@@ -2145,6 +2145,40 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 // nop
             } break;
+        // -- PowerInfer (lane-110 M3 graft) site1-dispatch
+        // -- Powerinfer
+        case GGML_OP_FUSED_SPARSE_FFN:
+        {
+            powerinfer_forward_fused_sparse_ffn(params, tensor);
+        } break;
+        case GGML_OP_FUSED_SPARSE_MOE:
+        {
+            int32_t n_expert_used = ggml_get_op_params_i32(tensor, 0);
+            powerinfer_forward_fused_sparse_moe(params, n_expert_used,tensor);
+        } break;
+        case GGML_OP_PRINT_TENSOR:
+        {
+            powerinfer_compute_forward_print_tensor(params, tensor);
+        } break;
+        case GGML_OP_MOE_PIPELINE_PREFETCH:
+        {
+            powerinfer_forward_moe_pipeline_prefetch(params, tensor);
+        } break;
+        case GGML_OP_MOE_PIPELINE_BUILD_TASKS:
+        {
+            powerinfer_forward_moe_pipeline_build_tasks(params, tensor);
+        } break;
+        case GGML_OP_MOE_PIPELINE_FORWARD:
+        {
+            powerinfer_forward_moe_pipeline_forward(params, tensor);
+        } break;
+        case GGML_OP_LMHEAD:
+            {
+                powerinfer_forward_lmhead(params, tensor);
+            } break;
+      // -- Powerinfer end
+
+
         case GGML_OP_RESHAPE:
             {
                 // nop
@@ -2497,6 +2531,21 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
             {
                 GGML_ABORT("fatal error");
             }
+
+        // -- PowerInfer (lane-110 M3 graft) site2-ntasks
+        // -- PowerInfer
+        case GGML_OP_FUSED_SPARSE_FFN:
+        case GGML_OP_FUSED_SPARSE_MOE:
+        case GGML_OP_MOE_PIPELINE_PREFETCH:
+        case GGML_OP_MOE_PIPELINE_BUILD_TASKS:
+        case GGML_OP_MOE_PIPELINE_FORWARD:
+        case GGML_OP_LMHEAD:
+        case GGML_OP_PRINT_TENSOR:
+        {
+            n_tasks = n_threads;
+        } break;
+        // -- PowerInfer end
+
         default:
             {
                 fprintf(stderr, "%s: op not implemented: ", __func__);
@@ -3033,6 +3082,46 @@ struct ggml_cplan ggml_graph_plan(
                     {
                         GGML_ABORT("fatal error");
                     }
+
+        // -- PowerInfer (lane-110 M3 graft) site3-workspace
+                // -- PowerInfer
+                case GGML_OP_FUSED_SPARSE_FFN:
+                    {
+                        const struct ggml_tensor * up               = node->src[0];
+                        const struct ggml_tensor * input            = node->src[3];
+
+                        const int n_embd     = up->ne[0];
+                        const int batch_size = input->ne[1];
+
+                        cur = ggml_row_size(GGML_TYPE_Q8_0, n_embd) * batch_size;
+                    } break;
+                case GGML_OP_FUSED_SPARSE_MOE:
+                    {
+                    const struct ggml_tensor * up               = node->src[0];
+                    const struct ggml_tensor * input            = node->src[3];
+
+                    const int n_embd     = up->ne[0];
+                    const int batch_size = input->ne[1];
+
+                    cur = ggml_row_size(GGML_TYPE_Q8_0, n_embd) * batch_size;
+                    } break;
+                case GGML_OP_LMHEAD:
+                    {
+                        const struct ggml_tensor *lmhead = node->src[0];
+                        const struct ggml_tensor *input  = node->src[1];
+                        const struct ggml_tensor *profiler =node->src[2];
+                        const size_t atomic_counter_align        = 64;
+
+                        GGML_ASSERT(lmhead->type == GGML_TYPE_Q4_0);
+                        GGML_ASSERT(input->ne[1] == 1);
+
+                        cur += ggml_row_size(GGML_TYPE_Q8_0, input->ne[0]);
+                        cur += ggml_row_size(GGML_TYPE_Q8_0, profiler->ne[0]/(lmhead->ne[1]+input->ne[0]));
+                        cur += sizeof(uint32_t)*lmhead->ne[1];
+                        cur += atomic_counter_align + 3 * sizeof(int);
+                    } break;
+                // -- Powerinfer end
+
                 case GGML_OP_LIGHTNING_INDEXER:
                     {
                         // temp buffer for dequantizing lightning indexer keys
