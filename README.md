@@ -1,126 +1,121 @@
-# llama.cpp
+# ArifiLabs llama.cpp
 
-![llama](https://raw.githubusercontent.com/ggml-org/llama.brand/refs/heads/master/cover/llama-cpp/cover-llama-cpp-dark.svg)
+An attribution-first, rebaseable llama.cpp fork for local inference across current and future ArifiLabs hardware.
 
-<div align="center">
+This repository starts from upstream llama.cpp master
+(`4df29be4f`, 2026-08-16) and carries an ordered,
+feature-toggled patch series. Its scope is deliberately broad: one engine for
+the current Beelink SER7, future 64/96 GB RAM configurations, an AMD Strix Halo
+128 GB system, and an NVIDIA DGX Spark 128 GB system.
 
-<b>LLM inference in C/C++</b>
+The fork preserves upstream backends. Vulkan is the blessed AMD path for the
+current gfx1103 estate; upstream CUDA remains available for NVIDIA hardware.
+ROCm/HIP and wholesale ROCmFPX adoption are not the running path on the current
+rig, but Charlie’s fork remains a tracked source for discrete mechanisms and
+currency review.
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Release](https://img.shields.io/github/v/release/ggml-org/llama.cpp?filter=v*&color=brightgreen)](https://github.com/ggml-org/llama.cpp/releases?q=tag:v0)
-[![Nightly](https://img.shields.io/github/v/release/ggml-org/llama.cpp?label=nightly&filter=b*&color=orange)](https://github.com/ggml-org/llama.cpp/releases?q=b)
-[![Server](https://img.shields.io/github/actions/workflow/status/ggml-org/llama.cpp/server.yml?label=Server)](https://github.com/ggml-org/llama.cpp/actions/workflows/server.yml)
-[![Docker](https://img.shields.io/github/actions/workflow/status/ggml-org/llama.cpp/docker.yml?label=Docker)](https://github.com/ggml-org/llama.cpp/actions/workflows/docker.yml)
-[![Winget](https://img.shields.io/github/actions/workflow/status/ggml-org/llama.cpp/winget.yml?label=Winget)](https://github.com/ggml-org/llama.cpp/actions/workflows/winget.yml)
+## Principles
 
-[ggml](https://github.com/ggml-org/ggml) / [ops](https://github.com/ggml-org/llama.cpp/blob/master/docs/ops.md) / [maintainer PRs](https://github.com/ggml-org/llama.cpp/issues?q=is%3Apr%20is%3Aopen%20draft%3AFalse%20(author%3Argerganov%20OR%20author%3AKitaitiMakoto%20OR%20author%3Adanbev%20OR%20author%3Aaldehir%20OR%20author%3Amax-krasnyansky%20OR%20author%3ACISC%20OR%20author%3Aggerganov%20OR%20author%3Aam17an%20OR%20author%3Ajhen0409%20OR%20author%3Abartowski1182%20OR%20author%3Anikwen%20OR%20author%3Ahipudding%20OR%20author%3Aravi9%20OR%20author%3AServeurpersoCom%20OR%20author%3Apwilkin%20OR%20author%3Areeselevine%20OR%20author%3Angxson%20OR%20author%3Ajeffbolznv%20OR%20author%3Amarty1885%20OR%20author%3A0cc4m%20OR%20author%3ATitaniumtown%20OR%20author%3Aangt%20OR%20author%3AIMbackK%20OR%20author%3Aarthw%20OR%20author%3AJohannesGaessler%20OR%20author%3AORippler%20OR%20author%3Aruixiang63%20OR%20author%3Axctan%20OR%20author%3Aallozaur%20OR%20author%3Ayomaytk%20OR%20author%3Aaendk%20OR%20author%3Awine99%20OR%20author%3Agaugarg-nv%20OR%20author%3Ataronaeo%20OR%20author%3Aforforever73%20OR%20author%3Alhez%20OR%20author%3Anetrunnereve%20OR%20author%3Afairydreaming)%20sort%3Aupdated-desc) / [dev stats](https://github.com/ggml-org/llama.cpp-dev) / [lib llama API](https://github.com/ggml-org/llama.cpp/issues/9289) / [llama-server REST API](https://github.com/ggml-org/llama.cpp/issues/9291)
+- Start from a known upstream anchor and make every local change rebaseable.
+- Compile capabilities in and expose them as documented runtime options.
+- Attribute every carried change in repository documentation and commit trailers.
+- Treat benchmark evidence as placement-specific: a gain on host-offloaded
+  experts is not a gain on GPU-resident unified-memory execution.
+- Accept an upstream or fork update only after a clean rebase, Windows Vulkan
+  build, functional checks, and the llama-server benchmark regression judge.
+- Preserve negative evidence. A failed kernel or an inert toggle is useful
+  engineering knowledge, not material to erase.
 
-</div>
+## Current planned series
 
-## Quick start
+The manifest at [`patches/series/MANIFEST.md`](patches/series/MANIFEST.md)
+defines, but intentionally does not yet contain, the following work:
 
-A few options to get `llama.cpp` installed on your machine:
+- the ordered `0001`–`0011` PowerInfer/Windows sparse-streaming graft;
+- the three ordered thecodacus community-prefetch patches;
+- a PrismML ternary `Q2_0_g128` Vulkan-port slot;
+- a Windows IOCP-overlap streaming slot; and
+- future ArifiLabs profiling and tooling work.
 
-- Visit https://llama.app and follow the instructions
-- Run with Docker - see our [Docker documentation](docs/docker.md)
-- Download pre-built binaries from the [releases page](https://github.com/ggml-org/llama.cpp/releases)
-- Build from source by cloning this repository - check out [our build guide](docs/build.md)
+No patch content is included in this Phase-1 skeleton. Conversion of the
+verified graft scripts into reviewable commits is a separate batch.
 
-Once installed:
+## Options and hardware defaults
 
-```sh
-# Download and run a model directly from Hugging Face
-llama cli -hf ggml-org/Qwen3.5-0.8B-GGUF
+[`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.md) is the authoritative
+runtime-option registry. It records defaults, placement constraints, measured
+effects, known negative results, and benchmark rules.
 
-# Launch OpenAI-compatible API server
-llama serve -hf ggml-org/Qwen3.5-0.8B-GGUF
-```
+Important defaults already ruled by evidence:
 
-<table align="center">
-    <tr>
-        <td align="center" width=50%>
-            <img width="1310" height="888" alt="VLM session with `llama cli`" src="https://github.com/user-attachments/assets/88726b48-1713-48aa-a525-95a02e78afc4" />
-            <i>VLM session with <b>llama cli</b></i>
-        </td>
-        <td align="center">
-            <img width="1392" height="958" alt="Built-in web UI against `llama serve` running Qwen 3.6" src="https://github.com/user-attachments/assets/b402f972-2e32-4def-8771-8d849f08cf2e" />
-            <i>Built-in web UI against <b>llama serve</b></i>
-        </td>
-    </tr>
-<table>
+- `--ctx-checkpoints 0` is the default; disabling rewind is the program’s
+  largest historical gain.
+- KV f16 is primary under the President’s 64 GB RAM ruling; q4_0 remains an
+  explicit capacity trade-off rather than a silent default.
+- DSpark is documented OFF on the current 780M Vulkan rig after a measured
+  `0.54×` net result.
+- thecodacus host-transfer prefetch patches remain compiled and carried, but
+  are OFF by default on unified-memory machines. Their documented gain belongs
+  to host-offloaded/discrete-transfer placement, while the GPU-resident Vulkan
+  configuration measured them inert.
 
-## Description
+## Credits and maximal attribution
 
-The main goal of `llama.cpp` is to enable LLM (and VLM) inference with minimal setup and state-of-the-art performance on
-a wide range of hardware - locally and in the cloud.
+This fork exists because of upstream and community work. Attribution is not a
+footer: it is part of the patch series, documentation, source ledger, and
+commit history.
 
-- Plain C/C++ implementation without any dependencies
-- Apple silicon is a first-class citizen - optimized via ARM NEON, Accelerate and Metal frameworks
-- AVX, AVX2, AVX512 and AMX support for x86 architectures
-- RVV, ZVFH, ZFH, ZICBOP and ZIHINTPAUSE support for RISC-V architectures
-- 1.5-bit, 2-bit, 3-bit, 4-bit, 5-bit, 6-bit, and 8-bit integer quantization for faster inference and reduced memory use
-- Custom CUDA kernels for running LLMs on NVIDIA GPUs (support for AMD GPUs via HIP and Moore Threads GPUs via MUSA)
-- Vulkan and SYCL backend support
-- CPU+GPU hybrid inference to partially accelerate models larger than the total VRAM capacity
+- [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) is the upstream
+  engine and the base for this repository. Upstream’s MIT notice is retained.
+- [Tiiny-AI/PowerInfer](https://github.com/Tiiny-AI/PowerInfer) supplies the
+  sparse-execution and expert-streaming lineage used by the planned
+  PowerInfer graft. Its root and `smallthinker` MIT notices are retained.
+- [PrismML-Eng/llama.cpp](https://github.com/PrismML-Eng/llama.cpp) supplied
+  the observed Vulkan path for PrismML `Q2_0_g128` ternary GGUFs and the
+  ternary-port lineage. The President’s rule #0 authorizes carrying this work
+  with maximal credit and provenance; the Phase-0 factual observation that the
+  retained PrismML releases did not include a source `LICENSE` or `NOTICE`
+  remains documented rather than rewritten.
+- [charlie12345/ROCmFPX](https://github.com/charlie12345/ROCmFPX), Charlie’s
+  fork, informed checkpoint and format investigations. It is tracked for
+  currency and diff audit, not blindly merged; its MIT notice is retained.
+- [thecodacus/llama.cpp](https://github.com/thecodacus/llama.cpp), branch
+  `fable5/prefetch-experts`, authored the three community prefetch patches
+  carried in their original dependency order:
+  [`20f5994`](https://github.com/thecodacus/llama.cpp/commit/20f5994bfeb91d24da328077c4b6095998cc9888.patch),
+  [`1163cb3`](https://github.com/thecodacus/llama.cpp/commit/1163cb34939fe4a9cb07aec034c5954144497ae9.patch),
+  and
+  [`5f83fbb`](https://github.com/thecodacus/llama.cpp/commit/5f83fbbe7c668c59912a1fe09e86a0ef580406c4.patch).
+  Their discovery record is
+  [thecodacus’s Fable5/prefetch-experts video](https://www.youtube.com/watch?v=VytSYCDhWQ0).
+  No separate channel URL was captured in the estate record, so none is
+  invented here.
+- `llama-cpp-turboquant` contributes MIT-licensed tooling lineage.
+- `turboquant_plus` contributes Apache-2.0 tooling lineage; its Apache license
+  and NOTICE are retained.
 
-The `llama.cpp` project is build on top of the [ggml](https://github.com/ggml-org/ggml) library.
+Every later carried commit must identify its source with `Taken-from:`, its
+local responsibility with `Origin:`, and its measured result or intentionally
+unmeasured status with `Measured-effect:`.
 
-## Supported backends
+## License notices
 
-| Backend | Target devices |
-| --- | --- |
-| [BLAS](docs/build.md#blas-build) | All |
-| [BLIS](docs/backend/BLIS.md) | All |
-| [CANN](docs/build.md#cann) | Ascend NPU |
-| [CUDA](docs/build.md#cuda) | Nvidia GPU |
-| [HIP](docs/build.md#hip) | AMD GPU |
-| [Hexagon](docs/backend/snapdragon/README.md) | Snapdragon |
-| [IBM zDNN](docs/backend/zDNN.md) | IBM Z & LinuxONE |
-| [MUSA](docs/build.md#musa) | Moore Threads GPU |
-| [Metal](docs/build.md#metal-build) | Apple Silicon |
-| [OpenCL](docs/backend/OPENCL.md) | Adreno GPU |
-| [OpenVINO [In Progress]](docs/backend/OPENVINO.md) | Intel CPUs, GPUs, and NPUs |
-| [RPC](https://github.com/ggml-org/llama.cpp/tree/master/tools/rpc) | All |
-| [SYCL](docs/backend/SYCL.md) | Intel GPU |
-| [VirtGPU](docs/backend/VirtGPU.md) | VirtGPU APIR |
-| [Vulkan](docs/build.md#vulkan) | GPU |
-| [WebGPU](docs/build.md#webgpu) | All |
-| [ZenDNN](docs/build.md#zendnn) | AMD CPU |
+`LICENSE` is the verbatim upstream llama.cpp MIT license. Retained third-party
+notices and the exact source from which each was copied are enumerated in
+[`LICENSES/README.md`](LICENSES/README.md).
 
-## Documentation
+The President’s 2026-07-22 rule #0 lifted the previous publication blocks for
+PrismML, thecodacus, PowerInfer, and Charlie/ROCmFPX. This authorization does
+not justify inventing license text: no PrismML or thecodacus license file is
+manufactured where Phase 0 did not observe one. Their credit and provenance
+remain explicit in this README, the series manifest, and each eventual commit.
 
-#### Tools
+## Status
 
-- [cli](tools/cli/README.md)
-- [completion](tools/completion/README.md)
-- [server](tools/server/README.md)
-- [GBNF grammars](grammars/README.md)
+Phase 1 is a repository skeleton and provenance layer only. It does not claim
+that the planned sparse Vulkan kernel, ternary port, IOCP overlap, or any
+individual patch-series contribution has been independently benchmarked.
 
-#### Development
-
-- [How to build](docs/build.md)
-- [Running on Docker](docs/docker.md)
-- [Build on Android](docs/android.md)
-- [Multi-GPU usage](docs/multi-gpu.md)
-- [Performance troubleshooting](docs/development/token_generation_performance_tips.md)
-- [GGML tips & tricks](https://github.com/ggml-org/llama.cpp/wiki/GGML-Tips-&-Tricks)
-- [XCFramework](docs/xcframework.md)
-- [Completions](docs/completions.md)
-- [Models](docs/models.md)
-- [Release process](docs/release.md)
-
-## Contributing
-
-- Contributors can open PRs
-- Collaborators will be invited based on contributions
-- Maintainers can push to branches in the `llama.cpp` repo and merge PRs into the `master` branch
-- Any help with managing issues, PRs and projects is very appreciated!
-- Read the [CONTRIBUTING.md](CONTRIBUTING.md) for more information
-
-## Acknowledgements
-
-- [yhirose/cpp-httplib](https://github.com/yhirose/cpp-httplib) - Single-header HTTP server, used by `llama-server` - MIT license
-- [nothings/stb](https://github.com/nothings/stb) - Single-header image format decoder, used by multimodal subsystem - Public domain
-- [nlohmann/json](https://github.com/nlohmann/json) - Single-header JSON library, used by various tools/examples - MIT License
-- [mackron/miniaudio](https://github.com/mackron/miniaudio) - Single-header audio format decoder, used by multimodal subsystem - Public domain
-- [sheredom/subprocess.h](https://github.com/sheredom/subprocess.h) - Single-header process launching solution for C and C++ - Public domain
+Publication remains gated by local proof, committed evidence for every
+published gain claim and negative result, and the President’s explicit release
+word.
