@@ -1,4 +1,7 @@
 #include "llama-graph.h"
+#include "powerinfer-cpu.h"  // // -- PowerInfer (lane-110 M3 generic MoE-streaming hook) (streaming cache query)
+#include <algorithm>  // lane-110C prefetch-cap env override
+#include <cstdlib>  // lane-110C prefetch-cap env override
 
 #include "llama-impl.h"
 #include "llama-model.h"
@@ -2097,6 +2100,44 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     if (w_scale != 0.0f && w_scale != 1.0f) {
         weights = ggml_scale(ctx0, weights, w_scale);
         cb(weights, "ffn_moe_weights_scaled", il);
+    }
+
+    // -- PowerInfer (lane-110 M3 generic MoE-streaming hook)
+    // Every MoE arch routes through build_moe_ffn, so this ONE branch gives disk-streamed experts
+    // (EXPERT_BUNDLE_PATH) to all of them. The pipeline gathers scores itself from the FULL
+    // [n_expert, n_tokens] probs (expert_logits[i*n_experts + expert_id], pipeline.cpp:93) and
+    // normalizes internally (normalize_scores=true) — passing the top-k `weights` here is wrong
+    // (fork parity: smallthinker llama-model.cpp:7516 passes full probs). `cur` is still
+    // [n_embd, n_tokens]. Known divergence: w_scale / softmax_weight gating arches unhandled.
+    if (powerinfer_has_global_expert_cache()) {
+        ggml_tensor * pi_selected_experts = ggml_cont(ctx0, selected_experts);
+        // Prefetch as a STANDALONE node (lane-110C): expanded into gf, NOT chained into the data
+        // path. In-chain (view of `cur`) it segfaulted the -ngl 99 -cmoe path (device-tensor view
+        // on the CPU op chain) and broke forward's src[1] zero-copy walk. Standalone it depends
+        // only on selected_experts, so the scheduler may run it before attention completes = the
+        // fork's early-prefetch overlap (llama-model.cpp:7431), generic-hook shaped.
+        // Default = the shipped fork-derived cap; positive LANE110_PREFETCH_CAP overrides for a
+        // measured sweep, bounded to this ubatch's selected-expert count so a malformed env
+        // cannot create unbounded speculative pressure. (Sol patch 1, lane-110C.)
+        const int pi_default_prefetch_cap = 3 * n_expert_used;
+        const int pi_max_prefetch_cap = 3 * n_expert_used * std::max(1, (int) n_tokens);
+        int pi_prefetch_cap = pi_default_prefetch_cap;
+        if (const char * pi_cap_env = std::getenv("LANE110_PREFETCH_CAP")) {
+            char * pi_cap_end = nullptr;
+            const long pi_cap_value = std::strtol(pi_cap_env, &pi_cap_end, 10);
+            if (pi_cap_end != pi_cap_env && *pi_cap_end == '\0' && pi_cap_value > 0) {
+                pi_prefetch_cap = static_cast<int>(std::min<long>(pi_cap_value, pi_max_prefetch_cap));
+            }
+        }
+        ggml_tensor * pi_prefetch = ggml_moe_pipeline_prefetch(
+            ctx0, pi_selected_experts, pi_selected_experts, il, pi_prefetch_cap);
+        ggml_build_forward_expand(gf, pi_prefetch);
+        ggml_tensor * pi_tasks = ggml_moe_pipeline_build_tasks(ctx0, pi_selected_experts, cur,
+                                     type_op == LLM_FFN_SILU ? 1 : 0, il);  // lane-110 M3 graft tag:silu
+        ggml_tensor * pi_probs = ggml_reshape_2d(ctx0, probs, n_expert, n_tokens);
+        ggml_tensor * pi_out = ggml_moe_pipeline_forward(ctx0, pi_probs, pi_tasks, il, -1);
+        cb(pi_out, "ffn_moe_out_streamed", il);
+        return pi_out;
     }
 
     //call early so that topk-moe can be used
