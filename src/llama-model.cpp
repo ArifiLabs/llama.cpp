@@ -1941,10 +1941,31 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                     for (size_t expert_id = 0; expert_id < hparams.n_expert; expert_id++) {
                         for (int idx = 0; idx < 3; idx++) {
                             auto & [pi_data, pi_ne0, pi_ne1] = pi_matrices[idx];
-                            if (pi_data != nullptr) {
-                                pi_builder.append(static_cast<const char *>(pi_data) + (expert_id * pi_matrix_bytes), pi_ne0, pi_ne1, false);
-                            } else {
+                            if (pi_data == nullptr) {
                                 pi_builder.append_zero(pi_ne0, pi_ne1);
+                            } else if (idx == 2 && !pi_down_transposed) {
+                                // lane-110 M3 graft tag:down-transpose — the pipeline's DownForwardTask
+                                // reads down as [n_ff rows x n_embd] (axpy row length = embed). Models
+                                // whose down is stored [n_embd rows x n_ff] (qwen35moe; smallthinker is
+                                // already transposed) must be dequant->transpose->requant at bundle-gen.
+                                const char * pi_src = static_cast<const char *>(pi_data) + expert_id * pi_matrix_bytes;
+                                const auto * pi_tt = ggml_get_type_traits(GGML_TYPE_Q4_0);
+                                const int pi_nff = (int) hparams.n_ff_exp, pi_nem = (int) hparams.n_embd;
+                                std::vector<float> pi_f((size_t) pi_nff * pi_nem), pi_ft((size_t) pi_nff * pi_nem);
+                                const size_t pi_src_row = ggml_row_size(GGML_TYPE_Q4_0, pi_nff);
+                                for (int r = 0; r < pi_nem; r++) {
+                                    pi_tt->to_float(pi_src + r * pi_src_row, pi_f.data() + (size_t) r * pi_nff, pi_nff);
+                                }
+                                for (int r = 0; r < pi_nem; r++) {
+                                    for (int c = 0; c < pi_nff; c++) {
+                                        pi_ft[(size_t) c * pi_nem + r] = pi_f[(size_t) r * pi_nff + c];
+                                    }
+                                }
+                                std::vector<char> pi_q(pi_matrix_bytes);
+                                ggml_quantize_chunk(GGML_TYPE_Q4_0, pi_ft.data(), pi_q.data(), 0, pi_nff, pi_nem, nullptr);
+                                pi_builder.append(pi_q.data(), pi_nem, pi_nff, false);
+                            } else {
+                                pi_builder.append(static_cast<const char *>(pi_data) + (expert_id * pi_matrix_bytes), pi_ne0, pi_ne1, false);
                             }
                         }
                     }
