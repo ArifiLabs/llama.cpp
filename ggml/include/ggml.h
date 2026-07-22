@@ -590,6 +590,16 @@ extern "C" {
 
         GGML_OP_GLU,
 
+
+        // -- PowerInfer (lane-110 M3 graft) tag:enum
+        GGML_OP_LMHEAD,
+        GGML_OP_FUSED_SPARSE_FFN,
+        GGML_OP_FUSED_SPARSE_MOE,
+        GGML_OP_MOE_PIPELINE_PREFETCH,
+        GGML_OP_MOE_PIPELINE_BUILD_TASKS,
+        GGML_OP_MOE_PIPELINE_FORWARD,
+        GGML_OP_PRINT_TENSOR,
+
         GGML_OP_COUNT,
     };
 
@@ -2957,6 +2967,64 @@ extern "C" {
     GGML_API struct ggml_threadpool_params ggml_threadpool_params_default(int n_threads);
     GGML_API void                          ggml_threadpool_params_init   (struct ggml_threadpool_params * p, int n_threads);
     GGML_API bool                          ggml_threadpool_params_match  (const struct ggml_threadpool_params * p0, const struct ggml_threadpool_params * p1);
+
+
+    // -- PowerInfer (lane-110 M3 graft) tag:decls
+#define PRINT_TENSOR_EXIT (1 << 0)
+#define PRINT_TENSOR_DUMP_TO_FILE (1 << 1)
+    GGML_API struct ggml_tensor * ggml_lmhead(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * lmhead,
+            struct ggml_tensor  * profiler,
+            struct ggml_tensor  * input,
+            int                   loader_id
+    );
+
+    GGML_API struct ggml_tensor * ggml_fused_sparse_ffn(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * up,
+            struct ggml_tensor  * gate,
+            struct ggml_tensor  * down,
+            struct ggml_tensor  * input,
+            struct ggml_tensor  * router_out,
+            int   loader_id
+    );
+
+    GGML_API struct ggml_tensor *ggml_fused_sparse_moe(
+        struct ggml_context *ctx, struct ggml_tensor *up,
+        struct ggml_tensor *gate, struct ggml_tensor *down,
+        struct ggml_tensor *input, struct ggml_tensor *selected_experts,
+        struct ggml_tensor *expert_weights, size_t n_expert_used);
+
+    GGML_API struct ggml_tensor *ggml_moe_pipeline_prefetch(
+        struct ggml_context *ctx,
+        struct ggml_tensor *expert_ids,  // Shape: [batch_size, n_predicted_experts]
+        struct ggml_tensor *dummy_input,
+        int layer_id,
+        int max_n_prefetch
+    );
+
+    GGML_API struct ggml_tensor *ggml_moe_pipeline_build_tasks(
+        struct ggml_context *ctx,
+        struct ggml_tensor *expert_ids,  // Shape: [batch_size, n_used_experts]
+        struct ggml_tensor *dummy_input,
+        int ffn_op_type,
+        int layer_id
+    );
+
+    GGML_API struct ggml_tensor *ggml_moe_pipeline_forward(
+        struct ggml_context *ctx,
+        struct ggml_tensor *expert_logits,  // Shape: [batch_size, n_experts]
+        struct ggml_tensor *input,
+        int layer_id,
+        int loader_id
+    );
+
+    GGML_API struct ggml_tensor * ggml_print_tensor(
+        struct ggml_context * ctx,
+        struct ggml_tensor * cur,
+        int flags
+    );
 
 #ifdef  __cplusplus
 }

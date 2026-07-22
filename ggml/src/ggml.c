@@ -1099,9 +1099,18 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_SGD",
 
     "GLU",
+    // -- PowerInfer (lane-110 M3 graft) tag:names
+    "LMHEAD",
+    "FUSED_SPARSE_FFN",
+    "FUSED_SPARSE_MOE",
+    "MOE_PIPELINE_PREFETCH",
+    "MOE_PIPELINE_BUILD_TASKS",
+    "MOE_PIPELINE_FORWARD",
+    "PRINT_TENSOR",
+
 };
 
-static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+static_assert(GGML_OP_COUNT == 108, "GGML_OP_COUNT != 101");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1214,9 +1223,18 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "sgd(x)",
 
     "glu(x)",
+    // -- PowerInfer (lane-110 M3 graft) tag:syms
+    "lmhead",
+    "fused_sparse_ffn",
+    "fused_sparse_moe",
+    "moe_pipeline_prefetch",
+    "moe_pipeline_build_tasks",
+    "moe_pipeline_forward",
+    "print_tensor",
+
 };
 
-static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+static_assert(GGML_OP_COUNT == 108, "GGML_OP_COUNT != 101");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -7513,6 +7531,193 @@ struct ggml_cgraph * ggml_graph_dup(struct ggml_context * ctx, struct ggml_cgrap
     struct ggml_cgraph * result = ggml_new_graph_custom(ctx, cgraph->size, cgraph->grads || force_grads);
     ggml_graph_cpy(cgraph, result);
     return result;
+}
+
+
+// -- PowerInfer (lane-110 M3 graft) tag:ctors
+struct ggml_tensor * ggml_lmhead(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * lmhead,
+            struct ggml_tensor  * profiler,
+            struct ggml_tensor  * input,
+            const int             loader_id
+    ) {
+    GGML_ASSERT(ggml_can_mul_mat(lmhead, input));
+    GGML_ASSERT(input->ne[1] == 1);
+
+    struct ggml_tensor *result = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, lmhead->ne[1]);
+
+    ggml_set_op_params_i32(result, 0, loader_id);
+
+    result->op     = GGML_OP_LMHEAD;
+    result->src[0] = lmhead;
+    result->src[1] = input;
+    result->src[2] = profiler;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_fused_sparse_ffn(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * up,
+            struct ggml_tensor  * gate,
+            struct ggml_tensor  * down,
+            struct ggml_tensor  * input,
+            struct ggml_tensor  * router_out,
+            int   loader_id
+    ) {
+    const int64_t n_embd   = input->ne[0];
+    const int64_t n_ff     = up->ne[1];
+    GGML_ASSERT(up->ne[0] == n_embd && up->ne[1] == n_ff);
+    GGML_ASSERT(gate->ne[0] == n_embd && gate->ne[1] == n_ff);
+    GGML_ASSERT(down->ne[0] == n_embd && down->ne[1] == n_ff);  // NOTE: Down transposed
+
+    GGML_ASSERT(up->type == GGML_TYPE_Q4_0);
+    GGML_ASSERT(gate->type == GGML_TYPE_Q4_0);
+    GGML_ASSERT(down->type == GGML_TYPE_Q4_0);
+    GGML_ASSERT(input->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(input));
+
+    struct ggml_tensor * result = ggml_dup(ctx, input);
+
+    ggml_set_op_params_i32(result, 0, loader_id);
+
+    result->op     = GGML_OP_FUSED_SPARSE_FFN;
+    result->src[0] = up;
+    result->src[1] = gate;
+    result->src[2] = down;
+    result->src[3] = input;
+    result->src[4] = router_out;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_fused_sparse_moe(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * up,
+            struct ggml_tensor  * gate,
+            struct ggml_tensor  * down,
+            struct ggml_tensor  * input,
+            struct ggml_tensor  * selected_experts,
+            struct ggml_tensor  * expert_weights,
+            size_t n_expert_used
+    ) {
+    const int64_t n_embd   = input->ne[0];
+    const int64_t n_ff     = up->ne[1];
+    GGML_ASSERT(up->ne[0] == n_embd && up->ne[1] == n_ff);
+    GGML_ASSERT(gate->ne[0] == n_embd && gate->ne[1] == n_ff);
+    GGML_ASSERT(down->ne[0] == n_embd && down->ne[1] == n_ff);  // NOTE: Down transposed
+
+    GGML_ASSERT(up->type == GGML_TYPE_Q4_0);
+    GGML_ASSERT(gate->type == GGML_TYPE_Q4_0);
+    GGML_ASSERT(down->type == GGML_TYPE_Q4_0);
+    GGML_ASSERT(input->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(input));
+    GGML_ASSERT(ggml_is_contiguous(up));
+    GGML_ASSERT(ggml_is_contiguous(gate));
+    GGML_ASSERT(ggml_is_contiguous(down));
+    GGML_ASSERT(ggml_is_contiguous(selected_experts));
+    GGML_ASSERT(ggml_is_contiguous(expert_weights));
+
+    struct ggml_tensor * result = ggml_dup(ctx, input);
+    ggml_set_op_params_i32(result, 0, n_expert_used);
+
+    result->op     = GGML_OP_FUSED_SPARSE_MOE;
+    result->src[0] = up;
+    result->src[1] = gate;
+    result->src[2] = down;
+    result->src[3] = input;
+    result->src[4] = selected_experts;
+    result->src[5] = expert_weights;
+
+    return result;
+}
+
+struct ggml_tensor *ggml_moe_pipeline_prefetch(
+    struct ggml_context *ctx,
+    struct ggml_tensor *expert_ids,  // Shape: [batch_size, n_predicted_experts]
+    struct ggml_tensor *dummy_input,
+    int layer_id,
+    int max_n_prefetch
+) {
+    GGML_ASSERT(expert_ids->type == GGML_TYPE_I32);
+    GGML_ASSERT(ggml_is_contiguous(expert_ids));
+
+    struct ggml_tensor *out = ggml_view_tensor(ctx, dummy_input);
+    out->op = GGML_OP_MOE_PIPELINE_PREFETCH;
+    out->src[0] = expert_ids;
+    out->src[1] = dummy_input;
+
+    ggml_set_op_params_i32(out, 0, layer_id);
+    ggml_set_op_params_i32(out, 1, max_n_prefetch);
+
+    return out;
+}
+
+struct ggml_tensor *ggml_moe_pipeline_build_tasks( 
+    struct ggml_context *ctx,
+    struct ggml_tensor *expert_ids,  // Shape: [batch_size, n_used_experts]
+    struct ggml_tensor *dummy_input,
+    int ffn_op_type, // An ugly impl, 0 for RELU, 1 for SiLU 
+    int layer_id
+) {
+    GGML_ASSERT(expert_ids->type == GGML_TYPE_I32);
+    GGML_ASSERT(ggml_is_contiguous(expert_ids));
+
+    struct ggml_tensor *out = ggml_view_tensor(ctx, dummy_input);
+    out->op = GGML_OP_MOE_PIPELINE_BUILD_TASKS;
+    out->src[0] = expert_ids;
+    out->src[1] = dummy_input;
+
+    ggml_set_op_params_i32(out, 0, layer_id);
+    ggml_set_op_params_i32(out, 1, ffn_op_type);
+    return out;
+}
+
+GGML_API struct ggml_tensor *ggml_moe_pipeline_forward(
+    struct ggml_context *ctx,
+    struct ggml_tensor *expert_logits,  // Shape: [batch_size, n_experts]
+    struct ggml_tensor *input,
+    int layer_id,
+    int loader_id
+) {
+    const int64_t batch_size = input->ne[1];
+    GGML_ASSERT(ggml_is_matrix(input));
+    GGML_ASSERT(input->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(input));
+
+    GGML_ASSERT(ggml_is_matrix(expert_logits));
+    GGML_ASSERT(expert_logits->ne[1] == batch_size);
+    GGML_ASSERT(expert_logits->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(expert_logits));
+
+    struct ggml_tensor *out = ggml_dup(ctx, input);
+    out->op = GGML_OP_MOE_PIPELINE_FORWARD;
+    out->src[0] = expert_logits;
+    out->src[1] = input;
+
+    ggml_set_op_params_i32(out, 0, layer_id);
+    ggml_set_op_params_i32(out, 1, loader_id);
+
+    return out;
+}
+
+struct ggml_tensor * ggml_print_tensor(
+    struct ggml_context * ctx,
+    struct ggml_tensor * cur,
+    int flags
+) {
+    GGML_ASSERT(ggml_is_matrix(cur));
+    GGML_ASSERT(ggml_is_contiguous(cur));
+    GGML_ASSERT(cur->type == GGML_TYPE_F32);
+
+    struct ggml_tensor *out = ggml_view_tensor(ctx, cur);
+    out->op = GGML_OP_PRINT_TENSOR;
+    out->src[0] = cur;
+
+    ggml_set_op_params_i32(out, 0, flags);
+
+    return out;
 }
 
 struct ggml_tensor * ggml_set_zero(struct ggml_tensor * tensor) {
