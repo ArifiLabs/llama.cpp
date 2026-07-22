@@ -7664,7 +7664,10 @@ struct ggml_tensor *ggml_moe_pipeline_build_tasks(
     GGML_ASSERT(expert_ids->type == GGML_TYPE_I32);
     GGML_ASSERT(ggml_is_contiguous(expert_ids));
 
-    struct ggml_tensor *out = ggml_view_tensor(ctx, dummy_input);
+    // lane-110 M3 graft tag:gpu-copy — dup, NOT view: with -ngl the input lives on a GPU buffer and a
+    // view keeps sharing it, so the CPU-side pipeline would deref a device pointer (segfault). A dup
+    // gives this CPU op its own tensor and the scheduler inserts the device->host copy.
+    struct ggml_tensor *out = ggml_dup(ctx, dummy_input);
     out->op = GGML_OP_MOE_PIPELINE_BUILD_TASKS;
     out->src[0] = expert_ids;
     out->src[1] = dummy_input;
