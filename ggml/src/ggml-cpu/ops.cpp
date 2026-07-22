@@ -1,5 +1,6 @@
 #include "ops.h"
 
+#include "ggml-backend.h"
 #include "ggml-cpu.h"
 #include "ggml-impl.h"
 #include "binary-ops.h"
@@ -10,7 +11,10 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 // ggml_compute_forward_dup
 
@@ -12380,8 +12384,21 @@ void powerinfer_forward_fused_sparse_moe(const ggml_compute_params *params, size
     }
 }
 
+// lane-110 M3 graft tag:prof — env-gated (LANE110_PROF=1) per-op timing for the streamed-MoE ceiling hunt
+namespace {
+bool lane110_prof_enabled() {
+    static const bool enabled = []() {
+        const char * value = std::getenv("LANE110_PROF");
+        return value != nullptr && value[0] == '1' && value[1] == '\0';
+    }();
+    return enabled;
+}
+} // namespace
+
 void powerinfer_forward_moe_pipeline_prefetch(const ggml_compute_params *params, struct ggml_tensor *dst) {
     if (params->ith == 0) {
+        const bool pi_prof = lane110_prof_enabled();
+        const auto pi_start = pi_prof ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         powerinfer_init_f16_table(ggml_table_f32_f16);
 
         const struct ggml_tensor *expert_ids = dst->src[0];
@@ -12397,11 +12414,19 @@ void powerinfer_forward_moe_pipeline_prefetch(const ggml_compute_params *params,
             max_n_prefetch,
             (const int32_t *)expert_ids->data
         );
+        if (pi_prof) {
+            const auto pi_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - pi_start).count();
+            std::fprintf(stderr, "LANE110_PROF sched us=%lld layer=%d\n",
+                         static_cast<long long>(pi_us), layer_id);
+        }
     }
 }
 
 void powerinfer_forward_moe_pipeline_build_tasks(const ggml_compute_params *params, struct ggml_tensor *dst) {
     if (params->ith == 0) {
+        const bool pi_prof = lane110_prof_enabled();
+        const auto pi_start = pi_prof ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         powerinfer_init_f16_table(ggml_table_f32_f16);
 
         const struct ggml_tensor *expert_ids = dst->src[0];
@@ -12409,22 +12434,38 @@ void powerinfer_forward_moe_pipeline_build_tasks(const ggml_compute_params *para
         const int ffn_op_type = ggml_get_op_params_i32(dst, 1);
         const size_t batch_size = dst->ne[1];
 
+        // lane-110 M3 graft tag:gpu-copy — keep the DUP as the GPU staging edge, but a CPU input
+        // remains directly readable by the next pipeline op through src[1], so copying it here is
+        // pure pass-through work on every MoE layer. Only materialize the duplicate for device input.
+        if (!ggml_backend_buffer_is_host(dst->src[1]->buffer)) {
+            memcpy(dst->data, dst->src[1]->data, ggml_nbytes(dst));
+        }
+
         powerinfer_moe_pipeline_build_tasks(
             layer_id,
             batch_size,
             ffn_op_type, 
             (const int32_t *)expert_ids->data
         );
+        if (pi_prof) {
+            const auto pi_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - pi_start).count();
+            std::fprintf(stderr, "LANE110_PROF build-tasks us=%lld layer=%d\n",
+                         static_cast<long long>(pi_us), layer_id);
+        }
     }
 }
 
 void powerinfer_forward_moe_pipeline_forward(const ggml_compute_params *params, struct ggml_tensor *dst) {
     const struct ggml_tensor *expert_logits = dst->src[0];
     const struct ggml_tensor *input = dst->src[1];
+    const struct ggml_tensor *input_source = input->src[1];
 
     const int layer_id = ggml_get_op_params_i32(dst, 0);
     const int loader_id = ggml_get_op_params_i32(dst, 1);
 
+    const bool pi_prof = params->ith == 0 && lane110_prof_enabled();
+    const auto pi_start = pi_prof ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     if (params->ith == 0) { powerinfer_init_f16_table(ggml_table_f32_f16); }
 
     struct PowerInferCPUParam param = {
@@ -12435,14 +12476,27 @@ void powerinfer_forward_moe_pipeline_forward(const ggml_compute_params *params, 
         params->wsize
     };
 
+    // The build-tasks node is a host duplicate solely to stage GPU input. For CPU input, consume
+    // its host source directly and avoid the redundant per-layer pass-through memcpy above.
+    const float *input_data = (input_source != nullptr &&
+                               ggml_backend_buffer_is_host(input_source->buffer))
+        ? (const float *) input_source->data
+        : (const float *) input->data;
+
     const struct PowerInferError ret = powerinfer_host_moe_pipeline_forward(
         param,
         layer_id,
         (const float *)expert_logits->data,
-        (const float *)input->data,
+        input_data,
         (float *)dst->data
     );
 
+    if (pi_prof) {
+        const auto pi_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - pi_start).count();
+        std::fprintf(stderr, "LANE110_PROF forward us=%lld layer=%d\n",
+                     static_cast<long long>(pi_us), layer_id);
+    }
     if (ret.error) {
         fprintf(stderr, "failed to execute powerinfer host ffn: %s\n", ret.message);
     }
