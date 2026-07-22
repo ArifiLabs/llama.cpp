@@ -1,4 +1,12 @@
 #include "llama-context.h"
+#include "powerinfer-cpu.h"  // lane-110 M3 graft tag:pipeline-init
+#include "az/core/spin_barrier.hpp"  // lane-110 M3 graft tag:pipeline-init
+#include "az/init.hpp"  // lane-110 M3 graft tag:pipeline-init
+#include <atomic>  // lane-110 M3 graft tag:pipeline-init
+#include <chrono>  // lane-110 M3 graft tag:pipeline-init
+#include <cstdio>  // lane-110 M3 graft tag:pipeline-init
+#include <cstdlib>  // lane-110 M3 graft tag:pipeline-init
+#include <mutex>  // lane-110 M3 graft tag:pipeline-init
 
 #include "ggml.h"
 #include "llama-arch.h"
@@ -1389,6 +1397,67 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         res->set_inputs(&ubatch);
 
         //LLAMA_LOG_INFO("graph set inputs time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
+    }
+
+    // lane-110 M3 graft tag:pipeline-init
+    // Fork parity (smallthinker llama-context.cpp:686): the streaming pipeline is rebuilt per
+    // ubatch; thread count MUST match graph_compute's choice or the spin barrier deadlocks.
+    if (powerinfer_has_global_expert_cache()) {
+        const char * pi_prof_env = std::getenv("LANE110_PROF");
+        const bool pi_prof = pi_prof_env != nullptr && pi_prof_env[0] == '1' && pi_prof_env[1] == '\0';
+        const auto pi_start = pi_prof ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        // az::init() fills az_fp16_to_fp32_table (+ exp/silu LUTs) — fork calls it in llama.cpp;
+        // without it every AZ_FP16_TO_FP32 scale reads 0 and all expert matvecs return exactly 0.
+        static std::once_flag pi_az_once;
+        std::call_once(pi_az_once, az::init);
+        const int pi_nth = ubatch.n_tokens > 1 ? cparams.n_threads_batch : cparams.n_threads;
+        // Guarded reuse (Sol patch 2, lane-110C): skip the per-ubatch pipeline/barrier rebuild
+        // when every shape input is unchanged; rebuild on any change (incl. prefill<->decode
+        // n_tokens flips). Fork rebuilds unconditionally — coherence is the judge on this one.
+        static std::mutex pi_pipeline_init_mutex;
+        static int pi_cached_nth = -1;
+        static int pi_cached_batch = -1;
+        static int pi_cached_layers = -1;
+        static int pi_cached_embd = -1;
+        static int pi_cached_ffn = -1;
+        static int pi_cached_experts = -1;
+        static int pi_cached_experts_used = -1;
+        bool pi_rebuilt = false;
+        {
+            std::lock_guard<std::mutex> pi_lock(pi_pipeline_init_mutex);
+            const bool pi_shape_changed =
+                pi_cached_nth != pi_nth ||
+                pi_cached_batch != (int) ubatch.n_tokens ||
+                pi_cached_layers != (int) model.hparams.n_layer() ||
+                pi_cached_embd != (int) model.hparams.n_embd ||
+                pi_cached_ffn != (int) model.hparams.n_ff_exp ||
+                pi_cached_experts != (int) model.hparams.n_expert ||
+                pi_cached_experts_used != (int) model.hparams.n_expert_used;
+            if (pi_shape_changed) {
+                powerinfer_init_moe_pipeline(pi_nth, model.hparams.n_layer(), model.hparams.n_embd,
+                                             model.hparams.n_ff_exp, ubatch.n_tokens,
+                                             model.hparams.n_expert, model.hparams.n_expert_used, true);
+                az::global_spin_barrier.init(pi_nth);
+                pi_cached_nth = pi_nth;
+                pi_cached_batch = (int) ubatch.n_tokens;
+                pi_cached_layers = (int) model.hparams.n_layer();
+                pi_cached_embd = (int) model.hparams.n_embd;
+                pi_cached_ffn = (int) model.hparams.n_ff_exp;
+                pi_cached_experts = (int) model.hparams.n_expert;
+                pi_cached_experts_used = (int) model.hparams.n_expert_used;
+                pi_rebuilt = true;
+            }
+        }
+        if (pi_prof) {
+            static std::atomic<uint64_t> pi_calls = 0;
+            const auto pi_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - pi_start).count();
+            const auto pi_call_count = pi_calls.fetch_add(1) + 1;
+            std::fprintf(stderr, "LANE110_PROF pipeline-init us=%lld calls=%llu nth=%d tokens=%d rebuilt=%d\n",
+                         static_cast<long long>(pi_us),
+                         static_cast<unsigned long long>(pi_call_count),
+                         pi_nth, static_cast<int>(ubatch.n_tokens), pi_rebuilt ? 1 : 0);
+        }
     }
 
     const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
