@@ -4927,6 +4927,22 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
     static const ggml::cpu::repack::tensor_traits<block_q1_0, 4, 4, GGML_TYPE_Q8_0> q1_0_4x4_q8_0;
     static const ggml::cpu::repack::tensor_traits<block_q1_0, 8, 4, GGML_TYPE_Q8_0> q1_0_4x8_q8_0;
 
+    // lane-110 M3 graft tag:repack-carveout — fork parity (smallthinker ggml-cpu-aarch64.cpp:6288-6299):
+    // the expert bundle must hold PLAIN Q4_0 bytes and the streaming kernels read plain Q4_0,
+    // so expert tensors must NOT be runtime-repacked in either bundle-gen or streaming mode.
+    if (getenv("EXPERT_BUNDLE_PATH") != nullptr && cur->name != nullptr) {
+        const char * pi_n = cur->name;
+        if (strstr(pi_n, "ffn_up_exps") || strstr(pi_n, "ffn_gate_exps") || strstr(pi_n, "ffn_down_exps")) {
+            return nullptr;
+        }
+    }
+    if (getenv("GENERATE_EXPERT_BUNDLE") != nullptr && cur->name != nullptr) {
+        const char * pi_n = cur->name;
+        if (strstr(pi_n, "ffn_up") || strstr(pi_n, "ffn_gate") || strstr(pi_n, "ffn_down")) {
+            return nullptr;
+        }
+    }
+
     // instance for Q4
     static const ggml::cpu::repack::tensor_traits<block_q4_0, 4, 4, GGML_TYPE_Q8_0> q4_0_4x4_q8_0;
     static const ggml::cpu::repack::tensor_traits<block_q4_0, 8, 4, GGML_TYPE_Q8_0> q4_0_4x8_q8_0;
