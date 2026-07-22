@@ -118,6 +118,16 @@ void ggml_compute_forward_opt_step_adamw(const struct ggml_compute_params * para
 void ggml_compute_forward_mul_mat(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_fwht(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_opt_step_sgd(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+
+// -- PowerInfer (lane-110 M3 graft)
+void powerinfer_forward_lmhead(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void powerinfer_forward_fused_sparse_ffn(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void powerinfer_forward_fused_sparse_moe(const struct ggml_compute_params * params, size_t n_expert_used,struct ggml_tensor * dst);
+void powerinfer_forward_moe_pipeline_prefetch(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void powerinfer_forward_moe_pipeline_build_tasks(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void powerinfer_forward_moe_pipeline_forward(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void powerinfer_compute_forward_print_tensor(const struct ggml_compute_params *params, struct ggml_tensor *dst);
+
 #ifdef __cplusplus
 }
 #endif
