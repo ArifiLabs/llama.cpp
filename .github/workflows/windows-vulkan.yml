@@ -1,0 +1,56 @@
+name: Windows Vulkan
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  windows-vulkan-build:
+    name: Windows Vulkan placeholder (${{ matrix.toolchain }})
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - msvc
+          - mingw
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record matrix contract
+        shell: pwsh
+        run: |
+          Write-Host "toolchain=${{ matrix.toolchain }}"
+          Write-Host "Future required configure flag: -DGGML_VULKAN=ON"
+          Write-Host "Future required checks: configure, build, llama-cli control load, and provenance validation."
+
+      - name: Configure and build placeholder
+        if: ${{ false }}
+        shell: pwsh
+        run: |
+          # Deliberately disabled until the repository pins Vulkan-SDK and
+          # Windows toolchain provisioning. Enable only with a reproducible
+          # toolchain bootstrap and a real target-model control test.
+          cmake -S . -B build -DGGML_VULKAN=ON
+          cmake --build build --config Release --parallel 2
+
+  bench-smoke:
+    name: llama-server bench smoke placeholder
+    needs: windows-vulkan-build
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Declare non-benchmarking placeholder
+        shell: pwsh
+        run: |
+          Write-Host "No timing result is produced in hosted CI."
+          Write-Host "Acceptance requires the President-ruled llama-server harness"
+          Write-Host "on declared hardware with no DR or sibling load."
+          Write-Host "This job becomes a real smoke only after a redistributable"
+          Write-Host "small control model and exact bench command are pinned."
