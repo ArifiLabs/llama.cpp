@@ -670,6 +670,10 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
 
     message(STATUS "Adding CPU backend variant ${GGML_CPU_NAME}: ${ARCH_FLAGS} ${ARCH_DEFINITIONS}")
     target_sources(${GGML_CPU_NAME} PRIVATE ${GGML_CPU_SOURCES})
+    # -- PowerInfer (lane-110 M3 graft) AVX-crash cure (mingw 32B ymm spill at 16B ABI slot) + link the sparse lib
+    target_compile_options(${GGML_CPU_NAME} PRIVATE ${ARCH_FLAGS} -mprefer-vector-width=128)
+    target_link_libraries(${GGML_CPU_NAME} PRIVATE powerinfer-${POWERINFER_GROUP_SIZE})
+    # (original stock line follows, harmless duplicate of ARCH_FLAGS):
     target_compile_options(${GGML_CPU_NAME} PRIVATE ${ARCH_FLAGS})
     target_compile_definitions(${GGML_CPU_NAME} PRIVATE ${ARCH_DEFINITIONS})
 

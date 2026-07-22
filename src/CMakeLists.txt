@@ -58,6 +58,8 @@ target_include_directories(llama PRIVATE . ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(llama PUBLIC ../include)
 target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
 
+# -- PowerInfer (lane-110 M3 graft)
+target_link_libraries(llama PRIVATE powerinfer-${POWERINFER_GROUP_SIZE})
 target_link_libraries(llama PUBLIC ggml)
 
 if (BUILD_SHARED_LIBS)
