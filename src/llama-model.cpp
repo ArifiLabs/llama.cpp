@@ -1,4 +1,7 @@
 #include "llama-model.h"
+// -- PowerInfer (lane-110 M3 graft) tag:loader-includes
+#include "moe_sparse_pipeline/expert_bundle.hpp"
+#include "powerinfer-cpu.h"
 
 #include "llama-arch.h"
 #include "llama-ext.h"
@@ -1832,6 +1835,67 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
     if (use_mmap_buffer) {
         for (auto & mapping : ml.mappings) {
             pimpl->mappings.emplace_back(std::move(mapping));
+        }
+    }
+
+    // -- PowerInfer (lane-110 M3 graft) tag:loader-block
+    // Streaming + bundle-generation hooks. Only engage via env vars; inert otherwise.
+    // Q4_0 experts only (bundle format contract, ggml.c ctor asserts); non-MoE models skip.
+    {
+        const int64_t pi_n_layer = hparams.n_layer();
+        bool pi_use_moe = false;
+        bool pi_down_transposed = false;
+        for (int64_t i = 0; i < pi_n_layer; ++i) {
+            if (layers[i].ffn_up_exps != nullptr && layers[i].ffn_down_exps != nullptr) {
+                pi_use_moe = true;
+                pi_down_transposed = layers[i].ffn_down_exps->ne[0] == layers[i].ffn_up_exps->ne[0] &&
+                                     layers[i].ffn_down_exps->ne[1] == layers[i].ffn_up_exps->ne[1];
+                break;
+            }
+        }
+        if (hparams.n_expert != 0 && pi_use_moe && hparams.n_ff_exp > 0) {
+            const size_t pi_row_size     = ggml_row_size(GGML_TYPE_Q4_0, hparams.n_embd);
+            const size_t pi_matrix_bytes = pi_row_size * hparams.n_ff_exp;
+
+            const char * pi_bundle_path = getenv("EXPERT_BUNDLE_PATH");
+            if (pi_bundle_path != nullptr && pi_matrix_bytes % 4096 == 0) {
+                LLAMA_LOG_INFO("%s: PowerInfer: loading expert bundle from \"%s\"\n", __func__, pi_bundle_path);
+                powerinfer_init_global_expert_cache(pi_bundle_path, (int) pi_n_layer, hparams.n_expert, 3, pi_matrix_bytes);
+            }
+
+            const char * pi_gen = getenv("GENERATE_EXPERT_BUNDLE");
+            if (pi_gen != nullptr) {
+                LLAMA_LOG_INFO("%s: PowerInfer: generating expert bundle -> \"%s\" (n_ff_exp=%u n_embd=%u matrix=%zu B)\n",
+                               __func__, pi_gen, hparams.n_ff_exp, hparams.n_embd, pi_matrix_bytes);
+                moe_sparse_pipeline::ExpertBundleBuilder pi_builder(pi_gen);
+                for (int64_t layer_id = 0; layer_id < pi_n_layer; layer_id++) {
+                    const auto & L = layers[layer_id];
+                    void * pi_up   = L.ffn_up_exps   ? L.ffn_up_exps->data   : nullptr;
+                    void * pi_gate = L.ffn_gate_exps ? L.ffn_gate_exps->data : nullptr;
+                    void * pi_down = L.ffn_down_exps ? L.ffn_down_exps->data : nullptr;
+                    std::tuple<void *, int, int> pi_matrices[] = {
+                        { pi_up,   (int) hparams.n_embd, (int) hparams.n_ff_exp },
+                        { pi_gate, (int) hparams.n_embd, (int) hparams.n_ff_exp },
+                        pi_down_transposed
+                            ? std::make_tuple(pi_down, (int) hparams.n_embd,   (int) hparams.n_ff_exp)
+                            : std::make_tuple(pi_down, (int) hparams.n_ff_exp, (int) hparams.n_embd),
+                    };
+                    for (size_t expert_id = 0; expert_id < hparams.n_expert; expert_id++) {
+                        for (int idx = 0; idx < 3; idx++) {
+                            auto & [pi_data, pi_ne0, pi_ne1] = pi_matrices[idx];
+                            if (pi_data != nullptr) {
+                                pi_builder.append(static_cast<const char *>(pi_data) + (expert_id * pi_matrix_bytes), pi_ne0, pi_ne1, false);
+                            } else {
+                                pi_builder.append_zero(pi_ne0, pi_ne1);
+                            }
+                        }
+                    }
+                    LLAMA_LOG_INFO("%s: PowerInfer: bundle layer %lld done\n", __func__, (long long) layer_id);
+                }
+                pi_builder.flush();
+                LLAMA_LOG_INFO("%s: PowerInfer: expert bundle generation done\n", __func__);
+                exit(0);
+            }
         }
     }
 
