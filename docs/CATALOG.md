@@ -1,0 +1,209 @@
+# ArifiLabs llama.cpp — complete change, patch, finding, and model-production catalog
+
+Scope: this catalog records only items traceable to the local-inference program
+sources. “Carried” means present in the engine recipe; it does not imply a
+measured gain in every placement regime.
+
+President rule #0, 2026-07-22: prior Phase-0 publication blocks for PrismML,
+thecodacus, and PowerInfer are lifted. Their factual license-audit findings
+remain recorded; authorized work proceeds in the main series with maximal
+credit, provenance, and retained notices where they exist.
+
+## A. Upstream and community patches we carry
+
+### A1. thecodacus patch 1 — pin mmap-backed CPU weights
+
+- **Identity:** `2026-07-02-thecodacus-pin-mmap-20f5994b.patch`, commit
+  `20f5994bfeb91d24da328077c4b6095998cc9888`.
+- **Attribution:** thecodacus, branch `fable5/prefetch-experts`.
+- **Mechanism:** pins mmap-backed CPU weights to accelerate host-to-device uploads.
+- **Carry status:** first patch in the three-patch dependency order used by
+  `b9978-patch` and `b10054-patch`.
+- **Measured status on shipped GPU-resident Vulkan:** inert as part of the
+  triplet; do not credit it with MTP enablement. MTP is native upstream.
+
+### A2. thecodacus patch 2 — overlap offloaded expert uploads with compute
+
+- **Identity:** `2026-07-02-thecodacus-overlap-uploads-1163cb34.patch`, commit
+  `1163cb34939fe4a9cb07aec034c5954144497ae9`.
+- **Attribution:** thecodacus, branch `fable5/prefetch-experts`.
+- **Mechanism:** adds `GGML_SCHED_PREFETCH_EXPERTS` to overlap host-offloaded
+  expert-weight uploads with compute.
+- **Carry status:** second patch in dependency order.
+- **Conditional result:** documented host-offloaded gain; inert when experts
+  are already GPU-resident.
+
+### A3. thecodacus patch 3 — size prefetch slots and repair fallback lifetime
+
+- **Identity:** `2026-07-02-thecodacus-size-prefetch-slots-5f83fbbe.patch`,
+  commit `5f83fbbe7c668c59912a1fe09e86a0ef580406c4`.
+- **Attribution:** thecodacus, branch `fable5/prefetch-experts`.
+- **Mechanism:** sizes prefetch slots per layer through
+  `GGML_SCHED_MAX_PREFETCH_SLOTS` and fixes a fallback use-after-free.
+- **Carry status:** third patch in dependency order.
+- **Measured status on shipped GPU-resident Vulkan:** inert as part of the
+  triplet.
+
+### A4. Placement-conditional verdict for the bundle
+
+- `b9978-patch` and `b10054-patch` are upstream llama.cpp plus the ordered
+  triplet. Sequential application to b10054 was clean.
+- On GPU-resident Vulkan, the patches are inert across the fill curve because
+  no host-to-device expert upload remains to prefetch. Stock and patched MTP
+  both work because MTP is native upstream.
+- In the explicitly host-offloaded `-cmoe` regime, the program record cites
+  `+64.5%` prefill. This is not transferable evidence for GPU-resident
+  production placement.
+
+## B. Fork work
+
+### B1. ROCmFPX / Charlie’s fork lineage
+
+- **Identity:** `charlie12345/ROCmFPX`, branch
+  `experimental-rocmfpx-branch`, pinned at
+  `a6a93765f7ce9779c13f9881164a65f7a9f31198`.
+- **Contribution:** surfaced the checkpoint mechanism that led to the
+  checkpoint-off finding.
+- **Not adopted:** same-session comparison still lost to mainline; it is not
+  the running engine path.
+- **Nuance:** the long-fill failure is real, but its cause is unknown and must
+  not be rewritten as proven OOM.
+
+### B2. ON_DEVICE checkpoint / rewind port
+
+- **Mechanism:** server prompt checkpointing saves recurrent state. The fork’s
+  ON_DEVICE version lowered stock host-side rewind overhead; upstream
+  `--ctx-checkpoints 0` disables rewind entirely.
+- **Measured result:** stock rewind `39.9/68.4/280`; ON_DEVICE
+  `84.8/128.8/341.6`; flag-off approximately `101/150/372` for
+  short/medium/long prefill.
+- **Shipping truth:** it works but ships nowhere because checkpoint-off wins.
+  The supplied evidence does not name a standalone source patch.
+
+### B3. Negative kernel findings retained
+
+- Seven decode-kernel variants hit a DRAM-latency wall on gfx1103.
+- Prefill warptile tuning was flat; bank-conflict work regressed roughly `50%`;
+  packed staging loads were flat.
+- Rollback-store fusion was inexpressible through views and the im2col route
+  regressed decode `15%`.
+- The program scoreboard’s gains are not credited to locally authored shaders:
+  they came from checkpoint-off, de-virtualization, and the Q6_K vocab-head
+  recompress.
+
+## C. PowerInfer Lane-110 series
+
+### C1. Windows port — native Windows sparse CPU execution
+
+- **Artifact:** `lane110-windows-port.patch`.
+- **Attribution:** ArifiLabs lane-110.
+- **Scope:** 12 files, 83 insertions, 14 deletions; portability skin rather
+  than sparse-logic modification.
+- **Ported areas:** allocator handling, CPU-affinity fallback, ARM-SVE
+  `prctl` guards, big-object flags, `io_uring` guarding, and link changes.
+- **Novel finding:** MinGW/GCC emitted aligned `vmovdqa ymm` spills at
+  Windows-ABI stack slots that are only 16-byte aligned, crashing hand-AVX
+  translation units. `-mprefer-vector-width=128` across `ggml-cpu` and
+  PowerInfer prevents the fault.
+- **Initial streaming state:** non-Linux `IOUring` was an API-identical fatal
+  stub; this initial patch did not provide Windows disk streaming.
+
+### C2. Windows read-path replacement and expert-bundle streaming proof
+
+- The later lane-110 implementation replaced the sole offload syscall site
+  with synchronous positioned Win32 `ReadFile + OVERLAPPED`.
+- A 10.5 GB Q4_0 expert bundle for all 52 layers of the 21B model generated
+  successfully. `EXPERT_BUNDLE_PATH` produced coherent output and exited zero.
+- This proves SSD-served expert weights on Windows. It is not an async-overlap
+  endpoint: the synchronous rung measured `1.74` prefill and `1.86` decode t/s.
+- No separate diff artifact for the functional replacement has been recovered.
+  Do not reconstruct it from prose.
+
+### C3. Sparse CPU proof and Vulkan wall
+
+- Sparse CPU decode improved from `12.6` to `16.7` t/s for 4B and from `5.0`
+  to `6.8` t/s for 21B; activation telemetry was `22.5%` and `18.6%`.
+- The observed `1.33–1.35×` gain is below activation-ratio intuition because
+  predictor cost, random row-gather, and non-sparse layers remain.
+- Sparse GPU execution is absent. `FUSED_SPARSE_MOE` is missing and aborts.
+  The roughly `35 t/s` projection is a ceiling hypothesis, not a measurement.
+
+### C4. M3 upstream graft: planned `git am` decomposition
+
+| Patch | Mechanism | Documented trap |
+|---|---|---|
+| `0001-ggml-moe-pipeline-ops` | Adds seven PowerInfer GGML operations, APIs, operation tables, constructors, and adjacent print flags. | Declaration-only extraction omitted adjacent macros; anchors must fail loudly. |
+| `0002-ggml-cpu-powerinfer-dispatch` | Ports kernels and compute-forward, task-count, workspace dispatch sites. | Three case blocks reside in distinct functions; ordinal placement caused an undeclared-variable failure. |
+| `0003-vendor-powerinfer-streaming-library` | Vendors the self-contained sparse engine and `moe_sparse_pipeline`. | Treat as a vendored payload with provenance, not a local rewrite. |
+| `0004-cmake-wire-powerinfer-and-winlibs-avx-cure` | Wires the library and carries `-mprefer-vector-width=128`. | Omitting the flag resurrects the MinGW hand-AVX crash. |
+| `0005-expert-bundle-loader-and-generator` | Adds bundle loading/generation and expert cache initialization. | Loader must stay inside `load_tensors`; Windows omits Linux `madvise` release. |
+| `0006-generic-moe-streaming-hook` | Routes upstream generic MoE FFN through streamed pipeline operations. | `selected_experts` must be contiguous; pipeline needs full probabilities. |
+| `0007-initialize-streamed-moe-pipeline` | Initializes pipeline/barrier and calls `az::init()` once. | Missing initialization yields null pipeline or zero fp16 conversion outputs. |
+| `0008-preserve-bundle-layout-and-silu-semantics` | Prevents bundle repack; adds SiLU and Qwen down-matrix transform. | Repack, ReLU-style skipping, or raw Qwen copying yields bad bundles. |
+| `0009-standalone-expert-prefetch` | Adds standalone expanded-graph prefetch node. | Chaining a device view through CPU chain segfaults under `-ngl 99 -cmoe`. |
+| `0010-guarded-pipeline-init-reuse` | Reuses pipeline only when shape is unchanged. | Thread mismatch can deadlock; all shape fields must invalidate. |
+| `0011-gpu-safe-streamed-moe-and-lane110-prof` | Device-only materialization plus default-off timing. | Vulkan views cannot be dereferenced by CPU; unconditional CPU copying is waste. |
+
+### C5. M3 outcome and boundaries
+
+- Integrity smoke: upstream b10068 plus graft ran SmallThinker-4B CPU at
+  `63.9` pp32 / `26.6` tg16 t/s.
+- SmallThinker-21B streamed coherently from SSD at `5.9–6.1` CPU decode t/s.
+- Qwen3.6-35B-A3B Q4_0 streamed from a 17 GB bundle at `1.6` CPU decode t/s.
+- Tiered `-ngl 99 -cmoe` placement produced coherent Qwen output at `3.0` t/s.
+- No sparse Vulkan success is claimed.
+
+## D. Measurements table
+
+| Change or finding | Result | Verdict |
+|---|---:|---|
+| checkpoint-off | short `38 → ~101`; medium `65 → 150`; long `~300 → 374` | largest program gain; launch flag |
+| ON_DEVICE checkpoints | `39.9/68.4/280 → 84.8/128.8/341.6 → ~101/150/372` flag-off | port works; not shipped |
+| de-virtualization | p47 `92.8 → 101.3`; long `304 → 372`; decode `22.4 → 24.0` | real platform gain |
+| Q6_K vocab head | `24.6 → 25.6` decode; `-117 MiB`; PPL effectively equal | shipped model-file gain |
+| three-patch bundle, GPU-resident Vulkan | patched approximately equals stock | inert in this placement |
+| three-patch bundle, host-offloaded | `+64.5%` prefill | conditional gain |
+| ROCmFPX re-check | short `+3.1%`, medium `−5.5%`, long `−14.2%` | not running path |
+| 4B sparse CPU decode | `12.6 → 16.7` t/s | sparse mechanism proven on CPU |
+| 21B sparse CPU decode | `5.0 → 6.8` t/s | sparse mechanism proven on CPU |
+| 21B sparse CPU prefill | `12.8 → 25.8` t/s | CPU-only result |
+| sparse Vulkan | missing op, abort | hard execution wall |
+| Windows AVX cure | crash → build/run | compiler/ABI finding |
+| Windows SSD streaming | no path → coherent 21B | capability proof |
+| synchronous Windows streaming | `1.74` pp / `1.86` tg | functional, not endpoint |
+| M3 SmallThinker smoke | `63.9` pp32 / `26.6` tg16 | b10068 graft loads/runs |
+| M3 SmallThinker streaming | `5.9–6.1` CPU decode | streaming green |
+| M3 Qwen35MoE streaming | 17 GB bundle, `1.6` CPU decode | decisive target-family proof |
+| tiered streamed placement | `1.6 → 3.0` t/s with `-ngl 99 -cmoe` | coherent tiering |
+| full unified placement | `3.1 → 29.2` t/s | fit-if-possible wins |
+| standalone prefetch rewiring | `5.99 / 9.79 / 10.48 / 12.31` server sequence | warm regime clears fork reference |
+| prefetch-cap sweep | default / `1` / `96` recorded in options registry | default retained pending controlled retest |
+| guarded init reuse | `2472 µs → 0–2 µs` | retained |
+| individual 0001–0011 contributions | not independently benchmarked | validated only as integrated outcomes |
+| prior shader/kernel attempts | dead, flat, or regressive | retained negative evidence |
+
+## E. Replication guide
+
+### E1. Preconditions and pin
+
+1. Start from clean upstream llama.cpp tag `b10068`,
+   `571d0d540df04f25298d0e159e520d9fc62ed121`.
+2. Use the recorded PowerInfer lineage
+   `8bd56d69906c9d2dba4d3bf6899763401e01a9a4`; vendor its `powerinfer/`
+   library before CMake wiring.
+3. Use the recorded Windows MinGW lineage where reproducing the original
+   Windows result, and retain `-mprefer-vector-width=128`.
+
+### E2. Graft-script order
+
+```text
+m3_graft_step1_ggml.py
+m3_graft_step2_cpu.py
+m3_graft_step3a_hook.py
+m3_graft_step3b_cmake.py
+m3_graft_step3c_loader.py
+m3_graft_step3d_pipeline_init.py
+m3_graft_step3e_repack_carveout.py
+m3_graft_step3f_silu.py
+m3_graft_step3g_down_transpose.py
+m3_graft_step3h_gpu_copy.py
