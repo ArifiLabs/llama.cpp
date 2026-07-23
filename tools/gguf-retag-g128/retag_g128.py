@@ -1,498 +1,740 @@
 #!/usr/bin/env python3
-"""Fail-closed GGUF Q2_0-g128 metadata retagger.
+"""
+Fail-closed GGUF v3 retagger for Prism-style Q2_0 g128 files.
 
-@capability: verify Q2_0-g128 GGUF geometry and write the GGML_Q2_0_G128=1 metadata key to a safe copy
-@intent: retag g128 GGUF, mark Q2_0 g128 model, verify ternary GGUF geometry, add GGML_Q2_0_G128 metadata
-@run: python tools/gguf-retag-g128/retag_g128.py <model.gguf>
+This parser deliberately never uses gguf-py and never constructs tensor arrays.
+It reads only GGUF structural fields (header, metadata KV entries, tensor-info
+table), derives Q2_0 geometry from declared dimensions and byte spans, and
+streams the tensor-data region through byte-for-byte unchanged.
 """
 
 from __future__ import annotations
 
 import argparse
-import gc
-import math
 import os
-import shutil
 import struct
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import BinaryIO
+
 
 GGUF_MAGIC = b"GGUF"
-METADATA_KEY = "GGML_Q2_0_G128"
+GGUF_VERSION = 3
+DEFAULT_ALIGNMENT = 32
 
-G64_VALUES_PER_BLOCK = 64
-G64_BYTES_PER_BLOCK = 18
-G128_VALUES_PER_BLOCK = 128
-G128_BYTES_PER_BLOCK = 34
+GGML_TYPE_Q2_0 = 42
+
+GGUF_VALUE_TYPE_UINT8 = 0
+GGUF_VALUE_TYPE_INT8 = 1
+GGUF_VALUE_TYPE_UINT16 = 2
+GGUF_VALUE_TYPE_INT16 = 3
+GGUF_VALUE_TYPE_UINT32 = 4
+GGUF_VALUE_TYPE_INT32 = 5
+GGUF_VALUE_TYPE_FLOAT32 = 6
+GGUF_VALUE_TYPE_BOOL = 7
+GGUF_VALUE_TYPE_STRING = 8
+GGUF_VALUE_TYPE_ARRAY = 9
+GGUF_VALUE_TYPE_UINT64 = 10
+GGUF_VALUE_TYPE_INT64 = 11
+GGUF_VALUE_TYPE_FLOAT64 = 12
+
+MARKER_KEY = b"GGML_Q2_0_G128"
+ALIGNMENT_KEY = b"general.alignment"
+
+_HEADER = struct.Struct("<4sIQQ")
+_U32 = struct.Struct("<I")
+_U64 = struct.Struct("<Q")
+
+COPY_CHUNK_BYTES = 1024 * 1024
 
 
-class RetagError(RuntimeError):
-    """A validation or safe-writing failure that must stop the retag."""
+class RetagRefusal(RuntimeError):
+    """Raised when the tool must fail closed."""
 
 
 @dataclass(frozen=True)
-class HeaderLayout:
-    kv_count: int
-    tensor_info_start: int
-    tensor_info_end: int
-    data_offset: int
-    alignment: int
-
-
-@dataclass(frozen=True)
-class Q2Span:
-    name: str
+class TensorInfo:
+    name: bytes
+    dimensions: tuple[int, ...]
+    ggml_type: int
     offset: int
-    span: int
-    g64_payload: int
-    g128_payload: int
-    g64_matches: bool
-    g128_matches: bool
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Verify a Q2_0 GGUF is unambiguously g128, then add "
-            "GGML_Q2_0_G128=1 to a copy."
-        ),
-    )
-    parser.add_argument("input", type=Path, help="source GGUF file")
-
-    destination = parser.add_mutually_exclusive_group()
-    destination.add_argument(
-        "-o",
-        "--output",
-        type=Path,
-        help="destination GGUF path; default: <input-stem>.g128.gguf",
-    )
-    destination.add_argument(
-        "--in-place",
-        action="store_true",
-        help=(
-            "replace the source after successful verification and temporary-copy "
-            "validation; this is intentionally opt-in"
-        ),
-    )
-    return parser.parse_args()
+@dataclass(frozen=True)
+class GgufLayout:
+    path: Path
+    file_size: int
+    tensor_count: int
+    metadata_kv_count: int
+    alignment: int
+    metadata_start: int
+    tensor_table_start: int
+    tensor_table_end: int
+    tensor_data_start: int
+    tensors: tuple[TensorInfo, ...]
+    marker_entries: tuple[tuple[int, int | None], ...]
 
 
-def default_output_path(source: Path) -> Path:
-    return source.with_name(f"{source.stem}.g128{source.suffix}")
+@dataclass(frozen=True)
+class SpanVerification:
+    q2_tensor_count: int
+    g128_discriminators: int
+    ambiguous_count: int
 
 
-def validate_source(source: Path) -> None:
-    print(f"Validating input: {source}")
+class _StructureReader:
+    """
+    Bounded sequential reader for GGUF structural sections.
 
-    if not source.exists():
-        raise RetagError(f"input file does not exist: {source}")
-    if not source.is_file():
-        raise RetagError(f"input path is not a regular file: {source}")
+    Metadata strings and unneeded metadata values are skipped with seek(), not
+    materialized. Tensor payload offsets are never passed to this reader.
+    """
 
-    try:
-        with source.open("rb") as handle:
-            magic = handle.read(4)
-    except OSError as exc:
-        raise RetagError(f"cannot read input file: {source}: {exc}") from exc
+    def __init__(self, path: Path) -> None:
+        self._file = path.open("rb")
+        self.file_size = os.fstat(self._file.fileno()).st_size
+        self.position = 0
 
-    if magic != GGUF_MAGIC:
-        raise RetagError(
-            f"{source} does not begin with valid GGUF magic bytes "
-            f"{GGUF_MAGIC!r}; refusing to retag"
-        )
+    def close(self) -> None:
+        self._file.close()
 
-    print("  GGUF magic bytes: valid.")
+    def __enter__(self) -> _StructureReader:
+        return self
 
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
-def import_gguf() -> Any:
-    try:
-        import gguf  # type: ignore[import-not-found]
-    except ImportError as exc:
-        raise RetagError(
-            "gguf-py is required. Install the fork's gguf-py package into the "
-            "Python environment used to run this tool."
-        ) from exc
-
-    return gguf
-
-
-def field_size(field: Any) -> int:
-    return sum(int(part.nbytes) for part in field.parts)
-
-
-def header_layout(reader: Any) -> HeaderLayout:
-    if reader.byte_order != "I" or sys.byteorder != "little":
-        raise RetagError(
-            "this tool supports only little-endian GGUF files; refusing to "
-            "rewrite a byte-swapped file"
-        )
-
-    if not reader.tensors:
-        raise RetagError("GGUF has no tensor table; refusing to retag")
-
-    kv_count_field = reader.get_field("GGUF.kv_count")
-    if kv_count_field is None:
-        raise RetagError("GGUF reader did not expose GGUF.kv_count")
-
-    tensor_info_start = min(tensor.field.offset for tensor in reader.tensors)
-    tensor_info_end = max(
-        tensor.field.offset + field_size(tensor.field) for tensor in reader.tensors
-    )
-    data_offset = int(reader.data_offset)
-    alignment = int(reader.alignment)
-
-    if alignment <= 0 or alignment & (alignment - 1):
-        raise RetagError(
-            f"GGUF declares invalid tensor alignment {alignment}; refusing to retag"
-        )
-
-    if not (24 <= tensor_info_start <= tensor_info_end <= data_offset):
-        raise RetagError(
-            "GGUF header/tensor-table offsets are inconsistent; refusing to retag"
-        )
-
-    return HeaderLayout(
-        kv_count=int(kv_count_field.contents()),
-        tensor_info_start=tensor_info_start,
-        tensor_info_end=tensor_info_end,
-        data_offset=data_offset,
-        alignment=alignment,
-    )
-
-
-def span_matches(span: int, payload: int, alignment: int) -> bool:
-    """Match the loader guard exactly: raw payload or alignment-padded payload."""
-    if span == payload:
-        return True
-
-    padded = ((payload + alignment - 1) // alignment) * alignment
-    return span == padded
-
-
-def q2_0_spans(source: Path, reader: Any, layout: HeaderLayout) -> list[Q2Span]:
-    file_size = source.stat().st_size
-    if layout.data_offset > file_size:
-        raise RetagError(
-            "GGUF data offset is beyond end of file; refusing to retag"
-        )
-
-    data_size = file_size - layout.data_offset
-    all_offsets: list[int] = []
-
-    for tensor in reader.tensors:
-        offset = int(tensor.data_offset) - layout.data_offset
-        if offset < 0 or offset > data_size:
-            raise RetagError(
-                f"tensor {tensor.name!r} has an offset outside the GGUF data region"
+    def _require_available(self, count: int, context: str) -> None:
+        if count < 0 or count > self.file_size - self.position:
+            raise RetagRefusal(
+                f"invalid GGUF: {context} extends beyond the end of the file"
             )
-        all_offsets.append(offset)
 
-    results: list[Q2Span] = []
-    for tensor in reader.tensors:
-        if tensor.tensor_type.name != "Q2_0":
+    def read_exact(self, count: int, context: str) -> bytes:
+        self._require_available(count, context)
+        data = self._file.read(count)
+        if len(data) != count:
+            raise RetagRefusal(f"invalid GGUF: short read while reading {context}")
+        self.position += count
+        return data
+
+    def skip(self, count: int, context: str) -> None:
+        self._require_available(count, context)
+        self._file.seek(count, os.SEEK_CUR)
+        self.position += count
+
+    def u8(self, context: str) -> int:
+        return self.read_exact(1, context)[0]
+
+    def u32(self, context: str) -> int:
+        return _U32.unpack(self.read_exact(4, context))[0]
+
+    def u64(self, context: str) -> int:
+        return _U64.unpack(self.read_exact(8, context))[0]
+
+    def gguf_string(self, context: str, maximum_length: int) -> bytes:
+        length = self.u64(f"{context} length")
+        if length > maximum_length:
+            raise RetagRefusal(
+                f"invalid GGUF: {context} length {length} exceeds {maximum_length}"
+            )
+        return self.read_exact(length, context)
+
+    def skip_gguf_string(self, context: str) -> None:
+        length = self.u64(f"{context} length")
+        self.skip(length, context)
+
+
+_FIXED_VALUE_SIZES = {
+    GGUF_VALUE_TYPE_UINT8: 1,
+    GGUF_VALUE_TYPE_INT8: 1,
+    GGUF_VALUE_TYPE_UINT16: 2,
+    GGUF_VALUE_TYPE_INT16: 2,
+    GGUF_VALUE_TYPE_UINT32: 4,
+    GGUF_VALUE_TYPE_INT32: 4,
+    GGUF_VALUE_TYPE_FLOAT32: 4,
+    GGUF_VALUE_TYPE_BOOL: 1,
+    GGUF_VALUE_TYPE_UINT64: 8,
+    GGUF_VALUE_TYPE_INT64: 8,
+    GGUF_VALUE_TYPE_FLOAT64: 8,
+}
+
+
+def _align_up(offset: int, alignment: int) -> int:
+    remainder = offset % alignment
+    return offset if remainder == 0 else offset + alignment - remainder
+
+
+def _validate_alignment(alignment: int) -> int:
+    if alignment <= 0 or alignment % 8 != 0:
+        raise RetagRefusal(
+            f"invalid GGUF: general.alignment must be a positive multiple of 8, "
+            f"got {alignment}"
+        )
+    return alignment
+
+
+def _skip_metadata_value(
+    reader: _StructureReader,
+    value_type: int,
+    *,
+    depth: int = 0,
+) -> None:
+    if depth > 64:
+        raise RetagRefusal("invalid GGUF: metadata array nesting exceeds 64 levels")
+
+    fixed_size = _FIXED_VALUE_SIZES.get(value_type)
+    if fixed_size is not None:
+        reader.skip(fixed_size, "metadata scalar value")
+        return
+
+    if value_type == GGUF_VALUE_TYPE_STRING:
+        reader.skip_gguf_string("metadata string value")
+        return
+
+    if value_type != GGUF_VALUE_TYPE_ARRAY:
+        raise RetagRefusal(f"invalid GGUF: unknown metadata value type {value_type}")
+
+    element_type = reader.u32("metadata array element type")
+    element_count = reader.u64("metadata array length")
+
+    fixed_element_size = _FIXED_VALUE_SIZES.get(element_type)
+    if fixed_element_size is not None:
+        reader.skip(
+            element_count * fixed_element_size,
+            "metadata array scalar values",
+        )
+        return
+
+    for _ in range(element_count):
+        _skip_metadata_value(reader, element_type, depth=depth + 1)
+
+
+def _parse_gguf_layout(path: Path) -> GgufLayout:
+    """
+    Parse exactly the GGUF v3 header, metadata, and tensor-info table.
+
+    No tensor-data bytes are read, decoded, reshaped, or otherwise interpreted.
+    """
+
+    with _StructureReader(path) as reader:
+        if reader.file_size < _HEADER.size:
+            raise RetagRefusal("invalid GGUF: file is smaller than its header")
+
+        magic, version, tensor_count, metadata_kv_count = _HEADER.unpack(
+            reader.read_exact(_HEADER.size, "GGUF header")
+        )
+
+        if magic != GGUF_MAGIC:
+            raise RetagRefusal("invalid GGUF: magic is not GGUF")
+        if version != GGUF_VERSION:
+            raise RetagRefusal(
+                f"unsupported GGUF version {version}; this tool requires v3"
+            )
+
+        metadata_start = reader.position
+        alignment = DEFAULT_ALIGNMENT
+        marker_entries: list[tuple[int, int | None]] = []
+
+        for index in range(metadata_kv_count):
+            key = reader.gguf_string(f"metadata key {index}", 65535)
+            value_type = reader.u32(f"metadata key {index} value type")
+
+            if key == ALIGNMENT_KEY:
+                if value_type != GGUF_VALUE_TYPE_UINT32:
+                    raise RetagRefusal(
+                        "invalid GGUF: general.alignment is not a uint32"
+                    )
+                alignment = reader.u32("general.alignment value")
+                continue
+
+            if key == MARKER_KEY:
+                if value_type == GGUF_VALUE_TYPE_UINT8:
+                    marker_entries.append(
+                        (value_type, reader.u8("GGML_Q2_0_G128 value"))
+                    )
+                else:
+                    marker_entries.append((value_type, None))
+                    _skip_metadata_value(reader, value_type)
+                continue
+
+            _skip_metadata_value(reader, value_type)
+
+        alignment = _validate_alignment(alignment)
+        tensor_table_start = reader.position
+        tensors: list[TensorInfo] = []
+
+        for index in range(tensor_count):
+            name = reader.gguf_string(f"tensor {index} name", 64)
+            dimension_count = reader.u32(f"tensor {index} dimension count")
+
+            if dimension_count == 0:
+                raise RetagRefusal(
+                    f"invalid GGUF: tensor {name!r} has zero dimensions"
+                )
+            if dimension_count > 64:
+                raise RetagRefusal(
+                    f"invalid GGUF: tensor {name!r} has too many dimensions "
+                    f"({dimension_count})"
+                )
+
+            dimensions = tuple(
+                reader.u64(f"tensor {index} dimension {dimension_index}")
+                for dimension_index in range(dimension_count)
+            )
+            ggml_type = reader.u32(f"tensor {index} ggml type")
+            offset = reader.u64(f"tensor {index} data offset")
+
+            tensors.append(
+                TensorInfo(
+                    name=name,
+                    dimensions=dimensions,
+                    ggml_type=ggml_type,
+                    offset=offset,
+                )
+            )
+
+        tensor_table_end = reader.position
+        tensor_data_start = _align_up(tensor_table_end, alignment)
+
+        if tensor_data_start > reader.file_size:
+            raise RetagRefusal(
+                "invalid GGUF: alignment padding places tensor data beyond EOF"
+            )
+
+        return GgufLayout(
+            path=path,
+            file_size=reader.file_size,
+            tensor_count=tensor_count,
+            metadata_kv_count=metadata_kv_count,
+            alignment=alignment,
+            metadata_start=metadata_start,
+            tensor_table_start=tensor_table_start,
+            tensor_table_end=tensor_table_end,
+            tensor_data_start=tensor_data_start,
+            tensors=tuple(tensors),
+            marker_entries=tuple(marker_entries),
+        )
+
+
+def _q2_padded_span(
+    dimensions: tuple[int, ...],
+    *,
+    values_per_block: int,
+    bytes_per_block: int,
+    alignment: int,
+) -> int | None:
+    """
+    Return this tensor's expected padded Q2_0 span, or None when its declared
+    width cannot be represented by the candidate block geometry.
+    """
+
+    columns = dimensions[0]
+    if columns == 0 or columns % values_per_block != 0:
+        return None
+    if any(dimension == 0 for dimension in dimensions[1:]):
+        return None
+
+    rows = 1
+    for dimension in dimensions[1:]:
+        rows *= dimension
+
+    raw_bytes = rows * (columns // values_per_block) * bytes_per_block
+    return _align_up(raw_bytes, alignment)
+
+
+def _verify_q2_spans(layout: GgufLayout) -> SpanVerification:
+    """
+    Classify Q2_0 entries from table offsets, dimensions, and file size only.
+
+    This is the g64-vs-g128 discriminator:
+      g64  = ceil-to-alignment(R * (C / 64)  * 18)
+      g128 = ceil-to-alignment(R * (C / 128) * 34)
+    """
+
+    payload_size = layout.file_size - layout.tensor_data_start
+    ordered = sorted(layout.tensors, key=lambda tensor: tensor.offset)
+
+    previous_offset: int | None = None
+    for tensor in ordered:
+        if tensor.offset % layout.alignment != 0:
+            raise RetagRefusal(
+                f"invalid GGUF: tensor {tensor.name!r} offset {tensor.offset} "
+                f"is not aligned to {layout.alignment}"
+            )
+        if tensor.offset > payload_size:
+            raise RetagRefusal(
+                f"invalid GGUF: tensor {tensor.name!r} offset is beyond tensor data"
+            )
+        if previous_offset is not None and tensor.offset == previous_offset:
+            raise RetagRefusal(
+                "invalid GGUF: two tensor entries share one data offset"
+            )
+        previous_offset = tensor.offset
+
+    q2_tensor_count = 0
+    g128_discriminators = 0
+    ambiguous_count = 0
+
+    for index, tensor in enumerate(ordered):
+        if tensor.ggml_type != GGML_TYPE_Q2_0:
             continue
 
-        shape = [int(dimension) for dimension in tensor.shape]
-        if not shape or shape[0] <= 0:
-            raise RetagError(
-                f"Q2_0 tensor {tensor.name!r} has an invalid shape; refusing to retag"
-            )
-
-        n_cols = shape[0]
-        n_rows = math.prod(shape[1:]) if len(shape) > 1 else 1
-
-        # This is the same prerequisite as llama_q2_0_g128_nbytes().
-        if n_cols % G128_VALUES_PER_BLOCK:
-            raise RetagError(
-                f"Q2_0 tensor {tensor.name!r} has row width {n_cols}, which is not "
-                f"divisible by the g128 block width {G128_VALUES_PER_BLOCK}; "
-                "refusing to retag"
-            )
-
-        offset = int(tensor.data_offset) - layout.data_offset
-        next_offset = min(
-            (candidate for candidate in all_offsets if candidate > offset),
-            default=data_size,
+        q2_tensor_count += 1
+        next_offset = (
+            ordered[index + 1].offset
+            if index + 1 < len(ordered)
+            else payload_size
         )
-        if next_offset < offset:
-            raise RetagError(
-                f"Q2_0 tensor {tensor.name!r} has a non-monotonic GGUF offset"
-            )
+        span = next_offset - tensor.offset
 
-        span = next_offset - offset
-        g64_payload = n_rows * (n_cols // G64_VALUES_PER_BLOCK) * G64_BYTES_PER_BLOCK
-        g128_payload = (
-            n_rows * (n_cols // G128_VALUES_PER_BLOCK) * G128_BYTES_PER_BLOCK
+        g64_span = _q2_padded_span(
+            tensor.dimensions,
+            values_per_block=64,
+            bytes_per_block=18,
+            alignment=layout.alignment,
+        )
+        g128_span = _q2_padded_span(
+            tensor.dimensions,
+            values_per_block=128,
+            bytes_per_block=34,
+            alignment=layout.alignment,
         )
 
-        results.append(
-            Q2Span(
-                name=tensor.name,
-                offset=offset,
-                span=span,
-                g64_payload=g64_payload,
-                g128_payload=g128_payload,
-                g64_matches=span_matches(span, g64_payload, layout.alignment),
-                g128_matches=span_matches(span, g128_payload, layout.alignment),
-            )
-        )
+        matches_g64 = g64_span is not None and span == g64_span
+        matches_g128 = g128_span is not None and span == g128_span
 
-    return results
-
-
-def verify_g128_geometry(source: Path, reader: Any, layout: HeaderLayout) -> None:
-    print("Checking Q2_0 tensor spans against g64 and g128 geometry...")
-
-    spans = q2_0_spans(source, reader, layout)
-    if not spans:
-        raise RetagError(
-            "file has no Q2_0 tensors, so g128 geometry cannot be established; "
-            "refusing to retag"
-        )
-
-    confirmed_g128 = False
-    for result in spans:
-        print(
-            f"  {result.name}: span={result.span} bytes; "
-            f"g64 payload={result.g64_payload}, match={result.g64_matches}; "
-            f"g128 payload={result.g128_payload}, match={result.g128_matches}"
-        )
-
-        if result.g128_matches and not result.g64_matches:
-            confirmed_g128 = True
-            print("    confirmed: g128-only discriminator")
+        if matches_g128 and not matches_g64:
+            g128_discriminators += 1
             continue
 
-        if result.g64_matches and not result.g128_matches:
-            raise RetagError(
-                f"Q2_0 tensor {result.name!r} has a {result.span}-byte span that "
-                "matches legacy g64 geometry only; refusing to create a wrongly "
-                "tagged file"
+        if matches_g64 and not matches_g128:
+            raise RetagRefusal(
+                f"g64-only span for Q2_0 tensor {tensor.name!r}: "
+                f"observed {span}, expected g64 {g64_span}"
             )
 
-        if not result.g64_matches and not result.g128_matches:
-            raise RetagError(
-                f"Q2_0 tensor {result.name!r} has a {result.span}-byte span that "
-                "matches neither g64 nor g128 geometry; refusing to retag"
-            )
+        if matches_g64 and matches_g128:
+            ambiguous_count += 1
+            continue
 
-        print(
-            "    alignment-ambiguous: not evidence for either layout; a separate "
-            "g128-only discriminator is required"
+        raise RetagRefusal(
+            f"Q2_0 tensor {tensor.name!r} span matches neither geometry: "
+            f"observed {span}, g64={g64_span}, g128={g128_span}"
         )
 
-    if not confirmed_g128:
-        raise RetagError(
-            "every Q2_0 tensor span is alignment-ambiguous; no span "
-            "unambiguously confirms g128 geometry, so the file will not be retagged"
+    if q2_tensor_count == 0:
+        raise RetagRefusal("no Q2_0 tensors found; refusing to add a g128 marker")
+
+    if g128_discriminators == 0:
+        raise RetagRefusal(
+            "all Q2_0 tensor spans are alignment-ambiguous; "
+            "refusing unsafe g128 tagging"
         )
 
-    print("  Geometry check: confirmed g128.")
-
-
-def marker_bytes() -> bytes:
-    key = METADATA_KEY.encode("utf-8")
-
-    # GGUF string: uint64 length + UTF-8 bytes.
-    # GGUF metadata entry: key string + uint32 value type + scalar value.
-    # The loader accepts scalar unsigned 1; writing UINT32 preserves the literal
-    # GGML_Q2_0_G128=1 contract.
-    return b"".join(
-        (
-            struct.pack("<Q", len(key)),
-            key,
-            struct.pack("<I", 4),  # GGUF_TYPE_UINT32
-            struct.pack("<I", 1),
-        )
+    return SpanVerification(
+        q2_tensor_count=q2_tensor_count,
+        g128_discriminators=g128_discriminators,
+        ambiguous_count=ambiguous_count,
     )
 
 
-def copy_range(source: Any, destination: Any, start: int, end: int) -> None:
-    if end < start:
-        raise RetagError("attempted to copy an invalid GGUF byte range")
+def _marker_entry_bytes() -> bytes:
+    return (
+        _U64.pack(len(MARKER_KEY))
+        + MARKER_KEY
+        + _U32.pack(GGUF_VALUE_TYPE_UINT8)
+        + bytes((1,))
+    )
+
+
+def _copy_range(
+    source: BinaryIO,
+    destination: BinaryIO,
+    *,
+    start: int,
+    length: int,
+    context: str,
+) -> None:
+    """
+    Copy an exact byte range without decoding it.
+
+    For tensor payload ranges, chunks are written directly and never parsed,
+    reshaped, or converted to a tensor representation.
+    """
 
     source.seek(start)
-    remaining = end - start
-    chunk_size = 8 * 1024 * 1024
+    remaining = length
 
     while remaining:
-        chunk = source.read(min(chunk_size, remaining))
+        chunk = source.read(min(COPY_CHUNK_BYTES, remaining))
         if not chunk:
-            raise RetagError("input ended unexpectedly while copying GGUF header")
+            raise RetagRefusal(f"short read while streaming {context}")
         destination.write(chunk)
         remaining -= len(chunk)
 
 
-def write_marked_copy(
-    source: Path,
-    destination: Path,
-    layout: HeaderLayout,
-) -> None:
-    """Copy all tensor bytes unchanged while inserting one metadata entry.
+def _write_zero_padding(destination: BinaryIO, count: int) -> None:
+    zero_chunk = b"\x00" * min(COPY_CHUNK_BYTES, count)
+    remaining = count
 
-    gguf-py's reader is deliberately used for parsing/validation. The payload copy
-    is raw because on-disk g128 tensors still advertise Q2_0; a generic Q2_0 writer
-    would calculate g64 payload lengths and could truncate those tensor bytes.
+    while remaining:
+        chunk_length = min(len(zero_chunk), remaining)
+        destination.write(zero_chunk[:chunk_length])
+        remaining -= chunk_length
+
+
+def _write_retagged_file(
+    source_path: Path,
+    destination_path: Path,
+    source_layout: GgufLayout,
+    *,
+    destination_exists_by_design: bool,
+) -> tuple[int, int]:
     """
-    marker = marker_bytes()
+    Write a new file with one appended metadata entry and a recomputed data start.
 
-    with source.open("rb") as input_file, destination.open("xb") as output_file:
-        first_16 = input_file.read(16)
-        if len(first_16) != 16:
-            raise RetagError("input ended before the full GGUF header")
+    The tensor-info table is copied verbatim. Its offsets remain valid because
+    they are relative to the newly aligned tensor-data start. Tensor payload
+    bytes are streamed unmodified from the original data start to the new one.
+    """
 
-        # Preserve magic, version, and tensor count. Replace only kv_count.
-        output_file.write(first_16)
-        output_file.write(struct.pack("<Q", layout.kv_count + 1))
+    marker = _marker_entry_bytes()
+    new_tensor_table_end = source_layout.tensor_table_end + len(marker)
+    new_tensor_data_start = _align_up(
+        new_tensor_table_end,
+        source_layout.alignment,
+    )
+    new_padding_length = new_tensor_data_start - new_tensor_table_end
+    payload_length = source_layout.file_size - source_layout.tensor_data_start
+    expected_size = new_tensor_data_start + payload_length
 
-        # Existing metadata, then the new marker, then unchanged tensor infos.
-        copy_range(input_file, output_file, 24, layout.tensor_info_start)
-        output_file.write(marker)
-        copy_range(
-            input_file,
-            output_file,
-            layout.tensor_info_start,
-            layout.tensor_info_end,
+    if source_layout.metadata_kv_count == (1 << 64) - 1:
+        raise RetagRefusal("invalid GGUF: metadata count cannot be incremented")
+
+    mode = "wb" if destination_exists_by_design else "xb"
+
+    with source_path.open("rb") as source, destination_path.open(mode) as destination:
+        destination.write(
+            _HEADER.pack(
+                GGUF_MAGIC,
+                GGUF_VERSION,
+                source_layout.tensor_count,
+                source_layout.metadata_kv_count + 1,
+            )
         )
 
-        padding = (-output_file.tell()) % layout.alignment
-        output_file.write(b"\x00" * padding)
+        _copy_range(
+            source,
+            destination,
+            start=source_layout.metadata_start,
+            length=source_layout.tensor_table_start - source_layout.metadata_start,
+            context="original metadata",
+        )
+        destination.write(marker)
 
-        # Tensor offsets are relative to the aligned data region, so the complete
-        # original data region can remain byte-for-byte unchanged.
-        input_file.seek(layout.data_offset)
-        shutil.copyfileobj(input_file, output_file, length=8 * 1024 * 1024)
+        _copy_range(
+            source,
+            destination,
+            start=source_layout.tensor_table_start,
+            length=source_layout.tensor_table_end - source_layout.tensor_table_start,
+            context="tensor-info table",
+        )
+        _write_zero_padding(destination, new_padding_length)
 
+        _copy_range(
+            source,
+            destination,
+            start=source_layout.tensor_data_start,
+            length=payload_length,
+            context="tensor payload",
+        )
 
-def verify_written_marker(output: Path, gguf: Any) -> None:
-    print("Validating written metadata key with gguf-py...")
-
-    try:
-        reader = gguf.GGUFReader(str(output), "r")
-        field = reader.get_field(METADATA_KEY)
-        if field is None:
-            raise RetagError(f"written file is missing {METADATA_KEY}")
-
-        if field.types != [gguf.GGUFValueType.UINT32] or field.contents() != 1:
-            raise RetagError(
-                f"written {METADATA_KEY} is not a scalar UINT32 value of 1"
+        if destination.tell() != expected_size:
+            raise RetagRefusal(
+                "internal error: output size differs from the computed layout"
             )
-    except RetagError:
-        raise
-    except Exception as exc:
-        raise RetagError(
-            f"gguf-py could not validate the written output {output}: {exc}"
-        ) from exc
-    finally:
-        if "reader" in locals():
-            del reader
-            gc.collect()
+
+    return new_tensor_data_start, expected_size
 
 
-def write_atomically(
-    source: Path,
-    destination: Path,
-    layout: HeaderLayout,
-    gguf: Any,
+def _validate_output(
+    output_path: Path,
     *,
-    in_place: bool,
-) -> None:
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=destination.parent,
-        prefix=f".{destination.name}.retag-",
-        suffix=".tmp",
-    )
-    os.close(descriptor)
-    temporary = Path(temporary_name)
-    temporary.unlink()
+    expected_tensor_data_start: int,
+    expected_size: int,
+) -> SpanVerification:
+    """
+    Post-write validation using the same header/KV/table-only parser.
+
+    This intentionally does not use gguf-py or access tensor payload content.
+    """
+
+    output_layout = _parse_gguf_layout(output_path)
+
+    if output_layout.file_size != expected_size:
+        raise RetagRefusal(
+            f"post-write validation failed: output size is {output_layout.file_size}, "
+            f"expected {expected_size}"
+        )
+
+    if output_layout.tensor_data_start != expected_tensor_data_start:
+        raise RetagRefusal(
+            "post-write validation failed: recomputed tensor-data start differs "
+            "from the write plan"
+        )
+
+    if output_layout.marker_entries != ((GGUF_VALUE_TYPE_UINT8, 1),):
+        raise RetagRefusal(
+            "post-write validation failed: GGML_Q2_0_G128 is not exactly uint8 1"
+        )
+
+    return _verify_q2_spans(output_layout)
+
+
+def _default_output_path(source: Path) -> Path:
+    suffix = source.suffix
+    stem = source.name[: -len(suffix)] if suffix else source.name
+    return source.with_name(f"{stem}.g128{suffix}")
+
+
+def _retag_copy(source: Path, destination: Path, layout: GgufLayout) -> SpanVerification:
+    if os.path.lexists(destination):
+        raise RetagRefusal(f"output already exists: {destination}")
 
     try:
-        print(f"Writing {METADATA_KEY}=1 to: {destination}")
-        write_marked_copy(source, temporary, layout)
-        verify_written_marker(temporary, gguf)
-
-        if not in_place and destination.exists():
-            raise RetagError(
-                f"output file appeared while writing: {destination}; refusing to overwrite it"
-            )
-
-        if in_place:
-            print(f"Replacing source after successful temporary-copy validation: {source}")
-        os.replace(temporary, destination)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
-def main() -> int:
-    args = parse_args()
-    source = args.input.resolve()
-
-    try:
-        validate_source(source)
-        gguf = import_gguf()
-
-        print("Opening input with gguf-py...")
-        try:
-            reader = gguf.GGUFReader(str(source), "r")
-        except Exception as exc:
-            raise RetagError(f"gguf-py could not parse {source}: {exc}") from exc
-
-        try:
-            if reader.get_field(METADATA_KEY) is not None:
-                raise RetagError(
-                    f"{METADATA_KEY} is already present; refusing to create a "
-                    "duplicate metadata key"
-                )
-
-            layout = header_layout(reader)
-            verify_g128_geometry(source, reader, layout)
-        finally:
-            del reader
-            gc.collect()
-
-        if args.in_place:
-            destination = source
-            print(
-                "WARNING: --in-place was explicitly requested. The source file will "
-                "be replaced only after a verified same-directory temporary copy is "
-                "written successfully."
-            )
-        else:
-            destination = (args.output or default_output_path(source)).resolve()
-            if destination == source:
-                raise RetagError(
-                    "output resolves to the input path; use --in-place explicitly "
-                    "if replacement is intended"
-                )
-            if not destination.parent.is_dir():
-                raise RetagError(
-                    f"output directory does not exist: {destination.parent}"
-                )
-            if destination.exists():
-                raise RetagError(
-                    f"output already exists: {destination}; refusing to overwrite it"
-                )
-
-        write_atomically(
+        new_data_start, expected_size = _write_retagged_file(
             source,
             destination,
             layout,
-            gguf,
-            in_place=args.in_place,
+            destination_exists_by_design=False,
         )
-        print(f"Done: verified g128 marker written to {destination}")
-        return 0
+        return _validate_output(
+            destination,
+            expected_tensor_data_start=new_data_start,
+            expected_size=expected_size,
+        )
+    except BaseException:
+        try:
+            destination.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
-    except RetagError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+
+def _retag_in_place(source: Path, layout: GgufLayout) -> SpanVerification:
+    print(
+        f"WARNING: --in-place will replace the original only after post-write "
+        f"validation succeeds: {source}",
+        file=sys.stderr,
+    )
+
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{source.name}.",
+        suffix=".retag-g128.tmp",
+        dir=source.parent,
+    )
+    os.close(file_descriptor)
+    temporary_path = Path(temporary_name)
+
+    try:
+        new_data_start, expected_size = _write_retagged_file(
+            source,
+            temporary_path,
+            layout,
+            destination_exists_by_design=True,
+        )
+        verification = _validate_output(
+            temporary_path,
+            expected_tensor_data_start=new_data_start,
+            expected_size=expected_size,
+        )
+        os.replace(temporary_path, source)
+        return verification
+    finally:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _build_argument_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Fail-closed GGUF v3 retagger for verified Q2_0 g128 files. "
+            "The default operation writes a separate copy."
+        )
+    )
+    parser.add_argument("input", type=Path, help="source GGUF file")
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="copy destination (default: <input>.g128.gguf)",
+    )
+    parser.add_argument(
+        "--in-place",
+        action="store_true",
+        help="replace the input only after a temporary output validates",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = _build_argument_parser().parse_args(argv)
+
+    if arguments.in_place and arguments.output is not None:
+        print("REFUSED: --in-place and --output cannot be used together", file=sys.stderr)
+        return 2
+
+    source = arguments.input.expanduser().resolve()
+    if not source.is_file():
+        print(f"REFUSED: input is not a regular file: {source}", file=sys.stderr)
+        return 2
+
+    try:
+        source_layout = _parse_gguf_layout(source)
+
+        if source_layout.marker_entries:
+            raise RetagRefusal(
+                "marker key already present: GGML_Q2_0_G128; refusing to retag"
+            )
+
+        _verify_q2_spans(source_layout)
+
+        if arguments.in_place:
+            verification = _retag_in_place(source, source_layout)
+            output = source
+        else:
+            output = (
+                arguments.output.expanduser().resolve()
+                if arguments.output is not None
+                else _default_output_path(source)
+            )
+
+            if output == source:
+                raise RetagRefusal(
+                    "copy destination is the input file; use --in-place explicitly"
+                )
+
+            verification = _retag_copy(source, output, source_layout)
+
+    except RetagRefusal as error:
+        print(f"REFUSED: {error}", file=sys.stderr)
+        return 2
+    except OSError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
         return 1
-    except OSError as exc:
-        print(f"ERROR: filesystem failure: {exc}", file=sys.stderr)
-        return 1
+
+    print(
+        f"Tagged verified g128 GGUF: {output}\n"
+        f"Q2_0 tensors={verification.q2_tensor_count}, "
+        f"g128 discriminators={verification.g128_discriminators}, "
+        f"alignment-ambiguous={verification.ambiguous_count}"
+    )
+    return 0
 
 
 if __name__ == "__main__":
