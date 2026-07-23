@@ -4093,7 +4093,7 @@ static bool ggml_vk_matmul_int_shmem_support(const vk_device& device, const std:
     uint32_t block_a_size = 0;
     switch (src0_type) {
         case GGML_TYPE_Q2_0:    block_a_size = std430_size({{32, 4}, {fp_size,  fp_align}});                  break; // qs[8] + dm
-        case GGML_TYPE_Q2_0_G128: block_a_size = std430_size({{64, 4}, {fp_size, fp_align}});                  break; // qs[32] + dm
+        case GGML_TYPE_Q2_0_G128: block_a_size = std430_size({{32, 4}, {fp_size, fp_align}});                  break; // one Q8_1-sized sub-block + dm; four per g128 source block
         case GGML_TYPE_Q4_0:    block_a_size = std430_size({{16, 4}, {fp_size,  fp_align}});                  break; // qs[16/4] + dm
         case GGML_TYPE_Q4_1:    block_a_size = std430_size({{16, 4}, {fp2_size, fp2_align}});                 break; // qs[16/4] + dm(vec2)
         case GGML_TYPE_Q5_0:    block_a_size = std430_size({{16, 4}, {4, 4}, {fp_size,  fp_align}});          break; // qs[16/4] + qh + dm
