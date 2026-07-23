@@ -293,7 +293,7 @@ bool llama_batch_allocr::init(
 
             const llama_pos p0 = mem ? mem->seq_pos_max(s) : -1;
 
-            if (batch.token) {
+            if (batch.token && !batch.embd) {
                 if (p0 >= 0 && p0 >= seq_pos_min(s)) {
                     LLAMA_LOG_ERROR(
                             "%s: the tokens of sequence %d in the input batch have inconsistent sequence positions:\n"
