@@ -104,6 +104,170 @@ static std::vector<std::string> llama_get_list_splits(const std::string & path, 
     return paths;
 }
 
+static bool llama_gguf_q2_0_g128_gate(const gguf_context * gguf) {
+    static constexpr const char * key_name = "GGML_Q2_0_G128";
+
+    const int key = gguf_find_key(gguf, key_name);
+    if (key < 0) {
+        return false;
+    }
+
+    bool enabled = false;
+    switch (gguf_get_kv_type(gguf, key)) {
+        case GGUF_TYPE_BOOL:   enabled = gguf_get_val_bool(gguf, key); break;
+        case GGUF_TYPE_UINT8:  enabled = gguf_get_val_u8  (gguf, key) == 1; break;
+        case GGUF_TYPE_UINT16: enabled = gguf_get_val_u16 (gguf, key) == 1; break;
+        case GGUF_TYPE_UINT32: enabled = gguf_get_val_u32 (gguf, key) == 1; break;
+        case GGUF_TYPE_UINT64: enabled = gguf_get_val_u64 (gguf, key) == 1; break;
+        default:
+            throw std::runtime_error(format(
+                "%s: %s must be a scalar boolean or unsigned integer with value 1",
+                __func__, key_name));
+    }
+
+    if (!enabled) {
+        throw std::runtime_error(format(
+            "%s: %s is present but is not set to 1",
+            __func__, key_name));
+    }
+
+    return true;
+}
+
+static size_t llama_q2_0_g128_nbytes(const ggml_tensor * tensor) {
+    if (tensor->ne[0] % QK2_0_G128 != 0) {
+        throw std::runtime_error(format(
+            "%s: Q2_0 tensor '%s' has row width %" PRId64
+            ", which is not divisible by the g128 block width %d",
+            __func__, ggml_get_name(tensor), tensor->ne[0], QK2_0_G128));
+    }
+
+    const size_t row_size = ggml_row_size(GGML_TYPE_Q2_0_G128, tensor->ne[0]);
+    const size_t nrows = ggml_nrows(tensor);
+    if (nrows != 0 && row_size > SIZE_MAX/nrows) {
+        throw std::runtime_error(format(
+            "%s: g128 tensor '%s' size overflows size_t",
+            __func__, ggml_get_name(tensor)));
+    }
+
+    return row_size*nrows;
+}
+
+static size_t llama_q2_0_span_size(
+        const gguf_context * gguf,
+        const llama_file * file,
+        size_t tensor_offset) {
+    const size_t data_offset = gguf_get_data_offset(gguf);
+    if (data_offset > file->size() || tensor_offset > file->size() - data_offset) {
+        throw std::runtime_error(format(
+            "%s: tensor offset is outside the GGUF data region",
+            __func__));
+    }
+
+    size_t next_offset = file->size() - data_offset;
+    const int64_t n_tensors = gguf_get_n_tensors(gguf);
+    for (int64_t i = 0; i < n_tensors; ++i) {
+        const size_t candidate = gguf_get_tensor_offset(gguf, i);
+        if (candidate > tensor_offset && candidate < next_offset) {
+            next_offset = candidate;
+        }
+    }
+
+    if (next_offset < tensor_offset) {
+        throw std::runtime_error(format(
+            "%s: GGUF tensor offsets are not monotonic",
+            __func__));
+    }
+
+    return next_offset - tensor_offset;
+}
+
+static bool llama_q2_0_span_matches(size_t span, size_t payload, size_t alignment) {
+    if (span == payload) {
+        return true;
+    }
+
+    if (payload > SIZE_MAX - (alignment - 1)) {
+        return false;
+    }
+
+    const size_t padded = ((payload + alignment - 1)/alignment)*alignment;
+    return span == padded;
+}
+
+static bool llama_verify_q2_0_g128_spans(
+        const gguf_context * gguf,
+        const llama_file * file,
+        ggml_context * ctx) {
+    const size_t alignment = gguf_get_alignment(gguf);
+    if (alignment == 0) {
+        throw std::runtime_error(format(
+            "%s: GGUF declares zero tensor alignment",
+            __func__));
+    }
+
+    bool confirmed = false;
+
+    for (ggml_tensor * tensor = ggml_get_first_tensor(ctx); tensor; tensor = ggml_get_next_tensor(ctx, tensor)) {
+        if (tensor->type != GGML_TYPE_Q2_0) {
+            continue;
+        }
+
+        const int tensor_id = gguf_find_tensor(gguf, ggml_get_name(tensor));
+        if (tensor_id < 0) {
+            throw std::runtime_error(format(
+                "%s: tensor '%s' is absent from its GGUF tensor table",
+                __func__, ggml_get_name(tensor)));
+        }
+
+        const size_t span = llama_q2_0_span_size(
+            gguf, file, gguf_get_tensor_offset(gguf, tensor_id));
+        const size_t q2_0_size = ggml_nbytes(tensor);
+        const size_t g128_size = llama_q2_0_g128_nbytes(tensor);
+
+        const bool q2_0_matches = llama_q2_0_span_matches(span, q2_0_size, alignment);
+        const bool g128_matches = llama_q2_0_span_matches(span, g128_size, alignment);
+
+        if (g128_matches && !q2_0_matches) {
+            confirmed = true;
+            continue;
+        }
+
+        if (q2_0_matches && !g128_matches) {
+            throw std::runtime_error(format(
+                "%s: GGML_Q2_0_G128=1 contradicts tensor '%s': its %zu-byte span "
+                "matches legacy Q2_0 geometry, not g128 geometry",
+                __func__, ggml_get_name(tensor), span));
+        }
+
+        if (!q2_0_matches && !g128_matches) {
+            throw std::runtime_error(format(
+                "%s: Q2_0 tensor '%s' has a %zu-byte span that matches neither "
+                "legacy Q2_0 nor g128 geometry",
+                __func__, ggml_get_name(tensor), span));
+        }
+
+        // Both aligned payload sizes are identical. This tensor is deliberately
+        // not evidence for either layout; a distinct span must confirm g128.
+    }
+
+    return confirmed;
+}
+
+static void llama_remap_q2_0_g128(ggml_context * ctx) {
+    for (ggml_tensor * tensor = ggml_get_first_tensor(ctx); tensor; tensor = ggml_get_next_tensor(ctx, tensor)) {
+        if (tensor->type != GGML_TYPE_Q2_0) {
+            continue;
+        }
+
+        tensor->type  = GGML_TYPE_Q2_0_G128;
+        tensor->nb[0] = ggml_type_size(GGML_TYPE_Q2_0_G128);
+        tensor->nb[1] = ggml_row_size (GGML_TYPE_Q2_0_G128, tensor->ne[0]);
+        tensor->nb[2] = tensor->nb[1]*tensor->ne[1];
+        tensor->nb[3] = tensor->nb[2]*tensor->ne[2];
+    }
+}
+
 namespace GGUFMeta {
     template <typename T, gguf_type gt_, T (*gfun)(const gguf_context *, const int64_t)>
     struct GKV_Base_Type {
@@ -556,6 +720,10 @@ llama_model_loader::llama_model_loader(
 
     tensor_buft_overrides = param_tensor_buft_overrides_p;
 
+    std::vector<const gguf_context *> gguf_contexts;
+    std::vector<gguf_context_ptr> split_metadata;
+    bool q2_0_g128_enabled = false;
+
     this->use_mmap      = load_mode == LLAMA_LOAD_MODE_MMAP || load_mode == LLAMA_LOAD_MODE_MMAP_MLOCK || load_mode == LLAMA_LOAD_MODE_AUTO;
     this->use_direct_io = load_mode == LLAMA_LOAD_MODE_DIRECT_IO;
 
@@ -576,22 +744,12 @@ llama_model_loader::llama_model_loader(
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
 
+        q2_0_g128_enabled = llama_gguf_q2_0_g128_gate(metadata);
+        gguf_contexts.push_back(metadata);
+
         files.emplace_back(new llama_file(fname.c_str(), "rb", use_direct_io));
         contexts.emplace_back(ctx);
 
-        // Save tensors data offset of the main file.
-        // For subsidiary files, `meta` tensor data offset must not be used,
-        // so we build a unified tensors index for weights.
-        for (ggml_tensor * cur = ggml_get_first_tensor(ctx); cur; cur = ggml_get_next_tensor(ctx, cur)) {
-            std::string tensor_name = std::string(cur->name);
-            // make sure there is no duplicated tensor names
-            if (weights_map.find(tensor_name) != weights_map.end()) {
-                throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", ggml_get_name(cur)));
-            }
-            n_elements += ggml_nelements(cur);
-            n_bytes    += ggml_nbytes(cur);
-            weights_map.emplace(tensor_name, llama_tensor_weight(files.back().get(), 0, metadata, cur));
-        }
         uint16_t n_split = 0;
         get_key(llm_kv(LLM_KV_SPLIT_COUNT), n_split, false);
 
@@ -644,31 +802,13 @@ llama_model_loader::llama_model_loader(
                     }
                 }
 
+                split_metadata.emplace_back(std::move(ctx_gguf));
+                gguf_contexts.push_back(split_metadata.back().get());
                 files.emplace_back(new llama_file(fname_split, "rb", use_direct_io));
                 contexts.emplace_back(ctx);
-
-                // Save tensors data offset info of the shard.
-                for (ggml_tensor * cur = ggml_get_first_tensor(ctx); cur; cur = ggml_get_next_tensor(ctx, cur)) {
-                    std::string tensor_name = std::string(cur->name);
-                    // make sure there is no duplicated tensor names
-                    if (weights_map.find(tensor_name) != weights_map.end()) {
-                        throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", ggml_get_name(cur)));
-                    }
-                    n_elements += ggml_nelements(cur);
-                    n_bytes    += ggml_nbytes(cur);
-                    weights_map.emplace(tensor_name, llama_tensor_weight(files.back().get(), idx, ctx_gguf.get(), cur));
-                }
             }
 
             get_key(llm_kv(LLM_KV_SPLIT_TENSORS_COUNT), n_tensors);
-
-            // sanity check
-            {
-                const int n_tensors_loaded = (int) weights_map.size();
-                if (n_tensors != n_tensors_loaded) {
-                    throw std::runtime_error(format("corrupted model: %d tensors expected but %d found", n_tensors, n_tensors_loaded));
-                }
-            }
 
             LLAMA_LOG_INFO("%s: additional %d GGUFs metadata loaded.\n",  __func__, n_split - 1);
         }
@@ -688,23 +828,54 @@ llama_model_loader::llama_model_loader(
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
 
+        q2_0_g128_enabled = llama_gguf_q2_0_g128_gate(metadata);
+        gguf_contexts.push_back(metadata);
+
         files.emplace_back(new llama_file(file));
         contexts.emplace_back(ctx);
-
-        // Save tensors data offset info of the main file.
-        for (ggml_tensor * cur = ggml_get_first_tensor(ctx); cur; cur = ggml_get_next_tensor(ctx, cur)) {
-            std::string tensor_name = std::string(cur->name);
-            // make sure there is no duplicated tensor names
-            if (weights_map.find(tensor_name) != weights_map.end()) {
-                throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", ggml_get_name(cur)));
-            }
-            n_elements += ggml_nelements(cur);
-            n_bytes    += ggml_nbytes(cur);
-            weights_map.emplace(tensor_name, llama_tensor_weight(files.back().get(), 0, metadata, cur));
-        }
     } else {
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
+    }
+
+    if (q2_0_g128_enabled) {
+        bool q2_0_g128_confirmed = false;
+        for (size_t i = 0; i < contexts.size(); ++i) {
+            q2_0_g128_confirmed |= llama_verify_q2_0_g128_spans(
+                gguf_contexts[i], files[i].get(), contexts[i].get());
+        }
+
+        if (!q2_0_g128_confirmed) {
+            throw std::runtime_error(
+                "GGML_Q2_0_G128=1 was declared, but no Q2_0 tensor span "
+                "unambiguously confirms 128-value Q2_0 geometry; refusing to load");
+        }
+
+        for (const ggml_context_ptr & context : contexts) {
+            llama_remap_q2_0_g128(context.get());
+        }
+    }
+
+    // Save tensor offsets only after the optional g128 remap: llama_tensor_weight
+    // then validates the actual runtime payload length, not the legacy Q2_0 length.
+    for (size_t file_idx = 0; file_idx < contexts.size(); ++file_idx) {
+        for (ggml_tensor * cur = ggml_get_first_tensor(contexts[file_idx].get()); cur; cur = ggml_get_next_tensor(cur)) {
+            std::string tensor_name = std::string(cur->name);
+            if (weights_map.find(tensor_name) != weights_map.end()) {
+                throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", ggml_get_name(cur)));
+            }
+
+            n_elements += ggml_nelements(cur);
+            n_bytes    += ggml_nbytes(cur);
+            weights_map.emplace(tensor_name, llama_tensor_weight(
+                files[file_idx].get(), file_idx, gguf_contexts[file_idx], cur));
+        }
+    }
+
+    if (n_tensors != 0 && n_tensors != (int) weights_map.size()) {
+        throw std::runtime_error(format(
+            "corrupted model: %d tensors expected but %zu found",
+            n_tensors, weights_map.size()));
     }
 
     n_kv      = gguf_get_n_kv(metadata);
@@ -772,6 +943,7 @@ llama_model_loader::llama_model_loader(
             case GGML_TYPE_NVFP4:   ftype = LLAMA_FTYPE_MOSTLY_NVFP4;   break;
             case GGML_TYPE_Q1_0:    ftype = LLAMA_FTYPE_MOSTLY_Q1_0;    break;
             case GGML_TYPE_Q2_0:    ftype = LLAMA_FTYPE_MOSTLY_Q2_0;    break;
+            case GGML_TYPE_Q2_0_G128: ftype = LLAMA_FTYPE_MOSTLY_Q2_0;  break;
             default:
                 {
                     LLAMA_LOG_WARN("%s: unknown type %s\n", __func__, ggml_type_name(type_max));
