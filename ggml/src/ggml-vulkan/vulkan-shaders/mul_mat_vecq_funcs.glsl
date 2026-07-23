@@ -65,9 +65,13 @@ uint unpack_q2_0_g128(uint bits) {
 }
 
 i32vec4 repack4(uint ib, uint iqs) {
-    const uint qs_idx = (ib & 3u) * 4u + iqs * 2u;
-    const uint bits = pack32(u16vec2(data_a_packed16[ib / 4].qs[qs_idx],
-                                     data_a_packed16[ib / 4].qs[qs_idx + 1]));
+    const uint block_idx = ib / 4;
+    const uint byte_idx = (ib & 3u) * 8u + iqs * 4u;
+    const uint bits = pack32(u8vec4(
+        data_a[block_idx].qs[byte_idx],
+        data_a[block_idx].qs[byte_idx + 1],
+        data_a[block_idx].qs[byte_idx + 2],
+        data_a[block_idx].qs[byte_idx + 3]));
     return i32vec4(unpack_q2_0_g128(bits), unpack_q2_0_g128(bits >> 8u),
                    unpack_q2_0_g128(bits >> 16u), unpack_q2_0_g128(bits >> 24u));
 }
