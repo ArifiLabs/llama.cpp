@@ -1,6 +1,7 @@
 #include "llama-model-loader.h"
 
 #include "ggml-alloc.h"
+#include "ggml-common.h"
 #include "ggml.h"
 #include "gguf.h"
 #include "llama-hparams.h"
@@ -859,7 +860,7 @@ llama_model_loader::llama_model_loader(
     // Save tensor offsets only after the optional g128 remap: llama_tensor_weight
     // then validates the actual runtime payload length, not the legacy Q2_0 length.
     for (size_t file_idx = 0; file_idx < contexts.size(); ++file_idx) {
-        for (ggml_tensor * cur = ggml_get_first_tensor(contexts[file_idx].get()); cur; cur = ggml_get_next_tensor(cur)) {
+        for (ggml_tensor * cur = ggml_get_first_tensor(contexts[file_idx].get()); cur; cur = ggml_get_next_tensor(contexts[file_idx].get(), cur)) {
             std::string tensor_name = std::string(cur->name);
             if (weights_map.find(tensor_name) != weights_map.end()) {
                 throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", ggml_get_name(cur)));
