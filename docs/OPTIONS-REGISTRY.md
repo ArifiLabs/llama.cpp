@@ -41,3 +41,23 @@ safe measurement posture.
    including repeated in-process requests where warm behavior matters.
 5. Preserve both positive and negative results. “No effect in this placement” is
    an accepted outcome, not permission to omit the option from the registry.
+
+## Build variants
+
+Local builds default to **web-UI ON** (President ruling 2026-07-22: he wants the
+llama.cpp web UI available for interactive testing). The earlier UI-OFF posture was
+purely crash containment for `ki-webui-0xC0000139` (`STATUS_ENTRYPOINT_NOT_FOUND` from a
+shadowed mingw `libstdc++` DLL when `ui-assets.cmake` runs the embed helper
+unconditionally, even with the UI-OFF flags set). That crash is now **cured by the static
+GCC runtime** (`-DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"`), which makes
+the embed helper immune to DLL shadowing, so UI-ON builds link cleanly.
+
+| Variant | Flags | Use | Verified |
+|---|---|---|---|
+| UI ON (local default) | omit the four UI/WEBUI OFF flags; keep static-libgcc/libstdc++ + `-D_WIN32_WINNT=0x0A00` | Local dev / interactive web-UI testing. | 2026-07-22 (lane-110): `build-vulkan-ui` — embed ran without `0xC0000139`, server binary 70.59 MB vs 67.81 MB UI-OFF (+2.78 MB embedded assets), generated `tools/ui/ui.cpp` = 14.3 MB. Verified statically (no server launched). |
+| UI OFF (minimal / CI-bench) | `-DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_USE_PREBUILT_WEBUI=OFF` | Bench-proof and CI builds where the UI is irrelevant to decode paths. | Remains available; `build-vulkan` bench artifact built this way. |
+
+**UI asset source (2026-07-22):** the npm build path (`node v24.14.1` already installed —
+`npm install` + `npm run build` into `tools/ui/dist`), not the prebuilt-release download.
+The UI embed touches no decode path; a UI-ON server binary is bench-equivalent to UI-OFF —
+note the binary used in any RESULTS entry.
