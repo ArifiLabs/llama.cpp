@@ -345,6 +345,22 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     store_a(col, eff_row + 4, FLOAT_TYPEV2(kvalues_mxfp4[vui  >>  4] * d,
                                             kvalues_mxfp4[vui2 >>  4] * d));
 #endif
+#elif defined(DATA_A_Q2_0_G128)
+    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+    const uint k_pair = row * LOAD_VEC_A / 2;
+
+    const uint ib  = idx / 32;
+    const uint iqs = idx & 0x1fu;
+
+    const float d = float(data_a[ib].d);
+    const uint byte_val = uint(data_a[ib].qs[iqs]);
+
+    store_a(col, k_pair, FLOAT_TYPEV2(
+        float(int( byte_val        & 3u) - 1) * d,
+        float(int((byte_val >> 2u) & 3u) - 1) * d));
+    store_a(col, k_pair + 1, FLOAT_TYPEV2(
+        float(int((byte_val >> 4u) & 3u) - 1) * d,
+        float(int((byte_val >> 6u) & 3u) - 1) * d));
 #else
     if (MmTypeA == GGML_TYPE_Q4_0) {
         const uint idx = pos_a + col * p.stride_a / mm_load_vec_a() + row;
