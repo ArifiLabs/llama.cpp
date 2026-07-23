@@ -211,6 +211,13 @@ static bool llama_verify_q2_0_g128_spans(
     bool confirmed = false;
 
     for (ggml_tensor * tensor = ggml_get_first_tensor(ctx); tensor; tensor = ggml_get_next_tensor(ctx, tensor)) {
+        // A native type-43 entry was already offset-validated by gguf_init using
+        // g128 sizing. It needs no legacy-Q2_0 reinterpretation below.
+        if (tensor->type == GGML_TYPE_Q2_0_G128) {
+            confirmed = true;
+            continue;
+        }
+
         if (tensor->type != GGML_TYPE_Q2_0) {
             continue;
         }
