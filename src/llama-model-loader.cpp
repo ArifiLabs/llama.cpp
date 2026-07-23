@@ -1,7 +1,6 @@
 #include "llama-model-loader.h"
 
 #include "ggml-alloc.h"
-#include "ggml-common.h"
 #include "ggml.h"
 #include "gguf.h"
 #include "llama-hparams.h"
@@ -136,11 +135,13 @@ static bool llama_gguf_q2_0_g128_gate(const gguf_context * gguf) {
 }
 
 static size_t llama_q2_0_g128_nbytes(const ggml_tensor * tensor) {
-    if (tensor->ne[0] % QK2_0_G128 != 0) {
+    const int64_t blck_size = ggml_blck_size(GGML_TYPE_Q2_0_G128);
+
+    if (tensor->ne[0] % blck_size != 0) {
         throw std::runtime_error(format(
             "%s: Q2_0 tensor '%s' has row width %" PRId64
-            ", which is not divisible by the g128 block width %d",
-            __func__, ggml_get_name(tensor), tensor->ne[0], QK2_0_G128));
+            ", which is not divisible by the g128 block width %" PRId64,
+            __func__, ggml_get_name(tensor), tensor->ne[0], blck_size));
     }
 
     const size_t row_size = ggml_row_size(GGML_TYPE_Q2_0_G128, tensor->ne[0]);
