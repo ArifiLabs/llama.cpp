@@ -61,3 +61,19 @@ the embed helper immune to DLL shadowing, so UI-ON builds link cleanly.
 `npm install` + `npm run build` into `tools/ui/dist`), not the prebuilt-release download.
 The UI embed touches no decode path; a UI-ON server binary is bench-equivalent to UI-OFF —
 note the binary used in any RESULTS entry.
+
+### Q2_0 g128 compatibility gate
+
+| Option | Default | Scope | Safety rule |
+|---|---|---|---|
+| GGUF metadata `GGML_Q2_0_G128=1` | Absent by default; loader gate is off when absent on all hardware | Per-file compatibility declaration for PrismML/HF Q2_0-g128 GGUFs | The loader remaps serialized `GGML_TYPE_Q2_0` only when this key is present with scalar value `1` and at least one Q2_0 tensor span unambiguously matches g128 geometry. It refuses a g64-only, neither-match, or all-alignment-ambiguous file. Never add the key to upstream g64 Q2_0. |
+| `GGML_TYPE_Q2_0_G128` | Internal only | CPU and Vulkan dispatch after verified metadata remap | Not serialized into existing GGUFs; preserves canonical serialized `GGML_TYPE_Q2_0` g64 behavior. |
+| Q2_0 g128 Vulkan | Available, OFF unless gate is set | 780M, discrete AMD, CUDA hosts with Vulkan build | Enable only for verified g128 models; use CPU fallback if the selected backend lacks the g128 pipeline. |
+
+Existing verified g128 files are marked with
+`tools/gguf-retag-g128/retag_g128.py`. The tool writes a new sibling copy by
+default, validates GGUF magic plus the same raw-or-alignment-padded Q2_0 span
+math used by the loader, and only then writes `GGML_Q2_0_G128=1`. `--in-place`
+is an explicit opt-in and warns before replacement. This is a metadata-key
+gate, not the superseded ambient environment-variable design: the model file
+declares its required geometry, while an absent key keeps normal g64 behavior.
