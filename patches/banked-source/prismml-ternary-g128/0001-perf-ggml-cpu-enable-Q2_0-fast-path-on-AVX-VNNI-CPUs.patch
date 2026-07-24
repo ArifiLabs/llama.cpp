@@ -1,0 +1,70 @@
+From 79697f23a2c8f3aa2ccb2fd7406095a8dbfbb454 Mon Sep 17 00:00:00 2001
+From: THT <584270+thtro@users.noreply.github.com>
+Date: Fri, 17 Jul 2026 15:26:08 +0300
+Subject: [PATCH] perf(ggml-cpu): enable Q2_0 fast path on AVX-VNNI CPUs (#72)
+
+ggml_vec_dot_q2_0_q8_0 gated its VNNI fast path on __AVX512VNNI__ &&
+__AVX512VL__ with no AVX2/AVX-VNNI fallback, so x86 CPUs without AVX-512
+silently took the scalar loop. This excludes all Intel 12th-14th gen
+consumer CPUs (Alder/Raptor Lake), where AVX-512 is fused off for the
+P/E hybrid design but AVX-VNNI is present.
+
+The fast-path body is already entirely 256-bit AVX2; the only AVX-512
+dependency is the _mm256_dpbusd_epi32 intrinsic. AVX-VNNI exposes the
+identical operation as _mm256_dpbusd_avx_epi32, so alias the intrinsic
+and widen the guard. No algorithmic change, and no behavior change on
+AVX-512-VNNI hosts.
+
+Measured on Intel i5-13400 (Raptor Lake, AVX-VNNI, no AVX-512), 12
+threads, CPU-only, same model and prompt (temperature=0):
+
+  Ternary-Bonsai-8B Q2_0 decode:      2.17 -> 6.92 tok/s (3.2x)
+  Ternary-Bonsai-8B Q2_0 prompt eval: 2.7  -> 8.6  tok/s (3.2x)
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+---
+ ggml/src/ggml-cpu/arch/x86/quants.c | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/ggml/src/ggml-cpu/arch/x86/quants.c b/ggml/src/ggml-cpu/arch/x86/quants.c
+index 0130dd555..2cffa82f8 100644
+--- a/ggml/src/ggml-cpu/arch/x86/quants.c
++++ b/ggml/src/ggml-cpu/arch/x86/quants.c
+@@ -552,6 +552,12 @@ static inline __m128i get_scale_shuffle(int i) {
+ }
+ #endif
+ 
++#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
++#  define GGML_DPBUSD_256 _mm256_dpbusd_epi32
++#elif defined(__AVXVNNI__)
++#  define GGML_DPBUSD_256 _mm256_dpbusd_avx_epi32
++#endif
++
+ void ggml_vec_dot_q2_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+     const int qk = QK2_0;
+     const int nb = n / qk;
+@@ -568,8 +574,8 @@ void ggml_vec_dot_q2_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
+ 
+     float sumf = 0.0f;
+ 
+-#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+-    // AVX-512-VNNI: unpack 2-bit codes c in {0,1,2,3} (value = c-1), then
++#if (defined(__AVX512VNNI__) && defined(__AVX512VL__)) || defined(__AVXVNNI__)
++    // AVX-512-VNNI or AVX-VNNI: unpack 2-bit codes c in {0,1,2,3} (value = c-1), then
+     // dot((c-1), qy) = dpbusd(c, qy) - dpbusd(1, qy).
+     const __m256i ones   = _mm256_set1_epi8(1);
+     const __m128i idxlo  = _mm_setr_epi8(0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3);
+@@ -591,8 +597,8 @@ void ggml_vec_dot_q2_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
+             r0 = _mm256_and_si256(_mm256_srli_epi16(_mm256_mullo_epi16(r0, mul), 6), three);
+             r1 = _mm256_and_si256(_mm256_srli_epi16(_mm256_mullo_epi16(r1, mul), 6), three);
+             __m256i codes = _mm256_permute4x64_epi64(_mm256_packus_epi16(r0, r1), 0xD8); // 32 codes in order
+-            const int dp = hsum_i32_8(_mm256_dpbusd_epi32(_mm256_setzero_si256(), codes, qy));
+-            const int sy = hsum_i32_8(_mm256_dpbusd_epi32(_mm256_setzero_si256(), ones,  qy));
++            const int dp = hsum_i32_8(GGML_DPBUSD_256(_mm256_setzero_si256(), codes, qy));
++            const int sy = hsum_i32_8(GGML_DPBUSD_256(_mm256_setzero_si256(), ones,  qy));
+             sumi += d1 * (float)(dp - sy);
+         }
+         sumf += d0 * sumi;
+-- 
+2.54.0.windows.1
+
