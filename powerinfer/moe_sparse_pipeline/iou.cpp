@@ -9,6 +9,7 @@
 #endif
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 
 #include "powerinfer-log.hpp"
 #include "moe_sparse_pipeline/config.hpp"
@@ -17,7 +18,18 @@
 namespace moe_sparse_pipeline {
 
 #if !defined(__linux__)
-// ---------------- Windows: IOCP positioned reads ----------------
+// ---------------- Windows: IOCP (default) or synchronous positioned reads ----------------
+
+// Runtime toggle, read once. Matches the lane110_prof_enabled() idiom in
+// ggml/src/ggml-cpu/ops.cpp: exact single-character parse, no per-call getenv.
+// Default ON; only an exact "0" selects the pre-M2b synchronous path.
+bool iocp_enabled() {
+    static const bool enabled = []() {
+        const char * value = std::getenv("POWERINFER_IOCP");
+        return !(value != nullptr && value[0] == '0' && value[1] == '\0');
+    }();
+    return enabled;
+}
 
 IOUring::IOUring(const std::string &path, size_t queue_depth) :
     queue_depth(queue_depth),
@@ -25,15 +37,23 @@ IOUring::IOUring(const std::string &path, size_t queue_depth) :
     completion_entries(queue_depth) {
     POWERINFER_ASSERT(queue_depth > 0);
 
+    // FILE_FLAG_OVERLAPPED only in IOCP mode: the synchronous path needs a
+    // blocking handle so ReadFile completes in place, exactly as pre-M2b.
+    const DWORD create_flags = iocp_enabled()
+        ? (FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_OVERLAPPED)
+        : FILE_FLAG_RANDOM_ACCESS;
+
     HANDLE h = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
-                           OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_OVERLAPPED, nullptr);
+                           OPEN_EXISTING, create_flags, nullptr);
     POWERINFER_ASSERT(h != INVALID_HANDLE_VALUE);
-
-    HANDLE port = CreateIoCompletionPort(h, nullptr, 0, 0);
-    POWERINFER_ASSERT(port != nullptr);
-
     handle = h;
-    completion_port = port;
+
+    if (iocp_enabled()) {
+        HANDLE port = CreateIoCompletionPort(h, nullptr, 0, 0);
+        POWERINFER_ASSERT(port != nullptr);
+        completion_port = port;
+    }
+
     pending.reserve(queue_depth);
 }
 
@@ -69,6 +89,23 @@ void IOUring::enqueue_read(void *buffer, size_t offset, size_t size, void *user_
     request.in_flight = true;
     ++n_inflight;
 
+    if (!iocp_enabled()) {
+        // Pre-M2b synchronous positioned read: OVERLAPPED carries the offset, so
+        // there is no shared file pointer. The read completes here and reap()
+        // fires the callback; submit_and_wait is a no-op in this mode.
+        DWORD got = 0;
+        BOOL ok = ReadFile(handle, buffer, static_cast<DWORD>(size), &got, &request.overlapped);
+        if (!ok || got != size) {
+            fprintf(stderr, "IOUring(win) read error: expect %zu, got %lu (err %lu)\n",
+                    size,
+                    static_cast<unsigned long>(got),
+                    static_cast<unsigned long>(GetLastError()));
+            abort();
+        }
+        pending.push_back({&request, got});
+        return;
+    }
+
     // Do not synthesize a completion for synchronous success.  Since this
     // handle has not opted into FILE_SKIP_COMPLETION_PORT_ON_SUCCESS, both
     // synchronous and pending reads produce exactly one IOCP completion.
@@ -84,6 +121,11 @@ void IOUring::enqueue_read(void *buffer, size_t offset, size_t size, void *user_
 }
 
 void IOUring::submit_and_wait(size_t wait_nr) {
+    if (!iocp_enabled()) {
+        // No-op: reads already completed synchronously in enqueue_read.
+        return;
+    }
+
     if (wait_nr == 0 || n_inflight == 0) {
         return;
     }
