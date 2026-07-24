@@ -6661,7 +6661,7 @@ void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
         }
 
         for (int y = 0; y < nr / 4; y++) {
-            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (4 * y * nb);
+            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb * (QK2_0 / QK8_0));
             for (int x = 0; x < nc / 4; x++) {
                 const block_q2_0x4 * b_ptr = (const block_q2_0x4 *) vx + (x * nb);
 
@@ -6678,7 +6678,7 @@ void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
                     const __m512 d0v23 = _mm512_permutexvar_ps(idx23, d0);
 
                     for (int k = 0; k < QK2_0 / QK8_0; ++k) {
-                        const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + 4 * l + k;
+                        const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + l * (QK2_0 / QK8_0) + k;
 
                         __m512i w01, w23;
                         __q2_0_expand_x4((const uint8_t *) b_ptr[l].qs + 32 * k, &w01, &w23);

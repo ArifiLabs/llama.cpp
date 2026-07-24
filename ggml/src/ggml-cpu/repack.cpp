@@ -2764,7 +2764,7 @@ void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,
     float sumf[4][4];
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (4 * y * nb);
+        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb * (QK2_0 / QK8_0));
         for (int x = 0; x < nc / ncols_interleaved; x++) {
             const block_q2_0x4 * b_ptr = (const block_q2_0x4 *) vx + (x * nb);
 
@@ -2783,7 +2783,7 @@ void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,
                 };
 
                 for (int k = 0; k < QK2_0 / QK8_0; ++k) {
-                    const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + 4 * l + k;
+                    const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + l * (QK2_0 / QK8_0) + k;
                     const float a_d[4] = {
                         GGML_CPU_FP16_TO_FP32(a_blk->d[0]),
                         GGML_CPU_FP16_TO_FP32(a_blk->d[1]),
