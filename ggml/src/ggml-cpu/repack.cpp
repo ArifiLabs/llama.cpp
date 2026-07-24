@@ -15,6 +15,7 @@
 #include <cstring>
 #include <cassert>
 #include <cstdio>  // for GGML_ASSERT
+#include <cstdlib> // for std::getenv (GGML_ARIFI_VNNI_REPACK toggle)
 
 #include "repack.h"
 
@@ -5133,6 +5134,21 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
 
 }  // namespace ggml::cpu::repack
 
+// lane-110C VNNI-repack slot — charter ask #3 ("all options compiled in, runtime-toggled").
+// GGML_ARIFI_VNNI_REPACK=0 restores the exact pre-slot behaviour on every arch: no Q1_0 and
+// no Q2_0 repack, both types falling through to the terminal return nullptr and thus back to
+// per-row vec_dot. Only an exact "0" disables; unset or anything else leaves the slot ON,
+// which is PrismML's own default. Env is read ONCE into a function-local static, matching the
+// lane110_prof_enabled() idiom in ggml/src/ggml-cpu/ops.cpp (magic-static init is
+// thread-safe, and there is no per-call getenv on the mul_mat path).
+static bool ggml_arifi_vnni_repack_enabled() {
+    static const bool enabled = []() {
+        const char * value = std::getenv("GGML_ARIFI_VNNI_REPACK");
+        return !(value != nullptr && value[0] == '0' && value[1] == '\0');
+    }();
+    return enabled;
+}
+
 static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(const struct ggml_tensor * cur) {
     // instance for Q1_0
     static const ggml::cpu::repack::tensor_traits<block_q1_0, 4, 4, GGML_TYPE_Q8_0> q1_0_4x4_q8_0;
@@ -5140,6 +5156,21 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
 
     // instance for Q2_0
     static const ggml::cpu::repack::tensor_traits<block_q2_0, 8, 4, GGML_TYPE_Q8_0> q2_0_4x8_q8_0;
+
+    // lane-110C g64/g128 tripwire — PHASE2c-g128-type-architecture.md:175 binds these VNNI paths
+    // to canonical g64 Q2_0 only. Every kernel behind the Q2_0 arm below is hard-wired to
+    // QK2_0 == 64 (block_q2_0x4 == block<2,4>, sized from QK_0<2>()), while GGML_TYPE_Q2_0_G128
+    // is 128 values/block with type_size 34. A g128 row entering a g64 kernel is mis-strided and
+    // yields SILENT WRONG MATH, not a crash, so it is excluded explicitly and first.
+    //
+    // In the current tree the type comparison in the Q2_0 arm already excludes g128, because
+    // llama_remap_q2_0_g128() (src/llama-model-loader.cpp) retypes 42 -> 43 during model load,
+    // before any backend buffer is allocated and therefore before this function ever sees the
+    // tensor. This early return is the tripwire that keeps the exclusion true if that ordering,
+    // or the shape of the if/else chain below, is ever changed.
+    if (cur->type == GGML_TYPE_Q2_0_G128) {
+        return nullptr;
+    }
 
     // lane-110 M3 graft tag:repack-carveout — fork parity (smallthinker ggml-cpu-aarch64.cpp:6288-6299):
     // the expert bundle must hold PLAIN Q4_0 bytes and the streaming kernels read plain Q4_0,
@@ -5355,25 +5386,33 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
             #endif
         }
     } else if (cur->type == GGML_TYPE_Q1_0) {
-        if (ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
-            if (cur->ne[1] % 4 == 0) {
-                return &q1_0_4x8_q8_0;
+        // lane-110C: gated by GGML_ARIFI_VNNI_REPACK. OFF => fall through to the terminal
+        // return nullptr, i.e. exactly the pre-slot behaviour (per-row vec_dot).
+        if (ggml_arifi_vnni_repack_enabled()) {
+            if (ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
+                if (cur->ne[1] % 4 == 0) {
+                    return &q1_0_4x8_q8_0;
+                }
             }
-        }
-        if (ggml_cpu_has_neon() && ggml_cpu_has_matmul_int8()) {
-            if (cur->ne[1] % 4 == 0) {
-                return &q1_0_4x8_q8_0;
+            if (ggml_cpu_has_neon() && ggml_cpu_has_matmul_int8()) {
+                if (cur->ne[1] % 4 == 0) {
+                    return &q1_0_4x8_q8_0;
+                }
             }
-        }
-        if (ggml_cpu_has_neon() && ggml_cpu_has_dotprod()) {
-            if (cur->ne[1] % 4 == 0) {
-                return &q1_0_4x4_q8_0;
+            if (ggml_cpu_has_neon() && ggml_cpu_has_dotprod()) {
+                if (cur->ne[1] % 4 == 0) {
+                    return &q1_0_4x4_q8_0;
+                }
             }
         }
     } else if (cur->type == GGML_TYPE_Q2_0) {
-        if (ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
-            if (cur->ne[1] % 4 == 0) {
-                return &q2_0_4x8_q8_0;
+        // lane-110C: g64 ONLY — GGML_TYPE_Q2_0_G128 was already excluded by the tripwire at the
+        // top of this function, so this arm can only ever see canonical 64-value-block Q2_0.
+        if (ggml_arifi_vnni_repack_enabled()) {
+            if (ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
+                if (cur->ne[1] % 4 == 0) {
+                    return &q2_0_4x8_q8_0;
+                }
             }
         }
     }
