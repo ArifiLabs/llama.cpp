@@ -1,5 +1,23 @@
 # Upstream currency and rebase procedure
 
+> **This procedure is now executable — run it, do not perform it by hand.**
+> [`tools/arifi-sync/`](../tools/arifi-sync/README.md) implements every step below and fails
+> loudly at each one. The prose here remains the specification; the tool is the implementation.
+>
+> ```bash
+> python tools/arifi-sync/arifi_sync.py currency              # steps 1-3
+> python tools/arifi-sync/arifi_sync.py bump --onto <ref>     # steps 4-10
+> python tools/arifi-sync/arifi_sync.py series regen          # step 11
+> ```
+>
+> This document previously described a procedure that had never been executed. When it was first
+> checked, remotes `rocmfpx` and `powerinfer` had **never been fetched at all** and a TurboQuant
+> checkout was 64 commits stale — which caused a wall to be declared that did not exist. That is
+> why the currency check is now code that fails, rather than a paragraph that can be skipped.
+>
+> Two corrections to step 5 below: the series is **linear with no merge commits** as of
+> 2026-07-24, and replay is `git am patches/series/*.patch`, not a hand-ordered re-application.
+
 ## Purpose
 
 This fork tracks four source remotes while preserving an auditable,
