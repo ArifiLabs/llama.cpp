@@ -1,0 +1,95 @@
+{
+  "_comment": [
+    "Configuration for tools/arifi-sync. Everything a stranger must be able to change lives here.",
+    "No path below is required to exist for `provenance`, `series`, or `recipe` to work.",
+    "",
+    "`ref` is MANDATORY and MUST be the source's real default branch. Do not guess main/master:",
+    "PrismML's default branch is `prism`; resolving `prisml/master` instead silently reports a",
+    "DIFFERENT branch's head as drift. That mistake was made once during this tool's own authoring.",
+    "",
+    "`pin` is the commit of that source we have actually reviewed. `currency` compares live head",
+    "against `pin`; it CANNOT be satisfied by doing nothing, because acknowledging drift requires",
+    "writing the newly-reviewed sha here."
+  ],
+
+  "base": {
+    "upstream_tag": "b10068",
+    "upstream_sha": "571d0d540df04f25298d0e159e520d9fc62ed121"
+  },
+
+  "series_dir": "patches/series",
+  "state_file": "tools/arifi-sync/state.json",
+  "max_fetch_age_days": 14,
+
+  "remotes": {
+    "upstream": {
+      "url": "https://github.com/ggml-org/llama.cpp",
+      "ref": "upstream/master",
+      "pin": "95a923a64",
+      "role": "base engine and release tags",
+      "track_tags": true
+    },
+    "prisml": {
+      "url": "https://github.com/PrismML-Eng/llama.cpp",
+      "ref": "prisml/prism",
+      "pin": "7529fdaaf",
+      "role": "ternary Q2_0 g128 lineage, f16 recurrent S-state, DSpark",
+      "track_tags": false
+    },
+    "rocmfpx": {
+      "url": "https://github.com/charlie12345/ROCmFPX",
+      "ref": "rocmfpx/HEAD",
+      "pin": "3edc3d31e",
+      "role": "M-RoPE guard, ROCmFP weight formats (diff-audit source)",
+      "track_tags": false
+    },
+    "powerinfer": {
+      "url": "https://github.com/Tiiny-AI/PowerInfer",
+      "ref": "powerinfer/HEAD",
+      "pin": "8bd56d699",
+      "role": "sparse CPU / expert-streaming lineage",
+      "track_tags": false
+    }
+  },
+
+  "local_checkouts": {
+    "_comment": "TurboQuant is not a remote of this fork. These are sibling clones on disk. Relative to this repo's parent directory unless `path` is absolute.",
+    "llama-cpp-turboquant": {
+      "path": "../llama-cpp-turboquant",
+      "ref": "origin/HEAD",
+      "pin": "UNPINNED",
+      "role": "TurboQuant KV / weight quant tooling"
+    },
+    "turboquant_plus": {
+      "path": "../turboquant_plus",
+      "ref": "origin/HEAD",
+      "pin": "UNPINNED",
+      "role": "TurboQuant recompress pipeline"
+    }
+  },
+
+  "build": {
+    "_comment": [
+      "The recipe is recovered by DIFFING a CMakeCache against the committed snapshot, never by",
+      "grepping it. Grepping a cache for flags you already remember missed -D_WIN32_WINNT=0x0A00,",
+      "LLAMA_USE_PREBUILT_UI=OFF and -static-libgcc -static-libstdc++, and cost three failed builds."
+    ],
+    "cache_snapshot": "tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt",
+    "live_cache": "build-vulkan/CMakeCache.txt",
+    "build_dir": "build-vulkan",
+    "targets": ["llama-server"]
+  },
+
+  "judge": {
+    "_comment": [
+      "F-085, President-ruled and BINDING: the regression judge is llama-server.",
+      "NOT llama-cli. NOT llama-bench. `binary` is not configurable to another judge on purpose.",
+      "Bench purity: reuse a binary within a comparison, never reuse a historical number,",
+      "never run timed arms under sibling load."
+    ],
+    "binary": "llama-server",
+    "model": "SET-ME: absolute path to the regression model gguf",
+    "args": ["-ngl", "99", "--no-host"],
+    "note_no_host": "--no-host is REQUIRED whenever a CPU_REPACK path is under test. Without it make_cpu_buft_list() puts the device host buffer type ahead of the CPU extra buffer types and the repack path never engages, so both A/B arms silently test the same code."
+  }
+}
