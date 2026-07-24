@@ -102,9 +102,12 @@ void ExpertCache::io_worker_main() {
     // NOTE: Do not manipulate LRU in IO worker
 
 #if !defined(__linux__)
-    // Windows IOCP path: fill the bounded request ring before waiting.  The
-    // completion callback remains the sole transition from DATA_LOADING to
-    // DATA_PRESENT, preserving the cache/task dependency semantics.
+    // Windows IOCP path (POWERINFER_IOCP default ON): fill the bounded request
+    // ring before waiting.  The completion callback remains the sole transition
+    // from DATA_LOADING to DATA_PRESENT, preserving the cache/task dependency
+    // semantics.  POWERINFER_IOCP=0 skips this and falls through to the shared
+    // synchronous loop below (pre-M2b behavior; submit_and_wait is a no-op).
+    if (iocp_enabled()) {
     bool stopping = false;
     while (!stopping || iou.n_inflight > 0) {
         if (iou.n_inflight >= io_queue_depth) {
@@ -153,7 +156,9 @@ void ExpertCache::io_worker_main() {
 
         iou.reap();
     }
-#else
+    return;
+    }
+#endif
     while (true) {
         powerinfer_begin_event("io_queue.pop");
         Matrix *matrix = nullptr;
@@ -194,7 +199,6 @@ void ExpertCache::io_worker_main() {
 
         iou.reap();
     }
-#endif
 }
 
 void ExpertCache::allocate_buffer(Matrix &matrix) {

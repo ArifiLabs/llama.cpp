@@ -8,6 +8,11 @@
 
 namespace moe_sparse_pipeline {
 
+// lane-110 M2b runtime toggle. Default ON (IOCP async reads); POWERINFER_IOCP=0
+// selects the pre-M2b synchronous ReadFile+OVERLAPPED path, so a field deadlock
+// is recoverable without a recompile. Read once at first use.
+bool iocp_enabled();
+
 struct IOUring {
     using CallbackFn = void(void *user_data);
 
