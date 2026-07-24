@@ -585,8 +585,8 @@ void ggml_vec_dot_q2_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
     for (int i = 0; i < nb; i++) {
         const float d0 = GGML_CPU_FP16_TO_FP32(x[i].d);
         float sumi = 0.0f;
-        for (int k = 0; k < 4; k++) {
-            const block_q8_0 * GGML_RESTRICT yb = &y[i * 4 + k];
+        for (int k = 0; k < QK2_0 / QK8_0; k++) {
+            const block_q8_0 * GGML_RESTRICT yb = &y[i * (QK2_0 / QK8_0) + k];
             const float d1 = GGML_CPU_FP16_TO_FP32(yb->d);
             const __m256i qy = _mm256_loadu_si256((const __m256i *) yb->qs);
             const __m128i src = _mm_loadl_epi64((const __m128i *) &x[i].qs[k * 8]); // 8 bytes
@@ -609,8 +609,8 @@ void ggml_vec_dot_q2_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
 
         float sumi = 0.0f;
 
-        for (int k = 0; k < 4; k++) {
-            const block_q8_0 * GGML_RESTRICT yb = &y[i * 4 + k];
+        for (int k = 0; k < QK2_0 / QK8_0; k++) {
+            const block_q8_0 * GGML_RESTRICT yb = &y[i * (QK2_0 / QK8_0) + k];
             const float d1 = GGML_CPU_FP16_TO_FP32(yb->d);
             int sumi_block = 0;
 
