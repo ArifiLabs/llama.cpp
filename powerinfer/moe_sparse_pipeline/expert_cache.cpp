@@ -101,6 +101,59 @@ void ExpertCache::io_worker_main() {
 
     // NOTE: Do not manipulate LRU in IO worker
 
+#if !defined(__linux__)
+    // Windows IOCP path: fill the bounded request ring before waiting.  The
+    // completion callback remains the sole transition from DATA_LOADING to
+    // DATA_PRESENT, preserving the cache/task dependency semantics.
+    bool stopping = false;
+    while (!stopping || iou.n_inflight > 0) {
+        if (iou.n_inflight >= io_queue_depth) {
+            powerinfer_begin_event("iou.submit_and_wait");
+            iou.submit_and_wait(1);
+            powerinfer_end_event();
+            iou.reap();
+            continue;
+        }
+
+        powerinfer_begin_event("io_queue.pop");
+        Matrix *matrix = nullptr;
+        auto v = io_queue.pop(!stopping && iou.n_inflight == 0);
+        if (v.has_value()) {
+            matrix = v.value();
+        }
+        powerinfer_end_event();
+
+        if (matrix == io_worker_exit_signal) {
+            // Destructor appends this after producers have stopped.  Do not
+            // abandon requests already accepted by the completion port.
+            POWERINFER_ASSERT(io_queue.empty());
+            stopping = true;
+        } else if (matrix) {
+            POWERINFER_ASSERT(matrix->data);
+            iou.enqueue_read(matrix->data, matrix->file_offset, matrix_bytes, matrix, [](void *user_data) {
+                Matrix *matrix = static_cast<Matrix *>(user_data);
+
+                std::unique_lock lock(*matrix->mutex);
+                matrix->status = DATA_PRESENT;
+                for (auto &task : matrix->pending_tasks) {
+                    task->on_prev_task_finished();
+                }
+                matrix->pending_tasks.clear();
+            });
+        }
+
+        // An empty producer queue, or shutdown, is the point at which we
+        // require forward progress.  Otherwise keep accepting independent
+        // reads so storage latency overlaps.
+        if (iou.n_inflight > 0 && (stopping || matrix == nullptr)) {
+            powerinfer_begin_event("iou.submit_and_wait");
+            iou.submit_and_wait(1);
+            powerinfer_end_event();
+        }
+
+        iou.reap();
+    }
+#else
     while (true) {
         powerinfer_begin_event("io_queue.pop");
         Matrix *matrix = nullptr;
@@ -141,6 +194,7 @@ void ExpertCache::io_worker_main() {
 
         iou.reap();
     }
+#endif
 }
 
 void ExpertCache::allocate_buffer(Matrix &matrix) {

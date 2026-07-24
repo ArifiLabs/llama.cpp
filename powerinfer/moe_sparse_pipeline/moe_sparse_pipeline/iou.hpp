@@ -3,20 +3,17 @@
 #include <string>
 #include <vector>
 
-// lane-110 M2 Windows port: io_uring is a Linux kernel interface. On Windows we provide an
-// API-identical SYNCHRONOUS implementation over Win32 positioned reads (ReadFile+OVERLAPPED offset),
-// so the disk-streamed expert cache (EXPERT_BUNDLE_PATH, the run-bigger-than-RAM capability) works.
-// Semantics preserved: enqueue_read does a blocking positioned read immediately and queues its
-// completion; submit_and_wait is a no-op (reads already done); reap fires the queued callbacks.
-// This is correct but not overlapped — the IOCP async version is a later optimization (M2b).
 #if !defined(__linux__)
+#include <windows.h>
+
 namespace moe_sparse_pipeline {
 
 struct IOUring {
     using CallbackFn = void(void *user_data);
 
-    int  fd = -1;            // unused on Windows (kept for ABI parity with the Linux struct)
-    void *handle = nullptr;  // Win32 HANDLE (opaque here to keep windows.h out of the header)
+    int fd = -1; // unused on Windows; retained for ABI parity with Linux
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    HANDLE completion_port = nullptr;
     size_t n_inflight = 0;
 
     explicit IOUring(const std::string &path, size_t queue_depth = 64);
@@ -27,12 +24,24 @@ struct IOUring {
     size_t reap();
 
 private:
-    struct Completion {
+    struct RequestData {
+        OVERLAPPED overlapped{};
+        size_t read_size = 0;
         void *user_data = nullptr;
         CallbackFn *callback = nullptr;
+        bool in_flight = false;
     };
-    std::vector<Completion> pending;   // reads done, callbacks not yet fired
+
+    struct Completion {
+        RequestData *request = nullptr;
+        DWORD bytes_transferred = 0;
+    };
+
+    std::vector<RequestData> req_data_buf;
+    std::vector<OVERLAPPED_ENTRY> completion_entries;
+    std::vector<Completion> pending;
     size_t queue_depth = 0;
+    size_t req_data_buf_pos = 0;
 };
 
 }

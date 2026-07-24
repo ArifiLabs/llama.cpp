@@ -1,6 +1,5 @@
-// lane-110 M2 Windows port: the disk-streamed expert cache (EXPERT_BUNDLE_PATH) needs positioned
-// reads. Linux uses io_uring; Windows uses a synchronous Win32 ReadFile+OVERLAPPED implementation
-// with the identical enqueue/submit/reap semantics (correct; IOCP async is the M2b optimization).
+// lane-110 M2b Windows port: the disk-streamed expert cache uses IOCP-backed
+// positioned reads. Linux retains the vendored io_uring implementation.
 
 #if defined(__linux__)
 #include <fcntl.h>
@@ -8,6 +7,8 @@
 #else
 #include <windows.h>
 #endif
+#include <algorithm>
+#include <cstdio>
 
 #include "powerinfer-log.hpp"
 #include "moe_sparse_pipeline/config.hpp"
@@ -16,47 +17,153 @@
 namespace moe_sparse_pipeline {
 
 #if !defined(__linux__)
-// ---------------- Windows: synchronous positioned reads ----------------
+// ---------------- Windows: IOCP positioned reads ----------------
 
-IOUring::IOUring(const std::string &path, size_t queue_depth) : queue_depth(queue_depth) {
+IOUring::IOUring(const std::string &path, size_t queue_depth) :
+    queue_depth(queue_depth),
+    req_data_buf(queue_depth),
+    completion_entries(queue_depth) {
+    POWERINFER_ASSERT(queue_depth > 0);
+
     HANDLE h = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
-                           OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS, nullptr);
+                           OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_OVERLAPPED, nullptr);
     POWERINFER_ASSERT(h != INVALID_HANDLE_VALUE);
+
+    HANDLE port = CreateIoCompletionPort(h, nullptr, 0, 0);
+    POWERINFER_ASSERT(port != nullptr);
+
     handle = h;
+    completion_port = port;
     pending.reserve(queue_depth);
 }
 
 IOUring::~IOUring() {
-    if (handle) { CloseHandle(static_cast<HANDLE>(handle)); handle = nullptr; }
+    // ExpertCache joins the worker before this destructor runs.  Closing an
+    // IOCP with live OVERLAPPED storage would violate request ownership.
+    POWERINFER_ASSERT(n_inflight == 0);
+    POWERINFER_ASSERT(pending.empty());
+
+    if (completion_port) {
+        CloseHandle(completion_port);
+        completion_port = nullptr;
+    }
+    if (handle != INVALID_HANDLE_VALUE) {
+        CloseHandle(handle);
+        handle = INVALID_HANDLE_VALUE;
+    }
 }
 
 void IOUring::enqueue_read(void *buffer, size_t offset, size_t size, void *user_data, CallbackFn *callback) {
-    // OVERLAPPED carries the offset → no shared file pointer → thread-safe positioned read.
-    OVERLAPPED ov{};
-    ov.Offset     = static_cast<DWORD>(offset & 0xFFFFFFFFull);
-    ov.OffsetHigh = static_cast<DWORD>(offset >> 32);
-    DWORD got = 0;
-    BOOL ok = ReadFile(static_cast<HANDLE>(handle), buffer, static_cast<DWORD>(size), &got, &ov);
-    if (!ok || got != size) {
-        fprintf(stderr, "IOUring(win) read error: expect %zu, got %lu (err %lu)\n",
-                size, got, GetLastError());
+    POWERINFER_ASSERT(n_inflight < queue_depth);
+    POWERINFER_ASSERT(size <= MAXDWORD);
+
+    auto &request = req_data_buf[(req_data_buf_pos++) % queue_depth];
+    POWERINFER_ASSERT(!request.in_flight);
+
+    request.overlapped = {};
+    request.overlapped.Offset     = static_cast<DWORD>(offset & 0xFFFFFFFFull);
+    request.overlapped.OffsetHigh = static_cast<DWORD>(offset >> 32);
+    request.read_size = size;
+    request.user_data = user_data;
+    request.callback = callback;
+    request.in_flight = true;
+    ++n_inflight;
+
+    // Do not synthesize a completion for synchronous success.  Since this
+    // handle has not opted into FILE_SKIP_COMPLETION_PORT_ON_SUCCESS, both
+    // synchronous and pending reads produce exactly one IOCP completion.
+    if (!ReadFile(handle, buffer, static_cast<DWORD>(size), nullptr, &request.overlapped)) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_IO_PENDING) {
+            return;
+        }
+        fprintf(stderr, "IOUring(win) enqueue error: size %zu (err %lu)\n",
+                size, static_cast<unsigned long>(error));
         abort();
     }
-    pending.push_back({user_data, callback});
-    n_inflight++;
 }
 
-void IOUring::submit_and_wait(size_t /*wait_nr*/) {
-    // No-op: reads already completed synchronously in enqueue_read.
+void IOUring::submit_and_wait(size_t wait_nr) {
+    if (wait_nr == 0 || n_inflight == 0) {
+        return;
+    }
+
+    wait_nr = std::min(wait_nr, n_inflight);
+
+    const auto collect = [this](DWORD timeout) -> size_t {
+        ULONG count = 0;
+        if (!GetQueuedCompletionStatusEx(
+                completion_port,
+                completion_entries.data(),
+                static_cast<ULONG>(completion_entries.size()),
+                &count,
+                timeout,
+                FALSE)) {
+            const DWORD error = GetLastError();
+            if (error == WAIT_TIMEOUT) {
+                return 0;
+            }
+            fprintf(stderr, "IOUring(win) completion-port error: %lu\n",
+                    static_cast<unsigned long>(error));
+            abort();
+        }
+
+        for (ULONG i = 0; i < count; ++i) {
+            auto *request = reinterpret_cast<RequestData *>(completion_entries[i].lpOverlapped);
+            POWERINFER_ASSERT(request != nullptr);
+            POWERINFER_ASSERT(request->in_flight);
+
+            DWORD got = 0;
+            if (!GetOverlappedResult(handle, &request->overlapped, &got, FALSE) ||
+                got != request->read_size) {
+                fprintf(stderr, "IOUring(win) read error: expect %zu, got %lu (err %lu)\n",
+                        request->read_size,
+                        static_cast<unsigned long>(got),
+                        static_cast<unsigned long>(GetLastError()));
+                abort();
+            }
+
+            pending.push_back({request, got});
+        }
+
+        return static_cast<size_t>(count);
+    };
+
+    size_t completed = 0;
+    while (completed < wait_nr) {
+        completed += collect(INFINITE);
+    }
+
+    // Drain already-ready completions without blocking; this increases
+    // overlap while retaining bounded request ownership.
+    while (collect(0) > 0) {
+    }
 }
 
 size_t IOUring::reap() {
     size_t count = pending.size();
-    for (auto &c : pending) {
-        if (c.callback) c.callback(c.user_data);
+    for (const auto &completion : pending) {
+        RequestData *request = completion.request;
+        POWERINFER_ASSERT(request != nullptr);
+        POWERINFER_ASSERT(request->in_flight);
+        POWERINFER_ASSERT(completion.bytes_transferred == request->read_size);
+        POWERINFER_ASSERT(n_inflight > 0);
+
+        CallbackFn *callback = request->callback;
+        void *user_data = request->user_data;
+
+        // Release the slot before the callback.  A request cannot be
+        // completed twice because only this path clears in_flight.
+        request->callback = nullptr;
+        request->user_data = nullptr;
+        request->in_flight = false;
+        --n_inflight;
+
+        if (callback) {
+            callback(user_data);
+        }
     }
     pending.clear();
-    n_inflight -= count;
     return count;
 }
 
