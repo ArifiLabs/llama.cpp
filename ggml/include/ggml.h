@@ -436,10 +436,10 @@ extern "C" {
         // — read it before adding any value here. Summary of the binding rules:
         //
         //   * SERIALIZED weight formats keep the id their originator wrote into
-        //     files. Never renumber an imported format. Reserved so far:
-        //       45,46      TurboQuant TQ3_1S / TQ4_1S
-        //       100..104   ROCmFP4 / ROCmFPX weight formats
-        //       107        ROCmFPX Q2_0_ROCMFPX
+        //     files. Never renumber an imported format. Allocated / reserved:
+        //       45,46      TurboQuant TQ3_1S / TQ4_1S      - reserved, not yet ported
+        //       100..104   ROCmFP4 / ROCmFPX weight formats - ALLOCATED below
+        //       107        ROCmFPX Q2_0_ROCMFPX             - ALLOCATED below
         //   * RUNTIME-ONLY types (KV codecs, repack layouts — anything that never
         //     enters a GGUF) belong in the ArifiLabs block 200..255. Do NOT place
         //     them near the weight ids: TurboQuant's 34-byte/128-value KV block is
@@ -451,7 +451,28 @@ extern "C" {
         // Adding a type is NOT one line: walk the dispatch checklist in §7 of the
         // doc. A missing CPU switch case compiles clean and aborts at RUNTIME.
         // ---------------------------------------------------------------------
-        GGML_TYPE_COUNT   = 44,
+
+        // Block W, 100..107 - ROCmFPX weight formats, adopted VERBATIM from
+        // charlie12345/ROCmFPX so its GGUFs and its convert/quantize tooling
+        // interoperate byte-for-byte. The implementations are compiled only when
+        // GGML_ARIFI_ROCMFPX_FORMATS is ON; the ids themselves are unconditional,
+        // because the enum is ABI and must not move with a build flag. With the
+        // implementations compiled out these ids have a zero-filled type_traits
+        // row, and gguf.cpp refuses such a file on `blck_size == 0` (fail-closed).
+        GGML_TYPE_Q4_0_ROCMFP4      = 100, // ROCmFP4  dual UE4M3 half-block scales, 18 B / 32
+        GGML_TYPE_Q4_0_ROCMFP4_FAST = 101, // ROCmFP4  single UE4M3 block scale,     17 B / 32
+        GGML_TYPE_Q6_0_ROCMFPX      = 102, // ROCmFPX  6-bit, dual UE4M3 scales,     26 B / 32
+        GGML_TYPE_Q8_0_ROCMFPX      = 103, // ROCmFPX  8-bit, single UE4M3 scale,    33 B / 32
+        GGML_TYPE_Q3_0_ROCMFPX      = 104, // ROCmFPX  3-bit, dual UE4M3 scales,     14 B / 32
+        // 105 / 106 are ROCmFPX's runtime-only TURBO3_0 / TURBO4_0. NOT allocated
+        // here: they are KV-cache types, never serialized (TYPE-ID-ALLOCATION §1.2),
+        // and 104's geometry is byte-identical to 105's - keep the split structural.
+        GGML_TYPE_Q2_0_ROCMFPX      = 107, // ROCmFPX  2-bit S40 + dual UE4M3,       10 B / 32
+
+        // The ceiling is 256, not 108: block R (ArifiLabs runtime-only types) is
+        // reserved at 200..255 and would otherwise force COUNT to move twice.
+        // 44..255 is a sparse range by design; every hole is fail-closed above.
+        GGML_TYPE_COUNT   = 256,
     };
 
     // precision
@@ -496,6 +517,16 @@ extern "C" {
         GGML_FTYPE_MOSTLY_NVFP4   = 26, // except 1d tensors
         GGML_FTYPE_MOSTLY_Q1_0    = 27, // except 1d tensors
         GGML_FTYPE_MOSTLY_Q2_0    = 28, // except 1d tensors
+        // ROCmFPX file types, adopted VERBATIM from charlie12345/ROCmFPX@3edc3d31e.
+        // NOTE these are ggml_ftype values and do NOT match the llama_ftype values
+        // of the same names - ROCmFPX numbers the two enums differently
+        // (ggml Q2_0_ROCMFPX = 113, llama LLAMA_FTYPE_MOSTLY_Q2_0_ROCMFPX = 119).
+        GGML_FTYPE_MOSTLY_Q4_0_ROCMFP4      = 100, // except 1d tensors
+        GGML_FTYPE_MOSTLY_Q4_0_ROCMFP4_FAST = 103, // ROCmFP4 single-scale speed layout
+        GGML_FTYPE_MOSTLY_Q6_0_ROCMFPX      = 110, // ROCmFPX 6-bit reference layout
+        GGML_FTYPE_MOSTLY_Q8_0_ROCMFPX      = 111, // ROCmFPX 8-bit reference layout
+        GGML_FTYPE_MOSTLY_Q3_0_ROCMFPX      = 112, // ROCmFPX 3-bit reference layout
+        GGML_FTYPE_MOSTLY_Q2_0_ROCMFPX      = 113, // ROCmFPX 2-bit S40 codebook layout
     };
 
     // available tensor operations:

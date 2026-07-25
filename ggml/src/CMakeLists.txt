@@ -213,6 +213,17 @@ set_target_properties(ggml-base PROPERTIES
     SOVERSION ${GGML_VERSION_MAJOR}
 )
 
+# ArifiLabs merge slot: ROCmFP4 / ROCmFPX serialized weight formats.
+# PUBLIC so ggml-cpu (and any other consumer of ggml-base) sees the same gate;
+# the type-ids in ggml.h are unconditional, only the implementation is gated.
+if (GGML_ARIFI_ROCMFPX_FORMATS)
+    target_sources(ggml-base PRIVATE
+                   ../rocmfp4/rocmfp4.c
+                   ../rocmfp4/rocmfp4.h
+                   ../rocmfpx/rocmfpx.c
+                   ../rocmfpx/rocmfpx.h)
+    target_compile_definitions(ggml-base PUBLIC GGML_ARIFI_ROCMFPX_FORMATS)
+endif()
 configure_file(ggml-version.h.in ${CMAKE_CURRENT_BINARY_DIR}/ggml-version.h @ONLY)
 
 target_include_directories(ggml-base PRIVATE . ${CMAKE_CURRENT_BINARY_DIR})
