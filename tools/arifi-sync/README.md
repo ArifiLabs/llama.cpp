@@ -24,7 +24,7 @@ are required for everything except `build`/`judge`.
 | `series replay --onto <ref>` | Replays the committed series onto any ref; names patch + file + rejected hunks on failure | no | no |
 | `currency` | Fetches every source and reports drift against the reviewed pins | **yes** | no |
 | `recipe diff` | Recovers the build recipe by **diffing** CMakeCache against the committed snapshot | no | a configured build dir |
-| `recipe export` | Writes a CMake `-C` initial-cache file that replays the recorded configuration | no | a configured build dir |
+| `recipe export` | Writes a CMake `-C` initial-cache file that replays the recorded configuration | no | no — see below |
 | `build` | Recipe-diffs, then builds `llama-server` | no | yes |
 | `judge` | The F-085 regression judge | no | yes |
 | `bump --onto <ref>` | Rebase surface → replay → build → judge. Refuses the bump unless **all three** pass | yes | yes |
@@ -49,8 +49,23 @@ cannot miss a flag, because anything that differs gets reported.
 ```bash
 python tools/arifi-sync/arifi_sync.py recipe diff     # live build vs the committed snapshot
 python tools/arifi-sync/arifi_sync.py recipe export   # -> arifi-recipe.cmake
-cmake -S . -B build-new -C arifi-recipe.cmake         # replays ALL 309 cache entries
+cmake -S . -B build-new -C arifi-recipe.cmake         # replays ALL 310 cache entries
 ```
+
+**With no build directory at all** — the state every fresh clone is in — point `--live` at the
+committed snapshot instead. `arifi-recipe.cmake` is gitignored, so this is the only way a new
+clone can read the recipe:
+
+```bash
+python tools/arifi-sync/arifi_sync.py recipe export \
+    --live tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt \
+    --initial-cache arifi-recipe.cmake
+```
+
+**Read the result; do not `-C` it blind on another machine.** 35 of the 310 entries are absolute
+paths into this box's WinGet, Ninja and Vulkan SDK installs. The portable subset — the flags that
+actually matter and the errors they prevent — is written out in
+[`docs/BUILDING.md`](../../docs/BUILDING.md).
 
 `recipe/build-vulkan.cache-snapshot.txt` is the committed recipe. It survives deletion of the build
 directory. Note that `-mprefer-vector-width=128` (the MinGW AVX-spill cure) is deliberately **not**
@@ -89,9 +104,9 @@ guessing. Then it replays, builds, and judges. Any failure refuses the bump. On 
 
 | Leg | Status |
 |---|---|
-| `status`, `provenance`, `series regen/check/replay` | **Exercised.** Run against the real 38-patch series; `series check` replays to a byte-identical tree. |
+| `status`, `provenance`, `series regen/check/replay` | **Exercised.** Run against the real 62-patch series; `series check` replays to a byte-identical tree. Re-verified 2026-07-25 from a **fresh clone** with no local state — it passes there too. |
 | `currency` | **Exercised.** Fetched all four remotes plus both TurboQuant checkouts and reported real drift. |
-| `recipe export`, `recipe diff` | **Exercised** against the real `build-vulkan/CMakeCache.txt` (309 entries). |
+| `recipe export`, `recipe diff` | **Exercised** against the real `build-vulkan/CMakeCache.txt` (310 entries), and `export --live <snapshot>` exercised from a fresh clone with no build directory. |
 | `build` | **UNEXERCISED.** Written, never run — a sibling agent held the box. |
 | `judge` | **UNEXERCISED, and it stops rather than pretending.** The timed `llama-server` harness is not wired; the subcommand raises instead of returning a plausible-looking result. Wire it to the lane's existing harness and delete that raise. |
 | `bump` | **UNEXERCISED end-to-end** — it depends on `build` and `judge`. |
