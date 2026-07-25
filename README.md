@@ -14,6 +14,28 @@ ROCm/HIP and wholesale ROCmFPX adoption are not the running path on the current
 rig, but Charlie’s fork remains a tracked source for discrete mechanisms and
 currency review.
 
+## Scope — what this is, and what it is not
+
+**It is** upstream llama.cpp `b10068` plus a linear, individually-toggleable, fully-attributed
+patch series, carrying real mechanisms from PowerInfer, PrismML, ROCmFPX and thecodacus that are
+not in upstream, each one gated and each one documented with its measured effect or an explicit
+`UNMEASURED`. The series replays byte-identically onto its base, and that is verified by a command
+you can run yourself.
+
+**It is not** a faster llama.cpp. Most of what is carried here is either a *capability* (run a model
+that otherwise would not fit) or a win confined to a specific hardware placement. Several carried
+patches measure **inert** on our own hardware and are documented as such.
+
+**Every number in this repository was measured on one machine**: a Beelink SER7 (Ryzen 7 7840HS,
+Radeon 780M / gfx1103, unified memory) on Windows 11, built with WinLibs MinGW-w64 GCC 14.2.0,
+running the Vulkan backend — or, where a row says CPU-only, the CPU backend on that same box.
+
+**Never built or run by anyone, anywhere, on:** Linux, macOS, MSVC, clang-cl, CUDA, ROCm/HIP,
+Arm/NEON, or any GPU other than gfx1103. Upstream supports all of them and nothing here removes
+that support; a CPU-only build is verified. But no result on this page transfers to that hardware,
+and we will not imply it does. If you are on any of it, start from
+[`docs/HARDWARE-PROFILES.md`](docs/HARDWARE-PROFILES.md) — several of our defaults are wrong for you.
+
 ## Principles
 
 - Start from a known upstream anchor and make every local change rebaseable.
@@ -26,22 +48,50 @@ currency review.
 - Preserve negative evidence. A failed kernel or an inert toggle is useful
   engineering knowledge, not material to erase.
 
+## Building
+
+Full instructions, including the failures each flag prevents, are in
+[`docs/BUILDING.md`](docs/BUILDING.md). The short version for MinGW on Windows:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00" -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00" \
+  -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" \
+  -DLLAMA_USE_PREBUILT_UI=OFF          # add -DGGML_VULKAN=ON for the Vulkan build
+cmake --build build --target llama-server -j 6
+```
+
+Those flags are not tuning. Without `-D_WIN32_WINNT=0x0A00` the build fails at
+`vendor/cpp-httplib/httplib.cpp:1471` with `'::CreateFile2' has not been declared` — an error that
+names neither the flag nor the fix, and which this fork lost three builds to. Without the static
+GCC runtime the binaries can die at startup with `0xC0000139` when a foreign `libstdc++-6.dll` is
+on `PATH`. A CPU-only build needs no Vulkan SDK and is verified working.
+
 ## What this fork adds to upstream
 
-Everything ArifiLabs adds lives as a **linear, 40-patch series** on top of upstream `b10068`.
+Everything ArifiLabs adds lives as a **linear, 62-patch series** on top of upstream `b10068`.
 There are no merge commits: the series is designed to be replayed onto a newer upstream tag.
 
 ```bash
-git clone <this repo> && cd llama.cpp
-git checkout -b my-rebuild 571d0d540
-git am patches/series/*.patch     # reproduces master, file-for-file
+git clone -c core.longpaths=true <this repo> arifilabs-llama.cpp && cd arifilabs-llama.cpp
+python tools/arifi-sync/arifi_sync.py series replay --onto 571d0d540   # reproduces master
 ```
+
+Use the driver, not a hand-written `git am`. The naive form —
+`git checkout -b x 571d0d540 && git am patches/series/*.patch` — **cannot work**, and the reason is
+worth knowing: `patches/series/` does not exist at the upstream base commit, because the series
+itself is what adds it. Checking out the base removes the very files you were about to apply.
+`series replay` avoids this by replaying into its own worktree, and it names the patch, file and
+rejected hunk on any failure.
 
 That is checked, not claimed: `series check` regenerates the series, byte-compares it against what
 is committed, replays it with `git am`, and diffs the result against `master`. The one thing the
 replay does not reproduce is `patches/series/` itself — the series is generated into the tree it
 describes, and a patch cannot contain itself, so the generated directory is excluded from its own
 generation. Everything outside it is identical.
+
+`core.longpaths=true` is not optional on Windows: upstream carries a 161-character path under
+`tools/ui/`, and the clone fails to check out without it. See [`docs/BUILDING.md`](docs/BUILDING.md).
 
 [`patches/series/MANIFEST.md`](patches/series/MANIFEST.md) lists every patch with its source,
 its gate, and its `Measured-effect:` trailer. Per-mechanism detail is in
@@ -189,7 +239,7 @@ unmeasured status with `Measured-effect:`.
 
 `LICENSE` is the verbatim upstream llama.cpp MIT license. Retained third-party
 notices and the exact source from which each was copied are enumerated in
-[`LICENSES/README.md`](LICENSES/README.md).
+[`licenses/README.md`](licenses/README.md).
 
 The President’s 2026-07-22 rule #0 lifted the previous publication blocks for
 PrismML, thecodacus, PowerInfer, and Charlie/ROCmFPX. This authorization does
@@ -199,7 +249,7 @@ remain explicit in this README, the series manifest, and each eventual commit.
 
 ## Status
 
-The patch series is real and complete: 40 linear commits on upstream `b10068`, every one carrying
+The patch series is real and complete: 73 linear commits on upstream `b10068`, every one carrying
 provenance trailers, generated into [`patches/series/`](patches/series/) and verified on demand to
 replay to a tree identical to `master` outside the generated series directory itself.
 

@@ -7,8 +7,15 @@ safe measurement posture.
 
 ## Defaults by hardware path
 
+> **If you are not on one of the four machines below, read
+> [`HARDWARE-PROFILES.md`](HARDWARE-PROFILES.md) first.** Every default in this registry was chosen
+> on the SER7/780M Vulkan rig, and at least one of them (`GGML_ARIFI_VNNI_REPACK`) is measurably
+> the wrong choice on a CPU-only path. That page routes by hardware; this one holds the evidence.
+
 | Hardware path | Default posture |
 |---|---|
+| **CPU-only** (no GPU backend compiled, or `-dev none`) | **Set `GGML_ARIFI_VNNI_REPACK=1`** — the shipped default of OFF is wrong here. Measured `+327%` to `+442%` prompt and `+20%` to `+24%` decode on a g64 Q1_0/Q2_0 model, ON/OFF ranges disjoint. Requires `--no-host` on a Vulkan-enabled build, which also exposes upstream's 8×8 repack `0xC0000005` crash — see the VNNI row. Everything else follows the unified-memory posture: prefetch OFF, `--ctx-checkpoints 0`, KV f16 or `q4_0`. |
+| **Any other hardware** (Linux, macOS, CUDA, ROCm, Arm, non-gfx1103 GPUs) | **No posture — nothing here has been built or run on it.** Start from upstream defaults, treat every ArifiLabs toggle as OFF, and measure before enabling. The rows below are results from one box, not predictions for yours. |
 | Beelink SER7 / Radeon 780M unified memory | Vulkan is the AMD path. Keep thecodacus host-transfer prefetch OFF by default; it measured inert when experts are GPU-resident. DSpark is OFF after a `0.54×` result. Use `--ctx-checkpoints 0`. |
 | SER7 upgraded to 64 GB or 96 GB DDR5 | Same Vulkan posture. KV f16 becomes unconditional under the 64 GB ruling when model placement permits. Prefer fitting the model in unified memory before adding streamed tiers. |
 | AMD Strix Halo 128 GB unified memory | Vulkan remains the expected AMD path. Start with the unified-memory defaults: prefetch OFF until a host-offloaded trial proves a transfer boundary; KV f16 preferred. |
