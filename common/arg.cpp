@@ -1,5 +1,6 @@
 #include "arg.h"
 
+#include "arifi-profile.h"
 #include "build-info.h"
 #include "chat.h"
 #include "common.h"
@@ -877,6 +878,10 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
     // parse all CLI args now, so that -hf is available below for remote preset resolution
     parse_cli_args();
 
+    // ArifiLabs: a build-time option set in the environment does nothing, and silently doing
+    // nothing is the failure docs/HARDWARE-PROFILES.md exists to prevent. Runs profile or not.
+    common_arifi_profile_warn_build_time_env();
+
     postprocess_cpu_params(params.cpuparams,       nullptr);
     postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
 
@@ -1510,6 +1515,23 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             }
         }
     ).set_examples({LLAMA_EXAMPLE_COMPLETION, LLAMA_EXAMPLE_CLI, LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_LOOKUP}));
+    // ArifiLabs: opt-in hardware profile. Applied here, during parsing, because the toggles it
+    // sets are latched the first time a tensor buffer is initialised - see arifi-profile.h.
+    add_opt(common_arg(
+        {"--arifi-profile"}, "NAME",
+        string_format(
+            "ArifiLabs hardware profile: %s (default: none). Sets a documented group of runtime "
+            "toggles and logs every one of them. An environment variable you set yourself always "
+            "wins, and no shipped default changes. See docs/HARDWARE-PROFILES.md",
+            common_arifi_profile_names().c_str()),
+        [](common_params &, const std::string & value) {
+            if (!common_arifi_profile_apply(value)) {
+                throw std::invalid_argument(string_format(
+                    "error: unknown --arifi-profile '%s' (known profiles: %s)\n",
+                    value.c_str(), common_arifi_profile_names().c_str()));
+            }
+        }
+    ).set_env("LLAMA_ARG_ARIFI_PROFILE"));
     add_opt(common_arg(
         {"-t", "--threads"}, "N",
         string_format("number of CPU threads to use during generation (default: %d)", params.cpuparams.n_threads),
