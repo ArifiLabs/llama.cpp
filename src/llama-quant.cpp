@@ -395,6 +395,15 @@ static ggml_type tensor_type_fallback(quantize_state_impl & qs, const ggml_tenso
             case GGML_TYPE_Q3_K:
             case GGML_TYPE_TQ1_0:
             case GGML_TYPE_TQ2_0:   return_type = GGML_TYPE_Q4_0;   break;
+#ifdef GGML_ARIFI_ROCMFPX_FORMATS
+            // Taken-from: charlie12345/ROCmFPX@3edc3d31e (src/llama-quant.cpp).
+            case GGML_TYPE_Q4_0_ROCMFP4:
+            case GGML_TYPE_Q4_0_ROCMFP4_FAST: return_type = GGML_TYPE_Q4_0; break;
+            case GGML_TYPE_Q3_0_ROCMFPX:
+            case GGML_TYPE_Q2_0_ROCMFPX:
+            case GGML_TYPE_Q6_0_ROCMFPX:
+            case GGML_TYPE_Q8_0_ROCMFPX: return_type = GGML_TYPE_Q8_0; break;
+#endif
             case GGML_TYPE_Q4_K:    return_type = GGML_TYPE_Q5_0;   break;
             case GGML_TYPE_Q5_K:    return_type = GGML_TYPE_Q5_1;   break;
             case GGML_TYPE_Q6_K:    return_type = GGML_TYPE_Q8_0;   break;
@@ -856,6 +865,18 @@ ggml_type llama_ftype_get_default_type(llama_ftype ftype) {
         case LLAMA_FTYPE_ALL_F32:     return GGML_TYPE_F32;
         case LLAMA_FTYPE_MOSTLY_Q1_0: return GGML_TYPE_Q1_0;
         case LLAMA_FTYPE_MOSTLY_Q2_0: return GGML_TYPE_Q2_0;
+
+#ifdef GGML_ARIFI_ROCMFPX_FORMATS
+        // Taken-from: charlie12345/ROCmFPX@3edc3d31e (src/llama-quant.cpp).
+        // Base formats only - the LEAN/COHERENT/STRIX/AGENT recipe ftypes are a
+        // separate mechanism and are deliberately not wired here.
+        case LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4:      return GGML_TYPE_Q4_0_ROCMFP4;
+        case LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_FAST: return GGML_TYPE_Q4_0_ROCMFP4_FAST;
+        case LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX:      return GGML_TYPE_Q6_0_ROCMFPX;
+        case LLAMA_FTYPE_MOSTLY_Q8_0_ROCMFPX:      return GGML_TYPE_Q8_0_ROCMFPX;
+        case LLAMA_FTYPE_MOSTLY_Q3_0_ROCMFPX:      return GGML_TYPE_Q3_0_ROCMFPX;
+        case LLAMA_FTYPE_MOSTLY_Q2_0_ROCMFPX:      return GGML_TYPE_Q2_0_ROCMFPX;
+#endif
 
         case LLAMA_FTYPE_MOSTLY_MXFP4_MOE: return GGML_TYPE_MXFP4;
 

@@ -157,6 +157,38 @@ extern "C" {
         LLAMA_FTYPE_MOSTLY_Q1_0          = 40, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_Q2_0          = 41, // except 1d tensors
 
+        // ROCmFPX file types, adopted VERBATIM from charlie12345/ROCmFPX@3edc3d31e
+        // so that its artifacts report the same general.file_type we do.
+        // These are unconditional enum values (they may appear in any GGUF's
+        // metadata); the quantizer wiring behind them is compiled only when
+        // GGML_ARIFI_ROCMFPX_FORMATS is ON.
+        LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4      = 100, // except 1d tensors
+        LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_FAST = 103, // ROCmFP4 single-scale speed layout
+        LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX      = 110, // ROCmFPX 6-bit reference layout
+        LLAMA_FTYPE_MOSTLY_Q8_0_ROCMFPX      = 111, // ROCmFPX 8-bit reference layout
+        LLAMA_FTYPE_MOSTLY_Q3_0_ROCMFPX      = 112, // ROCmFPX 3-bit reference layout
+        LLAMA_FTYPE_MOSTLY_Q2_0_ROCMFPX      = 119, // ROCmFPX 2-bit S40 + dual UE4M3 scales
+        // The values below name ROCmFPX quantizer RECIPES: per-tensor type policies
+        // layered on top of the same wire formats. The recipe LOGIC is a distinct
+        // mechanism and is deliberately NOT ported here (see docs/OPTIONS-REGISTRY.md,
+        // GGML_ARIFI_ROCMFPX_FORMATS, "deferred"). The ids are still allocated and
+        // named, because artifacts carrying them exist - e.g.
+        // models/rocmfpx-trial/ornith-9b-mtp-kl-Q4_0_ROCMFP4_COHERENT.gguf declares
+        // general.file_type = 102 - and "unknown, may not work" would be a false
+        // diagnostic for a file this build reads correctly. Nothing dispatches on
+        // them: llama_ftype_get_default_type() returns GGML_TYPE_COUNT (fail-closed)
+        // and llama-quantize does not offer them.
+        LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_LEAN          = 101, // ROCmFP4 + Q5_K token embeddings
+        LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_COHERENT      = 102, // ROCmFP4 + Q6_K token embeddings
+        LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_FAST_COHERENT = 104, // ROCmFP4 fast + Q6_K token embeddings
+        LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_STRIX         = 105, // ROCmFP4 Strix Halo quality/speed recipe
+        LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_STRIX_LEAN    = 106, // ROCmFP4 Strix Halo size-biased K/V recipe
+        LLAMA_FTYPE_MOSTLY_Q3_0_ROCMFPX_AGENT         = 113, // ROCmFPX 3-bit agent/tool-call routing
+        LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX_AGENT         = 114, // ROCmFPX 6-bit agent/tool-call routing
+        LLAMA_FTYPE_MOSTLY_Q8_0_ROCMFPX_AGENT         = 115, // ROCmFPX 8-bit agent/tool-call routing
+        LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX_LEAN          = 116, // ROCmFPX 6-bit size/speed-biased routing
+        LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX_AGENT_LEAN    = 117, // ROCmFPX 6-bit agent routing, no Q8 boosts
+
         LLAMA_FTYPE_GUESSED = 1024, // not specified in the model file
     };
 
