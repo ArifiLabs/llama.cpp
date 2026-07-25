@@ -28,14 +28,20 @@ currency review.
 
 ## What this fork adds to upstream
 
-Everything ArifiLabs adds lives as a **linear, 38-patch series** on top of upstream `b10068`.
+Everything ArifiLabs adds lives as a **linear, 40-patch series** on top of upstream `b10068`.
 There are no merge commits: the series is designed to be replayed onto a newer upstream tag.
 
 ```bash
 git clone <this repo> && cd llama.cpp
 git checkout -b my-rebuild 571d0d540
-git am patches/series/*.patch     # reproduces master exactly, tree-for-tree
+git am patches/series/*.patch     # reproduces master, file-for-file
 ```
+
+That is checked, not claimed: `series check` regenerates the series, byte-compares it against what
+is committed, replays it with `git am`, and diffs the result against `master`. The one thing the
+replay does not reproduce is `patches/series/` itself — the series is generated into the tree it
+describes, and a patch cannot contain itself, so the generated directory is excluded from its own
+generation. Everything outside it is identical.
 
 [`patches/series/MANIFEST.md`](patches/series/MANIFEST.md) lists every patch with its source,
 its gate, and its `Measured-effect:` trailer. Per-mechanism detail is in
@@ -193,9 +199,9 @@ remain explicit in this README, the series manifest, and each eventual commit.
 
 ## Status
 
-The patch series is real and complete: 38 linear commits on upstream `b10068`, every one carrying
-provenance trailers, generated into [`patches/series/`](patches/series/) and verified to replay to
-a byte-identical tree.
+The patch series is real and complete: 40 linear commits on upstream `b10068`, every one carrying
+provenance trailers, generated into [`patches/series/`](patches/series/) and verified on demand to
+replay to a tree identical to `master` outside the generated series directory itself.
 
 What that does **not** mean:
 
