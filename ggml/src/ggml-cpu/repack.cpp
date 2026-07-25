@@ -5135,16 +5135,29 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
 }  // namespace ggml::cpu::repack
 
 // lane-110C VNNI-repack slot — charter ask #3 ("all options compiled in, runtime-toggled").
-// GGML_ARIFI_VNNI_REPACK=0 restores the exact pre-slot behaviour on every arch: no Q1_0 and
-// no Q2_0 repack, both types falling through to the terminal return nullptr and thus back to
-// per-row vec_dot. Only an exact "0" disables; unset or anything else leaves the slot ON,
-// which is PrismML's own default. Env is read ONCE into a function-local static, matching the
-// lane110_prof_enabled() idiom in ggml/src/ggml-cpu/ops.cpp (magic-static init is
-// thread-safe, and there is no per-call getenv on the mul_mat path).
+//
+// DEFAULT OFF. Only an exact "1" enables the slot; unset, "0", or anything else leaves it
+// disabled, so Q1_0 and Q2_0 both fall through to the terminal return nullptr and back to
+// per-row vec_dot. This DIVERGES DELIBERATELY from PrismML's upstream default (ON) and is
+// measured, not preferred: on this fork's default Vulkan-enabled build, weights that land in
+// the CPU_REPACK buffer stop being eligible for large-batch GPU offload, and prompt processing
+// regresses -77.1% / -88.1% across the two g64 measurement models. The decode win (+20.1% /
+// +28.4%) does not pay for that. On a CPU-only path (-dev none) the same slot is a large win
+// (+326.7% / +441.8% prompt, +19.9% / +23.6% decode), which is exactly why it stays compiled
+// in and one env var away. Numbers and protocol: docs/OPTIONS-REGISTRY.md, GGML_ARIFI_VNNI_REPACK.
+//
+// NOT a pre-slot restore switch on x86. Commit c7645a0df also replaced the x86
+// ggml_vec_dot_q2_0_q8_0 (ggml/src/ggml-cpu/arch/x86/quants.c), which is selected at COMPILE
+// time by __AVX512VNNI__/__AVXVNNI__ and sits outside this toggle. OFF therefore selects the
+// new vec_dot kernel, not the one that predated the slot.
+//
+// Env is read ONCE into a function-local static, matching the lane110_prof_enabled() idiom in
+// ggml/src/ggml-cpu/ops.cpp (magic-static init is thread-safe, and there is no per-call getenv
+// on the mul_mat path).
 static bool ggml_arifi_vnni_repack_enabled() {
     static const bool enabled = []() {
         const char * value = std::getenv("GGML_ARIFI_VNNI_REPACK");
-        return !(value != nullptr && value[0] == '0' && value[1] == '\0');
+        return value != nullptr && value[0] == '1' && value[1] == '\0';
     }();
     return enabled;
 }
@@ -5381,8 +5394,8 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
             #endif
         }
     } else if (cur->type == GGML_TYPE_Q1_0) {
-        // lane-110C: gated by GGML_ARIFI_VNNI_REPACK. OFF => fall through to the terminal
-        // return nullptr, i.e. exactly the pre-slot behaviour (per-row vec_dot).
+        // lane-110C: gated by GGML_ARIFI_VNNI_REPACK, DEFAULT OFF (only "1" enables). OFF => fall
+        // through to the terminal return nullptr, i.e. no repack buffer and per-row vec_dot.
         if (ggml_arifi_vnni_repack_enabled()) {
             if (ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
                 if (cur->ne[1] % 4 == 0) {
