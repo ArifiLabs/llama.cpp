@@ -268,7 +268,10 @@ def build_manifest(repo: str, cfg: dict, ref: str, files: list, outdir: str) -> 
         if sha not in allshas:
             raise Loud("patch attributes itself to %s, which is not in %s..%s"
                        % (sha[:9], base[:9], ref))
-    dropped = [s for s in allshas if s not in shas]
+    # NOTE: do NOT derive anything in this manifest from the commits the generator dropped. Doing
+    # so makes the manifest a function of excluded commits, and every series-only commit then
+    # changes it - which is the same non-convergence the exclusion exists to remove, one level up.
+    # An earlier draft of this function listed them and diverged by exactly one line per regen.
 
     # Which patch carries the binary payload, read off the artifact rather than remembered. The
     # previous manifest hardcoded `0008`; the real one is whichever file contains a GIT binary
@@ -337,13 +340,16 @@ def build_manifest(repo: str, cfg: dict, ref: str, files: list, outdir: str) -> 
     L.append("series generates nothing, the next regeneration produces zero diff, and `series check`")
     L.append("can actually pass.")
     L.append("")
-    if dropped:
-        L.append("Commits excluded by that rule in the current range (they change only `%s`):"
-                 % cfg["series_dir"])
-        L.append("")
-        for sha in dropped:
-            L.append("- `%s` %s" % (sha[:9], gout(repo, "log", "-1", "--format=%s", sha)))
-        L.append("")
+    L.append("The manifest deliberately does NOT enumerate the commits that rule drops, and must never")
+    L.append("start to. Anything generated from an excluded commit puts the loop straight back: every")
+    L.append("regeneration commit would add its own line, requiring another regeneration, forever. This")
+    L.append("file is a function of the commits it INCLUDES, and of nothing else. List the dropped ones")
+    L.append("on demand instead:")
+    L.append("")
+    L.append("```bash")
+    L.append("git log --oneline %s..master -- %s" % (base[:9], cfg["series_dir"]))
+    L.append("```")
+    L.append("")
     L.append("## Load-bearing generation flags")
     L.append("")
     L.append("Never drop any of these:")
