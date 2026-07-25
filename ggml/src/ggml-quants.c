@@ -6,6 +6,11 @@
 #include "ggml-cpu/ggml-cpu-impl.h"
 #include "ggml-cpu.h"
 
+#ifdef GGML_ARIFI_ROCMFPX_FORMATS
+#include "../rocmfp4/rocmfp4.h"
+#include "../rocmfpx/rocmfpx.h"
+#endif
+
 #include <math.h>
 #include <string.h>
 #include <assert.h>
@@ -5583,6 +5588,54 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
             {
                 VALIDATE_ROW_DATA_D_F16_IMPL(block_q4_0, data, nb);
             } break;
+#ifdef GGML_ARIFI_ROCMFPX_FORMATS
+        // Taken-from: charlie12345/ROCmFPX@3edc3d31e (ggml/src/ggml-quants.c).
+        // These formats carry UE4M3 scale BYTES, not f16 scales, so the generic
+        // VALIDATE_ROW_DATA_D_F16_IMPL macro cannot be used: each family validates
+        // its own scale-byte legality instead.
+        case GGML_TYPE_Q4_0_ROCMFP4:
+            {
+                if (!rocmfp4_validate_row_data(data, nbytes)) {
+                    fprintf(stderr, "%s: invalid ROCmFP4 row data\n", __func__);
+                    return false;
+                }
+            } break;
+        case GGML_TYPE_Q4_0_ROCMFP4_FAST:
+            {
+                if (!rocmfp4_validate_row_data_fast(data, nbytes)) {
+                    fprintf(stderr, "%s: invalid ROCmFP4 fast row data\n", __func__);
+                    return false;
+                }
+            } break;
+        case GGML_TYPE_Q3_0_ROCMFPX:
+            {
+                if (!rocmfpx_validate_row_data_fp3(data, nbytes)) {
+                    fprintf(stderr, "%s: invalid ROCmFPx FP3 row data\n", __func__);
+                    return false;
+                }
+            } break;
+        case GGML_TYPE_Q2_0_ROCMFPX:
+            {
+                if (!rocmfpx_validate_row_data_fp2(data, nbytes)) {
+                    fprintf(stderr, "%s: invalid ROCmFPx FP2 row data\n", __func__);
+                    return false;
+                }
+            } break;
+        case GGML_TYPE_Q6_0_ROCMFPX:
+            {
+                if (!rocmfpx_validate_row_data_fp6(data, nbytes)) {
+                    fprintf(stderr, "%s: invalid ROCmFPx FP6 row data\n", __func__);
+                    return false;
+                }
+            } break;
+        case GGML_TYPE_Q8_0_ROCMFPX:
+            {
+                if (!rocmfpx_validate_row_data_fp8(data, nbytes)) {
+                    fprintf(stderr, "%s: invalid ROCmFPx FP8 row data\n", __func__);
+                    return false;
+                }
+            } break;
+#endif // GGML_ARIFI_ROCMFPX_FORMATS
         case GGML_TYPE_Q4_1:
             {
                 VALIDATE_ROW_DATA_DM_F16_IMPL(block_q4_1, data, nb, d, m);

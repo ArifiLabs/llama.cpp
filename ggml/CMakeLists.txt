@@ -132,6 +132,17 @@ option(GGML_GPROF                  "ggml: enable gprof"                         
 # build
 option(GGML_FATAL_WARNINGS    "ggml: enable -Werror flag"    OFF)
 
+# ArifiLabs merge slots (see docs/OPTIONS-REGISTRY.md for scope, defaults and measurements)
+#
+# GGML_ARIFI_ROCMFPX_FORMATS compiles the ROCmFP4 / ROCmFPX serialized weight
+# formats (type-ids 100..104 and 107, adopted verbatim from charlie12345/ROCmFPX).
+# It is a BUILD-time gate, not an env var, on purpose: the CPU vec_dot entries are
+# selected from ggml-cpu's type_traits_cpu[] table at link time and would sit
+# outside any runtime toggle. OFF compiles the family out entirely; the type-ids
+# stay allocated and gguf.cpp then refuses such a file on `blck_size == 0`.
+# Default OFF: the mechanism targets Strix Halo / discrete AMD, not the 780M.
+option(GGML_ARIFI_ROCMFPX_FORMATS "ggml: ROCmFP4/ROCmFPX weight formats (type-ids 100-104, 107)" OFF)
+
 # sanitizers
 option(GGML_SANITIZE_THREAD    "ggml: enable thread sanitizer"    OFF)
 option(GGML_SANITIZE_ADDRESS   "ggml: enable address sanitizer"   OFF)
