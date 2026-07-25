@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib> // for std::getenv (ArifiLabs VNNI-repack advisory)
 #include <cstring>
 #include <ctime>
 #include <stdexcept>
@@ -312,6 +313,57 @@ static bool llama_prepare_model_devices(const llama_model_params & params, llama
     return true;
 }
 
+// ArifiLabs startup advisory - docs/HARDWARE-PROFILES.md.
+//
+// GGML_ARIFI_VNNI_REPACK ships OFF because it was measured on this fork's rig, where weights are
+// GPU-offloaded and turning it on costs 77-88% of prompt throughput. On a CPU-only path the same
+// toggle is the largest win in the fork. That is a DISCLOSURE gap, not a wrong default: the person
+// it would help has no way to find out. So the fork says it once, and changes nothing.
+//
+// The predicate is deliberately not "is a GPU present". It is "did this load end up with zero
+// offload devices", which is the state in which the repack buffer is both reachable and measured
+// to help. It is evaluated here because this is the first point where device selection and final
+// tensor types are both known, and the last point before the expensive part of the load.
+static void llama_arifi_vnni_repack_advisory(const llama_model_loader & ml, const llama_model * model,
+        const llama_model_params & params) {
+    if (params.no_alloc) {
+        return; // memory-estimation pass, not a run; llama-server does one before the real load
+    }
+    if (!model->devices.empty()) {
+        return; // something offloads, and ON would cost prompt throughput there
+    }
+    if (!params.use_extra_bufts) {
+        return; // CPU_REPACK is not in the buffer-type list at all, so the toggle cannot engage
+    }
+    if (std::getenv("GGML_ARIFI_VNNI_REPACK") != nullptr) {
+        return; // the caller already decided, either way
+    }
+
+    // GGML_TYPE_Q2_0_G128 is excluded on purpose: the loader has already remapped it away from
+    // GGML_TYPE_Q2_0, and every repack kernel is hard-wired to 64-value blocks, so the toggle
+    // provably does nothing for a g128 file. Advising it there would be a false advisory.
+    size_t n_repackable = 0;
+    for (const auto & it : ml.weights_map) {
+        const ggml_type type = it.second.tensor->type;
+        if (type == GGML_TYPE_Q1_0 || type == GGML_TYPE_Q2_0) {
+            n_repackable++;
+        }
+    }
+    if (n_repackable == 0) {
+        return;
+    }
+
+    LLAMA_LOG_INFO("%s: ArifiLabs advisory: no offload device was selected and this model carries "
+            "%zu Q1_0/Q2_0 tensor(s)\n", __func__, n_repackable);
+    LLAMA_LOG_INFO("%s: ArifiLabs advisory: GGML_ARIFI_VNNI_REPACK=1 measured prompt +326.7%% / "
+            "+441.8%% and decode +19.9%% / +23.6%% on a CPU-only path (two g64 models, ArifiLabs "
+            "rig, 2026-07-24). UNMEASURED on any other machine\n", __func__);
+    LLAMA_LOG_INFO("%s: ArifiLabs advisory: it ships OFF because it costs prompt -77.1%% / -88.1%% "
+            "when weights are GPU-offloaded, which is the rig it was measured on. NOTHING HAS BEEN "
+            "CHANGED - set it yourself, or pass --arifi-profile cpu-only. docs/HARDWARE-PROFILES.md\n",
+            __func__);
+}
+
 // Returns 0 on success, -1 on error, and -2 on cancellation via llama_progress_callback
 static std::pair<int, llama_model *> llama_model_load(struct gguf_context * metadata, llama_model_set_tensor_data_t set_tensor_data, void * set_tensor_data_ud,
         const std::string & fname, std::vector<std::string> & splits, FILE * file, llama_model_params & params) {
@@ -365,6 +417,8 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
             LLAMA_LOG_INFO("%s: vocab only - skipping tensors\n", __func__);
             return {0, model_ptr.release()};
         }
+
+        llama_arifi_vnni_repack_advisory(ml, model_ptr.get(), params);
 
         if (!model->load_tensors(ml)) {
             return {-2, nullptr};

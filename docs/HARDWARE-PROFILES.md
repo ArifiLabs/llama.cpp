@@ -32,20 +32,103 @@ registry's `GGML_ARIFI_VNNI_REPACK` row.
 
 ---
 
+## Two mechanisms ship for this
+
+Both are **opt-in or informational**. Neither changes a shipped default, and neither exists to
+guess: they exist so the thing you would have had to discover in a benchmark is on your screen
+before the model finishes loading.
+
+### 1. `--arifi-profile NAME` (also `LLAMA_ARG_ARIFI_PROFILE`)
+
+`cpu-only` or `gpu-offload`. Sets a documented group of runtime toggles and prints every one of
+them, with the evidence, before anything loads:
+
+```
+$ llama-server --arifi-profile cpu-only -m model.gguf
+arifi profile: 'cpu-only' selected - no GPU backend in use - every matmul runs on the CPU
+arifi profile: evidence for every line below is docs/HARDWARE-PROFILES.md and docs/OPTIONS-REGISTRY.md
+arifi profile:   GGML_ARIFI_VNNI_REPACK=1 - measured on a CPU-only path: prompt +326.7% / +441.8% ...
+arifi profile:   GGML_SCHED_PREFETCH_EXPERTS=0 - nothing is offloaded, so there is no host-to-device ...
+arifi profile:   GGML_ARIFI_ROCMFPX_FORMATS is build-time, compiled OFF, NOT settable here - ...
+arifi profile: no shipped default was changed by this fork; a profile is opt-in and sets only the ...
+```
+
+Rules it obeys:
+
+- **A variable you set yourself always wins.** The profile logs `KEPT - your environment wins` at
+  warning level and moves on. A profile never overrides an explicit choice.
+- **An unknown name is a hard error**, naming the profiles that exist. It never falls back.
+- **`gpu-offload` changes no behaviour at all.** `GGML_ARIFI_VNNI_REPACK=0` and unset are the same
+  branch. It exists so a benchmark log states what was in effect instead of implying it.
+- **Build-time options are reported, never set** - see below.
+- It must be applied before the first model load, which is why it lives in the argument parser:
+  the toggles latch into function-local statics the first time a tensor buffer is initialised.
+
+Only one thing differs from shipped defaults in either profile: `cpu-only` sets
+`GGML_ARIFI_VNNI_REPACK=1`, and only because you asked for it by name.
+
+### 2. A startup advisory, when the defaults are wrong for you
+
+If a load ends with **no offload device**, the model carries **Q1_0/Q2_0 tensors**, and you have
+**not** set the toggle either way, the fork says so once and changes nothing:
+
+```
+llama_arifi_vnni_repack_advisory: ArifiLabs advisory: no offload device was selected and this model carries 168 Q1_0/Q2_0 tensor(s)
+llama_arifi_vnni_repack_advisory: ArifiLabs advisory: GGML_ARIFI_VNNI_REPACK=1 measured prompt +326.7% / +441.8% and decode +19.9% / +23.6% on a CPU-only path (two g64 models, ArifiLabs rig, 2026-07-24). UNMEASURED on any other machine
+llama_arifi_vnni_repack_advisory: ArifiLabs advisory: it ships OFF because it costs prompt -77.1% / -88.1% when weights are GPU-offloaded, which is the rig it was measured on. NOTHING HAS BEEN CHANGED - set it yourself, or pass --arifi-profile cpu-only. docs/HARDWARE-PROFILES.md
+```
+
+The predicate is **not** "is a GPU present". It is "did this load end up with zero offload
+devices", evaluated after device selection and before tensors load - the first moment the question
+is actually answerable, and the last moment before the expensive part of the load. It is silent on
+a GPU path, silent when you have already decided, silent for a model with no Q1_0/Q2_0 tensors,
+and silent during the memory-estimation pass `llama-server` runs before the real load.
+
+`GGML_TYPE_Q2_0_G128` deliberately does **not** count. The loader has already remapped it away
+from `Q2_0` and every repack kernel is hard-wired to 64-value blocks, so the toggle provably does
+nothing there; advising it would be a false advisory.
+
+> The advisory is a library-level `INFO` log. `llama-server` filters those out at its default
+> verbosity - raise it (`-lv 9`) if you do not see it.
+
+### Build-time options are never faked
+
+`GGML_ARIFI_ROCMFPX_FORMATS` is a **CMake option**, not a runtime toggle: its `vec_dot` lives in
+`type_traits_cpu[]` and is chosen when the binary is linked. A profile that claimed to flip it at
+runtime would be wrong on arrival, so:
+
+- profiles **report** it (`is build-time, compiled OFF, NOT settable here`) and never set it;
+- setting it in the environment produces a **warning that it is being ignored**, whether or not a
+  profile was selected, because the trap does not require a profile to fall into.
+
+---
+
 ## Pick your profile
 
 ### CPU-only (no GPU backend compiled, or `-dev none`)
 
+`--arifi-profile cpu-only` sets the first two rows for you and prints what it did. The rest are
+your call, for the reasons in "What is still not implemented" below.
+
 | Setting | Value | Why |
 |---|---|---|
-| `GGML_ARIFI_VNNI_REPACK` | **`1`** — change this | The single largest CPU-only win in the fork. Requires a **g64** Q1_0/Q2_0 model, and `--no-host` on a Vulkan-enabled build. |
-| thecodacus prefetch (`GGML_SCHED_PREFETCH_EXPERTS`) | leave OFF | There is no host→device transfer to hide. |
+| `GGML_ARIFI_VNNI_REPACK` | **`1`** - change this | The single largest CPU-only win in the fork. Requires a **g64** Q1_0/Q2_0 model. |
+| thecodacus prefetch (`GGML_SCHED_PREFETCH_EXPERTS`) | leave OFF | There is no host-to-device transfer to hide. |
 | `--ctx-checkpoints 0` | keep | Largest historical gain; not hardware-specific. |
-| KV cache | f16, or `q4_0` for capacity | Not `turbo*` — see the KV row below. |
+| KV cache | f16, or `q4_0` for capacity | Not `turbo*` - see the KV row below. |
 | `GGML_ARIFI_ROCMFPX_FORMATS` | OFF unless you have such a file | Build-time. These types are CPU-only anyway, so a CPU-only host is the one place they cost nothing extra. |
 
-> Caution: `--no-host` is what makes `CPU_REPACK` reachable — and also what exposes upstream's
-> 8×8 repack crash (`0xC0000005`). See [`BUILDING.md` §7](BUILDING.md#7-troubleshooting).
+> **`--no-host` is about which case you are in, not about the toggle.** `make_cpu_buft_list()`
+> only inserts a device host buffer type by iterating the *selected offload devices*. With none
+> selected - `-dev none`, or a build with no GPU backend - the list is empty, nothing outranks the
+> CPU extra buffer types, and `CPU_REPACK` is reachable without `--no-host`. Verified: `-dev none
+> --arifi-profile cpu-only` and no `--no-host` puts 95.98 MiB into `CPU_REPACK` on
+> `qwen2.5-0.5b-instruct-Q2_0-g64.gguf`, against 0.00 MiB with the toggle off.
+>
+> `--no-host` *is* required in the mixed case, where a GPU device is selected but you push the
+> weights back with `-ngl 0` - which is exactly the condition the measurements above were taken
+> in. It is also what exposes upstream's 8x8 repack crash (`0xC0000005`). See
+> [`BUILDING.md` section 7](BUILDING.md#7-troubleshooting).
 
 ### AMD unified memory + Vulkan (the rig everything was measured on)
 
@@ -103,13 +186,24 @@ worth stating rather than hiding:
 3. **It would change a measured default with no measurement behind the change.** This fork's own
    rule is that a default flips only on evidence. Auto-detection has none yet.
 
-**The proposal we would accept**, in order of preference:
+Those three reasons still stand, and auto-detection is still **not implemented**. What shipped
+instead are the two mechanisms above: `--arifi-profile`, and the startup advisory. Both are
+explicit, both are greppable, neither adds a cross-backend dependency, and neither moves a
+measured default without a measurement.
 
-- **Named profiles.** `--arifi-profile cpu-only|gpu-offload` resolving to a documented flag set,
-  logged verbatim at startup so any benchmark record shows what was actually in effect. Explicit,
-  greppable, no silent behaviour, no cross-backend dependency.
-- **A startup advisory.** When the CPU backend is the only one registered *and* the model contains
-  Q1_0/Q2_0 tensors *and* the toggle is unset, log one line naming the flag and its measured
-  effect. Changes nothing, costs nothing, and closes the discovery gap for the person it affects.
+### What is still not implemented
 
-Both are small. Neither has been implemented, and this paragraph is not a claim that they have.
+- **Runtime auto-detection.** Nothing flips `GGML_ARIFI_VNNI_REPACK` for you, ever. The advisory
+  tells you; you decide.
+- **Profiles for anything but the two CPU/GPU cases.** There is no `nvidia`, no `discrete-gpu`, no
+  `unified-memory` profile, because there is no measurement on that hardware to build one from.
+- **Everything else in the table below** stays manual: KV cache type, `--ctx-checkpoints`, MTP,
+  DSpark, PowerInfer expert streaming, `POWERINFER_IOCP`, `MAX_N_CACHED`,
+  `GGML_RECURRENT_STATE_F16`. A profile may only contain settings this fork has measured and can
+  defend; most of these have a verdict of UNMEASURED, UNRESOLVED, or "depends on your model", and
+  a profile that bundled them would be inventing a recommendation.
+- **`GGML_SCHED_PREFETCH_EXPERTS` in `gpu-offload`.** Its author measured `+64.5%` prefill in the
+  host-offloaded `-cmoe` regime; on our unified-memory rig it measured inert. Two different
+  answers, neither of them ours to generalise, so the profile does not touch it on a GPU path.
+- **Any measurement off this rig.** Every number quoted by the profile and the advisory was
+  measured on one machine. That is stated in the log text itself, not just here.

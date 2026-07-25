@@ -56,6 +56,8 @@ set(TARGET llama-common)
 add_library(${TARGET}
     arg.cpp
     arg.h
+    arifi-profile.cpp
+    arifi-profile.h
     base64.hpp
     chat-auto-parser-generator.cpp
     chat-auto-parser-helpers.cpp
