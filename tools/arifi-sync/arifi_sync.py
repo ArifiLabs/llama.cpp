@@ -209,15 +209,47 @@ def gates_in_commit(repo: str, sha: str) -> list:
     return found
 
 
-def format_patch(repo: str, base: str, ref: str, outdir: str) -> list:
-    """Generate the series. --binary is MANDATORY: commit d09d083aa vendors 19 binary files
-    (PowerInfer's cli11/fmt test fixtures and images) and without it git am cannot apply them.
+def format_patch(repo: str, cfg: dict, base: str, ref: str, outdir: str) -> list:
+    """Generate the series. Three generation rules are load-bearing:
+
+    --binary is MANDATORY: commit d09d083aa vendors 19 binary files (PowerInfer's cli11/fmt test
+    fixtures and images) and without it git am cannot apply them.
+
     --no-signature is MANDATORY: otherwise every patch ends with the local git version and the
-    integrity check breaks the day git is upgraded."""
+    integrity check breaks the day git is upgraded.
+
+    ':(exclude)<series_dir>' is MANDATORY, and is what makes the artifact CONVERGE. The series is
+    committed inside the tree it describes. Without the exclusion, regenerating emits a patch
+    whose content is the patch files, committing that changes the series, regenerating emits a
+    patch for THAT commit, and so on: `series check --ref master` can never pass, because the
+    commit that publishes the series is by construction never inside the series it published. A
+    self-containing patch is impossible - format-patch writes the commit's own sha into its
+    `From` line. Excluding the generated directory makes a commit that touches only the series a
+    no-op for generation, so the second regeneration produces zero diff and the fixpoint is real.
+
+    This rule was stated in commit 5d1486012 ("The generated series excludes patches/series/ so
+    that the artifact converges") but was never implemented here; the committed series was
+    hand-filtered to match. It is now enforced in code."""
     os.makedirs(outdir, exist_ok=True)
     _, out, _ = git(repo, "format-patch", "--binary", "--no-signature", "-N",
-                    "--output-directory", outdir, "%s..%s" % (base, ref))
+                    "--output-directory", outdir, "%s..%s" % (base, ref),
+                    "--", ":(exclude)%s" % cfg["series_dir"])
     return [l.strip() for l in out.splitlines() if l.strip()]
+
+
+def patch_sha(path: str) -> str:
+    """The commit a generated patch came from, read from its own `From <sha>` header.
+
+    Attribution is read back out of the artifact rather than re-derived by zipping the file list
+    against `git rev-list`. The zip was silently order-dependent and could not survive a generator
+    that legitimately drops commits (see format_patch): it would have mis-attributed every row
+    after the first dropped commit while still passing its own length check."""
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        first = fh.readline().strip()
+    m = re.match(r"^From ([0-9a-f]{40}) ", first)
+    if not m:
+        raise Loud("patch has no 'From <sha>' header, cannot attribute it: %s" % path)
+    return m.group(1)
 
 
 def series_files(directory: str) -> list:
@@ -227,13 +259,26 @@ def series_files(directory: str) -> list:
                   if re.match(r"^\d{4}-.*\.patch$", f))
 
 
-def build_manifest(repo: str, cfg: dict, ref: str, files: list) -> str:
+def build_manifest(repo: str, cfg: dict, ref: str, files: list, outdir: str) -> str:
     base = cfg["base"]["upstream_sha"]
     tag = cfg["base"]["upstream_tag"]
-    shas = gout(repo, "rev-list", "--reverse", "%s..%s" % (base, ref)).split()
-    if len(shas) != len(files):
-        raise Loud("series/commit count mismatch: %d patches vs %d commits"
-                   % (len(files), len(shas)))
+    shas = [patch_sha(os.path.join(outdir, fn)) for fn in files]
+    allshas = gout(repo, "rev-list", "--reverse", "%s..%s" % (base, ref)).split()
+    for sha in shas:
+        if sha not in allshas:
+            raise Loud("patch attributes itself to %s, which is not in %s..%s"
+                       % (sha[:9], base[:9], ref))
+    dropped = [s for s in allshas if s not in shas]
+
+    # Which patch carries the binary payload, read off the artifact rather than remembered. The
+    # previous manifest hardcoded `0008`; the real one is whichever file contains a GIT binary
+    # patch, and it moves whenever a commit is added ahead of it.
+    binpatch = "-"
+    for fn in files:
+        with open(os.path.join(outdir, fn), encoding="utf-8", errors="replace") as fh:
+            if "GIT binary patch" in fh.read():
+                binpatch = fn.split("-", 1)[0]
+                break
 
     rows, unclassified = [], []
     for fn, sha in zip(files, shas):
@@ -271,16 +316,50 @@ def build_manifest(repo: str, cfg: dict, ref: str, files: list) -> str:
     L.append("git am patches/series/*.patch")
     L.append("```")
     L.append("")
-    L.append("The result is byte-identical to `master`: same tree object, same 38 commit messages,")
-    L.append("same provenance trailers. Verified, not asserted - `series check` proves it on demand.")
+    L.append("The result is byte-identical to `master` everywhere outside `%s` itself:"
+             % cfg["series_dir"])
+    L.append("same file contents, same %d commit messages, same provenance trailers. Verified, not"
+             % len(files))
+    L.append("asserted - `series check` replays the series with `git am` and diffs the result against")
+    L.append("`master` on every run.")
     L.append("")
-    L.append("Two generation flags are load-bearing and must never be dropped:")
+    L.append("## Why the series excludes itself")
     L.append("")
-    L.append("- `--binary` - patch `0008` vendors 19 binary files (PowerInfer's bundled cli11/fmt")
+    L.append("`%s` is generated INTO the tree it describes, so it is excluded from its own"
+             % cfg["series_dir"])
+    L.append("generation with `':(exclude)%s'`. This is not tidiness, it is what makes the"
+             % cfg["series_dir"])
+    L.append("artifact converge. Include it, and regenerating emits a patch whose content is the patch")
+    L.append("files; committing that changes the series; regenerating emits a patch for THAT commit,")
+    L.append("forever. The commit that publishes the series can never be inside the series it")
+    L.append("published - a self-containing patch is impossible, since `format-patch` writes the")
+    L.append("commit's own sha into its `From` line. With the exclusion, a commit touching only the")
+    L.append("series generates nothing, the next regeneration produces zero diff, and `series check`")
+    L.append("can actually pass.")
+    L.append("")
+    if dropped:
+        L.append("Commits excluded by that rule in the current range (they change only `%s`):"
+                 % cfg["series_dir"])
+        L.append("")
+        for sha in dropped:
+            L.append("- `%s` %s" % (sha[:9], gout(repo, "log", "-1", "--format=%s", sha)))
+        L.append("")
+    L.append("## Load-bearing generation flags")
+    L.append("")
+    L.append("Never drop any of these:")
+    L.append("")
+    L.append("- `--binary` - patch `%s` vendors 19 binary files (PowerInfer's bundled cli11/fmt"
+             % binpatch)
     L.append("  fixtures and images). Without `--binary` `git format-patch` emits *\"Binary files")
     L.append("  differ\"* and `git am` cannot apply the series at all.")
     L.append("- `--no-signature` - otherwise every patch is terminated with the local git version")
     L.append("  string, and the integrity check starts failing the day git is upgraded.")
+    L.append("- `':(exclude)%s'` - see above; without it there is no fixpoint."
+             % cfg["series_dir"])
+    L.append("")
+    L.append("`.gitattributes` pins `patches/**` to `-text`, so these files are byte-identical in")
+    L.append("every clone. Without it, `core.autocrlf=true` (the Git-for-Windows default) checks them")
+    L.append("out as CRLF while `format-patch` writes LF, and the byte-compare cannot pass at all.")
     L.append("")
     L.append("## Flat numbering, grouped in the table")
     L.append("")
@@ -290,8 +369,11 @@ def build_manifest(repo: str, cfg: dict, ref: str, files: list) -> str:
     L.append("the order at the mercy of shell glob expansion. The grouping is metadata, and lives")
     L.append("in the table below and in `SERIES`.")
     L.append("")
-    L.append("`patches/series/ternary-g128/` is **not part of this series.** Those are PrismML's own")
-    L.append("format-patches, banked as *source material* for the port. Do not `git am` them.")
+    L.append("`patches/banked-source/` is **not part of this series.** Those are other projects' own")
+    L.append("format-patches, banked as *source material* for a port. Do not `git am` them. They were")
+    L.append("moved out of `%s` by `5d1486012` precisely because everything inside the"
+             % cfg["series_dir"])
+    L.append("generated directory is destroyed and rewritten on the next `series regen`.")
     L.append("")
     L.append("## The series")
     L.append("")
@@ -329,7 +411,7 @@ def cmd_series_regen(repo: str, cfg: dict, args) -> int:
     step("Regenerating %s from %s..%s" % (cfg["series_dir"], base[:9], args.ref))
     for old in series_files(outdir):
         os.remove(os.path.join(outdir, old))
-    made = format_patch(repo, base, args.ref, outdir)
+    made = format_patch(repo, cfg, base, args.ref, outdir)
     say("generated %d patches" % len(made))
 
     files = series_files(outdir)
@@ -340,7 +422,7 @@ def cmd_series_regen(repo: str, cfg: dict, args) -> int:
             fh.write(f + "\n")
     say("wrote SERIES (%d entries)" % len(files))
 
-    manifest = build_manifest(repo, cfg, args.ref, files)
+    manifest = build_manifest(repo, cfg, args.ref, files, outdir)
     with open(os.path.join(outdir, "MANIFEST.md"), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(manifest)
     say("wrote MANIFEST.md")
@@ -353,7 +435,7 @@ def cmd_series_check(repo: str, cfg: dict, args) -> int:
     step("Integrity check: regenerating the series and byte-comparing against %s" % cfg["series_dir"])
     tmp = tempfile.mkdtemp(prefix="arifi-series-")
     try:
-        format_patch(repo, base, args.ref, tmp)
+        format_patch(repo, cfg, base, args.ref, tmp)
         have = series_files(committed)
         want = series_files(tmp)
         rc = 0
@@ -384,12 +466,12 @@ def cmd_series_check(repo: str, cfg: dict, args) -> int:
         say("PASS: %d patches byte-identical to a fresh generation from git." % len(want))
 
         step("Replay check: git am the committed series onto %s" % base[:9])
-        return _replay(repo, cfg, base, committed, expect_tree=gout(repo, "rev-parse", args.ref + "^{tree}"))
+        return _replay(repo, cfg, base, committed, expect_ref=args.ref)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _replay(repo: str, cfg: dict, onto: str, series_path: str, expect_tree: str = "") -> int:
+def _replay(repo: str, cfg: dict, onto: str, series_path: str, expect_ref: str = "") -> int:
     """Replay the series onto `onto` in a throwaway worktree. Loud, per-patch, never auto-resolves."""
     files = [os.path.join(series_path, f) for f in series_files(series_path)]
     if not files:
@@ -436,11 +518,22 @@ def _replay(repo: str, cfg: dict, onto: str, series_path: str, expect_tree: str 
         tip = gout(wt, "rev-parse", "HEAD")
         tree = gout(wt, "rev-parse", "HEAD^{tree}")
         say("\nreplayed %d patches cleanly -> %s (tree %s)" % (len(files), tip[:9], tree[:9]))
-        if expect_tree:
-            if tree == expect_tree:
-                say("PASS: replayed tree is IDENTICAL to the reference tree.")
+        if expect_ref:
+            # The series excludes its own directory (see format_patch), so the replayed tree
+            # legitimately lacks it. Everything else must match the reference to the byte, and
+            # that is asserted by a real diff rather than by trusting the patch count.
+            expect = gout(repo, "rev-parse", expect_ref)
+            rc, out, _ = git(wt, "diff", "--stat", expect, "HEAD",
+                             "--", ".", ":(exclude)%s" % cfg["series_dir"], check=False)
+            if rc == 0 and not out.strip():
+                say("PASS: replayed tree is IDENTICAL to %s outside %s"
+                    % (expect_ref, cfg["series_dir"]))
+                say("      (reference tree %s, replayed tree %s - they differ only by the"
+                    % (gout(repo, "rev-parse", expect_ref + "^{tree}")[:9], tree[:9]))
+                say("       generated series itself, which by construction cannot contain itself)")
             else:
-                say("FAIL: replayed tree %s != reference %s" % (tree[:9], expect_tree[:9]))
+                say("FAIL: replayed tree differs from %s outside %s:" % (expect_ref, cfg["series_dir"]))
+                say(out or "(git diff failed)")
                 return 1
         return 0
     finally:

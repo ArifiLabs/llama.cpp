@@ -1,0 +1,15 @@
+# ArifiLabs: patches/ holds byte-exact artifacts, not ordinary text.
+#
+# `tools/arifi-sync/arifi_sync.py series check` regenerates the series with `git format-patch`
+# and BYTE-COMPARES it against what is committed. format-patch always writes LF. On Windows,
+# where core.autocrlf=true is the Git-for-Windows install default, these files would be checked
+# out as CRLF and the byte-compare could never pass on any clone - patch 0001 measured 61570
+# bytes with 1132 CR against a freshly generated 60438 with 0, byte-equal after normalisation.
+#
+# `-text` disables end-of-line conversion in both directions, so what git stores is what lands on
+# disk, on every platform and in every clone. It is the correct setting for generated and banked
+# patch files: the bytes ARE the artifact, and `git am` consumes them verbatim.
+#
+# `diff` is set alongside it so `-text` does not cost reviewability: git still renders these as
+# text in diffs instead of reporting "Binary files differ".
+patches/** -text diff
