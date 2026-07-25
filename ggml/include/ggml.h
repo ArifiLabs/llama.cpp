@@ -431,6 +431,26 @@ extern "C" {
         GGML_TYPE_Q1_0    = 41,
         GGML_TYPE_Q2_0    = 42,
         GGML_TYPE_Q2_0_G128 = 43, // Q2_0 wire format with 128 values/block
+        // ---------------------------------------------------------------------
+        // ArifiLabs type-ID allocation. THE CONTRACT IS docs/TYPE-ID-ALLOCATION.md
+        // — read it before adding any value here. Summary of the binding rules:
+        //
+        //   * SERIALIZED weight formats keep the id their originator wrote into
+        //     files. Never renumber an imported format. Reserved so far:
+        //       45,46      TurboQuant TQ3_1S / TQ4_1S
+        //       100..104   ROCmFP4 / ROCmFPX weight formats
+        //       107        ROCmFPX Q2_0_ROCMFPX
+        //   * RUNTIME-ONLY types (KV codecs, repack layouts — anything that never
+        //     enters a GGUF) belong in the ArifiLabs block 200..255. Do NOT place
+        //     them near the weight ids: TurboQuant's 34-byte/128-value KV block is
+        //     byte-identical to block_q2_0_g128, so geometry cannot separate them.
+        //   * 44 is deliberately left as a hole (see the doc, §3.1).
+        //   * Anything placed in 43..99 is on a collision course with upstream,
+        //     whose GGML_TYPE_COUNT is 43 and grows into this range.
+        //
+        // Adding a type is NOT one line: walk the dispatch checklist in §7 of the
+        // doc. A missing CPU switch case compiles clean and aborts at RUNTIME.
+        // ---------------------------------------------------------------------
         GGML_TYPE_COUNT   = 44,
     };
 
