@@ -5718,6 +5718,13 @@ class GGMLQuantizationType(IntEnum):
     NVFP4   = 40
     Q1_0    = 41
     Q2_0    = 42
+    # ROCmFPX weight formats. Taken-from: charlie12345/ROCmFPX@3edc3d31e.
+    Q4_0_ROCMFP4      = 100
+    Q4_0_ROCMFP4_FAST = 101
+    Q6_0_ROCMFPX      = 102
+    Q8_0_ROCMFPX      = 103
+    Q3_0_ROCMFPX      = 104
+    Q2_0_ROCMFPX      = 107
 
 
 class ExpertGatingFuncType(IntEnum):
@@ -5774,6 +5781,25 @@ class LlamaFileType(IntEnum):
     MOSTLY_NVFP4         = 39  # except 1d tensors
     MOSTLY_Q1_0          = 40  # except 1d tensors
     MOSTLY_Q2_0          = 41  # except 1d tensors
+    # ROCmFPX file types (base formats only - the LEAN/COHERENT/STRIX/AGENT
+    # recipe ftypes 101,102,104,105,106,113-117 are a separate mechanism).
+    MOSTLY_Q4_0_ROCMFP4      = 100  # except 1d tensors
+    MOSTLY_Q4_0_ROCMFP4_FAST = 103  # except 1d tensors
+    MOSTLY_Q6_0_ROCMFPX      = 110  # except 1d tensors
+    MOSTLY_Q8_0_ROCMFPX      = 111  # except 1d tensors
+    MOSTLY_Q3_0_ROCMFPX      = 112  # except 1d tensors
+    MOSTLY_Q2_0_ROCMFPX      = 119  # except 1d tensors
+    # ROCmFPX recipe file types - ids only; the recipe logic is a separate mechanism.
+    MOSTLY_Q4_0_ROCMFP4_LEAN          = 101
+    MOSTLY_Q4_0_ROCMFP4_COHERENT      = 102
+    MOSTLY_Q4_0_ROCMFP4_FAST_COHERENT = 104
+    MOSTLY_Q4_0_ROCMFP4_STRIX         = 105
+    MOSTLY_Q4_0_ROCMFP4_STRIX_LEAN    = 106
+    MOSTLY_Q3_0_ROCMFPX_AGENT         = 113
+    MOSTLY_Q6_0_ROCMFPX_AGENT         = 114
+    MOSTLY_Q8_0_ROCMFPX_AGENT         = 115
+    MOSTLY_Q6_0_ROCMFPX_LEAN          = 116
+    MOSTLY_Q6_0_ROCMFPX_AGENT_LEAN    = 117
 
     GUESSED              = 1024  # not specified in the model file
 
@@ -5912,6 +5938,12 @@ GGML_QUANT_SIZES: dict[GGMLQuantizationType, tuple[int, int]] = {
     GGMLQuantizationType.NVFP4:   (64, 4 + 32),
     GGMLQuantizationType.Q1_0:    (128, 2 + 16),
     GGMLQuantizationType.Q2_0:    (64, 2 + 16),
+    GGMLQuantizationType.Q4_0_ROCMFP4:      (32, 2 + 16),
+    GGMLQuantizationType.Q4_0_ROCMFP4_FAST: (32, 1 + 16),
+    GGMLQuantizationType.Q6_0_ROCMFPX:      (32, 24 + 2),
+    GGMLQuantizationType.Q8_0_ROCMFPX:      (32, 32 + 1),
+    GGMLQuantizationType.Q3_0_ROCMFPX:      (32, 12 + 2),
+    GGMLQuantizationType.Q2_0_ROCMFPX:      (32, 8 + 2),
 }
 
 

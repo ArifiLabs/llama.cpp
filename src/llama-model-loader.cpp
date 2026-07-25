@@ -39,6 +39,28 @@ const char * llama_ftype_name(llama_ftype ftype) {
         case LLAMA_FTYPE_MOSTLY_BF16:      name = LLAMA_FTYPE_PREFIX "BF16"; break;
         case LLAMA_FTYPE_MOSTLY_Q1_0:      name = LLAMA_FTYPE_PREFIX "Q1_0"; break;
         case LLAMA_FTYPE_MOSTLY_Q2_0:      name = LLAMA_FTYPE_PREFIX "Q2_0"; break;
+        // ROCmFPX file types. Named unconditionally, even when
+        // GGML_ARIFI_ROCMFPX_FORMATS is OFF: a file may carry the metadata value
+        // regardless of what this build can decode, and "unknown, may not work"
+        // would be a worse diagnostic than the real name.
+        // Taken-from: charlie12345/ROCmFPX@3edc3d31e (src/llama-model-loader.cpp).
+        case LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4:      name = LLAMA_FTYPE_PREFIX "Q4_0_ROCMFP4"; break;
+        case LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_FAST: name = LLAMA_FTYPE_PREFIX "Q4_0_ROCMFP4_FAST"; break;
+        case LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX:      name = LLAMA_FTYPE_PREFIX "Q6_0_ROCMFPX"; break;
+        case LLAMA_FTYPE_MOSTLY_Q8_0_ROCMFPX:      name = LLAMA_FTYPE_PREFIX "Q8_0_ROCMFPX"; break;
+        case LLAMA_FTYPE_MOSTLY_Q3_0_ROCMFPX:      name = LLAMA_FTYPE_PREFIX "Q3_0_ROCMFPX"; break;
+        case LLAMA_FTYPE_MOSTLY_Q2_0_ROCMFPX:      name = LLAMA_FTYPE_PREFIX "Q2_0_ROCMFPX"; break;
+        // ROCmFPX recipe file types - named only; no recipe logic is ported.
+        case LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_LEAN:          name = LLAMA_FTYPE_PREFIX "Q4_0_ROCMFP4_LEAN"; break;
+        case LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_COHERENT:      name = LLAMA_FTYPE_PREFIX "Q4_0_ROCMFP4_COHERENT"; break;
+        case LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_FAST_COHERENT: name = LLAMA_FTYPE_PREFIX "Q4_0_ROCMFP4_FAST_COHERENT"; break;
+        case LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_STRIX:         name = LLAMA_FTYPE_PREFIX "Q4_0_ROCMFP4_STRIX"; break;
+        case LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_STRIX_LEAN:    name = LLAMA_FTYPE_PREFIX "Q4_0_ROCMFP4_STRIX_LEAN"; break;
+        case LLAMA_FTYPE_MOSTLY_Q3_0_ROCMFPX_AGENT:         name = LLAMA_FTYPE_PREFIX "Q3_0_ROCMFPX_AGENT"; break;
+        case LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX_AGENT:         name = LLAMA_FTYPE_PREFIX "Q6_0_ROCMFPX_AGENT"; break;
+        case LLAMA_FTYPE_MOSTLY_Q8_0_ROCMFPX_AGENT:         name = LLAMA_FTYPE_PREFIX "Q8_0_ROCMFPX_AGENT"; break;
+        case LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX_LEAN:          name = LLAMA_FTYPE_PREFIX "Q6_0_ROCMFPX_LEAN"; break;
+        case LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX_AGENT_LEAN:    name = LLAMA_FTYPE_PREFIX "Q6_0_ROCMFPX_AGENT_LEAN"; break;
         case LLAMA_FTYPE_MOSTLY_Q4_0:      name = LLAMA_FTYPE_PREFIX "Q4_0"; break;
         case LLAMA_FTYPE_MOSTLY_Q4_1:      name = LLAMA_FTYPE_PREFIX "Q4_1"; break;
         case LLAMA_FTYPE_MOSTLY_Q5_0:      name = LLAMA_FTYPE_PREFIX "Q5_0"; break;
@@ -960,6 +982,15 @@ llama_model_loader::llama_model_loader(
             case GGML_TYPE_Q1_0:    ftype = LLAMA_FTYPE_MOSTLY_Q1_0;    break;
             case GGML_TYPE_Q2_0:    ftype = LLAMA_FTYPE_MOSTLY_Q2_0;    break;
             case GGML_TYPE_Q2_0_G128: ftype = LLAMA_FTYPE_MOSTLY_Q2_0;  break;
+#ifdef GGML_ARIFI_ROCMFPX_FORMATS
+            // Taken-from: charlie12345/ROCmFPX@3edc3d31e (src/llama-model-loader.cpp).
+            case GGML_TYPE_Q4_0_ROCMFP4:      ftype = LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4;      break;
+            case GGML_TYPE_Q4_0_ROCMFP4_FAST: ftype = LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4_FAST; break;
+            case GGML_TYPE_Q3_0_ROCMFPX:      ftype = LLAMA_FTYPE_MOSTLY_Q3_0_ROCMFPX;      break;
+            case GGML_TYPE_Q2_0_ROCMFPX:      ftype = LLAMA_FTYPE_MOSTLY_Q2_0_ROCMFPX;      break;
+            case GGML_TYPE_Q6_0_ROCMFPX:      ftype = LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX;      break;
+            case GGML_TYPE_Q8_0_ROCMFPX:      ftype = LLAMA_FTYPE_MOSTLY_Q8_0_ROCMFPX;      break;
+#endif
             default:
                 {
                     LLAMA_LOG_WARN("%s: unknown type %s\n", __func__, ggml_type_name(type_max));
