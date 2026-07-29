@@ -5662,8 +5662,9 @@ static const ggml::cpu::tensor_traits * ggml_arifi_dual_shadow_ensure(const stru
     GGML_LOG_DEBUG("%s: CPU_REPACK_DUAL shadow for %s (%zu bytes, total %.2f MiB)\n", __func__,
                    src0->name, size, g_arifi_dual_bytes / 1024.0 / 1024.0);
     if (before == 0 || (before >> 26) != (g_arifi_dual_bytes >> 26)) {
+        // size() already counts the record emplaced just above — no +1.
         GGML_LOG_INFO("%s: CPU_REPACK_DUAL shadow buffer size = %8.2f MiB (%zu tensors so far)\n",
-                      __func__, g_arifi_dual_bytes / 1024.0 / 1024.0, g_arifi_dual_shadows.size() + 1);
+                      __func__, g_arifi_dual_bytes / 1024.0 / 1024.0, g_arifi_dual_shadows.size());
     }
     return traits;
 }

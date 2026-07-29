@@ -232,8 +232,9 @@ Three ways out, none free, all recorded rather than assumed:
    prefill — it never loses it.** Decode reaches mode 1's win to within the noise.
 
    Cost, and it is printed rather than estimated: the shadow is **4.68 / 84.16 / 95.98 MiB** on the
-   4-, 72- and 168-tensor models — byte-for-byte what mode 1 puts in its own buffer, which is an
-   independent check that the two modes select the same tensors.
+   4-, 72- and 168-tensor models — byte-for-byte what mode 1 puts in its own buffer. The per-tensor
+   log rows make that check stronger than a byte total: **4 / 72 / 168 distinct tensor names**, so
+   the two modes are confirmed to select the same tensor *set*, not merely the same number of bytes.
 
    Quality: unchanged, and tested at the layer where it can actually be tested. With
    `--no-op-offload` — which pins mode 2's prefill to the CPU exactly like mode 1's, isolating the
