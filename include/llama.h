@@ -157,6 +157,12 @@ extern "C" {
         LLAMA_FTYPE_MOSTLY_Q1_0          = 40, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_Q2_0          = 41, // except 1d tensors
 
+        // TurboQuant file types, adopted VERBATIM from llama-cpp-turboquant@c26cbdffc so
+        // its artifacts report the same general.file_type we do. Unconditional enum values;
+        // the quantizer wiring behind them compiles only with GGML_ARIFI_TURBO_WEIGHT_QUANTS.
+        LLAMA_FTYPE_MOSTLY_TQ3_1S        = 43, // except 1d tensors
+        LLAMA_FTYPE_MOSTLY_TQ4_1S        = 44, // except 1d tensors
+
         // ROCmFPX file types, adopted VERBATIM from charlie12345/ROCmFPX@3edc3d31e
         // so that its artifacts report the same general.file_type we do.
         // These are unconditional enum values (they may appear in any GGUF's

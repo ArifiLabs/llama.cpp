@@ -975,6 +975,10 @@ llama_model_loader::llama_model_loader(
             case GGML_TYPE_Q1_0:    ftype = LLAMA_FTYPE_MOSTLY_Q1_0;    break;
             case GGML_TYPE_Q2_0:    ftype = LLAMA_FTYPE_MOSTLY_Q2_0;    break;
             case GGML_TYPE_Q2_0_G128: ftype = LLAMA_FTYPE_MOSTLY_Q2_0;  break;
+#ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
+            case GGML_TYPE_TQ3_1S:    ftype = LLAMA_FTYPE_MOSTLY_TQ3_1S; break;
+            case GGML_TYPE_TQ4_1S:    ftype = LLAMA_FTYPE_MOSTLY_TQ4_1S; break;
+#endif
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
             // Taken-from: charlie12345/ROCmFPX@3edc3d31e (src/llama-model-loader.cpp).
             case GGML_TYPE_Q4_0_ROCMFP4:      ftype = LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4;      break;

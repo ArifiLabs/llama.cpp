@@ -5613,6 +5613,28 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
             {
                 VALIDATE_ROW_DATA_D_F16_IMPL(block_q2_0_g128, data, nb);
             } break;
+#ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
+        // TurboQuant weight formats carry TWO half-block fp16 scales, so the single-`d`
+        // macro does not fit; check both fields per block.
+        case GGML_TYPE_TQ3_1S:
+            {
+                const block_tq3_1s * q = (const block_tq3_1s *) data;
+                for (size_t i = 0; i < nb; ++i) {
+                    if (!validate_fp16(q[i].d0, i) || !validate_fp16(q[i].d1, i)) {
+                        return false;
+                    }
+                }
+            } break;
+        case GGML_TYPE_TQ4_1S:
+            {
+                const block_tq4_1s * q = (const block_tq4_1s *) data;
+                for (size_t i = 0; i < nb; ++i) {
+                    if (!validate_fp16(q[i].d0, i) || !validate_fp16(q[i].d1, i)) {
+                        return false;
+                    }
+                }
+            } break;
+#endif
         case GGML_TYPE_Q4_0:
             {
                 VALIDATE_ROW_DATA_D_F16_IMPL(block_q4_0, data, nb);

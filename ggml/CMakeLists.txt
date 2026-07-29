@@ -143,6 +143,13 @@ option(GGML_FATAL_WARNINGS    "ggml: enable -Werror flag"    OFF)
 # Default OFF: the mechanism targets Strix Halo / discrete AMD, not the 780M.
 option(GGML_ARIFI_ROCMFPX_FORMATS "ggml: ROCmFP4/ROCmFPX weight formats (type-ids 100-104, 107)" OFF)
 
+# GGML_ARIFI_TURBO_WEIGHT_QUANTS compiles the TurboQuant TQ3_1S/TQ4_1S serialized weight
+# formats (type-ids 45/46). A CMake option rather than an env var for the same reason as
+# the ROCmFPX formats: vec_dot is selected at LINK time from type_traits_cpu[], so a runtime
+# toggle could not cover it (LL-250). Default OFF - measured slow on this estate's Vulkan
+# path; retained compiled-available for CUDA/HIP targets per the merge-slot manifest.
+option(GGML_ARIFI_TURBO_WEIGHT_QUANTS "ggml: TurboQuant TQ3_1S/TQ4_1S weight formats (type-ids 45/46)" OFF)
+
 # sanitizers
 option(GGML_SANITIZE_THREAD    "ggml: enable thread sanitizer"    OFF)
 option(GGML_SANITIZE_ADDRESS   "ggml: enable address sanitizer"   OFF)

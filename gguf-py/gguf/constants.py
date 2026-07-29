@@ -5573,6 +5573,8 @@ class GGMLQuantizationType(IntEnum):
     NVFP4   = 40
     Q1_0    = 41
     Q2_0    = 42
+    TQ3_1S  = 45
+    TQ4_1S  = 46
     # ROCmFPX weight formats. Taken-from: charlie12345/ROCmFPX@3edc3d31e.
     Q4_0_ROCMFP4      = 100
     Q4_0_ROCMFP4_FAST = 101
@@ -5636,6 +5638,8 @@ class LlamaFileType(IntEnum):
     MOSTLY_NVFP4         = 39  # except 1d tensors
     MOSTLY_Q1_0          = 40  # except 1d tensors
     MOSTLY_Q2_0          = 41  # except 1d tensors
+    MOSTLY_TQ3_1S        = 43  # except 1d tensors
+    MOSTLY_TQ4_1S        = 44  # except 1d tensors
     # ROCmFPX file types (base formats only - the LEAN/COHERENT/STRIX/AGENT
     # recipe ftypes 101,102,104,105,106,113-117 are a separate mechanism).
     MOSTLY_Q4_0_ROCMFP4      = 100  # except 1d tensors

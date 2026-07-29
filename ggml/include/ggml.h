@@ -431,6 +431,9 @@ extern "C" {
         GGML_TYPE_Q1_0    = 41,
         GGML_TYPE_Q2_0    = 42,
         GGML_TYPE_Q2_0_G128 = 43, // Q2_0 wire format with 128 values/block
+        // 44 intentionally unallocated (see docs/TYPE-ID-ALLOCATION.md §3.1)
+        GGML_TYPE_TQ3_1S    = 45, // TurboQuant 3-bit weight: RHT + Lloyd-Max, 16 B / 32
+        GGML_TYPE_TQ4_1S    = 46, // TurboQuant 4-bit weight: RHT + Lloyd-Max, 20 B / 32
         // ---------------------------------------------------------------------
         // ArifiLabs type-ID allocation. THE CONTRACT IS docs/TYPE-ID-ALLOCATION.md
         // — read it before adding any value here. Summary of the binding rules:

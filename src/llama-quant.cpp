@@ -865,6 +865,10 @@ ggml_type llama_ftype_get_default_type(llama_ftype ftype) {
         case LLAMA_FTYPE_ALL_F32:     return GGML_TYPE_F32;
         case LLAMA_FTYPE_MOSTLY_Q1_0: return GGML_TYPE_Q1_0;
         case LLAMA_FTYPE_MOSTLY_Q2_0: return GGML_TYPE_Q2_0;
+#ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
+        case LLAMA_FTYPE_MOSTLY_TQ3_1S: return GGML_TYPE_TQ3_1S;
+        case LLAMA_FTYPE_MOSTLY_TQ4_1S: return GGML_TYPE_TQ4_1S;
+#endif
 
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
         // Taken-from: charlie12345/ROCmFPX@3edc3d31e (src/llama-quant.cpp).
