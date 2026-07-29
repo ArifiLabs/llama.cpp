@@ -1,0 +1,45 @@
+From c73501cbc9672acc77cc98ec6c0f987014fe964e Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 29 Jul 2026 01:20:57 -0400
+Subject: [PATCH] docs(FINDINGS): record why the repack auto-enable was NOT
+ shipped
+
+Followed exit 2 of F-09 - enable repack automatically when no GPU backend exists - far enough
+to find the reason not to. The buffer accounting shows this machine's INTEGRATED GPU still
+offloading batch work from ordinary CPU memory once the host buffer type is out of the way,
+because unified memory lets it read that memory directly. A discrete GPU cannot, so the same
+default carries a different cost there, and this hardware cannot produce that case at all.
+
+Flipping a shipped default on a test that structurally cannot enter the class it would affect
+is how a regression reaches users who were never tested. Left manual, with the reason recorded
+so the next attempt starts from the constraint instead of rediscovering it.
+
+Origin: ArifiLabs lane-110D, code-optimisation pass
+Measured-effect: no code change - a deliberate non-change, with its evidence.
+---
+ docs/FINDINGS.md | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/docs/FINDINGS.md b/docs/FINDINGS.md
+index 83bf23af8..85824e315 100644
+--- a/docs/FINDINGS.md
++++ b/docs/FINDINGS.md
+@@ -189,8 +189,16 @@ Three ways out, none free, all recorded rather than assumed:
+    genuinely gets both wins and costs the memory of the affected tensors twice.
+ 2. **Enable repack only when no GPU backend exists at all.** Unlike "will this tensor be
+    offloaded", "is there any GPU device" *is* answerable at load time, and when the answer is no
+-   there is no offload eligibility to lose. This is narrow but strictly correct, and is the most
+-   likely next step.
++   there is no offload eligibility to lose.
++
++   **We looked at implementing this and stopped, on purpose.** The reference machine has an
++   *integrated* GPU with unified memory, and the buffer accounting shows the GPU still offloading
++   batch work from ordinary CPU memory even with the host buffer type disabled — because on
++   unified memory it can read that memory directly. On a discrete GPU it could not, so the same
++   flag has a different cost there. We can only measure one of those two classes on the hardware
++   we have. Flipping a shipped default from a test that structurally cannot enter the other case
++   is how you ship a regression to users you never tested. The flag stays manual until someone
++   measures a discrete GPU.
+ 3. **Repack after prefill.** Layout is a property of the buffer, not of the tensor, so this means
+    re-laying-out weights mid-run — plausible for a long-lived server, not cheap.
+ 

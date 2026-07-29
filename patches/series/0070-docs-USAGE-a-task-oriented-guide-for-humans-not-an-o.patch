@@ -1,0 +1,227 @@
+From 0ba7e07117ed6d07ca1e5d0f7d5a945433e07c1c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 29 Jul 2026 01:01:37 -0400
+Subject: [PATCH] docs: USAGE - a task-oriented guide for humans, not an option
+ reference
+
+The existing docs are mechanism-oriented: one page per switch, with the evidence attached.
+That is the right shape for an engineer auditing a claim and the wrong shape for someone who
+just wants to run a model. OPTIONS-REGISTRY has a single table cell of ~15,000 characters;
+it is a reference and should stay one.
+
+USAGE.md is organised by intent - 'run a ternary model', 'no GPU', 'model bigger than RAM',
+'speculative decoding' - each with the command, the reason, and the measured outcome including
+where the answer is 'turn it off'. It also states plainly which capabilities exist here that
+stock llama.cpp does not have, and credits the source project for each.
+
+Origin: ArifiLabs lane-110D, public-release bar
+Measured-effect: documentation only; every figure quoted is copied from OPTIONS-REGISTRY or
+committed trial evidence, none newly measured.
+---
+ docs/USAGE.md | 197 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 197 insertions(+)
+ create mode 100644 docs/USAGE.md
+
+diff --git a/docs/USAGE.md b/docs/USAGE.md
+new file mode 100644
+index 000000000..e7d8c75e6
+--- /dev/null
++++ b/docs/USAGE.md
+@@ -0,0 +1,197 @@
++# Using this fork
++
++Start here. This page is organised by **what you are trying to do**, not by what options exist.
++If you want the full reference — every switch, its default, and the measurement behind that
++default — that is [`OPTIONS-REGISTRY.md`](OPTIONS-REGISTRY.md), and it is deliberately exhaustive
++rather than readable. This page is the readable one.
++
++Three things worth knowing before you start:
++
++- **Everything this fork adds is off unless you turn it on.** Drop in a model and it behaves like
++  stock llama.cpp, with one exception: ternary 128-group models load, which upstream cannot do.
++- **Every default was chosen by a measurement on one machine** (an AMD Radeon 780M mini PC). At
++  least one of those defaults is provably wrong for a CPU-only machine. Where that matters, this
++  page says so.
++- **The build flags matter more than usual on Windows.** If you have not built yet, read
++  [`BUILDING.md`](BUILDING.md) first — three flags there are not optional, and skipping them
++  produces a link error or a binary that dies at startup.
++
++---
++
++## What this fork can do that stock llama.cpp cannot
++
++| You want to… | Possible with stock? | Here |
++|---|---|---|
++| Run a **ternary model** (2-bit, 128-value groups — the "Bonsai" family) | No — the file is refused at load | Works, no flag needed |
++| Run a **mixture-of-experts model larger than your RAM**, streaming experts from disk | No | Yes, see [Bigger than RAM](#bigger-than-ram) |
++| Get **fast ternary/1-bit maths on a CPU-only machine** | No | Yes, one environment variable |
++| Read **AMD ROCmFP4/FPX** quantized files | No | Yes, rebuild with one CMake flag |
++| Read **TurboQuant TQ3_1S/TQ4_1S** files | No | Yes, rebuild with one CMake flag |
++| Run **q4_0 / iq4_nl / mxfp4 with CPU repacking on Windows** | Crashes (upstream bug) | Fixed here |
++
++---
++
++## Recipe 1 — a ternary model (Bonsai and friends)
++
++Nothing special required. The model loads because this fork understands the 128-value-group
++layout that upstream does not.
++
++```bash
++llama-server -m Ternary-Bonsai-27B-Q2_0.gguf -ngl 99 -c 4096
++```
++
++A 27-billion-parameter ternary model is about 7 GB on disk, so it fits on machines that could
++never hold a 27B in any other format. On the reference machine it generates at 12.5–13.3 tokens
++per second; the 8B version reaches 36.8.
++
++**If the model fails to load with a tensor-offset error**, you have a file whose type tag does not
++match its actual layout. `tools/gguf/` contains a retagging utility that fails closed — it will
++refuse rather than guess.
++
++## Recipe 2 — you have no GPU (CPU-only machine)
++
++**Change the default.** This is the one case where the shipped default is measurably wrong:
++
++```bash
++GGML_ARIFI_VNNI_REPACK=1 llama-server -m your-ternary-model.gguf -dev none
++```
++
++On a CPU-only path this made prompt processing **327% to 442%** faster and generation **20% to
++24%** faster, on a machine with AVX-512. Ranges did not overlap across nine runs per arm.
++
++It is **off by default** because on a machine with a GPU the same feature makes prompt processing
++**77–88% slower** — repacked weights lose eligibility for batch offload to the GPU. One feature,
++opposite verdicts, so it ships off and the server prints an advisory when it detects the
++configuration where turning it on is clearly right.
++
++If your build has Vulkan compiled in but you are running on CPU, add `--no-host`, or the repacked
++path is never actually reached.
++
++## Recipe 3 — AMD integrated graphics / unified memory
++
++This is the reference configuration, so it is the best-tested path.
++
++```bash
++llama-server -m model.gguf -ngl 99 --n-cpu-moe 0 -c 4096 --ctx-checkpoints 0 -fa on -ub 512
++```
++
++- `-ngl 99 --n-cpu-moe 0` puts everything on the GPU via shared memory. When the model fits, this
++  is the fastest arrangement measured — 29.2 tokens/sec on a 35B mixture-of-experts model.
++- `-c 4096` is not cosmetic. At default context the cache does not fit and the model fails to
++  load; the context size is what makes it fit.
++- `--ctx-checkpoints 0` disables prompt rewind. Leave it off unless you need rewind — it was the
++  single largest speed win ever measured on this hardware.
++- Keep the KV cache at f16 unless you are short on memory. It measured speed-equal to the
++  quantized cache, so there is no reason to give up the precision.
++
++<a name="bigger-than-ram"></a>
++## Recipe 4 — a model bigger than your RAM
++
++For mixture-of-experts models, most weights sit idle on any given token, so they can stream from
++disk instead of living in memory.
++
++```bash
++EXPERT_BUNDLE_PATH=/path/to/bundle.bin \
++MAX_N_CACHED=20000 \
++llama-server -m model.gguf -ngl 0 -b 8 -ub 8
++```
++
++- `EXPERT_BUNDLE_PATH` points at a generated expert bundle. Without it, nothing streams.
++- `MAX_N_CACHED` bounds how many experts stay cached in RAM. Larger is faster until you run out
++  of memory; measure rather than guess.
++- `POWERINFER_IOCP=0` switches Windows back to simple blocking reads. It defaults to the
++  asynchronous path; if you hit a stall, this is the first thing to flip. **Honest note:** we
++  could not measure a speed difference between the two, because our test model's experts fit in
++  the OS file cache and there was little disk traffic to overlap. Correctness is proven; the
++  speed question is open.
++
++Expect single-digit tokens per second. Streaming trades speed for the ability to run the model
++at all.
++
++## Recipe 5 — speculative decoding (draft models / MTP)
++
++A small "draft" model guesses several tokens and the big model checks them in one pass. When it
++works it is a large win. **It is not universal** — sweep the depth, do not copy someone's number.
++
++```bash
++llama-server -m model.gguf --model-draft draft.gguf \
++  --spec-type draft-mtp --spec-draft-n-max 3 -fa on -ub 512 -c 4096
++```
++
++Measured outcomes on the reference machine, same mechanism:
++
++| Model | Without | With | Verdict |
++|---|---|---|---|
++| Gemma-4-26B-A4B | 29.3 t/s | **37.3 t/s** at depth 3 | worth it |
++| A 31B with root MTP | 1.8 t/s | **9.4 t/s** | dramatic |
++| A Qwen mixture-of-experts | 29.2 t/s | 22.8 t/s tuned | **slower — turn it off** |
++
++That last row is why you sweep `--spec-draft-n-max` yourself.
++
++There is also a target-specific drafter for the ternary family
++(`--spec-type draft-dspark --spec-draft-n-max 4 -ngld 999`). It measured **0.54×** — a real loss —
++on the reference machine, so it is off. Note `4` is mandatory there; other depths crash.
++
++## Recipe 6 — hardware you do not want to tune by hand
++
++```bash
++llama-server -m model.gguf --arifi-profile cpu-only
++```
++
++Profiles set a coherent group of options and **print verbatim what they selected and why**. There
++is deliberately no automatic detection: whether a CPU-side optimisation helps depends on whether
++*these specific tensors* end up offloaded, which is decided after startup — so a startup probe
++cannot answer the question the default depends on. See [`HARDWARE-PROFILES.md`](HARDWARE-PROFILES.md).
++
++---
++
++## Extra formats — rebuild required
++
++These are build-time options, not environment variables, for a specific reason: the CPU maths for
++a quantization type is bound when the binary is linked, so a runtime switch could not cover it.
++
++```bash
++# AMD ROCmFP4 / ROCmFPX files
++cmake -S . -B build -DGGML_ARIFI_ROCMFPX_FORMATS=ON
++
++# TurboQuant TQ3_1S / TQ4_1S files
++cmake -S . -B build -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON
++```
++
++Both default to off. With the option off, a file in one of those formats is **refused with a clear
++error**, never misread — that is deliberate.
++
++Fair warning on TurboQuant weights: on our CPU path `TQ4_1S` measured **438 MiB at 4.5 tokens/sec**
++against plain `Q4_0` at **409 MiB and 49.3 tokens/sec** — bigger and about eleven times slower,
++because no hand-optimised kernel exists for it yet. It is shipped for people on hardware where
++fused kernels do exist. We are not going to pretend that number is good.
++
++---
++
++## Where the pieces came from
++
++This fork is a merge, and every part has an owner:
++
++| Capability | Source |
++|---|---|
++| Everything else, and the base | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) |
++| Ternary 128-group format and kernels | [PrismML-Eng](https://github.com/PrismML-Eng/llama.cpp) |
++| Expert streaming from disk | [Tiiny-AI / PowerInfer](https://github.com/Tiiny-AI/PowerInfer) |
++| AMD weight formats, positional-encoding fix | [charlie12345 / ROCmFPX](https://github.com/charlie12345/ROCmFPX) |
++| Host prefetch patches | thecodacus (unmerged community pull requests) |
++| TurboQuant weight formats | the TurboQuant project |
++
++Every patch in [`patches/series/`](../patches/series/) names its source repository and commit.
++
++## When something does not work
++
++1. **A model will not load.** If the error mentions a type or block size, it is a format the build
++   does not have compiled — see the rebuild section above. If it mentions tensor offsets, the
++   file's type tag does not match its layout.
++2. **A crash on Windows with `q4_0`, `iq4_nl` or `mxfp4`.** Fixed here; if you see it, you are on
++   stock upstream or an older build. Details in [`FINDINGS.md`](FINDINGS.md) F-01.
++3. **A feature seems to do nothing.** Check it actually engaged rather than assuming. Repack
++   allocates its own buffer and logs it; streaming logs its working set. Two of our own early
++   comparisons were meaningless because the code never ran in either arm.
++4. **Numbers do not match ours.** They should not. Ours are from one machine, stated on every
++   figure. Measure on yours.

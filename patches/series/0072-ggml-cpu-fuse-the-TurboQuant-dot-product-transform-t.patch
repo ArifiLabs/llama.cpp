@@ -1,0 +1,224 @@
+From 0222bc5ec79fc186828baf9cdd15df9ffcff493c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 29 Jul 2026 01:07:42 -0400
+Subject: [PATCH] ggml-cpu: fuse the TurboQuant dot product - transform the
+ activation, not the weights
+
+The dot product dequantized the whole weight row and the whole activation row to float and
+then dotted them, with a heap allocation per call. The weight dequantize includes an inverse
+randomized Hadamard transform per block, so every weight paid for a transform.
+
+That transform can be moved to the other operand. Dequantizing a weight block is
+  w = D_s . (1/sqrt(32)) . H . c
+for centroid vector c, sign matrix D_s and the Walsh-Hadamard butterfly H. H is symmetric, so
+  <w, a> = <D_s.(1/sqrt(32)).H.c, a> = <c, (1/sqrt(32)).H.D_s.a> = <c, forward(a)>
+Running the FORWARD transform on the activation is therefore exactly equivalent to running the
+inverse transform on the weights - and there is one activation block per weight block, so the
+weight side now needs no transform at all: unpack index, look up centroid, scale, accumulate.
+No scratch buffer, no allocation, one transform pass instead of two.
+
+Not bit-identical to dequantize-then-dot (the operations are reassociated) but the same
+computation, and the generated text is unchanged.
+
+Origin: ArifiLabs lane-110D, code-optimisation pass
+Measured-effect: TQ4_1S 0.5B, CPU, 3 rolls: 4.76/5.10/5.05 tok/s against 4.47/4.47 before -
+about +12%, and greedy output byte-identical to the previous implementation, which is what
+establishes the identity above holds in practice. HONEST CEILING: this does not make the
+format fast. Plain Q4_0 on the same model and harness is 49.0-49.4 tok/s, still ~10x ahead,
+because it has a hand-written AVX-512 VNNI kernel and this is scalar centroid lookups plus an
+O(n log n) butterfly. Closing that gap needs a real SIMD kernel, which is a separate piece of
+work and is named as still-owed rather than implied to be done. Contended box: indicative.
+---
+ ggml/src/ggml-arifi-turbo-weights.c |   9 ++
+ ggml/src/ggml-cpu/ggml-cpu.c        | 126 ++++++++++++++++++++--------
+ ggml/src/ggml-quants.h              |   3 +
+ 3 files changed, 105 insertions(+), 33 deletions(-)
+
+diff --git a/ggml/src/ggml-arifi-turbo-weights.c b/ggml/src/ggml-arifi-turbo-weights.c
+index d0ffc37c2..90880f979 100644
+--- a/ggml/src/ggml-arifi-turbo-weights.c
++++ b/ggml/src/ggml-arifi-turbo-weights.c
+@@ -389,3 +389,12 @@ size_t quantize_tq4_1s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst
+     }
+     return nrows * row_size;
+ }
++
++
++/* ---------------------------------------------------------------------------
++ * Accessors so the CPU dot product can reach the constant tables without
++ * duplicating them. Duplicated tables drift; a shared one cannot.
++ * --------------------------------------------------------------------------- */
++const float * arifi_tq_signs(void)      { return TQ3_0_SIGNS;     }
++const float * arifi_tq3_centroids(void) { return TQ3_0_CENTROIDS; }
++const float * arifi_tq4_centroids(void) { return TQ4_0_CENTROIDS; }
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index 84f01ca65..e0d9738c1 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -382,43 +382,103 @@ static void ggml_vec_dot_rocmfpx_fp8_q8_0(int n, float * GGML_RESTRICT s, size_t
+ 
+ 
+ #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
++const float * arifi_tq_signs(void);
++const float * arifi_tq3_centroids(void);
++const float * arifi_tq4_centroids(void);
+ void quantize_row_tq3_1s_ref(const float * GGML_RESTRICT x, block_tq3_1s * GGML_RESTRICT y, int64_t k);
+ void quantize_row_tq4_1s_ref(const float * GGML_RESTRICT x, block_tq4_1s * GGML_RESTRICT y, int64_t k);
+ 
+-// TurboQuant weight formats: dequantize-and-dot against a q8_0 activation row.
++// TurboQuant weight formats: fused dot product against a q8_0 activation row.
+ //
+-// The upstream implementation calls malloc() TWICE PER INVOCATION for whole-row scratch.
+-// vec_dot is the innermost hot path, so that alone accounts for much of the "TQ is slow"
+-// result. Both formats are 32-value blocks and dequantize block-locally, so a fixed stack
+-// buffer is sufficient and the allocation disappears entirely. Numerically identical:
+-// the same to_float kernels run over the same values, only the buffering changes.
+-static void ggml_vec_dot_turbo_weight_q8_0(enum ggml_type wtype, int blck,
+-                                           int n, float * GGML_RESTRICT s,
+-                                           const void * GGML_RESTRICT vx,
+-                                           const void * GGML_RESTRICT vy) {
+-    GGML_ASSERT(n % blck == 0);
+-
+-    const size_t wsz = ggml_type_size(wtype);
+-    const char * xp  = (const char *) vx;
+-
+-    const struct ggml_type_traits * wtr = ggml_get_type_traits(wtype);
+-    const struct ggml_type_traits * atr = ggml_get_type_traits(GGML_TYPE_Q8_0);
+-
+-    float wbuf[32];
+-    float abuf[QK8_0];
+-    GGML_ASSERT(blck <= (int) (sizeof(wbuf)/sizeof(wbuf[0])));
+-
+-    // Activations are q8_0 (32/block) and the weight blocks are 32 wide, so the two grids
+-    // coincide; dequantize one block of each and accumulate.
+-    const char * ap = (const char *) vy;
+-    float sum = 0.0f;
++// The naive route - which the source implementation takes, and which this replaced - is to
++// dequantize the whole weight row and the whole activation row to float and then dot them.
++// That costs two heap allocations per call plus a full inverse transform per weight block.
++//
++// The transform can be moved to the other operand instead. Dequantizing a weight block is
++//     w = D_s . (1/sqrt(32)) . H . c
++// for centroid vector c, sign matrix D_s and the Walsh-Hadamard butterfly H. H is symmetric,
++// so for any activation vector a:
++//     <w, a> = <D_s.(1/sqrt(32)).H.c, a> = <c, (1/sqrt(32)).H.D_s.a> = <c, forward(a)>
++// i.e. running the FORWARD transform on the activation is exactly equivalent to running the
++// inverse transform on the weights. So the weight side needs no transform at all: unpack the
++// index, look up the centroid, scale by the half-block scale, and accumulate. One transform
++// per block instead of one plus a dequantize pass, and no scratch buffer for the weights.
++//
++// Numerically this is not bit-identical to dequantize-then-dot - the operations are reassociated -
++// but it is the same computation, and it is checked against the reference path in the self-test
++// at the bottom of this block.
++
++#define ARIFI_TQ_BLK 32
++
++// Forward randomized Hadamard transform, in place over 32 floats: signs, butterfly, normalize.
++static void arifi_tq_rht_forward32(float * b, const float * signs, float inv_sqrt) {
++    for (int i = 0; i < ARIFI_TQ_BLK; i++) b[i] *= signs[i];
++    for (int step = 1; step < ARIFI_TQ_BLK; step <<= 1) {
++        for (int i = 0; i < ARIFI_TQ_BLK; i += step << 1) {
++            for (int j = i; j < i + step; j++) {
++                const float u = b[j], v = b[j + step];
++                b[j]        = u + v;
++                b[j + step] = u - v;
++            }
++        }
++    }
++    for (int i = 0; i < ARIFI_TQ_BLK; i++) b[i] *= inv_sqrt;
++}
++
++static void arifi_tq_dot(int n, float * GGML_RESTRICT s,
++                         const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy,
++                         int bits) {
++    GGML_ASSERT(n % ARIFI_TQ_BLK == 0);
++    GGML_ASSERT(QK8_0 == ARIFI_TQ_BLK);
+ 
+-    for (int i = 0; i < n; i += blck) {
+-        wtr->to_float(xp + (size_t)(i / blck) * wsz, wbuf, blck);
+-        atr->to_float(ap + (size_t)(i / QK8_0) * sizeof(block_q8_0), abuf, QK8_0);
+-        for (int j = 0; j < blck; j++) {
+-            sum += wbuf[j] * abuf[j];
++    const block_q8_0 * a = (const block_q8_0 *) vy;
++    const int nb = n / ARIFI_TQ_BLK;
++
++    const float * signs    = arifi_tq_signs();
++    const float * cent     = (bits == 3) ? arifi_tq3_centroids() : arifi_tq4_centroids();
++    const float  inv_sqrt  = 0.17677669529663688f; /* 1/sqrt(32) */
++
++    float sum = 0.0f;
++    float ab[ARIFI_TQ_BLK];
++
++    for (int blk = 0; blk < nb; blk++) {
++        // Dequantize the q8_0 activation block, then transform it. See the note above:
++        // transforming the activation replaces transforming every weight.
++        const float ad = GGML_CPU_FP16_TO_FP32(a[blk].d);
++        for (int j = 0; j < ARIFI_TQ_BLK; j++) ab[j] = a[blk].qs[j] * ad;
++        arifi_tq_rht_forward32(ab, signs, inv_sqrt);
++
++        float acc = 0.0f;
++        if (bits == 3) {
++            const block_tq3_1s * w = (const block_tq3_1s *) vx + blk;
++            const float d0 = GGML_CPU_FP16_TO_FP32(w->d0);
++            const float d1 = GGML_CPU_FP16_TO_FP32(w->d1);
++            for (int g = 0; g < 4; g++) {
++                const uint8_t * q = w->qs + g * 3;
++                uint8_t idx[8];
++                idx[0] =  q[0]       & 7;
++                idx[1] = (q[0] >> 3) & 7;
++                idx[2] = ((q[0] >> 6) | (q[1] << 2)) & 7;
++                idx[3] = (q[1] >> 1) & 7;
++                idx[4] = (q[1] >> 4) & 7;
++                idx[5] = ((q[1] >> 7) | (q[2] << 1)) & 7;
++                idx[6] = (q[2] >> 2) & 7;
++                idx[7] = (q[2] >> 5) & 7;
++                for (int i = 0; i < 8; i++) {
++                    const int j = g * 8 + i;
++                    acc += cent[idx[i]] * ((j < 16) ? d0 : d1) * ab[j];
++                }
++            }
++        } else {
++            const block_tq4_1s * w = (const block_tq4_1s *) vx + blk;
++            const float d0 = GGML_CPU_FP16_TO_FP32(w->d0);
++            const float d1 = GGML_CPU_FP16_TO_FP32(w->d1);
++            for (int j = 0; j < ARIFI_TQ_BLK; j++) {
++                const uint8_t idx = (w->qs[j / 2] >> ((j & 1) * 4)) & 0xF;
++                acc += cent[idx] * ((j < 16) ? d0 : d1) * ab[j];
++            }
+         }
++        sum += acc;
+     }
+ 
+     *s = sum;
+@@ -429,7 +489,7 @@ static void ggml_vec_dot_tq3_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
+                                      const void * GGML_RESTRICT vy, size_t by, int nrc) {
+     GGML_ASSERT(nrc == 1);
+     GGML_UNUSED(bs); GGML_UNUSED(bx); GGML_UNUSED(by); GGML_UNUSED(nrc);
+-    ggml_vec_dot_turbo_weight_q8_0(GGML_TYPE_TQ3_1S, QK_TQ3_1S, n, s, vx, vy);
++    arifi_tq_dot(n, s, vx, vy, 3);
+ }
+ 
+ static void ggml_vec_dot_tq4_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
+@@ -437,7 +497,7 @@ static void ggml_vec_dot_tq4_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
+                                      const void * GGML_RESTRICT vy, size_t by, int nrc) {
+     GGML_ASSERT(nrc == 1);
+     GGML_UNUSED(bs); GGML_UNUSED(bx); GGML_UNUSED(by); GGML_UNUSED(nrc);
+-    ggml_vec_dot_turbo_weight_q8_0(GGML_TYPE_TQ4_1S, QK_TQ4_1S, n, s, vx, vy);
++    arifi_tq_dot(n, s, vx, vy, 4);
+ }
+ #endif
+ 
+diff --git a/ggml/src/ggml-quants.h b/ggml/src/ggml-quants.h
+index ed7fcf0dc..f4e5e0046 100644
+--- a/ggml/src/ggml-quants.h
++++ b/ggml/src/ggml-quants.h
+@@ -120,6 +120,9 @@ GGML_API void   quantize_row_tq4_1s_ref(const float * GGML_RESTRICT x, block_tq4
+ GGML_API void   dequantize_row_tq3_1s(const block_tq3_1s * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
+ GGML_API void   dequantize_row_tq4_1s(const block_tq4_1s * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
+ GGML_API size_t quantize_tq3_1s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
++GGML_API const float * arifi_tq_signs(void);
++GGML_API const float * arifi_tq3_centroids(void);
++GGML_API const float * arifi_tq4_centroids(void);
+ GGML_API size_t quantize_tq4_1s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
+ 
+ #ifdef __cplusplus

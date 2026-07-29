@@ -1,0 +1,124 @@
+From 301336ab050982543bbb50f548e2bd5997364ea6 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 29 Jul 2026 01:04:16 -0400
+Subject: [PATCH] ggml-cpu/x86: use the row-stride parameter in repack GEMV
+ stores instead of the row count
+
+Three x86 repack GEMV kernels stored their result with 's + (y * nr + x * 8)', using nr -
+the number of rows, i.e. the loop bound - as the stride between output rows, while the
+actual stride parameter bs was explicitly discarded with UNUSED(bs). The two are unrelated
+quantities; nr only happens to work because every current caller passes nr = 1, which makes
+y == 0 the only iteration and the stride term vanish.
+
+This is latent, not an active bug: no behaviour changes today, and the correctness suite
+below confirms that. It is worth fixing anyway - the moment any caller passes nr > 1 the
+kernels write rows at the wrong offsets, and the failure mode is silent wrong numbers or an
+out-of-bounds store rather than anything that announces itself.
+
+UNUSED(bs) is removed where bs is now genuinely used; the build stays warning-free at
+-Wall -Wextra -Wpedantic, which includes -Wunused-parameter.
+
+Found while root-causing the by-value __m256i crash in the same file (see the preceding
+commit); reported alongside it as a second upstream candidate.
+
+Taken-from: n/a - defect found in ggml-org/llama.cpp b10173 (e9fa0781f), fix authored here
+Origin: ArifiLabs lane-110D, upstream-contribution candidate
+Measured-effect: no observable change, as expected for a dormant defect. Repack correctness
+suite re-run after the change: q4_0, iq4_nl and mxfp4 all serve with the repack path engaged;
+iq4_nl and mxfp4 byte-identical to their repack-OFF arms, q4_0 differing by the pre-existing
+activation-quantisation token. F-085 judge PASS on the g128 ternary regression model.
+---
+ ggml/src/ggml-cpu/arch/x86/repack.cpp | 17 +++++------------
+ 1 file changed, 5 insertions(+), 12 deletions(-)
+
+diff --git a/ggml/src/ggml-cpu/arch/x86/repack.cpp b/ggml/src/ggml-cpu/arch/x86/repack.cpp
+index 8e7937948..be7dcf74d 100644
+--- a/ggml/src/ggml-cpu/arch/x86/repack.cpp
++++ b/ggml/src/ggml-cpu/arch/x86/repack.cpp
+@@ -553,7 +553,6 @@ static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t
+     const int qk = QK8_0;
+     const int nb = n / qk;
+ 
+-    UNUSED(bs);
+ 
+     __m256i finalpermutemask = _mm256_set_epi32(7, 5, 3, 1, 6, 4, 2, 0);
+ 
+@@ -655,7 +654,7 @@ static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t
+ 
+             // Accumulated output values permuted so as to be stored in appropriate order post accumulation
+             acc_row = _mm256_permutevar8x32_ps(acc_row, finalpermutemask);
+-            _mm256_storeu_ps(s + (y * nr + x * 8), acc_row);
++            _mm256_storeu_ps(s + (y * bs + x * 8), acc_row);
+         }
+     }
+ }
+@@ -1497,7 +1496,6 @@ void ggml_gemv_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
+     assert (nc % ncols_interleaved == 0);
+ 
+     UNUSED(s);
+-    UNUSED(bs);
+     UNUSED(vx);
+     UNUSED(vy);
+     UNUSED(nr);
+@@ -1695,7 +1693,7 @@ void ggml_gemv_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
+ 
+             // Accumulated output values permuted so as to be stored in appropriate order post accumulation
+             acc_row = _mm256_permutevar8x32_ps(acc_row, finalpermutemask);
+-            _mm256_storeu_ps(s + (y * nr + x * 8), _mm256_sub_ps(acc_row, acc_min_rows));
++            _mm256_storeu_ps(s + (y * bs + x * 8), _mm256_sub_ps(acc_row, acc_min_rows));
+         }
+     }
+ 
+@@ -1737,7 +1735,6 @@ void ggml_gemv_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
+     assert (nc % ncols_interleaved == 0);
+ 
+     UNUSED(s);
+-    UNUSED(bs);
+     UNUSED(vx);
+     UNUSED(vy);
+     UNUSED(nr);
+@@ -2030,7 +2027,7 @@ void ggml_gemv_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
+             }
+             // Accumulated output values permuted so as to be stored in appropriate order post accumulation
+             acc_row = _mm256_permutevar8x32_ps(acc_row, finalpermutemask);
+-            _mm256_storeu_ps(s + (y * nr + x * 8), _mm256_sub_ps(acc_row, acc_min_rows));
++            _mm256_storeu_ps(s + (y * bs + x * 8), _mm256_sub_ps(acc_row, acc_min_rows));
+         }
+     }
+ #else
+@@ -2067,7 +2064,6 @@ void ggml_gemm_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
+     assert (nc % ncols_interleaved == 0);
+ 
+     UNUSED(s);
+-    UNUSED(bs);
+     UNUSED(vx);
+     UNUSED(vy);
+     UNUSED(nr);
+@@ -3548,7 +3544,6 @@ void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
+     assert (nc % ncols_interleaved == 0);
+ 
+     UNUSED(s);
+-    UNUSED(bs);
+     UNUSED(vx);
+     UNUSED(vy);
+     UNUSED(nr);
+@@ -6475,8 +6470,7 @@ void ggml_gemv_q1_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+         assert(nr == 1);
+         assert(n % qk == 0);
+         assert(nc % 4 == 0);
+-        UNUSED(bs);
+-
++    
+         const __m512i ones  = _mm512_set1_epi8(1);
+         const __m512i idx01 = _mm512_set_epi32(1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0);
+         const __m512i idx23 = _mm512_set_epi32(3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2);
+@@ -6606,8 +6600,7 @@ void ggml_gemv_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+         assert(nr == 1);
+         assert(n % qk == 0);
+         assert(nc % 4 == 0);
+-        UNUSED(bs);
+-
++    
+         const __m512i ones  = _mm512_set1_epi8(1);
+         const __m512i idx01 = _mm512_set_epi32(1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0);
+         const __m512i idx23 = _mm512_set_epi32(3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2);

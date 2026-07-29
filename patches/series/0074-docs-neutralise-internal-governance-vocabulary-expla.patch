@@ -1,0 +1,176 @@
+From 0367e3f76d91500c250c3ce4a9a7abf6fa2dfe31 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 29 Jul 2026 01:19:40 -0400
+Subject: [PATCH] docs: neutralise internal governance vocabulary; explain the
+ work-unit ids instead
+
+A publication readiness pass found organisational vocabulary in tracked files - decisions
+attributed to internal roles rather than stated as project policy. It reads as unexplained
+jargon to anyone outside this organisation and it exposes internal structure for no benefit.
+Eleven occurrences across six files are rewritten to state the decision, not the decider. No
+technical content changed: every default, measurement and caveat is identical.
+
+The 'lane-NNN' work-unit ids are deliberately KEPT, and README now explains why: each one ties
+a change to the block of work that produced it, the machine it was measured on, and the file
+holding the raw numbers. Scrubbing them would cost the traceability that makes the measured
+claims checkable, which is the opposite of the point. They are documented as a ticket
+reference would be, alongside the Taken-from: and Measured-effect: trailer conventions.
+
+Note: 'HQ' still appears in src/models/minimax-m3.cpp as an upstream variable name for the
+head-query dimension. That is upstream code and unrelated; it is left alone.
+
+Origin: ArifiLabs lane-110D, public-release bar
+Measured-effect: documentation only; no engine behaviour changed.
+---
+ .github/workflows/windows-vulkan.yml |  2 +-
+ CONTRIBUTING/UPSTREAM-SYNC.md        |  2 +-
+ README.md                            | 25 +++++++++++++++++++++----
+ docs/CATALOG.md                      |  2 +-
+ docs/OPTIONS-REGISTRY.md             |  6 +++---
+ licenses/README.md                   |  2 +-
+ 6 files changed, 28 insertions(+), 11 deletions(-)
+
+diff --git a/.github/workflows/windows-vulkan.yml b/.github/workflows/windows-vulkan.yml
+index 5d4825ee0..f9625e874 100644
+--- a/.github/workflows/windows-vulkan.yml
++++ b/.github/workflows/windows-vulkan.yml
+@@ -50,7 +50,7 @@ jobs:
+         shell: pwsh
+         run: |
+           Write-Host "No timing result is produced in hosted CI."
+-          Write-Host "Acceptance requires the President-ruled llama-server harness"
++          Write-Host "Acceptance requires the llama-server harness"
+           Write-Host "on declared hardware with no DR or sibling load."
+           Write-Host "This job becomes a real smoke only after a redistributable"
+           Write-Host "small control model and exact bench command are pinned."
+diff --git a/CONTRIBUTING/UPSTREAM-SYNC.md b/CONTRIBUTING/UPSTREAM-SYNC.md
+index 3db1ff99e..026bb803a 100644
+--- a/CONTRIBUTING/UPSTREAM-SYNC.md
++++ b/CONTRIBUTING/UPSTREAM-SYNC.md
+@@ -84,7 +84,7 @@ accept a timing number copied from an old binary.
+    - `qwen35moe` load for the upstream-port proof;
+    - tiered `-ngl 99 -cmoe -b 8 -ub 8` validation when streaming is affected;
+    - ternary control and ternary GGUF load when PrismML work is affected.
+-9. Run the President-ruled `llama-server` benchmark regression judge. Reuse a
++9. Run the `llama-server` benchmark regression judge. Reuse a
+    binary during a single comparison; never reuse a historical number. Record
+    model, quant, prompt shape, flags, backend, hardware, SHA, control result,
+    and repeated in-process results.
+diff --git a/README.md b/README.md
+index ff6791e79..49c66e5ae 100644
+--- a/README.md
++++ b/README.md
+@@ -159,6 +159,23 @@ load_tensors: CPU_REPACK model buffer size = <N> MiB
+ present in the ON arm and **absent** in the OFF arm. An A/B whose arms agree proves nothing until
+ path engagement has been evidenced separately.
+ 
++## Reading our commit messages
++
++Commits, patches and evidence files carry identifiers like `lane-110C`. These are our internal
++work-unit ids, kept deliberately rather than scrubbed: each one ties a change to the exact block
++of work that produced it, the machine it was measured on, and the evidence file that holds the
++raw numbers. If a claim in this repository looks unsupported, the id is how you find what backs
++it. They are traceability, not organisational trivia — treat them the way you would a ticket
++reference in any other project.
++
++Two other conventions worth knowing:
++
++- **`Taken-from:`** in a commit body names the upstream repository and commit a change was ported
++  from. Every ported line has one.
++- **`Measured-effect:`** names what we actually measured, on which hardware, or says `UNMEASURED`.
++  That word is a legal value and appears where it is honest; an absent trailer is a gap, and the
++  provenance audit fails on it.
++
+ ## Maintaining the fork
+ 
+ [`tools/arifi-sync/`](tools/arifi-sync/README.md) drives currency, the patch series, and upstream
+@@ -187,7 +204,7 @@ Important defaults already ruled by evidence:
+ 
+ - `--ctx-checkpoints 0` is the default; disabling rewind is the program’s
+   largest historical gain.
+-- KV f16 is primary under the President’s 64 GB RAM ruling; q4_0 remains an
++- KV f16 is primary on machines with the memory for it; q4_0 remains an
+   explicit capacity trade-off rather than a silent default.
+ - DSpark is documented OFF on the current 780M Vulkan rig after a measured
+   `0.54×` net result.
+@@ -209,7 +226,7 @@ commit history.
+   PowerInfer graft. Its root and `smallthinker` MIT notices are retained.
+ - [PrismML-Eng/llama.cpp](https://github.com/PrismML-Eng/llama.cpp) supplied
+   the observed Vulkan path for PrismML `Q2_0_g128` ternary GGUFs and the
+-  ternary-port lineage. The President’s rule #0 authorizes carrying this work
++  ternary-port lineage. Project policy authorizes carrying this work
+   with maximal credit and provenance; the Phase-0 factual observation that the
+   retained PrismML releases did not include a source `LICENSE` or `NOTICE`
+   remains documented rather than rewritten.
+@@ -241,7 +258,7 @@ unmeasured status with `Measured-effect:`.
+ notices and the exact source from which each was copied are enumerated in
+ [`licenses/README.md`](licenses/README.md).
+ 
+-The President’s 2026-07-22 rule #0 lifted the previous publication blocks for
++A 2026-07-22 policy decision lifted the previous publication blocks for
+ PrismML, thecodacus, PowerInfer, and Charlie/ROCmFPX. This authorization does
+ not justify inventing license text: no PrismML or thecodacus license file is
+ manufactured where Phase 0 did not observe one. Their credit and provenance
+@@ -265,5 +282,5 @@ What that does **not** mean:
+   been run against this repository.
+ 
+ Publication remains gated by local proof, committed evidence for every
+-published gain claim and negative result, and the President’s explicit release
++published gain claim and negative result, and an explicit release
+ word.
+diff --git a/docs/CATALOG.md b/docs/CATALOG.md
+index c890cf83f..d971eab30 100644
+--- a/docs/CATALOG.md
++++ b/docs/CATALOG.md
+@@ -4,7 +4,7 @@ Scope: this catalog records only items traceable to the local-inference program
+ sources. “Carried” means present in the engine recipe; it does not imply a
+ measured gain in every placement regime.
+ 
+-President rule #0, 2026-07-22: prior Phase-0 publication blocks for PrismML,
++Project policy, 2026-07-22: prior Phase-0 publication blocks for PrismML,
+ thecodacus, and PowerInfer are lifted. Their factual license-audit findings
+ remain recorded; authorized work proceeds in the main series with maximal
+ credit, provenance, and retained notices where they exist.
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index 9fd3579aa..f712145f5 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -35,7 +35,7 @@ safe measurement posture.
+ | `--ctx-checkpoints 0` | `0` | Disables server prompt rewind/checkpoints. | Keep off unless a workload demonstrably requires rewind semantics. | Largest historical gain: stock rewind `39.9/68.4/280`; ON_DEVICE checkpoint `84.8/128.8/341.6`; disabled approximately `101/150/372` across short/medium/long prefill. |
+ | `--spec-type draft-mtp` and `--spec-draft-n-max N` | model- and hardware-specific | Enables MTP speculative decoding and sets draft depth. | Use only with a validated compatible draft and an `N` sweep. | Not universal: 31B root-MTP improved `1.8 → 9.4` t/s; Qwen35MoE lost to plain Q4_0 (`22.8` best tuned versus `29.2`); Gemma-4-26B-A4B improved `29.3 → 37.3` t/s at `N=3`. |
+ | M-RoPE embedded-batch position guard | Always on; no runtime toggle | Sends a batch carrying embeddings through the overlapping-position rule even when `batch.token` is also populated. | No operator action; retain for affected M-RoPE/MTP paths. | Narrow snapshot correction from the retained ROCmFPX source; build-only validation is insufficient: exercise a mixed token+embedding M-RoPE batch. |
+-| KV f16 / q4_0 | f16 primary where capacity permits | KV-cache storage precision. | Use q4_0 only as an explicit context-capacity trade-off. | President ruling: f16 is primary; at 64 GB RAM f16 is unconditional for the intended path. Do not claim an unsourced universal speed or quality delta. |
++| KV f16 / q4_0 | f16 primary where capacity permits | KV-cache storage precision. | Use q4_0 only as an explicit context-capacity trade-off. | Project default: f16 is primary; at 64 GB RAM f16 is unconditional for the intended path. Do not claim an unsourced universal speed or quality delta. |
+ | `GGML_RECURRENT_STATE_F16=1` | unset (`f32`) | Stores the recurrent GDN/SSM S-state cache in f16; the GDN kernel still computes in f32. | Opt in only for a recurrent/hybrid model after its output and long-context quality gate passes. | Halves S-state residency and read/write traffic. Recurrent rounding can compound, so it stays opt-in pending target-specific greedy and quality validation. |
+ | `-cmoe` and `-ngl` | placement-specific | Controls CPU MoE placement and GPU layer offload. | First prefer full unified placement when it fits; use tiered placement when it does not. | Full unified `-ngl 99 --n-cpu-moe 0 -c 4096` reached `29.2` t/s in the recorded fit case. CPU-only streamed was `1.6` t/s; GPU-tiered `-ngl 99 -cmoe` was `3.0` t/s. |
+ | DSpark: `--spec-type draft-dspark --spec-draft-n-max 4 -ngld 999` | OFF on current rig | Target-specific speculative drafter for Ternary-Bonsai-27B. | Only after a target-specific controlled benchmark on another hardware path. | It engaged on 780M Vulkan but fell from `7.89` to `4.27` t/s (`0.54×`). `N=4` is required; other values crash. |
+@@ -50,14 +50,14 @@ safe measurement posture.
+ 2. Compare a fresh binary against a fresh binary; reuse binaries, never historical
+    timing numbers.
+ 3. Do not time under DR activity or sibling load.
+-4. Use the President-ruled `llama-server` benchmark harness for acceptance,
++4. Use the `llama-server` benchmark harness for acceptance,
+    including repeated in-process requests where warm behavior matters.
+ 5. Preserve both positive and negative results. “No effect in this placement” is
+    an accepted outcome, not permission to omit the option from the registry.
+ 
+ ## Build variants
+ 
+-Local builds default to **web-UI ON** (President ruling 2026-07-22: he wants the
++Local builds default to **web-UI ON** (project decision 2026-07-22: we want the
+ llama.cpp web UI available for interactive testing). The earlier UI-OFF posture was
+ purely crash containment for `ki-webui-0xC0000139` (`STATUS_ENTRYPOINT_NOT_FOUND` from a
+ shadowed mingw `libstdc++` DLL when `ui-assets.cmake` runs the embed helper
+diff --git a/licenses/README.md b/licenses/README.md
+index 151286d52..56b5bcd5d 100644
+--- a/licenses/README.md
++++ b/licenses/README.md
+@@ -17,7 +17,7 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
+ 
+ Phase 0 observed no source `LICENSE` or `NOTICE` file in the retained PrismML
+ release material and no license grant inside the captured thecodacus patch
+-artifacts. The President’s 2026-07-22 rule #0 authorizes their inclusion with
++artifacts. A 2026-07-22 project decision authorizes their inclusion with
+ maximal attribution and provenance; it does not authorize inventing a license
+ text. Therefore this directory contains no fabricated `prisml-*` or
+ `thecodacus-*` license file.
