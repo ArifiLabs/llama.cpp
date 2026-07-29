@@ -45,6 +45,30 @@ Unless an entry says otherwise, every measurement was taken on:
 
 ### Added
 
+- **Dual residency for the ternary repack path — `GGML_ARIFI_VNNI_REPACK=2`.** Until now this
+  slot forced a choice: repacking Q1_0/Q2_0 weights bought **+22–24%** decode and cost **−65% to
+  −80%** prompt processing on a Vulkan build, because weights in the `CPU_REPACK` buffer stop being
+  eligible for large-batch GPU offload. Mode 2 stops choosing. The weight stays in the ordinary
+  host buffer — so the scheduler still sends prefill to the GPU — and the CPU path is served from a
+  separately allocated repacked *shadow* of the same weights. Measured on RIG-A, one binary with
+  only the environment flip, 519-token prefill, three interleaved replicates × 5 rolls (n=12 per
+  cell), free RAM 5.60–5.72 GB at every launch:
+
+  | tok/s | off | repack (mode 1) | **dual (mode 2)** |
+  |---|---|---|---|
+  | prompt, all-Q2_0 | 905.25 | 178.25 (−80.3%) | **963.51** |
+  | decode, all-Q2_0 | 40.95 | 50.95 (+24.4%) | **50.65 (+23.7%)** |
+
+  The decode gain has disjoint ranges against the baseline. The apparent prompt *gain* does not —
+  the ranges overlap, so it is reported as noise: dual residency does not recover prefill, it never
+  loses it. Cost is the affected tensors resident twice — **95.98 MiB** on that model, logged at
+  runtime because it sits outside llama.cpp's own buffer accounting. Nothing about precision
+  changes: with GPU offload disabled, so that both modes prefill on the CPU and only the shadow
+  differs, mode 2 is **bit-identical** to mode 1 across three models and two prompt shapes
+  (max |Δ logprob| `0.000000000`, deterministic 3/3). Scoped to Q1_0/Q2_0 and to `MUL_MAT`; the MoE
+  `MUL_MAT_ID` path is excluded and labelled, because no ternary MoE model exists here to test it
+  on. See [`docs/FINDINGS.md`](docs/FINDINGS.md) F-09, which this closes.
+
 - **TurboQuant `TQ3_1S` / `TQ4_1S` weight formats** behind `GGML_ARIFI_TURBO_WEIGHT_QUANTS`
   (default OFF). Type-ids 45/46 adopted verbatim, so files from the originating project load
   natively with no conversion step. Measured on RIG-A against plain `Q4_0` quantized from the

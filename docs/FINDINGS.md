@@ -185,22 +185,70 @@ buffer is selected at model-load time.
 
 Three ways out, none free, all recorded rather than assumed:
 
-1. **Keep both copies** — a host-visible copy for batch work and a repacked copy for decode. This
-   genuinely gets both wins and costs the memory of the affected tensors twice.
+1. **Keep both copies** — a host-visible copy for batch work and a repacked copy for decode.
+   **Built and measured. `GGML_ARIFI_VNNI_REPACK=2` on RIG-A.** It is the shipped answer to this
+   finding, and it holds both wins at once.
 
-   **This is the direction, and the reason is worth stating.** The framing above — *choose* which
-   processor gets the batch work — is only forced if the goal is to pick the single best default.
-   It is the wrong frame for a machine with unified memory, where the GPU, the CPU and the RAM are
-   one pool and the point is to use all three at once. Duplicating a tensor changes no weight and
-   no router decision, so it cannot cost quality; it spends memory, which is a resource, to buy
-   the prefill win and the decode win at the same time instead of trading one for the other. Only
-   Q1_0/Q2_0 tensors are affected, so the cost is bounded and measurable rather than global.
+   The framing above — *choose* which processor gets the batch work — is only forced if the goal is
+   to pick a single best default. It is the wrong frame for a machine with unified memory, where
+   the GPU, the CPU and the RAM are one pool. Duplicating a tensor changes no weight and no router
+   decision, so it cannot cost quality; it spends memory, which is a resource, to buy the prefill
+   win and the decode win at the same time. Only Q1_0/Q2_0 tensors are affected, so the cost is
+   bounded and it is printed.
 
-   Shape of the work: leave the tensor in a GPU-visible buffer so the scheduler can still offload
-   large-batch matmuls, and maintain a lazily-built repacked shadow that the CPU path uses when an
-   operation lands on the CPU — which is every single-token decode. The existing measurements say
-   what to expect: prefill keeps the ~950 tok/s it has today instead of collapsing to ~100, and
-   decode keeps the +20–28% the repack path already demonstrated.
+   **The placement was measured before anything was built**, because the whole design depends on a
+   claim this file had only asserted. `GGML_SCHED_DEBUG=2`, all-Q2_0 0.5B, `-ngl 0 --no-host`:
+   with the weight in a plain CPU buffer, **165 of 169** prefill `MUL_MAT`s run on Vulkan0 and
+   **169 of 169** decode `MUL_MAT`s run on the CPU; with it in `CPU_REPACK`, **all 169** prefill
+   `MUL_MAT`s move to the CPU. That is the −77…−88% prompt collapse seen directly as placement.
+   Decode is CPU-side in *both* arrangements, so the prefill/decode split is already free — the
+   only thing the repack buffer changes is where the bytes live.
+
+   That is also why the implementation is small. The offload gate
+   (`ggml/src/ggml-backend.cpp:944`) tests whether the weight's buffer is host-resident and
+   resolves to the CPU backend; it never inspects layout. And `ggml_cpu_extra_compute_forward`
+   (`ggml/src/ggml-cpu/traits.cpp:12`) consults `get_tensor_traits` for every op regardless of
+   buffer type. So the tensor stays exactly where mode 0 puts it — placement is byte-for-byte the
+   mode-0 arrangement — and the CPU path is handed a separately allocated repacked shadow. No new
+   buffer type: `ggml_backend_cpu_device_supports_op` short-circuits to an extra buffer type's own
+   `supports_op` for *every* op whose src lives there, so a dual buffer type would have had to
+   answer for ops it knows nothing about.
+
+   **Measured, same protocol as the rows above** (llama-server, `-ngl 0 --no-host -c 2048 -t 8`,
+   519-token prefill, `n_predict 128`, temp 0, three interleaved replicates × 5 rolls, roll 1
+   dropped, n=12 per cell, one binary with only the env flip, free RAM 5.60–5.72 GB at every
+   launch):
+
+   | tok/s | mode 0 (off) | mode 1 (claim the buffer) | **mode 2 (dual)** |
+   |---|---|---|---|
+   | prompt, mixed-Q2_0 | 898.11 | 310.65 (**−65.4%**) | **958.96** (+6.8%, ranges overlap → noise) |
+   | prompt, all-Q2_0 | 905.25 | 178.25 (**−80.3%**) | **963.51** (+6.4%, ranges overlap → noise) |
+   | decode, mixed-Q2_0 | 40.30 | 49.53 (**+22.9%**) | **49.16 (+22.0%)** |
+   | decode, all-Q2_0 | 40.95 | 50.95 (**+24.4%**) | **50.65 (+23.7%)** |
+
+   Every figure marked with a percentage has ON and OFF ranges that do **not** overlap and a gap
+   wider than the largest within-arm spread. The prefill gain for mode 2 is deliberately *not*
+   claimed: the ranges overlap, so the honest reading is that dual residency **does not recover
+   prefill — it never loses it.** Decode reaches mode 1's win to within the noise.
+
+   Cost, and it is printed rather than estimated: the shadow is **4.68 / 84.16 / 95.98 MiB** on the
+   4-, 72- and 168-tensor models — byte-for-byte what mode 1 puts in its own buffer, which is an
+   independent check that the two modes select the same tensors.
+
+   Quality: unchanged, and tested at the layer where it can actually be tested. With
+   `--no-op-offload` — which pins mode 2's prefill to the CPU exactly like mode 1's, isolating the
+   shadow from where prefill ran — mode 2 is **bit-identical to mode 1** on all six model × prompt
+   cells: same tokens, max |Δ logprob| **0.000000000**, deterministic 3/3. Under normal offload,
+   mode 2 remains bit-identical to mode 1 on any prompt below the batch-32 offload threshold, and
+   its divergence from mode 0 is never larger than mode 1's. On the 4-tensor control model all
+   three modes are token-identical.
+
+   **A caution the numbers above hide.** The first working version of this was *slower than doing
+   nothing* — decode 40.9 → 24.7 tok/s — while passing that entire correctness sweep, because
+   `get_tensor_traits` runs once per matmul **per worker thread** and the first implementation left
+   a `getenv`, a `strstr`, an exclusive mutex and an atomic RMW on that path. The design was right
+   and the plumbing ate it. A green correctness sweep says nothing about the cost of the machinery
+   that makes it correct.
 2. **Enable repack only when no GPU backend exists at all.** Unlike "will this tensor be
    offloaded", "is there any GPU device" *is* answerable at load time, and when the answer is no
    there is no offload eligibility to lose.
