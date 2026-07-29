@@ -1,0 +1,151 @@
+From 206f5447ea233b30f75cadd3fd153f9056ac42e5 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 24 Jul 2026 14:08:05 -0400
+Subject: [PATCH] port: native x86 Q2_0 vec_dot (AVX512-VNNI / AVX-VNNI), drop
+ scalar fallback alias
+
+Second undeclared prerequisite. Before this, x86 had NO native Q2_0 dot at all:
+arch-fallback.h aliased ggml_vec_dot_q2_0_q8_0_generic onto the public name, so
+every x86 host ran the scalar loop. 79697f23a (declared in the manifest) patches
+a function that therefore does not exist in our tree, and cannot apply alone.
+
+CONTENT-LIFT, not a replay. The declared chain upstream of 79697f23a is
+0e0353d7a -> 4d88cd4eb, but replaying it is wrong twice over:
+- 0e0353d7a put VNNI dots for BOTH Q1_0 and Q2_0 in the generic quants.c;
+  4d88cd4eb then moved the Q2_0 one into arch/x86 and reverted the generic file.
+  Diffing 0e0353d7a~1 against 4d88cd4eb on quants.c leaves ONE hunk - a cosmetic
+  0.0 -> 0.0f - so 0e0353d7a contributes nothing that survives and is not a
+  prerequisite at all. The manifest correction stands, but at 4d88cd4eb only.
+- 0e0353d7a's Q1_0 half would in any case collide with the native x86 Q1_0 dot
+  upstream already gave us (7f251fdbc, #21636).
+
+So this lands the settled end state of 4d88cd4eb + 79697f23a directly:
+ggml_vec_dot_q2_0_q8_0 in arch/x86/quants.c with the widened
+(AVX512VNNI && AVX512VL) || AVXVNNI guard and the GGML_DPBUSD_256 alias, plus
+the byte-identical scalar loop as the #else. The x86 alias in arch-fallback.h is
+removed so the native symbol is the one that binds - mirroring how Q1_0 is
+already wired.
+
+Bit-exactness vs the scalar path is PrismML's claim (0e0353d7a message:
+test-quantize-fns + KL-divergence unchanged); not independently re-verified here
+beyond reading that the two branches compute the same expression.
+
+Guard reach on this box: the 7840HS is Zen 4, so AVX512VNNI && AVX512VL is
+satisfied and the first branch binds. Non-VNNI x86 and every non-x86 arch keep
+the scalar #else and the generic alias respectively - unchanged.
+
+Taken-from: PrismML-Eng/llama.cpp@4d88cd4eb
+Taken-from: PrismML-Eng/llama.cpp@79697f23a
+Origin: ArifiLabs/vnni-repack
+---
+ ggml/src/ggml-cpu/arch-fallback.h   |  1 -
+ ggml/src/ggml-cpu/arch/x86/quants.c | 84 +++++++++++++++++++++++++++++
+ 2 files changed, 84 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-cpu/arch-fallback.h b/ggml/src/ggml-cpu/arch-fallback.h
+index f1e7adf2c..9a6f4856b 100644
+--- a/ggml/src/ggml-cpu/arch-fallback.h
++++ b/ggml/src/ggml-cpu/arch-fallback.h
+@@ -87,7 +87,6 @@
+ #define ggml_gemm_q2_K_8x8_q8_K_generic ggml_gemm_q2_K_8x8_q8_K
+ #elif defined(__x86_64__) || defined(__i386__) || defined(_M_IX86) || defined(_M_X64)
+ // quants.c
+-#define ggml_vec_dot_q2_0_q8_0_generic ggml_vec_dot_q2_0_q8_0
+ // repack.cpp
+ #define ggml_quantize_mat_q8_0_4x4_generic ggml_quantize_mat_q8_0_4x4
+ #define ggml_quantize_mat_q8_K_4x4_generic ggml_quantize_mat_q8_K_4x4
+diff --git a/ggml/src/ggml-cpu/arch/x86/quants.c b/ggml/src/ggml-cpu/arch/x86/quants.c
+index ea54cfe44..dbe83a6f3 100644
+--- a/ggml/src/ggml-cpu/arch/x86/quants.c
++++ b/ggml/src/ggml-cpu/arch/x86/quants.c
+@@ -552,6 +552,90 @@ static inline __m128i get_scale_shuffle(int i) {
+ }
+ #endif
+ 
++#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
++#  define GGML_DPBUSD_256 _mm256_dpbusd_epi32
++#elif defined(__AVXVNNI__)
++#  define GGML_DPBUSD_256 _mm256_dpbusd_avx_epi32
++#endif
++
++void ggml_vec_dot_q2_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
++    const int qk = QK2_0;
++    const int nb = n / qk;
++
++    assert(n % qk == 0);
++    assert(nrc == 1);
++    UNUSED(nrc);
++    UNUSED(bx);
++    UNUSED(by);
++    UNUSED(bs);
++
++    const block_q2_0 * GGML_RESTRICT x = vx;
++    const block_q8_0 * GGML_RESTRICT y = vy;
++
++    float sumf = 0.0f;
++
++#if (defined(__AVX512VNNI__) && defined(__AVX512VL__)) || defined(__AVXVNNI__)
++    // AVX-512-VNNI or AVX-VNNI: unpack 2-bit codes c in {0,1,2,3} (value = c-1), then
++    // dot((c-1), qy) = dpbusd(c, qy) - dpbusd(1, qy).
++    const __m256i ones   = _mm256_set1_epi8(1);
++    const __m128i idxlo  = _mm_setr_epi8(0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3);
++    const __m128i idxhi  = _mm_setr_epi8(4,4,4,4,5,5,5,5,6,6,6,6,7,7,7,7);
++    const __m256i mul    = _mm256_setr_epi16(64,16,4,1, 64,16,4,1, 64,16,4,1, 64,16,4,1); // <<(6-2c)
++    const __m256i three  = _mm256_set1_epi16(3);
++    for (int i = 0; i < nb; i++) {
++        const float d0 = GGML_CPU_FP16_TO_FP32(x[i].d);
++        float sumi = 0.0f;
++        for (int k = 0; k < 4; k++) {
++            const block_q8_0 * GGML_RESTRICT yb = &y[i * 4 + k];
++            const float d1 = GGML_CPU_FP16_TO_FP32(yb->d);
++            const __m256i qy = _mm256_loadu_si256((const __m256i *) yb->qs);
++            const __m128i src = _mm_loadl_epi64((const __m128i *) &x[i].qs[k * 8]); // 8 bytes
++            // replicate each byte 4x, then extract field c via (b<<(6-2c))>>6 & 3
++            const __m256i rep = _mm256_set_m128i(_mm_shuffle_epi8(src, idxhi), _mm_shuffle_epi8(src, idxlo));
++            __m256i r0 = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(rep));
++            __m256i r1 = _mm256_cvtepu8_epi16(_mm256_extracti128_si256(rep, 1));
++            r0 = _mm256_and_si256(_mm256_srli_epi16(_mm256_mullo_epi16(r0, mul), 6), three);
++            r1 = _mm256_and_si256(_mm256_srli_epi16(_mm256_mullo_epi16(r1, mul), 6), three);
++            __m256i codes = _mm256_permute4x64_epi64(_mm256_packus_epi16(r0, r1), 0xD8); // 32 codes in order
++            const int dp = hsum_i32_8(GGML_DPBUSD_256(_mm256_setzero_si256(), codes, qy));
++            const int sy = hsum_i32_8(GGML_DPBUSD_256(_mm256_setzero_si256(), ones,  qy));
++            sumi += d1 * (float)(dp - sy);
++        }
++        sumf += d0 * sumi;
++    }
++#else
++    for (int i = 0; i < nb; i++) {
++        const float d0 = GGML_CPU_FP16_TO_FP32(x[i].d);
++
++        float sumi = 0.0f;
++
++        for (int k = 0; k < 4; k++) {
++            const block_q8_0 * GGML_RESTRICT yb = &y[i * 4 + k];
++            const float d1 = GGML_CPU_FP16_TO_FP32(yb->d);
++            int sumi_block = 0;
++
++            const uint8_t * GGML_RESTRICT qs = &x[i].qs[k * 8];
++            const int8_t  * GGML_RESTRICT qy = yb->qs;
++
++            for (int b = 0; b < 8; ++b) {
++                const uint8_t byte = qs[b];
++                // Extract 4 two-bit values, map {0,1,2,3} -> {-1,0,1,2}
++                sumi_block += ((int)((byte >> 0) & 3) - 1) * qy[b*4 + 0];
++                sumi_block += ((int)((byte >> 2) & 3) - 1) * qy[b*4 + 1];
++                sumi_block += ((int)((byte >> 4) & 3) - 1) * qy[b*4 + 2];
++                sumi_block += ((int)((byte >> 6) & 3) - 1) * qy[b*4 + 3];
++            }
++
++            sumi += d1 * sumi_block;
++        }
++
++        sumf += d0 * sumi;
++    }
++#endif
++
++    *s = sumf;
++}
++
+ void ggml_vec_dot_q1_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+     const int qk = QK1_0;
+     const int nb = n / qk;

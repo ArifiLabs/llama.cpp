@@ -1,0 +1,76 @@
+From ce1af9f706f3f2d0b063db60f161eddf559a92f4 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 23 Jul 2026 06:55:05 -0400
+Subject: [PATCH] ggml-cpu: dispatch Q2_0_G128 at the 7 Q2_0 sites
+
+add/add1/out_prod/get_rows route through traits-generic handlers (core to_float +
+cpu from_float/type_size already registered); acc/set/clamp are reject-parity with
+Q2_0 (explicit identical GGML_ABORT rejection, not silent miscompute). Fixes the
+CPU get_rows abort on type-43 token embeddings.
+
+Origin: ArifiLabs lane-110
+Measured-effect: build fix only
+---
+ ggml/src/ggml-cpu/ops.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+index ea851e01a..e374d3482 100644
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -670,6 +670,7 @@ void ggml_compute_forward_add(
+             } break;
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
++        case GGML_TYPE_Q2_0_G128:
+         case GGML_TYPE_Q4_0:
+         case GGML_TYPE_Q4_1:
+         case GGML_TYPE_Q5_0:
+@@ -1121,6 +1122,7 @@ void ggml_compute_forward_add1(
+             } break;
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
++        case GGML_TYPE_Q2_0_G128:
+         case GGML_TYPE_Q4_0:
+         case GGML_TYPE_Q4_1:
+         case GGML_TYPE_Q5_0:
+@@ -1252,6 +1254,7 @@ void ggml_compute_forward_acc(
+         case GGML_TYPE_BF16:
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
++        case GGML_TYPE_Q2_0_G128:
+         case GGML_TYPE_Q4_0:
+         case GGML_TYPE_Q4_1:
+         case GGML_TYPE_Q5_0:
+@@ -4526,6 +4529,7 @@ void ggml_compute_forward_out_prod(
+     switch (src0->type) {
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
++        case GGML_TYPE_Q2_0_G128:
+         case GGML_TYPE_Q4_0:
+         case GGML_TYPE_Q4_1:
+         case GGML_TYPE_Q5_0:
+@@ -4802,6 +4806,7 @@ void ggml_compute_forward_set(
+         case GGML_TYPE_BF16:
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
++        case GGML_TYPE_Q2_0_G128:
+         case GGML_TYPE_Q4_0:
+         case GGML_TYPE_Q4_1:
+         case GGML_TYPE_Q5_0:
+@@ -5027,6 +5032,7 @@ void ggml_compute_forward_get_rows(
+     switch (src0->type) {
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
++        case GGML_TYPE_Q2_0_G128:
+         case GGML_TYPE_Q4_0:
+         case GGML_TYPE_Q4_1:
+         case GGML_TYPE_Q5_0:
+@@ -5784,6 +5790,7 @@ void ggml_compute_forward_clamp(
+         case GGML_TYPE_BF16:
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
++        case GGML_TYPE_Q2_0_G128:
+         case GGML_TYPE_Q4_0:
+         case GGML_TYPE_Q4_1:
+         case GGML_TYPE_Q5_0:

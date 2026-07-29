@@ -1,0 +1,72 @@
+From 87814df4162aeab6152da8707db2a3e1de83ce01 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 23 Jul 2026 05:00:07 -0400
+Subject: [PATCH] vulkan: g128 shader-gen parity + MMQ helper completion
+
+Origin: ArifiLabs lane-110
+Measured-effect: build fix only
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp                |  2 +-
+ .../ggml-vulkan/vulkan-shaders/mul_mmq_funcs.glsl   | 13 +++++++++++++
+ .../vulkan-shaders/vulkan-shaders-gen.cpp           |  4 +---
+ 3 files changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 1e3c86842..f97fd590e 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -3793,7 +3793,7 @@ static bool ggml_vk_matmul_int_shmem_support(const vk_device& device, const std:
+     uint32_t block_a_size = 0;
+     switch (src0_type) {
+         case GGML_TYPE_Q2_0:    block_a_size = std430_size({{32, 4}, {fp_size,  fp_align}});                  break; // qs[8] + dm
+-        case GGML_TYPE_Q2_0_G128: block_a_size = std430_size({{64, 4}, {fp_size, fp_align}});                  break; // qs[32] + dm
++        case GGML_TYPE_Q2_0_G128: block_a_size = std430_size({{32, 4}, {fp_size, fp_align}});                  break; // one Q8_1-sized sub-block + dm; four per g128 source block
+         case GGML_TYPE_Q4_0:    block_a_size = std430_size({{16, 4}, {fp_size,  fp_align}});                  break; // qs[16/4] + dm
+         case GGML_TYPE_Q4_1:    block_a_size = std430_size({{16, 4}, {fp2_size, fp2_align}});                 break; // qs[16/4] + dm(vec2)
+         case GGML_TYPE_Q5_0:    block_a_size = std430_size({{16, 4}, {4, 4}, {fp_size,  fp_align}});          break; // qs[16/4] + qh + dm
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_funcs.glsl
+index 0026127c0..789fa9ff4 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_funcs.glsl
+@@ -58,6 +58,19 @@ void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
+ 
+ void block_a_to_registers(const uint reg_ib, const uint buf_ib) {
+     cache_a[reg_ib].dm = buf_a[buf_ib].dm;
++
++    [[unroll]] for (uint iqs = 0; iqs < 8; ++iqs) {
++        cache_a[reg_ib].qs[iqs] = buf_a[buf_ib].qs[iqs];
++    }
++}
++
++ACC_TYPE mmq_dot_product(const uint ib_a) {
++    int32_t q_sum = 0;
++    [[unroll]] for (uint iqs = 0; iqs < 8; ++iqs) {
++        q_sum += dotPacked4x8EXT(cache_a[ib_a].qs[iqs], cache_b.qs[iqs]);
++    }
++
++    return ACC_TYPE(float(cache_a[ib_a].dm) * (float(q_sum) * float(cache_b.ds.x) - float(cache_b.ds.y)));
+ }
+ #endif
+ 
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index ffb968f46..d07268193 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -234,7 +234,7 @@ bool is_quantized_type(const std::string& type_name) {
+ }
+ 
+ bool is_legacy_quant(const std::string& type_name) {
+-    return type_name == "q2_0" || type_name == "q4_0" || type_name == "q4_1" || type_name == "q5_0" || type_name == "q5_1" || type_name == "q8_0";
++    return type_name == "q2_0" || type_name == "q2_0_g128" || type_name == "q4_0" || type_name == "q4_1" || type_name == "q5_0" || type_name == "q5_1" || type_name == "q8_0";
+ }
+ 
+ bool is_k_quant(const std::string& type_name) {
+@@ -839,8 +839,6 @@ void process_shaders() {
+         }
+     }
+ 
+-    string_to_spv("dequant_q2_0_g128", "dequant_q2_0_g128.comp", {{"D_TYPE", "float"}});
+-
+     auto get_type_str = [](bool f16) {
+         return f16 ? "float16_t" : "float";
+     };

@@ -1,0 +1,592 @@
+From c42e1f36e77b3a1afa92d5d9956c80ca98276c84 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 25 Jul 2026 03:20:59 -0400
+Subject: [PATCH] docs: make the fork buildable by someone who did not build it
+
+A fresh-clone stranger test was run for real: clone, replay, configure and
+build, using only what the repository says. Five blockers were reproduced.
+
+1. The README's replay block could not work. It said to check out the upstream
+   base and then `git am patches/series/*.patch` - but patches/ does not exist
+   at the base commit, because the series is what adds it. Checking out the base
+   deletes the files you are about to apply. Verbatim result:
+   `fatal: could not open 'patches/series/*.patch' for reading`. Replaced with
+   `series replay --onto`, which replays into its own worktree.
+
+2. Nothing in the repository told anyone how to build it. There was no build
+   section and no build document. Without `-D_WIN32_WINNT=0x0A00` a MinGW build
+   fails at 262/346 with `'::CreateFile2' has not been declared` at
+   vendor/cpp-httplib/httplib.cpp:1471 - an error naming neither flag nor fix,
+   which cost this fork three builds. docs/BUILDING.md now states each flag with
+   the failure it prevents, both verified from a clean clone.
+
+3. `git clone` fails on Windows. Upstream carries a 161-character path under
+   tools/ui/, so checkout dies with `Filename too long` unless core.longpaths is
+   set. Upstream's path, but our first command.
+
+4. The build recipe was unreachable from a fresh clone. arifi-recipe.cmake is
+   gitignored and `recipe export` stops without a build directory - which you
+   cannot configure without the recipe. `recipe export --live <snapshot>`
+   already solved this and was documented as impossible; now documented, with
+   the warning that 35 of the 310 entries are absolute paths into this box.
+
+5. `licenses/README.md` was linked as `LICENSES/README.md` - a 404 on every
+   case-sensitive filesystem, i.e. everywhere it would be published.
+
+Stale counts corrected: 40 -> 62 patches and 40 -> 73 commits in README, 38 ->
+62 and 309 -> 310 in the arifi-sync README.
+
+Adds docs/HARDWARE-PROFILES.md, because a single default is wrong for whoever
+it does not match. GGML_ARIFI_VNNI_REPACK is the live case: +327%/+442% prompt
+CPU-only, -77%/-88% prompt on Vulkan. It ships OFF, which is right for this rig
+and wrong for a CPU-only user, and that user had no way to find out. Runtime
+auto-detection was considered and deliberately NOT implemented - it would make
+ggml-cpu introspect sibling backends, "GPU present" is the wrong predicate, and
+it would flip a measured default with no measurement. Named profiles and a
+startup advisory are proposed instead, and recorded as unimplemented.
+
+README gains an explicit scope statement: what this fork is, what it is not,
+the one machine every number was measured on, and the platforms nobody has ever
+built it on. OPTIONS-REGISTRY gains a CPU-only row and an "any other hardware"
+row that promises nothing.
+
+series check --ref master still PASSES (62 patches, byte-identical replay); no
+master commit is touched and the series is unchanged.
+
+Origin: ArifiLabs lane-110C public-readiness
+Evidence: research/local-inference/trial-evidence/110/run-journal.jsonl
+Measured-effect: documentation only; no engine behaviour changed. The CPU-only
+ build (no Vulkan) was built and run from a fresh clone: llama-server reports
+ version 10141 (bc626ba1e), built with GNU 14.2.0, empty device list.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ README.md                  |  62 +++++++++--
+ docs/BUILDING.md           | 215 +++++++++++++++++++++++++++++++++++++
+ docs/HARDWARE-PROFILES.md  | 115 ++++++++++++++++++++
+ docs/OPTIONS-REGISTRY.md   |   7 ++
+ tools/arifi-sync/README.md |  23 +++-
+ 5 files changed, 412 insertions(+), 10 deletions(-)
+ create mode 100644 docs/BUILDING.md
+ create mode 100644 docs/HARDWARE-PROFILES.md
+
+diff --git a/README.md b/README.md
+index 14ecb9242..ff6791e79 100644
+--- a/README.md
++++ b/README.md
+@@ -14,6 +14,28 @@ ROCm/HIP and wholesale ROCmFPX adoption are not the running path on the current
+ rig, but Charlie’s fork remains a tracked source for discrete mechanisms and
+ currency review.
+ 
++## Scope — what this is, and what it is not
++
++**It is** upstream llama.cpp `b10068` plus a linear, individually-toggleable, fully-attributed
++patch series, carrying real mechanisms from PowerInfer, PrismML, ROCmFPX and thecodacus that are
++not in upstream, each one gated and each one documented with its measured effect or an explicit
++`UNMEASURED`. The series replays byte-identically onto its base, and that is verified by a command
++you can run yourself.
++
++**It is not** a faster llama.cpp. Most of what is carried here is either a *capability* (run a model
++that otherwise would not fit) or a win confined to a specific hardware placement. Several carried
++patches measure **inert** on our own hardware and are documented as such.
++
++**Every number in this repository was measured on one machine**: a Beelink SER7 (Ryzen 7 7840HS,
++Radeon 780M / gfx1103, unified memory) on Windows 11, built with WinLibs MinGW-w64 GCC 14.2.0,
++running the Vulkan backend — or, where a row says CPU-only, the CPU backend on that same box.
++
++**Never built or run by anyone, anywhere, on:** Linux, macOS, MSVC, clang-cl, CUDA, ROCm/HIP,
++Arm/NEON, or any GPU other than gfx1103. Upstream supports all of them and nothing here removes
++that support; a CPU-only build is verified. But no result on this page transfers to that hardware,
++and we will not imply it does. If you are on any of it, start from
++[`docs/HARDWARE-PROFILES.md`](docs/HARDWARE-PROFILES.md) — several of our defaults are wrong for you.
++
+ ## Principles
+ 
+ - Start from a known upstream anchor and make every local change rebaseable.
+@@ -26,23 +48,51 @@ currency review.
+ - Preserve negative evidence. A failed kernel or an inert toggle is useful
+   engineering knowledge, not material to erase.
+ 
++## Building
++
++Full instructions, including the failures each flag prevents, are in
++[`docs/BUILDING.md`](docs/BUILDING.md). The short version for MinGW on Windows:
++
++```bash
++cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
++  -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00" -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00" \
++  -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" \
++  -DLLAMA_USE_PREBUILT_UI=OFF          # add -DGGML_VULKAN=ON for the Vulkan build
++cmake --build build --target llama-server -j 6
++```
++
++Those flags are not tuning. Without `-D_WIN32_WINNT=0x0A00` the build fails at
++`vendor/cpp-httplib/httplib.cpp:1471` with `'::CreateFile2' has not been declared` — an error that
++names neither the flag nor the fix, and which this fork lost three builds to. Without the static
++GCC runtime the binaries can die at startup with `0xC0000139` when a foreign `libstdc++-6.dll` is
++on `PATH`. A CPU-only build needs no Vulkan SDK and is verified working.
++
+ ## What this fork adds to upstream
+ 
+-Everything ArifiLabs adds lives as a **linear, 40-patch series** on top of upstream `b10068`.
++Everything ArifiLabs adds lives as a **linear, 62-patch series** on top of upstream `b10068`.
+ There are no merge commits: the series is designed to be replayed onto a newer upstream tag.
+ 
+ ```bash
+-git clone <this repo> && cd llama.cpp
+-git checkout -b my-rebuild 571d0d540
+-git am patches/series/*.patch     # reproduces master, file-for-file
++git clone -c core.longpaths=true <this repo> arifilabs-llama.cpp && cd arifilabs-llama.cpp
++python tools/arifi-sync/arifi_sync.py series replay --onto 571d0d540   # reproduces master
+ ```
+ 
++Use the driver, not a hand-written `git am`. The naive form —
++`git checkout -b x 571d0d540 && git am patches/series/*.patch` — **cannot work**, and the reason is
++worth knowing: `patches/series/` does not exist at the upstream base commit, because the series
++itself is what adds it. Checking out the base removes the very files you were about to apply.
++`series replay` avoids this by replaying into its own worktree, and it names the patch, file and
++rejected hunk on any failure.
++
+ That is checked, not claimed: `series check` regenerates the series, byte-compares it against what
+ is committed, replays it with `git am`, and diffs the result against `master`. The one thing the
+ replay does not reproduce is `patches/series/` itself — the series is generated into the tree it
+ describes, and a patch cannot contain itself, so the generated directory is excluded from its own
+ generation. Everything outside it is identical.
+ 
++`core.longpaths=true` is not optional on Windows: upstream carries a 161-character path under
++`tools/ui/`, and the clone fails to check out without it. See [`docs/BUILDING.md`](docs/BUILDING.md).
++
+ [`patches/series/MANIFEST.md`](patches/series/MANIFEST.md) lists every patch with its source,
+ its gate, and its `Measured-effect:` trailer. Per-mechanism detail is in
+ [`docs/CATALOG.md`](docs/CATALOG.md); every runtime toggle is in
+@@ -189,7 +239,7 @@ unmeasured status with `Measured-effect:`.
+ 
+ `LICENSE` is the verbatim upstream llama.cpp MIT license. Retained third-party
+ notices and the exact source from which each was copied are enumerated in
+-[`LICENSES/README.md`](LICENSES/README.md).
++[`licenses/README.md`](licenses/README.md).
+ 
+ The President’s 2026-07-22 rule #0 lifted the previous publication blocks for
+ PrismML, thecodacus, PowerInfer, and Charlie/ROCmFPX. This authorization does
+@@ -199,7 +249,7 @@ remain explicit in this README, the series manifest, and each eventual commit.
+ 
+ ## Status
+ 
+-The patch series is real and complete: 40 linear commits on upstream `b10068`, every one carrying
++The patch series is real and complete: 73 linear commits on upstream `b10068`, every one carrying
+ provenance trailers, generated into [`patches/series/`](patches/series/) and verified on demand to
+ replay to a tree identical to `master` outside the generated series directory itself.
+ 
+diff --git a/docs/BUILDING.md b/docs/BUILDING.md
+new file mode 100644
+index 000000000..227c4e414
+--- /dev/null
++++ b/docs/BUILDING.md
+@@ -0,0 +1,215 @@
++# Building this fork
++
++Upstream's generic instructions are in [`build.md`](build.md) and they still apply. This page
++covers only what is **specific to this fork or to the toolchain it is developed on**, including
++three flags whose absence produces build or runtime failures that name neither the flag nor the fix.
++
++Every claim on this page is labelled with how it was established. `MEASURED` means a run on the
++hardware named in [scope](#scope-of-these-instructions); `UNTESTED` means exactly that.
++
++---
++
++## 0. Before you clone: Windows path length
++
++`git clone` of this repository **fails on Windows** unless long paths are enabled:
++
++```
++error: unable to create file tools/ui/src/lib/components/app/chat/ChatAttachments/ChatAttachmentsPreview/ChatAttachmentsPreviewCurrentItem/ChatAttachmentsPreviewCurrentItemUnavailable.svelte: Filename too long
++fatal: unable to checkout working tree
++```
++
++That path is **161 characters** and comes from upstream `b10068` — it is not something this fork
++added. Windows' default `MAX_PATH` is 260, so it survives only if your clone directory is shorter
++than about 98 characters. Either clone somewhere shallow, or turn long paths on:
++
++```bash
++git clone -c core.longpaths=true <this repo> arifilabs-llama.cpp
++```
++
++`MEASURED 2026-07-25`: clone into a 115-character prefix fails exactly as above; the same clone
++with `core.longpaths=true` succeeds.
++
++---
++
++## 1. Prerequisites
++
++| Component | What we develop against | Notes |
++|---|---|---|
++| Compiler | **WinLibs MinGW-w64 GCC 14.2.0** (UCRT, POSIX threads, SEH) | The flags in §2 are specific to this toolchain. MSVC and clang-cl are **UNTESTED here**. |
++| CMake | 4.3.3 | Any version upstream supports should work. |
++| Generator | Ninja 1.13.2 | Not required; it is what the recorded recipe uses. |
++| Vulkan SDK | 1.4.350.0 | **Only** for a Vulkan build. A CPU-only build needs no SDK. |
++| Python | 3.8+ | For `tools/arifi-sync/` and the GGUF tooling. |
++
++---
++
++## 2. The three flags that are not optional on MinGW
++
++These are not tuning. Each one prevents a specific failure, and the failure message does not
++mention the flag. This fork lost three separate builds to them, one flag at a time.
++
++### `-D_WIN32_WINNT=0x0A00` — required, or the build does not link
++
++Without it, the build **fails at roughly 262/346 targets**:
++
++```
++vendor/cpp-httplib/httplib.cpp:1471:9: error: '::CreateFile2' has not been declared; did you mean 'CreateFileW'?
++ 1471 |       ::CreateFile2(wpath.c_str(), GENERIC_READ,
++```
++
++`CreateFile2` is a Windows 8+ API and MinGW-w64's headers gate it behind `_WIN32_WINNT`. WinLibs
++defaults below `0x0602`, so the declaration is never emitted. `0x0A00` selects Windows 10.
++
++Set it on **both** language flags — the failing translation unit is C++, but the C sources need the
++same target level:
++
++```
++-DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00" -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00"
++```
++
++`MEASURED 2026-07-25`, fresh clone, CPU-only, no Vulkan: without the flag the build stops at the
++error above; with it, `llama-server` links and runs. It is **not** a Vulkan-only concern — a plain
++CPU-only build fails identically.
++
++### `-static-libgcc -static-libstdc++` — required, or the binary can die at startup
++
++```
++-DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
++```
++
++Without a static GCC runtime, any other `libstdc++-6.dll` earlier on `PATH` shadows the one the
++binary was built against. That produced `0xC0000139` (`STATUS_ENTRYPOINT_NOT_FOUND`) when
++`ui-assets.cmake` ran the asset-embed helper. Linking the runtime statically makes the binaries
++immune to DLL shadowing. See [`OPTIONS-REGISTRY.md` §Build variants](OPTIONS-REGISTRY.md#build-variants).
++
++### `LLAMA_USE_PREBUILT_UI=OFF` — required if you do not want a downloaded UI bundle
++
++Leaving it on makes the configure step fetch a prebuilt web-UI release. Build the UI from source
++(`npm install && npm run build` in `tools/ui`) or turn the UI off entirely — see §4.
++
++---
++
++## 3. CPU-only build (no GPU, no Vulkan SDK)
++
++This is the path to use if you have no AMD Vulkan device, or if you want the CPU kernels.
++
++```bash
++cmake -S . -B build-cpu -G Ninja \
++  -DCMAKE_BUILD_TYPE=Release \
++  -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00" \
++  -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00" \
++  -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" \
++  -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF
++
++cmake --build build-cpu --target llama-server -j 6
++```
++
++`MEASURED 2026-07-25` on a fresh clone: configure and build both succeed, `llama-server --version`
++reports `10141 (bc626ba1e) built with GNU 14.2.0 for Windows AMD64`, and `--list-devices` prints an
++empty device list. **Nothing in this fork requires a GPU backend to be present**; the Vulkan
++backend is simply not compiled and the CPU backend is selected.
++
++**If you are CPU-only, read [`HARDWARE-PROFILES.md`](HARDWARE-PROFILES.md) before benchmarking.**
++Several defaults in this fork are tuned for a GPU-offloaded rig and are the wrong choice for you —
++`GGML_ARIFI_VNNI_REPACK` in particular ships OFF and is a large measured win on a CPU-only path.
++
++## 4. Vulkan build (the rig this fork is developed on)
++
++```bash
++cmake -S . -B build-vulkan -G Ninja \
++  -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON \
++  -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00" \
++  -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00" \
++  -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" \
++  -DLLAMA_USE_PREBUILT_UI=OFF
++
++cmake --build build-vulkan --target llama-server -j 6
++```
++
++The web UI is **ON** by default in local builds and is built from source. For a minimal or
++bench-proof build add `-DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF
++-DLLAMA_USE_PREBUILT_WEBUI=OFF`. The UI touches no decode path, so a UI-ON server binary is
++bench-equivalent to UI-OFF — but record which one produced any number you publish.
++
++## 5. Reproducing our exact configuration
++
++`tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt` is the **committed** record of the real
++build: all 310 non-internal CMake cache entries. You do not need a build directory to read it:
++
++```bash
++python tools/arifi-sync/arifi_sync.py recipe export \
++    --live tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt \
++    --initial-cache arifi-recipe.cmake
++```
++
++**Do not feed that file to `cmake -C` unchanged on another machine.** 35 of the 310 entries are
++absolute paths into *our* WinGet, Ninja and Vulkan SDK installs (`CMAKE_C_COMPILER`,
++`CMAKE_CXX_COMPILER`, `CMAKE_MAKE_PROGRAM`, `Vulkan_*`, the binutils set). Treat the snapshot as
++the authoritative *reference* for what was set, and use the explicit commands in §3/§4 to build.
++
++Once you have your own configured build directory, `recipe diff` will tell you every entry where
++you differ from us — which is how a missing flag gets found without guessing:
++
++```bash
++python tools/arifi-sync/arifi_sync.py recipe diff --live build-cpu/CMakeCache.txt
++```
++
++## 6. Reproducing the patch series
++
++Do **not** try to `git am patches/series/*.patch` after checking out the upstream base: that
++directory does not exist at the base commit, and the shell would have nothing to expand. Use the
++driver, which replays into its own worktree:
++
++```bash
++python tools/arifi-sync/arifi_sync.py series replay --onto 571d0d540
++python tools/arifi-sync/arifi_sync.py series check      # regenerate, byte-compare, replay, diff
++```
++
++`MEASURED 2026-07-25`: `series check` passes from a completely fresh clone — 62 patches replay to a
++tree identical to `master` outside the generated series directory.
++
++---
++
++## 7. Troubleshooting
++
++| Symptom | Cause | Fix |
++|---|---|---|
++| `git clone` → `Filename too long` / `unable to checkout working tree` | Upstream's 161-char `tools/ui/...` path exceeds `MAX_PATH` | `git clone -c core.longpaths=true`, or clone to a shallower directory (§0) |
++| `'::CreateFile2' has not been declared` at `vendor/cpp-httplib/httplib.cpp:1471` | `_WIN32_WINNT` too low on MinGW | `-D_WIN32_WINNT=0x0A00` on both C and CXX flags (§2) |
++| Binary exits immediately with `0xC0000139` (`STATUS_ENTRYPOINT_NOT_FOUND`) | A foreign `libstdc++-6.dll` on `PATH` shadows the build's runtime | `-static-libgcc -static-libstdc++` (§2) |
++| **`0xC0000005` ACCESS_VIOLATION during decode, after `CPU_REPACK model buffer size` is logged** | **Upstream's 8×8 repack kernels. Not this fork.** See below. | Drop `--no-host`, or use a quant whose repack path is 4-wide |
++| `git am` → `unable to auto-detect email address` | No git identity configured | `git config user.email` / `user.name` |
++| `series check` byte-compare fails right after a `git` upgrade | Patch signature line changed | `series regen` — the series is generated, never hand-edited |
++
++### `0xC0000005` in an 8×8 repack kernel — a real crash you can hit blind
++
++Passing **`--no-host`** makes the `CPU_REPACK` buffer type reachable. Three of upstream's five
++repack types then abort with `0xC0000005` ACCESS_VIOLATION, *after* the buffer is allocated:
++
++- `Q4_0` (`q4_0_8x8`), `IQ4_NL` (`iq4_nl_8x8`), `MXFP4` (`mxfp4_8x8`)
++- gdb frame 0 is `ggml_gemv_q4_0_8x8_q8_0`, frame 1
++  `ggml::cpu::repack::tensor_traits<block_q4_0, 8, 8, GGML_TYPE_Q4_0>::compute_forward`,
++  reached from `llama_decode` on a libgomp worker.
++
++**Attribution is settled: this reproduces on stock upstream `b10068` on the identical model and
++box, so it is upstream's, not ours.** The 4-wide kernels — this fork's `q2_0_4x8` and upstream's
++`q2_K_8x8` / `q4_K_8x8` Q8_K pair — run fine.
++
++You will only meet this if you pass `--no-host`, which you should only be doing when you are
++deliberately A/B-testing a CPU repack path. `MEASURED` on the hardware in
++[scope](#scope-of-these-instructions); whether it reproduces on other CPUs is **UNTESTED**.
++Full evidence is in the `GGML_ARIFI_VNNI_REPACK` row of [`OPTIONS-REGISTRY.md`](OPTIONS-REGISTRY.md).
++
++---
++
++## Scope of these instructions
++
++Everything marked `MEASURED` on this page was measured on:
++
++- **Beelink SER7**, AMD Ryzen 7 7840HS, **Radeon 780M (gfx1103)**, unified memory, ~32 GB RAM
++- **Windows 11**, WinLibs MinGW-w64 GCC 14.2.0 (UCRT/POSIX/SEH), CMake 4.3.3, Ninja 1.13.2
++- Vulkan SDK 1.4.350.0 for the Vulkan build
++
++**UNTESTED anywhere in this repository:** Linux, macOS, MSVC, clang-cl, CUDA, ROCm/HIP, Arm/NEON,
++and every non-gfx1103 GPU. Upstream supports all of them and this fork does not remove that
++support — but no one has built or run this fork on them, and we will not imply otherwise.
+diff --git a/docs/HARDWARE-PROFILES.md b/docs/HARDWARE-PROFILES.md
+new file mode 100644
+index 000000000..a63a2e758
+--- /dev/null
++++ b/docs/HARDWARE-PROFILES.md
+@@ -0,0 +1,115 @@
++# Hardware profiles — which defaults are wrong for you
++
++Every default in this fork was chosen on **one machine**: a Beelink SER7 with a Radeon 780M and
++unified memory, running Vulkan. Those defaults are correct there because they were measured there.
++
++A single default is necessarily wrong for whoever it does not match. This page exists so you can
++find out which ones are wrong for *you* in one read, instead of discovering it in a benchmark.
++
++[`OPTIONS-REGISTRY.md`](OPTIONS-REGISTRY.md) remains authoritative for the evidence behind every
++row here. This page is the routing layer, not a second source of truth.
++
++---
++
++## The one question that changes the most
++
++> **Do your weights end up on a GPU, or on the CPU?**
++
++Not "do you own a GPU" — do the matmuls for *this model, at this `-ngl`, in this build* run on it?
++The fork's most consequential toggle flips on exactly that, and in opposite directions:
++
++| | CPU-only path | GPU-offloaded path |
++|---|---|---|
++| `GGML_ARIFI_VNNI_REPACK=1` | **+327% to +442% prompt**, +20% to +24% decode | **−77% to −88% prompt** (decode still +20% to +28%) |
++
++Same flag, same binary, same models. Repacked weights lose GPU-offload eligibility, so the batch
++matmuls that were running on the iGPU move back to the CPU. It ships **OFF**, which is right for
++the rig it was measured on and wrong for a CPU-only user.
++
++Measured 2026-07-24, `llama-server`, `-ngl 0 --no-host -c 2048 -t 8`, 419-token prefill, n=9 per
++arm, ON/OFF ranges disjoint in all eight comparisons. Full protocol and every raw value are in the
++registry's `GGML_ARIFI_VNNI_REPACK` row.
++
++---
++
++## Pick your profile
++
++### CPU-only (no GPU backend compiled, or `-dev none`)
++
++| Setting | Value | Why |
++|---|---|---|
++| `GGML_ARIFI_VNNI_REPACK` | **`1`** — change this | The single largest CPU-only win in the fork. Requires a **g64** Q1_0/Q2_0 model, and `--no-host` on a Vulkan-enabled build. |
++| thecodacus prefetch (`GGML_SCHED_PREFETCH_EXPERTS`) | leave OFF | There is no host→device transfer to hide. |
++| `--ctx-checkpoints 0` | keep | Largest historical gain; not hardware-specific. |
++| KV cache | f16, or `q4_0` for capacity | Not `turbo*` — see the KV row below. |
++| `GGML_ARIFI_ROCMFPX_FORMATS` | OFF unless you have such a file | Build-time. These types are CPU-only anyway, so a CPU-only host is the one place they cost nothing extra. |
++
++> Caution: `--no-host` is what makes `CPU_REPACK` reachable — and also what exposes upstream's
++> 8×8 repack crash (`0xC0000005`). See [`BUILDING.md` §7](BUILDING.md#7-troubleshooting).
++
++### AMD unified memory + Vulkan (the rig everything was measured on)
++
++Ship defaults as-is. `GGML_ARIFI_VNNI_REPACK` **stays OFF** — turning it on costs you 77–88% of
++prompt throughput. DSpark stays OFF (`0.54×` measured). Prefetch stays OFF (measured inert).
++
++### NVIDIA / CUDA
++
++Use upstream's CUDA backend; this fork does not modify it. Start from upstream defaults and treat
++every ArifiLabs toggle as OFF until you measure it. **Nothing in this fork has been built or run on
++CUDA hardware.** The DGX Spark row in the registry is a *plan*, not a result.
++
++### Discrete GPU with a real host→device boundary
++
++This is the one placement where the three thecodacus prefetch patches are expected to help — their
++author measured `+64.5%` prefill in the host-offloaded `-cmoe` regime they were written for. That
++is **his** number in **his** regime, reproduced here as a citation. On our unified-memory rig they
++measured inert. Turn them on in dependency order and measure.
++
++---
++
++## Every toggle, and who should change it
++
++| Mechanism | Default | Change it if… | Do **not** change it if… |
++|---|---|---|---|
++| `GGML_ARIFI_VNNI_REPACK` | OFF | You are CPU-only **and** running a g64 Q1_0/Q2_0 model | Any weights are GPU-offloaded — prompt throughput collapses |
++| `POWERINFER_IOCP` | ON (Windows) | You hit a streaming stall — set `0` to fall back to synchronous reads | You are chasing throughput. **The A/B was noise; there is no verdict.** Do not quote a number for this flag |
++| TurboQuant KV (`turbo2`/`turbo3`) | **not shipped** | — | Ever, for speed. Measured smaller *and* slower than plain `q4_0`: turbo3 350 MiB @ 8.5 t/s vs `q4_0` 504 MiB @ 19.8 t/s. The storage claim is real; the trade is not worth it |
++| PowerInfer expert streaming (`EXPERT_BUNDLE_PATH`) | unset | Your model's experts **cannot** fit in RAM/VRAM and you have a compatible bundle | The model fits. This is a capability for running what otherwise would not run — `1.6–6.1` t/s — not a speed-up |
++| `MAX_N_CACHED` | implementation-selected | You have measured cache pressure and RAM headroom | You are guessing. **UNMEASURED** — no accepted ON/OFF benchmark exists |
++| Q2_0 g128 (GGUF key `GGML_Q2_0_G128=1`) | absent → off | You have a verified PrismML/HF g128 file, retagged with `tools/gguf-retag-g128/` | You have an ordinary g64 Q2_0 file. Never add the key to one — the loader gate is fail-closed for a reason |
++| `GGML_ARIFI_ROCMFPX_FORMATS` | OFF (build-time) | You need to read or write a ROCmFPX GGUF | You want speed. **Performance UNMEASURED.** No GPU kernels exist for these types, so every matmul falls to CPU |
++| MTP (`--spec-type draft-mtp`) | model-specific | You have a validated draft **and** you sweep `N` | You expect it to generalise. It does not: 31B `1.8 → 9.4` t/s, but Qwen35MoE *lost* (`22.8` vs `29.2`) |
++| DSpark drafter | OFF | You are on hardware that is not a 780M **and** you benchmark it | You are on a 780M — measured `7.89 → 4.27` t/s (`0.54×`) |
++| `GGML_RECURRENT_STATE_F16` | unset (f32) | A recurrent/hybrid model passed your own quality gate | You have not run that gate. Recurrent rounding compounds |
++| `--ctx-checkpoints 0` | `0` | Your workload genuinely needs rewind semantics | Otherwise — this is the program's largest historical gain |
++
++---
++
++## Why this is a table and not automatic detection
++
++The obvious improvement is to detect the situation at runtime: if no GPU backend is present, turn
++`GGML_ARIFI_VNNI_REPACK` on by itself. We considered it and **did not implement it**, for reasons
++worth stating rather than hiding:
++
++1. **Layering.** The decision lives in `ggml_repack_get_optimal_repack_type()` inside `ggml-cpu`.
++   Making it depend on whether a Vulkan or CUDA backend exists would make the CPU backend
++   introspect its siblings, which is a dependency the upstream architecture does not have and
++   which we would then have to carry across every rebase.
++2. **"GPU present" is the wrong predicate.** What actually matters is whether *these tensors* get
++   offloaded, which depends on `-ngl`, `--no-host`, model size and free VRAM — all resolved after
++   buffer-type selection has already run. A build-time or device-count proxy would silently get it
++   wrong for the mixed case, and a silently-wrong default is exactly the failure this page exists
++   to prevent.
++3. **It would change a measured default with no measurement behind the change.** This fork's own
++   rule is that a default flips only on evidence. Auto-detection has none yet.
++
++**The proposal we would accept**, in order of preference:
++
++- **Named profiles.** `--arifi-profile cpu-only|gpu-offload` resolving to a documented flag set,
++  logged verbatim at startup so any benchmark record shows what was actually in effect. Explicit,
++  greppable, no silent behaviour, no cross-backend dependency.
++- **A startup advisory.** When the CPU backend is the only one registered *and* the model contains
++  Q1_0/Q2_0 tensors *and* the toggle is unset, log one line naming the flag and its measured
++  effect. Changes nothing, costs nothing, and closes the discovery gap for the person it affects.
++
++Both are small. Neither has been implemented, and this paragraph is not a claim that they have.
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index 325be425f..9fd3579aa 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -7,8 +7,15 @@ safe measurement posture.
+ 
+ ## Defaults by hardware path
+ 
++> **If you are not on one of the four machines below, read
++> [`HARDWARE-PROFILES.md`](HARDWARE-PROFILES.md) first.** Every default in this registry was chosen
++> on the SER7/780M Vulkan rig, and at least one of them (`GGML_ARIFI_VNNI_REPACK`) is measurably
++> the wrong choice on a CPU-only path. That page routes by hardware; this one holds the evidence.
++
+ | Hardware path | Default posture |
+ |---|---|
++| **CPU-only** (no GPU backend compiled, or `-dev none`) | **Set `GGML_ARIFI_VNNI_REPACK=1`** — the shipped default of OFF is wrong here. Measured `+327%` to `+442%` prompt and `+20%` to `+24%` decode on a g64 Q1_0/Q2_0 model, ON/OFF ranges disjoint. Requires `--no-host` on a Vulkan-enabled build, which also exposes upstream's 8×8 repack `0xC0000005` crash — see the VNNI row. Everything else follows the unified-memory posture: prefetch OFF, `--ctx-checkpoints 0`, KV f16 or `q4_0`. |
++| **Any other hardware** (Linux, macOS, CUDA, ROCm, Arm, non-gfx1103 GPUs) | **No posture — nothing here has been built or run on it.** Start from upstream defaults, treat every ArifiLabs toggle as OFF, and measure before enabling. The rows below are results from one box, not predictions for yours. |
+ | Beelink SER7 / Radeon 780M unified memory | Vulkan is the AMD path. Keep thecodacus host-transfer prefetch OFF by default; it measured inert when experts are GPU-resident. DSpark is OFF after a `0.54×` result. Use `--ctx-checkpoints 0`. |
+ | SER7 upgraded to 64 GB or 96 GB DDR5 | Same Vulkan posture. KV f16 becomes unconditional under the 64 GB ruling when model placement permits. Prefer fitting the model in unified memory before adding streamed tiers. |
+ | AMD Strix Halo 128 GB unified memory | Vulkan remains the expected AMD path. Start with the unified-memory defaults: prefetch OFF until a host-offloaded trial proves a transfer boundary; KV f16 preferred. |
+diff --git a/tools/arifi-sync/README.md b/tools/arifi-sync/README.md
+index dff31e3b5..0e5aad039 100644
+--- a/tools/arifi-sync/README.md
++++ b/tools/arifi-sync/README.md
+@@ -24,7 +24,7 @@ are required for everything except `build`/`judge`.
+ | `series replay --onto <ref>` | Replays the committed series onto any ref; names patch + file + rejected hunks on failure | no | no |
+ | `currency` | Fetches every source and reports drift against the reviewed pins | **yes** | no |
+ | `recipe diff` | Recovers the build recipe by **diffing** CMakeCache against the committed snapshot | no | a configured build dir |
+-| `recipe export` | Writes a CMake `-C` initial-cache file that replays the recorded configuration | no | a configured build dir |
++| `recipe export` | Writes a CMake `-C` initial-cache file that replays the recorded configuration | no | no — see below |
+ | `build` | Recipe-diffs, then builds `llama-server` | no | yes |
+ | `judge` | The F-085 regression judge | no | yes |
+ | `bump --onto <ref>` | Rebase surface → replay → build → judge. Refuses the bump unless **all three** pass | yes | yes |
+@@ -49,9 +49,24 @@ cannot miss a flag, because anything that differs gets reported.
+ ```bash
+ python tools/arifi-sync/arifi_sync.py recipe diff     # live build vs the committed snapshot
+ python tools/arifi-sync/arifi_sync.py recipe export   # -> arifi-recipe.cmake
+-cmake -S . -B build-new -C arifi-recipe.cmake         # replays ALL 309 cache entries
++cmake -S . -B build-new -C arifi-recipe.cmake         # replays ALL 310 cache entries
+ ```
+ 
++**With no build directory at all** — the state every fresh clone is in — point `--live` at the
++committed snapshot instead. `arifi-recipe.cmake` is gitignored, so this is the only way a new
++clone can read the recipe:
++
++```bash
++python tools/arifi-sync/arifi_sync.py recipe export \
++    --live tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt \
++    --initial-cache arifi-recipe.cmake
++```
++
++**Read the result; do not `-C` it blind on another machine.** 35 of the 310 entries are absolute
++paths into this box's WinGet, Ninja and Vulkan SDK installs. The portable subset — the flags that
++actually matter and the errors they prevent — is written out in
++[`docs/BUILDING.md`](../../docs/BUILDING.md).
++
+ `recipe/build-vulkan.cache-snapshot.txt` is the committed recipe. It survives deletion of the build
+ directory. Note that `-mprefer-vector-width=128` (the MinGW AVX-spill cure) is deliberately **not**
+ in it: patch `0009` applies it with a target-scoped `target_compile_options`, so it travels with the
+@@ -89,9 +104,9 @@ guessing. Then it replays, builds, and judges. Any failure refuses the bump. On
+ 
+ | Leg | Status |
+ |---|---|
+-| `status`, `provenance`, `series regen/check/replay` | **Exercised.** Run against the real 38-patch series; `series check` replays to a byte-identical tree. |
++| `status`, `provenance`, `series regen/check/replay` | **Exercised.** Run against the real 62-patch series; `series check` replays to a byte-identical tree. Re-verified 2026-07-25 from a **fresh clone** with no local state — it passes there too. |
+ | `currency` | **Exercised.** Fetched all four remotes plus both TurboQuant checkouts and reported real drift. |
+-| `recipe export`, `recipe diff` | **Exercised** against the real `build-vulkan/CMakeCache.txt` (309 entries). |
++| `recipe export`, `recipe diff` | **Exercised** against the real `build-vulkan/CMakeCache.txt` (310 entries), and `export --live <snapshot>` exercised from a fresh clone with no build directory. |
+ | `build` | **UNEXERCISED.** Written, never run — a sibling agent held the box. |
+ | `judge` | **UNEXERCISED, and it stops rather than pretending.** The timed `llama-server` harness is not wired; the subcommand raises instead of returning a plausible-looking result. Wire it to the lane's existing harness and delete that raise. |
+ | `bump` | **UNEXERCISED end-to-end** — it depends on `build` and `judge`. |

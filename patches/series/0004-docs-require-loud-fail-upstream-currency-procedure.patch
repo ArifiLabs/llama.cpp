@@ -1,0 +1,126 @@
+From ff742558ce6f12e25cb5652a5681bc61ac3e1f8c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 22 Jul 2026 19:18:22 -0400
+Subject: [PATCH] docs: require loud-fail upstream currency procedure
+
+Taken-from: ggml-org/llama.cpp@571d0d540df04f25298d0e159e520d9fc62ed121
+Taken-from: charlie12345/ROCmFPX@a6a93765f7ce9779c13f9881164a65f7a9f31198
+Taken-from: PrismML-Eng/llama.cpp@ternary-Q2_0_g128-lineage
+Taken-from: Tiiny-AI/PowerInfer@8bd56d69906c9d2dba4d3bf6899763401e01a9a4
+Origin: ArifiLabs lane-110
+Measured-effect: Process guardrail only; acceptance still requires a clean rebase, build, and bench judge.
+---
+ CONTRIBUTING/UPSTREAM-SYNC.md | 104 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 104 insertions(+)
+ create mode 100644 CONTRIBUTING/UPSTREAM-SYNC.md
+
+diff --git a/CONTRIBUTING/UPSTREAM-SYNC.md b/CONTRIBUTING/UPSTREAM-SYNC.md
+new file mode 100644
+index 000000000..35db31dc9
+--- /dev/null
++++ b/CONTRIBUTING/UPSTREAM-SYNC.md
+@@ -0,0 +1,104 @@
++# Upstream currency and rebase procedure
++
++## Purpose
++
++This fork tracks four source remotes while preserving an auditable,
++feature-toggled patch stack:
++
++| Remote | URL | Role |
++|---|---|---|
++| `upstream` | `https://github.com/ggml-org/llama.cpp` | Base engine and release tags |
++| `rocmfpx` | `https://github.com/charlie12345/ROCmFPX` | Diff-audit and discrete-mechanism source |
++| `prisml` | `https://github.com/PrismML-Eng/llama.cpp` | Ternary Vulkan lineage and currency source |
++| `powerinfer` | `https://github.com/Tiiny-AI/PowerInfer` | Sparse CPU/expert-streaming lineage |
++
++Do not add a source update by blind merge. Do not overwrite provenance. Do not
++accept a timing number copied from an old binary.
++
++## Currency procedure
++
++1. Begin from clean `master`. Record `git status --short`, current `HEAD`, and
++   current upstream tag/anchor.
++2. Fetch all four remotes and tags:
++
++   ```bash
++   git fetch upstream --tags --prune
++   git fetch rocmfpx --prune
++   git fetch prisml --prune
++   git fetch powerinfer --prune
++   ```
++
++3. Inspect candidate upstream tags and new fork commits. Classify each proposed
++   take as one of: upstream-base bump, PowerInfer payload update, PrismML
++   ternary change, ROCmFPX diff-audit candidate, or documentation-only source
++   refresh.
++4. Create a temporary branch named
++   `sync/upstream-<tag>-<YYYY-MM-DD>` from the current accepted `master`.
++   Never create `blocked/*` branches.
++5. Rebase the complete ordered ArifiLabs series onto the candidate anchor.
++   Reapply, in order, the PowerInfer series, community-prefetch series,
++   ternary slot when present, and local profiling/tooling commits.
++6. Loud-fail immediately on any of these conditions:
++
++   - a graft-script anchor or a patch context drifts;
++   - a rebase conflict requires semantic judgment;
++   - the vendored PowerInfer payload no longer matches its declared source;
++   - a retained license/notice copy is missing;
++   - a patch lacks `Taken-from:`, `Origin:`, or `Measured-effect:`;
++   - the Windows Vulkan configure/build fails;
++   - a standard-model control load, target-model load, greedy-output check, or
++     expert-bundle functional check fails;
++   - benchmark conditions are impure: reused timing, DR activity, sibling load,
++     mismatched model/flags, or a different binary.
++
++   A loud failure means stop, preserve the branch and diagnostic evidence, and
++   write the needed rebase or trial work. It never means force-apply or
++   silently skip a hunk.
++
++7. Build the candidate on Windows with Vulkan using the documented parity
++   constraints. Preserve the MinGW `-mprefer-vector-width=128` cure where that
++   toolchain and the PowerInfer subtree are in use.
++8. Run the functional sequence appropriate to the changed capability:
++
++   - standard-model control load;
++   - SmallThinker CPU smoke when the PowerInfer series is affected;
++   - compatible expert-bundle generate/load;
++   - `qwen35moe` load for the upstream-port proof;
++   - tiered `-ngl 99 -cmoe -b 8 -ub 8` validation when streaming is affected;
++   - ternary control and ternary GGUF load when PrismML work is affected.
++9. Run the President-ruled `llama-server` benchmark regression judge. Reuse a
++   binary during a single comparison; never reuse a historical number. Record
++   model, quant, prompt shape, flags, backend, hardware, SHA, control result,
++   and repeated in-process results.
++10. Accept only if the rebase is clean, builds and functional checks pass, the
++    benchmark result is valid under bench-purity law, and the committed evidence
++    supports the conclusion. Add or update provenance, option-registry, trial,
++    and catalog records in the same change.
++11. Cherry-pick or rebase the accepted source-derived commits into `master`
++    with original authorship preserved where available. Every resulting commit
++    carries:
++
++    ```text
++    Taken-from: <repo>@<source-sha-or-source-id>
++    Origin: ArifiLabs lane-110
++    Measured-effect: <measurement, placement boundary, or not independently measured>
++    ```
++
++12. Delete the temporary `sync/` branch only after the accepted master commit
++    and evidence are verified. Retain a rejected branch until its failure has
++    been captured in the applicable trial or decision record.
++
++## Source-specific rules
++
++- **upstream:** prefer upstream implementations when they cover an intended
++  capability, including a future ternary Vulkan implementation.
++- **PowerInfer:** updates are selectively vendored and reviewed; do not merge
++  its old engine wholesale.
++- **PrismML:** carry ternary work in the main series under rule #0 with maximal
++  attribution. Preserve the factual audit record; never fabricate a missing
++  source license text.
++- **ROCmFPX:** track and diff-audit it. Wholesale merge remains rejected by
++  measured evidence unless a new, controlled trial changes that verdict.
++- **thecodacus:** maintain the three-patch dependency order and explicit
++  authorship. Their default remains OFF on unified-memory hardware until a
++  transfer-bound trial says otherwise.

@@ -1,0 +1,44 @@
+From 758a090e8e707ff6419a23822d8fa09c0de52525 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 25 Jul 2026 01:50:46 -0400
+Subject: [PATCH] tools: record GGML_ARIFI_ROCMFPX_FORMATS in the build-recipe
+ snapshot
+
+Adding a CMake option adds a cache entry, so the committed recipe snapshot
+went stale the moment the option landed: recipe diff reported exactly one
+difference, the new key. Refreshed at the option's DEFAULT (OFF), so the
+snapshot keeps describing the default build rather than whatever arm was
+last configured. recipe diff is PASS again, 310/310.
+
+The two header lines also change: the previous snapshot was exported from a
+worktree and recorded a relative source path. This one was exported from the
+repo root.
+
+Origin: ArifiLabs/rocmfp-weight-formats
+Evidence: research/local-inference/trial-evidence/110/
+Measured-effect: generated artifact only; no source or engine behaviour changed
+---
+ tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt b/tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt
+index d1d8edf04..fff83aa79 100644
+--- a/tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt
++++ b/tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt
+@@ -1,6 +1,6 @@
+ # ArifiLabs build recipe snapshot - GENERATED, do not hand-edit.
+-# Source: ../arifilabs-llama.cpp/build-vulkan/CMakeCache.txt
+-# Captured: 2026-07-24T22:58:43+00:00
++# Source: build-vulkan/CMakeCache.txt
++# Captured: 2026-07-25T05:49:28+00:00
+ # Non-INTERNAL / non-STATIC CMake cache entries only.
+ # Compare a new build against this with: arifi_sync.py recipe diff
+ AZ_DISABLE_ASSERT:BOOL=OFF
+@@ -135,6 +135,7 @@ GGML_ALL_WARNINGS_3RD_PARTY:BOOL=OFF
+ GGML_AMX_BF16:BOOL=OFF
+ GGML_AMX_INT8:BOOL=OFF
+ GGML_AMX_TILE:BOOL=OFF
++GGML_ARIFI_ROCMFPX_FORMATS:BOOL=OFF
+ GGML_AVX:BOOL=OFF
+ GGML_AVX2:BOOL=OFF
+ GGML_AVX512:BOOL=OFF

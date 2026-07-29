@@ -1,0 +1,439 @@
+From b31093e835759d9444e90cadf2f6f118a722b7d4 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 22 Jul 2026 19:30:49 -0400
+Subject: [PATCH] powerinfer: CPU kernels + dispatch for streamed-MoE ops
+ [series 0002]
+
+Taken-from: Tiiny-AI/PowerInfer@8bd56d69906c9d2dba4d3bf6899763401e01a9a4
+Origin: ArifiLabs lane-110
+Measured-effect: Kernel dispatch only; measured effects land with the hook.
+---
+ ggml/src/ggml-cpu/ggml-cpu.c |  89 +++++++++++
+ ggml/src/ggml-cpu/ops.cpp    | 281 +++++++++++++++++++++++++++++++++++
+ ggml/src/ggml-cpu/ops.h      |  10 ++
+ 3 files changed, 380 insertions(+)
+
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index 491316f74..a09e0fdee 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -2120,6 +2120,40 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
+             {
+                 // nop
+             } break;
++        // -- PowerInfer (lane-110 M3 graft) site1-dispatch
++        // -- Powerinfer
++        case GGML_OP_FUSED_SPARSE_FFN:
++        {
++            powerinfer_forward_fused_sparse_ffn(params, tensor);
++        } break;
++        case GGML_OP_FUSED_SPARSE_MOE:
++        {
++            int32_t n_expert_used = ggml_get_op_params_i32(tensor, 0);
++            powerinfer_forward_fused_sparse_moe(params, n_expert_used,tensor);
++        } break;
++        case GGML_OP_PRINT_TENSOR:
++        {
++            powerinfer_compute_forward_print_tensor(params, tensor);
++        } break;
++        case GGML_OP_MOE_PIPELINE_PREFETCH:
++        {
++            powerinfer_forward_moe_pipeline_prefetch(params, tensor);
++        } break;
++        case GGML_OP_MOE_PIPELINE_BUILD_TASKS:
++        {
++            powerinfer_forward_moe_pipeline_build_tasks(params, tensor);
++        } break;
++        case GGML_OP_MOE_PIPELINE_FORWARD:
++        {
++            powerinfer_forward_moe_pipeline_forward(params, tensor);
++        } break;
++        case GGML_OP_LMHEAD:
++            {
++                powerinfer_forward_lmhead(params, tensor);
++            } break;
++      // -- Powerinfer end
++
++
+         case GGML_OP_RESHAPE:
+             {
+                 // nop
+@@ -2471,6 +2505,21 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
+             {
+                 GGML_ABORT("fatal error");
+             }
++
++        // -- PowerInfer (lane-110 M3 graft) site2-ntasks
++        // -- PowerInfer
++        case GGML_OP_FUSED_SPARSE_FFN:
++        case GGML_OP_FUSED_SPARSE_MOE:
++        case GGML_OP_MOE_PIPELINE_PREFETCH:
++        case GGML_OP_MOE_PIPELINE_BUILD_TASKS:
++        case GGML_OP_MOE_PIPELINE_FORWARD:
++        case GGML_OP_LMHEAD:
++        case GGML_OP_PRINT_TENSOR:
++        {
++            n_tasks = n_threads;
++        } break;
++        // -- PowerInfer end
++
+         default:
+             {
+                 fprintf(stderr, "%s: op not implemented: ", __func__);
+@@ -2992,6 +3041,46 @@ struct ggml_cplan ggml_graph_plan(
+                     {
+                         GGML_ABORT("fatal error");
+                     }
++
++        // -- PowerInfer (lane-110 M3 graft) site3-workspace
++                // -- PowerInfer
++                case GGML_OP_FUSED_SPARSE_FFN:
++                    {
++                        const struct ggml_tensor * up               = node->src[0];
++                        const struct ggml_tensor * input            = node->src[3];
++
++                        const int n_embd     = up->ne[0];
++                        const int batch_size = input->ne[1];
++
++                        cur = ggml_row_size(GGML_TYPE_Q8_0, n_embd) * batch_size;
++                    } break;
++                case GGML_OP_FUSED_SPARSE_MOE:
++                    {
++                    const struct ggml_tensor * up               = node->src[0];
++                    const struct ggml_tensor * input            = node->src[3];
++
++                    const int n_embd     = up->ne[0];
++                    const int batch_size = input->ne[1];
++
++                    cur = ggml_row_size(GGML_TYPE_Q8_0, n_embd) * batch_size;
++                    } break;
++                case GGML_OP_LMHEAD:
++                    {
++                        const struct ggml_tensor *lmhead = node->src[0];
++                        const struct ggml_tensor *input  = node->src[1];
++                        const struct ggml_tensor *profiler =node->src[2];
++                        const size_t atomic_counter_align        = 64;
++
++                        GGML_ASSERT(lmhead->type == GGML_TYPE_Q4_0);
++                        GGML_ASSERT(input->ne[1] == 1);
++
++                        cur += ggml_row_size(GGML_TYPE_Q8_0, input->ne[0]);
++                        cur += ggml_row_size(GGML_TYPE_Q8_0, profiler->ne[0]/(lmhead->ne[1]+input->ne[0]));
++                        cur += sizeof(uint32_t)*lmhead->ne[1];
++                        cur += atomic_counter_align + 3 * sizeof(int);
++                    } break;
++                // -- Powerinfer end
++
+                 case GGML_OP_LIGHTNING_INDEXER:
+                     {
+                         // temp buffer for dequantizing lightning indexer keys
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+index 42ec809ce..3fb77972d 100644
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -12002,3 +12002,284 @@ void ggml_compute_forward_lightning_indexer(
+         }
+     }
+ }
++
++// -- PowerInfer (lane-110 M3 graft)
++#include "powerinfer-cpu.h"
++#include "powerinfer-az.h"
++
++void powerinfer_forward_lmhead(const struct ggml_compute_params *params, struct ggml_tensor *dst) {
++    const int ith = params->ith;
++    const int nth = params->nth;
++
++    void *wdata        = params->wdata;
++    const size_t wsize = params->wsize;
++
++    if (ith == 0) { powerinfer_init_f16_table(ggml_table_f32_f16); }
++    
++    const ggml_tensor *lmhead       = dst->src[0];
++    const ggml_tensor *input        = dst->src[1];
++    const ggml_tensor *profiler     = dst->src[2];
++
++    // When offloading to disk, host lmhead should be called and there is no profiler in case of redundant copy.
++    // When batch size is larger than 1, lmhead calculation should fallbacks to the normal matmul.
++    // Therefore, profiler shouldn't be nullptr here.
++    GGML_ASSERT(profiler != nullptr);
++
++    const int loader_id       = dst->op_params[0];
++
++    constexpr auto get_pointer = +[](const ggml_tensor *tensor){
++        return tensor->data;
++    };
++
++    const void  *lmhead_data     = get_pointer(lmhead);
++    const void  *profiler_data   = get_pointer(profiler);
++    const float *ffn_out_data    = static_cast<const float *>(get_pointer(input));
++          float *dst_data        = static_cast<float *>(get_pointer(dst));
++
++    const int lmhead_ncols          = lmhead->ne[0];
++    const int lmhead_nrows          = lmhead->ne[1];
++    const int profiler_num_element  = ggml_nelements(profiler);
++
++    GGML_ASSERT(lmhead->ne[2] == 1 && lmhead->ne[3] == 1 && ggml_is_contiguous(lmhead));
++    GGML_ASSERT(lmhead_ncols == input->ne[0]);
++    GGML_ASSERT(ggml_nrows(input)   == 1);
++
++    PowerInferCPUParam param {
++        loader_id,
++        ith,
++        nth,
++        wdata,
++        wsize
++    };
++
++    const PowerInferError ret = powerinfer_host_lmhead_q4_0_f32(param,
++        profiler_data, lmhead_data, ffn_out_data, dst_data,
++        lmhead_ncols, lmhead_nrows, profiler_num_element);
++
++    if (ret.error) {
++        fprintf(stderr, "%s", ret.message);
++        GGML_ASSERT(false);
++    }
++}
++
++void powerinfer_forward_fused_sparse_ffn(const ggml_compute_params *params, struct ggml_tensor *dst) {
++    const struct ggml_tensor * up               = dst->src[0];
++    const struct ggml_tensor * gate             = dst->src[1];
++    const struct ggml_tensor * down             = dst->src[2];
++    const struct ggml_tensor * input            = dst->src[3];
++    const struct ggml_tensor * router_out       = dst->src[4];
++
++    const int ith = params->ith;
++    const int nth = params->nth;
++
++    void *wdata        = params->wdata;
++    const size_t wsize = params->wsize;
++
++    const int n_ff       = up->ne[1];
++    const int n_embd     = up->ne[0];
++    const int batch_size = input->ne[1];
++
++    const void *up_data      = up->data;
++    const void *gate_data    = gate->data;
++    const void *down_data    = down->data;
++    const float *input_data  = (const float *)input->data;
++    const float *router_out_data = router_out ? (const float *)router_out->data : NULL;
++    float *      dst_data    = (float *)dst->data;
++
++    GGML_ASSERT(input->ne[2] == 1);
++    GGML_ASSERT(input->ne[3] == 1);
++
++    if (ith == 0) { powerinfer_init_f16_table(ggml_table_f32_f16); }
++
++    const int loader_id      = ggml_get_op_params_i32(dst, 0);
++
++    struct PowerInferCPUParam param = {
++        loader_id,
++        ith,
++        nth,
++        wdata,
++        wsize
++    };
++
++    const struct PowerInferError ret = powerinfer_host_fused_sparse_ffn(
++        param,
++        batch_size,
++        n_embd,
++        n_ff,
++        up_data,
++        gate_data,
++        down_data,
++        input_data,
++        router_out_data,
++        dst_data
++    );
++
++    if (ret.error) {
++        fprintf(stderr, "failed to execute powerinfer host ffn: %s\n", ret.message);
++    }
++}
++
++void powerinfer_forward_fused_sparse_moe(const ggml_compute_params *params, size_t n_expert_used,struct ggml_tensor *dst) {
++    const struct ggml_tensor * up               = dst->src[0];
++    const struct ggml_tensor * gate             = dst->src[1];
++    const struct ggml_tensor * down             = dst->src[2];
++    const struct ggml_tensor * input            = dst->src[3];
++    const struct ggml_tensor * selected_experts = dst->src[4];
++    const struct ggml_tensor * expert_weights   = dst->src[5];
++
++    const int ith = params->ith;
++    const int nth = params->nth;
++
++    void *wdata        = params->wdata;
++    const size_t wsize = params->wsize;
++
++    const int n_ff       = up->ne[1];
++    const int n_embd     = up->ne[0];
++    const int batch_size = input->ne[1];
++
++    const void *up_data      = up->data;
++    const void *gate_data    = gate->data;
++    const void *down_data    = down->data;
++    const float *input_data  = (const float *)input->data;
++    float *      dst_data    = (float *)dst->data;
++    int32_t* selected_experts_data=(int32_t*)selected_experts->data;
++
++    GGML_ASSERT(input->ne[2] == 1);
++    GGML_ASSERT(input->ne[3] == 1);
++
++    if (ith == 0) { powerinfer_init_f16_table(ggml_table_f32_f16); }
++
++
++    struct PowerInferCPUParam param = {
++        -1,
++        ith,
++        nth,
++        wdata,
++        wsize
++    };
++
++    const struct PowerInferError ret = powerinfer_host_fused_sparse_moe(
++        param,
++        batch_size,
++        n_embd,
++        n_ff,
++        n_expert_used,
++        up_data,
++        gate_data,
++        down_data,
++        input_data,
++        selected_experts_data,
++        (float*)expert_weights->data,
++        dst_data
++    );
++
++    if (ret.error) {
++        fprintf(stderr, "failed to execute powerinfer host ffn: %s\n", ret.message);
++    }
++}
++
++void powerinfer_forward_moe_pipeline_prefetch(const ggml_compute_params *params, struct ggml_tensor *dst) {
++    if (params->ith == 0) {
++        powerinfer_init_f16_table(ggml_table_f32_f16);
++
++        const struct ggml_tensor *expert_ids = dst->src[0];
++        const int layer_id = ggml_get_op_params_i32(dst, 0);
++        const int max_n_prefetch = ggml_get_op_params_i32(dst, 1);
++        const size_t batch_size = dst->ne[1];
++        const size_t n_predicted_experts = expert_ids->ne[0];
++        
++        powerinfer_moe_pipeline_prefetch(
++            layer_id,
++            batch_size,
++            n_predicted_experts,
++            max_n_prefetch,
++            (const int32_t *)expert_ids->data
++        );
++    }
++}
++
++void powerinfer_forward_moe_pipeline_build_tasks(const ggml_compute_params *params, struct ggml_tensor *dst) {
++    if (params->ith == 0) {
++        powerinfer_init_f16_table(ggml_table_f32_f16);
++
++        const struct ggml_tensor *expert_ids = dst->src[0];
++        const int layer_id = ggml_get_op_params_i32(dst, 0);
++        const int ffn_op_type = ggml_get_op_params_i32(dst, 1);
++        const size_t batch_size = dst->ne[1];
++
++        powerinfer_moe_pipeline_build_tasks(
++            layer_id,
++            batch_size,
++            ffn_op_type, 
++            (const int32_t *)expert_ids->data
++        );
++    }
++}
++
++void powerinfer_forward_moe_pipeline_forward(const ggml_compute_params *params, struct ggml_tensor *dst) {
++    const struct ggml_tensor *expert_logits = dst->src[0];
++    const struct ggml_tensor *input = dst->src[1];
++
++    const int layer_id = ggml_get_op_params_i32(dst, 0);
++    const int loader_id = ggml_get_op_params_i32(dst, 1);
++
++    if (params->ith == 0) { powerinfer_init_f16_table(ggml_table_f32_f16); }
++
++    struct PowerInferCPUParam param = {
++        loader_id,
++        params->ith,
++        params->nth,
++        params->wdata,
++        params->wsize
++    };
++
++    const struct PowerInferError ret = powerinfer_host_moe_pipeline_forward(
++        param,
++        layer_id,
++        (const float *)expert_logits->data,
++        (const float *)input->data,
++        (float *)dst->data
++    );
++
++    if (ret.error) {
++        fprintf(stderr, "failed to execute powerinfer host ffn: %s\n", ret.message);
++    }
++}
++
++void powerinfer_compute_forward_print_tensor(const struct ggml_compute_params *params, struct ggml_tensor *dst) {
++    if (params->ith == 0) {
++        const int64_t n_shown_elements = 6;
++
++        const int64_t n = dst->ne[0];
++        const int64_t batch_size = dst->ne[1];
++
++        int flags = ggml_get_op_params_i32(dst, 0);
++
++        struct ggml_tensor *input = dst->src[0];
++
++        printf("\n%s:\n", input->name);
++        for (int64_t i = 0; i < batch_size; i++) {
++            const float *x = (const float *)input->data + i * n;
++            for (int64_t j = 0; j < n_shown_elements; j++) {
++                printf(" %.4lf", (double)x[j]);
++            }
++            printf(" ...");
++            for (int64_t j = n - n_shown_elements; j < n; j++) {
++                printf(" %.4lf", (double)x[j]);
++            }
++            puts("");
++        }
++
++        if (flags & PRINT_TENSOR_DUMP_TO_FILE) {
++            FILE *f = fopen(input->name, "w");
++            GGML_ASSERT(f);
++            fwrite(input->data, 1, n * batch_size * sizeof(float), f);
++            fflush(f);
++            fclose(f);
++        }
++
++        if (flags & PRINT_TENSOR_EXIT) {
++            exit(0);
++        }
++    }
++}
+diff --git a/ggml/src/ggml-cpu/ops.h b/ggml/src/ggml-cpu/ops.h
+index 4c1642a67..f67ea70c1 100644
+--- a/ggml/src/ggml-cpu/ops.h
++++ b/ggml/src/ggml-cpu/ops.h
+@@ -119,6 +119,16 @@ void ggml_compute_forward_opt_step_adamw(const struct ggml_compute_params * para
+ void ggml_compute_forward_mul_mat(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_fwht(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_opt_step_sgd(const struct ggml_compute_params * params, struct ggml_tensor * dst);
++
++// -- PowerInfer (lane-110 M3 graft)
++void powerinfer_forward_lmhead(const struct ggml_compute_params * params, struct ggml_tensor * dst);
++void powerinfer_forward_fused_sparse_ffn(const struct ggml_compute_params * params, struct ggml_tensor * dst);
++void powerinfer_forward_fused_sparse_moe(const struct ggml_compute_params * params, size_t n_expert_used,struct ggml_tensor * dst);
++void powerinfer_forward_moe_pipeline_prefetch(const struct ggml_compute_params * params, struct ggml_tensor * dst);
++void powerinfer_forward_moe_pipeline_build_tasks(const struct ggml_compute_params * params, struct ggml_tensor * dst);
++void powerinfer_forward_moe_pipeline_forward(const struct ggml_compute_params * params, struct ggml_tensor * dst);
++void powerinfer_compute_forward_print_tensor(const struct ggml_compute_params *params, struct ggml_tensor *dst);
++
+ #ifdef __cplusplus
+ }
+ #endif

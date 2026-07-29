@@ -1,0 +1,171 @@
+From 44f1c4fd68b419f8450f01e93e5b74f5c3bdcb17 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 24 Jul 2026 19:07:03 -0400
+Subject: [PATCH] docs: README section a GitHub visitor can read cold
+
+The README still said 'No patch content is included in this Phase-1 skeleton' and 'Phase 1 is
+a repository skeleton and provenance layer only'. Both were false once the 38-patch series
+landed, and a stranger reading them would have concluded the fork was empty.
+
+Adds, per charter ask #1:
+- what this fork adds to upstream, per feature, each with its toggle, default and an HONEST
+  status - measured gain, measured loss, or UNMEASURED where we have no number;
+- honest negative results, including the ones that cost us: the thecodacus patches measuring
+  inert on unified memory, DSpark at 0.54x, TurboQuant KV losing to plain q4_0, and a NaN
+  this fork caused itself and fixed;
+- how a user reproduces our numbers, including the --no-host requirement, without which a
+  CPU_REPACK A/B silently tests nothing - the exact trap that produced two false passes here;
+- how to maintain and bump the fork with tools/arifi-sync.
+
+Credits were already complete and correct and are left as they stand: thecodacus with his
+repo, the three commit links and the video; PrismML, PowerInfer, ROCmFPX, TurboQuant.
+
+Taken-from: ArifiLabs lane-110C fork-maintainability slot
+Origin: ArifiLabs lane-110C
+Measured-effect: documentation only; every figure quoted is copied from docs/OPTIONS-REGISTRY.md or committed trial evidence, none newly measured.
+---
+ README.md | 124 +++++++++++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 108 insertions(+), 16 deletions(-)
+
+diff --git a/README.md b/README.md
+index 6adccd317..b08a28c59 100644
+--- a/README.md
++++ b/README.md
+@@ -26,19 +26,100 @@ currency review.
+ - Preserve negative evidence. A failed kernel or an inert toggle is useful
+   engineering knowledge, not material to erase.
+ 
+-## Current planned series
+-
+-The manifest at [`patches/series/MANIFEST.md`](patches/series/MANIFEST.md)
+-defines, but intentionally does not yet contain, the following work:
+-
+-- the ordered `0001`–`0011` PowerInfer/Windows sparse-streaming graft;
+-- the three ordered thecodacus community-prefetch patches;
+-- a PrismML ternary `Q2_0_g128` Vulkan-port slot;
+-- a Windows IOCP-overlap streaming slot; and
+-- future ArifiLabs profiling and tooling work.
+-
+-No patch content is included in this Phase-1 skeleton. Conversion of the
+-verified graft scripts into reviewable commits is a separate batch.
++## What this fork adds to upstream
++
++Everything ArifiLabs adds lives as a **linear, 38-patch series** on top of upstream `b10068`.
++There are no merge commits: the series is designed to be replayed onto a newer upstream tag.
++
++```bash
++git clone <this repo> && cd llama.cpp
++git checkout -b my-rebuild 571d0d540
++git am patches/series/*.patch     # reproduces master exactly, tree-for-tree
++```
++
++[`patches/series/MANIFEST.md`](patches/series/MANIFEST.md) lists every patch with its source,
++its gate, and its `Measured-effect:` trailer. Per-mechanism detail is in
++[`docs/CATALOG.md`](docs/CATALOG.md); every runtime toggle is in
++[`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.md), which is authoritative where this
++summary and it disagree.
++
++| Feature | Source | Toggle | Default | Honest status |
++|---|---|---|---|---|
++| Sparse / expert SSD streaming | PowerInfer | `EXPERT_BUNDLE_PATH` | unset (off) | **Measured capability**, not a speed claim: 21B streamed coherently at `5.9–6.1` CPU decode t/s; 35B from a 17 GB bundle at `1.6` t/s; `-ngl 99 -cmoe` tiered at `3.0` t/s |
++| Hot-expert RAM cache | PowerInfer | `MAX_N_CACHED` | implementation-selected | **UNMEASURED** — no accepted ON/OFF benchmark |
++| Standalone expert prefetch | ArifiLabs / PowerInfer | `LANE110_PREFETCH_CAP` | `3*n_expert_used` | **Inconclusive** — cap sweeps differ but need controlled retest; default retained |
++| Per-op profiling | ArifiLabs | `LANE110_PROF=1` | unset | Diagnosis only; **overhead UNMEASURED**. Pipeline-init reuse itself cut rebuild `2472 µs → 0–2 µs` |
++| Host-transfer prefetch (3 patches) | thecodacus | `GGML_SCHED_PREFETCH_EXPERTS`, `GGML_SCHED_MAX_PREFETCH_SLOTS` | **OFF** on unified memory | `+64.5%` prefill in the host-offloaded `-cmoe` regime it was written for; **measured inert** on our GPU-resident unified-memory Vulkan rig |
++| Ternary `Q2_0_g128` CPU + Vulkan | PrismML | GGUF metadata key `GGML_Q2_0_G128=1` | gate absent → off | Ported and loading; fail-closed loader gate + verified retag tool. **Not independently benchmarked in this fork** |
++| f16 recurrent S-state | PrismML | `GGML_RECURRENT_STATE_F16=1` | unset (`f32`) | Halves S-state residency and traffic. **Opt-in**: recurrent rounding compounds; quality gate owed per target |
++| M-RoPE embedded-batch guard | ROCmFPX | none (always on) | on | Narrow correctness fix. **Build-validated only** — a mixed token+embedding M-RoPE batch is still owed |
++| Windows IOCP async expert reads | ArifiLabs | `POWERINFER_IOCP` | off | **Direction UNRESOLVED** — the A/B was noise. The 21B's experts largely fit cache, so there was little read traffic to hide; needs a bigger-than-RAM model |
++| DSpark iGPU detection fix | PrismML | n/a | on | Ships as an **iGPU-detection correctness fix**, explicitly *not* a DSpark recommendation here |
++| GGUF g128 retag tooling | ArifiLabs | `tools/gguf` | n/a | Fail-closed, structure-only parser; verified type-id rewrite 42→43 |
++
++## Honest negative results
++
++These are published because the fork's credibility depends on them more than on its wins.
++
++- **The three thecodacus patches do nothing on our hardware.** They pin and prefetch host-side
++  weights to speed a host→device transfer. On a unified-memory 780M there is no bus to beat, so
++  they measured inert. They are carried, compiled in and OFF by default, because they are a real
++  win on the discrete-GPU placement they were written for. Their author's `+64.5%` is his result
++  in his regime, and we reproduce it as a citation, not as ours.
++- **DSpark is a net loss on this rig** — it engaged on 780M Vulkan and fell from `7.89` to
++  `4.27` t/s (`0.54×`). Documented OFF.
++- **TurboQuant KV loses to plain `q4_0`.** Measured at n_ctx 16384: f16 1792 MiB @ ~20 t/s PASS;
++  `q4_0` 504 MiB @ ~19.8 t/s PASS; turbo3 350 MiB @ 8.5 t/s **FAIL**; turbo2@wht0 238 MiB @
++  11.2 t/s **FAIL**. The storage claim is real and exact, but every coherent configuration still
++  needs a non-turbo K — so plain `q4_0` is both smaller and faster. Not shipped.
++- **We caused a NaN and then fixed it.** The ported x86 VNNI Q2_0 GEMM hardcoded an activation
++  stride of `4`, which is `QK2_0/QK8_0` in PrismML's 128-wide block tree but `2` in our 64-wide
++  one. The pointer ran past the activation buffer and decoded garbage as FP16 NaN. Two files,
++  four lines. A second defect in the same port sat *outside* the runtime gate because `vec_dot`
++  is selected at compile time — so the "OFF" arm was not the baseline, and three A/B comparisons
++  before that discovery were worthless.
++- **MTP is not universal.** 31B root-MTP went `1.8 → 9.4` t/s; Gemma-4-26B-A4B `29.3 → 37.3` at
++  `N=3`; but Qwen35MoE *lost* to plain Q4_0 (`22.8` tuned vs `29.2`).
++- **`POWERINFER_IOCP` has no verdict.** An earlier registry row claimed one; it was corrected.
++
++## Reproducing our numbers
++
++The regression and benchmark judge is **`llama-server`**, not `llama-cli` and not `llama-bench`.
++Reuse one binary across the arms of a comparison; never reuse a number from a previous build.
++
++**If you are A/B-testing anything that touches a CPU repack path, you must pass `--no-host`.**
++`make_cpu_buft_list()` in `src/llama-model.cpp` appends the device host buffer type *before* the
++CPU extra buffer types, so on a Vulkan build `Vulkan_Host`/`CPU_Mapped` always wins and the
++repack path never engages. Two runs here produced **false passes** exactly this way — both arms
++agreed because the code under test ran in neither.
++
++Verify engagement independently before believing any comparison. For the repack path the only
++trustworthy signal is the load line:
++
++```
++load_tensors: CPU_REPACK model buffer size = <N> MiB
++```
++
++present in the ON arm and **absent** in the OFF arm. An A/B whose arms agree proves nothing until
++path engagement has been evidenced separately.
++
++## Maintaining the fork
++
++[`tools/arifi-sync/`](tools/arifi-sync/README.md) drives currency, the patch series, and upstream
++bumps. Every subcommand fails loudly and stops rather than guessing.
++
++```bash
++python tools/arifi-sync/arifi_sync.py status        # where the fork stands
++python tools/arifi-sync/arifi_sync.py series check  # series still byte-matches git, and replays
++python tools/arifi-sync/arifi_sync.py provenance    # every commit still carries its source
++python tools/arifi-sync/arifi_sync.py currency      # fetch all sources, report drift vs pins
++python tools/arifi-sync/arifi_sync.py bump --onto upstream/master
++```
++
++`bump` computes the rebase surface, replays the series patch by patch, rebuilds, and runs the
++`llama-server` judge — and refuses the bump unless all three pass. `currency` cannot be satisfied
++by re-running it: clearing a drift row requires reviewing the new commits and recording the sha
++you reviewed in `sources.json`.
+ 
+ ## Options and hardware defaults
+ 
+@@ -112,9 +193,20 @@ remain explicit in this README, the series manifest, and each eventual commit.
+ 
+ ## Status
+ 
+-Phase 1 is a repository skeleton and provenance layer only. It does not claim
+-that the planned sparse Vulkan kernel, ternary port, IOCP overlap, or any
+-individual patch-series contribution has been independently benchmarked.
++The patch series is real and complete: 38 linear commits on upstream `b10068`, every one carrying
++provenance trailers, generated into [`patches/series/`](patches/series/) and verified to replay to
++a byte-identical tree.
++
++What that does **not** mean:
++
++- It is not a claim that the sparse Vulkan kernel, the ternary port, the IOCP overlap, or any
++  individual patch has been independently benchmarked. Where a number is absent the registry says
++  `UNMEASURED`, and that is the honest value, not a placeholder.
++- CI is still a placeholder. A bump is currently verified by a human running
++  `tools/arifi-sync`, not by a build matrix.
++- The `build` and `judge` legs of `arifi-sync` are written but **unexercised**; see the status
++  table in [`tools/arifi-sync/README.md`](tools/arifi-sync/README.md). The rest of the tool has
++  been run against this repository.
+ 
+ Publication remains gated by local proof, committed evidence for every
+ published gain claim and negative result, and the President’s explicit release

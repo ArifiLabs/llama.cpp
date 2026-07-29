@@ -1,0 +1,95 @@
+From f1ff48b9058b74dd2a57d6614f61ea60352b7541 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 24 Jul 2026 19:05:39 -0400
+Subject: [PATCH] patches: generate the full auditable 38-patch series from git
+
+Replaces an aspirational manifest that described a layout which did not exist. The series is
+now generated from git, never hand-maintained, and an integrity check refuses to pass if it
+has drifted from git by a byte.
+
+- patches/series/0001..0038-*.patch - the complete series from the pinned base
+- patches/series/SERIES             - machine-readable apply order
+- patches/series/MANIFEST.md        - GENERATED; source, gate and Measured-effect per patch
+- patches/rewrite-map.txt           - old->new sha map for the 2026-07-24 linearization
+
+Flat numbering, not per-group subdirectories: apply order is the authoritative property and
+the groups interleave, so subdirectories would leave ordering to shell glob expansion. The
+grouping is metadata and lives in the MANIFEST table.
+
+Two generation flags are load-bearing. --binary, because patch 0008 vendors 19 binary files
+(PowerInfer's bundled cli11/fmt fixtures) and without it git am cannot apply the series at
+all. --no-signature, because otherwise each patch ends with the local git version string and
+the integrity check breaks the day git is upgraded.
+
+Verified, not asserted: git am of this series onto 571d0d540 reproduces master's tree object
+683ae08533bd28ca729152057407830b7721d426 exactly, with all 38 commit messages and all
+provenance trailers byte-identical.
+
+Taken-from: ArifiLabs lane-110C fork-maintainability slot
+Origin: ArifiLabs lane-110C
+Measured-effect: structure and tooling only; no engine behaviour changed. Series replays to a byte-identical tree (verified).
+---
+ patches/rewrite-map.txt | 54 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 54 insertions(+)
+ create mode 100644 patches/rewrite-map.txt
+
+diff --git a/patches/rewrite-map.txt b/patches/rewrite-map.txt
+new file mode 100644
+index 000000000..ba5b92276
+--- /dev/null
++++ b/patches/rewrite-map.txt
+@@ -0,0 +1,54 @@
++# Linearization rewrite map — 2026-07-24
++#
++# The three no-ff merge commits f7c4d9d2c / 42c1b19be / e2ac92c40 were dropped and the 38
++# non-merge commits re-parented into a linear series. Trees were preserved exactly: the
++# tip tree object is unchanged (683ae08533bd28ca729152057407830b7721d426) and every
++# intermediate commit reuses its original tree object verbatim.
++#
++# The pre-rewrite history is preserved forever at tag pre-linearize-2026-07-24.
++#
++# PARKED BRANCHES: topic/vnni-repack and topic/turboquant-kv were branched from the OLD
++# master and still carry the old merge commits in their ancestry. Merging one as-is would
++# re-import the merges and undo this linearization. Rebase first:
++#
++#     git rebase --onto master pre-linearize-2026-07-24 topic/vnni-repack
++#
++# format: <old-sha> <new-sha>
++9bb98c93414c8bac49ce362ed05aa263455680b4 9bb98c93414c8bac49ce362ed05aa263455680b4
++afa02b284f6e2dbe0d19d9238cf1b75c61461c4d afa02b284f6e2dbe0d19d9238cf1b75c61461c4d
++4e7c13ce387ec7c4fc7bd4adc0434ed830c4d8dc 4e7c13ce387ec7c4fc7bd4adc0434ed830c4d8dc
++254980cd2a3bf9186a99015cf5b3533c21b516a4 254980cd2a3bf9186a99015cf5b3533c21b516a4
++f89eec414849d9b55ea7ec90b2483fb769defafa f89eec414849d9b55ea7ec90b2483fb769defafa
++581ec9541bc3ef3eb1a759a12476f0396cfb25ca 581ec9541bc3ef3eb1a759a12476f0396cfb25ca
++e11f26054520285cf9a5e48fa3e4a22ec0b059f0 e11f26054520285cf9a5e48fa3e4a22ec0b059f0
++d09d083aa847599463fdeeeda89242b9456a37cb d09d083aa847599463fdeeeda89242b9456a37cb
++7fe5d5c708b33ba452225e83ebc04e0f1d0340b5 7fe5d5c708b33ba452225e83ebc04e0f1d0340b5
++1498670da86fa6b7327bce12d38072c07cc1153e 1498670da86fa6b7327bce12d38072c07cc1153e
++5d594c1f2bb64823705e2bbb24bb01483b0c16af 5d594c1f2bb64823705e2bbb24bb01483b0c16af
++0c896f3387960d3602857eb6fb5cc27dce248756 0c896f3387960d3602857eb6fb5cc27dce248756
++56e975ed4fec46fd3e817812f1acf5eb28db6339 56e975ed4fec46fd3e817812f1acf5eb28db6339
++35d26567022c050b8387481d952103cc021a03ae 35d26567022c050b8387481d952103cc021a03ae
++d7cdbc18c9eee2b0a26e00abe99db8bbca80bbae d7cdbc18c9eee2b0a26e00abe99db8bbca80bbae
++f85a6aaf9532db2b921237e1dd80ad80dcfeb4b9 f85a6aaf9532db2b921237e1dd80ad80dcfeb4b9
++ab6485cb8f5e445484315069c5388be9366bdb54 ab6485cb8f5e445484315069c5388be9366bdb54
++a4cb0fa6907e22f4b7a294ffc0afc494761994fe a4cb0fa6907e22f4b7a294ffc0afc494761994fe
++e708055865d82e35596c80ec9319c3a4b52c4c57 e708055865d82e35596c80ec9319c3a4b52c4c57
++77dab26d2b782b9bae19a5dbc4e57cdd8b238b3c e78d7ed50595b15212d1688ef15c308b2e1f1750
++bfcfc6c6051fb3822a32d0dcf514f14a9a90174b 03d1c0c8700080c2ab743f5d52e66f6dd9d39080
++71f0fcca477b5e165f1aa9c98aa660c9548a44bf e245290c97ade05261fad0e09262ec5bafabf5ad
++5851479897eddd1243dac29fb1cd4ff0db932d84 90af66c9e7af6e9b9a6b92903a96708879ae791b
++e9ec92eb0cb748d006d5c7132c1426512e03c77c f5a0b03aa45a36d973bcefebc2e99a8c53761a33
++d18cac83eb92cec102f38d6f9961b42db98aaa99 f3906b6e89e3be23635f53164b18c22c994fd51c
++b6ba75cffcbfed1075298ba6eb99ab210eab3120 4568843f245fe090078a308e6fb8880d067f32e3
++c4974213d62f81374920694e3dd049e78aeb9cf9 01b7f2d4a21ec3e3d6f2309740faa1c2d9ec008e
++c83b65358550d75b1c0e70054332cddf9f26e1ad fcccd4b302f622115ddf21f36a23eb271fb1fca2
++302db33b744e445c9030cbe0e9d2aeb03263a5a7 0be77857045817933f112eebc4f7e4af627427ed
++961457952cfd635d5c2371aa8a792c5d34e084d8 490824038c34206ff9d46a677e97ad787282a760
++efa0d572ac482a268de5e79cb263386c9507486e a54f6cae1dbc291331e2948e866d3b730348cff1
++35ae134a5f50ee34e3615314e06b0a2da8b3dfe5 305c810867c1e9e61e42dbd49151b1ddba22aa7e
++dee15c39dbbe3e1e66555dee596e75ddb6935e5e c6b2a7d0fe76edbc1aecfc6ec8f8ae7026b2649d
++2590f29740d2490699754767a38cd66be7b4843f b46fedeffc99dd6de7d5b84b9f7683b1dd0586d4
++781c4d5bfb59f7fd0472b6a211ba5828f677b214 a7f01616cb1ed5237a1632b38f3167255cd2ce96
++33cd7545d878665e6e2f5f918865e99a4f3a2990 a15079fcec74676cf9652543420c5fe55a9b76b8
++1e35329a96668ef3cbe30302cec5eed5798d1846 2d175c8e1d24a73b4706babd01e660054ca98f1b
++86f8b9f662ecb6b96060964d7bbd08af8d0fc713 67c83a6ec3c12a3d42ea489831124e3be4ea9a45

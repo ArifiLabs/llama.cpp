@@ -1,0 +1,481 @@
+From 707921cb74ec4286dfd5f1fde4d81dfaa185f7f4 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 23 Jul 2026 06:08:25 -0400
+Subject: [PATCH] =?UTF-8?q?tools(gguf):=20retag=20v3=20=E2=80=94=20verifie?=
+ =?UTF-8?q?d=20type-id=20rewrite=2042->43?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Records type-field byte offsets in the lightweight parse; rewrites ONLY
+span-verified 42->43 type fields with re-read-before-overwrite; byte-for-byte
+tensor-table validation allowing only those substitutions; post-write span
+re-verify with expected type 43. README corrected (marker is UINT8).
+
+One necessary completion beyond Sol's literal diff: main() line reassigned to
+'verification = _verify_q2_spans(source_layout)' to capture the source span
+verification the diff threads into _retag_in_place/_retag_copy; without it the
+diff references an undefined name. Flagged to HQ.
+
+Origin: ArifiLabs lane-110
+Measured-effect: build fix only
+---
+ tools/gguf-retag-g128/README.md     |  39 +++---
+ tools/gguf-retag-g128/retag_g128.py | 202 ++++++++++++++++++++++++++--
+ 2 files changed, 210 insertions(+), 31 deletions(-)
+
+diff --git a/tools/gguf-retag-g128/README.md b/tools/gguf-retag-g128/README.md
+index 3760a2635..3624ebd76 100644
+--- a/tools/gguf-retag-g128/README.md
++++ b/tools/gguf-retag-g128/README.md
+@@ -2,24 +2,25 @@
+ 
+ `retag_g128.py` verifies that a GGUF file's on-disk Q2_0 tensor spans are
+ unambiguously compatible with the 128-value Q2_0 geometry, then writes
+-`GGML_Q2_0_G128=1` into a new GGUF copy.
++`GGML_Q2_0_G128=1` and retags only the verified tensor-info `ggml_type`
++fields from `42` (`GGML_TYPE_Q2_0`) to `43` (`GGML_TYPE_Q2_0_G128`) in a
++new GGUF copy.
+ 
+ It is for the ArifiLabs ternary-g128 llama.cpp fork series. It does not
+ quantize, dequantize, or otherwise alter model tensor bytes.
+ 
+-## Prerequisite
++## Write contract
+ 
+-Run it with a Python environment containing the fork's `gguf-py` package:
++The tool uses only a bounded standard-library parser for the GGUF v3 header,
++metadata, and tensor-info table; it never constructs or reads tensor payloads.
++Before it writes any output bytes, it runs the fail-closed g64-versus-g128 span
++discriminator over every legacy type-42 entry.
+ 
+-```text
+-uv pip install --python <python> -e gguf-py
+-```
+-
+-The tool uses `gguf-py` to parse the input's metadata, tensor table, declared
+-alignment, and Q2_0 tensor dimensions. It copies the raw tensor-data region
+-byte-for-byte because these g128 files intentionally serialize their tensors
+-with the existing Q2_0 wire type; a generic g64 Q2_0 rewrite could calculate
+-the wrong payload size.
++Only after that verification succeeds, it streams the payload unchanged and
++rewrites exactly those verified four-byte type fields. Post-write validation
++compares the entire tensor-info table byte-for-byte, allowing only those
++`42 -> 43` substitutions; names, dimensions, offsets, and every other table
++field must be identical.
+ 
+ ## Usage
+ 
+@@ -49,16 +50,16 @@ temporary copy, then replaces the source only after that succeeds.
+ 
+ ## Why this is metadata, not an environment variable
+ 
+-`GGML_Q2_0_G128=1` is a per-file compatibility declaration. A loader can make
+-the file self-describing: the marker is present only on a verified g128 GGUF,
+-and an unmarked file continues through the canonical upstream Q2_0 g64 path.
++`GGML_Q2_0_G128=1` is the retained per-file audit and compatibility marker.
++The native type-43 tag makes the tensor geometry self-describing to the GGUF
++parser, while the marker retains the fork's explicit g128 declaration.
+ 
+ An ambient environment variable would apply to whichever file happened to be
+ loaded in that process. That makes g64 and g128 interpretation depend on
+ external process state instead of the model artifact itself. The metadata-key
+ gate avoids that ambiguity.
+ 
+-The tool writes the key as a scalar GGUF `UINT32` value of `1`. The fork loader
++The tool writes the key as a scalar GGUF `UINT8` value of `1`. The fork loader
+ accepts that representation for the gate.
+ 
+ ## Fail-closed geometry check
+@@ -70,7 +71,7 @@ The retagger uses the same span-size versus alignment math as the loader guard:
+ | g64 Q2_0 | 64 | 18 |
+ | g128 Q2_0 | 128 | 34 |
+ 
+-For every declared Q2_0 tensor, it calculates:
++For every declared legacy type-42 Q2_0 tensor, it calculates:
+ 
+ ```text
+ g64 payload  = rows * (columns / 64)  * 18
+@@ -84,7 +85,6 @@ size and alignment-padded size using the GGUF file's declared alignment.
+ The tool refuses with a non-zero exit when:
+ 
+ - the input is missing, is not a regular file, or does not begin with `GGUF`;
+-- `gguf-py` cannot parse the file;
+ - there are no Q2_0 tensors;
+ - a Q2_0 tensor is g64-only;
+ - a Q2_0 tensor matches neither geometry;
+@@ -93,6 +93,9 @@ The tool refuses with a non-zero exit when:
+ - the marker already exists, which prevents duplicate GGUF metadata keys; or
+ - the destination already exists in copy mode.
+ 
++It also refuses if post-write validation finds any tensor-info-table change
++other than a verified `42 -> 43` type-field rewrite.
++
+ An individual alignment-ambiguous tensor is not evidence for either layout.
+ It is allowed only when another Q2_0 tensor in the same file unambiguously
+ confirms g128. This exactly preserves the loader guard's rule: do not silently
+diff --git a/tools/gguf-retag-g128/retag_g128.py b/tools/gguf-retag-g128/retag_g128.py
+index a427bcd01..b527191cd 100644
+--- a/tools/gguf-retag-g128/retag_g128.py
++++ b/tools/gguf-retag-g128/retag_g128.py
+@@ -25,6 +25,7 @@ GGUF_VERSION = 3
+ DEFAULT_ALIGNMENT = 32
+ 
+ GGML_TYPE_Q2_0 = 42
++GGML_TYPE_Q2_0_G128 = 43
+ 
+ GGUF_VALUE_TYPE_UINT8 = 0
+ GGUF_VALUE_TYPE_INT8 = 1
+@@ -59,6 +60,7 @@ class TensorInfo:
+     name: bytes
+     dimensions: tuple[int, ...]
+     ggml_type: int
++    ggml_type_offset: int
+     offset: int
+ 
+ 
+@@ -82,6 +84,7 @@ class SpanVerification:
+     q2_tensor_count: int
+     g128_discriminators: int
+     ambiguous_count: int
++    verified_type_offsets: tuple[int, ...]
+ 
+ 
+ class _StructureReader:
+@@ -284,6 +287,7 @@ def _parse_gguf_layout(path: Path) -> GgufLayout:
+                 reader.u64(f"tensor {index} dimension {dimension_index}")
+                 for dimension_index in range(dimension_count)
+             )
++            ggml_type_offset = reader.position
+             ggml_type = reader.u32(f"tensor {index} ggml type")
+             offset = reader.u64(f"tensor {index} data offset")
+ 
+@@ -292,6 +296,7 @@ def _parse_gguf_layout(path: Path) -> GgufLayout:
+                     name=name,
+                     dimensions=dimensions,
+                     ggml_type=ggml_type,
++                    ggml_type_offset=ggml_type_offset,
+                     offset=offset,
+                 )
+             )
+@@ -345,7 +350,11 @@ def _q2_padded_span(
+     return _align_up(raw_bytes, alignment)
+ 
+ 
+-def _verify_q2_spans(layout: GgufLayout) -> SpanVerification:
++def _verify_q2_spans(
++    layout: GgufLayout,
++    *,
++    expected_ggml_type: int = GGML_TYPE_Q2_0,
++) -> SpanVerification:
+     """
+     Classify Q2_0 entries from table offsets, dimensions, and file size only.
+ 
+@@ -377,12 +386,14 @@ def _verify_q2_spans(layout: GgufLayout) -> SpanVerification:
+     q2_tensor_count = 0
+     g128_discriminators = 0
+     ambiguous_count = 0
++    verified_type_offsets: list[int] = []
+ 
+     for index, tensor in enumerate(ordered):
+-        if tensor.ggml_type != GGML_TYPE_Q2_0:
++        if tensor.ggml_type != expected_ggml_type:
+             continue
+ 
+         q2_tensor_count += 1
++        verified_type_offsets.append(tensor.ggml_type_offset)
+         next_offset = (
+             ordered[index + 1].offset
+             if index + 1 < len(ordered)
+@@ -438,6 +449,7 @@ def _verify_q2_spans(layout: GgufLayout) -> SpanVerification:
+         q2_tensor_count=q2_tensor_count,
+         g128_discriminators=g128_discriminators,
+         ambiguous_count=ambiguous_count,
++        verified_type_offsets=tuple(verified_type_offsets),
+     )
+ 
+ 
+@@ -486,17 +498,77 @@ def _write_zero_padding(destination: BinaryIO, count: int) -> None:
+         remaining -= chunk_length
+ 
+ 
++def _copy_retagged_tensor_table(
++    source: BinaryIO,
++    destination: BinaryIO,
++    source_layout: GgufLayout,
++    verification: SpanVerification,
++) -> None:
++    """
++    Copy the tensor table while replacing only verified legacy-Q2_0 type fields.
++
++    The type offsets are produced exclusively by the successful g64-vs-g128
++    span discriminator. Names, dimensions, data offsets, and every non-target
++    type field are copied byte-for-byte.
++    """
++
++    if verification.q2_tensor_count != len(verification.verified_type_offsets):
++        raise RetagRefusal(
++            "internal error: verified Q2_0 count does not match type-field offsets"
++        )
++
++    legacy_type = _U32.pack(GGML_TYPE_Q2_0)
++    native_type = _U32.pack(GGML_TYPE_Q2_0_G128)
++    position = source_layout.tensor_table_start
++
++    for type_offset in verification.verified_type_offsets:
++        if not (
++            position <= type_offset
++            and type_offset + _U32.size <= source_layout.tensor_table_end
++        ):
++            raise RetagRefusal(
++                "internal error: verified type field is outside the tensor table"
++            )
++
++        _copy_range(
++            source,
++            destination,
++            start=position,
++            length=type_offset - position,
++            context="tensor-info table",
++        )
++
++        source.seek(type_offset)
++        if source.read(_U32.size) != legacy_type:
++            raise RetagRefusal(
++                "input tensor table changed after g128 geometry verification"
++            )
++
++        destination.write(native_type)
++        position = type_offset + _U32.size
++
++    _copy_range(
++        source,
++        destination,
++        start=position,
++        length=source_layout.tensor_table_end - position,
++        context="tensor-info table",
++    )
++
++
+ def _write_retagged_file(
+     source_path: Path,
+     destination_path: Path,
+     source_layout: GgufLayout,
++    source_verification: SpanVerification,
+     *,
+     destination_exists_by_design: bool,
+ ) -> tuple[int, int]:
+     """
+     Write a new file with one appended metadata entry and a recomputed data start.
+ 
+-    The tensor-info table is copied verbatim. Its offsets remain valid because
++    The tensor-info table changes only at verified legacy-Q2_0 type fields:
++    42 becomes 43 (GGML_TYPE_Q2_0_G128). Tensor offsets remain valid because
+     they are relative to the newly aligned tensor-data start. Tensor payload
+     bytes are streamed unmodified from the original data start to the new one.
+     """
+@@ -535,12 +607,11 @@ def _write_retagged_file(
+         )
+         destination.write(marker)
+ 
+-        _copy_range(
++        _copy_retagged_tensor_table(
+             source,
+             destination,
+-            start=source_layout.tensor_table_start,
+-            length=source_layout.tensor_table_end - source_layout.tensor_table_start,
+-            context="tensor-info table",
++            source_layout,
++            source_verification,
+         )
+         _write_zero_padding(destination, new_padding_length)
+ 
+@@ -560,7 +631,60 @@ def _write_retagged_file(
+     return new_tensor_data_start, expected_size
+ 
+ 
++def _validate_retagged_tensor_table(
++    source_path: Path,
++    source_layout: GgufLayout,
++    output_path: Path,
++    output_layout: GgufLayout,
++    source_verification: SpanVerification,
++) -> None:
++    """Prove that only the verified 42->43 tensor-table fields changed."""
++
++    source_table_length = (
++        source_layout.tensor_table_end - source_layout.tensor_table_start
++    )
++    output_table_length = (
++        output_layout.tensor_table_end - output_layout.tensor_table_start
++    )
++    if output_table_length != source_table_length:
++        raise RetagRefusal(
++            "post-write validation failed: tensor-info table length changed"
++        )
++
++    with source_path.open("rb") as source:
++        source.seek(source_layout.tensor_table_start)
++        expected_table = bytearray(source.read(source_table_length))
++
++    with output_path.open("rb") as output:
++        output.seek(output_layout.tensor_table_start)
++        output_table = output.read(output_table_length)
++
++    if len(expected_table) != source_table_length or len(output_table) != output_table_length:
++        raise RetagRefusal(
++            "post-write validation failed: short tensor-info table read"
++        )
++
++    legacy_type = _U32.pack(GGML_TYPE_Q2_0)
++    native_type = _U32.pack(GGML_TYPE_Q2_0_G128)
++    for type_offset in source_verification.verified_type_offsets:
++        relative_offset = type_offset - source_layout.tensor_table_start
++        if expected_table[relative_offset : relative_offset + _U32.size] != legacy_type:
++            raise RetagRefusal(
++                "post-write validation failed: source type field was not legacy Q2_0"
++            )
++        expected_table[relative_offset : relative_offset + _U32.size] = native_type
++
++    if output_table != bytes(expected_table):
++        raise RetagRefusal(
++            "post-write validation failed: tensor-info table differs outside "
++            "the verified 42->43 type-field rewrites"
++        )
++
++
+ def _validate_output(
++    source_path: Path,
++    source_layout: GgufLayout,
++    source_verification: SpanVerification,
+     output_path: Path,
+     *,
+     expected_tensor_data_start: int,
+@@ -591,7 +715,31 @@ def _validate_output(
+             "post-write validation failed: GGML_Q2_0_G128 is not exactly uint8 1"
+         )
+ 
+-    return _verify_q2_spans(output_layout)
++    _validate_retagged_tensor_table(
++        source_path,
++        source_layout,
++        output_path,
++        output_layout,
++        source_verification,
++    )
++
++    output_verification = _verify_q2_spans(
++        output_layout,
++        expected_ggml_type=GGML_TYPE_Q2_0_G128,
++    )
++    if (
++        output_verification.q2_tensor_count
++        != source_verification.q2_tensor_count
++        or output_verification.g128_discriminators
++        != source_verification.g128_discriminators
++        or output_verification.ambiguous_count
++        != source_verification.ambiguous_count
++    ):
++        raise RetagRefusal(
++            "post-write validation failed: native g128 span verification changed"
++        )
++
++    return output_verification
+ 
+ 
+ def _default_output_path(source: Path) -> Path:
+@@ -600,7 +748,12 @@ def _default_output_path(source: Path) -> Path:
+     return source.with_name(f"{stem}.g128{suffix}")
+ 
+ 
+-def _retag_copy(source: Path, destination: Path, layout: GgufLayout) -> SpanVerification:
++def _retag_copy(
++    source: Path,
++    destination: Path,
++    layout: GgufLayout,
++    verification: SpanVerification,
++) -> SpanVerification:
+     if os.path.lexists(destination):
+         raise RetagRefusal(f"output already exists: {destination}")
+ 
+@@ -609,9 +762,13 @@ def _retag_copy(source: Path, destination: Path, layout: GgufLayout) -> SpanVeri
+             source,
+             destination,
+             layout,
++            verification,
+             destination_exists_by_design=False,
+         )
+         return _validate_output(
++            source,
++            layout,
++            verification,
+             destination,
+             expected_tensor_data_start=new_data_start,
+             expected_size=expected_size,
+@@ -624,7 +781,11 @@ def _retag_copy(source: Path, destination: Path, layout: GgufLayout) -> SpanVeri
+         raise
+ 
+ 
+-def _retag_in_place(source: Path, layout: GgufLayout) -> SpanVerification:
++def _retag_in_place(
++    source: Path,
++    layout: GgufLayout,
++    verification: SpanVerification,
++) -> SpanVerification:
+     print(
+         f"WARNING: --in-place will replace the original only after post-write "
+         f"validation succeeds: {source}",
+@@ -644,9 +805,13 @@ def _retag_in_place(source: Path, layout: GgufLayout) -> SpanVerification:
+             source,
+             temporary_path,
+             layout,
++            verification,
+             destination_exists_by_design=True,
+         )
+         verification = _validate_output(
++            source,
++            layout,
++            verification,
+             temporary_path,
+             expected_tensor_data_start=new_data_start,
+             expected_size=expected_size,
+@@ -702,10 +867,14 @@ def main(argv: list[str] | None = None) -> int:
+                 "marker key already present: GGML_Q2_0_G128; refusing to retag"
+             )
+ 
+-        _verify_q2_spans(source_layout)
++        verification = _verify_q2_spans(source_layout)
+ 
+         if arguments.in_place:
+-            verification = _retag_in_place(source, source_layout)
++            verification = _retag_in_place(
++                source,
++                source_layout,
++                verification,
++            )
+             output = source
+         else:
+             output = (
+@@ -719,7 +888,12 @@ def main(argv: list[str] | None = None) -> int:
+                     "copy destination is the input file; use --in-place explicitly"
+                 )
+ 
+-            verification = _retag_copy(source, output, source_layout)
++            verification = _retag_copy(
++                source,
++                output,
++                source_layout,
++                verification,
++            )
+ 
+     except RetagRefusal as error:
+         print(f"REFUSED: {error}", file=sys.stderr)
+@@ -730,6 +904,8 @@ def main(argv: list[str] | None = None) -> int:
+ 
+     print(
+         f"Tagged verified g128 GGUF: {output}\n"
++        f"Retagged tensor-info ggml_type: {GGML_TYPE_Q2_0} -> "
++        f"{GGML_TYPE_Q2_0_G128} for {verification.q2_tensor_count} tensors\n"
+         f"Q2_0 tensors={verification.q2_tensor_count}, "
+         f"g128 discriminators={verification.g128_discriminators}, "
+         f"alignment-ambiguous={verification.ambiguous_count}"
