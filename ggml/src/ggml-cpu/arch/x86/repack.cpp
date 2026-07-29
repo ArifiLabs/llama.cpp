@@ -517,9 +517,33 @@ void ggml_quantize_mat_q8_K_4x8(const float * GGML_RESTRICT x, void * GGML_RESTR
 
 #if defined(__AVX2__) || defined(__AVX512F__)
 
+// Build the nibble->byte lookup table from the block type itself.
+//
+// This is deliberately NOT passed as a __m256i parameter. On Windows x64 a 32-byte vector
+// argument is passed in memory, and the ABI only guarantees 16-byte stack alignment, but GCC
+// spills the copy with the alignment-requiring `vmovdqa`. Whenever a worker thread's frame
+// lands 16-mod-32 that store is a general-protection fault (0xC0000005). Constructing the LUT
+// inside the callee keeps it in a register and removes the ABI crossing entirely.
+template<typename block_tx8>
+static inline __m256i make_signextendlut() {
+    __m256i lut;
+    if constexpr (std::is_same_v<block_tx8, block_q4_0x8>) {
+        // signed nibbles -> signed bytes
+        lut = _mm256_castsi128_si256(_mm_set_epi8(-1, -2, -3, -4, -5, -6, -7, -8, 7, 6, 5, 4, 3, 2, 1, 0));
+    } else if constexpr (std::is_same_v<block_tx8, block_iq4_nlx8>) {
+        lut = _mm256_castsi128_si256(_mm_loadu_si128((const __m128i *)kvalues_iq4nl));
+    } else {
+        static_assert(std::is_same_v<block_tx8, block_mxfp4x8>, "Unsupported block type");
+        lut = _mm256_castsi128_si256(_mm_loadu_si128((const __m128i *)kvalues_mxfp4));
+    }
+    return _mm256_permute2f128_si256(lut, lut, 0);
+}
+
 // GEMV for 8x blocks of 32 4-bit quants with a single scale factor per block
 template<typename block_tx8>
-static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc, __m256i signextendlut) {
+static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+    const __m256i signextendlut = make_signextendlut<block_tx8>();
+
     static_assert(
             std::is_same_v<block_tx8, block_q4_0x8> ||
             std::is_same_v<block_tx8, block_iq4_nlx8> ||
@@ -638,7 +662,9 @@ static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
 
 // GEMM for 8x blocks of 32 4-bit quants with a single scale factor per block
 template<typename block_tx8>
-static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc, __m256i signextendlut) {
+static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+    const __m256i signextendlut = make_signextendlut<block_tx8>();
+
     static_assert(
             std::is_same_v<block_tx8, block_q4_0x8> ||
             std::is_same_v<block_tx8, block_iq4_nlx8> ||
@@ -1449,10 +1475,7 @@ void ggml_gemv_q4_0_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
 #if defined(__AVX2__) || defined(__AVX512F__)
     {
         // Lookup table to convert signed nibbles to signed bytes
-        __m256i signextendlut = _mm256_castsi128_si256(_mm_set_epi8(-1, -2, -3, -4, -5, -6, -7, -8, 7, 6, 5, 4, 3, 2, 1, 0));
-        signextendlut = _mm256_permute2f128_si256(signextendlut, signextendlut, 0);
-
-        gemv_q4_b32_8x8_q8_0_lut_avx<block_q4_0x8>(n, s, bs, vx, vy, nr, nc, signextendlut);
+            gemv_q4_b32_8x8_q8_0_lut_avx<block_q4_0x8>(n, s, bs, vx, vy, nr, nc);
 
         return;
     }
@@ -1686,10 +1709,7 @@ void ggml_gemv_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
 
 void ggml_gemv_iq4_nl_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
 #if defined(__AVX2__)
-    __m256i signextendlut = _mm256_castsi128_si256(_mm_loadu_si128((const __m128i*)kvalues_iq4nl));
-    signextendlut = _mm256_permute2f128_si256(signextendlut, signextendlut, 0);
-
-    gemv_q4_b32_8x8_q8_0_lut_avx<block_iq4_nlx8>(n, s, bs, vx, vy, nr, nc, signextendlut);
+    gemv_q4_b32_8x8_q8_0_lut_avx<block_iq4_nlx8>(n, s, bs, vx, vy, nr, nc);
 
     return;
 #endif
@@ -1699,10 +1719,7 @@ void ggml_gemv_iq4_nl_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const 
 
 void ggml_gemv_mxfp4_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
 #if defined(__AVX2__)
-    __m256i signextendlut = _mm256_castsi128_si256(_mm_loadu_si128((const __m128i*)kvalues_mxfp4));
-    signextendlut = _mm256_permute2f128_si256(signextendlut, signextendlut, 0);
-
-    gemv_q4_b32_8x8_q8_0_lut_avx<block_mxfp4x8>(n, s, bs, vx, vy, nr, nc, signextendlut);
+    gemv_q4_b32_8x8_q8_0_lut_avx<block_mxfp4x8>(n, s, bs, vx, vy, nr, nc);
 
     return;
 #endif
@@ -2027,10 +2044,7 @@ void ggml_gemm_q4_0_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
 #if defined(__AVX2__) || defined(__AVX512F__)
     {
         // Lookup table to convert signed nibbles to signed bytes
-        __m256i signextendlut = _mm256_castsi128_si256(_mm_set_epi8(-1, -2, -3, -4, -5, -6, -7, -8, 7, 6, 5, 4, 3, 2, 1, 0));
-        signextendlut = _mm256_permute2f128_si256(signextendlut, signextendlut, 0);
-
-        gemm_q4_b32_8x8_q8_0_lut_avx<block_q4_0x8>(n, s, bs, vx, vy, nr, nc, signextendlut);
+            gemm_q4_b32_8x8_q8_0_lut_avx<block_q4_0x8>(n, s, bs, vx, vy, nr, nc);
 
         return;
     }
@@ -3499,7 +3513,7 @@ void ggml_gemm_iq4_nl_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const 
         __m256i signextendlut = _mm256_castsi128_si256(_mm_loadu_si128((const __m128i*)kvalues_iq4nl));
         signextendlut = _mm256_permute2f128_si256(signextendlut, signextendlut, 0);
 
-        gemm_q4_b32_8x8_q8_0_lut_avx<block_iq4_nlx8>(n, s, bs, vx, vy, nr, nc, signextendlut);
+        gemm_q4_b32_8x8_q8_0_lut_avx<block_iq4_nlx8>(n, s, bs, vx, vy, nr, nc);
 
         return;
     }
@@ -3514,7 +3528,7 @@ void ggml_gemm_mxfp4_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const v
         __m256i signextendlut = _mm256_castsi128_si256(_mm_loadu_si128((const __m128i*)kvalues_mxfp4));
         signextendlut = _mm256_permute2f128_si256(signextendlut, signextendlut, 0);
 
-        gemm_q4_b32_8x8_q8_0_lut_avx<block_mxfp4x8>(n, s, bs, vx, vy, nr, nc, signextendlut);
+        gemm_q4_b32_8x8_q8_0_lut_avx<block_mxfp4x8>(n, s, bs, vx, vy, nr, nc);
 
         return;
     }
