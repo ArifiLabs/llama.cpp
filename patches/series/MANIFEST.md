@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10173`, `e9fa0781f1c25fc4fe8c86be1edc6970661ad6f0`
-- Patches: **75**, all non-merge, applied in filename order.
+- Patches: **78**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 75 commit messages, same provenance trailers. Verified, not
+same file contents, same 78 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -154,6 +154,9 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 73 | `0073-docs-FINDINGS-F-09-the-repack-GPU-trade-off-is-a-com.patch` | arifi-fork-base | `0f40f23b6` | - | - | docs(FINDINGS): F-09 - the repack/GPU trade-off is a compute-placement choice, not a bug |
 | 74 | `0074-docs-neutralise-internal-governance-vocabulary-expla.patch` | arifi-fork-base | `0367e3f76` | - | - | docs: neutralise internal governance vocabulary; explain the work-unit ids instead |
 | 75 | `0075-docs-FINDINGS-record-why-the-repack-auto-enable-was-.patch` | arifi-fork-base | `c73501cbc` | - | - | docs(FINDINGS): record why the repack auto-enable was NOT shipped |
+| 76 | `0076-provenance-catch-the-silent-trailer-block-break-inst.patch` | arifi-fork-base | `60b850cc2` | - | - | provenance: catch the silent trailer-block break instead of only reporting it |
+| 77 | `0077-gitattributes-pin-.githooks-to-LF-so-the-hook-runs-o.patch` | arifi-fork-base | `046f2cf81` | - | - | gitattributes: pin .githooks to LF so the hook runs on Linux and macOS |
+| 78 | `0078-githooks-force-a-normalized-blob-for-the-commit-msg-.patch` | arifi-fork-base | `098bb5cbf` | - | - | githooks: force a normalized blob for the commit-msg hook |
 
 ## Measured effect, per patch
 
@@ -237,6 +240,12 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0073-docs-FINDINGS-F-09-the-repack-GPU-trade-off-is-a-com.patch` | *(no Measured-effect trailer)* |
 | `0074-docs-neutralise-internal-governance-vocabulary-expla.patch` | documentation only; no engine behaviour changed. |
 | `0075-docs-FINDINGS-record-why-the-repack-auto-enable-was-.patch` | no code change - a deliberate non-change, with its evidence. |
+| `0076-provenance-catch-the-silent-trailer-block-break-inst.patch` | tooling and documentation only, no engine behaviour changed. Hook verified
+  on three crafted messages covering reject/accept/no-op. |
+| `0077-gitattributes-pin-.githooks-to-LF-so-the-hook-runs-o.patch` | packaging only, no engine behaviour changed. Verified the file is stored with
+  LF after re-adding under the new attribute. |
+| `0078-githooks-force-a-normalized-blob-for-the-commit-msg-.patch` | packaging only, no engine behaviour changed. Verified against the RAW object
+  via git cat-file - git show applies the checkout filter and reported the opposite of the truth. |
 
 ## Unclassified
 
@@ -264,4 +273,7 @@ rather than silently bucketed - add a rule when a new source appears.
 - `301336ab0` ggml-cpu/x86: use the row-stride parameter in repack GEMV stores instead of the row count
 - `0f40f23b6` docs(FINDINGS): F-09 - the repack/GPU trade-off is a compute-placement choice, not a bug
 - `c73501cbc` docs(FINDINGS): record why the repack auto-enable was NOT shipped
+- `60b850cc2` provenance: catch the silent trailer-block break instead of only reporting it
+- `046f2cf81` gitattributes: pin .githooks to LF so the hook runs on Linux and macOS
+- `098bb5cbf` githooks: force a normalized blob for the commit-msg hook
 

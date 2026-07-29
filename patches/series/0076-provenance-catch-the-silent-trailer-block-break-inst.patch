@@ -1,0 +1,205 @@
+From 60b850cc25f244b3da3d7c1f8f6a4dd3cae0b32e Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 29 Jul 2026 01:37:22 -0400
+Subject: [PATCH] provenance: catch the silent trailer-block break instead of
+ only reporting it
+
+'provenance --strict' reported 12 commits as LOOSE-ONLY without saying what was wrong with
+them, and the cause turned out to be a single undocumented git rule rather than carelessness:
+git ends a trailer block at the first line that is not trailer-shaped, so a WRAPPED value whose
+continuation starts in column 0 invalidates every trailer in the block - including the ones
+above it. The message still reads correctly to a human, so nothing announces the failure. Six
+of today's own commits tripped it.
+
+Three changes, none of which touch the engine:
+
+- provenance --strict now prints the actual cause and a wrong/right example instead of only
+  naming the rule it applied.
+- CONTRIBUTING/COMMIT-TRAILERS.md documents the three trailers, the wrapping rule, and why
+  UNMEASURED is a legal value while a missing trailer is not.
+- .githooks/commit-msg rejects a commit whose trailers are present but do not parse, by
+  running git's own parser rather than a regex of our own. Opt in with
+  'git config core.hooksPath .githooks'.
+
+The hook was tested against all three classes it must separate, not just the failing one: an
+unindented continuation (rejected), the indented form the fix produces (accepted), and a
+message with no trailers at all (accepted, since presence is provenance --strict's job).
+
+The 12 existing LOOSE-ONLY commits are deliberately NOT rewritten. Their provenance is present
+and correct for a reader, and rewriting messages to satisfy a parser would invalidate the
+series' verified byte-identical replay for no gain in the information itself. Recorded as a
+known gap in the new document.
+
+Origin: ArifiLabs lane-110D, public-release bar
+Measured-effect: tooling and documentation only, no engine behaviour changed. Hook verified
+  on three crafted messages covering reject/accept/no-op.
+---
+ .githooks/commit-msg            | 55 +++++++++++++++++++++++++
+ CONTRIBUTING/COMMIT-TRAILERS.md | 72 +++++++++++++++++++++++++++++++++
+ tools/arifi-sync/arifi_sync.py  | 12 ++++++
+ 3 files changed, 139 insertions(+)
+ create mode 100644 .githooks/commit-msg
+ create mode 100644 CONTRIBUTING/COMMIT-TRAILERS.md
+
+diff --git a/.githooks/commit-msg b/.githooks/commit-msg
+new file mode 100644
+index 000000000..e6cbb9a06
+--- /dev/null
++++ b/.githooks/commit-msg
+@@ -0,0 +1,55 @@
++#!/bin/sh
++# Reject a commit whose provenance trailers are present but not machine-readable.
++#
++# git ends a trailer block at the first line that is not trailer-shaped, so an unindented
++# continuation line invalidates EVERY trailer in the block while still reading correctly to a
++# human. That failure is silent, which is the whole reason this hook exists.
++#
++# Enable with:  git config core.hooksPath .githooks
++# Rationale and examples: CONTRIBUTING/COMMIT-TRAILERS.md
++
++msg_file="$1"
++
++# Merge, fixup, squash and revert messages are generated; leave them alone.
++head -n1 "$msg_file" | grep -qE '^(Merge|fixup!|squash!|Revert)' && exit 0
++
++has_token=0
++for key in Taken-from Origin Measured-effect; do
++    if grep -qE "^[[:space:]]*${key}:" "$msg_file"; then
++        has_token=1
++    fi
++done
++
++# Nothing claimed - nothing to verify. provenance --strict is what enforces presence.
++[ "$has_token" -eq 0 ] && exit 0
++
++parsed=$(git interpret-trailers --parse <"$msg_file" 2>/dev/null)
++
++missing=""
++for key in Taken-from Origin Measured-effect; do
++    if grep -qE "^[[:space:]]*${key}:" "$msg_file"; then
++        printf '%s\n' "$parsed" | grep -qE "^${key}:" || missing="$missing $key"
++    fi
++done
++
++if [ -n "$missing" ]; then
++    cat >&2 <<EOF
++
++commit-msg: provenance trailer(s) present but NOT machine-readable:$missing
++
++git ends the trailer block at the first line that is not trailer-shaped. A continuation
++line starting in column 0 invalidates every trailer in the block, including the ones
++above it - the message still reads fine, which is why this is easy to miss.
++
++  WRONG                                RIGHT
++  Measured-effect: 12.5 tok/s on the   Measured-effect: 12.5 tok/s on the
++  reference machine, 3 rolls.            reference machine, 3 rolls.
++
++Indent continuation lines by at least one space, and keep the trailer block as the LAST
++paragraph of the message. Details: CONTRIBUTING/COMMIT-TRAILERS.md
++
++EOF
++    exit 1
++fi
++
++exit 0
+diff --git a/CONTRIBUTING/COMMIT-TRAILERS.md b/CONTRIBUTING/COMMIT-TRAILERS.md
+new file mode 100644
+index 000000000..102ac5b4c
+--- /dev/null
++++ b/CONTRIBUTING/COMMIT-TRAILERS.md
+@@ -0,0 +1,72 @@
++# Commit trailers
++
++Every non-trivial commit in this fork carries provenance in its message. `arifi-sync provenance`
++audits it, and `--strict` uses **git's own trailer parser** — the same one CI and any downstream
++tooling sees. This page exists because there is one rule that is easy to break and gives no
++warning when you do.
++
++## The three trailers
++
++| Trailer | Required on | Value |
++|---|---|---|
++| `Taken-from:` | anything ported from another project | repository and commit, e.g. `PrismML-Eng/llama.cpp@984bf9723` |
++| `Origin:` | everything | which piece of work produced it |
++| `Measured-effect:` | anything that could change behaviour | what was measured, on what hardware — or the literal word `UNMEASURED` |
++
++`UNMEASURED` is a legal value and preferred over a guess. A *missing* trailer is the problem; an
++honest one that says nothing was measured is not.
++
++## The rule that bites: wrapped values
++
++Git ends the trailer block at the **first line that is not trailer-shaped**. A continuation line
++starting in column 0 therefore does not merely break its own trailer — it invalidates **every
++trailer in the block, including the ones above it**. The commit still reads perfectly to a human,
++which is exactly why this goes unnoticed.
++
++```
++WRONG — the block ends at "reference machine", so NOTHING here parses
++
++    Taken-from: ggml-org/llama.cpp@e9fa0781f
++    Origin: some work unit
++    Measured-effect: 12.5 tok/s on the
++    reference machine, 3 rolls, ranges disjoint.
++```
++
++```
++RIGHT — the continuation is indented, so the block is intact
++
++    Taken-from: ggml-org/llama.cpp@e9fa0781f
++    Origin: some work unit
++    Measured-effect: 12.5 tok/s on the
++      reference machine, 3 rolls, ranges disjoint.
++```
++
++Two habits keep this correct:
++
++1. **Indent continuation lines** by at least one space.
++2. **Put the trailer block last.** Prose *after* the trailers ends the block just as effectively
++   as an unindented continuation.
++
++## Checking before you commit
++
++```bash
++python tools/arifi-sync/arifi_sync.py provenance --strict
++```
++
++`provenance` (without `--strict`) accepts a trailer token anywhere in the message, so it passes
++on commits that machines cannot read. `--strict` is the honest check. If a commit shows up under
++`LOOSE-ONLY`, the message is fine for a human and invisible to tooling — reword the trailer block
++per the rule above before it lands.
++
++A `commit-msg` hook is available that performs the same check locally:
++
++```bash
++git config core.hooksPath .githooks
++```
++
++## Known gap
++
++Twelve commits already in history are `LOOSE-ONLY` — their provenance is present and correct for a
++reader but does not parse. They are not being rewritten: the series is verified to replay to a
++byte-identical tree, and rewriting messages to satisfy a parser would invalidate that verification
++for no gain in the information itself. New commits are expected to parse.
+diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
+index 6ff45ff92..726ee4fc5 100644
+--- a/tools/arifi-sync/arifi_sync.py
++++ b/tools/arifi-sync/arifi_sync.py
+@@ -146,6 +146,18 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:
+     if loose_only:
+         say("\nLOOSE-ONLY - provenance is human-readable but NOT machine-readable.")
+         say("A trailer only parses when it sits in a trailing paragraph of trailer-shaped lines.")
++        say("")
++        say("The usual cause is a WRAPPED VALUE. git ends the trailer block at the first line")
++        say("that is not trailer-shaped, so a continuation line starting in column 0 silently")
++        say("invalidates every trailer in the block - including the ones above it:")
++        say("")
++        say("    WRONG                              RIGHT")
++        say("    Measured-effect: 12.5 t/s on the   Measured-effect: 12.5 t/s on the")
++        say("    reference machine, 3 rolls.          reference machine, 3 rolls.")
++        say("    ^ column 0 - block ends here       ^ indented - still the same trailer")
++        say("")
++        say("Indent continuation lines by at least one space, and keep the trailer block as")
++        say("the LAST paragraph of the message. Prose after it has the same effect.")
+         for sha, s in loose_only:
+             say("  %s  %s" % (sha, s))
+     if no_meas:
