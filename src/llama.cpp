@@ -339,13 +339,13 @@ static void llama_arifi_vnni_repack_advisory(const llama_model_loader & ml, cons
         return; // the caller already decided, either way
     }
 
-    // GGML_TYPE_Q2_0_G128 is excluded on purpose: the loader has already remapped it away from
-    // GGML_TYPE_Q2_0, and every repack kernel is hard-wired to 64-value blocks, so the toggle
-    // provably does nothing for a g128 file. Advising it there would be a false advisory.
+    // GGML_TYPE_Q2_0_G128 counts since lane-110F gave it its own kernels. It used to be excluded
+    // here because the toggle provably did nothing for a g128 file, which would have made this a
+    // false advisory; the g128 speed effect is unmeasured, which the wording below reflects.
     size_t n_repackable = 0;
     for (const auto & it : ml.weights_map) {
         const ggml_type type = it.second.tensor->type;
-        if (type == GGML_TYPE_Q1_0 || type == GGML_TYPE_Q2_0) {
+        if (type == GGML_TYPE_Q1_0 || type == GGML_TYPE_Q2_0 || type == GGML_TYPE_Q2_0_G128) {
             n_repackable++;
         }
     }
@@ -354,7 +354,7 @@ static void llama_arifi_vnni_repack_advisory(const llama_model_loader & ml, cons
     }
 
     LLAMA_LOG_INFO("%s: ArifiLabs advisory: no offload device was selected and this model carries "
-            "%zu Q1_0/Q2_0 tensor(s)\n", __func__, n_repackable);
+            "%zu Q1_0/Q2_0/Q2_0_G128 tensor(s)\n", __func__, n_repackable);
     LLAMA_LOG_INFO("%s: ArifiLabs advisory: GGML_ARIFI_VNNI_REPACK=1 measured prompt +326.7%% / "
             "+441.8%% and decode +19.9%% / +23.6%% on a CPU-only path (two g64 models, ArifiLabs "
             "rig, 2026-07-24). UNMEASURED on any other machine\n", __func__);

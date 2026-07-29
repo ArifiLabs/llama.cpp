@@ -6591,23 +6591,29 @@ void ggml_gemm_q1_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
     ggml_gemm_q1_0_4x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
 }
 
-void ggml_gemv_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+typedef void (*ggml_repack_kernel_fn)(int, float * GGML_RESTRICT, size_t, const void * GGML_RESTRICT, const void * GGML_RESTRICT, int, int);
+
+// Group-size generic. __q2_0_expand_x4 has no notion of the block (it expands exactly one 32-byte
+// load) and the 32 * k qs stride is a constant of the 4-row interleave, so QK is the only thing the
+// g64 and g128 ternary formats disagree on here.
+template <typename BlockX4, int QK>
+static void ggml_gemv_q2_0_x4_q8_0_impl(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc, ggml_repack_kernel_fn fallback) {
 #if defined(__AVX512F__) && defined(__AVX512BW__) && defined(__AVX512DQ__) && defined(__AVX512VNNI__)
     {
-        const int qk = QK2_0;
+        const int qk = QK;
         const int nb = n / qk;
 
         assert(nr == 1);
         assert(n % qk == 0);
         assert(nc % 4 == 0);
-    
+
         const __m512i ones  = _mm512_set1_epi8(1);
         const __m512i idx01 = _mm512_set_epi32(1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0);
         const __m512i idx23 = _mm512_set_epi32(3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2);
 
         const block_q8_0 * a_ptr = (const block_q8_0 *) vy;
         for (int x = 0; x < nc / 4; x++) {
-            const block_q2_0x4 * b_ptr = (const block_q2_0x4 *) vx + (x * nb);
+            const BlockX4 * b_ptr = (const BlockX4 *) vx + (x * nb);
 
             __m512 accf01 = _mm512_setzero_ps();
             __m512 accf23 = _mm512_setzero_ps();
@@ -6617,8 +6623,8 @@ void ggml_gemv_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
                 const __m512 d0v01 = _mm512_permutexvar_ps(idx01, d0);
                 const __m512 d0v23 = _mm512_permutexvar_ps(idx23, d0);
 
-                for (int k = 0; k < QK2_0 / QK8_0; ++k) {
-                    const block_q8_0 * GGML_RESTRICT a_blk = a_ptr + l * (QK2_0 / QK8_0) + k;
+                for (int k = 0; k < QK / QK8_0; ++k) {
+                    const block_q8_0 * GGML_RESTRICT a_blk = a_ptr + l * (QK / QK8_0) + k;
 
                     __m512i w01, w23;
                     __q2_0_expand_x4((const uint8_t *) b_ptr[l].qs + 32 * k, &w01, &w23);
@@ -6644,13 +6650,22 @@ void ggml_gemv_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
     }
 #endif // AVX512 VNNI
 
-    ggml_gemv_q2_0_4x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
+    fallback(n, s, bs, vx, vy, nr, nc);
 }
 
-void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+void ggml_gemv_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+    ggml_gemv_q2_0_x4_q8_0_impl<block_q2_0x4, QK2_0>(n, s, bs, vx, vy, nr, nc, ggml_gemv_q2_0_4x8_q8_0_generic);
+}
+
+void ggml_gemv_q2_0_g128_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+    ggml_gemv_q2_0_x4_q8_0_impl<block_q2_0_g128x4, QK2_0_G128>(n, s, bs, vx, vy, nr, nc, ggml_gemv_q2_0_g128_4x8_q8_0_generic);
+}
+
+template <typename BlockX4, int QK>
+static void ggml_gemm_q2_0_x4_q8_0_impl(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc, ggml_repack_kernel_fn fallback) {
 #if defined(__AVX512F__) && defined(__AVX512BW__) && defined(__AVX512DQ__) && defined(__AVX512VNNI__)
     {
-        const int qk = QK2_0;
+        const int qk = QK;
         const int nb = n / qk;
 
         assert(n % qk == 0);
@@ -6668,9 +6683,9 @@ void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
         }
 
         for (int y = 0; y < nr / 4; y++) {
-            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb * (QK2_0 / QK8_0));
+            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb * (QK / QK8_0));
             for (int x = 0; x < nc / 4; x++) {
-                const block_q2_0x4 * b_ptr = (const block_q2_0x4 *) vx + (x * nb);
+                const BlockX4 * b_ptr = (const BlockX4 *) vx + (x * nb);
 
                 __m512 accf01[4];
                 __m512 accf23[4];
@@ -6684,8 +6699,8 @@ void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
                     const __m512 d0v01 = _mm512_permutexvar_ps(idx01, d0);
                     const __m512 d0v23 = _mm512_permutexvar_ps(idx23, d0);
 
-                    for (int k = 0; k < QK2_0 / QK8_0; ++k) {
-                        const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + l * (QK2_0 / QK8_0) + k;
+                    for (int k = 0; k < QK / QK8_0; ++k) {
+                        const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + l * (QK / QK8_0) + k;
 
                         __m512i w01, w23;
                         __q2_0_expand_x4((const uint8_t *) b_ptr[l].qs + 32 * k, &w01, &w23);
@@ -6718,5 +6733,13 @@ void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
     }
 #endif // AVX512 VNNI
 
-    ggml_gemm_q2_0_4x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
+    fallback(n, s, bs, vx, vy, nr, nc);
+}
+
+void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+    ggml_gemm_q2_0_x4_q8_0_impl<block_q2_0x4, QK2_0>(n, s, bs, vx, vy, nr, nc, ggml_gemm_q2_0_4x8_q8_0_generic);
+}
+
+void ggml_gemm_q2_0_g128_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+    ggml_gemm_q2_0_x4_q8_0_impl<block_q2_0_g128x4, QK2_0_G128>(n, s, bs, vx, vy, nr, nc, ggml_gemm_q2_0_g128_4x8_q8_0_generic);
 }
