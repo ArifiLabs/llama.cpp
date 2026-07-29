@@ -187,6 +187,20 @@ Three ways out, none free, all recorded rather than assumed:
 
 1. **Keep both copies** — a host-visible copy for batch work and a repacked copy for decode. This
    genuinely gets both wins and costs the memory of the affected tensors twice.
+
+   **This is the direction, and the reason is worth stating.** The framing above — *choose* which
+   processor gets the batch work — is only forced if the goal is to pick the single best default.
+   It is the wrong frame for a machine with unified memory, where the GPU, the CPU and the RAM are
+   one pool and the point is to use all three at once. Duplicating a tensor changes no weight and
+   no router decision, so it cannot cost quality; it spends memory, which is a resource, to buy
+   the prefill win and the decode win at the same time instead of trading one for the other. Only
+   Q1_0/Q2_0 tensors are affected, so the cost is bounded and measurable rather than global.
+
+   Shape of the work: leave the tensor in a GPU-visible buffer so the scheduler can still offload
+   large-batch matmuls, and maintain a lazily-built repacked shadow that the CPU path uses when an
+   operation lands on the CPU — which is every single-token decode. The existing measurements say
+   what to expect: prefill keeps the ~950 tok/s it has today instead of collapsing to ~100, and
+   decode keeps the +20–28% the repack path already demonstrated.
 2. **Enable repack only when no GPU backend exists at all.** Unlike "will this tensor be
    offloaded", "is there any GPU device" *is* answerable at load time, and when the answer is no
    there is no offload eligibility to lose.
