@@ -1,0 +1,54 @@
+From 6b2c0456834cac97199578bc96bd2a6f6395fc11 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 29 Jul 2026 01:54:58 -0400
+Subject: [PATCH] docs(FINDINGS): F-09 exit 1 is the direction - dual
+ residency, not a forced choice
+
+F-09 framed the repack/GPU regression as a choice between which processor does the batch work,
+and costed 'keep both copies' as the expensive exit. That framing is only forced when the goal
+is to pick a single best default. It is the wrong frame for a unified-memory machine, where the
+GPU, the CPU and the RAM are one pool and the objective is to use all three at once.
+
+Duplicating a tensor changes no weight and no router decision, so it cannot degrade quality. It
+spends memory - a resource - to hold the prefill win and the decode win simultaneously instead
+of trading one against the other, and only Q1_0/Q2_0 tensors are affected, so the cost is
+bounded rather than global.
+
+Shape recorded for whoever builds it: keep the tensor in a GPU-visible buffer so the scheduler
+can still offload large-batch matmuls, and maintain a lazily-built repacked shadow used by the
+CPU path when an op lands on the CPU, which is every single-token decode. Existing measurements
+set the expectation: prefill holds ~950 tok/s instead of collapsing to ~100, decode keeps the
++20-28% the repack path already showed.
+
+Origin: ArifiLabs lane-110D, direction correction
+Measured-effect: analysis only, no code change. The numbers quoted are the already-recorded
+  repack ON/OFF measurements, not new ones.
+---
+ docs/FINDINGS.md | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/docs/FINDINGS.md b/docs/FINDINGS.md
+index 85824e315..527941a98 100644
+--- a/docs/FINDINGS.md
++++ b/docs/FINDINGS.md
+@@ -187,6 +187,20 @@ Three ways out, none free, all recorded rather than assumed:
+ 
+ 1. **Keep both copies** — a host-visible copy for batch work and a repacked copy for decode. This
+    genuinely gets both wins and costs the memory of the affected tensors twice.
++
++   **This is the direction, and the reason is worth stating.** The framing above — *choose* which
++   processor gets the batch work — is only forced if the goal is to pick the single best default.
++   It is the wrong frame for a machine with unified memory, where the GPU, the CPU and the RAM are
++   one pool and the point is to use all three at once. Duplicating a tensor changes no weight and
++   no router decision, so it cannot cost quality; it spends memory, which is a resource, to buy
++   the prefill win and the decode win at the same time instead of trading one for the other. Only
++   Q1_0/Q2_0 tensors are affected, so the cost is bounded and measurable rather than global.
++
++   Shape of the work: leave the tensor in a GPU-visible buffer so the scheduler can still offload
++   large-batch matmuls, and maintain a lazily-built repacked shadow that the CPU path uses when an
++   operation lands on the CPU — which is every single-token decode. The existing measurements say
++   what to expect: prefill keeps the ~950 tok/s it has today instead of collapsing to ~100, and
++   decode keeps the +20–28% the repack path already demonstrated.
+ 2. **Enable repack only when no GPU backend exists at all.** Unlike "will this tensor be
+    offloaded", "is there any GPU device" *is* answerable at load time, and when the answer is no
+    there is no offload eligibility to lose.
