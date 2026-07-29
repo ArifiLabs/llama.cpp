@@ -13,3 +13,8 @@
 # `diff` is set alongside it so `-text` does not cost reviewability: git still renders these as
 # text in diffs instead of reporting "Binary files differ".
 patches/** -text diff
+
+# ArifiLabs: git hooks are shell scripts executed by /bin/sh. Checked out with CRLF they fail
+# on Linux and macOS with an unhelpful 'bad interpreter' error, and Git for Windows defaults
+# core.autocrlf=true - so pin them to LF regardless of the cloner's settings.
+.githooks/** text eol=lf
