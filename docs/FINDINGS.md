@@ -123,6 +123,41 @@ Upstream's Vulkan `Q2_0` support merged one day *before* this fork's earlier bas
 so it was never a competing implementation — this fork's g128 support is an extension on top of
 it, not a parallel one. Re-verified at the `b10173` rebase: nothing to drop.
 
+**g128 now has the CPU repack kernels too (2026-07-29).** Until then the flagship ternary format
+had no fast CPU path: `block<K, N>` derived its group size from the bit width via `QK_0<K>()`, so
+the template could not express "2-bit at group 128" and a g128 model logged
+`q2_0_g128 ... cannot be used with preferred buffer type CPU_REPACK`. The fix is a
+parameterisation, not a new kernel. `block` takes a third argument `int QK = QK_0<K>()`, which
+leaves every existing `block<K,N>` spelling valid, and the AVX512-VNNI GEMV/GEMM are templated on
+`<BlockX4, QK>`. The vector core needed no change at all: `__q2_0_expand_x4` loads exactly one
+`__m256i` and has no notion of the block, and the `32 * k` qs stride is
+`NB_COLS(4) * QK8_0(32) * 2 bits / 8` — a constant of the row interleave, not of the group.
+
+Two group sizes now mean two arms and two kernel instantiations, deliberately. A g128 row entering
+a g64 kernel is **mis-strided silent wrong math, not a crash** — 34 bytes read as 18, with the
+activation loop running two sub-blocks where it needs four — so the type that selects an arm is
+carried as a template parameter all the way into the repack, which asserts it.
+
+Measured on `Ternary-Bonsai-8B-Q2_0.g128.gguf` (RIG-A, `llama-server`, `-ngl 0 --no-host -c 2048
+-t 8`, temp 0, streamed oracle compared on token ids, 3 rolls per cell): repacked output is
+**token-identical to the scalar path** on both a GEMV-driving and a GEMM-driving prompt, with max
+|Δ logprob| **0.021–0.040** — inside the F-05 band and below this fork's own g64 ternary figure of
+0.061. The repack buffer claims **1759.50 MiB**, which is 252 of the model's 254 ternary tensors;
+the two it declines are `output.weight` and `token_embd.weight`, both `[4096, 151669]`, refused by
+the same `ne[1] % 4` condition the g64 arm has always applied.
+
+Dual residency came free. Adding the type to `ggml_arifi_dual_eligible` was enough because the x4
+block is exactly four plain blocks — the property the shadow sizing asserts — so g128 gets the
+same prefill-and-decode result: **252 shadow tensors, graph splits matching mode 0 (467) rather
+than mode 1 (430)**, and mode 2 **bit-identical to mode 1** under `--no-op-offload`
+(max |Δ logprob| `0.000000000`).
+
+The refactor rewrote the **shared** g64 kernels on the way through, so g64 was re-run against the
+pre-change answer key rather than assumed unaffected: 36 cells over three g64 models, every token
+identical and every logprob delta exactly `0.000000000`.
+
+**Speed is not claimed.** Whether the g128 CPU path is faster, and where, is unmeasured.
+
 **Method note:** compare struct *geometry*, never names or comments. An earlier round of this
 work recorded the relationship backwards from names alone and propagated the error into
 several documents; it was a source of F-02's crash. In-source size comments are also stale in
@@ -267,6 +302,75 @@ Three ways out, none free, all recorded rather than assumed:
 
 Until one of those lands, the flag stays off by default and the advisory tells CPU-only users to
 turn it on, which is the configuration where the answer is unambiguous.
+
+### F-10 — A validator that runs after the thing it was meant to validate
+
+A GGUF may declare the ternary type-id for a **64**-value group while its payload is laid out at
+**128** (F-06). The loader has a function written for exactly that case:
+`llama_verify_q2_0_g128_spans` measures each tensor's on-disk span and compares it against *both*
+geometries, refusing anything ambiguous. It never runs on such a file.
+
+`gguf_init_from_reader` walks the tensor table first and computes each tensor's expected offset by
+accumulating sizes **from the declared type**. At 18 bytes/block against a 34 bytes/block payload
+the running offset overshoots on the first ternary tensor, and the file is rejected before any
+llama-level code sees it:
+
+```
+gguf_init_from_reader: tensor 'output_norm.weight' has offset 165015872, expected 174722688
+gguf_init_from_reader: failed to read tensor data
+```
+
+The mechanism is sound and the ordering defeats it. Nothing downstream can rescue the file,
+because the disambiguation it needs happens two layers above where it dies.
+
+This is recorded rather than fixed because the fix is a real design choice, not a patch: either
+`gguf_init` learns to consult the format key before it sizes anything, or the key is read in a
+pre-pass. Both widen a hot, security-relevant path — offset validation is what stops a malformed
+file from being read out of bounds — so it is not something to do casually on the way past.
+
+**The practical consequence is a documentation one.** Code comments in the repack dispatch used to
+justify their g128 exclusion by pointing at the load-time retype that this path was supposed to
+perform. That justification rested on something unreachable. The dispatch now keys on the g128
+type directly and does not depend on it.
+
+### F-11 — Fallback kernels that no dispatch path can reach
+
+Every interleaved kernel has a portable `_generic` twin, and `arch-fallback.h` maps the public name
+onto it for the seven non-x86 architectures. For the ternary types that mapping leads nowhere.
+
+The dispatch arms for `Q2_0` and `Q2_0_G128` are gated on AVX512-VNNI **and nothing else**.
+`Q1_0`, sitting immediately above them in the same function, carries three arms — AVX512-VNNI,
+NEON with `matmul_int8`, and NEON with `dotprod`. So on ARM, PowerPC, RISC-V, s390 and WASM the
+ternary types never claim the repack buffer, their `_generic` kernels are compiled into every one
+of those builds, and not one of them is ever called. On x86 the same is true of any build without
+AVX512, because the predicate and the kernel body key off the *same* compile-time macros:
+
+```
+$ g++ -march=x86-64-v3 -fsyntax-only probe.c     # #error if __AVX512F__/__AVX512VNNI__ absent
+probe.c:2:2: error: #error "ggml_cpu_has_avx512/_vnni would return 0 here"
+$ g++ -march=native   -fsyntax-only probe.c      # exit 0
+```
+
+`ggml_cpu_has_avx512()` is `#if defined(__AVX512F__)`, not a CPU query, so no build configuration
+can open the dispatch while closing the kernel. There is no way to reach this code from a model.
+
+That makes it the one class of kernel a model-level correctness sweep can never cover, which is
+why [`tests/test-ternary-repack.cpp`](../tests/test-ternary-repack.cpp) calls all four variants
+directly — both group sizes, GEMV and GEMM, AVX512 and generic — against a reference written the
+other way round: the kernels accumulate integer products and scale per activation sub-block, the
+reference dequantizes to float and dots. The test carries its own inverse claim as well, feeding
+g128-packed weights to the g64 kernel and requiring the result to be **wrong**; it comes out wrong
+by `43064.94` against a tolerance of `0.000053`, which is what "mis-strided is silent wrong math,
+not a crash" looks like when you make it visible.
+
+Two harness defects were caught by that test's own scalar self-check before it ever judged a
+kernel — an uninitialised `ggml_table_f32_f16` (every scale decoding as zero, so every kernel
+returned zero and read exactly like a broken kernel) and a reference holding more precision than
+the fp16 block it described. Both would have been reported as kernel failures by a test that
+compared only against itself.
+
+**Not fixed here.** Giving ARM a ternary repack arm means shipping kernels this project cannot
+measure, which is the one thing its defaults policy (F-08) exists to prevent.
 
 ## Open questions
 

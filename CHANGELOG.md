@@ -45,6 +45,33 @@ Unless an entry says otherwise, every measurement was taken on:
 
 ### Added
 
+- **CPU repack kernels for the 128-group ternary format (`Q2_0_G128`).** This fork's flagship
+  ternary format had no fast CPU path: the interleaved-block template derived its group size from
+  the bit width, so it could not express "2-bit at group 128", and a g128 model logged
+  `cannot be used with preferred buffer type CPU_REPACK`. The block template now takes the group
+  size as a defaulted third parameter — every existing spelling stays valid — and the AVX512-VNNI
+  GEMV/GEMM are templated on it. The vector core is unchanged: the expansion helper loads one
+  32-byte register and has no notion of the block, and the `qs` stride is a constant of the
+  four-row interleave rather than of the group.
+
+  The two group sizes get separate arms and separate kernel instantiations on purpose. A g128 row
+  entering a g64 kernel is mis-strided **silent wrong math, not a crash**, so the type is carried
+  as a template parameter into the repack, which asserts it.
+
+  Correctness on **RIG-A** (`llama-server`, `Ternary-Bonsai-8B-Q2_0.g128.gguf`, `-ngl 0 --no-host
+  -c 2048 -t 8`, temp 0, token-id comparison, 3 rolls per cell): repacked output is
+  **token-identical to the scalar path** on both a GEMV-driving and a GEMM-driving prompt, max
+  |Δ logprob| **0.021–0.040** — inside the F-05 band and below this fork's own g64 ternary 0.061.
+  The repack buffer claims **1759.50 MiB**, 252 of 254 ternary tensors, the two declined being the
+  151669-row vocab tensors that fail the same `ne[1] % 4` test the g64 arm has always applied.
+  Dual residency (`=2`) covers the new type for free — **252 shadow tensors**, graph splits
+  tracking mode 0 rather than mode 1, and bit-identical to mode 1 under `--no-op-offload`.
+  The shared g64 kernels were rewritten on the way through, so they were re-run against the
+  pre-change answer key rather than assumed unaffected: **36 cells, every token identical, every
+  logprob delta 0.000000000**. See [`docs/FINDINGS.md`](docs/FINDINGS.md) F-06.
+
+  **No speed claim.** Whether this is faster, and where, is unmeasured.
+
 - **Dual residency for the ternary repack path — `GGML_ARIFI_VNNI_REPACK=2`.** Until now this
   slot forced a choice: repacking Q1_0/Q2_0 weights bought **+22–24%** decode and cost **−65% to
   −80%** prompt processing on a Vulkan build, because weights in the `CPU_REPACK` buffer stop being

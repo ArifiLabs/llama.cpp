@@ -1499,14 +1499,18 @@ void ggml_gemv_q1_0_4x8_q8_0_generic(int                        n,
     }
 }
 
-void ggml_gemv_q2_0_4x8_q8_0_generic(int                        n,
-                                     float * GGML_RESTRICT      s,
-                                     size_t                     bs,
-                                     const void * GGML_RESTRICT vx,
-                                     const void * GGML_RESTRICT vy,
-                                     int                        nr,
-                                     int                        nc) {
-    const int qk                = QK2_0;
+// The g64 and g128 ternary formats differ only in QK: the 32-byte qs stride below is a constant of
+// the 4-row interleave (4 rows x QK8_0 values x 2 bits / 8), not of the group.
+extern "C++" {
+template <typename BlockX4, int QK>
+static void ggml_gemv_q2_0_generic_impl(int                        n,
+                                        float * GGML_RESTRICT      s,
+                                        size_t                     bs,
+                                        const void * GGML_RESTRICT vx,
+                                        const void * GGML_RESTRICT vy,
+                                        int                        nr,
+                                        int                        nc) {
+    const int qk                = QK;
     const int nb                = n / qk;
     const int ncols_interleaved = 4;
 
@@ -1521,7 +1525,7 @@ void ggml_gemv_q2_0_4x8_q8_0_generic(int                        n,
 
     const block_q8_0 * a_ptr = (const block_q8_0 *) vy;
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q2_0x4 * b_ptr = (const block_q2_0x4 *) vx + (x * nb);
+        const BlockX4 * b_ptr = (const BlockX4 *) vx + (x * nb);
 
         for (int j = 0; j < ncols_interleaved; j++) {
             sumf[j] = 0.0f;
@@ -1535,8 +1539,8 @@ void ggml_gemv_q2_0_4x8_q8_0_generic(int                        n,
                 GGML_CPU_FP16_TO_FP32(b_ptr[l].d[3]),
             };
 
-            for (int k = 0; k < QK2_0 / QK8_0; ++k) {
-                const block_q8_0 * GGML_RESTRICT a_blk = a_ptr + l * (QK2_0 / QK8_0) + k;
+            for (int k = 0; k < QK / QK8_0; ++k) {
+                const block_q8_0 * GGML_RESTRICT a_blk = a_ptr + l * (QK / QK8_0) + k;
                 const float d1 = GGML_CPU_FP16_TO_FP32(a_blk->d);
 
                 for (int j = 0; j < ncols_interleaved; ++j) {
@@ -1562,6 +1566,15 @@ void ggml_gemv_q2_0_4x8_q8_0_generic(int                        n,
             s[x * ncols_interleaved + j] = sumf[j];
         }
     }
+}
+} // extern "C++"
+
+void ggml_gemv_q2_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+    ggml_gemv_q2_0_generic_impl<block_q2_0x4, QK2_0>(n, s, bs, vx, vy, nr, nc);
+}
+
+void ggml_gemv_q2_0_g128_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+    ggml_gemv_q2_0_generic_impl<block_q2_0_g128x4, QK2_0_G128>(n, s, bs, vx, vy, nr, nc);
 }
 
 // Only enable these for RISC-V.
@@ -2752,14 +2765,16 @@ void ggml_gemm_q1_0_4x8_q8_0_generic(int                        n,
     }
 }
 
-void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,
-                                     float * GGML_RESTRICT      s,
-                                     size_t                     bs,
-                                     const void * GGML_RESTRICT vx,
-                                     const void * GGML_RESTRICT vy,
-                                     int                        nr,
-                                     int                        nc) {
-    const int qk                = QK2_0;
+extern "C++" {
+template <typename BlockX4, int QK>
+static void ggml_gemm_q2_0_generic_impl(int                        n,
+                                        float * GGML_RESTRICT      s,
+                                        size_t                     bs,
+                                        const void * GGML_RESTRICT vx,
+                                        const void * GGML_RESTRICT vy,
+                                        int                        nr,
+                                        int                        nc) {
+    const int qk                = QK;
     const int nb                = n / qk;
     const int ncols_interleaved = 4;
 
@@ -2770,9 +2785,9 @@ void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,
     float sumf[4][4];
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb * (QK2_0 / QK8_0));
+        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb * (QK / QK8_0));
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q2_0x4 * b_ptr = (const block_q2_0x4 *) vx + (x * nb);
+            const BlockX4 * b_ptr = (const BlockX4 *) vx + (x * nb);
 
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
@@ -2788,8 +2803,8 @@ void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,
                     GGML_CPU_FP16_TO_FP32(b_ptr[l].d[3]),
                 };
 
-                for (int k = 0; k < QK2_0 / QK8_0; ++k) {
-                    const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + l * (QK2_0 / QK8_0) + k;
+                for (int k = 0; k < QK / QK8_0; ++k) {
+                    const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + l * (QK / QK8_0) + k;
                     const float a_d[4] = {
                         GGML_CPU_FP16_TO_FP32(a_blk->d[0]),
                         GGML_CPU_FP16_TO_FP32(a_blk->d[1]),
@@ -2832,6 +2847,15 @@ void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,
             }
         }
     }
+}
+} // extern "C++"
+
+void ggml_gemm_q2_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+    ggml_gemm_q2_0_generic_impl<block_q2_0x4, QK2_0>(n, s, bs, vx, vy, nr, nc);
+}
+
+void ggml_gemm_q2_0_g128_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+    ggml_gemm_q2_0_generic_impl<block_q2_0_g128x4, QK2_0_G128>(n, s, bs, vx, vy, nr, nc);
 }
 
 // Only enable these for RISC-V.
@@ -3234,8 +3258,9 @@ static block_q1_0x4 make_block_q1_0x4(block_q1_0 * in, unsigned int blck_size_in
     return out;
 }
 
-static block_q2_0x4 make_block_q2_0x4(block_q2_0 * in, unsigned int blck_size_interleave) {
-    block_q2_0x4 out;
+template <typename BlockX4, typename Block, int QK>
+static BlockX4 make_block_q2_0_x4(Block * in, unsigned int blck_size_interleave) {
+    BlockX4 out;
 
     for (int i = 0; i < 4; i++) {
         out.d[i] = in[i].d;
@@ -3245,7 +3270,7 @@ static block_q2_0x4 make_block_q2_0x4(block_q2_0 * in, unsigned int blck_size_in
     // sub-block per row): qs[k*32 + j*8 + b] = row j, bytes [k*8 + b].
     GGML_ASSERT(blck_size_interleave == 8);
 
-    for (int k = 0; k < QK2_0 / 32; ++k) {
+    for (int k = 0; k < QK / 32; ++k) {
         for (int j = 0; j < 4; ++j) {
             memcpy(&out.qs[k * 32 + j * 8], &in[j].qs[k * 8], 8);
         }
@@ -4056,21 +4081,24 @@ static int repack_q1_0_to_q1_0_4_bl(struct ggml_tensor *       t,
     return 0;
 }
 
-static int repack_q2_0_to_q2_0_4_bl(struct ggml_tensor *       t,
-                                    int                        interleave_block,
-                                    const void * GGML_RESTRICT data,
-                                    size_t                     data_size) {
-    GGML_ASSERT(t->type == GGML_TYPE_Q2_0);
+// EXPECT is asserted rather than inferred: a g128 row repacked through the g64 instantiation is
+// mis-strided silent wrong math, not a crash.
+template <typename BlockX4, typename Block, int QK, ggml_type EXPECT>
+static int repack_q2_0_to_q2_0_4_bl_impl(struct ggml_tensor *       t,
+                                         int                        interleave_block,
+                                         const void * GGML_RESTRICT data,
+                                         size_t                     data_size) {
+    GGML_ASSERT(t->type == EXPECT);
     GGML_ASSERT(interleave_block == 8);
     constexpr int nrows_interleaved = 4;
 
-    block_q2_0x4 *     dst = (block_q2_0x4 *) t->data;
-    const block_q2_0 * src = (const block_q2_0 *) data;
-    block_q2_0         dst_tmp[4];
-    int                nrow    = ggml_nrows(t);
-    int                nblocks = t->ne[0] / QK2_0;
+    BlockX4 *     dst = (BlockX4 *) t->data;
+    const Block * src = (const Block *) data;
+    Block         dst_tmp[4];
+    int           nrow    = ggml_nrows(t);
+    int           nblocks = t->ne[0] / QK;
 
-    GGML_ASSERT(data_size == (size_t) nrow * nblocks * sizeof(block_q2_0));
+    GGML_ASSERT(data_size == (size_t) nrow * nblocks * sizeof(Block));
 
     if (t->ne[1] % nrows_interleaved != 0) {
         return -1;
@@ -4081,11 +4109,27 @@ static int repack_q2_0_to_q2_0_4_bl(struct ggml_tensor *       t,
             for (int i = 0; i < nrows_interleaved; i++) {
                 dst_tmp[i] = src[x + (int64_t) i * nblocks];
             }
-            *dst++ = make_block_q2_0x4(dst_tmp, interleave_block);
+            *dst++ = make_block_q2_0_x4<BlockX4, Block, QK>(dst_tmp, interleave_block);
         }
         src += nrows_interleaved * nblocks;
     }
     return 0;
+}
+
+static int repack_q2_0_to_q2_0_4_bl(struct ggml_tensor *       t,
+                                    int                        interleave_block,
+                                    const void * GGML_RESTRICT data,
+                                    size_t                     data_size) {
+    return repack_q2_0_to_q2_0_4_bl_impl<block_q2_0x4, block_q2_0, QK2_0, GGML_TYPE_Q2_0>(
+        t, interleave_block, data, data_size);
+}
+
+static int repack_q2_0_g128_to_q2_0_g128_4_bl(struct ggml_tensor *       t,
+                                              int                        interleave_block,
+                                              const void * GGML_RESTRICT data,
+                                              size_t                     data_size) {
+    return repack_q2_0_to_q2_0_4_bl_impl<block_q2_0_g128x4, block_q2_0_g128, QK2_0_G128, GGML_TYPE_Q2_0_G128>(
+        t, interleave_block, data, data_size);
 }
 
 static block_q8_0x16 make_block_q8_0x16(block_q8_0 * in, unsigned int blck_size_interleave) {
@@ -4525,6 +4569,10 @@ template <> int repack<block_q2_0, 8, 4>(struct ggml_tensor * t, const void * da
     return repack_q2_0_to_q2_0_4_bl(t, 8, data, data_size);
 }
 
+template <> int repack<block_q2_0_g128, 8, 4>(struct ggml_tensor * t, const void * data, size_t data_size) {
+    return repack_q2_0_g128_to_q2_0_g128_4_bl(t, 8, data, data_size);
+}
+
 #if defined __riscv_zvfh
 template <> int repack<block_q4_0, 1, 16>(struct ggml_tensor * t, const void * data, size_t data_size) {
     return repack_q4_0_to_q4_0_16_bl(t, 1, data, data_size);
@@ -4634,6 +4682,10 @@ template <> void gemv<block_q2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t
     ggml_gemv_q2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
 }
 
+template <> void gemv<block_q2_0_g128, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+    ggml_gemv_q2_0_g128_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
+}
+
 #if defined __riscv_zvfh
 template <> void gemv<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
     ggml_gemv_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
@@ -4741,6 +4793,10 @@ template <> void gemm<block_q1_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t
 
 template <> void gemm<block_q2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
     ggml_gemm_q2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
+}
+
+template <> void gemm<block_q2_0_g128, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+    ggml_gemm_q2_0_g128_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
 }
 
 #if defined __riscv_zvfh
@@ -5274,21 +5330,6 @@ static bool ggml_arifi_vnni_repack_enabled() {
 // other.
 static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(const struct ggml_tensor * cur,
                                                                            bool for_dual = false) {
-    // lane-110C g64/g128 tripwire — PHASE2c-g128-type-architecture.md:175 binds these VNNI paths
-    // to canonical g64 Q2_0 only. Every kernel behind the Q2_0 arm below is hard-wired to
-    // QK2_0 == 64 (block_q2_0x4 == block<2,4>, sized from QK_0<2>()), while GGML_TYPE_Q2_0_G128
-    // is 128 values/block with type_size 34. A g128 row entering a g64 kernel is mis-strided and
-    // yields SILENT WRONG MATH, not a crash, so it is excluded explicitly and first.
-    //
-    // In the current tree the type comparison in the Q2_0 arm already excludes g128, because
-    // llama_remap_q2_0_g128() (src/llama-model-loader.cpp) retypes 42 -> 43 during model load,
-    // before any backend buffer is allocated and therefore before this function ever sees the
-    // tensor. This early return is the tripwire that keeps the exclusion true if that ordering,
-    // or the shape of the if/else chain below, is ever changed.
-    if (cur->type == GGML_TYPE_Q2_0_G128) {
-        return nullptr;
-    }
-
     // lane-110 M3 graft tag:repack-carveout — fork parity (smallthinker ggml-cpu-aarch64.cpp:6288-6299):
     // the expert bundle must hold PLAIN Q4_0 bytes and the streaming kernels read plain Q4_0,
     // so expert tensors must NOT be runtime-repacked in either bundle-gen or streaming mode.
@@ -5343,6 +5384,11 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
 
     // instance for Q2_0
     static const ggml::cpu::repack::tensor_traits<block_q2_0, 8, 4, GGML_TYPE_Q8_0> q2_0_4x8_q8_0;
+
+    // instance for Q2_0_G128 (lane-110F). Separate from the g64 instance on purpose: each carries
+    // its own block type and group size all the way down to the kernels, so the type that selects
+    // an arm here is the type the kernel is compiled for.
+    static const ggml::cpu::repack::tensor_traits<block_q2_0_g128, 8, 4, GGML_TYPE_Q8_0> q2_0_g128_4x8_q8_0;
 
     // instances for RISC-V
     //
@@ -5525,12 +5571,25 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
             }
         }
     } else if (cur->type == GGML_TYPE_Q2_0) {
-        // lane-110C: g64 ONLY — GGML_TYPE_Q2_0_G128 was already excluded by the tripwire at the
-        // top of this function, so this arm can only ever see canonical 64-value-block Q2_0.
+        // g64 ONLY. The two ternary group sizes have separate arms and separate kernels because a
+        // g128 row entering a g64 kernel is mis-strided SILENT WRONG MATH, not a crash: the block
+        // is 34 bytes against 18 and the activation loop runs 4 sub-blocks against 2. This arm and
+        // the one below are the only places the two can be confused, so they name their type.
         if (for_dual ? ggml_arifi_vnni_repack_dual_enabled() : ggml_arifi_vnni_repack_enabled()) {
             if (ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
                 if (cur->ne[1] % 4 == 0) {
                     return &q2_0_4x8_q8_0;
+                }
+            }
+        }
+    } else if (cur->type == GGML_TYPE_Q2_0_G128) {
+        // lane-110F: g128 gets its own kernels, so this is a real arm rather than the lane-110C
+        // tripwire that used to sit at the top of this function. Same gate, same ISA and ne[1]
+        // conditions as the g64 arm above.
+        if (for_dual ? ggml_arifi_vnni_repack_dual_enabled() : ggml_arifi_vnni_repack_enabled()) {
+            if (ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
+                if (cur->ne[1] % 4 == 0) {
+                    return &q2_0_g128_4x8_q8_0;
                 }
             }
         }
@@ -5551,6 +5610,9 @@ static_assert(sizeof(block_q1_0x4) == 4 * sizeof(block_q1_0),
 static_assert(sizeof(block_q2_0x4) == 4 * sizeof(block_q2_0),
               "dual residency assumes the x4 block is exactly 4 plain blocks; it is not — compute "
               "the shadow size from the repacked geometry instead of ggml_nbytes()");
+static_assert(sizeof(block_q2_0_g128x4) == 4 * sizeof(block_q2_0_g128),
+              "dual residency assumes the x4 block is exactly 4 plain blocks; it is not — compute "
+              "the shadow size from the repacked geometry instead of ggml_nbytes()");
 
 // True only for a MODEL WEIGHT that mode 0 leaves in a host buffer and that the interleaved
 // kernels can actually take.
@@ -5564,14 +5626,16 @@ static_assert(sizeof(block_q2_0x4) == 4 * sizeof(block_q2_0),
 // Q6_K, IQ4_NL, MXFP4, Q8_0) whose arms are NOT behind `GGML_ARIFI_VNNI_REPACK` at all, so reusing
 // that function alone would have quietly given a shadow to every repackable weight in any model —
 // doubling residency for types this slot has never measured and whose registry scope says
-// "Q1_0 and Q2_0 only". It did not show up in testing because no test model has a tensor of those
+// "Q1_0 and Q2_0 only" — widened by lane-110F to include Q2_0_G128 when g128 gained kernels, and
+// still listed type by type rather than delegated. It did not show up in testing because no test model has a tensor of those
 // types that meets their own ISA conditions on this box: the corpus could not enter the class.
 // Split in two on purpose. `_candidate` is field reads only and is safe to run per matmul per
 // thread; `_eligible` additionally asks ggml_repack_get_optimal_repack_type, which does two
 // getenv()s and strstr()s over the tensor name, and must run ONCE per tensor.
 static bool ggml_arifi_dual_candidate(const struct ggml_tensor * src0) {
     return ggml_arifi_vnni_repack_dual_enabled() && src0 && src0->buffer &&
-           (src0->type == GGML_TYPE_Q1_0 || src0->type == GGML_TYPE_Q2_0) &&
+           (src0->type == GGML_TYPE_Q1_0 || src0->type == GGML_TYPE_Q2_0 ||
+            src0->type == GGML_TYPE_Q2_0_G128) &&
            src0->buffer->usage == GGML_BACKEND_BUFFER_USAGE_WEIGHTS &&
            ggml_backend_buft_is_host(src0->buffer->buft) &&
            src0->buffer->buft != ggml_backend_cpu_repack_buffer_type();
