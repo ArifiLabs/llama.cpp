@@ -146,6 +146,18 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:
     if loose_only:
         say("\nLOOSE-ONLY - provenance is human-readable but NOT machine-readable.")
         say("A trailer only parses when it sits in a trailing paragraph of trailer-shaped lines.")
+        say("")
+        say("The usual cause is a WRAPPED VALUE. git ends the trailer block at the first line")
+        say("that is not trailer-shaped, so a continuation line starting in column 0 silently")
+        say("invalidates every trailer in the block - including the ones above it:")
+        say("")
+        say("    WRONG                              RIGHT")
+        say("    Measured-effect: 12.5 t/s on the   Measured-effect: 12.5 t/s on the")
+        say("    reference machine, 3 rolls.          reference machine, 3 rolls.")
+        say("    ^ column 0 - block ends here       ^ indented - still the same trailer")
+        say("")
+        say("Indent continuation lines by at least one space, and keep the trailer block as")
+        say("the LAST paragraph of the message. Prose after it has the same effect.")
         for sha, s in loose_only:
             say("  %s  %s" % (sha, s))
     if no_meas:
