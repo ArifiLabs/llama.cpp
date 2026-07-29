@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10173`, `e9fa0781f1c25fc4fe8c86be1edc6970661ad6f0`
-- Patches: **82**, all non-merge, applied in filename order.
+- Patches: **84**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 82 commit messages, same provenance trailers. Verified, not
+same file contents, same 84 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -161,6 +161,8 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 80 | `0080-repack-dual-residency-GGML_ARIFI_VNNI_REPACK-2-keeps.patch` | arifi-fork-base | `44e68f230` | - | `GGML_ARIFI_VNNI_REPACK` | repack: dual residency - GGML_ARIFI_VNNI_REPACK=2 keeps prefill on the GPU AND repacks decode |
 | 81 | `0081-repack-dual-residency-measured-both-wins-held-fix-th.patch` | arifi-fork-base | `1a3648e39` | - | `GGML_ARIFI_VNNI_REPACK` | repack: dual residency measured - both wins held; fix the hot-path cost that ate the first one |
 | 82 | `0082-repack-fix-the-shadow-tensor-COUNT-in-the-accounting.patch` | arifi-fork-base | `3e3ca94c8` | - | `GGML_ARIFI_VNNI_REPACK` | repack: fix the shadow tensor COUNT in the accounting line, and strengthen the claim it supports |
+| 83 | `0083-repack-CPU-kernels-for-the-128-group-ternary-format.patch` | arifi-fork-base | `f0c578349` | - | `GGML_ARIFI_VNNI_REPACK` | repack: CPU kernels for the 128-group ternary format |
+| 84 | `0084-tests-direct-equivalence-test-for-the-ternary-repack.patch` | arifi-fork-base | `8108813c6` | - | - | tests: direct equivalence test for the ternary repack kernels |
 
 ## Measured effect, per patch
 
@@ -273,6 +275,21 @@ legal and honest value; an absent trailer is a gap and is named as one.
   fix. Evidence: research/local-inference/trial-evidence/110/dual-residency/ |
 | `0082-repack-fix-the-shadow-tensor-COUNT-in-the-accounting.patch` | none on any code path - the changed line is a log format string. The claim it
   supports is now verified by tensor name rather than inferred from byte totals. |
+| `0083-repack-CPU-kernels-for-the-128-group-ternary-format.patch` | correctness only; speed UNMEASURED. RIG-A (Beelink SER7,
+  Ryzen 7840HS + Radeon 780M), llama-server, Ternary-Bonsai-8B-Q2_0.g128.gguf,
+  -ngl 0 --no-host -c 2048 -t 8, temp 0, token-id comparison, 3 rolls per cell:
+  repacked output token-identical to the scalar path on both a GEMV- and a
+  GEMM-driving prompt, max \|delta logprob\| 0.021-0.040, inside the F-05 band
+  and below this fork's own g64 ternary figure of 0.061. Repack buffer 1759.50
+  MiB = 252 of 254 ternary tensors. Dual residency covers the new type: 252
+  shadows, graph splits tracking mode 0 rather than mode 1, bit-identical to
+  mode 1 under --no-op-offload. The shared g64 kernels were rewritten here, so
+  they were re-run against the pre-change answer key: 36 cells, every token
+  identical, every logprob delta 0.000000000. |
+| `0084-tests-direct-equivalence-test-for-the-ternary-repack.patch` | UNMEASURED - test-only, no runtime path changes. The test
+  reports max \|err\| 1e-6 to 4e-6 against a 1e-5 relative tolerance across all
+  ten kernel/group-size combinations, and 43064.94 against a 0.000053
+  tolerance for the deliberate g128-through-g64 negative control. |
 
 ## Unclassified
 
@@ -307,4 +324,6 @@ rather than silently bucketed - add a rule when a new source appears.
 - `44e68f230` repack: dual residency - GGML_ARIFI_VNNI_REPACK=2 keeps prefill on the GPU AND repacks decode
 - `1a3648e39` repack: dual residency measured - both wins held; fix the hot-path cost that ate the first one
 - `3e3ca94c8` repack: fix the shadow tensor COUNT in the accounting line, and strengthen the claim it supports
+- `f0c578349` repack: CPU kernels for the 128-group ternary format
+- `8108813c6` tests: direct equivalence test for the ternary repack kernels
 

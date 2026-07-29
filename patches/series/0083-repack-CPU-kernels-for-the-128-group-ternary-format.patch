@@ -1,0 +1,893 @@
+From f0c5783496096c10573a9401b71b3b016d45f4cc Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 29 Jul 2026 14:28:42 -0400
+Subject: [PATCH] repack: CPU kernels for the 128-group ternary format
+
+The block template derived its group size from the bit width, so it could not
+express 2-bit at group 128 and a g128 model fell back to per-row vec_dot. Take
+the group size as a defaulted third parameter and template the AVX512-VNNI
+GEMV/GEMM on it; every existing block<K,N> spelling stays valid.
+
+The vector core needed nothing: the expansion helper loads one 32-byte register
+and has no notion of the block, and the qs stride is a constant of the four-row
+interleave rather than of the group.
+
+g64 and g128 get separate arms and separate instantiations. A g128 row in a g64
+kernel is mis-strided silent wrong math, not a crash, so the type travels as a
+template parameter into the repack, which asserts it. The old early-return
+tripwire becomes a real arm and keeps its reason in-comment.
+
+Origin: lane-110F, mission #1 (g128 CPU repack kernels)
+Measured-effect: correctness only; speed UNMEASURED. RIG-A (Beelink SER7,
+  Ryzen 7840HS + Radeon 780M), llama-server, Ternary-Bonsai-8B-Q2_0.g128.gguf,
+  -ngl 0 --no-host -c 2048 -t 8, temp 0, token-id comparison, 3 rolls per cell:
+  repacked output token-identical to the scalar path on both a GEMV- and a
+  GEMM-driving prompt, max |delta logprob| 0.021-0.040, inside the F-05 band
+  and below this fork's own g64 ternary figure of 0.061. Repack buffer 1759.50
+  MiB = 252 of 254 ternary tensors. Dual residency covers the new type: 252
+  shadows, graph splits tracking mode 0 rather than mode 1, bit-identical to
+  mode 1 under --no-op-offload. The shared g64 kernels were rewritten here, so
+  they were re-run against the pre-change answer key: 36 cells, every token
+  identical, every logprob delta 0.000000000.
+Assisted-by: Claude Opus 5
+---
+ CHANGELOG.md                          |  27 ++++
+ docs/FINDINGS.md                      | 104 +++++++++++++++
+ docs/OPTIONS-REGISTRY.md              |   4 +-
+ ggml/src/ggml-cpu/arch-fallback.h     |  14 ++
+ ggml/src/ggml-cpu/arch/x86/repack.cpp |  51 ++++++--
+ ggml/src/ggml-cpu/repack.cpp          | 178 +++++++++++++++++---------
+ ggml/src/ggml-cpu/repack.h            |  18 ++-
+ src/llama.cpp                         |  10 +-
+ 8 files changed, 325 insertions(+), 81 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 20300e105..1fc7e9ac0 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -45,6 +45,33 @@ Unless an entry says otherwise, every measurement was taken on:
+ 
+ ### Added
+ 
++- **CPU repack kernels for the 128-group ternary format (`Q2_0_G128`).** This fork's flagship
++  ternary format had no fast CPU path: the interleaved-block template derived its group size from
++  the bit width, so it could not express "2-bit at group 128", and a g128 model logged
++  `cannot be used with preferred buffer type CPU_REPACK`. The block template now takes the group
++  size as a defaulted third parameter — every existing spelling stays valid — and the AVX512-VNNI
++  GEMV/GEMM are templated on it. The vector core is unchanged: the expansion helper loads one
++  32-byte register and has no notion of the block, and the `qs` stride is a constant of the
++  four-row interleave rather than of the group.
++
++  The two group sizes get separate arms and separate kernel instantiations on purpose. A g128 row
++  entering a g64 kernel is mis-strided **silent wrong math, not a crash**, so the type is carried
++  as a template parameter into the repack, which asserts it.
++
++  Correctness on **RIG-A** (`llama-server`, `Ternary-Bonsai-8B-Q2_0.g128.gguf`, `-ngl 0 --no-host
++  -c 2048 -t 8`, temp 0, token-id comparison, 3 rolls per cell): repacked output is
++  **token-identical to the scalar path** on both a GEMV-driving and a GEMM-driving prompt, max
++  |Δ logprob| **0.021–0.040** — inside the F-05 band and below this fork's own g64 ternary 0.061.
++  The repack buffer claims **1759.50 MiB**, 252 of 254 ternary tensors, the two declined being the
++  151669-row vocab tensors that fail the same `ne[1] % 4` test the g64 arm has always applied.
++  Dual residency (`=2`) covers the new type for free — **252 shadow tensors**, graph splits
++  tracking mode 0 rather than mode 1, and bit-identical to mode 1 under `--no-op-offload`.
++  The shared g64 kernels were rewritten on the way through, so they were re-run against the
++  pre-change answer key rather than assumed unaffected: **36 cells, every token identical, every
++  logprob delta 0.000000000**. See [`docs/FINDINGS.md`](docs/FINDINGS.md) F-06.
++
++  **No speed claim.** Whether this is faster, and where, is unmeasured.
++
+ - **Dual residency for the ternary repack path — `GGML_ARIFI_VNNI_REPACK=2`.** Until now this
+   slot forced a choice: repacking Q1_0/Q2_0 weights bought **+22–24%** decode and cost **−65% to
+   −80%** prompt processing on a Vulkan build, because weights in the `CPU_REPACK` buffer stop being
+diff --git a/docs/FINDINGS.md b/docs/FINDINGS.md
+index 049e05e9b..785442e7d 100644
+--- a/docs/FINDINGS.md
++++ b/docs/FINDINGS.md
+@@ -123,6 +123,41 @@ Upstream's Vulkan `Q2_0` support merged one day *before* this fork's earlier bas
+ so it was never a competing implementation — this fork's g128 support is an extension on top of
+ it, not a parallel one. Re-verified at the `b10173` rebase: nothing to drop.
+ 
++**g128 now has the CPU repack kernels too (2026-07-29).** Until then the flagship ternary format
++had no fast CPU path: `block<K, N>` derived its group size from the bit width via `QK_0<K>()`, so
++the template could not express "2-bit at group 128" and a g128 model logged
++`q2_0_g128 ... cannot be used with preferred buffer type CPU_REPACK`. The fix is a
++parameterisation, not a new kernel. `block` takes a third argument `int QK = QK_0<K>()`, which
++leaves every existing `block<K,N>` spelling valid, and the AVX512-VNNI GEMV/GEMM are templated on
++`<BlockX4, QK>`. The vector core needed no change at all: `__q2_0_expand_x4` loads exactly one
++`__m256i` and has no notion of the block, and the `32 * k` qs stride is
++`NB_COLS(4) * QK8_0(32) * 2 bits / 8` — a constant of the row interleave, not of the group.
++
++Two group sizes now mean two arms and two kernel instantiations, deliberately. A g128 row entering
++a g64 kernel is **mis-strided silent wrong math, not a crash** — 34 bytes read as 18, with the
++activation loop running two sub-blocks where it needs four — so the type that selects an arm is
++carried as a template parameter all the way into the repack, which asserts it.
++
++Measured on `Ternary-Bonsai-8B-Q2_0.g128.gguf` (RIG-A, `llama-server`, `-ngl 0 --no-host -c 2048
++-t 8`, temp 0, streamed oracle compared on token ids, 3 rolls per cell): repacked output is
++**token-identical to the scalar path** on both a GEMV-driving and a GEMM-driving prompt, with max
++|Δ logprob| **0.021–0.040** — inside the F-05 band and below this fork's own g64 ternary figure of
++0.061. The repack buffer claims **1759.50 MiB**, which is 252 of the model's 254 ternary tensors;
++the two it declines are `output.weight` and `token_embd.weight`, both `[4096, 151669]`, refused by
++the same `ne[1] % 4` condition the g64 arm has always applied.
++
++Dual residency came free. Adding the type to `ggml_arifi_dual_eligible` was enough because the x4
++block is exactly four plain blocks — the property the shadow sizing asserts — so g128 gets the
++same prefill-and-decode result: **252 shadow tensors, graph splits matching mode 0 (467) rather
++than mode 1 (430)**, and mode 2 **bit-identical to mode 1** under `--no-op-offload`
++(max |Δ logprob| `0.000000000`).
++
++The refactor rewrote the **shared** g64 kernels on the way through, so g64 was re-run against the
++pre-change answer key rather than assumed unaffected: 36 cells over three g64 models, every token
++identical and every logprob delta exactly `0.000000000`.
++
++**Speed is not claimed.** Whether the g128 CPU path is faster, and where, is unmeasured.
++
+ **Method note:** compare struct *geometry*, never names or comments. An earlier round of this
+ work recorded the relationship backwards from names alone and propagated the error into
+ several documents; it was a source of F-02's crash. In-source size comments are also stale in
+@@ -268,6 +303,75 @@ Three ways out, none free, all recorded rather than assumed:
+ Until one of those lands, the flag stays off by default and the advisory tells CPU-only users to
+ turn it on, which is the configuration where the answer is unambiguous.
+ 
++### F-10 — A validator that runs after the thing it was meant to validate
++
++A GGUF may declare the ternary type-id for a **64**-value group while its payload is laid out at
++**128** (F-06). The loader has a function written for exactly that case:
++`llama_verify_q2_0_g128_spans` measures each tensor's on-disk span and compares it against *both*
++geometries, refusing anything ambiguous. It never runs on such a file.
++
++`gguf_init_from_reader` walks the tensor table first and computes each tensor's expected offset by
++accumulating sizes **from the declared type**. At 18 bytes/block against a 34 bytes/block payload
++the running offset overshoots on the first ternary tensor, and the file is rejected before any
++llama-level code sees it:
++
++```
++gguf_init_from_reader: tensor 'output_norm.weight' has offset 165015872, expected 174722688
++gguf_init_from_reader: failed to read tensor data
++```
++
++The mechanism is sound and the ordering defeats it. Nothing downstream can rescue the file,
++because the disambiguation it needs happens two layers above where it dies.
++
++This is recorded rather than fixed because the fix is a real design choice, not a patch: either
++`gguf_init` learns to consult the format key before it sizes anything, or the key is read in a
++pre-pass. Both widen a hot, security-relevant path — offset validation is what stops a malformed
++file from being read out of bounds — so it is not something to do casually on the way past.
++
++**The practical consequence is a documentation one.** Code comments in the repack dispatch used to
++justify their g128 exclusion by pointing at the load-time retype that this path was supposed to
++perform. That justification rested on something unreachable. The dispatch now keys on the g128
++type directly and does not depend on it.
++
++### F-11 — Fallback kernels that no dispatch path can reach
++
++Every interleaved kernel has a portable `_generic` twin, and `arch-fallback.h` maps the public name
++onto it for the seven non-x86 architectures. For the ternary types that mapping leads nowhere.
++
++The dispatch arms for `Q2_0` and `Q2_0_G128` are gated on AVX512-VNNI **and nothing else**.
++`Q1_0`, sitting immediately above them in the same function, carries three arms — AVX512-VNNI,
++NEON with `matmul_int8`, and NEON with `dotprod`. So on ARM, PowerPC, RISC-V, s390 and WASM the
++ternary types never claim the repack buffer, their `_generic` kernels are compiled into every one
++of those builds, and not one of them is ever called. On x86 the same is true of any build without
++AVX512, because the predicate and the kernel body key off the *same* compile-time macros:
++
++```
++$ g++ -march=x86-64-v3 -fsyntax-only probe.c     # #error if __AVX512F__/__AVX512VNNI__ absent
++probe.c:2:2: error: #error "ggml_cpu_has_avx512/_vnni would return 0 here"
++$ g++ -march=native   -fsyntax-only probe.c      # exit 0
++```
++
++`ggml_cpu_has_avx512()` is `#if defined(__AVX512F__)`, not a CPU query, so no build configuration
++can open the dispatch while closing the kernel. There is no way to reach this code from a model.
++
++That makes it the one class of kernel a model-level correctness sweep can never cover, which is
++why [`tests/test-ternary-repack.cpp`](../tests/test-ternary-repack.cpp) calls all four variants
++directly — both group sizes, GEMV and GEMM, AVX512 and generic — against a reference written the
++other way round: the kernels accumulate integer products and scale per activation sub-block, the
++reference dequantizes to float and dots. The test carries its own inverse claim as well, feeding
++g128-packed weights to the g64 kernel and requiring the result to be **wrong**; it comes out wrong
++by `43064.94` against a tolerance of `0.000053`, which is what "mis-strided is silent wrong math,
++not a crash" looks like when you make it visible.
++
++Two harness defects were caught by that test's own scalar self-check before it ever judged a
++kernel — an uninitialised `ggml_table_f32_f16` (every scale decoding as zero, so every kernel
++returned zero and read exactly like a broken kernel) and a reference holding more precision than
++the fp16 block it described. Both would have been reported as kernel failures by a test that
++compared only against itself.
++
++**Not fixed here.** Giving ARM a ternary repack arm means shipping kernels this project cannot
++measure, which is the one thing its defaults policy (F-08) exists to prevent.
++
+ ## Open questions
+ 
+ Listed because they are unresolved, not because they are unimportant.
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index 3788602bf..d000852c5 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -25,11 +25,11 @@ safe measurement posture.
+ 
+ | Control | Default | What it controls | When to turn it on | Evidence and cost |
+ |---|---|---|---|---|
+-| `GGML_ARIFI_VNNI_REPACK=2` (**dual residency**) | **OFF** when unset. `2` selects dual residency; `1` keeps the pre-existing claim-the-buffer behaviour unchanged; everything else is off. Added 2026-07-29 (lane-110E); modes 0 and 1 are byte-for-byte untouched, every new branch is behind an exact `2`. | Scope: `GGML_TYPE_Q1_0` and `GGML_TYPE_Q2_0` **weight** tensors, `GGML_OP_MUL_MAT` only, that mode 0 leaves in a host buffer. The tensor is NOT moved into `CPU_REPACK`; instead a repacked **shadow** is allocated beside it and the interleaved CPU kernels read that. Placement is therefore byte-for-byte the mode-0 arrangement, so large-batch GPU offload is retained. Scoped explicitly rather than inherited: `ggml_repack_get_optimal_repack_type` also answers for Q4_0/Q4_K/Q2_K/Q5_K/Q6_K/IQ4_NL/MXFP4/Q8_0, whose arms are **not** behind this variable, and reusing it alone would have doubled residency for types this slot has never measured. `MUL_MAT_ID` (MoE) is excluded — no ternary MoE model exists here to test the 3D path, and an untested weight-layout path fails as silent wrong math. | On a **Vulkan build where the model is CPU-resident** (`-ngl 0 --no-host`) — the exact configuration where mode 1's prompt collapse made the decode win unaffordable. Requires `--no-host` for the same reason mode 1 does: without it the weight lands in the Vulkan *host* buffer, which resolves to the Vulkan backend, and both prefill and decode go to the GPU (mode 2 then inert — **predicted, not yet probed**). Do not use where memory headroom is the binding constraint: it costs the affected tensors twice. | **MEASURED 2026-07-29, and it holds both wins.** Protocol identical to the row below: llama-server, two g64 models, `-ngl 0 --no-host -c 2048 -t 8`, 519-token prefill, `n_predict 128`, temp 0, top_k 1, seed 42, `cache_prompt` false, **three interleaved ON/OFF/DUAL replicates × 5 rolls**, roll 1 dropped as cold, **n=12 per cell**, fresh server per arm, one binary with only the env flip, free RAM `5.60–5.72 GB` at every launch.<br>**Prompt tok/s** — *mixed*: off `898.11` median (range `791.62–908.42`), mode 1 `310.65` (`305.96–324.09`, **−65.4%**, DISJOINT), **dual `958.96`** (`841.63–971.88`). *all-Q2_0*: off `905.25` (`856.82–920.92`), mode 1 `178.25` (`174.57–189.37`, **−80.3%**, DISJOINT), **dual `963.51`** (`867.81–989.27`).<br>**Decode tok/s** — *mixed*: off `40.30` (`38.36–41.60`), mode 1 `49.53` (**+22.9%**, DISJOINT), **dual `49.16` (+22.0%, DISJOINT)**. *all-Q2_0*: off `40.95` (`37.52–41.71`), mode 1 `50.95` (**+24.4%**, DISJOINT), **dual `50.65` (+23.7%, DISJOINT)**.<br>**The prompt gain is NOT claimed.** Dual's `+6.8%`/`+6.4%` over baseline has OVERLAPPING ranges and is reported as noise; the result is that dual **does not lose** prefill, not that it gains any. Every decode figure above has non-overlapping ranges and a gap wider than the largest within-arm spread.<br>**Cost, printed not estimated:** the shadow is `4.68 / 84.16 / 95.98 MiB` on the 4-, 72- and 168-tensor models — byte-for-byte what mode 1 places in `CPU_REPACK`. Confirmed by NAME as well as by size: the per-tensor log rows carry `4 / 72 / 168` distinct tensor names, so both modes provably select the same tensor *set*. (The per-arm counter previously read one higher on every model — the harness was matching the running-total INFO line as well as the per-tensor rows, and the INFO line itself added a spurious `+1`. Both were reporting defects, not an extra shadow; reconciled against the tensor names.) It sits outside every ggml buffer and is therefore invisible to llama.cpp's `load_tensors:` totals, so it logs its own line (`CPU_REPACK_DUAL shadow buffer size = …`); at INFO on the first shadow and every 64 MiB, per tensor at DEBUG. The last INFO line understates the settled total by at most 64 MiB — the exact figure was deliberately not put behind a counter on the decode path (see the regression note below).<br>**Precision: unchanged, and tested where it is testable.** With `--no-op-offload`, which pins mode 2's prefill to the CPU exactly as mode 1's is and isolates the shadow from where prefill ran, mode 2 is **bit-identical to mode 1** on all six model × prompt cells: tokens identical, max `|Δ logprob| = 0.000000000`, deterministic 3/3. Under normal offload mode 2 stays bit-identical to mode 1 on any prompt below the batch-32 offload threshold, its graph splits track **mode 0** (`335`) on all three models and never mode 1 (`339/312/286`), and its divergence from mode 0 is never larger than mode 1's over the common prefix. On the 4-tensor control model all three modes are token-identical.<br>**Placement was measured before the code was written**, not inferred: `GGML_SCHED_DEBUG=2` shows `165/169` prefill `MUL_MAT`s on Vulkan0 with the weight in a plain CPU buffer versus `0/169` with it in `CPU_REPACK`, and `169/169` decode `MUL_MAT`s on the CPU in both.<br>**Recorded regression, because it is the useful part:** the first working version measured **slower than doing nothing** (decode `40.9 → 24.7`) while passing that entire correctness sweep. `get_tensor_traits` runs once per matmul **per worker thread** (~1.4k/token at 8 threads) and it carried two `getenv()`s, `strstr()`s over the tensor name, an **exclusive** mutex serialising all workers, and an unconditional seq_cst atomic. Fixed by resolving once at build time into `tensor->extra`. A green correctness sweep says nothing about the cost of the machinery that makes it correct.<br>**UNEXERCISED, declared:** `Q1_0` (no such model on disk — a pre-existing gap of this whole slot), in-process model reload, a run without `--no-host`, discrete GPUs, and Arm/NEON. Evidence: `research/local-inference/trial-evidence/110/dual-residency/`. |
++| `GGML_ARIFI_VNNI_REPACK=2` (**dual residency**) | **OFF** when unset. `2` selects dual residency; `1` keeps the pre-existing claim-the-buffer behaviour unchanged; everything else is off. Added 2026-07-29 (lane-110E); modes 0 and 1 are byte-for-byte untouched, every new branch is behind an exact `2`. | Scope: `GGML_TYPE_Q1_0`, `GGML_TYPE_Q2_0` and (since 2026-07-29, lane-110F) `GGML_TYPE_Q2_0_G128` **weight** tensors, `GGML_OP_MUL_MAT` only, that mode 0 leaves in a host buffer. The tensor is NOT moved into `CPU_REPACK`; instead a repacked **shadow** is allocated beside it and the interleaved CPU kernels read that. Placement is therefore byte-for-byte the mode-0 arrangement, so large-batch GPU offload is retained. Scoped explicitly rather than inherited: `ggml_repack_get_optimal_repack_type` also answers for Q4_0/Q4_K/Q2_K/Q5_K/Q6_K/IQ4_NL/MXFP4/Q8_0, whose arms are **not** behind this variable, and reusing it alone would have doubled residency for types this slot has never measured. `MUL_MAT_ID` (MoE) is excluded — no ternary MoE model exists here to test the 3D path, and an untested weight-layout path fails as silent wrong math. | On a **Vulkan build where the model is CPU-resident** (`-ngl 0 --no-host`) — the exact configuration where mode 1's prompt collapse made the decode win unaffordable. Requires `--no-host` for the same reason mode 1 does: without it the weight lands in the Vulkan *host* buffer, which resolves to the Vulkan backend, and both prefill and decode go to the GPU (mode 2 then inert — **predicted, not yet probed**). Do not use where memory headroom is the binding constraint: it costs the affected tensors twice. | **MEASURED 2026-07-29, and it holds both wins.** Protocol identical to the row below: llama-server, two g64 models, `-ngl 0 --no-host -c 2048 -t 8`, 519-token prefill, `n_predict 128`, temp 0, top_k 1, seed 42, `cache_prompt` false, **three interleaved ON/OFF/DUAL replicates × 5 rolls**, roll 1 dropped as cold, **n=12 per cell**, fresh server per arm, one binary with only the env flip, free RAM `5.60–5.72 GB` at every launch.<br>**Prompt tok/s** — *mixed*: off `898.11` median (range `791.62–908.42`), mode 1 `310.65` (`305.96–324.09`, **−65.4%**, DISJOINT), **dual `958.96`** (`841.63–971.88`). *all-Q2_0*: off `905.25` (`856.82–920.92`), mode 1 `178.25` (`174.57–189.37`, **−80.3%**, DISJOINT), **dual `963.51`** (`867.81–989.27`).<br>**Decode tok/s** — *mixed*: off `40.30` (`38.36–41.60`), mode 1 `49.53` (**+22.9%**, DISJOINT), **dual `49.16` (+22.0%, DISJOINT)**. *all-Q2_0*: off `40.95` (`37.52–41.71`), mode 1 `50.95` (**+24.4%**, DISJOINT), **dual `50.65` (+23.7%, DISJOINT)**.<br>**The prompt gain is NOT claimed.** Dual's `+6.8%`/`+6.4%` over baseline has OVERLAPPING ranges and is reported as noise; the result is that dual **does not lose** prefill, not that it gains any. Every decode figure above has non-overlapping ranges and a gap wider than the largest within-arm spread.<br>**Cost, printed not estimated:** the shadow is `4.68 / 84.16 / 95.98 MiB` on the 4-, 72- and 168-tensor models — byte-for-byte what mode 1 places in `CPU_REPACK`. Confirmed by NAME as well as by size: the per-tensor log rows carry `4 / 72 / 168` distinct tensor names, so both modes provably select the same tensor *set*. (The per-arm counter previously read one higher on every model — the harness was matching the running-total INFO line as well as the per-tensor rows, and the INFO line itself added a spurious `+1`. Both were reporting defects, not an extra shadow; reconciled against the tensor names.) It sits outside every ggml buffer and is therefore invisible to llama.cpp's `load_tensors:` totals, so it logs its own line (`CPU_REPACK_DUAL shadow buffer size = …`); at INFO on the first shadow and every 64 MiB, per tensor at DEBUG. The last INFO line understates the settled total by at most 64 MiB — the exact figure was deliberately not put behind a counter on the decode path (see the regression note below).<br>**Precision: unchanged, and tested where it is testable.** With `--no-op-offload`, which pins mode 2's prefill to the CPU exactly as mode 1's is and isolates the shadow from where prefill ran, mode 2 is **bit-identical to mode 1** on all six model × prompt cells: tokens identical, max `|Δ logprob| = 0.000000000`, deterministic 3/3. Under normal offload mode 2 stays bit-identical to mode 1 on any prompt below the batch-32 offload threshold, its graph splits track **mode 0** (`335`) on all three models and never mode 1 (`339/312/286`), and its divergence from mode 0 is never larger than mode 1's over the common prefix. On the 4-tensor control model all three modes are token-identical.<br>**Placement was measured before the code was written**, not inferred: `GGML_SCHED_DEBUG=2` shows `165/169` prefill `MUL_MAT`s on Vulkan0 with the weight in a plain CPU buffer versus `0/169` with it in `CPU_REPACK`, and `169/169` decode `MUL_MAT`s on the CPU in both.<br>**Recorded regression, because it is the useful part:** the first working version measured **slower than doing nothing** (decode `40.9 → 24.7`) while passing that entire correctness sweep. `get_tensor_traits` runs once per matmul **per worker thread** (~1.4k/token at 8 threads) and it carried two `getenv()`s, `strstr()`s over the tensor name, an **exclusive** mutex serialising all workers, and an unconditional seq_cst atomic. Fixed by resolving once at build time into `tensor->extra`. A green correctness sweep says nothing about the cost of the machinery that makes it correct.<br>**UNEXERCISED, declared:** `Q1_0` (no such model on disk — a pre-existing gap of this whole slot), in-process model reload, a run without `--no-host`, discrete GPUs, and Arm/NEON. Evidence: `research/local-inference/trial-evidence/110/dual-residency/`. |
+ | `EXPERT_BUNDLE_PATH` | unset | Loads a generated Q4_0 expert bundle from SSD for supported MoE models. | Use when the model’s experts cannot remain in RAM/VRAM and a compatible bundle exists. | Capability proven: 21B streamed coherently at `5.9–6.1` CPU decode t/s; Qwen3.6-35B streamed from a 17 GB bundle at `1.6` CPU decode t/s; tiered `-ngl 99 -cmoe` reached `3.0` t/s. It is not a claim of sparse Vulkan execution. |
+ | `MAX_N_CACHED` | implementation-selected; document the chosen value in a run record | Bounds hot-expert RAM cache capacity. | Increase only after measuring cache pressure, RAM headroom, and bundle I/O behavior. | No independently accepted ON/OFF benchmark is recorded. Treat as a measured tuning variable, not a presumed gain. |
+ | `POWERINFER_IOCP` | **ON** when unset (Windows only; any value other than an exact `0` keeps IOCP). `POWERINFER_IOCP=0` selects the pre-M2b synchronous path. | Scope: the Windows expert-bundle read path only (`powerinfer/moe_sparse_pipeline/iou.cpp` + the `io_worker_main` Windows branch); it is inert on Linux, which keeps vendored `io_uring` unconditionally. ON issues bounded IOCP async positioned reads (ring of `io_queue_depth`=512) so storage latency overlaps the token path; OFF issues blocking `ReadFile`+`OVERLAPPED` positioned reads, one at a time. | Flip to `0` to recover from a suspected streaming deadlock, an IOCP assert, or to A/B the read path without a recompile. Only meaningful with `EXPERT_BUNDLE_PATH` set — with no bundle there is no expert IO and the flag does nothing. | **Direction UNRESOLVED — neither a gain nor a regression is established.** Same-binary A/B, 2026-07-24 (llama-server, 21B + bundle-21b, `-ngl 0 -b 8 -ub 8`, 4× n64 ignore_eos, fresh server per arm, env flip only — no HEAD confound): **OFF `3.77 / 3.60 / 5.94 / 3.94`** (mean `4.31`) vs **ON `2.42 / 8.74 / 5.20 / 6.28`** (mean `5.66`). The `+31%` mean gap is **noise, not signal, and must not be quoted**: within-arm spread on ON alone (`2.42→8.74` = `6.32`) exceeds the between-arm gap (`1.35`), and with n=1 per cell the ON mean swings `4.63`–`6.74` depending on which single roll is dropped — straddling the OFF mean. Both arms ran memory-starved (`2.4–4.0 GB` free during), and two confounds favour ON anyway (it ran second with a warmer page cache, and launched with `1.2 GB` more headroom). This is the terminal verdict at this RAM; a real measurement needs sustained headroom and repeated rolls per cell. Sol's `10–40%` cold-regime figure is an audit *estimate*, never measured here (`RESULTS-sparse-runs-on-windows.md:286`; codex job `task-mrwgwtze-hw1o8t.log`) — do not cite it as a result. Correctness ON is proven: streaming engaged (working set `4.77 GB` vs an `11.4 GB` model file, identical in both arms), coherent output, zero IOCP errors, clean shutdown. Ring-full (`n_inflight ≥ 512`) and `ERROR_IO_PENDING` branches remain **unexercised**. |
+-| `GGML_ARIFI_VNNI_REPACK` | **OFF** when unset. Only an exact `1` enables the slot; `0`, unset, and every other value leave it disabled, so the Q1_0/Q2_0 arms of `ggml_repack_get_optimal_repack_type()` return `nullptr` and both types fall back to per-row `vec_dot`. **FLIPPED 2026-07-24** from ON-when-unset (`ggml/src/ggml-cpu/repack.cpp`, `ggml_arifi_vnni_repack_enabled()`); the new predicate is the exact mirror of the old one. This **deliberately diverges from PrismML's upstream default, which is ON** — the measured reason is in the recommendation cell, and documenting exactly this kind of divergence is what this registry exists for. **Correction 2026-07-24:** the previous wording — that `=0` “restores the exact pre-slot behaviour” — was **false on x86**. Commit `c7645a0df` also replaced the x86 `ggml_vec_dot_q2_0_q8_0`, which sits **outside this toggle** (compile-time `__AVX512VNNI__`/`__AVXVNNI__` selection). `=0` therefore selected a *different* new kernel, not the pre-slot one. | Scope: the CPU repack *type-selection* for `GGML_TYPE_Q1_0` and `GGML_TYPE_Q2_0` only, inside `ggml_repack_get_optimal_repack_type()` (`ggml/src/ggml-cpu/repack.cpp`). ON lets those two types claim the `CPU_REPACK` buffer type and use the interleaved 4×8 GEMV/GEMM kernels (AVX512-VNNI on x86, NEON+DP on Arm); OFF falls back to per-row `vec_dot`. It does **not** touch Q4_0/Q4_K/Q8_0 repack, and is inert on any model containing no Q1_0/Q2_0 tensors. The x86 Q2_0 `vec_dot` fast path added alongside it is **not** covered by this toggle — see the default cell. | Only reachable at all for a **g64** Q1_0/Q2_0 model, and on a Vulkan-enabled build only with `--no-host`. **ADJUDICATED 2026-07-24 (bit-divergence round).** Bit-identity is **not achievable and was never the right bar** — proven against upstream's own repack types on this same binary (cost cell). The slot is now **correct and measured**. **DEFAULT OFF is IMPLEMENTED, not merely recommended** (flipped 2026-07-24, verified on a rebuilt binary — see the cost cell). The reason is unchanged: on a Vulkan-enabled build repacked weights lose GPU-offload eligibility and prompt processing regresses ~77–88%; on a CPU-only path the same slot is a **+327% to +442% prompt and +20% to +24% decode** win, so it stays compiled in and one `GGML_ARIFI_VNNI_REPACK=1` away. Set it to `1` for a CPU-only deployment; leave it unset everywhere else. The lane merges, not the executor. | **NaN FIXED (2026-07-24). Bit-divergence ADJUDICATED as INHERENT to the repack design, not a residual bug. Performance MEASURED (2026-07-24).**<br><br>**Root cause (one defect class, four sites).** PrismML's tree has `QK2_0 = 128`, so `QK2_0/QK8_0 = 4` and their kernels hardcode the activation-block stride as the literal `4`. This fork is canonical g64 (`QK2_0 = 64`, `ggml/src/ggml-common.h:187`), where the ratio is **2**. Every ported site that hardcoded `4` advanced the `block_q8_0` activation pointer twice as fast as its loop consumed, running past the packed activation buffer. **This is a downstream g64 integration defect, not a defect in PrismML's tree** — at g128 every one of these literals is correct.<br><br>**Fix A — the GEMM (4 lines, 2 files).** `ggml_gemm_q2_0_4x8_q8_0` (`ggml/src/ggml-cpu/arch/x86/repack.cpp:6664,6681`) and `ggml_gemm_q2_0_4x8_q8_0_generic` (`ggml/src/ggml-cpu/repack.cpp:2767,2786`): `(4 * y * nb)` → `(y * nb * (QK2_0 / QK8_0))` and `a_ptr + 4 * l + k` → `a_ptr + l * (QK2_0 / QK8_0) + k`, matching the form `ggml_gemv_q2_0_4x8_q8_0` already used correctly at `:6614`. Out-of-bounds `a_blk->d[m]` had been decoding as FP16 NaN and poisoning the FMA accumulator. The **Q1_0 arms were deliberately left alone**: `QK1_0 = 128`, so their hardcoded `4` is correct for this fork's current Q1 format — a portability hazard, not a present defect.<br><br>**Fix B — the control arm was itself broken (2 lines, separate commit).** The ported x86 `ggml_vec_dot_q2_0_q8_0` (`ggml/src/ggml-cpu/arch/x86/quants.c`, added by `c7645a0df`) carried the same g128 literals in **both** its VNNI branch and its scalar `#else`: `for (int k = 0; k < 4; k++)` over `&y[i * 4 + k]`, plus `&x[i].qs[k * 8]` reading at offsets 16 and 24 of a **16-byte** `block_q2_0.qs`. Since it is compile-time-selected, `GGML_ARIFI_VNNI_REPACK=0` could not disable it. **Consequence: every ON/OFF comparison recorded in this slot before 2026-07-24 compared one broken kernel against a differently broken kernel, and none of them adjudicated anything.** The generic `ggml_vec_dot_q2_0_q8_0_generic` (`ggml/src/ggml-cpu/quants.c:203-204`) was already correct (`k < 2`, `y[i * 2 + k]`); the x86 arm now matches it via `QK2_0 / QK8_0`. This also retires the prior registry claim that this fast path was “bit-exact with the scalar loop it replaces” — **falsified**.<br><br>**Engagement proven, both arms, both models** (llama-server per F-085, `-ngl 0 -c 1024 -t 8 --no-host`, temp 0, top_k 1, seed 42, `cache_prompt` false, fresh server per arm, env flip only, same binary). ON: `load_tensors: CPU_REPACK model buffer size = 4.68 MiB` (Q8_0 base + 4× `ffn_down`) and `95.98 MiB` (all-Q2_0). OFF: **no `CPU_REPACK` line at all**. **Correction:** the prior row claimed `CPU_Mapped` “grows by the same amount” when repack is off. It does **not** — `CPU_Mapped` was `625.75 MiB` in *both* arms; the repack buffer is an additional allocation and the mmap accounting is unchanged. (The prior run's own numbers, 322.28 + 95.98 ON vs 323.45 OFF, already contradicted it.)<br><br>**Result, `qwen2.5-0.5b-light-q8_0-4xffndownQ2_0-g64.gguf`, 11-token prefill (GEMM path):** the NaN is **gone**. ON is finite, coherent and deterministic 3/3 (`md5 bf102b7715220e6f6df074626ede9a0e`), and after Fix B the OFF arm produces the **token-identical** continuation — same md5, all 32 tokens, deterministic 3/3 in both arms. Before Fix B the arms disagreed completely (ON coherent, OFF `“ering!!!!…”`). Independent check: the unquantized `qwen2.5-0.5b-instruct-fp16.gguf` on the identical prompt continues `“ the dog jumps over the lazy cat. What is the next…”` (6/6 identical), which the repacked arm tracks closely.<br><br>**Bit-identity: NOT achieved, and ADJUDICATED as INHERENT (2026-07-24).** The ON/OFF logprob divergence is real (both arms internally deterministic, 3/3 rolls each) but it is **a property of llama.cpp's repack design, not of this port**. Proven with an upstream-blessed control: four additional models were quantised from the *same* `qwen2.5-0.5b-instruct-fp16.gguf` source with the *same* Q8_0 base and the *same* four tensors (`blk.0-3.ffn_down`, `4864x896`) carrying an **upstream** repack type instead of Q2_0, then run through the identical protocol on the identical binary. `--no-repack` was used as a uniform OFF for every arm and is byte-for-byte equivalent to `GGML_ARIFI_VNNI_REPACK=0` on the Q2_0 model (identical logprob fingerprint `3dea625c`, 3/3 rolls). Results, max absolute delta-logprob over 32 tokens: **ours Q2_0 4x8 = `0.061002`** (mean `0.0123761`, token-identical); **upstream Q2_K 8x8 = `0.140226`** (mean `0.0263535`, token-identical); **upstream Q4_K 8x8 = `1.39052`** (mean `0.328262`, and it **changes the generated text**). Upstream's own blessed repack types are therefore *less* faithful to their scalar paths than this port is to its own. Mechanism class is acknowledged upstream in-tree: `ggml/src/ggml-cpu/arch/x86/repack.cpp:210` comments that the repack activation quantiser is divided by `127.f` "to mirror results in quantize_row_q8_0" — a *mirror*, not an identity. **The prior demand for bit-identity was the wrong acceptance bar and is withdrawn.**<br><br>**Upstream 8x8 repack SEGFAULTS on this box — pre-existing, NOT this branch.** Three of the five upstream repack types could not be run at all: Q4_0 (`q4_0_8x8`), IQ4_NL (`iq4_nl_8x8`) and MXFP4 (`mxfp4_8x8`) all abort with `0xC0000005` ACCESS_VIOLATION once `--no-host` makes `CPU_REPACK` reachable, after the buffer is allocated (`CPU_REPACK model buffer size = 9.35 / 9.35 / 8.83 MiB`). gdb frame 0 is `ggml_gemv_q4_0_8x8_q8_0`, frame 1 `ggml::cpu::repack::tensor_traits<block_q4_0, 8ll, 8ll, (ggml_type)8>::compute_forward`, reached from `llama_decode` on a libgomp worker. **Attribution settled: stock upstream `llama-upstream-b10068` (`src/llama-upstream-b10068/build-vulkan/bin/llama-server.exe`) reproduces the identical crash on the identical model** — and this branch is strictly additive over its own base commit `f7c4d9d2c` (`git diff --numstat f7c4d9d2c..e32bf4149`: zero deletions in `repack.cpp`, `arch/x86/repack.cpp` and `arch/x86/quants.c`; the only deletion across the branch's nine commits is one `arch-fallback.h` alias). **Topology correction — RESOLVED 2026-07-24 (rebase round).** `f7c4d9d2c` is *not* master; it is the tag `pre-linearize-2026-07-24`, a merge commit on a parallel lineage. Master was then LINEARIZED to **`279f59f11`** (linear series, no fork merge commits); `67c83a6ec` is now an intermediate commit on that line, not the tip. The two lines diverged at `e70805586`. **The rebase is DONE:** `git rebase --onto master pre-linearize-2026-07-24 topic/vnni-repack` replayed all twelve commits with **zero conflicts**, and the resulting delta is byte-identical to the pre-rebase delta (same `git diff` blob hash `1330ce15`), so no content was lost or altered. The three dropped merge commits (`f7c4d9d2c`, `42c1b19be`, `e2ac92c40`) are gone from the branch ancestry and master is now a strict ancestor of it. **No conflict with `a54f6cae1` (Q2_0_G128 dispatch) arose, and none was possible:** that commit touches only `ggml/src/ggml-cpu/ops.cpp` (seven switch-case labels: add, add1, acc, out_prod, set, get_rows, clamp), a file this branch never modifies. No master-only commit touches any of the seven files this branch changes. The two mechanisms are disjoint in source and kept disjoint at runtime by the `GGML_TYPE_Q2_0_G128` early return at `ggml/src/ggml-cpu/repack.cpp:5164`. **Post-rebase sanity, re-measured on the rebased binary** (llama-server, `-ngl 0 --no-host -c 1024 -t 8 -v`, temp 0, top_k 1, seed 42, `cache_prompt` false): the NaN remains gone — `qwen2.5-0.5b-light-q8_0-4xffndownQ2_0-g64.gguf` ON returns coherent text with `CPU_REPACK model buffer size = 4.68 MiB`, OFF returns coherent text with **no** `CPU_REPACK` line at all, and `CPU_Mapped` is `625.75 MiB` in *both* arms (re-confirming the mmap-accounting correction below). The g128 path also still works: the native type-43 `Ternary-Bonsai-27B-Abliterated-LowDeg-Q2_0.g128.gguf` loads (`CPU_Mapped = 6822.71 MiB`, tensors reported as `q2_0_g128`), answers “The capital city of France is” with “ Paris. Paris is the capital city of France.”, aborts nowhere, and logs `token_embd.weight (q2_0_g128) (and 850 others) cannot be used with preferred buffer type CPU_REPACK, using CPU instead` with **no** `CPU_REPACK` buffer — the tripwire holds with the slot ON. **Gate default was ON when unset at the time of the measurements above** (`repack.cpp:5144-5150`), which did *not* match this row's own merge recommendation. **It has since been FLIPPED to OFF (2026-07-24)** and re-verified on a freshly built server binary (`recipe diff` PASS 309/309 first, then a `llama-server`-target build, exit 0), same protocol as above on `qwen2.5-0.5b-light-q8_0-4xffndownQ2_0-g64.gguf`, `-ngl 0 --no-host -c 1024 -t 8 -v`, fresh server per arm, reaped between arms, env flip only: **unset** produces **no** `load_tensors: CPU_REPACK model buffer size` line at all, **`=1`** produces `CPU_REPACK model buffer size = 4.68 MiB`. The loader's per-tensor fallback line appears in both arms and counts **290** ineligible tensors when unset against **286** with `=1` — the difference is exactly the four `blk.0-3.ffn_down` Q2_0 tensors the slot claims. Both arms return coherent text, no NaN, and `CPU_Mapped` is `625.75 MiB` in both (re-confirming the mmap-accounting correction above). Performance was **not** re-measured and did not need to be: the flip changes which branch an unset environment takes, not either kernel. Evidence: `research/local-inference/trial-evidence/110/vnni-default-flip/`. `--no-warmup` does not avoid the repack when the slot is on. The 4-wide/8-inter kernels — ours (`q2_0_4x8`, NB_COLS=4) and upstream's Q8_K pair (`q2_K_8x8`, `q4_K_8x8`) — run fine. Not this slot's defect; recorded for the lane.<br><br>**Performance: MEASURED 2026-07-24, from scratch.** All prior figures from this slot remain **void** (the `+58%` decode and `+354%` prompt gaps came from a NaN-poisoned ON arm; every pre-`2026-07-24` gap used the Fix-B baseline that read out of bounds). New protocol: llama-server per F-085, two models (`qwen2.5-0.5b-mixed-q8_0-ffnQ2_0-g64.gguf`, 72 Q2_0 tensors, `CPU_REPACK = 84.16 MiB`; and `qwen2.5-0.5b-instruct-Q2_0-g64.gguf`, all-Q2_0, `CPU_REPACK = 95.98 MiB`; OFF arms show **no** `CPU_REPACK` line), `-ngl 0 --no-host -c 2048 -t 8`, 419-token prefill, `n_predict 128`, temp 0, top_k 1, seed 42, `cache_prompt` false, **three interleaved ON/OFF replicate pairs x 5 rolls**, fresh server per arm, reaped and verified gone between arms, free RAM `7.40–7.69 GB` at every launch. Timings read from `slot print_timing`; roll 1 of each arm dropped as a cold first request, leaving **n=9 per arm — every value listed, no means substituted**.<br>**CPU-only (`-dev none`, the true kernel-vs-kernel comparison).** *mixed* prompt tok/s — ON `612.81/619.65/629.06/638.73/643.72/647.85/648.09/655.15/670.67` vs OFF `142.15/143.14/143.35/143.81/150.85/152.44/152.65/152.90/153.16` (**+326.7%** median, ranges DISJOINT); *mixed* decode tok/s — ON `49.23/49.49/49.64/49.67/49.71/49.72/49.75/49.77/49.80` vs OFF `39.46/40.16/40.21/40.31/41.46/41.60/41.67/41.69/41.76` (**+19.9%**, DISJOINT). *all-Q2_0* prompt tok/s — ON `602.65/639.27/640.38/657.49/738.80/740.08/761.58/769.50/772.82` vs OFF `128.48/129.33/129.72/135.24/136.35/136.73/136.98/136.98/137.44` (**+441.8%**, DISJOINT); *all-Q2_0* decode tok/s — ON `51.24/51.27/51.31/51.39/51.39/51.54/51.56/51.58/51.60` vs OFF `38.71/39.28/39.71/40.14/41.59/41.62/41.65/41.75/41.79` (**+23.6%**, DISJOINT).<br>**Noise check passes explicitly**: largest within-arm spread is `3.08` tok/s (decode) and `170.17` tok/s (all-Q2_0 prompt ON) against between-arm gaps of `9.80` and `602.45`; ON and OFF ranges do not overlap in any of the eight comparisons. This is the opposite of the earlier `+31%` slot that was noise.<br>**Vulkan-enabled (default build, `-dev` unset) — the merge-relevant caveat.** Decode still wins: *mixed* ON `49.32/49.33/49.34/49.37/49.49/49.99/50.00/50.21/50.21` vs OFF `39.70/39.98/40.23/40.84/41.20/41.28/41.62/41.68/41.74` (**+20.1%**); *all-Q2_0* ON `51.11/51.20/51.38/51.46/51.66/51.76/51.76/51.78/51.96` vs OFF `39.99/40.06/40.10/40.13/40.25/40.31/40.31/41.45/41.61` (**+28.4%**). But **prompt processing collapses**: *mixed* ON `213.82/216.32/216.77/219.28/220.69/221.12/221.83/241.40/258.81` vs OFF `952.81/956.58/959.42/959.92/961.95/966.47/967.16/969.51/971.34` (**-77.1%**); *all-Q2_0* ON `90.33/94.46/99.75/114.08/114.27/116.23/116.24/117.51/118.59` vs OFF `927.01/944.32/950.46/951.14/957.05/958.06/961.67/965.85/972.70` (**-88.1%**). **Cause, evidenced not assumed:** weights in the `CPU_REPACK` buffer are no longer eligible for large-batch GPU offload. All-Q2_0 ON logs `Vulkan0 compute buffer size = 5.26 MiB / Vulkan_Host = 34.01 MiB, graph splits = 286`, while OFF logs `Vulkan0 = 37.72 MiB / Vulkan_Host = 5.51 MiB, graph splits = 335` — the batch matmuls that ran on the iGPU move back to the CPU. Decode (`bs=1`, `graph splits = 1`) is CPU-side in both arms, which is why the decode win survives. **Therefore: default OFF on a Vulkan build; ON is the right default only for a CPU-only path.**<br><br>**Not attempted, recorded:** wiring these kernels to `GGML_TYPE_Q2_0_G128`. The base block layouts are byte-identical, but this fork has **no** `block_q2_0_g128x4` type and no g128 repack path, and the existing g64 `block_q2_0x4` is 72 B — dispatching type-43 into it would be silent wrong math. A real g128 path needs its own x4 struct (`d[4] + qs[128]` = 136 B), g128 repack/make functions, block-size-parameterised kernels, separate dispatch and scalar-equivalence testing. Future slot.<br><br>**HTTP 500 reproduction, corrected.** The server guard "The model produced output that does not match the expected Content-only format" was previously recorded as an ON-arm, all-Q2_0 phenomenon. It is **not repack-related**: on a long repetitive prompt it fires in **all 12 performance arms — ON and OFF, both models** (`CPU_REPACK = 84.16/95.98 MiB` and `0.0 MiB` alike), while the short prompt passes the guard in every arm. It is a response-format guard on degenerate output; generation completes and the server stays alive, so timings remain readable from `slot print_timing`.<br><br>**Still unexercised:** GEMV bit-exactness against `vec_dot` in isolation (`-ub 1` still the only clean lever and it remains untested here); the generic `repack.cpp` GEMM fix, which is unreachable on this box because the AVX512 branch returns first; and every Arm/NEON arm. Evidence: `research/local-inference/trial-evidence/110/vnni-g64-fix/` (NaN fix) and `research/local-inference/trial-evidence/110/vnni-adjudication/` (adjudication + performance). |
++| `GGML_ARIFI_VNNI_REPACK` | **OFF** when unset. Only an exact `1` enables the slot; `0`, unset, and every other value leave it disabled, so the Q1_0/Q2_0 arms of `ggml_repack_get_optimal_repack_type()` return `nullptr` and both types fall back to per-row `vec_dot`. **FLIPPED 2026-07-24** from ON-when-unset (`ggml/src/ggml-cpu/repack.cpp`, `ggml_arifi_vnni_repack_enabled()`); the new predicate is the exact mirror of the old one. This **deliberately diverges from PrismML's upstream default, which is ON** — the measured reason is in the recommendation cell, and documenting exactly this kind of divergence is what this registry exists for. **Correction 2026-07-24:** the previous wording — that `=0` “restores the exact pre-slot behaviour” — was **false on x86**. Commit `c7645a0df` also replaced the x86 `ggml_vec_dot_q2_0_q8_0`, which sits **outside this toggle** (compile-time `__AVX512VNNI__`/`__AVXVNNI__` selection). `=0` therefore selected a *different* new kernel, not the pre-slot one. | Scope: the CPU repack *type-selection* for `GGML_TYPE_Q1_0`, `GGML_TYPE_Q2_0` and `GGML_TYPE_Q2_0_G128` only, inside `ggml_repack_get_optimal_repack_type()` (`ggml/src/ggml-cpu/repack.cpp`). ON lets those two types claim the `CPU_REPACK` buffer type and use the interleaved 4×8 GEMV/GEMM kernels (AVX512-VNNI on x86, NEON+DP on Arm); OFF falls back to per-row `vec_dot`. It does **not** touch Q4_0/Q4_K/Q8_0 repack, and is inert on any model containing no Q1_0/Q2_0 tensors.<br>**g128 added 2026-07-29 (lane-110F).** `Q2_0_G128` has its own dispatch arm, its own kernel instantiations and its own block type; it does NOT share the g64 kernels, because a g128 row in a g64 kernel is mis-strided silent wrong math rather than a crash. CORRECTNESS measured (token-identical to the scalar path, max |delta logprob| 0.021-0.040, inside the F-05 band; repack buffer 1759.50 MiB = 252 of 254 ternary tensors on Ternary-Bonsai-8B-Q2_0.g128). SPEED UNMEASURED for g128 - the +327%/+442% prompt and +20%/+24% decode figures in this row are g64 numbers and must not be read as g128 ones. The x86 Q2_0 `vec_dot` fast path added alongside it is **not** covered by this toggle — see the default cell. | Reachable for a **g64** Q1_0/Q2_0 model and, since 2026-07-29 (lane-110F), for a **g128** `Q2_0_G128` model, and on a Vulkan-enabled build only with `--no-host`. **ADJUDICATED 2026-07-24 (bit-divergence round).** Bit-identity is **not achievable and was never the right bar** — proven against upstream's own repack types on this same binary (cost cell). The slot is now **correct and measured**. **DEFAULT OFF is IMPLEMENTED, not merely recommended** (flipped 2026-07-24, verified on a rebuilt binary — see the cost cell). The reason is unchanged: on a Vulkan-enabled build repacked weights lose GPU-offload eligibility and prompt processing regresses ~77–88%; on a CPU-only path the same slot is a **+327% to +442% prompt and +20% to +24% decode** win, so it stays compiled in and one `GGML_ARIFI_VNNI_REPACK=1` away. Set it to `1` for a CPU-only deployment; leave it unset everywhere else. The lane merges, not the executor. | **NaN FIXED (2026-07-24). Bit-divergence ADJUDICATED as INHERENT to the repack design, not a residual bug. Performance MEASURED (2026-07-24).**<br><br>**Root cause (one defect class, four sites).** PrismML's tree has `QK2_0 = 128`, so `QK2_0/QK8_0 = 4` and their kernels hardcode the activation-block stride as the literal `4`. This fork is canonical g64 (`QK2_0 = 64`, `ggml/src/ggml-common.h:187`), where the ratio is **2**. Every ported site that hardcoded `4` advanced the `block_q8_0` activation pointer twice as fast as its loop consumed, running past the packed activation buffer. **This is a downstream g64 integration defect, not a defect in PrismML's tree** — at g128 every one of these literals is correct.<br><br>**Fix A — the GEMM (4 lines, 2 files).** `ggml_gemm_q2_0_4x8_q8_0` (`ggml/src/ggml-cpu/arch/x86/repack.cpp:6664,6681`) and `ggml_gemm_q2_0_4x8_q8_0_generic` (`ggml/src/ggml-cpu/repack.cpp:2767,2786`): `(4 * y * nb)` → `(y * nb * (QK2_0 / QK8_0))` and `a_ptr + 4 * l + k` → `a_ptr + l * (QK2_0 / QK8_0) + k`, matching the form `ggml_gemv_q2_0_4x8_q8_0` already used correctly at `:6614`. Out-of-bounds `a_blk->d[m]` had been decoding as FP16 NaN and poisoning the FMA accumulator. The **Q1_0 arms were deliberately left alone**: `QK1_0 = 128`, so their hardcoded `4` is correct for this fork's current Q1 format — a portability hazard, not a present defect.<br><br>**Fix B — the control arm was itself broken (2 lines, separate commit).** The ported x86 `ggml_vec_dot_q2_0_q8_0` (`ggml/src/ggml-cpu/arch/x86/quants.c`, added by `c7645a0df`) carried the same g128 literals in **both** its VNNI branch and its scalar `#else`: `for (int k = 0; k < 4; k++)` over `&y[i * 4 + k]`, plus `&x[i].qs[k * 8]` reading at offsets 16 and 24 of a **16-byte** `block_q2_0.qs`. Since it is compile-time-selected, `GGML_ARIFI_VNNI_REPACK=0` could not disable it. **Consequence: every ON/OFF comparison recorded in this slot before 2026-07-24 compared one broken kernel against a differently broken kernel, and none of them adjudicated anything.** The generic `ggml_vec_dot_q2_0_q8_0_generic` (`ggml/src/ggml-cpu/quants.c:203-204`) was already correct (`k < 2`, `y[i * 2 + k]`); the x86 arm now matches it via `QK2_0 / QK8_0`. This also retires the prior registry claim that this fast path was “bit-exact with the scalar loop it replaces” — **falsified**.<br><br>**Engagement proven, both arms, both models** (llama-server per F-085, `-ngl 0 -c 1024 -t 8 --no-host`, temp 0, top_k 1, seed 42, `cache_prompt` false, fresh server per arm, env flip only, same binary). ON: `load_tensors: CPU_REPACK model buffer size = 4.68 MiB` (Q8_0 base + 4× `ffn_down`) and `95.98 MiB` (all-Q2_0). OFF: **no `CPU_REPACK` line at all**. **Correction:** the prior row claimed `CPU_Mapped` “grows by the same amount” when repack is off. It does **not** — `CPU_Mapped` was `625.75 MiB` in *both* arms; the repack buffer is an additional allocation and the mmap accounting is unchanged. (The prior run's own numbers, 322.28 + 95.98 ON vs 323.45 OFF, already contradicted it.)<br><br>**Result, `qwen2.5-0.5b-light-q8_0-4xffndownQ2_0-g64.gguf`, 11-token prefill (GEMM path):** the NaN is **gone**. ON is finite, coherent and deterministic 3/3 (`md5 bf102b7715220e6f6df074626ede9a0e`), and after Fix B the OFF arm produces the **token-identical** continuation — same md5, all 32 tokens, deterministic 3/3 in both arms. Before Fix B the arms disagreed completely (ON coherent, OFF `“ering!!!!…”`). Independent check: the unquantized `qwen2.5-0.5b-instruct-fp16.gguf` on the identical prompt continues `“ the dog jumps over the lazy cat. What is the next…”` (6/6 identical), which the repacked arm tracks closely.<br><br>**Bit-identity: NOT achieved, and ADJUDICATED as INHERENT (2026-07-24).** The ON/OFF logprob divergence is real (both arms internally deterministic, 3/3 rolls each) but it is **a property of llama.cpp's repack design, not of this port**. Proven with an upstream-blessed control: four additional models were quantised from the *same* `qwen2.5-0.5b-instruct-fp16.gguf` source with the *same* Q8_0 base and the *same* four tensors (`blk.0-3.ffn_down`, `4864x896`) carrying an **upstream** repack type instead of Q2_0, then run through the identical protocol on the identical binary. `--no-repack` was used as a uniform OFF for every arm and is byte-for-byte equivalent to `GGML_ARIFI_VNNI_REPACK=0` on the Q2_0 model (identical logprob fingerprint `3dea625c`, 3/3 rolls). Results, max absolute delta-logprob over 32 tokens: **ours Q2_0 4x8 = `0.061002`** (mean `0.0123761`, token-identical); **upstream Q2_K 8x8 = `0.140226`** (mean `0.0263535`, token-identical); **upstream Q4_K 8x8 = `1.39052`** (mean `0.328262`, and it **changes the generated text**). Upstream's own blessed repack types are therefore *less* faithful to their scalar paths than this port is to its own. Mechanism class is acknowledged upstream in-tree: `ggml/src/ggml-cpu/arch/x86/repack.cpp:210` comments that the repack activation quantiser is divided by `127.f` "to mirror results in quantize_row_q8_0" — a *mirror*, not an identity. **The prior demand for bit-identity was the wrong acceptance bar and is withdrawn.**<br><br>**Upstream 8x8 repack SEGFAULTS on this box — pre-existing, NOT this branch.** Three of the five upstream repack types could not be run at all: Q4_0 (`q4_0_8x8`), IQ4_NL (`iq4_nl_8x8`) and MXFP4 (`mxfp4_8x8`) all abort with `0xC0000005` ACCESS_VIOLATION once `--no-host` makes `CPU_REPACK` reachable, after the buffer is allocated (`CPU_REPACK model buffer size = 9.35 / 9.35 / 8.83 MiB`). gdb frame 0 is `ggml_gemv_q4_0_8x8_q8_0`, frame 1 `ggml::cpu::repack::tensor_traits<block_q4_0, 8ll, 8ll, (ggml_type)8>::compute_forward`, reached from `llama_decode` on a libgomp worker. **Attribution settled: stock upstream `llama-upstream-b10068` (`src/llama-upstream-b10068/build-vulkan/bin/llama-server.exe`) reproduces the identical crash on the identical model** — and this branch is strictly additive over its own base commit `f7c4d9d2c` (`git diff --numstat f7c4d9d2c..e32bf4149`: zero deletions in `repack.cpp`, `arch/x86/repack.cpp` and `arch/x86/quants.c`; the only deletion across the branch's nine commits is one `arch-fallback.h` alias). **Topology correction — RESOLVED 2026-07-24 (rebase round).** `f7c4d9d2c` is *not* master; it is the tag `pre-linearize-2026-07-24`, a merge commit on a parallel lineage. Master was then LINEARIZED to **`279f59f11`** (linear series, no fork merge commits); `67c83a6ec` is now an intermediate commit on that line, not the tip. The two lines diverged at `e70805586`. **The rebase is DONE:** `git rebase --onto master pre-linearize-2026-07-24 topic/vnni-repack` replayed all twelve commits with **zero conflicts**, and the resulting delta is byte-identical to the pre-rebase delta (same `git diff` blob hash `1330ce15`), so no content was lost or altered. The three dropped merge commits (`f7c4d9d2c`, `42c1b19be`, `e2ac92c40`) are gone from the branch ancestry and master is now a strict ancestor of it. **No conflict with `a54f6cae1` (Q2_0_G128 dispatch) arose, and none was possible:** that commit touches only `ggml/src/ggml-cpu/ops.cpp` (seven switch-case labels: add, add1, acc, out_prod, set, get_rows, clamp), a file this branch never modifies. No master-only commit touches any of the seven files this branch changes. The two mechanisms are disjoint in source and kept disjoint at runtime by the `GGML_TYPE_Q2_0_G128` early return at `ggml/src/ggml-cpu/repack.cpp:5164`. **Post-rebase sanity, re-measured on the rebased binary** (llama-server, `-ngl 0 --no-host -c 1024 -t 8 -v`, temp 0, top_k 1, seed 42, `cache_prompt` false): the NaN remains gone — `qwen2.5-0.5b-light-q8_0-4xffndownQ2_0-g64.gguf` ON returns coherent text with `CPU_REPACK model buffer size = 4.68 MiB`, OFF returns coherent text with **no** `CPU_REPACK` line at all, and `CPU_Mapped` is `625.75 MiB` in *both* arms (re-confirming the mmap-accounting correction below). The g128 path also still works: the native type-43 `Ternary-Bonsai-27B-Abliterated-LowDeg-Q2_0.g128.gguf` loads (`CPU_Mapped = 6822.71 MiB`, tensors reported as `q2_0_g128`), answers “The capital city of France is” with “ Paris. Paris is the capital city of France.”, aborts nowhere, and logs `token_embd.weight (q2_0_g128) (and 850 others) cannot be used with preferred buffer type CPU_REPACK, using CPU instead` with **no** `CPU_REPACK` buffer — the tripwire holds with the slot ON. **Gate default was ON when unset at the time of the measurements above** (`repack.cpp:5144-5150`), which did *not* match this row's own merge recommendation. **It has since been FLIPPED to OFF (2026-07-24)** and re-verified on a freshly built server binary (`recipe diff` PASS 309/309 first, then a `llama-server`-target build, exit 0), same protocol as above on `qwen2.5-0.5b-light-q8_0-4xffndownQ2_0-g64.gguf`, `-ngl 0 --no-host -c 1024 -t 8 -v`, fresh server per arm, reaped between arms, env flip only: **unset** produces **no** `load_tensors: CPU_REPACK model buffer size` line at all, **`=1`** produces `CPU_REPACK model buffer size = 4.68 MiB`. The loader's per-tensor fallback line appears in both arms and counts **290** ineligible tensors when unset against **286** with `=1` — the difference is exactly the four `blk.0-3.ffn_down` Q2_0 tensors the slot claims. Both arms return coherent text, no NaN, and `CPU_Mapped` is `625.75 MiB` in both (re-confirming the mmap-accounting correction above). Performance was **not** re-measured and did not need to be: the flip changes which branch an unset environment takes, not either kernel. Evidence: `research/local-inference/trial-evidence/110/vnni-default-flip/`. `--no-warmup` does not avoid the repack when the slot is on. The 4-wide/8-inter kernels — ours (`q2_0_4x8`, NB_COLS=4) and upstream's Q8_K pair (`q2_K_8x8`, `q4_K_8x8`) — run fine. Not this slot's defect; recorded for the lane.<br><br>**Performance: MEASURED 2026-07-24, from scratch.** All prior figures from this slot remain **void** (the `+58%` decode and `+354%` prompt gaps came from a NaN-poisoned ON arm; every pre-`2026-07-24` gap used the Fix-B baseline that read out of bounds). New protocol: llama-server per F-085, two models (`qwen2.5-0.5b-mixed-q8_0-ffnQ2_0-g64.gguf`, 72 Q2_0 tensors, `CPU_REPACK = 84.16 MiB`; and `qwen2.5-0.5b-instruct-Q2_0-g64.gguf`, all-Q2_0, `CPU_REPACK = 95.98 MiB`; OFF arms show **no** `CPU_REPACK` line), `-ngl 0 --no-host -c 2048 -t 8`, 419-token prefill, `n_predict 128`, temp 0, top_k 1, seed 42, `cache_prompt` false, **three interleaved ON/OFF replicate pairs x 5 rolls**, fresh server per arm, reaped and verified gone between arms, free RAM `7.40–7.69 GB` at every launch. Timings read from `slot print_timing`; roll 1 of each arm dropped as a cold first request, leaving **n=9 per arm — every value listed, no means substituted**.<br>**CPU-only (`-dev none`, the true kernel-vs-kernel comparison).** *mixed* prompt tok/s — ON `612.81/619.65/629.06/638.73/643.72/647.85/648.09/655.15/670.67` vs OFF `142.15/143.14/143.35/143.81/150.85/152.44/152.65/152.90/153.16` (**+326.7%** median, ranges DISJOINT); *mixed* decode tok/s — ON `49.23/49.49/49.64/49.67/49.71/49.72/49.75/49.77/49.80` vs OFF `39.46/40.16/40.21/40.31/41.46/41.60/41.67/41.69/41.76` (**+19.9%**, DISJOINT). *all-Q2_0* prompt tok/s — ON `602.65/639.27/640.38/657.49/738.80/740.08/761.58/769.50/772.82` vs OFF `128.48/129.33/129.72/135.24/136.35/136.73/136.98/136.98/137.44` (**+441.8%**, DISJOINT); *all-Q2_0* decode tok/s — ON `51.24/51.27/51.31/51.39/51.39/51.54/51.56/51.58/51.60` vs OFF `38.71/39.28/39.71/40.14/41.59/41.62/41.65/41.75/41.79` (**+23.6%**, DISJOINT).<br>**Noise check passes explicitly**: largest within-arm spread is `3.08` tok/s (decode) and `170.17` tok/s (all-Q2_0 prompt ON) against between-arm gaps of `9.80` and `602.45`; ON and OFF ranges do not overlap in any of the eight comparisons. This is the opposite of the earlier `+31%` slot that was noise.<br>**Vulkan-enabled (default build, `-dev` unset) — the merge-relevant caveat.** Decode still wins: *mixed* ON `49.32/49.33/49.34/49.37/49.49/49.99/50.00/50.21/50.21` vs OFF `39.70/39.98/40.23/40.84/41.20/41.28/41.62/41.68/41.74` (**+20.1%**); *all-Q2_0* ON `51.11/51.20/51.38/51.46/51.66/51.76/51.76/51.78/51.96` vs OFF `39.99/40.06/40.10/40.13/40.25/40.31/40.31/41.45/41.61` (**+28.4%**). But **prompt processing collapses**: *mixed* ON `213.82/216.32/216.77/219.28/220.69/221.12/221.83/241.40/258.81` vs OFF `952.81/956.58/959.42/959.92/961.95/966.47/967.16/969.51/971.34` (**-77.1%**); *all-Q2_0* ON `90.33/94.46/99.75/114.08/114.27/116.23/116.24/117.51/118.59` vs OFF `927.01/944.32/950.46/951.14/957.05/958.06/961.67/965.85/972.70` (**-88.1%**). **Cause, evidenced not assumed:** weights in the `CPU_REPACK` buffer are no longer eligible for large-batch GPU offload. All-Q2_0 ON logs `Vulkan0 compute buffer size = 5.26 MiB / Vulkan_Host = 34.01 MiB, graph splits = 286`, while OFF logs `Vulkan0 = 37.72 MiB / Vulkan_Host = 5.51 MiB, graph splits = 335` — the batch matmuls that ran on the iGPU move back to the CPU. Decode (`bs=1`, `graph splits = 1`) is CPU-side in both arms, which is why the decode win survives. **Therefore: default OFF on a Vulkan build; ON is the right default only for a CPU-only path.**<br><br>**Not attempted, recorded:** wiring these kernels to `GGML_TYPE_Q2_0_G128`. The base block layouts are byte-identical, but this fork has **no** `block_q2_0_g128x4` type and no g128 repack path, and the existing g64 `block_q2_0x4` is 72 B — dispatching type-43 into it would be silent wrong math. A real g128 path needs its own x4 struct (`d[4] + qs[128]` = 136 B), g128 repack/make functions, block-size-parameterised kernels, separate dispatch and scalar-equivalence testing. Future slot.<br><br>**HTTP 500 reproduction, corrected.** The server guard "The model produced output that does not match the expected Content-only format" was previously recorded as an ON-arm, all-Q2_0 phenomenon. It is **not repack-related**: on a long repetitive prompt it fires in **all 12 performance arms — ON and OFF, both models** (`CPU_REPACK = 84.16/95.98 MiB` and `0.0 MiB` alike), while the short prompt passes the guard in every arm. It is a response-format guard on degenerate output; generation completes and the server stays alive, so timings remain readable from `slot print_timing`.<br><br>**Still unexercised:** GEMV bit-exactness against `vec_dot` in isolation (`-ub 1` still the only clean lever and it remains untested here); the generic `repack.cpp` GEMM fix, which is unreachable on this box because the AVX512 branch returns first; and every Arm/NEON arm. Evidence: `research/local-inference/trial-evidence/110/vnni-g64-fix/` (NaN fix) and `research/local-inference/trial-evidence/110/vnni-adjudication/` (adjudication + performance). |
+ | `GGML_ARIFI_ROCMFPX_FORMATS` (CMake) | **OFF.** Build-time option in `ggml/CMakeLists.txt`, propagated as a PUBLIC compile definition on `ggml-base`. It is deliberately **not** an environment variable: the CPU dot products for these types are entries in `type_traits_cpu[]` (`ggml/src/ggml-cpu/ggml-cpu.c`), selected at link time, so a runtime toggle could not cover them - the exact defect that made the VNNI slot's first three A/Bs worthless. Two things stay unconditional regardless of the flag: the type-ids in `ggml/include/ggml.h` (the enum is ABI and must not move with a build flag) and `GGML_TYPE_COUNT = 256`. | Compiles the six ROCmFPX serialized weight formats and their whole CPU path: block structs and reference quant/dequant (`ggml/rocmfp4/`, `ggml/rocmfpx/`), `type_traits[]` rows, `type_traits_cpu[]` rows and four scalar `vec_dot`s, the `--check-tensors` row validators in `ggml-quants.c`, six of the seven type-id dispatch sites in `ggml-cpu/ops.cpp`, the `ggml_quantize_chunk` arms, and the llama-side quantizer wiring. Ids adopted verbatim: `100 Q4_0_ROCMFP4` (18 B/32), `101 Q4_0_ROCMFP4_FAST` (17 B/32), `102 Q6_0_ROCMFPX` (26 B/32), `103 Q8_0_ROCMFPX` (33 B/32), `104 Q3_0_ROCMFPX` (14 B/32), `107 Q2_0_ROCMFPX` (10 B/32). It does **not** compile any GPU kernel for these types - Vulkan and CUDA support are separate slots - and it does not port ROCmFPX's quantizer **recipes** (`_LEAN`, `_COHERENT`, `_STRIX`, `_AGENT`), which are a distinct mechanism. | Turn it ON to read or write ROCmFPX GGUFs. On a Vulkan build these types have no GPU pipeline, so `ggml_backend_vk_device_supports_op()` returns false for them and every matmul falls back to CPU - that is why the default is OFF on the 780M, and why Strix Halo / discrete AMD are ON-path only once the HIP and Vulkan slots land. OFF is safe, not lossy: the file is **refused, never guessed at**. | **Correctness proven in both arms on a real artifact. Performance UNMEASURED - no ON/OFF benchmark was run and none should be quoted.**<br><br>**Correction to the slot brief:** it stated there is no ROCmFP-format model on disk and that ON-path execution was therefore likely unverifiable. That is **false**. `C:/ArifiLabs/models/rocmfpx-trial/` holds two native ROCmFP4 GGUFs; `ornith-9b-mtp-kl-Q4_0_ROCMFP4_COHERENT.gguf` was probed directly from its header and carries **257 tensors at type-id 100**, 1 Q6_K and 184 F32, with `general.file_type = 102` and arch `qwen35`. The ON path was verified against it, not by proxy.<br><br>**ON.** llama-server per F-085, `-ngl 0 -c 512`, gate-ON build: the model loaded in **7.0 s**, `/props` reported `model_ftype = Q4_0_ROCMFP4_COHERENT`, and `/completion` on "The capital of France is" returned " Paris." and then repeated the sentence, at **3.24 tok/s** predicted. A chat request produced coherent multi-step reasoning. Execution ran through `rocmfp4_vec_dot_q4_0_q8_0` on CPU, as designed - Vulkan declined the type.<br><br>**OFF.** The identical file on the identical build with the option OFF is refused, verbatim: `gguf_init_from_reader: tensor 'output.weight' of type 100 ((null)) has 4096 elements per row, not a multiple of block size (0)`, then `failed to load model`, exit 1. That is the universal `blck_size == 0` backstop at `ggml/src/gguf.cpp:715`, not new code - which is what makes raising `GGML_TYPE_COUNT` to 256 safe despite the sparse 44..255 range it opens.<br><br>**Reference conformance.** Both ROCmFPX self-test suites were compiled against the ported sources with our own MinGW gcc and pass: `test_rocmfpx.c` (ROCmFP3/6/8 block and row sizes, bpw, mse, imatrix-weighted mse) and `test_rocmfp2_reference.c` (**32520 checks** - layout, packed-byte decode, UE4M3 boundaries, metadata validation, deterministic ties, Python golden vectors, non-finite rejection; fingerprint `78389c1c8a0a57a2`).<br><br>**No regression, OFF arm, same binary.** g128 still works: the native type-43 `Ternary-Bonsai-27B-Abliterated-LowDeg-Q2_0.g128.gguf` loads and answers "The capital of France is" with " Paris." (0.65 tok/s, `-ngl 0`, a 27B fully on CPU under memory pressure). VNNI still works: on `qwen2.5-0.5b-light-q8_0-4xffndownQ2_0-g64.gguf` with `-ngl 0 --no-host -c 1024 -t 8`, `GGML_ARIFI_VNNI_REPACK=1` produces `CPU_REPACK model buffer size = 4.68 MiB` with **286** ineligible tensors, and unset produces **no** `CPU_REPACK` line with **290** - reproducing the VNNI row's own documented numbers exactly, with token-identical coherent output in both arms and `CPU_Mapped = 625.75 MiB` in both.<br><br>**Cost of the un-gated part.** `GGML_TYPE_COUNT` 44 -> 256 is paid in both arms. It grows every `[GGML_TYPE_COUNT]`-dimensioned array, of which the Vulkan backend has by far the most (twelve `bool[COUNT]`, five `vk_matmul_pipeline2[COUNT]`, three `vk_pipeline[2][COUNT][8]`). The allocation contract's estimate is ~1.5 KB of `vk_device_struct` per type-id, i.e. **~320 KB more per Vulkan device** - an **estimate carried forward, not a measurement**; `sizeof(vk_matmul_pipeline2)` was not compiled here either. Device init also runs two `for (i = 0; i < GGML_TYPE_COUNT; ++i)` loops (`ggml-vulkan.cpp:4025`, `:6625`) over 256 ids instead of 44; both bodies are trivial, and `ggml_vk_matmul_shmem_support()` was read to confirm it has a `default: break` and performs no type-traits lookup, so an unimplemented id cannot fault it. **Not measured:** device-init wall time before versus after.<br><br>**Known consequence, recorded not fixed.** `tests/test-gguf.cpp` draws random types as `rng() % GGML_TYPE_COUNT` and skips those whose `type_size` is 0. Raising the ceiling to 256 cuts its effective random-type coverage by roughly 5.8x. The test still passes by construction; the coverage loss is real and belongs to whoever next touches that file.<br><br>**Not attempted, named:** GPU kernels for these types (ROCmFPX ships Vulkan dequant shaders and CUDA `mmq`/`mmvq`/`vecdotq`/`fattn` instances; both are separate slots); the ROCmFPX quantizer recipes; a round-trip quantization through our own `llama-quantize` into any of these types; whether `rocmfpx.c`'s 2-bit path is byte-identical to the frozen `rocmfp2_reference.c` (ROCmFPX's own `test_rocmfpx.c` covers only fp3/fp6/fp8); and any perplexity or throughput comparison against `Q4_0` or `Q4_K_M`. Evidence: this row plus the commit trailers on `topic/rocmfp-formats`. |
+ | `LANE110_PROF=1` | unset | Emits per-operation timing for pipeline initialization, scheduling, build tasks, and forward execution. | Diagnosis only. Disable for benchmark runs. | Pipeline-init reuse itself reduced rebuild work from `2472 µs` to `0–2 µs`; profiler overhead has not been independently quantified. |
+ | `LANE110_PREFETCH_CAP` | implementation default, currently `3*n_expert_used` | Limits standalone expert prefetch aggressiveness. | Sweep under cache pressure after establishing the baseline. | Recorded server sequences: default approximately `[5.07/9.03/9.58/12.01]`; cap `1` `[5.13/9.88/10.29/11.22]`; cap `96` `[5.79/11.73/12.19/11.26]`. Default retained because apparent ramp differences require controlled retest. |
+diff --git a/ggml/src/ggml-cpu/arch-fallback.h b/ggml/src/ggml-cpu/arch-fallback.h
+index 82e48bb2f..50bdacd73 100644
+--- a/ggml/src/ggml-cpu/arch-fallback.h
++++ b/ggml/src/ggml-cpu/arch-fallback.h
+@@ -58,6 +58,7 @@
+ #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
+ #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
+ #define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
++#define ggml_gemv_q2_0_g128_4x8_q8_0_generic ggml_gemv_q2_0_g128_4x8_q8_0
+ #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
+ #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
+ #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
+@@ -77,6 +78,7 @@
+ #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
+ #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
+ #define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
++#define ggml_gemm_q2_0_g128_4x8_q8_0_generic ggml_gemm_q2_0_g128_4x8_q8_0
+ #elif defined(__aarch64__) || defined(__arm__) || defined(_M_ARM) || defined(_M_ARM64)
+ // repack.cpp
+ #define ggml_quantize_mat_q8_K_4x4_generic ggml_quantize_mat_q8_K_4x4
+@@ -85,10 +87,12 @@
+ #define ggml_gemv_mxfp4_8x8_q8_0_generic ggml_gemv_mxfp4_8x8_q8_0
+ #define ggml_gemv_q2_K_8x8_q8_K_generic ggml_gemv_q2_K_8x8_q8_K
+ #define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
++#define ggml_gemv_q2_0_g128_4x8_q8_0_generic ggml_gemv_q2_0_g128_4x8_q8_0
+ #define ggml_gemm_iq4_nl_8x8_q8_0_generic ggml_gemm_iq4_nl_8x8_q8_0
+ #define ggml_gemm_mxfp4_8x8_q8_0_generic ggml_gemm_mxfp4_8x8_q8_0
+ #define ggml_gemm_q2_K_8x8_q8_K_generic ggml_gemm_q2_K_8x8_q8_K
+ #define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
++#define ggml_gemm_q2_0_g128_4x8_q8_0_generic ggml_gemm_q2_0_g128_4x8_q8_0
+ #elif defined(__x86_64__) || defined(__i386__) || defined(_M_IX86) || defined(_M_X64)
+ // quants.c
+ // repack.cpp
+@@ -152,6 +156,7 @@
+ #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
+ #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
+ #define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
++#define ggml_gemv_q2_0_g128_4x8_q8_0_generic ggml_gemv_q2_0_g128_4x8_q8_0
+ #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
+ #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
+ #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
+@@ -171,6 +176,7 @@
+ #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
+ #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
+ #define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
++#define ggml_gemm_q2_0_g128_4x8_q8_0_generic ggml_gemm_q2_0_g128_4x8_q8_0
+ #elif defined(__loongarch64)
+ // quants.c
+ #define quantize_row_q8_K_generic quantize_row_q8_K
+@@ -205,6 +211,7 @@
+ #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
+ #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
+ #define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
++#define ggml_gemv_q2_0_g128_4x8_q8_0_generic ggml_gemv_q2_0_g128_4x8_q8_0
+ #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
+ #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
+ #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
+@@ -224,6 +231,7 @@
+ #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
+ #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
+ #define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
++#define ggml_gemm_q2_0_g128_4x8_q8_0_generic ggml_gemm_q2_0_g128_4x8_q8_0
+ #elif defined(__riscv)
+ // quants.c
+ #define ggml_vec_dot_nvfp4_q8_0_generic ggml_vec_dot_nvfp4_q8_0
+@@ -252,6 +260,7 @@
+ #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
+ #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
+ #define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
++#define ggml_gemv_q2_0_g128_4x8_q8_0_generic ggml_gemv_q2_0_g128_4x8_q8_0
+ #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
+ #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
+ #define ggml_gemm_q2_K_8x8_q8_K_generic ggml_gemm_q2_K_8x8_q8_K
+@@ -270,6 +279,7 @@
+ #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
+ #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
+ #define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
++#define ggml_gemm_q2_0_g128_4x8_q8_0_generic ggml_gemm_q2_0_g128_4x8_q8_0
+ #elif defined(__s390x__)
+ // quants.c
+ #define quantize_row_q8_K_generic quantize_row_q8_K
+@@ -310,6 +320,7 @@
+ #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
+ #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
+ #define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
++#define ggml_gemv_q2_0_g128_4x8_q8_0_generic ggml_gemv_q2_0_g128_4x8_q8_0
+ #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
+ #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
+ #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
+@@ -329,6 +340,7 @@
+ #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
+ #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
+ #define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
++#define ggml_gemm_q2_0_g128_4x8_q8_0_generic ggml_gemm_q2_0_g128_4x8_q8_0
+ #elif defined(__wasm__)
+ // quants.c
+ #define ggml_vec_dot_tq1_0_q8_K_generic ggml_vec_dot_tq1_0_q8_K
+@@ -370,6 +382,7 @@
+ #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
+ #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
+ #define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
++#define ggml_gemv_q2_0_g128_4x8_q8_0_generic ggml_gemv_q2_0_g128_4x8_q8_0
+ #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
+ #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
+ #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
+@@ -389,4 +402,5 @@
+ #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
+ #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
+ #define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
++#define ggml_gemm_q2_0_g128_4x8_q8_0_generic ggml_gemm_q2_0_g128_4x8_q8_0
+ #endif
+diff --git a/ggml/src/ggml-cpu/arch/x86/repack.cpp b/ggml/src/ggml-cpu/arch/x86/repack.cpp
+index be7dcf74d..2466e84a9 100644
+--- a/ggml/src/ggml-cpu/arch/x86/repack.cpp
++++ b/ggml/src/ggml-cpu/arch/x86/repack.cpp
+@@ -6591,23 +6591,29 @@ void ggml_gemm_q1_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+     ggml_gemm_q1_0_4x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
+ }
+ 
+-void ggml_gemv_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++typedef void (*ggml_repack_kernel_fn)(int, float * GGML_RESTRICT, size_t, const void * GGML_RESTRICT, const void * GGML_RESTRICT, int, int);
++
++// Group-size generic. __q2_0_expand_x4 has no notion of the block (it expands exactly one 32-byte
++// load) and the 32 * k qs stride is a constant of the 4-row interleave, so QK is the only thing the
++// g64 and g128 ternary formats disagree on here.
++template <typename BlockX4, int QK>
++static void ggml_gemv_q2_0_x4_q8_0_impl(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc, ggml_repack_kernel_fn fallback) {
+ #if defined(__AVX512F__) && defined(__AVX512BW__) && defined(__AVX512DQ__) && defined(__AVX512VNNI__)
+     {
+-        const int qk = QK2_0;
++        const int qk = QK;
+         const int nb = n / qk;
+ 
+         assert(nr == 1);
+         assert(n % qk == 0);
+         assert(nc % 4 == 0);
+-    
++
+         const __m512i ones  = _mm512_set1_epi8(1);
+         const __m512i idx01 = _mm512_set_epi32(1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0);
+         const __m512i idx23 = _mm512_set_epi32(3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2);
+ 
+         const block_q8_0 * a_ptr = (const block_q8_0 *) vy;
+         for (int x = 0; x < nc / 4; x++) {
+-            const block_q2_0x4 * b_ptr = (const block_q2_0x4 *) vx + (x * nb);
++            const BlockX4 * b_ptr = (const BlockX4 *) vx + (x * nb);
+ 
+             __m512 accf01 = _mm512_setzero_ps();
+             __m512 accf23 = _mm512_setzero_ps();
+@@ -6617,8 +6623,8 @@ void ggml_gemv_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+                 const __m512 d0v01 = _mm512_permutexvar_ps(idx01, d0);
+                 const __m512 d0v23 = _mm512_permutexvar_ps(idx23, d0);
+ 
+-                for (int k = 0; k < QK2_0 / QK8_0; ++k) {
+-                    const block_q8_0 * GGML_RESTRICT a_blk = a_ptr + l * (QK2_0 / QK8_0) + k;
++                for (int k = 0; k < QK / QK8_0; ++k) {
++                    const block_q8_0 * GGML_RESTRICT a_blk = a_ptr + l * (QK / QK8_0) + k;
+ 
+                     __m512i w01, w23;
+                     __q2_0_expand_x4((const uint8_t *) b_ptr[l].qs + 32 * k, &w01, &w23);
+@@ -6644,13 +6650,22 @@ void ggml_gemv_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+     }
+ #endif // AVX512 VNNI
+ 
+-    ggml_gemv_q2_0_4x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
++    fallback(n, s, bs, vx, vy, nr, nc);
+ }
+ 
+-void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++void ggml_gemv_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    ggml_gemv_q2_0_x4_q8_0_impl<block_q2_0x4, QK2_0>(n, s, bs, vx, vy, nr, nc, ggml_gemv_q2_0_4x8_q8_0_generic);
++}
++
++void ggml_gemv_q2_0_g128_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    ggml_gemv_q2_0_x4_q8_0_impl<block_q2_0_g128x4, QK2_0_G128>(n, s, bs, vx, vy, nr, nc, ggml_gemv_q2_0_g128_4x8_q8_0_generic);
++}
++
++template <typename BlockX4, int QK>
++static void ggml_gemm_q2_0_x4_q8_0_impl(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc, ggml_repack_kernel_fn fallback) {
+ #if defined(__AVX512F__) && defined(__AVX512BW__) && defined(__AVX512DQ__) && defined(__AVX512VNNI__)
+     {
+-        const int qk = QK2_0;
++        const int qk = QK;
+         const int nb = n / qk;
+ 
+         assert(n % qk == 0);
+@@ -6668,9 +6683,9 @@ void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+         }
+ 
+         for (int y = 0; y < nr / 4; y++) {
+-            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb * (QK2_0 / QK8_0));
++            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb * (QK / QK8_0));
+             for (int x = 0; x < nc / 4; x++) {
+-                const block_q2_0x4 * b_ptr = (const block_q2_0x4 *) vx + (x * nb);
++                const BlockX4 * b_ptr = (const BlockX4 *) vx + (x * nb);
+ 
+                 __m512 accf01[4];
+                 __m512 accf23[4];
+@@ -6684,8 +6699,8 @@ void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+                     const __m512 d0v01 = _mm512_permutexvar_ps(idx01, d0);
+                     const __m512 d0v23 = _mm512_permutexvar_ps(idx23, d0);
+ 
+-                    for (int k = 0; k < QK2_0 / QK8_0; ++k) {
+-                        const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + l * (QK2_0 / QK8_0) + k;
++                    for (int k = 0; k < QK / QK8_0; ++k) {
++                        const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + l * (QK / QK8_0) + k;
+ 
+                         __m512i w01, w23;
+                         __q2_0_expand_x4((const uint8_t *) b_ptr[l].qs + 32 * k, &w01, &w23);
+@@ -6718,5 +6733,13 @@ void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+     }
+ #endif // AVX512 VNNI
+ 
+-    ggml_gemm_q2_0_4x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
++    fallback(n, s, bs, vx, vy, nr, nc);
++}
++
++void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    ggml_gemm_q2_0_x4_q8_0_impl<block_q2_0x4, QK2_0>(n, s, bs, vx, vy, nr, nc, ggml_gemm_q2_0_4x8_q8_0_generic);
++}
++
++void ggml_gemm_q2_0_g128_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    ggml_gemm_q2_0_x4_q8_0_impl<block_q2_0_g128x4, QK2_0_G128>(n, s, bs, vx, vy, nr, nc, ggml_gemm_q2_0_g128_4x8_q8_0_generic);
+ }
+diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
+index a53549c4c..ca727dc27 100644
+--- a/ggml/src/ggml-cpu/repack.cpp
++++ b/ggml/src/ggml-cpu/repack.cpp
+@@ -1499,14 +1499,18 @@ void ggml_gemv_q1_0_4x8_q8_0_generic(int                        n,
+     }
+ }
+ 
+-void ggml_gemv_q2_0_4x8_q8_0_generic(int                        n,
+-                                     float * GGML_RESTRICT      s,
+-                                     size_t                     bs,
+-                                     const void * GGML_RESTRICT vx,
+-                                     const void * GGML_RESTRICT vy,
+-                                     int                        nr,
+-                                     int                        nc) {
+-    const int qk                = QK2_0;
++// The g64 and g128 ternary formats differ only in QK: the 32-byte qs stride below is a constant of
++// the 4-row interleave (4 rows x QK8_0 values x 2 bits / 8), not of the group.
++extern "C++" {
++template <typename BlockX4, int QK>
++static void ggml_gemv_q2_0_generic_impl(int                        n,
++                                        float * GGML_RESTRICT      s,
++                                        size_t                     bs,
++                                        const void * GGML_RESTRICT vx,
++                                        const void * GGML_RESTRICT vy,
++                                        int                        nr,
++                                        int                        nc) {
++    const int qk                = QK;
+     const int nb                = n / qk;
+     const int ncols_interleaved = 4;
+ 
+@@ -1521,7 +1525,7 @@ void ggml_gemv_q2_0_4x8_q8_0_generic(int                        n,
+ 
+     const block_q8_0 * a_ptr = (const block_q8_0 *) vy;
+     for (int x = 0; x < nc / ncols_interleaved; x++) {
+-        const block_q2_0x4 * b_ptr = (const block_q2_0x4 *) vx + (x * nb);
++        const BlockX4 * b_ptr = (const BlockX4 *) vx + (x * nb);
+ 
+         for (int j = 0; j < ncols_interleaved; j++) {
+             sumf[j] = 0.0f;
+@@ -1535,8 +1539,8 @@ void ggml_gemv_q2_0_4x8_q8_0_generic(int                        n,
+                 GGML_CPU_FP16_TO_FP32(b_ptr[l].d[3]),
+             };
+ 
+-            for (int k = 0; k < QK2_0 / QK8_0; ++k) {
+-                const block_q8_0 * GGML_RESTRICT a_blk = a_ptr + l * (QK2_0 / QK8_0) + k;
++            for (int k = 0; k < QK / QK8_0; ++k) {
++                const block_q8_0 * GGML_RESTRICT a_blk = a_ptr + l * (QK / QK8_0) + k;
+                 const float d1 = GGML_CPU_FP16_TO_FP32(a_blk->d);
+ 
+                 for (int j = 0; j < ncols_interleaved; ++j) {
+@@ -1563,6 +1567,15 @@ void ggml_gemv_q2_0_4x8_q8_0_generic(int                        n,
+         }
+     }
+ }
++} // extern "C++"
++
++void ggml_gemv_q2_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    ggml_gemv_q2_0_generic_impl<block_q2_0x4, QK2_0>(n, s, bs, vx, vy, nr, nc);
++}
++
++void ggml_gemv_q2_0_g128_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    ggml_gemv_q2_0_generic_impl<block_q2_0_g128x4, QK2_0_G128>(n, s, bs, vx, vy, nr, nc);
++}
+ 
+ // Only enable these for RISC-V.
+ #if defined __riscv_zvfh
+@@ -2752,14 +2765,16 @@ void ggml_gemm_q1_0_4x8_q8_0_generic(int                        n,
+     }
+ }
+ 
+-void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,
+-                                     float * GGML_RESTRICT      s,
+-                                     size_t                     bs,
+-                                     const void * GGML_RESTRICT vx,
+-                                     const void * GGML_RESTRICT vy,
+-                                     int                        nr,
+-                                     int                        nc) {
+-    const int qk                = QK2_0;
++extern "C++" {
++template <typename BlockX4, int QK>
++static void ggml_gemm_q2_0_generic_impl(int                        n,
++                                        float * GGML_RESTRICT      s,
++                                        size_t                     bs,
++                                        const void * GGML_RESTRICT vx,
++                                        const void * GGML_RESTRICT vy,
++                                        int                        nr,
++                                        int                        nc) {
++    const int qk                = QK;
+     const int nb                = n / qk;
+     const int ncols_interleaved = 4;
+ 
+@@ -2770,9 +2785,9 @@ void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,
+     float sumf[4][4];
+ 
+     for (int y = 0; y < nr / 4; y++) {
+-        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb * (QK2_0 / QK8_0));
++        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb * (QK / QK8_0));
+         for (int x = 0; x < nc / ncols_interleaved; x++) {
+-            const block_q2_0x4 * b_ptr = (const block_q2_0x4 *) vx + (x * nb);
++            const BlockX4 * b_ptr = (const BlockX4 *) vx + (x * nb);
+ 
+             for (int m = 0; m < 4; m++) {
+                 for (int j = 0; j < ncols_interleaved; j++) {
+@@ -2788,8 +2803,8 @@ void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,
+                     GGML_CPU_FP16_TO_FP32(b_ptr[l].d[3]),
+                 };
+ 
+-                for (int k = 0; k < QK2_0 / QK8_0; ++k) {
+-                    const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + l * (QK2_0 / QK8_0) + k;
++                for (int k = 0; k < QK / QK8_0; ++k) {
++                    const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + l * (QK / QK8_0) + k;
+                     const float a_d[4] = {
+                         GGML_CPU_FP16_TO_FP32(a_blk->d[0]),
+                         GGML_CPU_FP16_TO_FP32(a_blk->d[1]),
+@@ -2833,6 +2848,15 @@ void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,
+         }
+     }
+ }
++} // extern "C++"
++
++void ggml_gemm_q2_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    ggml_gemm_q2_0_generic_impl<block_q2_0x4, QK2_0>(n, s, bs, vx, vy, nr, nc);
++}
++
++void ggml_gemm_q2_0_g128_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    ggml_gemm_q2_0_generic_impl<block_q2_0_g128x4, QK2_0_G128>(n, s, bs, vx, vy, nr, nc);
++}
+ 
+ // Only enable these for RISC-V.
+ #if defined __riscv_zvfh
+@@ -3234,8 +3258,9 @@ static block_q1_0x4 make_block_q1_0x4(block_q1_0 * in, unsigned int blck_size_in
+     return out;
+ }
+ 
+-static block_q2_0x4 make_block_q2_0x4(block_q2_0 * in, unsigned int blck_size_interleave) {
+-    block_q2_0x4 out;
++template <typename BlockX4, typename Block, int QK>
++static BlockX4 make_block_q2_0_x4(Block * in, unsigned int blck_size_interleave) {
++    BlockX4 out;
+ 
+     for (int i = 0; i < 4; i++) {
+         out.d[i] = in[i].d;
+@@ -3245,7 +3270,7 @@ static block_q2_0x4 make_block_q2_0x4(block_q2_0 * in, unsigned int blck_size_in
+     // sub-block per row): qs[k*32 + j*8 + b] = row j, bytes [k*8 + b].
+     GGML_ASSERT(blck_size_interleave == 8);
+ 
+-    for (int k = 0; k < QK2_0 / 32; ++k) {
++    for (int k = 0; k < QK / 32; ++k) {
+         for (int j = 0; j < 4; ++j) {
+             memcpy(&out.qs[k * 32 + j * 8], &in[j].qs[k * 8], 8);
+         }
+@@ -4056,21 +4081,24 @@ static int repack_q1_0_to_q1_0_4_bl(struct ggml_tensor *       t,
+     return 0;
+ }
+ 
+-static int repack_q2_0_to_q2_0_4_bl(struct ggml_tensor *       t,
+-                                    int                        interleave_block,
+-                                    const void * GGML_RESTRICT data,
+-                                    size_t                     data_size) {
+-    GGML_ASSERT(t->type == GGML_TYPE_Q2_0);
++// EXPECT is asserted rather than inferred: a g128 row repacked through the g64 instantiation is
++// mis-strided silent wrong math, not a crash.
++template <typename BlockX4, typename Block, int QK, ggml_type EXPECT>
++static int repack_q2_0_to_q2_0_4_bl_impl(struct ggml_tensor *       t,
++                                         int                        interleave_block,
++                                         const void * GGML_RESTRICT data,
++                                         size_t                     data_size) {
++    GGML_ASSERT(t->type == EXPECT);
+     GGML_ASSERT(interleave_block == 8);
+     constexpr int nrows_interleaved = 4;
+ 
+-    block_q2_0x4 *     dst = (block_q2_0x4 *) t->data;
+-    const block_q2_0 * src = (const block_q2_0 *) data;
+-    block_q2_0         dst_tmp[4];
+-    int                nrow    = ggml_nrows(t);
+-    int                nblocks = t->ne[0] / QK2_0;
++    BlockX4 *     dst = (BlockX4 *) t->data;
++    const Block * src = (const Block *) data;
++    Block         dst_tmp[4];
++    int           nrow    = ggml_nrows(t);
++    int           nblocks = t->ne[0] / QK;
+ 
+-    GGML_ASSERT(data_size == (size_t) nrow * nblocks * sizeof(block_q2_0));
++    GGML_ASSERT(data_size == (size_t) nrow * nblocks * sizeof(Block));
+ 
+     if (t->ne[1] % nrows_interleaved != 0) {
+         return -1;
+@@ -4081,13 +4109,29 @@ static int repack_q2_0_to_q2_0_4_bl(struct ggml_tensor *       t,
+             for (int i = 0; i < nrows_interleaved; i++) {
+                 dst_tmp[i] = src[x + (int64_t) i * nblocks];
+             }
+-            *dst++ = make_block_q2_0x4(dst_tmp, interleave_block);
++            *dst++ = make_block_q2_0_x4<BlockX4, Block, QK>(dst_tmp, interleave_block);
+         }
+         src += nrows_interleaved * nblocks;
+     }
+     return 0;
+ }
+ 
++static int repack_q2_0_to_q2_0_4_bl(struct ggml_tensor *       t,
++                                    int                        interleave_block,
++                                    const void * GGML_RESTRICT data,
++                                    size_t                     data_size) {
++    return repack_q2_0_to_q2_0_4_bl_impl<block_q2_0x4, block_q2_0, QK2_0, GGML_TYPE_Q2_0>(
++        t, interleave_block, data, data_size);
++}
++
++static int repack_q2_0_g128_to_q2_0_g128_4_bl(struct ggml_tensor *       t,
++                                              int                        interleave_block,
++                                              const void * GGML_RESTRICT data,
++                                              size_t                     data_size) {
++    return repack_q2_0_to_q2_0_4_bl_impl<block_q2_0_g128x4, block_q2_0_g128, QK2_0_G128, GGML_TYPE_Q2_0_G128>(
++        t, interleave_block, data, data_size);
++}
++
+ static block_q8_0x16 make_block_q8_0x16(block_q8_0 * in, unsigned int blck_size_interleave) {
+     block_q8_0x16 out;
+ 
+@@ -4525,6 +4569,10 @@ template <> int repack<block_q2_0, 8, 4>(struct ggml_tensor * t, const void * da
+     return repack_q2_0_to_q2_0_4_bl(t, 8, data, data_size);
+ }
+ 
++template <> int repack<block_q2_0_g128, 8, 4>(struct ggml_tensor * t, const void * data, size_t data_size) {
++    return repack_q2_0_g128_to_q2_0_g128_4_bl(t, 8, data, data_size);
++}
++
+ #if defined __riscv_zvfh
+ template <> int repack<block_q4_0, 1, 16>(struct ggml_tensor * t, const void * data, size_t data_size) {
+     return repack_q4_0_to_q4_0_16_bl(t, 1, data, data_size);
+@@ -4634,6 +4682,10 @@ template <> void gemv<block_q2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t
+     ggml_gemv_q2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
+ }
+ 
++template <> void gemv<block_q2_0_g128, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
++    ggml_gemv_q2_0_g128_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
++}
++
+ #if defined __riscv_zvfh
+ template <> void gemv<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+     ggml_gemv_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
+@@ -4743,6 +4795,10 @@ template <> void gemm<block_q2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t
+     ggml_gemm_q2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
+ }
+ 
++template <> void gemm<block_q2_0_g128, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
++    ggml_gemm_q2_0_g128_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
++}
++
+ #if defined __riscv_zvfh
+ template <> void gemm<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+     ggml_gemm_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
+@@ -5274,21 +5330,6 @@ static bool ggml_arifi_vnni_repack_enabled() {
+ // other.
+ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(const struct ggml_tensor * cur,
+                                                                            bool for_dual = false) {
+-    // lane-110C g64/g128 tripwire — PHASE2c-g128-type-architecture.md:175 binds these VNNI paths
+-    // to canonical g64 Q2_0 only. Every kernel behind the Q2_0 arm below is hard-wired to
+-    // QK2_0 == 64 (block_q2_0x4 == block<2,4>, sized from QK_0<2>()), while GGML_TYPE_Q2_0_G128
+-    // is 128 values/block with type_size 34. A g128 row entering a g64 kernel is mis-strided and
+-    // yields SILENT WRONG MATH, not a crash, so it is excluded explicitly and first.
+-    //
+-    // In the current tree the type comparison in the Q2_0 arm already excludes g128, because
+-    // llama_remap_q2_0_g128() (src/llama-model-loader.cpp) retypes 42 -> 43 during model load,
+-    // before any backend buffer is allocated and therefore before this function ever sees the
+-    // tensor. This early return is the tripwire that keeps the exclusion true if that ordering,
+-    // or the shape of the if/else chain below, is ever changed.
+-    if (cur->type == GGML_TYPE_Q2_0_G128) {
+-        return nullptr;
+-    }
+-
+     // lane-110 M3 graft tag:repack-carveout — fork parity (smallthinker ggml-cpu-aarch64.cpp:6288-6299):
+     // the expert bundle must hold PLAIN Q4_0 bytes and the streaming kernels read plain Q4_0,
+     // so expert tensors must NOT be runtime-repacked in either bundle-gen or streaming mode.
+@@ -5344,6 +5385,11 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+     // instance for Q2_0
+     static const ggml::cpu::repack::tensor_traits<block_q2_0, 8, 4, GGML_TYPE_Q8_0> q2_0_4x8_q8_0;
+ 
++    // instance for Q2_0_G128 (lane-110F). Separate from the g64 instance on purpose: each carries
++    // its own block type and group size all the way down to the kernels, so the type that selects
++    // an arm here is the type the kernel is compiled for.
++    static const ggml::cpu::repack::tensor_traits<block_q2_0_g128, 8, 4, GGML_TYPE_Q8_0> q2_0_g128_4x8_q8_0;
++
+     // instances for RISC-V
+     //
+     // These implement outer-product style matrix multiplication kernels with
+@@ -5525,8 +5571,10 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+             }
+         }
+     } else if (cur->type == GGML_TYPE_Q2_0) {
+-        // lane-110C: g64 ONLY — GGML_TYPE_Q2_0_G128 was already excluded by the tripwire at the
+-        // top of this function, so this arm can only ever see canonical 64-value-block Q2_0.
++        // g64 ONLY. The two ternary group sizes have separate arms and separate kernels because a
++        // g128 row entering a g64 kernel is mis-strided SILENT WRONG MATH, not a crash: the block
++        // is 34 bytes against 18 and the activation loop runs 4 sub-blocks against 2. This arm and
++        // the one below are the only places the two can be confused, so they name their type.
+         if (for_dual ? ggml_arifi_vnni_repack_dual_enabled() : ggml_arifi_vnni_repack_enabled()) {
+             if (ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
+                 if (cur->ne[1] % 4 == 0) {
+@@ -5534,6 +5582,17 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+                 }
+             }
+         }
++    } else if (cur->type == GGML_TYPE_Q2_0_G128) {
++        // lane-110F: g128 gets its own kernels, so this is a real arm rather than the lane-110C
++        // tripwire that used to sit at the top of this function. Same gate, same ISA and ne[1]
++        // conditions as the g64 arm above.
++        if (for_dual ? ggml_arifi_vnni_repack_dual_enabled() : ggml_arifi_vnni_repack_enabled()) {
++            if (ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
++                if (cur->ne[1] % 4 == 0) {
++                    return &q2_0_g128_4x8_q8_0;
++                }
++            }
++        }
+     }
+ 
+     return nullptr;
+@@ -5551,6 +5610,9 @@ static_assert(sizeof(block_q1_0x4) == 4 * sizeof(block_q1_0),
+ static_assert(sizeof(block_q2_0x4) == 4 * sizeof(block_q2_0),
+               "dual residency assumes the x4 block is exactly 4 plain blocks; it is not — compute "
+               "the shadow size from the repacked geometry instead of ggml_nbytes()");
++static_assert(sizeof(block_q2_0_g128x4) == 4 * sizeof(block_q2_0_g128),
++              "dual residency assumes the x4 block is exactly 4 plain blocks; it is not — compute "
++              "the shadow size from the repacked geometry instead of ggml_nbytes()");
+ 
+ // True only for a MODEL WEIGHT that mode 0 leaves in a host buffer and that the interleaved
+ // kernels can actually take.
+@@ -5564,14 +5626,16 @@ static_assert(sizeof(block_q2_0x4) == 4 * sizeof(block_q2_0),
+ // Q6_K, IQ4_NL, MXFP4, Q8_0) whose arms are NOT behind `GGML_ARIFI_VNNI_REPACK` at all, so reusing
+ // that function alone would have quietly given a shadow to every repackable weight in any model —
+ // doubling residency for types this slot has never measured and whose registry scope says
+-// "Q1_0 and Q2_0 only". It did not show up in testing because no test model has a tensor of those
++// "Q1_0 and Q2_0 only" — widened by lane-110F to include Q2_0_G128 when g128 gained kernels, and
++// still listed type by type rather than delegated. It did not show up in testing because no test model has a tensor of those
+ // types that meets their own ISA conditions on this box: the corpus could not enter the class.
+ // Split in two on purpose. `_candidate` is field reads only and is safe to run per matmul per
+ // thread; `_eligible` additionally asks ggml_repack_get_optimal_repack_type, which does two
+ // getenv()s and strstr()s over the tensor name, and must run ONCE per tensor.
+ static bool ggml_arifi_dual_candidate(const struct ggml_tensor * src0) {
+     return ggml_arifi_vnni_repack_dual_enabled() && src0 && src0->buffer &&
+-           (src0->type == GGML_TYPE_Q1_0 || src0->type == GGML_TYPE_Q2_0) &&
++           (src0->type == GGML_TYPE_Q1_0 || src0->type == GGML_TYPE_Q2_0 ||
++            src0->type == GGML_TYPE_Q2_0_G128) &&
+            src0->buffer->usage == GGML_BACKEND_BUFFER_USAGE_WEIGHTS &&
+            ggml_backend_buft_is_host(src0->buffer->buft) &&
+            src0->buffer->buft != ggml_backend_cpu_repack_buffer_type();
+diff --git a/ggml/src/ggml-cpu/repack.h b/ggml/src/ggml-cpu/repack.h
+index 5bc48b649..00a7c649e 100644
+--- a/ggml/src/ggml-cpu/repack.h
++++ b/ggml/src/ggml-cpu/repack.h
+@@ -26,9 +26,12 @@ template <int K> constexpr int QK_0() {
+     return -1;
+ }
+ 
+-template <int K, int N> struct block {
+-    ggml_half d[N];                         // deltas for N qK_0 blocks
+-    int8_t    qs[(QK_0<K>() * N * K) / 8];  // quants for N qK_0 blocks
++// QK defaults to the group size implied by the bit width, which is the only relationship the
++// canonical types have. Q2_0 also exists at a 128-value group (GGML_TYPE_Q2_0_G128), so the two
++// are decoupled by a third parameter rather than by a parallel struct.
++template <int K, int N, int QK = QK_0<K>()> struct block {
++    ggml_half d[N];                  // deltas for N qK_0 blocks
++    int8_t    qs[(QK * N * K) / 8];  // quants for N qK_0 blocks
+ };
+ 
+ // control size
+@@ -40,6 +43,7 @@ static_assert(sizeof(block<8, 8>) == 8 * sizeof(ggml_half) + QK8_0 * 8, "wrong b
+ static_assert(sizeof(block<8, 16>) == 16 * sizeof(ggml_half) + QK8_0 * 16, "wrong block<8,16> size/padding");
+ static_assert(sizeof(block<1, 4>) == 4 * sizeof(ggml_half) + QK1_0 / 2, "wrong block<1,4> size/padding");
+ static_assert(sizeof(block<2, 4>) == 4 * sizeof(ggml_half) + QK2_0, "wrong block<2,4> size/padding");
++static_assert(sizeof(block<2, 4, QK2_0_G128>) == 4 * sizeof(ggml_half) + QK2_0_G128, "wrong block<2,4,g128> size/padding");
+ 
+ using block_q4_0x4 = block<4, 4>;
+ using block_q4_0x8 = block<4, 8>;
+@@ -49,6 +53,10 @@ using block_q8_0x8 = block<8, 8>;
+ using block_q8_0x16 = block<8, 16>;
+ using block_q1_0x4 = block<1, 4>;
+ using block_q2_0x4 = block<2, 4>;
++using block_q2_0_g128x4 = block<2, 4, QK2_0_G128>;
++
++static_assert(sizeof(block_q2_0x4) == 4 * sizeof(block_q2_0), "block_q2_0x4 is not 4 plain q2_0 blocks");
++static_assert(sizeof(block_q2_0_g128x4) == 4 * sizeof(block_q2_0_g128), "block_q2_0_g128x4 is not 4 plain q2_0_g128 blocks");
+ 
+ struct block_q4_Kx8 {
+     ggml_half d[8];      // super-block scale for quantized scales
+@@ -170,6 +178,7 @@ void ggml_gemv_q8_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+ void ggml_gemv_q1_0_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemv_q1_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemv_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
++void ggml_gemv_q2_0_g128_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q4_0_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q4_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q4_0_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+@@ -189,6 +198,7 @@ void ggml_gemm_q8_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+ void ggml_gemm_q1_0_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q1_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
++void ggml_gemm_q2_0_g128_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ #if defined __riscv_zvfh
+ void ggml_quantize_mat_q8_0_4x1(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
+ void ggml_quantize_mat_q8_K_4x1(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
+@@ -228,6 +238,7 @@ void ggml_gemv_q8_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs,
+ void ggml_gemv_q1_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemv_q1_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemv_q2_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
++void ggml_gemv_q2_0_g128_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q4_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q4_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q4_0_8x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+@@ -247,6 +258,7 @@ void ggml_gemm_q8_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs,
+ void ggml_gemm_q1_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q1_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q2_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
++void ggml_gemm_q2_0_g128_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ #if defined __riscv_zvfh
+ void ggml_quantize_mat_q8_0_4x1_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
+ void ggml_quantize_mat_q8_K_4x1_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
+diff --git a/src/llama.cpp b/src/llama.cpp
+index 215df4d6a..c34ce93b1 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -327,13 +327,13 @@ static void llama_arifi_vnni_repack_advisory(const llama_model_loader & ml, cons
+         return; // the caller already decided, either way
+     }
+ 
+-    // GGML_TYPE_Q2_0_G128 is excluded on purpose: the loader has already remapped it away from
+-    // GGML_TYPE_Q2_0, and every repack kernel is hard-wired to 64-value blocks, so the toggle
+-    // provably does nothing for a g128 file. Advising it there would be a false advisory.
++    // GGML_TYPE_Q2_0_G128 counts since lane-110F gave it its own kernels. It used to be excluded
++    // here because the toggle provably did nothing for a g128 file, which would have made this a
++    // false advisory; the g128 speed effect is unmeasured, which the wording below reflects.
+     size_t n_repackable = 0;
+     for (const auto & it : ml.weights_map) {
+         const ggml_type type = it.second.tensor->type;
+-        if (type == GGML_TYPE_Q1_0 || type == GGML_TYPE_Q2_0) {
++        if (type == GGML_TYPE_Q1_0 || type == GGML_TYPE_Q2_0 || type == GGML_TYPE_Q2_0_G128) {
+             n_repackable++;
+         }
+     }
+@@ -342,7 +342,7 @@ static void llama_arifi_vnni_repack_advisory(const llama_model_loader & ml, cons
+     }
+ 
+     LLAMA_LOG_INFO("%s: ArifiLabs advisory: no offload device was selected and this model carries "
+-            "%zu Q1_0/Q2_0 tensor(s)\n", __func__, n_repackable);
++            "%zu Q1_0/Q2_0/Q2_0_G128 tensor(s)\n", __func__, n_repackable);
+     LLAMA_LOG_INFO("%s: ArifiLabs advisory: GGML_ARIFI_VNNI_REPACK=1 measured prompt +326.7%% / "
+             "+441.8%% and decode +19.9%% / +23.6%% on a CPU-only path (two g64 models, ArifiLabs "
+             "rig, 2026-07-24). UNMEASURED on any other machine\n", __func__);
