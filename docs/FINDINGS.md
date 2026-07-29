@@ -166,6 +166,37 @@ point.
 
 ---
 
+### F-09 — Why the repack/GPU trade-off is not a placement bug
+
+The obvious reading of the −77% prompt regression is that repacked weights are simply put in the
+wrong buffer, and that smarter placement would keep both the decode win and the prefill speed.
+We investigated that and it is not what is happening.
+
+The two buffer types are not better and worse versions of the same thing. A host-visible buffer
+holds weights in normal layout in CPU memory that **the GPU can read directly**, so large-batch
+matmuls are offloaded to it. The repack buffer holds the same weights in an interleaved layout
+that only the CPU's vector kernels understand, and the GPU cannot read it at all. Choosing one is
+choosing which processor gets the batch work.
+
+That is why prefill and decode split the way they do: prefill is a large batch and wants the GPU;
+decode is one token at a time, runs on the CPU in both arrangements, and simply prefers the faster
+CPU layout. The right choice therefore depends on the *operation*, which is not known when the
+buffer is selected at model-load time.
+
+Three ways out, none free, all recorded rather than assumed:
+
+1. **Keep both copies** — a host-visible copy for batch work and a repacked copy for decode. This
+   genuinely gets both wins and costs the memory of the affected tensors twice.
+2. **Enable repack only when no GPU backend exists at all.** Unlike "will this tensor be
+   offloaded", "is there any GPU device" *is* answerable at load time, and when the answer is no
+   there is no offload eligibility to lose. This is narrow but strictly correct, and is the most
+   likely next step.
+3. **Repack after prefill.** Layout is a property of the buffer, not of the tensor, so this means
+   re-laying-out weights mid-run — plausible for a long-lived server, not cheap.
+
+Until one of those lands, the flag stays off by default and the advisory tells CPU-only users to
+turn it on, which is the configuration where the answer is unambiguous.
+
 ## Open questions
 
 Listed because they are unresolved, not because they are unimportant.
