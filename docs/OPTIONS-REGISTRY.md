@@ -35,7 +35,7 @@ safe measurement posture.
 | `--ctx-checkpoints 0` | `0` | Disables server prompt rewind/checkpoints. | Keep off unless a workload demonstrably requires rewind semantics. | Largest historical gain: stock rewind `39.9/68.4/280`; ON_DEVICE checkpoint `84.8/128.8/341.6`; disabled approximately `101/150/372` across short/medium/long prefill. |
 | `--spec-type draft-mtp` and `--spec-draft-n-max N` | model- and hardware-specific | Enables MTP speculative decoding and sets draft depth. | Use only with a validated compatible draft and an `N` sweep. | Not universal: 31B root-MTP improved `1.8 → 9.4` t/s; Qwen35MoE lost to plain Q4_0 (`22.8` best tuned versus `29.2`); Gemma-4-26B-A4B improved `29.3 → 37.3` t/s at `N=3`. |
 | M-RoPE embedded-batch position guard | Always on; no runtime toggle | Sends a batch carrying embeddings through the overlapping-position rule even when `batch.token` is also populated. | No operator action; retain for affected M-RoPE/MTP paths. | Narrow snapshot correction from the retained ROCmFPX source; build-only validation is insufficient: exercise a mixed token+embedding M-RoPE batch. |
-| KV f16 / q4_0 | f16 primary where capacity permits | KV-cache storage precision. | Use q4_0 only as an explicit context-capacity trade-off. | President ruling: f16 is primary; at 64 GB RAM f16 is unconditional for the intended path. Do not claim an unsourced universal speed or quality delta. |
+| KV f16 / q4_0 | f16 primary where capacity permits | KV-cache storage precision. | Use q4_0 only as an explicit context-capacity trade-off. | Project default: f16 is primary; at 64 GB RAM f16 is unconditional for the intended path. Do not claim an unsourced universal speed or quality delta. |
 | `GGML_RECURRENT_STATE_F16=1` | unset (`f32`) | Stores the recurrent GDN/SSM S-state cache in f16; the GDN kernel still computes in f32. | Opt in only for a recurrent/hybrid model after its output and long-context quality gate passes. | Halves S-state residency and read/write traffic. Recurrent rounding can compound, so it stays opt-in pending target-specific greedy and quality validation. |
 | `-cmoe` and `-ngl` | placement-specific | Controls CPU MoE placement and GPU layer offload. | First prefer full unified placement when it fits; use tiered placement when it does not. | Full unified `-ngl 99 --n-cpu-moe 0 -c 4096` reached `29.2` t/s in the recorded fit case. CPU-only streamed was `1.6` t/s; GPU-tiered `-ngl 99 -cmoe` was `3.0` t/s. |
 | DSpark: `--spec-type draft-dspark --spec-draft-n-max 4 -ngld 999` | OFF on current rig | Target-specific speculative drafter for Ternary-Bonsai-27B. | Only after a target-specific controlled benchmark on another hardware path. | It engaged on 780M Vulkan but fell from `7.89` to `4.27` t/s (`0.54×`). `N=4` is required; other values crash. |
@@ -50,14 +50,14 @@ safe measurement posture.
 2. Compare a fresh binary against a fresh binary; reuse binaries, never historical
    timing numbers.
 3. Do not time under DR activity or sibling load.
-4. Use the President-ruled `llama-server` benchmark harness for acceptance,
+4. Use the `llama-server` benchmark harness for acceptance,
    including repeated in-process requests where warm behavior matters.
 5. Preserve both positive and negative results. “No effect in this placement” is
    an accepted outcome, not permission to omit the option from the registry.
 
 ## Build variants
 
-Local builds default to **web-UI ON** (President ruling 2026-07-22: he wants the
+Local builds default to **web-UI ON** (project decision 2026-07-22: we want the
 llama.cpp web UI available for interactive testing). The earlier UI-OFF posture was
 purely crash containment for `ki-webui-0xC0000139` (`STATUS_ENTRYPOINT_NOT_FOUND` from a
 shadowed mingw `libstdc++` DLL when `ui-assets.cmake` runs the embed helper

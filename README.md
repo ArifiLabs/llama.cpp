@@ -159,6 +159,23 @@ load_tensors: CPU_REPACK model buffer size = <N> MiB
 present in the ON arm and **absent** in the OFF arm. An A/B whose arms agree proves nothing until
 path engagement has been evidenced separately.
 
+## Reading our commit messages
+
+Commits, patches and evidence files carry identifiers like `lane-110C`. These are our internal
+work-unit ids, kept deliberately rather than scrubbed: each one ties a change to the exact block
+of work that produced it, the machine it was measured on, and the evidence file that holds the
+raw numbers. If a claim in this repository looks unsupported, the id is how you find what backs
+it. They are traceability, not organisational trivia — treat them the way you would a ticket
+reference in any other project.
+
+Two other conventions worth knowing:
+
+- **`Taken-from:`** in a commit body names the upstream repository and commit a change was ported
+  from. Every ported line has one.
+- **`Measured-effect:`** names what we actually measured, on which hardware, or says `UNMEASURED`.
+  That word is a legal value and appears where it is honest; an absent trailer is a gap, and the
+  provenance audit fails on it.
+
 ## Maintaining the fork
 
 [`tools/arifi-sync/`](tools/arifi-sync/README.md) drives currency, the patch series, and upstream
@@ -187,7 +204,7 @@ Important defaults already ruled by evidence:
 
 - `--ctx-checkpoints 0` is the default; disabling rewind is the program’s
   largest historical gain.
-- KV f16 is primary under the President’s 64 GB RAM ruling; q4_0 remains an
+- KV f16 is primary on machines with the memory for it; q4_0 remains an
   explicit capacity trade-off rather than a silent default.
 - DSpark is documented OFF on the current 780M Vulkan rig after a measured
   `0.54×` net result.
@@ -209,7 +226,7 @@ commit history.
   PowerInfer graft. Its root and `smallthinker` MIT notices are retained.
 - [PrismML-Eng/llama.cpp](https://github.com/PrismML-Eng/llama.cpp) supplied
   the observed Vulkan path for PrismML `Q2_0_g128` ternary GGUFs and the
-  ternary-port lineage. The President’s rule #0 authorizes carrying this work
+  ternary-port lineage. Project policy authorizes carrying this work
   with maximal credit and provenance; the Phase-0 factual observation that the
   retained PrismML releases did not include a source `LICENSE` or `NOTICE`
   remains documented rather than rewritten.
@@ -241,7 +258,7 @@ unmeasured status with `Measured-effect:`.
 notices and the exact source from which each was copied are enumerated in
 [`licenses/README.md`](licenses/README.md).
 
-The President’s 2026-07-22 rule #0 lifted the previous publication blocks for
+A 2026-07-22 policy decision lifted the previous publication blocks for
 PrismML, thecodacus, PowerInfer, and Charlie/ROCmFPX. This authorization does
 not justify inventing license text: no PrismML or thecodacus license file is
 manufactured where Phase 0 did not observe one. Their credit and provenance
@@ -265,5 +282,5 @@ What that does **not** mean:
   been run against this repository.
 
 Publication remains gated by local proof, committed evidence for every
-published gain claim and negative result, and the President’s explicit release
+published gain claim and negative result, and an explicit release
 word.

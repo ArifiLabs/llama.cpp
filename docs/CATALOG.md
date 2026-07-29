@@ -4,7 +4,7 @@ Scope: this catalog records only items traceable to the local-inference program
 sources. “Carried” means present in the engine recipe; it does not imply a
 measured gain in every placement regime.
 
-President rule #0, 2026-07-22: prior Phase-0 publication blocks for PrismML,
+Project policy, 2026-07-22: prior Phase-0 publication blocks for PrismML,
 thecodacus, and PowerInfer are lifted. Their factual license-audit findings
 remain recorded; authorized work proceeds in the main series with maximal
 credit, provenance, and retained notices where they exist.
