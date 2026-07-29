@@ -1,0 +1,50 @@
+From 538e239ffbfbe848fe395519dc013c48797266aa Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 28 Jul 2026 20:30:48 -0400
+Subject: [PATCH] =?UTF-8?q?sync:=20currency=20GREEN=20=E2=80=94=20TurboQua?=
+ =?UTF-8?q?nt=20checkouts=20pinned=20at=20their=20lane-110C-reviewed=20sha?=
+ =?UTF-8?q?s=20(c26cbdffc,=20ba52ad107),=20rocmfpx=20pin=20advanced=20to?=
+ =?UTF-8?q?=20db6844d9b=20after=206-commit=20review=20(HIP=20pinned-stagin?=
+ =?UTF-8?q?g=20noted=20for=20the=20HIP-deltas=20slot)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Origin: lane-110D mission #2 currency actions
+Measured-effect: 'currency' subcommand now PASSES on every source (first green run)
+---
+ tools/arifi-sync/sources.json | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/tools/arifi-sync/sources.json b/tools/arifi-sync/sources.json
+index 903d3c46c..1d249c2ff 100644
+--- a/tools/arifi-sync/sources.json
++++ b/tools/arifi-sync/sources.json
+@@ -39,7 +39,8 @@
+     "rocmfpx": {
+       "url": "https://github.com/charlie12345/ROCmFPX",
+       "ref": "rocmfpx/HEAD",
+-      "pin": "3edc3d31e",
++      "pin": "db6844d9b",
++      "pin_review": "lane-110D reviewed 3edc3d31e..db6844d9b (6 commits, 2026-07-28): CUDA NORM contiguity guard, HIP arch-selection script fix, HIP pinned-memory staging for large uploads. None touch the carried blobs (M-RoPE guard, ROCmFP formats). d0fae4ded pinned-staging is RELEVANT to the future HIP-deltas slot — note carried there.",
+       "role": "M-RoPE guard, ROCmFP weight formats (diff-audit source)",
+       "track_tags": false
+     },
+@@ -57,13 +58,15 @@
+     "llama-cpp-turboquant": {
+       "path": "../llama-cpp-turboquant",
+       "ref": "origin/HEAD",
+-      "pin": "UNPINNED",
++      "pin": "c26cbdffc",
++      "pin_review": "lane-110C turbokv matrix (trial-evidence/110/turbokv-matrix.json) measured this tree end-to-end; WHT non-interchangeability proven against it (RESUME finding 4)",
+       "role": "TurboQuant KV / weight quant tooling"
+     },
+     "turboquant_plus": {
+       "path": "../turboquant_plus",
+       "ref": "origin/HEAD",
+-      "pin": "UNPINNED",
++      "pin": "ba52ad107",
++      "pin_review": "lane-110C WHT/codec analysis (RESUME finding 4: randomized WHT, seed 42, dequant stays rotated) reviewed this tree's quantizer path",
+       "role": "TurboQuant recompress pipeline"
+     }
+   },
