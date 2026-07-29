@@ -4818,6 +4818,11 @@ struct ggml_arifi_dual_shadow {
     const void * src_data = nullptr;  // provenance: the plain bytes it was built from
     ggml_type    type     = GGML_TYPE_COUNT;
     int64_t      ne[4]    = { 0, 0, 0, 0 };
+    // Cached so the steady-state decode path never re-derives it. Resolving the traits calls
+    // ggml_repack_get_optimal_repack_type, which does two getenv()s and strstr()s over the tensor
+    // name for the expert-bundle carve-outs — fine once per tensor at load, ruinous per matmul
+    // per thread.
+    const ggml::cpu::tensor_traits * traits = nullptr;
 };
 
 // ponytail: shared_mutex, not a lock-free scheme. Every shadow is built during ggml_graph_plan
@@ -4828,39 +4833,33 @@ struct ggml_arifi_dual_shadow {
 static std::unordered_map<const ggml_tensor *, ggml_arifi_dual_shadow> g_arifi_dual_shadows;
 static std::shared_mutex                                              g_arifi_dual_mutex;
 static size_t                                                         g_arifi_dual_bytes = 0;
-// Shadows are allocated outside every ggml buffer, so llama.cpp's own `load_tensors:` accounting
-// cannot see them — on a 16 GB unified carve-out that is how a run OOMs invisibly. The SETTLED
-// total is therefore printed once, on the first compute after the last shadow of a graph is built
-// (the count is only final after ggml_graph_plan has walked the whole graph, so it cannot be
-// printed from the builder). Doubles as the engagement line law #4 requires.
-static std::atomic<size_t> g_arifi_dual_reported{ 0 };
 
 // The weight base pointer for the interleaved kernels: the shadow when one exists, else the
 // tensor's own (already repacked, mode 1) data. Never silently falls back to a PLAIN-layout
 // pointer — that would be wrong math, not a slow path, so a missing shadow is a hard failure.
+// THIS IS THE DECODE HOT PATH: called once per MUL_MAT per worker thread — ~1.4k times per token
+// on a 0.5B at 8 threads. The first version took a shared_lock on one global shared_mutex, hashed
+// the tensor pointer in an unordered_map, and did an unconditional seq_cst atomic exchange for the
+// accounting line. All three are per-call cache-line traffic across every core, and MEASURED they
+// cost more than the repack layout wins: decode went 40.9 -> 24.7 tok/s on the all-Q2_0 model,
+// i.e. dual mode was SLOWER than doing nothing while mode 1 was +26%. Footprint was ruled out —
+// mode 1 holds the same bytes (CPU_Mapped + a 95.98 MiB second copy) and is the fastest arm.
+//
+// So the lookup is resolved ONCE, at shadow-build time, into `tensor->extra`, and the hot path is
+// a single pointer load. `extra` is ggml's per-tensor backend-private slot and this is exactly the
+// idiom the CPU_REPACK buffer already uses it for; the branch below has established the tensor is
+// NOT in that buffer, so the field can only be ours. Checked: nothing else in the tree writes
+// `->extra` for a plain CPU-buffer weight (only extra-buffer-type init_tensor paths and other
+// backends' own buffers do).
 static const char * ggml_arifi_repack_weight_base(const struct ggml_tensor * t) {
     if (ggml_arifi_vnni_repack_dual_enabled() && t->buffer &&
         t->buffer->buft != ggml_backend_cpu_repack_buffer_type()) {
-        size_t total = 0, tensors = 0;
-        const char * base;
-        {
-            std::shared_lock<std::shared_mutex> lock(g_arifi_dual_mutex);
-            const auto                          it = g_arifi_dual_shadows.find(t);
-            GGML_ASSERT(it != g_arifi_dual_shadows.end() &&
-                        "dual residency: interleaved kernel reached a tensor with no repacked shadow");
-            GGML_ASSERT(it->second.src_data == t->data && it->second.type == t->type &&
-                        "dual residency: shadow does not belong to this tensor");
-            base    = (const char *) it->second.data;
-            total   = g_arifi_dual_bytes;
-            tensors = g_arifi_dual_shadows.size();
-        }
-        // Report the settled total once per distinct value; the exchange makes every worker thread
-        // but one skip it, and a later graph that adds shadows reports the new total.
-        if (g_arifi_dual_reported.exchange(total) != total) {
-            GGML_LOG_INFO("%s: CPU_REPACK_DUAL shadow buffer size = %8.2f MiB (%zu tensors)\n",
-                          __func__, total / 1024.0 / 1024.0, tensors);
-        }
-        return base;
+        const auto * shadow = (const ggml_arifi_dual_shadow *) t->extra;
+        GGML_ASSERT(shadow != nullptr &&
+                    "dual residency: interleaved kernel reached a tensor with no repacked shadow");
+        GGML_ASSERT(shadow->src_data == t->data && shadow->type == t->type &&
+                    "dual residency: shadow does not belong to this tensor");
+        return (const char *) shadow->data;
     }
     return (const char *) t->data;
 }
@@ -5567,12 +5566,19 @@ static_assert(sizeof(block_q2_0x4) == 4 * sizeof(block_q2_0),
 // doubling residency for types this slot has never measured and whose registry scope says
 // "Q1_0 and Q2_0 only". It did not show up in testing because no test model has a tensor of those
 // types that meets their own ISA conditions on this box: the corpus could not enter the class.
-static bool ggml_arifi_dual_eligible(const struct ggml_tensor * src0) {
+// Split in two on purpose. `_candidate` is field reads only and is safe to run per matmul per
+// thread; `_eligible` additionally asks ggml_repack_get_optimal_repack_type, which does two
+// getenv()s and strstr()s over the tensor name, and must run ONCE per tensor.
+static bool ggml_arifi_dual_candidate(const struct ggml_tensor * src0) {
     return ggml_arifi_vnni_repack_dual_enabled() && src0 && src0->buffer &&
            (src0->type == GGML_TYPE_Q1_0 || src0->type == GGML_TYPE_Q2_0) &&
            src0->buffer->usage == GGML_BACKEND_BUFFER_USAGE_WEIGHTS &&
            ggml_backend_buft_is_host(src0->buffer->buft) &&
-           src0->buffer->buft != ggml_backend_cpu_repack_buffer_type() &&
+           src0->buffer->buft != ggml_backend_cpu_repack_buffer_type();
+}
+
+static bool ggml_arifi_dual_eligible(const struct ggml_tensor * src0) {
+    return ggml_arifi_dual_candidate(src0) &&
            ggml_repack_get_optimal_repack_type(src0, /* for_dual = */ true) != nullptr;
 }
 
@@ -5594,7 +5600,8 @@ static const ggml::cpu::tensor_traits * ggml_arifi_dual_shadow_ensure(const stru
             return traits;
         }
         // Same address, different weight: a previous model's tensor was freed and this one landed
-        // on it. Drop the stale copy rather than serve it.
+        // on it. Drop the stale copy rather than serve it, and clear the cached pointer with it.
+        const_cast<ggml_tensor *>(src0)->extra = nullptr;
         ggml_aligned_free(s.data, s.size);
         g_arifi_dual_bytes -= s.size;
         g_arifi_dual_shadows.erase(it);
@@ -5626,19 +5633,33 @@ static const ggml::cpu::tensor_traits * ggml_arifi_dual_shadow_ensure(const stru
     rec.size     = size;
     rec.src_data = src0->data;
     rec.type     = src0->type;
+    rec.traits   = traits;
     for (int i = 0; i < 4; i++) {
         rec.ne[i] = src0->ne[i];
     }
-    g_arifi_dual_shadows.emplace(src0, rec);
+    // The map owns the record; `extra` caches a pointer to it so neither the traits lookup nor the
+    // shadow lookup happens again. std::unordered_map is node-based, so this pointer survives
+    // rehash.
+    const auto & stored = g_arifi_dual_shadows.emplace(src0, rec).first->second;
+    const_cast<ggml_tensor *>(src0)->extra = (void *) &stored;
 
+    // Accounting. Shadows sit outside every ggml buffer, so llama.cpp's own `load_tensors:` totals
+    // cannot see them, and on a 16 GB unified carve-out that is how a run OOMs invisibly. Per
+    // tensor at DEBUG (a 27B would emit ~850 rows); at INFO on the first shadow and at each 64 MiB
+    // boundary, so a run is auditable without -v. The last INFO line therefore understates the
+    // settled total by at most 64 MiB — stated rather than hidden, because the exact figure is not
+    // worth putting a counter on the decode path (that mistake is documented above).
     // ponytail: shadows live until the process exits. A model RELOAD in the same process leaks one
     // model's worth unless the tensor addresses are reused (handled above). Upgrade path if a
     // long-lived server ever reloads: hang the store off the buffer and free it with the buffer.
-    // Per-tensor rows stay at DEBUG so a 27B does not emit 850 lines; the settled total is printed
-    // at INFO from the compute path, where it is actually final.
+    const size_t before = g_arifi_dual_bytes;
     g_arifi_dual_bytes += size;
     GGML_LOG_DEBUG("%s: CPU_REPACK_DUAL shadow for %s (%zu bytes, total %.2f MiB)\n", __func__,
                    src0->name, size, g_arifi_dual_bytes / 1024.0 / 1024.0);
+    if (before == 0 || (before >> 26) != (g_arifi_dual_bytes >> 26)) {
+        GGML_LOG_INFO("%s: CPU_REPACK_DUAL shadow buffer size = %8.2f MiB (%zu tensors so far)\n",
+                      __func__, g_arifi_dual_bytes / 1024.0 / 1024.0, g_arifi_dual_shadows.size() + 1);
+    }
     return traits;
 }
 
@@ -5748,12 +5769,20 @@ class extra_buffer_type : ggml::cpu::extra_buffer_type {
             // cannot be exercised here, and an untested weight-layout path fails as silent wrong
             // math rather than as a crash. To lift this: quantise a small MoE to g64 Q2_0 and run
             // the --no-op-offload mode-1-vs-mode-2 equivalence check that the dense path passes.
+            //
+            // Cheap predicate first, then the cached pointer, and only then the build. This
+            // function runs per matmul per WORKER THREAD (traits.cpp:12), so anything expensive
+            // left on it is paid ~1.4k times per token: the first version reached the builder —
+            // and its exclusive lock — every single time, and measured SLOWER than doing nothing.
             if (op->op == GGML_OP_MUL_MAT &&
-                ggml_arifi_dual_eligible(op->src[0]) &&
+                ggml_arifi_dual_candidate(op->src[0]) &&
                 op->src[1]->type == GGML_TYPE_F32 &&
                 (!op->src[1]->buffer || ggml_backend_buft_is_host(op->src[1]->buffer->buft)) &&
                 ggml_n_dims(op->src[0]) == 2) {
-                return (ggml::cpu::tensor_traits *) const_cast<ggml::cpu::tensor_traits *>(
+                if (const auto * s = (const ggml_arifi_dual_shadow *) op->src[0]->extra) {
+                    return const_cast<ggml::cpu::tensor_traits *>(s->traits);
+                }
+                return const_cast<ggml::cpu::tensor_traits *>(
                     ggml_arifi_dual_shadow_ensure(op->src[0]));
             }
         }
