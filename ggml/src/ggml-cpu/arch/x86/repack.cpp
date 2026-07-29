@@ -553,7 +553,6 @@ static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
     const int qk = QK8_0;
     const int nb = n / qk;
 
-    UNUSED(bs);
 
     __m256i finalpermutemask = _mm256_set_epi32(7, 5, 3, 1, 6, 4, 2, 0);
 
@@ -655,7 +654,7 @@ static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
 
             // Accumulated output values permuted so as to be stored in appropriate order post accumulation
             acc_row = _mm256_permutevar8x32_ps(acc_row, finalpermutemask);
-            _mm256_storeu_ps(s + (y * nr + x * 8), acc_row);
+            _mm256_storeu_ps(s + (y * bs + x * 8), acc_row);
         }
     }
 }
@@ -1497,7 +1496,6 @@ void ggml_gemv_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
     assert (nc % ncols_interleaved == 0);
 
     UNUSED(s);
-    UNUSED(bs);
     UNUSED(vx);
     UNUSED(vy);
     UNUSED(nr);
@@ -1695,7 +1693,7 @@ void ggml_gemv_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
 
             // Accumulated output values permuted so as to be stored in appropriate order post accumulation
             acc_row = _mm256_permutevar8x32_ps(acc_row, finalpermutemask);
-            _mm256_storeu_ps(s + (y * nr + x * 8), _mm256_sub_ps(acc_row, acc_min_rows));
+            _mm256_storeu_ps(s + (y * bs + x * 8), _mm256_sub_ps(acc_row, acc_min_rows));
         }
     }
 
@@ -1737,7 +1735,6 @@ void ggml_gemv_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
     assert (nc % ncols_interleaved == 0);
 
     UNUSED(s);
-    UNUSED(bs);
     UNUSED(vx);
     UNUSED(vy);
     UNUSED(nr);
@@ -2030,7 +2027,7 @@ void ggml_gemv_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
             }
             // Accumulated output values permuted so as to be stored in appropriate order post accumulation
             acc_row = _mm256_permutevar8x32_ps(acc_row, finalpermutemask);
-            _mm256_storeu_ps(s + (y * nr + x * 8), _mm256_sub_ps(acc_row, acc_min_rows));
+            _mm256_storeu_ps(s + (y * bs + x * 8), _mm256_sub_ps(acc_row, acc_min_rows));
         }
     }
 #else
@@ -2067,7 +2064,6 @@ void ggml_gemm_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
     assert (nc % ncols_interleaved == 0);
 
     UNUSED(s);
-    UNUSED(bs);
     UNUSED(vx);
     UNUSED(vy);
     UNUSED(nr);
@@ -3548,7 +3544,6 @@ void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
     assert (nc % ncols_interleaved == 0);
 
     UNUSED(s);
-    UNUSED(bs);
     UNUSED(vx);
     UNUSED(vy);
     UNUSED(nr);
@@ -6475,8 +6470,7 @@ void ggml_gemv_q1_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
         assert(nr == 1);
         assert(n % qk == 0);
         assert(nc % 4 == 0);
-        UNUSED(bs);
-
+    
         const __m512i ones  = _mm512_set1_epi8(1);
         const __m512i idx01 = _mm512_set_epi32(1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0);
         const __m512i idx23 = _mm512_set_epi32(3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2);
@@ -6606,8 +6600,7 @@ void ggml_gemv_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
         assert(nr == 1);
         assert(n % qk == 0);
         assert(nc % 4 == 0);
-        UNUSED(bs);
-
+    
         const __m512i ones  = _mm512_set1_epi8(1);
         const __m512i idx01 = _mm512_set_epi32(1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0);
         const __m512i idx23 = _mm512_set_epi32(3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2);
