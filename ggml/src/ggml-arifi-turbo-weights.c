@@ -389,3 +389,12 @@ size_t quantize_tq4_1s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst
     }
     return nrows * row_size;
 }
+
+
+/* ---------------------------------------------------------------------------
+ * Accessors so the CPU dot product can reach the constant tables without
+ * duplicating them. Duplicated tables drift; a shared one cannot.
+ * --------------------------------------------------------------------------- */
+const float * arifi_tq_signs(void)      { return TQ3_0_SIGNS;     }
+const float * arifi_tq3_centroids(void) { return TQ3_0_CENTROIDS; }
+const float * arifi_tq4_centroids(void) { return TQ4_0_CENTROIDS; }

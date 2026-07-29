@@ -120,6 +120,9 @@ GGML_API void   quantize_row_tq4_1s_ref(const float * GGML_RESTRICT x, block_tq4
 GGML_API void   dequantize_row_tq3_1s(const block_tq3_1s * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
 GGML_API void   dequantize_row_tq4_1s(const block_tq4_1s * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
 GGML_API size_t quantize_tq3_1s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
+GGML_API const float * arifi_tq_signs(void);
+GGML_API const float * arifi_tq3_centroids(void);
+GGML_API const float * arifi_tq4_centroids(void);
 GGML_API size_t quantize_tq4_1s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
 
 #ifdef __cplusplus
