@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10173`, `e9fa0781f1c25fc4fe8c86be1edc6970661ad6f0`
-- Patches: **78**, all non-merge, applied in filename order.
+- Patches: **81**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 78 commit messages, same provenance trailers. Verified, not
+same file contents, same 81 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -157,6 +157,9 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 76 | `0076-provenance-catch-the-silent-trailer-block-break-inst.patch` | arifi-fork-base | `60b850cc2` | - | - | provenance: catch the silent trailer-block break instead of only reporting it |
 | 77 | `0077-gitattributes-pin-.githooks-to-LF-so-the-hook-runs-o.patch` | arifi-fork-base | `046f2cf81` | - | - | gitattributes: pin .githooks to LF so the hook runs on Linux and macOS |
 | 78 | `0078-githooks-force-a-normalized-blob-for-the-commit-msg-.patch` | arifi-fork-base | `098bb5cbf` | - | - | githooks: force a normalized blob for the commit-msg hook |
+| 79 | `0079-docs-FINDINGS-F-09-exit-1-is-the-direction-dual-resi.patch` | arifi-fork-base | `6b2c04568` | - | - | docs(FINDINGS): F-09 exit 1 is the direction - dual residency, not a forced choice |
+| 80 | `0080-repack-dual-residency-GGML_ARIFI_VNNI_REPACK-2-keeps.patch` | arifi-fork-base | `44e68f230` | - | `GGML_ARIFI_VNNI_REPACK` | repack: dual residency - GGML_ARIFI_VNNI_REPACK=2 keeps prefill on the GPU AND repacks decode |
+| 81 | `0081-repack-dual-residency-measured-both-wins-held-fix-th.patch` | arifi-fork-base | `1a3648e39` | - | `GGML_ARIFI_VNNI_REPACK` | repack: dual residency measured - both wins held; fix the hot-path cost that ate the first one |
 
 ## Measured effect, per patch
 
@@ -246,6 +249,27 @@ legal and honest value; an absent trailer is a gap and is named as one.
   LF after re-adding under the new attribute. |
 | `0078-githooks-force-a-normalized-blob-for-the-commit-msg-.patch` | packaging only, no engine behaviour changed. Verified against the RAW object
   via git cat-file - git show applies the checkout filter and reported the opposite of the truth. |
+| `0079-docs-FINDINGS-F-09-exit-1-is-the-direction-dual-resi.patch` | analysis only, no code change. The numbers quoted are the already-recorded
+  repack ON/OFF measurements, not new ones. |
+| `0080-repack-dual-residency-GGML_ARIFI_VNNI_REPACK-2-keeps.patch` | correctness and placement only; the SPEED claim is deliberately not made here
+  and is owed from a timed run. llama-server, 3 models (4 / 72 / 168 Q2_0 tensors) x 2 offload
+  variants x 3 modes x 2 prompt shapes x 3 rolls, temp 0, top_k 1, seed 42, fresh server per arm.
+  With --no-op-offload - which pins mode 2's prefill to the CPU like mode 1's, isolating the
+  shadow from where prefill ran - mode 2 is BIT-IDENTICAL to mode 1 on all 6 cells: tokens
+  identical, max \|delta logprob\| = 0.000000000, deterministic 3/3. Under default offload mode 2's
+  graph splits track MODE 0 (335) on all three models and never mode 1 (339/312/286), and mode 2
+  is still bit-identical to mode 1 on sub-threshold prompts. Shadow bytes equal mode 1's
+  CPU_REPACK buffer exactly - 4.68 / 84.16 / 95.98 MiB over 4 / 72 / 168 tensors - an independent
+  check that the predicate selects the same tensor set. Divergence from mode 0 is never larger
+  than mode 1's over the common prefix; on the 4-tensor control model all three modes are
+  token-identical. Evidence: trial-evidence/110/dual-residency/ |
+| `0081-repack-dual-residency-measured-both-wins-held-fix-th.patch` | decode +22.0% (mixed) and +23.7% (all-Q2_0) against mode 0, ranges DISJOINT, while
+  prefill is held at baseline instead of collapsing -65%/-80% as mode 1 does. Shadow cost 4.68 /
+  84.16 / 95.98 MiB on the 4- / 72- / 168-tensor models, byte-for-byte equal to what mode 1 places
+  in CPU_REPACK. Precision unchanged: with --no-op-offload, which isolates the shadow from where
+  prefill ran, mode 2 is bit-identical to mode 1 on all six model x prompt cells (max \|delta
+  logprob\| 0.000000000, deterministic 3/3). Re-verified on the shipped binary after the hot-path
+  fix. Evidence: research/local-inference/trial-evidence/110/dual-residency/ |
 
 ## Unclassified
 
@@ -276,4 +300,7 @@ rather than silently bucketed - add a rule when a new source appears.
 - `60b850cc2` provenance: catch the silent trailer-block break instead of only reporting it
 - `046f2cf81` gitattributes: pin .githooks to LF so the hook runs on Linux and macOS
 - `098bb5cbf` githooks: force a normalized blob for the commit-msg hook
+- `6b2c04568` docs(FINDINGS): F-09 exit 1 is the direction - dual residency, not a forced choice
+- `44e68f230` repack: dual residency - GGML_ARIFI_VNNI_REPACK=2 keeps prefill on the GPU AND repacks decode
+- `1a3648e39` repack: dual residency measured - both wins held; fix the hot-path cost that ate the first one
 
