@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10173`, `e9fa0781f1c25fc4fe8c86be1edc6970661ad6f0`
-- Patches: **84**, all non-merge, applied in filename order.
+- Patches: **85**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 84 commit messages, same provenance trailers. Verified, not
+same file contents, same 85 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -163,6 +163,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 82 | `0082-repack-fix-the-shadow-tensor-COUNT-in-the-accounting.patch` | arifi-fork-base | `3e3ca94c8` | - | `GGML_ARIFI_VNNI_REPACK` | repack: fix the shadow tensor COUNT in the accounting line, and strengthen the claim it supports |
 | 83 | `0083-repack-CPU-kernels-for-the-128-group-ternary-format.patch` | arifi-fork-base | `f0c578349` | - | `GGML_ARIFI_VNNI_REPACK` | repack: CPU kernels for the 128-group ternary format |
 | 84 | `0084-tests-direct-equivalence-test-for-the-ternary-repack.patch` | arifi-fork-base | `8108813c6` | - | - | tests: direct equivalence test for the ternary repack kernels |
+| 85 | `0085-docs-the-g128-repack-SPEED-numbers-measured.patch` | arifi-fork-base | `0cc066f68` | - | `GGML_ARIFI_VNNI_REPACK` | docs: the g128 repack SPEED numbers, measured |
 
 ## Measured effect, per patch
 
@@ -290,6 +291,9 @@ legal and honest value; an absent trailer is a gap and is named as one.
   reports max \|err\| 1e-6 to 4e-6 against a 1e-5 relative tolerance across all
   ten kernel/group-size combinations, and 43064.94 against a 0.000053
   tolerance for the deliberate g128-through-g64 negative control. |
+| `0085-docs-the-g128-repack-SPEED-numbers-measured.patch` | no code changed; documents measured throughput. decode 2.01 ->
+  6.67/6.69 tok/s and prompt 59.09 -> 17.44/85.84 on RIG-A, n=12 per cell, all
+  ranges disjoint. |
 
 ## Unclassified
 
