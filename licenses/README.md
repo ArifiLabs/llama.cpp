@@ -17,7 +17,7 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
 
 Phase 0 observed no source `LICENSE` or `NOTICE` file in the retained PrismML
 release material and no license grant inside the captured thecodacus patch
-artifacts. The President’s 2026-07-22 rule #0 authorizes their inclusion with
+artifacts. A 2026-07-22 project decision authorizes their inclusion with
 maximal attribution and provenance; it does not authorize inventing a license
 text. Therefore this directory contains no fabricated `prisml-*` or
 `thecodacus-*` license file.

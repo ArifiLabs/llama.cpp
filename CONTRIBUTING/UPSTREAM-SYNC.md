@@ -84,7 +84,7 @@ accept a timing number copied from an old binary.
    - `qwen35moe` load for the upstream-port proof;
    - tiered `-ngl 99 -cmoe -b 8 -ub 8` validation when streaming is affected;
    - ternary control and ternary GGUF load when PrismML work is affected.
-9. Run the President-ruled `llama-server` benchmark regression judge. Reuse a
+9. Run the `llama-server` benchmark regression judge. Reuse a
    binary during a single comparison; never reuse a historical number. Record
    model, quant, prompt shape, flags, backend, hardware, SHA, control result,
    and repeated in-process results.
