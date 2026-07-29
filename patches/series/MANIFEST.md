@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10173`, `e9fa0781f1c25fc4fe8c86be1edc6970661ad6f0`
-- Patches: **85**, all non-merge, applied in filename order.
+- Patches: **86**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 85 commit messages, same provenance trailers. Verified, not
+same file contents, same 86 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -164,6 +164,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 83 | `0083-repack-CPU-kernels-for-the-128-group-ternary-format.patch` | arifi-fork-base | `f0c578349` | - | `GGML_ARIFI_VNNI_REPACK` | repack: CPU kernels for the 128-group ternary format |
 | 84 | `0084-tests-direct-equivalence-test-for-the-ternary-repack.patch` | arifi-fork-base | `8108813c6` | - | - | tests: direct equivalence test for the ternary repack kernels |
 | 85 | `0085-docs-the-g128-repack-SPEED-numbers-measured.patch` | arifi-fork-base | `0cc066f68` | - | `GGML_ARIFI_VNNI_REPACK` | docs: the g128 repack SPEED numbers, measured |
+| 86 | `0086-docs-frame-the-g128-repack-numbers-as-a-CPU-tier-res.patch` | arifi-fork-base | `29f964b32` | - | - | docs: frame the g128 repack numbers as a CPU-tier result |
 
 ## Measured effect, per patch
 
@@ -294,6 +295,8 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0085-docs-the-g128-repack-SPEED-numbers-measured.patch` | no code changed; documents measured throughput. decode 2.01 ->
   6.67/6.69 tok/s and prompt 59.09 -> 17.44/85.84 on RIG-A, n=12 per cell, all
   ranges disjoint. |
+| `0086-docs-frame-the-g128-repack-numbers-as-a-CPU-tier-res.patch` | no code changed. Adds context to figures already measured; names
+  the same-binary GPU-vs-CPU arm as owed rather than implying it was run. |
 
 ## Unclassified
 
