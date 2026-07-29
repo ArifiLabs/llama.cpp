@@ -198,6 +198,29 @@ typedef struct {
 } block_q2_0_g128;
 static_assert(sizeof(block_q2_0_g128) == sizeof(ggml_half) + QK2_0_G128 / 4, "wrong q2_0_g128 block size/padding");
 
+// TurboQuant TQ3_1S / TQ4_1S — WHT-rotated Lloyd-Max weight formats (ArifiLabs port,
+// llama-cpp-turboquant@c26cbdffc). Serialized weight types; ids 45/46 per
+// docs/TYPE-ID-ALLOCATION.md. Geometry verified against the source structs, not their
+// comments — the source's own "// N bytes total" comments are stale (LL-252).
+#define QK_TQ3_1S 32
+typedef struct {
+    ggml_half d0;                     //  2 bytes: scale for first 16 elements
+    ggml_half d1;                     //  2 bytes: scale for last 16 elements
+    uint8_t   qs[QK_TQ3_1S * 3 / 8];  // 12 bytes: 3-bit indices packed
+} block_tq3_1s;
+static_assert(sizeof(block_tq3_1s) == 2*sizeof(ggml_half) + QK_TQ3_1S*3/8, "wrong tq3_1s block size/padding");
+
+#define QK_TQ4_1S 32
+typedef struct {
+    ggml_half d0;                     //  2 bytes: scale for first 16 elements
+    ggml_half d1;                     //  2 bytes: scale for last 16 elements
+    uint8_t   qs[QK_TQ4_1S / 2];      // 16 bytes: 4-bit indices nibble-packed
+} block_tq4_1s;
+static_assert(sizeof(block_tq4_1s) == 2*sizeof(ggml_half) + QK_TQ4_1S/2, "wrong tq4_1s block size/padding");
+
+#define QK_TQ3_0 QK_TQ3_1S
+#define QK_TQ4_0 QK_TQ4_1S
+
 #define QK4_0 32
 typedef struct {
     ggml_half d;           // delta

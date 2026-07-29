@@ -34,6 +34,10 @@ struct quant_option {
 static const std::vector<quant_option> QUANT_OPTIONS = {
     { "Q1_0",     LLAMA_FTYPE_MOSTLY_Q1_0,     " 1.125 bpw quantization",           },
     { "Q2_0",     LLAMA_FTYPE_MOSTLY_Q2_0,     " 2.25 bpw quantization (group 64)",  },
+#ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
+    { "TQ3_1S",   LLAMA_FTYPE_MOSTLY_TQ3_1S,   " 4.0 bpw TurboQuant RHT + Lloyd-Max",  },
+    { "TQ4_1S",   LLAMA_FTYPE_MOSTLY_TQ4_1S,   " 5.0 bpw TurboQuant RHT + Lloyd-Max",  },
+#endif
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
     // Taken-from: charlie12345/ROCmFPX@3edc3d31e (tools/quantize/quantize.cpp).
     // Base formats only; the _EVEN/_LEAN/_COHERENT/_STRIX/_AGENT rows there select

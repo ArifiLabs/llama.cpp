@@ -381,6 +381,67 @@ static void ggml_vec_dot_rocmfpx_fp8_q8_0(int n, float * GGML_RESTRICT s, size_t
 }
 #endif // GGML_ARIFI_ROCMFPX_FORMATS
 
+
+#ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
+void quantize_row_tq3_1s_ref(const float * GGML_RESTRICT x, block_tq3_1s * GGML_RESTRICT y, int64_t k);
+void quantize_row_tq4_1s_ref(const float * GGML_RESTRICT x, block_tq4_1s * GGML_RESTRICT y, int64_t k);
+
+// TurboQuant weight formats: dequantize-and-dot against a q8_0 activation row.
+//
+// The upstream implementation calls malloc() TWICE PER INVOCATION for whole-row scratch.
+// vec_dot is the innermost hot path, so that alone accounts for much of the "TQ is slow"
+// result. Both formats are 32-value blocks and dequantize block-locally, so a fixed stack
+// buffer is sufficient and the allocation disappears entirely. Numerically identical:
+// the same to_float kernels run over the same values, only the buffering changes.
+static void ggml_vec_dot_turbo_weight_q8_0(enum ggml_type wtype, int blck,
+                                           int n, float * GGML_RESTRICT s,
+                                           const void * GGML_RESTRICT vx,
+                                           const void * GGML_RESTRICT vy) {
+    GGML_ASSERT(n % blck == 0);
+
+    const size_t wsz = ggml_type_size(wtype);
+    const char * xp  = (const char *) vx;
+
+    const struct ggml_type_traits * wtr = ggml_get_type_traits(wtype);
+    const struct ggml_type_traits * atr = ggml_get_type_traits(GGML_TYPE_Q8_0);
+
+    float wbuf[32];
+    float abuf[QK8_0];
+    GGML_ASSERT(blck <= (int) (sizeof(wbuf)/sizeof(wbuf[0])));
+
+    // Activations are q8_0 (32/block) and the weight blocks are 32 wide, so the two grids
+    // coincide; dequantize one block of each and accumulate.
+    const char * ap = (const char *) vy;
+    float sum = 0.0f;
+
+    for (int i = 0; i < n; i += blck) {
+        wtr->to_float(xp + (size_t)(i / blck) * wsz, wbuf, blck);
+        atr->to_float(ap + (size_t)(i / QK8_0) * sizeof(block_q8_0), abuf, QK8_0);
+        for (int j = 0; j < blck; j++) {
+            sum += wbuf[j] * abuf[j];
+        }
+    }
+
+    *s = sum;
+}
+
+static void ggml_vec_dot_tq3_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
+                                     const void * GGML_RESTRICT vx, size_t bx,
+                                     const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    GGML_ASSERT(nrc == 1);
+    GGML_UNUSED(bs); GGML_UNUSED(bx); GGML_UNUSED(by); GGML_UNUSED(nrc);
+    ggml_vec_dot_turbo_weight_q8_0(GGML_TYPE_TQ3_1S, QK_TQ3_1S, n, s, vx, vy);
+}
+
+static void ggml_vec_dot_tq4_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
+                                     const void * GGML_RESTRICT vx, size_t bx,
+                                     const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    GGML_ASSERT(nrc == 1);
+    GGML_UNUSED(bs); GGML_UNUSED(bx); GGML_UNUSED(by); GGML_UNUSED(nrc);
+    ggml_vec_dot_turbo_weight_q8_0(GGML_TYPE_TQ4_1S, QK_TQ4_1S, n, s, vx, vy);
+}
+#endif
+
 static const struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {
     [GGML_TYPE_F32] = {
         .from_float               = (ggml_from_float_t) ggml_cpu_fp32_to_fp32,
@@ -412,6 +473,20 @@ static const struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {
         .vec_dot_type             = GGML_TYPE_Q8_0,
         .nrows                    = 1,
     },
+#ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
+    [GGML_TYPE_TQ3_1S] = {
+        .from_float               = (ggml_from_float_t) quantize_row_tq3_1s_ref,
+        .vec_dot                  = ggml_vec_dot_tq3_1s_q8_0,
+        .vec_dot_type             = GGML_TYPE_Q8_0,
+        .nrows                    = 1,
+    },
+    [GGML_TYPE_TQ4_1S] = {
+        .from_float               = (ggml_from_float_t) quantize_row_tq4_1s_ref,
+        .vec_dot                  = ggml_vec_dot_tq4_1s_q8_0,
+        .vec_dot_type             = GGML_TYPE_Q8_0,
+        .nrows                    = 1,
+    },
+#endif
     [GGML_TYPE_Q4_0] = {
         .from_float               = quantize_row_q4_0,
         .vec_dot                  = ggml_vec_dot_q4_0_q8_0,
