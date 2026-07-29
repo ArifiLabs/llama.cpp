@@ -1,0 +1,40 @@
+From 4fec906587fde471cebcc1b8bda2435de97cfbd4 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 22 Jul 2026 19:31:10 -0400
+Subject: [PATCH] powerinfer: repack carve-out for streamed tensors [series
+ 0008a]
+
+Taken-from: Tiiny-AI/PowerInfer@8bd56d69906c9d2dba4d3bf6899763401e01a9a4
+Origin: ArifiLabs lane-110
+Measured-effect: Fixes garbage output from AARCH64 repack of streamed experts (RESULTS rung2).
+---
+ ggml/src/ggml-cpu/repack.cpp | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
+index f18758f16..495278ac5 100644
+--- a/ggml/src/ggml-cpu/repack.cpp
++++ b/ggml/src/ggml-cpu/repack.cpp
+@@ -4526,6 +4526,22 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
+ }  // namespace ggml::cpu::repack
+ 
+ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(const struct ggml_tensor * cur) {
++    // lane-110 M3 graft tag:repack-carveout — fork parity (smallthinker ggml-cpu-aarch64.cpp:6288-6299):
++    // the expert bundle must hold PLAIN Q4_0 bytes and the streaming kernels read plain Q4_0,
++    // so expert tensors must NOT be runtime-repacked in either bundle-gen or streaming mode.
++    if (getenv("EXPERT_BUNDLE_PATH") != nullptr && cur->name != nullptr) {
++        const char * pi_n = cur->name;
++        if (strstr(pi_n, "ffn_up_exps") || strstr(pi_n, "ffn_gate_exps") || strstr(pi_n, "ffn_down_exps")) {
++            return nullptr;
++        }
++    }
++    if (getenv("GENERATE_EXPERT_BUNDLE") != nullptr && cur->name != nullptr) {
++        const char * pi_n = cur->name;
++        if (strstr(pi_n, "ffn_up") || strstr(pi_n, "ffn_gate") || strstr(pi_n, "ffn_down")) {
++            return nullptr;
++        }
++    }
++
+     // instance for Q4
+     static const ggml::cpu::repack::tensor_traits<block_q4_0, 4, 4, GGML_TYPE_Q8_0> q4_0_4x4_q8_0;
+     static const ggml::cpu::repack::tensor_traits<block_q4_0, 8, 4, GGML_TYPE_Q8_0> q4_0_4x8_q8_0;

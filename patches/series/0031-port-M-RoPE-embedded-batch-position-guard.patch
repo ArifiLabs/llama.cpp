@@ -1,0 +1,28 @@
+From 20f923fc6f4121660c7e14ee227b48ef889d9796 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 23 Jul 2026 07:10:22 -0400
+Subject: [PATCH] port: M-RoPE embedded-batch position guard
+
+Route a batch carrying embeddings through the overlapping-position rule even when
+batch.token is populated (batch.token && !batch.embd). phase-3a slot.
+
+Taken-from: charlie12345/ROCmFPX@rocmfpx-a6a9376
+Source-id: rocmfpx-a6a9376-fork
+Origin: ArifiLabs lane-110
+---
+ src/llama-batch.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/llama-batch.cpp b/src/llama-batch.cpp
+index 2b98a552f..bb3027119 100644
+--- a/src/llama-batch.cpp
++++ b/src/llama-batch.cpp
+@@ -261,7 +261,7 @@ bool llama_batch_allocr::init(
+ 
+             const llama_pos p0 = memory ? memory->seq_pos_max(s) : -1;
+ 
+-            if (batch.token) {
++            if (batch.token && !batch.embd) {
+                 if (p0 >= 0 && p0 >= seq_pos_min(s)) {
+                     LLAMA_LOG_ERROR(
+                             "%s: the tokens of sequence %d in the input batch have inconsistent sequence positions:\n"

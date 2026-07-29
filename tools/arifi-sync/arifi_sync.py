@@ -847,9 +847,66 @@ def cmd_judge(repo: str, cfg: dict, args) -> int:
         say("confirmed: no sibling build or inference is running, the box is otherwise idle, and")
         say("both arms will use the SAME binary. Bench purity: reuse a binary, never a number.")
         return 1
-    raise Loud("UNEXERCISED: the timed llama-server harness has never been run by this tool.\n"
-               "It is deliberately left as a stop rather than a plausible-looking fake result.\n"
-               "Wire it to the lane's existing llama-server harness and delete this raise.")
+    # The harness (wired lane-110D, 2026-07-28): launch llama-server, wait for /health,
+    # POST /completion, require HTTP 200 + non-empty finite output. Correctness gate,
+    # not a bench — timings are reported but never compared to a historical number.
+    import json as _json
+    import time as _time
+    import urllib.request as _rq
+    port = int(j.get("port", 8199))
+    prompt = j.get("prompt", "The capital of France is")
+    n_predict = int(j.get("n_predict", 16))
+    cmd = [binary, "-m", model, "--port", str(port), "--host", "127.0.0.1"] + list(j["args"])
+    step("launching judge server (port %d)" % port)
+    logpath = os.path.join(repo, "judge-server.log")
+    logf = open(logpath, "w", encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+    try:
+        deadline = _time.time() + 180
+        up = False
+        while _time.time() < deadline:
+            if proc.poll() is not None:
+                raise Loud("judge server DIED during load (exit %s). Log: %s"
+                           % (proc.returncode, logpath))
+            try:
+                with _rq.urlopen("http://127.0.0.1:%d/health" % port, timeout=2) as r:
+                    if r.status == 200:
+                        up = True
+                        break
+            except Exception:
+                _time.sleep(1.0)
+        if not up:
+            raise Loud("judge server never became healthy within 180 s. Log: %s" % logpath)
+        body = _json.dumps({"prompt": prompt, "n_predict": n_predict,
+                            "temperature": 0}).encode()
+        req = _rq.Request("http://127.0.0.1:%d/completion" % port, data=body,
+                          headers={"Content-Type": "application/json"})
+        t0 = _time.time()
+        with _rq.urlopen(req, timeout=300) as r:
+            if r.status != 200:
+                raise Loud("judge /completion returned HTTP %d" % r.status)
+            resp = _json.loads(r.read().decode("utf-8", errors="replace"))
+        dt = _time.time() - t0
+        content = resp.get("content", "")
+        say("judge output : %r" % content[:120])
+        timings = resp.get("timings", {})
+        if timings:
+            say("judge timings: prompt %.2f t/s, predict %.2f t/s (informational only — "
+                "never compare to a historical number)"
+                % (timings.get("prompt_per_second") or 0.0,
+                   timings.get("predicted_per_second") or 0.0))
+        if not content.strip():
+            raise Loud("judge FAILED: empty completion. Log: %s" % logpath)
+        say("judge PASS   : llama-server loaded the model and produced a completion "
+            "(%.1f s round-trip)" % dt)
+        return 0
+    finally:
+        proc.kill()
+        try:
+            proc.wait(timeout=30)
+        except Exception:
+            pass
+        logf.close()
 
 
 def cmd_bump(repo: str, cfg: dict, args) -> int:

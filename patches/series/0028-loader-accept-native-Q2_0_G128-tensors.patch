@@ -1,0 +1,33 @@
+From 730964171358e8b55b68ba6f1dcfb9638483c62b Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 23 Jul 2026 06:08:32 -0400
+Subject: [PATCH] loader: accept native Q2_0_G128 tensors
+
+Native type-43 tensors were already offset-validated by gguf_init using g128
+sizing; accept them directly in the g128 confirm loop, legacy Q2_0 remap kept
+underneath for compatibility.
+
+Origin: ArifiLabs lane-110
+Measured-effect: build fix only
+---
+ src/llama-model-loader.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index 61cebf331..1c517c278 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -211,6 +211,13 @@ static bool llama_verify_q2_0_g128_spans(
+     bool confirmed = false;
+ 
+     for (ggml_tensor * tensor = ggml_get_first_tensor(ctx); tensor; tensor = ggml_get_next_tensor(ctx, tensor)) {
++        // A native type-43 entry was already offset-validated by gguf_init using
++        // g128 sizing. It needs no legacy-Q2_0 reinterpretation below.
++        if (tensor->type == GGML_TYPE_Q2_0_G128) {
++            confirmed = true;
++            continue;
++        }
++
+         if (tensor->type != GGML_TYPE_Q2_0) {
+             continue;
+         }

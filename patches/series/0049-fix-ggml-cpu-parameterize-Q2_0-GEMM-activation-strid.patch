@@ -1,0 +1,90 @@
+From 61f70cccd4575aea0ec3123839e0a4b376643938 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 24 Jul 2026 17:40:08 -0400
+Subject: [PATCH] fix(ggml-cpu): parameterize Q2_0 GEMM activation stride by
+ QK2_0/QK8_0 - g64 NaN
+
+The ported AVX512-VNNI Q2_0 GEMM returned NaN on every multi-token prefill.
+
+Root cause: PrismML's tree is g128, so QK2_0/QK8_0 == 4 there and the kernel
+hardcodes the activation-block stride as the literal 4. This fork is canonical
+g64 (QK2_0 = 64, ggml/src/ggml-common.h:187), where the ratio is 2. The
+block_q8_0 activation pointer therefore advanced twice as fast as the loop
+consumed it, ran past the packed activation buffer, and an out-of-bounds
+a_blk->d[m] decoded as FP16 NaN that poisoned the FMA accumulator.
+
+This is a downstream g64 integration defect, NOT a defect in PrismML's tree -
+at g128 both literals are correct. Kernel design and credit remain theirs.
+
+Four lines, two files, GEMM only:
+  (4 * y * nb)      -> (y * nb * (QK2_0 / QK8_0))
+  a_ptr + 4 * l + k -> a_ptr + l * (QK2_0 / QK8_0) + k
+in ggml_gemm_q2_0_4x8_q8_0 (arch/x86/repack.cpp:6664,6681) and
+ggml_gemm_q2_0_4x8_q8_0_generic (repack.cpp:2767,2786). This is exactly the
+form ggml_gemv_q2_0_4x8_q8_0 already used correctly at :6614, which is why
+GEMV never produced NaN.
+
+The Q1_0 arms are deliberately untouched. They hardcode 4 as well, but
+QK1_0 = 128, so 4 == QK1_0/QK8_0 is correct for this fork's Q1 format. It is
+a future portability hazard, not a present defect.
+
+Verified: llama-server (F-085), qwen2.5-0.5b-light-q8_0-4xffndownQ2_0-g64.gguf,
+-ngl 0 -c 1024 -t 8 --no-host, 11-token prefill. Engagement proven by
+'CPU_REPACK model buffer size = 4.68 MiB' ON vs no CPU_REPACK line OFF. NaN
+gone; ON finite, coherent and deterministic 3/3. Bit-identity is addressed in
+the following commits and is NOT yet established.
+
+Taken-from: PrismML-Eng/llama.cpp (Q2_0 4x8 VNNI GEMM design)
+Ported-mechanism: g128 -> g64 stride parameterization
+Source-path: ggml/src/ggml-cpu/repack.cpp, ggml/src/ggml-cpu/arch/x86/repack.cpp
+Evidence: research/local-inference/trial-evidence/110/vnni-g64-fix/
+Origin: ArifiLabs/vnni-repack
+---
+ ggml/src/ggml-cpu/arch/x86/repack.cpp | 4 ++--
+ ggml/src/ggml-cpu/repack.cpp          | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/ggml/src/ggml-cpu/arch/x86/repack.cpp b/ggml/src/ggml-cpu/arch/x86/repack.cpp
+index 480f1b1fe..aa1b119d9 100644
+--- a/ggml/src/ggml-cpu/arch/x86/repack.cpp
++++ b/ggml/src/ggml-cpu/arch/x86/repack.cpp
+@@ -6661,7 +6661,7 @@ void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+         }
+ 
+         for (int y = 0; y < nr / 4; y++) {
+-            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (4 * y * nb);
++            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb * (QK2_0 / QK8_0));
+             for (int x = 0; x < nc / 4; x++) {
+                 const block_q2_0x4 * b_ptr = (const block_q2_0x4 *) vx + (x * nb);
+ 
+@@ -6678,7 +6678,7 @@ void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+                     const __m512 d0v23 = _mm512_permutexvar_ps(idx23, d0);
+ 
+                     for (int k = 0; k < QK2_0 / QK8_0; ++k) {
+-                        const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + 4 * l + k;
++                        const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + l * (QK2_0 / QK8_0) + k;
+ 
+                         __m512i w01, w23;
+                         __q2_0_expand_x4((const uint8_t *) b_ptr[l].qs + 32 * k, &w01, &w23);
+diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
+index c314da0e0..0f3f33d78 100644
+--- a/ggml/src/ggml-cpu/repack.cpp
++++ b/ggml/src/ggml-cpu/repack.cpp
+@@ -2764,7 +2764,7 @@ void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,
+     float sumf[4][4];
+ 
+     for (int y = 0; y < nr / 4; y++) {
+-        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (4 * y * nb);
++        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb * (QK2_0 / QK8_0));
+         for (int x = 0; x < nc / ncols_interleaved; x++) {
+             const block_q2_0x4 * b_ptr = (const block_q2_0x4 *) vx + (x * nb);
+ 
+@@ -2783,7 +2783,7 @@ void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,
+                 };
+ 
+                 for (int k = 0; k < QK2_0 / QK8_0; ++k) {
+-                    const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + 4 * l + k;
++                    const block_q8_0x4 * GGML_RESTRICT a_blk = a_ptr + l * (QK2_0 / QK8_0) + k;
+                     const float a_d[4] = {
+                         GGML_CPU_FP16_TO_FP32(a_blk->d[0]),
+                         GGML_CPU_FP16_TO_FP32(a_blk->d[1]),

@@ -1,0 +1,62 @@
+From 1f60456806f0aff8dec7b6dd5d367451433878cb Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 22 Jul 2026 19:31:02 -0400
+Subject: [PATCH] build: wire powerinfer lib + AVX-spill cure into CMake
+ [series 0004]
+
+Taken-from: Tiiny-AI/PowerInfer@8bd56d69906c9d2dba4d3bf6899763401e01a9a4
+Origin: ArifiLabs lane-110
+Measured-effect: Build-system only.
+---
+ CMakeLists.txt                   | 8 ++++++++
+ ggml/src/ggml-cpu/CMakeLists.txt | 4 ++++
+ src/CMakeLists.txt               | 2 ++
+ 3 files changed, 14 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3df1d82db..b9e4adc82 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -191,6 +191,14 @@ if (LLAMA_USE_SYSTEM_GGML)
+     add_library(ggml ALIAS ggml::ggml)
+ endif()
+ 
++# -- PowerInfer (lane-110 M3 graft)
++if (NOT DEFINED POWERINFER_GROUP_SIZE)
++    set(POWERINFER_GROUP_SIZE 32)
++endif()
++if (NOT TARGET powerinfer-${POWERINFER_GROUP_SIZE})
++    add_subdirectory(powerinfer)
++endif()
++
+ if (NOT TARGET ggml AND NOT LLAMA_USE_SYSTEM_GGML)
+     set(GGML_BUILD_NUMBER ${LLAMA_BUILD_NUMBER})
+     set(GGML_BUILD_COMMIT ${LLAMA_BUILD_COMMIT})
+diff --git a/ggml/src/ggml-cpu/CMakeLists.txt b/ggml/src/ggml-cpu/CMakeLists.txt
+index 836bae4d0..805e84b15 100644
+--- a/ggml/src/ggml-cpu/CMakeLists.txt
++++ b/ggml/src/ggml-cpu/CMakeLists.txt
+@@ -730,6 +730,10 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
+ 
+     message(STATUS "Adding CPU backend variant ${GGML_CPU_NAME}: ${ARCH_FLAGS} ${ARCH_DEFINITIONS}")
+     target_sources(${GGML_CPU_NAME} PRIVATE ${GGML_CPU_SOURCES})
++    # -- PowerInfer (lane-110 M3 graft) AVX-crash cure (mingw 32B ymm spill at 16B ABI slot) + link the sparse lib
++    target_compile_options(${GGML_CPU_NAME} PRIVATE ${ARCH_FLAGS} -mprefer-vector-width=128)
++    target_link_libraries(${GGML_CPU_NAME} PRIVATE powerinfer-${POWERINFER_GROUP_SIZE})
++    # (original stock line follows, harmless duplicate of ARCH_FLAGS):
+     target_compile_options(${GGML_CPU_NAME} PRIVATE ${ARCH_FLAGS})
+     target_compile_definitions(${GGML_CPU_NAME} PRIVATE ${ARCH_DEFINITIONS})
+ 
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 320784c3a..b510da5c2 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -53,6 +53,8 @@ target_include_directories(llama PRIVATE .)
+ target_include_directories(llama PUBLIC ../include)
+ target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
+ 
++# -- PowerInfer (lane-110 M3 graft)
++target_link_libraries(llama PRIVATE powerinfer-${POWERINFER_GROUP_SIZE})
+ target_link_libraries(llama PUBLIC ggml)
+ 
+ if (BUILD_SHARED_LIBS)

@@ -1,0 +1,34 @@
+From c99589308e0e31cb53efaa7b6ec8fba4805d0082 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 23 Jul 2026 04:44:21 -0400
+Subject: [PATCH] vulkan: fix f16 promotion in q2_0_g128 copy_to_quant
+
+Origin: ArifiLabs lane-110
+Measured-effect: build fix only
+---
+ ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp b/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
+index 9490e9185..6025e15dc 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
+@@ -244,7 +244,8 @@ void quantize(uint dst_idx, uint src_idx)
+     float amax = 0.0;
+ 
+     [[unroll]] for (int j = 0; j < QUANT_K_Q2_0_G128; ++j) {
+-        amax = max(amax, abs(data_s[src_idx + j]));
++        const float v = float(data_s[src_idx + j]);
++        amax = max(amax, abs(v));
+     }
+ 
+     const float d  = amax;
+@@ -257,7 +258,7 @@ void quantize(uint dst_idx, uint src_idx)
+     }
+ 
+     [[unroll]] for (int j = 0; j < QUANT_K_Q2_0_G128; ++j) {
+-        int q = int(round(data_s[src_idx + j] * id)) + 1;
++        int q = int(round(float(data_s[src_idx + j]) * id)) + 1;
+         q = clamp(q, 0, 3);
+         data_q[dst_idx].qs[j / 4] |= uint8_t(q << ((j % 4) * 2));
+     }

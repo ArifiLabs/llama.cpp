@@ -1,0 +1,545 @@
+From 2e358c0de952b9cb3d34faa315fab058e760fb4d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 25 Jul 2026 05:00:41 -0400
+Subject: [PATCH] feat: --arifi-profile and a CPU-only VNNI-repack startup
+ advisory
+
+GGML_ARIFI_VNNI_REPACK ships OFF because it was measured OFF-is-right on
+this rig, where weights are GPU-offloaded and ON costs 77-88% of prompt
+throughput. On a CPU-only path the same toggle is the largest win in the fork
+(+326.7%/+441.8% prompt). That is a DISCLOSURE gap, not a wrong default, and
+these two mechanisms close it without moving anything.
+
+common/arifi-profile.{h,cpp} + --arifi-profile NAME (env LLAMA_ARG_ARIFI_PROFILE
+via the existing set_env path). cpu-only and gpu-offload each resolve to a
+documented set of RUNTIME env toggles and log every one with its evidence. A
+variable the caller already set always wins and is logged as KEPT. An unknown
+name is a hard error listing the ones that exist. gpu-offload changes no
+behaviour at all - GGML_ARIFI_VNNI_REPACK=0 and unset take the same branch - it
+exists so a benchmark log states what was in effect. Applied during argument
+parsing because the toggles latch into function-local statics at first buffer
+init.
+
+The profile lives in common/ and only sets variables the engine already reads,
+so ggml gains no dependency on anything and there is nothing extra to carry
+across a rebase.
+
+Build-time options are never faked. GGML_ARIFI_ROCMFPX_FORMATS is a CMake
+option whose vec_dot is chosen in type_traits_cpu[] at link time, so profiles
+REPORT it (compiled ON/OFF, NOT settable here) and never set it, and setting it
+in the environment now produces a warning that it is being ignored - with or
+without a profile, since the trap does not need one.
+
+src/llama.cpp gains the advisory. It fires only when device selection ended with
+zero offload devices, extra bufts are enabled, the model carries Q1_0/Q2_0
+tensors, and the caller has not decided. The predicate is deliberately not "is a
+GPU present": that question cannot be answered before buffer-type selection, and
+what matters is whether THESE tensors offload. Q2_0_G128 does not count - the
+loader has remapped it and every repack kernel is hard-wired to 64-value blocks,
+so advising it would be false. The no_alloc estimation pass llama-server runs
+before the real load is skipped, so it prints once.
+
+Auto-detection remains NOT implemented, on purpose; docs/HARDWARE-PROFILES.md
+now says what shipped and lists what did not.
+
+Also corrected in that doc: the CPU-only section claimed --no-host is required.
+make_cpu_buft_list() only inserts a host buffer type by iterating the SELECTED
+offload devices, so with none selected there is nothing to outrank the CPU extra
+buffer types. --no-host is required in the mixed case (-ngl 0 with a device
+selected), which is the condition the measurements were taken in.
+
+Origin: ArifiLabs/lane-110C
+Evidence: research/local-inference/trial-evidence/110/run-journal.jsonl (provenance-and-profiles)
+Measured-effect: FUNCTIONAL, NOT TIMED - no throughput number was produced or claimed by this work, and no shipped default moved. Verified on build-vulkan (arifi_sync build exit 0, recipe diff PASS before and after) with qwen2.5-0.5b-instruct-Q2_0-g64.gguf: -dev none --arifi-profile cpu-only puts 95.98 MiB into CPU_REPACK and drops the rejected-tensor count from 290 to 122, where the same run without the profile leaves CPU_REPACK at 0.00 MiB. The advisory prints exactly one block on the CPU-only path (168 Q1_0/Q2_0 tensors) and is silent on the Vulkan path, when GGML_ARIFI_VNNI_REPACK is already set, and on the no_alloc pass. A run with no new flags produces no new output at all.
+---
+ common/CMakeLists.txt     |   2 +
+ common/arg.cpp            |  22 ++++++
+ common/arifi-profile.cpp  | 156 ++++++++++++++++++++++++++++++++++++++
+ common/arifi-profile.h    |  27 +++++++
+ docs/HARDWARE-PROFILES.md | 124 ++++++++++++++++++++++++++----
+ src/llama.cpp             |  54 +++++++++++++
+ 6 files changed, 370 insertions(+), 15 deletions(-)
+ create mode 100644 common/arifi-profile.cpp
+ create mode 100644 common/arifi-profile.h
+
+diff --git a/common/CMakeLists.txt b/common/CMakeLists.txt
+index 799d22751..e7210d783 100644
+--- a/common/CMakeLists.txt
++++ b/common/CMakeLists.txt
+@@ -56,6 +56,8 @@ set(TARGET llama-common)
+ add_library(${TARGET}
+     arg.cpp
+     arg.h
++    arifi-profile.cpp
++    arifi-profile.h
+     base64.hpp
+     chat-auto-parser-generator.cpp
+     chat-auto-parser-helpers.cpp
+diff --git a/common/arg.cpp b/common/arg.cpp
+index 79480e06f..62bf7d2ce 100644
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -1,5 +1,6 @@
+ #include "arg.h"
+ 
++#include "arifi-profile.h"
+ #include "build-info.h"
+ #include "chat.h"
+ #include "common.h"
+@@ -814,6 +815,10 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
+     // parse all CLI args now, so that -hf is available below for remote preset resolution
+     parse_cli_args();
+ 
++    // ArifiLabs: a build-time option set in the environment does nothing, and silently doing
++    // nothing is the failure docs/HARDWARE-PROFILES.md exists to prevent. Runs profile or not.
++    common_arifi_profile_warn_build_time_env();
++
+     postprocess_cpu_params(params.cpuparams,       nullptr);
+     postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
+ 
+@@ -1433,6 +1438,23 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+             }
+         }
+     ).set_examples({LLAMA_EXAMPLE_COMPLETION, LLAMA_EXAMPLE_CLI, LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_LOOKUP}));
++    // ArifiLabs: opt-in hardware profile. Applied here, during parsing, because the toggles it
++    // sets are latched the first time a tensor buffer is initialised - see arifi-profile.h.
++    add_opt(common_arg(
++        {"--arifi-profile"}, "NAME",
++        string_format(
++            "ArifiLabs hardware profile: %s (default: none). Sets a documented group of runtime "
++            "toggles and logs every one of them. An environment variable you set yourself always "
++            "wins, and no shipped default changes. See docs/HARDWARE-PROFILES.md",
++            common_arifi_profile_names().c_str()),
++        [](common_params &, const std::string & value) {
++            if (!common_arifi_profile_apply(value)) {
++                throw std::invalid_argument(string_format(
++                    "error: unknown --arifi-profile '%s' (known profiles: %s)\n",
++                    value.c_str(), common_arifi_profile_names().c_str()));
++            }
++        }
++    ).set_env("LLAMA_ARG_ARIFI_PROFILE"));
+     add_opt(common_arg(
+         {"-t", "--threads"}, "N",
+         string_format("number of CPU threads to use during generation (default: %d)", params.cpuparams.n_threads),
+diff --git a/common/arifi-profile.cpp b/common/arifi-profile.cpp
+new file mode 100644
+index 000000000..266959865
+--- /dev/null
++++ b/common/arifi-profile.cpp
+@@ -0,0 +1,156 @@
++#include "arifi-profile.h"
++
++#include "log.h"
++
++#include <cstdlib>
++#include <string>
++#include <vector>
++
++// see arifi-profile.h and docs/HARDWARE-PROFILES.md
++
++namespace {
++
++struct arifi_setting {
++    const char * env;
++    const char * value;
++    const char * why;
++};
++
++struct arifi_profile {
++    const char * name;
++    const char * what;
++    std::vector<arifi_setting> settings;
++};
++
++// A profile may only list variables the engine reads at RUNTIME. Build-time options belong in
++// build_time_only below, where they are reported and never set.
++const std::vector<arifi_profile> & profiles() {
++    static const std::vector<arifi_profile> all = {
++        {
++            "cpu-only",
++            "no GPU backend in use - every matmul runs on the CPU",
++            {
++                { "GGML_ARIFI_VNNI_REPACK", "1",
++                  "measured on a CPU-only path: prompt +326.7% / +441.8%, decode +19.9% / +23.6% "
++                  "(two g64 models, ArifiLabs rig, 2026-07-24). Engages only for g64 Q1_0/Q2_0 weights" },
++                { "GGML_SCHED_PREFETCH_EXPERTS", "0",
++                  "nothing is offloaded, so there is no host-to-device transfer to hide. This is "
++                  "already the default; the profile states it so a benchmark record is unambiguous" },
++            },
++        },
++        {
++            "gpu-offload",
++            "weights land on a GPU - this is the shipped default, stated explicitly",
++            {
++                { "GGML_ARIFI_VNNI_REPACK", "0",
++                  "repacked weights lose large-batch GPU-offload eligibility: measured prompt "
++                  "-77.1% / -88.1% on the ArifiLabs Vulkan rig. OFF is already the shipped default, "
++                  "so this profile changes no behaviour - it only makes the choice greppable" },
++            },
++        },
++    };
++    return all;
++}
++
++// Resolved at LINK time. Listing one here is a promise that the mechanism will NEVER pretend to
++// set it: it is reported, and a matching environment variable is called out as inert.
++struct arifi_build_time_option {
++    const char * name;
++    bool         compiled_in;
++    const char * how;
++};
++
++const std::vector<arifi_build_time_option> & build_time_only() {
++    static const std::vector<arifi_build_time_option> all = {
++        { "GGML_ARIFI_ROCMFPX_FORMATS",
++#ifdef GGML_ARIFI_ROCMFPX_FORMATS
++          true,
++#else
++          false,
++#endif
++          "CMake option; its vec_dot lives in type_traits_cpu[] and is chosen when the binary is "
++          "linked. Rebuild with -DGGML_ARIFI_ROCMFPX_FORMATS=ON to change it" },
++    };
++    return all;
++}
++
++bool env_is_set(const char * name) {
++    const char * v = std::getenv(name);
++    return v != nullptr && v[0] != '\0';
++}
++
++bool env_set(const char * name, const char * value) {
++#if defined(_WIN32)
++    return _putenv_s(name, value) == 0;
++#else
++    return setenv(name, value, /*overwrite =*/ 1) == 0;
++#endif
++}
++
++} // namespace
++
++std::string common_arifi_profile_names() {
++    std::string out;
++    for (const auto & p : profiles()) {
++        if (!out.empty()) {
++            out += ", ";
++        }
++        out += p.name;
++    }
++    return out;
++}
++
++void common_arifi_profile_warn_build_time_env() {
++    for (const auto & o : build_time_only()) {
++        if (env_is_set(o.name)) {
++            LOG_WRN("arifi profile: %s is set in the environment and is being IGNORED - it is a "
++                    "build-time option, not a runtime toggle. This binary was compiled with it %s. %s.\n",
++                    o.name, o.compiled_in ? "ON" : "OFF", o.how);
++        }
++    }
++}
++
++bool common_arifi_profile_apply(const std::string & name) {
++    const arifi_profile * chosen = nullptr;
++    for (const auto & p : profiles()) {
++        if (name == p.name) {
++            chosen = &p;
++            break;
++        }
++    }
++    if (chosen == nullptr) {
++        return false;
++    }
++
++    LOG_INF("arifi profile: '%s' selected - %s\n", chosen->name, chosen->what);
++    LOG_INF("arifi profile: evidence for every line below is docs/HARDWARE-PROFILES.md and docs/OPTIONS-REGISTRY.md\n");
++
++    for (const auto & s : chosen->settings) {
++        const char * existing = std::getenv(s.env);
++        if (existing != nullptr && existing[0] != '\0') {
++            // an explicit choice by the caller always outranks a profile
++            if (std::string(existing) == s.value) {
++                LOG_INF("arifi profile:   %s=%s (already set to the profile value)\n", s.env, existing);
++            } else {
++                LOG_WRN("arifi profile:   %s=%s KEPT - your environment wins; the profile wanted '%s'\n",
++                        s.env, existing, s.value);
++            }
++            continue;
++        }
++        if (!env_set(s.env, s.value)) {
++            LOG_ERR("arifi profile:   %s could NOT be set - the profile is incomplete and the run is "
++                    "not what you asked for\n", s.env);
++            continue;
++        }
++        LOG_INF("arifi profile:   %s=%s - %s\n", s.env, s.value, s.why);
++    }
++
++    for (const auto & o : build_time_only()) {
++        LOG_INF("arifi profile:   %s is build-time, compiled %s, NOT settable here - %s\n",
++                o.name, o.compiled_in ? "ON" : "OFF", o.how);
++    }
++
++    LOG_INF("arifi profile: no shipped default was changed by this fork; a profile is opt-in and "
++            "sets only the variables printed above\n");
++    return true;
++}
+diff --git a/common/arifi-profile.h b/common/arifi-profile.h
+new file mode 100644
+index 000000000..373b3a7e0
+--- /dev/null
++++ b/common/arifi-profile.h
+@@ -0,0 +1,27 @@
++#pragma once
++
++#include <string>
++
++// ArifiLabs hardware profiles - see docs/HARDWARE-PROFILES.md.
++//
++// A profile is a NAMED, documented set of runtime environment toggles. It only ever sets
++// variables the engine already reads, it never overrides one the caller set explicitly, and
++// it logs every decision verbatim. Selecting no profile changes nothing: every shipped
++// default is exactly what it was before this file existed.
++//
++// Ordering constraint: a profile must be applied BEFORE the first model load. The toggles it
++// sets are latched into function-local statics the first time a tensor buffer is initialised
++// (see ggml_arifi_vnni_repack_enabled() in ggml/src/ggml-cpu/repack.cpp). Applying one from
++// the argument parser satisfies this; applying one after a model exists does not.
++
++// Applies the named profile. Returns false, and leaves the environment untouched, if the name
++// is not known. Logs every variable it sets, keeps, or cannot set.
++bool common_arifi_profile_apply(const std::string & name);
++
++// "cpu-only, gpu-offload" - for --help text and error messages.
++std::string common_arifi_profile_names();
++
++// Warns about environment variables that LOOK like fork toggles but are resolved at LINK time,
++// so setting them in the environment does nothing. Cheap, and called whether or not a profile
++// was selected, because the trap does not require a profile to fall into.
++void common_arifi_profile_warn_build_time_env();
+diff --git a/docs/HARDWARE-PROFILES.md b/docs/HARDWARE-PROFILES.md
+index a63a2e758..fc26552a1 100644
+--- a/docs/HARDWARE-PROFILES.md
++++ b/docs/HARDWARE-PROFILES.md
+@@ -32,20 +32,103 @@ registry's `GGML_ARIFI_VNNI_REPACK` row.
+ 
+ ---
+ 
++## Two mechanisms ship for this
++
++Both are **opt-in or informational**. Neither changes a shipped default, and neither exists to
++guess: they exist so the thing you would have had to discover in a benchmark is on your screen
++before the model finishes loading.
++
++### 1. `--arifi-profile NAME` (also `LLAMA_ARG_ARIFI_PROFILE`)
++
++`cpu-only` or `gpu-offload`. Sets a documented group of runtime toggles and prints every one of
++them, with the evidence, before anything loads:
++
++```
++$ llama-server --arifi-profile cpu-only -m model.gguf
++arifi profile: 'cpu-only' selected - no GPU backend in use - every matmul runs on the CPU
++arifi profile: evidence for every line below is docs/HARDWARE-PROFILES.md and docs/OPTIONS-REGISTRY.md
++arifi profile:   GGML_ARIFI_VNNI_REPACK=1 - measured on a CPU-only path: prompt +326.7% / +441.8% ...
++arifi profile:   GGML_SCHED_PREFETCH_EXPERTS=0 - nothing is offloaded, so there is no host-to-device ...
++arifi profile:   GGML_ARIFI_ROCMFPX_FORMATS is build-time, compiled OFF, NOT settable here - ...
++arifi profile: no shipped default was changed by this fork; a profile is opt-in and sets only the ...
++```
++
++Rules it obeys:
++
++- **A variable you set yourself always wins.** The profile logs `KEPT - your environment wins` at
++  warning level and moves on. A profile never overrides an explicit choice.
++- **An unknown name is a hard error**, naming the profiles that exist. It never falls back.
++- **`gpu-offload` changes no behaviour at all.** `GGML_ARIFI_VNNI_REPACK=0` and unset are the same
++  branch. It exists so a benchmark log states what was in effect instead of implying it.
++- **Build-time options are reported, never set** - see below.
++- It must be applied before the first model load, which is why it lives in the argument parser:
++  the toggles latch into function-local statics the first time a tensor buffer is initialised.
++
++Only one thing differs from shipped defaults in either profile: `cpu-only` sets
++`GGML_ARIFI_VNNI_REPACK=1`, and only because you asked for it by name.
++
++### 2. A startup advisory, when the defaults are wrong for you
++
++If a load ends with **no offload device**, the model carries **Q1_0/Q2_0 tensors**, and you have
++**not** set the toggle either way, the fork says so once and changes nothing:
++
++```
++llama_arifi_vnni_repack_advisory: ArifiLabs advisory: no offload device was selected and this model carries 168 Q1_0/Q2_0 tensor(s)
++llama_arifi_vnni_repack_advisory: ArifiLabs advisory: GGML_ARIFI_VNNI_REPACK=1 measured prompt +326.7% / +441.8% and decode +19.9% / +23.6% on a CPU-only path (two g64 models, ArifiLabs rig, 2026-07-24). UNMEASURED on any other machine
++llama_arifi_vnni_repack_advisory: ArifiLabs advisory: it ships OFF because it costs prompt -77.1% / -88.1% when weights are GPU-offloaded, which is the rig it was measured on. NOTHING HAS BEEN CHANGED - set it yourself, or pass --arifi-profile cpu-only. docs/HARDWARE-PROFILES.md
++```
++
++The predicate is **not** "is a GPU present". It is "did this load end up with zero offload
++devices", evaluated after device selection and before tensors load - the first moment the question
++is actually answerable, and the last moment before the expensive part of the load. It is silent on
++a GPU path, silent when you have already decided, silent for a model with no Q1_0/Q2_0 tensors,
++and silent during the memory-estimation pass `llama-server` runs before the real load.
++
++`GGML_TYPE_Q2_0_G128` deliberately does **not** count. The loader has already remapped it away
++from `Q2_0` and every repack kernel is hard-wired to 64-value blocks, so the toggle provably does
++nothing there; advising it would be a false advisory.
++
++> The advisory is a library-level `INFO` log. `llama-server` filters those out at its default
++> verbosity - raise it (`-lv 9`) if you do not see it.
++
++### Build-time options are never faked
++
++`GGML_ARIFI_ROCMFPX_FORMATS` is a **CMake option**, not a runtime toggle: its `vec_dot` lives in
++`type_traits_cpu[]` and is chosen when the binary is linked. A profile that claimed to flip it at
++runtime would be wrong on arrival, so:
++
++- profiles **report** it (`is build-time, compiled OFF, NOT settable here`) and never set it;
++- setting it in the environment produces a **warning that it is being ignored**, whether or not a
++  profile was selected, because the trap does not require a profile to fall into.
++
++---
++
+ ## Pick your profile
+ 
+ ### CPU-only (no GPU backend compiled, or `-dev none`)
+ 
++`--arifi-profile cpu-only` sets the first two rows for you and prints what it did. The rest are
++your call, for the reasons in "What is still not implemented" below.
++
+ | Setting | Value | Why |
+ |---|---|---|
+-| `GGML_ARIFI_VNNI_REPACK` | **`1`** — change this | The single largest CPU-only win in the fork. Requires a **g64** Q1_0/Q2_0 model, and `--no-host` on a Vulkan-enabled build. |
+-| thecodacus prefetch (`GGML_SCHED_PREFETCH_EXPERTS`) | leave OFF | There is no host→device transfer to hide. |
++| `GGML_ARIFI_VNNI_REPACK` | **`1`** - change this | The single largest CPU-only win in the fork. Requires a **g64** Q1_0/Q2_0 model. |
++| thecodacus prefetch (`GGML_SCHED_PREFETCH_EXPERTS`) | leave OFF | There is no host-to-device transfer to hide. |
+ | `--ctx-checkpoints 0` | keep | Largest historical gain; not hardware-specific. |
+-| KV cache | f16, or `q4_0` for capacity | Not `turbo*` — see the KV row below. |
++| KV cache | f16, or `q4_0` for capacity | Not `turbo*` - see the KV row below. |
+ | `GGML_ARIFI_ROCMFPX_FORMATS` | OFF unless you have such a file | Build-time. These types are CPU-only anyway, so a CPU-only host is the one place they cost nothing extra. |
+ 
+-> Caution: `--no-host` is what makes `CPU_REPACK` reachable — and also what exposes upstream's
+-> 8×8 repack crash (`0xC0000005`). See [`BUILDING.md` §7](BUILDING.md#7-troubleshooting).
++> **`--no-host` is about which case you are in, not about the toggle.** `make_cpu_buft_list()`
++> only inserts a device host buffer type by iterating the *selected offload devices*. With none
++> selected - `-dev none`, or a build with no GPU backend - the list is empty, nothing outranks the
++> CPU extra buffer types, and `CPU_REPACK` is reachable without `--no-host`. Verified: `-dev none
++> --arifi-profile cpu-only` and no `--no-host` puts 95.98 MiB into `CPU_REPACK` on
++> `qwen2.5-0.5b-instruct-Q2_0-g64.gguf`, against 0.00 MiB with the toggle off.
++>
++> `--no-host` *is* required in the mixed case, where a GPU device is selected but you push the
++> weights back with `-ngl 0` - which is exactly the condition the measurements above were taken
++> in. It is also what exposes upstream's 8x8 repack crash (`0xC0000005`). See
++> [`BUILDING.md` section 7](BUILDING.md#7-troubleshooting).
+ 
+ ### AMD unified memory + Vulkan (the rig everything was measured on)
+ 
+@@ -103,13 +186,24 @@ worth stating rather than hiding:
+ 3. **It would change a measured default with no measurement behind the change.** This fork's own
+    rule is that a default flips only on evidence. Auto-detection has none yet.
+ 
+-**The proposal we would accept**, in order of preference:
+-
+-- **Named profiles.** `--arifi-profile cpu-only|gpu-offload` resolving to a documented flag set,
+-  logged verbatim at startup so any benchmark record shows what was actually in effect. Explicit,
+-  greppable, no silent behaviour, no cross-backend dependency.
+-- **A startup advisory.** When the CPU backend is the only one registered *and* the model contains
+-  Q1_0/Q2_0 tensors *and* the toggle is unset, log one line naming the flag and its measured
+-  effect. Changes nothing, costs nothing, and closes the discovery gap for the person it affects.
+-
+-Both are small. Neither has been implemented, and this paragraph is not a claim that they have.
++Those three reasons still stand, and auto-detection is still **not implemented**. What shipped
++instead are the two mechanisms above: `--arifi-profile`, and the startup advisory. Both are
++explicit, both are greppable, neither adds a cross-backend dependency, and neither moves a
++measured default without a measurement.
++
++### What is still not implemented
++
++- **Runtime auto-detection.** Nothing flips `GGML_ARIFI_VNNI_REPACK` for you, ever. The advisory
++  tells you; you decide.
++- **Profiles for anything but the two CPU/GPU cases.** There is no `nvidia`, no `discrete-gpu`, no
++  `unified-memory` profile, because there is no measurement on that hardware to build one from.
++- **Everything else in the table below** stays manual: KV cache type, `--ctx-checkpoints`, MTP,
++  DSpark, PowerInfer expert streaming, `POWERINFER_IOCP`, `MAX_N_CACHED`,
++  `GGML_RECURRENT_STATE_F16`. A profile may only contain settings this fork has measured and can
++  defend; most of these have a verdict of UNMEASURED, UNRESOLVED, or "depends on your model", and
++  a profile that bundled them would be inventing a recommendation.
++- **`GGML_SCHED_PREFETCH_EXPERTS` in `gpu-offload`.** Its author measured `+64.5%` prefill in the
++  host-offloaded `-cmoe` regime; on our unified-memory rig it measured inert. Two different
++  answers, neither of them ours to generalise, so the profile does not touch it on a GPU path.
++- **Any measurement off this rig.** Every number quoted by the profile and the advisory was
++  measured on one machine. That is stated in the log text itself, not just here.
+diff --git a/src/llama.cpp b/src/llama.cpp
+index d22e4c81a..215df4d6a 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -21,6 +21,7 @@
+ #include <cstddef>
+ #include <cstdint>
+ #include <cstdio>
++#include <cstdlib> // for std::getenv (ArifiLabs VNNI-repack advisory)
+ #include <cstring>
+ #include <ctime>
+ #include <stdexcept>
+@@ -300,6 +301,57 @@ static bool llama_prepare_model_devices(const llama_model_params & params, llama
+     return true;
+ }
+ 
++// ArifiLabs startup advisory - docs/HARDWARE-PROFILES.md.
++//
++// GGML_ARIFI_VNNI_REPACK ships OFF because it was measured on this fork's rig, where weights are
++// GPU-offloaded and turning it on costs 77-88% of prompt throughput. On a CPU-only path the same
++// toggle is the largest win in the fork. That is a DISCLOSURE gap, not a wrong default: the person
++// it would help has no way to find out. So the fork says it once, and changes nothing.
++//
++// The predicate is deliberately not "is a GPU present". It is "did this load end up with zero
++// offload devices", which is the state in which the repack buffer is both reachable and measured
++// to help. It is evaluated here because this is the first point where device selection and final
++// tensor types are both known, and the last point before the expensive part of the load.
++static void llama_arifi_vnni_repack_advisory(const llama_model_loader & ml, const llama_model * model,
++        const llama_model_params & params) {
++    if (params.no_alloc) {
++        return; // memory-estimation pass, not a run; llama-server does one before the real load
++    }
++    if (!model->devices.empty()) {
++        return; // something offloads, and ON would cost prompt throughput there
++    }
++    if (!params.use_extra_bufts) {
++        return; // CPU_REPACK is not in the buffer-type list at all, so the toggle cannot engage
++    }
++    if (std::getenv("GGML_ARIFI_VNNI_REPACK") != nullptr) {
++        return; // the caller already decided, either way
++    }
++
++    // GGML_TYPE_Q2_0_G128 is excluded on purpose: the loader has already remapped it away from
++    // GGML_TYPE_Q2_0, and every repack kernel is hard-wired to 64-value blocks, so the toggle
++    // provably does nothing for a g128 file. Advising it there would be a false advisory.
++    size_t n_repackable = 0;
++    for (const auto & it : ml.weights_map) {
++        const ggml_type type = it.second.tensor->type;
++        if (type == GGML_TYPE_Q1_0 || type == GGML_TYPE_Q2_0) {
++            n_repackable++;
++        }
++    }
++    if (n_repackable == 0) {
++        return;
++    }
++
++    LLAMA_LOG_INFO("%s: ArifiLabs advisory: no offload device was selected and this model carries "
++            "%zu Q1_0/Q2_0 tensor(s)\n", __func__, n_repackable);
++    LLAMA_LOG_INFO("%s: ArifiLabs advisory: GGML_ARIFI_VNNI_REPACK=1 measured prompt +326.7%% / "
++            "+441.8%% and decode +19.9%% / +23.6%% on a CPU-only path (two g64 models, ArifiLabs "
++            "rig, 2026-07-24). UNMEASURED on any other machine\n", __func__);
++    LLAMA_LOG_INFO("%s: ArifiLabs advisory: it ships OFF because it costs prompt -77.1%% / -88.1%% "
++            "when weights are GPU-offloaded, which is the rig it was measured on. NOTHING HAS BEEN "
++            "CHANGED - set it yourself, or pass --arifi-profile cpu-only. docs/HARDWARE-PROFILES.md\n",
++            __func__);
++}
++
+ // Returns 0 on success, -1 on error, and -2 on cancellation via llama_progress_callback
+ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * metadata, llama_model_set_tensor_data_t set_tensor_data, void * set_tensor_data_ud,
+         const std::string & fname, std::vector<std::string> & splits, FILE * file, llama_model_params & params) {
+@@ -352,6 +404,8 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
+             return {0, model_ptr.release()};
+         }
+ 
++        llama_arifi_vnni_repack_advisory(ml, model_ptr.get(), params);
++
+         if (!model->load_tensors(ml)) {
+             return {-2, nullptr};
+         }
