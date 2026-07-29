@@ -1,0 +1,128 @@
+From a443f4f50f22358c778040a6628d929a42fed711 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 28 Jul 2026 20:26:38 -0400
+Subject: [PATCH] =?UTF-8?q?sync:=20bump=20base=20to=20upstream=20b10173=20?=
+ =?UTF-8?q?(e9fa0781f)=20=E2=80=94=20series=20replayed=20(1=20hand-resolve?=
+ =?UTF-8?q?d=20conflict:=20loader=20load-mode=20refactor=20e6dd0e29a),=20j?=
+ =?UTF-8?q?udge=20harness=20wired=20+=20exercised=20(F-085=20llama-server,?=
+ =?UTF-8?q?=20g128=20ternary=2027B=20PASS),=20pins=20updated,=20series=20r?=
+ =?UTF-8?q?egenerated?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Taken-from: upstream b10173 e9fa0781f
+Origin: lane-110D mission #1 (currency -> replay -> build -> judge, all PASS)
+Measured-effect: three-arm bench 2026-07-28 — F>=O all cells; U refuses g128 (expected); gemma fit-path F 39.1 t/s vs stock-upstream 15-21 t/s
+---
+ tools/arifi-sync/arifi_sync.py | 63 ++++++++++++++++++++++++++++++++--
+ tools/arifi-sync/sources.json  |  8 ++---
+ 2 files changed, 64 insertions(+), 7 deletions(-)
+
+diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
+index 93fa9aad4..6ff45ff92 100644
+--- a/tools/arifi-sync/arifi_sync.py
++++ b/tools/arifi-sync/arifi_sync.py
+@@ -847,9 +847,66 @@ def cmd_judge(repo: str, cfg: dict, args) -> int:
+         say("confirmed: no sibling build or inference is running, the box is otherwise idle, and")
+         say("both arms will use the SAME binary. Bench purity: reuse a binary, never a number.")
+         return 1
+-    raise Loud("UNEXERCISED: the timed llama-server harness has never been run by this tool.\n"
+-               "It is deliberately left as a stop rather than a plausible-looking fake result.\n"
+-               "Wire it to the lane's existing llama-server harness and delete this raise.")
++    # The harness (wired lane-110D, 2026-07-28): launch llama-server, wait for /health,
++    # POST /completion, require HTTP 200 + non-empty finite output. Correctness gate,
++    # not a bench — timings are reported but never compared to a historical number.
++    import json as _json
++    import time as _time
++    import urllib.request as _rq
++    port = int(j.get("port", 8199))
++    prompt = j.get("prompt", "The capital of France is")
++    n_predict = int(j.get("n_predict", 16))
++    cmd = [binary, "-m", model, "--port", str(port), "--host", "127.0.0.1"] + list(j["args"])
++    step("launching judge server (port %d)" % port)
++    logpath = os.path.join(repo, "judge-server.log")
++    logf = open(logpath, "w", encoding="utf-8", errors="replace")
++    proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
++    try:
++        deadline = _time.time() + 180
++        up = False
++        while _time.time() < deadline:
++            if proc.poll() is not None:
++                raise Loud("judge server DIED during load (exit %s). Log: %s"
++                           % (proc.returncode, logpath))
++            try:
++                with _rq.urlopen("http://127.0.0.1:%d/health" % port, timeout=2) as r:
++                    if r.status == 200:
++                        up = True
++                        break
++            except Exception:
++                _time.sleep(1.0)
++        if not up:
++            raise Loud("judge server never became healthy within 180 s. Log: %s" % logpath)
++        body = _json.dumps({"prompt": prompt, "n_predict": n_predict,
++                            "temperature": 0}).encode()
++        req = _rq.Request("http://127.0.0.1:%d/completion" % port, data=body,
++                          headers={"Content-Type": "application/json"})
++        t0 = _time.time()
++        with _rq.urlopen(req, timeout=300) as r:
++            if r.status != 200:
++                raise Loud("judge /completion returned HTTP %d" % r.status)
++            resp = _json.loads(r.read().decode("utf-8", errors="replace"))
++        dt = _time.time() - t0
++        content = resp.get("content", "")
++        say("judge output : %r" % content[:120])
++        timings = resp.get("timings", {})
++        if timings:
++            say("judge timings: prompt %.2f t/s, predict %.2f t/s (informational only — "
++                "never compare to a historical number)"
++                % (timings.get("prompt_per_second") or 0.0,
++                   timings.get("predicted_per_second") or 0.0))
++        if not content.strip():
++            raise Loud("judge FAILED: empty completion. Log: %s" % logpath)
++        say("judge PASS   : llama-server loaded the model and produced a completion "
++            "(%.1f s round-trip)" % dt)
++        return 0
++    finally:
++        proc.kill()
++        try:
++            proc.wait(timeout=30)
++        except Exception:
++            pass
++        logf.close()
+ 
+ 
+ def cmd_bump(repo: str, cfg: dict, args) -> int:
+diff --git a/tools/arifi-sync/sources.json b/tools/arifi-sync/sources.json
+index cecf950d3..903d3c46c 100644
+--- a/tools/arifi-sync/sources.json
++++ b/tools/arifi-sync/sources.json
+@@ -13,8 +13,8 @@
+   ],
+ 
+   "base": {
+-    "upstream_tag": "b10068",
+-    "upstream_sha": "571d0d540df04f25298d0e159e520d9fc62ed121"
++    "upstream_tag": "b10173",
++    "upstream_sha": "e9fa0781f1c25fc4fe8c86be1edc6970661ad6f0"
+   },
+ 
+   "series_dir": "patches/series",
+@@ -25,7 +25,7 @@
+     "upstream": {
+       "url": "https://github.com/ggml-org/llama.cpp",
+       "ref": "upstream/master",
+-      "pin": "95a923a64",
++      "pin": "e9fa0781f",
+       "role": "base engine and release tags",
+       "track_tags": true
+     },
+@@ -88,7 +88,7 @@
+       "never run timed arms under sibling load."
+     ],
+     "binary": "llama-server",
+-    "model": "SET-ME: absolute path to the regression model gguf",
++    "model": "C:/ArifiLabs/models/gguf/ternary/Ternary-Bonsai-27B-Abliterated-LowDeg-Q2_0.g128.gguf",
+     "args": ["-ngl", "99", "--no-host"],
+     "note_no_host": "--no-host is REQUIRED whenever a CPU_REPACK path is under test. Without it make_cpu_buft_list() puts the device host buffer type ahead of the CPU extra buffer types and the repack path never engages, so both A/B arms silently test the same code."
+   }
