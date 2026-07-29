@@ -1,0 +1,34 @@
+From 046f2cf819ef097ad80fb9310f338a1cd1a16bbb Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 29 Jul 2026 01:37:59 -0400
+Subject: [PATCH] gitattributes: pin .githooks to LF so the hook runs on Linux
+ and macOS
+
+Git for Windows defaults to core.autocrlf=true, which checks a shell script out with CRLF.
+/bin/sh then fails on the shebang with a 'bad interpreter' error that does not obviously point
+at line endings. The commit-msg hook added in the previous commit would have been broken for
+anyone cloning on a POSIX system - caught by git's own CRLF warning at add time.
+
+Same reasoning as the existing patches/** rule: files whose bytes are load-bearing do not get
+to follow the cloner's text settings.
+
+Origin: ArifiLabs lane-110D, public-release bar
+Measured-effect: packaging only, no engine behaviour changed. Verified the file is stored with
+  LF after re-adding under the new attribute.
+---
+ .gitattributes | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/.gitattributes b/.gitattributes
+index 8c563c5e4..695b3ec9c 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -13,3 +13,8 @@
+ # `diff` is set alongside it so `-text` does not cost reviewability: git still renders these as
+ # text in diffs instead of reporting "Binary files differ".
+ patches/** -text diff
++
++# ArifiLabs: git hooks are shell scripts executed by /bin/sh. Checked out with CRLF they fail
++# on Linux and macOS with an unhelpful 'bad interpreter' error, and Git for Windows defaults
++# core.autocrlf=true - so pin them to LF regardless of the cloner's settings.
++.githooks/** text eol=lf

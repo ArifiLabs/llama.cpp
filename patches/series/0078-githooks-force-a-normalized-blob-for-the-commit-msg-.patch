@@ -1,0 +1,31 @@
+From 098bb5cbf1136952c471571683821ea7b8c6e3a7 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 29 Jul 2026 01:39:23 -0400
+Subject: [PATCH] githooks: force a normalized blob for the commit-msg hook
+
+The eol=lf attribute governs future checkouts and adds; it does not rewrite a blob already
+committed, and 'git add --renormalize' saw no change because git compares the working copy
+against the blob AFTER normalization - so a stale CRLF object looked identical to a clean LF
+working copy. The stored object kept 58 CR bytes while every local check looked correct.
+
+A real line of content forces git to write a fresh blob under the current attributes. The added
+line is a note in the file itself saying the endings are load-bearing, so the next person reads
+it where they would break it.
+
+Origin: ArifiLabs lane-110D, public-release bar
+Measured-effect: packaging only, no engine behaviour changed. Verified against the RAW object
+  via git cat-file - git show applies the checkout filter and reported the opposite of the truth.
+---
+ .githooks/commit-msg | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/.githooks/commit-msg b/.githooks/commit-msg
+index e6cbb9a06..015b0bff7 100644
+--- a/.githooks/commit-msg
++++ b/.githooks/commit-msg
+@@ -1,4 +1,5 @@
+ #!/bin/sh
++# Line endings: this file MUST be LF (.gitattributes pins it); CRLF breaks /bin/sh.
+ # Reject a commit whose provenance trailers are present but not machine-readable.
+ #
+ # git ends a trailer block at the first line that is not trailer-shaped, so an unindented
