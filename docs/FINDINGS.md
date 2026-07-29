@@ -156,7 +156,25 @@ The refactor rewrote the **shared** g64 kernels on the way through, so g64 was r
 pre-change answer key rather than assumed unaffected: 36 cells over three g64 models, every token
 identical and every logprob delta exactly `0.000000000`.
 
-**Speed is not claimed.** Whether the g128 CPU path is faster, and where, is unmeasured.
+  **Speed, measured 2026-07-29** (RIG-A, llama-server, `Ternary-Bonsai-8B-Q2_0.g128.gguf`,
+  `-ngl 0 --no-host -c 2048 -t 8`, 519-token prefill, `n_predict 128`, modes **interleaved** across
+  three replicates x 5 rolls, roll 1 dropped, n=12 per cell, one binary with only the env flip):
+
+  | tok/s | mode 0 (off) | mode 1 (claim the buffer) | **mode 2 (dual)** |
+  |---|---|---|---|
+  | prompt | 59.09 | 17.44 (**-70.5%**) | **85.84 (+45.3%)** |
+  | decode | 2.01 | 6.67 (**+231.6%**) | **6.69 (+232.6%)** |
+
+  Every figure has non-overlapping ranges. Two separate results here. The g128 scalar path was
+  **2.01 tok/s**, so the repack kernels are a **3.3x decode win** - far larger than g64's +22-24%,
+  because g64 already had a fast scalar `vec_dot` and g128 never did. And dual residency wins
+  **both** axes on g128, where on g64 the honest reading was only that it never *loses* prefill.
+
+  The prompt gain's mechanism is **ASSUMED, not measured**: graph splits are 467 in both mode 0 and
+  mode 2, so the same ops stay CPU-side during prefill, and in mode 2 those reach the repacked
+  shadow instead of the scalar path. On an 8B model that CPU share is large enough to matter where
+  on the 0.5B g64 models it was not. Separable with `--no-op-offload` or `GGML_SCHED_DEBUG=2`; not
+  done here.
 
 **Method note:** compare struct *geometry*, never names or comments. An earlier round of this
 work recorded the relationship backwards from names alone and propagated the error into

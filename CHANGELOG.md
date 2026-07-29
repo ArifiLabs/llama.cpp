@@ -70,7 +70,13 @@ Unless an entry says otherwise, every measurement was taken on:
   pre-change answer key rather than assumed unaffected: **36 cells, every token identical, every
   logprob delta 0.000000000**. See [`docs/FINDINGS.md`](docs/FINDINGS.md) F-06.
 
-  **No speed claim.** Whether this is faster, and where, is unmeasured.
+  **Speed, measured on RIG-A** (same protocol, modes interleaved, n=12 per cell, all ranges
+  non-overlapping): decode **2.01 -> 6.67 tok/s (+231.6%)** with the buffer claimed and
+  **6.69 (+232.6%)** with dual residency; prompt **59.09 -> 17.44 (-70.5%)** claimed but
+  **85.84 (+45.3%)** dual. The scalar g128 path was 2.01 tok/s, so this is a **3.3x decode
+  win** - much larger than g64's +22-24%, because g64 already had a fast scalar `vec_dot`.
+  Dual residency wins **both** axes here, where on g64 it could only be said not to lose
+  prefill; the prompt mechanism is labelled ASSUMED in FINDINGS.
 
 - **Dual residency for the ternary repack path — `GGML_ARIFI_VNNI_REPACK=2`.** Until now this
   slot forced a choice: repacking Q1_0/Q2_0 weights bought **+22–24%** decode and cost **−65% to
