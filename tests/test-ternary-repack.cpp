@@ -1,0 +1,314 @@
+// Equivalence test for the interleaved ternary repack kernels, at both group sizes.
+//
+// These kernels are otherwise untestable from a model. The dispatch that selects them
+// (ggml_repack_get_optimal_repack_type) gates Q2_0 and Q2_0_G128 on AVX512-VNNI and nothing else,
+// so the _generic fallbacks compiled for every other architecture are never reached by any code
+// path on any platform. Calling them directly is the only coverage they can have.
+//
+// Both variants are checked against a reference written a different way on purpose: the kernels
+// accumulate integer products and scale once per activation sub-block, while the reference
+// dequantizes to float first and then dots. Agreement between two formulations of the same
+// arithmetic is evidence; agreement between one formulation and a copy of itself is not.
+
+#include "ggml.h"
+#include "ggml-cpu.h"
+#include "repack.h"
+#include "quants.h"
+
+#include <cmath>
+#include <cstdio>
+#include <cstdint>
+#include <cstring>
+#include <vector>
+
+static uint32_t rng_state = 0x2be0f1a3u;
+
+static uint32_t next_rand() {
+    rng_state ^= rng_state << 13;
+    rng_state ^= rng_state >> 17;
+    rng_state ^= rng_state << 5;
+    return rng_state;
+}
+
+// One row of weights: QK codes per block, nb blocks. Codes are 0..3 and decode to -1..2.
+struct weights {
+    std::vector<uint8_t> codes;  // [nb * QK]
+    std::vector<float>   scale;  // [nb]
+};
+
+static weights make_weights(int nb, int qk) {
+    weights w;
+    w.codes.resize((size_t) nb * qk);
+    w.scale.resize(nb);
+    for (auto & c : w.codes) {
+        c = next_rand() & 3;
+    }
+    // Round-tripped through fp16 at creation, because that is the precision the block actually
+    // carries. A reference holding more precision than the data measures fp16 rounding rather
+    // than the kernel.
+    for (auto & s : w.scale) {
+        s = ggml_fp16_to_fp32(ggml_fp32_to_fp16(0.01f + (float) (next_rand() % 100) / 400.0f));
+    }
+    return w;
+}
+
+// Pack one row into plain blocks: 4 two-bit codes per byte, lowest field first.
+template <typename Block> static void pack_plain(const weights & w, int nb, int qk, Block * out) {
+    for (int l = 0; l < nb; ++l) {
+        out[l].d = ggml_fp32_to_fp16(w.scale[l]);
+        memset(out[l].qs, 0, sizeof(out[l].qs));
+        for (int i = 0; i < qk; ++i) {
+            out[l].qs[i / 4] |= (uint8_t) (w.codes[(size_t) l * qk + i] << (2 * (i % 4)));
+        }
+    }
+}
+
+// Interleave four plain rows into the x4 layout, written from the layout rule rather than by
+// calling the repacker under test: qs[k*32 + j*8 + b] = row j, byte k*8 + b.
+template <typename BlockX4, typename Block>
+static void pack_x4(const Block * rows[4], int nb, int qk, BlockX4 * out) {
+    for (int l = 0; l < nb; ++l) {
+        for (int j = 0; j < 4; ++j) {
+            out[l].d[j] = rows[j][l].d;
+        }
+        for (int k = 0; k < qk / 32; ++k) {
+            for (int j = 0; j < 4; ++j) {
+                memcpy(&out[l].qs[k * 32 + j * 8], &rows[j][l].qs[k * 8], 8);
+            }
+        }
+    }
+}
+
+struct activations {
+    std::vector<int8_t> q;  // [n]
+    std::vector<float>  d;  // [n / QK8_0]
+};
+
+static activations make_activations(int n) {
+    activations a;
+    a.q.resize(n);
+    a.d.resize(n / QK8_0);
+    for (auto & v : a.q) {
+        v = (int8_t) ((int) (next_rand() % 255) - 127);
+    }
+    for (auto & s : a.d) {
+        s = ggml_fp16_to_fp32(ggml_fp32_to_fp16(0.005f + (float) (next_rand() % 100) / 800.0f));
+    }
+    return a;
+}
+
+static void pack_q8(const activations & a, int n, block_q8_0 * out) {
+    for (int b = 0; b < n / QK8_0; ++b) {
+        out[b].d = ggml_fp32_to_fp16(a.d[b]);
+        memcpy(out[b].qs, &a.q[(size_t) b * QK8_0], QK8_0);
+    }
+}
+
+// Four activation rows interleaved in 8-byte chunks, the layout the GEMM kernels read:
+// element v of row m sits at (v/4/2)*32 + m*8 + ((v/4)%2)*4 + v%4.
+static void pack_q8_x4(const activations rows[4], int n, block_q8_0x4 * out) {
+    for (int b = 0; b < n / QK8_0; ++b) {
+        for (int m = 0; m < 4; ++m) {
+            out[b].d[m] = ggml_fp32_to_fp16(rows[m].d[b]);
+            for (int v = 0; v < QK8_0; ++v) {
+                const int by = v / 4;
+                out[b].qs[(by / 2) * 32 + m * 8 + (by % 2) * 4 + v % 4] = rows[m].q[(size_t) b * QK8_0 + v];
+            }
+        }
+    }
+}
+
+// Dequantize both sides to float, then dot. Deliberately not the kernels' integer formulation.
+static float reference_dot(const weights & w, const activations & a, int n, int qk) {
+    double acc = 0.0;
+    for (int i = 0; i < n; ++i) {
+        const float wv = ((float) w.codes[i] - 1.0f) * w.scale[i / qk];
+        const float av = (float) a.q[i] * a.d[i / QK8_0];
+        acc += (double) wv * (double) av;
+    }
+    return (float) acc;
+}
+
+static int failures = 0;
+
+// Tolerance is 1e-5 relative, roughly 100x the observed float accumulation-order noise and far
+// tighter than any structural error: a mis-strided kernel is wrong by order the value itself, not
+// by parts per million. Loose enough and this test passes over a real defect.
+static float worst_error(const float * got, const std::vector<float> & want, int n, float * tol_out) {
+    float max_abs = 1e-6f;
+    for (int i = 0; i < n; ++i) {
+        max_abs = std::fmax(max_abs, std::fabs(want[i]));
+    }
+    *tol_out = 1e-5f * max_abs;
+    float worst = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        worst = std::fmax(worst, std::fabs(got[i] - want[i]));
+    }
+    return worst;
+}
+
+static void check(const char * what, const float * got, const std::vector<float> & want, int n) {
+    float tol = 0.0f;
+    const float worst = worst_error(got, want, n, &tol);
+    const bool ok = worst <= tol;
+    printf("  %-46s max|err| = %.6f  tol = %.6f  %s\n", what, worst, tol, ok ? "OK" : "FAIL");
+    if (!ok) {
+        failures++;
+    }
+}
+
+// The inverse claim: this input MUST NOT match. Without it the checks above could all be passing
+// over a comparison too blunt to see a mis-stride, which is the exact failure mode the whole
+// two-group-size split exists to prevent.
+static void check_differs(const char * what, const float * got, const std::vector<float> & want, int n) {
+    float tol = 0.0f;
+    const float worst = worst_error(got, want, n, &tol);
+    const bool ok = worst > tol;
+    printf("  %-46s max|err| = %.6f  tol = %.6f  %s\n", what, worst, tol,
+           ok ? "OK (detected)" : "FAIL (test is blind)");
+    if (!ok) {
+        failures++;
+    }
+}
+
+typedef void (*kernel_fn)(int, float *, size_t, const void *, const void *, int, int);
+typedef void (*vec_dot_fn)(int, float *, size_t, const void *, size_t, const void *, size_t, int);
+
+template <typename BlockX4, typename Block, int QK>
+static void run_group(const char * label, kernel_fn gemv, kernel_fn gemv_generic,
+                      kernel_fn gemm, kernel_fn gemm_generic, vec_dot_fn vec_dot) {
+    const int nb = 2;             // two weight blocks per row
+    const int n  = nb * QK;       // columns
+    const int nc = 8;             // output columns: two interleaved groups of four
+    const int nr = 4;             // GEMM rows
+
+    printf("%s (QK = %d, n = %d, nc = %d)\n", label, QK, n, nc);
+
+    std::vector<weights>            w(nc);
+    std::vector<std::vector<Block>> plain(nc);
+    for (int c = 0; c < nc; ++c) {
+        w[c] = make_weights(nb, QK);
+        plain[c].resize(nb);
+        pack_plain<Block>(w[c], nb, QK, plain[c].data());
+    }
+
+    std::vector<BlockX4> packed((size_t) (nc / 4) * nb);
+    for (int g = 0; g < nc / 4; ++g) {
+        const Block * rows[4] = { plain[g * 4 + 0].data(), plain[g * 4 + 1].data(),
+                                  plain[g * 4 + 2].data(), plain[g * 4 + 3].data() };
+        pack_x4<BlockX4, Block>(rows, nb, QK, &packed[(size_t) g * nb]);
+    }
+
+    // ---- GEMV: one activation row against all nc weight rows.
+    {
+        const activations a = make_activations(n);
+        std::vector<block_q8_0> aq(n / QK8_0);
+        pack_q8(a, n, aq.data());
+
+        std::vector<float> want(nc);
+        for (int c = 0; c < nc; ++c) {
+            want[c] = reference_dot(w[c], a, n, QK);
+        }
+
+        // Oracle-of-oracles: ggml's own scalar path over the PLAIN (un-interleaved) blocks. If
+        // this disagrees with the dequantize-then-dot reference, the harness is wrong and nothing
+        // it says about the kernels can be trusted.
+        std::vector<float> scalar(nc, 0.0f);
+        for (int c = 0; c < nc; ++c) {
+            vec_dot(n, &scalar[c], 0, plain[c].data(), 0, aq.data(), 0, 1);
+        }
+        check("scalar vec_dot vs reference (harness self-check)", scalar.data(), want, nc);
+
+        std::vector<float> got(nc, 0.0f);
+        gemv(n, got.data(), 0, packed.data(), aq.data(), 1, nc);
+        check("gemv  (AVX512 when built for it) vs reference", got.data(), want, nc);
+
+        std::fill(got.begin(), got.end(), 0.0f);
+        gemv_generic(n, got.data(), 0, packed.data(), aq.data(), 1, nc);
+        check("gemv  _generic vs reference", got.data(), want, nc);
+    }
+
+    // ---- GEMM: four activation rows at once.
+    {
+        activations arows[4];
+        for (int m = 0; m < 4; ++m) {
+            arows[m] = make_activations(n);
+        }
+        std::vector<block_q8_0x4> aq((size_t) (n / QK8_0));
+        pack_q8_x4(arows, n, aq.data());
+
+        std::vector<float> want((size_t) nr * nc);
+        for (int m = 0; m < nr; ++m) {
+            for (int c = 0; c < nc; ++c) {
+                want[(size_t) m * nc + c] = reference_dot(w[c], arows[m], n, QK);
+            }
+        }
+
+        std::vector<float> got((size_t) nr * nc, 0.0f);
+        gemm(n, got.data(), nc, packed.data(), aq.data(), nr, nc);
+        check("gemm  (AVX512 when built for it) vs reference", got.data(), want, nr * nc);
+
+        std::fill(got.begin(), got.end(), 0.0f);
+        gemm_generic(n, got.data(), nc, packed.data(), aq.data(), nr, nc);
+        check("gemm  _generic vs reference", got.data(), want, nr * nc);
+    }
+}
+
+int main(void) {
+    // Populates ggml_table_f32_f16, which GGML_CPU_FP16_TO_FP32 reads. Without it every block
+    // scale decodes as zero and every kernel returns zero, which reads exactly like a broken
+    // kernel. The scalar self-check below is what catches that rather than reporting it as one.
+    ggml_cpu_init();
+
+    printf("ternary repack kernel equivalence\n\n");
+
+    run_group<block_q2_0x4, block_q2_0, QK2_0>(
+        "q2_0 g64", ggml_gemv_q2_0_4x8_q8_0, ggml_gemv_q2_0_4x8_q8_0_generic,
+        ggml_gemm_q2_0_4x8_q8_0, ggml_gemm_q2_0_4x8_q8_0_generic,
+        ggml_vec_dot_q2_0_q8_0);
+
+    printf("\n");
+
+    run_group<block_q2_0_g128x4, block_q2_0_g128, QK2_0_G128>(
+        "q2_0 g128", ggml_gemv_q2_0_g128_4x8_q8_0, ggml_gemv_q2_0_g128_4x8_q8_0_generic,
+        ggml_gemm_q2_0_g128_4x8_q8_0, ggml_gemm_q2_0_g128_4x8_q8_0_generic,
+        ggml_vec_dot_q2_0_g128_q8_0);
+
+    // Assert the comparison has teeth: feed g128-packed weights to the g64 kernel and require the
+    // result to be WRONG. This is the hazard the separate arms exist for - a g128 row read at g64
+    // stride is silent wrong math, not a crash - so a test that could not see it would be worse
+    // than no test. The buffer is deliberately oversized: at g64 the kernel walks 2x the blocks
+    // and would otherwise read past the g128 allocation.
+    printf("\nnegative control: g128 data through the g64 kernel must NOT match\n");
+    {
+        const int nb = 2, n = nb * QK2_0_G128, nc = 4;
+
+        weights                 w = make_weights(nb, QK2_0_G128);
+        std::vector<block_q2_0_g128> plain(nb);
+        pack_plain<block_q2_0_g128>(w, nb, QK2_0_G128, plain.data());
+        const block_q2_0_g128 * rows[4] = { plain.data(), plain.data(), plain.data(), plain.data() };
+
+        std::vector<block_q2_0_g128x4> packed(nb * 4);  // 4x the blocks needed, so g64 stays in bounds
+        pack_x4<block_q2_0_g128x4, block_q2_0_g128>(rows, nb, QK2_0_G128, packed.data());
+
+        const activations a = make_activations(n);
+        std::vector<block_q8_0> aq(n / QK8_0);
+        pack_q8(a, n, aq.data());
+
+        std::vector<float> want(nc);
+        for (int c = 0; c < nc; ++c) {
+            want[c] = reference_dot(w, a, n, QK2_0_G128);
+        }
+
+        std::vector<float> got(nc, 0.0f);
+        ggml_gemv_q2_0_g128_4x8_q8_0(n, got.data(), 0, packed.data(), aq.data(), 1, nc);
+        check("g128 data, g128 kernel (control: must match)", got.data(), want, nc);
+
+        std::fill(got.begin(), got.end(), 0.0f);
+        ggml_gemv_q2_0_4x8_q8_0(n, got.data(), 0, packed.data(), aq.data(), 1, nc);
+        check_differs("g128 data, g64 kernel", got.data(), want, nc);
+    }
+
+    printf("\n%s\n", failures == 0 ? "all kernels agree with the reference" : "MISMATCH");
+    return failures == 0 ? 0 : 1;
+}

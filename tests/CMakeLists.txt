@@ -198,6 +198,14 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
 
     llama_build_and_test(test-llama-archs.cpp)
 
+    # Ternary repack kernels. No model can reach the _generic variants (the dispatch gates Q2_0 and
+    # Q2_0_G128 on AVX512-VNNI only), so they are called directly here.
+    llama_build_and_test(test-ternary-repack.cpp)
+    target_include_directories(test-ternary-repack PRIVATE
+        ${PROJECT_SOURCE_DIR}/ggml/src
+        ${PROJECT_SOURCE_DIR}/ggml/src/ggml-cpu)
+    target_link_libraries(test-ternary-repack PRIVATE ggml-cpu)
+
     set(MODEL_DIR "${CMAKE_CURRENT_BINARY_DIR}/test-models/")
     file(MAKE_DIRECTORY "${MODEL_DIR}")
 
