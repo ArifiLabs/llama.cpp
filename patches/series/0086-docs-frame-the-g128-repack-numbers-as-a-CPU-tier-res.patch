@@ -1,0 +1,55 @@
+From 29f964b3211edefa2706b36a5ef6ab77fd25ce3a Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 29 Jul 2026 19:25:06 -0400
+Subject: [PATCH] docs: frame the g128 repack numbers as a CPU-tier result
+
+The +232% decode figure is easy to misread as an absolute win. It is not: the
+repack path is only reachable with --no-host, so every figure is the CPU tier by
+construction, and on this same model the Vulkan tier is roughly 4x faster on both
+axes. What these kernels fixed is the FLOOR - an earlier record of the 27B g128
+called its CPU path "2-bit CPU kernel unoptimized" at 33x/2.5x slower, and that is
+the kernel this replaces. The CPU tier is now 3.3x less bad and still the slower
+tier.
+
+States where the CPU tier is the one that matters, and flags that the GPU
+comparison is another binary's number - against this project's own rule to reuse
+a binary rather than a number. A same-binary arm is written and named as owed.
+
+Origin: lane-110F, mission #1 - framing correction after the President asked what
+  the GPU path does
+Measured-effect: no code changed. Adds context to figures already measured; names
+  the same-binary GPU-vs-CPU arm as owed rather than implying it was run.
+Assisted-by: Claude Opus 5
+---
+ docs/FINDINGS.md | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/docs/FINDINGS.md b/docs/FINDINGS.md
+index 4c9ac1a82..68c0c9b49 100644
+--- a/docs/FINDINGS.md
++++ b/docs/FINDINGS.md
+@@ -176,6 +176,24 @@ identical and every logprob delta exactly `0.000000000`.
+   on the 0.5B g64 models it was not. Separable with `--no-op-offload` or `GGML_SCHED_DEBUG=2`; not
+   done here.
+ 
++  **Read these numbers as a CPU-tier result, not an absolute one.** The repack path is only
++  reachable with `--no-host` (F-04), i.e. with the weights held out of the device host buffer, so
++  every figure above is the CPU tier by construction. On this same 8B g128 model the Vulkan tier is
++  roughly **4x faster on both axes** — an external record for the PrismML fork's Vulkan binary puts
++  it at pp512 **356.43** / tg128 **28.15 t/s**, against the 85.84 / 6.69 measured here. So what
++  mission #1 fixed is the *floor*: an earlier measurement of the 27B g128 recorded its CPU path as
++  "≈33x/2.5x slower; 2-bit CPU kernel unoptimized", and that unoptimized CPU kernel is exactly what
++  these kernels replace. The CPU tier is now 3.3x less bad; it is still the slower tier.
++
++  Where the CPU tier is the one that matters: a build with no GPU at all, a model that will not fit
++  in the device's memory, and dual residency's own case, where prefill goes to the GPU and only the
++  decode step is served from the repacked shadow.
++
++  **Not yet measured on one binary.** The 356.43 / 28.15 figures are another binary's, and this
++  project's own rule is to reuse a binary rather than a number — a prior cross-session comparison
++  manufactured a 24% fork regression that did not exist. A same-binary GPU-vs-CPU arm for g128 is
++  written and owed: `trial-evidence/110/g128-kernels/gpu_vs_cpu.py`.
++
+ **Method note:** compare struct *geometry*, never names or comments. An earlier round of this
+ work recorded the relationship backwards from names alone and propagated the error into
+ several documents; it was a source of F-02's crash. In-source size comments are also stale in
