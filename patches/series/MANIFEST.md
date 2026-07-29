@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10173`, `e9fa0781f1c25fc4fe8c86be1edc6970661ad6f0`
-- Patches: **81**, all non-merge, applied in filename order.
+- Patches: **82**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 81 commit messages, same provenance trailers. Verified, not
+same file contents, same 82 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -160,6 +160,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 79 | `0079-docs-FINDINGS-F-09-exit-1-is-the-direction-dual-resi.patch` | arifi-fork-base | `6b2c04568` | - | - | docs(FINDINGS): F-09 exit 1 is the direction - dual residency, not a forced choice |
 | 80 | `0080-repack-dual-residency-GGML_ARIFI_VNNI_REPACK-2-keeps.patch` | arifi-fork-base | `44e68f230` | - | `GGML_ARIFI_VNNI_REPACK` | repack: dual residency - GGML_ARIFI_VNNI_REPACK=2 keeps prefill on the GPU AND repacks decode |
 | 81 | `0081-repack-dual-residency-measured-both-wins-held-fix-th.patch` | arifi-fork-base | `1a3648e39` | - | `GGML_ARIFI_VNNI_REPACK` | repack: dual residency measured - both wins held; fix the hot-path cost that ate the first one |
+| 82 | `0082-repack-fix-the-shadow-tensor-COUNT-in-the-accounting.patch` | arifi-fork-base | `3e3ca94c8` | - | `GGML_ARIFI_VNNI_REPACK` | repack: fix the shadow tensor COUNT in the accounting line, and strengthen the claim it supports |
 
 ## Measured effect, per patch
 
@@ -270,6 +271,8 @@ legal and honest value; an absent trailer is a gap and is named as one.
   prefill ran, mode 2 is bit-identical to mode 1 on all six model x prompt cells (max \|delta
   logprob\| 0.000000000, deterministic 3/3). Re-verified on the shipped binary after the hot-path
   fix. Evidence: research/local-inference/trial-evidence/110/dual-residency/ |
+| `0082-repack-fix-the-shadow-tensor-COUNT-in-the-accounting.patch` | none on any code path - the changed line is a log format string. The claim it
+  supports is now verified by tensor name rather than inferred from byte totals. |
 
 ## Unclassified
 
@@ -303,4 +306,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `6b2c04568` docs(FINDINGS): F-09 exit 1 is the direction - dual residency, not a forced choice
 - `44e68f230` repack: dual residency - GGML_ARIFI_VNNI_REPACK=2 keeps prefill on the GPU AND repacks decode
 - `1a3648e39` repack: dual residency measured - both wins held; fix the hot-path cost that ate the first one
+- `3e3ca94c8` repack: fix the shadow tensor COUNT in the accounting line, and strengthen the claim it supports
 
