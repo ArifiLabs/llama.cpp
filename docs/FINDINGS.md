@@ -189,8 +189,16 @@ Three ways out, none free, all recorded rather than assumed:
    genuinely gets both wins and costs the memory of the affected tensors twice.
 2. **Enable repack only when no GPU backend exists at all.** Unlike "will this tensor be
    offloaded", "is there any GPU device" *is* answerable at load time, and when the answer is no
-   there is no offload eligibility to lose. This is narrow but strictly correct, and is the most
-   likely next step.
+   there is no offload eligibility to lose.
+
+   **We looked at implementing this and stopped, on purpose.** The reference machine has an
+   *integrated* GPU with unified memory, and the buffer accounting shows the GPU still offloading
+   batch work from ordinary CPU memory even with the host buffer type disabled — because on
+   unified memory it can read that memory directly. On a discrete GPU it could not, so the same
+   flag has a different cost there. We can only measure one of those two classes on the hardware
+   we have. Flipping a shipped default from a test that structurally cannot enter the other case
+   is how you ship a regression to users you never tested. The flag stays manual until someone
+   measures a discrete GPU.
 3. **Repack after prefill.** Layout is a property of the buffer, not of the tensor, so this means
    re-laying-out weights mid-run — plausible for a long-lived server, not cheap.
 
