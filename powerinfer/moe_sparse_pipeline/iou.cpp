@@ -39,9 +39,33 @@ IOUring::IOUring(const std::string &path, size_t queue_depth) :
 
     // FILE_FLAG_OVERLAPPED only in IOCP mode: the synchronous path needs a
     // blocking handle so ReadFile completes in place, exactly as pre-M2b.
-    const DWORD create_flags = iocp_enabled()
+    DWORD create_flags = iocp_enabled()
         ? (FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_OVERLAPPED)
         : FILE_FLAG_RANDOM_ACCESS;
+
+    // POWERINFER_NO_BUFFERING=1 -- the Windows counterpart of the O_DIRECT this same file already
+    // uses on Linux (see the POSIX branch: open(path, O_RDONLY | O_DIRECT)). The Windows port was
+    // brought up buffered, so every bundle read lands in the system file cache. On a box whose
+    // visible RAM (~15.7 GB) is comparable to the bundle (10.28 GB for SmallThinker-21B), the cache
+    // absorbs the very thing an I/O A/B is trying to measure: the POWERINFER_IOCP arms drifted
+    // upward run-over-run as the cache warmed (iocp-on 3.63 -> 4.73 -> 5.17) and never separated
+    // from the synchronous path, which is why that registry row has stayed "Direction UNRESOLVED".
+    //
+    // Requirements this satisfies, and why it is safe to add only now: NO_BUFFERING demands that the
+    // file offset, the transfer length AND the destination buffer all be sector-aligned. ExpertCache
+    // already allocates each buffer with az::aligned_alloc(io_alignment, ...), and as of the
+    // padded-stride change it also issues every read at a stride-aligned offset for a full
+    // stride-sized length. Before that change the unpadded length would have made these reads fail
+    // with ERROR_INVALID_PARAMETER for any model whose matrix was not already 4096-aligned.
+    //
+    // Default OFF. This is a measurement instrument first: it must be possible to A/B it against the
+    // buffered path on the same binary, and turning it on by default would silently change the
+    // meaning of every streaming number recorded so far.
+    if (const char * nb = std::getenv("POWERINFER_NO_BUFFERING")) {
+        if (nb[0] == '1' && nb[1] == '\0') {
+            create_flags |= FILE_FLAG_NO_BUFFERING;
+        }
+    }
 
     HANDLE h = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                            OPEN_EXISTING, create_flags, nullptr);
