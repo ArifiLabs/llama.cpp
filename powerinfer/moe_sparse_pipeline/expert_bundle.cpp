@@ -24,7 +24,14 @@ void ExpertBundleBuilder::append(const void *data, size_t ne0, size_t ne1,bool r
     else
     file.write(static_cast<const char*>(data),size);
 
-    current_offset += buf.size();
+    // advance by what was actually WRITTEN, not by buf.size(). On the repack=false path -- the only
+    // path bundle generation uses (llama-model.cpp:1734 and :1736 both pass false) -- `buf` is never
+    // resized, so this counter advanced by a stale value, and by zero on a builder that had never
+    // taken the repack branch. The written bytes were always correct because file.write() is given
+    // `size` directly, so no bundle on disk is affected; current_offset is a public member that
+    // nothing in the tree reads yet. Fixed now rather than left as a trap for whoever adds an offset
+    // index to the bundle format and reasonably assumes this counter tracks the file position.
+    current_offset += size;
 }
 
 void ExpertBundleBuilder::append_zero(size_t ne0, size_t ne1) {
