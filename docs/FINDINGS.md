@@ -408,6 +408,22 @@ gguf_init_from_reader: failed to read tensor data
 The mechanism is sound and the ordering defeats it. Nothing downstream can rescue the file,
 because the disambiguation it needs happens two layers above where it dies.
 
+**Confirmed on a second file, 2026-07-30, and it cost a trial.** This finding was recorded from one
+model. Setting up an unrelated speculative-decoding trial, the 27B ternary model was loaded by the
+path its own catalog entry gives — and it failed identically:
+
+```
+gguf_init_from_reader: tensor 'output_norm.weight' has offset 337715200, expected 357580800
+gguf_init_from_reader: failed to read tensor data
+```
+
+Same tensor, same overshoot, different model. The practical shape of this defect is now clear and it
+is worse than "a file we cannot read": **two files with the same name stem sit side by side, one
+loadable and one not**, distinguished only by a `.g128` in the filename. The trial ran four arms
+against the wrong one and every arm died before the feature under test was ever reached. Anything
+that records a path to one of these models should record the `.g128` spelling, and a reader who
+hits the offset error above is not looking at a corrupt download — they are looking at this.
+
 This is recorded rather than fixed because the fix is a real design choice, not a patch: either
 `gguf_init` learns to consult the format key before it sizes anything, or the key is read in a
 pre-pass. Both widen a hot, security-relevant path — offset validation is what stops a malformed
