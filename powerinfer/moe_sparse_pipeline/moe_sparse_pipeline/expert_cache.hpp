@@ -1,6 +1,9 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
 #include <mutex>
+#include <vector>
 #include <string>
 #include <memory>
 #include <functional>
@@ -59,6 +62,27 @@ struct ExpertCache {
     ~ExpertCache();
 
     auto get(size_t layer_id, size_t expert_id, size_t matrix_id) -> Matrix & {
+        // POWERINFER_EXPERT_HEATMAP=<path>: count accesses per (layer, expert) and dump at exit.
+        //
+        // This exists to answer a question BEFORE building anything: heat-driven pinning only pays
+        // if expert access is SKEWED. If every expert is touched about equally, pinning a "hot" set
+        // is pointless and no amount of implementation changes that -- which is a finding, not a
+        // failure. The eviction policy today is a plain LRU with no notion of heat.
+        //
+        // Gated on a bool resolved once in the constructor, so the hot path costs one predictable
+        // branch when off and one relaxed atomic increment when on.
+        if (heatmap_enabled) {
+            access_counts[layer_id * n_experts + expert_id].fetch_add(1, std::memory_order_relaxed);
+            // Dump PERIODICALLY, not at destruction. The harness stops the server with
+            // proc.terminate(), which on Windows is TerminateProcess -- no destructors, no atexit,
+            // no flush. A destructor-only dump produced nothing at all on the first attempt, the
+            // same way bundle generation's exit(0) swallows its own completion log line. Rewriting
+            // the whole file every 65536 accesses costs one pass over ~10k rows at an interval the
+            // hot path never notices, and whatever the process was killed mid-run still survives.
+            if ((heatmap_total.fetch_add(1, std::memory_order_relaxed) & 0xFFFFu) == 0) {
+                dump_heatmap();
+            }
+        }
         return layers[layer_id].experts[expert_id].matrices[matrix_id];
     }
 
@@ -87,6 +111,12 @@ private:
     // Keeping them separate is what lets a model whose matrix is not already 4096-aligned stream at
     // all -- see the constructor.
     size_t matrix_stride = 0;
+    // Per-(layer, expert) access histogram, allocated only when POWERINFER_EXPERT_HEATMAP is set.
+    bool heatmap_enabled = false;
+    std::string heatmap_path;
+    std::vector<std::atomic<uint64_t>> access_counts;
+    std::atomic<uint64_t> heatmap_total{0};
+    void dump_heatmap();
     std::vector<Layer> layers;
     bool debug_print = false;
 
