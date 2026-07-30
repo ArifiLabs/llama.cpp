@@ -978,6 +978,34 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
         selector_top_k = llama_model_dflash_selector_top_k(model_dft);
         is_dflash2     = selector_top_k > 0;
         mask_token_id = llama_vocab_mask(llama_model_get_vocab(model_dft));
+        if (mask_token_id == LLAMA_TOKEN_NULL) {
+            // A DFlash/DSpark drafter legitimately ships WITHOUT a vocabulary of its own -- it
+            // consumes the target's hidden features and shares the target's token embeddings
+            // (models/dflash.cpp:303-311). Such a GGUF sets tokenizer.ggml.model = "none", and that
+            // path nulls every special id, so llama_vocab_mask() can never return the mask even when
+            // the file states it. Fall back to the architecture metadata, exactly as block_size is
+            // read above.
+            //
+            // Without this the denoising batch below is built with token id -1
+            // (`i == 0 ? dp.id_last : mask_token_id`) and every draft decode returns -1 -- which does
+            // NOT surface as an error to the caller: speculation silently yields nothing and the run
+            // reports a plausible, badly wrong throughput. Observed on prism-ml's DSpark drafter as
+            // ~4 tok/s against an 8.6 tok/s no-drafter control, reading as "DSpark is slow" when the
+            // drafter had never drafted at all.
+            char buf[32] = {};
+            if (llama_model_meta_val_str(model_dft, "dflash.mask_token_id", buf, sizeof(buf)) >= 0) {
+                mask_token_id = std::atoi(buf);
+                LOG_INF("%s: draft model has no vocab; mask_token_id=%d taken from dflash.mask_token_id\n",
+                        __func__, mask_token_id);
+            }
+        }
+        if (is_dspark && mask_token_id == LLAMA_TOKEN_NULL) {
+            // Refuse rather than draft with -1. A drafter that cannot mask cannot denoise, and the
+            // failure is otherwise invisible in the numbers.
+            throw std::runtime_error("draft-dspark: no mask token — the draft model has no vocab mask "
+                                     "and no 'dflash.mask_token_id' metadata; DFlash denoising cannot "
+                                     "run and every draft decode would fail silently");
+        }
 
         if (is_dspark && this->params.p_min > 0.0f) {
             char buf[16] = {};
