@@ -2905,6 +2905,31 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     auto const &rm_id = [&](uint32_t rows) { return is_rdna3 ? 4u : rows; };
     uint32_t rm_iq = 2 * rm_kq;
 
+    // Rows per workgroup for the g128 ternary mul_mat_vec, made runtime-selectable.
+    //
+    // The pipeline that actually serves this format is the INTEGER-DOT one registered below, not
+    // either of the two dequant registrations: ggml_vk_should_use_mmvq() returns true for
+    // Q2_0_G128 on AMD at k >= 2048, and this was MEASURED rather than read off the source --
+    // GGML_VK_DISABLE_MMVQ moves decode from ~34.0 to ~28.2 tok/s on RIG-A, three interleaved
+    // replicates, non-overlapping. That matters because the dequant registrations take their rows
+    // from `rm_stdq` and this one takes them from `rm_kq_int`, so tuning the obvious variable would
+    // have compared two identical binaries.
+    //
+    // `rm_kq_int` is initialised to 1 above and raised by NO vendor branch -- AMD_GCN raises
+    // rm_stdq/rm_kq/rm_stdq_int, Intel raises rm_stdq/rm_stdq_int, neither touches it. So this
+    // pipeline has run 2 rows per workgroup on every device it has ever run on, untuned.
+    //
+    // Scoped to g128 alone rather than raising `rm_kq_int` itself, which is shared with Q2_0, Q2_K
+    // and several K-quants for which this box has no evidence. Unset leaves the shipped value, so
+    // no default moves (F-08).
+    uint32_t rm_g128_int = 2 * rm_kq_int;
+    if (const char * g128_rows = getenv("GGML_ARIFI_G128_MMV_ROWS")) {
+        const int v = atoi(g128_rows);
+        if (v > 0) {
+            rm_g128_int = (uint32_t) v;
+        }
+    }
+
     const bool use_subgroups = device->subgroup_arithmetic;
     // The Imagination proprietary compiler rejects the subgroup-only dequant mul_mat_vec
     // shaders that require a subgroup size >= 16; fall back to shared-memory reduction.
@@ -3008,7 +3033,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 const uint32_t wg_size_subgroup_int = (w == DMMV_WG_SIZE_SUBGROUP) ? subgroup_size_int : (subgroup_size_int * 4);
 
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_0][i], "mul_mat_vec_q2_0_q8_1_f32", arr_dmmv_q2_0_q8_1_f32_len[reduc], arr_dmmv_q2_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_kq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_0_G128][i], "mul_mat_vec_q2_0_g128_q8_1_f32", arr_dmmv_q2_0_g128_q8_1_f32_len[reduc], arr_dmmv_q2_0_g128_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_kq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_0_G128][i], "mul_mat_vec_q2_0_g128_q8_1_f32", arr_dmmv_q2_0_g128_q8_1_f32_len[reduc], arr_dmmv_q2_0_g128_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(rm_g128_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(rm_g128_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_0][i], "mul_mat_vec_q4_0_q8_1_f32", arr_dmmv_q4_0_q8_1_f32_len[reduc], arr_dmmv_q4_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_1][i], "mul_mat_vec_q4_1_q8_1_f32", arr_dmmv_q4_1_q8_1_f32_len[reduc], arr_dmmv_q4_1_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_0][i], "mul_mat_vec_q5_0_q8_1_f32", arr_dmmv_q5_0_q8_1_f32_len[reduc], arr_dmmv_q5_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
