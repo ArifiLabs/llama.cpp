@@ -8,11 +8,15 @@ only question a reader actually has is *"what did you change, and on what base?"
 answers exactly that. Entries are grouped by the upstream base they sit on, since a rebase is
 the one event that can change behaviour without any of our own code changing.
 
-Two rules for this file:
+Three rules for this file:
 
 - **Every performance claim names the hardware it was measured on.** A number without a machine
   is marketing.
 - **A mechanism that measured a loss is still listed, with its number.** Losses are results.
+- **Every performance claim was taken under the declared power plan.** On an APU the CPU and the
+  integrated GPU share one package power budget, so a "performance" power plan can halve iGPU
+  inference while speeding CPU work up — see [`docs/FINDINGS.md`](docs/FINDINGS.md) F-12. The bench
+  harness refuses to run under an undeclared plan.
 
 Detail beyond the summaries here lives in three places: [`docs/FINDINGS.md`](docs/FINDINGS.md)
 (what we learned and how), [`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.md) (every switch,

@@ -5,6 +5,13 @@ ArifiLabs llama.cpp series. An option is never silently enabled because it
 exists. Every option records its default, placement boundary, evidence, and
 safe measurement posture.
 
+> **Every default below was chosen under the Windows Balanced power plan.** That is not a
+> formality: on this APU the CPU and the integrated GPU share one package power budget, and a
+> "performance" plan measured **11.2 tok/s against Balanced's 29.0** on GPU-resident decode while
+> *speeding up* CPU-bound work ([`FINDINGS.md`](FINDINGS.md) F-12). A relative A/B is not immune to
+> that — an environment shift can move the two tiers in opposite directions and manufacture a win.
+> Re-declare the plan before you re-measure any row here.
+
 ## Defaults by hardware path
 
 > **If you are not on one of the four machines below, read
