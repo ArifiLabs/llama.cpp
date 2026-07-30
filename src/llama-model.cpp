@@ -1857,8 +1857,18 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             const size_t pi_row_size     = ggml_row_size(GGML_TYPE_Q4_0, hparams.n_embd);
             const size_t pi_matrix_bytes = pi_row_size * hparams.n_ff_exp;
 
+            // The `pi_matrix_bytes % 4096 == 0` condition that used to guard this is GONE. It existed
+            // only because ExpertCache strode the file by the UNPADDED matrix size and asserted that
+            // size was sector-aligned, while ExpertBundleBuilder has always PADDED each matrix up to
+            // io_alignment on write. The two disagreed, and the gate hid the disagreement by
+            // refusing every model whose matrix was not already 4096-aligned.
+            //
+            // That silently excluded this estate's own production brain: gemma4 26B-A4B has n_embd
+            // 2816 and n_ff_exp 704, so pi_matrix_bytes = 1,115,136 and 1,115,136 % 4096 = 1024. The
+            // bundle would generate (generation is not gated) and then never load. ExpertCache now
+            // carries an explicit padded `matrix_stride`, so the reader matches the writer.
             const char * pi_bundle_path = getenv("EXPERT_BUNDLE_PATH");
-            if (pi_bundle_path != nullptr && pi_matrix_bytes % 4096 == 0) {
+            if (pi_bundle_path != nullptr) {
                 LLAMA_LOG_INFO("%s: PowerInfer: loading expert bundle from \"%s\"\n", __func__, pi_bundle_path);
                 powerinfer_init_global_expert_cache(pi_bundle_path, (int) pi_n_layer, hparams.n_expert, 3, pi_matrix_bytes);
             }

@@ -82,6 +82,11 @@ private:
     size_t n_experts = 0;
     size_t n_matrices = 0;
     size_t matrix_bytes = 0;
+    // On-disk stride: matrix_bytes rounded UP to io_alignment. ExpertBundleBuilder pads every
+    // matrix it writes to io_alignment, so the file's stride is the padded size, not matrix_bytes.
+    // Keeping them separate is what lets a model whose matrix is not already 4096-aligned stream at
+    // all -- see the constructor.
+    size_t matrix_stride = 0;
     std::vector<Layer> layers;
     bool debug_print = false;
 

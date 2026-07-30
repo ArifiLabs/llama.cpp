@@ -20,9 +20,21 @@ ExpertCache::ExpertCache(
     n_layers(n_layers),
     n_experts(n_experts),
     n_matrices(n_matrices),
-    matrix_bytes(matrix_bytes)
+    matrix_bytes(matrix_bytes),
+    // ExpertBundleBuilder pads EVERY matrix it writes up to io_alignment (expert_bundle.cpp:13-15),
+    // so the file's stride is the padded size. This used to assert `matrix_bytes % io_alignment == 0`
+    // and stride by matrix_bytes, which is only correct when the padding happens to be zero --
+    // and llama-model.cpp gated bundle loading on exactly that condition to avoid tripping the
+    // assert. The effect was that any MoE model whose expert matrix is not already 4096-aligned
+    // could never stream, including this estate's own production brain: gemma4 26B-A4B has
+    // n_embd 2816 and n_ff_exp 704, so its matrix is 1,584 * 704 = 1,115,136 B and 1,115,136 % 4096
+    // = 1024. The file format already handled it; only the reader did not.
+    matrix_stride((matrix_bytes + io_alignment - 1) / io_alignment * io_alignment)
 {
-    POWERINFER_ASSERT(matrix_bytes % io_alignment == 0);
+    // The STRIDE is what must be aligned -- reads are issued at these offsets and, under
+    // FILE_FLAG_NO_BUFFERING, both the offset and the length must be sector multiples.
+    POWERINFER_ASSERT(matrix_stride % io_alignment == 0);
+    POWERINFER_ASSERT(matrix_stride >= matrix_bytes);
 
     layers.resize(n_layers);
     for (size_t layer_id = 0; layer_id < n_layers; layer_id++) {
@@ -38,7 +50,7 @@ ExpertCache::ExpertCache(
                 matrix.layer_id = layer_id;
                 matrix.expert_id = expert_id;
                 matrix.matrix_id = matrix_id;
-                matrix.file_offset = matrix_bytes * (matrix_id + expert_id * n_matrices + layer_id * n_experts * n_matrices);
+                matrix.file_offset = matrix_stride * (matrix_id + expert_id * n_matrices + layer_id * n_experts * n_matrices);
             }
         }
     }
@@ -133,7 +145,7 @@ void ExpertCache::io_worker_main() {
             stopping = true;
         } else if (matrix) {
             POWERINFER_ASSERT(matrix->data);
-            iou.enqueue_read(matrix->data, matrix->file_offset, matrix_bytes, matrix, [](void *user_data) {
+            iou.enqueue_read(matrix->data, matrix->file_offset, matrix_stride, matrix, [](void *user_data) {
                 Matrix *matrix = static_cast<Matrix *>(user_data);
 
                 std::unique_lock lock(*matrix->mutex);
@@ -175,7 +187,7 @@ void ExpertCache::io_worker_main() {
         bool any_submit = false;
         if (matrix) {
             POWERINFER_ASSERT(matrix->data);
-            iou.enqueue_read(matrix->data, matrix->file_offset, matrix_bytes, matrix, [](void *user_data) {
+            iou.enqueue_read(matrix->data, matrix->file_offset, matrix_stride, matrix, [](void *user_data) {
                 Matrix *matrix = static_cast<Matrix *>(user_data);
 
                 std::unique_lock lock(*matrix->mutex);
@@ -205,7 +217,10 @@ void ExpertCache::allocate_buffer(Matrix &matrix) {
     POWERINFER_ASSERT(!matrix.data);
 
     if (lru.size < max_n_cached_matrices) {
-        matrix.data = static_cast<char *>(az::aligned_alloc(io_alignment, matrix_bytes));  // lane-110: portable wrapper
+        // matrix_stride, not matrix_bytes: the read below transfers a full padded stride so the
+        // length stays sector-aligned for FILE_FLAG_NO_BUFFERING. Only the first matrix_bytes are
+        // weights; the tail is the writer's padding and is never read by the kernels.
+        matrix.data = static_cast<char *>(az::aligned_alloc(io_alignment, matrix_stride));  // lane-110: portable wrapper
     } else {
         Matrix *victim = lru.evict().get_owner_ptr(&Matrix::lru_node);
 
