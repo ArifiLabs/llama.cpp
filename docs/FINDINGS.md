@@ -14,7 +14,9 @@ A number without a machine attached is not a result.
 **How we measure.** The judge is always `llama-server` itself, never a synthetic benchmark
 binary. Fresh server per arm, free memory recorded at every launch, and a comparison counts
 only when the code path is independently evidenced as having actually run. That last rule
-exists because of F-04 below.
+exists because of F-04 below. The **active Windows power plan is declared with every number** and
+the harness refuses to run under any other one — that rule exists because of F-12, which cost us
+eight days of numbers.
 
 ---
 
@@ -407,6 +409,60 @@ compared only against itself.
 
 **Not fixed here.** Giving ARM a ternary repack arm means shipping kernels this project cannot
 measure, which is the one thing its defaults policy (F-08) exists to prevent.
+
+---
+
+## Measurement findings
+
+### F-12 — A "performance" power plan halved our iGPU inference, and every inference-level suspect read clean
+
+We publish this because for eight days it silently taxed everything measured on RIG-A, and
+nothing in the inference stack could have told us.
+
+A popular Windows optimizer's performance-focused power plan (installed deliberately, eight days
+before anyone noticed) cut GPU-resident decode from **29.3 to 11.2 tok/s** — while making tiny
+CPU-bound models run about **4× faster** at the same time. Full GPU residency, correct flags, no
+background load, no thermal event: every suspect checked clean, because the fault was not in the
+inference stack at all.
+
+The bisection, each row a fresh server on the same model and the same command, minutes apart:
+
+| Power configuration | decode tok/s |
+|---|---|
+| Windows Balanced | 29.0 |
+| Balanced + minimum-processor-state 100% (alone) | 29.0 |
+| Balanced + AMD Power Slider "best performance" (alone) | 28.8 |
+| **both together** | **14.5** |
+| **the optimizer's plan, verbatim from its `.pow` file** | **11.2** |
+
+Every single-variable arm is innocent. Only the pair reproduces the collapse.
+
+**Mechanism.** On an APU the CPU and the integrated GPU draw on **one package power budget**.
+Pinning the cores at maximum clock (minimum processor state 100%) *underneath* the maximum AMD
+performance slider saturates that budget continuously, and the iGPU can no longer boost. Either
+setting alone leaves headroom; together they starve the GPU. **A "CPU performance plan" is an
+anti-GPU plan on shared-budget silicon** — and because it genuinely accelerates CPU-bound work,
+single-workload benchmarking is structurally incapable of catching it.
+
+Nor is Balanced merely the least bad of the tweaked plans, and we did not assume it: the four plans
+were measured against each other on the same box within the same hour, same command — Balanced
+**29.12** and **28.95** on two probes, Ultimate Performance **28.90**, High Performance **28.39**,
+the optimizer's plan **11.07**. Both shipped "performance" plans are marginally *worse* than
+Balanced for this GPU-bound workload, and High Performance is a mild version of the same mechanism.
+Balanced is the pinned bench plan because it measured best here, not because it is the default.
+
+Three rules came out of it, and all three are now enforced rather than remembered:
+
+1. **Declare the power plan with every benchmark.** Our harness hard-refuses to run unless the
+   active scheme is the declared one. A wrong plan is a refused bench, not a footnote.
+2. **A relative A/B is not environment-immune.** An environment shift can move two processors in
+   *opposite* directions and so manufacture — or hide — a 20%-plus "win". Compare absolutes against
+   the incumbent record before believing any improvement ruling.
+3. **Bisect to the interaction, not to the setting.** Every single-variable arm here was innocent.
+
+The one thing this finding cannot do is repair the numbers taken inside the window. A throttled
+box hides a real win exactly as easily as it invents a fake one, so measurements from those eight
+days are re-verified before they are quoted, not adjusted.
 
 ## Open questions
 
