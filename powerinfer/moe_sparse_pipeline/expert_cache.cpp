@@ -1,4 +1,6 @@
 #include <fcntl.h>
+#include <cstdio>
+#include <cstdlib>
 
 #include "powerinfer-perf.hpp"
 #include "powerinfer-log.hpp"
@@ -36,6 +38,14 @@ ExpertCache::ExpertCache(
     POWERINFER_ASSERT(matrix_stride % io_alignment == 0);
     POWERINFER_ASSERT(matrix_stride >= matrix_bytes);
 
+    if (const char * hm = std::getenv("POWERINFER_EXPERT_HEATMAP")) {
+        heatmap_enabled = true;
+        heatmap_path = hm;
+        // std::atomic is not copyable, so the vector is built by resize (value-initialised to 0)
+        // rather than by a fill constructor.
+        access_counts = std::vector<std::atomic<uint64_t>>(n_layers * n_experts);
+    }
+
     layers.resize(n_layers);
     for (size_t layer_id = 0; layer_id < n_layers; layer_id++) {
         auto &layer = layers[layer_id];
@@ -70,6 +80,8 @@ ExpertCache::~ExpertCache() {
         victim->data = nullptr;
     }
 
+    dump_heatmap();  // best-effort: only reached on a clean shutdown, which terminate() is not
+
     if(debug_print){
         printf(
             "Expert cache: #examined=%zu, #cached=%zu (%.2lf%%)\n",
@@ -85,6 +97,28 @@ ExpertCache::~ExpertCache() {
             100.0 * stat.n_prefetched / stat.n_examined
         );
     }
+}
+
+// One row per (layer, expert). The question this answers, BEFORE anything is built: is expert
+// access SKEWED enough that pinning a hot set would beat the plain LRU we have? A flat histogram
+// means it would not, and that closes the row without writing an eviction policy nobody can justify.
+// Rewritten in place on every call so the newest complete snapshot always survives a hard kill.
+void ExpertCache::dump_heatmap() {
+    if (!heatmap_enabled || access_counts.empty()) {
+        return;
+    }
+    FILE * f = fopen(heatmap_path.c_str(), "w");
+    if (!f) {
+        return;
+    }
+    fprintf(f, "layer,expert,accesses\n");
+    for (size_t l = 0; l < n_layers; l++) {
+        for (size_t e = 0; e < n_experts; e++) {
+            fprintf(f, "%zu,%zu,%llu\n", l, e,
+                    (unsigned long long) access_counts[l * n_experts + e].load(std::memory_order_relaxed));
+        }
+    }
+    fclose(f);
 }
 
 void ExpertCache::lru_promote(Matrix &matrix) {
