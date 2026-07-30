@@ -1,0 +1,156 @@
+From 0c5c3eb0312b68b95126ee46a649f11fb3a104bc Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 29 Jul 2026 20:44:37 -0400
+Subject: [PATCH] docs: publish the power-plan finding as F-12, and bind the
+ bench protocol to it
+
+The President ruled this ships with the fork; 110F flagged that nobody had
+confirmed it reached the docs. It had not. Verified absent, now folded.
+
+F-12 records the whole thing: decode 29.3 -> 11.2 under a third-party
+"performance" power plan, the bisection showing every single-variable arm
+innocent (min-processor-100% 29.0, AMD slider 28.8) and only the pair
+collapsing (14.5, verbatim plan 11.2), and the shared-package-budget
+mechanism that explains why the same plan makes CPU-bound work ~4x faster.
+
+The four-plan comparison is included because the obvious objection is that
+Balanced was merely lucky: Balanced 29.12/28.95, Ultimate 28.90, High
+Performance 28.39, the optimizer's plan 11.07, same box and hour and command.
+Numbers taken from the register row that owns this issue, not from a prose
+retelling of it.
+
+Protocol changes that follow, in the same unit of work:
+- CHANGELOG gains a third standing rule: every performance claim was taken
+  under the declared power plan.
+- OPTIONS-REGISTRY says so in its preamble, because every default in it was
+  chosen under Balanced and a re-measurement under another plan is not a
+  comparison.
+- FINDINGS' "How we measure" now names the plan alongside the hardware.
+
+Origin: lane-110G, publication mandate - the President ruled this finding ships
+  with the fork, and 110F flagged that nobody had confirmed it reached the docs.
+Measured-effect: UNMEASURED by this commit - documentation only. The figures it
+  publishes were measured 2026-07-29 and are taken from the register row that
+  owns the issue rather than from a prose retelling of it.
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ CHANGELOG.md             |  6 ++++-
+ docs/FINDINGS.md         | 58 +++++++++++++++++++++++++++++++++++++++-
+ docs/OPTIONS-REGISTRY.md |  7 +++++
+ 3 files changed, 69 insertions(+), 2 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index b213feef6..c4741a7ab 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,11 +8,15 @@ only question a reader actually has is *"what did you change, and on what base?"
+ answers exactly that. Entries are grouped by the upstream base they sit on, since a rebase is
+ the one event that can change behaviour without any of our own code changing.
+ 
+-Two rules for this file:
++Three rules for this file:
+ 
+ - **Every performance claim names the hardware it was measured on.** A number without a machine
+   is marketing.
+ - **A mechanism that measured a loss is still listed, with its number.** Losses are results.
++- **Every performance claim was taken under the declared power plan.** On an APU the CPU and the
++  integrated GPU share one package power budget, so a "performance" power plan can halve iGPU
++  inference while speeding CPU work up — see [`docs/FINDINGS.md`](docs/FINDINGS.md) F-12. The bench
++  harness refuses to run under an undeclared plan.
+ 
+ Detail beyond the summaries here lives in three places: [`docs/FINDINGS.md`](docs/FINDINGS.md)
+ (what we learned and how), [`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.md) (every switch,
+diff --git a/docs/FINDINGS.md b/docs/FINDINGS.md
+index 68c0c9b49..f52a950e8 100644
+--- a/docs/FINDINGS.md
++++ b/docs/FINDINGS.md
+@@ -14,7 +14,9 @@ A number without a machine attached is not a result.
+ **How we measure.** The judge is always `llama-server` itself, never a synthetic benchmark
+ binary. Fresh server per arm, free memory recorded at every launch, and a comparison counts
+ only when the code path is independently evidenced as having actually run. That last rule
+-exists because of F-04 below.
++exists because of F-04 below. The **active Windows power plan is declared with every number** and
++the harness refuses to run under any other one — that rule exists because of F-12, which cost us
++eight days of numbers.
+ 
+ ---
+ 
+@@ -408,6 +410,60 @@ compared only against itself.
+ **Not fixed here.** Giving ARM a ternary repack arm means shipping kernels this project cannot
+ measure, which is the one thing its defaults policy (F-08) exists to prevent.
+ 
++---
++
++## Measurement findings
++
++### F-12 — A "performance" power plan halved our iGPU inference, and every inference-level suspect read clean
++
++We publish this because for eight days it silently taxed everything measured on RIG-A, and
++nothing in the inference stack could have told us.
++
++A popular Windows optimizer's performance-focused power plan (installed deliberately, eight days
++before anyone noticed) cut GPU-resident decode from **29.3 to 11.2 tok/s** — while making tiny
++CPU-bound models run about **4× faster** at the same time. Full GPU residency, correct flags, no
++background load, no thermal event: every suspect checked clean, because the fault was not in the
++inference stack at all.
++
++The bisection, each row a fresh server on the same model and the same command, minutes apart:
++
++| Power configuration | decode tok/s |
++|---|---|
++| Windows Balanced | 29.0 |
++| Balanced + minimum-processor-state 100% (alone) | 29.0 |
++| Balanced + AMD Power Slider "best performance" (alone) | 28.8 |
++| **both together** | **14.5** |
++| **the optimizer's plan, verbatim from its `.pow` file** | **11.2** |
++
++Every single-variable arm is innocent. Only the pair reproduces the collapse.
++
++**Mechanism.** On an APU the CPU and the integrated GPU draw on **one package power budget**.
++Pinning the cores at maximum clock (minimum processor state 100%) *underneath* the maximum AMD
++performance slider saturates that budget continuously, and the iGPU can no longer boost. Either
++setting alone leaves headroom; together they starve the GPU. **A "CPU performance plan" is an
++anti-GPU plan on shared-budget silicon** — and because it genuinely accelerates CPU-bound work,
++single-workload benchmarking is structurally incapable of catching it.
++
++Nor is Balanced merely the least bad of the tweaked plans, and we did not assume it: the four plans
++were measured against each other on the same box within the same hour, same command — Balanced
++**29.12** and **28.95** on two probes, Ultimate Performance **28.90**, High Performance **28.39**,
++the optimizer's plan **11.07**. Both shipped "performance" plans are marginally *worse* than
++Balanced for this GPU-bound workload, and High Performance is a mild version of the same mechanism.
++Balanced is the pinned bench plan because it measured best here, not because it is the default.
++
++Three rules came out of it, and all three are now enforced rather than remembered:
++
++1. **Declare the power plan with every benchmark.** Our harness hard-refuses to run unless the
++   active scheme is the declared one. A wrong plan is a refused bench, not a footnote.
++2. **A relative A/B is not environment-immune.** An environment shift can move two processors in
++   *opposite* directions and so manufacture — or hide — a 20%-plus "win". Compare absolutes against
++   the incumbent record before believing any improvement ruling.
++3. **Bisect to the interaction, not to the setting.** Every single-variable arm here was innocent.
++
++The one thing this finding cannot do is repair the numbers taken inside the window. A throttled
++box hides a real win exactly as easily as it invents a fake one, so measurements from those eight
++days are re-verified before they are quoted, not adjusted.
++
+ ## Open questions
+ 
+ Listed because they are unresolved, not because they are unimportant.
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index aace175d2..5b612b1e0 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -5,6 +5,13 @@ ArifiLabs llama.cpp series. An option is never silently enabled because it
+ exists. Every option records its default, placement boundary, evidence, and
+ safe measurement posture.
+ 
++> **Every default below was chosen under the Windows Balanced power plan.** That is not a
++> formality: on this APU the CPU and the integrated GPU share one package power budget, and a
++> "performance" plan measured **11.2 tok/s against Balanced's 29.0** on GPU-resident decode while
++> *speeding up* CPU-bound work ([`FINDINGS.md`](FINDINGS.md) F-12). A relative A/B is not immune to
++> that — an environment shift can move the two tiers in opposite directions and manufacture a win.
++> Re-declare the plan before you re-measure any row here.
++
+ ## Defaults by hardware path
+ 
+ > **If you are not on one of the four machines below, read

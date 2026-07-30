@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10173`, `e9fa0781f1c25fc4fe8c86be1edc6970661ad6f0`
-- Patches: **86**, all non-merge, applied in filename order.
+- Patches: **90**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 86 commit messages, same provenance trailers. Verified, not
+same file contents, same 90 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -165,6 +165,10 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 84 | `0084-tests-direct-equivalence-test-for-the-ternary-repack.patch` | arifi-fork-base | `8108813c6` | - | - | tests: direct equivalence test for the ternary repack kernels |
 | 85 | `0085-docs-the-g128-repack-SPEED-numbers-measured.patch` | arifi-fork-base | `0cc066f68` | - | `GGML_ARIFI_VNNI_REPACK` | docs: the g128 repack SPEED numbers, measured |
 | 86 | `0086-docs-frame-the-g128-repack-numbers-as-a-CPU-tier-res.patch` | arifi-fork-base | `29f964b32` | - | - | docs: frame the g128 repack numbers as a CPU-tier result |
+| 87 | `0087-docs-publish-the-power-plan-finding-as-F-12-and-bind.patch` | arifi-fork-base | `0c5c3eb03` | - | - | docs: publish the power-plan finding as F-12, and bind the bench protocol to it |
+| 88 | `0088-F-06-measure-the-GPU-tier-on-one-binary-and-count-th.patch` | arifi-fork-base | `db70b2893` | - | - | F-06: measure the GPU tier on one binary, and count the placement the prompt claim rested on |
+| 89 | `0089-registry-the-dual-residency-prompt-mechanism-is-meas.patch` | arifi-fork-base | `1a7ca693d` | - | `GGML_ARIFI_VNNI_REPACK` | registry: the dual-residency prompt mechanism is measured now, not ASSUMED |
+| 90 | `0090-powerinfer-MAX_N_CACHED-admitted-two-values-that-bre.patch` | powerinfer-streaming | `30a5eee76` | - | `MAX_N_CACHED` | powerinfer: MAX_N_CACHED admitted two values that break the eviction invariant |
 
 ## Measured effect, per patch
 
@@ -297,6 +301,22 @@ legal and honest value; an absent trailer is a gap and is named as one.
   ranges disjoint. |
 | `0086-docs-frame-the-g128-repack-numbers-as-a-CPU-tier-res.patch` | no code changed. Adds context to figures already measured; names
   the same-binary GPU-vs-CPU arm as owed rather than implying it was run. |
+| `0087-docs-publish-the-power-plan-finding-as-F-12-and-bind.patch` | UNMEASURED by this commit - documentation only. The figures it
+  publishes were measured 2026-07-29 and are taken from the register row that
+  owns the issue rather than from a prose retelling of it. |
+| `0088-F-06-measure-the-GPU-tier-on-one-binary-and-count-th.patch` | RIG-A, llama-server, Ternary-Bonsai-8B-Q2_0.g128.gguf, 519-token
+  prefill, n_predict 128, three interleaved replicates, one binary. GPU (-ngl 99)
+  327.38 prompt / 34.40 decode; CPU floor 58.15 / 1.88; CPU dual 85.62 / 6.56.
+  The two arms with published values reproduced within 6% as the run's own
+  known-answer control. Placement counted separately with GGML_SCHED_DEBUG=2:
+  mode 2 identical to mode 0 across all 24 graph dumps, CPU share 4 of 253. |
+| `0089-registry-the-dual-residency-prompt-mechanism-is-meas.patch` | UNMEASURED by this commit - it records the measurements made in
+  the preceding commit rather than making new ones. |
+| `0090-powerinfer-MAX_N_CACHED-admitted-two-values-that-bre.patch` | no throughput effect by construction - the default (6144) and
+  unset paths are unchanged. Behaviour verified on the built llama-server on
+  RIG-A: MAX_N_CACHED=512 and MAX_N_CACHED=-1 are refused with the new message,
+  513 and unset start normally. Before the change the same binary shape accepted
+  512, and accepted -1 as 18446744073709551615. |
 
 ## Unclassified
 
@@ -333,4 +353,6 @@ rather than silently bucketed - add a rule when a new source appears.
 - `3e3ca94c8` repack: fix the shadow tensor COUNT in the accounting line, and strengthen the claim it supports
 - `f0c578349` repack: CPU kernels for the 128-group ternary format
 - `8108813c6` tests: direct equivalence test for the ternary repack kernels
+- `db70b2893` F-06: measure the GPU tier on one binary, and count the placement the prompt claim rested on
+- `1a7ca693d` registry: the dual-residency prompt mechanism is measured now, not ASSUMED
 
