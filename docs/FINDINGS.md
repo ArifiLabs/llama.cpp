@@ -172,29 +172,76 @@ identical and every logprob delta exactly `0.000000000`.
   because g64 already had a fast scalar `vec_dot` and g128 never did. And dual residency wins
   **both** axes on g128, where on g64 the honest reading was only that it never *loses* prefill.
 
-  The prompt gain's mechanism is **ASSUMED, not measured**: graph splits are 467 in both mode 0 and
-  mode 2, so the same ops stay CPU-side during prefill, and in mode 2 those reach the repacked
-  shadow instead of the scalar path. On an 8B model that CPU share is large enough to matter where
-  on the 0.5B g64 models it was not. Separable with `--no-op-offload` or `GGML_SCHED_DEBUG=2`; not
-  done here.
+  **The prompt gain's mechanism was ASSUMED here, and the assumption was half wrong. Counted
+  2026-07-30.** The earlier text read: "graph splits are 467 in both mode 0 and mode 2, so the same
+  ops stay CPU-side during prefill, and in mode 2 those reach the repacked shadow instead of the
+  scalar path. On an 8B model that CPU share is large enough to matter where on the 0.5B g64 models
+  it was not." A split *count* is not a placement — 467 splits is consistent with any distribution
+  of MUL_MATs inside them — so the placements themselves were counted with `GGML_SCHED_DEBUG=2`.
+  Counting, not timing: the scheduler's assignment is a function of the graph and the buffer types,
+  so a busy machine cannot move it.
+
+  **Confirmed: placement is untouched.** Mode 2's per-graph MUL_MAT placement is identical to mode
+  0's across all 24 graph dumps in the run, backend for backend. Dual residency moves no work, which
+  is exactly what F-09's design requires and had only asserted.
+
+  **Falsified: the CPU share is not large.** In the offloaded multi-token graph, **249 of 253**
+  MUL_MATs run on Vulkan and **4** stay on the CPU — a **1.6%** CPU share, and 0 of 253 in the
+  ubatch shape that offloads everything. The 0.5B g64 models F-09 measured were 4 of 169, i.e.
+  **2.4%**. The 8B's CPU share is *smaller*, not larger, so "large enough to matter where on the
+  0.5B it was not" is wrong on its own terms.
+
+  **What is actually true is better than the guess.** The four CPU-resident MUL_MATs are not a
+  random 1.6%; they are, by name, `ffn_gate-35`, `ffn_up-35`, `ffn_out-35` and `result_output` —
+  the **final** transformer layer's whole FFN, plus the output head. Three of those are among the
+  largest matmuls in the model. So the honest form of the mechanism is not "a big share of prefill
+  is CPU-side" but "a *tiny* share of prefill is CPU-side and it is disproportionately expensive,
+  and mode 2 is what lets it use the repacked kernel instead of the scalar one". A count and a cost
+  are different things, and the original wording confused them.
+
+  **Still owed, and named rather than glossed:** per-operation timing. Identifying the four ops does
+  not by itself prove they account for the whole +45.3%; that needs the ops timed individually, not
+  inferred from their size. Driver: `trial-evidence/110/g128-kernels/mechanism_probe.py`.
 
   **Read these numbers as a CPU-tier result, not an absolute one.** The repack path is only
   reachable with `--no-host` (F-04), i.e. with the weights held out of the device host buffer, so
-  every figure above is the CPU tier by construction. On this same 8B g128 model the Vulkan tier is
-  roughly **4x faster on both axes** — an external record for the PrismML fork's Vulkan binary puts
-  it at pp512 **356.43** / tg128 **28.15 t/s**, against the 85.84 / 6.69 measured here. So what
-  mission #1 fixed is the *floor*: an earlier measurement of the 27B g128 recorded its CPU path as
-  "≈33x/2.5x slower; 2-bit CPU kernel unoptimized", and that unoptimized CPU kernel is exactly what
-  these kernels replace. The CPU tier is now 3.3x less bad; it is still the slower tier.
+  every figure above is the CPU tier by construction. The GPU tier is faster, and it is now measured
+  rather than cited.
+
+  **The GPU tier, on ONE binary (2026-07-30).** An earlier version of this section put the Vulkan
+  tier at "roughly 4× faster on both axes" by comparing an *external* record for the PrismML fork's
+  Vulkan binary (pp512 356.43 / tg128 28.15) against the 85.84 / 6.69 above. That is the
+  cross-binary comparison this project forbids itself — a prior cross-session comparison of that
+  shape manufactured a 24% regression that did not exist. Re-measured with the same binary, model,
+  prompt and protocol as the table above, three interleaved replicates, medians:
+
+  | tok/s | GPU (`-ngl 99`) | CPU floor (mode 0) | CPU dual (mode 2) |
+  |---|---|---|---|
+  | prompt | **327.38** | 58.15 (0.18×) | 85.62 (0.26×) |
+  | decode | **34.40** | 1.88 (0.05×) | 6.56 (0.19×) |
+
+  The "4× on both axes" figure was wrong, and wrong in the direction that flattered the CPU tier.
+  The GPU is **3.8×** the post-repack CPU tier on prompt and **5.2×** on decode — and **18.3×** the
+  CPU floor those kernels replaced. What mission #1 fixed is the *floor*: an earlier measurement of
+  the 27B g128 recorded its CPU path as "≈33×/2.5× slower; 2-bit CPU kernel unoptimized", and that
+  unoptimized kernel is exactly what these replace. The CPU tier is now 3.3× less bad; it is still,
+  by a wide margin, the slower tier.
+
+  The two arms with published values were re-measured as the run's own known-answer control and
+  reproduced within 6% (mode 0: 58.15 / 1.88 against 59.09 / 2.01; mode 2: 85.62 / 6.56 against
+  85.84 / 6.69), which is what makes the third arm trustworthy. Sample counts are uneven and stated
+  as measured — prompt n=6 per cell, decode n=3 to n=4, because some rolls emitted no eval-time
+  line; the tiers are separated by 4× to 18×, far outside that.
+
+  No prompt comparison against the external 356.43 is drawn even now. That figure is a `pp512`
+  synthetic and ours is a 519-token real prefill — comparing them would be the same error one level
+  down. Our own Vulkan decode of **34.40** does exceed the external record's 28.15, and that
+  observation is offered as an observation, not a benchmark result.
 
   Where the CPU tier is the one that matters: a build with no GPU at all, a model that will not fit
   in the device's memory, and dual residency's own case, where prefill goes to the GPU and only the
-  decode step is served from the repacked shadow.
-
-  **Not yet measured on one binary.** The 356.43 / 28.15 figures are another binary's, and this
-  project's own rule is to reuse a binary rather than a number — a prior cross-session comparison
-  manufactured a 24% fork regression that did not exist. A same-binary GPU-vs-CPU arm for g128 is
-  written and owed: `trial-evidence/110/g128-kernels/gpu_vs_cpu.py`.
+  decode step is served from the repacked shadow. Driver:
+  `trial-evidence/110/g128-kernels/gpu_vs_cpu.py`.
 
 **Method note:** compare struct *geometry*, never names or comments. An earlier round of this
 work recorded the relationship backwards from names alone and propagated the error into
