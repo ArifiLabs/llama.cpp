@@ -806,6 +806,11 @@ struct vk_device_struct {
     vk_pipeline pipeline_dequant_mul_mat_vec_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
     vk_pipeline pipeline_dequant_mul_mat_vec_id_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
 
+    // Activation pre-rotation for the TurboQuant rotated matmul path. One
+    // pipeline serves TQ3_1S and TQ4_1S: they share the 32-element sign pattern
+    // and butterfly, and the shader only touches the activation.
+    vk_pipeline pipeline_tq_rotate_act;
+
     vk_pipeline pipeline_mul_mat_vec_p021_f16_f32[p021_max_gqa_ratio];
     vk_pipeline pipeline_mul_mat_vec_nc_f16_f32;
     vk_pipeline pipeline_get_rows[GGML_TYPE_COUNT];
