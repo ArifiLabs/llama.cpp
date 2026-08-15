@@ -118,7 +118,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
 
     // reduced draft vocab (optional): d2t maps draft rows to target token ids
     int64_t n_vocab_draft = n_vocab;
-    const struct ggml_tensor * d2t_meta = ml->get_tensor_meta("d2t");
+    const struct ggml_tensor * d2t_meta = ml.get_tensor_meta("d2t");
     if (d2t_meta) {
         n_vocab_draft = d2t_meta->ne[0];
         d2t = create_tensor(tn(LLM_TENSOR_D2T), { n_vocab_draft }, 0);
@@ -126,7 +126,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
     }
 
     // DSpark = DFlash + a semi-autoregressive Markov head and Confidence head
-    const struct ggml_tensor * markov_meta = ml->get_tensor_meta("markov_w1.weight");
+    const struct ggml_tensor * markov_meta = ml.get_tensor_meta("markov_w1.weight");
     if (markov_meta) {
         const int64_t dspark_markov_rank = markov_meta->ne[0];
 
@@ -140,7 +140,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
         LLAMA_LOG_INFO("%s: DFlash with DSpark markov head (rank = %lld)\n", __func__, (long long) dspark_markov_rank);
     }
 
-    const struct ggml_tensor * selector_meta = ml->get_tensor_meta("selector_hidden.weight");
+    const struct ggml_tensor * selector_meta = ml.get_tensor_meta("selector_hidden.weight");
     if (selector_meta) {
         const int64_t rank = hparams.dflash_selector_rank;
         if (rank <= 0 || hparams.dflash_block_size <= 0 || hparams.dflash_selector_top_k <= 0 ||
