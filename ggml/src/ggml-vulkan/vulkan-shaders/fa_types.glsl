@@ -3,6 +3,26 @@
 
 #include "ggml_type_ids.glsl"
 
+// arifi: FA_TYPE_* kept beside upstream's GGML_TYPE_* ids (ggml_type_ids.glsl) - the fork K/V types
+// (turbo/TQ) have no upstream id, fork shader code uses these names, and arifi_sync_check.py
+// checks every FA_TYPE_* value against ggml.h. Same numbers, so the two spellings mix freely.
+#define FA_TYPE_F32   0u
+#define FA_TYPE_F16   1u
+#define FA_TYPE_Q4_0  2u
+#define FA_TYPE_Q4_1  3u
+#define FA_TYPE_Q5_0  6u
+#define FA_TYPE_Q5_1  7u
+#define FA_TYPE_Q8_0  8u
+#define FA_TYPE_IQ4_NL 20u
+#define FA_TYPE_BF16 30u
+#define FA_TYPE_Q1_0 41u
+#define FA_TYPE_Q2_0 42u
+#define FA_TYPE_TURBO2_0 43u
+#define FA_TYPE_TURBO3_0 44u
+#define FA_TYPE_TQ3_1S 45u
+#define FA_TYPE_TQ4_1S 46u
+#define FA_TYPE_TURBO4_0 47u
+
 // Number of matrix elements per buffer block, derived from the K/V type spec
 // constant. F32 is treated as a vec4 "block" of 4 floats. F16 uses block size 1
 // and bypasses the dequant path entirely. Quants follow their ggml block sizes.
@@ -17,6 +37,11 @@ uint fa_block_elems(uint ty) {
         case GGML_TYPE_Q8_0: return uint(QUANT_K_Q8_0);
         case GGML_TYPE_IQ4_NL: return uint(QUANT_K_IQ4_NL);
         case GGML_TYPE_BF16: return 1u;
+        case FA_TYPE_Q1_0: return uint(QUANT_K_Q1_0); // cm2-only, harmless elsewhere
+        case FA_TYPE_Q2_0: return uint(QUANT_K_Q2_0); // GGML_TYPE_Q2_0
+        case FA_TYPE_TURBO2_0: return uint(QUANT_K_TURBO2_0); // GGML_TYPE_TURBO2_0
+        case FA_TYPE_TURBO3_0: return uint(QUANT_K_TURBO3_0); // GGML_TYPE_TURBO3_0
+        case FA_TYPE_TURBO4_0: return uint(QUANT_K_TURBO4_0); // GGML_TYPE_TURBO4_0
         default:           return 1u;
     }
 }
