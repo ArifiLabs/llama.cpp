@@ -1217,6 +1217,7 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
         data.prompt += data.generation_prompt;
     }
 
+<<<<<<< ours
     std::vector<std::string> tool_call_starts = { "<tool_call>" };
 
     if (is_qwen3_coder) {
@@ -1229,6 +1230,8 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
         });
     }
 
+=======
+>>>>>>> theirs
     auto parser = build_chat_peg_parser([&](common_chat_peg_builder & p) {
         auto generation_prompt = p.literal(GEN_PREFIX);
 
@@ -1304,7 +1307,11 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
             auto tool_calls = p.trigger_rule("tool-call-root", p.repeat(calls, min_calls, 1));
 
             return generation_prompt +
+<<<<<<< ours
                    (reasoning << p.content(p.until_one_of(tool_call_starts)) << tool_calls);
+=======
+                   (reasoning << p.content(p.until_one_of({ "<tool_call>", "<function=" })) << tool_calls);
+>>>>>>> theirs
         }
 
         // Content only parser
@@ -1330,9 +1337,18 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
         });
 
         if (data.grammar_lazy) {
+<<<<<<< ours
             for (const auto & start : tool_call_starts) {
                 data.grammar_triggers.push_back({ COMMON_GRAMMAR_TRIGGER_TYPE_WORD, start });
             }
+=======
+            data.grammar_triggers = {
+                { COMMON_GRAMMAR_TRIGGER_TYPE_WORD, "<tool_call>" },
+                // Trigger on "<function" and not "<function=" because the trailing "=" is part of
+                // the token with the function name e.g. "=read"
+                { COMMON_GRAMMAR_TRIGGER_TYPE_WORD, "<function"   },
+            };
+>>>>>>> theirs
         }
     }
 
