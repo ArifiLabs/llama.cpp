@@ -72,6 +72,11 @@ list(APPEND GGML_SOURCES_ROCM ${SRCS})
 file(GLOB   SRCS "../ggml-cuda/template-instances/mmf*.cu")
 list(APPEND GGML_SOURCES_ROCM ${SRCS})
 
+# arifi: mixed f16/bf16 + q8_0 KV cache vec instances stay in the default build
+string(TOLOWER "${GGML_CUDA_FA_QUANTS}" GGML_CUDA_FA_QUANTS_LC)
+if (NOT GGML_CUDA_FA_ALL_QUANTS AND NOT GGML_CUDA_FA_QUANTS_LC STREQUAL "all")
+    set(GGML_CUDA_FA_QUANTS "${GGML_CUDA_FA_QUANTS};f16-q8_0;q8_0-f16;bf16-q8_0;q8_0-bf16")
+endif()
 ggml_cuda_fattn_vec_instances(${CMAKE_CURRENT_SOURCE_DIR}/../ggml-cuda SRCS)
 list(APPEND GGML_SOURCES_ROCM ${SRCS})
 # arifi: TurboQuant KV cache vec instances (always compiled, outside GGML_CUDA_FA_QUANTS)
