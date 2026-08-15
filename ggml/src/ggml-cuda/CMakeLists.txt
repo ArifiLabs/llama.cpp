@@ -112,8 +112,36 @@ if (CUDAToolkit_FOUND)
     file(GLOB   SRCS "template-instances/mmf*.cu")
     list(APPEND GGML_SOURCES_CUDA ${SRCS})
 
+    # arifi: mixed f16/bf16 + q8_0 KV cache vec instances stay in the default build
+    string(TOLOWER "${GGML_CUDA_FA_QUANTS}" GGML_CUDA_FA_QUANTS_LC)
+    if (NOT GGML_CUDA_FA_ALL_QUANTS AND NOT GGML_CUDA_FA_QUANTS_LC STREQUAL "all")
+        set(GGML_CUDA_FA_QUANTS "${GGML_CUDA_FA_QUANTS};f16-q8_0;q8_0-f16;bf16-q8_0;q8_0-bf16")
+    endif()
     ggml_cuda_fattn_vec_instances(${CMAKE_CURRENT_SOURCE_DIR} SRCS)
     list(APPEND GGML_SOURCES_CUDA ${SRCS})
+    # arifi: TurboQuant KV cache vec instances (always compiled, outside GGML_CUDA_FA_QUANTS)
+    list(APPEND GGML_SOURCES_CUDA
+        template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cu
+        template-instances/fattn-vec-instance-turbo3_0-q8_0.cu
+        template-instances/fattn-vec-instance-q8_0-turbo3_0.cu
+        template-instances/fattn-vec-instance-f16-turbo3_0.cu
+        template-instances/fattn-vec-instance-turbo3_0-f16.cu
+        template-instances/fattn-vec-instance-turbo2_0-turbo2_0.cu
+        template-instances/fattn-vec-instance-turbo2_0-q8_0.cu
+        template-instances/fattn-vec-instance-q8_0-turbo2_0.cu
+        template-instances/fattn-vec-instance-f16-turbo2_0.cu
+        template-instances/fattn-vec-instance-turbo2_0-f16.cu
+        template-instances/fattn-vec-instance-turbo3_0-turbo2_0.cu
+        template-instances/fattn-vec-instance-turbo2_0-turbo3_0.cu
+        template-instances/fattn-vec-instance-turbo4_0-turbo4_0.cu
+        template-instances/fattn-vec-instance-turbo4_0-q8_0.cu
+        template-instances/fattn-vec-instance-q8_0-turbo4_0.cu
+        template-instances/fattn-vec-instance-f16-turbo4_0.cu
+        template-instances/fattn-vec-instance-turbo4_0-f16.cu
+        template-instances/fattn-vec-instance-turbo4_0-turbo3_0.cu
+        template-instances/fattn-vec-instance-turbo3_0-turbo4_0.cu
+        template-instances/fattn-vec-instance-turbo4_0-turbo2_0.cu
+        template-instances/fattn-vec-instance-turbo2_0-turbo4_0.cu)
 
     ggml_add_backend_library(ggml-cuda
                              ${GGML_HEADERS_CUDA}
@@ -196,7 +224,8 @@ if (CUDAToolkit_FOUND)
         # - speed (nvcc's default)
         # - balance
         # - size
-        list(APPEND CUDA_FLAGS -compress-mode=${GGML_CUDA_COMPRESSION_MODE})
+        # Disabled: -compress-mode causes issues with GCC 12 host compiler
+        # list(APPEND CUDA_FLAGS -compress-mode=${GGML_CUDA_COMPRESSION_MODE})
     endif()
 
     if (GGML_FATAL_WARNINGS)
