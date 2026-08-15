@@ -5771,15 +5771,12 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
         case GGML_TYPE_IQ4_NL:
         case GGML_TYPE_MXFP4:
         case GGML_TYPE_NVFP4:
-<<<<<<< ours
         case GGML_TYPE_TQ1_0:
         case GGML_TYPE_TQ2_0:
-=======
         // TQ3_1S/TQ4_1S are deliberately absent from the q8_1 switch above:
         // their id pipelines are f32-B only.
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
->>>>>>> theirs
             break;
         default:
             return nullptr;
@@ -7527,13 +7524,32 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context& 
         quantize_y = false;
     }
 
+    // TurboQuant rotated matmul. The A side is loaded as centroid*scale with no
+    // inverse WHT, which is correct only against a pre-rotated activation, so
+    // the activation is staged into ctx->prealloc_y and rotated there.
+    //
+    // Staging is FORCED even when src1 is already contiguous f32. Otherwise
+    // y_f32_kernel is true, qy_needs_dequant is false, d_Y aliases the real
+    // src1 buffer, and the rotate would mutate the graph's own activation --
+    // the hazard Metal's in-place rotate/un-rotate pair has to work around.
+    //
+    // Gated on mmp_map != nullptr && !x_non_contig, i.e. only when the TQ matmul
+    // pipeline was actually selected. If we fell back to the f16 dequant path
+    // the weights are true weights and must NOT see a rotated activation.
+    const bool tq_rotate = !quantize_y && mmp_map != nullptr && !x_non_contig &&
+                           (src0->type == GGML_TYPE_TQ3_1S || src0->type == GGML_TYPE_TQ4_1S);
+
     const bool qx_needs_dequant = mmp_map == nullptr || x_non_contig;
-    bool qy_needs_dequant = !quantize_y && ((src1->type != f16_type && !y_f32_kernel) || y_non_contig);
+    bool qy_needs_dequant = !quantize_y && ((tq_rotate || (src1->type != f16_type && !y_f32_kernel) || y_non_contig));
 
     if (qx_needs_dequant) {
         // Fall back to dequant + f16 mulmat
         mmp_map = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, f16_type, y_f32_kernel ? GGML_TYPE_F32 : f16_type, (ggml_prec)dst->op_params[0], true);
     }
+
+    // Not implemented. tq_rotate is the deliberate exception: it forces staging
+    // for a contiguous src1 so the rotate never touches the graph's own tensor.
+    GGML_ASSERT(y_non_contig || tq_rotate || !qy_needs_dequant);  // NOLINT
 
     // Coopmat2 MUL_MAT_ID BK specialization constants in ggml_vk_load_shaders are at most 64.
     const uint32_t y_staged_row_stride = ctx->device->coopmat2 && !quantize_y ? ggml_vk_align_size(ne10, 64) : ne10;
@@ -7561,7 +7577,7 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context& 
     const uint64_t qx_sz = ggml_type_size(src0->type) * x_ne / ggml_blck_size(src0->type);
     const uint64_t qy_sz = ggml_type_size(src1->type) * ggml_nelements(src1) / ggml_blck_size(src1->type);
     const uint64_t x_sz = !qx_needs_dequant ? qx_sz : sizeof(ggml_fp16_t) * x_ne;
-    const uint64_t y_sz = quantize_y ? (ggml_vk_align_size(y_ne, 128) * ggml_type_size(GGML_TYPE_Q8_1) / ggml_blck_size(GGML_TYPE_Q8_1)) : (y_f32_kernel ? sizeof(float) * y_ne : sizeof(ggml_fp16_t) * y_ne);
+    const uint64_t y_sz = quantize_y ? (ggml_vk_align_size(y_ne, 128) * ggml_type_size(GGML_TYPE_Q8_1) / ggml_blck_size(GGML_TYPE_Q8_1)) : ((y_f32_kernel || tq_rotate) ? sizeof(float) * y_ne : sizeof(ggml_fp16_t) * y_ne);
     const uint64_t ids_sz = nbi2;
     const uint64_t d_sz = sizeof(float) * d_ne;
 
@@ -7584,7 +7600,12 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context& 
     } else {
         to_fp16_vk_0 = ggml_vk_get_to_fp16(ctx, src0->type);
     }
-    if (y_needs_reformat) {
+    if (tq_rotate) {
+        // Plain contiguous f32 copy into prealloc_y; tq_rotate_act then rotates
+        // that copy in place. f32 throughout: the butterfly is 5 rounds of adds
+        // and doing it in f16 would lose precision the quantization did not.
+        to_fp16_vk_1 = ggml_vk_get_cpy_pipeline(ctx, src1, nullptr, GGML_TYPE_F32);
+    } else if (y_needs_reformat) {
         ggml_tensor y_staged_dst;
         const ggml_tensor * y_staged_dst_ptr = nullptr;
         if (y_needs_k_padding) {
@@ -7633,6 +7654,9 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context& 
         }
         if (qy_needs_dequant) {
             ggml_pipeline_request_descriptor_sets(ctx, to_fp16_vk_1, 1);
+        }
+        if (tq_rotate) {
+            ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_tq_rotate_act, 1);
         }
         if (quantize_y) {
             ggml_pipeline_request_descriptor_sets(ctx, to_q8_1, 1);
@@ -7714,7 +7738,31 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context& 
         ggml_vk_dispatch_pipeline(ctx, subctx, to_fp16_vk_0,
             { vk_subbuffer{ d_Qx, qx_buf_offset, qx_sz }, vk_subbuffer{ d_X, 0, x_sz } }, pc, { (uint32_t)x_ne, 1, 1});
     }
-    if (y_needs_reformat) {
+    if (tq_rotate) {
+        // Cache identity is the ROTATE pipeline, not the cpy pipeline. prealloc_y
+        // now holds ROTATED data, so a later non-rotated consumer of the same src1
+        // must not reuse it -- keying on the rotate pipeline makes its pointer
+        // differ and forces a re-stage.
+        if (ctx->prealloc_y_last_pipeline_used != ctx->device->pipeline_tq_rotate_act.get() ||
+            ctx->prealloc_y_last_tensor_used != src1) {
+            if (ctx->prealloc_y_need_sync) {
+                ggml_vk_sync_buffers(ctx, subctx);
+            }
+            ggml_vk_cpy_to_contiguous(ctx, subctx, to_fp16_vk_1, src1, ggml_vk_subbuffer(ctx, d_Qy, qy_buf_offset), ggml_vk_subbuffer(ctx, d_Y, 0));
+            // The rotate reads what the copy just wrote.
+            ggml_vk_sync_buffers(ctx, subctx);
+            // Rotate only the rows the copy produced; the padded_n rows beyond
+            // ne11 are untouched, exactly as in the f16 staging path.
+            const uint32_t tq_rows = (uint32_t)(ne11 * ne12 * ne13);
+            const std::array<uint32_t, 3> tq_pc = { (uint32_t)ne10, tq_rows, (uint32_t)ne10 };
+            ggml_vk_dispatch_pipeline(ctx, subctx, ctx->device->pipeline_tq_rotate_act,
+                { ggml_vk_subbuffer(ctx, d_Y, 0) }, tq_pc,
+                { tq_rows * (uint32_t)ne10, 1, 1 });
+            ctx->prealloc_y_last_pipeline_used = ctx->device->pipeline_tq_rotate_act.get();
+            ctx->prealloc_y_last_tensor_used = src1;
+            ctx->prealloc_y_last_decode_vector_staging = false;
+        }
+    } else if (y_needs_reformat) {
         if (ctx->prealloc_y_last_pipeline_used != to_fp16_vk_1.get() ||
             ctx->prealloc_y_last_tensor_used != src1 ||
             ctx->prealloc_y_last_k_padded != y_needs_k_padding) {
