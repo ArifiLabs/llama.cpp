@@ -565,6 +565,13 @@ static bool arch_supported(const llm_arch arch) {
     if (arch == LLM_ARCH_DEEPSEEK32 || arch == LLM_ARCH_GLM_DSA || arch == LLM_ARCH_DOTS3NOTE || arch == LLM_ARCH_QWEN4EXP) {
         return false;
     }
+<<<<<<< ours
+    if (arch == LLM_ARCH_DEEPSEEK32 || arch == LLM_ARCH_GLM_DSA || arch == LLM_ARCH_MINIMAX_01) {
+=======
+    if (arch == LLM_ARCH_DEEPSEEK32 || arch == LLM_ARCH_GLM_DSA || arch == LLM_ARCH_MINIMAX_M3) {
+>>>>>>> theirs
+        return false;
+    }
 #endif // GGML_USE_WEBGPU
 
     // FIXME: jamba produces incorrect output (~0.55 NMSE vs CPU) on the HIP
