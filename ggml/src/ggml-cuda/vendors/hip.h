@@ -76,6 +76,12 @@
 #define cudaDeviceProp hipDeviceProp_t
 #define cudaDeviceSynchronize hipDeviceSynchronize
 #define cudaError_t hipError_t
+#ifndef cudaErrorUnknown
+#define cudaErrorUnknown hipErrorUnknown
+#endif
+#ifndef cudaErrorInvalidValue
+#define cudaErrorInvalidValue hipErrorInvalidValue
+#endif
 #define cudaErrorMemoryAllocation hipErrorOutOfMemory
 #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
 #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled
@@ -97,6 +103,9 @@
 #define cudaHostAllocPortable hipHostMallocPortable
 #define cudaHostAllocMapped hipHostMallocMapped
 #define cudaHostGetDevicePointer hipHostGetDevicePointer
+#ifndef cudaPeekAtLastError
+#define cudaPeekAtLastError hipPeekAtLastError
+#endif
 #define cudaHostRegister hipHostRegister
 #define cudaHostRegisterPortable hipHostRegisterPortable
 #define cudaHostRegisterReadOnly hipHostRegisterReadOnly
@@ -120,6 +129,12 @@
 #define cudaMemGetInfo hipMemGetInfo
 #define cudaOccupancyMaxPotentialBlockSize hipOccupancyMaxPotentialBlockSize
 #define cudaSetDevice hipSetDevice
+#ifndef cudaDeviceGetStreamPriorityRange
+#define cudaDeviceGetStreamPriorityRange hipDeviceGetStreamPriorityRange
+#endif
+#ifndef cudaStreamCreateWithPriority
+#define cudaStreamCreateWithPriority hipStreamCreateWithPriority
+#endif
 #define cuDeviceGet hipDeviceGet
 #define CUdevice hipDevice_t
 #define CUdeviceptr hipDeviceptr_t
