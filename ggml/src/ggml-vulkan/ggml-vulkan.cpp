@@ -2199,6 +2199,12 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
 // every FOR_EACH_LUT_TYPE* creation site also runs this list
 #define FOR_EACH_ARIFI_MM_TYPE(X) \
     X(GGML_TYPE_Q2_0_G128, q2_0_g128)
+// arifi: TurboQuant TQ3_1S/TQ4_1S ROTATED mul_mm_id - f32 B only (the activation is pre-rotated in f32 by
+// pipeline_tq_rotate_act), never coopmat2 (no dequant_funcs_cm2 entry); SPIR-V from the explicit tq stanza
+// in vulkan-shaders-gen.cpp. Correct ONLY against a pre-rotated activation.
+#define FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X) \
+    X(GGML_TYPE_TQ3_1S, tq3_1s) \
+    X(GGML_TYPE_TQ4_1S, tq4_1s)
 #define FOR_EACH_LUT_TYPE(X) \
     FOR_EACH_LUT_TYPE_NONFP4(X)  \
     FOR_EACH_LUT_FP4_TYPE(X)
@@ -2542,6 +2548,15 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         }
         FOR_EACH_LUT_TYPE_NONFP4(X_CM1_ID)
         FOR_EACH_ARIFI_MM_TYPE(X_CM1_ID)
+#define X_CM1_ID_F32B(TYPE, tstr) \
+        if (device->coopmat_acc_f16_support) { \
+            cm1_create({TYPE, GGML_TYPE_F32, true, true},  tc_mmq_id, "matmul_id_subgroup_" #tstr "_f32_f16acc", matmul_id_subgroup_##tstr##_f32_f16acc_cm1_len, matmul_id_subgroup_##tstr##_f32_f16acc_cm1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count); \
+        } \
+        if (device->coopmat_acc_f32_support) { \
+            cm1_create({TYPE, GGML_TYPE_F32, true, false}, tc_mmq_id, "matmul_id_subgroup_" #tstr "_f32",        matmul_id_subgroup_##tstr##_f32_cm1_len,        matmul_id_subgroup_##tstr##_f32_cm1_data,        sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count); \
+        }
+        FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X_CM1_ID_F32B)
+#undef X_CM1_ID_F32B
 #if defined(GGML_VULKAN_FLOAT_E2M1_GLSLC_SUPPORT) && defined(GGML_VULKAN_FLOAT_E4M3_GLSLC_SUPPORT)
         if (device->ocp_fp4) {
 #define X_CM1_ID_OCP(TYPE, tstr) \
@@ -2677,6 +2692,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 sg_create({TYPE, GGML_TYPE_F32, true, false}, tc_mmqid, "matmul_id_subgroup_" #tstr "_f32",        SPV_DOT2(matmul_id_subgroup_##tstr##_f32),        sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count, mul_mat_subgroup_size);
                 FOR_EACH_LUT_TYPE(X_SG_ID_SUB)
                 FOR_EACH_ARIFI_MM_TYPE(X_SG_ID_SUB)
+                FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X_SG_ID_SUB)
 #undef X_SG_ID_SUB
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
                 if (device->integer_dot_product) {
@@ -2716,6 +2732,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 sg_create({TYPE, GGML_TYPE_F32, true, false}, tc_mmqid, "matmul_id_" #tstr "_f32",        SPV_DOT2(matmul_id_##tstr##_f32),        sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count);
                 FOR_EACH_LUT_TYPE(X_SG_ID)
                 FOR_EACH_ARIFI_MM_TYPE(X_SG_ID)
+                FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X_SG_ID)
 #undef X_SG_ID
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
                 if (device->integer_dot_product) {
@@ -2791,6 +2808,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 sg_create({TYPE, GGML_TYPE_F32, true, false}, tc_mmqid, "matmul_id_subgroup_" #tstr "_f32", matmul_id_subgroup_##tstr##_f32_fp32_len, matmul_id_subgroup_##tstr##_f32_fp32_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count, mul_mat_subgroup_size);
                 FOR_EACH_LUT_TYPE(X_SG_ID_SUB_FP32)
                 FOR_EACH_ARIFI_MM_TYPE(X_SG_ID_SUB_FP32)
+                FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X_SG_ID_SUB_FP32)
 #undef X_SG_ID_SUB_FP32
             } else {
                 sg_create({GGML_TYPE_F32, GGML_TYPE_F32, true, false}, tc_mm, "matmul_id_f32_f32", matmul_id_f32_f32_fp32_len, matmul_id_f32_f32_fp32_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count);
@@ -2804,6 +2822,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 sg_create({TYPE, GGML_TYPE_F32, true, false}, tc_mmqid, "matmul_id_" #tstr "_f32", matmul_id_##tstr##_f32_fp32_len, matmul_id_##tstr##_f32_fp32_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count);
                 FOR_EACH_LUT_TYPE(X_SG_ID_FP32)
                 FOR_EACH_ARIFI_MM_TYPE(X_SG_ID_FP32)
+                FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X_SG_ID_FP32)
 #undef X_SG_ID_FP32
             }
         }
