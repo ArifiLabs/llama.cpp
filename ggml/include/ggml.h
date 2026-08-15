@@ -440,7 +440,7 @@ extern "C" {
         //
         //   * SERIALIZED weight formats keep the id their originator wrote into
         //     files. Never renumber an imported format. Allocated / reserved:
-        //       45,46      TurboQuant TQ3_1S / TQ4_1S      - reserved, not yet ported
+        //       45,46      TurboQuant TQ3_1S / TQ4_1S      - ALLOCATED above
         //       100..104   ROCmFP4 / ROCmFPX weight formats - ALLOCATED below
         //       107        ROCmFPX Q2_0_ROCMFPX             - ALLOCATED below
         //   * RUNTIME-ONLY types (KV codecs, repack layouts — anything that never
@@ -475,6 +475,21 @@ extern "C" {
         // The ceiling is 256, not 108: block R (ArifiLabs runtime-only types) is
         // reserved at 200..255 and would otherwise force COUNT to move twice.
         // 44..255 is a sparse range by design; every hole is fail-closed above.
+
+        // ---------------------------------------------------------------------
+        // Block R, 200..255 - ArifiLabs runtime-only types (TYPE-ID-ALLOCATION §3.2).
+        // TurboQuant numbers its KV codecs 43/44/47 in its own tree. They live HERE
+        // instead, and the reason is not tidiness: block_turbo2_0 is 34 bytes over
+        // 128 values - byte-IDENTICAL geometry to block_q2_0_g128 at id 43. Every
+        // size check in ggml passes on a mix-up, so the wrong dequantiser runs and
+        // returns numbers instead of an error. Their ids must never be confusable
+        // (§4.1, §6). These types never enter a GGUF, and the session-state read
+        // path is fail-closed on BOTH the persisted id and the row size, so moving
+        // them cannot silently misread an old session file.
+        GGML_TYPE_TURBO2_0 = 200, // TurboQuant 2-bit KV cache: WHT + 2-bit PolarQuant (runtime-only)
+        GGML_TYPE_TURBO3_0 = 201, // TurboQuant 3-bit KV cache: WHT + 3-bit PolarQuant (runtime-only)
+        GGML_TYPE_TURBO4_0 = 202, // TurboQuant 4-bit KV cache: WHT + 4-bit PolarQuant (runtime-only)
+
         GGML_TYPE_COUNT   = 256,
     };
 
@@ -625,6 +640,7 @@ extern "C" {
         GGML_OP_RWKV_WKV7,
         GGML_OP_SOLVE_TRI,
         GGML_OP_GATED_DELTA_NET,
+        GGML_OP_TURBO_WHT,
         GGML_OP_LIGHTNING_INDEXER,
         GGML_OP_DSV4_HC_COMB,
         GGML_OP_DSV4_HC_PRE,
@@ -2675,17 +2691,17 @@ extern "C" {
             struct ggml_tensor  * state,
             int64_t               K);
 
-    // DSA lightning indexer
-    //
-    // q:       [n_embd_idx, n_head_idx, n_batch, ne3 ]
-    // k:       [n_embd_idx, 1,          n_kv,    ne3 ]
-    // weights: [n_head_idx, n_batch,    1,       ne3 ] !! prescaled !!
-    // mask:    [n_kv,       n_batch,    1,       ne33] !! f16 !!
-    // res:     [n_kv,       n_batch,    1,       ne3 ]
-    //
-    // broadcast:
-    //   ne3 % ne33 == 0
-    //
+    // TurboQuant Walsh-Hadamard Transform (O(d log d) rotation for KV cache compression)
+    // Applies WHT rotation to 128-element groups along ne[0]: sign1 → butterfly → sign2 → normalize
+    // direction: 0 = forward (signs1 → WHT → signs2), 1 = inverse (signs2 → WHT → signs1)
+    GGML_API struct ggml_tensor * ggml_turbo_wht(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            int                   direction,
+            int                   group_size,    // 0 = auto (64 or 128 from ne[0])
+            struct ggml_tensor  * scale);        // NULL = no InnerQ scaling
+
+    // DeepSeek V4 Lightning Indexer
     GGML_API struct ggml_tensor * ggml_lightning_indexer(
         struct ggml_context * ctx,
         struct ggml_tensor  * q,
@@ -2694,8 +2710,6 @@ extern "C" {
         struct ggml_tensor  * mask);
 
     // DeepSeek V4 hyper-connections (ref. https://arxiv.org/pdf/2512.24880)
-    // In short these operations are replacements for the original residual connection (x = transformer(x) + x)
-    // using a richer representation through streams.
     //
     // hc_comb: mixes [(2 + hc)*hc, n_tokens], scale [3], base [(2 + hc)*hc]
     //          -> [dst_hc, src_hc, n_tokens]
@@ -2719,11 +2733,9 @@ extern "C" {
             struct ggml_tensor  * x,
             struct ggml_tensor  * weights);
 
-    // hc_post: x [n_embd, n_tokens], residual [n_embd, hc, n_tokens],
-    //          post [hc, n_tokens], comb [dst_hc, src_hc, n_tokens]
+    // hc_post: x [n_embd, n_tokens], residual [n_embd, hc, n_tokens], post [hc, n_tokens], comb [dst_hc, src_hc, n_tokens]
     //          -> [n_embd, hc, n_tokens]
-    //   result[i, dst, t] = x[i, t]*post[dst, t]
-    //                       + sum_src residual[i, src, t]*comb[dst, src, t]
+    //   result[i, h, t] = x[i, t] * post[h, t] + sum_src residual[i, src, t] * comb[h, src, t]
     //
     GGML_API struct ggml_tensor * ggml_dsv4_hc_post(
             struct ggml_context * ctx,
