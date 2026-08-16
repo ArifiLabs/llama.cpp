@@ -61,7 +61,11 @@ TEXT_MODEL_MAP: dict[str, str] = {
     "Lfm2DSparkDraftModel": "qwen",
     "LingDSparkModel": "qwen",
     "DeepseekV4ForCausalLM": "deepseek",
+<<<<<<< ours
     "DeepseekV4DSparkModel": "deepseek",
+=======
+    "DFlashLagunaForCausalLM": "laguna",
+>>>>>>> theirs
     "DistilBertForMaskedLM": "bert",
     "DistilBertForSequenceClassification": "bert",
     "DistilBertModel": "bert",
