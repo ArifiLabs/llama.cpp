@@ -1,14 +1,17 @@
 #include "fit.h"
 
+#include "common.h"
 #include "log.h"
 
+#include "../ggml/src/ggml-backend-moe-cache.h"
 #include "../src/llama-ext.h"
 
+#include <algorithm>
 #include <array>
 #include <cassert>
-#include <stdexcept>
 #include <cinttypes>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -26,8 +29,6 @@ class common_params_fit_exception : public std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
-<<<<<<< ours
-=======
 const char * common_moe_cache_tensor_override_pattern() {
     return "blk\\.\\d+\\.ffn_(up|down|gate_up|gate)_(ch|)exps";
 }
@@ -274,7 +275,6 @@ struct common_fit_logger_guard {
     }
 };
 
->>>>>>> theirs
 static std::vector<llama_device_memory_data> common_get_device_memory_data_impl(
         const char * path_model,
         const llama_model_params * mparams,
@@ -283,45 +283,34 @@ static std::vector<llama_device_memory_data> common_get_device_memory_data_impl(
         uint32_t & hp_ngl,
         uint32_t & hp_n_ctx_train,
         uint32_t & hp_n_expert,
-        ggml_log_level log_level) {
-    struct user_data_t {
-        struct {
-            ggml_log_callback callback;
-            void * user_data;
-        } original_logger;
-        ggml_log_level min_level; // prints below this log level go to debug log
-    };
-    user_data_t ud;
-    llama_log_get(&ud.original_logger.callback, &ud.original_logger.user_data);
-    ud.min_level = log_level;
-
-    llama_log_set([](ggml_log_level level, const char * text, void * user_data) {
-        const user_data_t * ud = (const user_data_t *) user_data;
-        const ggml_log_level level_eff = level >= ud->min_level ? level : GGML_LOG_LEVEL_DEBUG;
-        ud->original_logger.callback(level_eff, text, ud->original_logger.user_data);
-    }, &ud);
+        ggml_log_level log_level,
+        std::vector<llama_moe_tensor_info> * moe_tensors = nullptr,
+        llama_context * ctx_parent = nullptr) {
+    common_fit_logger_guard logger_guard(log_level);
 
     llama_model_params mparams_copy = *mparams;
     mparams_copy.no_alloc  = true;
     mparams_copy.load_mode = LLAMA_LOAD_MODE_NONE;
 
-    llama_model * model = llama_model_load_from_file(path_model, mparams_copy);
+    llama_model_ptr model(llama_model_load_from_file(path_model, mparams_copy));
     if (model == nullptr) {
-        llama_log_set(ud.original_logger.callback, ud.original_logger.user_data);
         throw std::runtime_error("failed to load model");
     }
 
-    llama_context * ctx = llama_init_from_model(model, *cparams);
+    llama_context_params cparams_copy = *cparams;
+    if (ctx_parent != nullptr) {
+        cparams_copy.ctx_other = ctx_parent;
+    }
+
+    llama_context_ptr ctx(llama_init_from_model(model.get(), cparams_copy));
     if (ctx == nullptr) {
-        llama_model_free(model);
-        llama_log_set(ud.original_logger.callback, ud.original_logger.user_data);
         throw std::runtime_error("failed to create llama_context from model");
     }
 
-    const size_t nd = llama_model_n_devices(model);
+    const size_t nd = llama_model_n_devices(model.get());
     std::vector<llama_device_memory_data> ret(nd + 1);
 
-    llama_memory_breakdown memory_breakdown = llama_get_memory_breakdown(ctx);
+    llama_memory_breakdown memory_breakdown = llama_get_memory_breakdown(ctx.get());
 
     for (const auto & [buft, mb] : memory_breakdown) {
         if (ggml_backend_buft_is_host(buft)) {
@@ -336,7 +325,7 @@ static std::vector<llama_device_memory_data> common_get_device_memory_data_impl(
             continue;
         }
         for (size_t i = 0; i < nd; i++) {
-            if (dev == llama_model_get_device(model, i)) {
+            if (dev == llama_model_get_device(model.get(), i)) {
                 ret[i].mb.model   += mb.model;
                 ret[i].mb.context += mb.context;
                 ret[i].mb.compute += mb.compute;
@@ -357,7 +346,7 @@ static std::vector<llama_device_memory_data> common_get_device_memory_data_impl(
         ret.back().total = total;
     }
     for (size_t i = 0; i < nd; i++) {
-        ggml_backend_dev_t dev = llama_model_get_device(model, i);
+        ggml_backend_dev_t dev = llama_model_get_device(model.get(), i);
 
         size_t free;
         size_t total;
@@ -381,22 +370,25 @@ static std::vector<llama_device_memory_data> common_get_device_memory_data_impl(
     }
 
     devs.clear();
-    for (int i = 0; i < llama_model_n_devices(model); i++) {
-        devs.push_back(llama_model_get_device(model, i));
+    for (int i = 0; i < llama_model_n_devices(model.get()); i++) {
+        devs.push_back(llama_model_get_device(model.get(), i));
     }
 
-    hp_ngl         = llama_model_n_layer(model);
+    hp_ngl         = llama_model_n_layer(model.get());
     if (mparams->load_mtp) {
-        hp_ngl    += llama_model_n_layer_nextn(model);
+        hp_ngl    += llama_model_n_layer_nextn(model.get());
     }
-    hp_n_ctx_train = llama_model_n_ctx_train(model);
-    hp_n_expert    = llama_model_n_expert(model);
+    hp_n_ctx_train = llama_model_n_ctx_train(model.get());
+    hp_n_expert    = llama_model_n_expert(model.get());
 
-    common_memory_breakdown_print(ctx);
+    if (moe_tensors) {
+        const size_t count = llama_model_get_moe_tensor_info(model.get(), nullptr, 0);
+        moe_tensors->resize(count);
+        const size_t written = llama_model_get_moe_tensor_info(model.get(), moe_tensors->data(), moe_tensors->size());
+        GGML_ASSERT(written == count);
+    }
 
-    llama_free(ctx);
-    llama_model_free(model);
-    llama_log_set(ud.original_logger.callback, ud.original_logger.user_data);
+    common_memory_breakdown_print(ctx.get());
 
     return ret;
 }
@@ -424,10 +416,54 @@ common_device_memory_data_vec common_get_device_memory_data(
     return ret;
 }
 
+common_device_memory_data_vec common_get_device_memory_data_with_parent(
+        const char * path_model,
+        const llama_model_params * mparams,
+        const llama_context_params * cparams,
+        const char * path_parent,
+        const llama_model_params * mparams_parent,
+        const llama_context_params * cparams_parent,
+        std::vector<ggml_backend_dev_t> & devs,
+        uint32_t & hp_ngl,
+        uint32_t & hp_n_ctx_train,
+        uint32_t & hp_n_expert,
+        ggml_log_level log_level) {
+    common_fit_logger_guard logger_guard(log_level);
+
+    llama_model_params mparams_parent_copy = *mparams_parent;
+    mparams_parent_copy.no_alloc  = true;
+    mparams_parent_copy.load_mode = LLAMA_LOAD_MODE_NONE;
+
+    llama_model_ptr model_parent(llama_model_load_from_file(path_parent, mparams_parent_copy));
+    if (model_parent == nullptr) {
+        throw std::runtime_error("failed to load parent model");
+    }
+
+    llama_context_ptr ctx_parent(llama_init_from_model(model_parent.get(), *cparams_parent));
+    if (ctx_parent == nullptr) {
+        throw std::runtime_error("failed to create parent llama_context");
+    }
+
+    std::vector<llama_device_memory_data> impl = common_get_device_memory_data_impl(
+            path_model, mparams, cparams, devs, hp_ngl, hp_n_ctx_train, hp_n_expert,
+            log_level, nullptr, ctx_parent.get());
+
+    common_device_memory_data_vec ret(impl.size());
+    for (size_t i = 0; i < impl.size(); i++) {
+        ret[i].total   = impl[i].total;
+        ret[i].free    = impl[i].free;
+        ret[i].model   = impl[i].mb.model;
+        ret[i].context = impl[i].mb.context;
+        ret[i].compute = impl[i].mb.compute;
+    }
+    return ret;
+}
+
 static void common_params_fit_impl(
         const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams,
         float * tensor_split, struct llama_model_tensor_buft_override * tensor_buft_overrides,
-        size_t * margins_s, uint32_t n_ctx_min, const common_fit_extra_model * extra, enum ggml_log_level log_level) {
+        common_moe_cache_params * moe_cache, size_t * margins_s, uint32_t n_ctx_min,
+        const common_fit_extra_model * extra, enum ggml_log_level log_level) {
     if (mparams->split_mode == LLAMA_SPLIT_MODE_TENSOR) {
         throw common_params_fit_exception("llama_params_fit is not implemented for SPLIT_MODE_TENSOR, abort");
     }
@@ -439,6 +475,11 @@ static void common_params_fit_impl(
     uint32_t hp_ngl = 0; // hparams.n_gpu_layers
     uint32_t hp_nct = 0; // hparams.n_ctx_train
     uint32_t hp_nex = 0; // hparams.n_expert
+    std::vector<llama_moe_tensor_info> moe_tensors;
+
+    if (moe_cache) {
+        moe_cache->fit_selected = false;
+    }
 
     // with non-unified kv, we need to take into account n_streams
     // for example, if memory can hold more than model's trained context size, we must extend the n_ctx to hold enough n_streams
@@ -509,7 +550,7 @@ static void common_params_fit_impl(
     // step 1: get data for default parameters and check whether any changes are necessary in the first place
 
     LOG_TRC("%s: getting device memory data for initial parameters:\n", __func__);
-    dmds_t dmds_full = common_get_device_memory_data_impl(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
+    dmds_t dmds_full = common_get_device_memory_data_impl(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level, &moe_tensors);
 
     // saturate instead of overflowing, this also preserves the UINT32_MAX sentinel of n_ctx_min:
     const uint32_t n_ctx_max       = (uint32_t) std::min<uint64_t>(uint64_t(hp_nct)    * n_streams, UINT32_MAX);
@@ -521,12 +562,20 @@ static void common_params_fit_impl(
         if (n_streams > 1) {
             LOG_TRC("%s: context size unset and KV cache not unified -> using %" PRIu32 " for %" PRIu32 " sequences:\n",
                 __func__, n_ctx_max, n_streams);
-            dmds_full = common_get_device_memory_data_impl(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
+            dmds_full = common_get_device_memory_data_impl(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level, &moe_tensors);
         }
     }
     add_extra_memory(dmds_full);
 
     const size_t nd = devs.size(); // number of devices
+
+    auto log_stock_fit = [&] {
+        if (moe_cache && moe_cache->mode != COMMON_MOE_CACHE_MODE_OFF &&
+            !moe_tensors.empty() &&
+            (!mparams->tensor_buft_overrides || !mparams->tensor_buft_overrides[0].pattern)) {
+            LOG_INF("%s: MoE cache fit kept stock placement because the complete model already meets the fit targets\n", __func__);
+        }
+    };
 
     std::vector<int64_t> margins; // this function uses int64_t rather than size_t for memory sizes to more conveniently handle deficits
     margins.reserve(nd);
@@ -601,6 +650,7 @@ static void common_params_fit_impl(
             if (projected_free_per_device[0] >= margins[0]) {
                 LOG_TRC("%s: will leave %" PRId64 " >= %" PRId64 " MiB of free device memory, no changes needed\n",
                     __func__, projected_free_per_device[0]/MiB, margins[0]/MiB);
+                log_stock_fit();
                 return;
             }
         } else {
@@ -613,6 +663,7 @@ static void common_params_fit_impl(
             }
             if (!changes_needed) {
                 LOG_TRC("%s: targets for free memory can be met on all devices, no changes needed\n", __func__);
+                log_stock_fit();
                 return;
             }
         }
@@ -861,11 +912,63 @@ static void common_params_fit_impl(
         return ret;
     };
 
+    auto set_cache_layer_split = [&](const std::vector<uint32_t> & layers,
+            llama_model_params & candidate, float * split,
+            llama_model_tensor_buft_override * overrides) {
+        GGML_ASSERT(layers.size() == nd);
+        std::fill(split, split + llama_max_devices(), 0.0f);
+        candidate.n_gpu_layers = 0;
+        for (size_t id = 0; id < nd; id++) {
+            if ((uint64_t)candidate.n_gpu_layers + layers[id] > INT32_MAX) {
+                throw std::runtime_error("cache candidate layer count overflowed");
+            }
+            candidate.n_gpu_layers += layers[id];
+            if (nd > 1) {
+                split[id] = layers[id];
+            }
+        }
+        candidate.tensor_split = split;
+        overrides[0] = {common_moe_cache_tensor_pattern.c_str(), ggml_backend_cpu_buffer_type()};
+        overrides[1] = {nullptr, nullptr};
+        candidate.tensor_buft_overrides = overrides;
+        candidate.use_extra_bufts = false;
+    };
+
+    auto get_cache_candidate_memory = [&](const std::vector<uint32_t> & layers,
+            dmds_t & candidate_memory) {
+        std::vector<float> candidate_split(llama_max_devices(), 0.0f);
+        std::vector<llama_model_tensor_buft_override> candidate_overrides(ntbo, {nullptr, nullptr});
+        llama_model_params candidate = *mparams;
+        set_cache_layer_split(layers, candidate, candidate_split.data(), candidate_overrides.data());
+
+        std::vector<ggml_backend_dev_t> candidate_devs;
+        uint32_t candidate_ngl = 0;
+        uint32_t candidate_nct = 0;
+        uint32_t candidate_nex = 0;
+        candidate_memory = common_get_device_memory_data_impl(
+                path_model, &candidate, cparams, candidate_devs,
+                candidate_ngl, candidate_nct, candidate_nex, log_level);
+        if (candidate_devs != devs || candidate_memory.size() != nd + 1) {
+            return false;
+        }
+        for (size_t id = 0; id < nd; id++) {
+            if (candidate_memory[id].mb.total() > INT64_MAX ||
+                candidate_memory[id].free - (int64_t)candidate_memory[id].mb.total() < margins[id]) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    std::vector<uint32_t> cache_layers;
+    dmds_t cache_memory;
+    bool cache_candidate_valid = false;
+    bool cache_candidate_main = false;
+
     int64_t global_surplus_cpu_moe = 0;
     if (hp_nex > 0) {
-        const static std::string pattern_moe_all = "blk\\.\\d+\\.ffn_(up|down|gate_up|gate)_(ch|)exps"; // matches all MoE tensors
         ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
-        tensor_buft_overrides[0] = {pattern_moe_all.c_str(), cpu_buft};
+        tensor_buft_overrides[0] = {common_moe_cache_tensor_pattern.c_str(), cpu_buft};
         tensor_buft_overrides[1] = {nullptr, nullptr};
         mparams->tensor_buft_overrides = tensor_buft_overrides;
 
@@ -975,6 +1078,35 @@ static void common_params_fit_impl(
             "%s:   - %s: %2" PRIu32 " layers, %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
             __func__, dev_names[id].c_str(), ngl_per_device[id].n_layer, mem[id]/MiB, projected_margin/MiB);
     }
+
+    if (hp_nex > 0 && global_surplus_cpu_moe > 0 && moe_cache &&
+        moe_cache->mode != COMMON_MOE_CACHE_MODE_OFF && !moe_tensors.empty()) {
+        std::vector<uint32_t> dense_layers(nd, 0);
+        uint64_t assigned_layers = 0;
+        for (size_t id = 0; id < nd; id++) {
+            dense_layers[id] = ngl_per_device[id].n_layer;
+            assigned_layers += dense_layers[id];
+        }
+
+        const uint64_t required_layers = (uint64_t)hp_ngl + 1;
+        if (assigned_layers == required_layers) {
+            const int main_gpu = mparams->main_gpu;
+            if (main_gpu >= 0 && main_gpu < (int)nd && required_layers <= UINT32_MAX) {
+                std::vector<uint32_t> main_layers(nd, 0);
+                main_layers[main_gpu] = (uint32_t)required_layers;
+                if (get_cache_candidate_memory(main_layers, cache_memory)) {
+                    cache_layers = std::move(main_layers);
+                    cache_candidate_valid = true;
+                    cache_candidate_main = true;
+                }
+            }
+            if (!cache_candidate_valid && get_cache_candidate_memory(dense_layers, cache_memory)) {
+                cache_layers = std::move(dense_layers);
+                cache_candidate_valid = true;
+            }
+        }
+    }
+
     if (hp_nex == 0 || global_surplus_cpu_moe <= 0) {
         set_ngl_tensor_split_tbo(ngl_per_device, overflow_bufts, *mparams);
         return;
@@ -1121,6 +1253,44 @@ static void common_params_fit_impl(
             __func__, dev_names[id].c_str(), ngl_per_device[id].n_layer, ngl_per_device[id].n_part, mem[id]/MiB, projected_margin/MiB);
     }
 
+    bool stock_spills_experts = false;
+    for (const ngl_t & layers : ngl_per_device) {
+        if (layers.n_part > 0) {
+            stock_spills_experts = true;
+            break;
+        }
+    }
+
+    if (moe_cache && moe_cache->mode != COMMON_MOE_CACHE_MODE_OFF) {
+        if (!stock_spills_experts) {
+            LOG_INF("%s: MoE cache fit kept stock placement because all routed expert weights fit in VRAM\n", __func__);
+        } else if (!cache_candidate_valid) {
+            LOG_INF("%s: MoE cache fit kept stock placement because canonical dense weights do not meet the fit targets\n", __func__);
+        } else {
+            common_moe_cache_fit_result cache_fit = common_moe_cache_evaluate_fit(
+                    moe_cache, moe_tensors, devs, cache_memory, margins);
+            if (cache_fit.feasible) {
+                set_cache_layer_split(cache_layers, *mparams, tensor_split, tensor_buft_overrides);
+                moe_cache->fit_selected = true;
+
+                const double coverage = cache_fit.expert_bytes > 0
+                    ? 100.0 * (double)std::min(cache_fit.cache_bytes, cache_fit.expert_bytes) /
+                        (double)cache_fit.expert_bytes
+                    : 0.0;
+                LOG_INF("%s: MoE cache fit selected %s dense placement with %zu MiB projected cache capacity for %zu MiB of routed expert weights (up to %.1f%% coverage)\n",
+                        __func__, cache_candidate_main ? "main-device" : "packed",
+                        cache_fit.cache_bytes / MiB, cache_fit.expert_bytes / MiB, coverage);
+                for (const common_moe_cache_fit_device & device : cache_fit.devices) {
+                    LOG_INF("%s: MoE cache fit CUDA%d leaves %zu MiB after reserve; minimum complete pool set is %zu MiB\n",
+                            __func__, device.physical_device, device.cache_bytes / MiB,
+                            cache_fit.minimum_device_bytes / MiB);
+                }
+                return;
+            }
+            LOG_INF("%s: MoE cache fit kept stock placement: %s\n", __func__, cache_fit.reason.c_str());
+        }
+    }
+
     set_ngl_tensor_split_tbo(ngl_per_device, overflow_bufts, *mparams);
 }
 
@@ -1130,6 +1300,7 @@ enum common_params_fit_status common_fit_params(
         llama_context_params * cparams,
         float * tensor_split,
         llama_model_tensor_buft_override * tensor_buft_overrides,
+        common_moe_cache_params * moe_cache,
         size_t * margins,
         uint32_t n_ctx_min,
         const common_fit_extra_model * extra,
@@ -1137,7 +1308,7 @@ enum common_params_fit_status common_fit_params(
     const int64_t t0_us = llama_time_us();
     common_params_fit_status status = COMMON_PARAMS_FIT_STATUS_SUCCESS;
     try {
-        common_params_fit_impl(path_model, mparams, cparams, tensor_split, tensor_buft_overrides, margins, n_ctx_min, extra, log_level);
+        common_params_fit_impl(path_model, mparams, cparams, tensor_split, tensor_buft_overrides, moe_cache, margins, n_ctx_min, extra, log_level);
         LOG_TRC("%s: successfully fit params to free device memory\n", __func__);
     } catch (const common_params_fit_exception & e) {
         LOG_WRN("%s: failed to fit params to free device memory: %s\n", __func__, e.what());
