@@ -468,7 +468,6 @@ void quantize_iq4_nl(device const float * src, device block_iq4_nl & dst) {
     dst.d = sumq2 > 0 ? sumqx/sumq2 : d;
 }
 
-<<<<<<< ours
 void quantize_tq2_0(device const float * src, device block_tq2_0 & dst) {
 #pragma METAL fp math_mode(safe)
     float amax = 0.0f; // absolute max
@@ -495,7 +494,6 @@ void quantize_tq2_0(device const float * src, device block_tq2_0 & dst) {
         }
         src += 4*32;
     }
-=======
 // ----- TurboQuant quantize/dequantize with Fast Walsh-Hadamard rotation -----
 // Uses O(d log d) WHT instead of O(d²) dense matvec (18× fewer operations)
 // 512 bytes of sign arrays instead of 256KB of dense matrices
@@ -1020,7 +1018,6 @@ void dequantize_turbo4_0_t4(device const block_turbo4_0 * xb, short il, thread t
         float(turbo_centroids_4bit_h[(qb1     ) & 0xF]) * norm,
         float(turbo_centroids_4bit_h[(qb1 >> 4) & 0xF]) * norm
     ));
->>>>>>> theirs
 }
 
 template <typename type4x4>
@@ -1574,7 +1571,6 @@ void dequantize_iq4_xs(device const block_iq4_xs * xb, short il, thread type4x4 
     }
 }
 
-<<<<<<< ours
 template <typename type4x4>
 void dequantize_tq2_0(device const block_tq2_0 * xb, short il, thread type4x4 & reg) {
     device const uint8_t * qs = xb->qs;
@@ -1594,7 +1590,6 @@ void dequantize_tq2_0(device const block_tq2_0 * xb, short il, thread type4x4 & 
     reg = (type4x4) reg_f;
 }
 
-=======
 // ============================================================================
 // TQ3_1S / TQ4_1S: WHT-rotated weight quantization constants and dequant
 // ============================================================================
@@ -1860,7 +1855,6 @@ kernel void kernel_tq3_unrotate_act(
     x[base + tiisg] = val * tq3_inv_sqrt32 * tq3_signs[tiisg];
 }
 
->>>>>>> theirs
 enum ggml_sort_order {
     GGML_SORT_ORDER_ASC,
     GGML_SORT_ORDER_DESC,
@@ -10026,17 +10020,14 @@ template [[host_name("kernel_cpy_q5_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<
 template [[host_name("kernel_cpy_q5_1_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q5_1, 2, dequantize_q5_1>;
 template [[host_name("kernel_cpy_q8_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q8_0, 2, dequantize_q8_0>;
 
-<<<<<<< ours
 template [[host_name("kernel_cpy_tq2_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_tq2_0, QK_NL, dequantize_tq2_0>;
 
-template<typename T>
-=======
 template [[host_name("kernel_cpy_tq3_1s_f32")]] kernel cpy_q_f_t kernel_cpy_q_f32<float4x4, block_tq3_1s, 2, dequantize_tq3_1s>;
 template [[host_name("kernel_cpy_tq3_1s_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_tq3_1s, 2, dequantize_tq3_1s>;
 template [[host_name("kernel_cpy_tq4_1s_f32")]] kernel cpy_q_f_t kernel_cpy_q_f32<float4x4, block_tq4_1s, 2, dequantize_tq4_1s>;
 template [[host_name("kernel_cpy_tq4_1s_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_tq4_1s, 2, dequantize_tq4_1s>;
 
->>>>>>> theirs
+template<typename T>
 kernel void kernel_concat(
         constant ggml_metal_kargs_concat & args,
         device  const char * src0,
@@ -12042,6 +12033,8 @@ kernel void kernel_set_rows_q(
         quantize_func(src_row + QK*ind, dst_row[ind]);
     }
 }
+template [[host_name("kernel_get_rows_tq3_1s")]]  kernel get_rows_q_t kernel_get_rows_q<block_tq3_1s,  2, dequantize_tq3_1s>;
+template [[host_name("kernel_get_rows_tq4_1s")]]  kernel get_rows_q_t kernel_get_rows_q<block_tq4_1s,  2, dequantize_tq4_1s>;
 
 template<typename TS, typename TI, typename block_q, void (*quantize_func)(device const float *, device block_q &)>
 kernel void kernel_set_rows_q32(
@@ -12389,6 +12382,18 @@ typedef decltype(kernel_set_rows_q<float, int64_t, QK_K, block_tq2_0, quantize_t
 
 template [[host_name("kernel_set_rows_f32_i64_tq2_0")]]  kernel set_rows_qK_t kernel_set_rows_q<float, int64_t, QK_K, block_tq2_0, quantize_tq2_0>;
 template [[host_name("kernel_set_rows_f32_i32_tq2_0")]]  kernel set_rows_qK_t kernel_set_rows_q<float, int32_t, QK_K, block_tq2_0, quantize_tq2_0>;
+// TurboQuant set_rows instantiations (128-element groups: 4x32-element blocks for turbo3, dedicated kernels for turbo2/4)
+typedef decltype(kernel_set_rows_turbo<int64_t, block_turbo3_0, QK_TURBO3, quantize_turbo3_0>) set_rows_turbo3_t;
+template [[host_name("kernel_set_rows_f32_i64_turbo3")]] kernel set_rows_turbo3_t kernel_set_rows_turbo<int64_t, block_turbo3_0, QK_TURBO3, quantize_turbo3_0>;
+template [[host_name("kernel_set_rows_f32_i32_turbo3")]] kernel set_rows_turbo3_t kernel_set_rows_turbo<int32_t, block_turbo3_0, QK_TURBO3, quantize_turbo3_0>;
+
+typedef decltype(kernel_set_rows_turbo2<int64_t>) set_rows_turbo2_t;
+template [[host_name("kernel_set_rows_f32_i64_turbo2")]] kernel set_rows_turbo2_t kernel_set_rows_turbo2<int64_t>;
+template [[host_name("kernel_set_rows_f32_i32_turbo2")]] kernel set_rows_turbo2_t kernel_set_rows_turbo2<int32_t>;
+
+typedef decltype(kernel_set_rows_turbo4<int64_t>) set_rows_turbo4_t;
+template [[host_name("kernel_set_rows_f32_i64_turbo4")]] kernel set_rows_turbo4_t kernel_set_rows_turbo4<int64_t>;
+template [[host_name("kernel_set_rows_f32_i32_turbo4")]] kernel set_rows_turbo4_t kernel_set_rows_turbo4<int32_t>;
 
 kernel void kernel_diag_f32(
         constant ggml_metal_kargs_diag & args,
