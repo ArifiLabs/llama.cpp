@@ -162,6 +162,12 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
     // a draft with its own embeddings + head references no target tensors and can run on devices the target does not use (e.g. -devd with a tensor-split target)
     output   = create_tensor(tn(LLM_TENSOR_OUTPUT,     "weight"), { n_embd, n_vocab_draft }, TENSOR_NOT_REQUIRED);
 
+    // Laguna drafters norm each captured target feature before concat + fc;
+    // the per-aux weights are stacked to [n_embd, n_aux] at conversion time
+    if (decoder_laguna) {
+        aux_norm = create_tensor(tn(LLM_TENSOR_ENC_AUX_NORM, "weight"), { n_embd, (int64_t) target_layer_ids.size() }, 0);
+    }
+
     if (hparams.dsv4_hc_mult > 0) {
         const int64_t q_lora_rank     = hparams.n_lora_q;
         const int64_t n_ff_exp        = hparams.n_ff_exp();
@@ -210,11 +216,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
             layer.ffn_up_shexp   = create_tensor(tn(LLM_TENSOR_FFN_UP_SHEXP,   "weight", i), {n_embd,                     n_ff_exp * n_expert_shared}, 0);
         }
         return;
-    // Laguna drafters norm each captured target feature before concat + fc;
-    // the per-aux weights are stacked to [n_embd, n_aux] at conversion time
-    if (decoder_laguna) {
-        aux_norm = create_tensor(tn(LLM_TENSOR_ENC_AUX_NORM, "weight"), { n_embd, (int64_t) target_layer_ids.size() }, 0);
-    }
+
 
     for (int i = 0; i < n_layer; ++i) {
         auto & layer = layers[i];
