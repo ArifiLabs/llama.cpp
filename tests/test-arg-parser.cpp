@@ -5,11 +5,8 @@
 #include "speculative.h"
 
 #include <cmath>
-<<<<<<< ours
-#include <limits>
-=======
 #include <cstdlib>
->>>>>>> theirs
+#include <limits>
 #include <string>
 #include <vector>
 #include <sstream>

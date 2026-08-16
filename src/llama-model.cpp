@@ -2538,11 +2538,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
             } break;
         case LLM_ARCH_DEEPSEEK4:
             {
-<<<<<<< ours
-<<<<<<< ours
-=======
-
->>>>>>> theirs
                 GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
 
                 if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
@@ -2583,7 +2578,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             nullptr,
                             nullptr);
                 }
-<<<<<<< ours
             } break;
         case LLM_ARCH_DFLASH:
             {
@@ -2611,53 +2605,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                 }
             }
             [[fallthrough]];
-=======
-                res = new llama_kv_cache_dsv4(
-                        *this,
-                        params.type_k,
-                        params.type_v,
-                        !cparams.flash_attn,
-                        cparams.offload_kqv,
-                        params.swa_full,
-                        cparams.kv_unified,
-                        cparams.n_ctx_seq,
-                        cparams.n_seq_max,
-                        cparams.n_ubatch,
-                        1,
-                        nullptr,
-                        nullptr);
-            } break;
->>>>>>> theirs
-=======
-            } break;
-        case LLM_ARCH_DFLASH:
-            {
-                // DSV4 DSpark stages store a single MLA-style K per position (window = the draft ring)
-                if (hparams.dsv4_hc_mult > 0) {
-                    GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
-
-                    res = new llama_kv_cache_iswa(
-                            *this,
-                            params.type_k,
-                            params.type_v,
-                            !cparams.flash_attn,
-                            cparams.offload_kqv,
-                            params.swa_full,
-                            cparams.kv_unified,
-                            cparams.n_ctx_seq,
-                            cparams.n_seq_max,
-                            cparams.n_ubatch,
-                            1,
-                            nullptr,
-                            nullptr,
-                            nullptr,
-                            nullptr);
-                    break;
-                }
-            }
-            [[fallthrough]];
-
->>>>>>> theirs
         // Models that need standard caching should rely on recurrent/hybrid
         // checks
         default:
