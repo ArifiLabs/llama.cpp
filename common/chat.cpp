@@ -1217,7 +1217,6 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
         data.prompt += data.generation_prompt;
     }
 
-<<<<<<< ours
     std::vector<std::string> tool_call_starts = { "<tool_call>" };
 
     if (is_qwen3_coder) {
@@ -1230,8 +1229,6 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
         });
     }
 
-=======
->>>>>>> theirs
     auto parser = build_chat_peg_parser([&](common_chat_peg_builder & p) {
         auto generation_prompt = p.literal(GEN_PREFIX);
 
@@ -1307,11 +1304,7 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
             auto tool_calls = p.trigger_rule("tool-call-root", p.repeat(calls, min_calls, 1));
 
             return generation_prompt +
-<<<<<<< ours
                    (reasoning << p.content(p.until_one_of(tool_call_starts)) << tool_calls);
-=======
-                   (reasoning << p.content(p.until_one_of({ "<tool_call>", "<function=" })) << tool_calls);
->>>>>>> theirs
         }
 
         // Content only parser
@@ -1337,18 +1330,9 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
         });
 
         if (data.grammar_lazy) {
-<<<<<<< ours
             for (const auto & start : tool_call_starts) {
                 data.grammar_triggers.push_back({ COMMON_GRAMMAR_TRIGGER_TYPE_WORD, start });
             }
-=======
-            data.grammar_triggers = {
-                { COMMON_GRAMMAR_TRIGGER_TYPE_WORD, "<tool_call>" },
-                // Trigger on "<function" and not "<function=" because the trailing "=" is part of
-                // the token with the function name e.g. "=read"
-                { COMMON_GRAMMAR_TRIGGER_TYPE_WORD, "<function"   },
-            };
->>>>>>> theirs
         }
     }
 
@@ -2337,23 +2321,10 @@ static common_chat_params common_chat_params_init_deepseek_v3_2(const common_cha
         }
 
         if (extract_reasoning && inputs.enable_thinking) {
-<<<<<<< ours
-            reasoning = p.optional(THINK_START + p.reasoning(p.until(THINK_END)) + THINK_END);
-            reasoning_with_tc = THINK_START +
-                p.reasoning(p.until_one_of({ TC_SEPARATOR + FC_START, FC_START, THINK_END })) +
-                p.space() + obligatory_tool_calls;
-=======
-            // Allow optional whitespace before <think> — some models emit a
-            // newline between the generation prompt and the thinking tag.
             reasoning = p.optional(p.space() + THINK_START + p.reasoning(p.until(THINK_END)) + THINK_END);
-<<<<<<< ours
-            reasoning_with_tc = THINK_START + p.reasoning(p.until_one_of({ FC_START, THINK_END })) + obligatory_tool_calls;
->>>>>>> theirs
-=======
             reasoning_with_tc = THINK_START +
                 p.reasoning(p.until_one_of({ TC_SEPARATOR + FC_START, FC_START, THINK_END })) +
                 p.space() + obligatory_tool_calls;
->>>>>>> theirs
             allow_reasoning_with_tc = true;
         } else if (extract_reasoning) {
             // Thinking disabled but reasoning extraction requested: the generation prompt
@@ -3415,12 +3386,8 @@ static common_chat_params common_chat_params_init_muse_glimmer(const common_chat
         auto analysis = p.ref("analysis");
 
         auto recipient  = p.optional(p.literal(" to=user"));
-<<<<<<< ours
         auto final_msg  = p.rule("final", recipient + p.literal("<|message|>") +
                                               p.content(p.until_one_of({ "<|eot|>", "<|eom|>" })));
-=======
-        auto final_msg  = p.rule("final", recipient + p.literal("<|message|>") + p.content(p.until("<|eot|>")));
->>>>>>> theirs
 
         if (has_tools && inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_NONE) {
             auto string_value = p.ac(
@@ -3476,12 +3443,8 @@ static common_chat_params common_chat_params_init_muse_glimmer(const common_chat
             if (inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED) {
                 return p.zero_or_more(start + analysis) + start + tool_calls;
             }
-<<<<<<< ours
             auto trailing_calls = p.optional(p.literal("<|eom|>") + start + tool_calls);
             return p.zero_or_more(start + analysis) + start + (tool_calls | (final_msg + trailing_calls));
-=======
-            return p.zero_or_more(start + analysis) + start + (tool_calls | final_msg);
->>>>>>> theirs
         }
 
         return p.zero_or_more(start + analysis) + start + final_msg;
