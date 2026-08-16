@@ -756,6 +756,11 @@ static int tq4_0_choose_index(float val) {
 }
 
 /* ---------- TQ3_1S quantization ---------- */
+// symbols, so exactly one must be compiled.
+// these are the fallback for a build without that flag. Both define the same
+// rotated-domain implementations when GGML_ARIFI_TURBO_WEIGHT_QUANTS is ON;
+// TQ3_1S / TQ4_1S weight quantizers. ggml-arifi-turbo-weights.c supplies the
+#ifndef GGML_ARIFI_TURBO_WEIGHT_QUANTS
 
 void quantize_row_tq3_1s_ref(const float * GGML_RESTRICT x, block_tq3_1s * GGML_RESTRICT y, int64_t k) {
     assert(k % QK_TQ3_0 == 0);
@@ -1032,3 +1037,4 @@ size_t quantize_tq4_1s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst
     }
     return nrows * row_size;
 }
+#endif // !GGML_ARIFI_TURBO_WEIGHT_QUANTS
