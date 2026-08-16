@@ -1323,7 +1323,17 @@ common_init_result::common_init_result(common_params & params, bool model_only) 
             /*.shares_model =*/ !has_draft, // an MTP context runs on the weights of the main model
         };
 
-        common_fit_params(params.model.path.c_str(), &mparams, &cparams,
+        // Snapshot the pre-fit state so a failed fit can be rolled back to a
+        // documented fallback instead of continuing with an unproven placement.
+        const llama_model_params mparams_before = mparams;
+        const llama_context_params cparams_before = cparams;
+        const std::vector<float> tensor_split_before(
+                params.tensor_split, params.tensor_split + llama_max_devices());
+        const std::vector<llama_model_tensor_buft_override> tbo_before =
+            params.tensor_buft_overrides;
+
+        const common_params_fit_status fit_status = common_fit_params(
+            params.model.path.c_str(), &mparams, &cparams,
             params.tensor_split,
             params.tensor_buft_overrides.data(),
             &params.moe_cache,
@@ -1331,6 +1341,21 @@ common_init_result::common_init_result(common_params & params, bool model_only) 
             params.fit_params_min_ctx,
             has_draft || spec_mtp ? &extra : nullptr,
             params.verbosity >= LOG_LEVEL_DEBUG ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_ERROR);
+        if (fit_status == COMMON_PARAMS_FIT_STATUS_ERROR) {
+            throw std::runtime_error(
+                "failed to fit parameters to device memory (hard error); retry with -fit off");
+        }
+        if (fit_status != COMMON_PARAMS_FIT_STATUS_SUCCESS) {
+            COM_ERR("%s", "fit could not prove a viable placement; restoring the pre-fit parameters\n");
+            mparams = mparams_before;
+            cparams = cparams_before;
+            std::copy(tensor_split_before.begin(), tensor_split_before.end(), params.tensor_split);
+            params.tensor_buft_overrides = tbo_before;
+            // Re-point at the restored arrays (the override vector may have moved).
+            mparams.tensor_split = params.tensor_split;
+            mparams.tensor_buft_overrides = params.tensor_buft_overrides.empty()
+                ? nullptr : params.tensor_buft_overrides.data();
+        }
     }
 
     if (params.moe_cache.mode_explicit || params.moe_cache.fit_selected) {
