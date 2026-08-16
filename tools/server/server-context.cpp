@@ -273,69 +273,6 @@ static std::vector<llama_token> server_sample_and_accept_synth(
     return result;
 }
 
-static bool server_prepare_shared_draft_devices(common_params & params) {
-    const auto & types = params.speculative.types;
-    const bool has_shared_draft =
-        std::find(types.begin(), types.end(), COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH) != types.end() ||
-        std::find(types.begin(), types.end(), COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK) != types.end();
-    if (!has_shared_draft || !params.speculative.draft.devices.empty()) {
-        return false;
-    }
-
-    std::vector<ggml_backend_dev_t> devices;
-    if (!params.devices.empty()) {
-        for (ggml_backend_dev_t device : params.devices) {
-            if (device == nullptr) {
-                break;
-            }
-            devices.push_back(device);
-        }
-    } else {
-        for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
-            ggml_backend_dev_t device = ggml_backend_dev_get(i);
-            const enum ggml_backend_dev_type type = ggml_backend_dev_type(device);
-            if (type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU) {
-                devices.push_back(device);
-            }
-        }
-    }
-
-    if (devices.empty()) {
-        return false;
-    }
-
-    size_t target_primary = 0;
-    if (params.split_mode == LLAMA_SPLIT_MODE_NONE && params.main_gpu >= 0 && (size_t)params.main_gpu < devices.size()) {
-        target_primary = params.main_gpu;
-    }
-
-    size_t draft_primary = target_primary;
-    size_t draft_free = 0;
-    for (size_t i = 0; i < devices.size(); i++) {
-        if (devices.size() > 1 && i == target_primary) {
-            continue;
-        }
-        size_t free = 0;
-        size_t total = 0;
-        ggml_backend_dev_memory(devices[i], &free, &total);
-        if (draft_primary == target_primary || free > draft_free) {
-            draft_primary = i;
-            draft_free = free;
-        }
-    }
-
-    params.speculative.draft.devices.push_back(devices[draft_primary]);
-    for (size_t i = 0; i < devices.size(); i++) {
-        if (i != draft_primary) {
-            params.speculative.draft.devices.push_back(devices[i]);
-        }
-    }
-    params.speculative.draft.devices.push_back(nullptr);
-
-    SRV_INF("[spec] auto-selected %s as the primary draft device\n", ggml_backend_dev_name(devices[draft_primary]));
-    return true;
-}
-
 // state diagram: https://github.com/ggml-org/llama.cpp/pull/9283
 enum slot_state {
     SLOT_STATE_IDLE,
@@ -526,6 +463,9 @@ struct server_slot {
     bool has_next_token = true;
     bool has_new_line   = false;
     bool truncated      = false;
+    // set when a prompt checkpoint was restored this iteration; the batch builder
+    // must not append more prompt tokens on top of a restored state
+    bool prompt_checkpoint_restored = false;
 
     stop_type stop;
 
@@ -615,6 +555,7 @@ struct server_slot {
         generated_text = "";
         has_new_line   = false;
         truncated      = false;
+        prompt_checkpoint_restored = false;
         stop           = STOP_TYPE_NONE;
         stopping_word  = "";
         n_sent_text    = 0;
@@ -3260,9 +3201,17 @@ private:
         std::vector<server_slot *> generating;
         std::vector<server_slot *> drafting;
 
+        const bool has_checkpoint_restored_prompt = std::any_of(slots.begin(), slots.end(), [](const server_slot & slot) {
+            return slot.prompt_checkpoint_restored && slot.state == SLOT_STATE_PROCESSING_PROMPT;
+        });
+
         // determine which slots are generating and drafting
         iterate(slots, [&](server_slot & slot) {
             if (slot.state != SLOT_STATE_GENERATING) {
+                return;
+            }
+
+            if (has_checkpoint_restored_prompt) {
                 return;
             }
 
@@ -3653,6 +3602,7 @@ private:
 
                                         pos_next = std::min(pos_next, std::max(it->pos_min + 1, it->pos_max));
                                         n_past   = std::min(slot.prompt.tokens.size_up_to_pos(pos_next), (size_t) it->n_tokens);
+                                        slot.prompt_checkpoint_restored = true;
                                         SLT_TRC(slot, "restored context checkpoint (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", n_past = %d, size = %.3f MiB)\n", it->pos_min, it->pos_max, it->n_tokens, n_past, (float) it->size() / 1024 / 1024);
                                     }
 
@@ -3883,6 +3833,7 @@ private:
 
                         slot.stats.n_gen = 0;
                         slot.i_batch     = batch.size() - 1;
+                        slot.prompt_checkpoint_restored = false;
 
                         slot.init_sampler();
                     } else {
