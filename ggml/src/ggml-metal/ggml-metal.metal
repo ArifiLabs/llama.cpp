@@ -12314,7 +12314,7 @@ kernel void kernel_set_rows_turbo4(
     }
 }
 
-template<typename T, typename TI>
+template<typename TS, typename TI, typename TD>
 kernel void kernel_set_rows_f(
         constant ggml_metal_kargs_set_rows & args,
         device const  void * src0,
