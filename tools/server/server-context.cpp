@@ -3633,6 +3633,10 @@ private:
                         }
                     }
 
+                    if (slot.prompt_checkpoint_restored && n_tokens_prev > 0) {
+                        return;
+                    }
+
                     // note: the prompt timing is advanced in post_decode(), so it does not cover
                     //       the tokens added to the batch below
                     slot.print_timings_pp();
