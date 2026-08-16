@@ -63,6 +63,11 @@ TEXT_MODEL_MAP: dict[str, str] = {
     "LingDSparkModel": "qwen",
     "DeepseekV4ForCausalLM": "deepseek",
 <<<<<<< ours
+<<<<<<< ours
+=======
+    "DFlashLagunaForCausalLM": "laguna",
+
+>>>>>>> theirs
     "DeepseekV4DSparkModel": "deepseek",
 =======
     "DFlashLagunaForCausalLM": "laguna",
