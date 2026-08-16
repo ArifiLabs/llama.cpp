@@ -6298,8 +6298,6 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
                 auto res = (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 ||
                             op->src[0]->type == GGML_TYPE_BF16) &&
                            (op->src[1]->type == GGML_TYPE_I64 || op->src[1]->type == GGML_TYPE_I32);
->>>>>>> theirs
->>>>>>> 43c058851 (4-other-backends/0048-cuda-fit-fix-two-Werror-build-failures-in-the-new-ca.patch)
                 return res;
             }
             break;
