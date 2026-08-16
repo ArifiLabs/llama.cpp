@@ -929,7 +929,7 @@ static void common_params_fit_impl(
             }
         }
         candidate.tensor_split = split;
-        overrides[0] = {common_moe_cache_tensor_pattern.c_str(), ggml_backend_cpu_buffer_type()};
+        overrides[0] = {common_moe_cache_tensor_override_pattern(), ggml_backend_cpu_buffer_type()};
         overrides[1] = {nullptr, nullptr};
         candidate.tensor_buft_overrides = overrides;
         candidate.use_extra_bufts = false;
@@ -969,7 +969,7 @@ static void common_params_fit_impl(
     int64_t global_surplus_cpu_moe = 0;
     if (hp_nex > 0) {
         ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
-        tensor_buft_overrides[0] = {common_moe_cache_tensor_pattern.c_str(), cpu_buft};
+        tensor_buft_overrides[0] = {common_moe_cache_tensor_override_pattern(), cpu_buft};
         tensor_buft_overrides[1] = {nullptr, nullptr};
         mparams->tensor_buft_overrides = tensor_buft_overrides;
 
