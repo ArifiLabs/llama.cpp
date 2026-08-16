@@ -106,7 +106,6 @@ static void set_rows_sycl_q(const char * __restrict__ src0_d,
     GGML_UNUSED(nb13);
 }
 
-<<<<<<< ours
 template<typename blockType>
 using quantize_row_qk_t = void (*)(const float *, blockType *, int64_t);
 
@@ -238,7 +237,8 @@ static void set_rows_sycl_iq_host(
             }
         }
     }
-=======
+}
+
 // ============================================================
 // TurboQuant SET_ROWS cooperative kernels (128 work-items each)
 // Ported from ggml-cuda/set-rows.cu
@@ -593,7 +593,6 @@ static void set_rows_sycl_turbo2(ggml_backend_sycl_context & ctx,
     GGML_UNUSED(ne13);
     GGML_UNUSED(nb00);
     GGML_UNUSED(nb13);
->>>>>>> theirs
 }
 
 template<typename TIn, typename TIdx, typename TOut>
@@ -925,12 +924,8 @@ void ggml_sycl_op_set_rows(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
     const ggml_tensor * src1 = dst->src[1];
 
-<<<<<<< ours
     GGML_ASSERT(dst->src[0]->type == GGML_TYPE_F32 || dst->src[0]->type == GGML_TYPE_F16);
-=======
-    GGML_ASSERT(dst->src[0]->type == GGML_TYPE_F32);
-    GGML_ASSERT(dst->src[0]->nb[0] == sizeof(float));
->>>>>>> theirs
+    GGML_ASSERT(dst->src[0]->nb[0] == ggml_type_size(dst->src[0]->type));
     GGML_ASSERT(dst->src[1]->type == GGML_TYPE_I64 || dst->src[1]->type == GGML_TYPE_I32);
 
     // dispatch on the index type (src1) and the source value type (src0)

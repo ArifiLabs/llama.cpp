@@ -935,18 +935,11 @@ public:
 
     std::vector<ggml_tensor *> t_layer_inp;
 
-<<<<<<< ours
     std::vector<ggml_tensor *> t_sampled;
     std::vector<ggml_tensor *> t_sampled_probs;
     std::vector<ggml_tensor *> t_sampled_logits;
     std::vector<ggml_tensor *> t_candidates;
-=======
-    std::map<llama_seq_id, ggml_tensor *> t_sampled_logits;
-    std::map<llama_seq_id, ggml_tensor *> t_candidates;
-    std::map<llama_seq_id, ggml_tensor *> t_sampled;
     std::vector<llm_graph_fused_node> fused_nodes;
-    std::map<llama_seq_id, ggml_tensor *> t_sampled_probs;
->>>>>>> theirs
 
     std::vector<llm_graph_input_ptr> inputs;
 
