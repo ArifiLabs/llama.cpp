@@ -1838,15 +1838,17 @@ struct block_rocmfpx_fp3
     uint8_t e[2];
 };
 
+// 32 codes x 6 bits = 24 bytes, packed as a contiguous little-endian 6-bit stream
+// (CPU reference: rocmfpx.h QS_ROCMFP6 / block_rocmfp6, rocmfpx.c rocmfpx_fp6_pack4).
 struct block_rocmfpx_fp6
 {
-    int8_t qs[32];
+    uint8_t qs[24];
     uint8_t e[2];
 };
 
 struct block_rocmfpx_fp6_packed16
 {
-    int16_t qs[16];
+    uint16_t qs[12];
     uint16_t e;
 };
 

@@ -7,6 +7,18 @@ layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 layout (binding = 0) readonly buffer A {block_rocmfpx_fp6 data_a[];};
 layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
 
+// Code idx lives at bit 6*idx of the 24-byte little-endian stream (CPU: rocmfpx_fp6_unpack4).
+uint rocmfpx_fp6_get_code(uint ib, uint idx) {
+    const uint bit_pos  = idx * 6u;
+    const uint byte_pos = bit_pos >> 3u;
+    const uint sh       = bit_pos & 7u;
+    uint bits = uint(data_a[ib].qs[byte_pos]) >> sh;
+    if (sh > 2u) {
+        bits |= uint(data_a[ib].qs[byte_pos + 1u]) << (8u - sh);
+    }
+    return bits & 0x3Fu;
+}
+
 void main() {
     const uint i = gl_WorkGroupID.x * 4 + gl_LocalInvocationID.x / 64;
 
@@ -28,6 +40,6 @@ void main() {
 
     [[unroll]] for (uint l = 0; l < 16; ++l) {
         const uint idx = q_idx + l;
-        data_b[b_idx + l] = D_TYPE(d * float(int(data_a[ib].qs[idx])));
+        data_b[b_idx + l] = D_TYPE(d * float(int(kvalues_rocmfpx_fp6_const[rocmfpx_fp6_get_code(ib, idx)])));
     }
 }
