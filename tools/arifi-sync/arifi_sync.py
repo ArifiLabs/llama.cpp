@@ -241,7 +241,24 @@ def format_patch(repo: str, cfg: dict, base: str, ref: str, outdir: str) -> list
 
     This rule was stated in commit 5d1486012 ("The generated series excludes patches/series/ so
     that the artifact converges") but was never implemented here; the committed series was
-    hand-filtered to match. It is now enforced in code."""
+    hand-filtered to match. It is now enforced in code.
+
+    A LINEAR range is equally mandatory, and is checked here rather than assumed. `format-patch`
+    silently omits merge commits, so a merge in the range takes its hand-made conflict resolutions
+    out of the series while keeping every commit that builds on them - the series then generates
+    and byte-compares fine and only fails much later, at `git am`, on a patch that looks innocent.
+    `status` has always printed the merge count with "must be 0", but nothing enforced it."""
+    merges = gout(repo, "rev-list", "--count", "--merges", "%s..%s" % (base, ref)).strip()
+    if merges not in ("0", ""):
+        raise Loud(
+            "range %s..%s contains %s merge commit(s); the series must be linear.\n"
+            "  format-patch omits merges, so their conflict resolutions never reach the series and\n"
+            "  the commits that depend on them cannot apply. Linearize the branch (rebase, not\n"
+            "  merge) onto the base, or point base.ref at a linear branch.\n"
+            "  offenders:\n%s"
+            % (base[:9], ref, merges,
+               "\n".join("    " + l for l in gout(
+                   repo, "log", "--oneline", "--merges", "%s..%s" % (base, ref)).splitlines()[:10])))
     os.makedirs(outdir, exist_ok=True)
     _, out, _ = git(repo, "format-patch", "--binary", "--no-signature", "-N",
                     "--output-directory", outdir, "%s..%s" % (base, ref),
@@ -962,13 +979,15 @@ def cmd_bump(repo: str, cfg: dict, args) -> int:
 
 def cmd_status(repo: str, cfg: dict, args) -> int:
     base = cfg["base"]["upstream_sha"]
+    ref = cfg["base"].get("ref", "master")
     say("repo            : %s" % repo)
     say("HEAD            : %s  (%s)" % (gout(repo, "rev-parse", "--short", "HEAD"),
                                         gout(repo, "rev-parse", "--abbrev-ref", "HEAD")))
     say("pinned base     : %s  %s" % (cfg["base"]["upstream_tag"], base[:9]))
-    say("series commits  : %s" % gout(repo, "rev-list", "--count", "%s..master" % base))
+    say("series ref      : %s" % ref)
+    say("series commits  : %s" % gout(repo, "rev-list", "--count", "%s..%s" % (base, ref)))
     say("merge commits   : %s   (must be 0 - the series is linear on purpose)"
-        % gout(repo, "rev-list", "--count", "--merges", "%s..master" % base))
+        % gout(repo, "rev-list", "--count", "--merges", "%s..%s" % (base, ref)))
     say("patches on disk : %d" % len(series_files(os.path.join(repo, cfg["series_dir"]))))
     st = read_state(repo, cfg)
     say("last currency   : %s" % st.get("last_currency_run", "NEVER"))
@@ -989,14 +1008,14 @@ def main(argv=None) -> int:
     sub.add_parser("status")
 
     p = sub.add_parser("provenance")
-    p.add_argument("--ref", default="master")
+    p.add_argument("--ref", default=None)
     p.add_argument("--strict", action="store_true",
                    help="also fail on loose-only trailers and missing Measured-effect")
 
     ps = sub.add_parser("series")
     pss = ps.add_subparsers(dest="sub", required=True)
-    a = pss.add_parser("regen"); a.add_argument("--ref", default="master")
-    a = pss.add_parser("check"); a.add_argument("--ref", default="master")
+    a = pss.add_parser("regen"); a.add_argument("--ref", default=None)
+    a = pss.add_parser("check"); a.add_argument("--ref", default=None)
     a = pss.add_parser("replay"); a.add_argument("--onto", required=True)
 
     p = sub.add_parser("currency")
@@ -1020,6 +1039,10 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
     repo = args.repo or repo_root(os.path.dirname(os.path.abspath(args.config)))
+
+    # base sha and the branch it describes are one pair; --ref only overrides it explicitly
+    if getattr(args, "ref", "") is None:
+        args.ref = cfg["base"].get("ref", "master")
 
     table = {
         ("status", None): cmd_status,
