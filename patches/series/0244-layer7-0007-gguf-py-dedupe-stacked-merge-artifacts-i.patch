@@ -1,0 +1,1198 @@
+From f74de752af33ccf0071d7e4150a33ce9e9482a0a Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 20:52:19 -0400
+Subject: [PATCH] 
+ layer7/0007-gguf-py-dedupe-stacked-merge-artifacts-in-constants..patch
+
+---
+ .github/FUNDING.yml                           |   1 +
+ .../actions/windows-setup-openvino/action.yml |  24 ---
+ .github/labeler.yml                           |  45 ++---
+ .github/workflows/build-cache.yml             |  26 ++-
+ .github/workflows/build-openvino.yml          |  89 +--------
+ .github/workflows/build-self-hosted.yml       |  12 +-
+ .github/workflows/build-wasm.yml              |  90 ---------
+ .github/workflows/build-webgpu.yml            |  47 ++++-
+ .github/workflows/docker.yml                  |  18 +-
+ .github/workflows/hip-quality-check.yml       |   4 -
+ .github/workflows/release.yml                 | 180 ++---------------
+ .github/workflows/server-self-hosted.yml      |   5 +-
+ .github/workflows/tqp-linux-release.yml       | 115 +++++++++++
+ .github/workflows/tqp-release.yml             | 186 ++++++++++++++++++
+ .github/workflows/ui-publish.yml              |   1 +
+ 15 files changed, 423 insertions(+), 420 deletions(-)
+ create mode 100644 .github/FUNDING.yml
+ delete mode 100644 .github/actions/windows-setup-openvino/action.yml
+ delete mode 100644 .github/workflows/build-wasm.yml
+ create mode 100644 .github/workflows/tqp-linux-release.yml
+ create mode 100644 .github/workflows/tqp-release.yml
+
+diff --git a/.github/FUNDING.yml b/.github/FUNDING.yml
+new file mode 100644
+index 000000000..4c301897b
+--- /dev/null
++++ b/.github/FUNDING.yml
+@@ -0,0 +1 @@
++github: [TheTom]
+diff --git a/.github/actions/windows-setup-openvino/action.yml b/.github/actions/windows-setup-openvino/action.yml
+deleted file mode 100644
+index f983df560..000000000
+--- a/.github/actions/windows-setup-openvino/action.yml
++++ /dev/null
+@@ -1,24 +0,0 @@
+-name: "Windows - Setup OpenVINO Toolkit"
+-description: "Setup OpenVINO Toolkit for Windows"
+-inputs:
+-  path:
+-    description: "Installation path"
+-    required: true
+-  version_major:
+-    description: "OpenVINO major version (e.g., 2026.2)"
+-    required: true
+-  version_full:
+-    description: "OpenVINO full version"
+-    required: true
+-
+-runs:
+-  using: "composite"
+-  steps:
+-    - name: Download and extract OpenVINO Runtime
+-      shell: powershell
+-      run: |
+-        $url = "https://storage.openvinotoolkit.org/repositories/openvino/packages/${{ inputs.version_major }}/windows/openvino_toolkit_windows_${{ inputs.version_full }}_x86_64.zip"
+-        $out = "openvino.zip"
+-        Invoke-WebRequest -Uri $url -OutFile $out
+-        Expand-Archive -Path $out -DestinationPath ${{ inputs.path }} -Force
+-        Remove-Item $out
+diff --git a/.github/labeler.yml b/.github/labeler.yml
+index 20e19c352..3361118ed 100644
+--- a/.github/labeler.yml
++++ b/.github/labeler.yml
+@@ -35,20 +35,8 @@ AMD ZenDNN:
+ documentation:
+     - changed-files:
+         - any-glob-to-any-file:
+-            - "**/*.md"
+             - docs/**
+             - media/**
+-examples:
+-    - all:
+-        - changed-files:
+-            - any-glob-to-any-file:
+-                - app/**
+-                - examples/**
+-                - tools/**
+-            - all-globs-to-all-files:
+-                - '!tools/server/**'
+-                - '!tools/mtmd/**'
+-                - '!tools/ui/**'
+ testing:
+     - changed-files:
+         - any-glob-to-any-file:
+@@ -59,12 +47,28 @@ build:
+             - cmake/**
+             - CMakeLists.txt
+             - CMakePresets.json
++examples:
++    - changed-files:
++        - any-glob-to-any-file:
++            - examples/**
++            - tools/**
+ devops:
+     - changed-files:
+         - any-glob-to-any-file:
+             - .devops/**
+             - .github/**
+             - ci/**
++python:
++    - changed-files:
++        - any-glob-to-any-file:
++            - "**/*.py"
++            - requirements/**
++            - gguf-py/**
++            - .flake8
++script:
++    - changed-files:
++        - any-glob-to-any-file:
++            - scripts/**
+ android:
+     - changed-files:
+         - any-glob-to-any-file:
+@@ -77,20 +81,9 @@ server:
+     - changed-files:
+         - any-glob-to-any-file:
+             - tools/server/**
+-mtmd:
+-    - changed-files:
+-        - any-glob-to-any-file:
+-            - tools/mtmd/**
+-conversion:
+-    - changed-files:
+-        - any-glob-to-any-file:
+-            - conversion/**
+-            - convert_*.py
+-            - gguf-py/**
+-vendor:
+-    - changed-files:
+-        - any-glob-to-any-file:
+-            - vendor/**
++
++
++
+ ggml:
+     - changed-files:
+         - any-glob-to-any-file:
+diff --git a/.github/workflows/build-cache.yml b/.github/workflows/build-cache.yml
+index 2a1031728..4d01a280f 100644
+--- a/.github/workflows/build-cache.yml
++++ b/.github/workflows/build-cache.yml
+@@ -68,8 +68,8 @@ jobs:
+ 
+     env:
+       # Sync versions in build.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
+-      OPENVINO_VERSION_MAJOR: "2026.2.1"
+-      OPENVINO_VERSION_FULL: "2026.2.1.21919.ede283a88e3"
++      OPENVINO_VERSION_MAJOR: "2026.0"
++      OPENVINO_VERSION_FULL: "2026.0.0.20965.c6d6a13a886"
+ 
+     steps:
+       - name: Clone
+@@ -91,6 +91,7 @@ jobs:
+           version_major: ${{ env.OPENVINO_VERSION_MAJOR }}
+           version_full: ${{ env.OPENVINO_VERSION_FULL }}
+ 
++<<<<<<< ours
+   windows-2022-openvino-cache:
+     runs-on: windows-2022
+ 
+@@ -98,6 +99,14 @@ jobs:
+       # Sync versions in build.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
+       OPENVINO_VERSION_MAJOR: "2026.2.1"
+       OPENVINO_VERSION_FULL: "2026.2.1.21919.ede283a88e3"
++=======
++  windows-2022-rocm-cache:
++    runs-on: windows-2022
++
++    env:
++      # Make sure this is in sync with build.yml
++      HIPSDK_INSTALLER_VERSION: "26.Q1"
++>>>>>>> theirs
+ 
+     steps:
+       - name: Clone
+@@ -106,6 +115,7 @@ jobs:
+ 
+       - name: Setup Cache
+         uses: actions/cache@v5
++<<<<<<< ours
+         id: cache-openvino
+         with:
+           path: ./openvino_toolkit
+@@ -143,3 +153,15 @@ jobs:
+   #       uses: ./.github/actions/windows-setup-rocm
+   #       with:
+   #         version: ${{ env.ROCM_VERSION }}
++=======
++        id: cache-rocm
++        with:
++          path: C:\Program Files\AMD\ROCm
++          key: cache-gha-rocm-${{ env.HIPSDK_INSTALLER_VERSION }}-${{ runner.os }}
++
++      - name: Setup ROCm
++        if: steps.cache-rocm.outputs.cache-hit != 'true'
++        uses: ./.github/actions/windows-setup-rocm
++        with:
++          version: ${{ env.HIPSDK_INSTALLER_VERSION }}
++>>>>>>> theirs
+diff --git a/.github/workflows/build-openvino.yml b/.github/workflows/build-openvino.yml
+index 938cde3f2..ddcbc6697 100644
+--- a/.github/workflows/build-openvino.yml
++++ b/.github/workflows/build-openvino.yml
+@@ -37,10 +37,14 @@ jobs:
+   ubuntu-24-openvino:
+     runs-on: [self-hosted, Linux, Intel, OpenVINO]
+ 
++    concurrency:
++      group: openvino-gpu-${{ github.head_ref || github.ref }}
++      cancel-in-progress: false
++
+     env:
+       # Sync versions in build-openvino.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
+-      OPENVINO_VERSION_MAJOR: "2026.2.1"
+-      OPENVINO_VERSION_FULL: "2026.2.1.21919.ede283a88e3"
++      OPENVINO_VERSION_MAJOR: "2026.0"
++      OPENVINO_VERSION_FULL: "2026.0.0.20965.c6d6a13a886"
+ 
+     steps:
+       - name: Clone
+@@ -74,7 +78,7 @@ jobs:
+           cmake -B build/ReleaseOV -G Ninja \
+             -DCMAKE_BUILD_TYPE=Release \
+             -DGGML_OPENVINO=ON
+-          time cmake --build build/ReleaseOV --config Release --parallel
++          time cmake --build build/ReleaseOV --config Release -j $(nproc)
+ 
+       - name: Test (CPU)
+         id: cmake_test_cpu
+@@ -89,81 +93,4 @@ jobs:
+         run: |
+           cd ${{ github.workspace }}
+           export GGML_OPENVINO_DEVICE=GPU
+-          ctest --test-dir build/ReleaseOV -L main -E "test-llama-archs" --verbose --timeout 3000
+-
+-  openvino-windows-2022:
+-    runs-on: windows-2022
+-
+-    env:
+-      # Sync versions in build-openvino.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
+-      OPENVINO_VERSION_MAJOR: "2026.2.1"
+-      OPENVINO_VERSION_FULL: "2026.2.1.21919.ede283a88e3"
+-
+-    steps:
+-      - name: Clone
+-        id: checkout
+-        uses: actions/checkout@v6
+-
+-      - name: ccache
+-        uses: ggml-org/ccache-action@v1.2.21
+-        with:
+-          key: openvino-windows-2022
+-          variant: ccache
+-          evict-old-files: 1d
+-          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+-
+-      - name: Setup Cache
+-        uses: actions/cache@v5
+-        id: cache-openvino
+-        with:
+-          path: ./openvino_toolkit
+-          key: cache-gha-openvino-toolkit-v${{ env.OPENVINO_VERSION_FULL }}-${{ runner.os }}
+-
+-      - name: Setup OpenVINO Toolkit
+-        if: steps.cache-openvino.outputs.cache-hit != 'true'
+-        uses: ./.github/actions/windows-setup-openvino
+-        with:
+-          path: ./openvino_toolkit
+-          version_major: ${{ env.OPENVINO_VERSION_MAJOR }}
+-          version_full: ${{ env.OPENVINO_VERSION_FULL }}
+-
+-      - name: Install OpenCL using vcpkg
+-        shell: powershell
+-        run: |
+-          git clone https://github.com/microsoft/vcpkg C:\vcpkg
+-          C:\vcpkg\bootstrap-vcpkg.bat
+-          C:\vcpkg\vcpkg install opencl
+-
+-      - name: Build
+-        id: cmake_build
+-        shell: cmd
+-        run: |
+-          REM Find extracted OpenVINO folder dynamically
+-          for /d %%i in (openvino_toolkit\*) do set OPENVINO_ROOT=%%i
+-
+-          if not exist "%OPENVINO_ROOT%\runtime\cmake\OpenVINOConfig.cmake" (
+-              echo ERROR: OpenVINOConfig.cmake not found
+-              exit /b 1
+-          )
+-
+-          call "%OPENVINO_ROOT%\setupvars.bat"
+-
+-          cmake -B build\ReleaseOV -G "Visual Studio 17 2022" ^
+-            -A x64 ^
+-            -DCMAKE_BUILD_TYPE=Release ^
+-            -DGGML_OPENVINO=ON ^
+-            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
+-
+-          cmake --build build\ReleaseOV --config Release -- /m
+-
+-      - name: Test (CPU)
+-        id: cmake_test_cpu
+-        shell: cmd
+-        # TODO: fix and re-enable the `test-llama-archs` test below
+-        run: |
+-          REM Find extracted OpenVINO folder dynamically
+-          for /d %%i in (openvino_toolkit\*) do set OPENVINO_ROOT=%%i
+-          call "%OPENVINO_ROOT%\setupvars.bat"
+-
+-          cd build
+-          ctest --test-dir ReleaseOV -L main -E "test-llama-archs" -C Release --verbose --timeout 3000
++          ctest --test-dir build/ReleaseOV -L main -E "test-llama-archs" --verbose --timeout 2000
+diff --git a/.github/workflows/build-self-hosted.yml b/.github/workflows/build-self-hosted.yml
+index 0ef202193..3caf79a35 100644
+--- a/.github/workflows/build-self-hosted.yml
++++ b/.github/workflows/build-self-hosted.yml
+@@ -6,7 +6,7 @@ on:
+     branches:
+       - master
+     paths: [
+-      '.github/workflows/build-self-hosted.yml',
++      '.github/workflows/build.yml',
+       '**/CMakeLists.txt',
+       '**/.cmake',
+       '**/*.h',
+@@ -48,8 +48,6 @@ concurrency:
+   cancel-in-progress: true
+ 
+ env:
+-  # note: this is dud token to avoid rate limiting (https://github.com/ggml-org/llama.cpp/pull/25706#issuecomment-4979941302)
+-  HF_TOKEN: ${{ secrets.HF_TOKEN_CI }}
+   GGML_NLOOP: 3
+   GGML_N_THREADS: 1
+   LLAMA_ARG_LOG_COLORS: 1
+@@ -286,10 +284,14 @@ jobs:
+   gpu-openvino-low-perf:
+     runs-on: [self-hosted, Linux, Intel, OpenVINO]
+ 
++    concurrency:
++      group: openvino-gpu-${{ github.head_ref || github.ref }}
++      cancel-in-progress: false
++
+     env:
+       # Sync versions in build.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
+-      OPENVINO_VERSION_MAJOR: "2026.2.1"
+-      OPENVINO_VERSION_FULL: "2026.2.1.21919.ede283a88e3"
++      OPENVINO_VERSION_MAJOR: "2026.0"
++      OPENVINO_VERSION_FULL: "2026.0.0.20965.c6d6a13a886"
+ 
+     steps:
+       - name: Clone
+diff --git a/.github/workflows/build-wasm.yml b/.github/workflows/build-wasm.yml
+deleted file mode 100644
+index aa7ae887d..000000000
+--- a/.github/workflows/build-wasm.yml
++++ /dev/null
+@@ -1,90 +0,0 @@
+-name: CI (wasm)
+-
+-on:
+-  workflow_dispatch: # allows manual triggering
+-  push:
+-    branches:
+-      - master
+-    paths: [
+-      '.github/workflows/build-wasm.yml',
+-      '**/CMakeLists.txt',
+-      '**/.cmake',
+-      '**/*.h',
+-      '**/*.hpp',
+-      '**/*.c',
+-      '**/*.cpp',
+-      '**/*.wgsl',
+-      '**/*.tmpl',
+-      'ggml/src/ggml-webgpu/wgsl-shaders/embed_wgsl.py'
+-    ]
+-
+-  pull_request:
+-    types: [opened, synchronize, reopened]
+-    paths: [
+-      '.github/workflows/build-wasm.yml',
+-      '**/CMakeLists.txt',
+-      '**/.cmake',
+-      '**/*.h',
+-      '**/*.hpp',
+-      '**/*.c',
+-      '**/*.cpp',
+-      '**/*.wgsl',
+-      '**/*.tmpl',
+-      'ggml/src/ggml-webgpu/wgsl-shaders/embed_wgsl.py'
+-    ]
+-
+-concurrency:
+-  group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
+-  cancel-in-progress: true
+-
+-env:
+-  GGML_NLOOP: 3
+-  GGML_N_THREADS: 1
+-  LLAMA_ARG_LOG_COLORS: 1
+-  LLAMA_ARG_LOG_PREFIX: 1
+-  LLAMA_ARG_LOG_TIMESTAMPS: 1
+-
+-jobs:
+-  ubuntu-webgpu:
+-    runs-on: ubuntu-24.04-arm
+-
+-    steps:
+-      - name: Clone
+-        id: checkout
+-        uses: actions/checkout@v6
+-
+-      - name: ccache
+-        uses: ggml-org/ccache-action@v1.2.21
+-        with:
+-          key: webgpu-ubuntu-24.04-arm-wasm
+-          evict-old-files: 1d
+-          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+-
+-      - name: Install Emscripten
+-        run: |
+-          git clone https://github.com/emscripten-core/emsdk.git
+-          cd emsdk
+-          ./emsdk install latest
+-          ./emsdk activate latest
+-
+-      - name: Fetch emdawnwebgpu
+-        run: |
+-          DAWN_TAG="v20260317.182325"
+-          EMDAWN_PKG="emdawnwebgpu_pkg-${DAWN_TAG}.zip"
+-          echo "Downloading ${EMDAWN_PKG}"
+-          curl -L -o emdawn.zip \
+-            "https://github.com/google/dawn/releases/download/${DAWN_TAG}/${EMDAWN_PKG}"
+-          unzip emdawn.zip
+-
+-      - name: Build WASM WebGPU
+-        run: |
+-          source emsdk/emsdk_env.sh
+-          emcmake cmake -B build-wasm \
+-            -G "Ninja" \
+-            -DCMAKE_BUILD_TYPE=Release \
+-            -DGGML_WEBGPU=ON \
+-            -DGGML_OPENMP=OFF \
+-            -DLLAMA_OPENSSL=OFF \
+-            -DEMDAWNWEBGPU_DIR=emdawnwebgpu_pkg
+-
+-          time cmake --build build-wasm --config Release --target test-backend-ops -j $(nproc)
+diff --git a/.github/workflows/build-webgpu.yml b/.github/workflows/build-webgpu.yml
+index ed73c185a..0f5ade7af 100644
+--- a/.github/workflows/build-webgpu.yml
++++ b/.github/workflows/build-webgpu.yml
+@@ -13,9 +13,7 @@ on:
+       '**/*.hpp',
+       '**/*.c',
+       '**/*.cpp',
+-      '**/*.wgsl',
+-      '**/*.tmpl',
+-      'ggml/src/ggml-webgpu/wgsl-shaders/embed_wgsl.py'
++      '**/*.wgsl'
+     ]
+ 
+   pull_request:
+@@ -153,3 +151,46 @@ jobs:
+           # This is using llvmpipe and runs slower than other backends
+           # test-backend-ops is too slow on llvmpipe, skip it
+           ctest -L main -E test-backend-ops --verbose --timeout 900
++
++  ubuntu-wasm:
++    runs-on: ubuntu-24.04-arm
++
++    steps:
++      - name: Clone
++        id: checkout
++        uses: actions/checkout@v6
++
++      - name: ccache
++        uses: ggml-org/ccache-action@v1.2.21
++        with:
++          key: webgpu-ubuntu-24.04-arm-wasm
++          evict-old-files: 1d
++          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
++
++      - name: Install Emscripten
++        run: |
++          git clone https://github.com/emscripten-core/emsdk.git
++          cd emsdk
++          ./emsdk install latest
++          ./emsdk activate latest
++
++      - name: Fetch emdawnwebgpu
++        run: |
++          DAWN_TAG="v20260317.182325"
++          EMDAWN_PKG="emdawnwebgpu_pkg-${DAWN_TAG}.zip"
++          echo "Downloading ${EMDAWN_PKG}"
++          curl -L -o emdawn.zip \
++            "https://github.com/google/dawn/releases/download/${DAWN_TAG}/${EMDAWN_PKG}"
++          unzip emdawn.zip
++
++      - name: Build WASM WebGPU
++        run: |
++          source emsdk/emsdk_env.sh
++          emcmake cmake -B build-wasm \
++            -G "Ninja" \
++            -DCMAKE_BUILD_TYPE=Release \
++            -DGGML_WEBGPU=ON \
++            -DLLAMA_OPENSSL=OFF \
++            -DEMDAWNWEBGPU_DIR=emdawnwebgpu_pkg
++
++          time cmake --build build-wasm --config Release --target test-backend-ops -j $(nproc)
+diff --git a/.github/workflows/docker.yml b/.github/workflows/docker.yml
+index afe4b7c66..8195a55ff 100644
+--- a/.github/workflows/docker.yml
++++ b/.github/workflows/docker.yml
+@@ -58,13 +58,6 @@ jobs:
+           git tag ${{ steps.srctag.outputs.name }} || exit 0
+           git push origin ${{ steps.srctag.outputs.name }} || exit 0
+ 
+-  build_ui:
+-    name: Build UI
+-    needs: create_tag
+-    uses: ./.github/workflows/ui-build.yml
+-    with:
+-      hf_ui_version: ${{ needs.create_tag.outputs.source_tag }}
+-
+   prepare_matrices:
+     name: Prepare Docker matrices
+     runs-on: ubuntu-24.04
+@@ -86,7 +79,7 @@ jobs:
+           [
+             { "tag": "cpu", "dockerfile": ".devops/cpu.Dockerfile", "platforms": "linux/amd64", "full": true, "light": true, "server": true, "free_disk_space": false, "runs_on": "ubuntu-24.04" },
+             { "tag": "cpu", "dockerfile": ".devops/cpu.Dockerfile", "platforms": "linux/arm64", "full": true, "light": true, "server": true, "free_disk_space": false, "runs_on": "ubuntu-24.04-arm" },
+-            { "tag": "cpu", "dockerfile": ".devops/s390x.Dockerfile", "platforms": "linux/s390x", "full": true, "light": true, "server": true, "free_disk_space": false, "runs_on": "ubuntu-24.04-s390x", "prebuilt_ui": true },
++            { "tag": "cpu", "dockerfile": ".devops/s390x.Dockerfile", "platforms": "linux/s390x", "full": true, "light": true, "server": true, "free_disk_space": false, "runs_on": "ubuntu-24.04-s390x" },
+             { "tag": "cuda cuda12", "dockerfile": ".devops/cuda.Dockerfile", "cuda_version": "12.8.1", "platforms": "linux/amd64", "full": true, "light": true, "server": true, "free_disk_space": true, "runs_on": "ubuntu-24.04" },
+             { "tag": "cuda cuda12", "dockerfile": ".devops/cuda.Dockerfile", "cuda_version": "12.8.1", "platforms": "linux/arm64", "full": true, "light": true, "server": true, "free_disk_space": true, "runs_on": "ubuntu-24.04-arm" },
+             { "tag": "cuda13", "dockerfile": ".devops/cuda.Dockerfile", "cuda_version": "13.3.0", "platforms": "linux/amd64", "full": true, "light": true, "server": true, "free_disk_space": true, "runs_on": "ubuntu-24.04" },
+@@ -142,7 +135,7 @@ jobs:
+ 
+   push_to_registry:
+     name: Push Docker image to Docker Registry
+-    needs: [prepare_matrices, create_tag, build_ui]
++    needs: [prepare_matrices, create_tag]
+ 
+     runs-on: ${{ matrix.config.runs_on }}
+     strategy:
+@@ -157,13 +150,6 @@ jobs:
+           fetch-depth: 0
+           ref: ${{ needs.create_tag.outputs.source_tag }}
+ 
+-      - name: Download prebuilt UI
+-        if: ${{ matrix.config.prebuilt_ui == true }}
+-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+-        with:
+-          name: ui-build
+-          path: tools/ui/dist
+-
+       - name: Set up QEMU
+         if: ${{ contains(matrix.config.platforms, 'linux/amd64') }}
+         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4
+diff --git a/.github/workflows/hip-quality-check.yml b/.github/workflows/hip-quality-check.yml
+index 5d23f01cf..14b9f41a6 100644
+--- a/.github/workflows/hip-quality-check.yml
++++ b/.github/workflows/hip-quality-check.yml
+@@ -9,8 +9,6 @@ on:
+       '.github/workflows/hip-quality-check.yml',
+       '**/*.cu',
+       '**/*.cuh',
+-      'ggml/src/ggml-hip/CMakeLists.txt',
+-      'ggml/src/ggml-cuda/vendors/hip.h',
+       'scripts/hip/gcn-cdna-vgpr-check.py'
+     ]
+ 
+@@ -20,8 +18,6 @@ on:
+       '.github/workflows/hip-quality-check.yml',
+       '**/*.cu',
+       '**/*.cuh',
+-      'ggml/src/ggml-hip/CMakeLists.txt',
+-      'ggml/src/ggml-cuda/vendors/hip.h',
+       'scripts/hip/gcn-cdna-vgpr-check.py'
+     ]
+ 
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 82a8364e4..bb6a2e1f8 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -46,13 +46,11 @@ jobs:
+ 
+     steps:
+       - id: check
+-        env:
+-          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+         run: |
+           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+             echo "should_release=true" >> $GITHUB_OUTPUT
+           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/master" ]]; then
+-            if echo "$COMMIT_MESSAGE" | grep -q '\[no release\]'; then
++            if echo "${{ github.event.head_commit.message }}" | grep -q '\[no release\]'; then
+               echo "should_release=false" >> $GITHUB_OUTPUT
+             else
+               echo "should_release=true" >> $GITHUB_OUTPUT
+@@ -445,9 +443,9 @@ jobs:
+       openvino_version: ${{ steps.openvino_version.outputs.value }}
+ 
+     env:
+-      # Sync versions in build-openvino.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
+-      OPENVINO_VERSION_MAJOR: "2026.2.1"
+-      OPENVINO_VERSION_FULL: "2026.2.1.21919.ede283a88e3"
++      # Sync versions in build.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
++      OPENVINO_VERSION_MAJOR: "2026.0"
++      OPENVINO_VERSION_FULL: "2026.0.0.20965.c6d6a13a886"
+ 
+     steps:
+       - name: Set OpenVINO version output
+@@ -506,11 +504,8 @@ jobs:
+           cmake -B build/ReleaseOV -G Ninja \
+             -DCMAKE_BUILD_TYPE=Release \
+             -DGGML_OPENVINO=ON \
+-            -DCMAKE_INSTALL_RPATH='$ORIGIN' \
+-            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+-            -DHF_UI_VERSION=${{ needs.get-version.outputs.ui_version }} \
+-            ${{ env.CMAKE_ARGS }}
+-          cmake --build build/ReleaseOV --config Release --parallel
++            -DHF_UI_VERSION=${{ needs.get-version.outputs.ui_version }}
++          cmake --build build/ReleaseOV --config Release -j $(nproc)
+ 
+       - name: ccache-clear
+         uses: ./.github/actions/ccache-clear
+@@ -524,26 +519,8 @@ jobs:
+       - name: Pack artifacts
+         id: pack_artifacts
+         run: |
+-          dest=./build/ReleaseOV/bin
+-          OPENVINO_ROOT=./openvino_toolkit
+-          ov_lib="$OPENVINO_ROOT/runtime/lib/intel64"
+-
+-          # Bundle OpenVINO runtime libs + TBB. Binaries built with RPATH=$ORIGIN
+-          # load these siblings without setupvars.sh / LD_LIBRARY_PATH.
+-          cp -P "$ov_lib"/libopenvino.so* \
+-                "$ov_lib"/libopenvino_c.so* \
+-                "$ov_lib"/libopenvino_*_plugin.so \
+-                "$ov_lib"/libopenvino_intel_npu_compiler*.so \
+-                "$OPENVINO_ROOT"/runtime/3rdparty/tbb/lib/*.so* \
+-                "$dest"
+-          cp -P /usr/lib/x86_64-linux-gnu/libOpenCL.so.1* "$dest" 2>/dev/null || true
+-          cp "$ov_lib"/cache.json "$dest" 2>/dev/null || true
+-
+-          # OpenVINO licensing
+-          cp -r "$OPENVINO_ROOT"/docs/licensing "$dest"/openvino-licensing
+-
+-          cp LICENSE "$dest"
+-          tar -czvf llama-${{ steps.tag.outputs.name }}-bin-ubuntu-openvino-${{ env.OPENVINO_VERSION_MAJOR }}-x64.tar.gz --transform "s,^\.,llama-${{ steps.tag.outputs.name }}," -C "$dest" .
++          cp LICENSE ./build/ReleaseOV/bin/
++          tar -czvf llama-${{ steps.tag.outputs.name }}-bin-ubuntu-openvino-${{ env.OPENVINO_VERSION_MAJOR }}-x64.tar.gz --transform "s,^\.,llama-${{ steps.tag.outputs.name }}," -C ./build/ReleaseOV/bin .
+ 
+       - name: Upload artifacts
+         uses: actions/upload-artifact@v6
+@@ -551,135 +528,6 @@ jobs:
+           path: llama-${{ steps.tag.outputs.name }}-bin-ubuntu-openvino-${{ env.OPENVINO_VERSION_MAJOR }}-x64.tar.gz
+           name: llama-bin-ubuntu-openvino-${{ env.OPENVINO_VERSION_MAJOR }}-x64.tar.gz
+ 
+-  windows-openvino:
+-    needs: [check-release]
+-    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+-
+-    runs-on: windows-2022
+-
+-    outputs:
+-      openvino_version: ${{ steps.openvino_version.outputs.value }}
+-
+-    env:
+-      # Sync versions in build-openvino.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
+-      OPENVINO_VERSION_MAJOR: "2026.2.1"
+-      OPENVINO_VERSION_FULL: "2026.2.1.21919.ede283a88e3"
+-
+-    steps:
+-      - name: Set OpenVINO version output
+-        id: openvino_version
+-        shell: bash
+-        run: echo "value=${{ env.OPENVINO_VERSION_MAJOR }}" >> $GITHUB_OUTPUT
+-
+-      - name: Clone
+-        id: checkout
+-        uses: actions/checkout@v6
+-        with:
+-            fetch-depth: 0
+-
+-      - name: Setup Node.js
+-        uses: actions/setup-node@v6
+-        with:
+-          node-version: "24"
+-          cache: "npm"
+-          cache-dependency-path: "tools/ui/package-lock.json"
+-
+-      - name: ccache
+-        uses: ggml-org/ccache-action@v1.2.21
+-        with:
+-          key: release-windows-2022-openvino
+-          variant: ccache
+-          evict-old-files: 1d
+-
+-      - name: Setup Cache
+-        uses: actions/cache@v5
+-        id: cache-openvino
+-        with:
+-          path: ./openvino_toolkit
+-          key: cache-gha-openvino-toolkit-v${{ env.OPENVINO_VERSION_FULL }}-${{ runner.os }}
+-
+-      - name: Setup OpenVINO Toolkit
+-        if: steps.cache-openvino.outputs.cache-hit != 'true'
+-        uses: ./.github/actions/windows-setup-openvino
+-        with:
+-          path: ./openvino_toolkit
+-          version_major: ${{ env.OPENVINO_VERSION_MAJOR }}
+-          version_full: ${{ env.OPENVINO_VERSION_FULL }}
+-
+-      - name: Install OpenCL using vcpkg
+-        shell: powershell
+-        run: |
+-          git clone https://github.com/microsoft/vcpkg C:\vcpkg
+-          C:\vcpkg\bootstrap-vcpkg.bat
+-          C:\vcpkg\vcpkg install opencl
+-
+-      - name: Build
+-        id: cmake_build
+-        shell: cmd
+-        run: |
+-          REM Find extracted OpenVINO folder dynamically
+-          for /d %%i in (openvino_toolkit\*) do set OPENVINO_ROOT=%%i
+-
+-          if not exist "%OPENVINO_ROOT%\runtime\cmake\OpenVINOConfig.cmake" (
+-              echo ERROR: OpenVINOConfig.cmake not found
+-              exit /b 1
+-          )
+-
+-          call "%OPENVINO_ROOT%\setupvars.bat"
+-
+-          cmake -B build\ReleaseOV -G "Visual Studio 17 2022" ^
+-            -A x64 ^
+-            -DCMAKE_BUILD_TYPE=Release ^
+-            -DGGML_OPENVINO=ON ^
+-            -DLLAMA_BUILD_BORINGSSL=ON ^
+-            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake ^
+-            ${{ env.CMAKE_ARGS }}
+-
+-          cmake --build build\ReleaseOV --config Release -- /m
+-
+-      - name: ccache-clear
+-        uses: ./.github/actions/ccache-clear
+-        with:
+-          key: release-windows-2022-openvino
+-
+-      - name: Determine tag name
+-        id: tag
+-        uses: ./.github/actions/get-tag-name
+-
+-      - name: Pack artifacts
+-        id: pack_artifacts
+-        shell: powershell
+-        run: |
+-          # Locate the extracted OpenVINO toolkit root (same pattern as the Build step).
+-          $OPENVINO_ROOT = (Get-ChildItem -Directory openvino_toolkit | Select-Object -First 1).FullName
+-          if (-not $OPENVINO_ROOT) {
+-            Write-Error "OpenVINO toolkit folder not found under .\openvino_toolkit"
+-            exit 1
+-          }
+-
+-          $dest = ".\build\ReleaseOV\bin\Release"
+-
+-          $ovBin = Join-Path $OPENVINO_ROOT 'runtime\bin\intel64\Release'
+-          Copy-Item -Path (Join-Path $ovBin '*.dll')       -Destination $dest -Force
+-          Copy-Item -Path (Join-Path $ovBin 'cache.json')  -Destination $dest -Force
+-
+-          $tbbBin = Join-Path $OPENVINO_ROOT 'runtime\3rdparty\tbb\bin'
+-          Copy-Item -Path (Join-Path $tbbBin 'tbb*.dll') -Destination $dest -Force
+-
+-          # OpenVINO licensing
+-          $licensingDest = Join-Path $dest 'openvino-licensing'
+-          New-Item -ItemType Directory -Force -Path $licensingDest | Out-Null
+-          Copy-Item -Path (Join-Path $OPENVINO_ROOT 'docs\licensing\*') -Destination $licensingDest -Recurse -Force
+-
+-          Copy-Item LICENSE $dest
+-          7z a -snl llama-${{ steps.tag.outputs.name }}-bin-win-openvino-${{ env.OPENVINO_VERSION_MAJOR }}-x64.zip $dest\*
+-
+-      - name: Upload artifacts
+-        uses: actions/upload-artifact@v6
+-        with:
+-          path: llama-${{ steps.tag.outputs.name }}-bin-win-openvino-${{ env.OPENVINO_VERSION_MAJOR }}-x64.zip
+-          name: llama-bin-win-openvino-${{ env.OPENVINO_VERSION_MAJOR }}-x64.zip
+-
+   windows-cpu:
+     needs: [check-release]
+     if: ${{ needs.check-release.outputs.should_release == 'true' }}
+@@ -1257,8 +1105,6 @@ jobs:
+             -DGGML_SYCL=ON \
+             -DCMAKE_C_COMPILER=icx \
+             -DCMAKE_CXX_COMPILER=icpx \
+-            -DCMAKE_INSTALL_RPATH='$ORIGIN' \
+-            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+             -DLLAMA_OPENSSL=OFF \
+             -DGGML_NATIVE=OFF \
+             -DGGML_SYCL_F16=${{ matrix.fp16 }}
+@@ -1576,9 +1422,14 @@ jobs:
+       - windows-cpu
+       - windows-cuda
+       #- windows-sycl
++<<<<<<< ours
+       - windows-rocm
+       - windows-openvino
+       #- ubuntu-22-rocm
++=======
++      - windows-hip
++      - ubuntu-22-rocm
++>>>>>>> theirs
+       - ubuntu-cpu
+       - ubuntu-vulkan
+       - ubuntu-24-openvino
+@@ -1673,9 +1524,6 @@ jobs:
+ 
+             </details>
+ 
+-            **Website:**
+-            - <https://llama.app>
+-
+             **macOS/iOS:**
+             - [macOS Apple Silicon (arm64)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-macos-arm64.tar.gz)
+             - macOS Apple Silicon (arm64, KleidiAI enabled) [DISABLED](https://github.com/ggml-org/llama.cpp/pull/23780)
+@@ -1699,12 +1547,10 @@ jobs:
+             **Windows:**
+             - [Windows x64 (CPU)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-win-cpu-x64.zip)
+             - [Windows arm64 (CPU)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-win-cpu-arm64.zip)
+-            - [Windows arm64 (OpenCL Adreno)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-win-opencl-adreno-arm64.zip)
+             - [Windows x64 (CUDA 12)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-win-cuda-12.4-x64.zip) - [CUDA 12.4 DLLs](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/cudart-llama-bin-win-cuda-12.4-x64.zip)
+             - [Windows x64 (CUDA 13)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-win-cuda-13.3-x64.zip) - [CUDA 13.3 DLLs](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/cudart-llama-bin-win-cuda-13.3-x64.zip)
+             - [Windows arm64 (CUDA 13) (preview)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-win-cuda-13.4-arm64.zip) - [CUDA 13.4 DLLs](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/cudart-llama-bin-win-cuda-13.4-arm64.zip)
+             - [Windows x64 (Vulkan)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-win-vulkan-x64.zip)
+-            - [Windows x64 (OpenVINO)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-win-openvino-${{ needs.windows-openvino.outputs.openvino_version }}-x64.zip)
+             - [Windows x64 (SYCL)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-win-sycl-x64.zip)
+             - [Windows x64 (ROCm 7.14)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-win-rocm-7.14-x64.zip)
+ 
+diff --git a/.github/workflows/server-self-hosted.yml b/.github/workflows/server-self-hosted.yml
+index 675ddbaaa..dc7863b4f 100644
+--- a/.github/workflows/server-self-hosted.yml
++++ b/.github/workflows/server-self-hosted.yml
+@@ -29,8 +29,6 @@ on:
+     ]
+ 
+ env:
+-  # note: this is dud token to avoid rate limiting (https://github.com/ggml-org/llama.cpp/pull/25706#issuecomment-4979941302)
+-  HF_TOKEN: ${{ secrets.HF_TOKEN_CI }}
+   LLAMA_ARG_LOG_COLORS: 1
+   LLAMA_ARG_LOG_PREFIX: 1
+   LLAMA_ARG_LOG_TIMESTAMPS: 1
+@@ -143,6 +141,7 @@ jobs:
+           export LLAMA_ARG_BACKEND_SAMPLING=1
+           ./tests.sh
+ 
++<<<<<<< ours
+       - name: Tests (GPUx2)
+         id: server_integration_tests_gpu2
+         if: ${{ !github.event.pull_request }}
+@@ -161,6 +160,8 @@ jobs:
+           export GGML_CUDA_DEVICES=2 LLAMA_ARG_BACKEND_SAMPLING=1
+           ./tests.sh
+ 
++=======
++>>>>>>> theirs
+   server-kleidiai:
+     runs-on: ah-ubuntu_22_04-c8g_8x
+ 
+diff --git a/.github/workflows/tqp-linux-release.yml b/.github/workflows/tqp-linux-release.yml
+new file mode 100644
+index 000000000..3cbc222f8
+--- /dev/null
++++ b/.github/workflows/tqp-linux-release.yml
+@@ -0,0 +1,115 @@
++name: TurboQuant+ Linux Release
++
++on:
++  workflow_dispatch:
++    inputs:
++      source_ref:
++        description: 'Git ref to build'
++        required: true
++        default: 'tqp-v0.2.0'
++      release_tag:
++        description: 'Existing release tag to upload assets to'
++        required: true
++        default: 'tqp-v0.2.0'
++
++env:
++  CMAKE_ARGS: "-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON"
++
++jobs:
++  linux-cpu:
++    runs-on: ubuntu-22.04
++
++    steps:
++      - name: Clone
++        uses: actions/checkout@v6
++        with:
++          ref: ${{ inputs.source_ref }}
++          fetch-depth: 0
++
++      - name: Dependencies
++        run: |
++          sudo apt-get update
++          sudo apt-get install -y build-essential libssl-dev
++
++      - name: Build
++        run: |
++          cmake -B build \
++            -DCMAKE_INSTALL_RPATH='$ORIGIN' \
++            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
++            -DGGML_BACKEND_DL=ON \
++            -DGGML_NATIVE=OFF \
++            -DGGML_CPU_ALL_VARIANTS=ON \
++            ${{ env.CMAKE_ARGS }}
++          cmake --build build --config Release -j $(nproc)
++
++      - name: Pack
++        run: |
++          cp LICENSE ./build/bin/
++          tar -czvf turboquant-plus-${{ inputs.release_tag }}-linux-x64-cpu.tar.gz \
++            --transform "s,^\.,turboquant-plus-${{ inputs.release_tag }}," -C ./build/bin .
++
++      - name: Upload
++        uses: actions/upload-artifact@v6
++        with:
++          name: linux-x64-cpu
++          path: turboquant-plus-${{ inputs.release_tag }}-linux-x64-cpu.tar.gz
++
++  linux-vulkan:
++    runs-on: ubuntu-22.04
++
++    steps:
++      - name: Clone
++        uses: actions/checkout@v6
++        with:
++          ref: ${{ inputs.source_ref }}
++          fetch-depth: 0
++
++      - name: Dependencies
++        run: |
++          wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
++          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
++          sudo apt-get update -y
++          sudo apt-get install -y build-essential mesa-vulkan-drivers vulkan-sdk libssl-dev
++
++      - name: Build
++        run: |
++          cmake -B build \
++            -DCMAKE_INSTALL_RPATH='$ORIGIN' \
++            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
++            -DGGML_BACKEND_DL=ON \
++            -DGGML_NATIVE=OFF \
++            -DGGML_CPU_ALL_VARIANTS=ON \
++            -DGGML_VULKAN=ON \
++            ${{ env.CMAKE_ARGS }}
++          cmake --build build --config Release -j $(nproc)
++
++      - name: Pack
++        run: |
++          cp LICENSE ./build/bin/
++          tar -czvf turboquant-plus-${{ inputs.release_tag }}-linux-x64-vulkan.tar.gz \
++            --transform "s,^\.,turboquant-plus-${{ inputs.release_tag }}," -C ./build/bin .
++
++      - name: Upload
++        uses: actions/upload-artifact@v6
++        with:
++          name: linux-x64-vulkan
++          path: turboquant-plus-${{ inputs.release_tag }}-linux-x64-vulkan.tar.gz
++
++  release:
++    needs: [linux-cpu, linux-vulkan]
++    runs-on: ubuntu-latest
++    permissions:
++      contents: write
++
++    steps:
++      - name: Download artifacts
++        uses: actions/download-artifact@v7
++        with:
++          path: ./release
++          merge-multiple: true
++
++      - name: Upload to release
++        uses: softprops/action-gh-release@v2
++        with:
++          tag_name: ${{ inputs.release_tag }}
++          files: ./release/*
+diff --git a/.github/workflows/tqp-release.yml b/.github/workflows/tqp-release.yml
+new file mode 100644
+index 000000000..23c059a3e
+--- /dev/null
++++ b/.github/workflows/tqp-release.yml
+@@ -0,0 +1,186 @@
++name: TurboQuant+ Release
++
++on:
++  push:
++    tags:
++      - 'tqp-v*'
++
++env:
++  CMAKE_ARGS: "-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON"
++
++jobs:
++  macos-metal:
++    runs-on: macos-14
++
++    steps:
++      - name: Clone
++        uses: actions/checkout@v6
++        with:
++          fetch-depth: 0
++
++      - name: Build
++        run: |
++          cmake -B build \
++            -DGGML_METAL_USE_BF16=ON \
++            -DGGML_METAL_EMBED_LIBRARY=ON \
++            -DCMAKE_INSTALL_RPATH='@loader_path' \
++            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
++            ${{ env.CMAKE_ARGS }}
++          cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
++
++      - name: Pack
++        run: |
++          cp LICENSE ./build/bin/
++          tar -czvf turboquant-plus-${{ github.ref_name }}-macos-arm64-metal.tar.gz \
++            -s ",./,turboquant-plus-${{ github.ref_name }}/," -C ./build/bin .
++
++      - name: Upload
++        uses: actions/upload-artifact@v6
++        with:
++          name: macos-arm64-metal
++          path: turboquant-plus-${{ github.ref_name }}-macos-arm64-metal.tar.gz
++
++  windows-cuda:
++    runs-on: windows-2022
++
++    strategy:
++      matrix:
++        cuda: ['12.4']
++
++    steps:
++      - name: Clone
++        uses: actions/checkout@v6
++
++      - name: Install Cuda Toolkit
++        uses: ./.github/actions/windows-setup-cuda
++        with:
++          cuda_version: ${{ matrix.cuda }}
++
++      - name: Install Ninja
++        run: choco install ninja
++
++      - name: Build
++        shell: cmd
++        run: |
++          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
++          cmake -S . -B build -G "Ninja Multi-Config" ^
++            -DGGML_NATIVE=OFF ^
++            -DGGML_CUDA=ON ^
++            -DGGML_CUDA_FA_ALL_QUANTS=ON ^
++            ${{ env.CMAKE_ARGS }}
++          set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
++          cmake --build build --config Release -j %NINJA_JOBS%
++
++      - name: Pack
++        run: |
++          cp LICENSE ./build/bin/Release/
++          $dst='.\build\bin\Release\'
++          robocopy "${{env.CUDA_PATH}}\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
++          robocopy "${{env.CUDA_PATH}}\lib" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
++          robocopy "${{env.CUDA_PATH}}\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
++          7z a turboquant-plus-${{ github.ref_name }}-windows-x64-cuda${{ matrix.cuda }}.zip .\build\bin\Release\*
++
++      - name: Upload
++        uses: actions/upload-artifact@v6
++        with:
++          name: windows-x64-cuda${{ matrix.cuda }}
++          path: turboquant-plus-${{ github.ref_name }}-windows-x64-cuda${{ matrix.cuda }}.zip
++
++  linux-cpu:
++    runs-on: ubuntu-22.04
++
++    steps:
++      - name: Clone
++        uses: actions/checkout@v6
++        with:
++          fetch-depth: 0
++
++      - name: Dependencies
++        run: |
++          sudo apt-get update
++          sudo apt-get install -y build-essential libssl-dev
++
++      - name: Build
++        run: |
++          cmake -B build \
++            -DCMAKE_INSTALL_RPATH='$ORIGIN' \
++            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
++            -DGGML_BACKEND_DL=ON \
++            -DGGML_NATIVE=OFF \
++            -DGGML_CPU_ALL_VARIANTS=ON \
++            ${{ env.CMAKE_ARGS }}
++          cmake --build build --config Release -j $(nproc)
++
++      - name: Pack
++        run: |
++          cp LICENSE ./build/bin/
++          tar -czvf turboquant-plus-${{ github.ref_name }}-linux-x64-cpu.tar.gz \
++            --transform "s,^\.,turboquant-plus-${{ github.ref_name }}," -C ./build/bin .
++
++      - name: Upload
++        uses: actions/upload-artifact@v6
++        with:
++          name: linux-x64-cpu
++          path: turboquant-plus-${{ github.ref_name }}-linux-x64-cpu.tar.gz
++
++  linux-vulkan:
++    runs-on: ubuntu-22.04
++
++    steps:
++      - name: Clone
++        uses: actions/checkout@v6
++        with:
++          fetch-depth: 0
++
++      - name: Dependencies
++        run: |
++          wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
++          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
++          sudo apt-get update -y
++          sudo apt-get install -y build-essential mesa-vulkan-drivers vulkan-sdk libssl-dev
++
++      - name: Build
++        run: |
++          cmake -B build \
++            -DCMAKE_INSTALL_RPATH='$ORIGIN' \
++            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
++            -DGGML_BACKEND_DL=ON \
++            -DGGML_NATIVE=OFF \
++            -DGGML_CPU_ALL_VARIANTS=ON \
++            -DGGML_VULKAN=ON \
++            ${{ env.CMAKE_ARGS }}
++          cmake --build build --config Release -j $(nproc)
++
++      - name: Pack
++        run: |
++          cp LICENSE ./build/bin/
++          tar -czvf turboquant-plus-${{ github.ref_name }}-linux-x64-vulkan.tar.gz \
++            --transform "s,^\.,turboquant-plus-${{ github.ref_name }}," -C ./build/bin .
++
++      - name: Upload
++        uses: actions/upload-artifact@v6
++        with:
++          name: linux-x64-vulkan
++          path: turboquant-plus-${{ github.ref_name }}-linux-x64-vulkan.tar.gz
++
++  release:
++    needs: [macos-metal, windows-cuda, linux-cpu, linux-vulkan]
++    runs-on: ubuntu-latest
++    permissions:
++      contents: write
++
++    steps:
++      - name: Download artifacts
++        uses: actions/download-artifact@v7
++        with:
++          path: ./release
++          merge-multiple: true
++
++      - name: Create Release
++        uses: softprops/action-gh-release@v2
++        with:
++          tag_name: ${{ github.ref_name }}
++          name: TurboQuant+ ${{ github.ref_name }}
++          files: ./release/*
++          draft: false
++          prerelease: false
+diff --git a/.github/workflows/ui-publish.yml b/.github/workflows/ui-publish.yml
+index 99a6d8420..c3b7343c6 100644
+--- a/.github/workflows/ui-publish.yml
++++ b/.github/workflows/ui-publish.yml
+@@ -73,3 +73,4 @@ jobs:
+           hf buckets rm ggml-org/${{ env.HF_BUCKET_NAME }}/index.html --yes 2>/dev/null || true
+           hf buckets rm ggml-org/${{ env.HF_BUCKET_NAME }}/bundle.js --yes 2>/dev/null || true
+           hf buckets rm ggml-org/${{ env.HF_BUCKET_NAME }}/bundle.css --yes 2>/dev/null || true
++          hf buckets rm ggml-org/${{ env.HF_BUCKET_NAME }}/loading.html --yes 2>/dev/null || true

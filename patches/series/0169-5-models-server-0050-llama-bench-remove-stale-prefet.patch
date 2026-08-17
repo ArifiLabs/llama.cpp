@@ -1,0 +1,54 @@
+From 7549eabceb89ee4a690029d1d51e31c76d1f2721 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:57:44 -0400
+Subject: [PATCH] 
+ 5-models-server/0050-llama-bench-remove-stale-prefetch-weights-documentat.patch
+
+---
+ common/chat.cpp                   | 6 ++++++
+ tools/llama-bench/README.md       | 1 -
+ tools/llama-bench/llama-bench.cpp | 1 -
+ 3 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/common/chat.cpp b/common/chat.cpp
+index e52570af3..a1b6a9c9e 100644
+--- a/common/chat.cpp
++++ b/common/chat.cpp
+@@ -2339,7 +2339,13 @@ static common_chat_params common_chat_params_init_deepseek_v3_2(const common_cha
+             // Allow optional whitespace before <think> — some models emit a
+             // newline between the generation prompt and the thinking tag.
+             reasoning = p.optional(p.space() + THINK_START + p.reasoning(p.until(THINK_END)) + THINK_END);
++<<<<<<< ours
+             reasoning_with_tc = THINK_START + p.reasoning(p.until_one_of({ FC_START, THINK_END })) + obligatory_tool_calls;
++>>>>>>> theirs
++=======
++            reasoning_with_tc = THINK_START +
++                p.reasoning(p.until_one_of({ TC_SEPARATOR + FC_START, FC_START, THINK_END })) +
++                p.space() + obligatory_tool_calls;
+ >>>>>>> theirs
+             allow_reasoning_with_tc = true;
+         } else if (extract_reasoning) {
+diff --git a/tools/llama-bench/README.md b/tools/llama-bench/README.md
+index 41b28cd56..42cb14859 100644
+--- a/tools/llama-bench/README.md
++++ b/tools/llama-bench/README.md
+@@ -74,7 +74,6 @@ test parameters:
+   -ot --override-tensor <tensor name pattern>=<buffer type>;...
+                                             (default: disabled)
+   -nopo, --no-op-offload <0|1>              (default: 0)
+-  -pw, --prefetch-weights <0|1>             (default: 0)
+   --no-host <0|1>                           (default: 0)
+ 
+ Multiple values can be given for each parameter by separating them with ','
+diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
+index 6c638e678..c558720c0 100644
+--- a/tools/llama-bench/llama-bench.cpp
++++ b/tools/llama-bench/llama-bench.cpp
+@@ -467,7 +467,6 @@ static void print_usage(int /* argc */, char ** argv) {
+     printf("  -ot --override-tensor <tensor name pattern>=<buffer type>;...\n");
+     printf("                                                    (default: disabled)\n");
+     printf("  -nopo, --no-op-offload <0|1>                      (default: 0)\n");
+-    printf("  -pw, --prefetch-weights <0|1>                     (default: %s)\n", join(cmd_params_defaults.prefetch_weights, ",").c_str());
+     printf("  --no-host <0|1>                                   (default: %s)\n", join(cmd_params_defaults.no_host, ",").c_str());
+     printf("\n");
+     printf(

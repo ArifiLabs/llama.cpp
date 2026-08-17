@@ -1,0 +1,23 @@
+From f9b419ae693d742be3160972024bcd5f137824a0 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:56:40 -0400
+Subject: [PATCH] 
+ 4-other-backends/0032-cuda-clarify-MoE-cache-session-diagnostics.patch
+
+---
+ ggml/src/ggml-cuda/moe-cache.cu | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-cuda/moe-cache.cu b/ggml/src/ggml-cuda/moe-cache.cu
+index d9eeb39f9..516449fa9 100644
+--- a/ggml/src/ggml-cuda/moe-cache.cu
++++ b/ggml/src/ggml-cuda/moe-cache.cu
+@@ -1908,7 +1908,7 @@ static void * moe_cache_begin(
+             (session->config.automatic &&
+              (budget_devices < 2 || slab_devices < 2))) {
+             if (session->config.automatic && slab_devices < 2) {
+-                MOE_CACHE_LOG("[moe-cache] dormant: only %d devices satisfy the %zu MiB automatic slab floor\n",
++                MOE_CACHE_LOG("[moe-cache] session dormant: only %d devices satisfy the %zu MiB automatic slab floor\n",
+                         slab_devices, session->config.minimum_slab_bytes >> 20);
+             }
+             session->dormant.store(true);

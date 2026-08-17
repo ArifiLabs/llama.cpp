@@ -1,0 +1,25 @@
+From 5292f8b8bc7bc7cb9ba8f77f71fc1e915c87cead Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:56:07 -0400
+Subject: [PATCH] 
+ 4-other-backends/0008-hip-add-mixed-f16-bf16-q8_0-fattn-vec-instances-to-t.patch
+
+---
+ ggml/src/ggml-hip/CMakeLists.txt | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/ggml/src/ggml-hip/CMakeLists.txt b/ggml/src/ggml-hip/CMakeLists.txt
+index 41ae71b4b..60384fa8e 100644
+--- a/ggml/src/ggml-hip/CMakeLists.txt
++++ b/ggml/src/ggml-hip/CMakeLists.txt
+@@ -82,6 +82,10 @@ else()
+         ../ggml-cuda/template-instances/fattn-vec-instance-q4_0-q4_0.cu
+         ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-q8_0.cu
+         ../ggml-cuda/template-instances/fattn-vec-instance-bf16-bf16.cu
++        ../ggml-cuda/template-instances/fattn-vec-instance-f16-q8_0.cu
++        ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-f16.cu
++        ../ggml-cuda/template-instances/fattn-vec-instance-bf16-q8_0.cu
++        ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-bf16.cu
+         ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cu
+         ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-q8_0.cu
+         ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo3_0.cu

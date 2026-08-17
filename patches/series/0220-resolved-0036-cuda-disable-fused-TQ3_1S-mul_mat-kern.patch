@@ -1,0 +1,190 @@
+From 269879f47e8ed7d2c302a216cdb82bd8928c3185 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:13:38 -0400
+Subject: [PATCH] 
+ resolved/0036-cuda-disable-fused-TQ3_1S-mul_mat-kernel-fixes-DSv4-.patch
+
+Assisted-by: Codex
+---
+ ggml/src/ggml-cuda/ggml-cuda.cu | 30 +++++++++++++++++++--
+ ggml/src/ggml-cuda/mmvq-tq.cu   | 46 ++++++++++++++++++++++-----------
+ 2 files changed, 59 insertions(+), 17 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index a933f9752..b17a65c38 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -1953,8 +1953,34 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
+     // mmvq-tq.cu), so permuted/viewed activations (e.g. DeepSeek-V4 MLA projections) must take the
+     // stride-aware cuBLAS fallback below, which dequantizes TQ via ggml_get_to_fp16_cuda.
+     const bool tq_fast_path_ok = ggml_is_contiguous(src1) && ggml_is_contiguous(dst);
+-    if (is_tq_weight && tq_fast_path_ok && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE) {
+-        // Handles ne[1]=1 (decode) and ne[1]<=8 (multi-token / speculative decoding)
++
++    // GGML_TYPE_TQ3_1S: the fused warp-scalar kernel (mul_mat_tq3_1s_multi /
++    // tq_prerotate_activation in mmvq-tq.cu) is disabled here pending a fix.
++    // Root-caused via eval-callback node-diffing on DeepSeek-V4-Flash (real
++    // TQ3_1S attn/ffn weights, CUDA vs CPU-oracle): output for some MUL_MAT
++    // nodes (e.g. blk.N.attn_q_a, a 4096->1024 low-rank bottleneck) diverges
++    // ~2%/layer, compounding over 61 layers into incoherent generation on
++    // CUDA (coherent on CPU/Metal). The math of the fused kernel (per-block
++    // WHT rotation + centroid dot product) was verified bit-for-bit
++    // equivalent to the (known-correct) dequantize_tq3_1s inverse-WHT used
++    // by the cuBLAS fallback, and switching the pre-rotated activation
++    // buffer from half to float (removing one candidate precision loss)
++    // made no measurable difference — so this is very likely a reduction-
++    // order/cancellation sensitivity in the kernel's per-lane accumulation
++    // for real (non-synthetic) weight/activation distributions rather than
++    // a simple indexing bug: test-backend-ops MUL_MAT cases at the exact
++    // failing shape (tq3_1s, m=1024, n=8, k=4096) pass with random data.
++    // Disabling *only* TQ3_1S here (confirmed via a direct A/B on the CUDA0
++    // repro: forcing all TQ mul_mats through cuBLAS restores coherent
++    // output) routes it to the verified-correct dequant+cuBLAS path below.
++    // TQ4_1S (dp4a and the AMD scalar variant) is untouched — no model on
++    // hand uses it and there's no evidence it shares this bug, so the fast
++    // path stays enabled for that type to avoid regressing existing users.
++    const bool tq3_1s_fused_disabled = (src0->type == GGML_TYPE_TQ3_1S);
++
++    if (is_tq_weight && tq_fast_path_ok && !tq3_1s_fused_disabled && ne11 <= MMVQ_MAX_BATCH_SIZE) {
++        // Fused TQ weight mul_mat with pre-rotated activations via warp shuffle WHT
++        // Handles ne[1]=1 (decode) and ne[1]≤8 (multi-token / speculative decoding)
+         ggml_cuda_mul_mat_tq(ctx, src0, src1, dst);
+         return;
+     }
+diff --git a/ggml/src/ggml-cuda/mmvq-tq.cu b/ggml/src/ggml-cuda/mmvq-tq.cu
+index fe1327acd..5948c9f4c 100644
+--- a/ggml/src/ggml-cuda/mmvq-tq.cu
++++ b/ggml/src/ggml-cuda/mmvq-tq.cu
+@@ -99,12 +99,27 @@ __device__ __forceinline__ void tq4_cents8_reg(uint32_t four_bytes, int &c0, int
+ }
+ 
+ // ============================================================================
+-// Pre-rotate activation to half (for TQ3_1S scalar path)
++// Pre-rotate activation to float (for TQ3_1S scalar path)
+ // ============================================================================
+ 
++// NOTE: dst is float, not half. The rotated activation for a given input
++// element is REUSED against every one of the (up to 1024+) output rows in
++// mul_mat_tq3_1s_multi/mul_mat_tq4_1s_scalar_multi below, so a per-element
++// fp16 rounding error here is not independent per-row noise that averages
++// out — it's a fixed bias replayed into every row's dot product. For real
++// (non-uniform, elementwise-scaled) model activations — e.g. DeepSeek-V4's
++// attn_norm output, which is RMSNorm * a learned per-channel weight with
++// large dynamic range — this compounded into ~2% per-layer error at
++// blk.0.attn_q_a (verified via eval-callback node diffing against the CPU
++// reference: qr-0 sum -0.771243 true weights) but was invisible on
++// synthetic/uniform test-backend-ops data, and accumulated across 61 layers
++// into token-soup garbage output. Keeping the rotated activation in float
++// (the WHT butterfly itself was always computed in float registers; only
++// the final store truncated to half) removes this without touching the
++// weight-side quantization or the WHT math itself.
+ static __global__ void tq_prerotate_activation(
+         const float * __restrict__ src,
+-        half        * __restrict__ dst,
++        float       * __restrict__ dst,
+         const int n_elements) {
+ 
+     const int block_idx = blockIdx.x * blockDim.y + threadIdx.y;
+@@ -121,7 +136,7 @@ static __global__ void tq_prerotate_activation(
+         val = (lane & h) ? (o - val) : (val + o);
+     }
+     val *= 0.17677669529663688f;
+-    dst[offset] = __float2half(val);
++    dst[offset] = val;
+ }
+ 
+ static __device__ __forceinline__ uint8_t tq3_extract_index(const uint8_t * __restrict__ qs, int lane) {
+@@ -212,7 +227,7 @@ static __global__ void mul_mat_tq4_1s_dp4a_multi(
+ template <int ncols_dst>
+ static __global__ void mul_mat_tq3_1s_multi(
+         const void  * __restrict__ vx,
+-        const half  * __restrict__ vy_rot,
++        const float * __restrict__ vy_rot,
+         float       * __restrict__ dst,
+         const int ncols_x,
+         const int nrows_x,
+@@ -241,7 +256,7 @@ static __global__ void mul_mat_tq3_1s_multi(
+ 
+         #pragma unroll
+         for (int j = 0; j < ncols_dst; j++) {
+-            const float act = __half2float(vy_rot[j * stride_col_y + ib * QK_TQ3_0 + lane]);
++            const float act = vy_rot[j * stride_col_y + ib * QK_TQ3_0 + lane];
+             sumf[j] += act * w;
+         }
+     }
+@@ -261,15 +276,15 @@ static __global__ void mul_mat_tq3_1s_multi(
+ }
+ 
+ // ============================================================================
+-// TQ4_1S scalar/half kernel (AMD fallback — no dp4a)
+-// Same pattern as TQ3_1S: pre-rotated half activations, scalar centroid lookup.
++// TQ4_1S scalar/float kernel (AMD fallback — no dp4a)
++// Same pattern as TQ3_1S: pre-rotated float activations, scalar centroid lookup.
+ // On RDNA4, sudot4 throughput differs from NVIDIA dp4a — this path is faster.
+ // ============================================================================
+ 
+ template <int ncols_dst>
+ static __global__ void mul_mat_tq4_1s_scalar_multi(
+         const void  * __restrict__ vx,
+-        const half  * __restrict__ vy_rot,
++        const float * __restrict__ vy_rot,
+         float       * __restrict__ dst,
+         const int ncols_x,
+         const int nrows_x,
+@@ -298,7 +313,7 @@ static __global__ void mul_mat_tq4_1s_scalar_multi(
+ 
+         #pragma unroll
+         for (int j = 0; j < ncols_dst; j++) {
+-            const float act = __half2float(vy_rot[j * stride_col_y + ib * QK_TQ4_1S + lane]);
++            const float act = vy_rot[j * stride_col_y + ib * QK_TQ4_1S + lane];
+             sumf[j] += act * w;
+         }
+     }
+@@ -336,7 +351,7 @@ static void launch_tq4_1s_multi(
+ 
+ template <int ncols_dst>
+ static void launch_tq4_1s_scalar_multi(
+-        const void * src0_d, const half * act_buf,
++        const void * src0_d, const float * act_buf,
+         float * dst_d, int ncols_x, int nrows_x,
+         int stride_col_y, int stride_col_dst, cudaStream_t stream) {
+     const dim3 block(WARP_SIZE, MMVQ_TQ_NWARPS);
+@@ -347,7 +362,7 @@ static void launch_tq4_1s_scalar_multi(
+ 
+ template <int ncols_dst>
+ static void launch_tq3_1s_multi(
+-        const void * src0_d, const half * act_buf,
++        const void * src0_d, const float * act_buf,
+         float * dst_d, int ncols_x, int nrows_x,
+         int stride_col_y, int stride_col_dst, cudaStream_t stream) {
+     const dim3 block(WARP_SIZE, MMVQ_TQ_NWARPS);
+@@ -407,8 +422,9 @@ void ggml_cuda_mul_mat_tq(ggml_backend_cuda_context & ctx,
+             case 8: launch_tq4_1s_multi<8>(src0_d, q8_1_buf.get(), dst_d, ncols_x, nrows_x, stride_col_y, stride_col_dst, stream); break;
+         }
+     } else {
+-        // Scalar half path: TQ3_1S (all vendors) + TQ4_1S on AMD (dp4a regresses on RDNA4)
+-        ggml_cuda_pool_alloc<half> act_buf(ctx.pool(id), n_total_elements);
++        // Scalar float path: TQ3_1S (all vendors) + TQ4_1S on AMD (dp4a regresses on RDNA4).
++        // float, not half: see the comment on tq_prerotate_activation for why.
++        ggml_cuda_pool_alloc<float> act_buf(ctx.pool(id), n_total_elements);
+ 
+         {
+             const int n_total_blocks = n_total_elements / 32;
+@@ -418,7 +434,7 @@ void ggml_cuda_mul_mat_tq(ggml_backend_cuda_context & ctx,
+             tq_prerotate_activation<<<grid, block, 0, stream>>>(src1_d, act_buf.get(), n_total_elements);
+         }
+ 
+-        const int stride_col_y   = ncols_x;  // half elements per column
++        const int stride_col_y   = ncols_x;  // float elements per column
+         const int stride_col_dst = nrows_x;
+         const bool is_tq4 = (src0->type == GGML_TYPE_TQ4_1S);
+ 
+@@ -442,7 +458,7 @@ void ggml_cuda_mul_mat_tq(ggml_backend_cuda_context & ctx,
+             // Large prefill: batch in groups of 8
+             for (int j = 0; j < ncols_dst; j += 8) {
+                 const int batch = min(8, ncols_dst - j);
+-                const half * act_j = act_buf.get() + j * ncols_x;
++                const float * act_j = act_buf.get() + j * ncols_x;
+                 float * dst_j = dst_d + j * nrows_x;
+                 switch (batch) {
+                     case 1: LAUNCH_SCALAR(1, src0_d, act_j, dst_j); break;

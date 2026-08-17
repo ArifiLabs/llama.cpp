@@ -1,0 +1,23 @@
+From c9fc55e15fba6a2af07d45dc16c6e60ee171e3bb Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:55:32 -0400
+Subject: [PATCH] 
+ 2-cpu-reference/0008-merge-fix-post-merge-build-and-crash-issues.patch
+
+---
+ ggml/src/ggml-cpu/ops.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+index e02c80dad..555e84cbe 100644
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -23,7 +23,7 @@ extern "C" {
+ // the two happen to unify is a property of the platform's symbol resolution
+ // (ELF interposition may merge them; two-level-namespace and DLL targets will
+ // not), which made the group-size propagation silently link-order dependent.
+-GGML_API extern int turbo3_cpu_wht_group_size;
++GGML_API int turbo3_cpu_wht_group_size;
+ }
+ 
+ // ggml_compute_forward_dup

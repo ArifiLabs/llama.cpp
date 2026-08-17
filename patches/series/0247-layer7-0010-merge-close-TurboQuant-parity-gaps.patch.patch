@@ -1,0 +1,42 @@
+From 094e36e7d1a2ce4cd599cbc6c1fece03c0071fc5 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 20:52:25 -0400
+Subject: [PATCH] layer7/0010-merge-close-TurboQuant-parity-gaps.patch
+
+---
+ ggml/src/ggml-backend-meta.cpp | 3 +++
+ ggml/src/ggml-quants.c         | 7 +++++++
+ 2 files changed, 10 insertions(+)
+
+diff --git a/ggml/src/ggml-backend-meta.cpp b/ggml/src/ggml-backend-meta.cpp
+index 7654ea1f3..0bd4fdc7f 100644
+--- a/ggml/src/ggml-backend-meta.cpp
++++ b/ggml/src/ggml-backend-meta.cpp
+@@ -1009,6 +1009,9 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
+             case GGML_OP_GLU: {
+                 split_state = handle_generic(src_ss, /*scalar_only =*/ false);
+             } break;
++            case GGML_OP_TURBO_WHT: {
++                split_state = handle_generic(src_ss, /*scalar_only =*/ false);
++            } break;
+             default: {
+                 GGML_ABORT("ggml op not implemented: %s", ggml_op_name(tensor->op));
+                 split_state = {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
+diff --git a/ggml/src/ggml-quants.c b/ggml/src/ggml-quants.c
+index 5b1677e28..4778cbfee 100644
+--- a/ggml/src/ggml-quants.c
++++ b/ggml/src/ggml-quants.c
+@@ -5802,6 +5802,13 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
+         case GGML_TYPE_I64:
+             // nothing to validate
+             break;
++        case GGML_TYPE_TQ3_1S:
++        case GGML_TYPE_TQ4_1S:
++        case GGML_TYPE_TURBO3_0:
++        case GGML_TYPE_TURBO4_0:
++        case GGML_TYPE_TURBO2_0:
++            // WHT-rotated / TurboQuant types: no scalar-domain validation.
++            break;
+         default:
+             {
+                 fprintf(stderr, "%s: invalid type %d\n", __func__, type);

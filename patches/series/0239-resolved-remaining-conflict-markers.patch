@@ -1,0 +1,283 @@
+From 5e368319781db828ea3601e893758c814d927c95 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:34:49 -0400
+Subject: [PATCH] resolved/remaining-conflict-markers
+
+---
+ common/speculative.cpp          | 30 -------------------
+ ggml/src/ggml-sycl/set_rows.cpp | 11 ++-----
+ src/llama-arch.cpp              |  6 ----
+ src/llama-graph.h               |  7 -----
+ src/llama-model.cpp             | 53 ---------------------------------
+ src/models/deepseek4.cpp        |  4 ---
+ tests/test-arg-parser.cpp       |  5 +---
+ 7 files changed, 4 insertions(+), 112 deletions(-)
+
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index a9a16bbc5..7bcd5687f 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -1019,7 +1019,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+             s.reset(common_sampler_init(model_dft, sparams));
+         }
+ 
+-<<<<<<< ours
+         // offload draft sampling to the backend
+         backend_chains.assign(n_seq, nullptr);
+         if (this->params.backend_sampling) {
+@@ -1036,13 +1035,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+             }
+         }
+ 
+-        // turn on extraction of the target layers' input embeddings
+-=======
+-        // Enable extraction of target model layer outputs for DFlash encoder; an id
+-        // equal to the target's layer count means the pre-final-norm hidden state,
+-        // which is captured through the unmasked nextn path instead
+         n_layer_tgt = llama_model_n_layer(model_tgt);
+->>>>>>> theirs
+         for (uint32_t k = 0; k < target_layer_ids_n; ++k) {
+             if (target_layer_ids[k] == n_layer_tgt) {
+                 llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
+@@ -2528,34 +2521,11 @@ common_speculative * common_speculative_init(common_params_speculative & params,
+     {
+         uint32_t enabled_configs = common_get_enabled_speculative_configs(params.types);
+ 
+-<<<<<<< ours
+         auto add_config_if_enabled = [&](common_speculative_type type, bool available = true) {
+             if (available && (enabled_configs & (1u << type))) {
+                 configs.emplace_back(type, params);
+             }
+         };
+-=======
+-        bool has_draft_simple = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE));
+-        bool has_draft_eagle3 = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3)) && params.draft.ctx_dft != nullptr;
+-        bool has_draft_mtp    = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_DRAFT_MTP))    && params.draft.ctx_dft != nullptr;
+-        bool has_draft_dflash = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH)) && params.draft.ctx_dft != nullptr;
+-        bool has_draft_dspark = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK)) && params.draft.ctx_dft != nullptr;
+-
+-        // If --dflash or --eagle3 flags are set, enable the corresponding type
+-        if (!has_draft_dflash && params.draft.dflash && params.draft.ctx_dft != nullptr) {
+-            has_draft_dflash = true;
+-        }
+-        if (!has_draft_eagle3 && params.draft.eagle3 && params.draft.ctx_dft != nullptr) {
+-            has_draft_eagle3 = true;
+-        }
+-
+-
+-        bool has_ngram_cache   = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_NGRAM_CACHE));
+-        bool has_ngram_simple  = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE));
+-        bool has_ngram_map_k   = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K));
+-        bool has_ngram_map_k4v = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K4V));
+-        bool has_ngram_mod     = (enabled_configs & (1u << COMMON_SPECULATIVE_TYPE_NGRAM_MOD));
+->>>>>>> theirs
+ 
+         // when adding a new type - update here the logic above
+         static_assert(COMMON_SPECULATIVE_TYPE_COUNT == 11);
+diff --git a/ggml/src/ggml-sycl/set_rows.cpp b/ggml/src/ggml-sycl/set_rows.cpp
+index 284858c9a..d79eadb2e 100644
+--- a/ggml/src/ggml-sycl/set_rows.cpp
++++ b/ggml/src/ggml-sycl/set_rows.cpp
+@@ -106,7 +106,6 @@ static void set_rows_sycl_q(const char * __restrict__ src0_d,
+     GGML_UNUSED(nb13);
+ }
+ 
+-<<<<<<< ours
+ template<typename blockType>
+ using quantize_row_qk_t = void (*)(const float *, blockType *, int64_t);
+ 
+@@ -238,7 +237,8 @@ static void set_rows_sycl_iq_host(
+             }
+         }
+     }
+-=======
++}
++
+ // ============================================================
+ // TurboQuant SET_ROWS cooperative kernels (128 work-items each)
+ // Ported from ggml-cuda/set-rows.cu
+@@ -593,7 +593,6 @@ static void set_rows_sycl_turbo2(ggml_backend_sycl_context & ctx,
+     GGML_UNUSED(ne13);
+     GGML_UNUSED(nb00);
+     GGML_UNUSED(nb13);
+->>>>>>> theirs
+ }
+ 
+ template<typename TIn, typename TIdx, typename TOut>
+@@ -924,12 +923,8 @@ void ggml_sycl_op_set_rows(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+     const ggml_tensor * src0 = dst->src[0];
+     const ggml_tensor * src1 = dst->src[1];
+ 
+-<<<<<<< ours
+     GGML_ASSERT(dst->src[0]->type == GGML_TYPE_F32 || dst->src[0]->type == GGML_TYPE_F16);
+-=======
+-    GGML_ASSERT(dst->src[0]->type == GGML_TYPE_F32);
+-    GGML_ASSERT(dst->src[0]->nb[0] == sizeof(float));
+->>>>>>> theirs
++    GGML_ASSERT(dst->src[0]->nb[0] == ggml_type_size(dst->src[0]->type));
+     GGML_ASSERT(dst->src[1]->type == GGML_TYPE_I64 || dst->src[1]->type == GGML_TYPE_I32);
+ 
+     // dispatch on the index type (src1) and the source value type (src0)
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index b2af3d7da..c64da8c9f 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -1049,10 +1049,7 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
+         case LLM_ARCH_QWEN35:
+         case LLM_ARCH_QWEN35MOE:
+         case LLM_ARCH_DEEPSEEK4:
+-<<<<<<< ours
+         case LLM_ARCH_MINIMAX_01:
+-=======
+->>>>>>> theirs
+             return true;
+         default:
+             return false;
+@@ -1076,11 +1073,8 @@ bool llm_arch_supports_rs_rollback(const llm_arch & arch) {
+         case LLM_ARCH_QWEN35:
+         case LLM_ARCH_QWEN35MOE:
+         case LLM_ARCH_DEEPSEEK4:
+-<<<<<<< ours
+         case LLM_ARCH_NEMOTRON_H:
+         case LLM_ARCH_NEMOTRON_H_MOE:
+-=======
+->>>>>>> theirs
+             return true;
+         default:
+             return false;
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+index 864dfe9c3..cf68c300c 100644
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -901,18 +901,11 @@ public:
+ 
+     std::vector<ggml_tensor *> t_layer_inp;
+ 
+-<<<<<<< ours
+     std::vector<ggml_tensor *> t_sampled;
+     std::vector<ggml_tensor *> t_sampled_probs;
+     std::vector<ggml_tensor *> t_sampled_logits;
+     std::vector<ggml_tensor *> t_candidates;
+-=======
+-    std::map<llama_seq_id, ggml_tensor *> t_sampled_logits;
+-    std::map<llama_seq_id, ggml_tensor *> t_candidates;
+-    std::map<llama_seq_id, ggml_tensor *> t_sampled;
+     std::vector<llm_graph_fused_node> fused_nodes;
+-    std::map<llama_seq_id, ggml_tensor *> t_sampled_probs;
+->>>>>>> theirs
+ 
+     std::vector<llm_graph_input_ptr> inputs;
+ 
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 8179f74d1..1294927d1 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -2302,11 +2302,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+             } break;
+         case LLM_ARCH_DEEPSEEK4:
+             {
+-<<<<<<< ours
+-<<<<<<< ours
+-=======
+-
+->>>>>>> theirs
+                 GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
+ 
+                 if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
+@@ -2347,7 +2342,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+                             nullptr,
+                             nullptr);
+                 }
+-<<<<<<< ours
+             } break;
+         case LLM_ARCH_DFLASH:
+             {
+@@ -2375,53 +2369,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+                 }
+             }
+             [[fallthrough]];
+-=======
+-                res = new llama_kv_cache_dsv4(
+-                        *this,
+-                        params.type_k,
+-                        params.type_v,
+-                        !cparams.flash_attn,
+-                        cparams.offload_kqv,
+-                        params.swa_full,
+-                        cparams.kv_unified,
+-                        cparams.n_ctx_seq,
+-                        cparams.n_seq_max,
+-                        cparams.n_ubatch,
+-                        1,
+-                        nullptr,
+-                        nullptr);
+-            } break;
+->>>>>>> theirs
+-=======
+-            } break;
+-        case LLM_ARCH_DFLASH:
+-            {
+-                // DSV4 DSpark stages store a single MLA-style K per position (window = the draft ring)
+-                if (hparams.dsv4_hc_mult > 0) {
+-                    GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
+-
+-                    res = new llama_kv_cache_iswa(
+-                            *this,
+-                            params.type_k,
+-                            params.type_v,
+-                            !cparams.flash_attn,
+-                            cparams.offload_kqv,
+-                            params.swa_full,
+-                            cparams.kv_unified,
+-                            cparams.n_ctx_seq,
+-                            cparams.n_seq_max,
+-                            cparams.n_ubatch,
+-                            1,
+-                            nullptr,
+-                            nullptr,
+-                            nullptr,
+-                            nullptr);
+-                    break;
+-                }
+-            }
+-            [[fallthrough]];
+-
+->>>>>>> theirs
+         // Models that need standard caching should rely on recurrent/hybrid
+         // checks
+         default:
+diff --git a/src/models/deepseek4.cpp b/src/models/deepseek4.cpp
+index ef1d742c8..89cd46176 100644
+--- a/src/models/deepseek4.cpp
++++ b/src/models/deepseek4.cpp
+@@ -114,13 +114,9 @@ void llama_model_deepseek4::load_arch_tensors(llama_model_loader & ml) {
+         layer.wq_b          = create_tensor(tn(LLM_TENSOR_ATTN_Q_B,      "weight", i), {q_lora_rank, n_head * n_embd_head}, flags);
+         layer.wkv           = create_tensor(tn(LLM_TENSOR_ATTN_KV,       "weight", i), {n_embd, n_embd_head}, flags);
+         layer.attn_kv_norm  = create_tensor(tn(LLM_TENSOR_ATTN_KV_NORM,  "weight", i), {n_embd_head}, flags);
+-<<<<<<< ours
+         // for wo_a, the shape in the file is (n_head * n_embd_head / o_groups, o_lora_rank*o_groups)
+         // so we reshape here, to avoid reshaping the tensor in the graph
+         layer.wo_a          = create_tensor(tn(LLM_TENSOR_ATTN_OUT_A,    "weight", i), {n_head * n_embd_head / o_groups, o_lora_rank, o_groups}, flags | TENSOR_ALLOW_RESHAPE);
+-=======
+-        layer.wo_a          = create_tensor(tn(LLM_TENSOR_ATTN_OUT_A,    "weight", i), {n_head * n_embd_head / o_groups, o_lora_rank * o_groups}, flags);
+->>>>>>> theirs
+         layer.wo_b          = create_tensor(tn(LLM_TENSOR_ATTN_OUT_B,    "weight", i), {o_groups * o_lora_rank, n_embd}, flags);
+ 
+         layer.hc_attn_fn    = create_tensor(tn(LLM_TENSOR_HC_ATTN_FN,    "weight", i), {hc_dim, hc_mix_dim}, flags);
+diff --git a/tests/test-arg-parser.cpp b/tests/test-arg-parser.cpp
+index c4d57c633..b2a455be1 100644
+--- a/tests/test-arg-parser.cpp
++++ b/tests/test-arg-parser.cpp
+@@ -4,11 +4,8 @@
+ #include "llama.h"
+ #include "speculative.h"
+ 
+-<<<<<<< ours
+-#include <limits>
+-=======
+ #include <cstdlib>
+->>>>>>> theirs
++#include <limits>
+ #include <string>
+ #include <vector>
+ #include <sstream>

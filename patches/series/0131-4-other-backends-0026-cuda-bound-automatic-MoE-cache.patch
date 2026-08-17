@@ -1,0 +1,23 @@
+From eb6ad4499be7190ce6edd2f4fe4dce358ea0da0d Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:56:31 -0400
+Subject: [PATCH] 
+ 4-other-backends/0026-cuda-bound-automatic-MoE-cache-admission.patch
+
+---
+ ggml/src/ggml-cuda/moe-cache.cu | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-cuda/moe-cache.cu b/ggml/src/ggml-cuda/moe-cache.cu
+index 13f04846c..c7bab8c73 100644
+--- a/ggml/src/ggml-cuda/moe-cache.cu
++++ b/ggml/src/ggml-cuda/moe-cache.cu
+@@ -47,7 +47,7 @@ void ggml_moe_cache_register(const void * owner) {
+ 
+ static constexpr int    moe_cache_cc_forced_min               = 700;
+ static constexpr int    moe_cache_cc_ampere                   = 800;
+-static constexpr size_t moe_cache_expert_bytes_ampere_min     = 64u << 10;
++static constexpr size_t moe_cache_expert_bytes_ampere_min     = 512u << 10;
+ static constexpr size_t moe_cache_expert_bytes_pre_ampere_min = 1u << 20;
+ static constexpr int    moe_cache_batch_auto_max              = 8;
+ static constexpr int    moe_cache_batch_forced_max            = 1;
