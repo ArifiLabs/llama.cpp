@@ -33,6 +33,31 @@ if(NOT "${HF_UI_VERSION}" STREQUAL "" AND NOT HF_UI_VERSION MATCHES "^[A-Za-z0-9
     message(FATAL_ERROR "UI: invalid HF_UI_VERSION='${HF_UI_VERSION}' - must match ^[A-Za-z0-9._-]+$")
 endif()
 
+# fork: vendored UI archive. A clean rebuild must be repeatable and offline - the HF
+# fetch falls back to the moving tag "latest" whenever the build-number tag 404s, which
+# makes the embedded UI a different artifact on every rebuild. scripts/ui-assets.cmake
+# takes pre-built assets in tools/ui/dist as priority 1, ahead of npm and of any
+# download, so extracting the pinned archive here leaves the network path unreachable.
+set(LLAMA_UI_VENDORED_ARCHIVE "${CMAKE_CURRENT_SOURCE_DIR}/dist.tar.gz")
+if(EXISTS "${LLAMA_UI_VENDORED_ARCHIVE}" AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/dist/index.html")
+    if(NOT EXISTS "${LLAMA_UI_VENDORED_ARCHIVE}.sha256")
+        message(FATAL_ERROR "UI: ${LLAMA_UI_VENDORED_ARCHIVE} has no .sha256 - an unpinned vendored archive is not a pin")
+    endif()
+    file(READ "${LLAMA_UI_VENDORED_ARCHIVE}.sha256" _ui_expected)
+    string(REGEX MATCH "^[0-9a-fA-F]+" _ui_expected "${_ui_expected}")
+    string(TOLOWER "${_ui_expected}" _ui_expected)
+    file(SHA256 "${LLAMA_UI_VENDORED_ARCHIVE}" _ui_actual)
+    if(NOT "${_ui_actual}" STREQUAL "${_ui_expected}")
+        message(FATAL_ERROR "UI: vendored dist.tar.gz checksum mismatch - expected ${_ui_expected}, got ${_ui_actual}")
+    endif()
+    file(REMOVE_RECURSE "${CMAKE_CURRENT_SOURCE_DIR}/dist")
+    file(ARCHIVE_EXTRACT INPUT "${LLAMA_UI_VENDORED_ARCHIVE}" DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/dist")
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/dist/index.html")
+        message(FATAL_ERROR "UI: vendored dist.tar.gz extracted without index.html")
+    endif()
+    message(STATUS "UI: extracted vendored dist.tar.gz (sha256 ${_ui_actual})")
+endif()
+
 set(UI_CPP "${CMAKE_CURRENT_BINARY_DIR}/ui.cpp")
 set(UI_H   "${CMAKE_CURRENT_BINARY_DIR}/ui.h")
 
