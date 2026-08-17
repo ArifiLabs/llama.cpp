@@ -1043,6 +1043,21 @@ void process_shaders() {
     string_to_spv("dequant_tq3_1s", "dequant_tq3_1s.comp",
         merge_maps(base_dict, {{"DATA_A_TQ3_1S", "1"}, {"D_TYPE", "float16_t"}}));
 
+    // tq3 family, TQ3_4S (type-id 48). Same block geometry, packing, centroids
+    // and rotation as TQ3_1S -- only the scale representation differs (four E3M5
+    // bytes per group of 8 instead of two f16 halves), so the same three-point
+    // rationale above binds: explicit generation, 32-thread pin host-side, no
+    // coopmat/coopmat2, no GET_ROWS via get_rows_quant.comp (that path applies no
+    // inverse WHT and would hand back un-rotated centroid*scale values).
+    string_to_spv("mul_mat_vec_tq3_4s_f32_f32", "mul_mat_vec_tq3_4s.comp",
+        merge_maps(base_dict, {{"DATA_A_TQ3_4S", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
+    string_to_spv("mul_mat_vec_tq3_4s_f16_f32", "mul_mat_vec_tq3_4s.comp",
+        merge_maps(base_dict, {{"DATA_A_TQ3_4S", "1"}, {"B_TYPE", "float16_t"}, {"B_TYPEV2", "f16vec2"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}));
+    string_to_spv("mul_mat_vec_id_tq3_4s_f32_f32", "mul_mat_vec_tq3_4s.comp",
+        merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {"DATA_A_TQ3_4S", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
+    string_to_spv("dequant_tq3_4s", "dequant_tq3_4s.comp",
+        merge_maps(base_dict, {{"DATA_A_TQ3_4S", "1"}, {"D_TYPE", "float16_t"}}));
+
     // Activation pre-rotation for the rotated matmul path. Type-independent:
     // TQ3 and TQ4 share the same 32-element sign pattern and butterfly, so one
     // pipeline serves both. Takes no DATA_A_* define -- it only touches the
