@@ -1,0 +1,89 @@
+#version 450
+
+#include "dequant_head.glsl"
+
+// TQ3_4S (type-id 48) full-block dequant. Structurally identical to
+// dequant_tq3_1s.comp -- same 32-value block, same 3-bit packing, same centroids,
+// same inverse RHT. The ONLY difference is the scale: TQ3_1S carries two f16
+// halves (elements 0-15 / 16-31); TQ3_4S carries four E3M5 bytes, one per group
+// of 8, which lines up exactly with the four 3-byte packing groups. Reference:
+// dequantize_row_tq3_4s() in ggml/src/ggml-arifi-turbo-weights.c:509-524.
+//
+// 256 threads per workgroup, each thread fully dequants one block (32 elements,
+// 16 bytes). Workgroups process 256 blocks = 8192 elements so the x dispatch
+// stays under maxComputeWorkGroupCount[0] for large tensors.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {block_tq3_4s data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
+
+// One WHT butterfly stage as a flat 16-iteration loop with a compile-time
+// constant stride. Deliberately NOT the rolled triple loop of tq3_0_rht_inverse():
+// a non-constant inner increment stops glslang unrolling, buf[] stays a
+// dynamically indexed function-local array and becomes scratch instead of
+// registers. This shader runs over the entire weight tensor on the prefill path,
+// so that matters. Identical construction to dequant_tq3_1s.comp; lo enumerates
+// the same (j, j + step) pairs in the same order as the reference.
+#define TQ3_WHT_STAGE(STEP)                                             \
+    [[unroll]] for (uint k = 0u; k < 16u; k++) {                        \
+        const uint lo = ((k / (STEP)) * (2u * (STEP))) + (k % (STEP));  \
+        const float a = buf[lo];                                        \
+        const float b = buf[lo + (STEP)];                               \
+        buf[lo]          = a + b;                                       \
+        buf[lo + (STEP)] = a - b;                                       \
+    }
+
+void main() {
+    // Lloyd-Max centroids for 3-bit normal quantization. ASYMMETRIC -- must match
+    // TQ3_0_CENTROIDS in ggml/src/ggml-arifi-turbo-weights.c:29-32 byte for byte.
+    const float centroids[8] = float[8](
+        -1.996684, -1.291398, -0.740341, -0.247508,
+         0.230106,  0.725222,  1.277503,  1.988943
+    );
+
+    // TQ3_0_SIGNS, ggml-arifi-turbo-weights.c:42-47.
+    const float signs[32] = float[32](
+        +1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
+        -1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
+        -1.0, -1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0,
+        -1.0, +1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0
+    );
+
+    const float INV_SQRT32 = 0.17677669529663688;
+
+    const uint ib = gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+    if (ib >= p.nel / 32) return;
+
+    // Load centroid*scale into per-thread buffer. TQ3 packs 8 three-bit indices
+    // into each 3-byte group, 4 groups per block. Reading the group as a 24-bit
+    // little-endian word turns the extraction into a single shift: tq3_pack8()
+    // lays index i at bits [3i, 3i+2] of that word, including indices 2 and 5
+    // which straddle a byte.
+    float buf[32];
+    [[unroll]] for (uint g = 0u; g < 4u; g++) {
+        const uint qb = g * 3u;
+        const uint packed = uint(data_a[ib].qs[qb])
+                          | (uint(data_a[ib].qs[qb + 1u]) << 8)
+                          | (uint(data_a[ib].qs[qb + 2u]) << 16);
+        // One E3M5 scale per group of 8 -- the whole reason this file exists.
+        const float d = tq3_4s_decode_scale(uint(data_a[ib].d[g]));
+        [[unroll]] for (uint i = 0u; i < 8u; i++) {
+            const uint j   = g * 8u + i;
+            const uint idx = (packed >> (i * 3u)) & 7u;
+            buf[j] = centroids[idx] * d;
+        }
+    }
+
+    // Inverse WHT butterfly (5 stages for 32 elements) -- matches CPU reference.
+    TQ3_WHT_STAGE(1u)
+    TQ3_WHT_STAGE(2u)
+    TQ3_WHT_STAGE(4u)
+    TQ3_WHT_STAGE(8u)
+    TQ3_WHT_STAGE(16u)
+
+    // Normalize and apply sign pattern.
+    const uint out_base = ib * 32u;
+    [[unroll]] for (uint j = 0u; j < 32u; j++) {
+        data_b[out_base + j] = D_TYPE(buf[j] * INV_SQRT32 * signs[j]);
+    }
+}
