@@ -402,6 +402,11 @@ const float * arifi_tq3_centroids(void);
 const float * arifi_tq4_centroids(void);
 void quantize_row_tq3_1s_ref(const float * GGML_RESTRICT x, block_tq3_1s * GGML_RESTRICT y, int64_t k);
 void quantize_row_tq4_1s_ref(const float * GGML_RESTRICT x, block_tq4_1s * GGML_RESTRICT y, int64_t k);
+float arifi_tq3_4s_decode_scale(uint8_t byte);
+void quantize_row_tq3_4s_ref(const float * GGML_RESTRICT x, block_tq3_4s * GGML_RESTRICT y, int64_t k);
+void quantize_row_tq3_0_ref(const float * GGML_RESTRICT x, block_tq3_0 * GGML_RESTRICT y, int64_t k);
+void quantize_row_tq3_4se_ref(const float * GGML_RESTRICT x, block_tq3_4se * GGML_RESTRICT y, int64_t k);
+void quantize_row_tq3_1s_shift_ref(const float * GGML_RESTRICT x, block_tq3_1s_shift * GGML_RESTRICT y, int64_t k);
 
 // TurboQuant weight formats: fused dot product against a q8_0 activation row.
 //
@@ -514,6 +519,116 @@ static void ggml_vec_dot_tq4_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
     GGML_UNUSED(bs); GGML_UNUSED(bx); GGML_UNUSED(by); GGML_UNUSED(nrc);
     arifi_tq_dot(n, s, vx, vy, 4);
 }
+
+// tq3 family (ids 48..51). The same identity applies - these types share the RHT
+// and the centroid table with TQ3_1S, so the forward transform still moves to the
+// activation and the weight side needs no transform. Only the per-element scale
+// (and, for 4SE/1S_SHIFT, an additive offset) differs.
+//
+// An offset t added in the rotated domain contributes <t.1, forward(a)> to the dot
+// product; it is folded in the same accumulate loop, so no extra pass is needed.
+
+static void arifi_tq3_dot(enum ggml_type type_x, int n, float * GGML_RESTRICT s,
+                          const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy) {
+    GGML_ASSERT(n % ARIFI_TQ_BLK == 0);
+    GGML_ASSERT(QK8_0 == ARIFI_TQ_BLK);
+
+    const block_q8_0 * a  = (const block_q8_0 *) vy;
+    const int          nb = n / ARIFI_TQ_BLK;
+
+    const float * signs   = arifi_tq_signs();
+    const float * cent    = arifi_tq3_centroids();
+    const float   inv_sqrt = 0.17677669529663688f; /* 1/sqrt(32) */
+
+    float sum = 0.0f;
+    float ab[ARIFI_TQ_BLK];
+
+    for (int blk = 0; blk < nb; blk++) {
+        const float ad = GGML_CPU_FP16_TO_FP32(a[blk].d);
+        for (int j = 0; j < ARIFI_TQ_BLK; j++) ab[j] = a[blk].qs[j] * ad;
+        arifi_tq_rht_forward32(ab, signs, inv_sqrt);
+
+        /* Per-element weight scale and additive offset in the rotated domain. */
+        float           ds[4]  = { 0, 0, 0, 0 };  /* per group of 8 */
+        float           off[4] = { 0, 0, 0, 0 };
+        float           post   = 1.0f;            /* scale applied OUTSIDE the rotation */
+        const uint8_t * qs     = NULL;
+
+        switch (type_x) {
+            case GGML_TYPE_TQ3_4S: {
+                const block_tq3_4s * w = (const block_tq3_4s *) vx + blk;
+                for (int g = 0; g < 4; g++) ds[g] = arifi_tq3_4s_decode_scale(w->d[g]);
+                qs = w->qs;
+            } break;
+            case GGML_TYPE_TQ3_0: {
+                const block_tq3_0 * w = (const block_tq3_0 *) vx + blk;
+                for (int g = 0; g < 4; g++) ds[g] = 1.0f;
+                post = GGML_CPU_FP16_TO_FP32(w->d);
+                qs   = w->qs;
+            } break;
+            case GGML_TYPE_TQ3_4SE: {
+                const block_tq3_4se * w = (const block_tq3_4se *) vx + blk;
+                float max_s = 0.0f;
+                for (int g = 0; g < 4; g++) {
+                    ds[g] = arifi_tq3_4s_decode_scale(w->d[g]);
+                    if (ds[g] > max_s) max_s = ds[g];
+                }
+                const float quantum = max_s / 8.0f;
+                for (int g = 0; g < 4; g++) {
+                    off[g] = ((int) w->s[g / 2] - 128) / 127.0f * quantum;
+                }
+                qs = w->qs;
+            } break;
+            case GGML_TYPE_TQ3_1S_SHIFT: {
+                const block_tq3_1s_shift * w = (const block_tq3_1s_shift *) vx + blk;
+                const float d0 = GGML_CPU_FP16_TO_FP32(w->d0);
+                const float d1 = GGML_CPU_FP16_TO_FP32(w->d1);
+                const float m  = GGML_CPU_FP16_TO_FP32(w->m);
+                ds[0] = ds[1] = d0;
+                ds[2] = ds[3] = d1;
+                off[0] = off[1] = off[2] = off[3] = m;
+                qs = w->qs;
+            } break;
+            default:
+                GGML_ABORT("arifi_tq3_dot: not a tq3-family type");
+        }
+
+        float acc = 0.0f;
+        for (int g = 0; g < 4; g++) {
+            const uint8_t * q = qs + g * 3;
+            uint8_t idx[8];
+            idx[0] =  q[0]       & 7;
+            idx[1] = (q[0] >> 3) & 7;
+            idx[2] = ((q[0] >> 6) | (q[1] << 2)) & 7;
+            idx[3] = (q[1] >> 1) & 7;
+            idx[4] = (q[1] >> 4) & 7;
+            idx[5] = ((q[1] >> 7) | (q[2] << 1)) & 7;
+            idx[6] = (q[2] >> 2) & 7;
+            idx[7] = (q[2] >> 5) & 7;
+            for (int i = 0; i < 8; i++) {
+                acc += (cent[idx[i]] * ds[g] + off[g]) * ab[g * 8 + i];
+            }
+        }
+        sum += acc * post;
+    }
+
+    *s = sum;
+}
+
+#define ARIFI_TQ3_VEC_DOT(name, type)                                                   \
+    static void ggml_vec_dot_##name##_q8_0(int n, float * GGML_RESTRICT s, size_t bs,    \
+                                           const void * GGML_RESTRICT vx, size_t bx,    \
+                                           const void * GGML_RESTRICT vy, size_t by,    \
+                                           int nrc) {                                   \
+        GGML_ASSERT(nrc == 1);                                                          \
+        GGML_UNUSED(bs); GGML_UNUSED(bx); GGML_UNUSED(by); GGML_UNUSED(nrc);            \
+        arifi_tq3_dot(type, n, s, vx, vy);                                              \
+    }
+
+ARIFI_TQ3_VEC_DOT(tq3_4s,       GGML_TYPE_TQ3_4S)
+ARIFI_TQ3_VEC_DOT(tq3_0,        GGML_TYPE_TQ3_0)
+ARIFI_TQ3_VEC_DOT(tq3_4se,      GGML_TYPE_TQ3_4SE)
+ARIFI_TQ3_VEC_DOT(tq3_1s_shift, GGML_TYPE_TQ3_1S_SHIFT)
 #endif
 
 static const struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {
@@ -557,6 +672,30 @@ static const struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {
     [GGML_TYPE_TQ4_1S] = {
         .from_float               = (ggml_from_float_t) quantize_row_tq4_1s_ref,
         .vec_dot                  = ggml_vec_dot_tq4_1s_q8_0,
+        .vec_dot_type             = GGML_TYPE_Q8_0,
+        .nrows                    = 1,
+    },
+    [GGML_TYPE_TQ3_4S] = {
+        .from_float               = (ggml_from_float_t) quantize_row_tq3_4s_ref,
+        .vec_dot                  = ggml_vec_dot_tq3_4s_q8_0,
+        .vec_dot_type             = GGML_TYPE_Q8_0,
+        .nrows                    = 1,
+    },
+    [GGML_TYPE_TQ3_0] = {
+        .from_float               = (ggml_from_float_t) quantize_row_tq3_0_ref,
+        .vec_dot                  = ggml_vec_dot_tq3_0_q8_0,
+        .vec_dot_type             = GGML_TYPE_Q8_0,
+        .nrows                    = 1,
+    },
+    [GGML_TYPE_TQ3_4SE] = {
+        .from_float               = (ggml_from_float_t) quantize_row_tq3_4se_ref,
+        .vec_dot                  = ggml_vec_dot_tq3_4se_q8_0,
+        .vec_dot_type             = GGML_TYPE_Q8_0,
+        .nrows                    = 1,
+    },
+    [GGML_TYPE_TQ3_1S_SHIFT] = {
+        .from_float               = (ggml_from_float_t) quantize_row_tq3_1s_shift_ref,
+        .vec_dot                  = ggml_vec_dot_tq3_1s_shift_q8_0,
         .vec_dot_type             = GGML_TYPE_Q8_0,
         .nrows                    = 1,
     },

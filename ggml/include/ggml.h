@@ -434,6 +434,15 @@ extern "C" {
         // 44 intentionally unallocated (see docs/TYPE-ID-ALLOCATION.md §3.1)
         GGML_TYPE_TQ3_1S    = 45, // TurboQuant 3-bit weight: RHT + Lloyd-Max, 16 B / 32
         GGML_TYPE_TQ4_1S    = 46, // TurboQuant 4-bit weight: RHT + Lloyd-Max, 20 B / 32
+        // 47 intentionally unallocated (see docs/TYPE-ID-ALLOCATION.md §3.1)
+        // 48..51 - the tq3 family (turbo-tan/llama.cpp-tq3), the ONE imported family
+        // we RENUMBER, because its TQ3_4S is serialized at 46 and 46 is already our
+        // TQ4_1S in files we wrote (TYPE-ID-ALLOCATION §3.1.1). tq3-authored GGUFs
+        // must be retagged (tools/gguf-retag-tq3) before they load here.
+        GGML_TYPE_TQ3_4S       = 48, // tq3 46: 4 x E3M5 per-8 scales + 3-bit RHT payload, 16 B / 32
+        GGML_TYPE_TQ3_0        = 49, // tq3 200: one f16 RMS scale + 3-bit RHT payload,    14 B / 32
+        GGML_TYPE_TQ3_4SE      = 50, // tq3 36: 4 x E3M5 scales + 2 x u8 shifts,           18 B / 32
+        GGML_TYPE_TQ3_1S_SHIFT = 51, // tq3: 3 x f16 (d0,d1,mean) + 3-bit payload,         18 B / 32
         // ---------------------------------------------------------------------
         // ArifiLabs type-ID allocation. THE CONTRACT IS docs/TYPE-ID-ALLOCATION.md
         // — read it before adding any value here. Summary of the binding rules:
