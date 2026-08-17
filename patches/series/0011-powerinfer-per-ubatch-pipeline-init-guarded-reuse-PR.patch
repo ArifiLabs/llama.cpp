@@ -1,4 +1,4 @@
-From f87003cf52d2376f998c2f1cd79613fcb7b3df3d Mon Sep 17 00:00:00 2001
+From 24b949a5a8c431cf985f151fa4920e1cdb9bc674 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:31:08 -0400
 Subject: [PATCH] powerinfer: per-ubatch pipeline init, guarded reuse, PROF
@@ -12,7 +12,7 @@ Measured-effect: Reuse: 9/263 rebuilds, init 2472us->0-2us (~2.5ms/token), coher
  1 file changed, 69 insertions(+)
 
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 9b399d609..cb1c41d2f 100644
+index 792bb6cac..be9de0e6a 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
 @@ -1,4 +1,12 @@
@@ -28,7 +28,7 @@ index 9b399d609..cb1c41d2f 100644
  
  #include "ggml.h"
  #include "llama-arch.h"
-@@ -1374,6 +1382,67 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+@@ -1382,6 +1390,67 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
          //LLAMA_LOG_INFO("graph set inputs time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
      }
  

@@ -1,4 +1,4 @@
-From 4fec906587fde471cebcc1b8bda2435de97cfbd4 Mon Sep 17 00:00:00 2001
+From 67eb7c301ad08df56a81e051ed9071aaea315a52 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:31:10 -0400
 Subject: [PATCH] powerinfer: repack carve-out for streamed tensors [series
@@ -12,7 +12,7 @@ Measured-effect: Fixes garbage output from AARCH64 repack of streamed experts (R
  1 file changed, 16 insertions(+)
 
 diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
-index f18758f16..495278ac5 100644
+index 9689ca3ce..61293d47a 100644
 --- a/ggml/src/ggml-cpu/repack.cpp
 +++ b/ggml/src/ggml-cpu/repack.cpp
 @@ -4526,6 +4526,22 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR

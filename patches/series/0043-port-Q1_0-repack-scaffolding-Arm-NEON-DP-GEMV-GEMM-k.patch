@@ -1,4 +1,4 @@
-From 7d51fd11a97f0a225207a78dc0e268590628f2ed Mon Sep 17 00:00:00 2001
+From 3ee44f3ddb9d5be5af8c9aa6205ac9a9a692e04e Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 24 Jul 2026 14:07:06 -0400
 Subject: [PATCH] port: Q1_0 repack scaffolding + Arm NEON/DP GEMV-GEMM kernels
@@ -34,9 +34,9 @@ Origin: ArifiLabs/vnni-repack
 ---
  ggml/src/ggml-cpu/arch-fallback.h     |  28 ++
  ggml/src/ggml-cpu/arch/arm/repack.cpp | 309 +++++++++++++++++++
- ggml/src/ggml-cpu/repack.cpp          | 412 ++++++++++++++++++++++++++
+ ggml/src/ggml-cpu/repack.cpp          | 414 +++++++++++++++++++++++++-
  ggml/src/ggml-cpu/repack.h            |  13 +
- 4 files changed, 762 insertions(+)
+ 4 files changed, 763 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/src/ggml-cpu/arch-fallback.h b/ggml/src/ggml-cpu/arch-fallback.h
 index 152e0bac9..f1e7adf2c 100644
@@ -498,7 +498,7 @@ index a75344430..ad0e5ccaf 100644
 +    ggml_gemm_q1_0_4x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
 +}
 diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
-index 495278ac5..c6583f05e 100644
+index 61293d47a..c6583f05e 100644
 --- a/ggml/src/ggml-cpu/repack.cpp
 +++ b/ggml/src/ggml-cpu/repack.cpp
 @@ -1365,6 +1365,133 @@ void ggml_gemv_q8_0_4x8_q8_0_generic(int                        n,
@@ -812,10 +812,11 @@ index 495278ac5..c6583f05e 100644
  // Only enable these for RISC-V.
  #if defined __riscv_zvfh
  void ggml_gemm_q4_0_16x1_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
-@@ -2739,6 +3036,50 @@ static block_q8_0x4 make_block_q8_0x4(block_q8_0 * in, unsigned int blck_size_in
+@@ -2739,7 +3036,51 @@ static block_q8_0x4 make_block_q8_0x4(block_q8_0 * in, unsigned int blck_size_in
      return out;
  }
  
+-static block_q4_0x4 make_block_q4_0x4(block_q4_0 * in, int blck_size_interleave) {
 +static block_q1_0x4 make_block_q1_0x4(block_q1_0 * in, unsigned int blck_size_interleave) {
 +    block_q1_0x4 out;
 +
@@ -860,9 +861,10 @@ index 495278ac5..c6583f05e 100644
 +    return out;
 +}
 +
- static block_q4_0x4 make_block_q4_0x4(block_q4_0 * in, unsigned int blck_size_interleave) {
++static block_q4_0x4 make_block_q4_0x4(block_q4_0 * in, unsigned int blck_size_interleave) {
      block_q4_0x4 out;
  
+     for (int i = 0; i < 4; i++) {
 @@ -3509,6 +3850,38 @@ static int repack_q8_0_to_q8_0_4_bl(struct ggml_tensor *       t,
      return 0;
  }

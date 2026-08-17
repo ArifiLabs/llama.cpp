@@ -1,4 +1,4 @@
-From 2e358c0de952b9cb3d34faa315fab058e760fb4d Mon Sep 17 00:00:00 2001
+From ce2315e792ca47d96ef13ddae28c8a5fd0f082c7 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Sat, 25 Jul 2026 05:00:41 -0400
 Subject: [PATCH] feat: --arifi-profile and a CPU-only VNNI-repack startup
@@ -63,7 +63,7 @@ Measured-effect: FUNCTIONAL, NOT TIMED - no throughput number was produced or cl
  create mode 100644 common/arifi-profile.h
 
 diff --git a/common/CMakeLists.txt b/common/CMakeLists.txt
-index 799d22751..e7210d783 100644
+index d6cfc9a00..208f93186 100644
 --- a/common/CMakeLists.txt
 +++ b/common/CMakeLists.txt
 @@ -56,6 +56,8 @@ set(TARGET llama-common)
@@ -76,7 +76,7 @@ index 799d22751..e7210d783 100644
      chat-auto-parser-generator.cpp
      chat-auto-parser-helpers.cpp
 diff --git a/common/arg.cpp b/common/arg.cpp
-index 79480e06f..62bf7d2ce 100644
+index 49b33806a..e3e7d5868 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
 @@ -1,5 +1,6 @@
@@ -86,7 +86,7 @@ index 79480e06f..62bf7d2ce 100644
  #include "build-info.h"
  #include "chat.h"
  #include "common.h"
-@@ -814,6 +815,10 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
+@@ -889,6 +890,10 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
      // parse all CLI args now, so that -hf is available below for remote preset resolution
      parse_cli_args();
  
@@ -97,7 +97,7 @@ index 79480e06f..62bf7d2ce 100644
      postprocess_cpu_params(params.cpuparams,       nullptr);
      postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
  
-@@ -1433,6 +1438,23 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -1511,6 +1516,23 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
              }
          }
      ).set_examples({LLAMA_EXAMPLE_COMPLETION, LLAMA_EXAMPLE_CLI, LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_LOOKUP}));
@@ -465,7 +465,7 @@ index a63a2e758..fc26552a1 100644
 +- **Any measurement off this rig.** Every number quoted by the profile and the advisory was
 +  measured on one machine. That is stated in the log text itself, not just here.
 diff --git a/src/llama.cpp b/src/llama.cpp
-index d22e4c81a..215df4d6a 100644
+index 1609fec88..cda923a24 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
 @@ -21,6 +21,7 @@
@@ -476,7 +476,7 @@ index d22e4c81a..215df4d6a 100644
  #include <cstring>
  #include <ctime>
  #include <stdexcept>
-@@ -300,6 +301,57 @@ static bool llama_prepare_model_devices(const llama_model_params & params, llama
+@@ -311,6 +312,57 @@ static bool llama_prepare_model_devices(const llama_model_params & params, llama
      return true;
  }
  
@@ -534,7 +534,7 @@ index d22e4c81a..215df4d6a 100644
  // Returns 0 on success, -1 on error, and -2 on cancellation via llama_progress_callback
  static std::pair<int, llama_model *> llama_model_load(struct gguf_context * metadata, llama_model_set_tensor_data_t set_tensor_data, void * set_tensor_data_ud,
          const std::string & fname, std::vector<std::string> & splits, FILE * file, llama_model_params & params) {
-@@ -352,6 +404,8 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
+@@ -363,6 +415,8 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
              return {0, model_ptr.release()};
          }
  
