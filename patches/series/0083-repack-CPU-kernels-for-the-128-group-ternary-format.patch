@@ -1,4 +1,4 @@
-From f0c5783496096c10573a9401b71b3b016d45f4cc Mon Sep 17 00:00:00 2001
+From d6ac9aaa19601be7073c83e7ef96785f090836c6 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 14:28:42 -0400
 Subject: [PATCH] repack: CPU kernels for the 128-group ternary format
@@ -861,10 +861,10 @@ index 5bc48b649..00a7c649e 100644
  void ggml_quantize_mat_q8_0_4x1_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
  void ggml_quantize_mat_q8_K_4x1_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 215df4d6a..c34ce93b1 100644
+index cda923a24..8943fc061 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -327,13 +327,13 @@ static void llama_arifi_vnni_repack_advisory(const llama_model_loader & ml, cons
+@@ -338,13 +338,13 @@ static void llama_arifi_vnni_repack_advisory(const llama_model_loader & ml, cons
          return; // the caller already decided, either way
      }
  
@@ -882,7 +882,7 @@ index 215df4d6a..c34ce93b1 100644
              n_repackable++;
          }
      }
-@@ -342,7 +342,7 @@ static void llama_arifi_vnni_repack_advisory(const llama_model_loader & ml, cons
+@@ -353,7 +353,7 @@ static void llama_arifi_vnni_repack_advisory(const llama_model_loader & ml, cons
      }
  
      LLAMA_LOG_INFO("%s: ArifiLabs advisory: no offload device was selected and this model carries "

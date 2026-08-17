@@ -1,4 +1,4 @@
-From 1f60456806f0aff8dec7b6dd5d367451433878cb Mon Sep 17 00:00:00 2001
+From 2d42fdde83c4a63ed389313bd71e608c462299b4 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:31:02 -0400
 Subject: [PATCH] build: wire powerinfer lib + AVX-spill cure into CMake
@@ -14,10 +14,10 @@ Measured-effect: Build-system only.
  3 files changed, 14 insertions(+)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 3df1d82db..b9e4adc82 100644
+index b2092d12d..945097fd4 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -191,6 +191,14 @@ if (LLAMA_USE_SYSTEM_GGML)
+@@ -207,6 +207,14 @@ if (LLAMA_USE_SYSTEM_GGML)
      add_library(ggml ALIAS ggml::ggml)
  endif()
  
@@ -48,10 +48,10 @@ index 836bae4d0..805e84b15 100644
      target_compile_definitions(${GGML_CPU_NAME} PRIVATE ${ARCH_DEFINITIONS})
  
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 320784c3a..b510da5c2 100644
+index 39ba3061f..618da03c7 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -53,6 +53,8 @@ target_include_directories(llama PRIVATE .)
+@@ -59,6 +59,8 @@ target_include_directories(llama PRIVATE .)
  target_include_directories(llama PUBLIC ../include)
  target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
  

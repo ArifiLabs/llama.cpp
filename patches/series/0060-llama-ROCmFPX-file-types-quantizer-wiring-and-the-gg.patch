@@ -1,4 +1,4 @@
-From 0b355d077f2c1d422478fecdfa4c73411c908654 Mon Sep 17 00:00:00 2001
+From eb9e0e8a0ef69a6e4a25b76eced45ba270fc0e34 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Sat, 25 Jul 2026 01:39:21 -0400
 Subject: [PATCH] llama: ROCmFPX file types, quantizer wiring and the gguf-py
@@ -44,10 +44,10 @@ Measured-effect: no behaviour change on any existing file type; the C wiring is 
  5 files changed, 127 insertions(+)
 
 diff --git a/gguf-py/gguf/constants.py b/gguf-py/gguf/constants.py
-index 124ea28b0..177287d7b 100644
+index e359216d7..04d3c12fc 100644
 --- a/gguf-py/gguf/constants.py
 +++ b/gguf-py/gguf/constants.py
-@@ -4736,6 +4736,13 @@ class GGMLQuantizationType(IntEnum):
+@@ -5246,6 +5246,13 @@ class GGMLQuantizationType(IntEnum):
      NVFP4   = 40
      Q1_0    = 41
      Q2_0    = 42
@@ -61,7 +61,7 @@ index 124ea28b0..177287d7b 100644
  
  
  class ExpertGatingFuncType(IntEnum):
-@@ -4792,6 +4799,25 @@ class LlamaFileType(IntEnum):
+@@ -5302,6 +5309,25 @@ class LlamaFileType(IntEnum):
      MOSTLY_NVFP4         = 39  # except 1d tensors
      MOSTLY_Q1_0          = 40  # except 1d tensors
      MOSTLY_Q2_0          = 41  # except 1d tensors
@@ -87,7 +87,7 @@ index 124ea28b0..177287d7b 100644
  
      GUESSED              = 1024  # not specified in the model file
  
-@@ -4921,6 +4947,12 @@ GGML_QUANT_SIZES: dict[GGMLQuantizationType, tuple[int, int]] = {
+@@ -5436,6 +5462,12 @@ GGML_QUANT_SIZES: dict[GGMLQuantizationType, tuple[int, int]] = {
      GGMLQuantizationType.NVFP4:   (64, 4 + 32),
      GGMLQuantizationType.Q1_0:    (128, 2 + 16),
      GGMLQuantizationType.Q2_0:    (64, 2 + 16),
@@ -101,7 +101,7 @@ index 124ea28b0..177287d7b 100644
  
  
 diff --git a/include/llama.h b/include/llama.h
-index 3c6d22be8..1555f94ae 100644
+index 177fc10a9..170cd9926 100644
 --- a/include/llama.h
 +++ b/include/llama.h
 @@ -157,6 +157,38 @@ extern "C" {
@@ -144,7 +144,7 @@ index 3c6d22be8..1555f94ae 100644
      };
  
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
-index 1c517c278..19e79d0ef 100644
+index b6d83f4cb..e4530f08b 100644
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
 @@ -39,6 +39,28 @@ const char * llama_ftype_name(llama_ftype ftype) {
@@ -176,7 +176,7 @@ index 1c517c278..19e79d0ef 100644
          case LLAMA_FTYPE_MOSTLY_Q4_0:      name = LLAMA_FTYPE_PREFIX "Q4_0"; break;
          case LLAMA_FTYPE_MOSTLY_Q4_1:      name = LLAMA_FTYPE_PREFIX "Q4_1"; break;
          case LLAMA_FTYPE_MOSTLY_Q5_0:      name = LLAMA_FTYPE_PREFIX "Q5_0"; break;
-@@ -939,6 +961,15 @@ llama_model_loader::llama_model_loader(
+@@ -948,6 +970,15 @@ llama_model_loader::llama_model_loader(
              case GGML_TYPE_Q1_0:    ftype = LLAMA_FTYPE_MOSTLY_Q1_0;    break;
              case GGML_TYPE_Q2_0:    ftype = LLAMA_FTYPE_MOSTLY_Q2_0;    break;
              case GGML_TYPE_Q2_0_G128: ftype = LLAMA_FTYPE_MOSTLY_Q2_0;  break;
@@ -193,7 +193,7 @@ index 1c517c278..19e79d0ef 100644
                  {
                      LLAMA_LOG_WARN("%s: unknown type %s\n", __func__, ggml_type_name(type_max));
 diff --git a/src/llama-quant.cpp b/src/llama-quant.cpp
-index 92ebc11b9..1c2873430 100644
+index fd6e787bd..2c4e4871b 100644
 --- a/src/llama-quant.cpp
 +++ b/src/llama-quant.cpp
 @@ -397,6 +397,15 @@ static ggml_type tensor_type_fallback(quantize_state_impl & qs, const ggml_tenso
@@ -232,7 +232,7 @@ index 92ebc11b9..1c2873430 100644
  
          // K-quants
 diff --git a/tools/quantize/quantize.cpp b/tools/quantize/quantize.cpp
-index 15ef64c4b..ba7349962 100644
+index 8d03c8fcd..fe1b2cfcf 100644
 --- a/tools/quantize/quantize.cpp
 +++ b/tools/quantize/quantize.cpp
 @@ -34,6 +34,17 @@ struct quant_option {

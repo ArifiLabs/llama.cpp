@@ -1,4 +1,4 @@
-From 0222bc5ec79fc186828baf9cdd15df9ffcff493c Mon Sep 17 00:00:00 2001
+From 561d4fdc2498dbc8d1eb9e569d07823fb9e39001 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 01:07:42 -0400
 Subject: [PATCH] ggml-cpu: fuse the TurboQuant dot product - transform the
@@ -52,7 +52,7 @@ index d0ffc37c2..90880f979 100644
 +const float * arifi_tq3_centroids(void) { return TQ3_0_CENTROIDS; }
 +const float * arifi_tq4_centroids(void) { return TQ4_0_CENTROIDS; }
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index 84f01ca65..e0d9738c1 100644
+index 323ee9274..69aa15c33 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -382,43 +382,103 @@ static void ggml_vec_dot_rocmfpx_fp8_q8_0(int n, float * GGML_RESTRICT s, size_t

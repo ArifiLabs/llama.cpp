@@ -1,4 +1,4 @@
-From 3f76e82c81d5f45561445fc0d97d7550d3c2fc71 Mon Sep 17 00:00:00 2001
+From c5aa23608acd5dbf747493402de695b377a6bd8b Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 20:59:03 -0400
 Subject: [PATCH] community: ggml : overlap offloaded expert weight uploads
@@ -12,10 +12,10 @@ Measured-effect: inert on GPU-resident unified memory (ki-prefetch-experts-condi
  1 file changed, 102 insertions(+)
 
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 7f4e252dc..4db1c744a 100644
+index f6fb91798..420a0890c 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
-@@ -818,6 +818,18 @@ struct ggml_backend_sched {
+@@ -820,6 +820,18 @@ struct ggml_backend_sched {
  
      bool op_offload;
  
@@ -34,7 +34,7 @@ index 7f4e252dc..4db1c744a 100644
      int debug;
  
      // used for debugging graph reallocations [GGML_SCHED_DEBUG_REALLOC]
-@@ -1547,6 +1559,47 @@ static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
+@@ -1591,6 +1603,47 @@ static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
      return true;
  }
  
@@ -82,7 +82,7 @@ index 7f4e252dc..4db1c744a 100644
  static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t sched) {
      GGML_ASSERT(sched);
      struct ggml_backend_sched_split * splits = sched->splits;
-@@ -1559,6 +1612,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1603,6 +1656,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
          struct ggml_backend_sched_split * split = &splits[split_id];
          int split_backend_id = split->backend_id;
          ggml_backend_t split_backend = sched->backends[split_backend_id];
@@ -90,7 +90,7 @@ index 7f4e252dc..4db1c744a 100644
  
          // copy the input tensors to the split backend
          for (int input_id = 0; input_id < split->n_inputs; input_id++) {
-@@ -1575,6 +1629,35 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1619,6 +1673,35 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                  }
                  ggml_backend_tensor_copy(input, input_cpy);
              } else {
@@ -126,7 +126,7 @@ index 7f4e252dc..4db1c744a 100644
                  // wait for the split backend to finish using the input before overwriting it
                  if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
                      ggml_backend_event_wait(split_backend, sched->events[split_backend_id][sched->cur_copy]);
-@@ -1688,6 +1771,10 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1732,6 +1815,10 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
              if (ec != GGML_STATUS_SUCCESS) {
                  return ec;
              }
@@ -137,7 +137,7 @@ index 7f4e252dc..4db1c744a 100644
          } else {
              // similar to ggml_backend_compare_graph_backend
              for (int j0 = 0; j0 < split->graph.n_nodes; j0++) {
-@@ -1797,6 +1884,9 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -1844,6 +1931,9 @@ ggml_backend_sched_t ggml_backend_sched_new(
      sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
      sched->op_offload = op_offload;
  
@@ -147,7 +147,7 @@ index 7f4e252dc..4db1c744a 100644
      ggml_backend_sched_reset(sched);
  
      return sched;
-@@ -1811,6 +1901,15 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
+@@ -1858,6 +1948,15 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
              ggml_backend_event_free(sched->events[b][c]);
          }
      }
@@ -163,7 +163,7 @@ index 7f4e252dc..4db1c744a 100644
      ggml_gallocr_free(sched->galloc);
      ggml_free(sched->ctx);
      ggml_hash_set_free(&sched->hash_set);
-@@ -1915,6 +2014,9 @@ void ggml_backend_sched_synchronize(ggml_backend_sched_t sched) {
+@@ -1966,6 +2065,9 @@ void ggml_backend_sched_synchronize(ggml_backend_sched_t sched) {
      for (int i = 0; i < sched->n_backends; i++) {
          ggml_backend_synchronize(sched->backends[i]);
      }
