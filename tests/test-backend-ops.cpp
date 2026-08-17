@@ -2548,7 +2548,9 @@ struct test_set_rows : public test_case {
             err_estimate /= 0.25f*float(ne[0] * r * ne[2]*nr23[0] * ne[3]*nr23[1]);
             return err_estimate;
         }
-        if (type_dst == GGML_TYPE_TQ3_1S || type_dst == GGML_TYPE_TQ4_1S) {
+        if (type_dst == GGML_TYPE_TQ3_1S || type_dst == GGML_TYPE_TQ4_1S ||
+            type_dst == GGML_TYPE_TQ3_4S || type_dst == GGML_TYPE_TQ3_0 ||
+            type_dst == GGML_TYPE_TQ3_4SE || type_dst == GGML_TYPE_TQ3_1S_SHIFT) {
             // Reduction order matters; both TurboQuant weight types have a
             // 32-element WHT inside the dot product which amplifies fp
             // reduction differences slightly.
@@ -8914,6 +8916,9 @@ static const ggml_type all_types[] = {
     GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ1_S, GGML_TYPE_IQ1_M,
     GGML_TYPE_IQ4_NL, GGML_TYPE_IQ3_S, GGML_TYPE_IQ4_XS,
     GGML_TYPE_TQ3_1S, GGML_TYPE_TQ4_1S,
+    // tq3 family (ids 48..51, TYPE-ID-ALLOCATION 3.1.1). Listing them here is the
+    // whole backend sweep: get_rows, mul_mat and cpy on every built backend.
+    GGML_TYPE_TQ3_4S, GGML_TYPE_TQ3_0, GGML_TYPE_TQ3_4SE, GGML_TYPE_TQ3_1S_SHIFT,
 };
 
 static const ggml_type base_types[] = {
