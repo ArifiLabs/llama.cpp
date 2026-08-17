@@ -221,6 +221,46 @@ static_assert(sizeof(block_tq4_1s) == 2*sizeof(ggml_half) + QK_TQ4_1S/2, "wrong 
 #define QK_TQ3_0 QK_TQ3_1S
 #define QK_TQ4_0 QK_TQ4_1S
 
+// ---------------------------------------------------------------------------
+// tq3 family (turbo-tan/llama.cpp-tq3@58ad80ffb), type-ids 48..51 after the
+// renumber mandated by docs/TYPE-ID-ALLOCATION.md §3.1.1. Same 32-value block
+// and the same randomized Hadamard rotation as TQ3_1S above - only the scale
+// representation differs. Geometry verified against the source structs at that
+// sha, not against their comments (LL-252).
+// ---------------------------------------------------------------------------
+
+// tq3 TQ3_4S (their id 46, ours 48). Four E3M5 mini-float scales, one per group
+// of 8 rotated values: scale = 2^((d>>5) - 9) * (1 + (d&31)/32), with d==0 => 0.
+typedef struct {
+    uint8_t   d[4];                   //  4 bytes: E3M5 scale per group of 8
+    uint8_t   qs[QK_TQ3_0 * 3 / 8];   // 12 bytes: 32 x 3-bit indices packed
+} block_tq3_4s;
+static_assert(sizeof(block_tq3_4s) == 4 + QK_TQ3_0*3/8, "wrong tq3_4s block size/padding");
+
+// tq3 TQ3_0 (their id 200 - which is OUR TURBO2_0 - hence ours 49).
+typedef struct {
+    ggml_half d;                      //  2 bytes: block RMS, applied pre-rotation
+    uint8_t   qs[QK_TQ3_0 * 3 / 8];   // 12 bytes
+} block_tq3_0;
+static_assert(sizeof(block_tq3_0) == sizeof(ggml_half) + QK_TQ3_0*3/8, "wrong tq3_0 block size/padding");
+
+// tq3 TQ3_4SE (their id 36, ours 50). TQ3_4S plus two u8 shifts, one per half of 16.
+typedef struct {
+    uint8_t   d[4];                   //  4 bytes: E3M5 scale per group of 8
+    uint8_t   s[2];                   //  2 bytes: u8 shift per half of 16
+    uint8_t   qs[QK_TQ3_0 * 3 / 8];   // 12 bytes
+} block_tq3_4se;
+static_assert(sizeof(block_tq3_4se) == 6 + QK_TQ3_0*3/8, "wrong tq3_4se block size/padding");
+
+// tq3 TQ3_1S_SHIFT (ours 51). TQ3_1S plus a shared mean offset in the rotated domain.
+typedef struct {
+    ggml_half d0;                     //  2 bytes: scale, first 16
+    ggml_half d1;                     //  2 bytes: scale, last 16
+    ggml_half m;                      //  2 bytes: shared mean in the rotated domain
+    uint8_t   qs[QK_TQ3_0 * 3 / 8];   // 12 bytes
+} block_tq3_1s_shift;
+static_assert(sizeof(block_tq3_1s_shift) == 3*sizeof(ggml_half) + QK_TQ3_0*3/8, "wrong tq3_1s_shift block size/padding");
+
 #define QK4_0 32
 typedef struct {
     ggml_half d;           // delta
