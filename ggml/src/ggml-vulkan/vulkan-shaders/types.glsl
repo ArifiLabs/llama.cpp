@@ -1846,12 +1846,6 @@ struct block_rocmfpx_fp6
     uint8_t e[2];
 };
 
-struct block_rocmfpx_fp6_packed16
-{
-    uint16_t qs[12];
-    uint16_t e;
-};
-
 struct block_rocmfpx_fp8
 {
     int8_t qs[QUANT_K_ROCMFPX_FP8];
@@ -1876,8 +1870,9 @@ struct block_rocmfpx_fp8
 #define QUANT_K QUANT_K_ROCMFPX_FP8
 #define QUANT_R QUANT_R_ROCMFPX_FP8
 #define QUANT_AUXF 1
+// No A_TYPE_PACKED16: the 26-byte block has no valid uint16 view (odd stride), nothing
+// reads data_a_packed16 for fp6, and no other ROCmFPX type declares one.
 #define A_TYPE block_rocmfpx_fp6
-#define A_TYPE_PACKED16 block_rocmfpx_fp6_packed16
 #endif
 
 #if defined(DATA_A_ROCMFPX_FP8)
