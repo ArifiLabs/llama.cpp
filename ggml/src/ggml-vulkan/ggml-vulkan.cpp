@@ -15658,7 +15658,15 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                     // ids->ne[1] = 512, so a gate that answers differently at load and at decode
                     // parks the experts in one backend's buffer and then runs the op in the
                     // other, copying every expert tensor across the bus on every token.
-                    if (src0_type == GGML_TYPE_TQ3_1S || src0_type == GGML_TYPE_TQ4_1S) {
+                    // TQ3_4S (lane-144) belongs here for the STRONGEST form of the reason above:
+                    // it has a mul_mat_vec_id pipeline but NO mul_mm_id at all, rotated or
+                    // otherwise, so have_rotated is always false and the f16 staging path is the
+                    // only prompt-processing route. This switch block is shared by GGML_OP_MUL_MAT
+                    // and GGML_OP_MUL_MAT_ID (:18393-18394), so adding the type case admitted
+                    // MUL_MAT_ID as well; without this line a MoE tq3_4s model would reach the
+                    // GGML_ABORT the guard exists to prevent. Found by lane-144's checker.
+                    if (src0_type == GGML_TYPE_TQ3_1S || src0_type == GGML_TYPE_TQ4_1S ||
+                        src0_type == GGML_TYPE_TQ3_4S) {
                         // Only reachable when we would fall back to the f16 dequant path.
                         // The rotated mul_mm_id path reads the quantized weights directly
                         // and never materialises the expert tensor as f16, so the limit
