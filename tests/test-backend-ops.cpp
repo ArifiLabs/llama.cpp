@@ -9237,6 +9237,13 @@ static const ggml_type all_types[] = {
     // tq3 family (ids 48..51, TYPE-ID-ALLOCATION 3.1.1). Listing them here is the
     // whole backend sweep: get_rows, mul_mat and cpy on every built backend.
     GGML_TYPE_TQ3_4S, GGML_TYPE_TQ3_0, GGML_TYPE_TQ3_4SE, GGML_TYPE_TQ3_1S_SHIFT,
+    // ROCmFP4 / ROCmFPX (ids 100-104, 107). Absent until lane-144: these types had
+    // Vulkan dequant, get_rows and mat-vec pipelines but were never swept here, so
+    // nothing checked them against the CPU reference. Listing them is what proves
+    // the fused mul_mm rows this lane wired.
+    GGML_TYPE_Q4_0_ROCMFP4, GGML_TYPE_Q4_0_ROCMFP4_FAST,
+    GGML_TYPE_Q2_0_ROCMFPX, GGML_TYPE_Q3_0_ROCMFPX,
+    GGML_TYPE_Q6_0_ROCMFPX, GGML_TYPE_Q8_0_ROCMFPX,
 };
 
 static const ggml_type base_types[] = {
