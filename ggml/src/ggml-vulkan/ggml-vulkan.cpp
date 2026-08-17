@@ -8061,14 +8061,26 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_conte
             return nullptr;
     }
 
+    vk_matmul_pipeline selected;
     if (ctx->device->coopmat2) {
         assert(src1_type == GGML_TYPE_F16);
-        return prec == GGML_PREC_DEFAULT ? ctx->device->pipeline_dequant_mul_mat_mat_f16[src0_type].f16acc : ctx->device->pipeline_dequant_mul_mat_mat_f16[src0_type].f32acc;
+        selected = prec == GGML_PREC_DEFAULT ? ctx->device->pipeline_dequant_mul_mat_mat_f16[src0_type].f16acc : ctx->device->pipeline_dequant_mul_mat_mat_f16[src0_type].f32acc;
+    } else if (ctx->device->coopmat_support) {
+        selected = (ctx->device->fp16 && ctx->device->coopmat_acc_f16_support && prec == GGML_PREC_DEFAULT) ? ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f16acc : ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f32acc;
+    } else {
+        selected = (ctx->device->fp16 && prec == GGML_PREC_DEFAULT) ? ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f16acc : ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f32acc;
     }
-    if (ctx->device->coopmat_support) {
-        return (ctx->device->fp16 && ctx->device->coopmat_acc_f16_support && prec == GGML_PREC_DEFAULT) ? ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f16acc : ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f32acc;
+
+    // A type listed in the switch above only says the type is ALLOWED here, not that anybody
+    // created its pipelines. vk_matmul_pipeline2's constructor make_shared's both accumulators
+    // unconditionally, so an uncreated entry is a valid pointer to an all-null struct, not null:
+    // the caller reads mmp != nullptr, skips qx_needs_dequant, and dereferences l/m/s. The MMQ
+    // branch above has always checked is_empty(); this path never did. Returning nullptr sends
+    // the caller down the dequant + f16 matmul fallback it already implements.
+    if (selected->is_empty()) {
+        return nullptr;
     }
-    return (ctx->device->fp16 && prec == GGML_PREC_DEFAULT) ? ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f16acc : ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f32acc;
+    return selected;
 }
 
 static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context * ctx, ggml_type a_type, ggml_type b_type, uint32_t num_cols, uint32_t m, uint32_t k) {
@@ -8268,13 +8280,14 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_id_pipeline(ggml_backend_vk_co
     bool support_fp16acc = !mmp.f16acc->is_empty();
     bool support_fp32acc = !mmp.f32acc->is_empty();
 
-    // The TQ pipelines are deliberately not created on the coopmat2 path (no
-    // dequant_funcs_cm2.glsl entry). This function ends in
-    // GGML_ASSERT(support_fp32acc), so without this guard a coopmat2 device would
-    // ABORT here rather than fall back. Returning nullptr lets the caller take the
-    // f16 dequant path, which needs no rotation.
-    if ((src0_type == GGML_TYPE_TQ3_1S || src0_type == GGML_TYPE_TQ4_1S) &&
-        !support_fp16acc && !support_fp32acc) {
+    // A type in the switch above is ALLOWED here; that is not a promise its pipelines were
+    // created. This function ends in GGML_ASSERT(support_fp32acc), so an uncreated type would
+    // ABORT rather than fall back. Returning nullptr lets the caller take the f16 dequant path.
+    // This guard was originally written for TQ3_1S/TQ4_1S only (not created on coopmat2, no
+    // dequant_funcs_cm2.glsl entry). Restricting it by type was the bug: the six ROCmFP types
+    // were later added to the switch with no CREATE_MM at all and crashed exactly here. Whether
+    // a pipeline exists is a question the pipelines answer, never the type id.
+    if (!support_fp16acc && !support_fp32acc) {
         return nullptr;
     }
 
