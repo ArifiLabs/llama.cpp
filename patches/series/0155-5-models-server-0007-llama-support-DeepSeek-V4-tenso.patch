@@ -1,0 +1,125 @@
+From 280fc751838c8370c05a847f611b3b589411560a Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:57:12 -0400
+Subject: [PATCH] 
+ 5-models-server/0007-llama-support-DeepSeek-V4-tensor-split.patch
+
+---
+ src/llama-arch.cpp              |  1 -
+ src/llama-model.cpp             |  9 ++++++--
+ tools/server/server-context.cpp | 41 ++++++++++++++++++++++++++++-----
+ 3 files changed, 42 insertions(+), 9 deletions(-)
+
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index b24e18c2b..07e7714a2 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -1092,7 +1092,6 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
+         case LLM_ARCH_OLMO2:
+         case LLM_ARCH_OLMOE:
+         case LLM_ARCH_DEEPSEEK2:
+-        case LLM_ARCH_DEEPSEEK4:
+         case LLM_ARCH_DEEPSEEK32:
+         case LLM_ARCH_GLM_DSA:
+         case LLM_ARCH_BITNET:
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 33f1aad11..20516d473 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -365,13 +365,14 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+     static const std::regex pattern_q_weight        ("blk\\.\\d*\\.attn_q.weight");
+     static const std::regex pattern_kv_weight       ("blk\\.\\d*\\.attn_(k|v).weight");
+     static const std::regex pattern_qkv_weight      ("blk\\.\\d*\\.attn_qkv.weight");
++    static const std::regex pattern_ds4_qkv_weight  ("blk\\.\\d*\\.attn_(q_[ab]|kv)\\.weight");
+     static const std::regex pattern_q_bias          ("blk\\.\\d*\\.attn_q\\.bias");
+     static const std::regex pattern_kv_bias         ("blk\\.\\d*\\.attn_(k|v)\\.bias");
+     static const std::regex pattern_qkv_bias        ("blk\\.\\d*\\.attn_qkv.bias");
+     static const std::regex pattern_qk_norm         ("blk\\.\\d*\\.attn_(q|k)_norm\\.weight");
+     static const std::regex pattern_kv_cache        ("cache_(k|v)_l\\d*");
+     static const std::regex pattern_attn_sinks      ("blk\\.\\d*\\.attn_sinks.weight");
+-    static const std::regex pattern_attn_out_weight ("blk\\.\\d*\\.attn_output.weight");
++    static const std::regex pattern_attn_out_weight ("blk\\.\\d*\\.attn_output(_[ab])?\\.weight");
+     static const std::regex pattern_attn_out_bias   ("blk\\.\\d*\\.attn_output.bias");
+     static const std::regex pattern_attn_gate_weight("blk\\.\\d*\\.attn_gate.weight");
+ 
+@@ -459,6 +460,10 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+         if (std::regex_match(tensor_name, pattern_qkv_weight)) {
+             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1, "attn_output.weight", "ssm_out.weight");
+         }
++        if (std::regex_match(tensor_name, pattern_ds4_qkv_weight)) {
++            // DeepSeek-V4 splits q into q_a/q_b and uses a single kv projection; pair them with the attn_output_a output tensor
++            return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1, "attn_output_a.weight", "attn_output_b.weight");
++        }
+         if ( std::regex_match(tensor_name, pattern_qkv_bias)) {
+             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0, "attn_output.weight", "ssm_out.weight");
+         }
+@@ -466,7 +471,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+             return get_tensor_config_impl(tensor->ne[1] == 1 ? GGML_BACKEND_SPLIT_AXIS_MIRRORED : GGML_BACKEND_SPLIT_AXIS_1, "attn_output.weight");
+         }
+         if (std::regex_match(tensor_name, pattern_kv_cache) || std::regex_match(tensor_name, pattern_attn_sinks)) {
+-            return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0, "attn_output.weight");
++            return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0, "attn_output.weight", "attn_output_a.weight");
+         }
+         if (std::regex_match(tensor_name, pattern_attn_out_weight)) {
+             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0);
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index fdc8f2b80..486cc8740 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -45,8 +45,20 @@ static common_speculative_output_limits server_output_limits(const common_params
+         return { params.n_batch, 1 };
+     }
+ 
++<<<<<<< ours
+     auto result = common_speculative_get_output_limits(
+             params.n_batch, params.n_parallel, common_speculative_n_max(&params.speculative));
++=======
++    // Account for draft modes enabled by convenience flags before their types are added.
++    uint32_t n_max = (uint32_t) common_speculative_n_max(&params.speculative);
++    if (params.speculative.draft.dflash || params.speculative.draft.eagle3) {
++        n_max = std::max(n_max, (uint32_t) std::max(0, params.speculative.draft.n_max));
++    }
++
++    const uint32_t n_outputs_per_seq = 1 + n_max;
++
++    const uint64_t n_outputs = (uint64_t) params.n_parallel * n_outputs_per_seq;
++>>>>>>> theirs
+ 
+     result.total   = std::max<int32_t>(1, result.total);
+     result.per_seq = std::max<int32_t>(1, result.per_seq);
+@@ -1223,12 +1235,29 @@ private:
+             slots.emplace_back();
+         }
+ 
+-        // try speculative decoding
+-        if (ctx_tgt_seq_rm_type != COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
+-            try {
+-                spec.reset(common_speculative_init(params_base.speculative, params_base.n_parallel));
+-            } catch (const std::exception & e) {
+-                SRV_ERR("failed to initialize speculative decoding context: %s\n", e.what());
++        // Initialize speculative decoding only when a type or convenience flag is set.
++        const bool is_speculative_enabled =
++            params_base.speculative.draft.dflash ||
++            params_base.speculative.draft.eagle3 ||
++            std::any_of(
++                params_base.speculative.types.begin(),
++                params_base.speculative.types.end(),
++                [](auto t) { return t != COMMON_SPECULATIVE_TYPE_NONE; });
++        if (is_speculative_enabled) {
++            if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
++                SRV_WRN("%s", "speculative decoding not supported by this context\n");
++            }
++
++            if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
++                SRV_TRC("%s", "speculative decoding will use checkpoints\n");
++            }
++
++            if (ctx_tgt_seq_rm_type != COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
++                try {
++                    spec.reset(common_speculative_init(params_base.speculative, params_base.n_parallel));
++                } catch (const std::exception & e) {
++                    SRV_ERR("failed to initialize speculative decoding context: %s\n", e.what());
++                }
+             }
+         }
+ 

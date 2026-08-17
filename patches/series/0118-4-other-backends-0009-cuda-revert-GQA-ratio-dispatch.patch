@@ -1,0 +1,57 @@
+From 8a0ee697ac28dd7af6b4cebbf3feab3cbcab357b Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:56:09 -0400
+Subject: [PATCH] 
+ 4-other-backends/0009-cuda-revert-GQA-ratio-dispatch-to-comparison-form-fi.patch
+
+---
+ ggml/src/ggml-cuda/fattn.cu | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/fattn.cu b/ggml/src/ggml-cuda/fattn.cu
+index ad4a52ddb..1fd8d4647 100644
+--- a/ggml/src/ggml-cuda/fattn.cu
++++ b/ggml/src/ggml-cuda/fattn.cu
+@@ -66,18 +66,18 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
+ 
+     // On Volta the GQA optimizations aren't as impactful vs. minimizing wasted compute:
+     if (cc == GGML_CUDA_CC_VOLTA) {
+-        if (use_gqa_opt && gqa_ratio % 8 == 0) {
++        if (use_gqa_opt && gqa_ratio > 4) {
+             ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 8>(ctx, dst);
+             return;
+         }
+ 
+-        if (use_gqa_opt && gqa_ratio % 4 == 0) {
++        if (use_gqa_opt && gqa_ratio > 2) {
+             ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 4>(ctx, dst);
+             return;
+         }
+ 
+         if constexpr (DKQ <= 256) {
+-            if (use_gqa_opt && gqa_ratio % 2 == 0) {
++            if (use_gqa_opt && gqa_ratio > 1) {
+                 ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 2>(ctx, dst);
+                 return;
+             }
+@@ -89,17 +89,17 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
+         }
+     }
+ 
+-    if (use_gqa_opt && gqa_ratio % 8 == 0) {
++    if (use_gqa_opt && gqa_ratio > 4) {
+         ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 8>(ctx, dst);
+         return;
+     }
+ 
+-    if (use_gqa_opt && gqa_ratio % 4 == 0) {
++    if (use_gqa_opt && gqa_ratio > 2) {
+         ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 4>(ctx, dst);
+         return;
+     }
+ 
+-    if (use_gqa_opt && gqa_ratio % 2 == 0) {
++    if (use_gqa_opt && gqa_ratio > 1) {
+         ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 2>(ctx, dst);
+         return;
+     }

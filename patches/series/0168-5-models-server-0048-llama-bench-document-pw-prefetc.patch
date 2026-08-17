@@ -1,0 +1,35 @@
+From 3a474d2d81892f3c35c8a5f0fbdd376111ccf518 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:57:42 -0400
+Subject: [PATCH] 
+ 5-models-server/0048-llama-bench-document-pw-prefetch-weights-in-help-and.patch
+
+---
+ tools/llama-bench/README.md       | 1 +
+ tools/llama-bench/llama-bench.cpp | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/tools/llama-bench/README.md b/tools/llama-bench/README.md
+index 42cb14859..41b28cd56 100644
+--- a/tools/llama-bench/README.md
++++ b/tools/llama-bench/README.md
+@@ -74,6 +74,7 @@ test parameters:
+   -ot --override-tensor <tensor name pattern>=<buffer type>;...
+                                             (default: disabled)
+   -nopo, --no-op-offload <0|1>              (default: 0)
++  -pw, --prefetch-weights <0|1>             (default: 0)
+   --no-host <0|1>                           (default: 0)
+ 
+ Multiple values can be given for each parameter by separating them with ','
+diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
+index c558720c0..6c638e678 100644
+--- a/tools/llama-bench/llama-bench.cpp
++++ b/tools/llama-bench/llama-bench.cpp
+@@ -467,6 +467,7 @@ static void print_usage(int /* argc */, char ** argv) {
+     printf("  -ot --override-tensor <tensor name pattern>=<buffer type>;...\n");
+     printf("                                                    (default: disabled)\n");
+     printf("  -nopo, --no-op-offload <0|1>                      (default: 0)\n");
++    printf("  -pw, --prefetch-weights <0|1>                     (default: %s)\n", join(cmd_params_defaults.prefetch_weights, ",").c_str());
+     printf("  --no-host <0|1>                                   (default: %s)\n", join(cmd_params_defaults.no_host, ",").c_str());
+     printf("\n");
+     printf(

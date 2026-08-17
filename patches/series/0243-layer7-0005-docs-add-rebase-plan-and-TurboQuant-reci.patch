@@ -1,0 +1,69 @@
+From 67172092486cc2aed18e5c258afa69a46b12c73b Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 20:52:18 -0400
+Subject: [PATCH] layer7/0005-docs-add-rebase-plan-and-TurboQuant-recipes.patch
+
+---
+ conversion/qwen.py             | 4 ++++
+ docs/speculative.md            | 1 +
+ gguf-py/gguf/tensor_mapping.py | 2 +-
+ 3 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/conversion/qwen.py b/conversion/qwen.py
+index ead435455..a99292525 100644
+--- a/conversion/qwen.py
++++ b/conversion/qwen.py
+@@ -691,6 +691,7 @@ class DFlashModel(Qwen3Model):
+             name = "model." + name
+         return super().filter_tensors((name, gen))
+ 
++<<<<<<< ours
+     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+         if name == "model.embed_tokens.weight" and not self.hparams.get("has_embed_tokens", True):
+             return
+@@ -698,6 +699,8 @@ class DFlashModel(Qwen3Model):
+         yield from super().modify_tensors(data_torch, name, bid)
+ 
+ 
++=======
++>>>>>>> theirs
+ @ModelBase.register("Qwen3DSparkModel")
+ class DSparkModel(DFlashModel):
+     # DSpark = DFlash + a semi-autoregressive Markov head
+@@ -716,3 +719,4 @@ class DSparkModel(DFlashModel):
+         if name.endswith(("embed_tokens.weight", "lm_head.weight")):
+             return None
+         return super().filter_tensors((name, gen))
++
+diff --git a/docs/speculative.md b/docs/speculative.md
+index 25abef1b6..783108067 100644
+--- a/docs/speculative.md
++++ b/docs/speculative.md
+@@ -78,6 +78,7 @@ See:
+ 
+ - #22105
+ 
++
+ ### DSpark (`draft-dspark`)
+ 
+ DSpark extends DFlash with a semi-autoregressive _Markov head_: the draft still emits a whole
+diff --git a/gguf-py/gguf/tensor_mapping.py b/gguf-py/gguf/tensor_mapping.py
+index 393976fb6..5e6b267ef 100644
+--- a/gguf-py/gguf/tensor_mapping.py
++++ b/gguf-py/gguf/tensor_mapping.py
+@@ -1321,6 +1321,7 @@ class TensorNameMap:
+             "encoder.fc", # dflash (transformers MuseGlimmerAssistant)
+         ),
+ 
++
+         MODEL_TENSOR.DSPARK_MARKOV_W1: (
+             "model.markov_head.markov_w1", # dspark
+         ),
+@@ -1332,7 +1333,6 @@ class TensorNameMap:
+         MODEL_TENSOR.DSPARK_CONF_PROJ: (
+             "model.confidence_head.proj", # dspark
+         ),
+-
+         MODEL_TENSOR.CLS: (
+             "classifier",       # jina
+             "classifier.dense", # roberta

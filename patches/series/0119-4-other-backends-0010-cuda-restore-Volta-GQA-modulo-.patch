@@ -1,0 +1,36 @@
+From c745eac0e3ce1625adf28c5d62777435dbaa7347 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:56:11 -0400
+Subject: [PATCH] 
+ 4-other-backends/0010-cuda-restore-Volta-GQA-modulo-dispatch-over-revert-i.patch
+
+---
+ ggml/src/ggml-cuda/fattn.cu | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/fattn.cu b/ggml/src/ggml-cuda/fattn.cu
+index 1fd8d4647..8f174f10f 100644
+--- a/ggml/src/ggml-cuda/fattn.cu
++++ b/ggml/src/ggml-cuda/fattn.cu
+@@ -66,18 +66,18 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
+ 
+     // On Volta the GQA optimizations aren't as impactful vs. minimizing wasted compute:
+     if (cc == GGML_CUDA_CC_VOLTA) {
+-        if (use_gqa_opt && gqa_ratio > 4) {
++        if (use_gqa_opt && gqa_ratio % 8 == 0) {
+             ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 8>(ctx, dst);
+             return;
+         }
+ 
+-        if (use_gqa_opt && gqa_ratio > 2) {
++        if (use_gqa_opt && gqa_ratio % 4 == 0) {
+             ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 4>(ctx, dst);
+             return;
+         }
+ 
+         if constexpr (DKQ <= 256) {
+-            if (use_gqa_opt && gqa_ratio > 1) {
++            if (use_gqa_opt && gqa_ratio % 2 == 0) {
+                 ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 2>(ctx, dst);
+                 return;
+             }

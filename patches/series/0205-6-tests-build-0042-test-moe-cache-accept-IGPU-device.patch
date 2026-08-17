@@ -1,0 +1,34 @@
+From bf1324f3110b379226fbd8e6335f33abab4dde64 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:58:42 -0400
+Subject: [PATCH] 
+ 6-tests-build/0042-test-moe-cache-accept-IGPU-devices-not-just-GPU.patch
+
+---
+ tests/test-moe-cache.cpp | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/tests/test-moe-cache.cpp b/tests/test-moe-cache.cpp
+index d0f7f6719..88ab143de 100644
+--- a/tests/test-moe-cache.cpp
++++ b/tests/test-moe-cache.cpp
+@@ -321,7 +321,8 @@ static ggml_backend_dev_t find_cuda_device() {
+     for (size_t index = 0; index < ggml_backend_dev_count(); index++) {
+         ggml_backend_dev_t device = ggml_backend_dev_get(index);
+         ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(device);
+-        if (ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_GPU &&
++        if ((ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_GPU ||
++             ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_IGPU) &&
+             strcmp(ggml_backend_reg_name(reg), "CUDA") == 0) {
+             return device;
+         }
+@@ -335,7 +336,8 @@ static ggml_backend_dev_t find_other_cuda_device(
+         ggml_backend_dev_t device = ggml_backend_dev_get(index);
+         ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(device);
+         if (device != excluded &&
+-            ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_GPU &&
++            (ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_GPU ||
++             ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_IGPU) &&
+             strcmp(ggml_backend_reg_name(reg), "CUDA") == 0) {
+             return device;
+         }

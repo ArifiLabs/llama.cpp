@@ -1,0 +1,62 @@
+From 6052fefb29e22b058c1457af32c5cdcec5d86f26 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:57:30 -0400
+Subject: [PATCH] 
+ 5-models-server/0021-common-support-the-DSpark-sidecar-resolution-26458.patch
+
+---
+ common/chat.cpp | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/common/chat.cpp b/common/chat.cpp
+index 669e5e8f4..c4c66f2ff 100644
+--- a/common/chat.cpp
++++ b/common/chat.cpp
+@@ -1215,6 +1215,7 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+         data.prompt += data.generation_prompt;
+     }
+ 
++<<<<<<< ours
+     std::vector<std::string> tool_call_starts = { "<tool_call>" };
+ 
+     // Match complete <function=name> opener for Qwen3-Coder models that occasionally omit the
+@@ -1225,6 +1226,8 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+         tool_call_starts.push_back("<function=" + name + ">");
+     });
+ 
++=======
++>>>>>>> theirs
+     auto parser = build_chat_peg_parser([&](common_chat_peg_builder & p) {
+         auto generation_prompt = p.literal(GEN_PREFIX);
+ 
+@@ -1297,7 +1300,11 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+             auto tool_calls = p.trigger_rule("tool-call-root", p.repeat(calls, min_calls, 1));
+ 
+             return generation_prompt +
++<<<<<<< ours
+                    (reasoning << p.content(p.until_one_of(tool_call_starts)) << tool_calls);
++=======
++                   (reasoning << p.content(p.until_one_of({ "<tool_call>", "<function=" })) << tool_calls);
++>>>>>>> theirs
+         }
+ 
+         // Content only parser
+@@ -1323,9 +1330,18 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+         });
+ 
+         if (data.grammar_lazy) {
++<<<<<<< ours
+             for (const auto & start : tool_call_starts) {
+                 data.grammar_triggers.push_back({ COMMON_GRAMMAR_TRIGGER_TYPE_WORD, start });
+             }
++=======
++            data.grammar_triggers = {
++                { COMMON_GRAMMAR_TRIGGER_TYPE_WORD, "<tool_call>" },
++                // Trigger on "<function" and not "<function=" because the trailing "=" is part of
++                // the token with the function name e.g. "=read"
++                { COMMON_GRAMMAR_TRIGGER_TYPE_WORD, "<function"   },
++            };
++>>>>>>> theirs
+         }
+     }
+ 

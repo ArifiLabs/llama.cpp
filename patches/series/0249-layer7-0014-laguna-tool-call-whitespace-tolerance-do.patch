@@ -1,0 +1,158 @@
+From cbba96ce786eac351184779aeaeb2da0d5fc219f Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 20:52:28 -0400
+Subject: [PATCH] 
+ layer7/0014-laguna-tool-call-whitespace-tolerance-docs-and-test-.patch
+
+---
+ conversion/__init__.py      |  4 +++
+ conversion/laguna.py        | 59 +++++++++++++++++++++++++++++++++++++
+ conversion/qwen.py          |  5 ++--
+ docs/speculative.md         | 11 +++++++
+ gguf-py/gguf/gguf_writer.py |  3 ++
+ 5 files changed, 80 insertions(+), 2 deletions(-)
+
+diff --git a/conversion/__init__.py b/conversion/__init__.py
+index a4db77e26..441fd2658 100644
+--- a/conversion/__init__.py
++++ b/conversion/__init__.py
+@@ -55,7 +55,11 @@ TEXT_MODEL_MAP: dict[str, str] = {
+     "DFlashDraftModel": "qwen",
+     "Qwen3DSparkModel": "qwen",
+     "DeepseekV4ForCausalLM": "deepseek",
++<<<<<<< ours
+     "DeepseekV4DSparkModel": "deepseek",
++=======
++    "DFlashLagunaForCausalLM": "laguna",
++>>>>>>> theirs
+     "DistilBertForMaskedLM": "bert",
+     "DistilBertForSequenceClassification": "bert",
+     "DistilBertModel": "bert",
+diff --git a/conversion/laguna.py b/conversion/laguna.py
+index a90f355ca..f682b65d3 100644
+--- a/conversion/laguna.py
++++ b/conversion/laguna.py
+@@ -10,6 +10,7 @@ if TYPE_CHECKING:
+     from torch import Tensor
+ 
+ from .base import ModelBase, TextModel, gguf, logger
++from .qwen import DFlashModel
+ 
+ 
+ @ModelBase.register("LagunaForCausalLM")
+@@ -205,3 +206,61 @@ class LagunaModel(TextModel):
+                     f"declared {gate_type} gate (expected {expected}); weights and config disagree.")
+ 
+         yield from TextModel.modify_tensors(self, data_torch, name, bid)
++
++
++@ModelBase.register("DFlashLagunaForCausalLM")
++class DFlashLagunaModel(DFlashModel):
++    """Laguna DFlash drafter (e.g. poolside/Laguna-XS-2.1-DFlash).
++
++    Dense Laguna-style draft layers on top of the generic DFlash contract:
++    fused qkv_proj (split here), per-head/per-element g_proj attention gate,
++    per-aux-layer RMSNorms (aux_hidden_norms) applied before concat + fc, and a
++    causal noise block. The GGUF is marked with decoder_arch = "laguna" so the
++    runtime picks the Laguna draft-layer contract. No embeddings or lm_head:
++    the drafter shares them with the target at runtime.
++    """
++
++    model_arch = gguf.MODEL_ARCH.DFLASH
++
++    def set_gguf_parameters(self) -> None:
++        # transformers' LagunaConfig injects MoE defaults (num_experts_per_tok)
++        # into the dense drafter config (num_experts == 0). Drop the expert keys
++        # so the GGUF does not carry an expert_count=0 / expert_used_count>0
++        # pair, which the runtime rejects.
++        if not self.hparams.get("num_experts") and not self.hparams.get("num_local_experts"):
++            for k in ("num_experts", "num_local_experts", "num_experts_per_tok", "num_experts_per_token"):
++                self.hparams.pop(k, None)
++        super().set_gguf_parameters()
++        self.gguf_writer.add_decoder_arch("laguna")
++
++    _aux_norms: dict[int, Tensor] | None = None
++
++    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
++        # per-aux feature norms: stack model.aux_hidden_norms.{k}.weight into a
++        # single [n_aux, n_embd] tensor once all of them have been seen
++        m = re.fullmatch(r"model\.aux_hidden_norms\.(\d+)\.weight", name)
++        if m:
++            if self._aux_norms is None:
++                self._aux_norms = {}
++            self._aux_norms[int(m.group(1))] = data_torch
++            dcfg = self.hparams.get("dflash_config", {})
++            n_aux = len(dcfg.get("target_layer_ids", [])
++                        or self.hparams.get("eagle_aux_hidden_state_layer_ids", []))
++            if n_aux and len(self._aux_norms) == n_aux:
++                stacked = torch.stack([self._aux_norms[i] for i in range(n_aux)], dim=0)
++                yield (self.format_tensor_name(gguf.MODEL_TENSOR.ENC_AUX_NORM), stacked)
++            return
++
++        # fused attention projection: split into q/k/v and take the normal path
++        if name.endswith("self_attn.qkv_proj.weight"):
++            head_dim = self.hparams["head_dim"]
++            q_size = self.hparams["num_attention_heads"] * head_dim
++            kv_size = self.hparams["num_key_value_heads"] * head_dim
++            q, k, v = data_torch.split([q_size, kv_size, kv_size], dim=0)
++            base = name.removesuffix("qkv_proj.weight")
++            yield from super().modify_tensors(q, base + "q_proj.weight", bid)
++            yield from super().modify_tensors(k, base + "k_proj.weight", bid)
++            yield from super().modify_tensors(v, base + "v_proj.weight", bid)
++            return
++
++        yield from super().modify_tensors(data_torch, name, bid)
+diff --git a/conversion/qwen.py b/conversion/qwen.py
+index a99292525..2317c0b8b 100644
+--- a/conversion/qwen.py
++++ b/conversion/qwen.py
+@@ -667,10 +667,11 @@ class DFlashModel(Qwen3Model):
+     def set_gguf_parameters(self):
+         super().set_gguf_parameters()
+ 
+-        block_size = self.hparams.get("block_size", 16)
+-        self.gguf_writer.add_block_size(block_size)
+         dflash_config = self.hparams.get("dflash_config", {})
+ 
++        block_size = dflash_config.get("block_size", self.hparams.get("block_size", 16))
++        self.gguf_writer.add_block_size(block_size)
++
+         target_layer_ids = dflash_config.get("target_layer_ids", [])
+         if target_layer_ids:
+             extract_layer_ids = [i + 1 for i in target_layer_ids]
+diff --git a/docs/speculative.md b/docs/speculative.md
+index 783108067..5f4835620 100644
+--- a/docs/speculative.md
++++ b/docs/speculative.md
+@@ -371,6 +371,17 @@ Specifies a comma-separated list of speculative decoding types to use.
+ ./llama-server [...] --spec-type ngram-mod,ngram-map-k4v
+ ```
+ 
++**Laguna DFlash drafters** (for example `poolside/Laguna-XS-2.1-DFlash` for
++`poolside/Laguna-XS-2.1`) go through the same `draft-dflash` flow. Their GGUF is
++marked with `dflash.decoder_arch = laguna`, which switches the draft layers to the
++Laguna decoder contract (softplus attention gate, per-aux feature norms, context
++K/V through the input layernorm, causal noise block) instead of the generic DFlash
++contract:
++```bash
++./llama-server -m Laguna-XS-2.1.gguf -md Laguna-XS-2.1-DFlash.gguf \
++    --spec-type draft-dflash --spec-draft-n-max 15 -fa on --jinja
++```
++
+ ### `--spec-ngram-*-size-n N`
+ 
+ Sets the size N of the lookup n-gram for n-gram map based speculative decoding.
+diff --git a/gguf-py/gguf/gguf_writer.py b/gguf-py/gguf/gguf_writer.py
+index 0aee5168c..3372fd462 100644
+--- a/gguf-py/gguf/gguf_writer.py
++++ b/gguf-py/gguf/gguf_writer.py
+@@ -987,6 +987,9 @@ class GGUFWriter:
+     def add_target_hidden_size(self, value: int) -> None:
+         self.add_uint32(Keys.LLM.TARGET_HIDDEN_SIZE.format(arch=self.arch), value)
+ 
++    def add_decoder_arch(self, value: str) -> None:
++        self.add_string(Keys.LLM.DECODER_ARCH.format(arch=self.arch), value)
++
+     def add_norm_before_residual(self, value: bool) -> None:
+         self.add_bool(Keys.LLM.NORM_BEFORE_RESIDUAL.format(arch=self.arch), value)
+ 

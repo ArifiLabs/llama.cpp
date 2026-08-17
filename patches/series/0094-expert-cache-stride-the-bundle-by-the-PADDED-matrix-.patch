@@ -1,0 +1,154 @@
+From 8ee6b59c43dc18716ef7a1cc240f683ce89a01a0 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 30 Jul 2026 01:50:14 -0400
+Subject: [PATCH] expert cache: stride the bundle by the PADDED matrix size --
+ unblocks our own brain
+
+ExpertBundleBuilder has always PADDED every matrix it writes up to io_alignment
+(expert_bundle.cpp:13-15). ExpertCache strode the file by the UNPADDED
+matrix_bytes and asserted that value was sector-aligned. The two disagreed, and
+llama-model.cpp hid the disagreement with a load gate --
+`pi_matrix_bytes % 4096 == 0` -- that simply refused any model whose matrix was
+not already 4096-aligned.
+
+The cost of that gate is the point: it silently excluded this estate's own
+production brain. gemma4 26B-A4B has n_embd 2816 and n_ff_exp 704, so its Q4_0
+expert matrix is (2816/32)*18 * 704 = 1,115,136 B, and 1,115,136 % 4096 = 1024.
+Generation is NOT gated, so GENERATE_EXPERT_BUNDLE would have happily written a
+11.96 GB file that the loader then skipped without a word. Of every MoE model on
+this box, that is the only one eligible to stream at all -- so in practice the
+streaming path could not be exercised on anything we own.
+
+The file format was never the problem. Only the reader was.
+
+ExpertCache now carries an explicit matrix_stride = align_up(matrix_bytes,
+io_alignment) and uses it for all three things that must agree with the writer:
+the per-matrix file_offset, the buffer allocation, and the read length. Reading a
+full padded stride also keeps the length sector-aligned, which
+FILE_FLAG_NO_BUFFERING requires of both offset AND length -- so this is a
+prerequisite for the NO_BUFFERING arm, not merely a compatibility fix. Only the
+first matrix_bytes of each buffer are weights; the tail is the writer's padding
+and no kernel reads it.
+
+The assert now checks the stride rather than the raw size, which is the invariant
+that was actually intended, and the load gate in llama-model.cpp drops its
+alignment condition because the reader no longer needs it.
+
+Unverified by measurement yet: no bundle has been generated or loaded on this box.
+This commit makes the path reachable; the generation run and the buffered-vs-
+NO_BUFFERING A/B are next, and the bundle is ~12.0 GB against 23.2 GB free.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../moe_sparse_pipeline/expert_cache.cpp      | 27 ++++++++++++++-----
+ .../moe_sparse_pipeline/expert_cache.hpp      |  5 ++++
+ src/llama-model.cpp                           | 12 ++++++++-
+ 3 files changed, 37 insertions(+), 7 deletions(-)
+
+diff --git a/powerinfer/moe_sparse_pipeline/expert_cache.cpp b/powerinfer/moe_sparse_pipeline/expert_cache.cpp
+index d379c7c41..2de706d3f 100644
+--- a/powerinfer/moe_sparse_pipeline/expert_cache.cpp
++++ b/powerinfer/moe_sparse_pipeline/expert_cache.cpp
+@@ -20,9 +20,21 @@ ExpertCache::ExpertCache(
+     n_layers(n_layers),
+     n_experts(n_experts),
+     n_matrices(n_matrices),
+-    matrix_bytes(matrix_bytes)
++    matrix_bytes(matrix_bytes),
++    // ExpertBundleBuilder pads EVERY matrix it writes up to io_alignment (expert_bundle.cpp:13-15),
++    // so the file's stride is the padded size. This used to assert `matrix_bytes % io_alignment == 0`
++    // and stride by matrix_bytes, which is only correct when the padding happens to be zero --
++    // and llama-model.cpp gated bundle loading on exactly that condition to avoid tripping the
++    // assert. The effect was that any MoE model whose expert matrix is not already 4096-aligned
++    // could never stream, including this estate's own production brain: gemma4 26B-A4B has
++    // n_embd 2816 and n_ff_exp 704, so its matrix is 1,584 * 704 = 1,115,136 B and 1,115,136 % 4096
++    // = 1024. The file format already handled it; only the reader did not.
++    matrix_stride((matrix_bytes + io_alignment - 1) / io_alignment * io_alignment)
+ {
+-    POWERINFER_ASSERT(matrix_bytes % io_alignment == 0);
++    // The STRIDE is what must be aligned -- reads are issued at these offsets and, under
++    // FILE_FLAG_NO_BUFFERING, both the offset and the length must be sector multiples.
++    POWERINFER_ASSERT(matrix_stride % io_alignment == 0);
++    POWERINFER_ASSERT(matrix_stride >= matrix_bytes);
+ 
+     layers.resize(n_layers);
+     for (size_t layer_id = 0; layer_id < n_layers; layer_id++) {
+@@ -38,7 +50,7 @@ ExpertCache::ExpertCache(
+                 matrix.layer_id = layer_id;
+                 matrix.expert_id = expert_id;
+                 matrix.matrix_id = matrix_id;
+-                matrix.file_offset = matrix_bytes * (matrix_id + expert_id * n_matrices + layer_id * n_experts * n_matrices);
++                matrix.file_offset = matrix_stride * (matrix_id + expert_id * n_matrices + layer_id * n_experts * n_matrices);
+             }
+         }
+     }
+@@ -133,7 +145,7 @@ void ExpertCache::io_worker_main() {
+             stopping = true;
+         } else if (matrix) {
+             POWERINFER_ASSERT(matrix->data);
+-            iou.enqueue_read(matrix->data, matrix->file_offset, matrix_bytes, matrix, [](void *user_data) {
++            iou.enqueue_read(matrix->data, matrix->file_offset, matrix_stride, matrix, [](void *user_data) {
+                 Matrix *matrix = static_cast<Matrix *>(user_data);
+ 
+                 std::unique_lock lock(*matrix->mutex);
+@@ -175,7 +187,7 @@ void ExpertCache::io_worker_main() {
+         bool any_submit = false;
+         if (matrix) {
+             POWERINFER_ASSERT(matrix->data);
+-            iou.enqueue_read(matrix->data, matrix->file_offset, matrix_bytes, matrix, [](void *user_data) {
++            iou.enqueue_read(matrix->data, matrix->file_offset, matrix_stride, matrix, [](void *user_data) {
+                 Matrix *matrix = static_cast<Matrix *>(user_data);
+ 
+                 std::unique_lock lock(*matrix->mutex);
+@@ -205,7 +217,10 @@ void ExpertCache::allocate_buffer(Matrix &matrix) {
+     POWERINFER_ASSERT(!matrix.data);
+ 
+     if (lru.size < max_n_cached_matrices) {
+-        matrix.data = static_cast<char *>(az::aligned_alloc(io_alignment, matrix_bytes));  // lane-110: portable wrapper
++        // matrix_stride, not matrix_bytes: the read below transfers a full padded stride so the
++        // length stays sector-aligned for FILE_FLAG_NO_BUFFERING. Only the first matrix_bytes are
++        // weights; the tail is the writer's padding and is never read by the kernels.
++        matrix.data = static_cast<char *>(az::aligned_alloc(io_alignment, matrix_stride));  // lane-110: portable wrapper
+     } else {
+         Matrix *victim = lru.evict().get_owner_ptr(&Matrix::lru_node);
+ 
+diff --git a/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/expert_cache.hpp b/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/expert_cache.hpp
+index 03301c1ba..b4c65074d 100644
+--- a/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/expert_cache.hpp
++++ b/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/expert_cache.hpp
+@@ -82,6 +82,11 @@ private:
+     size_t n_experts = 0;
+     size_t n_matrices = 0;
+     size_t matrix_bytes = 0;
++    // On-disk stride: matrix_bytes rounded UP to io_alignment. ExpertBundleBuilder pads every
++    // matrix it writes to io_alignment, so the file's stride is the padded size, not matrix_bytes.
++    // Keeping them separate is what lets a model whose matrix is not already 4096-aligned stream at
++    // all -- see the constructor.
++    size_t matrix_stride = 0;
+     std::vector<Layer> layers;
+     bool debug_print = false;
+ 
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 045f5eb00..d95bafda5 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1718,8 +1718,18 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+             const size_t pi_row_size     = ggml_row_size(GGML_TYPE_Q4_0, hparams.n_embd);
+             const size_t pi_matrix_bytes = pi_row_size * hparams.n_ff_exp;
+ 
++            // The `pi_matrix_bytes % 4096 == 0` condition that used to guard this is GONE. It existed
++            // only because ExpertCache strode the file by the UNPADDED matrix size and asserted that
++            // size was sector-aligned, while ExpertBundleBuilder has always PADDED each matrix up to
++            // io_alignment on write. The two disagreed, and the gate hid the disagreement by
++            // refusing every model whose matrix was not already 4096-aligned.
++            //
++            // That silently excluded this estate's own production brain: gemma4 26B-A4B has n_embd
++            // 2816 and n_ff_exp 704, so pi_matrix_bytes = 1,115,136 and 1,115,136 % 4096 = 1024. The
++            // bundle would generate (generation is not gated) and then never load. ExpertCache now
++            // carries an explicit padded `matrix_stride`, so the reader matches the writer.
+             const char * pi_bundle_path = getenv("EXPERT_BUNDLE_PATH");
+-            if (pi_bundle_path != nullptr && pi_matrix_bytes % 4096 == 0) {
++            if (pi_bundle_path != nullptr) {
+                 LLAMA_LOG_INFO("%s: PowerInfer: loading expert bundle from \"%s\"\n", __func__, pi_bundle_path);
+                 powerinfer_init_global_expert_cache(pi_bundle_path, (int) pi_n_layer, hparams.n_expert, 3, pi_matrix_bytes);
+             }

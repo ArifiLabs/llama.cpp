@@ -1,0 +1,1784 @@
+From 3005f8e71a5e8a296c6c2cf982e85dfd20ae63a9 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:55:35 -0400
+Subject: [PATCH] 
+ 3-vulkan/0001-vulkan-metal-hip-add-TurboQuant-kernel-support.patch
+
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  67 ++-
+ .../vulkan-shaders/copy_from_quant.comp       |  36 ++
+ .../vulkan-shaders/copy_to_quant.comp         | 550 +++++++++++++++++-
+ .../vulkan-shaders/dequant_funcs.glsl         |  75 +++
+ .../vulkan-shaders/dequant_funcs_cm2.glsl     |  29 +
+ .../vulkan-shaders/dequant_tq4_1s.comp        |  65 +++
+ .../vulkan-shaders/dequant_turbo3_0.comp      |  36 ++
+ .../vulkan-shaders/flash_attn.comp            |  14 +
+ .../vulkan-shaders/flash_attn_base.glsl       |  12 +
+ .../vulkan-shaders/flash_attn_cm1.comp        |   8 +
+ .../vulkan-shaders/flash_attn_dequant.glsl    |  69 +++
+ .../vulkan-shaders/mul_mat_vec_tq4_1s.comp    | 119 ++++
+ .../ggml-vulkan/vulkan-shaders/turbo_wht.comp |  67 +++
+ .../src/ggml-vulkan/vulkan-shaders/types.glsl |  64 ++
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     | 137 ++++-
+ 15 files changed, 1342 insertions(+), 6 deletions(-)
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/dequant_tq4_1s.comp
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/dequant_turbo3_0.comp
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq4_1s.comp
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/turbo_wht.comp
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 100223daa..c02afc035 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1060,6 +1060,7 @@ struct vk_device_struct {
+     vk_pipeline pipeline_snake_bf16;
+     vk_pipeline pipeline_pool1d_f32;
+     vk_pipeline pipeline_pool2d_f32;
++    vk_pipeline pipeline_turbo_wht;
+     vk_pipeline pipeline_rwkv_wkv6_f32;
+     vk_pipeline pipeline_rwkv_wkv7_f32;
+     vk_pipeline pipeline_gated_linear_attn_f32;
+@@ -4519,6 +4520,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             const bool f32acc = fa.first.f32acc;
+             const uint32_t fa_sgs = fa.first.subgroup_size;
+             const bool fa_ds = fa.first.subgroup_size == 0;
++            const bool is_turbo3 = (fa.first.k_type == GGML_TYPE_TURBO3_0);
++            (void) is_turbo3; // turbo3 FA SPIR-V generation deferred; no dedicated pipeline yet
+ 
+             const bool bf16_kv = fa.first.k_type == GGML_TYPE_BF16;
+ 
+@@ -5872,6 +5875,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     ggml_vk_create_pipeline(device, device->pipeline_pool1d_f32, "pool1d_f32", pool1d_f32_len, pool1d_f32_data, "main", 2, sizeof(vk_op_pool1d_push_constants), {512, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_pool2d_f32, "pool2d_f32", pool2d_f32_len, pool2d_f32_data, "main", 2, sizeof(vk_op_pool2d_push_constants), {512, 1, 1}, {}, 1);
+ 
++    // TurboQuant WHT (forward / inverse rotation, 128-element block)
++    ggml_vk_create_pipeline(device, device->pipeline_turbo_wht, "turbo_wht", turbo_wht_len, turbo_wht_data, "main", 2, 3 * sizeof(uint32_t), {128, 1, 1}, {}, 1);
++
+     ggml_vk_create_pipeline(device, device->pipeline_rwkv_wkv6_f32, "rwkv_wkv6_f32", rwkv_wkv6_f32_len, rwkv_wkv6_f32_data, "main", 7, sizeof(vk_op_rwkv_wkv6_push_constants), {1, 1, 1}, {device->subgroup_size}, 1);
+ 
+     ggml_vk_create_pipeline(device, device->pipeline_rwkv_wkv7_f32, "rwkv_wkv7_f32", rwkv_wkv7_f32_len, rwkv_wkv7_f32_data, "main", 8, sizeof(vk_op_rwkv_wkv7_push_constants), {1, 1, 1}, {device->subgroup_size}, 1);
+@@ -10865,7 +10871,12 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
+     uint32_t workgroups_y = (uint32_t)neq2;
+     uint32_t workgroups_z = (uint32_t)neq3;
+ 
+-    const bool f32acc = !ctx->device->fp16 || dst->op_params[3] == GGML_PREC_F32 || k->type == GGML_TYPE_BF16;
++    // Quantized K/V (q8_0, q4_*, q5_*) needs f32 accumulation: their dequantized
++    // magnitudes overflow f16 accumulation in flash attention (head size 128 KV
++    // produced inf / -FLT_MAX with prec=def), so treat quantized KV like BF16 and
++    // force f32acc regardless of the requested precision.
++    const bool f32acc = !ctx->device->fp16 || dst->op_params[3] == GGML_PREC_F32 || k->type == GGML_TYPE_BF16 ||
++                        ggml_is_quantized(k->type) || ggml_is_quantized(v->type);
+ 
+     // For scalar/coopmat1 FA, we can use the "large" size to accommodate qga.
+     // For coopmat2 FA, we always use the small size (which is still pretty large for gqa).
+@@ -12270,7 +12281,10 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
+     case GGML_OP_SET_ROWS:
+         {
+             uint32_t ne = ggml_nelements(src0);
+-            if (ggml_is_quantized(dst->type)) {
++            if (dst->type == GGML_TYPE_TURBO2_0 || dst->type == GGML_TYPE_TURBO3_0 || dst->type == GGML_TYPE_TURBO4_0) {
++                // turbo set_rows shaders: 128 threads per WG, one full QK=128 block per WG
++                ne = ne / 128;
++            } else if (ggml_is_quantized(dst->type)) {
+                 // quants run 32 threads each doing QUANT_K elements
+                 ne = CEIL_DIV(ne, 32 * ggml_blck_size(dst->type));
+             } else {
+@@ -13141,6 +13155,34 @@ static void ggml_vk_set_rows(ggml_backend_vk_context * ctx, vk_context& subctx,
+     });
+ }
+ 
++static void ggml_vk_turbo_wht(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * src0, ggml_tensor * dst) {
++    int direction, group_size;
++    memcpy(&direction, dst->op_params + 0, sizeof(int));
++    memcpy(&group_size, dst->op_params + sizeof(int), sizeof(int));
++    struct { uint32_t ne; uint32_t direction; uint32_t group_size; } pc = {
++        (uint32_t)ggml_nelements(src0), (uint32_t)direction, (uint32_t)group_size,
++    };
++    vk_pipeline pipeline = ctx->device->pipeline_turbo_wht;
++    GGML_ASSERT(pipeline != nullptr);
++    ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
++    vk_subbuffer src_buf = ggml_vk_tensor_subbuffer(ctx, src0, false);
++    vk_subbuffer dst_buf = ggml_vk_tensor_subbuffer(ctx, dst, false);
++    // Spread workgroups across Y/Z to stay within maxComputeWorkGroupCount[0].
++    const uint32_t n_groups = pc.ne / (uint32_t)group_size;
++    std::array<uint32_t, 3> elements;
++    if (n_groups > 262144) {
++        elements = { 512 * (uint32_t)group_size, 512, CEIL_DIV(n_groups, 262144) };
++    } else if (n_groups > 512) {
++        elements = { 512 * (uint32_t)group_size, CEIL_DIV(n_groups, 512), 1 };
++    } else {
++        elements = { pc.ne, 1, 1 };
++    }
++    // Compute-to-compute RAW/WAW ordering must be explicit on Vulkan.
++    ggml_vk_sync_buffers(ctx, subctx);
++    ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { src_buf, dst_buf }, pc, elements);
++    ggml_vk_sync_buffers(ctx, subctx);
++}
++
+ static void ggml_vk_silu_back(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+     ggml_vk_op_f32<vk_op_push_constants>(ctx, subctx, src0, src1, nullptr, nullptr, dst, GGML_OP_SILU_BACK, { (uint32_t)ggml_nelements(src0), 0, 0.0f, 0.0f, 0.0f, 0.0f });
+ }
+@@ -15500,6 +15542,10 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
+     case GGML_OP_SET_ROWS:
+         ggml_vk_set_rows(ctx, compute_ctx, src0, src1, node);
+ 
++        break;
++    case GGML_OP_TURBO_WHT:
++        ggml_vk_turbo_wht(ctx, compute_ctx, src0, node);
++
+         break;
+     case GGML_OP_SILU_BACK:
+         ggml_vk_silu_back(ctx, compute_ctx, src0, src1, node);
+@@ -18166,6 +18212,15 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_Q4_0:
+                     case GGML_TYPE_IQ4_NL:
+                         return true;
++                    // TurboQuant K/V flash attention: dequant is fused into the
++                    // scalar/coopmat1 FA shaders via dequantize4() (flash_attn_dequant.glsl),
++                    // so the standard f16 FA pipeline handles turbo K/V.
++                    case GGML_TYPE_TURBO2_0:
++                    case GGML_TYPE_TURBO3_0:
++                    case GGML_TYPE_TURBO4_0:
++                        return true;
++                    case GGML_TYPE_Q1_0:
++                        return coopmat2;
+                     default:
+                         return false;
+                     }
+@@ -18225,6 +18280,9 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+             {
+                 if ((op->src[0]->type != GGML_TYPE_F32 && op->src[0]->type != GGML_TYPE_F16) ||
+                     (op->src[1]->type != GGML_TYPE_I32 && op->src[1]->type != GGML_TYPE_I64)) {
++                // turbo shaders use a 128-element block: head_dim must be divisible by 128
++                if ((op->type == GGML_TYPE_TURBO2_0 || op->type == GGML_TYPE_TURBO3_0 || op->type == GGML_TYPE_TURBO4_0)
++                    && (op->src[0]->ne[0] % 128 != 0)) {
+                     return false;
+                 }
+                 switch (op->type) {
+@@ -18240,6 +18298,9 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_Q5_1:
+                     case GGML_TYPE_Q8_0:
+                     case GGML_TYPE_IQ4_NL:
++                    case GGML_TYPE_TURBO2_0:
++                    case GGML_TYPE_TURBO3_0:
++                    case GGML_TYPE_TURBO4_0:
+                         return true;
+                     default:
+                         return false;
+@@ -18477,6 +18538,8 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+             return ggml_is_contiguous(op->src[0]) && op->src[0]->type == GGML_TYPE_F32;
+         case GGML_OP_POOL_2D:
+             return ggml_is_contiguous(op->src[0]) && op->src[0]->type == GGML_TYPE_F32;
++        case GGML_OP_TURBO_WHT:
++            return op->src[0]->type == GGML_TYPE_F32 && op->src[0]->ne[0] % 128 == 0;
+         case GGML_OP_RWKV_WKV6:
+         case GGML_OP_RWKV_WKV7:
+             return true; // all inputs are contiguous, see ggml.c
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/copy_from_quant.comp b/ggml/src/ggml-vulkan/vulkan-shaders/copy_from_quant.comp
+index 6a6921474..812401ee6 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/copy_from_quant.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/copy_from_quant.comp
+@@ -30,6 +30,41 @@ void main() {
+ 
+     const uint a_offset = 0;
+     const uint ib = src_idx;
++
++#if defined(DATA_A_TQ4_1S)
++    // TQ4_1S requires full inverse WHT after centroid*scale dequant.
++    // Dequant all 32 elements into a buffer, apply butterfly, then write.
++    const float tq4_signs[32] = float[32](
++        +1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
++        -1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
++        -1.0, -1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0,
++        -1.0, +1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0
++    );
++    const float TQ4_INV_SQRT32 = 0.17677669529663688;
++
++    float buf[32];
++    for (int j = 0; j < 32; j += 2) {
++        vec2 v = dequantize(ib, j, a_offset);
++        buf[j]   = v.x;
++        buf[j+1] = v.y;
++    }
++
++    // Inverse WHT butterfly (5 stages for 32 elements)
++    for (uint step = 1u; step < 32u; step <<= 1u) {
++        for (uint i = 0u; i < 32u; i += step * 2u) {
++            for (uint j2 = i; j2 < i + step; j2++) {
++                float a2 = buf[j2], b2 = buf[j2 + step];
++                buf[j2]        = a2 + b2;
++                buf[j2 + step] = a2 - b2;
++            }
++        }
++    }
++
++    // Normalize and apply sign pattern
++    for (int j = 0; j < 32; j++) {
++        data_d[dst_idx + j] = buf[j] * TQ4_INV_SQRT32 * tq4_signs[j];
++    }
++#else
+     const vec2 dm = get_dm(ib, a_offset);
+ 
+     [[unroll]] for (int j = 0; j < QUANT_K; j += 4) {
+@@ -48,4 +83,5 @@ void main() {
+         data_d[dst_idx + j + 3] = v[3];
+ #endif
+     }
++#endif
+ }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp b/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
+index 6025e15dc..83e744fd6 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
+@@ -1,8 +1,14 @@
+ #version 450
+ 
++#extension GL_KHR_shader_subgroup_arithmetic : enable
++#extension GL_KHR_shader_subgroup_ballot : enable
++#extension GL_KHR_shader_subgroup_shuffle : enable
+ #include "types.glsl"
+ 
+-#if defined(SET_ROWS) && QUANT_K == 1
++#if defined(SET_ROWS) && (defined(DATA_A_TURBO2_0) || defined(DATA_A_TURBO3_0) || defined(DATA_A_TURBO4_0))
++layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
++const uint BLOCK_SIZE = 128;
++#elif defined(SET_ROWS) && QUANT_K == 1
+ layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+ const uint BLOCK_SIZE = 512;
+ #else
+@@ -237,6 +243,108 @@ void quantize(uint dst_idx, uint src_idx)
+     }
+ }
+ #endif
++#if defined(DATA_A_TURBO3_0)
++const float TS1[128] = float[128](
++    -1,  1,  1, -1, -1,  1, -1,  1, -1, -1,  1,  1,  1,  1,  1,  1,
++     1, -1,  1, -1,  1, -1, -1,  1,  1,  1, -1,  1,  1, -1, -1, -1,
++    -1,  1,  1, -1,  1,  1, -1,  1, -1,  1,  1, -1, -1,  1, -1,  1,
++     1,  1,  1, -1, -1, -1, -1, -1,  1, -1,  1,  1,  1,  1, -1,  1,
++    -1, -1,  1, -1, -1, -1,  1, -1, -1, -1,  1, -1, -1, -1,  1,  1,
++     1, -1, -1,  1,  1,  1, -1, -1,  1,  1, -1,  1,  1, -1,  1, -1,
++    -1,  1,  1, -1,  1, -1,  1, -1,  1,  1,  1,  1, -1,  1, -1,  1,
++     1, -1,  1,  1, -1, -1, -1, -1, -1,  1,  1, -1,  1,  1, -1,  1
++);
++
++const float TS2[128] = float[128](
++     1,  1,  1,  1, -1,  1,  1, -1,  1, -1, -1, -1,  1, -1, -1, -1,
++     1,  1, -1, -1,  1, -1,  1, -1,  1, -1, -1,  1, -1,  1,  1,  1,
++     1,  1, -1, -1, -1,  1, -1, -1, -1, -1, -1, -1,  1,  1,  1, -1,
++     1, -1,  1,  1,  1, -1, -1,  1, -1, -1, -1, -1, -1, -1,  1,  1,
++     1, -1,  1, -1, -1, -1, -1,  1, -1,  1, -1,  1, -1, -1,  1,  1,
++    -1,  1, -1,  1,  1, -1,  1, -1, -1, -1, -1,  1, -1, -1,  1, -1,
++     1, -1,  1,  1,  1, -1, -1,  1, -1,  1, -1,  1,  1, -1, -1,  1,
++    -1,  1, -1,  1,  1, -1,  1, -1,  1, -1, -1, -1, -1, -1,  1, -1
++);
++
++const float TINV = 0.08838834764831845;  // 1 / sqrt(128)
++
++const float TC[8] = float[8](
++    -0.190685, -0.117832, -0.065717, -0.021460,
++     0.021460,  0.065717,  0.117832,  0.190685
++);
++
++const float TM[7] = float[7](
++    -0.154259, -0.091775, -0.043589,
++     0.0,
++     0.043589,  0.091775,  0.154259
++);
++
++#if defined(SET_ROWS)
++
++shared float wht[128];
++shared float sg_acc[16];
++shared float gnrm;
++
++void quantize_block(uint b, uint o) {
++    [[unroll]] for (int j = 0; j < 32; ++j) data_q[b].qs[j]    = uint8_t(0);
++    [[unroll]] for (int j = 0; j < 16; ++j) data_q[b].signs[j] = uint8_t(0);
++    float rs = 0.0;
++    [[unroll]] for (int j = 0; j < 128; ++j) {
++        float v  = wht[o + j];
++        uint  i  = v < TM[0] ? 0 : v < TM[1] ? 1 : v < TM[2] ? 2 : v < TM[3] ? 3 :
++                   v < TM[4] ? 4 : v < TM[5] ? 5 : v < TM[6] ? 6 : 7;
++        rs += TC[i] * TC[i];
++        uint low2 = i & 0x3;
++        uint hi1  = (i >> 2) & 0x1;
++        data_q[b].qs[j / 4]    |= uint8_t(low2 << ((j % 4) * 2));
++        data_q[b].signs[j / 8] |= uint8_t(hi1  << (j % 8));
++    }
++    float rn = sqrt(rs);
++    data_q[b].norm = float16_t((rn > 1e-10) ? (gnrm / rn) : gnrm);
++}
++
++#endif // defined(SET_ROWS)
++#endif // defined(DATA_A_TURBO3_0)
++
++#if defined(DATA_A_TQ4_1S)
++
++const float TQ4_SIGNS[32] = float[32](
++    +1, -1, +1, -1, +1, +1, -1, +1,
++    -1, -1, +1, -1, +1, +1, -1, +1,
++    -1, -1, +1, -1, +1, -1, -1, +1,
++    -1, +1, +1, -1, +1, -1, -1, +1
++);
++
++const float TQ4_INV_SQRT32 = 0.17677669529663688;  // 1 / sqrt(32)
++
++const float TQ4_CENTROIDS[16] = float[16](
++    -2.732590, -2.069017, -1.618046, -1.256231,
++    -0.942340, -0.656759, -0.388048, -0.128395,
++     0.128395,  0.388048,  0.656759,  0.942340,
++     1.256231,  1.618046,  2.069017,  2.732590
++);
++
++// Midpoint thresholds for nearest-centroid binary search (16 centroids)
++uint tq4_choose_index(float val) {
++    if (val < -2.400804) return 0u;
++    if (val < -1.843532) return 1u;
++    if (val < -1.437139) return 2u;
++    if (val < -1.099286) return 3u;
++    if (val < -0.799550) return 4u;
++    if (val < -0.522404) return 5u;
++    if (val < -0.258222) return 6u;
++    if (val <  0.000000) return 7u;
++    if (val <  0.258222) return 8u;
++    if (val <  0.522404) return 9u;
++    if (val <  0.799550) return 10u;
++    if (val <  1.099286) return 11u;
++    if (val <  1.437139) return 12u;
++    if (val <  1.843532) return 13u;
++    if (val <  2.400804) return 14u;
++    return 15u;
++}
++
++#endif // defined(DATA_A_TQ4_1S)
+ 
+ #if defined(DATA_A_Q2_0_G128)
+ void quantize(uint dst_idx, uint src_idx)
+@@ -327,7 +435,445 @@ void quantize(uint dst_idx, uint src_idx)
+ }
+ #endif
+ 
+-#if defined(SET_ROWS)
++#if defined(SET_ROWS) && defined(DATA_A_TURBO3_0)
++void main() {
++    const uint t   = gl_LocalInvocationID.x;
++    const uint g   = gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x;
++    const uint gpr = p.ne00 / 128;
++
++    if (gpr == 0) return;
++    if (g >= p.ne / 128) return;
++
++    uint tmp = g;
++    const uint ig  = tmp % gpr; tmp /= gpr;
++    const uint i01 = tmp % p.ne01; tmp /= p.ne01;
++    const uint i02 = tmp % p.ne12;
++    const uint i03 = tmp / p.ne12;
++
++    const uint sb  = src0_idx(ig * 128, i01, i02, i03) + get_aoffset();
++    const uint i1  = data_i[src1_idx(i01, fastmod(i02, p.ne11), fastmod(i03, p.ne12), 0) + get_boffset()] DATA_I_SWIZZLE;
++    const uint db  = dst_idx(ig, i1, i02, i03) + get_doffset();
++
++    // Step 1: load into shared memory
++    wht[t] = data_s[sb + t];
++    barrier();
++
++    // Step 2: L2 norm via subgroup reduction
++    float v2 = wht[t] * wht[t];
++    v2 = subgroupAdd(v2);
++    if (gl_SubgroupInvocationID == 0) sg_acc[gl_SubgroupID] = v2;
++    barrier();
++    if (t == 0) {
++        float total = 0.0;
++        for (uint w = 0; w < gl_NumSubgroups; w++) total += sg_acc[w];
++        gnrm = sqrt(total);
++    }
++    barrier();
++
++    // Step 3: normalize, then apply forward WHT: signs1 -> butterfly -> signs2
++    wht[t] *= (gnrm > 1e-10) ? (1.0 / gnrm) : 0.0;
++    barrier();
++
++    wht[t] *= TS1[t];
++    barrier();
++
++    [[unroll]] for (uint h = 1; h < 128; h *= 2) {
++        if ((t % (2 * h)) < h) {
++            float a    = wht[t];
++            float b    = wht[t + h];
++            wht[t]     = a + b;
++            wht[t + h] = a - b;
++        }
++        barrier();
++    }
++
++    // Step 5: apply signs2 + scaling
++    float rv = wht[t] * TINV * TS2[t];
++
++    // Step 6: quantize -- all 128 threads participate
++    uint idx = rv < TM[0] ? 0u : rv < TM[1] ? 1u : rv < TM[2] ? 2u : rv < TM[3] ? 3u :
++              rv < TM[4] ? 4u : rv < TM[5] ? 5u : rv < TM[6] ? 6u : 7u;
++
++    // Pack qs: 4 elements per byte via subgroup shuffle
++    uint sg_lane = gl_SubgroupInvocationID;
++    uint my_low2 = idx & 0x3u;
++    uint qs_byte = 0u;
++    [[unroll]] for (uint k = 0; k < 4; k++) {
++        uint contrib = subgroupShuffle(my_low2, (sg_lane & ~3u) + k);
++        qs_byte |= contrib << (k * 2u);
++    }
++    if (sg_lane % 4u == 0u) {
++        data_q[db].qs[t / 4u] = uint8_t(qs_byte);
++    }
++
++    // Pack signs: 8 elements per byte via subgroup ballot
++    uvec4 ballot = subgroupBallot(((idx >> 2u) & 1u) != 0u);
++    if (sg_lane % 8u == 0u) {
++        uint local_byte = sg_lane / 8u;
++        data_q[db].signs[t / 8u] = uint8_t((ballot.x >> (local_byte * 8u)) & 0xFFu);
++    }
++
++    // Step 7: reconstruction norm via subgroup reduction
++    float rc = TC[idx] * TC[idx];
++    rc = subgroupAdd(rc);
++    if (sg_lane == 0u) sg_acc[gl_SubgroupID] = rc;
++    barrier();
++    if (t == 0u) {
++        float total = 0.0;
++        for (uint w = 0; w < gl_NumSubgroups; w++) total += sg_acc[w];
++        float rn = sqrt(total);
++        data_q[db].norm = float16_t((rn > 1e-10) ? (gnrm / rn) : gnrm);
++    }
++}
++#elif defined(SET_ROWS) && defined(DATA_A_TURBO2_0)
++// Mirror of the TURBO3_0 block above, adapted for turbo2 (4 centroids,
++// 2-bit pack, no signs byte). WHT tables and reduction structure are
++// identical (QK = 128 for both).
++const float TS1_T2[128] = float[128](
++    -1,  1,  1, -1, -1,  1, -1,  1, -1, -1,  1,  1,  1,  1,  1,  1,
++     1, -1,  1, -1,  1, -1, -1,  1,  1,  1, -1,  1,  1, -1, -1, -1,
++    -1,  1,  1, -1,  1,  1, -1,  1, -1,  1,  1, -1, -1,  1, -1,  1,
++     1,  1,  1, -1, -1, -1, -1, -1,  1, -1,  1,  1,  1,  1, -1,  1,
++    -1, -1,  1, -1, -1, -1,  1, -1, -1, -1,  1, -1, -1, -1,  1,  1,
++     1, -1, -1,  1,  1,  1, -1, -1,  1,  1, -1,  1,  1, -1,  1, -1,
++    -1,  1,  1, -1,  1, -1,  1, -1,  1,  1,  1,  1, -1,  1, -1,  1,
++     1, -1,  1,  1, -1, -1, -1, -1, -1,  1,  1, -1,  1,  1, -1,  1
++);
++const float TS2_T2[128] = float[128](
++     1,  1,  1,  1, -1,  1,  1, -1,  1, -1, -1, -1,  1, -1, -1, -1,
++     1,  1, -1, -1,  1, -1,  1, -1,  1, -1, -1,  1, -1,  1,  1,  1,
++     1,  1, -1, -1, -1,  1, -1, -1, -1, -1, -1, -1,  1,  1,  1, -1,
++     1, -1,  1,  1,  1, -1, -1,  1, -1, -1, -1, -1, -1, -1,  1,  1,
++     1, -1,  1, -1, -1, -1, -1,  1, -1,  1, -1,  1, -1, -1,  1,  1,
++    -1,  1, -1,  1,  1, -1,  1, -1, -1, -1, -1,  1, -1, -1,  1, -1,
++     1, -1,  1,  1,  1, -1, -1,  1, -1,  1, -1,  1,  1, -1, -1,  1,
++    -1,  1, -1,  1,  1, -1,  1, -1,  1, -1, -1, -1, -1, -1,  1, -1
++);
++const float TINV_T2 = 0.08838834764831845;  // 1 / sqrt(128)
++// Lloyd-Max centroids for N(0, 1/128), 4 levels (matches CENTROIDS_2BIT in C ref)
++const float TC2[4] = float[4](-0.133462, -0.039994, 0.039994, 0.133462);
++// Midpoints between adjacent centroids
++const float TM2[3] = float[3](-0.086728, 0.0, 0.086728);
++
++shared float wht_t2[128];
++shared float sg_acc_t2[16];
++shared float gnrm_t2;
++
++void main() {
++    const uint t   = gl_LocalInvocationID.x;
++    const uint g   = gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x;
++    const uint gpr = p.ne00 / 128;
++
++    if (gpr == 0) return;
++    if (g >= p.ne / 128) return;
++
++    uint tmp = g;
++    const uint ig  = tmp % gpr; tmp /= gpr;
++    const uint i01 = tmp % p.ne01; tmp /= p.ne01;
++    const uint i02 = tmp % p.ne12;
++    const uint i03 = tmp / p.ne12;
++
++    const uint sb  = src0_idx(ig * 128, i01, i02, i03) + get_aoffset();
++    const uint i1  = data_i[src1_idx(i01, fastmod(i02, p.ne11), fastmod(i03, p.ne12), 0) + get_boffset()] DATA_I_SWIZZLE;
++    const uint db  = dst_idx(ig, i1, i02, i03) + get_doffset();
++
++    wht_t2[t] = data_s[sb + t];
++    barrier();
++
++    float v2 = wht_t2[t] * wht_t2[t];
++    v2 = subgroupAdd(v2);
++    if (gl_SubgroupInvocationID == 0) sg_acc_t2[gl_SubgroupID] = v2;
++    barrier();
++    if (t == 0) {
++        float total = 0.0;
++        for (uint w = 0; w < gl_NumSubgroups; w++) total += sg_acc_t2[w];
++        gnrm_t2 = sqrt(total);
++    }
++    barrier();
++
++    wht_t2[t] *= (gnrm_t2 > 1e-10) ? (1.0 / gnrm_t2) : 0.0;
++    barrier();
++
++    wht_t2[t] *= TS1_T2[t];
++    barrier();
++
++    [[unroll]] for (uint h = 1; h < 128; h *= 2) {
++        if ((t % (2 * h)) < h) {
++            float a    = wht_t2[t];
++            float b    = wht_t2[t + h];
++            wht_t2[t]     = a + b;
++            wht_t2[t + h] = a - b;
++        }
++        barrier();
++    }
++
++    float rv = wht_t2[t] * TINV_T2 * TS2_T2[t];
++
++    // Quantize to nearest of 4 centroids (2-bit index, no signs byte)
++    uint idx = rv < TM2[0] ? 0u : rv < TM2[1] ? 1u : rv < TM2[2] ? 2u : 3u;
++
++    // Pack qs: 4 elements per byte (full 2-bit each, no high bit)
++    uint sg_lane = gl_SubgroupInvocationID;
++    uint qs_byte = 0u;
++    [[unroll]] for (uint k = 0; k < 4; k++) {
++        uint contrib = subgroupShuffle(idx & 0x3u, (sg_lane & ~3u) + k);
++        qs_byte |= contrib << (k * 2u);
++    }
++    if (sg_lane % 4u == 0u) {
++        data_q[db].qs[t / 4u] = uint8_t(qs_byte);
++    }
++
++    // Reconstruction norm via subgroup reduction
++    float rc = TC2[idx] * TC2[idx];
++    rc = subgroupAdd(rc);
++    if (sg_lane == 0u) sg_acc_t2[gl_SubgroupID] = rc;
++    barrier();
++    if (t == 0u) {
++        float total = 0.0;
++        for (uint w = 0; w < gl_NumSubgroups; w++) total += sg_acc_t2[w];
++        float rn = sqrt(total);
++        data_q[db].norm = float16_t((rn > 1e-10) ? (gnrm_t2 / rn) : gnrm_t2);
++    }
++}
++
++#elif defined(SET_ROWS) && defined(DATA_A_TURBO4_0)
++// Mirror of the TURBO3_0 block above, adapted for turbo4 (16 centroids,
++// 4-bit nibble pack, no signs byte). WHT tables and reduction structure
++// are identical (QK = 128 for both).
++const float TS1_T4[128] = float[128](
++    -1,  1,  1, -1, -1,  1, -1,  1, -1, -1,  1,  1,  1,  1,  1,  1,
++     1, -1,  1, -1,  1, -1, -1,  1,  1,  1, -1,  1,  1, -1, -1, -1,
++    -1,  1,  1, -1,  1,  1, -1,  1, -1,  1,  1, -1, -1,  1, -1,  1,
++     1,  1,  1, -1, -1, -1, -1, -1,  1, -1,  1,  1,  1,  1, -1,  1,
++    -1, -1,  1, -1, -1, -1,  1, -1, -1, -1,  1, -1, -1, -1,  1,  1,
++     1, -1, -1,  1,  1,  1, -1, -1,  1,  1, -1,  1,  1, -1,  1, -1,
++    -1,  1,  1, -1,  1, -1,  1, -1,  1,  1,  1,  1, -1,  1, -1,  1,
++     1, -1,  1,  1, -1, -1, -1, -1, -1,  1,  1, -1,  1,  1, -1,  1
++);
++const float TS2_T4[128] = float[128](
++     1,  1,  1,  1, -1,  1,  1, -1,  1, -1, -1, -1,  1, -1, -1, -1,
++     1,  1, -1, -1,  1, -1,  1, -1,  1, -1, -1,  1, -1,  1,  1,  1,
++     1,  1, -1, -1, -1,  1, -1, -1, -1, -1, -1, -1,  1,  1,  1, -1,
++     1, -1,  1,  1,  1, -1, -1,  1, -1, -1, -1, -1, -1, -1,  1,  1,
++     1, -1,  1, -1, -1, -1, -1,  1, -1,  1, -1,  1, -1, -1,  1,  1,
++    -1,  1, -1,  1,  1, -1,  1, -1, -1, -1, -1,  1, -1, -1,  1, -1,
++     1, -1,  1,  1,  1, -1, -1,  1, -1,  1, -1,  1,  1, -1, -1,  1,
++    -1,  1, -1,  1,  1, -1,  1, -1,  1, -1, -1, -1, -1, -1,  1, -1
++);
++const float TINV_T4 = 0.08838834764831845;  // 1 / sqrt(128)
++// Lloyd-Max centroids for N(0, 1/128), 16 levels (matches CENTROIDS_4BIT in C ref)
++const float TC4[16] = float[16](
++    -0.241529, -0.182877, -0.143016, -0.111036,
++    -0.083292, -0.058050, -0.034299, -0.011349,
++     0.011349,  0.034299,  0.058050,  0.083292,
++     0.111036,  0.143016,  0.182877,  0.241529
++);
++// 15 midpoints between adjacent centroids (matches nearest_centroid_4bit in C ref)
++const float TM4[15] = float[15](
++    -0.212203, -0.162947, -0.127026, -0.097164,
++    -0.070671, -0.046174, -0.022824,  0.0,
++     0.022824,  0.046174,  0.070671,  0.097164,
++     0.127026,  0.162947,  0.212203
++);
++
++shared float wht_t4[128];
++shared float sg_acc_t4[16];
++shared float gnrm_t4;
++
++void main() {
++    const uint t   = gl_LocalInvocationID.x;
++    const uint g   = gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x;
++    const uint gpr = p.ne00 / 128;
++
++    if (gpr == 0) return;
++    if (g >= p.ne / 128) return;
++
++    uint tmp = g;
++    const uint ig  = tmp % gpr; tmp /= gpr;
++    const uint i01 = tmp % p.ne01; tmp /= p.ne01;
++    const uint i02 = tmp % p.ne12;
++    const uint i03 = tmp / p.ne12;
++
++    const uint sb  = src0_idx(ig * 128, i01, i02, i03) + get_aoffset();
++    const uint i1  = data_i[src1_idx(i01, fastmod(i02, p.ne11), fastmod(i03, p.ne12), 0) + get_boffset()] DATA_I_SWIZZLE;
++    const uint db  = dst_idx(ig, i1, i02, i03) + get_doffset();
++
++    wht_t4[t] = data_s[sb + t];
++    barrier();
++
++    float v2 = wht_t4[t] * wht_t4[t];
++    v2 = subgroupAdd(v2);
++    if (gl_SubgroupInvocationID == 0) sg_acc_t4[gl_SubgroupID] = v2;
++    barrier();
++    if (t == 0) {
++        float total = 0.0;
++        for (uint w = 0; w < gl_NumSubgroups; w++) total += sg_acc_t4[w];
++        gnrm_t4 = sqrt(total);
++    }
++    barrier();
++
++    wht_t4[t] *= (gnrm_t4 > 1e-10) ? (1.0 / gnrm_t4) : 0.0;
++    barrier();
++
++    wht_t4[t] *= TS1_T4[t];
++    barrier();
++
++    [[unroll]] for (uint h = 1; h < 128; h *= 2) {
++        if ((t % (2 * h)) < h) {
++            float a    = wht_t4[t];
++            float b    = wht_t4[t + h];
++            wht_t4[t]     = a + b;
++            wht_t4[t + h] = a - b;
++        }
++        barrier();
++    }
++
++    float rv = wht_t4[t] * TINV_T4 * TS2_T4[t];
++
++    // Quantize to nearest of 16 centroids (4-bit index, no signs byte)
++    uint idx = 0u;
++    [[unroll]] for (uint i = 0; i < 15; i++) {
++        if (rv >= TM4[i]) idx = i + 1u;
++    }
++
++    // Pack qs: 2 elements per byte (4-bit nibble each)
++    uint sg_lane = gl_SubgroupInvocationID;
++    uint pair_low  = subgroupShuffle(idx & 0xFu, sg_lane & ~1u);
++    uint pair_high = subgroupShuffle(idx & 0xFu, (sg_lane & ~1u) + 1u);
++    uint qs_byte = pair_low | (pair_high << 4u);
++    if (sg_lane % 2u == 0u) {
++        data_q[db].qs[t / 2u] = uint8_t(qs_byte);
++    }
++
++    // Reconstruction norm via subgroup reduction
++    float rc = TC4[idx] * TC4[idx];
++    rc = subgroupAdd(rc);
++    if (sg_lane == 0u) sg_acc_t4[gl_SubgroupID] = rc;
++    barrier();
++    if (t == 0u) {
++        float total = 0.0;
++        for (uint w = 0; w < gl_NumSubgroups; w++) total += sg_acc_t4[w];
++        float rn = sqrt(total);
++        data_q[db].norm = float16_t((rn > 1e-10) ? (gnrm_t4 / rn) : gnrm_t4);
++    }
++}
++
++#elif defined(SET_ROWS) && defined(DATA_A_TQ4_1S)
++
++void main() {
++    const uint t   = gl_LocalInvocationID.x;    // 0..31, one per block element
++    const uint g   = gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x;
++    const uint gpr = p.ne00 / 32;  // blocks per row
++
++    if (gpr == 0) return;
++    if (g >= p.ne / 32) return;
++
++    uint tmp = g;
++    const uint ig  = tmp % gpr; tmp /= gpr;
++    const uint i01 = tmp % p.ne01; tmp /= p.ne01;
++    const uint i02 = tmp % p.ne12;
++    const uint i03 = tmp / p.ne12;
++
++    const uint sb  = src0_idx(ig * 32, i01, i02, i03) + get_aoffset();
++    const uint i1  = data_i[src1_idx(i01, fastmod(i02, p.ne11), fastmod(i03, p.ne12), 0) + get_boffset()] DATA_I_SWIZZLE;
++    const uint db  = dst_idx(ig, i1, i02, i03) + get_doffset();
++
++    // Step 1: load one f32 input per thread
++    float val = data_s[sb + t];
++
++    // Step 2: Forward RHT via subgroup ops
++    // Sign flip
++    val *= TQ4_SIGNS[t];
++
++    // WHT butterfly via subgroupShuffleXor
++    [[unroll]] for (uint h = 1u; h < 32u; h <<= 1u) {
++        const float other = subgroupShuffleXor(val, h);
++        val = ((t & h) == 0u) ? (val + other) : (other - val);
++    }
++
++    // Normalize
++    val *= TQ4_INV_SQRT32;
++
++    // Step 3: Dual half-block RMS scale computation
++    float sq = val * val;
++    float sum_sq_lo = subgroupAdd((t < 16u) ? sq : 0.0);
++    float sum_sq_hi = subgroupAdd((t >= 16u) ? sq : 0.0);
++    float rms_lo = sqrt(sum_sq_lo / 16.0);
++    float rms_hi = sqrt(sum_sq_hi / 16.0);
++
++    // Step 4: Scale search (9 points) — matches CPU quantize_row_tq4_1s_ref
++    const float SCALES[9] = float[9](0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.35, 1.5);
++    float best_d0 = rms_lo;
++    float best_d1 = rms_hi;
++    float best_err_total = 1e30;
++
++    for (uint si = 0u; si < 9u; si++) {
++        float d0 = rms_lo * SCALES[si];
++        float d1 = rms_hi * SCALES[si];
++        float inv = (t < 16u)
++            ? ((d0 > 1e-10) ? 1.0 / d0 : 0.0)
++            : ((d1 > 1e-10) ? 1.0 / d1 : 0.0);
++
++        uint idx = tq4_choose_index(val * inv);
++        float c = TQ4_CENTROIDS[idx];
++        float d = (t < 16u) ? d0 : d1;
++        float diff2 = val - c * d;
++        float local_err = diff2 * diff2;
++
++        float err_total = subgroupAdd(local_err);
++        if (err_total < best_err_total) {
++            best_err_total = err_total;
++            best_d0 = d0;
++            best_d1 = d1;
++        }
++    }
++
++    // Step 5: Iterative refinement (6 iterations)
++    [[unroll]] for (uint iter = 0u; iter < 6u; iter++) {
++        float inv = (t < 16u)
++            ? ((best_d0 > 1e-10) ? 1.0 / best_d0 : 0.0)
++            : ((best_d1 > 1e-10) ? 1.0 / best_d1 : 0.0);
++
++        uint idx = tq4_choose_index(val * inv);
++        float c = TQ4_CENTROIDS[idx];
++
++        float num_lo = subgroupAdd((t < 16u) ? val * c : 0.0);
++        float den_lo = subgroupAdd((t < 16u) ? c * c   : 0.0);
++        float num_hi = subgroupAdd((t >= 16u) ? val * c : 0.0);
++        float den_hi = subgroupAdd((t >= 16u) ? c * c   : 0.0);
++
++        if (den_lo > 1e-10) best_d0 = num_lo / den_lo;
++        if (den_hi > 1e-10) best_d1 = num_hi / den_hi;
++    }
++
++    // Step 6: Final quantization
++    float inv_final = (t < 16u)
++        ? ((best_d0 > 1e-10) ? 1.0 / best_d0 : 0.0)
++        : ((best_d1 > 1e-10) ? 1.0 / best_d1 : 0.0);
++    uint cidx = tq4_choose_index(val * inv_final);
++
++    // Step 7: Nibble packing — two 4-bit indices per byte
++    // Even element j: low nibble; odd element j: high nibble
++    // Thread t pairs with thread t^1
++    uint partner_idx = subgroupShuffle(cidx, t ^ 1u);
++    uint byte_val;
++    if ((t & 1u) == 0u) {
++        byte_val = cidx | (partner_idx << 4u);
++    } else {
++        byte_val = partner_idx | (cidx << 4u);
++    }
++    // Only even threads write (one byte per pair)
++    if ((t & 1u) == 0u) {
++        data_q[db].qs[t >> 1u] = uint8_t(byte_val);
++    }
++
++    // Step 8: Store scales (thread 0 writes both)
++    if (t == 0u) {
++        data_q[db].d0 = float16_t(best_d0);
++        data_q[db].d1 = float16_t(best_d1);
++    }
++}
++#elif defined(SET_ROWS)
+ 
+ void main() {
+ #ifdef NEEDS_INIT_IQ_SHMEM
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
+index 0152a7ff0..d52c29bfd 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
+@@ -764,3 +764,78 @@ vec2 get_dm(uint ib, uint a_offset) {
+     return vec2(1, 0);
+ }
+ #endif
++
++#if defined(DATA_A_TURBO3_0)
++vec2 dequantize(uint ib, uint iqs, uint a_offset) {
++    // PolarQuant 3-bit centroids (Lloyd-Max for Gaussian)
++    const float centroids[8] = float[8](
++        -0.190685, -0.117832, -0.065717, -0.021460,
++         0.021460,  0.065717,  0.117832,  0.190685
++    );
++
++    // iqs is the element index within the block (0..31), we decode 2 consecutive elements
++    const uint j0 = iqs;
++    const uint j1 = iqs + 1;
++
++    // Extract 2-bit low indices from qs (4 per byte)
++    const uint low2_0 = (uint(data_a[a_offset + ib].qs[j0 / 4]) >> ((j0 % 4) * 2)) & 0x3;
++    const uint low2_1 = (uint(data_a[a_offset + ib].qs[j1 / 4]) >> ((j1 % 4) * 2)) & 0x3;
++
++    // Extract 1-bit high from signs (8 per byte)
++    const uint hi1_0 = (uint(data_a[a_offset + ib].signs[j0 / 8]) >> (j0 % 8)) & 0x1;
++    const uint hi1_1 = (uint(data_a[a_offset + ib].signs[j1 / 8]) >> (j1 % 8)) & 0x1;
++
++    // Combine to 3-bit index
++    const uint idx0 = low2_0 | (hi1_0 << 2);
++    const uint idx1 = low2_1 | (hi1_1 << 2);
++
++    return vec2(centroids[idx0], centroids[idx1]);
++}
++vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
++    vec2 v0 = dequantize(ib, iqs, a_offset);
++    vec2 v1 = dequantize(ib, iqs + 2, a_offset);
++    return vec4(v0.x, v0.y, v1.x, v1.y);
++}
++vec2 get_dm(uint ib, uint a_offset) {
++    return vec2(float(data_a[a_offset + ib].norm), 0);
++}
++#endif
++
++#if defined(DATA_A_TQ4_1S)
++vec2 dequantize(uint ib, uint iqs, uint a_offset) {
++    // TQ4_1S: 16-level Lloyd-Max centroids for N(0,1)
++    const float centroids[16] = float[16](
++        -2.732590, -2.069017, -1.618046, -1.256231,
++        -0.942340, -0.656759, -0.388048, -0.128395,
++         0.128395,  0.388048,  0.656759,  0.942340,
++         1.256231,  1.618046,  2.069017,  2.732590
++    );
++
++    // iqs is the element pair index within the block (0..15)
++    const uint j0 = iqs;
++    const uint j1 = iqs + 1;
++
++    // Extract 4-bit nibble indices from qs (2 per byte)
++    const uint idx0 = (uint(data_a[a_offset + ib].qs[j0 / 2]) >> ((j0 & 1) * 4)) & 0xF;
++    const uint idx1 = (uint(data_a[a_offset + ib].qs[j1 / 2]) >> ((j1 & 1) * 4)) & 0xF;
++
++    // Scale by d0 (elements 0-15) or d1 (elements 16-31)
++    const float d0 = float(data_a[a_offset + ib].d0);
++    const float d1 = float(data_a[a_offset + ib].d1);
++    const float s0 = (j0 < 16) ? d0 : d1;
++    const float s1 = (j1 < 16) ? d0 : d1;
++
++    // Returns centroid * scale WITHOUT RHT inverse
++    // (caller must handle pre-rotation for correctness)
++    return vec2(centroids[idx0] * s0, centroids[idx1] * s1);
++}
++vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
++    vec2 v0 = dequantize(ib, iqs, a_offset);
++    vec2 v1 = dequantize(ib, iqs + 2, a_offset);
++    return vec4(v0.x, v0.y, v1.x, v1.y);
++}
++vec2 get_dm(uint ib, uint a_offset) {
++    // No global scale/min — scales are applied per-element in dequantize()
++    return vec2(1, 0);
++}
++#endif
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl
+index c4674de49..b5e058c05 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl
+@@ -1398,6 +1398,33 @@ f16vec4 dequantFuncNVFP4_v(const in decodeBufNVFP4 bl, const in uint blockCoords
+ }
+ #endif
+ 
++#if defined(DATA_A_TURBO3_0)
++layout(buffer_reference, std430, buffer_reference_align = 2) buffer decodeBufTURBO3_0 {
++   block_turbo3_0 block;
++};
++
++float16_t dequantFuncTURBO3_0(const in decodeBufTURBO3_0 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
++{
++    const float centroids[8] = float[8](
++        -0.190685, -0.117832, -0.065717, -0.021460,
++         0.021460,  0.065717,  0.117832,  0.190685
++    );
++    const float norm = float(bl.block.norm);
++    const uint j = coordInBlock[1];
++
++    // Extract 2-bit low index from qs (4 per byte)
++    const uint low2 = (uint(bl.block.qs[j / 4]) >> ((j % 4) * 2)) & 0x3;
++
++    // Extract 1-bit high from signs (8 per byte)
++    const uint hi1 = (uint(bl.block.signs[j / 8]) >> (j % 8)) & 0x1;
++
++    // Combine to 3-bit index
++    const uint idx = low2 | (hi1 << 2);
++
++    return float16_t(centroids[idx] * norm);
++}
++#endif
++
+ #if defined(DATA_A_Q1_0)
+ #define dequantFuncA dequantFuncQ1_0
+ #define dequantFuncA_v dequantFuncQ1_0_v
+@@ -1476,6 +1503,8 @@ f16vec4 dequantFuncNVFP4_v(const in decodeBufNVFP4 bl, const in uint blockCoords
+ #elif defined(DATA_A_NVFP4)
+ #define dequantFuncA dequantFuncNVFP4
+ #define dequantFuncA_v dequantFuncNVFP4_v
++#elif defined(DATA_A_TURBO3_0)
++#define dequantFuncA dequantFuncTURBO3_0
+ #elif defined(DATA_A_F32)
+ #define dequantFuncA dequantFuncF32
+ #endif
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_tq4_1s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_tq4_1s.comp
+new file mode 100644
+index 000000000..fc497631f
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_tq4_1s.comp
+@@ -0,0 +1,65 @@
++#version 450
++
++#include "dequant_head.glsl"
++
++// 256 threads per workgroup, each thread fully dequants one TQ4_1S block
++// (32 elements, 20 bytes). Workgroups process 256 blocks = 8192 elements each
++// so the x dispatch stays under maxComputeWorkGroupCount[0] for large tensors.
++layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
++
++layout (binding = 0) readonly buffer A {block_tq4_1s data_a[];};
++layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
++
++void main() {
++    // Lloyd-Max centroids for 4-bit normal quantization
++    const float centroids[16] = float[16](
++        -2.732590, -2.069017, -1.618046, -1.256231,
++        -0.942340, -0.656759, -0.388048, -0.128395,
++         0.128395,  0.388048,  0.656759,  0.942340,
++         1.256231,  1.618046,  2.069017,  2.732590
++    );
++
++    // WHT sign pattern for inverse RHT normalization
++    const float signs[32] = float[32](
++        +1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
++        -1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
++        -1.0, -1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0,
++        -1.0, +1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0
++    );
++
++    const float INV_SQRT32 = 0.17677669529663688;
++
++    const uint ib = gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
++    if (ib >= p.nel / 32) return;
++
++    const float d0 = float(data_a[ib].d0);
++    const float d1 = float(data_a[ib].d1);
++
++    // Load centroid*scale into per-thread buffer
++    float buf[32];
++    for (int j = 0; j < 32; j++) {
++        const uint byte_idx = uint(j) / 2u;
++        const uint nibble_shift = (uint(j) & 1u) * 4u;
++        const uint idx = (uint(data_a[ib].qs[byte_idx]) >> nibble_shift) & 0xFu;
++        const float d = (j < 16) ? d0 : d1;
++        buf[j] = centroids[idx] * d;
++    }
++
++    // Inverse WHT butterfly (5 stages for 32 elements) — matches CPU reference
++    for (uint step = 1u; step < 32u; step <<= 1u) {
++        for (uint i = 0u; i < 32u; i += step * 2u) {
++            for (uint j = i; j < i + step; j++) {
++                const float a = buf[j];
++                const float b = buf[j + step];
++                buf[j]        = a + b;
++                buf[j + step] = a - b;
++            }
++        }
++    }
++
++    // Normalize and apply sign pattern
++    const uint out_base = ib * 32u;
++    for (int j = 0; j < 32; j++) {
++        data_b[out_base + uint(j)] = D_TYPE(buf[j] * INV_SQRT32 * signs[j]);
++    }
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_turbo3_0.comp b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_turbo3_0.comp
+new file mode 100644
+index 000000000..c12dd5f8e
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_turbo3_0.comp
+@@ -0,0 +1,36 @@
++#version 450
++
++#include "dequant_head.glsl"
++
++// 128 elements per block (QK_TURBO3 = 128)
++// Each workgroup processes one block. 128 threads, 1 element per thread.
++layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
++
++layout (binding = 0) readonly buffer A {block_turbo3_0 data_a[];};
++layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
++
++void main() {
++    const float centroids[8] = float[8](
++        -0.190685, -0.117832, -0.065717, -0.021460,
++         0.021460,  0.065717,  0.117832,  0.190685
++    );
++
++    // Each workgroup processes one 128-element block
++    const uint ib  = gl_WorkGroupID.x;
++    const uint j   = gl_LocalInvocationID.x;  // element index 0..127
++
++    if (ib >= p.nel / 128) return;
++
++    const float norm = float(data_a[ib].norm);
++
++    // Extract 2-bit low index from qs (4 per byte)
++    const uint low2 = (uint(data_a[ib].qs[j / 4]) >> ((j % 4) * 2)) & 0x3;
++
++    // Extract 1-bit high from signs (8 per byte)
++    const uint hi1 = (uint(data_a[ib].signs[j / 8]) >> (j % 8)) & 0x1;
++
++    // Combine to 3-bit index
++    const uint idx = low2 | (hi1 << 2);
++
++    data_b[ib * 128 + j] = D_TYPE(centroids[idx] * norm);
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn.comp b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn.comp
+index 6c264c786..7b89c509a 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn.comp
+@@ -2,8 +2,10 @@
+ 
+ #extension GL_EXT_control_flow_attributes : enable
+ #extension GL_EXT_shader_16bit_storage : require
++#extension GL_EXT_shader_8bit_storage : require
+ 
+ #extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
++#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+ 
+ #ifdef FLOAT16
+ #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+@@ -36,10 +38,12 @@ const uint32_t num_subgroups = SubGroupSize == 0 ? 0 : WorkGroupSize / SubGroupS
+ 
+ layout (binding = 0) readonly buffer Q {float data_q[];};
+ layout (binding = 0) readonly buffer QV4 {vec4 data_qv4[];};
++#if !defined(DATA_A_TURBO3_0)
+ layout (binding = 1) readonly buffer K {float16_t data_k[];};
+ layout (binding = 1) readonly buffer KV4 {f16vec4 data_kv4[];};
+ layout (binding = 2) readonly buffer V {float16_t data_v[];};
+ layout (binding = 2) readonly buffer VV4 {f16vec4 data_vv4[];};
++#endif
+ layout (binding = 3) readonly buffer M {float16_t data_m[];};
+ 
+ // If SubGroupSize is set to 0 then only use shmem reductions
+@@ -265,7 +269,9 @@ void main() {
+                             uint iqs = (coord % BLOCK_SIZE_K);
+                             K_Tf = dequantize4(ib, iqs, k_offset, BINDING_IDX_K);
+                         } else {
++#if !defined(DATA_A_TURBO3_0)
+                             K_Tf = FLOAT_TYPEV4(data_kv4[k_offset / 4 + (j * Bc + c) * k_stride / 4 + d]);
++#endif
+                         }
+                     }
+ 
+@@ -318,7 +324,9 @@ void main() {
+                         uint iqs = (coord % BLOCK_SIZE_K);
+                         K_Tf = dequantize4(ib, iqs, k_offset, BINDING_IDX_K);
+                     } else {
++#if !defined(DATA_A_TURBO3_0)
+                         K_Tf = FLOAT_TYPEV4(data_kv4[k_offset / 4 + (j * Bc + c * cols_per_iter + col_tid) * k_stride / 4 + d * D_split + d_tid]);
++#endif
+                     }
+                     [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+                         Sf[r][c] = dot_product(Q_cache[r], K_Tf, Sf[r][c]);
+@@ -341,7 +349,9 @@ void main() {
+                         uint iqs = (coord % BLOCK_SIZE_K);
+                         K_Tf = dequantize4(ib, iqs, k_offset, BINDING_IDX_K);
+                     } else {
++#if !defined(DATA_A_TURBO3_0)
+                         K_Tf = FLOAT_TYPEV4(data_kv4[k_offset / 4 + (j * Bc + c * cols_per_iter + col_tid) * k_stride / 4 + d * D_split + d_tid]);
++#endif
+                     }
+                     [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+                         Sf[r][c] = dot_product(Qf[tile_row(r) * qf_stride + d * D_split + d_tid], K_Tf, Sf[r][c]);
+@@ -496,7 +506,9 @@ void main() {
+                             uint iqs = (coord % BLOCK_SIZE_V);
+                             V_Tf = dequantize4(ib, iqs, v_offset, BINDING_IDX_V);
+                         } else {
++#if !defined(DATA_A_TURBO3_0)
+                             V_Tf = FLOAT_TYPEV4(data_vv4[v_offset / 4 + (j * Bc + c) * v_stride / 4 + d]);
++#endif
+                         }
+                     }
+ 
+@@ -527,7 +539,9 @@ void main() {
+                     uint iqs = (coord % BLOCK_SIZE_V);
+                     Vf = dequantize4(ib, iqs, v_offset, BINDING_IDX_V);
+                 } else {
++#if !defined(DATA_A_TURBO3_0)
+                     Vf = FLOAT_TYPEV4(data_vv4[v_offset / 4 + (j * Bc + c * cols_per_iter + col_tid) * v_stride / 4 + d * D_split + d_tid]);
++#endif
+                 }
+                 [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+                     Of[r][d] += FLOAT_TYPEV4(Pf[r] * Vf);
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_base.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_base.glsl
+index 3c64f91da..69bd57314 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_base.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_base.glsl
+@@ -99,6 +99,13 @@ layout (binding = 6) readonly buffer MO {uint32_t data_mask_opt[];};
+ #define FA_TYPE_Q8_0  8u
+ #define FA_TYPE_IQ4_NL 20u
+ #define FA_TYPE_BF16 30u
++#define FA_TYPE_Q1_0 41u
++#define FA_TYPE_Q2_0 42u
++#define FA_TYPE_TURBO2_0 43u
++#define FA_TYPE_TURBO3_0 44u
++#define FA_TYPE_TQ3_1S 45u
++#define FA_TYPE_TQ4_1S 46u
++#define FA_TYPE_TURBO4_0 47u
+ 
+ #if defined(BFLOAT16)
+ #define O_TYPE float
+@@ -122,6 +129,11 @@ uint fa_block_elems(uint ty) {
+         case FA_TYPE_Q8_0: return uint(QUANT_K_Q8_0);
+         case FA_TYPE_IQ4_NL: return uint(QUANT_K_IQ4_NL);
+         case FA_TYPE_BF16: return 1u;
++        case FA_TYPE_Q1_0: return uint(QUANT_K_Q1_0); // cm2-only, harmless elsewhere
++        case FA_TYPE_Q2_0: return uint(QUANT_K_Q2_0); // GGML_TYPE_Q2_0
++        case FA_TYPE_TURBO2_0: return uint(QUANT_K_TURBO2_0); // GGML_TYPE_TURBO2_0
++        case FA_TYPE_TURBO3_0: return uint(QUANT_K_TURBO3_0); // GGML_TYPE_TURBO3_0
++        case FA_TYPE_TURBO4_0: return uint(QUANT_K_TURBO4_0); // GGML_TYPE_TURBO4_0
+         default:           return 1u;
+     }
+ }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp
+index 057ed739a..f589439d9 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp
+@@ -2,9 +2,11 @@
+ 
+ #extension GL_EXT_control_flow_attributes : enable
+ #extension GL_EXT_shader_16bit_storage : require
++#extension GL_EXT_shader_8bit_storage : require
+ 
+ #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+ #extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
++#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+ 
+ #if defined(BFLOAT16)
+ #extension GL_EXT_bfloat16 : enable
+@@ -295,13 +297,17 @@ void main() {
+             }
+ 
+             if (stage_k) {
++                memoryBarrierShared();
+                 uint coord = (gl_SubgroupID * MatBc) * kvsh_stride;
+                 coopMatLoad(KMat, kvsh, coord, kvsh_stride, gl_CooperativeMatrixLayoutRowMajor);
+             } else {
++#if !defined(DATA_A_TURBO3_0)
+                 const uint coord = k_offset / 4 + (j * Bc + gl_SubgroupID * MatBc) * k_stride / 4 + d * 16 / 4;
+                 coopMatLoad(KMat, data_kv4, coord, k_stride / 4, gl_CooperativeMatrixLayoutRowMajor);
++#endif
+             }
+             } else {
++                memoryBarrierShared();
+                 uint coord = (gl_SubgroupID * MatBc) * kvsh_stride + d * 16 / 4;
+                 coopMatLoad(KMat, kvsh, coord, kvsh_stride, gl_CooperativeMatrixLayoutRowMajor);
+             }
+@@ -485,10 +491,12 @@ void main() {
+                         const uint v_tile_offset = v_offset / 4 + v_tile_row * v_stride / 4 + hsv_offset / 4;
+                         coopMatLoad(QMat, data_vv4, v_tile_offset, v_stride / 4, gl_CooperativeMatrixLayoutRowMajor);
+                     } else {
++                        memoryBarrierShared();
+                         const uint v_tile_offset = bc_chunk * MatBr * v_cols + gl_SubgroupID * (MatBc / 4);
+                         coopMatLoad(QMat, kvsh, v_tile_offset, vsh_stride, gl_CooperativeMatrixLayoutRowMajor);
+                     }
+                     } else {
++                        memoryBarrierShared();
+                         const uint v_tile_offset = bc_chunk * MatBc * kvsh_stride + (hsv_tile * row_split + gl_SubgroupID) * (MatBc / 4);
+                         coopMatLoad(QMat, kvsh, v_tile_offset, kvsh_stride, gl_CooperativeMatrixLayoutRowMajor);
+                     }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_dequant.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_dequant.glsl
+index 8ba4725f3..dcdcc8e2b 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_dequant.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_dequant.glsl
+@@ -12,6 +12,7 @@
+ // illegal to return from / pass to functions. Macros expand inline where the
+ // float16 stays in storage and is converted to FLOAT_TYPE at use.
+ 
++#if !defined(DATA_A_TURBO3_0)
+ // F32 is fed as a vec4 "block" (4 floats), matching what dequant_funcs_cm2.glsl
+ // does for F32 in the cm2 shader. FaBlockBytesK/V == 16 for F32.
+ layout (binding = 1) readonly buffer K_PACKED_F32  { vec4 data[]; }                k_packed_f32;
+@@ -29,10 +30,23 @@ layout (binding = 1) readonly buffer K_PACKED_Q8_0 { block_q8_0_packed16 data[];
+ layout (binding = 2) readonly buffer V_PACKED_Q8_0 { block_q8_0_packed16 data[]; } v_packed_q8_0;
+ layout (binding = 1) readonly buffer K_PACKED_IQ4_NL { block_iq4_nl_packed16 data[]; } k_packed_iq4_nl;
+ layout (binding = 2) readonly buffer V_PACKED_IQ4_NL { block_iq4_nl_packed16 data[]; } v_packed_iq4_nl;
++#endif  // !DATA_A_TURBO3_0
+ 
+ layout (binding = 1) readonly buffer K_PACKED_BF16 { u16vec4 data[]; } k_packed_bf16;
+ layout (binding = 2) readonly buffer V_PACKED_BF16 { u16vec4 data[]; } v_packed_bf16;
+ 
++// TurboQuant K/V views. Explicit std430 + restrict because the turbo blocks have
++// a different (larger) stride than the q4/q5/q8 views aliased at the same binding
++// (turbo3 is a 50-byte block), so the driver must not assume a uniform stride.
++// Graph applies forward WHT to Q pre-attention and inverse WHT to FA output, so
++// dequant just returns centroid * norm.
++layout (binding = 1, std430) restrict readonly buffer K_PACKED_TURBO2_0 { block_turbo2_0 data[]; } k_packed_turbo2_0;
++layout (binding = 2, std430) restrict readonly buffer V_PACKED_TURBO2_0 { block_turbo2_0 data[]; } v_packed_turbo2_0;
++layout (binding = 1, std430) restrict readonly buffer K_PACKED_TURBO3_0 { block_turbo3_0 data[]; } k_packed_turbo3_0;
++layout (binding = 2, std430) restrict readonly buffer V_PACKED_TURBO3_0 { block_turbo3_0 data[]; } v_packed_turbo3_0;
++layout (binding = 1, std430) restrict readonly buffer K_PACKED_TURBO4_0 { block_turbo4_0 data[]; } k_packed_turbo4_0;
++layout (binding = 2, std430) restrict readonly buffer V_PACKED_TURBO4_0 { block_turbo4_0 data[]; } v_packed_turbo4_0;
++
+ // Q4_1 and Q5_1 packed32 views: aliased to the same memory as the packed16
+ // views, used by the MMQ K-side hot path for fast 4-uint loads.
+ layout (binding = 1) readonly buffer K_PACKED_Q4_1_P32 { block_q4_1_packed32 data[]; } k_packed_q4_1_p32;
+@@ -118,6 +132,55 @@ layout (binding = 1) readonly buffer K_PACKED_Q5_1_P32 { block_q5_1_packed32 dat
+ #define FA_DEQUANT4_BF16(BUF) \
+     return FLOAT_TYPEV4(bf16_to_fp32(uvec4(BUF.data[(a_offset + ib) / 4])));
+ 
++// TurboQuant2 dequant: 2-bit centroids, no signs byte. All 4 elements share
++// qs byte (iqs/4) at iqs%4==0.
++#define FA_DEQUANT4_TURBO2_0(BUF) {                                                               \
++    const float c[4] = float[4](-0.133462, -0.039994, 0.039994, 0.133462);                        \
++    const float norm = float(BUF.data[a_offset + ib].norm);                                       \
++    const uint qs_byte = uint(BUF.data[a_offset + ib].qs[iqs / 4]);                               \
++    const uint i0 = (qs_byte     ) & 0x3u;                                                         \
++    const uint i1 = (qs_byte >> 2) & 0x3u;                                                         \
++    const uint i2 = (qs_byte >> 4) & 0x3u;                                                         \
++    const uint i3 = (qs_byte >> 6) & 0x3u;                                                         \
++    return FLOAT_TYPE(norm) * FLOAT_TYPEV4(c[i0], c[i1], c[i2], c[i3]);                           \
++}
++
++// TurboQuant3 dequant: per-element centroid lookup. iqs is in [0, 128) at vec4
++// alignment (iqs%4 == 0), so all 4 elements share qs byte (iqs/4) and signs
++// byte (iqs/8). No iWHT here, the graph handles rotation outside FA.
++#define FA_DEQUANT4_TURBO3_0(BUF) {                                                               \
++    const float c[8] = float[8](                                                                  \
++        -0.190685, -0.117832, -0.065717, -0.021460,                                               \
++         0.021460,  0.065717,  0.117832,  0.190685);                                              \
++    const float norm = float(BUF.data[a_offset + ib].norm);                                       \
++    const uint qs_byte  = uint(BUF.data[a_offset + ib].qs[iqs / 4]);                              \
++    const uint sgn_byte = uint(BUF.data[a_offset + ib].signs[iqs / 8]);                           \
++    const uint base = iqs & 0x7u;                                                                 \
++    const uint i0 = ((qs_byte     ) & 0x3) | (((sgn_byte >> (base    )) & 0x1u) << 2);            \
++    const uint i1 = ((qs_byte >> 2) & 0x3) | (((sgn_byte >> (base + 1)) & 0x1u) << 2);            \
++    const uint i2 = ((qs_byte >> 4) & 0x3) | (((sgn_byte >> (base + 2)) & 0x1u) << 2);            \
++    const uint i3 = ((qs_byte >> 6) & 0x3) | (((sgn_byte >> (base + 3)) & 0x1u) << 2);            \
++    return FLOAT_TYPE(norm) * FLOAT_TYPEV4(c[i0], c[i1], c[i2], c[i3]);                           \
++}
++
++// TurboQuant4 dequant: 4-bit indices, 2 per byte. iqs%4==0 means the 4
++// elements span 2 consecutive qs bytes (each holds 2 nibbles).
++#define FA_DEQUANT4_TURBO4_0(BUF) {                                                               \
++    const float c[16] = float[16](                                                                \
++        -0.241529, -0.182877, -0.143016, -0.111036,                                               \
++        -0.083292, -0.058050, -0.034299, -0.011349,                                               \
++         0.011349,  0.034299,  0.058050,  0.083292,                                                \
++         0.111036,  0.143016,  0.182877,  0.241529);                                              \
++    const float norm = float(BUF.data[a_offset + ib].norm);                                       \
++    const uint b0 = uint(BUF.data[a_offset + ib].qs[iqs / 2    ]);                                \
++    const uint b1 = uint(BUF.data[a_offset + ib].qs[iqs / 2 + 1]);                                \
++    const uint i0 = (b0     ) & 0xFu;                                                              \
++    const uint i1 = (b0 >> 4) & 0xFu;                                                              \
++    const uint i2 = (b1     ) & 0xFu;                                                              \
++    const uint i3 = (b1 >> 4) & 0xFu;                                                              \
++    return FLOAT_TYPE(norm) * FLOAT_TYPEV4(c[i0], c[i1], c[i2], c[i3]);                           \
++}
++
+ FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+     if (binding_idx == BINDING_IDX_K) {
+         switch (FaTypeK) {
+@@ -129,6 +192,9 @@ FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+             case FA_TYPE_Q8_0: FA_DEQUANT4_Q8_0(k_packed_q8_0)
+             case FA_TYPE_IQ4_NL: FA_DEQUANT4_IQ4_NL(k_packed_iq4_nl)
+             case FA_TYPE_BF16: FA_DEQUANT4_BF16(k_packed_bf16)
++            case FA_TYPE_TURBO2_0: FA_DEQUANT4_TURBO2_0(k_packed_turbo2_0)
++            case FA_TYPE_TURBO3_0: FA_DEQUANT4_TURBO3_0(k_packed_turbo3_0)
++            case FA_TYPE_TURBO4_0: FA_DEQUANT4_TURBO4_0(k_packed_turbo4_0)
+         }
+     } else {
+         switch (FaTypeV) {
+@@ -140,6 +206,9 @@ FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+             case FA_TYPE_Q8_0: FA_DEQUANT4_Q8_0(v_packed_q8_0)
+             case FA_TYPE_IQ4_NL: FA_DEQUANT4_IQ4_NL(v_packed_iq4_nl)
+             case FA_TYPE_BF16: FA_DEQUANT4_BF16(v_packed_bf16)
++            case FA_TYPE_TURBO2_0: FA_DEQUANT4_TURBO2_0(v_packed_turbo2_0)
++            case FA_TYPE_TURBO3_0: FA_DEQUANT4_TURBO3_0(v_packed_turbo3_0)
++            case FA_TYPE_TURBO4_0: FA_DEQUANT4_TURBO4_0(v_packed_turbo4_0)
+         }
+     }
+     return FLOAT_TYPEV4(0);
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq4_1s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq4_1s.comp
+new file mode 100644
+index 000000000..334788aa7
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq4_1s.comp
+@@ -0,0 +1,119 @@
++#version 450
++
++#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
++
++#include "mul_mat_vec_base.glsl"
++
++layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
++
++// Lloyd-Max centroids for TQ4_1S (4-bit, 16 levels) — N(0, 1) optimal
++const float TQ4_CENTROIDS[16] = float[16](
++    -2.732590, -2.069017, -1.618046, -1.256231,
++    -0.942340, -0.656759, -0.388048, -0.128395,
++     0.128395,  0.388048,  0.656759,  0.942340,
++     1.256231,  1.618046,  2.069017,  2.732590
++);
++
++// WHT sign pattern for 32-element blocks (shared by TQ3 and TQ4)
++const float TQ4_SIGNS[32] = float[32](
++    +1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
++    -1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
++    -1.0, -1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0,
++    -1.0, +1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0
++);
++
++const float TQ4_INV_SQRT32 = 0.17677669529663688;
++
++// See the commit message on a850ccc for the full derivation and portability
++// rationale.  Short version: pre-rotate the activation block via forward WHT
++// in shared memory, then dot-product against the raw centroid*scale weights.
++//
++// Shared memory budget: NUM_COLS * 32 floats (max 1 KiB at NUM_COLS=8)
++// plus whatever tmpsh the reduction helper allocates.
++
++shared float tq4_smem[8 * 32];
++
++void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
++    const uint tid = gl_LocalInvocationID.x;
++
++    uint a_offset, b_offset, d_offset;
++    get_offsets(a_offset, b_offset, d_offset);
++
++    FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
++    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++        [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
++            temp[j][n] = FLOAT_TYPE(0);
++        }
++    }
++
++    const uint num_blocks_per_row = p.ncols / 32u;
++    const uint byte_idx     = tid / 2u;
++    const uint nibble_shift = (tid & 1u) * 4u;
++    const float sign_tid    = TQ4_SIGNS[tid];
++
++    for (uint blk = 0; blk < num_blocks_per_row; blk++) {
++        // --- Stage 1: load activation, sign-flip, write to shared memory ---
++        [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
++            const uint b_base = c * p.batch_stride_b + b_offset + blk * 32u;
++            tq4_smem[c * 32u + tid] = float(data_b[b_base + tid]) * sign_tid;
++        }
++        barrier();
++
++        // --- Stage 2: forward WHT butterfly in shared memory (5 stages) ---
++        [[unroll]] for (uint step = 1u; step < 32u; step <<= 1u) {
++            if ((tid & step) == 0u) {
++                const uint partner = tid + step;
++                [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
++                    const uint base = c * 32u;
++                    const float a = tq4_smem[base + tid];
++                    const float b = tq4_smem[base + partner];
++                    tq4_smem[base + tid]     = a + b;
++                    tq4_smem[base + partner] = a - b;
++                }
++            }
++            barrier();
++        }
++
++        // --- Stage 3: dequant all rows' weights for this block position ---
++        // Pre-computing the weight for every row before touching the column
++        // accumulator lets the compiler treat the smem read in stage 4 as
++        // loop-invariant across rows, which is the Vulkan analogue of the
++        // "hot loop load dedup" optimisation in the CUDA kernel (PR #57).
++        float w_vals[NUM_ROWS];
++        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
++            const uint ib  = (first_row + n) * num_blocks_per_row + blk;
++            const uint idx = (uint(data_a[a_offset + ib].qs[byte_idx]) >> nibble_shift) & 0xFu;
++            const float d  = (tid < 16u)
++                ? float(data_a[a_offset + ib].d0)
++                : float(data_a[a_offset + ib].d1);
++            w_vals[n] = TQ4_CENTROIDS[idx] * d * TQ4_INV_SQRT32;
++        }
++
++        // --- Stage 4: accumulate dot products ---
++        // Read the rotated activation once per column; reuse across all rows.
++        [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
++            const float b_rotated = tq4_smem[c * 32u + tid];
++            [[unroll]] for (uint n = 0; n < num_rows; ++n) {
++                temp[c][n] += FLOAT_TYPE(w_vals[n] * b_rotated);
++            }
++        }
++
++        // Ensure every thread is done reading before the next block's store.
++        barrier();
++    }
++
++    reduce_result(temp, d_offset, first_row, num_rows, tid);
++}
++
++void main() {
++    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
++
++    if (first_row + NUM_ROWS <= p.stride_d) {
++        compute_outputs(first_row, NUM_ROWS);
++    } else {
++        if (first_row >= p.stride_d) {
++            return;
++        }
++        compute_outputs(first_row, p.stride_d - first_row);
++    }
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/turbo_wht.comp b/ggml/src/ggml-vulkan/vulkan-shaders/turbo_wht.comp
+new file mode 100644
+index 000000000..914875eba
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/turbo_wht.comp
+@@ -0,0 +1,67 @@
++#version 450
++
++#extension GL_EXT_shader_16bit_storage : require
++#extension GL_EXT_control_flow_attributes : require
++
++layout (local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
++
++layout (push_constant) uniform parameter { uint ne; uint direction; uint group_size; } p;
++
++layout (binding = 0) readonly  buffer A { float data_a[]; };
++layout (binding = 1) writeonly buffer D { float data_d[]; };
++
++shared float x[128];
++
++// Pre-scramble sign vectors applied before and after the WHT.
++// direction == 0: pre = S1, post = S2; direction == 1: pre = S2, post = S1.
++const float S1[128] = float[128](
++    -1,  1,  1, -1, -1,  1, -1,  1, -1, -1,  1,  1,  1,  1,  1,  1,
++     1, -1,  1, -1,  1, -1, -1,  1,  1,  1, -1,  1,  1, -1, -1, -1,
++    -1,  1,  1, -1,  1,  1, -1,  1, -1,  1,  1, -1, -1,  1, -1,  1,
++     1,  1,  1, -1, -1, -1, -1, -1,  1, -1,  1,  1,  1,  1, -1,  1,
++    -1, -1,  1, -1, -1, -1,  1, -1, -1, -1,  1, -1, -1, -1,  1,  1,
++     1, -1, -1,  1,  1,  1, -1, -1,  1,  1, -1,  1,  1, -1,  1, -1,
++    -1,  1,  1, -1,  1, -1,  1, -1,  1,  1,  1,  1, -1,  1, -1,  1,
++     1, -1,  1,  1, -1, -1, -1, -1, -1,  1,  1, -1,  1,  1, -1,  1
++);
++
++const float S2[128] = float[128](
++     1,  1,  1,  1, -1,  1,  1, -1,  1, -1, -1, -1,  1, -1, -1, -1,
++     1,  1, -1, -1,  1, -1,  1, -1,  1, -1, -1,  1, -1,  1,  1,  1,
++     1,  1, -1, -1, -1,  1, -1, -1, -1, -1, -1, -1,  1,  1,  1, -1,
++     1, -1,  1,  1,  1, -1, -1,  1, -1, -1, -1, -1, -1, -1,  1,  1,
++     1, -1,  1, -1, -1, -1, -1,  1, -1,  1, -1,  1, -1, -1,  1,  1,
++    -1,  1, -1,  1,  1, -1,  1, -1, -1, -1, -1,  1, -1, -1,  1, -1,
++     1, -1,  1,  1,  1, -1, -1,  1, -1,  1, -1,  1,  1, -1, -1,  1,
++    -1,  1, -1,  1,  1, -1,  1, -1,  1, -1, -1, -1, -1, -1,  1, -1
++);
++
++const float INV_SQRT_128 = 0.08838834764831845;  // 1 / sqrt(128)
++
++void main() {
++    const uint tid  = gl_LocalInvocationID.x;
++    const uint base = (gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x) * 128;
++
++    if (base + tid >= p.ne) return;
++
++    const float fs = (p.direction == 0) ? S1[tid] : S2[tid];
++    const float ss = (p.direction == 0) ? S2[tid] : S1[tid];
++
++    x[tid] = data_a[base + tid];
++    barrier();
++
++    x[tid] *= fs;
++    barrier();
++
++    [[unroll]] for (uint h = 1; h < 128; h *= 2) {
++        if ((tid % (2 * h)) < h) {
++            float a    = x[tid];
++            float b    = x[tid + h];
++            x[tid]     = a + b;
++            x[tid + h] = a - b;
++        }
++        barrier();
++    }
++
++    data_d[base + tid] = x[tid] * INV_SQRT_128 * ss;
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
+index dc951cdc7..20ec1f180 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
+@@ -6,6 +6,7 @@
+ #extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+ #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+ #extension GL_EXT_shader_16bit_storage : require
++#extension GL_EXT_shader_8bit_storage : require
+ 
+ #ifdef USE_OCP_FP4
+ #extension GL_EXT_float_e2m1 : require
+@@ -1820,6 +1821,69 @@ struct block_nvfp4_packed32
+ #define A_TYPE_PACKED32 block_nvfp4_packed32
+ #endif
+ 
++#define QUANT_K_TURBO3_0 128
++#define QUANT_R_TURBO3_0 1
++
++struct block_turbo3_0
++{
++    float16_t norm;
++    uint8_t qs[32];     // 2-bit centroid indices (4 per byte), 128/4 = 32 bytes
++    uint8_t signs[16]; // 1-bit high bit of 3-bit index (8 per byte), 128/8 = 16 bytes
++};
++
++#if defined(DATA_A_TURBO3_0)
++#define QUANT_K QUANT_K_TURBO3_0
++#define QUANT_R QUANT_R_TURBO3_0
++#define QUANT_AUXF 1
++#define A_TYPE block_turbo3_0
++#endif
++
++#define QUANT_K_TURBO2_0 128
++#define QUANT_R_TURBO2_0 1
++struct block_turbo2_0
++{
++    float16_t norm;
++    uint8_t qs[32];     // 2-bit centroid indices (4 per byte), 128/4 = 32 bytes
++};
++#if defined(DATA_A_TURBO2_0)
++#define QUANT_K QUANT_K_TURBO2_0
++#define QUANT_R QUANT_R_TURBO2_0
++#define QUANT_AUXF 1
++#define A_TYPE block_turbo2_0
++#endif
++
++#define QUANT_K_TURBO4_0 128
++#define QUANT_R_TURBO4_0 1
++struct block_turbo4_0
++{
++    float16_t norm;
++    uint8_t qs[64];     // 4-bit centroid indices, nibble-packed (2 per byte), 128/2 = 64 bytes
++};
++#if defined(DATA_A_TURBO4_0)
++#define QUANT_K QUANT_K_TURBO4_0
++#define QUANT_R QUANT_R_TURBO4_0
++#define QUANT_AUXF 1
++#define A_TYPE block_turbo4_0
++#endif
++
++
++#define QUANT_K_TQ4_1S 32
++#define QUANT_R_TQ4_1S 1
++
++struct block_tq4_1s
++{
++    float16_t d0;      // scale for elements 0-15
++    float16_t d1;      // scale for elements 16-31
++    uint8_t qs[16];    // 4-bit nibble-packed centroid indices (2 per byte)
++};
++
++#if defined(DATA_A_TQ4_1S)
++#define QUANT_K QUANT_K_TQ4_1S
++#define QUANT_R QUANT_R_TQ4_1S
++#define QUANT_AUXF 1
++#define A_TYPE block_tq4_1s
++#endif
++
+ #if defined(DATA_A_IQ4_NL) || defined(DATA_A_IQ4_XS)
+ const int8_t kvalues_iq4nl_const[16] = {
+     int8_t(-127), int8_t(-104), int8_t(-83), int8_t(-65), int8_t(-49), int8_t(-35), int8_t(-22), int8_t(-10),
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index de7ecb928..2e655e8db 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -52,6 +52,12 @@ const std::vector<std::string> type_names = {
+     "q1_0",
+     "q2_0",
+     "q2_0_g128",
++    "rocmfp4",
++    "rocmfp4_fast",
++    "rocmfpx_fp2",
++    "rocmfpx_fp3",
++    "rocmfpx_fp6",
++    "rocmfpx_fp8",
+     "q4_0",
+     "q4_1",
+     "q5_0",
+@@ -586,7 +592,7 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
+         std::string load_vec_quant = "2";
+         if ((tname == "q1_0") || (tname == "q4_0") || (tname == "q4_1") || (tname == "q5_1") || (tname == "iq1_s") || (tname == "iq1_m") || (tname == "iq2_xxs") || (tname == "iq2_xs") || (tname == "iq2_s"))
+             load_vec_quant = "8";
+-        else if ((tname == "q2_0") || (tname == "q2_0_g128") || (tname == "q5_0") || (tname == "q8_0") || (tname == "q2_k") || (tname == "q4_k") || (tname == "q5_k") || (tname == "iq3_xxs") || (tname == "iq3_s") || (tname == "iq4_xs") || (tname == "iq4_nl") || (tname == "mxfp4") || (tname == "nvfp4"))
++        else if ((tname == "q2_0") || (tname == "q2_0_g128") || (tname == "rocmfp4") || (tname == "rocmfp4_fast") || (tname == "rocmfpx_fp2") || (tname == "rocmfpx_fp3") || (tname == "rocmfpx_fp6") || (tname == "rocmfpx_fp8") || (tname == "q5_0") || (tname == "q8_0") || (tname == "q2_k") || (tname == "q4_k") || (tname == "q5_k") || (tname == "iq3_xxs") || (tname == "iq3_s") || (tname == "iq4_xs") || (tname == "iq4_nl") || (tname == "mxfp4") || (tname == "nvfp4"))
+             load_vec_quant = "4";
+ 
+         if (tname == "bf16") {
+@@ -629,6 +635,40 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
+         }
+ #endif
+     }
++
++    // TurboQuant weight types, ROTATED matmul.
++    //
++    // Generated explicitly rather than by adding them to type_names, for the
++    // same reasons as the mat-vec kernels: that loop would also emit q8_1 mmq
++    // variants (no integer-dot path exists for these types) and pull them into
++    // paths that have no TQ support.
++    //
++    // The A side loads centroid*scale WITHOUT the inverse WHT, so these are only
++    // correct against an activation pre-rotated by tq_rotate_act.comp. The host
++    // must not dispatch them otherwise.
++    //
++    // coopmat2 is excluded: TQ has no dequant_funcs_cm2.glsl entry, and the
++    // target (gfx1151) exposes KHR_coopmat only. LOAD_VEC_A is pinned to 8
++    // because the A-side block indexes idx/4 and idx&3 to map one invocation
++    // onto exactly one 3-byte packing group of 8 contiguous elements.
++    if (!coopmat2) {
++        for (const auto& tname : {std::string("tq3_1s"), std::string("tq4_1s")}) {
++            const std::string data_a_key = "DATA_A_" + to_uppercase(tname);
++            // Must carry FLOAT_TYPEV8 as well: load_b_to_shmem() references it
++            // whenever LOAD_VEC_B is 8, which it is on the fp16 path.
++            const std::map<std::string, std::string> float_type_dict = {
++                {"FLOAT_TYPE",   FLOAT_TYPE(1, tname)},
++                {"FLOAT_TYPEV2", FLOAT_TYPE(2, tname)},
++                {"FLOAT_TYPEV4", FLOAT_TYPE(4, tname)},
++                {"FLOAT_TYPEV8", FLOAT_TYPE(8, tname)},
++            };
++
++            string_to_spv(shader_name + "_" + tname + "_f32" + dot2_sfx, "mul_mm.comp",
++                merge_maps(merge_maps(base_dict, float_type_dict), {{data_a_key, "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f32}, {"B_TYPE_SCALAR", "float"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
++            string_to_spv(shader_name + "_" + tname + "_f16" + dot2_sfx, "mul_mm.comp",
++                merge_maps(merge_maps(base_dict, float_type_dict), {{data_a_key, "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f16}, {"B_TYPE_SCALAR", "float16_t"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
++        }
++    }
+ }
+ 
+ void process_shaders() {
+@@ -705,6 +745,19 @@ void process_shaders() {
+             string_to_spv("flash_attn_f32_f16", "flash_attn.comp",
+                 merge_maps(fa_base_dict, {{"Q_TYPE", "float"}, {"D_TYPE", "float"}, {"D_TYPEV4", "vec4"}, {"MMQ", "1"}, {"FA_MMQ_MIXED", "1"}}), fp16, false, false, f16acc, "_int8");
+ #endif
++            // TurboQuant3 FA: SPIR-V generation is DISABLED pending the turbo3 FA
++            // re-port onto upstream's evolved flash-attention shader. glslc hangs
++            // (infinite optimizer loop) compiling flash_attn.comp with
++            // DATA_A_TURBO3_0 against the current FA base, which blocks the entire
++            // Vulkan build. These variants are not wired into the runtime
++            // (flash_attn_f32_f16_turbo3_0_* is referenced nowhere in
++            // ggml-vulkan.cpp), so skipping generation has no runtime effect: a
++            // turbo3 K/V flash-attention path falls back as before. Re-enable once
++            // the turbo3 FA shader is reconciled with the new base.
++            // string_to_spv("flash_attn_f32_f16_turbo3_0", "flash_attn.comp",
++            //     merge_maps(fa_base_dict, {{"DATA_A_TURBO3_0", "1"}, {"Q_TYPE", "float"}, {"D_TYPE", "float"}, {"D_TYPEV4", "vec4"}}), fp16, false, false, f16acc);
++            // string_to_spv("flash_attn_f32_f16_turbo3_0", "flash_attn_cm1.comp",
++            //     merge_maps(fa_base_dict, {{"DATA_A_TURBO3_0", "1"}, {"Q_TYPE", "float"}, {"D_TYPE", "float"}, {"D_TYPEV4", "vec4"}, {"COOPMAT", "1"}}), fp16, true, false, f16acc);
+         }
+     }
+ 
+@@ -792,6 +845,11 @@ void process_shaders() {
+         string_to_spv("get_rows_" + tname + "_f32", shader, merge_maps(base_dict, {{"TEMP_TYPE", "FLOAT_TYPE"}, {data_a_key, "1"}, {"B_TYPE", "int"}, {"D_TYPE", "float"}}));
+     }
+ 
++    // TurboQuant3 KV-cache dequant and get_rows (KV-only type, not in type_names)
++    string_to_spv("dequant_turbo3_0", "dequant_turbo3_0.comp", merge_maps(base_dict, {{"DATA_A_TURBO3_0", "1"}, {"D_TYPE", "float16_t"}}));
++    string_to_spv("get_rows_turbo3_0", "get_rows_quant.comp", merge_maps(base_dict, {{"TEMP_TYPE", "FLOAT_TYPE"}, {"DATA_A_TURBO3_0", "1"}, {"B_TYPE", "int"}, {"D_TYPE", "float16_t"}}));
++    string_to_spv("get_rows_turbo3_0_f32", "get_rows_quant.comp", merge_maps(base_dict, {{"TEMP_TYPE", "FLOAT_TYPE"}, {"DATA_A_TURBO3_0", "1"}, {"B_TYPE", "int"}, {"D_TYPE", "float"}}));
++
+     string_to_spv("get_rows_i32", "get_rows.comp", {{"TEMP_TYPE", "uint"}, {"A_TYPE", "uint"}, {"B_TYPE", "int"}, {"D_TYPE", "uint"}});
+ 
+     string_to_spv("mul_mat_vec_p021_f16_f32_subgroup_add", "mul_mat_vec_p021.comp", {{"A_TYPE", "float16_t"}, {"A_TYPEV4", "f16vec4"}, {"B_TYPE", "float"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}, {"USE_SUBGROUP_ADD", "1"}});
+@@ -832,14 +890,89 @@ void process_shaders() {
+         string_to_spv("cpy_f32_" + t, "copy_to_quant.comp", {{"DATA_A_" + to_uppercase(t), "1"}, {"S_TYPE", "float"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
+         string_to_spv("cpy_" + t + "_f32", "copy_from_quant.comp", {{"DATA_A_" + to_uppercase(t), "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
+     }
++    // turbo3_0 copy-from-quant only; copy-to-quant (cpy_f32_turbo3_0) omitted because the non-SET_ROWS quantize() path lacks the WHT transform
++    string_to_spv("cpy_turbo3_0_f32", "copy_from_quant.comp", {{"DATA_A_TURBO3_0", "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
+ 
+     for (auto src : {std::pair{"f32", "float"}, std::pair{"f16", "float16_t"}}) {
+-        for (std::string dst : {"f32", "f16", "bf16", "q1_0", "q2_0", "q2_0_g128", "q4_0", "q4_1", "q5_0", "q5_1", "q8_0", "iq4_nl"}) {
++        for (std::string dst : {"f32", "f16", "bf16", "q1_0", "q2_0", "q2_0_g128", "q4_0", "q4_1", "q5_0", "q5_1", "q8_0", "iq4_nl", "turbo2_0", "turbo3_0", "turbo4_0"}) {
+             string_to_spv("set_rows_" + std::string(src.first) + "_" + dst + "_i32", "copy_to_quant.comp", {{"SET_ROWS", "1"}, {"DATA_A_" + to_uppercase(dst), "1"}, {"B_TYPE", "uint"}, {"B_SIZE", "32"}, {"S_TYPE", src.second}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
+             string_to_spv("set_rows_" + std::string(src.first) + "_" + dst + "_i64", "copy_to_quant.comp", {{"SET_ROWS", "1"}, {"DATA_A_" + to_uppercase(dst), "1"}, {"B_TYPE", "uvec2"}, {"B_SIZE", "64"}, {"S_TYPE", src.second}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
+         }
+     }
+ 
++    // TurboQuant Walsh-Hadamard Transform op (Q forward + kqv inverse rotation)
++    string_to_spv("turbo_wht", "turbo_wht.comp", {});
++
++    // TurboQuant WEIGHT types.
++    //
++    // dequant_tq4_1s.comp and mul_mat_vec_tq4_1s.comp have been in the tree
++    // since 2a716ac4 but were never passed to glslc: the Vulkan SPIR-V build is
++    // driven entirely by the explicit string_to_spv() calls here (there is no
++    // glob), and "tq4_1s" appears in neither type_names nor any generation
++    // loop. The shaders were dead files, so every TQ4_1S MUL_MAT fell back to
++    // CPU while test-backend-ops reported OK -- its TQ4_1S cases were silently
++    // skipped rather than run (see ggml-org/llama.cpp#242 for why a fully
++    // skipped op still reports success).
++    //
++    // These are generated here rather than by adding "tq4_1s" to type_names,
++    // because that loop would also emit three things we must not use:
++    //
++    //   1. USE_SUBGROUP_ADD / _NO_SHMEM reduction variants. mul_mat_vec_tq4_1s
++    //      indexes a 32-entry shared array by gl_LocalInvocationID.x and pairs
++    //      lanes as (tid, tid + step) for the butterfly, so it is only correct
++    //      for a 32-thread workgroup. A subgroup reduction over a wave that is
++    //      not exactly the workgroup is wrong, and RADV on gfx1151 (Strix Halo,
++    //      Radeon 8060S) reports "warp size: 64". The host side pins these
++    //      pipelines to a 32-thread workgroup with SHMEM reduction to match.
++    //   2. mul_mat_vec_id_tq4_1s_f16_f32. The MUL_MAT_ID host path asserts the
++    //      B operand is f32 or q8_1 (ggml_vk_get_dequantize_mul_mat_vec_id), so
++    //      only the f32 id variant is generated below.
++    //   3. get_rows_tq4_1s via get_rows_quant.comp, which applies no inverse
++    //      WHT and whose get_dm() returns vec2(1,0); it would hand back
++    //      un-rotated centroid*scale values. GET_ROWS support is deliberately
++    //      not claimed for this type.
++    string_to_spv("mul_mat_vec_tq4_1s_f32_f32", "mul_mat_vec_tq4_1s.comp",
++        merge_maps(base_dict, {{"DATA_A_TQ4_1S", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
++    string_to_spv("mul_mat_vec_tq4_1s_f16_f32", "mul_mat_vec_tq4_1s.comp",
++        merge_maps(base_dict, {{"DATA_A_TQ4_1S", "1"}, {"B_TYPE", "float16_t"}, {"B_TYPEV2", "f16vec2"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}));
++    // MoE decode. The same source compiled with MUL_MAT_ID: all of the expert
++    // indirection lives in mul_mat_vec_base.glsl (get_offsets(), reduce_result()),
++    // which this shader already includes, and the expert id arrives via
++    // gl_WorkGroupID.y, which it never touches. The 32-thread pin and the
++    // shared-memory butterfly are therefore unaffected.
++    string_to_spv("mul_mat_vec_id_tq4_1s_f32_f32", "mul_mat_vec_tq4_1s.comp",
++        merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {"DATA_A_TQ4_1S", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
++    // Cold path: dequantize the whole tensor to f16 and run the generic matmul.
++    // Used when n > mul_mat_vec_max_cols (prompt processing).
++    string_to_spv("dequant_tq4_1s", "dequant_tq4_1s.comp",
++        merge_maps(base_dict, {{"DATA_A_TQ4_1S", "1"}, {"D_TYPE", "float16_t"}}));
++
++    // TQ3_1S is the sibling 3-bit type (8 Lloyd-Max levels, 8 indices packed
++    // per 3 bytes, 16 B blocks). Unlike TQ4_1S it had no Vulkan shaders at all,
++    // so dequant_tq3_1s.comp and mul_mat_vec_tq3_1s.comp are new. Everything in
++    // the three-point rationale above applies here verbatim -- the mat-vec maps
++    // one thread to one element of a 32-element block, so it is generated
++    // explicitly and pinned to a 32-thread workgroup host-side rather than
++    // being driven from type_names.
++    //
++    // TQ3_1S is also excluded from the coopmat/coopmat2 matmul paths: it has no
++    // dequant_funcs_cm2.glsl entry, and gfx1151 exposes KHR_coopmat (coopmat1)
++    // only. A stub that returned zeros there would be worse than no support.
++    string_to_spv("mul_mat_vec_tq3_1s_f32_f32", "mul_mat_vec_tq3_1s.comp",
++        merge_maps(base_dict, {{"DATA_A_TQ3_1S", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
++    string_to_spv("mul_mat_vec_tq3_1s_f16_f32", "mul_mat_vec_tq3_1s.comp",
++        merge_maps(base_dict, {{"DATA_A_TQ3_1S", "1"}, {"B_TYPE", "float16_t"}, {"B_TYPEV2", "f16vec2"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}));
++    string_to_spv("mul_mat_vec_id_tq3_1s_f32_f32", "mul_mat_vec_tq3_1s.comp",
++        merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {"DATA_A_TQ3_1S", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
++    string_to_spv("dequant_tq3_1s", "dequant_tq3_1s.comp",
++        merge_maps(base_dict, {{"DATA_A_TQ3_1S", "1"}, {"D_TYPE", "float16_t"}}));
++
++    // Activation pre-rotation for the rotated matmul path. Type-independent:
++    // TQ3 and TQ4 share the same 32-element sign pattern and butterfly, so one
++    // pipeline serves both. Takes no DATA_A_* define -- it only touches the
++    // activation.
++    string_to_spv("tq_rotate_act", "tq_rotate_act.comp", {});
++
+     auto get_type_str = [](bool f16) {
+         return f16 ? "float16_t" : "float";
+     };

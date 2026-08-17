@@ -1,0 +1,178 @@
+From ac9a11875cd308796125dcc27acef0ab321af98a Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 20:55:45 -0400
+Subject: [PATCH] resolve 8 committed conflict markers on merit
+
+---
+ .github/workflows/build-cache.yml        | 6 ------
+ .github/workflows/release.yml            | 3 ---
+ .github/workflows/server-self-hosted.yml | 3 ---
+ conversion/__init__.py                   | 9 ---------
+ conversion/deepseek.py                   | 4 ----
+ conversion/qwen.py                       | 3 ---
+ vendor/cpp-httplib/CMakeLists.txt        | 4 ----
+ 7 files changed, 32 deletions(-)
+
+diff --git a/.github/workflows/build-cache.yml b/.github/workflows/build-cache.yml
+index 4d01a280f..1e91922b3 100644
+--- a/.github/workflows/build-cache.yml
++++ b/.github/workflows/build-cache.yml
+@@ -91,7 +91,6 @@ jobs:
+           version_major: ${{ env.OPENVINO_VERSION_MAJOR }}
+           version_full: ${{ env.OPENVINO_VERSION_FULL }}
+ 
+-<<<<<<< ours
+   windows-2022-openvino-cache:
+     runs-on: windows-2022
+ 
+@@ -99,14 +98,12 @@ jobs:
+       # Sync versions in build.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
+       OPENVINO_VERSION_MAJOR: "2026.2.1"
+       OPENVINO_VERSION_FULL: "2026.2.1.21919.ede283a88e3"
+-=======
+   windows-2022-rocm-cache:
+     runs-on: windows-2022
+ 
+     env:
+       # Make sure this is in sync with build.yml
+       HIPSDK_INSTALLER_VERSION: "26.Q1"
+->>>>>>> theirs
+ 
+     steps:
+       - name: Clone
+@@ -115,7 +112,6 @@ jobs:
+ 
+       - name: Setup Cache
+         uses: actions/cache@v5
+-<<<<<<< ours
+         id: cache-openvino
+         with:
+           path: ./openvino_toolkit
+@@ -153,7 +149,6 @@ jobs:
+   #       uses: ./.github/actions/windows-setup-rocm
+   #       with:
+   #         version: ${{ env.ROCM_VERSION }}
+-=======
+         id: cache-rocm
+         with:
+           path: C:\Program Files\AMD\ROCm
+@@ -164,4 +159,3 @@ jobs:
+         uses: ./.github/actions/windows-setup-rocm
+         with:
+           version: ${{ env.HIPSDK_INSTALLER_VERSION }}
+->>>>>>> theirs
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index bb6a2e1f8..56f28b8ba 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -1422,14 +1422,11 @@ jobs:
+       - windows-cpu
+       - windows-cuda
+       #- windows-sycl
+-<<<<<<< ours
+       - windows-rocm
+       - windows-openvino
+       #- ubuntu-22-rocm
+-=======
+       - windows-hip
+       - ubuntu-22-rocm
+->>>>>>> theirs
+       - ubuntu-cpu
+       - ubuntu-vulkan
+       - ubuntu-24-openvino
+diff --git a/.github/workflows/server-self-hosted.yml b/.github/workflows/server-self-hosted.yml
+index dc7863b4f..4c0ece335 100644
+--- a/.github/workflows/server-self-hosted.yml
++++ b/.github/workflows/server-self-hosted.yml
+@@ -141,7 +141,6 @@ jobs:
+           export LLAMA_ARG_BACKEND_SAMPLING=1
+           ./tests.sh
+ 
+-<<<<<<< ours
+       - name: Tests (GPUx2)
+         id: server_integration_tests_gpu2
+         if: ${{ !github.event.pull_request }}
+@@ -160,8 +159,6 @@ jobs:
+           export GGML_CUDA_DEVICES=2 LLAMA_ARG_BACKEND_SAMPLING=1
+           ./tests.sh
+ 
+-=======
+->>>>>>> theirs
+   server-kleidiai:
+     runs-on: ah-ubuntu_22_04-c8g_8x
+ 
+diff --git a/conversion/__init__.py b/conversion/__init__.py
+index 869e8829b..aec0d54ee 100644
+--- a/conversion/__init__.py
++++ b/conversion/__init__.py
+@@ -55,16 +55,7 @@ TEXT_MODEL_MAP: dict[str, str] = {
+     "DFlashDraftModel": "qwen",
+     "Qwen3DSparkModel": "qwen",
+     "DeepseekV4ForCausalLM": "deepseek",
+-<<<<<<< ours
+-<<<<<<< ours
+-=======
+     "DFlashLagunaForCausalLM": "laguna",
+-
+->>>>>>> theirs
+-    "DeepseekV4DSparkModel": "deepseek",
+-=======
+-    "DFlashLagunaForCausalLM": "laguna",
+->>>>>>> theirs
+     "DistilBertForMaskedLM": "bert",
+     "DistilBertForSequenceClassification": "bert",
+     "DistilBertModel": "bert",
+diff --git a/conversion/deepseek.py b/conversion/deepseek.py
+index e55cc1883..dbfa96c2e 100644
+--- a/conversion/deepseek.py
++++ b/conversion/deepseek.py
+@@ -674,12 +674,8 @@ class DeepseekV4Model(TextModel):
+         self.gguf_writer.add_hyper_connection_sinkhorn_iterations(hparams["hc_sinkhorn_iters"])
+         self.gguf_writer.add_hyper_connection_epsilon(hparams["hc_eps"])
+         self.gguf_writer.add_hash_layer_count(hparams["num_hash_layers"])
+-<<<<<<< ours
+         if self.model_arch == gguf.MODEL_ARCH.DEEPSEEK4:
+             self.gguf_writer.add_embedding_length_out(hparams["hidden_size"] * hparams["hc_mult"])
+-=======
+-        self.gguf_writer.add_embedding_length_out(hparams["hidden_size"] * hparams["hc_mult"])
+->>>>>>> theirs
+         if self.mtp_only and (num_nextn_predict_layers := hparams.get("num_nextn_predict_layers", 0)) > 0:
+             self.gguf_writer.add_nextn_predict_layers(num_nextn_predict_layers)
+ 
+diff --git a/conversion/qwen.py b/conversion/qwen.py
+index 2317c0b8b..10030b498 100644
+--- a/conversion/qwen.py
++++ b/conversion/qwen.py
+@@ -692,7 +692,6 @@ class DFlashModel(Qwen3Model):
+             name = "model." + name
+         return super().filter_tensors((name, gen))
+ 
+-<<<<<<< ours
+     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+         if name == "model.embed_tokens.weight" and not self.hparams.get("has_embed_tokens", True):
+             return
+@@ -700,8 +699,6 @@ class DFlashModel(Qwen3Model):
+         yield from super().modify_tensors(data_torch, name, bid)
+ 
+ 
+-=======
+->>>>>>> theirs
+ @ModelBase.register("Qwen3DSparkModel")
+ class DSparkModel(DFlashModel):
+     # DSpark = DFlash + a semi-autoregressive Markov head
+diff --git a/vendor/cpp-httplib/CMakeLists.txt b/vendor/cpp-httplib/CMakeLists.txt
+index 5c7625d19..6a6eefed1 100644
+--- a/vendor/cpp-httplib/CMakeLists.txt
++++ b/vendor/cpp-httplib/CMakeLists.txt
+@@ -41,11 +41,7 @@ if (LLAMA_BUILD_BORINGSSL)
+     set(FIPS OFF CACHE BOOL "Enable FIPS (BoringSSL)")
+ 
+     set(BORINGSSL_GIT "https://boringssl.googlesource.com/boringssl" CACHE STRING "BoringSSL git repository")
+-<<<<<<< ours
+     set(BORINGSSL_VERSION "0.20260813.0" CACHE STRING "BoringSSL version")
+-=======
+-    set(BORINGSSL_VERSION "0.20260730.0" CACHE STRING "BoringSSL version")
+->>>>>>> theirs
+ 
+     message(STATUS "Fetching BoringSSL version ${BORINGSSL_VERSION}")
+ 

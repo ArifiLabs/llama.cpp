@@ -1,0 +1,113 @@
+From 62852cdb2a2b326af3db58853dc00f01073ea849 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 30 Jul 2026 01:17:51 -0400
+Subject: [PATCH] speculative: DFlash/DSpark drafters have no vocab -- take the
+ mask token from metadata
+
+A DFlash/DSpark drafter legitimately ships WITHOUT a vocabulary of its own: it
+consumes the target's hidden features and shares the target's token embeddings
+(models/dflash.cpp:303-311, and load_arch_tensors deliberately creates neither
+tok_embd nor output). Such a GGUF sets tokenizer.ggml.model = "none", and that
+path nulls every special id -- so llama_vocab_mask() cannot return the mask even
+when the file states it. Adding tokenizer.ggml.mask_token_id to the GGUF does not
+help: the no-vocab branch never consults it.
+
+The consequence was silent and expensive. speculative.cpp builds the denoising
+batch as `i == 0 ? dp.id_last : mask_token_id`, so a null mask puts token id -1
+into every draft position. llama_decode then returns -1 on every draft -- and that
+does NOT propagate to the caller. Speculation simply yields nothing, and the run
+reports a plausible, badly wrong throughput. Measured on prism-ml's DSpark drafter:
+~4.05-4.28 tok/s against an 8.61 tok/s no-drafter control, which reads as "DSpark
+is roughly half the speed of no drafter" and is really "the drafter never drafted
+once". That number is within noise of the 0.54x this estate has been carrying as
+its DSpark verdict.
+
+Two changes:
+
+1. Fall back to the dflash.mask_token_id architecture metadata when the draft
+   model has no vocab mask, mirroring exactly how block_size is read eight lines
+   above. Logs the source so an artifact records where the value came from.
+
+2. For draft-dspark specifically, THROW when no mask can be found by either route.
+   A drafter that cannot mask cannot denoise; refusing beats drafting with -1,
+   because the -1 path produces numbers rather than errors.
+
+Verified on the real binary: "draft model has no vocab; mask_token_id=248319 taken
+from dflash.mask_token_id", block_size=4, n_extract=5, and zero occurrences of
+"W draft: llama_decode returned -1" where the previous build logged 46 in a single
+short run.
+
+Also in this commit -- expert_bundle: advance current_offset by the bytes actually
+written. On the repack=false path, which is the ONLY path bundle generation uses
+(llama-model.cpp:1734 and :1736 both pass false), `buf` is never resized, so the
+counter advanced by a stale value and by zero on a fresh builder. Written bytes
+were always correct because file.write() is handed `size` directly, so no bundle
+on disk is affected and current_offset is a public member nothing reads yet --
+fixed now rather than left as a trap for whoever adds an offset index to the
+bundle format and reasonably assumes it tracks the file position.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ common/speculative.cpp                        | 28 +++++++++++++++++++
+ .../moe_sparse_pipeline/expert_bundle.cpp     |  9 +++++-
+ 2 files changed, 36 insertions(+), 1 deletion(-)
+
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index cd2dfc760..3ff23c6da 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -962,6 +962,34 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+             }
+         }
+         mask_token_id = llama_vocab_mask(llama_model_get_vocab(model_dft));
++        if (mask_token_id == LLAMA_TOKEN_NULL) {
++            // A DFlash/DSpark drafter legitimately ships WITHOUT a vocabulary of its own -- it
++            // consumes the target's hidden features and shares the target's token embeddings
++            // (models/dflash.cpp:303-311). Such a GGUF sets tokenizer.ggml.model = "none", and that
++            // path nulls every special id, so llama_vocab_mask() can never return the mask even when
++            // the file states it. Fall back to the architecture metadata, exactly as block_size is
++            // read above.
++            //
++            // Without this the denoising batch below is built with token id -1
++            // (`i == 0 ? dp.id_last : mask_token_id`) and every draft decode returns -1 -- which does
++            // NOT surface as an error to the caller: speculation silently yields nothing and the run
++            // reports a plausible, badly wrong throughput. Observed on prism-ml's DSpark drafter as
++            // ~4 tok/s against an 8.6 tok/s no-drafter control, reading as "DSpark is slow" when the
++            // drafter had never drafted at all.
++            char buf[32] = {};
++            if (llama_model_meta_val_str(model_dft, "dflash.mask_token_id", buf, sizeof(buf)) >= 0) {
++                mask_token_id = std::atoi(buf);
++                LOG_INF("%s: draft model has no vocab; mask_token_id=%d taken from dflash.mask_token_id\n",
++                        __func__, mask_token_id);
++            }
++        }
++        if (is_dspark && mask_token_id == LLAMA_TOKEN_NULL) {
++            // Refuse rather than draft with -1. A drafter that cannot mask cannot denoise, and the
++            // failure is otherwise invisible in the numbers.
++            throw std::runtime_error("draft-dspark: no mask token — the draft model has no vocab mask "
++                                     "and no 'dflash.mask_token_id' metadata; DFlash denoising cannot "
++                                     "run and every draft decode would fail silently");
++        }
+ 
+         LOG_INF("%s: adding speculative implementation '%s'\n", __func__, common_speculative_type_to_str(type).c_str());
+         LOG_INF("%s: - n_max=%d, n_min=%d, p_min=%.2f\n", __func__, this->params.n_max, this->params.n_min, this->params.p_min);
+diff --git a/powerinfer/moe_sparse_pipeline/expert_bundle.cpp b/powerinfer/moe_sparse_pipeline/expert_bundle.cpp
+index 23385eae4..fd31fefcb 100644
+--- a/powerinfer/moe_sparse_pipeline/expert_bundle.cpp
++++ b/powerinfer/moe_sparse_pipeline/expert_bundle.cpp
+@@ -24,7 +24,14 @@ void ExpertBundleBuilder::append(const void *data, size_t ne0, size_t ne1,bool r
+     else
+     file.write(static_cast<const char*>(data),size);
+ 
+-    current_offset += buf.size();
++    // advance by what was actually WRITTEN, not by buf.size(). On the repack=false path -- the only
++    // path bundle generation uses (llama-model.cpp:1734 and :1736 both pass false) -- `buf` is never
++    // resized, so this counter advanced by a stale value, and by zero on a builder that had never
++    // taken the repack branch. The written bytes were always correct because file.write() is given
++    // `size` directly, so no bundle on disk is affected; current_offset is a public member that
++    // nothing in the tree reads yet. Fixed now rather than left as a trap for whoever adds an offset
++    // index to the bundle format and reasonably assumes this counter tracks the file position.
++    current_offset += size;
+ }
+ 
+ void ExpertBundleBuilder::append_zero(size_t ne0, size_t ne1) {

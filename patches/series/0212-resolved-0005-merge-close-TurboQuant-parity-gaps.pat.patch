@@ -1,0 +1,29 @@
+From 919f4a28bd3d11ba99a9b10b7217fe8cbaa9e794 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:06:49 -0400
+Subject: [PATCH] resolved/0005-merge-close-TurboQuant-parity-gaps.patch
+
+Assisted-by: Codex
+---
+ tools/server/server-context.cpp | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 32c2183b4..ce0ec6342 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -61,7 +61,13 @@ static common_speculative_output_limits server_output_limits(const common_params
+         return n_batch;
+     }
+ 
+-    const uint32_t n_outputs_per_seq = 1 + common_speculative_n_max(&params.speculative);
++    // Account for draft modes enabled by convenience flags before their types are added.
++    uint32_t n_max = (uint32_t) common_speculative_n_max(&params.speculative);
++    if (params.speculative.draft.dflash || params.speculative.draft.eagle3) {
++        n_max = std::max(n_max, (uint32_t) std::max(0, params.speculative.draft.n_max));
++    }
++
++    const uint32_t n_outputs_per_seq = 1 + n_max;
+ 
+     const uint64_t n_outputs = (uint64_t) params.n_parallel * n_outputs_per_seq;
+ 

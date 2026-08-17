@@ -1,0 +1,46 @@
+From 8ffcd409b4eb0e09066861ecb279af24ffaa1575 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:56:53 -0400
+Subject: [PATCH] 
+ 4-other-backends/0043-moe-cache-fix-registry-build-I1-follow-up.patch
+
+---
+ ggml/src/ggml-cuda/moe-cache.cu  | 2 ++
+ ggml/src/ggml-cuda/moe-cache.cuh | 4 ++--
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/moe-cache.cu b/ggml/src/ggml-cuda/moe-cache.cu
+index 640ce9a4c..ff516e3bc 100644
+--- a/ggml/src/ggml-cuda/moe-cache.cu
++++ b/ggml/src/ggml-cuda/moe-cache.cu
+@@ -3150,6 +3150,8 @@ static void moe_cache_register(const void * owner) {
+     ggml_moe_cache_register(&api);
+ }
+ 
++#endif // !defined(GGML_USE_MUSA)
++
+ #if defined(GGML_USE_MUSA)
+ void ggml_cuda_moe_cache_register(void * reg) {
+     (void) reg;
+diff --git a/ggml/src/ggml-cuda/moe-cache.cuh b/ggml/src/ggml-cuda/moe-cache.cuh
+index 1393a1ce6..c41bff63b 100644
+--- a/ggml/src/ggml-cuda/moe-cache.cuh
++++ b/ggml/src/ggml-cuda/moe-cache.cuh
+@@ -1,7 +1,7 @@
+ #pragma once
+ 
+ // MoE expert cache registration entry point, called from ggml_backend_cuda_reg().
+-// Populates ggml_moe_cache (see ggml-backend-moe-cache.h).
++// Registers the provider API with the backend registry (see ggml-backend-moe-cache.h).
+ 
+ #include <stddef.h>
+ 
+@@ -9,7 +9,7 @@
+ extern "C" {
+ #endif
+ 
+-void ggml_moe_cache_register(const void * owner);
++void ggml_cuda_moe_cache_register(void * reg);
+ 
+ // Surrender the device's cache VRAM under allocator pressure; returns bytes freed.
+ size_t ggml_moe_cache_trim(int device);

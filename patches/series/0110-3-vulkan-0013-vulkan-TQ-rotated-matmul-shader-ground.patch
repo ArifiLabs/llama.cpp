@@ -1,0 +1,280 @@
+From 49937a6f7974608066571b9165b0d022098dff01 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:55:50 -0400
+Subject: [PATCH] 
+ 3-vulkan/0013-vulkan-TQ-rotated-matmul-shader-groundwork-A-side-lo.patch
+
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 54 ++++++++---
+ .../vulkan-shaders/mul_mm_funcs.glsl          | 72 +++++++++++++++
+ .../vulkan-shaders/tq_rotate_act.comp         | 90 +++++++++++++++++++
+ 3 files changed, 204 insertions(+), 12 deletions(-)
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/tq_rotate_act.comp
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index ddc5277d0..47fd4fc10 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -5415,6 +5415,17 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_MXFP4],   "mul_mat_vec_id_mxfp4_f32",   OCP_DMMV_LEN(arr_dmmv_id_mxfp4_f32_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_id_mxfp4_f32_f32, reduc16), "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_NVFP4],   "mul_mat_vec_id_nvfp4_f32",   OCP_DMMV_LEN(arr_dmmv_id_nvfp4_f32_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_id_nvfp4_f32_f32, reduc16), "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+ 
++        // TurboQuant weight types. Same 32-thread pin and SHMEM reduction as the
++        // non-id pipelines above (tq_wg_size / tq_use_subgroups are declared at
++        // the top of this loop): the id shaders are the same source compiled
++        // with MUL_MAT_ID, so the workgroup constraint is identical. No
++        // arr_dmmv_id_tq*_f32_f32[] array exists -- these are generated
++        // explicitly rather than from type_names -- so the raw _len/_data
++        // symbols are referenced directly, as the non-id pipelines do. The id
++        // pipelines have no num_cols dimension, hence {tq_wg_size, 1}.
++        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_TQ3_1S],  "mul_mat_vec_id_tq3_1s_f32",  mul_mat_vec_id_tq3_1s_f32_f32_len, mul_mat_vec_id_tq3_1s_f32_f32_data, "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {1, 1, 1}, {tq_wg_size, 1}, 1, true, tq_use_subgroups, tq_force_subgroup_size);
++        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_TQ4_1S],  "mul_mat_vec_id_tq4_1s_f32",  mul_mat_vec_id_tq4_1s_f32_f32_len, mul_mat_vec_id_tq4_1s_f32_f32_data, "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {1, 1, 1}, {tq_wg_size, 1}, 1, true, tq_use_subgroups, tq_force_subgroup_size);
++
+ #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+         if (device->integer_dot_product) {
+             const uint32_t subgroup_size_int = (device->vendor_id == VK_VENDOR_ID_INTEL && device->subgroup_size_control) ? device->subgroup_min_size : device->subgroup_size;
+@@ -8078,7 +8089,14 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
+         case GGML_TYPE_IQ4_NL:
+         case GGML_TYPE_MXFP4:
+         case GGML_TYPE_NVFP4:
++<<<<<<< ours
+         case GGML_TYPE_TQ2_0:
++=======
++        // TQ3_1S/TQ4_1S are deliberately absent from the q8_1 switch above:
++        // their id pipelines are f32-B only.
++        case GGML_TYPE_TQ3_1S:
++        case GGML_TYPE_TQ4_1S:
++>>>>>>> theirs
+             break;
+         default:
+             return nullptr;
+@@ -8101,6 +8119,13 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
+         }
+     }
+ 
++    // Mirrors the pin in ggml_vk_get_dequantize_mul_mat_vec(): the TurboQuant
++    // mat-vec shaders are only correct at a 32-thread workgroup, so the size
++    // class must not be allowed to select a different pipeline.
++    if (a_type == GGML_TYPE_TQ3_1S || a_type == GGML_TYPE_TQ4_1S) {
++        dmmv_wg = DMMV_WG_SIZE_SUBGROUP;
++    }
++
+     if (b_type == GGML_TYPE_Q8_1) {
+         if (ctx->device->vendor_id == VK_VENDOR_ID_INTEL) {
+             dmmv_wg = DMMV_WG_SIZE_SUBGROUP;
+@@ -18158,19 +18183,24 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+             {
+                 ggml_type src0_type = op->src[0]->type;
+                 if (op->op == GGML_OP_MUL_MAT_ID) {
+-                    // TurboQuant weight types have no mul_mat_vec_id pipeline. The
+-                    // mul_mat_id_s/m/l check below does not reject them: it is a shared-memory
+-                    // heuristic, and ggml_vk_matmul_shmem_support() has no lut_size case for
+-                    // TQ3_1S/TQ4_1S, so it computes a trivially-fitting size and leaves those
+-                    // flags true on mainstream vendors. Claiming support is only survivable
+-                    // while n > 8, where ggml_vk_use_mul_mat_vec_id() routes to mul_mm_id and
+-                    // the generic dequant-to-f16 path picks it up. On the decode path
+-                    // (src2->ne[1] <= 8) it reaches ggml_vk_get_dequantize_mul_mat_vec_id(),
+-                    // whose type switch has no TQ cases, and asserts on a null pipeline. That
+-                    // is ordinary MoE decode for a TQ-quantized model, so reject explicitly
+-                    // until mul_mat_vec_id_tq{3,4}_1s exists.
++                    // The TurboQuant weight types now have mul_mat_vec_id pipelines, so MoE
++                    // decode runs on the GPU. Prompt processing does not: there is still no TQ
++                    // mul_mm_id, so ggml_vk_get_mul_mat_mat_id_pipeline() returns nullptr,
++                    // qx_needs_dequant goes true, and the generic path stages the ENTIRE expert
++                    // tensor as f16 (x_ne = ggml_nelements(src0), all experts). Reject when that
++                    // staging buffer would not fit, or ggml_vk_mul_mat_id_q_f16() reaches
++                    // GGML_ABORT("Requested preallocation size is too large").
++                    //
++                    // The gate is deliberately independent of src2->ne[1]. An n-dependent gate is
++                    // worse than no support at all: weight_buft_supported() probes with a fixed
++                    // ids->ne[1] = 512, so a gate that answers differently at load and at decode
++                    // parks the experts in one backend's buffer and then runs the op in the
++                    // other, copying every expert tensor across the bus on every token.
+                     if (src0_type == GGML_TYPE_TQ3_1S || src0_type == GGML_TYPE_TQ4_1S) {
+-                        return false;
++                        const uint64_t x_sz_f16 = sizeof(ggml_fp16_t) * ggml_nelements(op->src[0]);
++                        if (x_sz_f16 > device->properties.limits.maxStorageBufferRange) {
++                            return false;
++                        }
+                     }
+                     if (!device->mul_mat_id_s[src0_type] && !device->mul_mat_id_m[src0_type] && !device->mul_mat_id_l[src0_type]) {
+                         // If there's not enough shared memory for row_ids and the result tile, fallback to CPU
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl
+index a21ef5bc2..a48ee0f58 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl
+@@ -596,6 +596,78 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
+             store_a(col, eff_row + 4, FLOAT_TYPEV2(kvalues_mxfp4[vui  >>  4] * d,
+                                                     kvalues_mxfp4[vui2 >>  4] * d));
+ #endif
++#elif defined(DATA_A_TQ3_1S)
++            // TurboQuant, ROTATED formulation. These loads deliberately produce
++            // centroid*scale and do NOT apply the inverse WHT, so this shader is
++            // only correct when the B operand has already been rotated (see
++            // tq_rotate_act.comp and ggml_vk_tq_rotate_src1). The identity is
++            // <S.H.y.k, x> == k.<y, H.S.x> with H the symmetric 32x32 Hadamard,
++            // S = diag(signs) and k = 1/sqrt(32): rotate the activation once
++            // instead of un-rotating every weight block.
++            //
++            // LOAD_VEC_A is 8 for this type, which lines up exactly: one
++            // invocation covers one 3-byte packing group = 8 contiguous
++            // elements, so the 8 values are contiguous in k and buf_idx uses the
++            // LOAD_VEC_A/2 form (as F32 does) rather than Q4_0's split form.
++            {
++            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
++            const uint buf_idx = col * SHMEM_STRIDE + row * LOAD_VEC_A / 2;
++
++            const uint ib  = idx / 4u;   // 4 groups of 8 per 32-element block
++            const uint iqs = idx & 3u;   // which 3-byte group
++
++            // ASYMMETRIC -- must match TQ3_0_CENTROIDS in ggml-turbo-quant.c
++            // byte for byte, and dequant_funcs.glsl / dequant_tq3_1s.comp.
++            const float centroids[8] = float[8](
++                -1.996684, -1.291398, -0.740341, -0.247508,
++                 0.230106,  0.725222,  1.277503,  1.988943
++            );
++
++            // elements iqs*8 .. iqs*8+7, so d0 covers groups 0-1, d1 groups 2-3
++            const float d = (iqs < 2u) ? float(data_a[ib].d0) : float(data_a[ib].d1);
++
++            const uint g = iqs * 3u;
++            const uint pk = uint(data_a[ib].qs[g])
++                          | (uint(data_a[ib].qs[g + 1u]) << 8)
++                          | (uint(data_a[ib].qs[g + 2u]) << 16);
++
++            [[unroll]] for (uint i = 0; i < 4u; i++) {
++                const uint i0 = i * 2u;
++                const uint i1 = i0 + 1u;
++                buf_a[buf_idx + i] = FLOAT_TYPEV2(
++                    centroids[(pk >> (i0 * 3u)) & 7u] * d,
++                    centroids[(pk >> (i1 * 3u)) & 7u] * d);
++            }
++            }
++#elif defined(DATA_A_TQ4_1S)
++            // Same rotated formulation as TQ3_1S above; see that comment.
++            // 16 levels, 2 nibbles per byte, so one invocation covers 8
++            // contiguous elements = 4 bytes of qs.
++            {
++            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
++            const uint buf_idx = col * SHMEM_STRIDE + row * LOAD_VEC_A / 2;
++
++            const uint ib  = idx / 4u;
++            const uint iqs = idx & 3u;
++
++            // SYMMETRIC 16-level Lloyd-Max; must match TQ4_0_CENTROIDS.
++            const float centroids[16] = float[16](
++                -2.732590, -2.069017, -1.618046, -1.256231,
++                -0.942340, -0.656759, -0.388048, -0.128395,
++                 0.128395,  0.388048,  0.656759,  0.942340,
++                 1.256231,  1.618046,  2.069017,  2.732590
++            );
++
++            const float d = (iqs < 2u) ? float(data_a[ib].d0) : float(data_a[ib].d1);
++
++            const uint b0 = iqs * 4u;
++            [[unroll]] for (uint i = 0; i < 4u; i++) {
++                const uint byt = uint(data_a[ib].qs[b0 + i]);
++                buf_a[buf_idx + i] = FLOAT_TYPEV2(
++                    centroids[byt & 0xFu] * d,
++                    centroids[(byt >> 4u) & 0xFu] * d);
++            }
++            }
+ #endif
+ }
+ 
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/tq_rotate_act.comp b/ggml/src/ggml-vulkan/vulkan-shaders/tq_rotate_act.comp
+new file mode 100644
+index 000000000..ee73550dc
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/tq_rotate_act.comp
+@@ -0,0 +1,90 @@
++#version 450
++
++#extension GL_EXT_control_flow_attributes : require
++
++// Pre-rotate an activation for the TurboQuant rotated matmul path.
++//
++// A stored TQ3_1S/TQ4_1S block holds c[j] = centroid[idx_j] * d_j, i.e. the
++// block *after* the rotation quantization applied. Recovering true weights costs
++// an inverse RHT per weight block. Instead use
++//
++//     <S.H.y.k, x> == k.<y, H.S.x>
++//
++// with H the symmetric 32x32 natural-ordered (Sylvester) Hadamard realised by
++// the in-place butterfly, S = diag(TQ_SIGNS) and k = 1/sqrt(32): rotate the
++// *activation* once per tile and dot it against raw centroid*scale weights.
++// mul_mm_funcs.glsl loads the A side as centroid*d with no inverse WHT and no
++// k, so k belongs here, on the activation. (mul_mat_vec_tq3_1s.comp folds k
++// into the weight instead; either is fine, but exactly one must apply it.)
++//
++// Deliberately NOT in place. The Metal implementation rotates src1 in place,
++// runs the matmul, then un-rotates, which needs a hazard flag
++// (ggml_metal_op_mutates_tq_src1) and a barrier on both sides -- and its rotate
++// indexes src1 flat while the matmul reads it with nb11/nb12/nb13 strides, so a
++// padded or strided src1 rotates different elements than the matmul consumes.
++// Writing to a separate destination costs one small scratch buffer
++// (n_tokens * k * 4 bytes) and removes that entire class of bug.
++
++layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
++
++layout (binding = 0) readonly  buffer S {float data_s[];};
++layout (binding = 1) writeonly buffer D {float data_d[];};
++
++layout (push_constant) uniform parameter {
++    uint k;            // elements per row, guaranteed a multiple of 32
++    uint nrows;        // total rows: ne11 * ne12 * ne13
++    uint src_stride;   // row stride in elements
++    uint dst_stride;   // row stride in elements
++} p;
++
++// TQ3_0_SIGNS in ggml-turbo-quant.c / TQ_WEIGHT_SIGNS in turbo-quant.cuh.
++// Shared by TQ3 and TQ4, which is why one rotate shader serves both types.
++const float TQ_SIGNS[32] = float[32](
++    +1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
++    -1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
++    -1.0, -1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0,
++    -1.0, +1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0
++);
++
++const float TQ_INV_SQRT32 = 0.17677669529663688;
++
++// 32 threads, one 32-element group per workgroup. Fixed at 32 for the same
++// reason as the TQ mat-vec kernels: the butterfly pairs lanes (tid, tid + step)
++// through a 32-entry shared array, so it is only correct when the workgroup is
++// exactly the block size. RADV on gfx1151 reports warp size 64, so this must
++// not be widened and must not use subgroup ops.
++shared float tq_smem[32];
++
++void main() {
++    const uint groups_per_row = p.k / 32u;
++    const uint gid            = gl_WorkGroupID.x;
++    const uint row            = gid / groups_per_row;
++
++    if (row >= p.nrows) {
++        return;
++    }
++
++    const uint g   = gid % groups_per_row;
++    const uint tid = gl_LocalInvocationID.x;
++    const uint off = g * 32u + tid;
++
++    // Stage 1: sign flip
++    tq_smem[tid] = data_s[row * p.src_stride + off] * TQ_SIGNS[tid];
++    barrier();
++
++    // Stage 2: forward WHT butterfly, 5 stages. Pairs (tid, tid + step) with
++    // (tid & step) == 0, matching tq3_0_rht_forward() in ggml-turbo-quant.c and
++    // stage 2 of mul_mat_vec_tq3_1s.comp.
++    [[unroll]] for (uint step = 1u; step < 32u; step <<= 1u) {
++        if ((tid & step) == 0u) {
++            const uint partner = tid + step;
++            const float a = tq_smem[tid];
++            const float b = tq_smem[partner];
++            tq_smem[tid]     = a + b;
++            tq_smem[partner] = a - b;
++        }
++        barrier();
++    }
++
++    data_d[row * p.dst_stride + off] = tq_smem[tid] * TQ_INV_SQRT32;
++}
