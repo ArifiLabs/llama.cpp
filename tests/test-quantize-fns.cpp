@@ -111,6 +111,91 @@ static float dot_product_error(const ggml_type_traits * qfns, const ggml_type_tr
     return fabsf(result - dot_ref) / test_size;
 }
 
+#ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
+// tq3 family (ids 48..51): the numeric coverage the generic harness above cannot give them.
+//
+// Two reasons it cannot. (1) TQ3_4S and TQ3_4SE carry their group scales as E3M5 mini-floats
+// capped at 0.4921875, and the generic harness feeds every type a fixed 0.1 + 2*cos(i) whose
+// post-rotation per-group RMS is ~1.4 - roughly 3x above what the format can encode, so the
+// clamp, not the codec, would be under test. Real weights sit far below it: 192,000 scale
+// bytes decoded from real TQ3_4S tensors use exponent fields 0..4 with ZERO saturation.
+// (2) test-backend-ops cannot cover them either - it compares a backend against CPU, and CPU
+// is its own reference, so for a CPU-only type nothing executes.
+//
+// So: generate data at a realistic WEIGHT magnitude and check two things per type.
+//   round-trip - quantize then dequantize, RMS error against the input.
+//   dot consistency - vec_dot(w, q8_0(a)) against dequantize(w) . dequantize(q8_0(a)).
+// The second is the important one. The fused dot in ggml-cpu.c does NOT dequantize: it moves
+// the Hadamard transform onto the activation and applies each type's scale/offset per group.
+// If any group->scale or group->offset mapping disagreed with that type's dequantizer, this
+// check would catch it and nothing else in the tree would. It is immune to the scale clamp,
+// because both sides read the same stored weights.
+static int test_tq3_family(bool verbose) {
+    const ggml_type types[] = {
+        GGML_TYPE_TQ3_4S, GGML_TYPE_TQ3_0, GGML_TYPE_TQ3_4SE, GGML_TYPE_TQ3_1S_SHIFT,
+    };
+    const size_t n = 4096;
+    int num_failed = 0;
+
+    // Realistic LLM weight magnitude, not the harness's +/-2.
+    std::vector<float> w(n), a(n);
+    for (size_t i = 0; i < n; i++) {
+        w[i] = 0.02f * cosf((float) i);
+        a[i] = 0.50f * cosf((float) i + 1.0f);
+    }
+
+    for (ggml_type type : types) {
+        const auto * qfns     = ggml_get_type_traits(type);
+        const auto * qfns_cpu = ggml_get_type_traits_cpu(type);
+        if (qfns->blck_size == 0 || !qfns_cpu->from_float || !qfns->to_float) {
+            printf("  %-13s tq3 block: skipped (not compiled in)\n", ggml_type_name(type));
+            continue;
+        }
+
+        std::vector<uint8_t> qw(n * ggml_type_size(type) / ggml_blck_size(type));
+        std::vector<float>   dw(n);
+        qfns_cpu->from_float(w.data(), qw.data(), n);
+        qfns->to_float(qw.data(), dw.data(), n);
+
+        double se = 0.0;
+        for (size_t i = 0; i < n; i++) { const double d = w[i] - dw[i]; se += d * d; }
+        const float rt_err = (float) sqrt(se / n);
+        // 3-bit payload on data with RMS ~0.0141: a correct codec lands near 0.001.
+        bool failed = !(rt_err < 0.004f);
+        num_failed += failed;
+        if (failed || verbose) {
+            printf("  %-13s tq3 round-trip RMSE:          %s (%f)\n",
+                   ggml_type_name(type), RESULT_STR[failed], rt_err);
+        }
+
+        // Dot consistency: fused vec_dot vs dequantize-then-dot, same stored weights.
+        const auto * vdot = ggml_get_type_traits_cpu(qfns_cpu->vec_dot_type);
+        const auto * vtr  = ggml_get_type_traits(qfns_cpu->vec_dot_type);
+        std::vector<uint8_t> qa(n * ggml_type_size(qfns_cpu->vec_dot_type) /
+                                    ggml_blck_size(qfns_cpu->vec_dot_type));
+        std::vector<float>   da(n);
+        vdot->from_float(a.data(), qa.data(), n);
+        vtr->to_float(qa.data(), da.data(), n);
+
+        float fused = INFINITY;
+        qfns_cpu->vec_dot(n, &fused, 0, qw.data(), 0, qa.data(), 0, 1);
+
+        double ref = 0.0;
+        for (size_t i = 0; i < n; i++) { ref += (double) dw[i] * (double) da[i]; }
+
+        // Same computation, reassociated - this is a consistency bound, not an accuracy one.
+        const float dot_err = fabsf(fused - (float) ref) / n;
+        failed = !(dot_err < 1e-6f);
+        num_failed += failed;
+        if (failed || verbose) {
+            printf("  %-13s tq3 vec_dot vs dequant-dot:   %s (fused=%f ref=%f err=%g)\n",
+                   ggml_type_name(type), RESULT_STR[failed], fused, (float) ref, dot_err);
+        }
+    }
+    return num_failed;
+}
+#endif // GGML_ARIFI_TURBO_WEIGHT_QUANTS
+
 static int test_vec_dot_f32(bool verbose) {
     const auto * f32 = ggml_get_type_traits_cpu(GGML_TYPE_F32);
     int num_failed = 0;
@@ -268,6 +353,9 @@ int main(int argc, char * argv[]) {
 
     num_failed += test_vec_dot_f32(verbose);
     num_failed += test_vec_dot_q(verbose);
+#ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
+    num_failed += test_tq3_family(verbose);
+#endif
 
     if (num_failed || verbose) {
         printf("%d tests failed\n", num_failed);

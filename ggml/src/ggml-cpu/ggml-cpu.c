@@ -402,11 +402,9 @@ const float * arifi_tq3_centroids(void);
 const float * arifi_tq4_centroids(void);
 void quantize_row_tq3_1s_ref(const float * GGML_RESTRICT x, block_tq3_1s * GGML_RESTRICT y, int64_t k);
 void quantize_row_tq4_1s_ref(const float * GGML_RESTRICT x, block_tq4_1s * GGML_RESTRICT y, int64_t k);
-float arifi_tq3_4s_decode_scale(uint8_t byte);
-void quantize_row_tq3_4s_ref(const float * GGML_RESTRICT x, block_tq3_4s * GGML_RESTRICT y, int64_t k);
-void quantize_row_tq3_0_ref(const float * GGML_RESTRICT x, block_tq3_0 * GGML_RESTRICT y, int64_t k);
-void quantize_row_tq3_4se_ref(const float * GGML_RESTRICT x, block_tq3_4se * GGML_RESTRICT y, int64_t k);
-void quantize_row_tq3_1s_shift_ref(const float * GGML_RESTRICT x, block_tq3_1s_shift * GGML_RESTRICT y, int64_t k);
+// The tq3-family entry points are declared GGML_API in ggml-quants.h, which is included
+// above. Do NOT re-declare them here: a plain redeclaration of a GGML_API symbol gives it
+// inconsistent dllimport linkage on MSVC.
 
 // TurboQuant weight formats: fused dot product against a q8_0 activation row.
 //
