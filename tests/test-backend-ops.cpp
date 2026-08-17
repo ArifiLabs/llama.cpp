@@ -9605,6 +9605,15 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     // quant block count not a multiple of the kernel block size
     test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_Q4_0, {96, 1, 1, 1}));
     test_cases.emplace_back(new test_cpy(GGML_TYPE_Q4_0, GGML_TYPE_F32, {96, 1, 1, 1}));
+
+    // Types the Vulkan supports_op names for CPY that all_types does not carry. Without a case
+    // here, a backend that claims one of them with no pipeline behind it stays invisible until a
+    // real graph aborts: that is how the ROCmFP SET_ROWS/CPY abort hid. TURBO3_0 is the live one
+    // (its copy-to-quant shader is deliberately not generated, only copy-from-quant).
+    for (ggml_type type : {GGML_TYPE_Q2_0_G128, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO4_0}) {
+        test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, type, {256, 4, 4, 4}));
+        test_cases.emplace_back(new test_cpy(type, GGML_TYPE_F32, {256, 4, 4, 4}));
+    }
     test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_I32, {256, 2, 3, 4}));
     test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_I32, {256, 2, 3, 4}, {-1,-1,-1,-1}, {1, 0, 2, 3}));
     test_cases.emplace_back(new test_cpy(GGML_TYPE_I32, GGML_TYPE_F32, {256, 2, 3, 4}));
