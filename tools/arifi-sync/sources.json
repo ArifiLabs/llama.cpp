@@ -9,25 +9,24 @@
     "",
     "`pin` is the commit of that source we have actually reviewed. `currency` compares live head",
     "against `pin`; it CANNOT be satisfied by doing nothing, because acknowledging drift requires",
-    "writing the newly-reviewed sha here."
+    "writing the newly-reviewed sha here.",
+    "2026-08-16: ALL SEVEN forks are registered here now. ciru and tq3 were remotes of this repo that this file had never listed, so their work was invisible to `currency` - 198 and 394 fork-authored commits nobody had reviewed. A source that is not in this file is a source that silently drifts; add every remote you fetch."
   ],
-
   "base": {
     "upstream_tag": "b10173",
     "upstream_sha": "e9fa0781f1c25fc4fe8c86be1edc6970661ad6f0"
   },
-
   "series_dir": "patches/series",
   "state_file": "tools/arifi-sync/state.json",
   "max_fetch_age_days": 14,
-
   "remotes": {
     "upstream": {
       "url": "https://github.com/ggml-org/llama.cpp",
       "ref": "upstream/master",
-      "pin": "e9fa0781f",
+      "pin": "4df29be4f",
       "role": "base engine and release tags",
-      "track_tags": true
+      "track_tags": true,
+      "pin_review": "HQ seat-33 2026-08-16: our 107 integration commits were rebased onto this exact commit and the result builds green, so the 281 commits from e9fa0781f are reviewed in the only way that counts - every conflict they caused was resolved by hand. Three conflicts total: the fork README, the Vulkan mul_mm store_a refactor, and repack.cpp's make_block_q1_0x4 insertion."
     },
     "prisml": {
       "url": "https://github.com/PrismML-Eng/llama.cpp",
@@ -39,8 +38,8 @@
     "rocmfpx": {
       "url": "https://github.com/charlie12345/ROCmFPX",
       "ref": "rocmfpx/HEAD",
-      "pin": "db6844d9b",
-      "pin_review": "lane-110D reviewed 3edc3d31e..db6844d9b (6 commits, 2026-07-28): CUDA NORM contiguity guard, HIP arch-selection script fix, HIP pinned-memory staging for large uploads. None touch the carried blobs (M-RoPE guard, ROCmFP formats). d0fae4ded pinned-staging is RELEVANT to the future HIP-deltas slot — note carried there.",
+      "pin": "b2f5829db",
+      "pin_review": "HQ seat-33 2026-08-16: reviewed db6844d9b..b2f5829db, 41 commits (22 non-merge). Ported from this head: the 6 Vulkan dequant shaders, the types.glsl blocks, the dequantize entries and the coopmat2 decode functions - our fork had NO ROCmFPX GPU path before. Still owed from this range, ranked: 00d54526e (ggml-alloc zero-size view guard; asserts during prompt-cache save on Vulkan, which we run), 4321c85cc + 4eca07e5a (spec-checkpoint restore never rewinds the MTP boundary, and has no livelock guard), de37bcb21 (--spec-mtp-strict-qwen), 4b53e333a (LFM2.5 tokenizer hashes), f231b50ac (BailingMoeV3).",
       "role": "M-RoPE guard, ROCmFP weight formats (diff-audit source)",
       "track_tags": false
     },
@@ -50,9 +49,24 @@
       "pin": "8bd56d699",
       "role": "sparse CPU / expert-streaming lineage",
       "track_tags": false
+    },
+    "ciru": {
+      "url": "https://github.com/ciru-ai/ROCmFPX",
+      "ref": "ciru/main",
+      "pin": "64d528be7",
+      "pin_review": "NEVER REVIEWED. Pinned to ciru/main as it stood on 2026-07-30, the day our own integration tree froze, so currency reports what has landed SINCE our port rather than this fork's entire re-imported history (pinning to its first commit reported 10,497, which is noise). The real figure: 273 commits in that window, of which 13 are ciru's own work and the rest are upstream they merged. Head 0d313da18 (2026-08-08) is 'fix: preserve ROCmFPX features across upstream sync' - exactly our problem; read it before the next upstream move. Also carries ActiveFPX PromptForge routes for Qwen3.8-27B. Shares NO ancestor with upstream llama.cpp: a re-import, not an ordinary fork.",
+      "role": "ROCmFPX derivative: Vulkan FP kernels, ActiveFPX routes, upstream-sync technique",
+      "track_tags": false
+    },
+    "tq3": {
+      "url": "https://github.com/turbo-tan/llama.cpp-tq3",
+      "ref": "tq3/main",
+      "pin": "f75b55413",
+      "pin_review": "NEVER REVIEWED. Pinned to this fork's first own commit (2026-08-10) so the backlog reads as owed. main carries only 7 own commits and sits 89 behind b10447; the other ~387 live on feature branches, so a main-only diff UNDERSTATES this fork badly. Brings a whole quant family we do not have: TQ3_4S, TQ3_0, TQ3_1S-shift, TQ3_4SE, TQ3_4SV. TYPE-ID HAZARD - it numbers TQ3_1S at 44 and TQ3_4S at 46, and our 46 is TQ4_1S. Its TQ3_4S is 16 B/32 against our TQ4_1S at 20 B/32, so a mix-up fails loudly today; that is luck, not design. YTan2000/Qwen3.8-27B-TQ3_4S-v2.gguf is on disk and cannot load until this is ported.",
+      "role": "tq3 quant family (TQ3_4S/TQ3_0/shift variants), MTP RS-rollback server work",
+      "track_tags": false
     }
   },
-
   "local_checkouts": {
     "_comment": "TurboQuant is not a remote of this fork. These are sibling clones on disk. Relative to this repo's parent directory unless `path` is absolute.",
     "llama-cpp-turboquant": {
@@ -70,7 +84,6 @@
       "role": "TurboQuant recompress pipeline"
     }
   },
-
   "build": {
     "_comment": [
       "The recipe is recovered by DIFFING a CMakeCache against the committed snapshot, never by",
@@ -80,9 +93,10 @@
     "cache_snapshot": "tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt",
     "live_cache": "build-vulkan/CMakeCache.txt",
     "build_dir": "build-vulkan",
-    "targets": ["llama-server"]
+    "targets": [
+      "llama-server"
+    ]
   },
-
   "judge": {
     "_comment": [
       "F-085, President-ruled and BINDING: the regression judge is llama-server.",
@@ -92,7 +106,11 @@
     ],
     "binary": "llama-server",
     "model": "C:/ArifiLabs/models/gguf/ternary/Ternary-Bonsai-27B-Abliterated-LowDeg-Q2_0.g128.gguf",
-    "args": ["-ngl", "99", "--no-host"],
+    "args": [
+      "-ngl",
+      "99",
+      "--no-host"
+    ],
     "note_no_host": "--no-host is REQUIRED whenever a CPU_REPACK path is under test. Without it make_cpu_buft_list() puts the device host buffer type ahead of the CPU extra buffer types and the repack path never engages, so both A/B arms silently test the same code."
   }
 }
