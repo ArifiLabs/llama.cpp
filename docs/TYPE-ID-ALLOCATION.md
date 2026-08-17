@@ -130,9 +130,58 @@ are **not ours to choose**: we adopt whatever the format's originator serialized
 | 104 | `GGML_TYPE_Q3_0_ROCMFPX` | ROCmFPX | `qs[12] + e[2]` | 14 | 32 | reserved, same slot |
 | 107 | `GGML_TYPE_Q2_0_ROCMFPX` | ROCmFPX | `qs[8] + e[2]` | 10 | 32 | reserved, same slot |
 
+| 48 | `GGML_TYPE_TQ3_4S` | tq3 (**retagged**) | `d(4) + qs[12]` | 16 | 32 | **RESERVED, not implemented** — see §3.1.1 |
+| 49 | `GGML_TYPE_TQ3_0` | tq3 (**retagged**) | `d + qs[12]` | 14 | 32 | **RESERVED, not implemented** — see §3.1.1 |
+| 50 | `GGML_TYPE_TQ3_4SE` | tq3 (**retagged**) | `d(6) + qs[12]` | 18 | 32 | **RESERVED, not implemented** — see §3.1.1 |
+| 51 | `GGML_TYPE_TQ3_1S_SHIFT` | tq3 (**retagged**) | `3 x half + qs[12]` | 18 | 32 | **RESERVED, not implemented** — see §3.1.1 |
+
 `44` is left as a hole. It is the value TurboQuant uses for a runtime-only type and the value our
 current `GGML_TYPE_COUNT` occupies; leaving it unassigned costs nothing and removes a whole class of
 off-by-one confusion when reading either fork's diffs.
+
+`47` is also left free: TurboQuant uses it for runtime-only `TURBO4_0`, and by the same argument as
+`44` it costs nothing to skip. The tq3 family therefore starts at **48**.
+
+#### 3.1.1 tq3: the one imported family we DO renumber, and why
+
+This section is the exception to the rule three paragraphs above ("their ids are **not ours to
+choose**"). It is an exception because obeying the rule is arithmetically impossible here.
+
+`github.com/turbo-tan/llama.cpp-tq3` numbers **`TQ3_4S` at 46**. Our 46 is `TQ4_1S`. Both are
+serialized weight types, so for the first time two formats we want claim the SAME id, and adopting
+the originator's id is not available: one of them has to move, and it cannot be ours — 46 is already
+in files we wrote. tq3's ids are therefore remapped into free space at 48+, and any tq3-authored
+GGUF must be **retagged** before it can load here.
+
+The size mismatch is what makes this survivable rather than silent:
+
+| | our 46 | tq3's 46 |
+|---|---|---|
+| type | `GGML_TYPE_TQ4_1S` | `TQ3_4S` |
+| block | `d0 + d1 + qs[16]` | `d(4 B) + qs[12]` |
+| bytes / 32 values | **20** | **16** |
+
+A file tagged 46 by tq3 and read as our `TQ4_1S` computes a row size 25% too large and fails at load.
+That is **luck, not design** — it is exactly the class of hazard §2 is about, and it would be a
+silent corruption instead of a loud failure if the two blocks happened to match in size.
+
+Measured 2026-08-17 (lane-139), scanning all 67 GGUF headers under `C:/ArifiLabs/models`:
+`models/hf/YTan2000/Qwen3.8-27B-TQ3_4S/Qwen3.8-27B-TQ3_4S-v2.gguf` carries **504 tensors at id 46**,
+meaning tq3's `TQ3_4S`. It is the only such file on disk. No other file carries a tq3 id. Evidence:
+`research/local-inference/lane-evidence/2026-08-17-lane-139-proofs/I-typeid-scan-BEFORE-enum-change.txt`
+(the scan self-check plants a type-46 tensor and confirms it surfaces, so a scan that could not fire
+is not what produced this number).
+
+**RESERVED means reserved, and nothing more.** The ids above are written down so that the next lane
+cannot pick them for something else and so the collision is discoverable without re-deriving it.
+The codec is NOT ported: `TQ3_4S` is a rotated-domain format (`TQ3_0_CENTROIDS`, `TQ3_0_SIGNS`,
+`tq3_0_rht_forward/inverse`, `tq3_4s_encode/decode_scale`) at roughly 496 lines in
+`tq3:ggml/src/ggml-quants.c`, and a rotated-domain codec is only "ported" when its dequant output is
+numerically correct — which nothing short of a coherent-text run on the YTan file demonstrates.
+
+Whoever ports it: land the codec and the coherence proof FIRST, and only then the retag tool. A
+retag tool shipped ahead of a working dequant converts a file that fails loudly at load into a file
+that loads and emits garbage, which is strictly worse than the situation this section describes.
 
 ### 3.2 Block R — ArifiLabs runtime-only types, **200-255**
 
