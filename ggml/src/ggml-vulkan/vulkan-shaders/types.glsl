@@ -1784,6 +1784,113 @@ struct block_mxfp4
     uint8_t qs[QUANT_K_MXFP4/2];
 };
 
+
+// ---------------------------------------------------------------------------
+#ifndef ARIFI_ROCMFP_TYPES_INCLUDED
+#define ARIFI_ROCMFP_TYPES_INCLUDED
+// ROCmFP4 / ROCmFPX weight formats. Adopted VERBATIM from charlie12345/ROCmFPX
+// so its GGUFs decode byte-for-byte. ggml type ids 100-104 and 107 per
+// docs/TYPE-ID-ALLOCATION.md.
+// ---------------------------------------------------------------------------
+#define QUANT_K_ROCMFP4 32
+#define QUANT_R_ROCMFP4 2
+
+struct block_rocmfp4
+{
+    uint8_t qs[QUANT_K_ROCMFP4/2];
+    uint8_t e[2];
+};
+
+struct block_rocmfp4_fast
+{
+    uint8_t qs[QUANT_K_ROCMFP4/2];
+    uint8_t e;
+};
+
+#if defined(DATA_A_ROCMFP4)
+#define QUANT_K QUANT_K_ROCMFP4
+#define QUANT_R QUANT_R_ROCMFP4
+#define QUANT_AUXF 1
+#define A_TYPE block_rocmfp4
+#endif
+
+#if defined(DATA_A_ROCMFP4_FAST)
+#define QUANT_K QUANT_K_ROCMFP4
+#define QUANT_R QUANT_R_ROCMFP4
+#define QUANT_AUXF 1
+#define A_TYPE block_rocmfp4_fast
+#endif
+
+#define QUANT_K_ROCMFPX_FP2 32
+#define QUANT_R_ROCMFPX_FP2 1
+#define QUANT_K_ROCMFPX_FP8 32
+#define QUANT_R_ROCMFPX_FP8 1
+
+struct block_rocmfpx_fp2
+{
+    uint8_t qs[8];
+    uint8_t e[2];
+};
+
+struct block_rocmfpx_fp3
+{
+    uint8_t qs[12];
+    uint8_t e[2];
+};
+
+struct block_rocmfpx_fp6
+{
+    int8_t qs[32];
+    uint8_t e[2];
+};
+
+struct block_rocmfpx_fp6_packed16
+{
+    int16_t qs[16];
+    uint16_t e;
+};
+
+struct block_rocmfpx_fp8
+{
+    int8_t qs[QUANT_K_ROCMFPX_FP8];
+    uint8_t e;
+};
+
+#if defined(DATA_A_ROCMFPX_FP2)
+#define QUANT_K QUANT_K_ROCMFPX_FP2
+#define QUANT_R QUANT_R_ROCMFPX_FP2
+#define QUANT_AUXF 1
+#define A_TYPE block_rocmfpx_fp2
+#endif
+
+#if defined(DATA_A_ROCMFPX_FP3)
+#define QUANT_K QUANT_K_ROCMFPX_FP8
+#define QUANT_R QUANT_R_ROCMFPX_FP8
+#define QUANT_AUXF 1
+#define A_TYPE block_rocmfpx_fp3
+#endif
+
+#if defined(DATA_A_ROCMFPX_FP6)
+#define QUANT_K QUANT_K_ROCMFPX_FP8
+#define QUANT_R QUANT_R_ROCMFPX_FP8
+#define QUANT_AUXF 1
+#define A_TYPE block_rocmfpx_fp6
+#define A_TYPE_PACKED16 block_rocmfpx_fp6_packed16
+#endif
+
+#if defined(DATA_A_ROCMFPX_FP8)
+#define QUANT_K QUANT_K_ROCMFPX_FP8
+#define QUANT_R QUANT_R_ROCMFPX_FP8
+#define QUANT_AUXF 1
+#define A_TYPE block_rocmfpx_fp8
+#endif
+
+#if defined(DATA_A_ROCMFPX_FP2) || defined(DATA_A_ROCMFPX_FP3) || defined(DATA_A_ROCMFPX_FP6) || defined(DATA_A_ROCMFPX_FP8)
+#define DATA_A_ROCMFPX_FAMILY
+#endif
+
+#endif // ARIFI_ROCMFP_TYPES_INCLUDED
+
 #if defined(DATA_A_MXFP4)
 #define QUANT_K QUANT_K_MXFP4
 #define QUANT_R QUANT_R_MXFP4
@@ -2035,3 +2142,113 @@ float ue4m3_to_fp32(uint8_t x) {
 #endif
 
 #endif // !defined(GGML_TYPES_COMP)
+
+#ifndef ARIFI_ROCMFP_TABLES_INCLUDED
+#define ARIFI_ROCMFP_TABLES_INCLUDED
+#if defined(DATA_A_ROCMFP4) || defined(DATA_A_ROCMFP4_FAST)
+const int8_t kvalues_rocmfp4_const[16] = {
+    int8_t(0), int8_t(1), int8_t(2), int8_t(3), int8_t(4), int8_t(6), int8_t(8), int8_t(10),
+    int8_t(0), int8_t(-1), int8_t(-2), int8_t(-3), int8_t(-4), int8_t(-6), int8_t(-8), int8_t(-10),
+};
+
+shared int8_t kvalues_rocmfp4[16];
+shared float rocmfp4_ue4m3_fp32_lut[128];
+
+// ROCmFPX's UE4M3 is NOT NVFP4's: bias 119 and subnormal step 1/1024, against NVFP4's 120 and
+// 1/512. That is a factor of two on every scale, which is why this table is separate.
+float rocmfp4_ue4m3_to_fp32_build(uint u) {
+    if (u == 0u || u == 127u) {
+        return 0.0;
+    }
+    const uint exp = (u >> 3) & 15u;
+    const uint man = u & 7u;
+    if (exp == 0u) {
+        return float(man) * (1.0 / 1024.0);
+    }
+    const uint bits = (exp + 119u) << 23 | (man << 20);
+    return uintBitsToFloat(bits);
+}
+#endif
+
+#if defined(DATA_A_ROCMFPX_FAMILY)
+shared float rocmfpx_ue4m3_fp32_lut[128];
+
+float rocmfpx_ue4m3_to_fp32_build(uint u) {
+    if (u == 0u || u == 127u) {
+        return 0.0;
+    }
+    const uint exp = (u >> 3) & 15u;
+    const uint man = u & 7u;
+    if (exp == 0u) {
+        return float(man) * (1.0 / 1024.0);
+    }
+    const uint bits = (exp + 119u) << 23 | (man << 20);
+    return uintBitsToFloat(bits);
+}
+
+const int8_t kvalues_rocmfpx_fp2_const[4] = {
+    int8_t(-4), int8_t(-1), int8_t(1), int8_t(4)
+};
+
+const int8_t kvalues_rocmfpx_fp3_const[8] = {
+    int8_t(0), int8_t(1), int8_t(2), int8_t(4),
+    int8_t(0), int8_t(-1), int8_t(-2), int8_t(-4)
+};
+
+const int8_t kvalues_rocmfpx_fp6_const[64] = {
+    int8_t(0), int8_t(1), int8_t(2), int8_t(3), int8_t(4), int8_t(5), int8_t(6), int8_t(7),
+    int8_t(8), int8_t(9), int8_t(10), int8_t(11), int8_t(12), int8_t(13), int8_t(14), int8_t(15),
+    int8_t(16), int8_t(17), int8_t(18), int8_t(19), int8_t(20), int8_t(21), int8_t(22), int8_t(23),
+    int8_t(24), int8_t(25), int8_t(26), int8_t(27), int8_t(28), int8_t(29), int8_t(30), int8_t(31),
+    int8_t(-32), int8_t(-1), int8_t(-2), int8_t(-3), int8_t(-4), int8_t(-5), int8_t(-6), int8_t(-7),
+    int8_t(-8), int8_t(-9), int8_t(-10), int8_t(-11), int8_t(-12), int8_t(-13), int8_t(-14), int8_t(-15),
+    int8_t(-16), int8_t(-17), int8_t(-18), int8_t(-19), int8_t(-20), int8_t(-21), int8_t(-22), int8_t(-23),
+    int8_t(-24), int8_t(-25), int8_t(-26), int8_t(-27), int8_t(-28), int8_t(-29), int8_t(-30), int8_t(-31)
+};
+
+uint rocmfpx_fp6_code_at(uint q0, uint q1, uint q2, uint q3, uint q4, uint q5, uint bit_pos) {
+    const uint reg_idx = bit_pos >> 5;
+    const uint shift = bit_pos & 31u;
+    const uint low  = reg_idx == 0u ? q0 : reg_idx == 1u ? q1 : reg_idx == 2u ? q2 :
+                      reg_idx == 3u ? q3 : reg_idx == 4u ? q4 : q5;
+    const uint high = reg_idx == 0u ? q1 : reg_idx == 1u ? q2 : reg_idx == 2u ? q3 :
+                      reg_idx == 3u ? q4 : reg_idx == 4u ? q5 : 0u;
+    uint bits = low >> shift;
+    if (shift > 26u) {
+        bits |= high << (32u - shift);
+    }
+    return bits & 0x3Fu;
+}
+#endif
+
+#if defined(DATA_A_ROCMFP4) || defined(DATA_A_ROCMFP4_FAST)
+float ue4m3_to_fp32(uint8_t x) {
+    return rocmfp4_ue4m3_fp32_lut[min(uint(x), 127u)];
+}
+#elif defined(DATA_A_ROCMFPX_FAMILY)
+float ue4m3_to_fp32(uint8_t x) {
+    return rocmfpx_ue4m3_fp32_lut[min(uint(x), 127u)];
+}
+#endif
+
+#if defined(DATA_A_ROCMFP4) || defined(DATA_A_ROCMFP4_FAST) || defined(DATA_A_ROCMFPX_FAMILY)
+#define NEEDS_INIT_IQ_SHMEM
+void init_iq_shmem(uvec3 wgsize)
+{
+#if defined(DATA_A_ROCMFP4) || defined(DATA_A_ROCMFP4_FAST)
+    for (uint i = gl_LocalInvocationIndex.x; i < kvalues_rocmfp4.length(); i += wgsize.x) {
+        kvalues_rocmfp4[i] = kvalues_rocmfp4_const[i];
+    }
+    for (uint i = gl_LocalInvocationIndex.x; i < rocmfp4_ue4m3_fp32_lut.length(); i += wgsize.x) {
+        rocmfp4_ue4m3_fp32_lut[i] = rocmfp4_ue4m3_to_fp32_build(i);
+    }
+#endif
+#if defined(DATA_A_ROCMFPX_FAMILY)
+    for (uint i = gl_LocalInvocationIndex.x; i < rocmfpx_ue4m3_fp32_lut.length(); i += wgsize.x) {
+        rocmfpx_ue4m3_fp32_lut[i] = rocmfpx_ue4m3_to_fp32_build(i);
+    }
+#endif
+    barrier();
+}
+#endif
+#endif // ARIFI_ROCMFP_TABLES_INCLUDED
