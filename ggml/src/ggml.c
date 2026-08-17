@@ -722,6 +722,40 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .to_float                 = (ggml_to_float_t) dequantize_row_tq4_1s,
         .from_float_ref           = (ggml_from_float_t) quantize_row_tq4_1s_ref,
     },
+    // tq3 family, ids RENUMBERED 48..51 (TYPE-ID-ALLOCATION §3.1.1 — their TQ3_4S
+    // is serialized at 46, which is our TQ4_1S). Taken-from: turbo-tan/llama.cpp-tq3@58ad80ffb.
+    [GGML_TYPE_TQ3_4S] = {
+        .type_name                = "tq3_4s",
+        .blck_size                = QK_TQ3_0,
+        .type_size                = sizeof(block_tq3_4s),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tq3_4s,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tq3_4s_ref,
+    },
+    [GGML_TYPE_TQ3_0] = {
+        .type_name                = "tq3_0",
+        .blck_size                = QK_TQ3_0,
+        .type_size                = sizeof(block_tq3_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tq3_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tq3_0_ref,
+    },
+    [GGML_TYPE_TQ3_4SE] = {
+        .type_name                = "tq3_4se",
+        .blck_size                = QK_TQ3_0,
+        .type_size                = sizeof(block_tq3_4se),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tq3_4se,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tq3_4se_ref,
+    },
+    [GGML_TYPE_TQ3_1S_SHIFT] = {
+        .type_name                = "tq3_1s_shift",
+        .blck_size                = QK_TQ3_0,
+        .type_size                = sizeof(block_tq3_1s_shift),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tq3_1s_shift,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tq3_1s_shift_ref,
+    },
 #endif
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
     // ROCmFPX weight formats, ids adopted verbatim (docs/TYPE-ID-ALLOCATION.md §3.1).
@@ -8390,6 +8424,10 @@ size_t ggml_quantize_chunk(
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:  result = quantize_tq3_1s (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
         case GGML_TYPE_TQ4_1S:  result = quantize_tq4_1s (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_TQ3_4S:  result = quantize_tq3_4s (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_TQ3_0:   result = quantize_tq3_0  (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_TQ3_4SE: result = quantize_tq3_4se(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_TQ3_1S_SHIFT: result = quantize_tq3_1s_shift(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
 #endif
         case GGML_TYPE_Q2_0:    result = quantize_q2_0   (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS

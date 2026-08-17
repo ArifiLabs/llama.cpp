@@ -684,6 +684,10 @@ void ggml_compute_forward_add(
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
+        case GGML_TYPE_TQ3_4S:
+        case GGML_TYPE_TQ3_0:
+        case GGML_TYPE_TQ3_4SE:
+        case GGML_TYPE_TQ3_1S_SHIFT:
 #endif
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
         case GGML_TYPE_Q4_0_ROCMFP4:
@@ -1148,6 +1152,10 @@ void ggml_compute_forward_add1(
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
+        case GGML_TYPE_TQ3_4S:
+        case GGML_TYPE_TQ3_0:
+        case GGML_TYPE_TQ3_4SE:
+        case GGML_TYPE_TQ3_1S_SHIFT:
 #endif
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
         case GGML_TYPE_Q4_0_ROCMFP4:
@@ -1292,6 +1300,10 @@ void ggml_compute_forward_acc(
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
+        case GGML_TYPE_TQ3_4S:
+        case GGML_TYPE_TQ3_0:
+        case GGML_TYPE_TQ3_4SE:
+        case GGML_TYPE_TQ3_1S_SHIFT:
 #endif
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
         case GGML_TYPE_Q4_0_ROCMFP4:
@@ -4708,6 +4720,10 @@ void ggml_compute_forward_out_prod(
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
+        case GGML_TYPE_TQ3_4S:
+        case GGML_TYPE_TQ3_0:
+        case GGML_TYPE_TQ3_4SE:
+        case GGML_TYPE_TQ3_1S_SHIFT:
 #endif
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
         case GGML_TYPE_Q4_0_ROCMFP4:
@@ -4997,6 +5013,10 @@ void ggml_compute_forward_set(
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
+        case GGML_TYPE_TQ3_4S:
+        case GGML_TYPE_TQ3_0:
+        case GGML_TYPE_TQ3_4SE:
+        case GGML_TYPE_TQ3_1S_SHIFT:
 #endif
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
         case GGML_TYPE_Q4_0_ROCMFP4:
@@ -5235,6 +5255,10 @@ void ggml_compute_forward_get_rows(
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
+        case GGML_TYPE_TQ3_4S:
+        case GGML_TYPE_TQ3_0:
+        case GGML_TYPE_TQ3_4SE:
+        case GGML_TYPE_TQ3_1S_SHIFT:
 #endif
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
         case GGML_TYPE_Q4_0_ROCMFP4:
@@ -6008,6 +6032,10 @@ void ggml_compute_forward_clamp(
         // and carries no default:, so gating these two would emit -Wswitch on the OFF build.
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
+        case GGML_TYPE_TQ3_4S:
+        case GGML_TYPE_TQ3_0:
+        case GGML_TYPE_TQ3_4SE:
+        case GGML_TYPE_TQ3_1S_SHIFT:
         // Unconditional: this switch is exhaustive over ggml_type (it has no
         // default:), so omitting these labels when GGML_ARIFI_ROCMFPX_FORMATS is
         // OFF costs six -Wswitch warnings. The body is the reject branch, which is
