@@ -1,0 +1,80 @@
+From 122df79e3bdf2d31f75b603298f0f9b03a539035 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:56:56 -0400
+Subject: [PATCH] 
+ 4-other-backends/0045-cuda-fix-HIP-MoE-cache-compatibility-and-q8_1-sums.patch
+
+---
+ ggml/src/ggml-cuda/quantize.cu   |  6 +++---
+ ggml/src/ggml-cuda/vendors/hip.h | 15 +++++++++++++++
+ 2 files changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/quantize.cu b/ggml/src/ggml-cuda/quantize.cu
+index bcc772395..7f4d2ba3b 100644
+--- a/ggml/src/ggml-cuda/quantize.cu
++++ b/ggml/src/ggml-cuda/quantize.cu
+@@ -83,21 +83,21 @@ static __global__ void quantize_q8_1(
+     ggml_cuda_pdl_sync();
+     const float xi = i0 < ne00 ? x[i03*s03 + i02*s02 + i01*s01 + i00] : 0.0f;
+     float amax = fabsf(xi);
+-    float sum = xi;
++    float sum = 0.0f;
+ 
+     amax = warp_reduce_max<QK8_1>(amax);
+-    sum  = warp_reduce_sum<QK8_1>(sum);
+ 
+     const float  d = amax / 127.0f;
+     const int8_t q = amax == 0.0f ? 0 : roundf(xi / d);
+ 
+     y[ib].qs[iqs] = q;
++    sum = warp_reduce_sum<QK8_1>((float) q);
+ 
+     if (iqs > 0) {
+         return;
+     }
+ 
+-    y[ib].ds = make_half2(d, sum);
++    y[ib].ds = make_half2(d, d * sum);
+ }
+ 
+ __device__ __forceinline__ uint8_t compute_e8m0_scale(float amax) {
+diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
+index 8c367f82a..146cdf715 100644
+--- a/ggml/src/ggml-cuda/vendors/hip.h
++++ b/ggml/src/ggml-cuda/vendors/hip.h
+@@ -76,6 +76,12 @@
+ #define cudaDeviceProp hipDeviceProp_t
+ #define cudaDeviceSynchronize hipDeviceSynchronize
+ #define cudaError_t hipError_t
++#ifndef cudaErrorUnknown
++#define cudaErrorUnknown hipErrorUnknown
++#endif
++#ifndef cudaErrorInvalidValue
++#define cudaErrorInvalidValue hipErrorInvalidValue
++#endif
+ #define cudaErrorMemoryAllocation hipErrorOutOfMemory
+ #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
+ #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled
+@@ -93,6 +99,9 @@
+ #define cudaGetDeviceProperties hipGetDeviceProperties
+ #define cudaGetErrorString hipGetErrorString
+ #define cudaGetLastError hipGetLastError
++#ifndef cudaPeekAtLastError
++#define cudaPeekAtLastError hipPeekAtLastError
++#endif
+ #define cudaHostRegister hipHostRegister
+ #define cudaHostRegisterPortable hipHostRegisterPortable
+ #define cudaHostRegisterReadOnly hipHostRegisterReadOnly
+@@ -116,6 +125,12 @@
+ #define cudaMemGetInfo hipMemGetInfo
+ #define cudaOccupancyMaxPotentialBlockSize hipOccupancyMaxPotentialBlockSize
+ #define cudaSetDevice hipSetDevice
++#ifndef cudaDeviceGetStreamPriorityRange
++#define cudaDeviceGetStreamPriorityRange hipDeviceGetStreamPriorityRange
++#endif
++#ifndef cudaStreamCreateWithPriority
++#define cudaStreamCreateWithPriority hipStreamCreateWithPriority
++#endif
+ #define cuDeviceGet hipDeviceGet
+ #define CUdevice hipDevice_t
+ #define CUdeviceptr hipDeviceptr_t

@@ -1,0 +1,26 @@
+From 83cf0a6bc44265de11790fd50286227943e3dd31 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:57:53 -0400
+Subject: [PATCH] 
+ 6-tests-build/0006-ggml-webgpu-add-support-for-f16-repeat-26307.patch
+
+---
+ tests/test-llama-archs.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/tests/test-llama-archs.cpp b/tests/test-llama-archs.cpp
+index 9105c184a..e9ca9d9d1 100644
+--- a/tests/test-llama-archs.cpp
++++ b/tests/test-llama-archs.cpp
+@@ -446,7 +446,11 @@ static bool arch_supported(const llm_arch arch) {
+ 
+     // FIXME: these hit scheduler/view-backed-output issues with WebGPU on CI.
+ #ifdef GGML_USE_WEBGPU
++<<<<<<< ours
+     if (arch == LLM_ARCH_DEEPSEEK32 || arch == LLM_ARCH_GLM_DSA || arch == LLM_ARCH_MINIMAX_01) {
++=======
++    if (arch == LLM_ARCH_DEEPSEEK32 || arch == LLM_ARCH_GLM_DSA || arch == LLM_ARCH_MINIMAX_M3) {
++>>>>>>> theirs
+         return false;
+     }
+ #endif // GGML_USE_WEBGPU

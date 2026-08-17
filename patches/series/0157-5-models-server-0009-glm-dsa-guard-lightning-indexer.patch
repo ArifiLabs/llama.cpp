@@ -1,0 +1,54 @@
+From d975017431ab7ee4facd6eb5d2d55a2a6a0d077e Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:57:16 -0400
+Subject: [PATCH] 
+ 5-models-server/0009-glm-dsa-guard-lightning-indexer-Hadamard-rotation-wh.patch
+
+---
+ src/llama-kv-cache.cpp |  5 +++++
+ src/models/glm-dsa.cpp | 16 +++++++++++-----
+ 2 files changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index 2aa606304..8af2f0064 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -2118,6 +2118,11 @@ void llama_kv_cache::set_input_pos_bucket(ggml_tensor * dst, const llama_ubatch
+ }
+ 
+ void llama_kv_cache::set_input_k_rot(ggml_tensor * dst) const {
++    if (!dst) {
++        // rotation disabled for this cache (attn_rot_k == false): the graph
++        // never created the input tensor — nothing to fill.
++        return;
++    }
+     GGML_ASSERT(ggml_backend_buffer_is_host(dst->buffer));
+ 
+     const auto n_rot = dst->ne[0];
+diff --git a/src/models/glm-dsa.cpp b/src/models/glm-dsa.cpp
+index 803ef7674..ef2e6f9e9 100644
+--- a/src/models/glm-dsa.cpp
++++ b/src/models/glm-dsa.cpp
+@@ -294,11 +294,17 @@ llama_model_glm_dsa::graph::graph(const llama_model & model, const llm_graph_par
+                                      ext_factor, attn_factor, beta_fast, beta_slow);
+                 cb(indexer_k, "indexer_k", il);
+ 
+-                // perform Hadamard transform on indexer q and k
+-                indexer_q = ggml_mul_mat(ctx0, inp_attn_dsa->self_k_rot_lid, indexer_q);
+-                cb(indexer_q, "indexer_q", il);
+-                indexer_k = ggml_mul_mat(ctx0, inp_attn_dsa->self_k_rot_lid, indexer_k);
+-                cb(indexer_k, "indexer_k", il);
++                // perform Hadamard transform on indexer q and k when the LID cache
++                // has rotation enabled (the kv-cache attn_rot override guarantees the
++                // rot tensor for DeepSeek DSA archs; GLM-DSA stores indexer K
++                // unrotated, so skip the transform to stay consistent with the
++                // write side)
++                if (inp_attn_dsa->self_k_rot_lid) {
++                    indexer_q = ggml_mul_mat(ctx0, inp_attn_dsa->self_k_rot_lid, indexer_q);
++                    cb(indexer_q, "indexer_q", il);
++                    indexer_k = ggml_mul_mat(ctx0, inp_attn_dsa->self_k_rot_lid, indexer_k);
++                    cb(indexer_k, "indexer_k", il);
++                }
+ 
+                 // store indexer keys to KV cache
+                 const auto * mctx_lid = inp_attn_dsa->mctx->get_lid();

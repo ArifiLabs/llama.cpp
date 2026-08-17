@@ -1,0 +1,57 @@
+From f3b913bfa7ed71823157b8380876efe983008dbc Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:56:38 -0400
+Subject: [PATCH] 
+ 4-other-backends/0031-cuda-report-oversized-MoE-cache-nodes.patch
+
+---
+ ggml/src/ggml-cuda/moe-cache.cu | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-cuda/moe-cache.cu b/ggml/src/ggml-cuda/moe-cache.cu
+index a97a92526..d9eeb39f9 100644
+--- a/ggml/src/ggml-cuda/moe-cache.cu
++++ b/ggml/src/ggml-cuda/moe-cache.cu
+@@ -253,6 +253,7 @@ struct moe_cache_session {
+     std::atomic<bool> config_announced{false};
+     std::atomic<bool> enabled_announced{false};
+     std::atomic<bool> batch_bypass_announced{false};
++    std::atomic<bool> row_bypass_announced{false};
+     int active_scopes = 0;
+     int active_nodes = 0;
+     struct active_source {
+@@ -1817,7 +1818,8 @@ static void moe_cache_session_leave(void * opaque) {
+ 
+ static void * moe_cache_begin(
+         const char * name, const void * host_base, size_t expert_size,
+-        int64_t n_in, int64_t n_out, int wtype, int64_t n_expert, int64_t n_tokens) {
++        int64_t n_in, int64_t n_out, int wtype, int64_t n_expert,
++        int64_t n_tokens, int64_t n_rows) {
+     if (g_session_suppressed > 0 || g_session_stack.empty()) {
+         return nullptr;
+     }
+@@ -1833,6 +1835,9 @@ static void * moe_cache_begin(
+         !moe_cache_type_supported((ggml_type)wtype)) {
+         return nullptr;
+     }
++    if (n_rows < n_tokens || n_rows % n_tokens != 0) {
++        return nullptr;
++    }
+     if (n_tokens > session->config.max_batch) {
+         bool expected = false;
+         if (session->batch_bypass_announced.compare_exchange_strong(expected, true)) {
+@@ -1841,6 +1846,14 @@ static void * moe_cache_begin(
+         }
+         return nullptr;
+     }
++    if (n_rows > moe_cache_node_rows_max) {
++        bool expected = false;
++        if (session->row_bypass_announced.compare_exchange_strong(expected, true)) {
++            MOE_CACHE_LOG("[moe-cache] bypassing %lld-row node above row limit=%d; the stock CPU path remains active\n",
++                    (long long)n_rows, moe_cache_node_rows_max);
++        }
++        return nullptr;
++    }
+ 
+     const size_t row_size = ggml_row_size((ggml_type)wtype, n_in);
+     if (row_size == 0 || (uint64_t)n_out > SIZE_MAX / row_size ||

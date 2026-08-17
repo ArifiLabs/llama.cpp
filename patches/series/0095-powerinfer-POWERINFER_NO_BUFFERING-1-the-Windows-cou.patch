@@ -1,0 +1,82 @@
+From ff6b165291ad96009b082a1807d2cf0f59d65f3f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 30 Jul 2026 03:11:42 -0400
+Subject: [PATCH] powerinfer: POWERINFER_NO_BUFFERING=1 -- the Windows
+ counterpart of the O_DIRECT Linux already uses
+
+This same file already opens the bundle with O_RDONLY | O_DIRECT on POSIX
+(iou.cpp, the Linux branch). The Windows port was brought up buffered:
+FILE_FLAG_RANDOM_ACCESS, plus FILE_FLAG_OVERLAPPED in IOCP mode, and nothing
+that bypasses the system file cache. So on Windows every bundle read lands in
+the cache.
+
+That is not a cosmetic difference on this box. Visible RAM is ~15.7 GB and the
+SmallThinker-21B bundle is 10.28 GB, so the cache absorbs exactly what an I/O A/B
+is trying to measure. Measured consequence, from this lane's own run: the
+POWERINFER_IOCP arms drifted upward run-over-run as the cache warmed (iocp-on
+3.63 -> 4.73 -> 5.17 across replicates) while the synchronous arm did not
+(3.98 -> 4.12 -> 3.35), and the two never separated -- ranges 3.25-5.37 against
+2.80-4.16. That is why the options registry has carried POWERINFER_IOCP as
+"Direction UNRESOLVED" and why an earlier A/B was written off as noise.
+
+WHY THIS COULD NOT HAVE BEEN ADDED BEFORE. NO_BUFFERING requires the file offset,
+the transfer length AND the destination buffer to be sector-aligned. ExpertCache
+already allocated buffers via az::aligned_alloc(io_alignment, ...), but until the
+padded-stride change (a3d5215ff) it issued reads of the UNPADDED matrix length at
+unpadded offsets. Those reads would have failed with ERROR_INVALID_PARAMETER for
+any model whose matrix was not already 4096-aligned. The stride fix was the
+prerequisite, not a separate cleanup.
+
+Default OFF, deliberately. This is a measurement instrument first: the buffered
+and unbuffered paths must be A/B-able on the same binary, and defaulting it on
+would silently change the meaning of every streaming number recorded so far.
+
+Verified on the real binary before this commit: both nobuf arms loaded the bundle
+("PowerInfer: loading expert bundle from" present), produced timings, and logged
+no ReadFile or INVALID_PARAMETER failures.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ powerinfer/moe_sparse_pipeline/iou.cpp | 26 +++++++++++++++++++++++++-
+ 1 file changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/powerinfer/moe_sparse_pipeline/iou.cpp b/powerinfer/moe_sparse_pipeline/iou.cpp
+index cbf5f62db..0ca05bb61 100644
+--- a/powerinfer/moe_sparse_pipeline/iou.cpp
++++ b/powerinfer/moe_sparse_pipeline/iou.cpp
+@@ -39,10 +39,34 @@ IOUring::IOUring(const std::string &path, size_t queue_depth) :
+ 
+     // FILE_FLAG_OVERLAPPED only in IOCP mode: the synchronous path needs a
+     // blocking handle so ReadFile completes in place, exactly as pre-M2b.
+-    const DWORD create_flags = iocp_enabled()
++    DWORD create_flags = iocp_enabled()
+         ? (FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_OVERLAPPED)
+         : FILE_FLAG_RANDOM_ACCESS;
+ 
++    // POWERINFER_NO_BUFFERING=1 -- the Windows counterpart of the O_DIRECT this same file already
++    // uses on Linux (see the POSIX branch: open(path, O_RDONLY | O_DIRECT)). The Windows port was
++    // brought up buffered, so every bundle read lands in the system file cache. On a box whose
++    // visible RAM (~15.7 GB) is comparable to the bundle (10.28 GB for SmallThinker-21B), the cache
++    // absorbs the very thing an I/O A/B is trying to measure: the POWERINFER_IOCP arms drifted
++    // upward run-over-run as the cache warmed (iocp-on 3.63 -> 4.73 -> 5.17) and never separated
++    // from the synchronous path, which is why that registry row has stayed "Direction UNRESOLVED".
++    //
++    // Requirements this satisfies, and why it is safe to add only now: NO_BUFFERING demands that the
++    // file offset, the transfer length AND the destination buffer all be sector-aligned. ExpertCache
++    // already allocates each buffer with az::aligned_alloc(io_alignment, ...), and as of the
++    // padded-stride change it also issues every read at a stride-aligned offset for a full
++    // stride-sized length. Before that change the unpadded length would have made these reads fail
++    // with ERROR_INVALID_PARAMETER for any model whose matrix was not already 4096-aligned.
++    //
++    // Default OFF. This is a measurement instrument first: it must be possible to A/B it against the
++    // buffered path on the same binary, and turning it on by default would silently change the
++    // meaning of every streaming number recorded so far.
++    if (const char * nb = std::getenv("POWERINFER_NO_BUFFERING")) {
++        if (nb[0] == '1' && nb[1] == '\0') {
++            create_flags |= FILE_FLAG_NO_BUFFERING;
++        }
++    }
++
+     HANDLE h = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                            OPEN_EXISTING, create_flags, nullptr);
+     POWERINFER_ASSERT(h != INVALID_HANDLE_VALUE);

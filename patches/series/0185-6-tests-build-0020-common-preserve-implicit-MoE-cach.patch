@@ -1,0 +1,28 @@
+From 77c1736eb8b21c6bee782c1a3a8fc55e4f120c60 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:58:10 -0400
+Subject: [PATCH] 
+ 6-tests-build/0020-common-preserve-implicit-MoE-cache-provider-settings.patch
+
+---
+ tests/test-arg-parser.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/tests/test-arg-parser.cpp b/tests/test-arg-parser.cpp
+index 8e2087c00..c4d57c633 100644
+--- a/tests/test-arg-parser.cpp
++++ b/tests/test-arg-parser.cpp
+@@ -232,6 +232,13 @@ static void test(void) {
+ 
+     printf("test-arg-parser: test MoE cache and repack modes\n\n");
+ 
++    {
++        common_params mode_params;
++        assert(mode_params.moe_cache.mode == COMMON_MOE_CACHE_MODE_AUTO);
++        assert(mode_params.moe_cache.mode_explicit == false);
++        assert(common_context_params_to_llama(mode_params).moe_cache_mode == LLAMA_MOE_CACHE_MODE_UNSPECIFIED);
++    }
++
+     const std::vector<std::vector<std::string>> invalid_moe_cache_args = {
+         {"binary_name", "--moe-cache"},
+         {"binary_name", "--moe-cache", "invalid"},

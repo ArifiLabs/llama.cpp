@@ -1,0 +1,41 @@
+From 29c769bae9c76fda81c741996ddc4ccf3bec4a10 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:56:29 -0400
+Subject: [PATCH] 
+ 4-other-backends/0025-cuda-aggregate-small-MoE-tensors-into-cache-pools.patch
+
+---
+ ggml/src/ggml-cuda/moe-cache.cu | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/moe-cache.cu b/ggml/src/ggml-cuda/moe-cache.cu
+index 8c6669ff3..13f04846c 100644
+--- a/ggml/src/ggml-cuda/moe-cache.cu
++++ b/ggml/src/ggml-cuda/moe-cache.cu
+@@ -949,7 +949,7 @@ static int moe_cache_query_shape(
+         int wtype, int64_t n_in, int64_t n_out, int64_t n_expert,
+         size_t expert_size,
+         ggml_moe_cache_shape_caps * result) {
+-    if (!result || n_in <= 0 || n_out <= 0 || n_expert < moe_cache_pool_slots_min ||
++    if (!result || n_in <= 0 || n_out <= 0 || n_expert <= 0 ||
+         !moe_cache_type_supported((ggml_type)wtype)) {
+         return 0;
+     }
+@@ -1784,7 +1784,7 @@ static void * moe_cache_begin(
+     if (!session || session->stopping || session->dormant || !name || !host_base ||
+         !moe_cache_tensor_name_supported(name) || n_tokens < 1 ||
+         expert_size < session->config.min_expert_bytes ||
+-        n_in <= 0 || n_out <= 0 || n_expert < moe_cache_pool_slots_min ||
++        n_in <= 0 || n_out <= 0 || n_expert <= 0 ||
+         !moe_cache_type_supported((ggml_type)wtype)) {
+         return nullptr;
+     }
+@@ -2615,7 +2615,7 @@ static void * moe_cache_fused_begin(
+         up->n_in != gate->n_in || up->n_out != gate->n_out ||
+         up->n_expert != gate->n_expert || up->type != gate->type ||
+         up->n_in <= 0 || up->n_out <= 0 ||
+-        up->n_expert < moe_cache_pool_slots_min ||
++        up->n_expert <= 0 ||
+         up->type == GGML_TYPE_NVFP4 ||
+         !moe_cache_type_supported((ggml_type)up->type)) {
+         return nullptr;

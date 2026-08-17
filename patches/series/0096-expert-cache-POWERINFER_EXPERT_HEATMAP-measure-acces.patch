@@ -1,0 +1,172 @@
+From e0ede3b1873323de964132fe3d05e88a73d32109 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 30 Jul 2026 08:29:41 -0400
+Subject: [PATCH] expert cache: POWERINFER_EXPERT_HEATMAP -- measure access
+ skew before building a pin policy
+
+Heat-driven pinning can only beat plain LRU if expert access is SKEWED. If every
+expert is touched about equally there is no hot set to pin and no eviction-policy
+code changes that. So the histogram comes before the implementation.
+
+POWERINFER_EXPERT_HEATMAP=<path> counts accesses per (layer, expert) in
+ExpertCache::get and writes a CSV. Gated on a bool resolved once in the
+constructor, so the hot path costs one predictable branch when off and one relaxed
+atomic increment when on.
+
+DUMPED PERIODICALLY, NOT AT DESTRUCTION, and that was a bug caught by running it:
+the first version wrote only from ~ExpertCache and produced NOTHING, because the
+harness stops the server with proc.terminate(), which on Windows is
+TerminateProcess -- no destructors, no atexit, no flush. Same class as bundle
+generation's exit(0) swallowing its own completion line. It now rewrites the file
+every 65536 accesses, so the newest complete snapshot survives a hard kill; the
+destructor call remains as best-effort for clean shutdowns.
+
+FIRST RESULT, SmallThinker-21B, 983,041 accesses over 3,328 cells:
+
+  hottest  1% of cells hold  7.9% of accesses
+  hottest  5%               23.0%
+  hottest 10%               33.9%   <- uniform would be 10.0%
+  hottest 25%               57.9%
+  hottest 50%               83.6%
+
+3.4x concentration at the top decile; median cell 219 against mean 295, the
+signature of a right-skewed tail. But 96.8% of experts are touched at least once,
+so this is a broad distribution with a heavy head, not a handful of experts doing
+everything. The head is why pinning has headroom; the breadth is why pinning
+cannot replace the cache.
+
+Where the headroom is NOT: the shipped MAX_N_CACHED=6144 holds 2,048 of 3,328
+cells (62%), and the hottest 50% of cells already carry 83.6% of accesses -- so
+plain LRU already retains most of the working set there. That is consistent with
+the I/O toggle being invisible at the default. A pinning trial must run at a SMALL
+MAX_N_CACHED or it will measure nothing, for exactly the reason the IOCP A/B
+measured nothing.
+
+NOT established: that pinning wins. Nothing is implemented and nothing measured
+against a baseline. The skew says the idea is worth building, not that it works.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../moe_sparse_pipeline/expert_cache.cpp      | 34 +++++++++++++++++++
+ .../moe_sparse_pipeline/expert_cache.hpp      | 30 ++++++++++++++++
+ 2 files changed, 64 insertions(+)
+
+diff --git a/powerinfer/moe_sparse_pipeline/expert_cache.cpp b/powerinfer/moe_sparse_pipeline/expert_cache.cpp
+index 2de706d3f..a44c39470 100644
+--- a/powerinfer/moe_sparse_pipeline/expert_cache.cpp
++++ b/powerinfer/moe_sparse_pipeline/expert_cache.cpp
+@@ -1,4 +1,6 @@
+ #include <fcntl.h>
++#include <cstdio>
++#include <cstdlib>
+ 
+ #include "powerinfer-perf.hpp"
+ #include "powerinfer-log.hpp"
+@@ -36,6 +38,14 @@ ExpertCache::ExpertCache(
+     POWERINFER_ASSERT(matrix_stride % io_alignment == 0);
+     POWERINFER_ASSERT(matrix_stride >= matrix_bytes);
+ 
++    if (const char * hm = std::getenv("POWERINFER_EXPERT_HEATMAP")) {
++        heatmap_enabled = true;
++        heatmap_path = hm;
++        // std::atomic is not copyable, so the vector is built by resize (value-initialised to 0)
++        // rather than by a fill constructor.
++        access_counts = std::vector<std::atomic<uint64_t>>(n_layers * n_experts);
++    }
++
+     layers.resize(n_layers);
+     for (size_t layer_id = 0; layer_id < n_layers; layer_id++) {
+         auto &layer = layers[layer_id];
+@@ -70,6 +80,8 @@ ExpertCache::~ExpertCache() {
+         victim->data = nullptr;
+     }
+ 
++    dump_heatmap();  // best-effort: only reached on a clean shutdown, which terminate() is not
++
+     if(debug_print){
+         printf(
+             "Expert cache: #examined=%zu, #cached=%zu (%.2lf%%)\n",
+@@ -87,6 +99,28 @@ ExpertCache::~ExpertCache() {
+     }
+ }
+ 
++// One row per (layer, expert). The question this answers, BEFORE anything is built: is expert
++// access SKEWED enough that pinning a hot set would beat the plain LRU we have? A flat histogram
++// means it would not, and that closes the row without writing an eviction policy nobody can justify.
++// Rewritten in place on every call so the newest complete snapshot always survives a hard kill.
++void ExpertCache::dump_heatmap() {
++    if (!heatmap_enabled || access_counts.empty()) {
++        return;
++    }
++    FILE * f = fopen(heatmap_path.c_str(), "w");
++    if (!f) {
++        return;
++    }
++    fprintf(f, "layer,expert,accesses\n");
++    for (size_t l = 0; l < n_layers; l++) {
++        for (size_t e = 0; e < n_experts; e++) {
++            fprintf(f, "%zu,%zu,%llu\n", l, e,
++                    (unsigned long long) access_counts[l * n_experts + e].load(std::memory_order_relaxed));
++        }
++    }
++    fclose(f);
++}
++
+ void ExpertCache::lru_promote(Matrix &matrix) {
+     lru.promote(matrix.lru_node);
+ }
+diff --git a/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/expert_cache.hpp b/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/expert_cache.hpp
+index b4c65074d..c50e93228 100644
+--- a/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/expert_cache.hpp
++++ b/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/expert_cache.hpp
+@@ -1,6 +1,9 @@
+ #pragma once
+ 
++#include <atomic>
++#include <cstdint>
+ #include <mutex>
++#include <vector>
+ #include <string>
+ #include <memory>
+ #include <functional>
+@@ -59,6 +62,27 @@ struct ExpertCache {
+     ~ExpertCache();
+ 
+     auto get(size_t layer_id, size_t expert_id, size_t matrix_id) -> Matrix & {
++        // POWERINFER_EXPERT_HEATMAP=<path>: count accesses per (layer, expert) and dump at exit.
++        //
++        // This exists to answer a question BEFORE building anything: heat-driven pinning only pays
++        // if expert access is SKEWED. If every expert is touched about equally, pinning a "hot" set
++        // is pointless and no amount of implementation changes that -- which is a finding, not a
++        // failure. The eviction policy today is a plain LRU with no notion of heat.
++        //
++        // Gated on a bool resolved once in the constructor, so the hot path costs one predictable
++        // branch when off and one relaxed atomic increment when on.
++        if (heatmap_enabled) {
++            access_counts[layer_id * n_experts + expert_id].fetch_add(1, std::memory_order_relaxed);
++            // Dump PERIODICALLY, not at destruction. The harness stops the server with
++            // proc.terminate(), which on Windows is TerminateProcess -- no destructors, no atexit,
++            // no flush. A destructor-only dump produced nothing at all on the first attempt, the
++            // same way bundle generation's exit(0) swallows its own completion log line. Rewriting
++            // the whole file every 65536 accesses costs one pass over ~10k rows at an interval the
++            // hot path never notices, and whatever the process was killed mid-run still survives.
++            if ((heatmap_total.fetch_add(1, std::memory_order_relaxed) & 0xFFFFu) == 0) {
++                dump_heatmap();
++            }
++        }
+         return layers[layer_id].experts[expert_id].matrices[matrix_id];
+     }
+ 
+@@ -87,6 +111,12 @@ private:
+     // Keeping them separate is what lets a model whose matrix is not already 4096-aligned stream at
+     // all -- see the constructor.
+     size_t matrix_stride = 0;
++    // Per-(layer, expert) access histogram, allocated only when POWERINFER_EXPERT_HEATMAP is set.
++    bool heatmap_enabled = false;
++    std::string heatmap_path;
++    std::vector<std::atomic<uint64_t>> access_counts;
++    std::atomic<uint64_t> heatmap_total{0};
++    void dump_heatmap();
+     std::vector<Layer> layers;
+     bool debug_print = false;
+ 

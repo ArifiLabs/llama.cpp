@@ -1,0 +1,32 @@
+From d22dc16c737702d8e55196eb045d7b15c1287744 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:09:10 -0400
+Subject: [PATCH] 
+ resolved/0019-vulkan-dispatch-the-TQ-rotated-mul_mm_id-path.patch
+
+Assisted-by: Codex
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 3ef25e547..77c9df2fa 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -8052,16 +8052,13 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_id_pipeline(ggml_backend_vk_co
+         case GGML_TYPE_IQ4_NL:
+         case GGML_TYPE_MXFP4:
+         case GGML_TYPE_NVFP4:
+-<<<<<<< ours
+         case GGML_TYPE_TQ2_0:
+-=======
+         // TurboQuant, ROTATED. Selecting these commits the caller to staging and
+         // rotating the activation (tq_rotate in ggml_vk_mul_mat_id_q_f16); the A
+         // side is centroid*scale with no inverse WHT and is wrong against a raw
+         // activation.
+         case GGML_TYPE_TQ3_1S:
+         case GGML_TYPE_TQ4_1S:
+->>>>>>> theirs
+             break;
+         default:
+             return nullptr;
