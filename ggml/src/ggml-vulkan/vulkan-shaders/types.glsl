@@ -2010,6 +2010,42 @@ struct block_tq4_1s
 #define A_TYPE block_tq4_1s
 #endif
 
+// tq3 family, type-id 48. Mirrors block_tq3_4s in ggml/src/ggml-common.h:
+// 4 + 12 = 16 bytes. Structurally TQ3_1S with a different scale representation:
+// four E3M5 mini-float bytes, one per group of 8 rotated values, instead of two
+// f16 halves. Same 32-value block, same 3-bit packing, same Lloyd-Max centroids
+// and same randomized Hadamard rotation -- verified against
+// dequantize_row_tq3_4s() / tq3_0_rht_inverse() in ggml/src/ggml-arifi-turbo-weights.c.
+// The four scale groups line up exactly with the four 3-byte packing groups.
+#define QUANT_K_TQ3_4S 32
+#define QUANT_R_TQ3_4S 1
+
+struct block_tq3_4s
+{
+    uint8_t d[4];      // E3M5 scale, one per group of 8
+    uint8_t qs[12];    // 3-bit centroid indices, 8 packed per 3-byte group
+};
+
+#if defined(DATA_A_TQ3_4S)
+#define QUANT_K QUANT_K_TQ3_4S
+#define QUANT_R QUANT_R_TQ3_4S
+#define QUANT_AUXF 1
+#define A_TYPE block_tq3_4s
+#endif
+
+// E3M5 mini-float scale decode. Byte 0 means "zero scale" and is NOT
+// representable by the formula -- dropping that case is the silently-wrong-numbers
+// failure TYPE-ID-ALLOCATION.md 3.1.1 warns about. Exact mirror of
+// arifi_tq3_4s_decode_scale() in ggml/src/ggml-arifi-turbo-weights.c:447-452.
+#if defined(DATA_A_TQ3_4S)
+float tq3_4s_decode_scale(uint b) {
+    if (b == 0u) return 0.0;
+    const int   e = int(b >> 5) - 9;
+    const float m = 1.0 + float(b & 31u) / 32.0;
+    return ldexp(m, e);
+}
+#endif
+
 #if defined(DATA_A_IQ4_NL) || defined(DATA_A_IQ4_XS)
 const int8_t kvalues_iq4nl_const[16] = {
     int8_t(-127), int8_t(-104), int8_t(-83), int8_t(-65), int8_t(-49), int8_t(-35), int8_t(-22), int8_t(-10),
