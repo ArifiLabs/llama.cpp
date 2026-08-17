@@ -1673,20 +1673,33 @@ layout(buffer_reference, std430, buffer_reference_align = 1) buffer decodeBufROC
    block_rocmfpx_fp6 block;
 };
 
+// Code idx lives at bit 6*idx of the 24-byte little-endian stream (CPU: rocmfpx_fp6_unpack4).
+int rocmfpx_cm2_fp6_decode(const in decodeBufROCMFPXFP6 bl, uint idx)
+{
+    const uint bit_pos  = idx * 6u;
+    const uint byte_pos = bit_pos >> 3u;
+    const uint sh       = bit_pos & 7u;
+    uint bits = uint(bl.block.qs[byte_pos]) >> sh;
+    if (sh > 2u) {
+        bits |= uint(bl.block.qs[byte_pos + 1u]) << (8u - sh);
+    }
+    return int(kvalues_rocmfpx_fp6_const[bits & 0x3Fu]);
+}
+
 float16_t dequantFuncROCMFPXFP6(const in decodeBufROCMFPXFP6 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
 {
     const uint idx = coordInBlock[1];
     const float d = ue4m3_to_fp32(bl.block.e[idx >= 16u ? 1u : 0u]);
-    return float16_t(float(int(bl.block.qs[idx])) * d);
+    return float16_t(float(rocmfpx_cm2_fp6_decode(bl, idx)) * d);
 }
 
 f16vec4 dequantFuncROCMFPXFP6_v(const in decodeBufROCMFPXFP6 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
 {
     const uint idx = coordInBlock[1];
-    return f16vec4(float16_t(float(int(bl.block.qs[idx + 0u])) * ue4m3_to_fp32(bl.block.e[(idx + 0u) >= 16u ? 1u : 0u])),
-                   float16_t(float(int(bl.block.qs[idx + 1u])) * ue4m3_to_fp32(bl.block.e[(idx + 1u) >= 16u ? 1u : 0u])),
-                   float16_t(float(int(bl.block.qs[idx + 2u])) * ue4m3_to_fp32(bl.block.e[(idx + 2u) >= 16u ? 1u : 0u])),
-                   float16_t(float(int(bl.block.qs[idx + 3u])) * ue4m3_to_fp32(bl.block.e[(idx + 3u) >= 16u ? 1u : 0u])));
+    return f16vec4(float16_t(float(rocmfpx_cm2_fp6_decode(bl, idx + 0u)) * ue4m3_to_fp32(bl.block.e[(idx + 0u) >= 16u ? 1u : 0u])),
+                   float16_t(float(rocmfpx_cm2_fp6_decode(bl, idx + 1u)) * ue4m3_to_fp32(bl.block.e[(idx + 1u) >= 16u ? 1u : 0u])),
+                   float16_t(float(rocmfpx_cm2_fp6_decode(bl, idx + 2u)) * ue4m3_to_fp32(bl.block.e[(idx + 2u) >= 16u ? 1u : 0u])),
+                   float16_t(float(rocmfpx_cm2_fp6_decode(bl, idx + 3u)) * ue4m3_to_fp32(bl.block.e[(idx + 3u) >= 16u ? 1u : 0u])));
 }
 #endif
 
