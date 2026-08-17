@@ -1012,9 +1012,23 @@ vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
 #endif
 
 #if defined(DATA_A_ROCMFPX_FP6)
+// Code idx lives at bit 6*idx of the 24-byte little-endian stream. sh is always even
+// (0/6/4/2), so the second byte is needed iff sh > 2 — and idx=31 -> byte 23, sh=2,
+// which stays in bounds.
+uint rocmfpx_fp6_get_code(uint ib, uint idx, uint a_offset) {
+    const uint bit_pos  = idx * 6u;
+    const uint byte_pos = bit_pos >> 3u;
+    const uint sh       = bit_pos & 7u;
+    uint bits = uint(data_a[a_offset + ib].qs[byte_pos]) >> sh;
+    if (sh > 2u) {
+        bits |= uint(data_a[a_offset + ib].qs[byte_pos + 1u]) << (8u - sh);
+    }
+    return bits & 0x3Fu;
+}
+
 float rocmfpx_fp6_dequant(uint ib, uint idx, uint a_offset) {
     const float d = ue4m3_to_fp32(data_a[a_offset + ib].e[idx >= 16u ? 1u : 0u]);
-    return float(int(data_a[a_offset + ib].qs[idx])) * d;
+    return float(int(kvalues_rocmfpx_fp6_const[rocmfpx_fp6_get_code(ib, idx, a_offset)])) * d;
 }
 
 vec2 dequantize(uint ib, uint iqs, uint a_offset) {
