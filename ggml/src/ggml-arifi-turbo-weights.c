@@ -78,17 +78,31 @@ static void tq3_0_rht_inverse(float * buf) {
     for (int i = 0; i < TQ_BLOCK_SIZE; i++) buf[i] *= TQ_INV_SQRT32 * TQ3_0_SIGNS[i];
 }
 
-/* Nearest centroid for TQ3 (8 centroids) */
+/* Decision boundaries: midpoints between adjacent TQ3_0_CENTROIDS. Copied VERBATIM from
+ * the originator (tq3 ggml-quants.c TQ3_0_BOUNDARIES); do not re-derive them by rounding
+ * the midpoints yourself - two of these differ from a half-up rounding in the 6th decimal. */
+static const float TQ3_0_BOUNDARIES[7] = {
+    -1.644041f, -1.015870f, -0.493924f, -0.008701f,
+     0.477664f,  1.001362f,  1.633223f
+};
+
+/* Nearest centroid for TQ3 (8 centroids).
+ *
+ * The linear `>` scan is the originator's, kept verbatim rather than rewritten as a binary
+ * search on `<`. The two are NOT equivalent: `v > B` sends an exact boundary hit to the LOWER
+ * index, `v < B` sends it to the HIGHER one. An earlier version of this function had both the
+ * inverted tie-break and two drifted constants, and measured 21 differing indices per 20M
+ * N(0,1) samples - encoder-only (no decode path calls this, so reading tq3-authored files was
+ * never affected), but one flipped index shifts the fitted scale, and therefore the stored
+ * E3M5 byte, for its whole 8-element group. */
 static int tq3_0_choose_index(float val) {
-    /* Binary search on midpoints of TQ3_0_CENTROIDS */
-    if (val < -1.644041f) return 0;
-    if (val < -1.015870f) return 1;
-    if (val < -0.493925f) return 2;
-    if (val < -0.008701f) return 3;
-    if (val <  0.477664f) return 4;
-    if (val <  1.001363f) return 5;
-    if (val <  1.633223f) return 6;
-    return 7;
+    int idx = 0;
+    for (int b = 0; b < 7; ++b) {
+        if (val > TQ3_0_BOUNDARIES[b]) {
+            idx = b + 1;
+        }
+    }
+    return idx;
 }
 
 /* Nearest centroid for TQ4 (16 centroids) */
@@ -587,7 +601,10 @@ size_t quantize_tq3_0(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst,
 /* TQ3_4S plus one shift per half of 16, encoded signed-u8 against a quantum of
  * max(group scale)/8. Note the asymmetry the source carries and this preserves:
  * the shift is FITTED over halves of 16 but APPLIED with h = g/2, i.e. per group
- * pair - which is the same partition, and the round-trip test pins it. */
+ * pair - which is the same partition. Pinned by the tq3 numeric block in
+ * tests/test-quantize-fns.cpp, which checks vec_dot against dequantize-then-dot for
+ * every type in this family (the generic harness cannot: it skips the CPU backend,
+ * and its fixed data is outside the E3M5 scale range these types can encode). */
 
 void quantize_row_tq3_4se_ref(const float * GGML_RESTRICT x, block_tq3_4se * GGML_RESTRICT y, int64_t k) {
     assert(k % QK_TQ3_0 == 0);
