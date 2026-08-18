@@ -268,15 +268,19 @@ const float TS2[128] = float[128](
 
 const float TINV = 0.08838834764831845;  // 1 / sqrt(128)
 
+// SOURCE OF TRUTH: CENTROIDS_3BIT in ggml/src/ggml-turbo-quant.c
 const float TC[8] = float[8](
-    -0.190685, -0.117832, -0.065717, -0.021460,
-     0.021460,  0.065717,  0.117832,  0.190685
+    -0.190207, -0.118786, -0.066822, -0.021663,
+     0.021663,  0.066822,  0.118786,  0.190207
 );
 
+// Decision boundaries = midpoints of TC. Must equal nearest_centroid_3bit()'s
+// thresholds in ggml/src/ggml-turbo-quant.c, or the GPU encoder picks a
+// different index than the CPU encoder for values near a boundary.
 const float TM[7] = float[7](
-    -0.154259, -0.091775, -0.043589,
+    -0.154496, -0.092804, -0.044243,
      0.0,
-     0.043589,  0.091775,  0.154259
+     0.044243,  0.092804,  0.154496
 );
 
 #if defined(SET_ROWS)
