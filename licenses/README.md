@@ -12,8 +12,16 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
 | `llama-cpp-turboquant-MIT.txt` | `<FORK-WORKSPACE>/src/llama-cpp-turboquant/LICENSE` | llama-cpp-turboquant MIT |
 | `turboquant-plus-Apache-2.0.txt` | `<FORK-WORKSPACE>/src/turboquant_plus/LICENSE` | turboquant_plus Apache-2.0 |
 | `turboquant-plus-NOTICE.txt` | `<FORK-WORKSPACE>/src/turboquant_plus/NOTICE` | turboquant_plus retained NOTICE |
+| `tq3-MIT.txt` | `git show refs/remotes/tq3/main:LICENSE` (turbo-tan/llama.cpp-tq3) | tq3 MIT — the `TQ3_4S` family at ids 48-51 is ported from this tree. **Retained 2026-08-18 (lane-151); this was the one real gap.** |
+| `prisml-MIT.txt` | `git show refs/remotes/prisml/prism:LICENSE` (PrismML-Eng/llama.cpp) | PrismML MIT. **Retained 2026-08-18 (lane-151) — see the correction below.** |
+| `ciru-MIT.txt` | `git show refs/remotes/ciru/main:LICENSE` (ciru-ai/ROCmFPX) | ciru MIT. Registered source, no code carried yet; retained ahead of any ingest so the notice can never lag the code. |
 
 `../LICENSE` is also the verbatim copy of upstream llama.cpp’s MIT license.
+
+The three files added on 2026-08-18 are extracted with `git show` from the fetched remotes of this
+very repository, so their provenance is a ref, not a local checkout. They are 1078 bytes against the
+1099 of the older copies: the same MIT text, LF-terminated as git stores it rather than CRLF. Verbatim
+means verbatim, so they are not re-normalized.
 
 ## Audit, 2026-08-18 (lane-151) — every source this fork carries code or credit from
 
@@ -33,16 +41,36 @@ the audit.
 | `charlie12345/ROCmFPX` | yes — `rocmfpx-MIT.txt` | complete |
 | `llama-cpp-turboquant` | yes — MIT | complete |
 | `turboquant_plus` | yes — Apache-2.0 + NOTICE | complete |
-| `PrismML-Eng/llama.cpp` | **no** | Phase 0 observed no `LICENSE`/`NOTICE` in the retained release material. Documented, not manufactured. |
-| `thecodacus/llama.cpp` | **no** | no license grant inside the captured patch artifacts. Documented, not manufactured. |
-| `turbo-tan/llama.cpp-tq3` | **no — GAP** | code WAS ported (`58ad80ffb`, the `TQ3_4S` family at ids 48-51). Unlike the two rows above this is not a "we looked and there was none" finding: no one looked, and no clone remains on the estate to look at. **Retaining tq3's license is a hard precondition of publishing this repository.** |
+| `PrismML-Eng/llama.cpp` | **yes — `prisml-MIT.txt`** | **CLOSED 2026-08-18.** See the correction below: the "Phase 0 observed no LICENSE" finding was about the retained *release material*, and it was carried forward for a year as though it were a fact about the project. `refs/remotes/prisml/prism:LICENSE` exists and is MIT. |
+| `turbo-tan/llama.cpp-tq3` | **yes — `tq3-MIT.txt`** | **CLOSED 2026-08-18.** Code IS ported (`58ad80ffb`, the `TQ3_4S` family at ids 48-51), and the license is now retained from `refs/remotes/tq3/main:LICENSE`. |
+| `ciru-ai/ROCmFPX` | **yes — `ciru-MIT.txt`** | registered source, no code carried yet; the notice is retained ahead of any ingest so it can never lag the code. |
+| `thecodacus/llama.cpp` | **no** | Still open, and honestly so: there is no `thecodacus` remote on this repository — the three prefetch patches were captured as patch artifacts, and those artifacts carry no license grant. There is nothing to `git show`. Documented, not manufactured. |
 
-`ciru-ai/ROCmFPX` is a registered source but appears in no trailer and has contributed no code, so
-no notice is owed yet; if it ever contributes, its license is retained first.
+### Correction, 2026-08-18 (lane-151): a false absence that stood for months
 
-Phase 0 observed no source `LICENSE` or `NOTICE` file in the retained PrismML
-release material and no license grant inside the captured thecodacus patch
-artifacts. A 2026-07-22 project decision authorizes their inclusion with
-maximal attribution and provenance; it does not authorize inventing a license
-text. Therefore this directory contains no fabricated `prisml-*` or
-`thecodacus-*` license file.
+Two of these rows said "no license" for a year, and one of them said it in this very file's prose.
+Both were wrong, and the reason they were wrong is worth more than the fix: **the absence was checked
+against the wrong artifact.** Phase 0 looked at retained *release material* and local checkouts, found
+no `LICENSE`, and wrote down "there is none". Meanwhile this repository has had `prisml`, `tq3`,
+`ciru`, `rocmfpx`, `powerinfer`, `turboquant` and `tqplus` configured as git remotes with their
+objects fetched the whole time — every one of those licenses was one `git show` away.
+
+Lane-151 repeated the same mistake with tq3 in the same breath, writing "no clone remains on the
+estate to look at" and filing it as an unclosable gap, when `git show refs/remotes/tq3/main:LICENSE`
+answers in a second. **An absence claim is only as good as the place you looked, and "I could not
+find it" is not the same statement as "it does not exist."**
+
+Audited all seven registered sources at once, since the same command answers for each:
+`prisml`, `ciru`, `rocmfpx`, `powerinfer`, `turboquant`, `tqplus` all carry a `LICENSE` at their
+fetched head; `tqplus` also carries a `NOTICE`. Every one is now retained.
+
+**SUPERSEDED IN PART, 2026-08-18 — kept because the reasoning still binds where it applies.** Phase 0
+observed no source `LICENSE` or `NOTICE` file in the retained PrismML release material, and no license
+grant inside the captured thecodacus patch artifacts. The PrismML half is now closed: `prisml-MIT.txt`
+is retained from `refs/remotes/prisml/prism:LICENSE`, and the correction above explains why the
+original finding was true of the material examined and false of the project. The thecodacus half
+STANDS — there is no thecodacus remote and no license text to copy.
+
+A 2026-07-22 project decision authorizes their inclusion with maximal attribution and provenance; it
+does not authorize inventing a license text. Therefore this directory still contains no fabricated
+`thecodacus-*` license file, and never will.
