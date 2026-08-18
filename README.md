@@ -16,10 +16,10 @@ currency review.
 
 ## Scope — what this is, and what it is not
 
-**It is** upstream llama.cpp `b10068` plus a linear, individually-toggleable, fully-attributed
-patch series, carrying real mechanisms from PowerInfer, PrismML, ROCmFPX and thecodacus that are
-not in upstream, each one gated and each one documented with its measured effect or an explicit
-`UNMEASURED`. The series replays byte-identically onto its base, and that is verified by a command
+**It is** upstream llama.cpp `b10453` plus a linear, individually-toggleable, fully-attributed
+patch series, carrying real mechanisms from PowerInfer, PrismML, ROCmFPX, TurboQuant, tq3 and
+thecodacus that are not in upstream, each one gated and each one documented with its measured effect
+or an explicit `UNMEASURED`. The series replays byte-identically onto its base, and that is verified by a command
 you can run yourself.
 
 **It is not** a faster llama.cpp. Most of what is carried here is either a *capability* (run a model
@@ -69,13 +69,44 @@ on `PATH`. A CPU-only build needs no Vulkan SDK and is verified working.
 
 ## What this fork adds to upstream
 
-Everything ArifiLabs adds lives as a **linear, 62-patch series** on top of upstream `b10068`.
-There are no merge commits: the series is designed to be replayed onto a newer upstream tag.
+Everything ArifiLabs adds lives as a **linear patch series** on top of upstream `b10453`
+(`4df29be4f`). The canonical branch is **`arifi/main`** and it carries **zero merge commits** — the
+series exists to be replayed onto a newer upstream tag, and a merge commit is a hole in it
+(`format-patch` omits merges, so their hand-made conflict resolutions never reach the series; that
+was a real, measured failure here before the history was flattened).
 
 ```bash
 git clone -c core.longpaths=true <this repo> arifilabs-llama.cpp && cd arifilabs-llama.cpp
-python tools/arifi-sync/arifi_sync.py series replay --onto 571d0d540   # reproduces master
+python tools/arifi-sync/arifi_sync.py series check     # regenerate + verify the series
+python tools/arifi-sync/arifi_sync.py series replay --onto 4df29be4f   # reproduces arifi/main
 ```
+
+The procedure for the next upstream bump, the next fork ingest, and what must be re-verified
+afterwards is written out command-by-command in [`UPDATE-RUNBOOK.md`](UPDATE-RUNBOOK.md).
+
+### The seven ingested sources
+
+Seven third-party trees besides upstream are tracked for currency, each pinned in
+[`tools/arifi-sync/sources.json`](tools/arifi-sync/sources.json). "Tracked" is not "merged", and the
+distinction is the point: a source can be registered, pinned and reviewed and still contribute zero
+lines, and several do.
+
+| source | what it is | what actually landed here |
+|---|---|---|
+| [PrismML-Eng/llama.cpp](https://github.com/PrismML-Eng/llama.cpp) | ternary `Q2_0`/`Q2_0_G128` lineage | the g128 weight format (our id 43), its CPU dispatch, and the 4x8 VNNI repack GEMV/GEMM design |
+| [Tiiny-AI/PowerInfer](https://github.com/Tiiny-AI/PowerInfer) | sparse execution + expert streaming | the MoE streaming/expert-bundle graft and its Windows IOCP read path |
+| [charlie12345/ROCmFPX](https://github.com/charlie12345/ROCmFPX) | AMD FP weight formats | the six ROCmFPX serialized formats (ids 100-104, 107) and their CPU path, behind `GGML_ARIFI_ROCMFPX_FORMATS` |
+| [ciru-ai/ROCmFPX](https://github.com/ciru-ai/ROCmFPX) | a second ROCmFPX lineage | **nothing yet** — registered and pinned for currency/diff audit only |
+| [turbo-tan/llama.cpp-tq3](https://github.com/turbo-tan/llama.cpp-tq3) | the `TQ3_4S` rotated-domain family | the codec at our **retagged** ids 48-51, behind `GGML_ARIFI_TURBO_WEIGHT_QUANTS`, plus `tools/gguf-retag-tq3` |
+| `llama-cpp-turboquant` | TurboQuant KV + `TQ3_1S`/`TQ4_1S` weights | the Turbo3 KV cache types and the `TQ3_1S`/`TQ4_1S` weight formats (ids 45/46) and their Vulkan kernels |
+| `turboquant_plus` | Apache-2.0 KV-fidelity scoring package | **nothing** — it is not a llama.cpp fork at all; see the note below |
+
+Two of the seven are honest zeroes and stay in the table for exactly that reason. `turboquant_plus`
+was once believed to be free capability because 57 of 57 of its patches applied cleanly; opening its
+root tree showed no `ggml/`, no `src/llama.cpp` and a `pyproject.toml` naming a Python package. A
+high clean-apply rate measures **collision, not value**. The three community expert-prefetch patches
+from [thecodacus/llama.cpp](https://github.com/thecodacus/llama.cpp) are carried too, but as
+individual patches rather than a tracked remote.
 
 Use the driver, not a hand-written `git am`. The naive form —
 `git checkout -b x 571d0d540 && git am patches/series/*.patch` — **cannot work**, and the reason is
@@ -244,7 +275,19 @@ commit history.
   [thecodacus’s Fable5/prefetch-experts video](https://www.youtube.com/watch?v=VytSYCDhWQ0).
   No separate channel URL was captured in the estate record, so none is
   invented here.
-- `llama-cpp-turboquant` contributes MIT-licensed tooling lineage.
+- [turbo-tan/llama.cpp-tq3](https://github.com/turbo-tan/llama.cpp-tq3) authored the `TQ3_4S`
+  rotated-domain weight family — `TQ3_0_CENTROIDS`, `TQ3_0_SIGNS`, the randomized Hadamard
+  transform, and the `tq3_4s` scale codecs — ported here from `58ad80ffb` and carried at
+  **renumbered** ids 48-51 because tq3's own `46` collides with our `TQ4_1S`. The renumbering and
+  its whole justification are in [`docs/TYPE-ID-ALLOCATION.md`](docs/TYPE-ID-ALLOCATION.md) §3.1.
+  **License audit gap, stated rather than papered over:** no tq3 `LICENSE` file was retained in
+  `licenses/` at ingest time and no clone remains on the estate to copy one from. Nothing is
+  invented here. Retaining it is a **hard precondition of publishing this repository anywhere**.
+- [ciru-ai/ROCmFPX](https://github.com/ciru-ai/ROCmFPX) is tracked for currency and diff audit.
+  It has contributed no code, so no notice is retained and none is manufactured; if it ever
+  contributes, its license must be retained first.
+- `llama-cpp-turboquant` contributes MIT-licensed tooling lineage, and — via the core-types patch,
+  not via tq3 — the `TQ3_1S`/`TQ4_1S` weight formats and the Turbo3 KV cache types.
 - `turboquant_plus` contributes Apache-2.0 tooling lineage; its Apache license
   and NOTICE are retained.
 
@@ -266,7 +309,8 @@ remain explicit in this README, the series manifest, and each eventual commit.
 
 ## Status
 
-The patch series is real and complete: 73 linear commits on upstream `b10068`, every one carrying
+The patch series is real and complete: every fork commit on `arifi/main` is linear on upstream
+`b10453` (`4df29be4f`) with zero merges, and every one carries
 provenance trailers, generated into [`patches/series/`](patches/series/) and verified on demand to
 replay to a tree identical to `master` outside the generated series directory itself.
 
