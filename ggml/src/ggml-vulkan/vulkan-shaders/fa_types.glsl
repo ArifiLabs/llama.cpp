@@ -14,11 +14,17 @@
 #define FA_TYPE_BF16 30u
 #define FA_TYPE_Q1_0 41u
 #define FA_TYPE_Q2_0 42u
-#define FA_TYPE_TURBO2_0 43u
-#define FA_TYPE_TURBO3_0 44u
 #define FA_TYPE_TQ3_1S 45u
 #define FA_TYPE_TQ4_1S 46u
-#define FA_TYPE_TURBO4_0 47u
+// The TurboQuant KV types live in the 200+ runtime-only block of enum ggml_type
+// (ggml.h). These three read 43/44/47 until lane-148: stale ids from before the
+// move. The host passes the raw enum (get_fa_spec_constants: FaTypeK/FaTypeV =
+// (uint32_t) k_type), so a stale id makes BOTH switches fall through -
+// fa_block_elems() returns its 1u default and dequantize4() returns vec4(0),
+// which zeroes V and therefore the whole FA output. Silent, not an abort.
+#define FA_TYPE_TURBO2_0 200u
+#define FA_TYPE_TURBO3_0 201u
+#define FA_TYPE_TURBO4_0 202u
 
 // Number of matrix elements per buffer block, derived from the K/V type spec
 // constant. F32 is treated as a vec4 "block" of 4 floats. F16 uses block size 1
