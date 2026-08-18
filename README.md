@@ -257,10 +257,11 @@ commit history.
   PowerInfer graft. Its root and `smallthinker` MIT notices are retained.
 - [PrismML-Eng/llama.cpp](https://github.com/PrismML-Eng/llama.cpp) supplied
   the observed Vulkan path for PrismML `Q2_0_g128` ternary GGUFs and the
-  ternary-port lineage. Project policy authorizes carrying this work
-  with maximal credit and provenance; the Phase-0 factual observation that the
-  retained PrismML releases did not include a source `LICENSE` or `NOTICE`
-  remains documented rather than rewritten.
+  ternary-port lineage. Its MIT notice is retained as `licenses/prisml-MIT.txt`.
+  The Phase-0 observation that the retained PrismML *releases* carried no
+  `LICENSE` was true of that material and false of the project; the correction,
+  and why the absence check looked in the wrong place, is in
+  [`licenses/README.md`](licenses/README.md).
 - [charlie12345/ROCmFPX](https://github.com/charlie12345/ROCmFPX), Charlie’s
   fork, informed checkpoint and format investigations. It is tracked for
   currency and diff audit, not blindly merged; its MIT notice is retained.
@@ -280,12 +281,9 @@ commit history.
   transform, and the `tq3_4s` scale codecs — ported here from `58ad80ffb` and carried at
   **renumbered** ids 48-51 because tq3's own `46` collides with our `TQ4_1S`. The renumbering and
   its whole justification are in [`docs/TYPE-ID-ALLOCATION.md`](docs/TYPE-ID-ALLOCATION.md) §3.1.
-  **License audit gap, stated rather than papered over:** no tq3 `LICENSE` file was retained in
-  `licenses/` at ingest time and no clone remains on the estate to copy one from. Nothing is
-  invented here. Retaining it is a **hard precondition of publishing this repository anywhere**.
-- [ciru-ai/ROCmFPX](https://github.com/ciru-ai/ROCmFPX) is tracked for currency and diff audit.
-  It has contributed no code, so no notice is retained and none is manufactured; if it ever
-  contributes, its license must be retained first.
+  Its MIT notice is retained as `licenses/tq3-MIT.txt`.
+- [ciru-ai/ROCmFPX](https://github.com/ciru-ai/ROCmFPX) is tracked for currency and diff audit. It has
+  contributed no code; its MIT notice is retained anyway, so a notice can never lag an ingest.
 - `llama-cpp-turboquant` contributes MIT-licensed tooling lineage, and — via the core-types patch,
   not via tq3 — the `TQ3_1S`/`TQ4_1S` weight formats and the Turbo3 KV cache types.
 - `turboquant_plus` contributes Apache-2.0 tooling lineage; its Apache license
