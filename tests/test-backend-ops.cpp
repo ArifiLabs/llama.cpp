@@ -12431,12 +12431,26 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
         // TQ4_1S was ever caught, and only because it happened to have a bespoke class with its
         // own op_desc. This second tally keys on the tensor type named in vars(), so a per-TYPE
         // hole inside a mixed op is named the same way a per-op hole is.
+        // KNOWN LIMITS, named rather than implied (lane-150 checker, findings 1/2/8):
+        //   * ONE axis per case. A bucket with any executing cell stays silent, so a hole on a
+        //     second axis still hides — CPY[type_dst=tq4_1s] has 3 passing same-type memcpy cells,
+        //     which is why this tally would NOT have caught the tq4_1s->f32 read-back hole, and
+        //     SET_ROWS[type_dst=X] mixes f32-src and f16-src cells.
+        //   * Only these four keys. type_K / type_V / type_b / type_kernel / type_input carry no
+        //     bucket, so FLASH_ATTN_EXT — the largest type-parameterised op, and the KV-cache path —
+        //     is NOT covered here.
         std::map<std::string, std::pair<size_t, size_t>> per_op_type;
         // Pull the type this case is really about out of the vars() string. Order matters: the
         // destination is what a write-path cell is about, the source is what a read-path cell is.
         auto type_bucket = [](const std::string & op, const std::string & vars) -> std::string {
             for (const char * key : { "type_dst=", "type=", "type_a=", "type_src=" }) {
-                const size_t p = vars.find(key);
+                size_t p = vars.find(key);
+                // The match must START a var name, or "type=" matches inside "dst_type=",
+                // "pool_type=", "kernel_type=", "tri_type=" and labels a POOLING MODE as a tensor
+                // type (checker finding 3). Walk on until the match is at the start or after ','.
+                while (p != std::string::npos && p != 0 && vars[p - 1] != ',' && vars[p - 1] != ' ') {
+                    p = vars.find(key, p + 1);
+                }
                 if (p == std::string::npos) {
                     continue;
                 }
