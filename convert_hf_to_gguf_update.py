@@ -189,8 +189,13 @@ pre_computed_hashes = [
     # jina-v2-de variants
     {"name": "jina-v2-de", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/aari1995/German_Semantic_V3", "chkhsh": "b3d1dd861f1d4c5c0d2569ce36baf3f90fe8a102db3de50dd71ff860d91be3df"},
     {"name": "gpt-2", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/evilfreelancer/ruGPT3XL", "chkhsh": "0fe1cf6eda062318a1af7270f3331a85c539a01778ff948e24388e949c5282f4"},
-    # lfm2 variants
+    # lfm2 variants. They MUST live here rather than in the models list above:
+    # get_existing_models() keys by res name, so a single models-list entry can only ever
+    # round-trip ONE hash per name, and regenerating this file silently drops the rest.
     {"name": "lfm2", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/LiquidAI/LFM2.5-8B-A1B", "chkhsh": "9e454714343b69b99b71795c1d27a68c2a1d15dab111f4d353109f966af29da7"},
+    {"name": "lfm2", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct", "chkhsh": "1695bc99c38f06ed8a7ab6d3e066ff571f9c5f8759e6eeba60afd0f221e2e858"},
+    {"name": "lfm2", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/LiquidAI/LFM2.5-8B-A1B", "chkhsh": "5d5192db33764da7bf8147f23ca2c0f4e74fb549a2ecb9dc39eff533a5a267cc"},
+    {"name": "lfm2", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/reaperdoesntknow/LFM2.5-8B-A1B-Opus-Distil", "chkhsh": "87ab4b1536216e11d7a9b700bf6f8266d2742f26f436e8b557385f39cc891750"},
 ]
 
 
