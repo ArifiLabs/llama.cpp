@@ -1,0 +1,37 @@
+From 40fad441a9fcefcd4c4474401e933e065e5e6950 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 10:26:07 -0400
+Subject: [PATCH] WI-1580 sub-2: UPDATE-RUNBOOK section 7 - the 4.5 line was
+ stale. lane-153 staged models/engines/arifi-b10481-union/ from a verified
+ build of canonical, smoked from the staged copies, and flipped
+ current-state.json + artifact-catalog.json, so 4.5 HAS now been executed
+ once, by hand. The bump distinction is KEPT because it is still true: no bump
+ has ever driven staging end to end (lane-152's bump refused at leg 2). Narrow
+ edit - the section-2 and section-3 paragraphs around it are untouched. Note
+ for the record: the lane-153 REPORT cites this text at
+ UPDATE-RUNBOOK.md:238-244; it actually lives at :308-323
+
+---
+ UPDATE-RUNBOOK.md | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/UPDATE-RUNBOOK.md b/UPDATE-RUNBOOK.md
+index 5ac3c2566..70486daa7 100644
+--- a/UPDATE-RUNBOOK.md
++++ b/UPDATE-RUNBOOK.md
+@@ -314,8 +314,13 @@ picking the base, about `bump`'s legs, about the worktree that holds the branch
+ blocks `--continue` is written from that run. Four conflicts, all in §2.2's manual path; §2.1's
+ `bump` refused at leg 2 exactly as designed and is still not a shortcut past §4.
+ 
+-**§4.5 and the register flip have NOT been run by a bump.** Staging remains HQ + President work and
+-no bump has ever driven it end to end.
++**§4.5 and the register flip HAVE now been run, once — lane-153, 2026-08-18, by hand.** The staged
++engine of record `models/engines/arifi-b10481-union/` was copied from a verified build of canonical,
++smoke-tested from the staged copies, and the register flip landed in `registers/current-state.json`
++and `registers/artifact-catalog.json`. What §4.5 says about the MinGW DLLs and the stripped-`PATH`
++caveat is written from that run. **Still NOT run by a bump:** no `bump` has ever driven staging or
++the flip end to end — lane-152's `bump` refused at leg 2 and lane-153 staged manually — so staging
++remains HQ + President work.
+ 
+ **§3 has been run per-source, never as a sweep.** Each ingest below the tq3/rocmfpx line is
+ reviewed one source at a time, which is what §3 asks for, but no single execution has taken every
