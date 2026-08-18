@@ -2762,6 +2762,65 @@ struct test_set_rows_turbo4 : public test_case {
     }
 };
 
+// Test SET_ROWS with turbo2 destination, then dequantize and compare.
+// Added by lane-148: turbo2 had NO SET_ROWS coverage at all -- the generic test_set_rows
+// iterates all_types, which excludes the TURBO ids -- while set_rows_f32_turbo2_0_* shaders are
+// generated and pipeline_set_rows[...][GGML_TYPE_TURBO2_0] is created. A claimed, shipped write
+// path with zero executed cases. Same bespoke shape as its turbo3/turbo4 neighbours above.
+struct test_set_rows_turbo2 : public test_case {
+    const ggml_type type_idx;
+    const int64_t ne0; // head dim (must be multiple of 128)
+    const int64_t ne1; // rows in dst
+    const int r;       // rows to write
+
+    std::string vars() override {
+        return VARS_TO_STR4(type_idx, ne0, ne1, r);
+    }
+
+    std::string op_desc(ggml_tensor * t) override {
+        GGML_UNUSED(t);
+        return "SET_ROWS_TURBO2";
+    }
+
+    test_set_rows_turbo2(ggml_type type_idx = GGML_TYPE_I32,
+            int64_t ne0 = 128, int64_t ne1 = 8, int r = 4)
+        : type_idx(type_idx), ne0(ne0), ne1(ne1), r(r) {}
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * dst = ggml_new_tensor_2d(ctx, GGML_TYPE_TURBO2_0, ne0, ne1);
+        ggml_set_name(dst, "dst");
+
+        ggml_tensor * src = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, ne0, r);
+        ggml_set_name(src, "src");
+
+        ggml_tensor * row_idxs = ggml_new_tensor_1d(ctx, type_idx, r);
+        ggml_set_name(row_idxs, "row_idxs");
+
+        ggml_tensor * written = ggml_set_rows(ctx, dst, src, row_idxs);
+
+        ggml_tensor * out = ggml_cpy(ctx, written, ggml_new_tensor_2d(ctx, GGML_TYPE_F32, ne0, ne1));
+        ggml_set_name(out, "out");
+        return out;
+    }
+
+    void initialize_tensors(ggml_context * ctx) override {
+        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+            if (t->type == GGML_TYPE_I64 || t->type == GGML_TYPE_I32) {
+                if (ggml_is_view_op(t->op)) continue;
+                init_set_rows_row_ids(t, ne1);
+            } else {
+                init_tensor_uniform(t);
+            }
+        }
+    }
+
+    double max_nmse_err() override {
+        // 2 bits per element: a looser round-trip bound than turbo3/turbo4's 0.05.
+        // A layout or LUT mismatch lands orders of magnitude beyond it either way.
+        return 0.35;
+    }
+};
+
 // Test SET_ROWS with TQ4_1S destination (weight quantization), then dequantize and compare.
 // Validates: f32 -> WHT forward -> 16-centroid quantize -> nibble pack -> SET_ROWS
 // followed by: GET_ROWS/CPY -> WHT inverse -> f32 dequant. Round-trip error is bounded.
@@ -9178,6 +9237,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_set_rows_turbo4(GGML_TYPE_I32, 128, 4096, 1024));
     test_cases.emplace_back(new test_set_rows_turbo4(GGML_TYPE_I32, 256, 2048, 512));
     test_cases.emplace_back(new test_set_rows_turbo4(GGML_TYPE_I32, 512, 1024, 256));
+
+    // SET_ROWS with turbo2 destination: quantize then dequant round-trip (lane-148)
+    for (ggml_type idx_type : {GGML_TYPE_I32, GGML_TYPE_I64}) {
+        for (int64_t ne0 : {128, 256, 512}) {
+            for (int r : {1, 4, 7}) {
+                test_cases.emplace_back(new test_set_rows_turbo2(idx_type, ne0, 16, r));
+            }
+        }
+    }
+    test_cases.emplace_back(new test_set_rows_turbo2(GGML_TYPE_I32, 128, 4096, 1024));
+    test_cases.emplace_back(new test_set_rows_turbo2(GGML_TYPE_I32, 256, 2048, 512));
+    test_cases.emplace_back(new test_set_rows_turbo2(GGML_TYPE_I32, 512, 1024, 256));
 
     // SET_ROWS with TQ4_1S destination: quantize then dequant round-trip
     for (ggml_type idx_type : {GGML_TYPE_I32, GGML_TYPE_I64}) {
