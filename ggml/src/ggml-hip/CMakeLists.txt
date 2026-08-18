@@ -178,3 +178,13 @@ if (GGML_HIP_RCCL)
 endif()
 
 target_link_libraries(ggml-hip PRIVATE ggml-base hip::host roc::rocblas roc::hipblas)
+
+# NOTE: do not add -ffast-math / -funsafe-math-optimizations here. Upstream tried both and removed
+# them (ggml-org/llama.cpp#25495, #26696): they imply -fassociative-math, which reassociates FP
+# reductions and can flip greedy argmax on RDNA3.5, making MTP speculative decode diverge from the
+# non-speculative baseline. -ffinite-math-only additionally lets the compiler assume inf/NaN cannot
+# occur, so EXPM1 returns NaN where the CPU returns inf.
+# Guard only: this line is already absent here (upstream #26696 is in our base b10481). It is kept
+# as a comment because rocmfpx carried the flag from its initial snapshot until 2026-08-17 and had
+# to remove it again - the regression is re-introducible, so the reason is recorded where it would
+# be re-introduced.
