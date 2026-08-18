@@ -1,0 +1,87 @@
+From cb45826f28b744c63523e6d9a5e5e071457ff803 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 00:49:13 -0400
+Subject: [PATCH] lane-150 step 2: TQ4_1S write leg EXECUTES - SET_ROWS_TQ4_1S
+ 17 cases/0 executed -> 17/17 PASS, and the inherited 5.0 waive is retired
+
+Three wirings: set_rows dst list in vulkan-shaders-gen.cpp, the two pipeline_set_rows creation lines (require_full_subgroups + required_subgroup_size=32 - the shader's WHT butterfly is subgroupShuffleXor across exactly 32 lanes on a 64-wide device), and a dedicated SET_ROWS dispatch arm. DEFECT FOUND AND FIXED: the generic quantized dispatch arm computes CEIL_DIV(ne, 32*blck_size) = ne/1024, but the TQ4_1S shader is the turbo shape - 32 threads, ONE 32-element block per workgroup - so it needs ne/32. The generic arm dispatched 1/32 of the workgroups and left 31/32 of rows unwritten. MUTATION PROOF (C3): reverting that one arm gives ERR 1.13 to 17.81 across 15 of 17 cases. THRESHOLD: max_nmse_err was 5.0 on a comment describing divergence nobody could have observed (0 executed). Measured ERR is 0.000000000 on all 17, identical to known-good test_set_rows_turbo2 under the same probe. Tightened to 0.05 (turbo3/turbo4 family bound). The old 5.0 would have PASSED the mutation's 1.13/3.36/3.93 cases - the waive was actively hiding the dispatch bug.
+
+Lane: lane-150
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp            | 11 ++++++++++-
+ .../vulkan-shaders/vulkan-shaders-gen.cpp       |  4 +++-
+ tests/test-backend-ops.cpp                      | 17 +++++++++++------
+ 3 files changed, 24 insertions(+), 8 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index de7f4ade0..61c47744a 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -5727,7 +5727,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         ggml_vk_create_pipeline(device, device->pipeline_set_rows ## itype [src_idx][GGML_TYPE_IQ4_NL], "set_rows_" #src "_iq4_nl" #itype, set_rows_ ## src ## _iq4_nl ## itype ## _len, set_rows_ ## src ## _iq4_nl ## itype ## _data, "main", 3, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {1}, 1, true); \
+         ggml_vk_create_pipeline(device, device->pipeline_set_rows ## itype [src_idx][GGML_TYPE_TURBO2_0], "set_rows_" #src "_turbo2_0" #itype, set_rows_ ## src ## _turbo2_0 ## itype ## _len, set_rows_ ## src ## _turbo2_0 ## itype ## _data, "main", 3, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {1}, 1, true, true, 32u); \
+         ggml_vk_create_pipeline(device, device->pipeline_set_rows ## itype [src_idx][GGML_TYPE_TURBO3_0], "set_rows_" #src "_turbo3_0" #itype, set_rows_ ## src ## _turbo3_0 ## itype ## _len, set_rows_ ## src ## _turbo3_0 ## itype ## _data, "main", 3, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {1}, 1, true, true, 32u); \
+-        ggml_vk_create_pipeline(device, device->pipeline_set_rows ## itype [src_idx][GGML_TYPE_TURBO4_0], "set_rows_" #src "_turbo4_0" #itype, set_rows_ ## src ## _turbo4_0 ## itype ## _len, set_rows_ ## src ## _turbo4_0 ## itype ## _data, "main", 3, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {1}, 1, true, true, 32u);
++        ggml_vk_create_pipeline(device, device->pipeline_set_rows ## itype [src_idx][GGML_TYPE_TURBO4_0], "set_rows_" #src "_turbo4_0" #itype, set_rows_ ## src ## _turbo4_0 ## itype ## _len, set_rows_ ## src ## _turbo4_0 ## itype ## _data, "main", 3, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {1}, 1, true, true, 32u); \
++        /* lane-150 TQ4_1S write leg. require_full_subgroups + required_subgroup_size=32 is MANDATORY, not cosmetic: the shader's WHT butterfly is subgroupShuffleXor across exactly the 32 lanes of one block, and this device's native subgroup is 64. */ \
++        ggml_vk_create_pipeline(device, device->pipeline_set_rows ## itype [src_idx][GGML_TYPE_TQ4_1S], "set_rows_" #src "_tq4_1s" #itype, set_rows_ ## src ## _tq4_1s ## itype ## _len, set_rows_ ## src ## _tq4_1s ## itype ## _data, "main", 3, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {1}, 1, true, true, 32u);
+ 
+     SET_ROWS(0, f32, _i32)
+     SET_ROWS(0, f32, _i64)
+@@ -12593,6 +12595,13 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
+             if (dst->type == GGML_TYPE_TURBO2_0 || dst->type == GGML_TYPE_TURBO3_0 || dst->type == GGML_TYPE_TURBO4_0) {
+                 // turbo set_rows shaders: 128 threads per WG, one full QK=128 block per WG
+                 ne = ne / 128;
++            } else if (dst->type == GGML_TYPE_TQ4_1S) {
++                // lane-150: the TQ4_1S set_rows shader is the SAME shape as turbo, not the generic
++                // quant shape. It runs 32 threads per WG and each WG produces ONE 32-element block
++                // (its main() indexes gl_WorkGroupID as a block index, guard `g >= p.ne / 32`).
++                // The generic arm below assumes 32 threads each doing a WHOLE block, so it would
++                // dispatch 1/32 of the workgroups needed and leave 31/32 of the rows unwritten.
++                ne = CEIL_DIV(ne, 32);
+             } else if (ggml_is_quantized(dst->type)) {
+                 // quants run 32 threads each doing QUANT_K elements
+                 ne = CEIL_DIV(ne, 32 * ggml_blck_size(dst->type));
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index 0ac714c34..4bc70d75a 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -903,7 +903,9 @@ void process_shaders() {
+     }
+ 
+     for (auto src : {std::pair{"f32", "float"}, std::pair{"f16", "float16_t"}}) {
+-        for (std::string dst : {"f32", "f16", "bf16", "q1_0", "q2_0", "q2_0_g128", "q4_0", "q4_1", "q5_0", "q5_1", "q8_0", "iq4_nl", "turbo2_0", "turbo3_0", "turbo4_0"}) {
++        // tq4_1s (lane-150): copy_to_quant.comp has carried a complete SET_ROWS+DATA_A_TQ4_1S main()
++        // (RHT + 9-point scale search + 6-iteration refinement + nibble pack) that was never emitted.
++        for (std::string dst : {"f32", "f16", "bf16", "q1_0", "q2_0", "q2_0_g128", "q4_0", "q4_1", "q5_0", "q5_1", "q8_0", "iq4_nl", "turbo2_0", "turbo3_0", "turbo4_0", "tq4_1s"}) {
+             string_to_spv("set_rows_" + std::string(src.first) + "_" + dst + "_i32", "copy_to_quant.comp", {{"SET_ROWS", "1"}, {"DATA_A_" + to_uppercase(dst), "1"}, {"B_TYPE", "uint"}, {"B_SIZE", "32"}, {"S_TYPE", src.second}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
+             string_to_spv("set_rows_" + std::string(src.first) + "_" + dst + "_i64", "copy_to_quant.comp", {{"SET_ROWS", "1"}, {"DATA_A_" + to_uppercase(dst), "1"}, {"B_TYPE", "uvec2"}, {"B_SIZE", "64"}, {"S_TYPE", src.second}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
+         }
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 5ae0d21fb..a70f23725 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -2807,12 +2807,17 @@ struct test_set_rows_tq4_1s : public test_case {
+     }
+ 
+     double max_nmse_err() override {
+-        // GPU and CPU TQ4_1S quantization diverge due to subgroupAdd reduction
+-        // order vs CPU serial addition in the iterative scale refinement. The
+-        // difference compounds over 6 iterations, leading to different centroid
+-        // selections and thus different dequanted values. Both are valid
+-        // quantizations of comparable quality.
+-        return 5.0;
++        // lane-150: this was 5.0, justified by a comment claiming observed GPU/CPU divergence from
++        // subgroupAdd order compounding over the 6 refinement iterations. That divergence was never
++        // observed: until lane-150 wired the pipelines, this case class ran 17 cases / 0 executed,
++        // so 5.0 was a waive written blind — and 5.0 on a 4-bit format passes almost any output.
++        // MEASURED once the path actually executed: ERR = 0.000000000 on all 17 cases (below the
++        // harness's %.9f print resolution), the same value its known-good sibling
++        // test_set_rows_turbo2 reports under the identical probe. Tightened to the turbo3/turbo4
++        // family bound, which leaves ~8 orders of margin over the measurement and still catches a
++        // layout, LUT, subgroup-width or dispatch-sizing regression by orders of magnitude
++        // (proven: mutating the SET_ROWS dispatch arm back to the generic quant sizing fails here).
++        return 0.05;
+     }
+ };
+ 
