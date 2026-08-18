@@ -14,11 +14,13 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
+#include <cinttypes>
 #include <cmath>
 #include <cstring>
 #include <iomanip>
 #include <map>
-#include <cinttypes>
+#include <random>
 
 #define SPC_DBG(fmt, ...) LOG_DBG("spec %12.*s: " fmt, 12, __func__, __VA_ARGS__)
 #define SPC_TRC(fmt, ...) LOG_TRC("spec %12.*s: " fmt, 12, __func__, __VA_ARGS__)
@@ -928,6 +930,9 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
     bool    is_dflash2     = false;
     bool    is_mrope       = false;
     int32_t selector_top_k = 0;
+    int32_t selector_top_k = 0;
+    std::vector<std::mt19937> selector_rng;
+    std::vector<bool> selector_reset;
 
     // draft-dspark: the draft carries a Markov head and uses an anchor-first block layout
     const bool is_dspark;
@@ -1050,10 +1055,13 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
         for (auto & s : smpls) {
             common_params_sampling sparams;
             sparams.no_perf  = false;
-            sparams.top_k    = 10;
+            sparams.top_k    = is_dflash2 ? selector_top_k : 10;
             sparams.samplers = { COMMON_SAMPLER_TYPE_TOP_K };
             s.reset(common_sampler_init(model_dft, sparams));
         }
+
+        selector_rng.resize(n_seq);
+        selector_reset.assign(n_seq, true);
 
         // offload draft sampling to the backend
         backend_chains.assign(n_seq, nullptr);
@@ -1084,11 +1092,14 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
             }
         }
 
-        llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ true);
-
-        // generic DFlash drafts with non-causal block attention; Laguna drafters
-        // are trained with a causal noise block
-        {
+        // DFlash2 reads its selector lattice from h_nextn and never consumes raw logits (PR #27342);
+        // DFlash1 keeps the masked path and the Laguna causal-noise-block detection (our fork).
+        llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ !is_dflash2);
+        if (is_dflash2) {
+            llama_set_causal_attn(ctx_dft, false); // DFlash2 needs non-causal attention
+        } else {
+            // generic DFlash drafts with non-causal block attention; Laguna drafters
+            // are trained with a causal noise block
             bool causal = false;
             char buf[32] = {};
             if (llama_model_meta_val_str(model_dft, "dflash.decoder_arch", buf, sizeof(buf)) >= 0) {
@@ -1125,6 +1136,8 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
             return;
         }
 
+        selector_reset[seq_id] = true;
+
         const llama_pos pos_max = llama_memory_seq_pos_max(llama_get_memory(params.ctx_dft), seq_id);
         if (pos_max < N - 1) {
             LOG_WRN("%s: ctx_dft pos_max=%d < N-1=%d - process() did not run on every prefill ubatch. "
@@ -1150,21 +1163,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
         }
 
         const int32_t n_tokens = batch_in.n_tokens;
-
-        // per-seq inclusive batch range (assumes each seq's tokens are contiguous in the batch)
-        std::vector<int32_t> i_batch_beg(n_seq, -1);
-        std::vector<int32_t> i_batch_end(n_seq, -1);
-        for (int32_t k = 0; k < n_tokens; ++k) {
-            GGML_ASSERT(batch_in.n_seq_id[k] == 1);
-            const llama_seq_id seq_id = batch_in.seq_id[k][0];
-            if (seq_id < 0 || seq_id >= (llama_seq_id) n_seq) {
-                continue;
-            }
-            i_batch_end[seq_id] = k;
-            if (i_batch_beg[seq_id] < 0) {
-                i_batch_beg[seq_id] = k;
-            }
-        }
 
         auto * ctx_tgt = this->params.ctx_tgt;
         auto * ctx_dft = this->params.ctx_dft;
@@ -1196,68 +1194,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                         std::memcpy(dst, src, (size_t) n_embd_tgt * sizeof(float));
                     }
                 }
-
-                // sanitize non-finite feature values before fusing. on Metal, the
-                // mat-mat kernels stage f32 activations as f16 for the simdgroup
-                // multiply; Laguna's massive-activation rows (attention-sink tokens,
-                // |x| ~ 1e6 in the pre-final-norm residual) overflow f16 -> inf/nan.
-                // one poisoned row would otherwise NaN the whole drafter KV cache.
-                {
-                    size_t n_bad = 0;
-                    for (auto & v : features_buf) {
-                        if (!std::isfinite(v)) {
-                            v = v != v ? 0.0f : (v > 0.0f ? 65504.0f : -65504.0f);
-                            n_bad++;
-                        }
-                    }
-                    if (n_bad > 0) {
-                        static bool warned = false;
-                        if (!warned) {
-                            LOG_WRN("%s: sanitized %zu non-finite target feature values (f16 overflow on massive activations); "
-                                    "draft quality may degrade slightly on affected rows\n", __func__, n_bad);
-                            warned = true;
-                        }
-                    }
-                }
-
-                // fuse extracted features through DFlash encoder
-                // M-RoPE drafts read 4 position rows per token from embd batches, so pass them explicitly
-                std::vector<llama_pos> enc_pos;
-                if (is_mrope) {
-                    enc_pos.resize((size_t) 4 * n_chunk);
-                    for (int32_t i = 0; i < n_chunk; ++i) {
-                        const llama_pos p = batch_in.pos[i_batch_beg[seq_id] + offset + i];
-                        enc_pos[0 * n_chunk + i] = p;
-                        enc_pos[1 * n_chunk + i] = p;
-                        enc_pos[2 * n_chunk + i] = p;
-                        enc_pos[3 * n_chunk + i] = 0;
-                    }
-                }
-
-                llama_batch enc_batch = {
-                    /*.n_tokens =*/ n_chunk,
-                    /*.token    =*/ nullptr,
-                    /*.embd     =*/ features_buf.data(),
-                    /*.pos      =*/ is_mrope ? enc_pos.data() : nullptr,
-                    /*.n_seq_id =*/ nullptr,
-                    /*.seq_id   =*/ nullptr,
-                    /*.logits   =*/ nullptr,
-                };
-
-                int32_t rc = llama_encode(ctx_dft, enc_batch);
-                if (rc != 0) {
-                    LOG_ERR("%s: llama_encode(ctx_dft) failed rc=%d (n_tokens=%d, offset=%d)\n",
-                            __func__, rc, (int) n_chunk, (int) offset);
-                    return false;
-                }
-
-                const float * inp_g = llama_get_embeddings_nextn(ctx_dft);
-                GGML_ASSERT(inp_g && "DFlash encoder produced no output.");
-
-                // inject the DFlash decoder K/V cache at the tokens' target positions
-                batch_inject.n_tokens = n_chunk;
-                std::memcpy(batch_inject.embd, inp_g, (size_t) n_chunk * n_embd_dec * sizeof(float));
-
                 for (int32_t i = 0; i < n_chunk; ++i) {
                     const llama_pos p = batch_in.pos[i_batch_beg[seq_id] + offset + i];
                     batch_inject.pos[i] = p;
@@ -1277,6 +1213,71 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                     return false;
                 }
             }
+
+            // sanitize non-finite feature values before fusing. on Metal, the
+            // mat-mat kernels stage f32 activations as f16 for the simdgroup
+            // multiply; Laguna's massive-activation rows (attention-sink tokens,
+            // |x| ~ 1e6 in the pre-final-norm residual) overflow f16 -> inf/nan.
+            // one poisoned row would otherwise NaN the whole drafter KV cache.
+            {
+                size_t n_bad = 0;
+                for (auto & v : features_buf) {
+                    if (!std::isfinite(v)) {
+                        v = v != v ? 0.0f : (v > 0.0f ? 65504.0f : -65504.0f);
+                        n_bad++;
+                    }
+                }
+                if (n_bad > 0) {
+                    static bool warned = false;
+                    if (!warned) {
+                        LOG_WRN("%s: sanitized %zu non-finite target feature values (f16 overflow on massive activations); "
+                                "draft quality may degrade slightly on affected rows\n", __func__, n_bad);
+                        warned = true;
+                    }
+                }
+            }
+
+            llama_batch enc_batch = {
+                /*.n_tokens =*/ n_chunk,
+                /*.token    =*/ nullptr,
+                /*.embd     =*/ features_buf.data(),
+                /*.pos      =*/ nullptr,
+                /*.n_seq_id =*/ nullptr,
+                /*.seq_id   =*/ nullptr,
+                /*.logits   =*/ nullptr,
+            };
+
+            int32_t rc = llama_encode(ctx_dft, enc_batch);
+            if (rc != 0) {
+                LOG_ERR("%s: llama_encode(ctx_dft) failed rc=%d (n_tokens=%d, offset=%d)\n",
+                        __func__, rc, (int) n_chunk, (int) offset);
+                return false;
+            }
+
+            const float * inp_g = llama_get_embeddings_nextn(ctx_dft);
+            GGML_ASSERT(inp_g && "DFlash encoder produced no output.");
+
+            batch_inject.n_tokens = n_chunk;
+            std::memcpy(batch_inject.embd, inp_g, (size_t) n_chunk * n_embd_dec * sizeof(float));
+            for (int32_t i = 0; i < n_chunk; ++i) {
+                const int32_t j = offset + i;
+                GGML_ASSERT(batch_in.n_seq_id[j] == 1);
+                const llama_seq_id seq_id = batch_in.seq_id[j][0];
+                GGML_ASSERT(seq_id >= 0 && seq_id < (llama_seq_id) n_seq);
+                batch_inject.pos[i]       = batch_in.pos[j];
+                batch_inject.n_seq_id[i]  = 1;
+                batch_inject.seq_id[i][0] = seq_id;
+                batch_inject.logits[i]    = false;
+            }
+
+            rc = llama_decode(ctx_dft, batch_inject);
+            if (rc != 0) {
+                LOG_ERR("%s: llama_decode(ctx_dft) failed rc=%d (n_tokens=%d, offset=%d)\n",
+                        __func__, rc, (int) n_chunk, (int) offset);
+                return false;
+            }
+            // The server may switch contexts before the next draft decode.
+            llama_synchronize(ctx_dft);
         }
 
         return true;
@@ -1336,32 +1337,69 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
 
             auto & result = *dp.result;
 
+            if (dp.dists) {
+                dp.dists->clear();
+            }
+
             if (is_dflash2) {
+                GGML_ASSERT(dp.temperature <= 0.0f || dp.dists);
                 const float * lattice = llama_get_embeddings_nextn(ctx_dft);
                 GGML_ASSERT(lattice && "DFlash2 selector produced no lattice");
+
+                if (selector_reset[seq_id]) {
+                    uint32_t seed = dp.seed;
+                    if (seed == LLAMA_DEFAULT_SEED) {
+                        seed = (uint32_t) std::chrono::high_resolution_clock::now().time_since_epoch().count();
+                    }
+                    selector_rng[seq_id].seed(seed ^ 0x85ebca6bU);
+                    selector_reset[seq_id] = false;
+                }
 
                 int32_t predecessor = 0;
                 for (int32_t i = 1; i < n_block_tokens; ++i) {
                     const float * row = lattice + (size_t) (beg + i) * n_embd_dec;
                     const float * scores = row + selector_top_k + (size_t) predecessor * selector_top_k;
 
-                    predecessor = (int32_t) std::distance(scores,
-                            std::max_element(scores, scores + selector_top_k));
-                    if (params.p_min > 0.0f) {
-                        // softmax(scores) at the argmax, i.e. 1 / sum(exp(s_k - s_max))
+                    if (dp.temperature > 0.0f) {
+                        common_speculative_token_dist dist;
+                        dist.ids.resize(selector_top_k);
+                        dist.probs.resize(selector_top_k);
+                        const float max_score = *std::max_element(scores, scores + selector_top_k);
                         float sum = 0.0f;
                         for (int32_t k = 0; k < selector_top_k; ++k) {
-                            sum += std::exp(scores[k] - scores[predecessor]);
+                            dist.ids[k] = (llama_token) row[k];
+                            dist.probs[k] = std::exp((scores[k] - max_score) / dp.temperature);
+                            sum += dist.probs[k];
                         }
-                        if (1.0f / sum < params.p_min) {
-                            break;
+                        for (float & p : dist.probs) {
+                            p /= sum;
                         }
+                        std::discrete_distribution<int32_t> sample(dist.probs.begin(), dist.probs.end());
+                        predecessor = sample(selector_rng[seq_id]);
+                        result.push_back(dist.ids[predecessor]);
+                        dp.dists->push_back(std::move(dist));
+                    } else {
+                        predecessor = (int32_t) std::distance(scores,
+                                std::max_element(scores, scores + selector_top_k));
+                        if (params.p_min > 0.0f) {
+                            // softmax(scores) at the argmax, i.e. 1 / sum(exp(s_k - s_max))
+                            float p_sum = 0.0f;
+                            for (int32_t k = 0; k < selector_top_k; ++k) {
+                                p_sum += std::exp(scores[k] - scores[predecessor]);
+                            }
+                            if (1.0f / p_sum < params.p_min) {
+                                break;
+                            }
+                        }
+                        result.push_back((llama_token) row[predecessor]);
                     }
-                    result.push_back((llama_token) row[predecessor]);
                 }
 
                 if (result.size() < (size_t) params.n_min) {
                     result.clear();
+                    if (dp.dists) {
+                        dp.dists->clear();
+                    }
                 }
                 continue;
             }
@@ -2600,7 +2638,7 @@ common_params common_base_params_to_speculative(const common_params & params) {
     result.n_outputs_max = params.n_parallel;
     result.n_outputs_max_per_seq = 1;
 
-    // dflash/dspark decode the whole noise block in a single pass and sample every block position on the backend
+    // dflash/dspark decode every sequence's full noise block in one pass
     // TODO: refactor such properties to be announced by the speculative types
     //       something like `struct common_speculative_type_props common_speculative_type_get_props(...);`
     const bool has_block_draft = std::any_of(
@@ -2612,6 +2650,8 @@ common_params common_base_params_to_speculative(const common_params & params) {
         // per-seq output positions: DFlash decodes anchor + n_max masks (n_max + 1); DSpark n_max -> +1 covers both
         const int32_t per_seq = std::max(1, params_spec.n_max + 1);
         result.n_outputs_max = params.n_parallel * per_seq;
+        result.n_batch  = std::max(result.n_batch,  result.n_outputs_max);
+        result.n_ubatch = std::max(result.n_ubatch, result.n_outputs_max);
         if (params_spec.backend_sampling) {
             result.n_outputs_max_per_seq = per_seq;
         }
