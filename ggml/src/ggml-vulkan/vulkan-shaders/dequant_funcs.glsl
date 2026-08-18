@@ -817,6 +817,57 @@ vec2 get_dm(uint ib, uint a_offset) {
 }
 #endif
 
+// turbo2 / turbo4 copy-from-quant. Added by lane-148: without these there is no
+// cpy_turbo{2,4}_0_f32 pipeline, so test_set_rows_turbo4's read-back leg declines and the
+// SET_ROWS_TURBO4 case prints "0/0 tests passed / Backend Vulkan0: OK" -- a green banner over
+// zero executed coverage of the turbo4 WHT+quantize write path.
+// No inverse WHT here: dequant stays in the rotated domain, exactly as
+// dequantize_row_turbo2_0 / dequantize_row_turbo4_0 do (ggml/src/ggml-turbo-quant.c).
+#if defined(DATA_A_TURBO2_0)
+vec2 dequantize(uint ib, uint iqs, uint a_offset) {
+    // SOURCE OF TRUTH: CENTROIDS_2BIT in ggml/src/ggml-turbo-quant.c
+    const float centroids[4] = float[4](-0.133462, -0.039994, 0.039994, 0.133462);
+    const uint j0 = iqs;
+    const uint j1 = iqs + 1;
+    const uint i0 = (uint(data_a[a_offset + ib].qs[j0 / 4]) >> ((j0 % 4) * 2)) & 0x3;
+    const uint i1 = (uint(data_a[a_offset + ib].qs[j1 / 4]) >> ((j1 % 4) * 2)) & 0x3;
+    return vec2(centroids[i0], centroids[i1]);
+}
+vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
+    vec2 v0 = dequantize(ib, iqs,     a_offset);
+    vec2 v1 = dequantize(ib, iqs + 2, a_offset);
+    return vec4(v0.x, v0.y, v1.x, v1.y);
+}
+vec2 get_dm(uint ib, uint a_offset) {
+    return vec2(float(data_a[a_offset + ib].norm), 0);
+}
+#endif
+
+#if defined(DATA_A_TURBO4_0)
+vec2 dequantize(uint ib, uint iqs, uint a_offset) {
+    // SOURCE OF TRUTH: CENTROIDS_4BIT in ggml/src/ggml-turbo-quant.c
+    const float centroids[16] = float[16](
+        -0.241529, -0.182877, -0.143016, -0.111036,
+        -0.083292, -0.058050, -0.034299, -0.011349,
+         0.011349,  0.034299,  0.058050,  0.083292,
+         0.111036,  0.143016,  0.182877,  0.241529
+    );
+    const uint j0 = iqs;
+    const uint j1 = iqs + 1;
+    const uint i0 = (uint(data_a[a_offset + ib].qs[j0 / 2]) >> ((j0 % 2) * 4)) & 0xF;
+    const uint i1 = (uint(data_a[a_offset + ib].qs[j1 / 2]) >> ((j1 % 2) * 4)) & 0xF;
+    return vec2(centroids[i0], centroids[i1]);
+}
+vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
+    vec2 v0 = dequantize(ib, iqs,     a_offset);
+    vec2 v1 = dequantize(ib, iqs + 2, a_offset);
+    return vec4(v0.x, v0.y, v1.x, v1.y);
+}
+vec2 get_dm(uint ib, uint a_offset) {
+    return vec2(float(data_a[a_offset + ib].norm), 0);
+}
+#endif
+
 #if defined(DATA_A_TQ3_1S)
 vec2 dequantize(uint ib, uint iqs, uint a_offset) {
     // TQ3_1S: 8-level Lloyd-Max centroids for N(0,1). ASYMMETRIC -- must match
