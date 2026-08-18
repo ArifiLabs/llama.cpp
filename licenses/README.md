@@ -15,6 +15,25 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
 
 `../LICENSE` is also the verbatim copy of upstream llama.cpp’s MIT license.
 
+## Audit, 2026-08-18 (lane-151) — every source cited by a `Taken-from:` trailer
+
+Derived by taking the distinct `Taken-from:` trailer values across every fork commit on `arifi/main`
+and asking, for each, whether a notice is retained above.
+
+| source cited by a trailer | notice retained | disposition |
+|---|---|---|
+| `ggml-org/llama.cpp` (upstream) | yes — `llama.cpp-MIT.txt` + root `LICENSE` | complete |
+| `Tiiny-AI/PowerInfer` (+ `smallthinker`) | yes — two MIT files | complete |
+| `charlie12345/ROCmFPX` | yes — `rocmfpx-MIT.txt` | complete |
+| `llama-cpp-turboquant` | yes — MIT | complete |
+| `turboquant_plus` | yes — Apache-2.0 + NOTICE | complete |
+| `PrismML-Eng/llama.cpp` | **no** | Phase 0 observed no `LICENSE`/`NOTICE` in the retained release material. Documented, not manufactured. |
+| `thecodacus/llama.cpp` | **no** | no license grant inside the captured patch artifacts. Documented, not manufactured. |
+| `turbo-tan/llama.cpp-tq3` | **no — GAP** | code WAS ported (`58ad80ffb`, the `TQ3_4S` family at ids 48-51). Unlike the two rows above this is not a "we looked and there was none" finding: no one looked, and no clone remains on the estate to look at. **Retaining tq3's license is a hard precondition of publishing this repository.** |
+
+`ciru-ai/ROCmFPX` is a registered source but appears in no trailer and has contributed no code, so
+no notice is owed yet; if it ever contributes, its license is retained first.
+
 Phase 0 observed no source `LICENSE` or `NOTICE` file in the retained PrismML
 release material and no license grant inside the captured thecodacus patch
 artifacts. A 2026-07-22 project decision authorizes their inclusion with
