@@ -1,0 +1,85 @@
+From 757ce57553e2efe446ffcaf223ba7859690256a9 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 11:18:03 -0400
+Subject: [PATCH] graph: derive the V-unpad head count from the attention
+ output tensor, not from hparams
+
+hparams.n_head(il) is correct here but is a SECOND source of truth that has to agree with the tensor. cur->ne[0] / padded_v_head cannot disagree with cur, and the divisibility assert turns a silent nelements mismatch into a loud failure at the exact site instead of a reshape abort downstream.
+
+Applied at all THREE sites in our tree (verified: 0 occurrences of the old hparams form remain, 3 of the tensor-derived form, 3 asserts). Content-checked, not message-checked: coverage.py scored this commit 0.00 against arifi/main, i.e. none of its added signal lines were present here.
+
+Taken-from: TheTom/llama-cpp-turboquant@f0420e056
+Origin: lane-154 turboquant greedy ingest, disposition row f0420e056 = CAPABILITY (cov 0.00, absent slice src/llama-graph.cpp).
+Measured-effect: UNMEASURED on this rig. Their report is a live abort in ggml_reshape_3d during graph reserve for gpt-oss-20b (V head_dim 64 padded to 128, 64 q heads over 8 kv heads) with -ctk turbo3 -ctv turbo3; we do not run that model, so the fix is taken as a correctness guard and the claim is NOT restated as ours.
+Lane: lane-154
+---
+ src/llama-graph.cpp | 42 +++++++++++++++++++++++++++---------------
+ 1 file changed, 27 insertions(+), 15 deletions(-)
+
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index ea83e9b0b..10ce8f322 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -2942,11 +2942,15 @@ ggml_tensor * llm_graph_context::build_attn(
+         if (padded_v_head != orig_v_head) {
+             // Reshape to 4D, extract original head_dim, reshape back to 2D
+             // Fix #78 (bingh0): cur shape post-MHA is (n_embd_head * n_head, n_tokens),
+-            // not (n_embd_head * n_head_kv, n_tokens). Reshape needs n_head
+-            // (Q-head count) so GQA models with n_head != n_head_kv (e.g.
+-            // Qwen2.5-0.5B head_dim=64 padded → 128) don't fail the element
+-            // count check in ggml_reshape_3d.
+-            const int64_t n_head_v = hparams.n_head(il);
++            // not (n_embd_head * n_head_kv, n_tokens). The output carries one
++            // row per Q head, so derive the head count from the tensor itself:
++            // hparams.n_head(il) is correct but is a second source of truth
++            // that has to agree with cur — ne[0]/padded_v_head cannot disagree,
++            // and the assert turns a silent nelements mismatch (observed live:
++            // gpt-oss 64->128 V pad, 64q/8kv, abort in ggml_reshape_3d during
++            // graph reserve) into a loud failure at the exact site.
++            GGML_ASSERT(cur->ne[0] % padded_v_head == 0);
++            const int64_t n_head_v = cur->ne[0] / padded_v_head;
+             const int64_t n_tokens_cur = cur->ne[1];
+             cur = ggml_reshape_3d(ctx0, cur, padded_v_head, n_head_v, n_tokens_cur);
+             // ggml_view_3d to extract first orig_v_head elements per head
+@@ -3069,11 +3073,15 @@ ggml_tensor * llm_graph_context::build_attn(
+         if (padded_v_head != orig_v_head) {
+             // cur is 2D: (padded_v_head * n_head, n_tokens) after build_attn_mha
+             // Fix #78 (bingh0): cur shape post-MHA is (n_embd_head * n_head, n_tokens),
+-            // not (n_embd_head * n_head_kv, n_tokens). Reshape needs n_head
+-            // (Q-head count) so GQA models with n_head != n_head_kv (e.g.
+-            // Qwen2.5-0.5B head_dim=64 padded → 128) don't fail the element
+-            // count check in ggml_reshape_3d.
+-            const int64_t n_head_v = hparams.n_head(il);
++            // not (n_embd_head * n_head_kv, n_tokens). The output carries one
++            // row per Q head, so derive the head count from the tensor itself:
++            // hparams.n_head(il) is correct but is a second source of truth
++            // that has to agree with cur — ne[0]/padded_v_head cannot disagree,
++            // and the assert turns a silent nelements mismatch (observed live:
++            // gpt-oss 64->128 V pad, 64q/8kv, abort in ggml_reshape_3d during
++            // graph reserve) into a loud failure at the exact site.
++            GGML_ASSERT(cur->ne[0] % padded_v_head == 0);
++            const int64_t n_head_v = cur->ne[0] / padded_v_head;
+             const int64_t n_tokens_cur = cur->ne[1];
+             cur = ggml_reshape_3d(ctx0, cur, padded_v_head, n_head_v, n_tokens_cur);
+             cur = ggml_view_3d(ctx0, cur, orig_v_head, n_head_v, n_tokens_cur,
+@@ -3265,11 +3273,15 @@ ggml_tensor * llm_graph_context::build_attn(
+         const int64_t padded_v_head = v->ne[0];
+         if (padded_v_head != orig_v_head) {
+             // Fix #78 (bingh0): cur shape post-MHA is (n_embd_head * n_head, n_tokens),
+-            // not (n_embd_head * n_head_kv, n_tokens). Reshape needs n_head
+-            // (Q-head count) so GQA models with n_head != n_head_kv (e.g.
+-            // Qwen2.5-0.5B head_dim=64 padded → 128) don't fail the element
+-            // count check in ggml_reshape_3d.
+-            const int64_t n_head_v = hparams.n_head(il);
++            // not (n_embd_head * n_head_kv, n_tokens). The output carries one
++            // row per Q head, so derive the head count from the tensor itself:
++            // hparams.n_head(il) is correct but is a second source of truth
++            // that has to agree with cur — ne[0]/padded_v_head cannot disagree,
++            // and the assert turns a silent nelements mismatch (observed live:
++            // gpt-oss 64->128 V pad, 64q/8kv, abort in ggml_reshape_3d during
++            // graph reserve) into a loud failure at the exact site.
++            GGML_ASSERT(cur->ne[0] % padded_v_head == 0);
++            const int64_t n_head_v = cur->ne[0] / padded_v_head;
+             const int64_t n_tokens_cur = cur->ne[1];
+             cur = ggml_reshape_3d(ctx0, cur, padded_v_head, n_head_v, n_tokens_cur);
+             cur = ggml_view_3d(ctx0, cur, orig_v_head, n_head_v, n_tokens_cur,

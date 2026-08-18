@@ -1,0 +1,3033 @@
+From b1179b79b7bd94f45674b003b5cba78dfa5bd037 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 12:11:32 -0400
+Subject: [PATCH] off-rig backends: land the 12 CUDA/Metal/SYCL/HIP rows
+ unbuilt, per the HQ ruling of 2026-08-18
+
+HQ ruled on my OPTIONS AUDIT: land them, per precedent (the CUDA moe-cache line landed unbuilt in prior lanes) and the union law (capability in scope, declinable only when BROKEN). These 12 are not broken; the blocker was only ever that this rig has no such device.
+
+HOW, and why not by replay: all TWELVE rows FAIL to apply as deltas (git apply --3way, measured, 12/12 conflict) because their context depends on intermediate turboquant commits our tree never carried in that form. I landed the seven off-rig FILES they touch at TIP state instead - the same tip-not-replay rule the VK cluster used. The over-reach is declared, not hidden: tip state is a SUPERSET of the 12 rows for those files.
+
+The over-reach was measured before I took it, not assumed harmless. ggml-cuda.cu tip state deletes 133 lines and ggml-metal.metal 363, and ZERO of either carry a rocmfp/tq3/q2_0_g128/q6_0/turbo/arifi marker - none of our own additions are lost. The only marker-bearing deletions are the 6 in fattn-vec.cuh, and those ARE row f050a2501 landing by design (it gates the turbo K split on the LUT instead of on D). For backends we do not build, byte-identity with the fork tip is the correct end state: it removes drift rather than accumulating it.
+
+HQ CONDITION 1 - flag-gated so they never enter the Vulkan/CPU build path - VERIFIED STRUCTURALLY rather than by adding new flags, which would have been redundant machinery. build-vulkan/CMakeCache.txt: GGML_CUDA/METAL/SYCL/HIP/OPENCL/WEBGPU all BOOL=OFF, GGML_VULKAN=ON. The generated build.ninja contains 3085 ggml-vulkan/ references and ZERO compiling references to ggml-metal/, ggml-sycl/, ggml-opencl/, ggml-webgpu/ or ggml-hip/; the single ggml-cuda/ occurrence is a READ dependency of the arifi-sync-check stamp, not a compile rule.
+
+HQ CONDITION 4 - the proof they touch nothing here: rebuild green with fresh exe mtimes, and arifi_sync_check.py exit 0 on the same tallies. The rig sweep comparison is banked alongside.
+
+Taken-from: TheTom/llama-cpp-turboquant@7ebcbb0b6
+Origin: lane-154, HQ ruling of 2026-08-18 on the 12 OFF-RIG-BACKEND disposition rows: aa606e4a9 78104ec46 f31e9b7c7 fa7393cd8 2603f5d98 abbe07788 7a2b25a0c 1f8ceb051 7b4192ad7 f050a2501 a577aebfb ccd29136c.
+Measured-effect: UNMEASURED AND UNPROVABLE ON THIS RIG - that is the point of the ruling. This code never compiles here (no CUDA/Metal/SYCL/HIP device or toolchain), so no F-107 exe proof and no backend-ops execution proof exists for it. A future lane with the hardware owes roughly 30 min to verify it; the debt is a named OWED row in the REPORT.
+Lane: lane-154
+---
+ ggml/src/ggml-cuda/fattn-vec.cuh            |   31 +-
+ ggml/src/ggml-cuda/ggml-cuda.cu             |  152 +--
+ ggml/src/ggml-cuda/moe-cache.cu             |   38 +-
+ ggml/src/ggml-metal/CMakeLists.txt          |    1 +
+ ggml/src/ggml-metal/ggml-metal-moe-cache.mm | 1205 +++++++++++++++++++
+ ggml/src/ggml-metal/ggml-metal.cpp          |    8 +-
+ ggml/src/ggml-metal/ggml-metal.metal        | 1167 ++++++++++++------
+ 7 files changed, 2071 insertions(+), 531 deletions(-)
+ create mode 100644 ggml/src/ggml-metal/ggml-metal-moe-cache.mm
+
+diff --git a/ggml/src/ggml-cuda/fattn-vec.cuh b/ggml/src/ggml-cuda/fattn-vec.cuh
+index 42e7a7930..34f04f671 100644
+--- a/ggml/src/ggml-cuda/fattn-vec.cuh
++++ b/ggml/src/ggml-cuda/fattn-vec.cuh
+@@ -94,21 +94,22 @@ static __global__ void flash_attn_ext_vec(
+     // nthreads_KQ=1: each thread computes a full KQ product alone — eliminates warp_reduce_sum
+     // shuffle and halves KQ loop iterations. Each thread holds full Q vector in registers.
+     //
+-    // That last property is what makes it unaffordable at large D. Q_reg below is
+-    // [ncols][(D/2)/nthreads_KQ], so with nthreads_KQ=1 the per-thread Q working set grows
+-    // linearly with D: at D=256, ncols=2 it is float2[2][128] = 2 KiB per lane. Measured
+-    // spills for K=turbo at D=256 (issue #294):
++    // That last property is what makes it unaffordable in general: Q_reg below is
++    // [ncols][(D/2)/nthreads_KQ], so at nthreads_KQ=1 the per-lane Q working set is the whole
++    // Q vector. Measured spill for turbo K (issue #294): ~4.3 KB/lane at ncols=2 on SM 86,
++    // 295-786 VGPRs across CDNA/RDNA2/RDNA3/RDNA4, at both hsk=128 and hsk=256.
+     //
+-    //     gfx908 (CDNA)    550-586 VGPR (255 + 295-330)
+-    //     gfx1100 (RDNA3)  884-907 VGPR (256 + 628-651)
+-    //     gfx1030 (RDNA2)  890-976 VGPR (256 + 634-720)
++    // The shared-memory LUT paths below are the exception. They compute the full D-length dot
++    // per lane with no nthreads_KQ striding and never call warp_reduce_sum, so they structurally
++    // require nthreads_KQ==1; raising it there makes every lane redundantly recompute the whole
++    // dot (correct, but measured at -12.6% / -31.1% turbo2 decode at 8K / 32K on SM 86).
++    // Those same shapes are also the ones that do not spill. So the split is gated on the LUT
++    // being inactive rather than on D: keep 1 exactly where the LUT runs, split everywhere else.
+     //
+-    // while the same shapes with a non-turbo K spill nothing. Above D=128 the reduction
+-    // shuffle is much cheaper than the spill, so fall back to the split the other
+-    // unquantized K types already use. The turbo KQ dots are templated on nthreads and
+-    // stride correctly for any value, and warp_reduce_sum<nthreads_KQ> is a no-op at 1,
+-    // so both settings are already supported by the kernel.
+-    constexpr int nthreads_KQ = K_is_turbo ? (D > 128 ? 128 / cpy_nb : 1)
++    // Kept in sync with n_centroids_lut below; turbo4 never gets a LUT (shmem budget).
++    constexpr bool turbo_lut_active = (ncols == 1) && (D <= 256) &&
++        (type_K == GGML_TYPE_TURBO3_0 || type_K == GGML_TYPE_TURBO2_0);
++    constexpr int nthreads_KQ = K_is_turbo ? (turbo_lut_active ? 1 : 128 / cpy_nb)
+                                            : (K_is_unquantized ? 128 / cpy_nb : nthreads_KQ_q);
+     constexpr bool V_is_turbo = (type_V == GGML_TYPE_TURBO3_0 || type_V == GGML_TYPE_TURBO2_0 || type_V == GGML_TYPE_TURBO4_0);
+     // Turbo V dequant is scalar (byte extract + LUT), not vectorized loads.
+@@ -164,8 +165,8 @@ static __global__ void flash_attn_ext_vec(
+     // then the hot loop does turbo_lut[d][idx] (shmem read, no multiply).
+     // turbo4 excluded: 16 centroids × D exceeds shmem budget.
+     // Stride = n_centroids+1 to avoid bank conflicts.
+-    constexpr int n_centroids_lut = (D <= 256 && type_K == GGML_TYPE_TURBO3_0) ? 8 :
+-                                    (D <= 256 && type_K == GGML_TYPE_TURBO2_0) ? 4 : 0;
++    constexpr int n_centroids_lut = !turbo_lut_active ? 0 :
++                                    (type_K == GGML_TYPE_TURBO3_0) ? 8 : 4;
+     constexpr int lut_stride = n_centroids_lut > 0 ? n_centroids_lut + 1 : 1;
+     __shared__ half turbo_lut[n_centroids_lut > 0 ? D : 1][lut_stride];
+ 
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index d61c1c190..dc1439b2c 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -2004,37 +2004,6 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
+     ggml_cuda_mul_mat_cublas(ctx, src0, src1, dst);
+ }
+ 
+-// returns true when ggml_cuda_mul_mat_id takes the fallback path that requires stream synchronization
+-// [TAG_MUL_MAT_ID_CUDA_GRAPHS]
+-static bool ggml_cuda_mul_mat_id_needs_sync(const ggml_tensor * dst, const int cc) {
+-    const ggml_tensor * src0 = dst->src[0];
+-    const ggml_tensor * src1 = dst->src[1];
+-
+-    if (src1->type != GGML_TYPE_F32 || dst->type != GGML_TYPE_F32) {
+-        return true;
+-    }
+-
+-    if (dst->ne[2] <= MMVQ_MAX_BATCH_SIZE) {
+-        if (ggml_is_quantized(src0->type)) {
+-            if (dst->ne[2] <= get_mmvq_mmid_max_batch(src0->type, cc)) {
+-                return false;
+-            }
+-        } else if (GGML_CUDA_CC_IS_AMD(cc)) {
+-            return false;
+-        }
+-    }
+-
+-    if (ggml_cuda_should_use_mmq(src0->type, cc, src1->ne[2], /*n_experts=*/src0->ne[2])) {
+-        return false;
+-    }
+-
+-    if (ggml_cuda_should_use_mmf(src0->type, cc, WARP_SIZE, src0->ne, src0->nb, src1->ne[2], /*mul_mat_id=*/true)) {
+-        return false;
+-    }
+-
+-    return true;
+-}
+-
+ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+     const ggml_tensor * src0 = dst->src[0];
+     const ggml_tensor * src1 = dst->src[1];
+@@ -2079,7 +2048,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor *
+     }
+ 
+     // note: this path should not be reached when recording CUDA graphs, because it requires stream synchronization
+-    GGML_ASSERT(ggml_cuda_mul_mat_id_needs_sync(dst, cc));
++    // TODO: add asserts to verify this. should work with CUDA, HIP, etc.
+     cudaStream_t stream = ctx.stream();
+ 
+     GGML_ASSERT(nb12 % nb11 == 0);
+@@ -2700,8 +2669,10 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
+         const bool is_tq_w = (node->src[0]->type == GGML_TYPE_TQ4_1S || node->src[0]->type == GGML_TYPE_TQ3_1S);
+         if (node->op == GGML_OP_MUL_MAT_ID) {
+             const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+-            if (ggml_cuda_mul_mat_id_needs_sync(node, cc)) {
+-                // the mul_mat_id fallback path synchronizes the stream, so we cannot use CUDA graphs
++            const int mmvq_mmid_max = get_mmvq_mmid_max_batch(node->src[0]->type, cc);
++            if (!ggml_is_quantized(node->src[0]->type) || is_tq_w || node->ne[2] > mmvq_mmid_max) {
++                // under these conditions, the mul_mat_id operation will need to synchronize the stream, so we cannot use CUDA graphs
++                // TODO: figure out a way to enable for larger batch sizes, without hurting performance
+                 // ref: https://github.com/ggml-org/llama.cpp/pull/18958
+                 use_cuda_graph = false;
+ #ifndef NDEBUG
+@@ -2827,52 +2798,6 @@ static bool ggml_cuda_should_fuse_rope_set_rows(const ggml_tensor * rope,
+     return true;
+ }
+ 
+-static bool ggml_cuda_should_fuse_rms_norm_mul_rope(const ggml_tensor * rms_norm,
+-                                                    const ggml_tensor * mul,
+-                                                    const ggml_tensor * rope) {
+-    if (rms_norm->op != GGML_OP_RMS_NORM || mul->op != GGML_OP_MUL || rope->op != GGML_OP_ROPE) {
+-        return false;
+-    }
+-
+-    if (rms_norm->src[0]->type != GGML_TYPE_F32 || rms_norm->type != GGML_TYPE_F32 ||
+-        mul->src[0]->type != GGML_TYPE_F32 || mul->src[1]->type != GGML_TYPE_F32 ||
+-        mul->type != GGML_TYPE_F32 || rope->type != GGML_TYPE_F32) {
+-        return false;
+-    }
+-
+-    if (rope->src[0] != mul) {
+-        return false;
+-    }
+-
+-    //if rms norm is the B operand, then we don't handle broadcast
+-    if (rms_norm == mul->src[1] && !ggml_are_same_shape(mul->src[0], rms_norm)) {
+-        return false;
+-    }
+-
+-    if (!ggml_are_same_shape(rms_norm, mul)) {
+-        return false;
+-    }
+-
+-    //rms_norm kernel assumes contiguous rows
+-    if (!ggml_is_contiguous_rows(rms_norm->src[0]) ||
+-        !ggml_is_contiguous_rows(mul->src[0]) || !ggml_is_contiguous_rows(mul->src[1])) {
+-        return false;
+-    }
+-
+-    // the fused kernel handles the norm/neox rope modes only
+-    const int mode = ((const int32_t *) rope->op_params)[2];
+-    if (mode != GGML_ROPE_TYPE_NORMAL && mode != GGML_ROPE_TYPE_NEOX) {
+-        return false;
+-    }
+-
+-    const int n_dims = ((const int32_t *) rope->op_params)[1];
+-    if (n_dims % 2 != 0 || rope->src[0]->ne[0] % 2 != 0) {
+-        return false;
+-    }
+-
+-    return true;
+-}
+-
+ // match gated_delta_net + the strided cpy that scatters its state snapshots into the cache
+ // (slot i -> rollback group i, slot 0 newest), so the kernel can write them and skip the cpy.
+ static int ggml_cuda_try_gdn_cache_fusion(
+@@ -3202,36 +3127,6 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
+         }
+     }
+ 
+-    std::initializer_list<enum ggml_op> rms_norm_mul_rope_ops          = { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_ROPE };
+-    std::initializer_list<enum ggml_op> rms_norm_mul_rope_set_rows_ops = { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_ROPE, GGML_OP_VIEW, GGML_OP_SET_ROWS };
+-
+-    if (is_equal(rms_norm_mul_rope_set_rows_ops, ops) && ggml_can_fuse_subgraph(cgraph, node_idx, ops, { node_idx + 4 })) {
+-        const ggml_tensor * rms_norm = cgraph->nodes[node_idx];
+-        const ggml_tensor * mul      = cgraph->nodes[node_idx + 1];
+-        const ggml_tensor * rope     = cgraph->nodes[node_idx + 2];
+-        const ggml_tensor * view     = cgraph->nodes[node_idx + 3];
+-        const ggml_tensor * set_rows = cgraph->nodes[node_idx + 4];
+-
+-        if (ggml_check_edges(cgraph, node_idx, {{1, 0, 0}, {2, 0, 1}, {3, 0, 2}, {4, 0, 3}}) &&
+-            ggml_cuda_should_fuse_rms_norm_mul_rope(rms_norm, mul, rope) &&
+-            ggml_cuda_should_fuse_rope_set_rows(rope, view, set_rows)) {
+-            int out_nodes[] = { node_idx + 4 };
+-            return ggml_cuda_check_fusion_memory_ranges(cgraph, node_idx, (int)ops.size(), out_nodes, 1);
+-        }
+-    }
+-
+-    if (is_equal(rms_norm_mul_rope_ops, ops) && ggml_can_fuse(cgraph, node_idx, ops)) {
+-        const ggml_tensor * rms_norm = cgraph->nodes[node_idx];
+-        const ggml_tensor * mul      = cgraph->nodes[node_idx + 1];
+-        const ggml_tensor * rope     = cgraph->nodes[node_idx + 2];
+-
+-        if (ggml_cuda_should_fuse_rms_norm_mul_rope(rms_norm, mul, rope)) {
+-            int out_nodes[] = { node_idx + 2 };
+-            return ggml_cuda_check_fusion_memory_ranges(cgraph, node_idx, (int)ops.size(), out_nodes, 1);
+-        }
+-        return false;
+-    }
+-
+     std::initializer_list<enum ggml_op> rope_set_rows_ops = { GGML_OP_ROPE, GGML_OP_VIEW, GGML_OP_SET_ROWS };
+ 
+     if (is_equal(rope_set_rows_ops, ops) && ggml_can_fuse_subgraph(cgraph, node_idx, ops, { node_idx + 2 })) {
+@@ -3240,8 +3135,7 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
+         const ggml_tensor * set_rows = cgraph->nodes[node_idx + 2];
+ 
+         if (ggml_cuda_should_fuse_rope_set_rows(rope, view, set_rows)) {
+-            int out_nodes[] = { node_idx + 2 };
+-            return ggml_cuda_check_fusion_memory_ranges(cgraph, node_idx, (int)ops.size(), out_nodes, 1);
++            return true;
+         }
+     }
+ 
+@@ -4093,16 +3987,6 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph
+         return fused_node_count - 1;
+     }
+ 
+-    if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_ROPE, GGML_OP_VIEW, GGML_OP_SET_ROWS }, {})) {
+-        ggml_cuda_op_rms_norm_mul_rope_fused(*cuda_ctx, node, cgraph->nodes[i + 1], cgraph->nodes[i + 2], cgraph->nodes[i + 4]);
+-        return 4;
+-    }
+-
+-    if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_ROPE }, {})) {
+-        ggml_cuda_op_rms_norm_mul_rope_fused(*cuda_ctx, node, cgraph->nodes[i + 1], cgraph->nodes[i + 2], nullptr);
+-        return 2;
+-    }
+-
+     if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_ADD }, {})) {
+         ggml_cuda_op_rms_norm_fused_add(*cuda_ctx, node, cgraph->nodes[i + 1], cgraph->nodes[i + 2]);
+         return 2;
+@@ -4429,7 +4313,17 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+             ggml_cuda_lock_counter.fetch_add(1, std::memory_order_relaxed);
+         }
+ 
++#if defined(GGML_USE_HIP)
++        // RDNA2 (gfx1030) faults (GPF in libamdhip64) capturing in Relaxed mode when
++        // driven from a worker thread; ThreadLocal capture avoids it. Other archs keep Relaxed.
++        const hipStreamCaptureMode capture_mode =
++            GGML_CUDA_CC_IS_RDNA2(ggml_cuda_info().devices[cuda_ctx->device].cc)
++                ? hipStreamCaptureModeThreadLocal
++                : hipStreamCaptureModeRelaxed;
++        CUDA_CHECK(cudaStreamBeginCapture(cuda_ctx->stream(), capture_mode));
++#else
+         CUDA_CHECK(cudaStreamBeginCapture(cuda_ctx->stream(), cudaStreamCaptureModeRelaxed));
++#endif
+     }
+ 
+     ggml_cuda_graph_evaluate_and_capture(cuda_ctx, cgraph, use_cuda_graph, cuda_graph_update_required, graph_key);
+@@ -4917,7 +4811,7 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
+     }
+ 
+ // ref: https://github.com/ggml-org/llama.cpp/pull/17368
+-#if defined(__linux__) && !defined(GGML_USE_HIP)
++#if defined(__linux__)
+     // Check if this is a UMA (Unified Memory Architecture) system
+     cudaDeviceProp prop;
+     CUDA_CHECK(cudaGetDeviceProperties(&prop, ggml_cuda_get_physical_device(ctx->device)));
+@@ -4937,7 +4831,7 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
+             GGML_LOG_ERROR("%s: /proc/meminfo reading failed, using cudaMemGetInfo\n", __func__);
+         }
+     }
+-#endif // defined(__linux__) && !defined(GGML_USE_HIP)
++#endif // defined(__linux__)
+ 
+     // virtual devices sharing one physical GPU share its memory pool; split it between them
+     const int share_count = ggml_cuda_physical_device_share_count(ctx->device);
+@@ -4977,7 +4871,6 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
+         /* .host_buffer           = */ host_buffer,
+         /* .buffer_from_host_ptr  = */ false,
+         /* .events                = */ events,
+-        /* .mmap_support          = */ props->type != GGML_BACKEND_DEVICE_TYPE_IGPU,
+     };
+ }
+ 
+@@ -5352,17 +5245,11 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+                    (op->src[1]->type == GGML_TYPE_F32 || op->src[1]->type == GGML_TYPE_F16) &&
+                    (op->type         == GGML_TYPE_F32 || op->type         == GGML_TYPE_F16);
+         case GGML_OP_SSM_SCAN: {
+-            const int32_t K = ggml_get_op_params_i32(op, 0);
+-
+             if (op->src[3]->ne[0] == 1) {
+                 // Mamba2
+                 // (kernel only supports (d_state == 128 || d_state == 256) && d_head % 16 == 0)
+                 return (op->src[0]->ne[0] == 128 || op->src[0]->ne[0] == 256) && op->src[0]->ne[1] % 16 == 0;
+             } else {
+-                if (K > 1) {
+-                    return false;
+-                }
+-
+                 // Mamba
+                 // (kernel only supports d_state == 16, d_head == 1, n_head % 128 == 0, n_group == 1)
+                 return op->src[0]->ne[0] == 16 && op->src[0]->ne[1] == 1 && op->src[0]->ne[2] % 128 == 0 && op->src[4]->ne[1] == 1;
+@@ -5384,7 +5271,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+             return max_bias == 0.0f;
+         }
+         case GGML_OP_ROLL:
+-            if(op->src[0]->type == GGML_TYPE_F32 && ggml_is_contiguous(op->src[0])) {
++            if(op->src[0]->type == GGML_TYPE_F32) {
+                 return true;
+             }
+             return false;
+@@ -5495,7 +5382,6 @@ static bool ggml_backend_cuda_device_offload_op(ggml_backend_dev_t dev, const gg
+ 
+ static ggml_backend_event_t ggml_backend_cuda_device_event_new(ggml_backend_dev_t dev) {
+ #ifdef GGML_CUDA_NO_PEER_COPY
+-    GGML_UNUSED(dev);
+     return nullptr;
+ #else
+     ggml_backend_cuda_device_context * dev_ctx = (ggml_backend_cuda_device_context *)dev->context;
+diff --git a/ggml/src/ggml-cuda/moe-cache.cu b/ggml/src/ggml-cuda/moe-cache.cu
+index 4f03d6578..6b7495e54 100644
+--- a/ggml/src/ggml-cuda/moe-cache.cu
++++ b/ggml/src/ggml-cuda/moe-cache.cu
+@@ -810,7 +810,7 @@ static bool moe_cache_grow_device(
+         const size_t old_capacity = capacity;
+         if (!moe_cache_cuda_ok(
+                     device, cudaFree(*pointer), "scratch replacement free", true)) {
+-            cudaFree(fresh);
++            (void)cudaFree(fresh);
+             return false;
+         }
+         moe_cache_budget_reallocation(device, old_capacity, requested);
+@@ -1010,7 +1010,7 @@ static bool moe_cache_grow_host(
+         return false;
+     }
+     if (*pointer) {
+-        cudaFreeHost(*pointer);
++        (void)cudaFreeHost(*pointer);
+     }
+     *pointer = fresh;
+     capacity = requested;
+@@ -1069,7 +1069,7 @@ static void moe_cache_worker(moe_cache_session * session, moe_cache_device * dev
+             cudaError_t alloc_error = cudaMallocHost((void **)&fresh, job.bytes);
+             if (alloc_error == cudaSuccess) {
+                 if (stage) {
+-                    cudaFreeHost(stage);
++                    (void)cudaFreeHost(stage);
+                 }
+                 stage = fresh;
+                 stage_capacity = job.bytes;
+@@ -1143,11 +1143,11 @@ static void moe_cache_worker(moe_cache_session * session, moe_cache_device * dev
+     }
+ 
+     if (stream) {
+-        cudaStreamSynchronize(stream);
+-        cudaStreamDestroy(stream);
++        (void)cudaStreamSynchronize(stream);
++        (void)cudaStreamDestroy(stream);
+     }
+     if (stage) {
+-        cudaFreeHost(stage);
++        (void)cudaFreeHost(stage);
+     }
+ }
+ 
+@@ -1264,7 +1264,7 @@ static bool moe_cache_allocate_pool(
+ 
+     std::unique_ptr<moe_cache_pool> pool(new (std::nothrow) moe_cache_pool());
+     if (!pool) {
+-        cudaFree(slab);
++        (void)cudaFree(slab);
+         moe_cache_budget_allocation(device, allocated, false);
+         return false;
+     }
+@@ -1282,7 +1282,7 @@ static bool moe_cache_allocate_pool(
+         }
+         device.pools.push_back(std::move(pool));
+     } catch (...) {
+-        cudaFree(slab);
++        (void)cudaFree(slab);
+         moe_cache_budget_allocation(device, allocated, false);
+         return false;
+     }
+@@ -1291,7 +1291,7 @@ static bool moe_cache_allocate_pool(
+     device.allocated_bytes += allocated;
+ 
+     if (!moe_cache_start_worker(session, device)) {
+-        cudaFree(device.pools.back()->slab);
++        (void)cudaFree(device.pools.back()->slab);
+         moe_cache_budget_allocation(device, allocated, false);
+         device.pools.back()->slab = nullptr;
+         device.pools.pop_back();
+@@ -1646,41 +1646,41 @@ static void moe_cache_cancel_queue_locked(
+ static void moe_cache_free_device(moe_cache_device & device) {
+     ggml_cuda_set_device(device.logical);
+     if (device.compute_stream) {
+-        cudaStreamSynchronize(device.compute_stream);
++        (void)cudaStreamSynchronize(device.compute_stream);
+     }
+     for (auto & pool_ptr : device.pools) {
+         if (pool_ptr->slab) {
+-            cudaFree(pool_ptr->slab);
++            (void)cudaFree(pool_ptr->slab);
+             moe_cache_budget_allocation(
+                     device, (size_t)pool_ptr->n_slots * pool_ptr->expert_size, false);
+             pool_ptr->slab = nullptr;
+         }
+     }
+     if (device.d_input) {
+-        cudaFree(device.d_input);
++        (void)cudaFree(device.d_input);
+         moe_cache_budget_allocation(device, device.d_input_cap, false);
+         device.d_input = nullptr;
+     }
+     if (device.d_act_q8) {
+-        cudaFree(device.d_act_q8);
++        (void)cudaFree(device.d_act_q8);
+         moe_cache_budget_allocation(device, device.act_q8_cap, false);
+         device.d_act_q8 = nullptr;
+     }
+     if (device.d_out) {
+-        cudaFree(device.d_out);
++        (void)cudaFree(device.d_out);
+         moe_cache_budget_allocation(device, device.d_out_cap, false);
+         device.d_out = nullptr;
+     }
+     if (device.h_input) {
+-        cudaFreeHost(device.h_input);
++        (void)cudaFreeHost(device.h_input);
+         device.h_input = nullptr;
+     }
+     if (device.h_out) {
+-        cudaFreeHost(device.h_out);
++        (void)cudaFreeHost(device.h_out);
+         device.h_out = nullptr;
+     }
+     if (device.compute_stream) {
+-        cudaStreamDestroy(device.compute_stream);
++        (void)cudaStreamDestroy(device.compute_stream);
+         device.compute_stream = nullptr;
+     }
+     device.pools.clear();
+@@ -2531,7 +2531,7 @@ static int moe_cache_dispatch_internal(
+     }
+ 
+     if (!ok) {
+-        cudaStreamSynchronize(device.compute_stream);
++        (void)cudaStreamSynchronize(device.compute_stream);
+         std::lock_guard<std::mutex> lock(session.mu);
+         device.dispatch_failures++;
+         return 0;
+@@ -2586,7 +2586,7 @@ static int moe_cache_collect(
+                 device, cudaStreamSynchronize(device.compute_stream),
+                 "output synchronization", true);
+     } else {
+-        cudaStreamSynchronize(device.compute_stream);
++        (void)cudaStreamSynchronize(device.compute_stream);
+     }
+     node->dispatched = false;
+ 
+diff --git a/ggml/src/ggml-metal/CMakeLists.txt b/ggml/src/ggml-metal/CMakeLists.txt
+index 42054d841..ab54237ee 100644
+--- a/ggml/src/ggml-metal/CMakeLists.txt
++++ b/ggml/src/ggml-metal/CMakeLists.txt
+@@ -11,6 +11,7 @@ ggml_add_backend_library(ggml-metal
+                          ggml-metal-common.cpp
+                          ggml-metal-context.m
+                          ggml-metal-ops.cpp
++                         ggml-metal-moe-cache.mm
+                         )
+ 
+ target_link_libraries(ggml-metal PRIVATE
+diff --git a/ggml/src/ggml-metal/ggml-metal-moe-cache.mm b/ggml/src/ggml-metal/ggml-metal-moe-cache.mm
+new file mode 100644
+index 000000000..ef9c1b1ea
+--- /dev/null
++++ b/ggml/src/ggml-metal/ggml-metal-moe-cache.mm
+@@ -0,0 +1,1205 @@
++// Metal MoE Expert Cache.
++//
++// Keeps the hottest CPU-resident MoE expert weights resident in Metal
++// shared (unified) memory, so decode-time expert matvecs run on the GPU
++// instead of the CPU path with PCIe-round-trip weight reads.
++//
++// This implements the real ggml_moe_cache_api contract (see
++// ggml-backend-moe-cache.h). The scheduler owns one cache session; the
++// CPU MUL_MAT_ID path calls begin/plan/dispatch/collect/end per node.
++//
++// v1 notes:
++//   - synchronous fills (no worker thread): plan() copies missed experts
++//     into the slab before returning, so a miss still serves this node
++//   - one pool per (expert_size, wtype), allocated lazily in begin()
++//   - unified memory: fills are plain memcpy, results live in shared
++//     buffers readable by the CPU
++//   - fused SwiGLU returns NULL (stock CPU path handles the node)
++//
++// Register by calling ggml_metal_moe_cache_register() from
++// ggml_backend_metal_reg() after the backend reg struct is set up.
++
++#import <Foundation/Foundation.h>
++#import <Metal/Metal.h>
++
++#include "ggml-metal.h"
++#include "ggml-metal-context.h"
++#include "ggml-metal-device.h"
++
++#include "ggml-backend-impl.h"
++#include "ggml-backend.h"
++#include "ggml-impl.h"
++#include "ggml.h"
++#include "../ggml-quants.h"
++#include "../ggml-moe-cache-common.h"
++
++// Thread-local session stack (owned by this backend; independent of CUDA's).
++static thread_local std::vector<moe_cache_scope_frame> g_session_stack;
++static thread_local int g_session_suppressed = 0;
++
++// Global session registry for invalidate()/teardown paths.
++static std::mutex g_registry_mu;
++static std::unordered_set<moe_cache_session *> g_sessions;
++// Live-session count, so invalidate() can bail before taking g_registry_mu.
++// invalidate runs on every backend buffer write; with no cache active that was
++// one mutex acquire per write during model load.
++static std::atomic<size_t> g_session_count{0};
++
++// Backend registration object this provider was registered under.
++static const void * g_moe_cache_owner = nullptr;
++
++// ---------------------------------------------------------------------------
++// Metal device extension
++// ---------------------------------------------------------------------------
++
++struct moe_cache_metal_device : public moe_cache_device {
++    moe_cache_metal_device(id<MTLDevice> dev, ggml_metal_device_t ctx)
++        : moe_cache_device(0, 0), mtl_device(dev), ctx_dev(ctx) {
++        [mtl_device retain];
++    }
++
++    ~moe_cache_metal_device() {
++        free_slabs();
++        if (out_buffer) {
++            [out_buffer release];
++            out_buffer = nil;
++        }
++        if (mtl_queue) {
++            [mtl_queue release];
++            mtl_queue = nil;
++        }
++        [mtl_device release];
++    }
++
++    id<MTLDevice> mtl_device;
++    // Backend device context; the library is compiled from it on first use.
++    ggml_metal_device_t ctx_dev = nullptr;
++    // Command queue, library, and pipelines are created lazily on the first
++    // begin, so a context that never uses the cache allocates no GPU objects.
++    id<MTLCommandQueue> mtl_queue = nil;
++    std::once_flag init_once;
++    bool init_ok = false;
++    ggml_metal_library_t lib = nullptr;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_q8_0;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_q4_0;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_q4_K;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_q6_K;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_q5_K;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_q1_0;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_q2_0;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_q4_1;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_q5_0;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_q5_1;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_q2_K;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_q3_K;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_iq2_xxs;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_iq2_xs;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_iq2_s;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_iq3_xxs;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_iq3_s;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_iq1_s;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_iq1_m;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_iq4_nl;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_iq4_xs;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_mxfp4;
++    struct ggml_metal_pipeline_with_params mmv_pipeline_nvfp4;
++
++    // Tracked MTLBuffers for slab pools.
++    std::vector<id<MTLBuffer>> slab_buffers;
++    id<MTLBuffer> out_buffer = nil;
++
++    void free_slabs() {
++        for (auto buf : slab_buffers) {
++            [buf release];
++        }
++        slab_buffers.clear();
++        for (auto & p : pools) {
++            p->slab = nullptr;
++        }
++    }
++};
++
++// ---------------------------------------------------------------------------
++// Slab allocation — MTLBuffer with shared storage (unified memory).
++// ---------------------------------------------------------------------------
++
++static char * metal_slab_alloc(moe_cache_metal_device & dev, size_t bytes) {
++    id<MTLBuffer> buf = [dev.mtl_device newBufferWithLength:bytes
++        options:MTLResourceStorageModeShared];
++    if (!buf) {
++        return nullptr;
++    }
++    dev.slab_buffers.push_back(buf);
++    return (char *)[buf contents];
++}
++
++// ---------------------------------------------------------------------------
++// Query functions
++// ---------------------------------------------------------------------------
++
++static int metal_query_config(int automatic, size_t budget_mib,
++                               ggml_moe_cache_config * result) {
++    if (!result) {
++        return 0;
++    }
++
++    moe_cache_config config = moe_cache_read_config();
++    if (automatic >= 0) {
++        config.enabled = true;
++        config.automatic = automatic != 0;
++        moe_cache_apply_mode_defaults(config);
++        config.min_compute_capability =
++            moe_cache_min_compute_capability(config.automatic);
++    }
++    if (budget_mib > 0) {
++        config.budget_mb = budget_mib;
++    }
++    if (!config.enabled || config.budget_mb > (SIZE_MAX >> 20) ||
++        config.reserve_mb > (SIZE_MAX >> 20)) {
++        return 0;
++    }
++
++    result->budget_bytes = config.budget_mb << 20;
++    result->reserve_bytes = config.reserve_mb << 20;
++    result->minimum_slab_bytes = config.minimum_slab_bytes;
++    result->min_expert_bytes = config.min_expert_bytes;
++    result->min_expert_explicit = config.min_expert_explicit;
++    result->max_batch = config.max_batch;
++    result->min_compute_capability = config.min_compute_capability;
++    result->min_devices = 1; // Metal always has exactly one device
++    result->overlap_cpu_rows = config.overlap_cpu_rows;
++    return 1;
++}
++
++static int metal_query_device(void * opaque, const ggml_moe_cache_config * config,
++                               ggml_moe_cache_device_caps * result) {
++    if (!opaque || !config || !result || !g_moe_cache_owner) {
++        return 0;
++    }
++
++    ggml_backend_dev_t device = (ggml_backend_dev_t)opaque;
++    ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(device);
++    if ((const void *)reg != g_moe_cache_owner) {
++        return 0;
++    }
++
++    result->logical_device = 0;
++    result->physical_device = 0;
++    result->compute_capability = 800; // Apple Silicon ~ Ampere-class
++    result->min_expert_bytes = config->min_expert_explicit
++        ? config->min_expert_bytes
++        : moe_cache_default_min_expert_bytes(800);
++    return 1;
++}
++
++static int metal_query_shape(int wtype, int64_t n_in, int64_t n_out,
++                              int64_t n_expert, size_t expert_size,
++                              ggml_moe_cache_shape_caps * result) {
++    if (!result || n_in <= 0 || n_out <= 0 || n_expert <= 0) {
++        return 0;
++    }
++    // canonical list from ggml-backend-moe-cache.h; single source of truth
++    if (!ggml_moe_cache_wtype_supported(wtype)) {
++        return 0;
++    }
++
++    const size_t row_size = ggml_row_size((ggml_type)wtype, n_in);
++    if (row_size == 0 || (uint64_t)n_out > SIZE_MAX / row_size ||
++        expert_size != (size_t)n_out * row_size ||
++        expert_size > SIZE_MAX / moe_cache_pool_slots_min) {
++        return 0;
++    }
++
++    const size_t out_bytes =
++        moe_cache_node_rows_max * (size_t)n_out * sizeof(float);
++    const size_t act_q8_bytes =
++        moe_cache_node_rows_max *
++        (size_t)((n_in + QK8_1 - 1) / QK8_1) * sizeof(block_q8_1);
++    const size_t scratch_bytes = out_bytes + act_q8_bytes;
++    const size_t pool_bytes = expert_size * moe_cache_pool_slots_min;
++    if (pool_bytes > SIZE_MAX - scratch_bytes) {
++        return 0;
++    }
++    result->scratch_bytes = scratch_bytes;
++    result->pool_bytes = pool_bytes;
++    result->minimum_bytes = scratch_bytes + pool_bytes;
++    return 1;
++}
++
++// ---------------------------------------------------------------------------
++// Pool lifecycle
++// ---------------------------------------------------------------------------
++
++static moe_cache_pool * metal_find_or_create_pool(
++        moe_cache_metal_device & dev, moe_cache_session & session,
++        size_t expert_size, int wtype, int64_t n_expert, size_t budget_bytes) {
++    const int existing = moe_cache_find_pool(dev, expert_size, wtype);
++    if (existing >= 0) {
++        return dev.pools[existing].get();
++    }
++
++    if (moe_cache_fail(session, "slab")) {
++        MOE_CACHE_LOG("[moe-cache] Metal: skipped %zu KiB expert pool: allocation failed\n",
++                expert_size >> 10);
++        return nullptr;
++    }
++
++    size_t slots = budget_bytes / expert_size;
++    if (slots < moe_cache_pool_slots_min) {
++        return nullptr;
++    }
++    if ((uint64_t)n_expert > 0 && slots > (size_t)n_expert) {
++        slots = (size_t)n_expert;
++    }
++    if (slots < moe_cache_pool_slots_min) {
++        return nullptr;
++    }
++    if (slots > (size_t)INT_MAX) {
++        slots = INT_MAX;
++    }
++    const size_t slab_bytes = slots * expert_size;
++
++    char * slab = metal_slab_alloc(dev, slab_bytes);
++    if (!slab) {
++        MOE_CACHE_LOG("[moe-cache] Metal: failed to allocate %zu MiB expert pool\n",
++                slab_bytes >> 20);
++        return nullptr;
++    }
++
++    try {
++        std::unique_ptr<moe_cache_pool> pool(new moe_cache_pool());
++        pool->expert_size = expert_size;
++        pool->wtype = wtype;
++        pool->slab = slab;
++        pool->n_slots = (int)slots;
++        pool->covers_all_entries = (uint64_t)slots >= (uint64_t)n_expert;
++        pool->slots.resize(slots);
++        pool->free_slots.reserve(slots);
++        pool->map.reserve(slots);
++        for (int index = (int)slots - 1; index >= 0; index--) {
++            pool->free_slots.push_back(index);
++        }
++        dev.allocated_bytes += slab_bytes;
++        dev.pools.push_back(std::move(pool));
++        MOE_CACHE_LOG("[moe-cache] Metal%d pool[%d]: type=%s expert=%zu KiB slots=%zu entries=%lld coverage=%s total=%zu MiB\n",
++                dev.physical, (int)dev.pools.size() - 1,
++                ggml_type_name((ggml_type)wtype), expert_size >> 10,
++                slots, (long long)n_expert,
++                dev.pools.back()->covers_all_entries ? "complete" : "partial",
++                slab_bytes >> 20);
++        bool expected = false;
++        if (session.enabled_announced.compare_exchange_strong(expected, true)) {
++            MOE_CACHE_LOG("[moe-cache] enabled: first pool allocated on Metal%d\n",
++                    dev.physical);
++        }
++        return dev.pools.back().get();
++    } catch (...) {
++        // remove the tracked buffer and restore the pool list
++        if (!dev.slab_buffers.empty()) {
++            id<MTLBuffer> buf = dev.slab_buffers.back();
++            [buf release];
++            dev.slab_buffers.pop_back();
++        }
++        dev.allocated_bytes -= slab_bytes;
++        return nullptr;
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Session lifecycle
++// ---------------------------------------------------------------------------
++
++// Get-or-compile a moe-cache kernel pipeline, logging the name on failure.
++// The backend caches pipelines lazily; get_pipeline alone only returns
++// already-compiled ones, so every lookup on a fresh library would miss.
++static struct ggml_metal_pipeline_with_params metal_pipeline_get(
++        ggml_metal_library_t lib, const char * name) {
++    struct ggml_metal_pipeline_with_params res =
++        ggml_metal_library_compile_pipeline(lib, name, name, nullptr);
++    if (!res.pipeline) {
++        MOE_CACHE_LOG("[moe-cache] Metal: moe cache kernel missing: %s\n", name);
++    }
++    return res;
++}
++
++// Compile the moe-cache pipelines and create the command queue on first use.
++// session_create only keeps bookkeeping state, so a context that never uses
++// the cache pays no GPU setup cost.
++static bool metal_device_ensure_ready(moe_cache_metal_device & dev, size_t budget_mb) {
++    std::call_once(dev.init_once, [&]() {
++        // Load the shared kernel library (same embedded source as the
++        // backend; contains kernel_moe_cache_mv_* from ggml-metal.metal).
++        ggml_metal_library_t lib = ggml_metal_library_init(dev.ctx_dev);
++        if (!lib) {
++            MOE_CACHE_LOG("[moe-cache] Metal library init failed\n");
++            dev.dead.store(true);
++            return;
++        }
++
++        struct ggml_metal_pipeline_with_params p_q8_0 =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_q8_0_f32");
++        struct ggml_metal_pipeline_with_params p_q4_0 =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_q4_0_f32");
++        struct ggml_metal_pipeline_with_params p_q4_K =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_q4_K_f32");
++        struct ggml_metal_pipeline_with_params p_q6_K =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_q6_K_f32");
++        struct ggml_metal_pipeline_with_params p_q5_K =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_q5_K_f32");
++        struct ggml_metal_pipeline_with_params p_q1_0 =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_q1_0_f32");
++        struct ggml_metal_pipeline_with_params p_q2_0 =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_q2_0_f32");
++        struct ggml_metal_pipeline_with_params p_q4_1 =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_q4_1_f32");
++        struct ggml_metal_pipeline_with_params p_q5_0 =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_q5_0_f32");
++        struct ggml_metal_pipeline_with_params p_q5_1 =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_q5_1_f32");
++        struct ggml_metal_pipeline_with_params p_q2_K =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_q2_K_f32");
++        struct ggml_metal_pipeline_with_params p_q3_K =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_q3_K_f32");
++        struct ggml_metal_pipeline_with_params p_iq2_xxs =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_iq2_xxs_f32");
++        struct ggml_metal_pipeline_with_params p_iq2_xs =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_iq2_xs_f32");
++        struct ggml_metal_pipeline_with_params p_iq2_s =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_iq2_s_f32");
++        struct ggml_metal_pipeline_with_params p_iq3_xxs =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_iq3_xxs_f32");
++        struct ggml_metal_pipeline_with_params p_iq3_s =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_iq3_s_f32");
++        struct ggml_metal_pipeline_with_params p_iq1_s =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_iq1_s_f32");
++        struct ggml_metal_pipeline_with_params p_iq1_m =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_iq1_m_f32");
++        struct ggml_metal_pipeline_with_params p_iq4_nl =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_iq4_nl_f32");
++        struct ggml_metal_pipeline_with_params p_iq4_xs =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_iq4_xs_f32");
++        struct ggml_metal_pipeline_with_params p_mxfp4 =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_mxfp4_f32");
++        struct ggml_metal_pipeline_with_params p_nvfp4 =
++            metal_pipeline_get(lib, "kernel_moe_cache_mv_nvfp4_f32");
++        if (!p_q8_0.pipeline || !p_q4_0.pipeline ||
++            !p_q4_K.pipeline || !p_q6_K.pipeline || !p_q5_K.pipeline ||
++            !p_q1_0.pipeline || !p_q2_0.pipeline || !p_q4_1.pipeline ||
++            !p_q5_0.pipeline || !p_q5_1.pipeline || !p_q2_K.pipeline ||
++            !p_q3_K.pipeline || !p_iq2_xxs.pipeline || !p_iq2_xs.pipeline ||
++            !p_iq2_s.pipeline || !p_iq3_xxs.pipeline || !p_iq3_s.pipeline ||
++            !p_iq1_s.pipeline || !p_iq1_m.pipeline || !p_iq4_nl.pipeline ||
++            !p_iq4_xs.pipeline || !p_mxfp4.pipeline || !p_nvfp4.pipeline) {
++            MOE_CACHE_LOG("[moe-cache] Metal: one or more moe cache kernels missing\n");
++            ggml_metal_library_free(lib);
++            dev.dead.store(true);
++            return;
++        }
++
++        id<MTLCommandQueue> queue = [dev.mtl_device newCommandQueue];
++        if (!queue) {
++            ggml_metal_library_free(lib);
++            dev.dead.store(true);
++            return;
++        }
++
++        dev.mtl_queue = queue;
++        dev.lib = lib;
++        dev.mmv_pipeline_q8_0 = p_q8_0;
++        dev.mmv_pipeline_q4_0 = p_q4_0;
++        dev.mmv_pipeline_q4_K = p_q4_K;
++        dev.mmv_pipeline_q6_K = p_q6_K;
++        dev.mmv_pipeline_q5_K = p_q5_K;
++        dev.mmv_pipeline_q1_0 = p_q1_0;
++        dev.mmv_pipeline_q2_0 = p_q2_0;
++        dev.mmv_pipeline_q4_1 = p_q4_1;
++        dev.mmv_pipeline_q5_0 = p_q5_0;
++        dev.mmv_pipeline_q5_1 = p_q5_1;
++        dev.mmv_pipeline_q2_K = p_q2_K;
++        dev.mmv_pipeline_q3_K = p_q3_K;
++        dev.mmv_pipeline_iq2_xxs = p_iq2_xxs;
++        dev.mmv_pipeline_iq2_xs = p_iq2_xs;
++        dev.mmv_pipeline_iq2_s = p_iq2_s;
++        dev.mmv_pipeline_iq3_xxs = p_iq3_xxs;
++        dev.mmv_pipeline_iq3_s = p_iq3_s;
++        dev.mmv_pipeline_iq1_s = p_iq1_s;
++        dev.mmv_pipeline_iq1_m = p_iq1_m;
++        dev.mmv_pipeline_iq4_nl = p_iq4_nl;
++        dev.mmv_pipeline_iq4_xs = p_iq4_xs;
++        dev.mmv_pipeline_mxfp4 = p_mxfp4;
++        dev.mmv_pipeline_nvfp4 = p_nvfp4;
++        dev.init_ok = true;
++        MOE_CACHE_LOG("[moe-cache] Metal session ready (budget=%zu MiB)\n", budget_mb);
++    });
++    return dev.init_ok;
++}
++
++static void * metal_session_create(void * const * backends, int n_backends,
++                                    const ggml_moe_cache_config * supplied_config) {
++    try {
++        moe_cache_config config = moe_cache_read_config();
++        if (supplied_config) {
++            constexpr size_t MiB = 1024 * 1024;
++            if (supplied_config->budget_bytes % MiB != 0 ||
++                supplied_config->reserve_bytes % MiB != 0 ||
++                supplied_config->minimum_slab_bytes % MiB != 0 ||
++                supplied_config->min_expert_bytes == 0 ||
++                supplied_config->min_expert_explicit < 0 ||
++                supplied_config->min_expert_explicit > 1 ||
++                supplied_config->max_batch < 1 ||
++                supplied_config->max_batch > moe_cache_batch_max ||
++                supplied_config->min_devices < 1 ||
++                supplied_config->min_compute_capability < 0 ||
++                supplied_config->min_compute_capability > 999 ||
++                supplied_config->overlap_cpu_rows < -1 ||
++                supplied_config->overlap_cpu_rows > 8) {
++                return nullptr;
++            }
++            config.enabled = true;
++            config.automatic = supplied_config->minimum_slab_bytes > 0;
++            config.budget_mb = supplied_config->budget_bytes / MiB;
++            config.reserve_mb = supplied_config->reserve_bytes / MiB;
++            config.minimum_slab_bytes = supplied_config->minimum_slab_bytes;
++            config.min_expert_bytes = supplied_config->min_expert_bytes;
++            config.min_expert_explicit = supplied_config->min_expert_explicit;
++            config.max_batch = supplied_config->max_batch;
++            config.min_compute_capability = supplied_config->min_compute_capability;
++            config.overlap_cpu_rows = supplied_config->overlap_cpu_rows;
++        }
++        if (!config.enabled) {
++            return nullptr;
++        }
++        // A zero budget can never create a pool; bail before retaining the
++        // MTLDevice, which would trigger an AppleParavirtCommandQueue retain
++        // cycle reported by `leaks` on macOS CI.
++        if (!supplied_config && config.budget_mb == 0) {
++            return nullptr;
++        }
++
++        // Find the Metal backend among the scheduler's backends.
++        ggml_metal_device_t ctx_dev = nullptr;
++        id<MTLDevice> mtl_dev = nil;
++        for (int i = 0; i < n_backends; i++) {
++            ggml_backend_t be = (ggml_backend_t)backends[i];
++            if (!be || !ggml_backend_is_metal(be)) {
++                continue;
++            }
++            ggml_backend_dev_t dev = ggml_backend_get_device(be);
++            if (!dev || !dev->context) {
++                continue;
++            }
++            ctx_dev = (ggml_metal_device_t)dev->context;
++            mtl_dev = (__bridge id<MTLDevice>)ggml_metal_device_get_obj(ctx_dev);
++            break;
++        }
++        if (!mtl_dev) {
++            MOE_CACHE_LOG("[moe-cache] no Metal device found\n");
++            return nullptr;
++        }
++
++        // GPU resources (command queue, library, pipelines) are created
++        // lazily on the first begin; a context that never uses the cache
++        // allocates none of them.
++        std::unique_ptr<moe_cache_session> session(new (std::nothrow) moe_cache_session());
++        if (!session) {
++            return nullptr;
++        }
++        session->config = std::move(config);
++
++        std::unique_ptr<moe_cache_metal_device> dev(new (std::nothrow)
++                moe_cache_metal_device(mtl_dev, ctx_dev));
++        if (!dev) {
++            return nullptr;
++        }
++        session->devices.push_back(std::move(dev));
++
++        moe_cache_session * result = session.get();
++        try {
++            std::lock_guard<std::mutex> lock(g_registry_mu);
++            g_sessions.insert(result);
++            g_session_count.store(g_sessions.size(), std::memory_order_release);
++        } catch (...) {
++            return nullptr;
++        }
++        session.release();
++        return result;
++    } catch (...) {
++        MOE_CACHE_LOG("[moe-cache] Metal session creation failed\n");
++        return nullptr;
++    }
++}
++
++// Teardown statistics, same field names as CUDA so the log contract is
++// backend-independent. Only logged when the session did any cache work.
++static void metal_log_stats(moe_cache_metal_device & dev) {
++    size_t used = 0;
++    size_t slots = 0;
++    for (const auto & pool_ptr : dev.pools) {
++        const moe_cache_pool & pool = *pool_ptr;
++        slots += pool.n_slots;
++        used += pool.n_slots - pool.free_slots.size();
++    }
++    const long long total = dev.hits + dev.misses;
++    MOE_CACHE_LOG("[moe-cache] Metal%d hits=%lld/%lld (%.1f%%) used=%zu/%zu enqueued=%lld filled=%lld fill-fail=%lld evictions=%lld skips=%lld admission=%lld dispatch-fail=%lld collect-fail=%lld bypass=%lld\n",
++            dev.physical, dev.hits, total,
++            total ? 100.0 * (double)dev.hits / (double)total : 0.0,
++            used, slots, dev.inserts, dev.fills, dev.fill_failures,
++            dev.evictions, dev.insert_skips, dev.admission_skips,
++            dev.dispatch_failures, dev.collect_failures, dev.contention_bypasses);
++}
++
++static void metal_session_destroy(void * opaque) {
++    moe_cache_session * session = (moe_cache_session *)opaque;
++    if (!session) {
++        return;
++    }
++    {
++        // Stop new scopes/nodes and wait for in-flight work to drain before
++        // touching device resources a CPU worker may still be using.
++        std::unique_lock<std::mutex> lock(session->mu);
++        session->stopping = true;
++        session->cv.notify_all();
++        session->idle_cv.wait(lock, [&] {
++            return session->active_scopes == 0 && session->active_nodes == 0;
++        });
++    }
++    {
++        std::lock_guard<std::mutex> lock(g_registry_mu);
++        g_sessions.erase(session);
++        g_session_count.store(g_sessions.size(), std::memory_order_release);
++    }
++    for (auto & dev_ptr : session->devices) {
++        moe_cache_metal_device & dev =
++            static_cast<moe_cache_metal_device &>(*dev_ptr);
++        if (dev.nodes > 0 || dev.dispatch_failures > 0 ||
++            dev.collect_failures > 0) {
++            metal_log_stats(dev);
++        }
++        if (dev.lib) {
++            ggml_metal_library_free(dev.lib);
++            dev.lib = nullptr;
++        }
++    }
++    delete session;
++}
++
++static void metal_session_enter(void * opaque) {
++    if (g_session_suppressed > 0) {
++        g_session_suppressed++;
++        return;
++    }
++
++    moe_cache_session * session = (moe_cache_session *)opaque;
++    if (!session || session->dormant.load() || session->stopping) {
++        if (g_session_stack.empty()) {
++            return;
++        }
++        try {
++            g_session_stack.push_back({session, nullptr});
++        } catch (...) {
++            g_session_suppressed++;
++        }
++        return;
++    }
++    try {
++        g_session_stack.push_back({session, session});
++    } catch (...) {
++        g_session_suppressed++;
++        return;
++    }
++    std::lock_guard<std::mutex> lock(session->mu);
++    session->active_scopes++;
++}
++
++static void metal_session_leave(void * opaque) {
++    if (g_session_suppressed > 0) {
++        g_session_suppressed--;
++        return;
++    }
++    moe_cache_session * expected = (moe_cache_session *)opaque;
++    auto found = std::find_if(
++            g_session_stack.rbegin(), g_session_stack.rend(),
++            [expected](const moe_cache_scope_frame & frame) {
++                return frame.requested == expected;
++            });
++    if (found == g_session_stack.rend()) {
++        return;
++    }
++    moe_cache_session * active = found->active;
++    g_session_stack.erase(std::next(found).base());
++    if (active) {
++        std::lock_guard<std::mutex> lock(active->mu);
++        if (active->active_scopes > 0) {
++            active->active_scopes--;
++        }
++        active->idle_cv.notify_all();
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Quantize activations to Q8_1 (scalar, reference quality).
++// ---------------------------------------------------------------------------
++
++static void metal_quantize_act_q8_1(const float * src, block_q8_1 * dst,
++                                     int64_t n, int64_t padded_n) {
++    const int nb = (int)(padded_n / QK8_1);
++    for (int ib = 0; ib < nb; ib++) {
++        float amax = 0.0f;
++        for (int i = 0; i < QK8_1; i++) {
++            int64_t idx = (int64_t)ib * QK8_1 + i;
++            float v = (idx < n) ? src[idx] : 0.0f;
++            amax = fmaxf(amax, fabsf(v));
++        }
++        const float d = amax / 127.0f;
++        const float id = (d > 0.0f) ? (1.0f / d) : 0.0f;
++        float sum = 0.0f;
++        for (int i = 0; i < QK8_1; i++) {
++            int64_t idx = (int64_t)ib * QK8_1 + i;
++            float v = (idx < n) ? src[idx] : 0.0f;
++            int8_t q = (int8_t)roundf(v * id);
++            dst[ib].qs[i] = q;
++            sum += (float)q * d;
++        }
++        dst[ib].d = ggml_fp32_to_fp16(d);
++        dst[ib].s = ggml_fp32_to_fp16(sum);
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Begin: find pool, create node. Pools are created lazily on first use.
++// ---------------------------------------------------------------------------
++
++static void * metal_begin(const char * name, const void * host_base,
++                           size_t expert_size, int64_t n_in, int64_t n_out,
++                           int wtype, int64_t n_expert, int64_t n_tokens,
++                           int64_t n_rows) {
++    if (g_session_suppressed > 0 || g_session_stack.empty()) {
++        return nullptr;
++    }
++    moe_cache_session * session = g_session_stack.back().active;
++    if (!session || session->stopping || session->dormant) {
++        return nullptr;
++    }
++    if (!name || !host_base || !moe_cache_tensor_name_supported(name) ||
++        n_tokens < 1 || expert_size < session->config.min_expert_bytes ||
++        n_in <= 0 || n_out <= 0 || n_expert <= 0 ||
++        !ggml_moe_cache_wtype_supported(wtype)) {
++        return nullptr;
++    }
++    if (n_rows < n_tokens || n_rows % n_tokens != 0 ||
++        n_tokens > session->config.max_batch ||
++        n_rows > moe_cache_node_rows_max) {
++        return nullptr;
++    }
++
++    const size_t row_size = ggml_row_size((ggml_type)wtype, n_in);
++    if (row_size == 0 || (uint64_t)n_out > SIZE_MAX / row_size ||
++        expert_size != (size_t)n_out * row_size ||
++        expert_size > SIZE_MAX / moe_cache_pool_slots_min) {
++        return nullptr;
++    }
++
++    if (session->devices.empty()) {
++        return nullptr;
++    }
++    moe_cache_metal_device & dev =
++        static_cast<moe_cache_metal_device &>(*session->devices[0]);
++    // A zero budget can never create a pool; skip GPU setup entirely.
++    if (session->config.budget_mb == 0) {
++        return nullptr;
++    }
++    // Compile the pipelines and create the command queue on first use, before
++    // the dispatch lock so a one-time compile does not block other workers.
++    if (!metal_device_ensure_ready(dev, session->config.budget_mb)) {
++        return nullptr;
++    }
++
++    std::unique_lock<std::mutex> dispatch_lock;
++    try {
++        dispatch_lock = std::unique_lock<std::mutex>(
++                dev.dispatch_mu, std::try_to_lock);
++    } catch (...) {
++        dev.contention_bypasses++;
++        return nullptr;
++    }
++    if (!dispatch_lock.owns_lock()) {
++        dev.contention_bypasses++;
++        return nullptr;
++    }
++    if (dev.dead.load()) {
++        return nullptr;
++    }
++
++    moe_cache_log_configuration(*session);
++    const size_t budget_bytes = session->config.budget_mb << 20;
++    moe_cache_pool * pool = metal_find_or_create_pool(
++            dev, *session, expert_size, wtype, n_expert, budget_bytes);
++    if (!pool) {
++        return nullptr;
++    }
++    const int pool_index = moe_cache_find_pool(dev, expert_size, wtype);
++    if (pool_index < 0) {
++        return nullptr;
++    }
++
++    std::unique_ptr<moe_cache_node> node(new (std::nothrow) moe_cache_node());
++    if (!node) {
++        return nullptr;
++    }
++    node->session = session;
++    node->device = &dev;
++    node->pool = pool;
++    node->pool_index = pool_index;
++    node->host_base = host_base;
++    node->expert_size = expert_size;
++    node->n_in = n_in;
++    node->n_out = n_out;
++    node->n_expert = n_expert;
++    node->n_tokens = n_tokens;
++    node->wtype = wtype;
++    node->dispatch_lock = std::move(dispatch_lock);
++
++    // Own the node for the caller; destroy() waits for this to reach zero.
++    std::lock_guard<std::mutex> session_lock(session->mu);
++    session->active_nodes++;
++    return node.release();
++}
++
++// ---------------------------------------------------------------------------
++// Plan: mark cache hits; sync-fill misses into the slab so they can also
++// be served by this node. slot_idx[i] >= 0 means the row is cache-served.
++// ---------------------------------------------------------------------------
++
++static int metal_plan(void * opaque, const int32_t * ids, int n_ids,
++                       int32_t * slot_indices) {
++    moe_cache_node * node = (moe_cache_node *)opaque;
++    if (!node || !ids || !slot_indices || n_ids < 0 ||
++        n_ids > moe_cache_node_rows_max || node->planned) {
++        return 0;
++    }
++    node->planned = true;
++    for (int index = 0; index < n_ids; index++) {
++        slot_indices[index] = -1;
++    }
++
++    moe_cache_session & session = *node->session;
++    moe_cache_device & device = *node->device;
++    moe_cache_pool & pool = *node->pool;
++    int hits = 0;
++
++    std::unique_lock<std::mutex> lock(session.mu);
++    if (session.stopping) {
++        return 0;
++    }
++    for (int index = 0; index < n_ids; index++) {
++        const int32_t expert = ids[index];
++        if (expert < 0 || expert >= node->n_expert || device.dead.load()) {
++            continue;
++        }
++
++        const moe_cache_key key{node->host_base, expert};
++        auto found = pool.map.find(key);
++        if (found != pool.map.end() &&
++            pool.slots[found->second].state == moe_cache_slot_state::valid) {
++            const int slot_index = found->second;
++            moe_cache_slot & slot = pool.slots[slot_index];
++            slot.readers++;
++            moe_cache_lru_remove(pool, slot_index);
++            moe_cache_lru_push_back(pool, slot_index);
++            node->pins[node->n_pins++] = {&pool, slot_index};
++            slot_indices[index] = slot_index;
++            device.hits++;
++            hits++;
++            continue;
++        }
++
++        // miss: evict LRU if full, then sync-fill
++        device.misses++;
++        if (moe_cache_fail(session, "insert")) {
++            device.fill_failures++;
++            continue;
++        }
++        int slot_index = -1;
++        if (!pool.free_slots.empty()) {
++            slot_index = pool.free_slots.back();
++            pool.free_slots.pop_back();
++        } else {
++            int candidate = pool.lru_head;
++            while (candidate >= 0 && pool.slots[candidate].readers > 0) {
++                candidate = pool.slots[candidate].next;
++            }
++            if (candidate < 0) {
++                continue; // all slots pinned; CPU handles this row
++            }
++            slot_index = candidate;
++            moe_cache_slot_reset(pool, slot_index, false);
++            device.evictions++;
++        }
++
++        moe_cache_slot & slot = pool.slots[slot_index];
++        slot.key = key;
++        slot.generation++;
++        slot.state = moe_cache_slot_state::copying;
++        const void * source =
++            (const char *)node->host_base + (size_t)expert * node->expert_size;
++        try {
++            pool.map.emplace(key, slot_index);
++        } catch (...) {
++            moe_cache_slot_reset(pool, slot_index, true);
++            device.insert_skips++;
++            continue;
++        }
++
++        // unified memory: direct copy into the shared slab
++        memcpy(pool.slab + (size_t)slot_index * node->expert_size,
++               source, node->expert_size);
++        slot.state = moe_cache_slot_state::valid;
++        moe_cache_lru_push_back(pool, slot_index);
++
++        slot.readers++;
++        node->pins[node->n_pins++] = {&pool, slot_index};
++        slot_indices[index] = slot_index;
++        device.inserts++;
++        device.fills++;
++        device.hits++;
++        hits++;
++    }
++    device.nodes++;
++    return hits;
++}
++
++// ---------------------------------------------------------------------------
++// Dispatch: launch the Metal matvec kernel over the hit rows.
++// ---------------------------------------------------------------------------
++
++static int metal_dispatch(void * opaque, int wtype, int64_t n_in, int64_t n_out,
++                           int n_hits, const int32_t * slot_indices,
++                           const float * const * act_rows) {
++    moe_cache_node * node = (moe_cache_node *)opaque;
++    if (!node || !node->planned || !slot_indices || !act_rows ||
++        n_hits <= 0 || n_hits > moe_cache_node_rows_max ||
++        n_hits != node->n_pins ||
++        wtype != node->wtype || n_in != node->n_in || n_out != node->n_out) {
++        return 0;
++    }
++
++    moe_cache_metal_device & dev =
++        static_cast<moe_cache_metal_device &>(*node->device);
++    if (dev.dead.load() || moe_cache_fail(*node->session, "dispatch")) {
++        std::lock_guard<std::mutex> lock(node->session->mu);
++        dev.dispatch_failures++;
++        return 0;
++    }
++
++    const int64_t padded_n_in = ((n_in + QK8_1 - 1) / QK8_1) * QK8_1;
++    const int64_t expert_stride = node->expert_size;
++    const int64_t row_stride = ggml_row_size((ggml_type)wtype, n_in);
++
++    // Output buffer (shared; CPU reads results directly).
++    const size_t out_bytes = (size_t)n_hits * (size_t)n_out * sizeof(float);
++    id<MTLBuffer> out_buf = [dev.mtl_device newBufferWithLength:out_bytes
++        options:MTLResourceStorageModeShared];
++    if (!out_buf) {
++        return 0;
++    }
++
++    // Activation buffer: q8_1 per hit row.
++    const size_t act_bytes = (size_t)n_hits * (size_t)(padded_n_in / QK8_1) *
++        sizeof(block_q8_1);
++    id<MTLBuffer> act_buf = [dev.mtl_device newBufferWithLength:act_bytes
++        options:MTLResourceStorageModeShared];
++    if (!act_buf) {
++        [out_buf release];
++        return 0;
++    }
++    block_q8_1 * act_q8 = (block_q8_1 *)[act_buf contents];
++    for (int i = 0; i < n_hits; i++) {
++        metal_quantize_act_q8_1(act_rows[i],
++            act_q8 + i * (padded_n_in / QK8_1), n_in, padded_n_in);
++    }
++
++    // Slot index buffer.
++    const size_t ids_bytes = (size_t)n_hits * sizeof(int32_t);
++    id<MTLBuffer> ids_buf = [dev.mtl_device newBufferWithLength:ids_bytes
++        options:MTLResourceStorageModeShared];
++    if (!ids_buf) {
++        [act_buf release];
++        [out_buf release];
++        return 0;
++    }
++    memcpy([ids_buf contents], slot_indices, ids_bytes);
++
++    // Select pipeline by weight type.
++    struct ggml_metal_pipeline_with_params pipeline = dev.mmv_pipeline_q8_0;
++    switch (wtype) {
++        case GGML_TYPE_Q8_0: pipeline = dev.mmv_pipeline_q8_0; break;
++        case GGML_TYPE_Q4_0: pipeline = dev.mmv_pipeline_q4_0; break;
++        case GGML_TYPE_Q4_K: pipeline = dev.mmv_pipeline_q4_K; break;
++        case GGML_TYPE_Q6_K: pipeline = dev.mmv_pipeline_q6_K; break;
++        case GGML_TYPE_Q5_K: pipeline = dev.mmv_pipeline_q5_K; break;
++        case GGML_TYPE_Q1_0: pipeline = dev.mmv_pipeline_q1_0; break;
++        case GGML_TYPE_Q2_0: pipeline = dev.mmv_pipeline_q2_0; break;
++        case GGML_TYPE_Q4_1: pipeline = dev.mmv_pipeline_q4_1; break;
++        case GGML_TYPE_Q5_0: pipeline = dev.mmv_pipeline_q5_0; break;
++        case GGML_TYPE_Q5_1: pipeline = dev.mmv_pipeline_q5_1; break;
++        case GGML_TYPE_Q2_K: pipeline = dev.mmv_pipeline_q2_K; break;
++        case GGML_TYPE_Q3_K: pipeline = dev.mmv_pipeline_q3_K; break;
++        case GGML_TYPE_IQ2_XXS: pipeline = dev.mmv_pipeline_iq2_xxs; break;
++        case GGML_TYPE_IQ2_XS: pipeline = dev.mmv_pipeline_iq2_xs; break;
++        case GGML_TYPE_IQ2_S: pipeline = dev.mmv_pipeline_iq2_s; break;
++        case GGML_TYPE_IQ3_XXS: pipeline = dev.mmv_pipeline_iq3_xxs; break;
++        case GGML_TYPE_IQ3_S: pipeline = dev.mmv_pipeline_iq3_s; break;
++        case GGML_TYPE_IQ1_S: pipeline = dev.mmv_pipeline_iq1_s; break;
++        case GGML_TYPE_IQ1_M: pipeline = dev.mmv_pipeline_iq1_m; break;
++        case GGML_TYPE_IQ4_NL: pipeline = dev.mmv_pipeline_iq4_nl; break;
++        case GGML_TYPE_IQ4_XS: pipeline = dev.mmv_pipeline_iq4_xs; break;
++        case GGML_TYPE_MXFP4: pipeline = dev.mmv_pipeline_mxfp4; break;
++        case GGML_TYPE_NVFP4: pipeline = dev.mmv_pipeline_nvfp4; break;
++        default: break;
++    }
++    if (!pipeline.pipeline) {
++        [ids_buf release];
++        [act_buf release];
++        [out_buf release];
++        return 0;
++    }
++
++    // Find the slab MTLBuffer that backs this pool.
++    id<MTLBuffer> slab_buf = nil;
++    NSUInteger slab_offset = 0;
++    for (id<MTLBuffer> buf : dev.slab_buffers) {
++        char * contents = (char *)[buf contents];
++        char * slab = node->pool->slab;
++        if (slab >= contents && slab < contents + [buf length]) {
++            slab_buf = buf;
++            slab_offset = (NSUInteger)(slab - contents);
++            break;
++        }
++    }
++    if (!slab_buf) {
++        [ids_buf release];
++        [act_buf release];
++        [out_buf release];
++        return 0;
++    }
++
++    // MTLCommandQueue has no -newCommandBuffer; the selector is -commandBuffer,
++    // which returns an autoreleased buffer (+0), so it must not be released here.
++    id<MTLCommandBuffer> cmd_buf = [dev.mtl_queue commandBuffer];
++    if (!cmd_buf) {
++        [ids_buf release];
++        [act_buf release];
++        [out_buf release];
++        return 0;
++    }
++    ggml_metal_encoder_t enc = ggml_metal_encoder_init(
++            (ggml_metal_cmd_buf_t)cmd_buf, true);
++    if (!enc) {
++        [ids_buf release];
++        [act_buf release];
++        [out_buf release];
++        return 0;
++    }
++
++    ggml_metal_encoder_set_pipeline(enc, pipeline);
++    ggml_metal_encoder_set_buffer(enc, {(__bridge void *)slab_buf, slab_offset}, 0);
++    ggml_metal_encoder_set_buffer(enc, {(__bridge void *)ids_buf, 0}, 1);
++    ggml_metal_encoder_set_buffer(enc, {(__bridge void *)act_buf, 0}, 2);
++    ggml_metal_encoder_set_buffer(enc, {(__bridge void *)out_buf, 0}, 3);
++
++    int64_t args[6] = {n_in, n_out, expert_stride, row_stride, n_hits, padded_n_in};
++    ggml_metal_encoder_set_bytes(enc, args, sizeof(args), 4);
++
++    const NSUInteger total_threads = (NSUInteger)(n_hits * n_out);
++    ggml_metal_encoder_dispatch_threadgroups(
++            enc, (int)((total_threads + 255) / 256), 1, 1, 256, 1, 1);
++
++    ggml_metal_encoder_end_encoding(enc);
++    ggml_metal_encoder_free(enc);
++
++    [cmd_buf commit];
++    [cmd_buf waitUntilCompleted];
++
++    // A failed command buffer leaves out_buf with undefined contents. Do not
++    // publish it: report failure so the CPU path recomputes these rows.
++    const bool cmd_ok = [cmd_buf status] == MTLCommandBufferStatusCompleted;
++    if (!cmd_ok) {
++        NSError * mtl_err = [cmd_buf error];
++        MOE_CACHE_LOG("[moe-cache] Metal%d: command buffer failed (status=%ld, error=%s); "
++                      "dropping the matvec so the CPU path recomputes\n",
++                      dev.physical, (long)[cmd_buf status],
++                      mtl_err ? [[mtl_err localizedDescription] UTF8String] : "none");
++    }
++
++    [ids_buf release];
++    [act_buf release];
++    if (!cmd_ok) {
++        [out_buf release];
++        dev.dispatch_failures++;
++        return 0;
++    }
++
++    if (dev.out_buffer) {
++        [dev.out_buffer release];
++    }
++    dev.out_buffer = out_buf;
++    dev.d_out = [out_buf contents];
++    dev.d_out_cap = out_bytes;
++
++    node->dispatched = true;
++    return 1;
++}
++
++// ---------------------------------------------------------------------------
++// Collect: copy results from the shared output buffer into dst_rows.
++// ---------------------------------------------------------------------------
++
++static int metal_collect(void * opaque, int n_hits, float * const * dst_rows,
++                          int64_t n_out) {
++    moe_cache_node * node = (moe_cache_node *)opaque;
++    if (!node || !node->dispatched || n_hits <= 0 ||
++        n_hits > moe_cache_node_rows_max ||
++        node->n_pins != n_hits || !dst_rows || n_out != node->n_out) {
++        return 0;
++    }
++    for (int index = 0; index < n_hits; index++) {
++        if (!dst_rows[index]) {
++            return 0;
++        }
++    }
++
++    moe_cache_metal_device & dev =
++        static_cast<moe_cache_metal_device &>(*node->device);
++    moe_cache_session & session = *node->session;
++    const bool ok = !dev.dead.load() && dev.out_buffer && dev.d_out &&
++        !moe_cache_fail(session, "collect");
++    if (ok) {
++        float * out = (float *)dev.d_out;
++        for (int index = 0; index < n_hits; index++) {
++            memcpy(dst_rows[index], out + (size_t)index * n_out,
++                   (size_t)n_out * sizeof(float));
++        }
++    }
++    node->dispatched = false;
++    {
++        std::lock_guard<std::mutex> lock(session.mu);
++        if (!ok) {
++            dev.collect_failures++;
++        }
++        dev.collect_calls++;
++        if (session.config.stats_every > 0 &&
++            dev.collect_calls % session.config.stats_every == 0) {
++            metal_log_stats(dev);
++        }
++    }
++    return ok ? 1 : 0;
++}
++
++// ---------------------------------------------------------------------------
++// End: release slot pins and the node.
++// ---------------------------------------------------------------------------
++
++static void metal_end(void * opaque) {
++    std::unique_ptr<moe_cache_node> node((moe_cache_node *)opaque);
++    if (!node) {
++        return;
++    }
++    moe_cache_session & session = *node->session;
++    {
++        std::lock_guard<std::mutex> lock(session.mu);
++        for (int index = 0; index < node->n_pins; index++) {
++            const moe_cache_pin & pin = node->pins[index];
++            if (pin.pool && pin.slot >= 0 && pin.slot < pin.pool->n_slots) {
++                moe_cache_slot & slot = pin.pool->slots[pin.slot];
++                if (slot.readers > 0) {
++                    slot.readers--;
++                }
++            }
++        }
++        session.active_nodes--;
++        session.idle_cv.notify_all();
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Fused SwiGLU — not implemented for v1; stock CPU path handles the node.
++// ---------------------------------------------------------------------------
++
++static void * metal_fused_begin(const ggml_moe_cache_tensor_desc * up,
++                                 const ggml_moe_cache_tensor_desc * gate,
++                                 int glu_op, float up_min, float up_max,
++                                 float gate_min, float gate_max,
++                                 const int32_t * ids, int n_rows,
++                                 int64_t n_tokens,
++                                 const float * const * act_rows,
++                                 uint64_t * hit_mask) {
++    (void)up; (void)gate; (void)glu_op;
++    (void)up_min; (void)up_max; (void)gate_min; (void)gate_max;
++    (void)ids; (void)n_rows; (void)n_tokens; (void)act_rows; (void)hit_mask;
++    return nullptr;
++}
++
++// ---------------------------------------------------------------------------
++// Invalidate: drop cached slots whose tensor range overlaps [base, base+size).
++// ---------------------------------------------------------------------------
++
++static void metal_invalidate(const void * base, size_t size) {
++    if (!base || size == 0) {
++        return;
++    }
++    if (g_session_count.load(std::memory_order_acquire) == 0) {
++        return;
++    }
++    std::lock_guard<std::mutex> registry_lock(g_registry_mu);
++    for (moe_cache_session * session : g_sessions) {
++        std::lock_guard<std::mutex> lock(session->mu);
++        for (auto & dev_ptr : session->devices) {
++            for (auto & pool_ptr : dev_ptr->pools) {
++                for (int i = 0; i < pool_ptr->n_slots; i++) {
++                    if (pool_ptr->slots[i].key.tensor &&
++                        moe_cache_ranges_overlap(
++                            pool_ptr->slots[i].key.tensor,
++                            pool_ptr->expert_size, base, size)) {
++                        moe_cache_slot_reset(*pool_ptr, i, true);
++                    }
++                }
++            }
++        }
++    }
++}
++
++// ---------------------------------------------------------------------------
++// Registration
++// ---------------------------------------------------------------------------
++
++// Each backend wires its own function table into the provider registry
++// (ggml-backend-moe-cache.h). The owner is the backend reg pointer so that
++// query_device can match ggml_backend_dev_backend_reg(device).
++
++static void metal_register(const void * owner) {
++    g_moe_cache_owner = owner;
++    ggml_moe_cache_api api = {};
++    api.owner = owner;
++    api.query_config = metal_query_config;
++    api.query_device = metal_query_device;
++    api.query_shape = metal_query_shape;
++    api.session_create = metal_session_create;
++    api.session_destroy = metal_session_destroy;
++    api.session_enter = metal_session_enter;
++    api.session_leave = metal_session_leave;
++    api.begin = metal_begin;
++    api.plan = metal_plan;
++    api.dispatch = metal_dispatch;
++    api.collect = metal_collect;
++    api.end = metal_end;
++    api.fused_begin = metal_fused_begin;
++    api.invalidate = metal_invalidate;
++    ggml_moe_cache_register(&api);
++}
++
++// Prior declaration so the definition below does not trip -Wmissing-prototypes.
++extern "C" void ggml_metal_moe_cache_register(void * reg);
++
++extern "C" void ggml_metal_moe_cache_register(void * reg) {
++    metal_register(reg);
++}
+diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
+index ef3c92f27..32a6272e1 100644
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -10,6 +10,8 @@
+ #include <mutex>
+ #include <string>
+ 
++extern "C" void ggml_metal_moe_cache_register(void * reg);
++
+ #define GGML_METAL_NAME "MTL"
+ #define GGML_METAL_MAX_DEVICES 16
+ 
+@@ -681,7 +683,6 @@ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_bac
+         /* .host_buffer          = */ false,
+         /* .buffer_from_host_ptr = */ true,
+         /* .events               = */ true,
+-        /* .mmap_support         = */ true,
+     };
+ }
+ 
+@@ -945,6 +946,11 @@ ggml_backend_reg_t ggml_backend_metal_reg(void) {
+         initialized = true;
+     }
+ 
++    // No GGML_USE_* guard: that macro is defined for consumers of the backend
++    // (ggml-backend-reg.cpp), not for this target, so guarding here compiled the
++    // registration out entirely and the provider never installed.
++    ggml_metal_moe_cache_register(&reg);
++
+     return &reg;
+ }
+ 
+diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
+index df4ca3ddc..89327c5e2 100644
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -75,6 +75,22 @@ static inline float e8m0_to_fp32(uint8_t x) {
+     return as_type<float>(bits);
+ }
+ 
++// UE4M3 -> fp32, raw E4M3 value (matches the CPU ggml_ue4m3_to_fp32 without
++// its * 0.5 fold; that fold pairs the x2 kvalues_mxfp4 table, while the Metal
++// kvalues_mxfp4_f table is already halved).
++static inline float nvfp4_ue4m3_to_fp32(uint8_t x) {
++    if (x == 0 || x == 0x7F) {
++        return 0.0f;
++    }
++    const int exp = (x >> 3) & 0xF;
++    const int man = x & 0x7;
++    if (exp == 0) {
++        return (float)man * (1.0f / 512.0f);
++    }
++    const uint32_t bits = ((uint32_t)(exp + 120) << 23) | ((uint32_t)man << 20);
++    return as_type<float>(bits);
++}
++
+ static inline float dot(float x, float y) {
+     return x*y;
+ }
+@@ -468,32 +484,6 @@ void quantize_iq4_nl(device const float * src, device block_iq4_nl & dst) {
+     dst.d = sumq2 > 0 ? sumqx/sumq2 : d;
+ }
+ 
+-void quantize_tq2_0(device const float * src, device block_tq2_0 & dst) {
+-#pragma METAL fp math_mode(safe)
+-    float amax = 0.0f; // absolute max
+-
+-    for (int j = 0; j < QK_K; j++) {
+-        const float v = src[j];
+-        amax = MAX(amax, fabs(v));
+-    }
+-
+-    const float d = amax;
+-    const float id = d ? 1.0f/d : 0.0f;
+-
+-    dst.d = (half) d;
+-
+-    for (int j = 0; j < QK_K/4; j += 32) {
+-        for (int m = 0; m < 32; ++m) {
+-            uint8_t q = 0;
+-            for (int n = 0; n < 4; ++n) {
+-                // -1, 0, 1 -> 0, 1, 2
+-                int xi = (int)round(src[m + n*32] * id) + 1;
+-                q += (uint8_t)((xi & 3) << (2*n));
+-            }
+-            dst.qs[j + m] = q;
+-        }
+-        src += 4*32;
+-    }
+ // ----- TurboQuant quantize/dequantize with Fast Walsh-Hadamard rotation -----
+ // Uses O(d log d) WHT instead of O(d²) dense matvec (18× fewer operations)
+ // 512 bytes of sign arrays instead of 256KB of dense matrices
+@@ -1573,25 +1563,6 @@ void dequantize_iq4_xs(device const block_iq4_xs * xb, short il, thread type4x4
+     }
+ }
+ 
+-template <typename type4x4>
+-void dequantize_tq2_0(device const block_tq2_0 * xb, short il, thread type4x4 & reg) {
+-    device const uint8_t * qs = xb->qs;
+-    const float d = xb->d;
+-
+-    float4x4 reg_f;
+-
+-    // 2 bits per element, 4 elements per byte, 128 elements per 32-byte group
+-    const short base = il * 16;
+-    for (int k = 0; k < 16; k++) {
+-        const int i = base + k;
+-        const int byte = ((i >> 7) & 1) * 32 + (i & 31);
+-        const int l = (i >> 5) & 3;
+-        reg_f[k/4][k%4] = d * (float)(((qs[byte] >> (2*l)) & 3) - 1);
+-    }
+-
+-    reg = (type4x4) reg_f;
+-}
+-
+ // ============================================================================
+ // TQ3_1S / TQ4_1S: WHT-rotated weight quantization constants and dequant
+ // ============================================================================
+@@ -3218,8 +3189,6 @@ kernel void kernel_ssm_scan_f32(
+     const int32_t nh  = args.n_head;
+     const int32_t ng  = args.n_group;
+     const int32_t n_t = args.n_seq_tokens;
+-    const int32_t n_s = args.n_seqs;
+-    const int32_t K   = args.K;
+ 
+     const int32_t s_off = args.s_off;
+ 
+@@ -3278,12 +3247,6 @@ kernel void kernel_ssm_scan_f32(
+             // recurse
+             s0 = s;
+ 
+-            const int32_t slot = n_t - 1 - (i2 + t);
+-            if (slot > 0 && slot < K) {
+-                device float * s_snapshot = (device float *) ((device char *) s_buff + (int64_t) slot*n_s*args.nb03);
+-                s_snapshot[i] = s;
+-            }
+-
+             B  += args.ns42;
+             C  += args.ns52;
+         }
+@@ -9949,7 +9912,6 @@ template [[host_name("kernel_cpy_f32_q4_1")]]   kernel cpy_f_q_t kernel_cpy_f32_
+ template [[host_name("kernel_cpy_f32_q5_0")]]   kernel cpy_f_q_t kernel_cpy_f32_q<QK5_0,  block_q5_0,   quantize_q5_0>;
+ template [[host_name("kernel_cpy_f32_q5_1")]]   kernel cpy_f_q_t kernel_cpy_f32_q<QK5_1,  block_q5_1,   quantize_q5_1>;
+ template [[host_name("kernel_cpy_f32_iq4_nl")]] kernel cpy_f_q_t kernel_cpy_f32_q<QK4_NL, block_iq4_nl, quantize_iq4_nl>;
+-template [[host_name("kernel_cpy_f32_tq2_0")]]  kernel cpy_f_q_t kernel_cpy_f32_q<QK_K,   block_tq2_0,  quantize_tq2_0>;
+ 
+ template<typename T4x4, typename block_q, short nl, void (*dequantize_func)(device const block_q *, short, thread T4x4 &)>
+ kernel void kernel_cpy_q_f32(
+@@ -9997,8 +9959,6 @@ template [[host_name("kernel_cpy_q5_0_f32")]] kernel cpy_q_f_t kernel_cpy_q_f32<
+ template [[host_name("kernel_cpy_q5_1_f32")]] kernel cpy_q_f_t kernel_cpy_q_f32<float4x4, block_q5_1, 2, dequantize_q5_1>;
+ template [[host_name("kernel_cpy_q8_0_f32")]] kernel cpy_q_f_t kernel_cpy_q_f32<float4x4, block_q8_0, 2, dequantize_q8_0>;
+ 
+-template [[host_name("kernel_cpy_tq2_0_f32")]] kernel cpy_q_f_t kernel_cpy_q_f32<float4x4, block_tq2_0, QK_NL, dequantize_tq2_0>;
+-
+ template [[host_name("kernel_cpy_q1_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q1_0, 8, dequantize_q1_0>;
+ template [[host_name("kernel_cpy_q2_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q2_0, 4, dequantize_q2_0>;
+ template [[host_name("kernel_cpy_q4_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q4_0, 2, dequantize_q4_0>;
+@@ -10007,8 +9967,6 @@ template [[host_name("kernel_cpy_q5_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<
+ template [[host_name("kernel_cpy_q5_1_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q5_1, 2, dequantize_q5_1>;
+ template [[host_name("kernel_cpy_q8_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q8_0, 2, dequantize_q8_0>;
+ 
+-template [[host_name("kernel_cpy_tq2_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_tq2_0, QK_NL, dequantize_tq2_0>;
+-
+ template [[host_name("kernel_cpy_tq3_1s_f32")]] kernel cpy_q_f_t kernel_cpy_q_f32<float4x4, block_tq3_1s, 2, dequantize_tq3_1s>;
+ template [[host_name("kernel_cpy_tq3_1s_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_tq3_1s, 2, dequantize_tq3_1s>;
+ template [[host_name("kernel_cpy_tq4_1s_f32")]] kernel cpy_q_f_t kernel_cpy_q_f32<float4x4, block_tq4_1s, 2, dequantize_tq4_1s>;
+@@ -11780,121 +11738,6 @@ kernel void kernel_mul_mv_mxfp4_f32(
+     kernel_mul_mv_mxfp4_f32_impl<N_R0_MXFP4, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
+ }
+ 
+-template<int nr0, typename args_t>
+-void kernel_mul_mv_tq2_0_f32_impl(
+-        args_t args,
+-        device const char * src0,
+-        device const char * src1,
+-        device       char * dst,
+-        threadgroup  char * shmem,
+-        uint3  tgpig,
+-        ushort tiisg,
+-        ushort sgitg) {
+-    const short NSG = FC_mul_mv_nsg;
+-
+-    const int nb = args.ne00/QK_K;
+-
+-    const int r0 = tgpig.x;
+-    const int r1 = tgpig.y;
+-    const int im = tgpig.z;
+-
+-    const int first_row = (r0 * NSG + sgitg) * nr0;
+-
+-    const uint i12 = im%FC_mul_mv_ne12;
+-    const uint i13 = im/FC_mul_mv_ne12;
+-
+-    const uint64_t offset1 =        r1*args.nb11 + (i12        )*args.nb12 + (i13        )*args.nb13;
+-
+-    device const float * y = (device const float *) (src1 + offset1);
+-
+-    device const block_tq2_0 * ax[nr0];
+-    for (int row = 0; row < nr0; ++row) {
+-        const uint64_t offset0 = (first_row + row)*args.nb01 + (i12/FC_mul_mv_r2)*args.nb02 + (i13/FC_mul_mv_r3)*args.nb03;
+-        ax[row] = (device const block_tq2_0 *) ((device char *) src0 + offset0);
+-    }
+-
+-    float sumf[nr0] = {0.f};
+-
+-    // 8 threads per block, NBLOCK blocks per pass, 2 halves per block per pass
+-    constexpr short NBLOCK = 4;
+-
+-    constexpr short NB = N_SIMDWIDTH/NBLOCK; // threads per block
+-
+-    const short blk = tiisg / NB;    // 0..NBLOCK-1, block handled by this thread
+-    const short htg = tiisg % NB;    // 0..NB-1, thread within block (0..7)
+-
+-    // byte and y base offsets within the block (32 elements per thread, 4 per byte)
+-    device const float4 * yb4 = (device const float4 *)(y + 4*htg + blk*QK_K);
+-
+-    // hoisted per-byte coefficients (from y) and total y-sum, shared across rows
+-    // ref: https://github.com/ggml-org/llama.cpp/pull/26980
+-    float4 coef[4];
+-
+-    for (int ib = blk; ib < nb; ib += NBLOCK) {
+-        FOR_UNROLL (short h0 = 0; h0 < 2; ++h0) {
+-            const float4 y0 = yb4[ 0 + 32*h0];
+-            const float4 y1 = yb4[ 8 + 32*h0];
+-            const float4 y2 = yb4[16 + 32*h0];
+-            const float4 y3 = yb4[24 + 32*h0];
+-
+-            float sumy = 0.f;
+-            FOR_UNROLL (short j = 0; j < 4; ++j) {
+-                coef[j] = float4(
+-                        y0[j],
+-                        y1[j] - 4.0f*y0[j],
+-                        y2[j] - 4.0f*y1[j],
+-                        y3[j] - 4.0f*y2[j]);
+-
+-                sumy += (y0[j] + y1[j]) + (y2[j] + y3[j]);
+-            }
+-
+-            FOR_UNROLL (short row = 0; row < nr0; ++row) {
+-                device const block_tq2_0 & xb = ax[row][ib];
+-                device const uchar * qs = xb.qs + 4*htg + 32*h0;
+-
+-                float sum = -sumy;
+-                FOR_UNROLL (short j = 0; j < 4; ++j) {
+-                    // express the 2-bit field shifts (v>>2, v>>4, v>>6) as float floor ops
+-                    const float v = (float)qs[j];
+-
+-                    const float f0 = v;
+-                    const float f1 = floor(v*0.25f);    // v>>2
+-                    const float f2 = floor(v*0.0625);   // v>>4
+-                    const float f3 = floor(v*0.015625); // v>>6
+-
+-                    sum += coef[j][0]*f0 + coef[j][1]*f1 + coef[j][2]*f2 + coef[j][3]*f3;
+-                }
+-
+-                sumf[row] += xb.d * sum;
+-            }
+-        }
+-
+-        yb4 += QK_K * NBLOCK / 4;
+-    }
+-
+-    device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
+-
+-    for (int row = 0; row < nr0; ++row) {
+-        const float tot = simd_sum(sumf[row]);
+-        if (tiisg == 0 && first_row + row < args.ne01) {
+-            dst_f32[first_row + row] = tot;
+-        }
+-    }
+-}
+-
+-[[host_name("kernel_mul_mv_tq2_0_f32")]]
+-kernel void kernel_mul_mv_tq2_0_f32(
+-        constant ggml_metal_kargs_mul_mv & args,
+-        device const char * src0,
+-        device const char * src1,
+-        device       char * dst,
+-        uint3  tgpig[[threadgroup_position_in_grid]],
+-        ushort tiisg[[thread_index_in_simdgroup]],
+-        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+-
+-    kernel_mul_mv_tq2_0_f32_impl<N_R0_TQ2_0, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
+-}
+-
+ template<typename block_q, short nl, void (*dequantize_func)(device const block_q *, short, thread float4x4 &)>
+ kernel void kernel_get_rows_q(
+         constant ggml_metal_kargs_get_rows & args,
+@@ -11988,38 +11831,6 @@ template [[host_name("kernel_get_rows_iq1_s")]]   kernel get_rows_q_t kernel_get
+ template [[host_name("kernel_get_rows_iq1_m")]]   kernel get_rows_q_t kernel_get_rows_q<block_iq1_m,   QK_NL, dequantize_iq1_m>;
+ template [[host_name("kernel_get_rows_iq4_nl")]]  kernel get_rows_q_t kernel_get_rows_q<block_iq4_nl,  2,     dequantize_iq4_nl>;
+ template [[host_name("kernel_get_rows_iq4_xs")]]  kernel get_rows_q_t kernel_get_rows_q<block_iq4_xs,  QK_NL, dequantize_iq4_xs>;
+-template [[host_name("kernel_get_rows_tq2_0")]]   kernel get_rows_q_t kernel_get_rows_q<block_tq2_0,   QK_NL, dequantize_tq2_0>;
+-
+-template<typename TS, typename TI, short QK, typename block_q, void (*quantize_func)(device const float *, device block_q &)>
+-kernel void kernel_set_rows_q(
+-        constant ggml_metal_kargs_set_rows & args,
+-        device const  void * src0,
+-        device const  void * src1,
+-        device       float * dst,
+-        uint3                tgpig[[threadgroup_position_in_grid]],
+-        uint                 tiitg[[thread_index_in_threadgroup]],
+-        uint3                tptg [[threads_per_threadgroup]]) {
+-    const int32_t i03 = tgpig.z;
+-    const int32_t i02 = tgpig.y;
+-
+-    const int32_t i12 = i03%args.ne12;
+-    const int32_t i11 = i02%args.ne11;
+-
+-    const int32_t i01 = tgpig.x*tptg.y + tiitg/tptg.x;
+-    if (i01 >= args.ne01) {
+-        return;
+-    }
+-
+-    const int32_t i10 = i01;
+-    const TI      i1  = ((const device TI *) ((const device char *) src1 + i10*args.nb10 + i11*args.nb11 + i12*args.nb12))[0];
+-
+-          device block_q * dst_row = (      device block_q *) ((      device char *) dst  +  i1*args.nb1  + i02*args.nb2  + i03*args.nb3);
+-    const device TS      * src_row = (const device TS      *) ((const device char *) src0 + i01*args.nb01 + i02*args.nb02 + i03*args.nb03);
+-
+-    for (int ind = tiitg%tptg.x; ind < args.nk0; ind += tptg.x) {
+-        quantize_func(src_row + QK*ind, dst_row[ind]);
+-    }
+-}
+ template [[host_name("kernel_get_rows_tq3_1s")]]  kernel get_rows_q_t kernel_get_rows_q<block_tq3_1s,  2, dequantize_tq3_1s>;
+ template [[host_name("kernel_get_rows_tq4_1s")]]  kernel get_rows_q_t kernel_get_rows_q<block_tq4_1s,  2, dequantize_tq4_1s>;
+ 
+@@ -12365,10 +12176,6 @@ template [[host_name("kernel_set_rows_f32_i32_q5_1")]]   kernel set_rows_q32_t k
+ template [[host_name("kernel_set_rows_f32_i64_iq4_nl")]] kernel set_rows_q32_t kernel_set_rows_q32<float, int64_t, block_iq4_nl, quantize_iq4_nl>;
+ template [[host_name("kernel_set_rows_f32_i32_iq4_nl")]] kernel set_rows_q32_t kernel_set_rows_q32<float, int32_t, block_iq4_nl, quantize_iq4_nl>;
+ 
+-typedef decltype(kernel_set_rows_q<float, int64_t, QK_K, block_tq2_0, quantize_tq2_0>) set_rows_qK_t;
+-
+-template [[host_name("kernel_set_rows_f32_i64_tq2_0")]]  kernel set_rows_qK_t kernel_set_rows_q<float, int64_t, QK_K, block_tq2_0, quantize_tq2_0>;
+-template [[host_name("kernel_set_rows_f32_i32_tq2_0")]]  kernel set_rows_qK_t kernel_set_rows_q<float, int32_t, QK_K, block_tq2_0, quantize_tq2_0>;
+ // TurboQuant set_rows instantiations (128-element groups: 4x32-element blocks for turbo3, dedicated kernels for turbo2/4)
+ typedef decltype(kernel_set_rows_turbo<int64_t, block_turbo3_0, QK_TURBO3, quantize_turbo3_0>) set_rows_turbo3_t;
+ template [[host_name("kernel_set_rows_f32_i64_turbo3")]] kernel set_rows_turbo3_t kernel_set_rows_turbo<int64_t, block_turbo3_0, QK_TURBO3, quantize_turbo3_0>;
+@@ -13168,7 +12975,6 @@ template [[host_name("kernel_mul_mm_iq1_s_f32")]]   kernel mul_mm_t kernel_mul_m
+ template [[host_name("kernel_mul_mm_iq1_m_f32")]]   kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq1_m,   QK_NL, dequantize_iq1_m,   float,  float4x4,  float, float2x4>;
+ template [[host_name("kernel_mul_mm_iq4_nl_f32")]]  kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_nl,  2,     dequantize_iq4_nl,  float,  float4x4,  float, float2x4>;
+ template [[host_name("kernel_mul_mm_iq4_xs_f32")]]  kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_xs,  QK_NL, dequantize_iq4_xs,  float,  float4x4,  float, float2x4>;
+-template [[host_name("kernel_mul_mm_tq2_0_f32")]]   kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_tq2_0,   QK_NL, dequantize_tq2_0,   float,  float4x4,  float, float2x4>;
+ 
+ template [[host_name("kernel_mul_mm_f32_f16")]]     kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   float4x4,      1,     dequantize_f32,     float,  float4x4,  half, half2x4>;
+ template [[host_name("kernel_mul_mm_f16_f16")]]     kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   half4x4,       1,     dequantize_f16,     half,   half4x4,   half, half2x4>;
+@@ -13198,7 +13004,6 @@ template [[host_name("kernel_mul_mm_iq1_s_f16")]]   kernel mul_mm_t kernel_mul_m
+ template [[host_name("kernel_mul_mm_iq1_m_f16")]]   kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq1_m,   QK_NL, dequantize_iq1_m,   float,  float4x4,  half, half2x4>;
+ template [[host_name("kernel_mul_mm_iq4_nl_f16")]]  kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_nl,  2,     dequantize_iq4_nl,  float,  float4x4,  half, half2x4>;
+ template [[host_name("kernel_mul_mm_iq4_xs_f16")]]  kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_xs,  QK_NL, dequantize_iq4_xs,  float,  float4x4,  half, half2x4>;
+-template [[host_name("kernel_mul_mm_tq2_0_f16")]]   kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_tq2_0,   QK_NL, dequantize_tq2_0,   float,  float4x4,  half, half2x4>;
+ 
+ //
+ // indirect matrix-matrix multiplication
+@@ -13237,7 +13042,6 @@ template [[host_name("kernel_mul_mm_id_iq1_s_f32")]]   kernel mul_mm_id kernel_m
+ template [[host_name("kernel_mul_mm_id_iq1_m_f32")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq1_m,   QK_NL, dequantize_iq1_m,   float,  float4x4,  float, float2x4>;
+ template [[host_name("kernel_mul_mm_id_iq4_nl_f32")]]  kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_nl,  2,     dequantize_iq4_nl,  float,  float4x4,  float, float2x4>;
+ template [[host_name("kernel_mul_mm_id_iq4_xs_f32")]]  kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_xs,  QK_NL, dequantize_iq4_xs,  float,  float4x4,  float, float2x4>;
+-template [[host_name("kernel_mul_mm_id_tq2_0_f32")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_tq2_0,   QK_NL, dequantize_tq2_0,   float,  float4x4,  float, float2x4>;
+ 
+ template [[host_name("kernel_mul_mm_id_f32_f16")]]     kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   float4x4,      1,     dequantize_f32,     float,  float4x4,  half, half2x4>;
+ template [[host_name("kernel_mul_mm_id_f16_f16")]]     kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   half4x4,       1,     dequantize_f16,     half,   half4x4,   half, half2x4>;
+@@ -13267,7 +13071,6 @@ template [[host_name("kernel_mul_mm_id_iq1_s_f16")]]   kernel mul_mm_id kernel_m
+ template [[host_name("kernel_mul_mm_id_iq1_m_f16")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq1_m,   QK_NL, dequantize_iq1_m,   float,  float4x4,  half, half2x4>;
+ template [[host_name("kernel_mul_mm_id_iq4_nl_f16")]]  kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_nl,  2,     dequantize_iq4_nl,  float,  float4x4,  half, half2x4>;
+ template [[host_name("kernel_mul_mm_id_iq4_xs_f16")]]  kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_iq4_xs,  QK_NL, dequantize_iq4_xs,  float,  float4x4,  half, half2x4>;
+-template [[host_name("kernel_mul_mm_id_tq2_0_f16")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_tq2_0,   QK_NL, dequantize_tq2_0,   float,  float4x4,  half, half2x4>;
+ 
+ //
+ // matrix-vector multiplication
+@@ -13427,7 +13230,6 @@ template [[host_name("kernel_mul_mv_id_iq3_s_f32")]]   kernel kernel_mul_mv_id_t
+ template [[host_name("kernel_mul_mv_id_iq2_s_f32")]]   kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq2_s_f32_impl  <N_R0_IQ2_S>>>;
+ template [[host_name("kernel_mul_mv_id_iq4_nl_f32")]]  kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq4_nl_f32_impl <N_R0_IQ4_NL>>>;
+ template [[host_name("kernel_mul_mv_id_iq4_xs_f32")]]  kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq4_xs_f32_impl <N_R0_IQ4_XS>>>;
+-template [[host_name("kernel_mul_mv_id_tq2_0_f32")]]   kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_tq2_0_f32_impl  <N_R0_TQ2_0>>>;
+ 
+ kernel void kernel_pool_2d_max_f32(
+         constant    ggml_metal_kargs_pool_2d & args,
+@@ -13696,155 +13498,6 @@ typedef decltype(kernel_count_equal<int32_t>) kernel_count_equal_t;
+ 
+ template [[host_name("kernel_count_equal_i32")]] kernel kernel_count_equal_t kernel_count_equal<int32_t>;
+ 
+-template<
+-    typename kd4x4_t,
+-    short nl_k,
+-    void (*deq_k)(device const kd4x4_t *, short, thread half4x4 &)>
+-kernel void kernel_lightning_indexer(
+-        constant ggml_metal_kargs_lightning_indexer & args,
+-        device const char * q,
+-        device const char * k,
+-        device const char * w,
+-        device const char * m,
+-        device       char * dst,
+-        uint3  tgpig[[threadgroup_position_in_grid]],
+-        ushort tiitg[[thread_index_in_threadgroup]],
+-        ushort tiisg[[thread_index_in_simdgroup]],
+-        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+-    constexpr short DK    = OP_LIGHTNING_INDEXER_DK;
+-    constexpr short NH    = OP_LIGHTNING_INDEXER_NH;
+-    constexpr short NHPTG = OP_LIGHTNING_INDEXER_NHPTG;
+-    constexpr short NKPSG = OP_LIGHTNING_INDEXER_NKPSG;
+-    constexpr short NSG   = OP_LIGHTNING_INDEXER_NSG;
+-    constexpr short NBPTG = OP_LIGHTNING_INDEXER_NBPTG;
+-
+-    constexpr short DK4  = DK/4;
+-    constexpr short DK8  = DK/8;
+-    constexpr short DK16 = DK/16;
+-
+-    constexpr short NK  = NKPSG*NSG; // keys    per threadgroup
+-    constexpr short NTG = 32*NSG;    // threads per threadgroup
+-
+-    const int i_stream = tgpig.z;
+-    const int i_kv_0   = tgpig.x*NK;            // first key of this threadgroup
+-    const int i_kv     = i_kv_0 + sgitg*NKPSG;  // first key of this simdgroup
+-
+-    threadgroup half sk[NK * DK16 * 16];
+-    threadgroup half4x4 * sk4x4 = (threadgroup half4x4 *) sk;
+-
+-    for (short i = tiitg; i < NK*DK16; i += NTG) {
+-        const short ik  = i/DK16;
+-        const short i16 = i%DK16;
+-
+-        half4x4 tmp;
+-
+-        if (i_kv_0 + ik < args.n_kv) {
+-            device const kd4x4_t * kr = (device const kd4x4_t *) (k + (i_kv_0 + ik)*args.nbk2 + i_stream*args.nbk3);
+-
+-            deq_k(kr + i16/nl_k, i16%nl_k, tmp);
+-        } else {
+-            FOR_UNROLL (short j = 0; j < 4; ++j) {
+-                tmp[j] = half4(0.0h);
+-            }
+-        }
+-
+-        sk4x4[i] = tmp;
+-    }
+-
+-    threadgroup_barrier(mem_flags::mem_threadgroup);
+-
+-    // K tile of this simdgroup, transposed to [DK, NKPSG]
+-    simdgroup_half8x8 mk[DK8];
+-
+-    FOR_UNROLL (short i = 0; i < DK8; ++i) {
+-        simdgroup_load(mk[i], sk + sgitg*NKPSG*DK + 8*i, DK, 0, true);
+-    }
+-
+-    threadgroup half4   sq4[NHPTG*DK4];
+-    threadgroup half  * sq = (threadgroup half *) sq4;
+-
+-    threadgroup float sw [NHPTG];
+-    threadgroup float sqk[NSG*NHPTG*NKPSG];
+-
+-    const int i_batch_0 = tgpig.y*NBPTG;
+-    const int n_batch   = min((int) NBPTG, args.n_batch - i_batch_0);
+-
+-    for (short ib = 0; ib < n_batch; ++ib) {
+-        const int i_batch = i_batch_0 + ib;
+-
+-        device const char * pq = q + i_batch*args.nbq2 + i_stream*args.nbq3;
+-        device const char * pw = w + i_batch*args.nbw1 + i_stream*args.nbw3;
+-
+-        float score = 0.0f;
+-
+-        FOR_UNROLL (short i_head = 0; i_head < NH; i_head += NHPTG) {
+-            // stage the Q tile [DK, NHPTG] and the (prescaled) head weights
+-            for (short i = tiitg; i < NHPTG*DK4; i += NTG) {
+-                const short ih = i/DK4;
+-                const short i4 = i%DK4;
+-
+-                device const float4 * q4 = (device const float4 *) (pq + (i_head + ih)*args.nbq1);
+-
+-                sq4[ih*DK4 + i4] = half4(q4[i4]);
+-            }
+-
+-            if (tiitg < NHPTG) {
+-                sw[tiitg] = ((device const float *) pw)[i_head + tiitg];
+-            }
+-
+-            threadgroup_barrier(mem_flags::mem_threadgroup);
+-
+-            simdgroup_float8x8 mqk = make_filled_simdgroup_matrix<float, 8>(0.0f);
+-
+-            FOR_UNROLL (short i = 0; i < DK8; ++i) {
+-                simdgroup_half8x8 mq;
+-
+-                simdgroup_load(mq, sq + 8*i, DK, 0, false);
+-                simdgroup_multiply_accumulate(mqk, mq, mk[i], mqk);
+-            }
+-
+-            threadgroup float * pqk = sqk + sgitg*NHPTG*NKPSG;
+-
+-            simdgroup_store(mqk, pqk, NKPSG, 0, false);
+-            simdgroup_barrier(mem_flags::mem_threadgroup);
+-
+-            // one lane per key: ReLU, apply the head weight and accumulate over the head tile
+-            if (tiisg < NKPSG) {
+-                FOR_UNROLL (short ih = 0; ih < NHPTG; ++ih) {
+-                    score += max(pqk[ih*NKPSG + tiisg], 0.0f)*sw[ih];
+-                }
+-            }
+-
+-            threadgroup_barrier(mem_flags::mem_threadgroup);
+-        }
+-
+-        if (tiisg < NKPSG) {
+-            const int ik = i_kv + tiisg;
+-            if (ik < args.n_kv) {
+-                device const half  * pm = (device const half  *) (m   + i_batch*args.nbm1 + (i_stream % args.mask_ne3)*args.nbm3);
+-                device       float * pd = (device       float *) (dst + i_batch*args.nb1  + i_stream*args.nb3);
+-
+-                pd[ik] = score + (float) pm[ik];
+-            }
+-        }
+-    }
+-}
+-
+-typedef decltype(kernel_lightning_indexer<half4x4, 1, dequantize_f16>) kernel_lightning_indexer_t;
+-
+-template [[host_name("kernel_lightning_indexer_f32")]]  kernel kernel_lightning_indexer_t kernel_lightning_indexer<float4x4, 1, dequantize_f32>;
+-template [[host_name("kernel_lightning_indexer_f16")]]  kernel kernel_lightning_indexer_t kernel_lightning_indexer<half4x4,  1, dequantize_f16>;
+-
+-#if defined(GGML_METAL_HAS_BF16)
+-template [[host_name("kernel_lightning_indexer_bf16")]] kernel kernel_lightning_indexer_t kernel_lightning_indexer<bfloat4x4, 1, dequantize_bf16>;
+-#endif
+-
+-template [[host_name("kernel_lightning_indexer_q4_0")]] kernel kernel_lightning_indexer_t kernel_lightning_indexer<block_q4_0, 2, dequantize_q4_0>;
+-template [[host_name("kernel_lightning_indexer_q4_1")]] kernel kernel_lightning_indexer_t kernel_lightning_indexer<block_q4_1, 2, dequantize_q4_1>;
+-template [[host_name("kernel_lightning_indexer_q5_0")]] kernel kernel_lightning_indexer_t kernel_lightning_indexer<block_q5_0, 2, dequantize_q5_0>;
+-template [[host_name("kernel_lightning_indexer_q5_1")]] kernel kernel_lightning_indexer_t kernel_lightning_indexer<block_q5_1, 2, dequantize_q5_1>;
+-template [[host_name("kernel_lightning_indexer_q8_0")]] kernel kernel_lightning_indexer_t kernel_lightning_indexer<block_q8_0, 2, dequantize_q8_0>;
+-
+ kernel void kernel_dsv4_hc_comb_f32(
+         constant ggml_metal_kargs_dsv4_hc_comb & args,
+         device const char * mixes,
+@@ -14002,3 +13655,791 @@ kernel void kernel_dsv4_hc_post_f32(
+         *(device float *) (dst + i0*args.nb_d0 + idst*args.nb_d1 + it*args.nb_d2) = result[idst];
+     }
+ }
++
++
++// ============================================================================
++// MoE Expert Cache matvec — reads quantized weights from a pool slab
++// at per-row offsets and computes dot products with q8_1 activations.
++// One thread per (hit, output_row) pair.
++// Template parameter: block_t = the quantized block type.
++// ============================================================================
++
++// Per-type block dot functions. MSL type-checks every branch of a runtime if,
++// so dispatch happens via overload resolution (each overload only touches its
++// own block type's members). One thread per (hit, output row) pair.
++// Q8_0: signed 8-bit quants, one 32-wide act block
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_q8_0 * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    const float d_w = (float)w_block->d;
++    const float d_a = (float)a_block->d;
++    int sum_q = 0;
++    for (int i = 0; i < QK8_0; i++) {
++        sum_q += (int)w_block->qs[i] * (int)a_block->qs[i];
++    }
++    sum += d_w * d_a * (float)sum_q;
++}
++
++// Q4_0: 4-bit nibbles, offset by -8, one 32-wide act block.
++// qs packing (CPU reference): byte j = element j (low nibble) | element
++// j+16 (high nibble), so element j pairs with act element j.
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_q4_0 * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    const float d_w = (float)w_block->d;
++    const float d_a = (float)a_block->d;
++    int sum_q = 0;
++    for (int i = 0; i < 16; i++) {
++        const uint8_t nibbles = w_block->qs[i];
++        sum_q += ((int)(nibbles & 0xF) - 8) * (int)a_block->qs[i];
++        sum_q += ((int)(nibbles >> 4)  - 8) * (int)a_block->qs[i + 16];
++    }
++    sum += d_w * d_a * (float)sum_q;
++}
++
++// Q4_K: 8 sub-blocks of 32 elements, each with a 6-bit scale and 6-bit min
++// packed across scales[12] (get_scale_min_k4). Sub-block sb pairs with act
++// block sb; formula matches the CUDA reference:
++//   d_all * d8[sb] * sc6 * dot1 - d_min * d8[sb] * mn6 * dot2
++// where dot1 = sum(q4*qs) and dot2 = sum(qs) over the 32 elements.
++// qs packing (CPU reference): sub-block pair 2k/2k+1 shares qs[32k..32k+31],
++// even sub-block in the low nibbles, odd in the high nibbles.
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_q4_K * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    device const uint8_t * q = w_block->qs;
++    device const uint8_t * sc = w_block->scales;
++    const float d_all = (float)w_block->d;
++    const float d_min = (float)w_block->dmin;
++
++    for (int sb = 0; sb < 8; sb++) {
++        int sc6, mn6;
++        if (sb < 4) {
++            sc6 = sc[sb] & 0x3F;
++            mn6 = sc[sb + 4] & 0x3F;
++        } else {
++            sc6 = (sc[sb + 4] & 0xF) | ((sc[sb - 4] & 0xC0) >> 2);
++            mn6 = (sc[sb + 4] >> 4) | ((sc[sb] & 0xC0) >> 2);
++        }
++        const float dl = d_all * (float)sc6;
++        const float ml = d_min * (float)mn6;
++        const float d_a = (float)a_block[sb].d;
++
++        int dot1 = 0;
++        int dot2 = 0;
++        for (int j = 0; j < 32; j++) {
++            const uint8_t nibbles = q[(sb >> 1) * 32 + j];
++            const int n0 = (sb & 1) ? (nibbles >> 4) : (nibbles & 0xF);
++            const int qs = (int)a_block[sb].qs[j];
++            dot1 += n0 * qs;
++            dot2 += qs;
++        }
++        sum += d_a * (dl * (float)dot1 - ml * (float)dot2);
++    }
++}
++
++// Q6_K: 16 sub-blocks of 16 elements, int8 scale per sub-block, 8 act blocks
++// of 32. Element e uses weight scale scales[e/16] and act block e/32, so two
++// weight sub-blocks share one act block. q6 value packing (CPU reference):
++//   ql byte (e%64) + 64*(e/128), high nibble iff (e/64) is odd
++//   qh byte (e%32) + 32*(e/128), bits 2*((e/32) % 4)
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_q6_K * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    const float d_all = (float)w_block->d;
++
++    for (int e = 0; e < QK_K; e++) {
++        const int sb = e / 16;
++        const int ab = e / 32;
++        const float dl = d_all * (float)w_block->scales[sb];
++        const float d_a = (float)a_block[ab].d;
++
++        const uint8_t low = w_block->ql[(e % 64) + 64 * (e / 128)];
++        const uint8_t high = w_block->qh[(e % 32) + 32 * (e / 128)];
++        const int q4 = ((e / 64) & 1) ? (low >> 4) : (low & 0xF);
++        const int q2 = (high >> (2 * ((e / 32) % 4))) & 0x3;
++        const int q6 = q4 | (q2 << 4);
++        const float w_val = dl * (float)(q6 - 32);
++
++        sum += w_val * d_a * (float)a_block[ab].qs[e % 32];
++    }
++}
++
++// Q5_K: 8 sub-blocks of 32. Same scale/min packing as Q4_K (get_scale_min_k4)
++// plus a per-element high bit in qh. q5 = nibble | (high << 4) with no offset
++// (the min term shifts it; see vec_dot_q5_K_q8_1_impl_vmmq, which also uses
++// the unshifted vl|vh). The high bit of element (sb*32 + j) sits at qh[j]
++// bit (2*(sb >> 1) + (sb & 1)).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_q5_K * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    device const uint8_t * q = w_block->qs;
++    device const uint8_t * qh = w_block->qh;
++    device const uint8_t * sc = w_block->scales;
++    const float d_all = (float)w_block->d;
++    const float d_min = (float)w_block->dmin;
++
++    for (int sb = 0; sb < 8; sb++) {
++        int sc6, mn6;
++        if (sb < 4) {
++            sc6 = sc[sb] & 0x3F;
++            mn6 = sc[sb + 4] & 0x3F;
++        } else {
++            sc6 = (sc[sb + 4] & 0xF) | ((sc[sb - 4] & 0xC0) >> 2);
++            mn6 = (sc[sb + 4] >> 4) | ((sc[sb] & 0xC0) >> 2);
++        }
++        const float dl = d_all * (float)sc6;
++        const float ml = d_min * (float)mn6;
++        const float d_a = (float)a_block[sb].d;
++
++        int dot1 = 0;
++        int dot2 = 0;
++        for (int j = 0; j < 32; j++) {
++            const uint8_t nibbles = q[(sb >> 1) * 32 + j];
++            const int q5 = (sb & 1) ? (nibbles >> 4) : (nibbles & 0xF);
++            const int high = (qh[j] >> (2 * (sb >> 1) + (sb & 1))) & 1;
++            const int qs = (int)a_block[sb].qs[j];
++            dot1 += (q5 | (high << 4)) * qs;
++            dot2 += qs;
++        }
++        sum += d_a * (dl * (float)dot1 - ml * (float)dot2);
++    }
++}
++
++// Q1_0: 128 elements per block, one scale, 1 bit per element (+1/-1). The
++// weight block spans four 32-wide act chunks, each with its own q8_1 scale.
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_q1_0 * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    float s = 0.0f;
++    for (int c = 0; c < 4; c++) {
++        const float d_a = (float)a_block[c].d;
++        int sumi = 0;
++        for (int j = 0; j < 32; j++) {
++            const int e = c*32 + j;
++            const int bit = (w_block->qs[e >> 3] >> (e & 7)) & 1;
++            sumi += (bit ? 1 : -1) * (int)a_block[c].qs[j];
++        }
++        s += d_a * (float)sumi;
++    }
++    sum += (float)w_block->d * s;
++}
++
++// Q2_0: 64 elements per block, one scale, 2 bits per element mapped
++// {0,1,2,3} -> {-1,0,1,2} (CPU vec_dot_q2_0 reference). Two act chunks.
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_q2_0 * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    float s = 0.0f;
++    for (int c = 0; c < 2; c++) {
++        const float d_a = (float)a_block[c].d;
++        int sumi = 0;
++        for (int j = 0; j < 32; j++) {
++            const int e = c*32 + j;
++            const int q2 = (w_block->qs[e >> 2] >> (2 * (e & 3))) & 3;
++            sumi += (q2 - 1) * (int)a_block[c].qs[j];
++        }
++        s += d_a * (float)sumi;
++    }
++    sum += (float)w_block->d * s;
++}
++
++// Q4_1: nibbles 0..15, min term via the q8_1 activation sum (CPU reference:
++// (d*d8)*sumi + m*s). qs packing like Q4_0.
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_q4_1 * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    const float d = (float)w_block->d;
++    const float m = (float)w_block->m;
++    const float d_a = (float)a_block->d;
++    int sumi = 0;
++    for (int i = 0; i < 16; i++) {
++        const uint8_t nibbles = w_block->qs[i];
++        sumi += (int)(nibbles & 0xF) * (int)a_block->qs[i];
++        sumi += (int)(nibbles >> 4) * (int)a_block->qs[i + 16];
++    }
++    sum += (d * d_a) * (float)sumi + m * (float)a_block->s;
++}
++
++// Q5_0: nibble | (high bit << 4) - 16, single scale, no min term. High bit of
++// element e is bit e of the 32-bit qh field (4 bytes, CPU packing).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_q5_0 * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    const float d = (float)w_block->d;
++    const float d_a = (float)a_block->d;
++    const uint32_t qh = (uint32_t)w_block->qh[0] | ((uint32_t)w_block->qh[1] << 8) |
++                        ((uint32_t)w_block->qh[2] << 16) | ((uint32_t)w_block->qh[3] << 24);
++    int sumi = 0;
++    for (int i = 0; i < 16; i++) {
++        const int v0 = ((int)(w_block->qs[i] & 0xF) | (((int)(qh >> i) & 1) << 4)) - 16;
++        const int v1 = ((int)(w_block->qs[i] >> 4) | (((int)(qh >> (i + 16)) & 1) << 4)) - 16;
++        sumi += v0 * (int)a_block->qs[i] + v1 * (int)a_block->qs[i + 16];
++    }
++    sum += (d * d_a) * (float)sumi;
++}
++
++// Q5_1: nibble | (high bit << 4) in 0..31, min term via the act sum (CPU
++// reference: (d*d8)*sumi + m*s).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_q5_1 * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    const float d = (float)w_block->d;
++    const float m = (float)w_block->m;
++    const float d_a = (float)a_block->d;
++    const uint32_t qh = (uint32_t)w_block->qh[0] | ((uint32_t)w_block->qh[1] << 8) |
++                        ((uint32_t)w_block->qh[2] << 16) | ((uint32_t)w_block->qh[3] << 24);
++    int sumi = 0;
++    for (int i = 0; i < 16; i++) {
++        const int v0 = (int)(w_block->qs[i] & 0xF) | (((int)(qh >> i) & 1) << 4);
++        const int v1 = (int)(w_block->qs[i] >> 4) | (((int)(qh >> (i + 16)) & 1) << 4);
++        sumi += v0 * (int)a_block->qs[i] + v1 * (int)a_block->qs[i + 16];
++    }
++    sum += (d * d_a) * (float)sumi + m * (float)a_block->s;
++}
++
++// Q2_K: 16 sub-blocks of 16 elements. scales[sb] packs a 4-bit scale (low) and
++// a 4-bit min (high). q2 codes are raw 0..3; the min term recenters them.
++// Sub-block sb pairs with act block (ab + sb/2). value packing (CPU
++// vec_dot_q2_K_q8_K reference): element e uses byte qs[32*(e/128) + e%32],
++// 2-bit field 2*((e/32)%4).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_q2_K * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    const float d_all = (float)w_block->d;
++    const float d_min = (float)w_block->dmin;
++    for (int sb = 0; sb < 16; sb++) {
++        const float dl = d_all * (float)(w_block->scales[sb] & 0xF);
++        const float ml = d_min * (float)(w_block->scales[sb] >> 4);
++        const float d_a = (float)a_block[sb / 2].d;
++        int dot1 = 0;
++        int dot2 = 0;
++        for (int j = 0; j < 16; j++) {
++            const int e = sb*16 + j;
++            const int q2 = (w_block->qs[32*(e/128) + e%32] >> (2*((e/32)%4))) & 3;
++            const int qs = (int)a_block[sb / 2].qs[j + 16*(sb & 1)];
++            dot1 += q2 * qs;
++            dot2 += qs;
++        }
++        sum += d_a * (dl * (float)dot1 - ml * (float)dot2);
++    }
++}
++
++// Q3_K: 16 sub-blocks of 16 elements, 6-bit scale per sub-block packed across
++// scales[12] (CPU vec_dot_q3_K_q8_K reference unpacking). value = (2-bit
++// code) - 4 + 4*hmask bit; scale = sc6 - 32; no min term.
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_q3_K * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    const float d_all = (float)w_block->d;
++    for (int sb = 0; sb < 16; sb++) {
++        // 6-bit scales packed across scales[12] (CUDA vec_dot_q3_K_q8_1
++        // unpacking): 16 low nibbles in scales[0..7], 16x2 high bits in
++        // scales[8..11].
++        const int sc_low  = (w_block->scales[sb % 8] >> (4 * (sb / 8))) & 0xF;
++        const int sc_high = (w_block->scales[8 + sb % 4] >> (2 * (sb / 4))) & 0x3;
++        const float dl = d_all * (float)((sc_low | (sc_high << 4)) - 32);
++        const float d_a = (float)a_block[sb / 2].d;
++        int dot1 = 0;
++        for (int j = 0; j < 16; j++) {
++            const int e = sb*16 + j;
++            const int low2 = (w_block->qs[32*(e/128) + e%32] >> (2*((e/32)%4))) & 3;
++            const int hbit = (w_block->hmask[e%32] >> (4*(e/128) + (e/32)%4)) & 1;
++            dot1 += (low2 - 4 + 4*hbit) * (int)a_block[sb / 2].qs[j + 16*(sb & 1)];
++        }
++        sum += d_a * dl * (float)dot1;
++    }
++}
++
++// IQ2_XXS: 8 act windows of 32. Each window uses 8 bytes of qs: 4 grid
++// indices (aux32_g) and 4 bytes of scale+signs (aux32_s); the 4-bit scale
++// sits in the top nibble, signs are 7-bit groups (ksigns_iq2xs). scale factor
++// (2*scale+1)/8 (CPU reference).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_iq2_xxs * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    float s = 0.0f;
++    for (int ib32 = 0; ib32 < 8; ib32++) {
++        device const uint16_t * q2 = w_block->qs + 4*ib32;
++        const uint32_t aux32_g = (uint32_t)q2[0] | ((uint32_t)q2[1] << 16);
++        const uint32_t aux32_s = (uint32_t)q2[2] | ((uint32_t)q2[3] << 16);
++        const int ls = 2*((int)((aux32_s >> 28) & 0xF)) + 1;
++        const float d_a = (float)a_block[ib32].d;
++        int sumi = 0;
++        for (int l = 0; l < 4; l++) {
++            const int idx = (int)((aux32_g >> (8*l)) & 0xFF);
++            const uint8_t signs = ksigns_iq2xs[(aux32_s >> (7*l)) & 127];
++            constant uint8_t * grid = (constant uint8_t *)(iq2xxs_grid + idx);
++            for (int i = 0; i < 8; i++) {
++                const int g = (int)grid[i];
++                const int sgn = (signs >> i) & 1;
++                sumi += (sgn ? -g : g) * (int)a_block[ib32].qs[8*l + i];
++            }
++        }
++        s += d_a * (float)(sumi * ls);
++    }
++    sum += (float)w_block->d * (1.0f/8.0f) * s;
++}
++
++// IQ2_XS: per 32-window, 4 uint16 words hold a 9-bit grid index and 7 sign
++// bits each; scales[ib32] holds two 4-bit scales (per 16-element half).
++// scale factor (2*scale+1)/8 (CPU reference).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_iq2_xs * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    float s = 0.0f;
++    for (int ib32 = 0; ib32 < 8; ib32++) {
++        const int ls1 = 2*((int)(w_block->scales[ib32] & 0xF)) + 1;
++        const int ls2 = 2*((int)(w_block->scales[ib32] >> 4)) + 1;
++        device const uint16_t * q2 = w_block->qs + 4*ib32;
++        const float d_a = (float)a_block[ib32].d;
++        int sumi1 = 0;
++        int sumi2 = 0;
++        for (int l = 0; l < 4; l++) {
++            const uint16_t q2w = q2[l];
++            const int idx = (int)(q2w & 511);
++            const uint8_t signs = ksigns_iq2xs[q2w >> 9];
++            constant uint8_t * grid = (constant uint8_t *)(iq2xs_grid + idx);
++            int sumi = 0;
++            for (int i = 0; i < 8; i++) {
++                const int g = (int)grid[i];
++                const int sgn = (signs >> i) & 1;
++                sumi += (sgn ? -g : g) * (int)a_block[ib32].qs[8*l + i];
++            }
++            if (l < 2) { sumi1 += sumi; } else { sumi2 += sumi; }
++        }
++        s += d_a * (float)(ls1*sumi1 + ls2*sumi2);
++    }
++    sum += (float)w_block->d * (1.0f/8.0f) * s;
++}
++
++// IQ2_S: per 32-window, 4 grid bytes + 4 sign bytes (at qs + 32), a 2-bit high
++// index from qh[ib32], and two 4-bit scales. scale factor (2*scale+1)/8.
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_iq2_s * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    float s = 0.0f;
++    for (int ib32 = 0; ib32 < 8; ib32++) {
++        const int ls1 = 2*((int)(w_block->scales[ib32] & 0xF)) + 1;
++        const int ls2 = 2*((int)(w_block->scales[ib32] >> 4)) + 1;
++        const uint8_t qh = w_block->qh[ib32];
++        const float d_a = (float)a_block[ib32].d;
++        int sumi1 = 0;
++        int sumi2 = 0;
++        for (int l = 0; l < 4; l++) {
++            const int idx = (int)w_block->qs[4*ib32 + l] | ((qh << (8 - 2*l)) & 0x300);
++            const uint8_t sg = w_block->qs[32 + 4*ib32 + l];
++            constant uint8_t * grid = (constant uint8_t *)(iq2s_grid + idx);
++            int sumi = 0;
++            for (int i = 0; i < 8; i++) {
++                const int g = (int)grid[i];
++                const int sgn = (sg >> i) & 1;
++                sumi += (sgn ? -g : g) * (int)a_block[ib32].qs[8*l + i];
++            }
++            if (l < 2) { sumi1 += sumi; } else { sumi2 += sumi; }
++        }
++        s += d_a * (float)(ls1*sumi1 + ls2*sumi2);
++    }
++    sum += (float)w_block->d * (1.0f/8.0f) * s;
++}
++
++// IQ3_XXS: per 32-window, 8 grid bytes in qs[0..63] and 4 scale+sign bytes in
++// qs[64..95]. Two 4-byte grid entries and 7-bit sign groups per l; scale
++// factor (2*scale+1)/4 (CPU reference).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_iq3_xxs * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    float s = 0.0f;
++    for (int ib32 = 0; ib32 < 8; ib32++) {
++        const uint32_t aux32 = (uint32_t)w_block->qs[64 + 4*ib32 + 0] |
++                               ((uint32_t)w_block->qs[64 + 4*ib32 + 1] << 8) |
++                               ((uint32_t)w_block->qs[64 + 4*ib32 + 2] << 16) |
++                               ((uint32_t)w_block->qs[64 + 4*ib32 + 3] << 24);
++        const int ls = 2*((int)((aux32 >> 28) & 0xF)) + 1;
++        const float d_a = (float)a_block[ib32].d;
++        int sumi = 0;
++        for (int l = 0; l < 4; l++) {
++            constant uint8_t * grid1 = (constant uint8_t *)(iq3xxs_grid + w_block->qs[8*ib32 + 2*l + 0]);
++            constant uint8_t * grid2 = (constant uint8_t *)(iq3xxs_grid + w_block->qs[8*ib32 + 2*l + 1]);
++            const uint8_t signs = ksigns_iq2xs[(aux32 >> (7*l)) & 127];
++            for (int i = 0; i < 4; i++) {
++                const int g1 = (int)grid1[i];
++                const int g2 = (int)grid2[i];
++                const int s1 = (signs >> i) & 1;
++                const int s2 = (signs >> (i + 4)) & 1;
++                sumi += (s1 ? -g1 : g1) * (int)a_block[ib32].qs[8*l + i];
++                sumi += (s2 ? -g2 : g2) * (int)a_block[ib32].qs[8*l + i + 4];
++            }
++        }
++        s += d_a * (float)(sumi * ls);
++    }
++    sum += (float)w_block->d * (1.0f/4.0f) * s;
++}
++
++// IQ3_S: per 32-window, 8 grid bytes, 4 sign bytes, qh[ib32] for the 9th
++// index bit, and a 4-bit scale. scale factor 1 + 2*scale (no /8; CPU
++// reference).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_iq3_s * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    float s = 0.0f;
++    for (int ib32 = 0; ib32 < 8; ib32++) {
++        const int ls = 2*((int)(w_block->scales[ib32 >> 1] >> (4 * (ib32 & 1))) & 0xF) + 1;
++        const uint8_t qh = w_block->qh[ib32];
++        const float d_a = (float)a_block[ib32].d;
++        int sumi = 0;
++        for (int l = 0; l < 4; l++) {
++            constant uint8_t * grid1 = (constant uint8_t *)(iq3s_grid + (w_block->qs[8*ib32 + 2*l + 0] | ((qh << (8 - 2*l)) & 256)));
++            constant uint8_t * grid2 = (constant uint8_t *)(iq3s_grid + (w_block->qs[8*ib32 + 2*l + 1] | ((qh << (7 - 2*l)) & 256)));
++            const uint8_t sg = w_block->signs[4*ib32 + l];
++            for (int i = 0; i < 4; i++) {
++                const int g1 = (int)grid1[i];
++                const int g2 = (int)grid2[i];
++                const int s1 = (sg >> i) & 1;
++                const int s2 = (sg >> (i + 4)) & 1;
++                sumi += (s1 ? -g1 : g1) * (int)a_block[ib32].qs[8*l + i];
++                sumi += (s2 ? -g2 : g2) * (int)a_block[ib32].qs[8*l + i + 4];
++            }
++        }
++        s += d_a * (float)(sumi * ls);
++    }
++    sum += (float)w_block->d * s;
++}
++
++// IQ1_S: per 32-window, 4 grid bytes in qs, qh[ib] supplies a 3-bit high index
++// and the scale/delta. grid values are 4-bit per byte (iq1s_grid_gpu). The
++// min term uses the q8_1 activation sum (CUDA reference).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_iq1_s * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    float s = 0.0f;
++    for (int ib = 0; ib < 8; ib++) {
++        const uint16_t qh = w_block->qh[ib];
++        const int ls = 2*((qh >> 12) & 7) + 1;
++        const float delta = (qh & 0x8000) ? -1.0f - IQ1S_DELTA : -1.0f + IQ1S_DELTA;
++        const float d_a = (float)a_block[ib].d;
++        int sumi = 0;
++        for (int l = 0; l < 4; l++) {
++            const int idx = (int)w_block->qs[4*ib + l] | (((qh >> (3*l)) & 7) << 8);
++            constant uint32_t * e = iq1s_grid_gpu + idx;
++            const uint32_t ev = *e;
++            for (int i = 0; i < 4; i++) {
++                const int g0 = (int)((ev >> (8*i)) & 0xF);
++                const int g1 = (int)((ev >> (8*i + 4)) & 0xF);
++                sumi += g0 * (int)a_block[ib].qs[8*l + i];
++                sumi += g1 * (int)a_block[ib].qs[8*l + i + 4];
++            }
++        }
++        s += (float)ls * (d_a * (float)sumi + (float)a_block[ib].s * delta);
++    }
++    sum += (float)w_block->d * s;
++}
++
++// IQ1_M: no block d; the scale is reconstructed from the four uint16 scales
++// words. Per 32-window: 4 grid bytes, 2 qh bytes (deltas), two 6-bit scales.
++// delta terms use the raw q8 sum (CUDA reference), act scale from ds.x.
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_iq1_m * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    device const uint16_t * sc = (device const uint16_t *)w_block->scales;
++    float s = 0.0f;
++    for (int ib = 0; ib < 8; ib++) {
++        const uint8_t qh0 = w_block->qh[2*ib];
++        const uint8_t qh1 = w_block->qh[2*ib + 1];
++        const float delta0 = (qh0 & 0x08) ? -1.0f - IQ1M_DELTA : -1.0f + IQ1M_DELTA;
++        const float delta1 = (qh0 & 0x80) ? -1.0f - IQ1M_DELTA : -1.0f + IQ1M_DELTA;
++        const float delta2 = (qh1 & 0x08) ? -1.0f - IQ1M_DELTA : -1.0f + IQ1M_DELTA;
++        const float delta3 = (qh1 & 0x80) ? -1.0f - IQ1M_DELTA : -1.0f + IQ1M_DELTA;
++        const uint16_t sc16 = sc[ib >> 1];
++        const int ls1 = 2*((sc16 >> (6*(ib & 1) + 0)) & 7) + 1;
++        const int ls2 = 2*((sc16 >> (6*(ib & 1) + 3)) & 7) + 1;
++        const float d_a = (float)a_block[ib].d;
++        int sumi0 = 0;
++        int sumi1 = 0;
++        float sumf0 = 0.0f;
++        float sumf1 = 0.0f;
++        for (int l = 0; l < 4; l++) {
++            const uint8_t qhl = (l < 2) ? qh0 : qh1;
++            const int idx = (int)w_block->qs[4*ib + l] | ((qhl << (8 - 4*(l % 2))) & 0x700);
++            const float delta = l == 0 ? delta0 : l == 1 ? delta1 : l == 2 ? delta2 : delta3;
++            constant uint32_t * e = iq1s_grid_gpu + idx;
++            const uint32_t ev = *e;
++            int sumi = 0;
++            int sumy = 0;
++            for (int i = 0; i < 4; i++) {
++                const int g0 = (int)((ev >> (8*i)) & 0xF);
++                const int g1 = (int)((ev >> (8*i + 4)) & 0xF);
++                sumi += g0 * (int)a_block[ib].qs[8*l + i] + g1 * (int)a_block[ib].qs[8*l + i + 4];
++                sumy += (int)a_block[ib].qs[8*l + i] + (int)a_block[ib].qs[8*l + i + 4];
++            }
++            if (l < 2) { sumi0 += sumi; sumf0 += delta * (float)sumy; }
++            else       { sumi1 += sumi; sumf1 += delta * (float)sumy; }
++        }
++        s += d_a * (((float)sumi0 + sumf0) * (float)ls1 + ((float)sumi1 + sumf1) * (float)ls2);
++    }
++    iq1m_scale_t scale;
++    scale.u16 = (sc[0] >> 12) | ((sc[1] >> 8) & 0x00f0) | ((sc[2] >> 4) & 0x0f00) | (sc[3] & 0xf000);
++    sum += (float)scale.f16 * s;
++}
++
++// IQ4_NL: 32 elements per block, one scale, 4-bit non-linear codes
++// (kvalues_iq4nl), 2 per byte (CPU vec_dot_iq4_nl_q8_1 reference).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_iq4_nl * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    const float d_a = (float)a_block[0].d;
++    int sumi = 0;
++    for (int j = 0; j < 16; j++) {
++        const uint8_t byte = w_block->qs[j];
++        sumi += (int)kvalues_iq4nl_f[byte & 0xF] * (int)a_block[0].qs[j];
++        sumi += (int)kvalues_iq4nl_f[byte >> 4] * (int)a_block[0].qs[j + 16];
++    }
++    sum += (float)w_block->d * d_a * (float)sumi;
++}
++
++// IQ4_XS: per 32-window, 16 qs bytes and a 6-bit scale (4 bits from scales_l,
++// 2 from scales_h), offset by -32 (CPU reference).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_iq4_xs * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    float s = 0.0f;
++    for (int ib = 0; ib < 8; ib++) {
++        const int ls = ((w_block->scales_l[ib >> 1] >> (4 * (ib & 1))) & 0xF) |
++                       (((w_block->scales_h >> (2*ib)) & 3) << 4);
++        const float dl = (float)(ls - 32);
++        const float d_a = (float)a_block[ib].d;
++        int sumi = 0;
++        for (int j = 0; j < 16; j++) {
++            const uint8_t byte = w_block->qs[16*ib + j];
++            sumi += (int)kvalues_iq4nl_f[byte & 0xF] * (int)a_block[ib].qs[j];
++            sumi += (int)kvalues_iq4nl_f[byte >> 4] * (int)a_block[ib].qs[j + 16];
++        }
++        s += d_a * dl * (float)sumi;
++    }
++    sum += (float)w_block->d * s;
++}
++
++// MXFP4: 32 elements, one E8M0 exponent, 2 E2M1 values per byte. The Metal
++// kvalues_mxfp4_f table already holds the half-step values (CPU/CUDA
++// reference: e8m0 * 0.5 * 2*E2M1 == e8m0 * E2M1).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_mxfp4 * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    const float d = e8m0_to_fp32(w_block->e) * (float)a_block->d;
++    int sumi = 0;
++    for (int j = 0; j < 16; j++) {
++        const uint8_t byte = w_block->qs[j];
++        sumi += (int)kvalues_mxfp4_f[byte & 0xF] * (int)a_block->qs[j];
++        sumi += (int)kvalues_mxfp4_f[byte >> 4] * (int)a_block->qs[j + 16];
++    }
++    sum += d * (float)sumi;
++}
++
++// NVFP4: 64 elements = 4 sub-blocks of 16, each with a UE4M3 scale; 2 E2M1
++// values per byte (CPU vec_dot_nvfp4 reference packing).
++static inline void kernel_moe_cache_mv_block_dot(
++    device const block_nvfp4 * w_block,
++    device const block_q8_1 * a_block,
++    thread float & sum) {
++    for (int s = 0; s < 4; s++) {
++        const float d = nvfp4_ue4m3_to_fp32(w_block->d[s]) * (float)a_block[s >> 1].d;
++        const int off = (s & 1) * 16;
++        int sumi = 0;
++        for (int j = 0; j < 8; j++) {
++            const uint8_t byte = w_block->qs[8*s + j];
++            sumi += (int)kvalues_mxfp4_f[byte & 0xF] * (int)a_block[s >> 1].qs[off + j];
++            sumi += (int)kvalues_mxfp4_f[byte >> 4] * (int)a_block[s >> 1].qs[off + j + 8];
++        }
++        sum += d * (float)sumi;
++    }
++}
++
++// Host binds all six scalars as one packed blob at buffer index 4
++// (ggml_metal_encoder_set_bytes(enc, args, sizeof(args), 4)), so the kernel must
++// take a single struct there. Six separate `constant int64_t &` parameters would
++// claim indices 4..9, leaving every field after n_in unbound.
++struct moe_cache_mv_args {
++    int64_t n_in;
++    int64_t n_out;
++    int64_t expert_stride;
++    int64_t row_stride;
++    int64_t n_hits;
++    int64_t padded_n_in;
++};
++
++template <typename block_t, short qk>
++kernel void kernel_moe_cache_mv_generic(
++    device const char * slab,
++    device const int32_t * ids,
++    device const block_q8_1 * act_q8,
++    device float * dst,
++    constant moe_cache_mv_args & args,
++    uint id [[thread_position_in_grid]]
++) {
++    const int64_t n_in          = args.n_in;
++    const int64_t n_out         = args.n_out;
++    const int64_t expert_stride = args.expert_stride;
++    const int64_t row_stride    = args.row_stride;
++    const int64_t n_hits        = args.n_hits;
++    const int64_t padded_n_in   = args.padded_n_in;
++    const int64_t hit = (int64_t)id / n_out;
++    const int64_t row = (int64_t)id - hit * n_out;
++
++    if (hit >= n_hits) return;
++
++    const int slot = ids[hit];
++    if (slot < 0) {
++        dst[hit * n_out + row] = 0.0f;
++        return;
++    }
++
++    device const block_t * w_row = (device const block_t *)(slab + (int64_t)slot * expert_stride + row * row_stride);
++    device const block_q8_1 * act = act_q8 + hit * (padded_n_in / QK8_1);
++
++    const int nb = (int)(n_in / qk);
++    float sum = 0.0f;
++    for (int ib = 0; ib < nb; ib++) {
++        // a 256-column K-type weight block consumes qk / QK8_1 act blocks
++        kernel_moe_cache_mv_block_dot(&w_row[ib], &act[ib * (qk / QK8_1)], sum);
++    }
++    dst[hit * n_out + row] = sum;
++}
++
++// Per-type instantiations with host_name for runtime dispatch
++
++template [[host_name("kernel_moe_cache_mv_q8_0_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_q8_0, QK8_0>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_q4_0_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_q4_0, QK4_0>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_q4_K_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_q4_K, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_q6_K_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_q6_K, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_q5_K_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_q5_K, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_q1_0_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_q1_0, QK1_0>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_q2_0_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_q2_0, QK2_0>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_q4_1_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_q4_1, QK4_1>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_q5_0_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_q5_0, QK5_0>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_q5_1_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_q5_1, QK5_1>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_q2_K_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_q2_K, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_q3_K_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_q3_K, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_iq2_xxs_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_iq2_xxs, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_iq2_xs_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_iq2_xs, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_iq2_s_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_iq2_s, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_iq3_xxs_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_iq3_xxs, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_iq3_s_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_iq3_s, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_iq1_s_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_iq1_s, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_iq1_m_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_iq1_m, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_iq4_nl_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_iq4_nl, QK4_NL>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_iq4_xs_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_iq4_xs, QK_K>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_mxfp4_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_mxfp4, QK_MXFP4>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
++
++template [[host_name("kernel_moe_cache_mv_nvfp4_f32")]]
++kernel void kernel_moe_cache_mv_generic<block_nvfp4, QK_NVFP4>(
++    device const char *, device const int32_t *, device const block_q8_1 *,
++    device float *, constant moe_cache_mv_args &, uint);
