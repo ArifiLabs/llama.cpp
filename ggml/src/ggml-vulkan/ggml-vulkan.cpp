@@ -5,6 +5,7 @@ inline std::ostream & operator<<(std::ostream & os, vk::Buffer buffer) {
     return os << static_cast<VkBuffer>(buffer);
 }
 }
+extern "C" void ggml_vulkan_moe_cache_register(void * reg);
 static vk_device_architecture get_device_architecture(const vk::PhysicalDevice& device) {
     vk::PhysicalDeviceProperties props = device.getProperties();
 
@@ -16548,6 +16549,9 @@ ggml_backend_reg_t ggml_backend_vk_reg() {
     };
     try {
         ggml_vk_instance_init();
+        // No GGML_USE_* guard: see the Metal backend; that macro is not defined
+        // for this target, so the registration was compiled out.
+        ggml_vulkan_moe_cache_register(&reg);
         return &reg;
     } catch (const vk::SystemError& e) {
         VK_LOG_DEBUG("ggml_backend_vk_reg() -> Error: System error: " << e.what());
