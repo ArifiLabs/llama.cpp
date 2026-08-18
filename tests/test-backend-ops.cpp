@@ -11918,6 +11918,29 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
         // Per-op tallies make that visible at the end of every run.
         std::map<std::string, std::pair<size_t, size_t>> per_op;   // op -> {executed, declined}
         std::mutex per_op_mutex;
+        // lane-150: per-op is NOT fine enough. The generic test_set_rows / test_cpy classes report
+        // one op_desc ("SET_ROWS", "CPY") for EVERY destination type they sweep, so a whole weight
+        // format with zero executed cells hides behind the types that pass in the same bucket.
+        // Measured at lane-150's base: all six TQ ids had 24 declined / 0 executed SET_ROWS cases
+        // each — 144 invisible cells — while the bucket printed "338/343 tests passed". Only
+        // TQ4_1S was ever caught, and only because it happened to have a bespoke class with its
+        // own op_desc. This second tally keys on the tensor type named in vars(), so a per-TYPE
+        // hole inside a mixed op is named the same way a per-op hole is.
+        std::map<std::string, std::pair<size_t, size_t>> per_op_type;
+        // Pull the type this case is really about out of the vars() string. Order matters: the
+        // destination is what a write-path cell is about, the source is what a read-path cell is.
+        auto type_bucket = [](const std::string & op, const std::string & vars) -> std::string {
+            for (const char * key : { "type_dst=", "type=", "type_a=", "type_src=" }) {
+                const size_t p = vars.find(key);
+                if (p == std::string::npos) {
+                    continue;
+                }
+                const size_t b = p + strlen(key);
+                const size_t e = vars.find(',', b);
+                return op + "[" + key + vars.substr(b, e == std::string::npos ? e : e - b) + "]";
+            }
+            return std::string();   // no type in vars: the per-op tally already covers it
+        };
         std::vector<std::string> failed_tests;
         std::mutex failed_tests_mutex;
 
@@ -11947,6 +11970,10 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
                             n_not_supported++;
                             std::lock_guard<std::mutex> guard(per_op_mutex);
                             per_op[test->current_op_name].second++;
+                            const std::string tb = type_bucket(test->current_op_name, test->vars());
+                            if (!tb.empty()) {
+                                per_op_type[tb].second++;
+                            }
                         } else {
                             n_filtered++;
                         }
@@ -11955,6 +11982,10 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
                     {
                         std::lock_guard<std::mutex> guard(per_op_mutex);
                         per_op[test->current_op_name].first++;
+                        const std::string tb = type_bucket(test->current_op_name, test->vars());
+                        if (!tb.empty()) {
+                            per_op_type[tb].first++;
+                        }
                     }
                     tests_run++;
                     if (status == test_status_t::OK) {
@@ -12027,6 +12058,33 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
             if (!zero_exec.empty()) {
                 printf("  ZERO EXECUTED COVERAGE for %zu op(s) — every case declined: ",
                        zero_exec.size());
+                for (size_t i = 0; i < zero_exec.size(); i++) {
+                    printf("%s%s", i ? ", " : "", zero_exec[i].c_str());
+                }
+                printf("\n");
+            }
+        }
+
+        // lane-150: the same rule one level finer — op x type. An entry here that is NOT already
+        // named by the per-op line above is a format that has zero executed coverage for this op
+        // while its neighbours in the same bucket pass. That is the shape the whole TQ family sat
+        // in for weeks. Declining is allowed; declining INVISIBLY is not.
+        {
+            std::vector<std::string> zero_exec;
+            for (const auto & kv : per_op_type) {
+                if (kv.second.first != 0 || kv.second.second == 0) {
+                    continue;
+                }
+                const std::string op = kv.first.substr(0, kv.first.find('['));
+                const auto it = per_op.find(op);
+                if (it != per_op.end() && it->second.first == 0) {
+                    continue;   // the whole op is already named above; do not print it twice
+                }
+                zero_exec.push_back(kv.first + "(" + std::to_string(kv.second.second) + ")");
+            }
+            if (!zero_exec.empty()) {
+                printf("  ZERO EXECUTED COVERAGE for %zu op x type cell(s) inside otherwise-"
+                       "executing ops — every case declined: ", zero_exec.size());
                 for (size_t i = 0; i < zero_exec.size(); i++) {
                     printf("%s%s", i ? ", " : "", zero_exec[i].c_str());
                 }
