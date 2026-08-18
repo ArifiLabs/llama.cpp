@@ -44,7 +44,7 @@ the audit.
 | `PrismML-Eng/llama.cpp` | **yes — `prisml-MIT.txt`** | **CLOSED 2026-08-18.** See the correction below: the "Phase 0 observed no LICENSE" finding was about the retained *release material*, and it was carried forward for a year as though it were a fact about the project. `refs/remotes/prisml/prism:LICENSE` exists and is MIT. |
 | `turbo-tan/llama.cpp-tq3` | **yes — `tq3-MIT.txt`** | **CLOSED 2026-08-18.** Code IS ported (`58ad80ffb`, the `TQ3_4S` family at ids 48-51), and the license is now retained from `refs/remotes/tq3/main:LICENSE`. |
 | `ciru-ai/ROCmFPX` | **yes — `ciru-MIT.txt`** | registered source, no code carried yet; the notice is retained ahead of any ingest so it can never lag the code. |
-| `thecodacus/llama.cpp` | **no** | Still open, and honestly so: there is no `thecodacus` remote on this repository — the three prefetch patches were captured as patch artifacts, and those artifacts carry no license grant. There is nothing to `git show`. Documented, not manufactured. |
+| `thecodacus/llama.cpp` | **yes — `thecodacus-MIT.txt`** | **CLOSED 2026-08-18** (President's correction, retained in `d40e42fae`; row landed lane-152). The last open attribution. The old text of this row is preserved in the correction below because the error in it is instructive. |
 
 ### Correction, 2026-08-18 (lane-151): a false absence that stood for months
 
@@ -69,7 +69,15 @@ observed no source `LICENSE` or `NOTICE` file in the retained PrismML release ma
 grant inside the captured thecodacus patch artifacts. The PrismML half is now closed: `prisml-MIT.txt`
 is retained from `refs/remotes/prisml/prism:LICENSE`, and the correction above explains why the
 original finding was true of the material examined and false of the project. The thecodacus half
-STANDS — there is no thecodacus remote and no license text to copy.
+**FELL THE SAME DAY, to the same mistake one level out.** Its old text read: *"there is no
+`thecodacus` remote on this repository — the three prefetch patches were captured as patch artifacts,
+and those artifacts carry no license grant. There is nothing to `git show`. Documented, not
+manufactured."* Every clause of that is true, and the conclusion drawn from it is still wrong: the
+correction above says an absence claim is only as good as the place you looked, and this row then
+looked in exactly one place — this repository — and stopped. **NO LOCAL REMOTE IS NOT NO SOURCE.**
+The project is public; its LICENSE is a fetch away and needs no remote configured here. The President
+made that correction and `thecodacus-MIT.txt` is retained (`d40e42fae`). All seven registered sources
+plus thecodacus are now closed; this directory still contains no fabricated license text.
 
 A 2026-07-22 project decision authorizes their inclusion with maximal attribution and provenance; it
 does not authorize inventing a license text. Therefore this directory still contains no fabricated

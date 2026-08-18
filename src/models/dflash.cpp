@@ -118,6 +118,12 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
 
     // reduced draft vocab (optional): d2t maps draft rows to target token ids
     int64_t n_vocab_draft = n_vocab;
+    // `ml.`, not `ml->`, and the reason is a SHADOW, not an upstream bug. Upstream b10481 writes
+    // this line as `ml->` and leaves its parameter UNNAMED on purpose: `ml` there resolves to the
+    // `llama_model_loader * ml` member of llama_model_base (llama-model.h:767). Our signature names
+    // the parameter `ml`, so inside this function the member is shadowed by a reference and `->`
+    // has nothing to reach through. The sibling lookup twelve lines down has always been `ml.` for
+    // exactly this reason; this line arrived through the b10481 merge still in upstream's shape.
     const struct ggml_tensor * d2t_meta = ml.get_tensor_meta("d2t");
     if (d2t_meta) {
         n_vocab_draft = d2t_meta->ne[0];
