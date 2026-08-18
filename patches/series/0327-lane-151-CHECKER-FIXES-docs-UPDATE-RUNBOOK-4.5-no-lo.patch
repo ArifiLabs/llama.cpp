@@ -1,0 +1,63 @@
+From eb4888e8d195ca17d89bf72ff745bcaf6147406b Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 03:14:23 -0400
+Subject: [PATCH] lane-151 CHECKER FIXES (docs): UPDATE-RUNBOOK 4.5 no longer
+ asserts a self-containment standard nothing on this estate meets - the four
+ MinGW runtime DLLs are named and staged, and the measured stripped-PATH
+ failure is recorded as identical for the raw build tree and the previous
+ engine. licenses/README.md audit header stops claiming a purely mechanical
+ trailer derivation: the tq3 row is a SUBJECT-line citation git never parses
+ as a trailer, which is exactly why a trailer-only sweep would have missed the
+ one real license gap
+
+---
+ UPDATE-RUNBOOK.md  | 10 ++++++++--
+ licenses/README.md | 14 ++++++++++----
+ 2 files changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/UPDATE-RUNBOOK.md b/UPDATE-RUNBOOK.md
+index e18aa6066..7e3c38c89 100644
+--- a/UPDATE-RUNBOOK.md
++++ b/UPDATE-RUNBOOK.md
+@@ -213,8 +213,14 @@ loaded, not that the GPU path works.
+ Staging is a **copy from a verified build of canonical**, never a build from a lane branch:
+ 
+ 1. copy the built exes into a new `models/engines/<name>/` directory;
+-2. re-run §4.4's smoke **from the staged copies** — a staged engine that cannot launch from its own
+-   directory is a staged engine that does not exist;
++2. re-run §4.4's smoke **from the staged copies**, not from the build tree — a stage nobody has
++   launched is a stage nobody can trust. Copy the MinGW runtime DLLs beside the exes as well
++   (`libgcc_s_seh-1`, `libstdc++-6`, `libwinpthread-1`, `libgomp-1`), which the import table names.
++   **Measured caveat, so this does not read as a standard we meet:** even with those four staged,
++   launching with a stripped `PATH` still fails `STATUS_DLL_NOT_FOUND` — and it fails *identically*
++   from the raw build directory and from the previous engine of record, so it is a property of every
++   MinGW build on this estate, not of any one stage. These engines depend on the ambient `PATH`.
++   Full self-containment is unclaimed and unmeasured;
+ 3. point the state register at it and rewrite the "do not use on" caveat to the new truth.
+ 
+ ## 5. The standard this repository is organized to
+diff --git a/licenses/README.md b/licenses/README.md
+index d59aeb47f..f3a6f4b36 100644
+--- a/licenses/README.md
++++ b/licenses/README.md
+@@ -15,10 +15,16 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
+ 
+ `../LICENSE` is also the verbatim copy of upstream llama.cpp’s MIT license.
+ 
+-## Audit, 2026-08-18 (lane-151) — every source cited by a `Taken-from:` trailer
+-
+-Derived by taking the distinct `Taken-from:` trailer values across every fork commit on `arifi/main`
+-and asking, for each, whether a notice is retained above.
++## Audit, 2026-08-18 (lane-151) — every source this fork carries code or credit from
++
++Derived from the distinct `Taken-from:` values across every fork commit on `arifi/main`, then widened
++by hand. **The widening is not cosmetic and is stated so the table is not read as a purely mechanical
++derivation:** two rows below are NOT in git's parsed trailer set. `turbo-tan/llama.cpp-tq3` appears in
++commit `01b3065fe`'s *subject* as "Taken-from turbo-tan/llama.cpp-tq3@58ad80ffb" — no colon, so git
++does not parse it as a trailer, and a tool that trusted the trailer block alone would have missed the
++one source with a real license GAP. `turboquant_plus` appears in no trailer at all; its notice is
++retained anyway because its Apache-2.0 NOTICE requires it. A trailer sweep is a starting point, not
++the audit.
+ 
+ | source cited by a trailer | notice retained | disposition |
+ |---|---|---|
