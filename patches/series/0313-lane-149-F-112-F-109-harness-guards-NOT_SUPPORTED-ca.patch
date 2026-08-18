@@ -1,0 +1,173 @@
+From 76d72d6af95be834d7df22b6363f090288ecb2bc Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 22:43:39 -0400
+Subject: [PATCH] lane-149 F-112 + F-109 harness guards: NOT_SUPPORTED cases
+ counted and named, zero-executed run now FAILS; all_types coverage-parity
+ assert with reason-bearing waivers; Q2_0_G128 added to all_types
+
+---
+ tests/test-backend-ops.cpp | 100 ++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 99 insertions(+), 1 deletion(-)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 37b39a3b0..4d1580780 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -718,6 +718,12 @@ struct test_summary_info {
+     size_t tests_passed;
+     size_t tests_total;
+     bool   is_backend_summary = false;  // true for backend summary, false for test summary
++    // lane-149 / failure-ledger F-112: cases the backend DECLINED never reach tests_total, so a run
++    // in which every case was declined printed "0/0 tests passed" and then "OK" — a green banner
++    // over zero executed coverage. They are counted here and named on their own line; the
++    // "%zu/%zu tests passed" line above is left byte-identical because sweep_table.py parses it.
++    size_t tests_not_supported = 0;     // graph contained a node the backend does not support
++    size_t tests_filtered      = 0;     // did not match -o/-t, never intended to run
+ 
+     test_summary_info() = default;
+ 
+@@ -883,6 +889,16 @@ struct console_printer : public printer {
+             printf("%zu/%zu backends passed\n", info.tests_passed, info.tests_total);
+         } else {
+             printf("  %zu/%zu tests passed\n", info.tests_passed, info.tests_total);
++            // F-112: name what did NOT run. Silence here is what let SET_ROWS_TURBO4 look green
++            // for 21 cases while executing none of them.
++            if (info.tests_not_supported > 0) {
++                printf("  %zu case(s) NOT SUPPORTED by the backend — DECLINED, never executed\n",
++                       info.tests_not_supported);
++            }
++            if (info.tests_total == 0 && info.tests_not_supported > 0) {
++                printf("  \033[1;31mNO CASES EXECUTED\033[0m: every case matching the filter was "
++                       "declined. A pass banner here would mean 'nothing failed', not 'something ran'.\n");
++            }
+         }
+     }
+ 
+@@ -8541,6 +8557,9 @@ static const ggml_type all_types[] = {
+     GGML_TYPE_Q8_0,
+     GGML_TYPE_Q1_0,
+     GGML_TYPE_Q2_0,
++    // lane-149 (F-109): Q2_0_G128 had two op cells in the whole sweep because it was never listed
++    // here — the 128-value sibling of Q2_0, with its own block struct and its own shaders.
++    GGML_TYPE_Q2_0_G128,
+     GGML_TYPE_MXFP4, GGML_TYPE_NVFP4,
+     GGML_TYPE_Q2_K, GGML_TYPE_Q3_K,
+     GGML_TYPE_Q4_K, GGML_TYPE_Q5_K,
+@@ -8563,6 +8582,61 @@ static const ggml_type all_types[] = {
+     GGML_TYPE_Q6_0_ROCMFPX, GGML_TYPE_Q8_0_ROCMFPX,
+ };
+ 
++// ---------------------------------------------------------------------------------------------
++// lane-149 / failure-ledger F-109: all_types is HAND-CURATED, and whole format families sat outside
++// it for weeks (ROCmFP4/ROCmFPX, the tq3 family, Q2_0_G128). A green harness proves nothing about a
++// family its corpus never entered. This assert makes the omission mechanical: every quantized type
++// in enum ggml_type that this build actually implements must appear in all_types, or carry a
++// waiver WITH A REASON here. Adding a type without its harness cases now FAILS the run.
++struct type_coverage_waiver { ggml_type type; const char * reason; };
++
++static const type_coverage_waiver all_types_waivers[] = {
++    { GGML_TYPE_Q8_1,     "quantiser staging block for the int-dot path, never a tested tensor type" },
++    { GGML_TYPE_Q8_K,     "CPU-side intermediate for the K-quant dot products, no backend op takes it" },
++    { GGML_TYPE_TQ1_0,    "upstream: not implemented on all backends (see the TODO in all_types)" },
++    { GGML_TYPE_TURBO2_0, "runtime-only KV codec: covered by the bespoke test_set_rows_turbo2 class, "
++                          "not by the generic all_types sweep (it is never a weight tensor)" },
++    { GGML_TYPE_TURBO3_0, "runtime-only KV codec: covered by test_set_rows_turbo3 + the FA K/V cases" },
++    { GGML_TYPE_TURBO4_0, "runtime-only KV codec: covered by test_set_rows_turbo4" },
++};
++
++static bool check_all_types_coverage() {
++    bool ok = true;
++    for (int i = 0; i < GGML_TYPE_COUNT; i++) {
++        const ggml_type t = (ggml_type) i;
++        const ggml_type_traits * tr = ggml_get_type_traits(t);
++        // a type this build did not compile in (e.g. the ROCmFPX block with the flag OFF) has a
++        // zero-filled traits row: nothing to test, and gguf.cpp already fails closed on it.
++        if (tr->type_name == nullptr || tr->blck_size == 0 || !tr->is_quantized) {
++            continue;
++        }
++        if (tr->to_float == nullptr && tr->from_float_ref == nullptr) {
++            continue;   // declared but unimplemented on the CPU reference: nothing to compare against
++        }
++        bool listed = false;
++        for (ggml_type a : all_types) {
++            listed = listed || a == t;
++        }
++        for (const auto & w : all_types_waivers) {
++            listed = listed || w.type == t;
++        }
++        if (!listed) {
++            printf("  \033[1;31mCOVERAGE GAP\033[0m: %s (id %d) is implemented but is not in "
++                   "all_types and has no waiver — add its cases, or add a waiver with a reason "
++                   "(test-backend-ops.cpp all_types_waivers). failure-ledger F-109.\n",
++                   tr->type_name, i);
++            ok = false;
++        }
++    }
++    for (const auto & w : all_types_waivers) {
++        if (w.reason == nullptr || w.reason[0] == '\0') {
++            printf("  \033[1;31mCOVERAGE WAIVER\033[0m for type id %d carries no reason\n", (int) w.type);
++            ok = false;
++        }
++    }
++    return ok;
++}
++
+ static const ggml_type base_types[] = {
+     GGML_TYPE_F32, GGML_TYPE_F16,
+     GGML_TYPE_Q8_0, // for I8MM tests
+@@ -11031,6 +11105,8 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+ 
+         std::atomic<size_t> n_ok = 0;
+         std::atomic<size_t> tests_run = 0;
++        std::atomic<size_t> n_not_supported = 0;   // F-112: declined cases, counted not swallowed
++        std::atomic<size_t> n_filtered = 0;
+         std::vector<std::string> failed_tests;
+         std::mutex failed_tests_mutex;
+ 
+@@ -11056,6 +11132,11 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+                     auto & test = test_cases[i];
+                     test_status_t status = test->eval(b, b_cpu, op_names_filter, output_printer);
+                     if (status == test_status_t::SKIPPED || status == test_status_t::NOT_SUPPORTED) {
++                        if (status == test_status_t::NOT_SUPPORTED) {
++                            n_not_supported++;
++                        } else {
++                            n_filtered++;
++                        }
+                         continue;
+                     }
+                     tests_run++;
+@@ -11109,9 +11190,19 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+             }
+         }
+ 
+-        output_printer->print_summary(test_summary_info(n_ok, tests_run, false));
++        test_summary_info summary(n_ok, tests_run, false);
++        summary.tests_not_supported = n_not_supported;
++        summary.tests_filtered      = n_filtered;
++        output_printer->print_summary(summary);
+         output_printer->print_failed_tests(failed_tests);
+ 
++        // F-112: a filter that matched cases, all of which were declined, executed NOTHING. That is
++        // not a pass. (A filter that matched nothing at all — n_filtered only — stays a no-op, which
++        // is how the per-op sweep enumerates ops.)
++        if (tests_run == 0 && n_not_supported > 0) {
++            return false;
++        }
++
+         return n_ok == tests_run;
+     }
+ 
+@@ -11357,6 +11448,13 @@ int main(int argc, char ** argv) {
+     // load and enumerate backends
+     ggml_backend_load_all();
+ 
++    // F-109: the corpus must cover every implemented quantized type before anything is claimed
++    // about it. This runs before a single case, so a missing family fails loudly, not silently.
++    if (!check_all_types_coverage()) {
++        printf("\033[1;31mtest-backend-ops: all_types coverage parity FAILED\033[0m\n");
++        return 1;
++    }
++
+     // Create printer for output format
+     std::unique_ptr<printer> output_printer = create_printer(output_format);
+     if (output_printer) {

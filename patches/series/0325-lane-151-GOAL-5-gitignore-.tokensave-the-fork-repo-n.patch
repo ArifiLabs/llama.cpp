@@ -1,0 +1,22 @@
+From c511dc99671c545238756a2e3feb50bf88110d73 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 02:44:16 -0400
+Subject: [PATCH] lane-151 GOAL 5: gitignore .tokensave/ - the fork repo now
+ carries its own code graph (63344 nodes, 154451 edges over 3407 files) and
+ the index is per-machine, never committed
+
+---
+ .gitignore | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/.gitignore b/.gitignore
+index 9c9ffc8df..e18ee0027 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -162,3 +162,6 @@ arifi-recipe.cmake
+ 
+ # lane / launch scratch — never publishable (lane-151 GOAL 6 sweep: 648 tracked debris files incl. an embedded shadow.git)
+ _lane-out/
++
++# tokensave code graph — per-machine index, never committed (lane-151 GOAL 5)
++.tokensave/
