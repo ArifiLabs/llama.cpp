@@ -149,9 +149,9 @@ layout (binding = 1) readonly buffer K_PACKED_Q5_1_P32 { block_q5_1_packed32 dat
 // alignment (iqs%4 == 0), so all 4 elements share qs byte (iqs/4) and signs
 // byte (iqs/8). No iWHT here, the graph handles rotation outside FA.
 #define FA_DEQUANT4_TURBO3_0(BUF) {                                                               \
-    const float c[8] = float[8](                                                                  \
-        -0.190685, -0.117832, -0.065717, -0.021460,                                               \
-         0.021460,  0.065717,  0.117832,  0.190685);                                              \
+    const float c[8] = float[8](  /* = CENTROIDS_3BIT, ggml/src/ggml-turbo-quant.c */             \
+        -0.190207, -0.118786, -0.066822, -0.021663,                                               \
+         0.021663,  0.066822,  0.118786,  0.190207);                                              \
     const float norm = float(BUF.data[a_offset + ib].norm);                                       \
     const uint qs_byte  = uint(BUF.data[a_offset + ib].qs[iqs / 4]);                              \
     const uint sgn_byte = uint(BUF.data[a_offset + ib].signs[iqs / 8]);                           \
