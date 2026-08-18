@@ -1,0 +1,44 @@
+From 915a510fd90d5361f6f632dcb699e7423ac443b5 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 03:47:06 -0400
+Subject: [PATCH] lane-152 GOAL 1: upstream bump b10453 -> b10481, the FIRST
+ live execution of UPDATE-RUNBOOK 2. 348 patches replayed onto 25ae3a9b3, 4
+ conflicts resolved by hand, series regenerated to 329, zero merges.
+
+Conflicts and how each was resolved, so none of them is re-broken:
+
+1. ggml/src/ggml-cuda/mmvq.cu at patch 0120 (cuda MoE expert cache rework). b10481 IS the colliding upstream commit (25ae3a9b3, 'CUDA: MMVQ nwarps=8 for bs=1 for dense models on DGX Spark'): it rewrote the ncols_dst==1 block into a compile-time tag-dispatch lambda. Our whole contribution to that block is one gate - allow_small_k, which the MoE expert-cache caller passes false because the cache hands the kernel a gathered-row layout the small-K path cannot address. Upstream's structure kept verbatim, our gate moved onto its predicate: 'if (allow_small_k && should_use_small_k(c_ncols_dst))'. Commented in place.
+
+2. Same file at patch 0128 (fuse cached MoE SwiGLU rows): include-order only, <limits> vs <type_traits>. Both kept.
+
+3+4. conversion/qwen.py at 671720924 then ac9a11875. FINDING, not a resolution: 671720924 ('docs: add rebase plan and TurboQuant recipes') COMMITS LITERAL CONFLICT MARKERS into a Python file - it adds '<<<<<<< ours', '=======', '>>>>>>> theirs' as content, and ac9a11875 ('resolve 8 committed conflict markers on merit') is the later commit that deletes them again. The net tree is clean and arifi/main's qwen.py parses - CHECKED with ast.parse - so this is a mid-history artifact, not a shipped defect. Resolved by taking the upstream-current side at both commits, which is marker-free and byte-equivalent in intent to what ac9a11875 produces. Verified with ast.parse at each step.
+---
+ tools/arifi-sync/sources.json | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/tools/arifi-sync/sources.json b/tools/arifi-sync/sources.json
+index 4de519296..c1daa5a96 100644
+--- a/tools/arifi-sync/sources.json
++++ b/tools/arifi-sync/sources.json
+@@ -19,8 +19,19 @@
+     "at all, and `4df29be4f..master` is not a range anybody meant to ask for. Set both, or neither."
+   ],
+   "base": {
+-    "upstream_tag": "b10453",
+-    "upstream_sha": "4df29be4f4c3673f428170fda944a5b19f743bb8",
++    "upstream_tag": "b10481",
++    "upstream_sha": "25ae3a9b331fffea50ff8d07a5cad34c33f1276f",
++    "_base_moved_2026_08_18_lane152": [
++      "MOVED b10453/4df29be4f -> b10481/25ae3a9b3 by the first live execution of UPDATE-RUNBOOK.md 2.",
++      "TAG, NOT HEAD, and the choice is recorded because 2.2 does not make it: upstream/master was",
++      "8b8640097, exactly ONE commit past tag b10481, and that commit is `ci: create pre-release with",
++      "change log and nightly link in make-release (#27302)` - a release-workflow change with no engine",
++      "content. This file sets `track_tags: true` on upstream, carries an `upstream_tag` field at all,",
++      "and the staged engine of record is literally named arifi-b10453-union: every one of those is",
++      "tag-shaped. Taking the tag keeps the pair nameable. 2.2 was corrected in the same commit.",
++      "27 upstream commits over the old base. FOUR conflicts, all resolved by hand, all recorded in the",
++      "rebase commits and in board/programs/local-inference/lanes/2026-08-18-lane-152-DECISIONS.md."
++    ],
+     "ref": "arifi/main",
+     "_ref_comment": [
+       "The branch the series describes. `series regen|check` and `provenance` default `--ref` to this.",
