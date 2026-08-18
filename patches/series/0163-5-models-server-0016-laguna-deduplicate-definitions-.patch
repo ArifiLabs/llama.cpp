@@ -1,4 +1,4 @@
-From 0fcd6c67a5fa9bcad4f9c0c9371dbd72dd8e0512 Mon Sep 17 00:00:00 2001
+From cc20e2a27360da295713ef5892f757eb1d3e0b23 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:26 -0400
 Subject: [PATCH] 
@@ -11,31 +11,31 @@ Subject: [PATCH]
  3 files changed, 14 deletions(-)
 
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 20598b36e..a29e21d46 100644
+index 923308d5b..bedf9aacd 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -848,7 +848,6 @@ const char * llm_type_name(llm_type type) {
+@@ -851,7 +851,6 @@ const char * llm_type_name(llm_type type) {
          case LLM_TYPE_100B_A6B:      return "100B.A6B";
          case LLM_TYPE_102B_A12B:     return "102B.A12B";
          case LLM_TYPE_106B_A12B:     return "106B.A12B";
 -        case LLM_TYPE_118B_A8B:      return "118B.A8B";
          case LLM_TYPE_120B_A12B:     return "120B.A12B";
          case LLM_TYPE_122B_A10B:     return "122B.A10B";
-         case LLM_TYPE_196B_A11B:     return "196B.A11B";
+         case LLM_TYPE_124B_A5_1B:    return "124B.A5.1B";
 diff --git a/src/llama-model.h b/src/llama-model.h
-index 4635ffd53..ab313499b 100644
+index 4f27164da..6fa0cc713 100644
 --- a/src/llama-model.h
 +++ b/src/llama-model.h
-@@ -132,7 +132,6 @@ enum llm_type {
+@@ -133,7 +133,6 @@ enum llm_type {
      LLM_TYPE_100B_A6B,
      LLM_TYPE_102B_A12B, // Solar-Open
      LLM_TYPE_106B_A12B, // GLM-4.5-Air
 -    LLM_TYPE_118B_A8B,  // Laguna-S-2
      LLM_TYPE_120B_A12B, // Nemotron 3 Super
      LLM_TYPE_122B_A10B, // Qwen3.5
-     LLM_TYPE_196B_A11B, // Step3.5-Flash
+     LLM_TYPE_124B_A5_1B, // Ling-3.0-flash
 diff --git a/src/models/models.h b/src/models/models.h
-index 0f0c761d8..1113d6105 100644
+index 1e95557e4..1f021bc73 100644
 --- a/src/models/models.h
 +++ b/src/models/models.h
 @@ -1363,18 +1363,6 @@ struct llama_model_dflash : public llama_model_base {

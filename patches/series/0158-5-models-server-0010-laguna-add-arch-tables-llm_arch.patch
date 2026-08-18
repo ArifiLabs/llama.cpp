@@ -1,4 +1,4 @@
-From 22448184559cdfff0c91fce3ee276f66ee7f8b90 Mon Sep 17 00:00:00 2001
+From 72d0dca176e0690b558f906bec03781536dcea02 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:17 -0400
 Subject: [PATCH] 
@@ -10,10 +10,10 @@ Subject: [PATCH]
  2 files changed, 5 insertions(+)
 
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index 07e7714a2..c64da8c9f 100644
+index 913eb76be..ac1859508 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -334,6 +334,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+@@ -336,6 +336,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
      { LLM_KV_TARGET_HIDDEN_SIZE,    "%s.target_hidden_size"   },
      { LLM_KV_NORM_BEFORE_RESIDUAL,  "%s.norm_before_residual" },
      { LLM_KV_NORM_BEFORE_FC,        "%s.norm_before_fc"       },
@@ -21,7 +21,7 @@ index 07e7714a2..c64da8c9f 100644
  
      { LLM_KV_SHORTCONV_L_CACHE, "%s.shortconv.l_cache" },
      // sentence-transformers dense modules feature dims
-@@ -454,6 +455,7 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
+@@ -456,6 +457,7 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
      { LLM_TENSOR_CLS_OUT,                                "cls.output" },
      { LLM_TENSOR_CLS_NORM,                               "cls.norm" },
      { LLM_TENSOR_ENC_OUTPUT_NORM,                        "enc.output_norm" },
@@ -29,7 +29,7 @@ index 07e7714a2..c64da8c9f 100644
      { LLM_TENSOR_FFN_GATE_INP_SHEXP,                     "blk.%d.ffn_gate_inp_shexp" },
      { LLM_TENSOR_SSM_A_NOSCAN,                           "blk.%d.ssm_a" },
      { LLM_TENSOR_SSM_CONV1D,                             "blk.%d.ssm_conv1d" },
-@@ -705,6 +707,7 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
+@@ -707,6 +709,7 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
      {LLM_TENSOR_OUTPUT_NORM_LFM2,           {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
      {LLM_TENSOR_DEC_OUTPUT_NORM,            {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
      {LLM_TENSOR_ENC_OUTPUT_NORM,            {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
@@ -38,10 +38,10 @@ index 07e7714a2..c64da8c9f 100644
      {LLM_TENSOR_ROPE_FACTORS_LONG,          {LLM_TENSOR_LAYER_REPEATING, GGML_OP_ROPE}},
      {LLM_TENSOR_ROPE_FACTORS_SHORT,         {LLM_TENSOR_LAYER_REPEATING, GGML_OP_ROPE}},
 diff --git a/src/llama-arch.h b/src/llama-arch.h
-index 3f1ab07ff..63c487933 100644
+index 1a0a2aef8..0e22ad4c8 100644
 --- a/src/llama-arch.h
 +++ b/src/llama-arch.h
-@@ -381,6 +381,7 @@ enum llm_kv {
+@@ -383,6 +383,7 @@ enum llm_kv {
      LLM_KV_TARGET_HIDDEN_SIZE,
      LLM_KV_NORM_BEFORE_RESIDUAL,
      LLM_KV_NORM_BEFORE_FC,
@@ -49,7 +49,7 @@ index 3f1ab07ff..63c487933 100644
  
      LLM_KV_SHORTCONV_L_CACHE,
  
-@@ -608,6 +609,7 @@ enum llm_tensor {
+@@ -610,6 +611,7 @@ enum llm_tensor {
      LLM_TENSOR_ENC_FFN_DOWN,
      LLM_TENSOR_ENC_FFN_UP,
      LLM_TENSOR_ENC_OUTPUT_NORM,
