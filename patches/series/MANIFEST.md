@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10481`, `25ae3a9b331fffea50ff8d07a5cad34c33f1276f`
-- Patches: **345**, all non-merge, applied in filename order.
+- Patches: **346**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 345 commit messages, same provenance trailers. Verified, not
+same file contents, same 346 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -424,6 +424,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 343 | `0343-off-rig-backends-land-the-12-CUDA-Metal-SYCL-HIP-row.patch` | arifi-fork-base | `b1179b79b` | TheTom/llama-cpp-turboquant@7ebcbb0b6 | - | off-rig backends: land the 12 CUDA/Metal/SYCL/HIP rows unbuilt, per the HQ ruling of 2026-08-18 |
 | 344 | `0344-sources-pin_review-names-the-12-off-rig-shas-and-the.patch` | arifi-fork-base | `7e8a7422e` | TheTom/llama-cpp-turboquant@7ebcbb0b6 | - | sources: pin_review names the 12 off-rig shas and their BUILD-UNPROVEN status (HQ condition 3) |
 | 345 | `0345-sources-correct-the-pin_review-the-contested-12-12-a.patch` | arifi-fork-base | `3f298b330` | TheTom/llama-cpp-turboquant@7ebcbb0b6 | - | sources: correct the pin_review - the contested 12/12 apply-conflict count is no longer the justification (checker F1) |
+| 346 | `0346-sources-pin_review-records-the-apply-count-claim-as-.patch` | arifi-fork-base | `7c761ace3` | TheTom/llama-cpp-turboquant@7ebcbb0b6 | - | sources: pin_review records the apply-count claim as WRONG, not disputed (checker F1, resolved against me) |
 
 ## Measured effect, per patch
 
@@ -834,6 +835,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0343-off-rig-backends-land-the-12-CUDA-Metal-SYCL-HIP-row.patch` | UNMEASURED AND UNPROVABLE ON THIS RIG - that is the point of the ruling. This code never compiles here (no CUDA/Metal/SYCL/HIP device or toolchain), so no F-107 exe proof and no backend-ops execution proof exists for it. A future lane with the hardware owes roughly 30 min to verify it; the debt is a named OWED row in the REPORT. |
 | `0344-sources-pin_review-names-the-12-off-rig-shas-and-the.patch` | UNMEASURED - a pin review changes no runtime behaviour. |
 | `0345-sources-correct-the-pin_review-the-contested-12-12-a.patch` | UNMEASURED - a pin review changes no runtime behaviour. |
+| `0346-sources-pin_review-records-the-apply-count-claim-as-.patch` | UNMEASURED - a pin review changes no runtime behaviour. |
 
 ## Unclassified
 
@@ -1118,4 +1120,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `b1179b79b` off-rig backends: land the 12 CUDA/Metal/SYCL/HIP rows unbuilt, per the HQ ruling of 2026-08-18
 - `7e8a7422e` sources: pin_review names the 12 off-rig shas and their BUILD-UNPROVEN status (HQ condition 3)
 - `3f298b330` sources: correct the pin_review - the contested 12/12 apply-conflict count is no longer the justification (checker F1)
+- `7c761ace3` sources: pin_review records the apply-count claim as WRONG, not disputed (checker F1, resolved against me)
 
