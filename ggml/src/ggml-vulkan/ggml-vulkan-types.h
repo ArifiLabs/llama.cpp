@@ -1,8 +1,12 @@
 #pragma once
 
-#include "ggml-vulkan.h"
-
+// vulkan_core.h MUST come first: ggml-vulkan.h guards the MoE-cache handle accessors on
+// `#if defined(VK_VERSION_1_0)` so that non-Vulkan builds of the header stay free of the
+// Vulkan headers. With ggml-vulkan.h first the guard is false here, the declarations are
+// skipped, and the definitions below silently acquire C++ linkage while every caller that
+// includes <vulkan/vulkan.h> first expects C linkage — a link error, not a compile error.
 #include <vulkan/vulkan_core.h>
+#include "ggml-vulkan.h"
 
 #if defined(GGML_VULKAN_RUN_TESTS) || defined(GGML_VULKAN_CHECK_RESULTS)
 #include <chrono>
