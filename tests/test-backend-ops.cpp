@@ -12413,6 +12413,11 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
         std::atomic<size_t> tests_run = 0;
         std::atomic<size_t> n_not_supported = 0;   // F-112: declined cases, counted not swallowed
         std::atomic<size_t> n_filtered = 0;
+        // F-112, second half: the run-level rule cannot see a SINGLE op family that executed
+        // nothing inside a big green sweep — which is exactly the shape SET_ROWS_TURBO4 hid in.
+        // Per-op tallies make that visible at the end of every run.
+        std::map<std::string, std::pair<size_t, size_t>> per_op;   // op -> {executed, declined}
+        std::mutex per_op_mutex;
         std::vector<std::string> failed_tests;
         std::mutex failed_tests_mutex;
 
@@ -12440,10 +12445,16 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
                     if (status == test_status_t::SKIPPED || status == test_status_t::NOT_SUPPORTED) {
                         if (status == test_status_t::NOT_SUPPORTED) {
                             n_not_supported++;
+                            std::lock_guard<std::mutex> guard(per_op_mutex);
+                            per_op[test->current_op_name].second++;
                         } else {
                             n_filtered++;
                         }
                         continue;
+                    }
+                    {
+                        std::lock_guard<std::mutex> guard(per_op_mutex);
+                        per_op[test->current_op_name].first++;
                     }
                     tests_run++;
                     if (status == test_status_t::OK) {
@@ -12503,6 +12514,25 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
         output_printer->print_failed_tests(failed_tests);
 
         const bool slice_ok = run_fa_vec_slice(backend, backend_cpu.get(), op_names_filter);
+        // F-112: name every op whose cases were ALL declined. In a full sweep the run-level rule
+        // below cannot fire (thousands of other cases execute), so without this line an op family
+        // with zero executed coverage is invisible behind a green banner — the lane-148 defect.
+        {
+            std::vector<std::string> zero_exec;
+            for (const auto & kv : per_op) {
+                if (kv.second.first == 0 && kv.second.second > 0) {
+                    zero_exec.push_back(kv.first + "(" + std::to_string(kv.second.second) + ")");
+                }
+            }
+            if (!zero_exec.empty()) {
+                printf("  ZERO EXECUTED COVERAGE for %zu op(s) — every case declined: ",
+                       zero_exec.size());
+                for (size_t i = 0; i < zero_exec.size(); i++) {
+                    printf("%s%s", i ? ", " : "", zero_exec[i].c_str());
+                }
+                printf("\n");
+            }
+        }
 
         // F-112: a filter that matched cases, all of which were declined, executed NOTHING. That is
         // not a pass. (A filter that matched nothing at all — n_filtered only — stays a no-op, which
