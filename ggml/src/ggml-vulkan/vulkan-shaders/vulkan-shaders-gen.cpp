@@ -899,7 +899,12 @@ void process_shaders() {
     // turbo copy-from-quant only; copy-to-quant (cpy_f32_turbo*_0) omitted because the non-SET_ROWS quantize() path lacks the WHT transform.
     // turbo2_0/turbo4_0 added by lane-148: their absence made test_set_rows_turbo4's read-back leg
     // decline, so SET_ROWS_TURBO4 printed "0/0 tests passed / Backend Vulkan0: OK".
-    for (std::string t : {"turbo2_0", "turbo3_0", "turbo4_0"}) {
+    // tq4_1s added by lane-150, same shape and same reason: copy_from_quant.comp has carried a
+    // complete DATA_A_TQ4_1S branch (inverse WHT + sign pattern) since the type landed, and this
+    // generator never emitted the variant — so the read-back leg of test_set_rows_tq4_1s declined
+    // and SET_ROWS_TQ4_1S ran 17 cases / 0 executed. Copy-to-quant (cpy_f32_tq4_1s) stays omitted
+    // for the same reason as turbo: the non-SET_ROWS quantize() path has no WHT.
+    for (std::string t : {"turbo2_0", "turbo3_0", "turbo4_0", "tq4_1s"}) {
         string_to_spv("cpy_" + t + "_f32", "copy_from_quant.comp", {{"DATA_A_" + to_uppercase(t), "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
     }
 
