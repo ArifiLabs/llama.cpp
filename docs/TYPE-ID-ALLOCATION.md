@@ -134,6 +134,9 @@ are **not ours to choose**: we adopt whatever the format's originator serialized
 | 49 | `GGML_TYPE_TQ3_0` | tq3 (**retagged**) | `d + qs[12]` | 14 | 32 | **implemented behind `GGML_ARIFI_TURBO_WEIGHT_QUANTS`** (lane-142) — see §3.1.1 |
 | 50 | `GGML_TYPE_TQ3_4SE` | tq3 (**retagged**) | `d(6) + qs[12]` | 18 | 32 | **implemented behind `GGML_ARIFI_TURBO_WEIGHT_QUANTS`** (lane-142) — see §3.1.1 |
 | 51 | `GGML_TYPE_TQ3_1S_SHIFT` | tq3 (**retagged**) | `3 x half + qs[12]` | 18 | 32 | **implemented behind `GGML_ARIFI_TURBO_WEIGHT_QUANTS`** (lane-142) — see §3.1.1 |
+| 52 | `GGML_TYPE_TQ3_4SV` | tq3 (**retagged**, their 37) | NOT DERIVED | NOT DERIVED | 32 | **RESERVED — not implemented** (lane-151) — see §3.1.2 |
+| 53 | `GGML_TYPE_TQ3_1S_AP1` | tq3 (**retagged**, their 31) | NOT DERIVED | NOT DERIVED | 32 | **RESERVED — not implemented** (lane-151) — see §3.1.2 |
+| 54 | `GGML_TYPE_TQ3_1S_TQ3` | tq3 (**retagged**, their 44) | *hypothesis:* same wire as our 45 | *hypothesis:* 16 | 32 | **RESERVED — not implemented** (lane-151) — see §3.1.2 |
 
 `44` is left as a hole. It is the value TurboQuant uses for a runtime-only type and the value our
 current `GGML_TYPE_COUNT` occupies; leaving it unassigned costs nothing and removes a whole class of
@@ -205,11 +208,43 @@ Three corrections this port forces on the paragraphs above, all measured at that
    and `TQ3_1S_AP1` (31) have no destination, and tq3's `TQ3_1S` (44) is very likely the same wire
    format as our `TQ3_1S` (45) but has not been proven so. The retag tool **refuses** all three
    rather than guessing. Allocating them is an open decision, not a lane's to make.
+   **Superseded in part by §3.1.2 (lane-151):** the three ids now have RESERVED destinations (52, 53,
+   54) so nothing else can claim them. The refusals are unchanged and the codecs are still unported —
+   reserving an id and porting a format are different acts.
 3. The only tq3-id file on the estate carries **`token_embd.weight` as Q6_K**, not as a tq3 type
    (866 tensors = 360 f32 + 2 Q6_K + 504 at id 46). A coherent generation on it therefore exercises
    `mul_mat`/`vec_dot` and the loader, and says **nothing** about `get_rows` — which is precisely
    the switch site that aborted at runtime for g128 (§7). `get_rows` coverage for these ids comes
    from `tests/test-backend-ops.cpp`, where they are listed in `all_types[]`.
+
+#### 3.1.2 The three tq3 ids that lane-142 left with no destination — now RESERVED (lane-151)
+
+Correction 2 of §3.1.1 named a real gap and left it open: tq3 serializes at least **six** ids, this
+table reserved **four**, and `TQ3_4SV` (their 37), `TQ3_1S_AP1` (their 31) and tq3's `TQ3_1S` (their
+44) had **no destination at all**. An id with no destination is not neutral — it is exactly the
+condition under which a later lane picks 52 for something else and the next retag is a collision
+instead of a refusal. Lane-151 closes the bookkeeping half, and only the bookkeeping half.
+
+| tq3 id | our reserved id | what is known | what is NOT known |
+|---|---|---|---|
+| 37 `TQ3_4SV` | **52** | it is a serialized weight type in tq3's enum | block layout, bytes/block, codec — nothing was derived; the name suggests a `TQ3_4S` variant, and a suggestion is not a geometry |
+| 31 `TQ3_1S_AP1` | **53** | serialized weight type in tq3's enum | same — layout and codec undrived |
+| 44 `TQ3_1S` | **54** | 32 values/block; §3.1.1 records the *hypothesis* that it is the same wire format as our 45 | that the hypothesis is TRUE. It has never been proven on a file. If it is proven, 54 is retired and 45 is the destination — that is a decision, not an inference a lane may make |
+
+**RESERVED-not-implemented means exactly three things.** (1) No other type may claim 52, 53 or 54.
+(2) Nothing is ported: there is no block struct, no `type_traits[]` row, no `type_traits_cpu[]` row,
+no dispatch case, and `GGML_TYPE_TQ3_4SV`/`_AP1`/`_TQ3` do **not** exist in `ggml.h`. Reserving an id
+in a document is not the same act as adding an enumerator, and this table has been wrong about that
+distinction before. (3) **The retag tool's refusals STAY.** `tools/gguf-retag-tq3/retag_tq3.py`
+`TQ3_ID_UNMAPPED` still refuses 37, 31 and 44, and must keep refusing them.
+
+That last point is the whole safety argument, so it is worth being blunt about why: a reserved
+destination id makes the *rewrite* expressible, and the rewrite is the dangerous half. §3.1.1 already
+states the rule — "land the codec and the coherence proof FIRST, and only then the retag tool" —
+because a retag ahead of a working dequant turns a file that fails loudly at load into a file that
+loads and emits garbage. Wiring these three ids into the retag map before their codecs exist would do
+precisely that. Whoever ports one of them: port the codec, prove coherent output on a real file,
+THEN delete that id's line from `TQ3_ID_UNMAPPED` — in that order, and one id at a time.
 
 ### 3.2 Block R — ArifiLabs runtime-only types, **200-255**
 
