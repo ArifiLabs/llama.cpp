@@ -1,4 +1,4 @@
-From 964da1880055c85db10b07d9445b328b8f0492ed Mon Sep 17 00:00:00 2001
+From 8d9e107de8b9d99592db0292451fb0bcd12c7979 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 20:52:13 -0400
 Subject: [PATCH] 
@@ -9,18 +9,18 @@ Subject: [PATCH]
  1 file changed, 18 insertions(+), 23 deletions(-)
 
 diff --git a/gguf-py/gguf/constants.py b/gguf-py/gguf/constants.py
-index 373831f37..5a0191dbc 100644
+index d5e1008f0..28788c8d2 100644
 --- a/gguf-py/gguf/constants.py
 +++ b/gguf-py/gguf/constants.py
-@@ -164,6 +164,7 @@ class Keys:
-         BLOCK_SIZE                        = "{arch}.block_size"
+@@ -165,6 +165,7 @@ class Keys:
+         SAMPLE_FROM_ANCHOR                = "{arch}.sample_from_anchor"
          NORM_BEFORE_RESIDUAL              = "{arch}.norm_before_residual"
          NORM_BEFORE_FC                    = "{arch}.norm_before_fc"
 +        DECODER_ARCH                      = "{arch}.decoder_arch"
  
      class Adapters:
          COUNT                = "{arch}.adapters.count"
-@@ -196,9 +197,9 @@ class Keys:
+@@ -197,9 +198,9 @@ class Keys:
          OUTPUT_GROUP_COUNT           = "{arch}.attention.output_group_count"
          OUTPUT_LORA_RANK             = "{arch}.attention.output_lora_rank"
          OUTPUT_SCALE                 = "{arch}.attention.output_scale"
@@ -31,7 +31,7 @@ index 373831f37..5a0191dbc 100644
          TEMPERATURE_LENGTH           = "{arch}.attention.temperature_length"
          KEY_LENGTH_MLA               = "{arch}.attention.key_length_mla"
          VALUE_LENGTH_MLA             = "{arch}.attention.value_length_mla"
-@@ -803,6 +804,7 @@ class MODEL_TENSOR(IntEnum):
+@@ -806,6 +807,7 @@ class MODEL_TENSOR(IntEnum):
      ENC_FFN_DOWN         = auto()
      ENC_FFN_UP           = auto()
      ENC_OUTPUT_NORM      = auto()
@@ -39,7 +39,7 @@ index 373831f37..5a0191dbc 100644
      CLS                  = auto() # classifier
      CLS_OUT              = auto() # classifier output projection
      CLS_NORM             = auto()
-@@ -1241,9 +1243,9 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
+@@ -1244,9 +1246,9 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
      MODEL_ARCH.DEEPSEEK:         "deepseek",
      MODEL_ARCH.DEEPSEEK2:        "deepseek2",
      MODEL_ARCH.DEEPSEEK2OCR:     "deepseek2-ocr",
@@ -50,7 +50,7 @@ index 373831f37..5a0191dbc 100644
      MODEL_ARCH.GLM4:             "glm4",
      MODEL_ARCH.GLM4_MOE:         "glm4moe",
      MODEL_ARCH.GLM_DSA:          "glm-dsa",
-@@ -1332,6 +1334,9 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
+@@ -1336,6 +1338,9 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
      MODEL_TENSOR.MASKED_EMBD_CENTROIDS:     "masked_embd_centroids",
      MODEL_TENSOR.MASKED_EMBD_ORDERING:      "masked_embd_ordering",
      MODEL_TENSOR.POS_EMBD:                  "position_embd",
@@ -60,7 +60,7 @@ index 373831f37..5a0191dbc 100644
      MODEL_TENSOR.OUTPUT_NORM:               "output_norm",
      MODEL_TENSOR.OUTPUT:                    "output",
      MODEL_TENSOR.DENSE_2_OUT:               "dense_2", # embeddinggemma 2_Dense
-@@ -1379,8 +1384,8 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
+@@ -1383,8 +1388,8 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
      MODEL_TENSOR.FFN_DOWN_EXP:              "blk.{bid}.ffn_down_exps",
      MODEL_TENSOR.FFN_UP_EXP:                "blk.{bid}.ffn_up_exps",
      MODEL_TENSOR.FFN_GATE_UP_EXP:           "blk.{bid}.ffn_gate_up_exps",
@@ -70,7 +70,7 @@ index 373831f37..5a0191dbc 100644
      MODEL_TENSOR.MOE_LATENT_DOWN:           "blk.{bid}.ffn_latent_down",      # nemotron 3 super
      MODEL_TENSOR.MOE_LATENT_UP:             "blk.{bid}.ffn_latent_up",        # nemotron 3 super
      MODEL_TENSOR.LAYER_OUT_NORM:            "blk.{bid}.layer_output_norm",
-@@ -1517,6 +1522,7 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
+@@ -1521,6 +1526,7 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
      MODEL_TENSOR.ENC_FFN_DOWN:              "enc.blk.{bid}.ffn_down",
      MODEL_TENSOR.ENC_FFN_UP:                "enc.blk.{bid}.ffn_up",
      MODEL_TENSOR.ENC_OUTPUT_NORM:           "enc.output_norm",
@@ -78,7 +78,7 @@ index 373831f37..5a0191dbc 100644
      MODEL_TENSOR.CLS:                       "cls",
      MODEL_TENSOR.CLS_OUT:                   "cls.output",
      MODEL_TENSOR.CLS_NORM:                  "cls.norm",
-@@ -4780,23 +4786,7 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
+@@ -4829,23 +4835,7 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
          MODEL_TENSOR.ATTN_OUT,
          MODEL_TENSOR.ATTN_Q_NORM,
          MODEL_TENSOR.ATTN_K_NORM,
@@ -103,7 +103,7 @@ index 373831f37..5a0191dbc 100644
          MODEL_TENSOR.FFN_NORM,
          MODEL_TENSOR.FFN_GATE,
          MODEL_TENSOR.FFN_DOWN,
-@@ -4815,6 +4805,7 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
+@@ -4865,6 +4855,7 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
          MODEL_TENSOR.DSPARK_MARKOV_W1,
          MODEL_TENSOR.DSPARK_MARKOV_W2,
          MODEL_TENSOR.DSPARK_CONF_PROJ,
@@ -111,7 +111,7 @@ index 373831f37..5a0191dbc 100644
      ],
      MODEL_ARCH.MISTRAL4: [
          MODEL_TENSOR.TOKEN_EMBD,
-@@ -5258,9 +5249,10 @@ class GGMLQuantizationType(IntEnum):
+@@ -5308,9 +5299,10 @@ class GGMLQuantizationType(IntEnum):
  
  
  class ExpertGatingFuncType(IntEnum):
@@ -125,7 +125,7 @@ index 373831f37..5a0191dbc 100644
  
  
  # TODO: add GGMLFileType from ggml_ftype in ggml.h
-@@ -5333,6 +5325,7 @@ class LlamaFileType(IntEnum):
+@@ -5383,6 +5375,7 @@ class LlamaFileType(IntEnum):
      MOSTLY_Q6_0_ROCMFPX_LEAN          = 116
      MOSTLY_Q6_0_ROCMFPX_AGENT_LEAN    = 117
  
@@ -133,7 +133,7 @@ index 373831f37..5a0191dbc 100644
      GUESSED              = 1024  # not specified in the model file
  
  
-@@ -5472,6 +5465,8 @@ GGML_QUANT_SIZES: dict[GGMLQuantizationType, tuple[int, int]] = {
+@@ -5522,6 +5515,8 @@ GGML_QUANT_SIZES: dict[GGMLQuantizationType, tuple[int, int]] = {
      GGMLQuantizationType.Q8_0_ROCMFPX:      (32, 32 + 1),
      GGMLQuantizationType.Q3_0_ROCMFPX:      (32, 12 + 2),
      GGMLQuantizationType.Q2_0_ROCMFPX:      (32, 8 + 2),

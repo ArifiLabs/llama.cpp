@@ -1,4 +1,4 @@
-From f74de752af33ccf0071d7e4150a33ce9e9482a0a Mon Sep 17 00:00:00 2001
+From a154e792761794086bb92514e6c91cf1ab20972f Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 20:52:19 -0400
 Subject: [PATCH] 
@@ -143,10 +143,10 @@ index 20e19c352..3361118ed 100644
      - changed-files:
          - any-glob-to-any-file:
 diff --git a/.github/workflows/build-cache.yml b/.github/workflows/build-cache.yml
-index 2a1031728..4d01a280f 100644
+index 604f84241..5c7cbfcb3 100644
 --- a/.github/workflows/build-cache.yml
 +++ b/.github/workflows/build-cache.yml
-@@ -68,8 +68,8 @@ jobs:
+@@ -41,8 +41,8 @@ jobs:
  
      env:
        # Sync versions in build.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
@@ -157,7 +157,7 @@ index 2a1031728..4d01a280f 100644
  
      steps:
        - name: Clone
-@@ -91,6 +91,7 @@ jobs:
+@@ -64,6 +64,7 @@ jobs:
            version_major: ${{ env.OPENVINO_VERSION_MAJOR }}
            version_full: ${{ env.OPENVINO_VERSION_FULL }}
  
@@ -165,7 +165,7 @@ index 2a1031728..4d01a280f 100644
    windows-2022-openvino-cache:
      runs-on: windows-2022
  
-@@ -98,6 +99,14 @@ jobs:
+@@ -71,6 +72,14 @@ jobs:
        # Sync versions in build.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
        OPENVINO_VERSION_MAJOR: "2026.2.1"
        OPENVINO_VERSION_FULL: "2026.2.1.21919.ede283a88e3"
@@ -180,7 +180,7 @@ index 2a1031728..4d01a280f 100644
  
      steps:
        - name: Clone
-@@ -106,6 +115,7 @@ jobs:
+@@ -79,6 +88,7 @@ jobs:
  
        - name: Setup Cache
          uses: actions/cache@v5
@@ -188,7 +188,7 @@ index 2a1031728..4d01a280f 100644
          id: cache-openvino
          with:
            path: ./openvino_toolkit
-@@ -143,3 +153,15 @@ jobs:
+@@ -116,3 +126,15 @@ jobs:
    #       uses: ./.github/actions/windows-setup-rocm
    #       with:
    #         version: ${{ env.ROCM_VERSION }}
@@ -515,10 +515,10 @@ index ed73c185a..0f5ade7af 100644
 +
 +          time cmake --build build-wasm --config Release --target test-backend-ops -j $(nproc)
 diff --git a/.github/workflows/docker.yml b/.github/workflows/docker.yml
-index afe4b7c66..8195a55ff 100644
+index 350811a93..c74385bd1 100644
 --- a/.github/workflows/docker.yml
 +++ b/.github/workflows/docker.yml
-@@ -58,13 +58,6 @@ jobs:
+@@ -59,13 +59,6 @@ jobs:
            git tag ${{ steps.srctag.outputs.name }} || exit 0
            git push origin ${{ steps.srctag.outputs.name }} || exit 0
  
@@ -532,7 +532,7 @@ index afe4b7c66..8195a55ff 100644
    prepare_matrices:
      name: Prepare Docker matrices
      runs-on: ubuntu-24.04
-@@ -86,7 +79,7 @@ jobs:
+@@ -87,7 +80,7 @@ jobs:
            [
              { "tag": "cpu", "dockerfile": ".devops/cpu.Dockerfile", "platforms": "linux/amd64", "full": true, "light": true, "server": true, "free_disk_space": false, "runs_on": "ubuntu-24.04" },
              { "tag": "cpu", "dockerfile": ".devops/cpu.Dockerfile", "platforms": "linux/arm64", "full": true, "light": true, "server": true, "free_disk_space": false, "runs_on": "ubuntu-24.04-arm" },
@@ -541,7 +541,7 @@ index afe4b7c66..8195a55ff 100644
              { "tag": "cuda cuda12", "dockerfile": ".devops/cuda.Dockerfile", "cuda_version": "12.8.1", "platforms": "linux/amd64", "full": true, "light": true, "server": true, "free_disk_space": true, "runs_on": "ubuntu-24.04" },
              { "tag": "cuda cuda12", "dockerfile": ".devops/cuda.Dockerfile", "cuda_version": "12.8.1", "platforms": "linux/arm64", "full": true, "light": true, "server": true, "free_disk_space": true, "runs_on": "ubuntu-24.04-arm" },
              { "tag": "cuda13", "dockerfile": ".devops/cuda.Dockerfile", "cuda_version": "13.3.0", "platforms": "linux/amd64", "full": true, "light": true, "server": true, "free_disk_space": true, "runs_on": "ubuntu-24.04" },
-@@ -142,7 +135,7 @@ jobs:
+@@ -143,7 +136,7 @@ jobs:
  
    push_to_registry:
      name: Push Docker image to Docker Registry
@@ -550,7 +550,7 @@ index afe4b7c66..8195a55ff 100644
  
      runs-on: ${{ matrix.config.runs_on }}
      strategy:
-@@ -157,13 +150,6 @@ jobs:
+@@ -158,13 +151,6 @@ jobs:
            fetch-depth: 0
            ref: ${{ needs.create_tag.outputs.source_tag }}
  
@@ -587,7 +587,7 @@ index 5d23f01cf..14b9f41a6 100644
      ]
  
 diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
-index 82a8364e4..bb6a2e1f8 100644
+index eba2bd87b..5bc6a0b42 100644
 --- a/.github/workflows/release.yml
 +++ b/.github/workflows/release.yml
 @@ -46,13 +46,11 @@ jobs:
@@ -806,7 +806,7 @@ index 82a8364e4..bb6a2e1f8 100644
              -DLLAMA_OPENSSL=OFF \
              -DGGML_NATIVE=OFF \
              -DGGML_SYCL_F16=${{ matrix.fp16 }}
-@@ -1576,9 +1422,14 @@ jobs:
+@@ -1578,9 +1424,14 @@ jobs:
        - windows-cpu
        - windows-cuda
        #- windows-sycl
@@ -821,7 +821,7 @@ index 82a8364e4..bb6a2e1f8 100644
        - ubuntu-cpu
        - ubuntu-vulkan
        - ubuntu-24-openvino
-@@ -1673,9 +1524,6 @@ jobs:
+@@ -1686,9 +1537,6 @@ jobs:
  
              </details>
  
@@ -831,7 +831,7 @@ index 82a8364e4..bb6a2e1f8 100644
              **macOS/iOS:**
              - [macOS Apple Silicon (arm64)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-macos-arm64.tar.gz)
              - macOS Apple Silicon (arm64, KleidiAI enabled) [DISABLED](https://github.com/ggml-org/llama.cpp/pull/23780)
-@@ -1699,12 +1547,10 @@ jobs:
+@@ -1712,12 +1560,10 @@ jobs:
              **Windows:**
              - [Windows x64 (CPU)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-win-cpu-x64.zip)
              - [Windows arm64 (CPU)](https://github.com/ggml-org/llama.cpp/releases/download/${{ steps.tag.outputs.name }}/llama-${{ steps.tag.outputs.name }}-bin-win-cpu-arm64.zip)

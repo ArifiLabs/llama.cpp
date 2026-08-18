@@ -1,4 +1,4 @@
-From 7811e6ae33d745b3ad6ca7a5234766aa7d5f5574 Mon Sep 17 00:00:00 2001
+From 5d50d1cfe33ee89ff4ca5d348868ac274a1832bb Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:24:18 -0400
 Subject: [PATCH] resolved/0026-cuda-rework-MoE-expert-cache-execution.patch
@@ -21,7 +21,7 @@ Assisted-by: Codex
  13 files changed, 823 insertions(+), 250 deletions(-)
 
 diff --git a/common/arg.cpp b/common/arg.cpp
-index 1514d1563..59e90f2ae 100644
+index cf11fa622..f95bfecf4 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
 @@ -26,10 +26,12 @@
@@ -737,10 +737,10 @@ index 35d6e58ad..57acd8e3f 100644
  
  LLAMA_API llama_memory_breakdown llama_get_memory_breakdown(const struct llama_context * ctx);
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index cf71711a5..0bc98a5b9 100644
+index 93cb5a79a..863c1dfbb 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -3071,6 +3071,42 @@ int32_t llama_model_n_expert(const struct llama_model * model) {
+@@ -3076,6 +3076,42 @@ int32_t llama_model_n_expert(const struct llama_model * model) {
      return model->hparams.n_expert;
  }
  
@@ -1080,7 +1080,7 @@ index 42cb14859..1f6f8093b 100644
 +$ ./llama-bench -o sql | sqlite3 benchmark.sqlite
  ```
 diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
-index c558720c0..65522413a 100644
+index d1e8a27d6..fa5df3182 100644
 --- a/tools/llama-bench/llama-bench.cpp
 +++ b/tools/llama-bench/llama-bench.cpp
 @@ -1,6 +1,7 @@
@@ -1867,7 +1867,7 @@ index c558720c0..65522413a 100644
                      fprintf(stderr, "%s: error: failed to run gen\n", __func__);
                      llama_free(ctx);
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index c8bf3dd33..8ad2195d3 100644
+index 3ab95b192..0b619da44 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
 @@ -230,6 +230,69 @@ static server_shared_draft_device_config server_prepare_shared_draft_devices(con

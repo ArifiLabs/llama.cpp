@@ -1,4 +1,4 @@
-From 93760f0af9ce7bb8cb355fd6f99ef5e521e90e48 Mon Sep 17 00:00:00 2001
+From b4757023fee20dba4073f1cdbca660831012ae7b Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 20:52:31 -0400
 Subject: [PATCH] 
@@ -14,11 +14,11 @@ Subject: [PATCH]
  create mode 100644 docs/quality-benchmarks.md
 
 diff --git a/conversion/__init__.py b/conversion/__init__.py
-index 441fd2658..869e8829b 100644
+index da7816583..959d7ea11 100644
 --- a/conversion/__init__.py
 +++ b/conversion/__init__.py
-@@ -56,6 +56,11 @@ TEXT_MODEL_MAP: dict[str, str] = {
-     "Qwen3DSparkModel": "qwen",
+@@ -59,6 +59,11 @@ TEXT_MODEL_MAP: dict[str, str] = {
+     "DSparkSpeculator": "qwen",
      "DeepseekV4ForCausalLM": "deepseek",
  <<<<<<< ours
 +<<<<<<< ours
@@ -30,10 +30,10 @@ index 441fd2658..869e8829b 100644
  =======
      "DFlashLagunaForCausalLM": "laguna",
 diff --git a/conversion/deepseek.py b/conversion/deepseek.py
-index dbfa96c2e..e55cc1883 100644
+index 225f8645d..bcef64f23 100644
 --- a/conversion/deepseek.py
 +++ b/conversion/deepseek.py
-@@ -674,8 +674,12 @@ class DeepseekV4Model(TextModel):
+@@ -681,8 +681,12 @@ class DeepseekV4Model(TextModel):
          self.gguf_writer.add_hyper_connection_sinkhorn_iterations(hparams["hc_sinkhorn_iters"])
          self.gguf_writer.add_hyper_connection_epsilon(hparams["hc_eps"])
          self.gguf_writer.add_hash_layer_count(hparams["num_hash_layers"])

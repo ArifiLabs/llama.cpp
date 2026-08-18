@@ -1,4 +1,4 @@
-From cbba96ce786eac351184779aeaeb2da0d5fc219f Mon Sep 17 00:00:00 2001
+From 376c5f3742b38c692021f1aa800afdc02239aac6 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 20:52:28 -0400
 Subject: [PATCH] 
@@ -13,12 +13,12 @@ Subject: [PATCH]
  5 files changed, 80 insertions(+), 2 deletions(-)
 
 diff --git a/conversion/__init__.py b/conversion/__init__.py
-index a4db77e26..441fd2658 100644
+index 3232a1050..da7816583 100644
 --- a/conversion/__init__.py
 +++ b/conversion/__init__.py
-@@ -55,7 +55,11 @@ TEXT_MODEL_MAP: dict[str, str] = {
-     "DFlashDraftModel": "qwen",
-     "Qwen3DSparkModel": "qwen",
+@@ -58,7 +58,11 @@ TEXT_MODEL_MAP: dict[str, str] = {
+     "DSparkDraftModel": "qwen",
+     "DSparkSpeculator": "qwen",
      "DeepseekV4ForCausalLM": "deepseek",
 +<<<<<<< ours
      "DeepseekV4DSparkModel": "deepseek",
@@ -29,7 +29,7 @@ index a4db77e26..441fd2658 100644
      "DistilBertForSequenceClassification": "bert",
      "DistilBertModel": "bert",
 diff --git a/conversion/laguna.py b/conversion/laguna.py
-index a90f355ca..f682b65d3 100644
+index 29e0b3d6b..88574bc0a 100644
 --- a/conversion/laguna.py
 +++ b/conversion/laguna.py
 @@ -10,6 +10,7 @@ if TYPE_CHECKING:
@@ -40,7 +40,7 @@ index a90f355ca..f682b65d3 100644
  
  
  @ModelBase.register("LagunaForCausalLM")
-@@ -205,3 +206,61 @@ class LagunaModel(TextModel):
+@@ -206,3 +207,61 @@ class LagunaModel(TextModel):
                      f"declared {gate_type} gate (expected {expected}); weights and config disagree.")
  
          yield from TextModel.modify_tensors(self, data_torch, name, bid)
@@ -103,10 +103,10 @@ index a90f355ca..f682b65d3 100644
 +
 +        yield from super().modify_tensors(data_torch, name, bid)
 diff --git a/conversion/qwen.py b/conversion/qwen.py
-index a99292525..2317c0b8b 100644
+index 26b10452b..10b645181 100644
 --- a/conversion/qwen.py
 +++ b/conversion/qwen.py
-@@ -667,10 +667,11 @@ class DFlashModel(Qwen3Model):
+@@ -678,10 +678,11 @@ class DFlashModel(Qwen3Model):
      def set_gguf_parameters(self):
          super().set_gguf_parameters()
  
@@ -121,10 +121,10 @@ index a99292525..2317c0b8b 100644
          if target_layer_ids:
              extract_layer_ids = [i + 1 for i in target_layer_ids]
 diff --git a/docs/speculative.md b/docs/speculative.md
-index 783108067..5f4835620 100644
+index d15aa9dc8..6ffef5424 100644
 --- a/docs/speculative.md
 +++ b/docs/speculative.md
-@@ -371,6 +371,17 @@ Specifies a comma-separated list of speculative decoding types to use.
+@@ -375,6 +375,17 @@ Specifies a comma-separated list of speculative decoding types to use.
  ./llama-server [...] --spec-type ngram-mod,ngram-map-k4v
  ```
  
@@ -143,10 +143,10 @@ index 783108067..5f4835620 100644
  
  Sets the size N of the lookup n-gram for n-gram map based speculative decoding.
 diff --git a/gguf-py/gguf/gguf_writer.py b/gguf-py/gguf/gguf_writer.py
-index 0aee5168c..3372fd462 100644
+index 9e0914fd8..01e944449 100644
 --- a/gguf-py/gguf/gguf_writer.py
 +++ b/gguf-py/gguf/gguf_writer.py
-@@ -987,6 +987,9 @@ class GGUFWriter:
+@@ -990,6 +990,9 @@ class GGUFWriter:
      def add_target_hidden_size(self, value: int) -> None:
          self.add_uint32(Keys.LLM.TARGET_HIDDEN_SIZE.format(arch=self.arch), value)
  

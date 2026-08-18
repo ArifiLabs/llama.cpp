@@ -1,4 +1,4 @@
-From e5f7768f563b1c786567ddcb308cddd03d10fa22 Mon Sep 17 00:00:00 2001
+From 2625faa96bac09a693b27b33d4b47f05b9d99c60 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:30:05 -0400
 Subject: [PATCH] resolved/0043-moe-cache-audit-fixes-H1-F1-F2-A1.patch
@@ -167,10 +167,10 @@ index 57acd8e3f..872ff3c2b 100644
  
  LLAMA_API size_t llama_model_get_moe_tensor_info(
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 0bc98a5b9..8179f74d1 100644
+index 863c1dfbb..1d0b95a12 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -3093,6 +3093,15 @@ size_t llama_model_get_moe_tensor_info(
+@@ -3098,6 +3098,15 @@ size_t llama_model_get_moe_tensor_info(
              continue;
          }
  
@@ -186,7 +186,7 @@ index 0bc98a5b9..8179f74d1 100644
          if (info && count < capacity) {
              info[count] = {
                  tensor->type,
-@@ -3100,6 +3109,7 @@ size_t llama_model_get_moe_tensor_info(
+@@ -3105,6 +3114,7 @@ size_t llama_model_get_moe_tensor_info(
                  tensor->ne[0],
                  tensor->ne[1],
                  tensor->ne[2],
@@ -195,7 +195,7 @@ index 0bc98a5b9..8179f74d1 100644
          }
          count++;
 diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
-index ac51f9e51..7c9f3e6c8 100644
+index 1161185b6..88837f06d 100644
 --- a/tools/llama-bench/llama-bench.cpp
 +++ b/tools/llama-bench/llama-bench.cpp
 @@ -2565,13 +2565,22 @@ int llama_bench(int argc, char ** argv) {

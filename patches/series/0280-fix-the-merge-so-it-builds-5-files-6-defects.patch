@@ -1,4 +1,4 @@
-From f79a9c8f4cba7771510c1d003bd24aa70d70e8ed Mon Sep 17 00:00:00 2001
+From 209887d035f9bccea78b36adbcefa032a9c5375c Mon Sep 17 00:00:00 2001
 From: hq <hq@arifilabs>
 Date: Sat, 15 Aug 2026 21:40:14 -0400
 Subject: [PATCH] fix the merge so it builds: 5 files, 6 defects
@@ -67,10 +67,10 @@ index 6c0101180..bc7746586 100644
 -    ggml_cgraph * build() override;
 -};
 diff --git a/tools/mtmd/mtmd-image.cpp b/tools/mtmd/mtmd-image.cpp
-index e880a879a..cc41c813b 100644
+index 911146ba6..b4a78c647 100644
 --- a/tools/mtmd/mtmd-image.cpp
 +++ b/tools/mtmd/mtmd-image.cpp
-@@ -1716,121 +1716,8 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
+@@ -1734,121 +1734,8 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
  //
  
  // Replicates transformers' get_aspect_ratio_preserving_size
@@ -193,7 +193,7 @@ index e880a879a..cc41c813b 100644
 -    return output;
 -}
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 0be670925..254df1144 100644
+index d2fedae9a..db216e75c 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
 @@ -230,69 +230,6 @@ static server_shared_draft_device_config server_prepare_shared_draft_devices(con
@@ -313,7 +313,7 @@ index 0be670925..254df1144 100644
                                          SLT_TRC(slot, "restored context checkpoint (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", n_past = %d, size = %.3f MiB)\n", it->pos_min, it->pos_max, it->n_tokens, n_past, (float) it->size() / 1024 / 1024);
                                      }
  
-@@ -3868,6 +3818,7 @@ private:
+@@ -3869,6 +3819,7 @@ private:
  
                          slot.stats.n_gen = 0;
                          slot.i_batch     = batch.size() - 1;

@@ -1,4 +1,4 @@
-From ac9a11875cd308796125dcc27acef0ab321af98a Mon Sep 17 00:00:00 2001
+From 12673fad3041db9a48a47abb97d1777be7ce4c6c Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 20:55:45 -0400
 Subject: [PATCH] resolve 8 committed conflict markers on merit
@@ -9,15 +9,14 @@ Subject: [PATCH] resolve 8 committed conflict markers on merit
  .github/workflows/server-self-hosted.yml | 3 ---
  conversion/__init__.py                   | 9 ---------
  conversion/deepseek.py                   | 4 ----
- conversion/qwen.py                       | 3 ---
  vendor/cpp-httplib/CMakeLists.txt        | 4 ----
- 7 files changed, 32 deletions(-)
+ 6 files changed, 29 deletions(-)
 
 diff --git a/.github/workflows/build-cache.yml b/.github/workflows/build-cache.yml
-index 4d01a280f..1e91922b3 100644
+index 5c7cbfcb3..e4e614a21 100644
 --- a/.github/workflows/build-cache.yml
 +++ b/.github/workflows/build-cache.yml
-@@ -91,7 +91,6 @@ jobs:
+@@ -64,7 +64,6 @@ jobs:
            version_major: ${{ env.OPENVINO_VERSION_MAJOR }}
            version_full: ${{ env.OPENVINO_VERSION_FULL }}
  
@@ -25,7 +24,7 @@ index 4d01a280f..1e91922b3 100644
    windows-2022-openvino-cache:
      runs-on: windows-2022
  
-@@ -99,14 +98,12 @@ jobs:
+@@ -72,14 +71,12 @@ jobs:
        # Sync versions in build.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
        OPENVINO_VERSION_MAJOR: "2026.2.1"
        OPENVINO_VERSION_FULL: "2026.2.1.21919.ede283a88e3"
@@ -40,7 +39,7 @@ index 4d01a280f..1e91922b3 100644
  
      steps:
        - name: Clone
-@@ -115,7 +112,6 @@ jobs:
+@@ -88,7 +85,6 @@ jobs:
  
        - name: Setup Cache
          uses: actions/cache@v5
@@ -48,7 +47,7 @@ index 4d01a280f..1e91922b3 100644
          id: cache-openvino
          with:
            path: ./openvino_toolkit
-@@ -153,7 +149,6 @@ jobs:
+@@ -126,7 +122,6 @@ jobs:
    #       uses: ./.github/actions/windows-setup-rocm
    #       with:
    #         version: ${{ env.ROCM_VERSION }}
@@ -56,16 +55,16 @@ index 4d01a280f..1e91922b3 100644
          id: cache-rocm
          with:
            path: C:\Program Files\AMD\ROCm
-@@ -164,4 +159,3 @@ jobs:
+@@ -137,4 +132,3 @@ jobs:
          uses: ./.github/actions/windows-setup-rocm
          with:
            version: ${{ env.HIPSDK_INSTALLER_VERSION }}
 ->>>>>>> theirs
 diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
-index bb6a2e1f8..56f28b8ba 100644
+index 5bc6a0b42..fb5f7cdf5 100644
 --- a/.github/workflows/release.yml
 +++ b/.github/workflows/release.yml
-@@ -1422,14 +1422,11 @@ jobs:
+@@ -1424,14 +1424,11 @@ jobs:
        - windows-cpu
        - windows-cuda
        #- windows-sycl
@@ -102,12 +101,12 @@ index dc7863b4f..4c0ece335 100644
      runs-on: ah-ubuntu_22_04-c8g_8x
  
 diff --git a/conversion/__init__.py b/conversion/__init__.py
-index 869e8829b..aec0d54ee 100644
+index 959d7ea11..8c52fc8ca 100644
 --- a/conversion/__init__.py
 +++ b/conversion/__init__.py
-@@ -55,16 +55,7 @@ TEXT_MODEL_MAP: dict[str, str] = {
-     "DFlashDraftModel": "qwen",
-     "Qwen3DSparkModel": "qwen",
+@@ -58,16 +58,7 @@ TEXT_MODEL_MAP: dict[str, str] = {
+     "DSparkDraftModel": "qwen",
+     "DSparkSpeculator": "qwen",
      "DeepseekV4ForCausalLM": "deepseek",
 -<<<<<<< ours
 -<<<<<<< ours
@@ -123,10 +122,10 @@ index 869e8829b..aec0d54ee 100644
      "DistilBertForSequenceClassification": "bert",
      "DistilBertModel": "bert",
 diff --git a/conversion/deepseek.py b/conversion/deepseek.py
-index e55cc1883..dbfa96c2e 100644
+index bcef64f23..225f8645d 100644
 --- a/conversion/deepseek.py
 +++ b/conversion/deepseek.py
-@@ -674,12 +674,8 @@ class DeepseekV4Model(TextModel):
+@@ -681,12 +681,8 @@ class DeepseekV4Model(TextModel):
          self.gguf_writer.add_hyper_connection_sinkhorn_iterations(hparams["hc_sinkhorn_iters"])
          self.gguf_writer.add_hyper_connection_epsilon(hparams["hc_eps"])
          self.gguf_writer.add_hash_layer_count(hparams["num_hash_layers"])
@@ -139,27 +138,6 @@ index e55cc1883..dbfa96c2e 100644
          if self.mtp_only and (num_nextn_predict_layers := hparams.get("num_nextn_predict_layers", 0)) > 0:
              self.gguf_writer.add_nextn_predict_layers(num_nextn_predict_layers)
  
-diff --git a/conversion/qwen.py b/conversion/qwen.py
-index 2317c0b8b..10030b498 100644
---- a/conversion/qwen.py
-+++ b/conversion/qwen.py
-@@ -692,7 +692,6 @@ class DFlashModel(Qwen3Model):
-             name = "model." + name
-         return super().filter_tensors((name, gen))
- 
--<<<<<<< ours
-     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
-         if name == "model.embed_tokens.weight" and not self.hparams.get("has_embed_tokens", True):
-             return
-@@ -700,8 +699,6 @@ class DFlashModel(Qwen3Model):
-         yield from super().modify_tensors(data_torch, name, bid)
- 
- 
--=======
-->>>>>>> theirs
- @ModelBase.register("Qwen3DSparkModel")
- class DSparkModel(DFlashModel):
-     # DSpark = DFlash + a semi-autoregressive Markov head
 diff --git a/vendor/cpp-httplib/CMakeLists.txt b/vendor/cpp-httplib/CMakeLists.txt
 index 5c7625d19..6a6eefed1 100644
 --- a/vendor/cpp-httplib/CMakeLists.txt

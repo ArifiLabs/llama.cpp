@@ -1,4 +1,4 @@
-From 5e368319781db828ea3601e893758c814d927c95 Mon Sep 17 00:00:00 2001
+From 33937deffc8f339274a04d0c046b4b9077c3271c Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:34:49 -0400
 Subject: [PATCH] resolved/remaining-conflict-markers
@@ -14,10 +14,10 @@ Subject: [PATCH] resolved/remaining-conflict-markers
  7 files changed, 4 insertions(+), 112 deletions(-)
 
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index a9a16bbc5..7bcd5687f 100644
+index a6711e470..4ae364194 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
-@@ -1019,7 +1019,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1026,7 +1026,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
              s.reset(common_sampler_init(model_dft, sparams));
          }
  
@@ -25,7 +25,7 @@ index a9a16bbc5..7bcd5687f 100644
          // offload draft sampling to the backend
          backend_chains.assign(n_seq, nullptr);
          if (this->params.backend_sampling) {
-@@ -1036,13 +1035,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1043,13 +1042,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
              }
          }
  
@@ -39,7 +39,7 @@ index a9a16bbc5..7bcd5687f 100644
          for (uint32_t k = 0; k < target_layer_ids_n; ++k) {
              if (target_layer_ids[k] == n_layer_tgt) {
                  llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
-@@ -2528,34 +2521,11 @@ common_speculative * common_speculative_init(common_params_speculative & params,
+@@ -2535,34 +2528,11 @@ common_speculative * common_speculative_init(common_params_speculative & params,
      {
          uint32_t enabled_configs = common_get_enabled_speculative_configs(params.types);
  
@@ -119,10 +119,10 @@ index 284858c9a..d79eadb2e 100644
  
      // dispatch on the index type (src1) and the source value type (src0)
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index b2af3d7da..c64da8c9f 100644
+index 7ea00b592..ac1859508 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -1049,10 +1049,7 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
+@@ -1052,10 +1052,7 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
          case LLM_ARCH_QWEN35:
          case LLM_ARCH_QWEN35MOE:
          case LLM_ARCH_DEEPSEEK4:
@@ -133,7 +133,7 @@ index b2af3d7da..c64da8c9f 100644
              return true;
          default:
              return false;
-@@ -1076,11 +1073,8 @@ bool llm_arch_supports_rs_rollback(const llm_arch & arch) {
+@@ -1079,11 +1076,8 @@ bool llm_arch_supports_rs_rollback(const llm_arch & arch) {
          case LLM_ARCH_QWEN35:
          case LLM_ARCH_QWEN35MOE:
          case LLM_ARCH_DEEPSEEK4:
@@ -169,10 +169,10 @@ index 864dfe9c3..cf68c300c 100644
      std::vector<llm_graph_input_ptr> inputs;
  
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 8179f74d1..1294927d1 100644
+index 1d0b95a12..a0b8a716b 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -2302,11 +2302,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2306,11 +2306,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
              } break;
          case LLM_ARCH_DEEPSEEK4:
              {
@@ -184,7 +184,7 @@ index 8179f74d1..1294927d1 100644
                  GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
  
                  if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
-@@ -2347,7 +2342,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2351,7 +2346,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                              nullptr,
                              nullptr);
                  }
@@ -192,7 +192,7 @@ index 8179f74d1..1294927d1 100644
              } break;
          case LLM_ARCH_DFLASH:
              {
-@@ -2375,53 +2369,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2379,53 +2373,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                  }
              }
              [[fallthrough]];
