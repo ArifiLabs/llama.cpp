@@ -1,0 +1,62 @@
+From bf49779fbc63b2af0b65059b3affb37ffbbd3ed0 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 08:49:17 -0400
+Subject: [PATCH] tests: cover the tq3 family in test-quantize-fns and
+ test-backend-ops (kilobyte-scale proof before the 13 GB run)
+
+---
+ tests/test-backend-ops.cpp  | 7 ++++++-
+ tests/test-quantize-fns.cpp | 8 +++++++-
+ 2 files changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 254fb3903..2f5e84df9 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -2463,7 +2463,9 @@ struct test_set_rows : public test_case {
+             err_estimate /= 0.25f*float(ne[0] * r * ne[2]*nr23[0] * ne[3]*nr23[1]);
+             return err_estimate;
+         }
+-        if (type_dst == GGML_TYPE_TQ3_1S || type_dst == GGML_TYPE_TQ4_1S) {
++        if (type_dst == GGML_TYPE_TQ3_1S || type_dst == GGML_TYPE_TQ4_1S ||
++            type_dst == GGML_TYPE_TQ3_4S || type_dst == GGML_TYPE_TQ3_0 ||
++            type_dst == GGML_TYPE_TQ3_4SE || type_dst == GGML_TYPE_TQ3_1S_SHIFT) {
+             // Reduction order matters; both TurboQuant weight types have a
+             // 32-element WHT inside the dot product which amplifies fp
+             // reduction differences slightly.
+@@ -8490,6 +8492,9 @@ static const ggml_type all_types[] = {
+     GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ1_S, GGML_TYPE_IQ1_M,
+     GGML_TYPE_IQ4_NL, GGML_TYPE_IQ3_S, GGML_TYPE_IQ4_XS,
+     GGML_TYPE_TQ3_1S, GGML_TYPE_TQ4_1S,
++    // tq3 family (ids 48..51, TYPE-ID-ALLOCATION 3.1.1). Listing them here is the
++    // whole backend sweep: get_rows, mul_mat and cpy on every built backend.
++    GGML_TYPE_TQ3_4S, GGML_TYPE_TQ3_0, GGML_TYPE_TQ3_4SE, GGML_TYPE_TQ3_1S_SHIFT,
+ };
+ 
+ static const ggml_type base_types[] = {
+diff --git a/tests/test-quantize-fns.cpp b/tests/test-quantize-fns.cpp
+index 0a39c0e77..fb3720949 100644
+--- a/tests/test-quantize-fns.cpp
++++ b/tests/test-quantize-fns.cpp
+@@ -177,6 +177,11 @@ static int test_vec_dot_q(bool verbose) {
+                 type == GGML_TYPE_IQ3_S   ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
+                 type == GGML_TYPE_IQ3_XXS ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS_XXS :
+                 type == GGML_TYPE_TQ3_1S  ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
++                // tq3 family (48..51): 3-bit payload in the rotated domain, same class as TQ3_1S.
++                type == GGML_TYPE_TQ3_4S  ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
++                type == GGML_TYPE_TQ3_0   ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
++                type == GGML_TYPE_TQ3_4SE ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
++                type == GGML_TYPE_TQ3_1S_SHIFT ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
+                 type == GGML_TYPE_NVFP4   ? MAX_QUANTIZATION_TOTAL_ERROR_FP4 : MAX_QUANTIZATION_TOTAL_ERROR;
+             bool failed = !(total_error < max_quantization_error);
+             num_failed += failed;
+@@ -194,7 +199,8 @@ static int test_vec_dot_q(bool verbose) {
+             const float vec_dot_error = dot_product_error(qfns, qfns_cpu, test_size, test_data.data(), test_data2.data());
+             const float max_allowed_error = type == GGML_TYPE_Q2_K || type == GGML_TYPE_IQ2_XS || type == GGML_TYPE_IQ2_XXS ||
+                 type == GGML_TYPE_IQ3_XXS || type == GGML_TYPE_IQ3_S || type == GGML_TYPE_IQ2_S ||
+-                type == GGML_TYPE_TQ3_1S
++                type == GGML_TYPE_TQ3_1S || type == GGML_TYPE_TQ3_4S || type == GGML_TYPE_TQ3_0 ||
++                type == GGML_TYPE_TQ3_4SE || type == GGML_TYPE_TQ3_1S_SHIFT
+                 ? MAX_DOT_PRODUCT_ERROR_LOWBIT
+                 : type == GGML_TYPE_Q1_0
+                 ? MAX_DOT_PRODUCT_ERROR_BINARY
