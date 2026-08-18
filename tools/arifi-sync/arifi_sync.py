@@ -968,7 +968,12 @@ def cmd_bump(repo: str, cfg: dict, args) -> int:
 
     step("1/4  rebase surface: what upstream touched that our patches also touch")
     base = cfg["base"]["upstream_sha"]
-    _, ours, _ = git(repo, "diff", "--name-only", base, args.ref if hasattr(args, "ref") else "master")
+    # lane-152: this read `args.ref if hasattr(args, "ref") else "master"`, and `bump`'s parser had no
+    # --ref, so it ALWAYS took the hardcoded fallback. sources.json's own _comment says the three
+    # argparse "master" defaults were fixed at lane-139 - this fourth one was missed, and `master` is
+    # still a live branch here (9aa7b3d2b, the pre-recut history), so it printed a plausible rebase
+    # surface computed against a dead branch instead of failing. Silent wrong numbers, not an error.
+    _, ours, _ = git(repo, "diff", "--name-only", base, args.ref)
     our_paths = set(p for p in ours.split("\n") if p)
     _, theirs, _ = git(repo, "diff", "--name-only", base, args.onto)
     their_paths = set(p for p in theirs.split("\n") if p)
@@ -1057,6 +1062,7 @@ def main(argv=None) -> int:
     p.add_argument("--i-have-read-bench-purity", action="store_true")
     p = sub.add_parser("bump")
     p.add_argument("--onto", required=True)
+    p.add_argument("--ref", default=None)   # lane-152: without this, cmd_bump fell back to "master"
     p.add_argument("--i-have-read-bench-purity", action="store_true")
 
     args = ap.parse_args(argv)
