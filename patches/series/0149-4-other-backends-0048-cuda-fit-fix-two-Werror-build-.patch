@@ -1,4 +1,4 @@
-From 36a2395b2b269163b0973fddb1bdbd2cc9cd7af1 Mon Sep 17 00:00:00 2001
+From 32daf163bfb810fb0af43a264bc4f4ab7843f11d Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:00 -0400
 Subject: [PATCH] 
@@ -28,7 +28,7 @@ index 9e6059787..c14ab85a2 100644
          }
          void alloc(size_t nelements) {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 82b90e219..82836500d 100644
+index ea1664cf2..da83d7083 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -600,12 +600,19 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
@@ -57,10 +57,10 @@ index 82b90e219..82836500d 100644
                  create_result = cuMemCreate(&handle, reserve_size, &prop, 0);
              }
 diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
-index 5cc8f5a52..af34d5289 100644
+index d75d94552..2dd5bb7f2 100644
 --- a/ggml/src/ggml-sycl/ggml-sycl.cpp
 +++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
-@@ -6055,8 +6055,11 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+@@ -6062,8 +6062,11 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
                           op->type == GGML_TYPE_TURBO2_0 || op->type == GGML_TYPE_TURBO3_0 || op->type == GGML_TYPE_TURBO4_0) &&
                          op->src[0]->type == GGML_TYPE_F32 &&
                          (op->src[1]->type == GGML_TYPE_I64 || op->src[1]->type == GGML_TYPE_I32));

@@ -1,4 +1,4 @@
-From 24b949a5a8c431cf985f151fa4920e1cdb9bc674 Mon Sep 17 00:00:00 2001
+From 0911c7b8492855297d26eefd74a0b2fe6e8c8ed3 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:31:08 -0400
 Subject: [PATCH] powerinfer: per-ubatch pipeline init, guarded reuse, PROF
@@ -12,7 +12,7 @@ Measured-effect: Reuse: 9/263 rebuilds, init 2472us->0-2us (~2.5ms/token), coher
  1 file changed, 69 insertions(+)
 
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 792bb6cac..be9de0e6a 100644
+index 52f8d5367..5a71282b9 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
 @@ -1,4 +1,12 @@

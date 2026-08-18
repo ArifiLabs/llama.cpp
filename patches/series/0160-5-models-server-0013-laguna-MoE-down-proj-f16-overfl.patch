@@ -1,4 +1,4 @@
-From 002e69bd60836893fef594b6f8669f57f4e73cbc Mon Sep 17 00:00:00 2001
+From 6ff262b9f22f8861f933c96dce68efd558b53366 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:21 -0400
 Subject: [PATCH] 
@@ -11,7 +11,7 @@ Subject: [PATCH]
  3 files changed, 154 insertions(+), 10 deletions(-)
 
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 44e7a35c2..a9a16bbc5 100644
+index 25cf464ff..a6711e470 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
 @@ -14,6 +14,7 @@
@@ -22,7 +22,7 @@ index 44e7a35c2..a9a16bbc5 100644
  #include <cstring>
  #include <iomanip>
  #include <map>
-@@ -928,6 +929,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -931,6 +932,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
  
      const int32_t * target_layer_ids   = nullptr; // model_dft's extract layer indices
      uint32_t        target_layer_ids_n = 0;
@@ -30,7 +30,7 @@ index 44e7a35c2..a9a16bbc5 100644
  
      // scratch buffer for concatenated target features [n_tokens, n_embd_enc]
      std::vector<float> features_buf;
-@@ -1017,6 +1019,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1024,6 +1026,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
              s.reset(common_sampler_init(model_dft, sparams));
          }
  
@@ -38,7 +38,7 @@ index 44e7a35c2..a9a16bbc5 100644
          // offload draft sampling to the backend
          backend_chains.assign(n_seq, nullptr);
          if (this->params.backend_sampling) {
-@@ -1034,12 +1037,32 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1041,12 +1044,32 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
          }
  
          // turn on extraction of the target layers' input embeddings
@@ -73,7 +73,7 @@ index 44e7a35c2..a9a16bbc5 100644
      }
  
      ~common_speculative_impl_draft_dflash() override {
-@@ -1127,7 +1150,9 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1134,7 +1157,9 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                  // gather this chunk's target features, interleaved by extract layer
                  features_buf.resize((size_t) n_chunk * n_embd_enc);
                  for (uint32_t k = 0; k < target_layer_ids_n; ++k) {
@@ -84,7 +84,7 @@ index 44e7a35c2..a9a16bbc5 100644
                      if (!layer) {
                          GGML_ABORT("DFlash: target layer %d input not extracted.", target_layer_ids[k]);
                      }
-@@ -1138,6 +1163,29 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1145,6 +1170,29 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                      }
                  }
  
@@ -139,7 +139,7 @@ index 402270333..77525c946 100644
  
      if (down_exps_s) {
 diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
-index 72c87c91e..1f551abec 100644
+index 2ed145a48..bbcbae796 100644
 --- a/src/models/dflash.cpp
 +++ b/src/models/dflash.cpp
 @@ -75,11 +75,16 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
@@ -160,7 +160,7 @@ index 72c87c91e..1f551abec 100644
      LLAMA_LOAD_LOCALS;
  
      const int64_t n_embd_inp = hparams.n_embd_inp_enc();
-@@ -107,6 +112,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
+@@ -117,6 +122,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
      output_norm_enc = create_tensor(tn(LLM_TENSOR_ENC_OUTPUT_NORM, "weight"), { n_embd }, 0); // encoder hidden_norm (after fc)
      output_norm     = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM,    "weight"), { n_embd }, 0); // decoder final norm
  
@@ -168,7 +168,7 @@ index 72c87c91e..1f551abec 100644
      if (hparams.dsv4_hc_mult > 0) {
          const int64_t q_lora_rank     = hparams.n_lora_q;
          const int64_t n_ff_exp        = hparams.n_ff_exp;
-@@ -155,6 +161,12 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
+@@ -165,6 +171,12 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
              layer.ffn_up_shexp   = create_tensor(tn(LLM_TENSOR_FFN_UP_SHEXP,   "weight", i), {n_embd,                     n_ff_exp * n_expert_shared}, 0);
          }
          return;
@@ -180,8 +180,8 @@ index 72c87c91e..1f551abec 100644
 +>>>>>>> theirs
      }
  
-     for (int i = 0; i < n_layer; ++i) {
-@@ -170,6 +182,22 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
+     // optional: reduced-vocab drafts ship their own, full-vocab drafts share the target's via ctx_other
+@@ -183,6 +195,22 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
          layer.attn_q_norm = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), { n_embd_head_k }, 0);
          layer.attn_k_norm = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), { n_embd_head_k }, 0);
  
@@ -204,7 +204,7 @@ index 72c87c91e..1f551abec 100644
          layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), { n_embd }, 0);
          layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), { n_embd, n_ff }, 0);
          layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd }, 0);
-@@ -210,9 +238,29 @@ ggml_tensor * llama_model_dflash::graph<true>::build_inp_embd_enc() const {
+@@ -223,9 +251,29 @@ ggml_tensor * llama_model_dflash::graph<true>::build_inp_embd_enc() const {
  // DFlash Encoder: processes target model features through feature fusion layer
  template <>
  llama_model_dflash::graph<true>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
@@ -234,7 +234,7 @@ index 72c87c91e..1f551abec 100644
      cb(cur, "fc_out", -1);
  
      cur = build_norm(cur, model.output_norm_enc, NULL, LLM_NORM_RMS, -1);
-@@ -347,11 +395,21 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -380,11 +428,21 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
  
          res->add_input(std::move(inp));
  
@@ -258,7 +258,7 @@ index 72c87c91e..1f551abec 100644
  
              Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
              Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
-@@ -454,10 +512,37 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -487,10 +545,37 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
          cb(Kcur, "Kcur", il);
          cb(Vcur, "Vcur", il);
  
