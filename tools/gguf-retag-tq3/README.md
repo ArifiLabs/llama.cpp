@@ -69,8 +69,8 @@ tool at some point, which is why each stays as a case rather than an argument.
 
 ```
 python retag_tq3.py \
-  C:/ArifiLabs/models/hf/YTan2000/Qwen3.8-27B-TQ3_4S/Qwen3.8-27B-TQ3_4S-v2.gguf \
-  C:/ArifiLabs/models/hf/YTan2000/Qwen3.8-27B-TQ3_4S/Qwen3.8-27B-TQ3_4S-v2-tq3retag-lane142.gguf \
+  <MODELS>/hf/YTan2000/Qwen3.8-27B-TQ3_4S/Qwen3.8-27B-TQ3_4S-v2.gguf \
+  <MODELS>/hf/YTan2000/Qwen3.8-27B-TQ3_4S/Qwen3.8-27B-TQ3_4S-v2-tq3retag-lane142.gguf \
   --map-out map.tsv
 ```
 

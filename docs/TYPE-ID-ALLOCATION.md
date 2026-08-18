@@ -165,7 +165,7 @@ A file tagged 46 by tq3 and read as our `TQ4_1S` computes a row size 25% too lar
 That is **luck, not design** — it is exactly the class of hazard §2 is about, and it would be a
 silent corruption instead of a loud failure if the two blocks happened to match in size.
 
-Measured 2026-08-17 (lane-139), scanning all 67 GGUF headers under `C:/ArifiLabs/models`:
+Measured 2026-08-17 (lane-139), scanning all 67 GGUF headers under `<MODELS>`:
 `models/hf/YTan2000/Qwen3.8-27B-TQ3_4S/Qwen3.8-27B-TQ3_4S-v2.gguf` carries **504 tensors at id 46**,
 meaning tq3's `TQ3_4S`. It is the only such file on disk. No other file carries a tq3 id. Evidence:
 `research/local-inference/lane-evidence/2026-08-17-lane-139-proofs/I-typeid-scan-BEFORE-enum-change.txt`
@@ -337,7 +337,7 @@ confusable. 200-202 guarantees that by construction.
 
 Moving it is the one migration this table could have demanded. It should not.
 
-**What is actually on disk** (probed 2026-07-24, `C:/ArifiLabs/models/gguf/ternary/`, reading the GGUF
+**What is actually on disk** (probed 2026-07-24, `<MODELS>/gguf/ternary/`, reading the GGUF
 metadata and tensor-info tables directly):
 
 | file | `GGML_Q2_0_G128` key | tensor type-ids |
