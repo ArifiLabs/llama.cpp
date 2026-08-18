@@ -1,5 +1,10 @@
-#include "ggml-vulkan.h"
+// vulkan_core.h MUST come first: ggml-vulkan.h guards the MoE-cache handle accessors on
+// `#if defined(VK_VERSION_1_0)` so that non-Vulkan builds of the header stay free of the
+// Vulkan headers. With ggml-vulkan.h first the guard is false here, the declarations are
+// skipped, and the definitions below silently acquire C++ linkage while every caller that
+// includes <vulkan/vulkan.h> first expects C linkage — a link error, not a compile error.
 #include <vulkan/vulkan_core.h>
+#include "ggml-vulkan.h"
 #if defined(GGML_VULKAN_RUN_TESTS) || defined(GGML_VULKAN_CHECK_RESULTS)
 #include <chrono>
 #include "ggml-cpu.h"
@@ -18832,6 +18837,51 @@ ggml_backend_t ggml_backend_vk_init(size_t dev_num) {
 
 bool ggml_backend_is_vk(ggml_backend_t backend) {
     return backend != NULL && ggml_guid_matches(backend->guid, ggml_backend_vk_guid());
+}
+
+VkDevice ggml_backend_vk_get_device_handle(ggml_backend_t backend) {
+    if (!ggml_backend_is_vk(backend)) {
+        return VK_NULL_HANDLE;
+    }
+    ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
+    if (!ctx->device) {
+        return VK_NULL_HANDLE;
+    }
+    return (VkDevice)ctx->device->device;
+}
+
+VkQueue ggml_backend_vk_get_queue_handle(ggml_backend_t backend) {
+    if (!ggml_backend_is_vk(backend)) {
+        return VK_NULL_HANDLE;
+    }
+    ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
+    if (!ctx->device || !ctx->device->compute_queue ||
+        !ctx->device->compute_queue->handle) {
+        return VK_NULL_HANDLE;
+    }
+    return (VkQueue)ctx->device->compute_queue->handle->queue;
+}
+
+VkPhysicalDevice ggml_backend_vk_get_physical_device(ggml_backend_t backend) {
+    if (!ggml_backend_is_vk(backend)) {
+        return VK_NULL_HANDLE;
+    }
+    ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
+    if (!ctx->device) {
+        return VK_NULL_HANDLE;
+    }
+    return (VkPhysicalDevice)ctx->device->physical_device;
+}
+
+uint32_t ggml_backend_vk_get_queue_family(ggml_backend_t backend) {
+    if (!ggml_backend_is_vk(backend)) {
+        return 0;
+    }
+    ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
+    if (!ctx->device || !ctx->device->compute_queue) {
+        return 0;
+    }
+    return ctx->device->compute_queue->queue_family_index;
 }
 
 int ggml_backend_vk_get_device_count() {
