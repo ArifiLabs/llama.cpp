@@ -2897,12 +2897,17 @@ struct test_set_rows_tq4_1s : public test_case {
     }
 
     double max_nmse_err() override {
-        // GPU and CPU TQ4_1S quantization diverge due to subgroupAdd reduction
-        // order vs CPU serial addition in the iterative scale refinement. The
-        // difference compounds over 6 iterations, leading to different centroid
-        // selections and thus different dequanted values. Both are valid
-        // quantizations of comparable quality.
-        return 5.0;
+        // lane-150: this was 5.0, justified by a comment claiming observed GPU/CPU divergence from
+        // subgroupAdd order compounding over the 6 refinement iterations. That divergence was never
+        // observed: until lane-150 wired the pipelines, this case class ran 17 cases / 0 executed,
+        // so 5.0 was a waive written blind — and 5.0 on a 4-bit format passes almost any output.
+        // MEASURED once the path actually executed: ERR = 0.000000000 on all 17 cases (below the
+        // harness's %.9f print resolution), the same value its known-good sibling
+        // test_set_rows_turbo2 reports under the identical probe. Tightened to the turbo3/turbo4
+        // family bound, which leaves ~8 orders of margin over the measurement and still catches a
+        // layout, LUT, subgroup-width or dispatch-sizing regression by orders of magnitude
+        // (proven: mutating the SET_ROWS dispatch arm back to the generic quant sizing fails here).
+        return 0.05;
     }
 };
 
