@@ -10,9 +10,13 @@ layout (binding = 0) readonly buffer A {block_turbo3_0 data_a[];};
 layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
 
 void main() {
+    // SOURCE OF TRUTH: CENTROIDS_3BIT in ggml/src/ggml-turbo-quant.c. CUDA
+    // (ggml-cuda/turbo-quant.cuh), Metal and SYCL carry the same eight values.
+    // ponytail: five GLSL copies of this table, kept in sync by hand; a shared
+    // include is the upgrade if it drifts again (it drifted once — lane-148).
     const float centroids[8] = float[8](
-        -0.190685, -0.117832, -0.065717, -0.021460,
-         0.021460,  0.065717,  0.117832,  0.190685
+        -0.190207, -0.118786, -0.066822, -0.021663,
+         0.021663,  0.066822,  0.118786,  0.190207
     );
 
     // Each workgroup processes one 128-element block
