@@ -12858,7 +12858,11 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
                 // (its main() indexes gl_WorkGroupID as a block index, guard `g >= p.ne / 32`).
                 // The generic arm below assumes 32 threads each doing a WHOLE block, so it would
                 // dispatch 1/32 of the workgroups needed and leave 31/32 of the rows unwritten.
-                ne = CEIL_DIV(ne, 32);
+                // The 32 is the block size AND the workgroup size at once, and the shader hardcodes
+                // it too (`p.ne / 32`, `p.ne00 / 32` in copy_to_quant.comp). Pin it: an F-110-class
+                // silent desync across three files is exactly what this assert is for.
+                GGML_ASSERT(ggml_blck_size(dst->type) == 32);
+                ne = CEIL_DIV(ne, ggml_blck_size(dst->type));
             } else if (ggml_is_quantized(dst->type)) {
                 // quants run 32 threads each doing QUANT_K elements
                 ne = CEIL_DIV(ne, 32 * ggml_blck_size(dst->type));
