@@ -15,10 +15,16 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
 
 `../LICENSE` is also the verbatim copy of upstream llama.cpp’s MIT license.
 
-## Audit, 2026-08-18 (lane-151) — every source cited by a `Taken-from:` trailer
+## Audit, 2026-08-18 (lane-151) — every source this fork carries code or credit from
 
-Derived by taking the distinct `Taken-from:` trailer values across every fork commit on `arifi/main`
-and asking, for each, whether a notice is retained above.
+Derived from the distinct `Taken-from:` values across every fork commit on `arifi/main`, then widened
+by hand. **The widening is not cosmetic and is stated so the table is not read as a purely mechanical
+derivation:** two rows below are NOT in git's parsed trailer set. `turbo-tan/llama.cpp-tq3` appears in
+commit `01b3065fe`'s *subject* as "Taken-from turbo-tan/llama.cpp-tq3@58ad80ffb" — no colon, so git
+does not parse it as a trailer, and a tool that trusted the trailer block alone would have missed the
+one source with a real license GAP. `turboquant_plus` appears in no trailer at all; its notice is
+retained anyway because its Apache-2.0 NOTICE requires it. A trailer sweep is a starting point, not
+the audit.
 
 | source cited by a trailer | notice retained | disposition |
 |---|---|---|
