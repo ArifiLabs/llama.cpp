@@ -214,6 +214,51 @@ if (Vulkan_FOUND)
               CONFIGURE_DEPENDS "${_ggml_vk_input_dir}/*.cpp"
                                 "${_ggml_vk_input_dir}/*.h")
 
+    # ---------------------------------------------------------------- arifi-sync-check (F-110)
+    # Hand-synced C <-> GLSL/host pairs (centroid LUTs, FA_TYPE spec-constant ids, QUANT_K block
+    # sizes, per-type switch lists) drift SILENTLY: a wrong constant returns a slightly wrong
+    # number and a stale id makes a switch fall through to zeros. This runs BEFORE shader codegen
+    # and FAILS the build on divergence. Fail-closed by design: no python3, no build.
+    find_package(Python3 COMPONENTS Interpreter)
+    if (NOT Python3_Interpreter_FOUND)
+        message(FATAL_ERROR "arifi-sync-check requires python3 (ggml-vulkan/arifi_sync_check.py). "
+                            "It is the only mechanical check on the hand-synced C<->GLSL pairs "
+                            "(failure-ledger F-110); skipping it silently is the defect it exists "
+                            "to prevent.")
+    endif()
+
+    set(_arifi_sync_root   "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
+    set(_arifi_sync_script "${CMAKE_CURRENT_SOURCE_DIR}/arifi_sync_check.py")
+    set(_arifi_sync_stamp  "${CMAKE_CURRENT_BINARY_DIR}/arifi-sync-check.stamp")
+
+    file(GLOB _arifi_sync_glsl CONFIGURE_DEPENDS "${_ggml_vk_input_dir}/*.glsl")
+
+    add_custom_command(
+        OUTPUT  ${_arifi_sync_stamp}
+        COMMAND ${Python3_EXECUTABLE} ${_arifi_sync_script} ${_arifi_sync_root}
+        COMMAND ${CMAKE_COMMAND} -E touch ${_arifi_sync_stamp}
+        DEPENDS ${_arifi_sync_script}
+                ${_ggml_vk_shader_files}
+                ${_arifi_sync_glsl}
+                ${CMAKE_CURRENT_SOURCE_DIR}/ggml-vulkan.cpp
+                ${_arifi_sync_root}/ggml/include/ggml.h
+                ${_arifi_sync_root}/ggml/src/ggml.c
+                ${_arifi_sync_root}/ggml/src/ggml-common.h
+                ${_arifi_sync_root}/ggml/src/ggml-turbo-quant.c
+                ${_arifi_sync_root}/ggml/src/ggml-arifi-turbo-weights.c
+                ${_arifi_sync_root}/ggml/src/ggml-cuda/turbo-quant.cuh
+                ${_arifi_sync_root}/ggml/rocmfp4/rocmfp4.c
+                ${_arifi_sync_root}/ggml/rocmfp4/rocmfp4.h
+                ${_arifi_sync_root}/ggml/rocmfpx/rocmfpx.c
+                ${_arifi_sync_root}/ggml/rocmfpx/rocmfpx.h
+        COMMENT "arifi-sync-check: C <-> GLSL/host hand-synced pairs"
+        VERBATIM
+    )
+    add_custom_target(arifi-sync-check DEPENDS ${_arifi_sync_stamp})
+    # ordered BEFORE shader generation so a divergence costs seconds, not a shader rebuild
+    add_dependencies(vulkan-shaders-gen arifi-sync-check)
+    add_dependencies(ggml-vulkan arifi-sync-check)
+
     add_custom_command(
         OUTPUT ${_ggml_vk_header}
         COMMAND ${_ggml_vk_genshaders_cmd}

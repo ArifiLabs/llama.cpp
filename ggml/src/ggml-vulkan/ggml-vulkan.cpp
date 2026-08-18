@@ -4016,6 +4016,7 @@ static std::vector<uint32_t> get_fa_spec_constants(const vk_fa_pipeline_state& s
 static bool ggml_vk_matmul_shmem_support(const vk_device& device, const std::vector<uint32_t>& warptile, bool mul_mat_id, ggml_type src0_type) {
 
     uint32_t lut_size = 0;
+    // ARIFI-SYNC-SOLO: shared-memory capability probe, not a type-support list; it answers 'does this type's mul_mm tile fit in shared memory', so it is deliberately narrower than every support list.
     switch (src0_type) {
     case GGML_TYPE_IQ1_S:
     case GGML_TYPE_IQ1_M:
@@ -4097,6 +4098,7 @@ static bool ggml_vk_matmul_int_shmem_support(const vk_device& device, const std:
     };
 
     uint32_t block_a_size = 0;
+    // ARIFI-SYNC-SOLO: integer-dot shared-memory capability probe, same reason as ggml_vk_matmul_shmem_support above.
     switch (src0_type) {
         case GGML_TYPE_Q2_0:    block_a_size = std430_size({{32, 4}, {fp_size,  fp_align}});                  break; // qs[8] + dm
         case GGML_TYPE_Q2_0_G128: block_a_size = std430_size({{32, 4}, {fp_size, fp_align}});                  break; // one Q8_1-sized sub-block + dm; four per g128 source block
@@ -7947,6 +7949,7 @@ static void ggml_vk_init(ggml_backend_vk_context * ctx, size_t idx) {
 
 static vk_pipeline ggml_vk_get_to_fp16(ggml_backend_vk_context * ctx, ggml_type type) {
     VK_LOG_DEBUG("ggml_vk_get_to_fp16()");
+    // ARIFI-SYNC-SOLO: types with a dequant-to-f16 shader. A superset of the mul_mm list (the f16 staging path serves types that have no rotated mul_mm) and a subset of the mat-vec list, by design.
     switch (type) {
         case GGML_TYPE_F32:
         case GGML_TYPE_Q1_0:
@@ -8033,6 +8036,7 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_conte
         return nullptr;
     }
 
+    // ARIFI-SYNC-SOLO: types with a mul_mm (matrix-matrix) pipeline. Narrower than the mat-vec list on purpose: tq3_1s/tq4_1s/tq3_4s reach mul_mat through f16 staging.
     switch (src0_type) {
         case GGML_TYPE_Q1_0:
         case GGML_TYPE_Q2_0:
@@ -8098,6 +8102,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context * 
     GGML_ASSERT(num_cols >= 1 && num_cols <= mul_mat_vec_max_cols);
 
     if (b_type == GGML_TYPE_Q8_1) {
+        // ARIFI-SYNC-SET: mul_mat.mmq_int_dot
         switch (a_type) {
             case GGML_TYPE_Q2_0:
             case GGML_TYPE_Q2_0_G128:
@@ -8126,6 +8131,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context * 
         }
     }
 
+    // ARIFI-SYNC-SET: mul_mat.src0_types
     switch (a_type) {
         case GGML_TYPE_F32:
         case GGML_TYPE_F16:
@@ -8241,6 +8247,7 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_id_pipeline(ggml_backend_vk_co
 
     GGML_ASSERT(src1_type == GGML_TYPE_F32 || (ctx->device->coopmat2 && src1_type == GGML_TYPE_F16));
 
+    // ARIFI-SYNC-SOLO: types with a mul_mm_id pipeline. TQ3_4S is absent by design (no rotated mul_mm_id at all - supports_op admits it via the f16 staging path).
     switch (src0_type) {
         case GGML_TYPE_Q1_0:
         case GGML_TYPE_Q2_0:
@@ -8314,6 +8321,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
     GGML_ASSERT(b_type == GGML_TYPE_F32 || b_type == GGML_TYPE_Q8_1);
 
     if (b_type == GGML_TYPE_Q8_1) {
+        // ARIFI-SYNC-SET: mul_mat.mmq_int_dot
         switch (a_type) {
             case GGML_TYPE_Q2_0:
             case GGML_TYPE_Q2_0_G128:
@@ -8342,6 +8350,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
         }
     }
 
+    // ARIFI-SYNC-SET: mul_mat.src0_types
     switch (a_type) {
         case GGML_TYPE_F32:
         case GGML_TYPE_F16:
@@ -9414,6 +9423,7 @@ static vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const
         }
     }
     if (src->type == GGML_TYPE_F32) {
+        // ARIFI-SYNC-SET: cpy.f32_to_quant
         switch (to) {
         case GGML_TYPE_Q1_0:
         case GGML_TYPE_Q2_0:
@@ -9437,6 +9447,7 @@ static vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const
     }
 
     if (to == GGML_TYPE_F32) {
+        // ARIFI-SYNC-SET: cpy.quant_to_f32
         switch (src->type) {
         case GGML_TYPE_Q1_0:
         case GGML_TYPE_Q2_0:
@@ -19102,6 +19113,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                         return false;
                     }
                 }
+                // ARIFI-SYNC-SET: mul_mat.src0_types
                 switch (src0_type) {
                     case GGML_TYPE_F32:
                     case GGML_TYPE_F16:
@@ -19189,6 +19201,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                     return false;
                 }
                 auto fa_kv_ok = [](ggml_type t) {
+                    // ARIFI-SYNC-SOLO: flash-attention K/V types. Its cross-language partner is not another switch but the FA_TYPE_* defines in vulkan-shaders/flash_attn_base.glsl, which arifi_sync_check.py check 5 diffs against this list.
                     switch (t) {
                     case GGML_TYPE_F32:
                     case GGML_TYPE_F16:
@@ -19225,6 +19238,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
             }
         case GGML_OP_GET_ROWS:
             {
+                // ARIFI-SYNC-SOLO: GET_ROWS source types. The dispatch side is an indexed pipeline table (pipeline_dequant[type]), not a second switch, and it is nullptr-checked.
                 switch (op->src[0]->type) {
                     case GGML_TYPE_F32:
                     case GGML_TYPE_F16:
@@ -19293,6 +19307,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                 ggml_type src1_type = op->src[1] != nullptr ? op->src[1]->type : src0_type;
 
                 if (src0_type == GGML_TYPE_F32) {
+                    // ARIFI-SYNC-SET: cpy.f32_to_quant EXCEPT F32=non-quant early return, F16=non-quant early return, BF16=non-quant early return, TURBO3_0=admitted only when the pipeline table has an entry (copy-TO is generated for turbo3 alone), so it is table-guarded rather than dispatch-switched
                     switch (src1_type) {
                     case GGML_TYPE_F32:
                     case GGML_TYPE_F16:
@@ -19324,6 +19339,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                     }
                 }
                 if (src1_type == GGML_TYPE_F32) {
+                    // ARIFI-SYNC-SET: cpy.quant_to_f32 EXCEPT F16=non-quant early return, BF16=non-quant early return
                     switch (src0_type) {
                     case GGML_TYPE_F16:
                     case GGML_TYPE_BF16:
