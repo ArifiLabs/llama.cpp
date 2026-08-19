@@ -247,7 +247,7 @@ struct llama_hparams {
     // output embedding dimension (0 = use n_embd)
     uint32_t n_embd_out_impl = 0;
 
-    uint32_t dflash_block_size       = 0;
+    // dflash_block_size lives in the fork's DFlash1 block below, default 16 (dedupe of PR #27342)
     uint32_t dflash_conv_kernel_size = 0;
     uint32_t dflash_conv_group_size  = 0;
     uint32_t dflash_selector_rank    = 0;
