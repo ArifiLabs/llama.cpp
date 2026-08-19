@@ -101,7 +101,13 @@ def assert_load_floor(argv: list[str]) -> dict[str, Any]:
     """
     from arifi_core import load_governor as lg  # company venv; the runbook invokes us with it
 
-    model = lg._largest_gguf(argv)
+    # take the model from -m, never "largest .gguf on the command line": the calibrator's -o names
+    # the artifact it is about to CREATE, so scanning all .gguf arguments stats a file that does
+    # not exist yet and dies with WinError 2 before any floor is ever compared.
+    if "-m" not in argv:
+        raise ProofError(f"cannot floor-check a launch with no -m model: {argv}")
+    model = Path(argv[argv.index("-m") + 1])
+    require_file(model, "model for the load-governor floor check")
     snapshot = lg._memory_snapshot()
     free_gb = snapshot.free_bytes / lg.GIB
     model_gb = model.stat().st_size / lg.GIB
