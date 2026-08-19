@@ -136,7 +136,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
         LLAMA_LOG_INFO("%s: DFlash with DSpark markov head (rank = %lld)\n", __func__, (long long) dspark_markov_rank);
     }
 
-    const struct ggml_tensor * selector_meta = ml->get_tensor_meta("selector_hidden.weight");
+    const struct ggml_tensor * selector_meta = ml.get_tensor_meta("selector_hidden.weight");
     if (selector_meta) {
         const int64_t rank = hparams.dflash_selector_rank;
         if (rank <= 0 || hparams.dflash_block_size <= 0 || hparams.dflash_selector_top_k <= 0 ||
