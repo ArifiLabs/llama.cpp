@@ -1,84 +1,15 @@
-From 12673fad3041db9a48a47abb97d1777be7ce4c6c Mon Sep 17 00:00:00 2001
+From 0de0de9782bfe7a9cf2c212329085a457df42303 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 20:55:45 -0400
 Subject: [PATCH] resolve 8 committed conflict markers on merit
 
 ---
- .github/workflows/build-cache.yml        | 6 ------
- .github/workflows/release.yml            | 3 ---
  .github/workflows/server-self-hosted.yml | 3 ---
  conversion/__init__.py                   | 9 ---------
  conversion/deepseek.py                   | 4 ----
  vendor/cpp-httplib/CMakeLists.txt        | 4 ----
- 6 files changed, 29 deletions(-)
+ 4 files changed, 20 deletions(-)
 
-diff --git a/.github/workflows/build-cache.yml b/.github/workflows/build-cache.yml
-index 5c7cbfcb3..e4e614a21 100644
---- a/.github/workflows/build-cache.yml
-+++ b/.github/workflows/build-cache.yml
-@@ -64,7 +64,6 @@ jobs:
-           version_major: ${{ env.OPENVINO_VERSION_MAJOR }}
-           version_full: ${{ env.OPENVINO_VERSION_FULL }}
- 
--<<<<<<< ours
-   windows-2022-openvino-cache:
-     runs-on: windows-2022
- 
-@@ -72,14 +71,12 @@ jobs:
-       # Sync versions in build.yml, build-self-hosted.yml, release.yml, build-cache.yml, .devops/openvino.Dockerfile
-       OPENVINO_VERSION_MAJOR: "2026.2.1"
-       OPENVINO_VERSION_FULL: "2026.2.1.21919.ede283a88e3"
--=======
-   windows-2022-rocm-cache:
-     runs-on: windows-2022
- 
-     env:
-       # Make sure this is in sync with build.yml
-       HIPSDK_INSTALLER_VERSION: "26.Q1"
-->>>>>>> theirs
- 
-     steps:
-       - name: Clone
-@@ -88,7 +85,6 @@ jobs:
- 
-       - name: Setup Cache
-         uses: actions/cache@v5
--<<<<<<< ours
-         id: cache-openvino
-         with:
-           path: ./openvino_toolkit
-@@ -126,7 +122,6 @@ jobs:
-   #       uses: ./.github/actions/windows-setup-rocm
-   #       with:
-   #         version: ${{ env.ROCM_VERSION }}
--=======
-         id: cache-rocm
-         with:
-           path: C:\Program Files\AMD\ROCm
-@@ -137,4 +132,3 @@ jobs:
-         uses: ./.github/actions/windows-setup-rocm
-         with:
-           version: ${{ env.HIPSDK_INSTALLER_VERSION }}
-->>>>>>> theirs
-diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
-index 5bc6a0b42..fb5f7cdf5 100644
---- a/.github/workflows/release.yml
-+++ b/.github/workflows/release.yml
-@@ -1424,14 +1424,11 @@ jobs:
-       - windows-cpu
-       - windows-cuda
-       #- windows-sycl
--<<<<<<< ours
-       - windows-rocm
-       - windows-openvino
-       #- ubuntu-22-rocm
--=======
-       - windows-hip
-       - ubuntu-22-rocm
-->>>>>>> theirs
-       - ubuntu-cpu
-       - ubuntu-vulkan
-       - ubuntu-24-openvino
 diff --git a/.github/workflows/server-self-hosted.yml b/.github/workflows/server-self-hosted.yml
 index dc7863b4f..4c0ece335 100644
 --- a/.github/workflows/server-self-hosted.yml
@@ -139,10 +70,10 @@ index bcef64f23..225f8645d 100644
              self.gguf_writer.add_nextn_predict_layers(num_nextn_predict_layers)
  
 diff --git a/vendor/cpp-httplib/CMakeLists.txt b/vendor/cpp-httplib/CMakeLists.txt
-index 5c7625d19..6a6eefed1 100644
+index 0c682c7b8..30ae8b47e 100644
 --- a/vendor/cpp-httplib/CMakeLists.txt
 +++ b/vendor/cpp-httplib/CMakeLists.txt
-@@ -41,11 +41,7 @@ if (LLAMA_BUILD_BORINGSSL)
+@@ -43,11 +43,7 @@ if (LLAMA_BUILD_BORINGSSL)
      set(FIPS OFF CACHE BOOL "Enable FIPS (BoringSSL)")
  
      set(BORINGSSL_GIT "https://boringssl.googlesource.com/boringssl" CACHE STRING "BoringSSL git repository")
