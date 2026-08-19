@@ -28,6 +28,9 @@
 #include "ggml.h"
 #include "llama.h"
 #include "log.h"
+#ifdef GGML_ARIFI_KV_MEANCENTER
+#include "kv-mean-center.h"
+#endif
 
 #ifdef _WIN32
 #    define WIN32_LEAN_AND_MEAN
@@ -428,6 +431,9 @@ struct cmd_params {
     std::vector<int>                 n_ubatch;
     std::vector<ggml_type>           type_k;
     std::vector<ggml_type>           type_v;
+#ifdef GGML_ARIFI_KV_MEANCENTER
+    std::string                      kv_mean_center_path;
+#endif
     std::vector<int>                 n_threads;
     std::vector<std::string>         cpu_mask;
     std::vector<bool>                cpu_strict;
@@ -479,6 +485,9 @@ static const cmd_params cmd_params_defaults = {
     /* n_ubatch             */ { 512 },
     /* type_k               */ { GGML_TYPE_F16 },
     /* type_v               */ { GGML_TYPE_F16 },
+#ifdef GGML_ARIFI_KV_MEANCENTER
+    /* kv_mean_center_path  */ "",
+#endif
     /* n_threads            */ { common_cpu_get_num_math() },
     /* cpu_mask             */ { "0x0" },
     /* cpu_strict           */ { false },
@@ -557,6 +566,9 @@ static void print_usage(int /* argc */, char ** argv) {
     printf("  -ub, --ubatch-size <n>                            (default: %s)\n", join(cmd_params_defaults.n_ubatch, ",").c_str());
     printf("  -ctk, --cache-type-k <t>                          (default: %s)\n", join(transform_to_str(cmd_params_defaults.type_k, ggml_type_name), ",").c_str());
     printf("  -ctv, --cache-type-v <t>                          (default: %s)\n", join(transform_to_str(cmd_params_defaults.type_v, ggml_type_name), ",").c_str());
+#ifdef GGML_ARIFI_KV_MEANCENTER
+    printf("  --kv-mean-center <filename>                       exact-model K-cache calibration (default: disabled)\n");
+#endif
     printf("  -t, --threads <n>                                 (default: %s)\n", join(cmd_params_defaults.n_threads, ",").c_str());
     printf("  -C, --cpu-mask <hex,hex>                          (default: %s)\n", join(cmd_params_defaults.cpu_mask, ",").c_str());
     printf("  --cpu-strict <0|1>                                (default: %s)\n", join(cmd_params_defaults.cpu_strict, ",").c_str());
@@ -797,6 +809,14 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                     break;
                 }
                 params.type_v.insert(params.type_v.end(), types.begin(), types.end());
+#ifdef GGML_ARIFI_KV_MEANCENTER
+            } else if (arg == "--kv-mean-center") {
+                if (++i >= argc || argv[i][0] == '\0') {
+                    invalid_param = true;
+                    break;
+                }
+                params.kv_mean_center_path = argv[i];
+#endif
             } else if (arg == "-dev" || arg == "--device") {
                 if (++i >= argc) {
                     invalid_param = true;
@@ -2581,6 +2601,9 @@ int llama_bench(int argc, char ** argv) {
 
     llama_model *               lmodel    = nullptr;
     const cmd_params_instance * prev_inst = nullptr;
+#ifdef GGML_ARIFI_KV_MEANCENTER
+    std::string kv_mean_center_model_sha256;
+#endif
 
     // store context state for repeated benchmarks with matching cache and repack settings
     // ref: https://github.com/ggml-org/llama.cpp/pull/16944#issuecomment-3478151721
@@ -2655,9 +2678,26 @@ int llama_bench(int argc, char ** argv) {
                 fprintf(stderr, "%s: error: failed to load model '%s'\n", __func__, inst.model.c_str());
                 return 1;
             }
+#ifdef GGML_ARIFI_KV_MEANCENTER
+            kv_mean_center_model_sha256.clear();
+            if (!params.kv_mean_center_path.empty() &&
+                    !common_kv_mean_center_model_sha256(
+                        inst.model, lmodel, kv_mean_center_model_sha256)) {
+                fprintf(stderr, "%s: error: failed to bind K-cache calibration to model '%s'\n",
+                        __func__, inst.model.c_str());
+                llama_model_free(lmodel);
+                return 1;
+            }
+#endif
             prev_inst = &inst;
         }
 
+#ifdef GGML_ARIFI_KV_MEANCENTER
+        if (!params.kv_mean_center_path.empty()) {
+            cparams.path_kv_mean_center = params.kv_mean_center_path.c_str();
+            cparams.kv_mean_center_model_sha256 = kv_mean_center_model_sha256.c_str();
+        }
+#endif
         llama_context * ctx = llama_init_from_model(lmodel, cparams);
         if (ctx == NULL) {
             fprintf(stderr, "%s: error: failed to create context with model '%s'\n", __func__, inst.model.c_str());

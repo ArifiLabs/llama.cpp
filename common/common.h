@@ -616,6 +616,7 @@ struct common_params {
     // only takes effect when cache_type_k == GGML_TYPE_Q4_0; see docs/kv-mean-center.md
     std::string kv_mean_center_path = "";
     std::string kv_mean_center_model_sha256 = "";
+    std::string kv_mean_center_probe_output = "";
 #endif
 
     common_conversation_mode conversation_mode = COMMON_CONVERSATION_MODE_AUTO;
