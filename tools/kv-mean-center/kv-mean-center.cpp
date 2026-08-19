@@ -292,12 +292,21 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    if (!common_kv_mean_center_write(params.out_file, layers, g_collector.saw_k_rot())) {
+    std::string model_sha256;
+    if (!common_kv_mean_center_model_sha256(params.model.path, model, model_sha256)) {
+        LOG_ERR("%s: refusing to emit an unbound calibration artifact\n", __func__);
         return 1;
     }
 
-    LOG_INF("%s: wrote K-cache mean-centering bias for %zu layer(s) to %s (measured with K rotation %s)\n",
-            __func__, layers.size(), params.out_file.c_str(), g_collector.saw_k_rot() ? "active" : "inactive");
+    if (!common_kv_mean_center_write(
+                params.out_file, layers, model_sha256, g_collector.saw_k_rot())) {
+        return 1;
+    }
+
+    LOG_INF("%s: wrote K-cache mean-centering bias for %zu layer(s) to %s "
+            "(model %s; measured with K rotation %s)\n",
+            __func__, layers.size(), params.out_file.c_str(), model_sha256.c_str(),
+            g_collector.saw_k_rot() ? "active" : "inactive");
 
     llama_backend_free();
 

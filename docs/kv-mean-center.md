@@ -67,11 +67,17 @@ attention).
 
 ## Bias file format
 
-The bias file is a small GGUF file with one F32 1-D tensor per layer that has a bias, named
+The bias file is a small GGUF file with exactly one F32 1-D tensor per cache layer, named
 `kv_bar.blk.<il>.k`, holding `n_embd_head_k(il) * n_head_kv(il)` values laid out as
 `[n_embd_head_k, n_head_kv]` (channel-fastest). This matches the in-memory layout of the K tensor
 at the point it is written into the cache, so the file can be loaded directly as a small
 broadcastable bias tensor per layer.
+
+The artifact is per-model, not merely per-architecture or per-quant. It records a
+domain-separated SHA-256 over every byte of every GGUF split. When `--kv-mean-center` is used,
+startup recomputes that identity and refuses a missing, malformed, wrong-model, partial, or
+extra-layer calibration. There is no silent uncentered fallback. Exact hashing adds one
+sequential read of the model files to centered-context startup; OFF/default runs do not hash.
 
 ## Calibration
 

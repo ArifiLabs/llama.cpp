@@ -444,6 +444,9 @@ extern "C" {
         // which softmax is invariant to). currently only supported when type_k == GGML_TYPE_Q4_0.
         // see tools/kv-mean-center to generate this file and docs/kv-mean-center.md for details.
         const char * path_kv_mean_center;
+        // exact domain-separated SHA-256 over all source GGUF bytes. Required whenever
+        // path_kv_mean_center is set; the loader refuses a missing or mismatched identity.
+        const char * kv_mean_center_model_sha256;
 #endif
 
         // Abort callback

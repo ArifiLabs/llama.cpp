@@ -440,7 +440,9 @@ llama_context::llama_context(
                         "(not recurrent-only or MLA/DSA memory types)");
             }
             for (auto * kv : kvs) {
-                if (!kv->load_kv_mean_center(params.path_kv_mean_center)) {
+                if (!kv->load_kv_mean_center(
+                            params.path_kv_mean_center,
+                            params.kv_mean_center_model_sha256)) {
                     throw std::runtime_error("failed to load K-cache mean-centering bias file");
                 }
             }
@@ -3926,6 +3928,7 @@ llama_context_params llama_context_default_params() {
         /*.moe_cache_budget_mib        =*/ 0,
 #ifdef GGML_ARIFI_KV_MEANCENTER
         /*.path_kv_mean_center         =*/ nullptr,
+        /*.kv_mean_center_model_sha256 =*/ nullptr,
 #endif
         /*.abort_callback              =*/ nullptr,
         /*.abort_callback_data         =*/ nullptr,
