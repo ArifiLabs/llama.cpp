@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10488`, `9d77fa17254e1dee4b9e92504c91611a60b1359f`
-- Patches: **354**, all non-merge, applied in filename order.
+- Patches: **355**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 354 commit messages, same provenance trailers. Verified, not
+same file contents, same 355 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -433,6 +433,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 352 | `0352-sources-ciru-re-derived-315-15-and-HELD-with-all-15-.patch` | arifi-fork-base | `afeaf5f1e` | - | - | sources: ciru re-derived 315 -> 15 and HELD with all 15 reviewed (lane-156 GOAL 5) |
 | 353 | `0353-sources-advance-remotes.upstream.pin-25ae3a9b3-9d77f.patch` | arifi-fork-base | `65835bf99` | - | - | sources: advance remotes.upstream.pin 25ae3a9b3 -> 9d77fa172 (b10488) with its review |
 | 354 | `0354-sources-correct-the-turboquant-pin_review-s-FALSE-bl.patch` | arifi-fork-base | `8528be534` | - | - | sources: correct the turboquant pin_review's FALSE blocker for e130aef60 (checker F8, BLOCKING) |
+| 355 | `0355-sources-trim-the-e130aef60-blocker-to-the-ONE-item-t.patch` | arifi-fork-base | `9b9eda606` | - | - | sources: trim the e130aef60 blocker to the ONE item that survives (checker pass 2, advisory 1) |
 
 ## Measured effect, per patch
 
@@ -857,6 +858,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0352-sources-ciru-re-derived-315-15-and-HELD-with-all-15-.patch` | *(no Measured-effect trailer)* |
 | `0353-sources-advance-remotes.upstream.pin-25ae3a9b3-9d77f.patch` | *(no Measured-effect trailer)* |
 | `0354-sources-correct-the-turboquant-pin_review-s-FALSE-bl.patch` | *(no Measured-effect trailer)* |
+| `0355-sources-trim-the-e130aef60-blocker-to-the-ONE-item-t.patch` | *(no Measured-effect trailer)* |
 
 ## Unclassified
 
@@ -1150,4 +1152,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `afeaf5f1e` sources: ciru re-derived 315 -> 15 and HELD with all 15 reviewed (lane-156 GOAL 5)
 - `65835bf99` sources: advance remotes.upstream.pin 25ae3a9b3 -> 9d77fa172 (b10488) with its review
 - `8528be534` sources: correct the turboquant pin_review's FALSE blocker for e130aef60 (checker F8, BLOCKING)
+- `9b9eda606` sources: trim the e130aef60 blocker to the ONE item that survives (checker pass 2, advisory 1)
 
