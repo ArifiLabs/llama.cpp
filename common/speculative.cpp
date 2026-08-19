@@ -2581,6 +2581,13 @@ common_params common_base_params_to_speculative(const common_params & params) {
         result.model                 = params_spec.mparams;
         result.n_gpu_layers          = params_spec.n_gpu_layers;
         result.tensor_buft_overrides = params_spec.tensor_buft_overrides;
+#ifdef GGML_ARIFI_KV_MEANCENTER
+        // 4dd165625: a calibration is bound to the target model's exact bytes and K geometry.
+        // The fork centralizes draft-param derivation here, so clear it once rather than at
+        // the two server call sites used by the source branch.
+        result.kv_mean_center_path.clear();
+        result.kv_mean_center_model_sha256.clear();
+#endif
 
         if (params_spec.cpuparams.n_threads > 0) {
             result.cpuparams.n_threads       = params_spec.cpuparams.n_threads;
