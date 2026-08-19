@@ -1,4 +1,4 @@
-From ca011875bd33b4e0437c7522ecdefae4ff7d49a7 Mon Sep 17 00:00:00 2001
+From 822ce059264630929fabf2066a07523bfe3053df Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:29:24 -0400
 Subject: [PATCH] resolved/0039-model-Muse-Glimmer-Support-26841.patch
@@ -113,7 +113,7 @@ index a1b6a9c9e..eaaaaed6b 100644
  
          return p.zero_or_more(start + analysis) + start + final_msg;
 diff --git a/tools/mtmd/clip-impl.h b/tools/mtmd/clip-impl.h
-index 65fbc8dd7..2c9ea499c 100644
+index 036468699..ea8549776 100644
 --- a/tools/mtmd/clip-impl.h
 +++ b/tools/mtmd/clip-impl.h
 @@ -488,13 +488,10 @@ enum projector_type {
@@ -158,10 +158,10 @@ index 27a36d28e..6c0101180 100644
 +    ggml_cgraph * build() override;
 +};
 diff --git a/tools/mtmd/mtmd-image.cpp b/tools/mtmd/mtmd-image.cpp
-index 2a7cd82d5..911146ba6 100644
+index 57fc979ee..86eb4211e 100644
 --- a/tools/mtmd/mtmd-image.cpp
 +++ b/tools/mtmd/mtmd-image.cpp
-@@ -1790,3 +1790,65 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
+@@ -1807,3 +1807,65 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
      output.append(hparams, resized_image, true);
      return output;
  }

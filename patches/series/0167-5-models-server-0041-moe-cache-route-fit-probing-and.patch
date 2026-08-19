@@ -1,4 +1,4 @@
-From cd9f8e17447cdcfe920217db175c2a317323affd Mon Sep 17 00:00:00 2001
+From 1efb9d7ab08e8d45011c86aeb9d6a18cc424ddf4 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:39 -0400
 Subject: [PATCH] 
@@ -94,7 +94,7 @@ index ab1280945..e60a5314c 100644
          shape_inputs.push_back({tensor.type, tensor.expert_size, tensor_bytes,
                  caps.scratch_bytes, caps.pool_bytes, cacheable});
 diff --git a/tools/mtmd/clip-impl.h b/tools/mtmd/clip-impl.h
-index 2c9ea499c..65fbc8dd7 100644
+index ea8549776..036468699 100644
 --- a/tools/mtmd/clip-impl.h
 +++ b/tools/mtmd/clip-impl.h
 @@ -488,10 +488,13 @@ enum projector_type {
@@ -139,10 +139,10 @@ index 3631d849b..27a36d28e 100644
 +    ggml_cgraph * build() override;
 +};
 diff --git a/tools/mtmd/mtmd-image.cpp b/tools/mtmd/mtmd-image.cpp
-index 769b6efe6..2a7cd82d5 100644
+index 0d9db4f62..57fc979ee 100644
 --- a/tools/mtmd/mtmd-image.cpp
 +++ b/tools/mtmd/mtmd-image.cpp
-@@ -1728,3 +1728,65 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
+@@ -1745,3 +1745,65 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
      output.append(hparams, resized_image, true);
      return output;
  }
