@@ -74,6 +74,19 @@ decode samples per arm using `llama-bench`. It refuses mixed binary hashes, iden
 and evaluation corpora, process overlap, missing probe layers, non-Vulkan probe buffers, and a
 PPL gain that does not exceed twice the pooled standard error.
 
+The same harness also fail-closes the default-OFF byte-identity proof after two clean native builds:
+
+```powershell
+C:/ArifiLabs/shared/.venv/Scripts/python.exe tools/kv-mean-center/ab-proof.py verify-off-identity `
+  --base-bin-dir C:/ArifiLabs/research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs/off-base-bin `
+  --feature-bin-dir C:/ArifiLabs/research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs/off-feature-bin `
+  --output C:/ArifiLabs/research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs/off-identity.json
+```
+
+Every common `.exe` and `.dll` must hash identically. The only permitted feature-only artifacts
+are `llama-kv-mean-center.exe` and `test-kv-mean-center.exe`; missing base artifacts, unexpected
+new binaries, or any byte mismatch return RED.
+
 The seated model's generated side artifact belongs beside its source model under the registered
 `models` machine home:
 
