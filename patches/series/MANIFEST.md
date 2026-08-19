@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10488`, `9d77fa17254e1dee4b9e92504c91611a60b1359f`
-- Patches: **355**, all non-merge, applied in filename order.
+- Patches: **359**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 355 commit messages, same provenance trailers. Verified, not
+same file contents, same 359 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -434,6 +434,10 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 353 | `0353-sources-advance-remotes.upstream.pin-25ae3a9b3-9d77f.patch` | arifi-fork-base | `65835bf99` | - | - | sources: advance remotes.upstream.pin 25ae3a9b3 -> 9d77fa172 (b10488) with its review |
 | 354 | `0354-sources-correct-the-turboquant-pin_review-s-FALSE-bl.patch` | arifi-fork-base | `8528be534` | - | - | sources: correct the turboquant pin_review's FALSE blocker for e130aef60 (checker F8, BLOCKING) |
 | 355 | `0355-sources-trim-the-e130aef60-blocker-to-the-ONE-item-t.patch` | arifi-fork-base | `9b9eda606` | - | - | sources: trim the e130aef60 blocker to the ONE item that survives (checker pass 2, advisory 1) |
+| 356 | `0356-feat-kv-cache-port-flag-gated-mean-centering.patch` | arifi-fork-base | `6b9a2e121` | prisml/prism-v6@b075a360c | - | feat(kv-cache): port flag-gated mean centering |
+| 357 | `0357-feat-kv-cache-bind-calibration-to-exact-model.patch` | arifi-fork-base | `932d33fe1` | prisml/prism-v6@b075a360c | - | feat(kv-cache): bind calibration to exact model |
+| 358 | `0358-fix-server-keep-target-calibration-out-of-draft-cont.patch` | arifi-fork-base | `8a05ba3c8` | prisml/prism@4dd165625 | - | fix(server): keep target calibration out of draft contexts |
+| 359 | `0359-test-kv-cache-add-Vulkan-tensor-probe-and-bench-pure.patch` | arifi-fork-base | `f56cf26f1` | - | - | test(kv-cache): add Vulkan tensor probe and bench-pure A/B harness |
 
 ## Measured effect, per patch
 
@@ -859,6 +863,10 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0353-sources-advance-remotes.upstream.pin-25ae3a9b3-9d77f.patch` | *(no Measured-effect trailer)* |
 | `0354-sources-correct-the-turboquant-pin_review-s-FALSE-bl.patch` | *(no Measured-effect trailer)* |
 | `0355-sources-trim-the-e130aef60-blocker-to-the-ONE-item-t.patch` | *(no Measured-effect trailer)* |
+| `0356-feat-kv-cache-port-flag-gated-mean-centering.patch` | UNMEASURED |
+| `0357-feat-kv-cache-bind-calibration-to-exact-model.patch` | UNMEASURED (native toolchain execution denied in managed seat) |
+| `0358-fix-server-keep-target-calibration-out-of-draft-cont.patch` | UNMEASURED (native toolchain execution denied in managed seat) |
+| `0359-test-kv-cache-add-Vulkan-tensor-probe-and-bench-pure.patch` | harness selftest PASS; native build/model effect UNMEASURED (HQ-OWED) |
 
 ## Unclassified
 
@@ -1153,4 +1161,8 @@ rather than silently bucketed - add a rule when a new source appears.
 - `65835bf99` sources: advance remotes.upstream.pin 25ae3a9b3 -> 9d77fa172 (b10488) with its review
 - `8528be534` sources: correct the turboquant pin_review's FALSE blocker for e130aef60 (checker F8, BLOCKING)
 - `9b9eda606` sources: trim the e130aef60 blocker to the ONE item that survives (checker pass 2, advisory 1)
+- `6b9a2e121` feat(kv-cache): port flag-gated mean centering
+- `932d33fe1` feat(kv-cache): bind calibration to exact model
+- `8a05ba3c8` fix(server): keep target calibration out of draft contexts
+- `f56cf26f1` test(kv-cache): add Vulkan tensor probe and bench-pure A/B harness
 
