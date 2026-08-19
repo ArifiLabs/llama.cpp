@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10488`, `9d77fa17254e1dee4b9e92504c91611a60b1359f`
-- Patches: **360**, all non-merge, applied in filename order.
+- Patches: **361**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 360 commit messages, same provenance trailers. Verified, not
+same file contents, same 361 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -439,6 +439,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 358 | `0358-fix-server-keep-target-calibration-out-of-draft-cont.patch` | arifi-fork-base | `8a05ba3c8` | prisml/prism@4dd165625 | - | fix(server): keep target calibration out of draft contexts |
 | 359 | `0359-test-kv-cache-add-Vulkan-tensor-probe-and-bench-pure.patch` | arifi-fork-base | `f56cf26f1` | - | - | test(kv-cache): add Vulkan tensor probe and bench-pure A/B harness |
 | 360 | `0360-sources-record-lane-158-PrismML-K-cache-disposition.patch` | arifi-fork-base | `efc3eec68` | - | - | sources: record lane-158 PrismML K-cache disposition |
+| 361 | `0361-test-kv-cache-fail-close-default-OFF-binary-identity.patch` | arifi-fork-base | `8fd1ef2f0` | - | - | test(kv-cache): fail-close default-OFF binary identity |
 
 ## Measured effect, per patch
 
@@ -869,6 +870,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0358-fix-server-keep-target-calibration-out-of-draft-cont.patch` | UNMEASURED (native toolchain execution denied in managed seat) |
 | `0359-test-kv-cache-add-Vulkan-tensor-probe-and-bench-pure.patch` | harness selftest PASS; native build/model effect UNMEASURED (HQ-OWED) |
 | `0360-sources-record-lane-158-PrismML-K-cache-disposition.patch` | source census corrected; native model effect UNMEASURED (HQ-OWED) |
+| `0361-test-kv-cache-fail-close-default-OFF-binary-identity.patch` | clean fixture PASS; planted byte mismatch RED; native identity UNMEASURED (HQ-OWED) |
 
 ## Unclassified
 
@@ -1168,4 +1170,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `8a05ba3c8` fix(server): keep target calibration out of draft contexts
 - `f56cf26f1` test(kv-cache): add Vulkan tensor probe and bench-pure A/B harness
 - `efc3eec68` sources: record lane-158 PrismML K-cache disposition
+- `8fd1ef2f0` test(kv-cache): fail-close default-OFF binary identity
 
