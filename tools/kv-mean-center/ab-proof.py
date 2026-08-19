@@ -24,6 +24,7 @@ from typing import Any
 
 
 SCHEMA = "arifilabs.kv-mean-center.ab-proof.v1"
+OFF_IDENTITY_SCHEMA = "arifilabs.kv-mean-center.off-identity.v1"
 PPL_RE = re.compile(r"PPL\s*=\s*([0-9]+(?:\.[0-9]+)?)(?:\s*\+/-\s*([0-9]+(?:\.[0-9]+)?))?")
 HEAVY_RE = re.compile(r"(?i)(cmake|ninja|cc1plus|clang\+\+|llama-(?:server|cli|perplexity|bench|kv-mean-center))")
 GATE_PYTHON = Path("C:/ArifiLabs/products/CareerCommand/.venv/Scripts/python.exe")
@@ -178,6 +179,56 @@ def summarize(off_ppl: list[float], on_ppl: list[float], off_ts: list[float], on
     }
 
 
+def compare_off_identity(base_bin: Path, feature_bin: Path) -> dict[str, Any]:
+    allowed_feature_only = {"llama-kv-mean-center.exe", "test-kv-mean-center.exe"}
+
+    def artifacts(root: Path) -> dict[str, Path]:
+        require_file(root / "llama-server.exe", "OFF-identity anchor executable")
+        return {
+            path.relative_to(root).as_posix(): path
+            for path in sorted(root.rglob("*"))
+            if path.is_file() and path.suffix.lower() in {".exe", ".dll"}
+        }
+
+    base = artifacts(base_bin.resolve())
+    feature = artifacts(feature_bin.resolve())
+    base_only = sorted(set(base) - set(feature))
+    feature_only = sorted(set(feature) - set(base))
+    unexpected_feature_only = [name for name in feature_only if Path(name).name not in allowed_feature_only]
+    common = sorted(set(base) & set(feature))
+    rows = []
+    mismatches = []
+    for name in common:
+        base_hash = sha256(base[name])
+        feature_hash = sha256(feature[name])
+        identical = base_hash == feature_hash
+        if not identical:
+            mismatches.append(name)
+        rows.append({
+            "path": name,
+            "base_sha256": base_hash,
+            "feature_sha256": feature_hash,
+            "base_size": base[name].stat().st_size,
+            "feature_size": feature[name].stat().st_size,
+            "base_mtime_ns": base[name].stat().st_mtime_ns,
+            "feature_mtime_ns": feature[name].stat().st_mtime_ns,
+            "identical": identical,
+        })
+    passed = bool(common) and not base_only and not unexpected_feature_only and not mismatches
+    return {
+        "schema": OFF_IDENTITY_SCHEMA,
+        "base_bin": str(base_bin.resolve()),
+        "feature_bin": str(feature_bin.resolve()),
+        "common_artifact_count": len(common),
+        "base_only": base_only,
+        "feature_only_allowed": feature_only,
+        "feature_only_unexpected": unexpected_feature_only,
+        "byte_mismatches": mismatches,
+        "artifacts": rows,
+        "verdict": "PASS" if passed else "RED",
+    }
+
+
 def verify_bank(out_dir: Path, *, planted_overlap: bool = False) -> dict[str, Any]:
     manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("schema") != SCHEMA:
@@ -326,6 +377,8 @@ def selftest(out_dir: Path) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     good_fixture = False
     planted_error = None
+    off_identity_good_fixture = False
+    off_identity_planted_red = False
     with tempfile.TemporaryDirectory(prefix="ab-proof-selftest-", dir=out_dir) as tmp:
         bank = Path(tmp)
         write_json(bank / "manifest.json", {
@@ -363,15 +416,35 @@ def selftest(out_dir: Path) -> int:
             verify_bank(bank, planted_overlap=True)
         except ProofError as exc:
             planted_error = str(exc)
+
+        base_bin = bank / "off-base"
+        feature_bin = bank / "off-feature"
+        base_bin.mkdir()
+        feature_bin.mkdir()
+        for name, content in (("llama-server.exe", b"server"), ("llama.dll", b"llama")):
+            (base_bin / name).write_bytes(content)
+            (feature_bin / name).write_bytes(content)
+        (feature_bin / "llama-kv-mean-center.exe").write_bytes(b"new opt-in tool")
+        off_identity_good_fixture = compare_off_identity(base_bin, feature_bin)["verdict"] == "PASS"
+        (feature_bin / "llama.dll").write_bytes(b"planted mismatch")
+        off_identity_planted_red = compare_off_identity(base_bin, feature_bin)["verdict"] == "RED"
     result = {
         "schema": "arifilabs.kv-mean-center.ab-proof-selftest.v1",
         "good_fixture_gain_beats_noise": good_fixture,
         "planted_violation_returned_red": planted_error is not None,
         "planted_violation": planted_error,
+        "off_identity_good_fixture": off_identity_good_fixture,
+        "off_identity_planted_mismatch_returned_red": off_identity_planted_red,
     }
     write_json(out_dir / "ab-proof-selftest.json", result)
     print(json.dumps(result, indent=2))
-    return 0 if all((result["good_fixture_gain_beats_noise"], result["planted_violation_returned_red"])) else 1
+    required = (
+        result["good_fixture_gain_beats_noise"],
+        result["planted_violation_returned_red"],
+        result["off_identity_good_fixture"],
+        result["off_identity_planted_mismatch_returned_red"],
+    )
+    return 0 if all(required) else 1
 
 
 def parser() -> argparse.ArgumentParser:
@@ -391,6 +464,10 @@ def parser() -> argparse.ArgumentParser:
     verify_p = sub.add_parser("verify")
     verify_p.add_argument("--output-dir", type=Path, required=True)
     verify_p.add_argument("--plant-overlap", action="store_true")
+    identity_p = sub.add_parser("verify-off-identity")
+    identity_p.add_argument("--base-bin-dir", type=Path, required=True)
+    identity_p.add_argument("--feature-bin-dir", type=Path, required=True)
+    identity_p.add_argument("--output", type=Path, required=True)
     test_p = sub.add_parser("selftest")
     test_p.add_argument("--output-dir", type=Path, required=True)
     return p
@@ -408,6 +485,11 @@ def main() -> int:
             write_json(args.output_dir.resolve() / "summary.rederived.json", summary)
             print(json.dumps(summary, indent=2))
             return 0 if summary["verdict"] == "GO" else 2
+        if args.command == "verify-off-identity":
+            result = compare_off_identity(args.base_bin_dir, args.feature_bin_dir)
+            write_json(args.output.resolve(), result)
+            print(json.dumps(result, indent=2))
+            return 0 if result["verdict"] == "PASS" else 2
         return selftest(args.output_dir.resolve())
     except (OSError, ValueError, KeyError, ProofError, statistics.StatisticsError) as exc:
         print(f"AB-PROOF RED: {exc}", file=sys.stderr)
