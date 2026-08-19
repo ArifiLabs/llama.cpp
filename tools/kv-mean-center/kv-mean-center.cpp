@@ -12,11 +12,17 @@
 #include "kv-mean-center.h"
 #include "log.h"
 #include "llama.h"
+#include "gguf.h"
 
 #include <algorithm>
+#include <cinttypes>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iomanip>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -28,6 +34,9 @@ public:
     bool collect(struct ggml_tensor * t, bool ask);
 
     std::vector<common_kv_mean_center_layer> finalize() const;
+
+    void enable_probe() { m_probe_enabled = true; }
+    bool write_probe(const std::string & output_path, const std::string & calibration_path) const;
 
     bool saw_k_rot() const { return m_saw_k_rot; }
 
@@ -44,6 +53,19 @@ private:
     // "attn_inp_k_rot" input, so it shows up in the ancestry of "k_cache_in-<il>".
     // recorded in the output file so the loader can reject a basis mismatch.
     bool m_saw_k_rot = false;
+
+    struct probe_layer {
+        std::vector<double> delta_sum;
+        int64_t             token_count = 0;
+        double              max_abs_delta = 0.0;
+        std::string         pre_buffer;
+        std::string         post_buffer;
+    };
+
+    bool m_probe_enabled = false;
+    bool m_probe_failed  = false;
+    std::unordered_map<int32_t, std::vector<float>> m_probe_pre;
+    std::unordered_map<int32_t, probe_layer>        m_probe_layers;
 };
 
 // look for the "attn_inp_k_rot" input within a few links of the captured tensor. matched as a
@@ -65,9 +87,8 @@ static bool tensor_has_k_rot_ancestor(const struct ggml_tensor * t, int depth = 
 }
 
 // "k_cache_in-<il>" -> il, as formatted by llm_graph_context::cb() (ggml_format_name("%s-%d", ...))
-static bool parse_k_cache_in_layer(const char * name, int32_t & il) {
-    static const char prefix[] = "k_cache_in-";
-    const size_t n = sizeof(prefix) - 1;
+static bool parse_layer_name(const char * name, const char * prefix, int32_t & il) {
+    const size_t n = strlen(prefix);
 
     if (strncmp(name, prefix, n) != 0) {
         return false;
@@ -85,7 +106,10 @@ static bool parse_k_cache_in_layer(const char * name, int32_t & il) {
 
 bool kv_mean_collector::collect(struct ggml_tensor * t, bool ask) {
     int32_t il = -1;
-    if (!parse_k_cache_in_layer(t->name, il)) {
+    const bool is_pre  = parse_layer_name(t->name, "k_cache_in-", il);
+    const bool is_post = !is_pre && m_probe_enabled &&
+            parse_layer_name(t->name, "k_cache_centered-", il);
+    if (!is_pre && !is_post) {
         return false;
     }
 
@@ -96,7 +120,7 @@ bool kv_mean_collector::collect(struct ggml_tensor * t, bool ask) {
 
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    if (!m_saw_k_rot && tensor_has_k_rot_ancestor(t)) {
+    if (is_pre && !m_saw_k_rot && tensor_has_k_rot_ancestor(t)) {
         m_saw_k_rot = true;
     }
 
@@ -143,6 +167,46 @@ bool kv_mean_collector::collect(struct ggml_tensor * t, bool ask) {
         f = m_f32_buf.data();
     }
 
+    if (is_post) {
+        auto pre = m_probe_pre.find(il);
+        if (pre == m_probe_pre.end() || pre->second.size() != (size_t) n_elem) {
+            LOG_ERR("%s: centered tensor for layer %d has no shape-matched pre-centering sample\n",
+                    __func__, il);
+            m_probe_failed = true;
+            return true;
+        }
+
+        auto & probe = m_probe_layers[il];
+        const size_t n_channel = (size_t) (n_embd_head*n_head);
+        if (probe.delta_sum.empty()) {
+            probe.delta_sum.assign(n_channel, 0.0);
+        }
+        if (probe.delta_sum.size() != n_channel) {
+            LOG_ERR("%s: probe channel geometry changed for layer %d\n", __func__, il);
+            m_probe_failed = true;
+            return true;
+        }
+        probe.post_buffer = t->buffer ? ggml_backend_buffer_name(t->buffer) : "none";
+        for (int64_t i2 = 0; i2 < n_tokens; ++i2) {
+            for (int64_t i1 = 0; i1 < n_head; ++i1) {
+                for (int64_t i0 = 0; i0 < n_embd_head; ++i0) {
+                    const size_t channel = (size_t) (i1*n_embd_head + i0);
+                    const size_t idx = (size_t) ((i2*n_head + i1)*n_embd_head + i0);
+                    const double delta = (double) pre->second[idx] - (double) f[idx];
+                    probe.delta_sum[channel] += delta;
+                    probe.max_abs_delta = std::max(probe.max_abs_delta, std::abs(delta));
+                }
+            }
+        }
+        probe.token_count += n_tokens;
+        return true;
+    }
+
+    if (m_probe_enabled) {
+        m_probe_pre[il].assign(f, f + n_elem);
+        m_probe_layers[il].pre_buffer = t->buffer ? ggml_backend_buffer_name(t->buffer) : "none";
+    }
+
     for (int64_t i2 = 0; i2 < n_tokens; ++i2) {
         for (int64_t i1 = 0; i1 < n_head; ++i1) {
             for (int64_t i0 = 0; i0 < n_embd_head; ++i0) {
@@ -154,6 +218,126 @@ bool kv_mean_collector::collect(struct ggml_tensor * t, bool ask) {
     m_count[il] += n_tokens;
 
     return true;
+}
+
+static std::string json_escape(const std::string & value) {
+    std::string out;
+    out.reserve(value.size());
+    for (const char c : value) {
+        switch (c) {
+            case '\\': out += "\\\\"; break;
+            case '"':  out += "\\\""; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:   out += c;       break;
+        }
+    }
+    return out;
+}
+
+bool kv_mean_collector::write_probe(
+        const std::string & output_path,
+        const std::string & calibration_path) const {
+    if (m_probe_failed || m_probe_layers.empty()) {
+        LOG_ERR("%s: tensor probe did not capture a complete pre/post pair\n", __func__);
+        return false;
+    }
+
+    ggml_context * ctx_data = nullptr;
+    gguf_init_params params = {
+        /*.no_alloc =*/ false,
+        /*.ctx      =*/ &ctx_data,
+    };
+    gguf_context * ctx_gguf = gguf_init_from_file(calibration_path.c_str(), params);
+    if (!ctx_gguf) {
+        LOG_ERR("%s: cannot read calibration %s for tensor-probe comparison\n",
+                __func__, calibration_path.c_str());
+        return false;
+    }
+
+    std::vector<int32_t> layer_ids;
+    layer_ids.reserve(m_probe_layers.size());
+    for (const auto & entry : m_probe_layers) {
+        layer_ids.push_back(entry.first);
+    }
+    std::sort(layer_ids.begin(), layer_ids.end());
+
+    const int64_t expected_layers = gguf_get_n_tensors(ctx_gguf);
+    if ((int64_t) layer_ids.size() != expected_layers) {
+        LOG_ERR("%s: tensor probe captured %zu layer(s), but calibration contains %" PRId64 "\n",
+                __func__, layer_ids.size(), expected_layers);
+        gguf_free(ctx_gguf);
+        ggml_free(ctx_data);
+        return false;
+    }
+    for (int64_t expected = 0; expected < expected_layers; ++expected) {
+        if (layer_ids[(size_t) expected] != expected) {
+            LOG_ERR("%s: tensor probe is missing calibration layer %" PRId64 "\n", __func__, expected);
+            gguf_free(ctx_gguf);
+            ggml_free(ctx_data);
+            return false;
+        }
+    }
+
+    bool ok = true;
+    double global_max_error = 0.0;
+    bool all_vulkan = true;
+    std::ostringstream rows;
+    rows << std::setprecision(10);
+    for (size_t row = 0; row < layer_ids.size(); ++row) {
+        const int32_t il = layer_ids[row];
+        const auto & probe = m_probe_layers.at(il);
+        const std::string tensor_name = "kv_bar.blk." + std::to_string(il) + ".k";
+        ggml_tensor * bias = ggml_get_tensor(ctx_data, tensor_name.c_str());
+        if (!bias || bias->type != GGML_TYPE_F32 ||
+                (size_t) ggml_nelements(bias) != probe.delta_sum.size() || probe.token_count == 0) {
+            LOG_ERR("%s: calibration tensor %s does not match captured probe geometry\n",
+                    __func__, tensor_name.c_str());
+            ok = false;
+            break;
+        }
+
+        const float * expected = (const float *) bias->data;
+        double max_error = 0.0;
+        for (size_t i = 0; i < probe.delta_sum.size(); ++i) {
+            const double measured = probe.delta_sum[i] / (double) probe.token_count;
+            max_error = std::max(max_error, std::abs(measured - (double) expected[i]));
+        }
+        global_max_error = std::max(global_max_error, max_error);
+        const bool layer_vulkan = probe.pre_buffer.find("Vulkan") != std::string::npos &&
+                probe.post_buffer.find("Vulkan") != std::string::npos;
+        all_vulkan = all_vulkan && layer_vulkan;
+        if (row != 0) {
+            rows << ",\n";
+        }
+        rows << "    {\"layer\": " << il
+             << ", \"pre_buffer\": \"" << json_escape(probe.pre_buffer)
+             << "\", \"post_buffer\": \"" << json_escape(probe.post_buffer)
+             << "\", \"token_count\": " << probe.token_count
+             << ", \"max_abs_delta\": " << probe.max_abs_delta
+             << ", \"max_abs_error_vs_calibration\": " << max_error << "}";
+    }
+
+    std::ofstream out(output_path, std::ios::binary | std::ios::trunc);
+    if (!ok || !out) {
+        LOG_ERR("%s: cannot write tensor probe to %s\n", __func__, output_path.c_str());
+        gguf_free(ctx_gguf);
+        ggml_free(ctx_data);
+        return false;
+    }
+    out << std::setprecision(10)
+        << "{\n"
+        << "  \"schema\": \"arifilabs.kv-mean-center.tensor-probe.v1\",\n"
+        << "  \"calibration\": \"" << json_escape(calibration_path) << "\",\n"
+        << "  \"layer_count\": " << layer_ids.size() << ",\n"
+        << "  \"all_pre_post_buffers_vulkan\": " << (all_vulkan ? "true" : "false") << ",\n"
+        << "  \"global_max_abs_error_vs_calibration\": " << global_max_error << ",\n"
+        << "  \"layers\": [\n" << rows.str() << "\n  ]\n}\n";
+
+    gguf_free(ctx_gguf);
+    ggml_free(ctx_data);
+    return (bool) out;
 }
 
 std::vector<common_kv_mean_center_layer> kv_mean_collector::finalize() const {
@@ -198,6 +382,7 @@ static void print_usage(int, char ** argv) {
     LOG("\n");
     LOG("Computes a per-layer K-cache mean-centering bias file for use with --kv-mean-center\n");
     LOG("(which requires --cache-type-k q4_0). See docs/kv-mean-center.md.\n\n");
+    LOG("Tensor proof: add --kv-mean-center existing.gguf --kv-mean-center-probe-output proof.json\n\n");
 }
 
 int main(int argc, char ** argv) {
@@ -216,6 +401,15 @@ int main(int argc, char ** argv) {
     if (params.prompt.empty()) {
         LOG_ERR("%s: no calibration text provided (use -f FNAME)\n", __func__);
         return 1;
+    }
+
+    const bool probe_mode = !params.kv_mean_center_probe_output.empty();
+    if (probe_mode && params.kv_mean_center_path.empty()) {
+        LOG_ERR("%s: --kv-mean-center-probe-output requires --kv-mean-center\n", __func__);
+        return 1;
+    }
+    if (probe_mode) {
+        g_collector.enable_probe();
     }
 
     llama_backend_init();
@@ -290,6 +484,17 @@ int main(int argc, char ** argv) {
         LOG_ERR("%s: no K-cache activity was captured; this model may not use the standard "
                 "attention KV-cache path that k_cache_in is tagged on\n", __func__);
         return 1;
+    }
+
+    if (probe_mode) {
+        if (!g_collector.write_probe(
+                    params.kv_mean_center_probe_output, params.kv_mean_center_path)) {
+            return 1;
+        }
+        LOG_INF("%s: wrote tensor-level Vulkan centering proof for %zu layer(s) to %s\n",
+                __func__, layers.size(), params.kv_mean_center_probe_output.c_str());
+        llama_backend_free();
+        return 0;
     }
 
     std::string model_sha256;

@@ -65,6 +65,51 @@ any required layer is absent, or if metadata is missing/malformed. A requested c
 falls back to an uncentered cache. The exact identity check costs one sequential model-file read
 at centered-context startup; the default/OFF path has no hashing cost.
 
+## ArifiLabs native A/B proof
+
+`ab-proof.py` is the lane-158 bench-purity runner and independent verifier. It generates the
+calibration, fires the missing-file refusal, captures a tensor-level pre/post subtraction probe on
+Vulkan, runs three alternating 8192-context perplexity replications per arm, and compares three
+decode samples per arm using `llama-bench`. It refuses mixed binary hashes, identical calibration
+and evaluation corpora, process overlap, missing probe layers, non-Vulkan probe buffers, and a
+PPL gain that does not exceed twice the pooled standard error.
+
+The seated model's generated side artifact belongs beside its source model under the registered
+`models` machine home:
+
+```powershell
+$ev = 'C:/ArifiLabs/research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs'
+$zip = "$ev/wikitext-2-raw-v1.zip"
+New-Item -ItemType Directory -Force -Path "$ev/corpora" | Out-Null
+Invoke-WebRequest `
+  -Uri 'https://huggingface.co/datasets/ggml-org/ci/resolve/main/wikitext-2-raw-v1.zip' `
+  -OutFile $zip
+Expand-Archive -LiteralPath $zip -DestinationPath "$ev/corpora" -Force
+
+C:/ArifiLabs/shared/.venv/Scripts/python.exe tools/kv-mean-center/ab-proof.py run `
+  --bin-dir C:/ArifiLabs/research/local-inference/src/_158kcache/build-vulkan/bin `
+  --model C:/ArifiLabs/models/hf/AtomicChat/Qwen3.8-27B-GGUF/Qwen3.8-27B-AD-IQ4_XS.gguf `
+  --calibration-corpus "$ev/corpora/wikitext-2-raw/wiki.train.raw" `
+  --evaluation-corpus "$ev/corpora/wikitext-2-raw/wiki.test.raw" `
+  --calibration-output C:/ArifiLabs/models/hf/AtomicChat/Qwen3.8-27B-GGUF/kv-mean-center-q4_0.gguf `
+  --output-dir $ev
+```
+
+The calibration uses WikiText-2 train and evaluation uses the disjoint test split. Both hashes are
+banked and the runner refuses identical bytes. Every native command is banked,
+declared through `CC_RUN_ANNOUNCE`, run with the 7.0 GB floor, redirected through `cmd.exe`, and
+surrounded by full-command-line process scans. Re-derive a completed bank with:
+
+```powershell
+C:/ArifiLabs/shared/.venv/Scripts/python.exe tools/kv-mean-center/ab-proof.py verify `
+  --output-dir C:/ArifiLabs/research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs
+```
+
+`--kv-mean-center-probe-output proof.json` is specific to `llama-kv-mean-center`. In probe mode the
+tool reads the centered graph tensors back from their real backend buffers and checks that
+`K_before - K_after` matches every bound calibration channel (maximum absolute error is reported),
+rather than treating a CLI flag or loader banner as path-engagement proof.
+
 ## Interaction with the Hadamard K-cache rotation: calibrate with matching cache settings
 
 This fork's optional Hadamard rotation is active for quantized K caches whose head dimension is a

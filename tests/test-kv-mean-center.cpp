@@ -294,6 +294,8 @@ static void test_loud_refusals() {
     const std::string wrong_path = "test-kv-mean-center-wrong-model.gguf";
     TEST_ASSERT(common_kv_mean_center_write(
             wrong_path, complete, k_wrong_model_sha256, /*k_rot=*/true));
+    TEST_ASSERT(build_context(
+            model.get(), GGML_TYPE_Q4_0, wrong_path.c_str(), /*model_sha256=*/nullptr) == nullptr);
     TEST_ASSERT(build_context(model.get(), GGML_TYPE_Q4_0, wrong_path.c_str()) == nullptr);
     remove(wrong_path.c_str());
 

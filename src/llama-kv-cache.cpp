@@ -1619,6 +1619,7 @@ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggm
             bias = ggml_cast(ctx, bias, k_cur->type);
         }
         k_cur = ggml_sub(ctx, k_cur, bias);
+        ggml_format_name(k_cur, "k_cache_centered-%d", il);
     }
 #endif
 
