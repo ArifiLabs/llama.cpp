@@ -1,0 +1,39 @@
+From 549728b496b8218950bad7afa4246e7a216c46ae Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 19 Aug 2026 06:35:05 -0400
+Subject: [PATCH] fix(kv-cache): floor-check the model named by -m, not the
+ largest .gguf on the command line
+
+assert_load_floor called load_governor._largest_gguf(argv), which stats every .gguf-looking
+argument. The calibrator command carries "-o <calibration>", the artifact it is about to CREATE, so
+the scan stat'd a file that does not exist yet and the run died with WinError 2 before any floor was
+compared. The model is taken from -m and required to exist.
+
+With this the refusal is the real one and it names its numbers:
+  load governor REFUSED: 6.53 GB free is below the 7.0 GB system-side floor
+  {"model_gb": 15.38, "free_ram_gb": 6.53, "gpu_budget_gb": 24.0, "system_floor_gb": 7.0}
+
+Assisted-by: Claude Opus 5
+---
+ tools/kv-mean-center/ab-proof.py | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/tools/kv-mean-center/ab-proof.py b/tools/kv-mean-center/ab-proof.py
+index 26aaf5314..0bf950c2e 100644
+--- a/tools/kv-mean-center/ab-proof.py
++++ b/tools/kv-mean-center/ab-proof.py
+@@ -101,7 +101,13 @@ def assert_load_floor(argv: list[str]) -> dict[str, Any]:
+     """
+     from arifi_core import load_governor as lg  # company venv; the runbook invokes us with it
+ 
+-    model = lg._largest_gguf(argv)
++    # take the model from -m, never "largest .gguf on the command line": the calibrator's -o names
++    # the artifact it is about to CREATE, so scanning all .gguf arguments stats a file that does
++    # not exist yet and dies with WinError 2 before any floor is ever compared.
++    if "-m" not in argv:
++        raise ProofError(f"cannot floor-check a launch with no -m model: {argv}")
++    model = Path(argv[argv.index("-m") + 1])
++    require_file(model, "model for the load-governor floor check")
+     snapshot = lg._memory_snapshot()
+     free_gb = snapshot.free_bytes / lg.GIB
+     model_gb = model.stat().st_size / lg.GIB
