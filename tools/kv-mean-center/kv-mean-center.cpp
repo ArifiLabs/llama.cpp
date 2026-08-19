@@ -263,17 +263,36 @@ bool kv_mean_collector::write_probe(
     }
     std::sort(layer_ids.begin(), layer_ids.end());
 
+    // The calibrated layers are the ones that emit "k_cache_in", which is NOT every layer and is
+    // not a dense range: on a 64-layer Qwen3.8-27B the ids are 3,7,11,...,63. Compare the probed
+    // ids against the ids the calibration file actually carries, never against 0..n-1.
     const int64_t expected_layers = gguf_get_n_tensors(ctx_gguf);
-    if ((int64_t) layer_ids.size() != expected_layers) {
-        LOG_ERR("%s: tensor probe captured %zu layer(s), but calibration contains %" PRId64 "\n",
-                __func__, layer_ids.size(), expected_layers);
+    std::vector<int32_t> expected_ids;
+    expected_ids.reserve((size_t) expected_layers);
+    for (int64_t i = 0; i < expected_layers; ++i) {
+        const char * name = gguf_get_tensor_name(ctx_gguf, i);
+        int32_t il = -1;
+        if (!name || sscanf(name, "kv_bar.blk.%d.k", &il) != 1 || il < 0) {
+            LOG_ERR("%s: calibration tensor %" PRId64 " has an unexpected name '%s'\n",
+                    __func__, i, name ? name : "(null)");
+            gguf_free(ctx_gguf);
+            ggml_free(ctx_data);
+            return false;
+        }
+        expected_ids.push_back(il);
+    }
+    std::sort(expected_ids.begin(), expected_ids.end());
+
+    if (layer_ids.size() != expected_ids.size()) {
+        LOG_ERR("%s: tensor probe captured %zu layer(s), but calibration contains %zu\n",
+                __func__, layer_ids.size(), expected_ids.size());
         gguf_free(ctx_gguf);
         ggml_free(ctx_data);
         return false;
     }
-    for (int64_t expected = 0; expected < expected_layers; ++expected) {
-        if (layer_ids[(size_t) expected] != expected) {
-            LOG_ERR("%s: tensor probe is missing calibration layer %" PRId64 "\n", __func__, expected);
+    for (size_t i = 0; i < expected_ids.size(); ++i) {
+        if (layer_ids[i] != expected_ids[i]) {
+            LOG_ERR("%s: tensor probe is missing calibration layer %d\n", __func__, expected_ids[i]);
             gguf_free(ctx_gguf);
             ggml_free(ctx_data);
             return false;
