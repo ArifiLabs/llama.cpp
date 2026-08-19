@@ -350,7 +350,8 @@ def run(args: argparse.Namespace) -> int:
         require_file(path, label)
     if calibration_corpus == evaluation_corpus:
         raise ProofError("calibration and evaluation corpora must be different files")
-    if calibration.exists():
+    reuse_calibration = getattr(args, "reuse_calibration", False) and calibration.is_file()
+    if calibration.exists() and not reuse_calibration:
         raise ProofError(f"refusing to overwrite calibration artifact: {calibration}")
     if not calibration.parent.is_dir():
         raise ProofError(f"registered calibration side-home must already exist: {calibration.parent}")
@@ -403,11 +404,23 @@ def run(args: argparse.Namespace) -> int:
         runs.append(item)
         write_json(out_dir / "runs.json", runs)
 
-    bank_run(run_native(
-        [str(exes["calibrator"]), *common, "-f", str(calibration_corpus), "-o", str(calibration),
-         "-c", str(args.calibration_context), "--chunks", str(args.calibration_chunks)],
-        "calibrate exact seated model", out_dir, "calibration",
-    ))
+    if reuse_calibration:
+        # no launch happened, so there is no purity scan to record; carry the empty shape the
+        # bank verifier reads rather than a partial entry it cannot interpret
+        empty_purity = {"command_lines": [], "process_hygiene": "not run: calibration reused"}
+        bank_run({"stem": "calibration", "reused": True, "path": str(calibration),
+                  "sha256": sha256(calibration),
+                  "purity_before": empty_purity, "purity_after": empty_purity,
+                  "returncode": 0, "log": None,
+                  "note": "existing calibration reused (--reuse-calibration); not recalibrated, "
+                          "because the artifact is not byte-reproducible and a rerun would change "
+                          "the SHA-256 already published in the artifact catalog"})
+    else:
+        bank_run(run_native(
+            [str(exes["calibrator"]), *common, "-f", str(calibration_corpus), "-o", str(calibration),
+             "-c", str(args.calibration_context), "--chunks", str(args.calibration_chunks)],
+            "calibrate exact seated model", out_dir, "calibration",
+        ))
     require_file(calibration, "calibration artifact")
     manifest["calibration_sha256"] = sha256(calibration)
     write_json(out_dir / "manifest.json", manifest)
@@ -534,6 +547,10 @@ def parser() -> argparse.ArgumentParser:
     run_p.add_argument("--calibration-context", type=int, default=512)
     run_p.add_argument("--calibration-chunks", type=int, default=64)
     run_p.add_argument("--ppl-chunks", type=int, default=4)
+    # Reuse an EXISTING calibration instead of refusing. Recalibrating is not free of consequence:
+    # the artifact is not byte-reproducible, so a rerun changes its SHA-256 and invalidates the
+    # catalog row already published for it. Without this flag the overwrite refusal still stands.
+    run_p.add_argument("--reuse-calibration", action="store_true")
     verify_p = sub.add_parser("verify")
     verify_p.add_argument("--output-dir", type=Path, required=True)
     verify_p.add_argument("--plant-overlap", action="store_true")
