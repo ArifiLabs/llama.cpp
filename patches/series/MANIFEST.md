@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10488`, `9d77fa17254e1dee4b9e92504c91611a60b1359f`
-- Patches: **352**, all non-merge, applied in filename order.
+- Patches: **353**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 352 commit messages, same provenance trailers. Verified, not
+same file contents, same 353 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -431,6 +431,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 350 | `0350-sources-advance-the-turboquant-pin-7ebcbb0b6-d14e368.patch` | arifi-fork-base | `5e402b5cf` | - | - | sources: advance the turboquant pin 7ebcbb0b6 -> d14e36827 with a dated lane-156 pin_review |
 | 351 | `0351-sources-prisml-pin-HELD-deliberately-with-a-sharper-.patch` | arifi-fork-base | `0de7a647a` | - | - | sources: prisml pin HELD deliberately with a sharper reason + the v6 K-cache-mean-center verdict (lane-156 GOAL 4) |
 | 352 | `0352-sources-ciru-re-derived-315-15-and-HELD-with-all-15-.patch` | arifi-fork-base | `afeaf5f1e` | - | - | sources: ciru re-derived 315 -> 15 and HELD with all 15 reviewed (lane-156 GOAL 5) |
+| 353 | `0353-sources-advance-remotes.upstream.pin-25ae3a9b3-9d77f.patch` | arifi-fork-base | `65835bf99` | - | - | sources: advance remotes.upstream.pin 25ae3a9b3 -> 9d77fa172 (b10488) with its review |
 
 ## Measured effect, per patch
 
@@ -853,6 +854,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0350-sources-advance-the-turboquant-pin-7ebcbb0b6-d14e368.patch` | *(no Measured-effect trailer)* |
 | `0351-sources-prisml-pin-HELD-deliberately-with-a-sharper-.patch` | *(no Measured-effect trailer)* |
 | `0352-sources-ciru-re-derived-315-15-and-HELD-with-all-15-.patch` | *(no Measured-effect trailer)* |
+| `0353-sources-advance-remotes.upstream.pin-25ae3a9b3-9d77f.patch` | *(no Measured-effect trailer)* |
 
 ## Unclassified
 
@@ -1144,4 +1146,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `5e402b5cf` sources: advance the turboquant pin 7ebcbb0b6 -> d14e36827 with a dated lane-156 pin_review
 - `0de7a647a` sources: prisml pin HELD deliberately with a sharper reason + the v6 K-cache-mean-center verdict (lane-156 GOAL 4)
 - `afeaf5f1e` sources: ciru re-derived 315 -> 15 and HELD with all 15 reviewed (lane-156 GOAL 5)
+- `65835bf99` sources: advance remotes.upstream.pin 25ae3a9b3 -> 9d77fa172 (b10488) with its review
 
