@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+struct llama_model;
+
 // Shared GGUF file format for the K-cache mean-centering bias vectors produced by
 // tools/kv-mean-center and consumed by llama_kv_cache::load_kv_mean_center() (see
 // docs/kv-mean-center.md).
@@ -27,4 +29,14 @@ struct common_kv_mean_center_layer {
 bool common_kv_mean_center_write(
         const std::string & fname,
         const std::vector<common_kv_mean_center_layer> & layers,
+        const std::string & model_sha256,
         bool k_rot = false);
+
+// Compute an exact, order-sensitive SHA-256 identity over every GGUF file that makes up
+// `model`. The digest is domain-separated and includes each file length before its bytes,
+// so split-model boundaries cannot alias. Returns false loudly on an unreadable or
+// unresolvable model source.
+bool common_kv_mean_center_model_sha256(
+        const std::string & model_path,
+        const llama_model * model,
+        std::string & model_sha256);

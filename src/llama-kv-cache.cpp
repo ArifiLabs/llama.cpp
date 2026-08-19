@@ -1742,7 +1742,10 @@ ggml_tensor * llama_kv_cache::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggm
 }
 
 #ifdef GGML_ARIFI_KV_MEANCENTER
-bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
+bool llama_kv_cache::load_kv_mean_center(
+        const char * path,
+        const char * expected_model_sha256,
+        bool require_q4_0) {
     GGML_ASSERT(path != nullptr);
     GGML_ASSERT(k_bar.empty() && "K-cache mean-centering already loaded");
 
@@ -1756,6 +1759,51 @@ bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
     struct gguf_context * ctx_gguf = gguf_init_from_file(path, gguf_params);
     if (!ctx_gguf) {
         LLAMA_LOG_ERROR("%s: failed to load K-cache mean-centering bias file from %s\n", __func__, path);
+        return false;
+    }
+
+    const auto fail_metadata = [&](const char * message) {
+        LLAMA_LOG_ERROR("%s: calibration file %s %s\n", __func__, path, message);
+        gguf_free(ctx_gguf);
+        ggml_free(ctx_data);
+        return false;
+    };
+
+    if (expected_model_sha256 == nullptr || strlen(expected_model_sha256) != 64 ||
+            strspn(expected_model_sha256, "0123456789abcdef") != 64) {
+        return fail_metadata("cannot be used without an exact lowercase model SHA-256 binding");
+    }
+
+    const int64_t idx_type = gguf_find_key(ctx_gguf, "general.type");
+    if (idx_type < 0 || gguf_get_kv_type(ctx_gguf, idx_type) != GGUF_TYPE_STRING ||
+            strcmp(gguf_get_val_str(ctx_gguf, idx_type), "kv-mean-center") != 0) {
+        return fail_metadata("is not a typed K-cache mean-centering artifact");
+    }
+
+    const int64_t idx_schema = gguf_find_key(ctx_gguf, "kv_mean_center.schema_version");
+    if (idx_schema < 0 || gguf_get_kv_type(ctx_gguf, idx_schema) != GGUF_TYPE_UINT32 ||
+            gguf_get_val_u32(ctx_gguf, idx_schema) != 1) {
+        return fail_metadata("has a missing, malformed, or unsupported schema version");
+    }
+
+    const int64_t idx_model_sha256 = gguf_find_key(ctx_gguf, "kv_mean_center.model_sha256");
+    if (idx_model_sha256 < 0 || gguf_get_kv_type(ctx_gguf, idx_model_sha256) != GGUF_TYPE_STRING) {
+        return fail_metadata("does not contain the required exact model SHA-256");
+    }
+    const char * calibrated_model_sha256 = gguf_get_val_str(ctx_gguf, idx_model_sha256);
+    if (strcmp(calibrated_model_sha256, expected_model_sha256) != 0) {
+        LLAMA_LOG_ERROR("%s: calibration file %s belongs to model %s, but the loaded model is %s; refusing mismatched calibration\n",
+                __func__, path, calibrated_model_sha256, expected_model_sha256);
+        gguf_free(ctx_gguf);
+        ggml_free(ctx_data);
+        return false;
+    }
+
+    if ((size_t) gguf_get_n_tensors(ctx_gguf) != layers.size()) {
+        LLAMA_LOG_ERROR("%s: calibration file %s contains %" PRId64 " tensor(s), but this cache requires %zu; refusing incomplete or extra coverage\n",
+                __func__, path, gguf_get_n_tensors(ctx_gguf), layers.size());
+        gguf_free(ctx_gguf);
+        ggml_free(ctx_data);
         return false;
     }
 
@@ -1779,30 +1827,20 @@ bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
     // improving it (see tools/kv-mean-center/README.md), so refuse it outright.
     {
         const int64_t idx_k_rot = gguf_find_key(ctx_gguf, "kv_mean_center.k_rot");
-        if (idx_k_rot >= 0) {
-            if (gguf_get_kv_type(ctx_gguf, idx_k_rot) != GGUF_TYPE_BOOL) {
-                LLAMA_LOG_ERROR("%s: bias file %s has a non-boolean kv_mean_center.k_rot key - malformed file\n",
-                        __func__, path);
-                gguf_free(ctx_gguf);
-                ggml_free(ctx_data);
-                return false;
-            }
-            const bool bias_k_rot = gguf_get_val_bool(ctx_gguf, idx_k_rot);
-            if (bias_k_rot != attn_rot_k) {
-                LLAMA_LOG_ERROR("%s: bias file %s was calibrated with the K-cache rotation %s, but it is %s "
-                        "for this context - recalibrate with matching cache settings "
-                        "(or set LLAMA_ATTN_ROT_DISABLE=1 consistently in both)\n",
-                        __func__, path,
-                        bias_k_rot  ? "active" : "inactive",
-                        attn_rot_k ? "active" : "inactive");
-                gguf_free(ctx_gguf);
-                ggml_free(ctx_data);
-                return false;
-            }
-        } else {
-            LLAMA_LOG_WARN("%s: bias file %s does not record its calibration basis (kv_mean_center.k_rot); "
-                    "K-cache rotation is %s for this context - a basis mismatch degrades quality\n",
-                    __func__, path, attn_rot_k ? "active" : "inactive");
+        if (idx_k_rot < 0 || gguf_get_kv_type(ctx_gguf, idx_k_rot) != GGUF_TYPE_BOOL) {
+            return fail_metadata("does not contain a valid K-cache rotation basis");
+        }
+        const bool bias_k_rot = gguf_get_val_bool(ctx_gguf, idx_k_rot);
+        if (bias_k_rot != attn_rot_k) {
+            LLAMA_LOG_ERROR("%s: bias file %s was calibrated with the K-cache rotation %s, but it is %s "
+                    "for this context - recalibrate with matching cache settings "
+                    "(or set LLAMA_ATTN_ROT_DISABLE=1 consistently in both)\n",
+                    __func__, path,
+                    bias_k_rot  ? "active" : "inactive",
+                    attn_rot_k ? "active" : "inactive");
+            gguf_free(ctx_gguf);
+            ggml_free(ctx_data);
+            return false;
         }
     }
 
@@ -1843,8 +1881,10 @@ bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
 
         ggml_tensor * src = ggml_get_tensor(ctx_data, name.c_str());
         if (!src) {
-            // no bias provided for this layer - leave it uncentered
-            continue;
+            LLAMA_LOG_ERROR("%s: calibration file %s is missing required tensor %s; refusing partial centering\n",
+                    __func__, path, name.c_str());
+            ok = false;
+            break;
         }
 
         if (src->type != GGML_TYPE_F32) {

@@ -38,6 +38,8 @@ static const uint32_t k_n_head  = 2;
 static const uint32_t k_n_ff    = 384;
 static const uint32_t k_n_layer = 2;
 static const uint32_t k_n_ctx   = 128;
+static const char * k_model_sha256 = "1111111111111111111111111111111111111111111111111111111111111111";
+static const char * k_wrong_model_sha256 = "2222222222222222222222222222222222222222222222222222222222222222";
 
 // deterministic pseudo-random weight initializer (same technique as test-llama-archs.cpp)
 static void set_tensor_data(struct ggml_tensor * tensor, void * userdata) {
@@ -97,7 +99,11 @@ static llama_model_ptr build_model(struct gguf_context * gguf_ctx, size_t seed) 
 
 // builds a context on top of an existing model; returns nullptr if llama_init_from_model rejects
 // the configuration (e.g. the --kv-mean-center / GGML_TYPE_Q4_0 gate)
-static llama_context_ptr build_context(llama_model * model, ggml_type type_k, const char * path_kv_mean_center = nullptr) {
+static llama_context_ptr build_context(
+        llama_model * model,
+        ggml_type type_k,
+        const char * path_kv_mean_center = nullptr,
+        const char * model_sha256 = k_model_sha256) {
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx               = 0; // from model
     ctx_params.n_batch             = 32;
@@ -106,6 +112,7 @@ static llama_context_ptr build_context(llama_model * model, ggml_type type_k, co
     ctx_params.n_threads_batch     = 2;
     ctx_params.type_k              = type_k;
     ctx_params.path_kv_mean_center = path_kv_mean_center;
+    ctx_params.kv_mean_center_model_sha256 = path_kv_mean_center ? model_sha256 : nullptr;
 
     // quantized K cache types in this codebase are exercised together with flash attention
     if (ggml_is_quantized(type_k)) {
@@ -232,7 +239,7 @@ static void test_q4_0_gate() {
     // this synthetic model has a 64-wide K head, so a Q4_0 K cache activates the Hadamard
     // rotation; the bias must be marked as measured in the rotated basis to be accepted there
     const std::string tmp_path = "test-kv-mean-center-gate.gguf";
-    TEST_ASSERT(common_kv_mean_center_write(tmp_path, layers, /*k_rot=*/true));
+    TEST_ASSERT(common_kv_mean_center_write(tmp_path, layers, k_model_sha256, /*k_rot=*/true));
 
     // F16 K cache + --kv-mean-center must be rejected outright (llama_init_from_model returns
     // nullptr), matching this codebase's convention for other cache-type-gated mismatches (e.g.
@@ -240,7 +247,7 @@ static void test_q4_0_gate() {
     // the rotation is off, so k_rot=false matches) so this exercises the cache-type gate
     // specifically, not the basis check
     const std::string tmp_path_unrot = "test-kv-mean-center-gate-unrot.gguf";
-    TEST_ASSERT(common_kv_mean_center_write(tmp_path_unrot, layers, /*k_rot=*/false));
+    TEST_ASSERT(common_kv_mean_center_write(tmp_path_unrot, layers, k_model_sha256, /*k_rot=*/false));
     llama_context_ptr ctx_bad = build_context(model.get(), GGML_TYPE_F16, tmp_path_unrot.c_str());
     TEST_ASSERT(ctx_bad == nullptr);
 
@@ -262,6 +269,40 @@ static void test_q4_0_gate() {
     }
 
     remove(tmp_path.c_str());
+
+    LOG_INF("%s: OK\n", __func__);
+}
+
+// LL-031 refusal contract: absent, wrong-model, and incomplete calibrations are all fatal at
+// context load. None may fall back to an uncentered cache.
+static void test_loud_refusals() {
+    gguf_context_ptr gguf_ctx = build_llama_gguf_ctx();
+    llama_model_ptr  model    = build_model(gguf_ctx.get(), /*seed=*/ 4040);
+
+    TEST_ASSERT(build_context(
+            model.get(), GGML_TYPE_Q4_0, "definitely-missing-kv-mean-center.gguf") == nullptr);
+
+    const uint32_t n_embd_head = k_n_embd / k_n_head;
+    std::vector<common_kv_mean_center_layer> complete;
+    for (uint32_t il = 0; il < k_n_layer; ++il) {
+        common_kv_mean_center_layer layer;
+        layer.il = (int32_t) il;
+        layer.bias.assign(n_embd_head * k_n_head, 0.125f);
+        complete.push_back(std::move(layer));
+    }
+
+    const std::string wrong_path = "test-kv-mean-center-wrong-model.gguf";
+    TEST_ASSERT(common_kv_mean_center_write(
+            wrong_path, complete, k_wrong_model_sha256, /*k_rot=*/true));
+    TEST_ASSERT(build_context(model.get(), GGML_TYPE_Q4_0, wrong_path.c_str()) == nullptr);
+    remove(wrong_path.c_str());
+
+    const std::string partial_path = "test-kv-mean-center-partial.gguf";
+    complete.pop_back();
+    TEST_ASSERT(common_kv_mean_center_write(
+            partial_path, complete, k_model_sha256, /*k_rot=*/true));
+    TEST_ASSERT(build_context(model.get(), GGML_TYPE_Q4_0, partial_path.c_str()) == nullptr);
+    remove(partial_path.c_str());
 
     LOG_INF("%s: OK\n", __func__);
 }
@@ -300,7 +341,7 @@ static void test_softmax_invariance() {
     // itself, so a fixed name is fine
     const std::string tmp_path = "test-kv-mean-center-bias.gguf";
 
-    TEST_ASSERT(common_kv_mean_center_write(tmp_path, layers));
+    TEST_ASSERT(common_kv_mean_center_write(tmp_path, layers, k_model_sha256));
 
     // centered: same model, fresh F32-K-cache context, bias applied through the exact same
     // cpy_k() code path -- bypassing the public --kv-mean-center gate (require_q4_0 = false)
@@ -310,7 +351,8 @@ static void test_softmax_invariance() {
 
     auto * kv = dynamic_cast<llama_kv_cache *>(llama_get_memory(ctx_centered.get()));
     TEST_ASSERT(kv != nullptr);
-    TEST_ASSERT(kv->load_kv_mean_center(tmp_path.c_str(), /*require_q4_0=*/false));
+    TEST_ASSERT(kv->load_kv_mean_center(
+            tmp_path.c_str(), k_model_sha256, /*require_q4_0=*/false));
 
     const std::vector<float> logits_centered = decode_and_get_logits(ctx_centered.get(), tokens);
 
@@ -332,6 +374,7 @@ static void test_softmax_invariance() {
 int main() {
     test_regression_safety();
     test_q4_0_gate();
+    test_loud_refusals();
     test_softmax_invariance();
 
     return 0;

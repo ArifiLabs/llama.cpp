@@ -6,6 +6,9 @@
 #include "fit.h"
 #include "log.h"
 #include "llama.h"
+#ifdef GGML_ARIFI_KV_MEANCENTER
+#include "kv-mean-center.h"
+#endif
 #include "sampling.h"
 #include "speculative.h"
 #include "unicode.h"
@@ -1381,6 +1384,17 @@ common_init_result::common_init_result(common_params & params, bool model_only) 
 
     pimpl->model.reset(model);
 
+#ifdef GGML_ARIFI_KV_MEANCENTER
+    if (!params.kv_mean_center_path.empty()) {
+        if (!common_kv_mean_center_model_sha256(
+                    params.model.path, model, params.kv_mean_center_model_sha256)) {
+            COM_ERR("failed to bind K-cache calibration to model '%s'\n", params.model.path.c_str());
+            return;
+        }
+        cparams.kv_mean_center_model_sha256 = params.kv_mean_center_model_sha256.c_str();
+    }
+#endif
+
     if (model_only) {
         return;
     }
@@ -1820,6 +1834,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     // note: params (and therefore params.kv_mean_center_path) is kept alive by the caller for
     // at least as long as it takes to call llama_init_from_model() with the returned cparams
     cparams.path_kv_mean_center = params.kv_mean_center_path.empty() ? nullptr : params.kv_mean_center_path.c_str();
+    cparams.kv_mean_center_model_sha256 = nullptr;
 #endif
 
     return cparams;
