@@ -2506,6 +2506,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.kv_mean_center_path = value;
         }
     ).set_env("LLAMA_ARG_KV_MEAN_CENTER"));
+    add_opt(common_arg(
+        {"--kv-mean-center-probe-output"}, "FNAME",
+        "write a tensor-level pre/post-centering proof JSON; requires --kv-mean-center",
+        [](common_params & params, const std::string & value) {
+            params.kv_mean_center_probe_output = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_KV_MEAN_CENTER}));
 #endif
     add_opt(common_arg(
         {"--hellaswag"},
