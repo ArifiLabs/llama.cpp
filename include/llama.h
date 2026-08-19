@@ -436,6 +436,16 @@ extern "C" {
         enum llama_moe_cache_mode moe_cache_mode; // runtime MoE expert cache mode
         size_t moe_cache_budget_mib;               // 0 uses the provider's available-memory budget
 
+#ifdef GGML_ARIFI_KV_MEANCENTER
+        // optional path to a per-layer K-cache mean-centering bias file (GGUF), or NULL to disable.
+        // the bias is subtracted from the K vector for each (kv-head, channel) right before it is
+        // written into the K cache, which improves quantization fidelity for GGML_TYPE_Q4_0 without
+        // changing attention results (the same constant is added to every logit in a query's row,
+        // which softmax is invariant to). currently only supported when type_k == GGML_TYPE_Q4_0.
+        // see tools/kv-mean-center to generate this file and docs/kv-mean-center.md for details.
+        const char * path_kv_mean_center;
+#endif
+
         // Abort callback
         // if it returns true, execution of llama_decode() will be aborted
         // currently works only with CPU execution

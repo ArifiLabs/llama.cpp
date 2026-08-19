@@ -124,6 +124,12 @@ add_library(${TARGET}
     jinja/caps.h
     )
 
+if (GGML_ARIFI_KV_MEANCENTER)
+    target_sources(${TARGET} PRIVATE
+        kv-mean-center.cpp
+        kv-mean-center.h)
+endif()
+
 set_target_properties(${TARGET} PROPERTIES
     VERSION ${LLAMA_VERSION_BASE}
     SOVERSION ${LLAMA_VERSION_MAJOR}

@@ -254,6 +254,9 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
         ARGS --models "${MODEL_DIR}"
     )
     set_tests_properties(test-save-load-state PROPERTIES FIXTURES_REQUIRED generate-models)
+    if (GGML_ARIFI_KV_MEANCENTER)
+        llama_build_and_test(test-kv-mean-center.cpp)
+    endif()
 endif()
 
 llama_build_and_test(test-chat-peg-parser.cpp peg-parser/simple-tokenize.cpp)
