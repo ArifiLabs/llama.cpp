@@ -49,8 +49,9 @@ self-generated text measures the same bias as an external corpus: in an A/B test
 corpus and a standard multi-domain calibration set produced biases agreeing to within the
 calibration sampling noise (cosine similarity above 0.95 on every layer).
 
-The output is a small GGUF file with one F32 tensor per layer, named `kv_bar.blk.<il>.k`. Load it
-at inference time with:
+The output is a small GGUF file with one F32 tensor per layer, named `kv_bar.blk.<il>.k`. It also
+contains an exact, domain-separated SHA-256 over all source GGUF splits. Load it at inference
+time with:
 
 ```
 ./llama-cli -m model.gguf -ctk q4_0 --kv-mean-center kv-mean-center.gguf -p "..."
@@ -58,6 +59,11 @@ at inference time with:
 
 `--kv-mean-center` requires `--cache-type-k q4_0`; loading fails with a clear error otherwise
 (centering is currently only implemented/validated for `GGML_TYPE_Q4_0`).
+
+The runtime hashes the loaded model files and refuses the artifact if the identity differs, if
+any required layer is absent, or if metadata is missing/malformed. A requested calibration never
+falls back to an uncentered cache. The exact identity check costs one sequential model-file read
+at centered-context startup; the default/OFF path has no hashing cost.
 
 ## Interaction with the Hadamard K-cache rotation: calibrate with matching cache settings
 

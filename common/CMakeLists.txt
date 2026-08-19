@@ -128,6 +128,7 @@ if (GGML_ARIFI_KV_MEANCENTER)
     target_sources(${TARGET} PRIVATE
         kv-mean-center.cpp
         kv-mean-center.h)
+    target_link_libraries(${TARGET} PRIVATE vendor::hash)
 endif()
 
 set_target_properties(${TARGET} PROPERTIES
