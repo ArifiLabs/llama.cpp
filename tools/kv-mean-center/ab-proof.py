@@ -90,6 +90,10 @@ def declare_launch(label: str) -> None:
         raise ProofError(f"CC_RUN_ANNOUNCE declaration failed: {proc.stdout} {proc.stderr}")
 
 
+FLOOR_WAIT_MAX_S = 1800.0
+FLOOR_POLL_S = 15.0
+
+
 def assert_load_floor(argv: list[str]) -> dict[str, Any]:
     """Refuse a launch that does not clear the President's system-side RAM floor.
 
@@ -121,10 +125,23 @@ def assert_load_floor(argv: list[str]) -> dict[str, Any]:
     if model_gb > lg.GPU_BUDGET_GB:
         raise ProofError(f"load governor REFUSED: model {model_gb:.2f} GB exceeds the "
                          f"{lg.GPU_BUDGET_GB:.0f} GB GPU budget; {json.dumps(state)}")
+
+    # WAIT for the floor instead of failing the whole proof at the first dip. A previous arm has
+    # just unloaded a 15 GB model, so the box needs a moment to give the pages back, and this rig
+    # sits within ~0.2 GB of the floor while the workstation is in use. Waiting never lowers or
+    # waives the floor: the launch still happens only once the box genuinely clears it.
+    waited_s = 0.0
+    while free_gb < lg.GPU_RESIDENT_SYSTEM_FLOOR_GB and waited_s < FLOOR_WAIT_MAX_S:
+        time.sleep(FLOOR_POLL_S)
+        waited_s += FLOOR_POLL_S
+        free_gb = lg._memory_snapshot().free_bytes / lg.GIB
+    state["free_ram_gb"] = round(free_gb, 2)
+    state["floor_wait_s"] = round(waited_s, 1)
     if free_gb < lg.GPU_RESIDENT_SYSTEM_FLOOR_GB:
-        raise ProofError(f"load governor REFUSED: {free_gb:.2f} GB free is below the "
-                         f"{lg.GPU_RESIDENT_SYSTEM_FLOOR_GB:.1f} GB system-side floor; "
-                         f"free RAM before launching, never lower the floor; {json.dumps(state)}")
+        raise ProofError(f"load governor REFUSED after waiting {waited_s:.0f}s: {free_gb:.2f} GB "
+                         f"free is below the {lg.GPU_RESIDENT_SYSTEM_FLOOR_GB:.1f} GB system-side "
+                         f"floor; free RAM before launching, never lower the floor; "
+                         f"{json.dumps(state)}")
     return state
 
 
@@ -368,8 +385,19 @@ def run(args: argparse.Namespace) -> int:
     }
     write_json(out_dir / "manifest.json", manifest)
 
+    # -fit off for two independent reasons, and it applies to every arm so they stay comparable:
+    #  1. bench purity: auto-fit ADJUSTS unset arguments to the free device memory of that moment,
+    #     so an ON arm and an OFF arm minutes apart could run different parameters. A/B arms must
+    #     differ only by the calibration.
+    #  2. it avoids an engine ordering bug: common_init_result builds cparams (which carries
+    #     path_kv_mean_center but a NULL model SHA-256, see common.cpp) and runs the fit probe
+    #     BEFORE the exact-model binding is computed further down, so every -fit on run that loads
+    #     a calibration is refused by the loader and dies "failed to fit parameters to device
+    #     memory (hard error)". Reported separately; this flag does not fix it.
+    # Only the calibrator and llama-perplexity take -fit; llama-bench has no such flag (its own
+    # -fitt already defaults to off), and the bench arms below build their own argv.
     common = ["-m", str(model), "-ngl", "999", "-dev", "Vulkan0", "-ctk", "q4_0",
-              "-ctv", "q8_0", "-fa", "on", "-b", "512", "-ub", "512"]
+              "-ctv", "q8_0", "-fa", "on", "-b", "512", "-ub", "512", "-fit", "off"]
     runs: list[dict[str, Any]] = []
     def bank_run(item: dict[str, Any]) -> None:
         runs.append(item)
