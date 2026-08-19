@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10488`, `9d77fa17254e1dee4b9e92504c91611a60b1359f`
-- Patches: **366**, all non-merge, applied in filename order.
+- Patches: **368**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 366 commit messages, same provenance trailers. Verified, not
+same file contents, same 368 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -445,6 +445,8 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 364 | `0364-fix-kv-cache-floor-check-the-model-named-by-m-not-th.patch` | arifi-fork-base | `549728b49` | - | - | fix(kv-cache): floor-check the model named by -m, not the largest .gguf on the command line |
 | 365 | `0365-fix-kv-cache-wait-for-the-RAM-floor-between-arms-and.patch` | arifi-fork-base | `2e024a136` | - | - | fix(kv-cache): wait for the RAM floor between arms, and pin -fit off so the A/B arms match |
 | 366 | `0366-fix-kv-cache-probe-the-layer-ids-the-calibration-act.patch` | arifi-fork-base | `e820fb9c9` | - | - | fix(kv-cache): probe the layer ids the calibration actually has, and let an existing calibration be reused |
+| 367 | `0367-support-DFlash2.patch` | arifi-fork-base | `1f75892b9` | - | - | support DFlash2 |
+| 368 | `0368-dflash2-build-fixes-on-the-PR-27342-pick-dedupe-DFLA.patch` | arifi-fork-base | `4614eebf1` | - | - | dflash2: build fixes on the PR #27342 pick - dedupe DFLASH_BLOCK_SIZE enum/hparam/kv-map (fork DFlash1 originals keep authority, default 16) + ml. reference fix (the shadow the fork's own comment documents) |
 
 ## Measured effect, per patch
 
@@ -881,6 +883,8 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0364-fix-kv-cache-floor-check-the-model-named-by-m-not-th.patch` | *(no Measured-effect trailer)* |
 | `0365-fix-kv-cache-wait-for-the-RAM-floor-between-arms-and.patch` | *(no Measured-effect trailer)* |
 | `0366-fix-kv-cache-probe-the-layer-ids-the-calibration-act.patch` | *(no Measured-effect trailer)* |
+| `0367-support-DFlash2.patch` | *(no Measured-effect trailer)* |
+| `0368-dflash2-build-fixes-on-the-PR-27342-pick-dedupe-DFLA.patch` | *(no Measured-effect trailer)* |
 
 ## Unclassified
 
@@ -1186,4 +1190,6 @@ rather than silently bucketed - add a rule when a new source appears.
 - `549728b49` fix(kv-cache): floor-check the model named by -m, not the largest .gguf on the command line
 - `2e024a136` fix(kv-cache): wait for the RAM floor between arms, and pin -fit off so the A/B arms match
 - `e820fb9c9` fix(kv-cache): probe the layer ids the calibration actually has, and let an existing calibration be reused
+- `1f75892b9` support DFlash2
+- `4614eebf1` dflash2: build fixes on the PR #27342 pick - dedupe DFLASH_BLOCK_SIZE enum/hparam/kv-map (fork DFlash1 originals keep authority, default 16) + ml. reference fix (the shadow the fork's own comment documents)
 
