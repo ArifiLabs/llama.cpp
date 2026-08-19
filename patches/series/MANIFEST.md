@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10488`, `9d77fa17254e1dee4b9e92504c91611a60b1359f`
-- Patches: **362**, all non-merge, applied in filename order.
+- Patches: **363**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 362 commit messages, same provenance trailers. Verified, not
+same file contents, same 363 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -441,6 +441,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 360 | `0360-sources-record-lane-158-PrismML-K-cache-disposition.patch` | arifi-fork-base | `efc3eec68` | - | - | sources: record lane-158 PrismML K-cache disposition |
 | 361 | `0361-test-kv-cache-fail-close-default-OFF-binary-identity.patch` | arifi-fork-base | `8fd1ef2f0` | - | - | test(kv-cache): fail-close default-OFF binary identity |
 | 362 | `0362-test-kv-cache-assert-both-rotation-basis-polarities-.patch` | arifi-fork-base | `554bbad31` | - | - | test(kv-cache): assert both rotation-basis polarities against the resolved attn_rot_k |
+| 363 | `0363-fix-kv-cache-make-the-A-B-harness-able-to-launch-and.patch` | arifi-fork-base | `068aae2f9` | - | - | fix(kv-cache): make the A/B harness able to launch, and actually enforce the RAM floor it claims |
 
 ## Measured effect, per patch
 
@@ -873,6 +874,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0360-sources-record-lane-158-PrismML-K-cache-disposition.patch` | source census corrected; native model effect UNMEASURED (HQ-OWED) |
 | `0361-test-kv-cache-fail-close-default-OFF-binary-identity.patch` | clean fixture PASS; planted byte mismatch RED; native identity UNMEASURED (HQ-OWED) |
 | `0362-test-kv-cache-assert-both-rotation-basis-polarities-.patch` | *(no Measured-effect trailer)* |
+| `0363-fix-kv-cache-make-the-A-B-harness-able-to-launch-and.patch` | *(no Measured-effect trailer)* |
 
 ## Unclassified
 
@@ -1174,4 +1176,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `efc3eec68` sources: record lane-158 PrismML K-cache disposition
 - `8fd1ef2f0` test(kv-cache): fail-close default-OFF binary identity
 - `554bbad31` test(kv-cache): assert both rotation-basis polarities against the resolved attn_rot_k
+- `068aae2f9` fix(kv-cache): make the A/B harness able to launch, and actually enforce the RAM floor it claims
 
