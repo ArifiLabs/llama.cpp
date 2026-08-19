@@ -1816,6 +1816,12 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     }
     cparams.moe_cache_budget_mib = params.moe_cache.budget_mib;
 
+#ifdef GGML_ARIFI_KV_MEANCENTER
+    // note: params (and therefore params.kv_mean_center_path) is kept alive by the caller for
+    // at least as long as it takes to call llama_init_from_model() with the returned cparams
+    cparams.path_kv_mean_center = params.kv_mean_center_path.empty() ? nullptr : params.kv_mean_center_path.c_str();
+#endif
+
     return cparams;
 }
 

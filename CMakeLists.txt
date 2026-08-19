@@ -145,6 +145,11 @@ option(LLAMA_OPENSSL    "llama: use openssl to support HTTPS" ON)
 option(LLAMA_SUBPROCESS "llama-common: use subprocess, required by server tools and server router mode" ${LLAMA_SUBPROCESS_DEFAULT})
 option(LLAMA_LLGUIDANCE "llama-common: include LLGuidance library for structured output in common utils" OFF)
 
+# ArifiLabs opt-in K-cache mean-centering. The complete feature surface, including the public
+# context parameter and calibration tool, is absent from an OFF build so the shipped default
+# stays byte-compatible with the pre-port engine.
+option(GGML_ARIFI_KV_MEANCENTER "llama: per-model K-cache mean-centering calibration and runtime path" OFF)
+
 
 # Required for relocatable CMake package
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/build-info.cmake)
