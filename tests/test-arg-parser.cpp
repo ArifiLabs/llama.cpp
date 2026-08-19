@@ -102,6 +102,20 @@ static void test(void) {
         assert(draft.n_outputs_max_per_seq == 1);
     }
 
+#ifdef GGML_ARIFI_KV_MEANCENTER
+    {
+        common_params base;
+        base.kv_mean_center_path = "target-only.gguf";
+        base.kv_mean_center_model_sha256 =
+                "1111111111111111111111111111111111111111111111111111111111111111";
+        base.speculative.draft.mparams.path = "draft.gguf";
+
+        const auto draft = common_base_params_to_speculative(base);
+        assert(draft.kv_mean_center_path.empty());
+        assert(draft.kv_mean_center_model_sha256.empty());
+    }
+#endif
+
     printf("test-arg-parser: make sure there is no duplicated arguments in any examples\n\n");
     for (int ex = 0; ex < LLAMA_EXAMPLE_COUNT; ex++) {
         try {
