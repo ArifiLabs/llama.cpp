@@ -90,11 +90,44 @@ def declare_launch(label: str) -> None:
         raise ProofError(f"CC_RUN_ANNOUNCE declaration failed: {proc.stdout} {proc.stderr}")
 
 
+def assert_load_floor(argv: list[str]) -> dict[str, Any]:
+    """Refuse a launch that does not clear the President's system-side RAM floor.
+
+    HQ-OWED-NATIVE-RUNBOOK.md states this runner enforces the 7.0 GB floor. Nothing did: run_native
+    only exported ARIFI_GPU_RESIDENT_FLOOR_GB into a native child that never reads it, so the
+    promise was documentation only. This applies the rule load_governor.guard() documents for a
+    GPU-resident load -- weights land in the dedicated carveout, so the binding limits are the GPU
+    budget and the system-side floor -- without exec'ing, so launch timing is unchanged.
+    """
+    from arifi_core import load_governor as lg  # company venv; the runbook invokes us with it
+
+    model = lg._largest_gguf(argv)
+    snapshot = lg._memory_snapshot()
+    free_gb = snapshot.free_bytes / lg.GIB
+    model_gb = model.stat().st_size / lg.GIB
+    state = {
+        "model": str(model),
+        "model_gb": round(model_gb, 2),
+        "free_ram_gb": round(free_gb, 2),
+        "gpu_budget_gb": lg.GPU_BUDGET_GB,
+        "system_floor_gb": lg.GPU_RESIDENT_SYSTEM_FLOOR_GB,
+    }
+    if model_gb > lg.GPU_BUDGET_GB:
+        raise ProofError(f"load governor REFUSED: model {model_gb:.2f} GB exceeds the "
+                         f"{lg.GPU_BUDGET_GB:.0f} GB GPU budget; {json.dumps(state)}")
+    if free_gb < lg.GPU_RESIDENT_SYSTEM_FLOOR_GB:
+        raise ProofError(f"load governor REFUSED: {free_gb:.2f} GB free is below the "
+                         f"{lg.GPU_RESIDENT_SYSTEM_FLOOR_GB:.1f} GB system-side floor; "
+                         f"free RAM before launching, never lower the floor; {json.dumps(state)}")
+    return state
+
+
 def run_native(
     argv: list[str], label: str, out_dir: Path, stem: str, *, expect_success: bool = True,
     split_streams: bool = False,
 ) -> dict[str, Any]:
     purity_before = assert_quiet()
+    load_state = assert_load_floor(argv)
     declare_launch(label)
     command = subprocess.list2cmdline(argv)
     stdout_path = out_dir / f"{stem}.stdout.txt"
@@ -109,7 +142,12 @@ def run_native(
     env = os.environ.copy()
     env["ARIFI_GPU_RESIDENT_FLOOR_GB"] = "7.0"
     start_ns = time.time_ns()
-    proc = subprocess.run(["cmd.exe", "/d", "/s", "/c", redirected], env=env, check=False)
+    # pass the redirection as ONE shell string. In the list form Python's list2cmdline
+    # backslash-escapes the inner quotes, and cmd.exe reads \" as part of the filename, so every
+    # launch died with "The filename, directory name, or volume label syntax is incorrect" before
+    # writing a log. shell=True hands cmd.exe the string verbatim, keeping the F-108 cmd.exe
+    # redirection that native stderr needs.
+    proc = subprocess.run(redirected, shell=True, env=env, check=False)
     end_ns = time.time_ns()
     purity_after = assert_quiet()
     if expect_success and proc.returncode != 0:
@@ -125,6 +163,7 @@ def run_native(
         "wall_s": (end_ns - start_ns) / 1e9,
         "purity_before": purity_before,
         "purity_after": purity_after,
+        "load_governor": load_state,
         "stdout": str(stdout_path) if split_streams else None,
         "stderr": str(stderr_path) if split_streams else None,
         "log": None if split_streams else str(combined_path),
