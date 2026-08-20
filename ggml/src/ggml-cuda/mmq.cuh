@@ -2,6 +2,7 @@
 
 #include "common.cuh"
 
+#include <cfloat>
 #include <climits>
 #include <cstdint>
 
@@ -74,6 +75,7 @@ static mmq_q8_1_ds_layout mmq_get_q8_1_ds_layout(const ggml_type type_x) {
         case GGML_TYPE_MXFP4:
             return MMQ_Q8_1_DS_LAYOUT_D4;
         case GGML_TYPE_NVFP4:
+        case GGML_TYPE_TQ3_4S:
             return MMQ_Q8_1_DS_LAYOUT_D4;
         case GGML_TYPE_Q2_K:
             return MMQ_Q8_1_DS_LAYOUT_D2S6;
@@ -428,8 +430,123 @@ static __host__ int ggml_cuda_mmq_get_nbytes_shared_x(const ggml_cuda_mmq_config
 
 // ------------------------------------------------------------
 
+// ---- TQ3_4S compat helpers (turbo-tan/llama.cpp-tq3) ----
+// The tq3 tile loader was written against fixed tile-stride macros; on this
+// tree the Q8_0 stride is config-derived and identical (see the static_assert).
+static constexpr __device__ int mmq_get_nwarps_device() { return MMQ_NWARPS; }
+
+#define MMQ_MMA_TILE_X_K_Q8_0  (2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_0 + 4)
+
+static_assert(MMQ_MMA_TILE_X_K_Q8_0 == ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0),
+    "TQ3_4S tile loader stride must match the Q8_0 SRAM layout");
+// ---- end compat helpers ----
+
 #include "mmq-load-tiles.cuh"
 #include "mmq-vec-dot.cuh"
+
+template <int mmq_y, bool need_check> static __device__ __forceinline__ void load_tiles_tq3_4s(
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
+    constexpr int nwarps = mmq_get_nwarps_device();
+    static_assert(WARP_SIZE == QK_TQ3_0, "TQ3_4S MMQ assumes one 32-lane warp per block");
+
+#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
+    int   * x_qs = (int   *)  x_tile;
+    float * x_df = (float *) (x_qs + 2*MMQ_TILE_NE_K);
+#else
+    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q8_0, mmq_y);
+    int   * x_qs = (int   *)  x_tile;
+    float * x_df = (float *) (x_qs + txs.qs);
+#endif
+
+    constexpr int threads_per_row = 16;
+    constexpr int nrows = WARP_SIZE / threads_per_row;
+    const int kqsx = threadIdx.x % threads_per_row;
+
+    static constexpr float tq3_centroids[8] = {
+        -1.996684f, -1.291398f, -0.740341f, -0.247508f,
+         0.230106f,  0.725222f,  1.277503f,  1.988943f
+    };
+
+    const auto decode_tq3_4s_scale = [] __device__ (const uint8_t sb) {
+        if (sb == 0) {
+            return 0.0f;
+        }
+        const uint32_t bits = (((uint32_t) (sb >> 5) + 118u) << 23) | ((uint32_t) (sb & 31u) << 18);
+        return __uint_as_float(bits);
+    };
+
+#pragma unroll
+    for (int i0 = 0; i0 < mmq_y; i0 += nrows*nwarps) {
+        int i = i0 + threadIdx.y*nrows + threadIdx.x/threads_per_row;
+
+        if (need_check) {
+            i = min(i, i_max);
+        }
+
+        const int blk_in_row = kqsx / 2;
+        const int half = kqsx % 2;
+        const int g_base = half * 2;
+
+        const block_tq3_4s * bxi = (const block_tq3_4s *)x + kbx0 + i*stride + blk_in_row;
+
+        float rms_local[2];
+#pragma unroll
+        for (int sg = 0; sg < 2; ++sg) {
+            rms_local[sg] = decode_tq3_4s_scale(bxi->d[g_base + sg]);
+        }
+
+        const float amax_pair = fmaxf(rms_local[0], rms_local[1]);
+        const float amax_shfl = __shfl_xor_sync(0xFFFFFFFF, amax_pair, 1, WARP_SIZE);
+        const float amax = fmaxf(amax_pair, amax_shfl) * 1.996684f;
+        const float d_block = amax / 127.0f;
+        const float d_inv = (d_block > 0.0f) ? 127.0f / amax : 0.0f;
+
+#pragma unroll
+        for (int sg = 0; sg < 2; sg++) {
+            const int g = g_base + sg;
+            const float rms_g = rms_local[sg];
+
+            const uint8_t * qp = bxi->qs + g * 3;
+            const uint32_t packed = (uint32_t)qp[0] | ((uint32_t)qp[1] << 8) | ((uint32_t)qp[2] << 16);
+
+            const float q_scale = rms_g * d_inv;
+            const uint32_t q0 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  0) & 7] * q_scale);
+            const uint32_t q1 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  3) & 7] * q_scale);
+            const uint32_t q2 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  6) & 7] * q_scale);
+            const uint32_t q3 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  9) & 7] * q_scale);
+            const uint32_t q4 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 12) & 7] * q_scale);
+            const uint32_t q5 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 15) & 7] * q_scale);
+            const uint32_t q6 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 18) & 7] * q_scale);
+            const uint32_t q7 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 21) & 7] * q_scale);
+
+            const uint32_t pq0 = q0 | (q1 << 8) | (q2 << 16) | (q3 << 24);
+            const uint32_t pq1 = q4 | (q5 << 8) | (q6 << 16) | (q7 << 24);
+
+            const int out_base = blk_in_row * QI8_0 + g * 2;
+
+#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
+            x_qs[i*MMQ_MMA_TILE_X_K_Q8_0 + out_base + 0] = pq0;
+            x_qs[i*MMQ_MMA_TILE_X_K_Q8_0 + out_base + 1] = pq1;
+            if (sg == 0 && half == 0) {
+                x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + blk_in_row] = d_block;
+            }
+#else
+            x_qs[i*(2*MMQ_TILE_NE_K + 1) + out_base + 0] = pq0;
+            x_qs[i*(2*MMQ_TILE_NE_K + 1) + out_base + 1] = pq1;
+            if (sg == 0 && half == 0) {
+                x_df[i*(2*MMQ_TILE_NE_K/QI8_0) + i/(QI8_0/2) + blk_in_row] = d_block;
+            }
+#endif
+        }
+    }
+}
+
+template <ggml_type type, int J, bool fallback>
+static __device__ __forceinline__ void ggml_cuda_mmq_load_tiles_tq3_4s(
+        const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
+    constexpr int I = ggml_cuda_mmq_get_I(type, J, fallback);
+    load_tiles_tq3_4s<I, fallback>(x, x_tile, kbx0, i_max, stride);
+}
 
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_write_back_dp4a(
         const float * __restrict__ sum, const int32_t * __restrict__ ids_dst, float * __restrict__ dst,
@@ -579,6 +696,12 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q8_0_Q8_1_MMQ,
                     ggml_cuda_mmq_load_tiles_q8_0<type, J, fallback>,
+                    ggml_cuda_mmq_vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
+                    ggml_cuda_mmq_write_back_dp4a<type, J, fallback>);
+            case GGML_TYPE_TQ3_4S:
+                return ggml_cuda_mmq_util_funcs(
+                    VDR_Q8_0_Q8_1_MMQ,
+                    ggml_cuda_mmq_load_tiles_tq3_4s<type, J, fallback>,
                     ggml_cuda_mmq_vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
                     ggml_cuda_mmq_write_back_dp4a<type, J, fallback>);
 // ---------------------------------------------------------------------------------------------
@@ -837,6 +960,12 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
                 -1,
                 ggml_cuda_mmq_load_tiles_nvfp4<type, J, fallback>,
                 ggml_cuda_mmq_vec_dot_q8_0_16_q8_1_mma<type, J, fallback>,
+                ggml_cuda_mmq_write_back_mma<type, J, fallback>);
+        case GGML_TYPE_TQ3_4S:
+            return ggml_cuda_mmq_util_funcs(
+                -1,
+                ggml_cuda_mmq_load_tiles_tq3_4s<type, J, fallback>,
+                ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma<type, J, fallback, MMQ_Q8_1_DS_LAYOUT_D4>,
                 ggml_cuda_mmq_write_back_mma<type, J, fallback>);
         default:
             return ggml_cuda_mmq_util_funcs(1, nullptr, nullptr, nullptr);
@@ -1589,10 +1718,12 @@ extern DECL_MMQ_CASE(GGML_TYPE_IQ4_XS);
 // -----------------------------------------
 extern DECL_MMQ_CASE(GGML_TYPE_MXFP4);
 extern DECL_MMQ_CASE(GGML_TYPE_NVFP4);
+// -----------------------------------------
+extern DECL_MMQ_CASE(GGML_TYPE_TQ3_4S);
 
 // -------------------------------------------------------------------------------------------------------------------------
 
 void ggml_cuda_mul_mat_q(
         ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst);
 
-bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t n_experts);
+bool ggml_cuda_should_use_mmq(const ggml_tensor * src0, int cc, int64_t ne11, int64_t n_experts);
