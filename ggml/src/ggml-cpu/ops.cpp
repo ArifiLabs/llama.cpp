@@ -12825,11 +12825,16 @@ static void escha_build_k3_lanes(void) {
 // decode one 16x16 tile into wtile[row=in][col=out]
 static inline void escha_decode_tile_k2(const uint16_t * w, float wtile[16][16]) {
     for (int lane = 0; lane < 32; ++lane) {
-        const uint32_t word = w[lane ^ 1];
+        // lane windows a 32-bit suffix of a 64-bit pair; a bare u16 truncates it
+        uint32_t lo, hi;
+        memcpy(&lo, (const char *) w + 4*((lane >> 1) & 15), 4);
+        memcpy(&hi, (const char *) w + 4*(((lane >> 1) - 1) & 15), 4);
+        const uint64_t z = (uint64_t) lo | ((uint64_t) hi << 32);
+        const uint32_t word = (uint32_t) (z >> ((lane & 1) ? 0 : 16));
         const int colbase = 2*(lane >> 3) + ((lane >> 2) & 1);
         const int rowbase = 2*(lane & 3);
         for (int c = 0; c < 8; ++c) {
-            const int row = rowbase + (c & 1) + 8*(1 - ((c >> 1) & 1));
+            const int row = rowbase + (1 - (c & 1)) + 8*(1 - ((c >> 1) & 1));
             const int col = (c < 4 ? 8 : 0) + colbase;
             wtile[row][col] = escha_cba_lut[(word >> (2*c)) & 0xFFFF];
         }
@@ -12849,7 +12854,7 @@ static inline void escha_decode_tile_k3(const uint16_t * w, float wtile[16][16])
         const int colbase = 2*(lane >> 3) + ((lane >> 2) & 1);
         const int rowbase = 2*(lane & 3);
         for (int c = 0; c < 8; ++c) {
-            const int row = rowbase + (c & 1) + 8*(1 - ((c >> 1) & 1));
+            const int row = rowbase + (1 - (c & 1)) + 8*(1 - ((c >> 1) & 1));
             const int col = (c < 4 ? 8 : 0) + colbase;
             const uint64_t win = (c < 4) ? (p >> (3*c)) : (r >> (3*(c - 4)));
             wtile[row][col] = escha_cba_lut[(uint32_t)(win & 0xFFFF)];
