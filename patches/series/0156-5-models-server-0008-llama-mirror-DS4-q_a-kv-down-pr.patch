@@ -1,4 +1,4 @@
-From 7e85e5d47ea4b59135e274509e2b8c11027a70e6 Mon Sep 17 00:00:00 2001
+From 82c91c228a83361e109158679515b67dd16808bc Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:14 -0400
 Subject: [PATCH] 
@@ -9,10 +9,10 @@ Subject: [PATCH]
  1 file changed, 8 insertions(+), 3 deletions(-)
 
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 2a5273ee4..8bbe3485c 100644
+index 5aa054f7d..f45bd9963 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -367,7 +367,8 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -369,7 +369,8 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
      static const std::regex pattern_q_weight        ("blk\\.\\d*\\.attn_q.weight");
      static const std::regex pattern_kv_weight       ("blk\\.\\d*\\.attn_(k|v).weight");
      static const std::regex pattern_qkv_weight      ("blk\\.\\d*\\.attn_qkv.weight");
@@ -22,7 +22,7 @@ index 2a5273ee4..8bbe3485c 100644
      static const std::regex pattern_q_bias          ("blk\\.\\d*\\.attn_q\\.bias");
      static const std::regex pattern_kv_bias         ("blk\\.\\d*\\.attn_(k|v)\\.bias");
      static const std::regex pattern_qkv_bias        ("blk\\.\\d*\\.attn_qkv.bias");
-@@ -462,8 +463,12 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -464,8 +465,12 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
          if (std::regex_match(tensor_name, pattern_qkv_weight)) {
              return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1, "attn_output.weight", "ssm_out.weight");
          }

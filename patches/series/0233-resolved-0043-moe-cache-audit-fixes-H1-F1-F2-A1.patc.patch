@@ -1,4 +1,4 @@
-From d3f2a53d029d0771af0c3ce56b0b71f5e0d0aa08 Mon Sep 17 00:00:00 2001
+From 4363f5896f7f34a9dcae692604380e2b99d8015a Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:30:05 -0400
 Subject: [PATCH] resolved/0043-moe-cache-audit-fixes-H1-F1-F2-A1.patch
@@ -12,7 +12,7 @@ Subject: [PATCH] resolved/0043-moe-cache-audit-fixes-H1-F1-F2-A1.patch
  5 files changed, 88 insertions(+), 9 deletions(-)
 
 diff --git a/common/common.cpp b/common/common.cpp
-index a6bf636e7..447b27221 100644
+index e38609795..b7a068020 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
 @@ -1300,13 +1300,38 @@ common_init_result::common_init_result(common_params & params, bool model_only)
@@ -167,10 +167,10 @@ index 57acd8e3f..872ff3c2b 100644
  
  LLAMA_API size_t llama_model_get_moe_tensor_info(
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 863c1dfbb..1d0b95a12 100644
+index 597559fb8..dec684b48 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -3098,6 +3098,15 @@ size_t llama_model_get_moe_tensor_info(
+@@ -3102,6 +3102,15 @@ size_t llama_model_get_moe_tensor_info(
              continue;
          }
  
@@ -186,7 +186,7 @@ index 863c1dfbb..1d0b95a12 100644
          if (info && count < capacity) {
              info[count] = {
                  tensor->type,
-@@ -3105,6 +3114,7 @@ size_t llama_model_get_moe_tensor_info(
+@@ -3109,6 +3118,7 @@ size_t llama_model_get_moe_tensor_info(
                  tensor->ne[0],
                  tensor->ne[1],
                  tensor->ne[2],

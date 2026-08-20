@@ -1,4 +1,4 @@
-From a8e84919e4a47fc89965b79465d59c6eddedfd7c Mon Sep 17 00:00:00 2001
+From 8b9167e8dc604215d162d322f2dd936130207273 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Tue, 18 Aug 2026 01:33:54 -0400
 Subject: [PATCH] lane-150 checker-driven fixes: type_bucket prefix-boundary
@@ -13,10 +13,10 @@ Lane: lane-150
  2 files changed, 20 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 61c47744a..16f4e8099 100644
+index 7459df2f0..659d76b4d 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -12601,7 +12601,11 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
+@@ -12694,7 +12694,11 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
                  // (its main() indexes gl_WorkGroupID as a block index, guard `g >= p.ne / 32`).
                  // The generic arm below assumes 32 threads each doing a WHOLE block, so it would
                  // dispatch 1/32 of the workgroups needed and leave 31/32 of the rows unwritten.
@@ -30,10 +30,10 @@ index 61c47744a..16f4e8099 100644
                  // quants run 32 threads each doing QUANT_K elements
                  ne = CEIL_DIV(ne, 32 * ggml_blck_size(dst->type));
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index ced97a0b5..066461b77 100644
+index 5e549e6b6..b935cbd0d 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -11125,12 +11125,26 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+@@ -11202,12 +11202,26 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
          // TQ4_1S was ever caught, and only because it happened to have a bespoke class with its
          // own op_desc. This second tally keys on the tensor type named in vars(), so a per-TYPE
          // hole inside a mixed op is named the same way a per-op hole is.

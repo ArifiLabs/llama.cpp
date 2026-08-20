@@ -1,4 +1,4 @@
-From 843ca19537e4201bd7419fdaa45c45e0438b59c0 Mon Sep 17 00:00:00 2001
+From 3706b661869415cf09e11f7c169874a0a7553f0f Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:24:18 -0400
 Subject: [PATCH] resolved/0026-cuda-rework-MoE-expert-cache-execution.patch
@@ -21,7 +21,7 @@ Assisted-by: Codex
  13 files changed, 823 insertions(+), 250 deletions(-)
 
 diff --git a/common/arg.cpp b/common/arg.cpp
-index cf11fa622..f95bfecf4 100644
+index 16615fc5a..1c867a474 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
 @@ -26,10 +26,12 @@
@@ -109,7 +109,7 @@ index cf11fa622..f95bfecf4 100644
                      string_format("got %zu input configs, but system only has %zu devices", split_arg.size(), llama_max_devices())
                  );
 diff --git a/common/common.cpp b/common/common.cpp
-index cb284545b..961e025a2 100644
+index 9bf7ccda4..9af04344e 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
 @@ -1303,6 +1303,7 @@ common_init_result::common_init_result(common_params & params, bool model_only)
@@ -737,10 +737,10 @@ index 35d6e58ad..57acd8e3f 100644
  
  LLAMA_API llama_memory_breakdown llama_get_memory_breakdown(const struct llama_context * ctx);
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 93cb5a79a..863c1dfbb 100644
+index fd2369ec6..597559fb8 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -3076,6 +3076,42 @@ int32_t llama_model_n_expert(const struct llama_model * model) {
+@@ -3080,6 +3080,42 @@ int32_t llama_model_n_expert(const struct llama_model * model) {
      return model->hparams.n_expert;
  }
  
@@ -1867,7 +1867,7 @@ index d1e8a27d6..fa5df3182 100644
                      fprintf(stderr, "%s: error: failed to run gen\n", __func__);
                      llama_free(ctx);
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 3ab95b192..0b619da44 100644
+index b827c0861..c26631ead 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
 @@ -230,6 +230,69 @@ static server_shared_draft_device_config server_prepare_shared_draft_devices(con
@@ -1940,7 +1940,7 @@ index 3ab95b192..0b619da44 100644
  // state diagram: https://github.com/ggml-org/llama.cpp/pull/9283
  enum slot_state {
      SLOT_STATE_IDLE,
-@@ -1231,7 +1294,7 @@ private:
+@@ -1243,7 +1306,7 @@ private:
                  // MTP draft context lives on the target model, only context+compute are new
                  bool measure_model_bytes = has_draft;
  
@@ -1949,7 +1949,7 @@ index 3ab95b192..0b619da44 100644
  
                  auto mparams_dft = common_model_params_to_llama(params_dft);
                  auto cparams_dft = common_context_params_to_llama(params_dft);
-@@ -1245,8 +1308,11 @@ private:
+@@ -1257,8 +1320,11 @@ private:
                  uint32_t hp_nct = 0;
                  uint32_t hp_nex = 0;
                  try {
@@ -1962,7 +1962,7 @@ index 3ab95b192..0b619da44 100644
                          devs, hp_ngl, hp_nct, hp_nex, GGML_LOG_LEVEL_ERROR);
  
                      std::vector<std::pair<ggml_backend_dev_t, size_t>> reservations;
-@@ -1294,6 +1360,9 @@ private:
+@@ -1306,6 +1372,9 @@ private:
  
                      for (const auto & [device, bytes] : reservations) {
                          total += bytes;
@@ -1972,7 +1972,7 @@ index 3ab95b192..0b619da44 100644
                          for (size_t i = 0; i < tgt_devices.size(); i++) {
                              if (tgt_devices[i] == device) {
                                  SRV_INF("[spec] reserving %.2f MiB on %s for the speculative model and context\n",
-@@ -1306,7 +1375,7 @@ private:
+@@ -1318,7 +1387,7 @@ private:
                              }
                          }
                      }
@@ -1981,7 +1981,7 @@ index 3ab95b192..0b619da44 100644
                              has_draft ? "draft model" : "MTP context",
                              total / (1024.0 * 1024.0));
                  } catch (const std::exception & e) {
-@@ -1349,7 +1418,7 @@ private:
+@@ -1361,7 +1430,7 @@ private:
              load_progress_spec.t_last_load_progress_ms = 0;  // reset so internal cbs aren't delayed
  
              {

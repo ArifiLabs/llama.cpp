@@ -1,4 +1,4 @@
-From 60e27b74315bda82ceb85a6f65895a1f1f50bf93 Mon Sep 17 00:00:00 2001
+From 79f96dfe7e8e38dfbaa3d5f30616aec6b4743b84 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 02:21:16 -0400
 Subject: [PATCH] vulkan: ask the pipelines whether they exist, not the type id
@@ -34,10 +34,10 @@ Assisted-by: Claude Opus 5
  1 file changed, 24 insertions(+), 11 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 67cb23591..5b8b4c022 100644
+index addbca25a..29a517a21 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -7937,14 +7937,26 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_conte
+@@ -7943,14 +7943,26 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_conte
              return nullptr;
      }
  
@@ -68,7 +68,7 @@ index 67cb23591..5b8b4c022 100644
  }
  
  static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context * ctx, ggml_type a_type, ggml_type b_type, uint32_t num_cols, uint32_t m, uint32_t k) {
-@@ -8144,13 +8156,14 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_id_pipeline(ggml_backend_vk_co
+@@ -8150,13 +8162,14 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_id_pipeline(ggml_backend_vk_co
      bool support_fp16acc = !mmp.f16acc->is_empty();
      bool support_fp32acc = !mmp.f32acc->is_empty();
  

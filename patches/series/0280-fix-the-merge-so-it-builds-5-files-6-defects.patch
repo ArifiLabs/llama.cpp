@@ -1,4 +1,4 @@
-From f461ceece0b98f94fcf378d69f6706fe6f2df32c Mon Sep 17 00:00:00 2001
+From de1c34a13ea459811f2a017add4e50e1c782153a Mon Sep 17 00:00:00 2001
 From: hq <hq@arifilabs>
 Date: Sat, 15 Aug 2026 21:40:14 -0400
 Subject: [PATCH] fix the merge so it builds: 5 files, 6 defects
@@ -34,10 +34,10 @@ restored-checkpoint protection. A partial merge that builds is the dangerous sha
  4 files changed, 18 insertions(+), 186 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 24e64cc3f..3101d8e83 100644
+index 8fc6dad22..795e2f9db 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -5663,7 +5663,10 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5669,7 +5669,10 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_Q5_1], "cpy_f32_q5_1", cpy_f32_q5_1_len, cpy_f32_q5_1_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_Q8_0], "cpy_f32_q8_0", cpy_f32_q8_0_len, cpy_f32_q8_0_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_IQ4_NL], "cpy_f32_iq4_nl", cpy_f32_iq4_nl_len, cpy_f32_iq4_nl_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
@@ -193,7 +193,7 @@ index 86eb4211e..17d368db6 100644
 -    return output;
 -}
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index d2fedae9a..db216e75c 100644
+index 04501aadc..24ff2d66d 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
 @@ -230,69 +230,6 @@ static server_shared_draft_device_config server_prepare_shared_draft_devices(con
@@ -284,7 +284,7 @@ index d2fedae9a..db216e75c 100644
          stop           = STOP_TYPE_NONE;
          stopping_word  = "";
          n_sent_text    = 0;
-@@ -3246,12 +3187,20 @@ private:
+@@ -3269,12 +3210,20 @@ private:
          std::vector<server_slot *> generating;
          std::vector<server_slot *> drafting;
  
@@ -305,7 +305,7 @@ index d2fedae9a..db216e75c 100644
              // check if we can batch this slot with the previous one
              if (!slot_batched) {
                  slot_batched = &slot;
-@@ -3639,6 +3588,7 @@ private:
+@@ -3662,6 +3611,7 @@ private:
  
                                          pos_next = std::min(pos_next, std::max(it->pos_min + 1, it->pos_max));
                                          n_past   = std::min(slot.prompt.tokens.size_up_to_pos(pos_next), (size_t) it->n_tokens);
@@ -313,7 +313,7 @@ index d2fedae9a..db216e75c 100644
                                          SLT_TRC(slot, "restored context checkpoint (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", n_past = %d, size = %.3f MiB)\n", it->pos_min, it->pos_max, it->n_tokens, n_past, (float) it->size() / 1024 / 1024);
                                      }
  
-@@ -3869,6 +3819,7 @@ private:
+@@ -3892,6 +3842,7 @@ private:
  
                          slot.stats.n_gen = 0;
                          slot.i_batch     = batch.size() - 1;

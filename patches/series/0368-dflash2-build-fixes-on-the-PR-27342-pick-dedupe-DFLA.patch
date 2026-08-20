@@ -1,4 +1,4 @@
-From 4614eebf1728850836c1567f4f1ec1c018c4e485 Mon Sep 17 00:00:00 2001
+From b8586314d85a4a9e6dba2e255f9cd8999d22850e Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 19 Aug 2026 11:24:11 -0400
 Subject: [PATCH] dflash2: build fixes on the PR #27342 pick - dedupe
@@ -13,10 +13,10 @@ Subject: [PATCH] dflash2: build fixes on the PR #27342 pick - dedupe
  4 files changed, 4 insertions(+), 4 deletions(-)
 
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index 46858c47c..ad19196ec 100644
+index 03988f251..a1d368bad 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -334,7 +334,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+@@ -337,7 +337,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
  
      { LLM_KV_TARGET_LAYERS,         "%s.target_layers"        },
      { LLM_KV_TARGET_HIDDEN_SIZE,    "%s.target_hidden_size"   },
@@ -26,10 +26,10 @@ index 46858c47c..ad19196ec 100644
      { LLM_KV_DFLASH_CONV_GROUP_SIZE,  "%s.conv_group_size"     },
      { LLM_KV_DFLASH_SELECTOR_RANK,    "%s.selector_rank"       },
 diff --git a/src/llama-arch.h b/src/llama-arch.h
-index f2fc897e4..ca6ad67d8 100644
+index cc5fc34a8..3a864f76d 100644
 --- a/src/llama-arch.h
 +++ b/src/llama-arch.h
-@@ -381,7 +381,7 @@ enum llm_kv {
+@@ -384,7 +384,7 @@ enum llm_kv {
  
      LLM_KV_TARGET_LAYERS,
      LLM_KV_TARGET_HIDDEN_SIZE,
@@ -39,10 +39,10 @@ index f2fc897e4..ca6ad67d8 100644
      LLM_KV_DFLASH_CONV_GROUP_SIZE,
      LLM_KV_DFLASH_SELECTOR_RANK,
 diff --git a/src/llama-hparams.h b/src/llama-hparams.h
-index 2b074cdbc..420537f57 100644
+index 964de8184..de3062dcc 100644
 --- a/src/llama-hparams.h
 +++ b/src/llama-hparams.h
-@@ -214,7 +214,7 @@ struct llama_hparams {
+@@ -218,7 +218,7 @@ struct llama_hparams {
      // output embedding dimension (0 = use n_embd)
      uint32_t n_embd_out_impl = 0;
  

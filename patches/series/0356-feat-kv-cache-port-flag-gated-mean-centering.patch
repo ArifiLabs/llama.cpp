@@ -1,4 +1,4 @@
-From 6b9a2e121ba16f0efea609702f6dfa241a75135f Mon Sep 17 00:00:00 2001
+From 595b9c17f6666982ce685de3775cc95cbcc044fe Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 19 Aug 2026 02:13:35 -0400
 Subject: [PATCH] feat(kv-cache): port flag-gated mean centering
@@ -72,7 +72,7 @@ index 2afea320a..5c015267c 100644
      VERSION ${LLAMA_VERSION_BASE}
      SOVERSION ${LLAMA_VERSION_MAJOR}
 diff --git a/common/arg.cpp b/common/arg.cpp
-index f95bfecf4..19004d530 100644
+index 1c867a474..f0581aa90 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
 @@ -1771,7 +1771,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
@@ -120,7 +120,7 @@ index f95bfecf4..19004d530 100644
          {"-ofreq", "--output-frequency"}, "N",
          string_format("output the imatrix every N iterations (default: %d)", params.n_out_freq),
 diff --git a/common/common.cpp b/common/common.cpp
-index 0783f108c..d04b5abc1 100644
+index aaf66052f..f9bacb0d1 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
 @@ -1792,6 +1792,12 @@ struct llama_context_params common_context_params_to_llama(const common_params &
@@ -816,10 +816,10 @@ index ac4a61707..cecd362fb 100644
  
      size_t size_k_bytes() const;
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
-index 3afa3b4cd..e25cacdaf 100644
+index 9ba24af8d..04ccd4995 100644
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
-@@ -235,6 +235,10 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
+@@ -236,6 +236,10 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
      set_tests_properties(test-recurrent-state-rollback-nemotron-h PROPERTIES
          FIXTURES_REQUIRED generate-models
      )

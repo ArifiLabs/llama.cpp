@@ -1,4 +1,4 @@
-From 8560eeda2a61abcd63ce6a067892f8e4b45231ce Mon Sep 17 00:00:00 2001
+From 8e01eec50d2b7550d97edc7eaf8946d638e07361 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:06:41 -0400
 Subject: [PATCH] 
@@ -10,10 +10,10 @@ Assisted-by: Codex
  1 file changed, 13 insertions(+), 3 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index d56cf31d9..3ef25e547 100644
+index cc0a8e01b..c39fcd45b 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -18301,9 +18301,19 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18395,9 +18395,19 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      // parks the experts in one backend's buffer and then runs the op in the
                      // other, copying every expert tensor across the bus on every token.
                      if (src0_type == GGML_TYPE_TQ3_1S || src0_type == GGML_TYPE_TQ4_1S) {

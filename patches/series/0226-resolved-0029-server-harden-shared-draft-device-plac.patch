@@ -1,4 +1,4 @@
-From d57b034fb34e237b50d8ac7aafbc3b29c4a5fecd Mon Sep 17 00:00:00 2001
+From d92555d24388f06f955295708b52e390083d5e43 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:22:08 -0400
 Subject: [PATCH] 
@@ -10,7 +10,7 @@ Assisted-by: Codex
  1 file changed, 219 insertions(+), 99 deletions(-)
 
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 0ff2d103b..afc91ada1 100644
+index 49903f456..5ef27261e 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
 @@ -42,113 +42,191 @@ constexpr int HTTP_POLLING_SECONDS = 1;
@@ -275,7 +275,7 @@ index 0ff2d103b..afc91ada1 100644
      return result;
  }
  
-@@ -922,6 +1000,7 @@ private:
+@@ -930,6 +1008,7 @@ private:
      // use server_context methods instead
  
      common_params params_base;
@@ -283,7 +283,7 @@ index 0ff2d103b..afc91ada1 100644
  
      // note: keep these alive - they determine the lifetime of the model, context, etc.
      common_init_result_ptr llama_init;
-@@ -1048,33 +1127,38 @@ private:
+@@ -1060,33 +1139,38 @@ private:
          load_progress_data load_progress_spec  (this, "spec_model");
  
          const bool is_resume = sleeping;
@@ -331,7 +331,7 @@ index 0ff2d103b..afc91ada1 100644
  
          if (callback_state) {
              std::vector<std::string> stages = {"text_model"};
-@@ -1125,13 +1209,13 @@ private:
+@@ -1137,13 +1221,13 @@ private:
                  }
                  SRV_TRC("[mtmd] estimated worst-case memory usage of mmproj is %.2f MiB (took %.2f ms)\n", total / (1024.0 * 1024.0), t_elapsed / 1000.0);
                  GGML_ASSERT(!params_base.fit_params_target.empty());
@@ -351,7 +351,7 @@ index 0ff2d103b..afc91ada1 100644
                              break;
                          }
                      }
-@@ -1165,24 +1249,58 @@ private:
+@@ -1177,24 +1261,58 @@ private:
                          params_dft.model.path.c_str(), &mparams_dft, &cparams_dft,
                          devs, hp_ngl, hp_nct, hp_nex, GGML_LOG_LEVEL_ERROR);
  
@@ -422,7 +422,7 @@ index 0ff2d103b..afc91ada1 100644
                                  params_base.fit_params_target[i] += bytes;
                                  break;
                              }
-@@ -1465,8 +1583,10 @@ private:
+@@ -1477,8 +1595,10 @@ private:
          model_aliases = params_base.model_alias;
          model_tags    = params_base.model_tags;
  

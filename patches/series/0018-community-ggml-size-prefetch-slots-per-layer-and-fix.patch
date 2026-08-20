@@ -1,4 +1,4 @@
-From 7dcc63efa5b820839942df7bdbae413ae6b3c42e Mon Sep 17 00:00:00 2001
+From e0ce66c236096a6443fe67ccdfa0a78cd4b7c00b Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 20:59:28 -0400
 Subject: [PATCH] community: ggml : size prefetch slots per layer and fix
@@ -12,10 +12,10 @@ Measured-effect: inert on GPU-resident unified memory (ki-prefetch-experts-condi
  1 file changed, 90 insertions(+), 19 deletions(-)
 
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 420a0890c..9ef92bc66 100644
+index a86e4d38c..89ed5cda0 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
-@@ -761,6 +761,10 @@ static bool ggml_is_view_op(enum ggml_op op) {
+@@ -763,6 +763,10 @@ static bool ggml_is_view_op(enum ggml_op op) {
  #define GGML_SCHED_MAX_COPIES 4
  #endif
  
@@ -26,7 +26,7 @@ index 420a0890c..9ef92bc66 100644
  struct ggml_backend_sched_split {
      int backend_id;
      int i_start;
-@@ -826,10 +830,11 @@ struct ggml_backend_sched {
+@@ -828,10 +832,11 @@ struct ggml_backend_sched {
      // they overlap compute, alternating between two staging slots
      bool prefetch_experts;
      ggml_backend_t prefetch_backend;
@@ -42,7 +42,7 @@ index 420a0890c..9ef92bc66 100644
      int prefetch_cur;
  
      int debug;
-@@ -1603,6 +1608,40 @@ static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
+@@ -1605,6 +1610,40 @@ static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
      return true;
  }
  
@@ -83,7 +83,7 @@ index 420a0890c..9ef92bc66 100644
  static bool ggml_backend_sched_prefetch_init(ggml_backend_sched_t sched, ggml_backend_t split_backend, size_t size) {
      if (sched->prefetch_backend == NULL) {
          ggml_backend_dev_t dev = split_backend->device;
-@@ -1617,7 +1656,7 @@ static bool ggml_backend_sched_prefetch_init(ggml_backend_sched_t sched, ggml_ba
+@@ -1619,7 +1658,7 @@ static bool ggml_backend_sched_prefetch_init(ggml_backend_sched_t sched, ggml_ba
              sched->prefetch_experts = false;
              return false;
          }
@@ -92,7 +92,7 @@ index 420a0890c..9ef92bc66 100644
              sched->prefetch_ready[i] = ggml_backend_event_new(dev);
              sched->prefetch_free[i]  = ggml_backend_event_new(dev);
              if (sched->prefetch_ready[i] == NULL || sched->prefetch_free[i] == NULL) {
-@@ -1627,18 +1666,31 @@ static bool ggml_backend_sched_prefetch_init(ggml_backend_sched_t sched, ggml_ba
+@@ -1629,18 +1668,31 @@ static bool ggml_backend_sched_prefetch_init(ggml_backend_sched_t sched, ggml_ba
          }
      }
  
@@ -132,7 +132,7 @@ index 420a0890c..9ef92bc66 100644
          }
      }
      return true;
-@@ -1657,6 +1709,9 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1659,6 +1711,9 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
          int split_backend_id = split->backend_id;
          ggml_backend_t split_backend = sched->backends[split_backend_id];
          int split_prefetch_slot = -1;
@@ -142,7 +142,7 @@ index 420a0890c..9ef92bc66 100644
  
          // copy the input tensors to the split backend
          for (int input_id = 0; input_id < split->n_inputs; input_id++) {
-@@ -1686,11 +1741,17 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1688,11 +1743,17 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                          if (ids->ne[0]*ids->ne[1] >= 2*n_expert &&
                              ggml_backend_sched_prefetch_init(sched, split_backend, ggml_nbytes(input))) {
                              const int slot = sched->prefetch_cur;
@@ -161,7 +161,7 @@ index 420a0890c..9ef92bc66 100644
                              input_cpy->buffer = sched->prefetch_slots[slot];
                              input_cpy->data   = ggml_backend_buffer_get_base(sched->prefetch_slots[slot]);
                              ggml_backend_tensor_set_async(sched->prefetch_backend, input_cpy, input->data, 0, ggml_nbytes(input));
-@@ -1812,12 +1873,15 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1814,12 +1875,15 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
  
          if (!sched->callback_eval) {
              enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);
@@ -180,7 +180,7 @@ index 420a0890c..9ef92bc66 100644
              }
          } else {
              // similar to ggml_backend_compare_graph_backend
-@@ -1931,8 +1995,14 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -1933,8 +1997,14 @@ ggml_backend_sched_t ggml_backend_sched_new(
      sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
      sched->op_offload = op_offload;
  
@@ -196,7 +196,7 @@ index 420a0890c..9ef92bc66 100644
  
      ggml_backend_sched_reset(sched);
  
-@@ -1950,7 +2020,8 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
+@@ -1952,7 +2022,8 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
      }
      if (sched->prefetch_backend) {
          ggml_backend_synchronize(sched->prefetch_backend);
