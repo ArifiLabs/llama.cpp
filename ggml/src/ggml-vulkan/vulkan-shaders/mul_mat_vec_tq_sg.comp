@@ -1,0 +1,135 @@
+#version 450
+
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+#include "mul_mat_vec_base.glsl"
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+// Subgroup-cooperative TQ mat-vec, serves TQ3_1S / TQ3_4S / TQ4_1S via DATA_A_*.
+// Same math as mul_mat_vec_tq3_1s.comp (rotate the activation, dot against raw
+// centroid*scale weights - see the derivation there), different execution shape:
+// the WHT butterfly runs in registers with subgroupShuffleXor, so there is no
+// shared memory and no barrier in the hot loop, and the workgroup is no longer
+// pinned to 32 threads. Each aligned 32-lane slice of the workgroup owns every
+// nslices-th block of the K dimension; the partial sums meet in reduce_result.
+// Port of the CUDA butterfly in tq_prerotate_activation (ggml-cuda/mmvq-tq.cu).
+//
+// Correct for any subgroup size that is a multiple of 32: a shuffle-xor with
+// mask < 32 cannot leave an aligned 32-lane group. The host only creates this
+// pipeline with full subgroups on such devices; others keep the 32-thread shaders.
+
+const float TQ_SIGNS[32] = float[32](
+    +1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
+    -1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
+    -1.0, -1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0,
+    -1.0, +1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0
+);
+
+const float TQ_INV_SQRT32 = 0.17677669529663688;
+
+#if defined(DATA_A_TQ4_1S)
+// Lloyd-Max centroids, 4-bit (TQ4_0_CENTROIDS in ggml-arifi-turbo-weights.c)
+const float TQ_CENTROIDS[16] = float[16](
+    -2.732590, -2.069017, -1.618046, -1.256231,
+    -0.942340, -0.656759, -0.388048, -0.128395,
+     0.128395,  0.388048,  0.656759,  0.942340,
+     1.256231,  1.618046,  2.069017,  2.732590
+);
+#else
+// Lloyd-Max centroids, 3-bit (TQ3_0_CENTROIDS in ggml-arifi-turbo-weights.c)
+const float TQ_CENTROIDS[8] = float[8](
+    -1.996684, -1.291398, -0.740341, -0.247508,
+     0.230106,  0.725222,  1.277503,  1.988943
+);
+#endif
+
+void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+    const uint tid = gl_LocalInvocationID.x;
+
+    // lane inside the 32-element block, and which 32-lane slice this is.
+    // Derived from subgroup builtins so the shuffle pairs are subgroup-aligned.
+    const uint lane    = gl_SubgroupInvocationID & 31u;
+    const uint slice   = gl_SubgroupID * (gl_SubgroupSize >> 5u) + (gl_SubgroupInvocationID >> 5u);
+    const uint nslices = gl_NumSubgroups * (gl_SubgroupSize >> 5u);
+
+    uint a_offset, b_offset, d_offset;
+    get_offsets(a_offset, b_offset, d_offset);
+
+    FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
+            temp[j][n] = FLOAT_TYPE(0);
+        }
+    }
+
+    const uint num_blocks_per_row = p.ncols / 32u;
+
+#if defined(DATA_A_TQ4_1S)
+    const uint byte_idx     = lane >> 1u;
+    const uint nibble_shift = (lane & 1u) * 4u;
+#else
+    const uint group   = lane >> 3u;        // 3-byte group (TQ3_4S: also the scale group)
+    const uint qs_base = group * 3u;
+    const uint shift   = (lane & 7u) * 3u;
+#endif
+    const float sign_lane = TQ_SIGNS[lane];
+
+    for (uint blk = slice; blk < num_blocks_per_row; blk += nslices) {
+        float xr[NUM_COLS];
+        [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
+            xr[c] = float(data_b[c * p.batch_stride_b + b_offset + blk * 32u + lane]) * sign_lane;
+        }
+
+        // forward WHT butterfly in registers, same pairing as tq3_0_rht_forward()
+        [[unroll]] for (uint step = 1u; step < 32u; step <<= 1u) {
+            [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
+                const float o = subgroupShuffleXor(xr[c], step);
+                xr[c] = ((lane & step) == 0u) ? (xr[c] + o) : (o - xr[c]);
+            }
+        }
+
+        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+            const uint ib = (first_row + n) * num_blocks_per_row + blk;
+#if defined(DATA_A_TQ4_1S)
+            const uint idx = (uint(data_a[a_offset + ib].qs[byte_idx]) >> nibble_shift) & 0xFu;
+            const float d  = (lane < 16u)
+                ? float(data_a[a_offset + ib].d0)
+                : float(data_a[a_offset + ib].d1);
+#else
+            const uint packed = uint(data_a[a_offset + ib].qs[qs_base])
+                              | (uint(data_a[a_offset + ib].qs[qs_base + 1u]) << 8)
+                              | (uint(data_a[a_offset + ib].qs[qs_base + 2u]) << 16);
+            const uint idx = (packed >> shift) & 7u;
+#if defined(DATA_A_TQ3_4S)
+            const float d  = tq3_4s_decode_scale(uint(data_a[a_offset + ib].d[group]));
+#else
+            const float d  = (lane < 16u)
+                ? float(data_a[a_offset + ib].d0)
+                : float(data_a[a_offset + ib].d1);
+#endif
+#endif
+            const float w = TQ_CENTROIDS[idx] * d * TQ_INV_SQRT32;
+            [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
+                temp[c][n] += FLOAT_TYPE(w * xr[c]);
+            }
+        }
+    }
+
+    reduce_result(temp, d_offset, first_row, num_rows, tid);
+}
+
+void main() {
+    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+
+    if (first_row + NUM_ROWS <= p.stride_d) {
+        compute_outputs(first_row, NUM_ROWS);
+    } else {
+        if (first_row >= p.stride_d) {
+            return;
+        }
+        compute_outputs(first_row, p.stride_d - first_row);
+    }
+}

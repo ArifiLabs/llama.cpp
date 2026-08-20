@@ -163,6 +163,9 @@ PAIRS = [
     (WEIGHTS, "TQ3_0_SIGNS",     "mul_mat_vec_tq3_4s.comp", "TQ3_SIGNS"),
     (WEIGHTS, "TQ4_0_CENTROIDS", "mul_mat_vec_tq4_1s.comp", "TQ4_CENTROIDS"),
     (WEIGHTS, "TQ3_0_SIGNS",     "mul_mat_vec_tq4_1s.comp", "TQ4_SIGNS"),
+    (WEIGHTS, "TQ3_0_SIGNS",     "mul_mat_vec_tq_sg.comp",  "TQ_SIGNS"),
+    (WEIGHTS, "TQ4_0_CENTROIDS", "mul_mat_vec_tq_sg.comp",  "TQ_CENTROIDS#0"),
+    (WEIGHTS, "TQ3_0_CENTROIDS", "mul_mat_vec_tq_sg.comp",  "TQ_CENTROIDS#1"),
     (WEIGHTS, "TQ3_0_CENTROIDS", "mul_mm_funcs.glsl",      "centroids#0"),
     (WEIGHTS, "TQ4_0_CENTROIDS", "mul_mm_funcs.glsl",      "centroids#1"),
     (WEIGHTS, "TQ3_0_SIGNS",     "tq_rotate_act.comp",     "TQ_SIGNS"),
@@ -499,7 +502,7 @@ def main():
     for label, got, want in (("FA_TYPE ids", n_fa, 16), ("QUANT_K sizes", n_qk, 35),
                              ("marked type lists", n_regions, 16), ("SETs", n_sets, 4),
                              ("FA K/V types", n_kv, 12), ("scalar mirrors", n_scalar, len(SCALARS)),
-                             ("LUT pairs", len(PAIRS), 49)):
+                             ("LUT pairs", len(PAIRS), 52)):  # +3: mul_mat_vec_tq_sg.comp (lane-163)
         if got != want:
             fail("COUNT CHANGED: %s = %d, expected %d. If you added or removed one deliberately, "
                  "update the expected count in arifi_sync_check.py main(); if you did not, a mirror "
