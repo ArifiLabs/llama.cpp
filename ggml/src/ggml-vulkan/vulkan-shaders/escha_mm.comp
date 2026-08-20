@@ -79,19 +79,13 @@ float escha_F(uint xw) {
     return unpackHalf2x16(f32_to_f16_rte(s)).x;    // value of the f16-rounded sum
 }
 
-uint word16(uint base_u32, uint idx) {
-    return (data_a[base_u32 + (idx >> 1u)] >> (16u * (idx & 1u))) & 0xFFFFu;
-}
-
-#if ESCHA_K == 3
-// 64-bit funnel shift via two u32s, shift in {0,8,16,24,12,20,28,36}; no shaderInt64
+// 64-bit funnel shift via two u32s; no shaderInt64
 uint shr64_32(uint lo, uint hi, uint s) {
     if (s == 0u)  return lo;
     if (s < 32u)  return (lo >> s) | (hi << (32u - s));
     if (s == 32u) return hi;
     return hi >> (s - 32u);
 }
-#endif
 
 void hadamard128(uint tid) {
     [[unroll]] for (uint step = 1u; step < 128u; step <<= 1u) {
@@ -133,10 +127,13 @@ void main() {
             [[unroll]] for (uint b = 0u; b < 4u; ++b) {
                 const uint lane = lhi + b;
 #if ESCHA_K == 2
-                const uint word = word16(base, lane ^ 1u);
+                // lane windows a 32-bit suffix of a 64-bit pair, not one u16
+                const uint pw   = (lane >> 1u) & 15u;
+                const uint qw   = (pw + 15u) & 15u;
+                const uint word = shr64_32(data_a[base + pw], data_a[base + qw], ((lane & 1u) == 0u) ? 16u : 0u);
                 [[unroll]] for (uint k = 0u; k < 4u; ++k) {
                     const uint c   = c0 + k;
-                    const uint row = 2u*b + (c & 1u) + 8u*(1u - ((c >> 1u) & 1u));
+                    const uint row = 2u*b + (1u - (c & 1u)) + 8u*(1u - ((c >> 1u) & 1u));
                     acc += sh[t*16u + row] * escha_F((word >> (2u*c)) & 0xFFFFu);
                 }
 #else
@@ -153,7 +150,7 @@ void main() {
                 const uint rr   = shr64_32(zlo, zhi, sh0 + 12u);
                 [[unroll]] for (uint k = 0u; k < 4u; ++k) {
                     const uint c   = c0 + k;
-                    const uint row = 2u*b + (c & 1u) + 8u*(1u - ((c >> 1u) & 1u));
+                    const uint row = 2u*b + (1u - (c & 1u)) + 8u*(1u - ((c >> 1u) & 1u));
                     const uint win = (c < 4u) ? (pp >> (3u*c)) : (rr >> (3u*(c - 4u)));
                     acc += sh[t*16u + row] * escha_F(win & 0xFFFFu);
                 }
