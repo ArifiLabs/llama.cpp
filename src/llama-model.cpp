@@ -1685,6 +1685,27 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             if (!layer.nextn.shared_head_head_in_s && layer.nextn.shared_head_head) {
                 layer.nextn.shared_head_head_in_s = create_tensor(tn(LLM_TENSOR_NEXTN_SHARED_HEAD_HEAD, "input_scale", i), {1}, TENSOR_NOT_REQUIRED);
             }
+
+            // ArifiLabs Escha-W2 (lane-164): every escha-typed weight REQUIRES its
+            // f32 aux sidecar (rin*s_in | rout*s_out | bias) — loud fail if absent.
+            {
+                const auto load_escha_aux = [&](ggml_tensor * w, llm_tensor tt) {
+                    if (w && (w->type == GGML_TYPE_ESCHA2 || w->type == GGML_TYPE_ESCHA3)) {
+                        ggml_tensor * aux = create_tensor(tn(tt, "escha_aux", i), { w->ne[0] + 2*w->ne[1] }, 0);
+                        escha_aux[w] = aux;
+                    }
+                };
+                load_escha_aux(layer.wq,        LLM_TENSOR_ATTN_Q);
+                load_escha_aux(layer.wk,        LLM_TENSOR_ATTN_K);
+                load_escha_aux(layer.wv,        LLM_TENSOR_ATTN_V);
+                load_escha_aux(layer.wo,        LLM_TENSOR_ATTN_OUT);
+                load_escha_aux(layer.wqkv,      LLM_TENSOR_ATTN_QKV);
+                load_escha_aux(layer.wqkv_gate, LLM_TENSOR_ATTN_GATE);
+                load_escha_aux(layer.ssm_out,   LLM_TENSOR_SSM_OUT);
+                load_escha_aux(layer.ffn_gate,  LLM_TENSOR_FFN_GATE);
+                load_escha_aux(layer.ffn_up,    LLM_TENSOR_FFN_UP);
+                load_escha_aux(layer.ffn_down,  LLM_TENSOR_FFN_DOWN);
+            }
         }
         // output scales
         if (output && output->type == GGML_TYPE_NVFP4) {

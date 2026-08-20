@@ -705,6 +705,15 @@ struct llama_model {
 
     std::vector<llama_layer> layers;
 
+    // ArifiLabs Escha-W2 (lane-164): escha-typed weight -> f32 aux sidecar
+    // (rin*s_in | rout*s_out | bias), consumed by GGML_OP_ESCHA_MM
+    std::map<const ggml_tensor *, ggml_tensor *> escha_aux;
+
+    ggml_tensor * get_escha_aux(const ggml_tensor * w) const {
+        const auto it = escha_aux.find(w);
+        return it == escha_aux.end() ? nullptr : it->second;
+    }
+
     //Dense linear projections for SentenceTransformers models like embeddinggemma
     // For Sentence Transformers models structure see
     // https://sbert.net/docs/sentence_transformer/usage/custom_models.html#structure-of-sentence-transformer-models

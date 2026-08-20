@@ -137,6 +137,8 @@ are **not ours to choose**: we adopt whatever the format's originator serialized
 | 52 | `GGML_TYPE_TQ3_4SV` | tq3 (**retagged**, their 37) | NOT DERIVED | NOT DERIVED | 32 | **RESERVED — not implemented** (lane-151) — see §3.1.2 |
 | 53 | `GGML_TYPE_TQ3_1S_AP1` | tq3 (**retagged**, their 31) | NOT DERIVED | NOT DERIVED | 32 | **RESERVED — not implemented** (lane-151) — see §3.1.2 |
 | 54 | `GGML_TYPE_TQ3_1S_TQ3` | tq3 (**retagged**, their 44) | *hypothesis:* same wire as our 45 | *hypothesis:* 16 | 32 | **RESERVED — not implemented** (lane-151) — see §3.1.2 |
+| 55 | `GGML_TYPE_ESCHA2` | **ArifiLabs** (lane-164) | packed EschaLabs cbA K=2 code tiles, `[in/16][out/16][32] i16 LE` | 64 | 256 (one 16x16 tile) | **implemented** — NOT row-separable; sole consumer `GGML_OP_ESCHA_MM`; f32 aux sidecar `<base>.escha_aux` required |
+| 56 | `GGML_TYPE_ESCHA3` | **ArifiLabs** (lane-164) | packed EschaLabs cbA K=3 code tiles, `[in/16][out/16][48] i16 LE` | 96 | 256 | **implemented** — same rules as 55 |
 
 `44` is left as a hole. It is the value TurboQuant uses for a runtime-only type and the value our
 current `GGML_TYPE_COUNT` occupies; leaving it unassigned costs nothing and removes a whole class of

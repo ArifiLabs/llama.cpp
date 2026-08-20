@@ -1506,6 +1506,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     loras            (params.loras),
     mctx             (params.mctx),
     cross            (params.cross),
+    mdl              (params.mdl),
     samplers         (params.samplers),
     cb_func          (params.cb),
     res              (params.res),
@@ -1532,6 +1533,16 @@ ggml_tensor * llm_graph_context::build_lora_mm(
           ggml_tensor * w,
           ggml_tensor * cur,
           ggml_tensor * w_s) const {
+    // ArifiLabs Escha-W2 (lane-164): escha-typed weights route to the fused op,
+    // with the aux sidecar resolved from the model. LoRA/scale do not apply.
+    if (w->type == GGML_TYPE_ESCHA2 || w->type == GGML_TYPE_ESCHA3) {
+        GGML_ASSERT(mdl != nullptr && "escha weight but no model in graph params");
+        ggml_tensor * aux = mdl->get_escha_aux(w);
+        GGML_ASSERT(aux != nullptr && "escha weight without aux sidecar");
+        GGML_ASSERT(w_s == nullptr);
+        return ggml_escha_mm(ctx0, w, cur, aux);
+    }
+
     ggml_tensor * res = ggml_mul_mat(ctx0, w, cur);
 
     if (w_s) {
