@@ -110,6 +110,21 @@ def commit_trailers(repo: str, sha: str) -> dict:
     return out
 
 
+def load_grandfather(repo: str) -> set:
+    """Sha-pinned exemption ledger for fork-NATIVE commits that predate the
+    'Origin: ArifiLabs (native)' convention (2026-08-20). These commits have no
+    upstream origin - requiring Taken-from on them was a category error, and
+    rewriting 289 commits of history to add trailers would break every series
+    pin and evidence citation. The ledger is CLOSED: new native commits carry
+    the native Origin trailer instead and must never be added here."""
+    p = os.path.join(repo, "tools", "arifi-sync", "native-grandfather.json")
+    if not os.path.exists(p):
+        return set()
+    with open(p, "r", encoding="utf-8-sig") as fh:
+        data = json.load(fh)
+    return {row["sha"] for row in data.get("commits", [])}
+
+
 def cmd_provenance(repo: str, cfg: dict, args) -> int:
     base = cfg["base"]["upstream_sha"]
     rng = "%s..%s" % (base, args.ref)
@@ -117,24 +132,30 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:
     if not shas:
         raise Loud("empty range %s - is the base pin correct?" % rng)
 
-    strict, loose, meas = 0, 0, 0
+    grandfathered = load_grandfather(repo)
+    strict, loose, meas, native, gf = 0, 0, 0, 0, 0
     loose_only, missing, no_meas = [], [], []
     for sha in shas:
         body = gout(repo, "log", "-1", "--format=%B", sha)
         subject = gout(repo, "log", "-1", "--format=%s", sha)
         tr = commit_trailers(repo, sha)
+        is_native = "arifilabs (native)" in tr["Origin"].lower()
         is_strict = bool(tr["Taken-from"] or tr["Origin"])
         is_loose = ("Taken-from:" in body) or ("Origin:" in body)
         strict += is_strict
         loose += is_loose
+        native += is_native
         if tr["Measured-effect"]:
             meas += 1
-        else:
+        elif not (is_native or sha in grandfathered):
             no_meas.append((sha[:9], subject))
         if is_loose and not is_strict:
             loose_only.append((sha[:9], subject))
         if not is_loose:
-            missing.append((sha[:9], subject))
+            if sha in grandfathered:
+                gf += 1
+            else:
+                missing.append((sha[:9], subject))
 
     n = len(shas)
     say("range                     : %s" % rng)
@@ -142,6 +163,8 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:
     say("Taken-from/Origin STRICT  : %d / %d   (git's own trailer-block parser; this is what CI sees)" % (strict, n))
     say("Taken-from/Origin LOOSE   : %d / %d   (token present anywhere in the message)" % (loose, n))
     say("Measured-effect           : %d / %d" % (meas, n))
+    say("native (Origin trailer)   : %d       (fork-authored, no upstream origin - convention 2026-08-20)" % native)
+    say("grandfathered NATIVE      : %d / %d  (sha-pinned in tools/arifi-sync/native-grandfather.json, ledger CLOSED)" % (gf, n))
 
     if loose_only:
         say("\nLOOSE-ONLY - provenance is human-readable but NOT machine-readable.")
