@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10524`, `9ee9fc04c136ef2ae729bfc60d18961b23c13ddf`
-- Patches: **372**, all non-merge, applied in filename order.
+- Patches: **374**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 372 commit messages, same provenance trailers. Verified, not
+same file contents, same 374 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -451,6 +451,8 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 370 | `0370-cuda-lift-TQ3_4S-kernel-set-from-tq3-master-14-files.patch` | arifi-fork-base | `1d43fab13` | turbo-tan/llama.cpp-tq3@854516439 | - | cuda: lift TQ3_4S kernel set from tq3/master (14 files) |
 | 371 | `0371-metal-lift-TQ3_4S-kernel-set-from-tq3-master-5-files.patch` | arifi-fork-base | `9da72a05c` | turbo-tan/llama.cpp-tq3@854516439 | - | metal: lift TQ3_4S kernel set from tq3/master (5 files + alloc hook) |
 | 372 | `0372-metal-declare-the-tq3_rht-pipeline-getter-in-ggml-me.patch` | arifi-fork-base | `e12569511` | turbo-tan/llama.cpp-tq3@854516439 | - | metal: declare the tq3_rht pipeline getter in ggml-metal-device.h |
+| 373 | `0373-sync-move-base-b10488-b10524-regenerate-series-372-p.patch` | arifi-fork-base | `f2da307f8` | upstream@9ee9fc04c (tag b10524) | `EXPERT_BUNDLE_PATH`, `LANE110_PREFETCH_CAP`, `LANE110_PROF`, `MAX_N_CACHED`, `GENERATE_EXPERT_BUNDLE`, `LLAMA_USE_PREBUILT_UI`, `GGML_RECURRENT_STATE_F16`, `POWERINFER_IOCP`, `GGML_ARIFI_VNNI_REPACK`, `GGML_ARIFI_TURBO_KV`, `ARIFI_TOOL_NVFP4_REMAP` | sync: move base b10488 -> b10524, regenerate series (372 patches) |
+| 374 | `0374-spec-ingest-turboquant-MTP-boost-wave-effective-KV-b.patch` | arifi-fork-base | `94dfaccc7` | llama-cpp-turboquant@bd1bf025f (524531e57, f9e04f5d7, 4be91d62b, 5b105dfb7, 4c4131bf8, b20e97012, 7544b18cf, 275963f50, cd638bc13, e82fe159b) | - | spec: ingest turboquant MTP-boost wave + effective-KV bench reporting |
 
 ## Measured effect, per patch
 
@@ -893,6 +895,8 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0370-cuda-lift-TQ3_4S-kernel-set-from-tq3-master-14-files.patch` | UNMEASURED ON THIS RIG (no CUDA silicon); tq3-side references: RTX 3090 tg128 43.1 -> 47.4 t/s (PRMT vec_dot), Ampere decode +35% (3d3888c9f) |
 | `0371-metal-lift-TQ3_4S-kernel-set-from-tq3-master-5-files.patch` | UNMEASURED ON THIS RIG (no Metal silicon); tq3-side reference: M3 Pro 27B decode ~4 t/s, ~27x over CPU (02d51f048) |
 | `0372-metal-declare-the-tq3_rht-pipeline-getter-in-ggml-me.patch` | UNMEASURED ON THIS RIG (no Metal toolchain) |
+| `0373-sync-move-base-b10488-b10524-regenerate-series-372-p.patch` | UNMEASURED (build+sweep follow in this lane) |
+| `0374-spec-ingest-turboquant-MTP-boost-wave-effective-KV-b.patch` | UNMEASURED (their mtp-boost numbers are theirs; no arm run on this rig yet) |
 
 ## Unclassified
 
@@ -1204,4 +1208,6 @@ rather than silently bucketed - add a rule when a new source appears.
 - `1d43fab13` cuda: lift TQ3_4S kernel set from tq3/master (14 files)
 - `9da72a05c` metal: lift TQ3_4S kernel set from tq3/master (5 files + alloc hook)
 - `e12569511` metal: declare the tq3_rht pipeline getter in ggml-metal-device.h
+- `f2da307f8` sync: move base b10488 -> b10524, regenerate series (372 patches)
+- `94dfaccc7` spec: ingest turboquant MTP-boost wave + effective-KV bench reporting
 
