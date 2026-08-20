@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10488`, `9d77fa17254e1dee4b9e92504c91611a60b1359f`
-- Patches: **371**, all non-merge, applied in filename order.
+- Patches: **372**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 371 commit messages, same provenance trailers. Verified, not
+same file contents, same 372 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -450,6 +450,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 369 | `0369-sources-register-buun-spiritbuun-buun-llama-cpp-as-a.patch` | arifi-fork-base | `a458eab86` | - | - | sources: register buun (spiritbuun/buun-llama-cpp) as a greedy-ingestion watch source - President ruling, VBR/KV + DFlash2-for-3.8 lineage |
 | 370 | `0370-cuda-lift-TQ3_4S-kernel-set-from-tq3-master-14-files.patch` | arifi-fork-base | `28e4af5c0` | turbo-tan/llama.cpp-tq3@854516439 | - | cuda: lift TQ3_4S kernel set from tq3/master (14 files) |
 | 371 | `0371-metal-lift-TQ3_4S-kernel-set-from-tq3-master-5-files.patch` | arifi-fork-base | `827f683e4` | turbo-tan/llama.cpp-tq3@854516439 | - | metal: lift TQ3_4S kernel set from tq3/master (5 files + alloc hook) |
+| 372 | `0372-metal-declare-the-tq3_rht-pipeline-getter-in-ggml-me.patch` | arifi-fork-base | `803767f83` | turbo-tan/llama.cpp-tq3@854516439 | - | metal: declare the tq3_rht pipeline getter in ggml-metal-device.h |
 
 ## Measured effect, per patch
 
@@ -891,6 +892,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0369-sources-register-buun-spiritbuun-buun-llama-cpp-as-a.patch` | *(no Measured-effect trailer)* |
 | `0370-cuda-lift-TQ3_4S-kernel-set-from-tq3-master-14-files.patch` | UNMEASURED ON THIS RIG (no CUDA silicon); tq3-side references: RTX 3090 tg128 43.1 -> 47.4 t/s (PRMT vec_dot), Ampere decode +35% (3d3888c9f) |
 | `0371-metal-lift-TQ3_4S-kernel-set-from-tq3-master-5-files.patch` | UNMEASURED ON THIS RIG (no Metal silicon); tq3-side reference: M3 Pro 27B decode ~4 t/s, ~27x over CPU (02d51f048) |
+| `0372-metal-declare-the-tq3_rht-pipeline-getter-in-ggml-me.patch` | UNMEASURED ON THIS RIG (no Metal toolchain) |
 
 ## Unclassified
 
@@ -1201,4 +1203,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `a458eab86` sources: register buun (spiritbuun/buun-llama-cpp) as a greedy-ingestion watch source - President ruling, VBR/KV + DFlash2-for-3.8 lineage
 - `28e4af5c0` cuda: lift TQ3_4S kernel set from tq3/master (14 files)
 - `827f683e4` metal: lift TQ3_4S kernel set from tq3/master (5 files + alloc hook)
+- `803767f83` metal: declare the tq3_rht pipeline getter in ggml-metal-device.h
 
