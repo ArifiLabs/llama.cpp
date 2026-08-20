@@ -1069,6 +1069,20 @@ void process_shaders() {
     string_to_spv("dequant_tq3_4s", "dequant_tq3_4s.comp",
         merge_maps(base_dict, {{"DATA_A_TQ3_4S", "1"}, {"D_TYPE", "float16_t"}}));
 
+    // Subgroup-cooperative TQ mat-vec (lane-163). Register WHT via subgroupShuffleXor,
+    // no hot-loop barriers, workgroup size decoupled from 32. The host prefers these
+    // over the 32-thread pinned variants when the device subgroup size is a multiple
+    // of 32 with full-subgroup support; the pinned shaders above stay as the fallback.
+    for (std::string t : {"tq3_1s", "tq4_1s", "tq3_4s"}) {
+        const std::string da = "DATA_A_" + to_uppercase(t);
+        string_to_spv("mul_mat_vec_" + t + "_sg_f32_f32", "mul_mat_vec_tq_sg.comp",
+            merge_maps(base_dict, {{da, "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
+        string_to_spv("mul_mat_vec_" + t + "_sg_f16_f32", "mul_mat_vec_tq_sg.comp",
+            merge_maps(base_dict, {{da, "1"}, {"B_TYPE", "float16_t"}, {"B_TYPEV2", "f16vec2"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}));
+        string_to_spv("mul_mat_vec_id_" + t + "_sg_f32_f32", "mul_mat_vec_tq_sg.comp",
+            merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {da, "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
+    }
+
     // Activation pre-rotation for the rotated matmul path. Type-independent:
     // TQ3 and TQ4 share the same 32-element sign pattern and butterfly, so one
     // pipeline serves both. Takes no DATA_A_* define -- it only touches the
