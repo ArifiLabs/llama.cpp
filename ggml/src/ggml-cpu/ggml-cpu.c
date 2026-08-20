@@ -2827,6 +2827,12 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             } break;
       // -- Powerinfer end
 
+        // -- ArifiLabs Escha-W2 (lane-164)
+        case GGML_OP_ESCHA_MM:
+            {
+                ggml_compute_forward_escha_mm(params, tensor);
+            } break;
+
 
         case GGML_OP_RESHAPE:
             {
@@ -3198,6 +3204,12 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
             n_tasks = n_threads;
         } break;
         // -- PowerInfer end
+
+        // -- ArifiLabs Escha-W2 (lane-164)
+        case GGML_OP_ESCHA_MM:
+        {
+            n_tasks = n_threads;
+        } break;
 
         default:
             {
@@ -3590,6 +3602,11 @@ struct ggml_cplan ggml_graph_plan(
                         if (ggml_cpu_iqp_supports_mul_mat(node)) {
                             cur = GGML_PAD(cur, 64) + n_tasks * ggml_cpu_iqp_scratch_size(node);
                         }
+                    } break;
+                case GGML_OP_ESCHA_MM:
+                    {
+                        // per-thread transformed-activation buffer (lane-164)
+                        cur = sizeof(float) * node->src[0]->ne[0] * n_threads;
                     } break;
                 case GGML_OP_MUL_MAT_ID:
                     {

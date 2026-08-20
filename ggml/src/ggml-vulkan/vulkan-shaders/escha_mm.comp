@@ -1,0 +1,174 @@
+#version 450
+
+#extension GL_EXT_control_flow_attributes : require
+
+// ArifiLabs Escha-W2 fused linear mat-vec (lane-164).
+//
+//   y = D(rout*s_out) * H128( decode(codes)^T * H128(D(rin*s_in) * x) ) + bias
+//
+// One workgroup = one 128-channel output block (8 adjacent 16x16 code tiles per
+// in-block) for one activation column. Thread j owns output channel ob*128+j.
+// The activation block is staged + Hadamard-transformed in shared memory
+// (portable barriers version; the lane-163 subgroup butterfly is an upgrade path).
+//
+// Decode math is the recovered cbA generator (Terra-64, trial-evidence/escha-decoder):
+// deterministic-by-spec here — integer ops, unpackHalf2x16 (exact), one f32 add
+// (correctly rounded per Vulkan), and a SOFTWARE f32->f16 RTE round, so no
+// dependence on driver f16 float-controls (Terra-66: glslc does not emit them).
+// Compile with ESCHA_K = 2 or 3.
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout (push_constant) uniform parameter {
+    uint n_in;
+    uint n_out;
+    uint ncols;
+    uint Tout;      // n_out/16
+} p;
+
+layout (binding = 0) readonly  buffer A { uint  data_a[]; };  // packed codes, u32 view
+layout (binding = 1) readonly  buffer B { float data_b[]; };  // x [n_in, ncols]
+layout (binding = 2) readonly  buffer C { float data_c[]; };  // aux: rin | rout | bias
+layout (binding = 3) writeonly buffer D { float data_d[]; };  // y [n_out, ncols]
+
+shared float sh[128];
+
+const float INV_SQRT128 = 0.08838834764831845;
+
+#if ESCHA_K == 2
+#define TILE_U32S 16u
+#else
+#define TILE_U32S 24u
+#endif
+
+// software round-to-nearest-even f32 -> f16 bit pattern (denormal-correct)
+uint f32_to_f16_rte(float f) {
+    const uint x    = floatBitsToUint(f);
+    const uint sign = (x >> 16) & 0x8000u;
+    const int  e    = int((x >> 23) & 0xFFu) - 127 + 15;
+    uint m = x & 0x7FFFFFu;
+    if (e >= 31) {
+        return sign | 0x7C00u;
+    }
+    if (e <= 0) {
+        if (e < -10) {
+            return sign;
+        }
+        m |= 0x800000u;
+        const uint shift = uint(14 - e);
+        const uint r = (m + (1u << (shift - 1u)) - 1u + ((m >> shift) & 1u)) >> shift;
+        return sign | r;
+    }
+    uint r = m + 0xFFFu + ((m >> 13) & 1u);
+    uint ee = uint(e);
+    if ((r & 0x800000u) != 0u) {
+        r = 0u;
+        ee += 1u;
+        if (ee >= 31u) {
+            return sign | 0x7C00u;
+        }
+    }
+    return sign | (ee << 10) | (r >> 13);
+}
+
+// the recovered cbA scalar generator F(x) on a 16-bit window
+float escha_F(uint xw) {
+    const uint q = 0x3B603B60u ^ ((xw * 0xCBAC1FEDu) & 0x8FFF8FFFu);
+    const vec2 h = unpackHalf2x16(q);
+    const float s = h.x + h.y;                     // exact operands; correctly-rounded f32 add
+    return unpackHalf2x16(f32_to_f16_rte(s)).x;    // value of the f16-rounded sum
+}
+
+uint word16(uint base_u32, uint idx) {
+    return (data_a[base_u32 + (idx >> 1u)] >> (16u * (idx & 1u))) & 0xFFFFu;
+}
+
+#if ESCHA_K == 3
+// 64-bit funnel shift via two u32s, shift in {0,8,16,24,12,20,28,36}; no shaderInt64
+uint shr64_32(uint lo, uint hi, uint s) {
+    if (s == 0u)  return lo;
+    if (s < 32u)  return (lo >> s) | (hi << (32u - s));
+    if (s == 32u) return hi;
+    return hi >> (s - 32u);
+}
+#endif
+
+void hadamard128(uint tid) {
+    [[unroll]] for (uint step = 1u; step < 128u; step <<= 1u) {
+        const float a = sh[tid];
+        const float o = sh[tid ^ step];
+        barrier();
+        sh[tid] = ((tid & step) == 0u) ? (a + o) : (o - a);
+        barrier();
+    }
+}
+
+void main() {
+    const uint tid  = gl_LocalInvocationID.x;
+    const uint ob   = gl_WorkGroupID.x;      // output 128-block
+    const uint col  = gl_WorkGroupID.y;      // activation column
+    const uint ot   = ob * 8u + (tid >> 4u); // this thread's out tile
+    const uint tcol = tid & 15u;             // column within the tile
+
+    // lanes serving this tile column (Terra-64 scatter, inverted for a fixed col)
+    const uint colbase = tcol & 7u;
+    const uint lhi     = ((colbase >> 1u) << 3u) | ((colbase & 1u) << 2u);
+    // col >= 8 was produced by components c in 0..3; col < 8 by c in 4..7
+    const uint c0      = (tcol >= 8u) ? 0u : 4u;
+
+    float acc = 0.0;
+
+    const uint n_ib = p.n_in / 128u;
+    for (uint ib = 0u; ib < n_ib; ++ib) {
+        const uint gi = ib * 128u + tid;
+        sh[tid] = data_b[col * p.n_in + gi] * data_c[gi];
+        barrier();
+        hadamard128(tid);
+        // fold the input-side 1/sqrt(128): sh is read-only below, scale at use
+
+        for (uint t = 0u; t < 8u; ++t) {
+            const uint it   = ib * 8u + t;
+            const uint base = (it * p.Tout + ot) * TILE_U32S;
+
+            [[unroll]] for (uint b = 0u; b < 4u; ++b) {
+                const uint lane = lhi + b;
+#if ESCHA_K == 2
+                const uint word = word16(base, lane ^ 1u);
+                [[unroll]] for (uint k = 0u; k < 4u; ++k) {
+                    const uint c   = c0 + k;
+                    const uint row = 2u*b + (c & 1u) + 8u*(1u - ((c >> 1u) & 1u));
+                    acc += sh[t*16u + row] * escha_F((word >> (2u*c)) & 0xFFFFu);
+                }
+#else
+                // K=3 crossed 96-byte bitstream (PTX lines 2282-2312)
+                const uint tt   = 24u * lane;
+                const uint aa   = tt + 755u;
+                const uint bb   = tt + 791u;
+                const uint sh0  = ((bb & 2016u) - tt) - 760u;
+                const uint hw   = (lane == 0u) ? 23u : ((aa >> 5u) - 24u);
+                const uint lw   = (((bb >> 3u) & 252u) - 96u) >> 2u;
+                const uint zlo  = data_a[base + lw];
+                const uint zhi  = data_a[base + hw];
+                const uint pp   = shr64_32(zlo, zhi, sh0);
+                const uint rr   = shr64_32(zlo, zhi, sh0 + 12u);
+                [[unroll]] for (uint k = 0u; k < 4u; ++k) {
+                    const uint c   = c0 + k;
+                    const uint row = 2u*b + (c & 1u) + 8u*(1u - ((c >> 1u) & 1u));
+                    const uint win = (c < 4u) ? (pp >> (3u*c)) : (rr >> (3u*(c - 4u)));
+                    acc += sh[t*16u + row] * escha_F(win & 0xFFFFu);
+                }
+#endif
+            }
+        }
+        barrier(); // all reads of sh done before the next block overwrites it
+    }
+
+    // output-side transform + scales + bias; both 1/sqrt(128) factors fold here
+    sh[tid] = acc;
+    barrier();
+    hadamard128(tid);
+    const uint oc = ob * 128u + tid;
+    const float yv = sh[tid] * (INV_SQRT128 * INV_SQRT128) * data_c[p.n_in + oc]
+                   + data_c[p.n_in + p.n_out + oc];
+    data_d[col * p.n_out + oc] = yv;
+}

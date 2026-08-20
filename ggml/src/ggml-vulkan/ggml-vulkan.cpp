@@ -1090,6 +1090,7 @@ struct vk_device_struct {
     vk_pipeline pipeline_cross_entropy_loss_f32, pipeline_cross_entropy_loss_f32_wg512;
     vk_pipeline pipeline_cross_entropy_loss_back_f32, pipeline_cross_entropy_loss_back_f32_wg512;
     vk_pipeline pipeline_fwht_f32[4];
+    vk_pipeline pipeline_escha_mm[2]; // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
     vk_pipeline pipeline_cumsum_f32;
     vk_pipeline pipeline_cumsum_small_f32;
     vk_pipeline pipeline_cumsum_multipass1_f32;
@@ -1452,6 +1453,14 @@ struct vk_op_fwht_push_constants {
     uint32_t src_offset;
     uint32_t dst_offset;
     float scale;
+};
+
+// ArifiLabs Escha-W2 fused linear (lane-164)
+struct vk_op_escha_mm_push_constants {
+    uint32_t n_in;
+    uint32_t n_out;
+    uint32_t ncols;
+    uint32_t Tout;
 };
 
 struct vk_op_count_experts_push_constants {
@@ -6086,6 +6095,10 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         }
     }
 
+    // ArifiLabs Escha-W2 fused linear (lane-164): portable shared-memory shader, fixed 128 threads
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm[0], "escha_mm_k2_f32", escha_mm_k2_f32_len, escha_mm_k2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm[1], "escha_mm_k3_f32", escha_mm_k3_f32_len, escha_mm_k3_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+
     const uint32_t cumsum_elem_per_thread = (device->vendor_id == VK_VENDOR_ID_AMD || device->vendor_id == VK_VENDOR_ID_INTEL) ? 2 : 4;
     ggml_vk_create_pipeline(device, device->pipeline_cumsum_f32,       "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 256, device->subgroup_size, cumsum_elem_per_thread }, 1, true, true, device->subgroup_size);
     ggml_vk_create_pipeline(device, device->pipeline_cumsum_small_f32, "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 128, device->subgroup_size, 1 }, 1, true, true, device->subgroup_size);
@@ -10455,6 +10468,40 @@ static void ggml_vk_fwht(ggml_backend_vk_context * ctx, vk_context& subctx, cons
     ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { src_buf, dst_buf }, pc, { workgroups_x, 1, 1 });
 }
 
+// ArifiLabs Escha-W2 fused linear (lane-164)
+static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, ggml_tensor * dst) {
+    const ggml_tensor * src0 = dst->src[0]; // packed codes
+    const ggml_tensor * src1 = dst->src[1]; // x
+    const ggml_tensor * src2 = dst->src[2]; // aux
+
+    GGML_ASSERT(dst->buffer != nullptr);
+    GGML_ASSERT(ggml_is_contiguous(src0));
+    GGML_ASSERT(ggml_is_contiguous(src1));
+    GGML_ASSERT(ggml_is_contiguous(src2));
+
+    const uint32_t n_in  = (uint32_t) src0->ne[0];
+    const uint32_t n_out = (uint32_t) src0->ne[1];
+    const uint32_t ncols = (uint32_t) (src1->ne[1] * src1->ne[2] * src1->ne[3]);
+
+    vk_pipeline pipeline = ctx->device->pipeline_escha_mm[src0->type == GGML_TYPE_ESCHA3 ? 1 : 0];
+    GGML_ASSERT(pipeline != nullptr);
+
+    ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
+
+    const vk_op_escha_mm_push_constants pc = {
+        n_in, n_out, ncols, n_out / 16,
+    };
+
+    const vk_subbuffer a_buf   = ggml_vk_tensor_subbuffer(ctx, src0);
+    const vk_subbuffer b_buf   = ggml_vk_tensor_subbuffer(ctx, src1);
+    const vk_subbuffer aux_buf = ggml_vk_tensor_subbuffer(ctx, src2);
+    const vk_subbuffer dst_buf = ggml_vk_tensor_subbuffer(ctx, dst);
+
+    const std::array<uint32_t, 3> elements = { n_out / 128, ncols, 1 };
+
+    ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { a_buf, b_buf, aux_buf, dst_buf }, pc, elements);
+}
+
 static void ggml_vk_mul_mat(ggml_backend_vk_context * ctx, vk_context& subctx, const struct ggml_cgraph * cgraph, int node_idx) {
     ggml_tensor * dst = cgraph->nodes[node_idx];
     ggml_tensor * src0 = dst->src[0];
@@ -12243,6 +12290,14 @@ static vk_pipeline ggml_vk_op_get_pipeline(ggml_backend_vk_context * ctx, const 
             } else if (d_state == 256) {
                 return ctx->device->pipeline_ssm_scan_f32_d256;
             }
+        }
+        return nullptr;
+    case GGML_OP_ESCHA_MM:
+        if (src0->type == GGML_TYPE_ESCHA2) {
+            return ctx->device->pipeline_escha_mm[0];
+        }
+        if (src0->type == GGML_TYPE_ESCHA3) {
+            return ctx->device->pipeline_escha_mm[1];
         }
         return nullptr;
     case GGML_OP_SSM_CONV:
@@ -16610,6 +16665,11 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
 
         break;
 
+    case GGML_OP_ESCHA_MM:
+        ggml_vk_escha_mm(ctx, compute_ctx, node);
+
+        break;
+
     case GGML_OP_SSM_CONV:
         ggml_vk_ssm_conv(ctx, compute_ctx, cgraph, node_idx);
 
@@ -19693,6 +19753,13 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                 }
                 return op->type == GGML_TYPE_F32;
             }
+        case GGML_OP_ESCHA_MM:
+            // lane-164: fused escha linear; the shader is portable (no special features)
+            return (op->src[0]->type == GGML_TYPE_ESCHA2 || op->src[0]->type == GGML_TYPE_ESCHA3) &&
+                   op->src[1]->type == GGML_TYPE_F32 && op->src[2]->type == GGML_TYPE_F32 &&
+                   op->type == GGML_TYPE_F32 &&
+                   ggml_is_contiguous(op->src[0]) && ggml_is_contiguous(op->src[1]) &&
+                   op->src[0]->ne[0] % 256 == 0 && op->src[0]->ne[1] % 128 == 0;
         case GGML_OP_SSM_SCAN:
             {
                 for (int i = 0; i < 6; i++) {

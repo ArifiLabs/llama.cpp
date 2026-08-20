@@ -703,6 +703,21 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .to_float                 = (ggml_to_float_t) dequantize_row_q2_0_g128,
         .from_float_ref           = (ggml_from_float_t) quantize_row_q2_0_g128_ref,
     },
+    // ArifiLabs Escha-W2 packed cbA code tiles (lane-164, TYPE-ID-ALLOCATION §3.1).
+    // NOT row-separable: no to_float / from_float. Sole consumer is GGML_OP_ESCHA_MM;
+    // every generic row-wise path must reject these types.
+    [GGML_TYPE_ESCHA2] = {
+        .type_name                = "escha2",
+        .blck_size                = 256,           // one 16x16 tile
+        .type_size                = 64,            // 32 x int16 codewords
+        .is_quantized             = true,
+    },
+    [GGML_TYPE_ESCHA3] = {
+        .type_name                = "escha3",
+        .blck_size                = 256,
+        .type_size                = 96,            // 48 x int16 codewords
+        .is_quantized             = true,
+    },
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
     // TurboQuant serialized weight formats, ids adopted verbatim (TYPE-ID-ALLOCATION §3.1).
     // Taken-from: llama-cpp-turboquant@c26cbdffc.
@@ -1252,9 +1267,11 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "MOE_PIPELINE_FORWARD",
     "PRINT_TENSOR",
 
+    "ESCHA_MM",
+
 };
 
-static_assert(GGML_OP_COUNT == 109, "GGML_OP_COUNT != 109");
+static_assert(GGML_OP_COUNT == 110, "GGML_OP_COUNT != 110");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1377,9 +1394,11 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "moe_pipeline_forward",
     "print_tensor",
 
+    "escha_mm(x)",
+
 };
 
-static_assert(GGML_OP_COUNT == 109, "GGML_OP_COUNT != 109");
+static_assert(GGML_OP_COUNT == 110, "GGML_OP_COUNT != 110");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -3509,6 +3528,33 @@ void ggml_mul_mat_set_prec(
     const int32_t prec_i32 = (int32_t) prec;
 
     ggml_set_op_params_i32(a, 0, prec_i32);
+}
+
+// ggml_escha_mm — ArifiLabs Escha-W2 fused linear (lane-164)
+
+struct ggml_tensor * ggml_escha_mm(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * aux) {
+    GGML_ASSERT(a->type == GGML_TYPE_ESCHA2 || a->type == GGML_TYPE_ESCHA3);
+    GGML_ASSERT(b->type == GGML_TYPE_F32);
+    GGML_ASSERT(aux->type == GGML_TYPE_F32);
+    GGML_ASSERT(a->ne[0] == b->ne[0]);
+    GGML_ASSERT(a->ne[0] % 256 == 0 && a->ne[1] % 128 == 0);
+    GGML_ASSERT(ggml_nelements(aux) == a->ne[0] + 2*a->ne[1]);
+    GGML_ASSERT(ggml_is_contiguous(a) && ggml_is_contiguous(aux));
+    GGML_ASSERT(a->ne[2] == 1 && a->ne[3] == 1);
+
+    const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+
+    result->op     = GGML_OP_ESCHA_MM;
+    result->src[0] = a;
+    result->src[1] = b;
+    result->src[2] = aux;
+
+    return result;
 }
 
 void ggml_mul_mat_set_hint(
