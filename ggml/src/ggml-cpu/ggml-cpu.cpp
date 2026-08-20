@@ -455,7 +455,14 @@ static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const st
                 src0->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32) {
                 return src1->type == GGML_TYPE_F32 || src1->type == GGML_TYPE_F16;
             }
+            // escha types are not row-separable; their only consumer is GGML_OP_ESCHA_MM (lane-164)
+            if (src0->type == GGML_TYPE_ESCHA2 || src0->type == GGML_TYPE_ESCHA3) {
+                return false;
+            }
             return src1->type == GGML_TYPE_F32 || src1->type == ggml_get_type_traits_cpu(src0->type)->vec_dot_type;
+        case GGML_OP_ESCHA_MM:
+            return (src0->type == GGML_TYPE_ESCHA2 || src0->type == GGML_TYPE_ESCHA3) &&
+                   src1->type == GGML_TYPE_F32 && op->src[2]->type == GGML_TYPE_F32;
         case GGML_OP_SOFT_MAX_BACK: {
             if (op->src[0]->type != GGML_TYPE_F32 || op->src[1]->type != GGML_TYPE_F32) {
                 return false;

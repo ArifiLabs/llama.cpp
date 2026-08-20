@@ -12773,3 +12773,208 @@ void powerinfer_compute_forward_print_tensor(const struct ggml_compute_params *p
         }
     }
 }
+
+#include <mutex>
+#include <cstring>
+
+// ================================================================================================
+// ArifiLabs Escha-W2 fused linear (lane-164)
+//
+// y = D(rout*s_out) * H128( W_bare^T * H128(D(rin*s_in) * x) ) + bias
+//
+// src0: packed cbA code tiles, GGML_TYPE_ESCHA2/ESCHA3, ne = [n_in, n_out], tile-major
+//       [n_in/16][n_out/16][16*K] int16 LE - byte-identical to the vendor checkpoint.
+// src1: F32 activations [n_in, ncols...]
+// src2: F32 aux [n_in + 2*n_out] = rin_c | rout_c | bias
+//
+// Decode math: the recovered cbA generator (Terra-64, trial-evidence/escha-decoder), realized
+// as a 65,536-entry f32 LUT built from the exact f16 arithmetic at first use. Bit-exact vs
+// tools/decode_cba.py by construction (f16(x)+f16(y) done in f32 then rounded RTE == f16 RN add).
+// ================================================================================================
+
+static float escha_cba_lut[65536];
+static std::once_flag escha_lut_once;
+
+static void escha_build_lut(void) {
+    for (uint32_t x = 0; x < 65536; ++x) {
+        const uint32_t mixed = (uint32_t)(x * 0xCBAC1FEDu);
+        const uint32_t q     = 0x3B603B60u ^ (mixed & 0x8FFF8FFFu);
+        const float lo = GGML_FP16_TO_FP32((ggml_fp16_t)(q & 0xFFFF));
+        const float hi = GGML_FP16_TO_FP32((ggml_fp16_t)(q >> 16));
+        escha_cba_lut[x] = GGML_FP16_TO_FP32(GGML_FP32_TO_FP16(lo + hi));
+    }
+}
+
+// K=3 crossed-bitstream lane parameters (PTX lines 2282-2312, Terra-64)
+struct escha_k3_lane { int lo_idx, hi_idx, shift; };
+static escha_k3_lane escha_k3_lanes[32];
+static std::once_flag escha_k3_once;
+
+static void escha_build_k3_lanes(void) {
+    for (int lane = 0; lane < 32; ++lane) {
+        const int t = 24 * lane;
+        const int a = t + 755;
+        const int b = t + 791;
+        const int d = (b & 2016) - t;
+        escha_k3_lanes[lane].shift  = d - 760;
+        escha_k3_lanes[lane].hi_idx = (lane == 0) ? 23 : (a >> 5) - 24;
+        escha_k3_lanes[lane].lo_idx = (((b >> 3) & 252) - 96) / 4;
+    }
+}
+
+// decode one 16x16 tile into wtile[row=in][col=out]
+static inline void escha_decode_tile_k2(const uint16_t * w, float wtile[16][16]) {
+    for (int lane = 0; lane < 32; ++lane) {
+        const uint32_t word = w[lane ^ 1];
+        const int colbase = 2*(lane >> 3) + ((lane >> 2) & 1);
+        const int rowbase = 2*(lane & 3);
+        for (int c = 0; c < 8; ++c) {
+            const int row = rowbase + (c & 1) + 8*(1 - ((c >> 1) & 1));
+            const int col = (c < 4 ? 8 : 0) + colbase;
+            wtile[row][col] = escha_cba_lut[(word >> (2*c)) & 0xFFFF];
+        }
+    }
+}
+
+static inline void escha_decode_tile_k3(const uint16_t * w, float wtile[16][16]) {
+    const escha_k3_lane * lanes = escha_k3_lanes;
+    for (int lane = 0; lane < 32; ++lane) {
+        const escha_k3_lane & lp = lanes[lane];
+        uint32_t lo, hi;
+        memcpy(&lo, (const char *) w + 4*lp.lo_idx, 4);
+        memcpy(&hi, (const char *) w + 4*lp.hi_idx, 4);
+        const uint64_t z = (uint64_t) lo | ((uint64_t) hi << 32);
+        const uint64_t p = z >> lp.shift;
+        const uint64_t r = z >> (lp.shift + 12);
+        const int colbase = 2*(lane >> 3) + ((lane >> 2) & 1);
+        const int rowbase = 2*(lane & 3);
+        for (int c = 0; c < 8; ++c) {
+            const int row = rowbase + (c & 1) + 8*(1 - ((c >> 1) & 1));
+            const int col = (c < 4 ? 8 : 0) + colbase;
+            const uint64_t win = (c < 4) ? (p >> (3*c)) : (r >> (3*(c - 4)));
+            wtile[row][col] = escha_cba_lut[(uint32_t)(win & 0xFFFF)];
+        }
+    }
+}
+
+// in-place normalized blockwise Hadamard, one 128-wide block
+static inline void escha_h128(float * v) {
+    for (int step = 1; step < 128; step <<= 1) {
+        for (int i = 0; i < 128; i += step << 1) {
+            for (int j = i; j < i + step; ++j) {
+                const float a = v[j];
+                const float b = v[j + step];
+                v[j]        = a + b;
+                v[j + step] = a - b;
+            }
+        }
+    }
+    const float inv_sqrt128 = 0.08838834764831845f; // 1/sqrt(128)
+    for (int j = 0; j < 128; ++j) {
+        v[j] *= inv_sqrt128;
+    }
+}
+
+void ggml_compute_forward_escha_mm(const ggml_compute_params * params, ggml_tensor * dst) {
+    const ggml_tensor * src0 = dst->src[0]; // codes
+    const ggml_tensor * src1 = dst->src[1]; // x
+    const ggml_tensor * src2 = dst->src[2]; // aux
+
+    GGML_ASSERT(src0->type == GGML_TYPE_ESCHA2 || src0->type == GGML_TYPE_ESCHA3);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32 && src2->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(src0));
+    GGML_ASSERT(ggml_is_contiguous(src1));
+    GGML_ASSERT(ggml_is_contiguous(src2));
+    GGML_ASSERT(ggml_is_contiguous(dst));
+
+    const int K = (src0->type == GGML_TYPE_ESCHA2) ? 2 : 3;
+
+    const int64_t n_in  = src0->ne[0];
+    const int64_t n_out = src0->ne[1];
+    const int64_t ncols = src1->ne[1] * src1->ne[2] * src1->ne[3];
+
+    GGML_ASSERT(src1->ne[0] == n_in);
+    GGML_ASSERT(dst->ne[0]  == n_out);
+    GGML_ASSERT(n_in  % 128 == 0);
+    GGML_ASSERT(n_out % 128 == 0);
+    GGML_ASSERT(ggml_nelements(src2) == n_in + 2*n_out);
+
+    std::call_once(escha_lut_once, escha_build_lut);
+    if (K == 3) {
+        std::call_once(escha_k3_once, escha_build_k3_lanes);
+    }
+
+    const uint16_t * codes = (const uint16_t *) src0->data;
+    const float    * x     = (const float    *) src1->data;
+    const float    * rin   = (const float    *) src2->data;
+    const float    * rout  = rin + n_in;
+    const float    * bias  = rout + n_out;
+    float          * y     = (float          *) dst->data;
+
+    const int64_t Tin  = n_in  / 16;
+    const int64_t Tout = n_out / 16;
+    const int     tile_words = 16 * K;
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    float * xh = (float *) params->wdata + (size_t) ith * n_in;
+
+    // work items: (col, out-block of 128) - contiguous chunks so a thread's xh
+    // is recomputed only when its column changes
+    const int64_t n_ob    = n_out / 128;
+    const int64_t n_items = ncols * n_ob;
+    const int64_t chunk   = (n_items + nth - 1) / nth;
+    const int64_t it0     = (int64_t) ith * chunk;
+    const int64_t it1     = MIN(it0 + chunk, n_items);
+
+    int64_t cur_col = -1;
+
+    for (int64_t item = it0; item < it1; ++item) {
+        const int64_t col = item / n_ob;
+        const int64_t ob  = item % n_ob;
+
+        if (col != cur_col) {
+            const float * xc = x + col * n_in;
+            for (int64_t i = 0; i < n_in; ++i) {
+                xh[i] = xc[i] * rin[i];
+            }
+            for (int64_t i = 0; i < n_in; i += 128) {
+                escha_h128(xh + i);
+            }
+            cur_col = col;
+        }
+
+        float acc[128] = { 0.0f };
+        float wtile[16][16];
+
+        for (int64_t ot = ob*8; ot < ob*8 + 8; ++ot) {
+            float * accT = acc + (ot - ob*8) * 16;
+            for (int64_t it = 0; it < Tin; ++it) {
+                const uint16_t * tw = codes + (it * Tout + ot) * tile_words;
+                if (K == 2) {
+                    escha_decode_tile_k2(tw, wtile);
+                } else {
+                    escha_decode_tile_k3(tw, wtile);
+                }
+                const float * xt = xh + it * 16;
+                for (int r = 0; r < 16; ++r) {
+                    const float xv = xt[r];
+                    for (int c = 0; c < 16; ++c) {
+                        accT[c] += xv * wtile[r][c];
+                    }
+                }
+            }
+        }
+
+        escha_h128(acc);
+
+        float * yo = y + col * n_out + ob * 128;
+        const float * ro = rout + ob * 128;
+        const float * bo = bias + ob * 128;
+        for (int j = 0; j < 128; ++j) {
+            yo[j] = acc[j] * ro[j] + bo[j];
+        }
+    }
+}

@@ -5719,6 +5719,9 @@ class GGMLQuantizationType(IntEnum):
     Q2_0    = 42
     TQ3_1S  = 45
     TQ4_1S  = 46
+    # ArifiLabs Escha-W2 packed cbA code tiles (lane-164, TYPE-ID-ALLOCATION §3.1)
+    ESCHA2  = 55
+    ESCHA3  = 56
     # ROCmFPX weight formats. Taken-from: charlie12345/ROCmFPX@3edc3d31e.
     Q4_0_ROCMFP4      = 100
     Q4_0_ROCMFP4_FAST = 101
@@ -5943,6 +5946,8 @@ GGML_QUANT_SIZES: dict[GGMLQuantizationType, tuple[int, int]] = {
     GGMLQuantizationType.NVFP4:   (64, 4 + 32),
     GGMLQuantizationType.Q1_0:    (128, 2 + 16),
     GGMLQuantizationType.Q2_0:    (64, 2 + 16),
+    GGMLQuantizationType.ESCHA2:  (256, 64),
+    GGMLQuantizationType.ESCHA3:  (256, 96),
     GGMLQuantizationType.Q4_0_ROCMFP4:      (32, 2 + 16),
     GGMLQuantizationType.Q4_0_ROCMFP4_FAST: (32, 1 + 16),
     GGMLQuantizationType.Q6_0_ROCMFPX:      (32, 24 + 2),

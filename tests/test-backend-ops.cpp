@@ -4741,6 +4741,52 @@ struct test_dsv4_hc_post : public test_dsv4_hc {
 
 
 // GGML_OP_SSM_CONV
+// GGML_OP_ESCHA_MM — ArifiLabs Escha-W2 fused linear (lane-164)
+struct test_escha_mm : public test_case {
+    const ggml_type type;   // GGML_TYPE_ESCHA2 or GGML_TYPE_ESCHA3
+    const int64_t n_in;
+    const int64_t n_out;
+    const int64_t ncols;
+
+    std::string vars() override {
+        return VARS_TO_STR4(type, n_in, n_out, ncols);
+    }
+
+    double max_nmse_err() override {
+        return 1e-6; // decode is integer-deterministic; only accumulation order differs
+    }
+
+    test_escha_mm(ggml_type type = GGML_TYPE_ESCHA2, int64_t n_in = 512, int64_t n_out = 256, int64_t ncols = 4)
+        : type(type), n_in(n_in), n_out(n_out), ncols(ncols) {}
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * a   = ggml_new_tensor_2d(ctx, type, n_in, n_out);
+        ggml_tensor * b   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_in, ncols);
+        ggml_tensor * aux = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_in + 2*n_out);
+        ggml_set_name(a, "codes");
+        ggml_set_name(b, "x");
+        ggml_set_name(aux, "aux");
+        return ggml_escha_mm(ctx, a, b, aux);
+    }
+
+    void initialize_tensors(ggml_context * ctx) override {
+        std::default_random_engine gen(0xE5C4A);
+        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
+            if (t->type == GGML_TYPE_ESCHA2 || t->type == GGML_TYPE_ESCHA3) {
+                // any random bytes are valid escha codes
+                std::vector<uint8_t> data(ggml_nbytes(t));
+                std::uniform_int_distribution<int> dist(0, 255);
+                for (auto & v : data) {
+                    v = (uint8_t) dist(gen);
+                }
+                ggml_backend_tensor_set(t, data.data(), 0, data.size());
+            } else {
+                init_tensor_uniform(t);
+            }
+        }
+    }
+};
+
 struct test_ssm_conv : public test_case {
     const ggml_type type;
     const std::array<int64_t, 4> ne_a;
@@ -10373,6 +10419,15 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     }
     for (int64_t d_conv : {3, 4, 9}) {
         for (int64_t d_inner: {1024, 1536, 2048}) {
+            // ArifiLabs Escha-W2 fused linear (lane-164): mat-vec + batched, both K rates,
+            // plus the real 27B projection shapes
+            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 1));
+            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 4));
+            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 1));
+            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 4));
+            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, 2));
+            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, 2));
+
             test_cases.emplace_back(new test_ssm_conv(GGML_TYPE_F32, {d_conv, d_inner, 1, 1}, {d_conv, d_inner, 1, 1}));
             test_cases.emplace_back(new test_ssm_conv(GGML_TYPE_F32, {2 * d_conv, d_inner, 1, 1}, {d_conv, d_inner, 1, 1}));
             test_cases.emplace_back(new test_ssm_conv(GGML_TYPE_F32, {d_conv, d_inner, 4, 1}, {d_conv, d_inner, 1, 1}));

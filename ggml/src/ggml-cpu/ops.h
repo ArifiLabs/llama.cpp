@@ -129,6 +129,9 @@ void powerinfer_forward_moe_pipeline_build_tasks(const struct ggml_compute_param
 void powerinfer_forward_moe_pipeline_forward(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void powerinfer_compute_forward_print_tensor(const struct ggml_compute_params *params, struct ggml_tensor *dst);
 
+// -- ArifiLabs Escha-W2 fused linear (lane-164)
+void ggml_compute_forward_escha_mm(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+
 #ifdef __cplusplus
 }
 #endif

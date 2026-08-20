@@ -1171,6 +1171,13 @@ static bool weight_buft_supported(const llama_hparams & hparams, ggml_tensor * w
             } break;
         case GGML_OP_MUL_MAT:
             {
+                if (w->type == GGML_TYPE_ESCHA2 || w->type == GGML_TYPE_ESCHA3) {
+                    // escha weights are consumed by the fused op, never by MUL_MAT (lane-164)
+                    ggml_tensor * b   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, w->ne[0], 512);
+                    ggml_tensor * aux = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, w->ne[0] + 2*w->ne[1]);
+                    op_tensor = ggml_escha_mm(ctx, w, b, aux);
+                    break;
+                }
                 ggml_tensor * b = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, w->ne[0], 512, w->ne[2], w->ne[3]);
                 op_tensor = ggml_mul_mat(ctx, w, b);
             } break;

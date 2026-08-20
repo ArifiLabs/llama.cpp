@@ -207,6 +207,14 @@ struct vk_op_dsv4_hc_post_push_constants {
     uint32_t d_offset;
 };
 
+// ArifiLabs Escha-W2 fused linear (lane-164)
+struct vk_op_escha_mm_push_constants {
+    uint32_t n_in;
+    uint32_t n_out;
+    uint32_t ncols;
+    uint32_t Tout;
+};
+
 struct vk_op_count_experts_push_constants {
     uint32_t ne00;
     uint32_t ne01;

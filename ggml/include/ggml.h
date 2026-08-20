@@ -464,6 +464,16 @@ extern "C" {
         // doc. A missing CPU switch case compiles clean and aborts at RUNTIME.
         // ---------------------------------------------------------------------
 
+        // Block W, 55..56 - ArifiLabs-minted Escha-W2 serialized weight formats
+        // (lane-164; TYPE-ID-ALLOCATION §3.1). Packed EschaLabs cbA code tiles,
+        // byte-identical to the vendor checkpoint layout: [in/16][out/16][16K]
+        // int16 LE, one 16x16 weight tile per 16K codewords. NOT row-separable
+        // (one codeword feeds 4 rows x 2 cols of its tile): the ONLY consumer is
+        // GGML_OP_ESCHA_MM; generic row-wise paths must reject these types.
+        // 52..54 stay reserved for tq3 (§3.1.2).
+        GGML_TYPE_ESCHA2 = 55, // Escha cbA K=2: 64 B / 256-weight tile, 2 bpw
+        GGML_TYPE_ESCHA3 = 56, // Escha cbA K=3: 96 B / 256-weight tile, 3 bpw
+
         // Block W, 100..107 - ROCmFPX weight formats, adopted VERBATIM from
         // charlie12345/ROCmFPX so its GGUFs and its convert/quantize tooling
         // interoperate byte-for-byte. The implementations are compiled only when
@@ -690,6 +700,10 @@ extern "C" {
         GGML_OP_MOE_PIPELINE_BUILD_TASKS,
         GGML_OP_MOE_PIPELINE_FORWARD,
         GGML_OP_PRINT_TENSOR,
+
+        // -- ArifiLabs Escha-W2 (lane-164) tag:enum
+        // fused escha linear: y = D(rout)*H128( H128(D(rin)*x)^T W_bare ) + bias
+        GGML_OP_ESCHA_MM,
 
         GGML_OP_COUNT,
     };
@@ -1573,6 +1587,19 @@ extern "C" {
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
+
+    // ArifiLabs Escha-W2 fused linear (lane-164).
+    // a:   packed escha codes, type GGML_TYPE_ESCHA2/ESCHA3, ne = [n_in, n_out]
+    // b:   activations, F32, ne = [n_in, n_cols, ...]
+    // aux: F32 sidecar, ne = [n_in + 2*n_out]: rin*s_in | rout*s_out | bias
+    // result F32 [n_out, n_cols, ...]:
+    //   y = D(rout) * H128( decode(a)^T * H128(D(rin) * b) ) + bias
+    // where H128 is the normalized 128-wide blockwise Hadamard transform.
+    GGML_API struct ggml_tensor * ggml_escha_mm(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * aux);
 
     // change the precision of a matrix multiplication
     // set to GGML_PREC_F32 for higher precision (useful for phi-2)
