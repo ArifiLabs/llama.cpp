@@ -1,0 +1,603 @@
+From 827f683e45c461a21da6e4b96d29c654e286dc77 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 07:12:25 -0400
+Subject: [PATCH] metal: lift TQ3_4S kernel set from tq3/master (5 files +
+ alloc hook)
+
+Ports the TQ3_4S Metal support from the tq3 fork tip (source commit
+02d51f048, metal: add TQ3_4S GPU support #59): E3M5 scale decode +
+3-bit unpack helpers and local dequantize_tq3_4s, the forward-RHT
+activation pre-pass kernel (kernel_tq3_4s_rht_f32), the coalesced
+mat-vec (kernel_mul_mv_tq3_4s_f32), the one-SIMD-group-per-row
+get_rows kernel, and the mul_mm GEMM template instance. Host side:
+pipeline getters, N_R0/N_SG tuning constants, kargs_tq3_rht, the
+dedicated ggml_metal_op_mul_mat_tq3_4s path, and the extra_w1
+scratch sizing in the Metal alloc-size hook.
+
+FIX KEPT ON PURPOSE: tq3/master TIP has the dispatch hook displaced
+into ggml_metal_op_mul_mat_id by the b745799e7 rebase, which strands
+the MUL_MAT-only scratch (extra_w1) and would run mul_mat_id with an
+unallocated buffer. This port restores the hook to
+ggml_metal_op_mul_mat, where the source commit 02d51f048 put it.
+
+NOT BUILT HERE: this rig has no Apple silicon or Metal toolchain.
+Compile readiness only; hardware validation is an OWED row with
+verbatim commands in the lane evidence (HARDWARE-VALIDATION.md).
+
+Taken-from: turbo-tan/llama.cpp-tq3@854516439
+Origin: lane-160 TQ3_4S hunk port; dispatch-hook placement restored to the 02d51f048 original (tip regression); TQ3_4S-only trim
+Measured-effect: UNMEASURED ON THIS RIG (no Metal silicon); tq3-side reference: M3 Pro 27B decode ~4 t/s, ~27x over CPU (02d51f048)
+Lane: lane-160
+---
+ ggml/src/ggml-metal/ggml-metal-device.cpp |  20 ++
+ ggml/src/ggml-metal/ggml-metal-impl.h     |  15 ++
+ ggml/src/ggml-metal/ggml-metal-ops.cpp    | 172 ++++++++++++++-
+ ggml/src/ggml-metal/ggml-metal-ops.h      |   3 +
+ ggml/src/ggml-metal/ggml-metal.cpp        |   4 +
+ ggml/src/ggml-metal/ggml-metal.metal      | 241 ++++++++++++++++++++++
+ 6 files changed, 453 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
+index 9a7c39ca6..58b868f7b 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -160,6 +160,21 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_get_rows(ggml_me
+     return res;
+ }
+ 
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq3_rht(ggml_metal_library_t lib) {
++    char base[256];
++    char name[256];
++
++    snprintf(base, 256, "kernel_tq3_4s_rht_f32");
++    snprintf(name, 256, "%s", base);
++
++    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
++    if (!res.pipeline) {
++        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
++    }
++
++    return res;
++}
++
+ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_set_rows(ggml_metal_library_t lib, const ggml_tensor * op) {
+     char base[256];
+     char name[256];
+@@ -987,6 +1002,11 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+                 nsg = N_SG_TQ2_0;
+                 nr0 = N_R0_TQ2_0;
+             } break;
++        case GGML_TYPE_TQ3_4S:
++            {
++                nsg = N_SG_TQ3_4S;
++                nr0 = N_R0_TQ3_4S;
++            } break;
+         default:
+             {
+                 GGML_LOG_ERROR("Asserting on type %d\n", (int) tsrc0);
+diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
+index d36480e8b..bc7612a6a 100644
+--- a/ggml/src/ggml-metal/ggml-metal-impl.h
++++ b/ggml/src/ggml-metal/ggml-metal-impl.h
+@@ -89,6 +89,9 @@
+ 
+ #define N_R0_TQ2_0 4
+ #define N_SG_TQ2_0 2
++
++#define N_R0_TQ3_4S 4
++#define N_SG_TQ3_4S 4
+ #define N_R0_TQ3_1S 8
+ #define N_SG_TQ3_1S 2
+ 
+@@ -1035,6 +1038,18 @@ typedef struct {
+     uint64_t nb3;
+ } ggml_metal_kargs_get_rows;
+ 
++// forward randomized Hadamard transform of activations (TQ3_4S mat-mul pre-pass)
++typedef struct {
++    int32_t  nb;    // number of 32-element blocks along K
++    int32_t  ne12;  // src1 dim2 (to unflatten the batch grid index)
++    uint64_t nb11;  // src1 strides (input activation)
++    uint64_t nb12;
++    uint64_t nb13;
++    uint64_t ob11;  // dst strides (contiguous transformed activation)
++    uint64_t ob12;
++    uint64_t ob13;
++} ggml_metal_kargs_tq3_rht;
++
+ typedef struct {
+     int32_t  nk0;
+     int32_t  ne01;
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+index 39a6180db..7fdaef6b0 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -1225,9 +1225,17 @@ int ggml_metal_op_get_rows(ggml_metal_op_t ctx, int idx) {
+         /*.nb3   =*/ nb3,
+     };
+ 
+-    const int nth = std::min(args.ne00t, ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
++    int nth = std::min(args.ne00t, ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
+ 
+-    const int nw0 = (args.ne00t + nth - 1)/nth;
++    int nw0 = (args.ne00t + nth - 1)/nth;
++
++    // TQ3_4S uses a custom kernel that processes one 32-element block per 32-lane
++    // SIMD-group (inverse RHT via simd_shuffle_xor). Dispatch exactly one
++    // SIMD-group per gathered row so each row is handled by a single threadgroup.
++    if (op->src[0]->type == GGML_TYPE_TQ3_4S) {
++        nth = 32;
++        nw0 = 1;
++    }
+ 
+     ggml_metal_encoder_set_pipeline(enc, pipeline);
+     ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+@@ -2362,6 +2370,159 @@ int ggml_metal_op_pool_2d(ggml_metal_op_t ctx, int idx) {
+     return 1;
+ }
+ 
++size_t ggml_metal_op_mul_mat_extra_w1(const ggml_tensor * op) {
++    if (op->op != GGML_OP_MUL_MAT || op->src[0]->type != GGML_TYPE_TQ3_4S) {
++        return 0;
++    }
++
++    // contiguous f32 copy of the RHT-pre-transformed activation
++    const ggml_tensor * src1 = op->src[1];
++    return (size_t) src1->ne[0]*src1->ne[1]*src1->ne[2]*src1->ne[3]*sizeof(float);
++}
++
++// TQ3_4S matmul: pre-transform the activation with the forward RHT, then run the
++// coalesced mat-vec on the local-dequant weights. Kept as a dedicated path so the
++// generic mul_mat code is untouched for every other type.
++static int ggml_metal_op_mul_mat_tq3_4s(ggml_metal_op_t ctx, int idx) {
++    ggml_tensor * op = ctx->node(idx);
++
++    ggml_metal_library_t lib = ctx->lib;
++    ggml_metal_encoder_t enc = ctx->enc;
++
++    GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
++    GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
++    GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
++    GGML_TENSOR_LOCALS(uint64_t, nb1, op->src[1], nb);
++    GGML_TENSOR_LOCALS( int32_t, ne,  op,         ne);
++    GGML_TENSOR_LOCALS(uint64_t, nb,  op,         nb);
++
++    GGML_ASSERT(op->src[1]->type == GGML_TYPE_F32);
++    GGML_ASSERT(ne00 % 32 == 0); // QK_TQ3_0
++
++    const int16_t r2 = ne12/ne02;
++    const int16_t r3 = ne13/ne03;
++
++    const ggml_metal_buffer_id bid_src0 = ggml_metal_get_buffer_id(op->src[0]);
++    const ggml_metal_buffer_id bid_src1 = ggml_metal_get_buffer_id(op->src[1]);
++    const ggml_metal_buffer_id bid_dst  = ggml_metal_get_buffer_id(op);
++
++    // scratch for the transformed activation, carved right after the dst tensor
++    ggml_metal_buffer_id bid_w1 = bid_dst;
++    bid_w1.offs += ggml_nbytes(op);
++
++    // contiguous strides of the transformed-activation buffer
++    const uint64_t ob11 = (uint64_t) ne10*sizeof(float);
++    const uint64_t ob12 = ob11*ne11;
++    const uint64_t ob13 = ob12*ne12;
++
++    // 1) forward RHT of the activation (per 32-element K-block)
++    {
++        ggml_metal_kargs_tq3_rht args = {
++            /*.nb   =*/ ne10/32,
++            /*.ne12 =*/ ne12,
++            /*.nb11 =*/ nb11,
++            /*.nb12 =*/ nb12,
++            /*.nb13 =*/ nb13,
++            /*.ob11 =*/ ob11,
++            /*.ob12 =*/ ob12,
++            /*.ob13 =*/ ob13,
++        };
++
++        auto pipeline = ggml_metal_library_get_pipeline_tq3_rht(lib);
++
++        ggml_metal_encoder_set_pipeline(enc, pipeline);
++        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++        ggml_metal_encoder_set_buffer  (enc, bid_src1, 1);
++        ggml_metal_encoder_set_buffer  (enc, bid_w1,   2);
++
++        ggml_metal_encoder_dispatch_threadgroups(enc, ne10/32, ne11, ne12*ne13, 32, 1, 1);
++    }
++
++    // the matmul must wait for the transformed activation
++    ggml_metal_op_concurrency_reset(ctx);
++
++    // 2) matmul over local-dequant weights, reading the transformed activation.
++    //    Batch (ne11 > 1: prefill or speculative-decode verification) -> simdgroup
++    //    GEMM, which amortizes the weight reads across the batch. Single column
++    //    (decode) -> the coalesced mat-vec.
++    const ggml_metal_device_props * props_dev = ggml_metal_device_get_props(ctx->dev);
++    const bool use_mm = props_dev->has_simdgroup_mm && ne00 >= 64 && ne11 > 1;
++
++    if (use_mm) {
++        auto pipeline = ggml_metal_library_get_pipeline_mul_mm(lib, op);
++
++        ggml_metal_kargs_mul_mm args = {
++            /*.ne00 =*/ ne00,
++            /*.ne02 =*/ ne02,
++            /*.nb01 =*/ nb01,
++            /*.nb02 =*/ nb02,
++            /*.nb03 =*/ nb03,
++            /*.ne12 =*/ ne12,
++            /*.nb10 =*/ sizeof(float),
++            /*.nb11 =*/ ob11,
++            /*.nb12 =*/ ob12,
++            /*.nb13 =*/ ob13,
++            /*.ne0  =*/ ne0,
++            /*.ne1  =*/ ne1,
++            /*.r2   =*/ r2,
++            /*.r3   =*/ r3,
++        };
++
++        ggml_metal_encoder_set_pipeline(enc, pipeline);
++        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++        ggml_metal_encoder_set_buffer  (enc, bid_src0, 1);
++        ggml_metal_encoder_set_buffer  (enc, bid_w1,   2);
++        ggml_metal_encoder_set_buffer  (enc, bid_dst,  3);
++
++        const size_t smem = pipeline.smem;
++        ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
++
++        const int nr0 = pipeline.nr0;
++        const int nr1 = pipeline.nr1;
++        const int nsg = pipeline.nsg;
++
++        ggml_metal_encoder_dispatch_threadgroups(enc, ((ne11 + nr1 - 1)/nr1), ((ne01 + nr0 - 1)/nr0), ne12*ne13, 32, nsg, 1);
++    } else {
++        auto pipeline = ggml_metal_library_get_pipeline_mul_mv(lib, op);
++
++        const int nr0 = pipeline.nr0;
++        const int nr1 = pipeline.nr1;
++        const int nsg = pipeline.nsg;
++
++        ggml_metal_kargs_mul_mv args = {
++            /*.ne00 =*/ ne00,
++            /*.ne01 =*/ ne01,
++            /*.ne02 =*/ ne02,
++            /*.nb00 =*/ nb00,
++            /*.nb01 =*/ nb01,
++            /*.nb02 =*/ nb02,
++            /*.nb03 =*/ nb03,
++            /*.ne10 =*/ ne10,
++            /*.ne11 =*/ ne11,
++            /*.ne12 =*/ ne12,
++            /*.nb10 =*/ sizeof(float),
++            /*.nb11 =*/ ob11,
++            /*.nb12 =*/ ob12,
++            /*.nb13 =*/ ob13,
++            /*.ne0  =*/ ne0,
++            /*.ne1  =*/ ne1,
++            /*.nr0  =*/ nr0,
++            /*.r2   =*/ r2,
++            /*.r3   =*/ r3,
++        };
++
++        ggml_metal_encoder_set_pipeline(enc, pipeline);
++        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++        ggml_metal_encoder_set_buffer  (enc, bid_src0, 1);
++        ggml_metal_encoder_set_buffer  (enc, bid_w1,   2);
++        ggml_metal_encoder_set_buffer  (enc, bid_dst,  3);
++
++        ggml_metal_encoder_dispatch_threadgroups(enc, ((ne01 + nr0*nsg - 1)/(nr0*nsg)), ((ne11 + nr1 - 1)/nr1), ne12*ne13, 32, nsg, 1);
++    }
++
++    return 1;
++}
++
+ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+     ggml_tensor * op = ctx->node(idx);
+ 
+@@ -2382,6 +2543,13 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+     }
+     const ggml_metal_device_props * props_dev = ggml_metal_device_get_props(ctx->dev);
+ 
++    // On tq3/master TIP this dispatch sits in ggml_metal_op_mul_mat_id (rebase
++    // displacement in b745799e7); the source commit 02d51f048 places it HERE,
++    // matching the MUL_MAT-only scratch in ggml_metal_op_mul_mat_extra_w1.
++    if (op->src[0]->type == GGML_TYPE_TQ3_4S) {
++        return ggml_metal_op_mul_mat_tq3_4s(ctx, idx);
++    }
++
+     GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
+     GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
+     GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.h b/ggml/src/ggml-metal/ggml-metal-ops.h
+index 79de592cd..787388ff7 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.h
++++ b/ggml/src/ggml-metal/ggml-metal-ops.h
+@@ -30,6 +30,9 @@ int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx);
+ // available ops:
+ //
+ 
++// RHT-pre-transformed activation scratch for TQ3_4S mat-mul
++size_t ggml_metal_op_mul_mat_extra_w1(const struct ggml_tensor * op);
++
+ // tokens per expert
+ size_t ggml_metal_op_mul_mat_id_extra_tpe(const struct ggml_tensor * op);
+ 
+diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
+index 32a6272e1..f2b3f662c 100644
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -217,6 +217,10 @@ static size_t ggml_backend_metal_buffer_type_get_alloc_size(ggml_backend_buffer_
+ 
+     // some operations require additional memory for fleeting data:
+     switch (tensor->op) {
++        case GGML_OP_MUL_MAT:
++            {
++                res += ggml_metal_op_mul_mat_extra_w1(tensor);
++            } break;
+         case GGML_OP_MUL_MAT_ID:
+             {
+                 res += ggml_metal_op_mul_mat_id_extra_tpe(tensor);
+diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
+index 89327c5e2..d2908af10 100644
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -103,6 +103,79 @@ static inline float sum(float4 x) {
+     return x[0] + x[1] + x[2] + x[3];
+ }
+ 
++// ---------------------------------------------------------------------------
++// TurboQuant TQ3_4S (our type 48; tq3 serialized it at 46) helpers
++// block_tq3_4s (see ggml-common.h): uint8_t d[4] (E3M5 scales / group of 8)
++//                                   uint8_t qs[12] (32 x 3-bit packed indices)
++// Dequant = 8-level codebook lookup * per-group scale, then inverse randomized
++// Hadamard transform (sign flip + Walsh-Hadamard + 1/sqrt(32) norm) over the
++// 32-element block. Mirrors the CPU reference (ggml-quants.c) and the CUDA
++// kernel (ggml-cuda/convert.cu). The block size QK_TQ3_0 == 32 maps to one
++// 32-lane SIMD-group so the WHT butterfly is done with simd_shuffle_xor.
++// ---------------------------------------------------------------------------
++constant float TQ3_0_CENTROIDS_M[8] = {
++    -1.996684f, -1.291398f, -0.740341f, -0.247508f,
++     0.230106f,  0.725222f,  1.277503f,  1.988943f
++};
++
++constant float TQ3_0_SIGNS_M[32] = {
++    +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
++    -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
++    -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
++    -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
++};
++
++// E3M5 mini-float scale decode: scale = 2^((sb>>5)-9) * (1 + (sb&31)/32).
++// Implemented via direct IEEE-754 bit construction (matches CUDA MMQ path):
++//   exponent field = (sb>>5) + 118  (bias 127 => actual exp (sb>>5)-9)
++//   top 5 mantissa bits = (sb&31)
++static inline float tq3_4s_decode_scale(uint8_t sb) {
++    if (sb == 0) {
++        return 0.0f;
++    }
++    const uint bits = (((uint)(sb >> 5) + 118u) << 23) | ((uint)(sb & 31u) << 18);
++    return as_type<float>(bits);
++}
++
++// Fast path: a whole 16-byte block loaded as one aligned uint4 (avoids slow
++// byte-addressed loads). Layout: raw.x = d[0..3] (E3M5 scales), raw.yzw = qs[12].
++// Because each group packs 8 indices in exactly 3 bytes (24 bits), the index of
++// element j sits at bit 3*j of the 96-bit little-endian qs stream.
++static inline uint8_t tq3_4s_idx_from_block(uint4 raw, ushort j) {
++    const uint bitpos = 3u * (uint) j;
++    const uint w      = bitpos >> 5;   // qs word: 0,1,2
++    const uint off    = bitpos & 31u;
++    const uint cur = (w == 0u) ? raw.y : ((w == 1u) ? raw.z : raw.w);
++    uint v = cur >> off;
++    if (off > 29u && w < 2u) {         // 3-bit field straddles two words
++        const uint nxt = (w == 0u) ? raw.z : raw.w;
++        v |= nxt << (32u - off);
++    }
++    return (uint8_t) (v & 7u);
++}
++
++static inline float tq3_4s_scale_from_block(uint4 raw, ushort g) {
++    return tq3_4s_decode_scale((raw.x >> (8u * (uint) g)) & 0xffu);
++}
++
++// LOCAL dequant (codebook lookup * per-group scale, NO inverse RHT) for the GEMM
++// path. Valid only when the activation has been RHT-pre-transformed
++// (kernel_tq3_4s_rht_f32): dot(W_dequant, x) == dot(centroid*scale, RHT_fwd(x)).
++// Element ordering matches dequantize_q8_0 (contiguous: element 16*il + i).
++template <typename type4x4>
++void dequantize_tq3_4s(device const block_tq3_4s * xb, short il, thread type4x4 & reg) {
++    const uint4 raw = ((device const uint4 *) xb)[0];
++
++    float4x4 reg_f;
++    for (short i = 0; i < 16; ++i) {
++        const ushort e   = 16*il + i;
++        const ushort g   = e / 8;
++        const uint8_t idx = tq3_4s_idx_from_block(raw, e);
++        reg_f[i/4][i%4] = TQ3_0_CENTROIDS_M[idx] * tq3_4s_scale_from_block(raw, g);
++    }
++    reg = (type4x4) reg_f;
++}
++
+ // NOTE: this is not dequantizing - we are simply fitting the template
+ template <typename type4x4>
+ void dequantize_f32(device const float4x4 * src, short il, thread type4x4 & reg) {
+@@ -11738,6 +11811,173 @@ kernel void kernel_mul_mv_mxfp4_f32(
+     kernel_mul_mv_mxfp4_f32_impl<N_R0_MXFP4, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
+ }
+ 
++// Pre-pass for TQ3_4S mat-mul: forward randomized Hadamard transform of the
++// activation, per 32-element block along K, written to a contiguous f32 buffer.
++// By RHT orthogonality, dot(W_dequant_row, x) == dot(centroid*scale, RHT_fwd(x)),
++// so after this pass the mat-vec needs only a local codebook lookup on the
++// weights (no per-weight butterfly), which frees the lane mapping to do fully
++// coalesced weight loads. One 32-element block maps to one 32-lane SIMD-group.
++kernel void kernel_tq3_4s_rht_f32(
++        constant ggml_metal_kargs_tq3_rht & args,
++        device const char * src1,
++        device       char * dst,
++        uint3  tgpig[[threadgroup_position_in_grid]],
++        ushort tiisg[[thread_index_in_simdgroup]]) {
++    const int    ib  = tgpig.x;            // 32-element block along K
++    const int    i11 = tgpig.y;            // activation column
++    const int    b   = tgpig.z;            // flattened batch (i12 + i13*ne12)
++    const int    i12 = b % args.ne12;
++    const int    i13 = b / args.ne12;
++    const ushort j   = tiisg;              // element within the block
++
++    device const float * y = (device const float *) (src1 + i13*args.nb13 + i12*args.nb12 + i11*args.nb11) + ib*QK_TQ3_0 + j;
++
++    float v = y[0] * TQ3_0_SIGNS_M[j];
++    for (ushort step = 1; step < 32; step <<= 1) {
++        const float o = simd_shuffle_xor(v, step);
++        v = (j & step) ? (o - v) : (o + v);
++    }
++    v *= 1.0f / sqrt(32.0f);
++
++    device float * o = (device float *) (dst + i13*args.ob13 + i12*args.ob12 + i11*args.ob11) + ib*QK_TQ3_0 + j;
++    o[0] = v;
++}
++
++// Matrix-vector product for TQ3_4S weights.
++//
++// src1 here is the RHT-pre-transformed activation (see kernel_tq3_4s_rht_f32),
++// so the weights only need a local codebook lookup + per-group scale. Each lane
++// owns whole 32-element K-blocks, strided by the SIMD-group width, so the 32
++// lanes read 32 consecutive 16-byte blocks per step -> fully coalesced loads.
++template<int nr0, typename args_t>
++void kernel_mul_mv_tq3_4s_f32_impl(
++        args_t args,
++        device const char * src0,
++        device const char * src1,
++        device       char * dst,
++        threadgroup  char * shmem,
++        uint3  tgpig,
++        ushort tiisg,
++        ushort sgitg) {
++    const short NSG = FC_mul_mv_nsg;
++
++    const int nb = args.ne00 / QK_TQ3_0; // number of 32-element K-blocks
++
++    const int r0 = tgpig.x;
++    const int r1 = tgpig.y;
++    const int im = tgpig.z;
++
++    const int first_row = (r0 * NSG + sgitg) * nr0;
++
++    const uint i12 = im%FC_mul_mv_ne12;
++    const uint i13 = im/FC_mul_mv_ne12;
++
++    const uint64_t offset0 = first_row*args.nb01 + (i12/FC_mul_mv_r2)*args.nb02 + (i13/FC_mul_mv_r3)*args.nb03;
++    const uint64_t offset1 =        r1*args.nb11 + (i12        )*args.nb12 + (i13        )*args.nb13;
++
++    device const char  * cx = src0 + offset0;
++    device const float * y  = (device const float *) (src1 + offset1); // RHT-pre-transformed activation
++
++    float sumf[nr0] = {0.f};
++
++    for (int ib = tiisg; ib < nb; ib += 32) {
++        device const float * ya = y + ib*QK_TQ3_0; // 32 pre-transformed activations
++
++        for (short row = 0; row < nr0; ++row) {
++            device const uint4 * bp = (device const uint4 *) (cx + row*args.nb01) + ib;
++            const uint4 raw = bp[0];
++
++            const float s0 = tq3_4s_decode_scale((raw.x      ) & 0xffu);
++            const float s1 = tq3_4s_decode_scale((raw.x >>  8) & 0xffu);
++            const float s2 = tq3_4s_decode_scale((raw.x >> 16) & 0xffu);
++            const float s3 = tq3_4s_decode_scale((raw.x >> 24) & 0xffu);
++
++            // 24-bit packed indices per group of 8 (qs = raw.yzw, little-endian)
++            const uint p0 =  (raw.y                       ) & 0xFFFFFFu;
++            const uint p1 = ((raw.y >> 24) | (raw.z <<  8)) & 0xFFFFFFu;
++            const uint p2 = ((raw.z >> 16) | (raw.w << 16)) & 0xFFFFFFu;
++            const uint p3 =  (raw.w >>  8                 ) & 0xFFFFFFu;
++
++            float a0 = 0.f, a1 = 0.f, a2 = 0.f, a3 = 0.f;
++            for (short r = 0; r < 8; ++r) {
++                a0 += TQ3_0_CENTROIDS_M[(p0 >> (3*r)) & 7] * ya[     r];
++                a1 += TQ3_0_CENTROIDS_M[(p1 >> (3*r)) & 7] * ya[ 8 + r];
++                a2 += TQ3_0_CENTROIDS_M[(p2 >> (3*r)) & 7] * ya[16 + r];
++                a3 += TQ3_0_CENTROIDS_M[(p3 >> (3*r)) & 7] * ya[24 + r];
++            }
++
++            sumf[row] += s0*a0 + s1*a1 + s2*a2 + s3*a3;
++        }
++    }
++
++    device float * dst_f32 = (device float *) dst + (int64_t)im*args.ne0*args.ne1 + (int64_t)r1*args.ne0;
++
++    for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
++        const float sum_all = simd_sum(sumf[row]);
++        if (tiisg == 0) {
++            dst_f32[first_row + row] = sum_all;
++        }
++    }
++}
++
++[[host_name("kernel_mul_mv_tq3_4s_f32")]]
++kernel void kernel_mul_mv_tq3_4s_f32(
++        constant ggml_metal_kargs_mul_mv & args,
++        device const char * src0,
++        device const char * src1,
++        device       char * dst,
++        uint3  tgpig[[threadgroup_position_in_grid]],
++        ushort tiisg[[thread_index_in_simdgroup]],
++        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
++
++    kernel_mul_mv_tq3_4s_f32_impl<N_R0_TQ3_4S, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
++}
++
++// Custom get_rows for TQ3_4S: the generic template dequantizes per-thread which
++// cannot do the block-wide inverse RHT. Dispatched as one 32-lane SIMD-group per
++// gathered row (see ggml_metal_op_get_rows); the simd-group loops over the row's
++// 32-element blocks and applies the inverse RHT via simd_shuffle_xor.
++kernel void kernel_get_rows_tq3_4s(
++        constant ggml_metal_kargs_get_rows & args,
++        device const void * src0,
++        device const void * src1,
++        device       void * dst,
++        uint3  tgpig[[threadgroup_position_in_grid]],
++        ushort tiisg[[thread_index_in_simdgroup]]) {
++    const int32_t i10 = tgpig.x;
++    const int32_t i11 = tgpig.y;
++    const int32_t i12 = tgpig.z;
++
++    const int32_t r = ((const device int32_t *) ((const device char *) src1 + i12*args.nb12 + i11*args.nb11 + i10*args.nb10))[0];
++
++    const int32_t i02 = i11;
++    const int32_t i03 = i12;
++
++    device const block_tq3_4s * psrc = (device const block_tq3_4s *) ((const device char *) src0 + i03*args.nb03 + i02*args.nb02 + r*args.nb01);
++    device       float        * pdst = (device       float        *) ((      device char *) dst  + i12*args.nb3  + i11*args.nb2  + i10*args.nb1);
++
++    const int    nb   = args.ne00 / QK_TQ3_0; // 32-element blocks in the row
++    const ushort j    = tiisg;                // lane == element index within block
++    const ushort g    = j / 8;
++    const float  sign = TQ3_0_SIGNS_M[j];
++    const float  norm = 1.0f / sqrt(32.0f);
++
++    for (int ib = 0; ib < nb; ++ib) {
++        const uint4 raw = ((device const uint4 *) psrc)[ib];
++
++        const uint8_t idx = tq3_4s_idx_from_block(raw, j);
++        float val = TQ3_0_CENTROIDS_M[idx] * tq3_4s_scale_from_block(raw, g);
++
++        // inverse randomized Hadamard transform across the 32 lanes
++        for (ushort step = 1; step < 32; step <<= 1) {
++            const float o = simd_shuffle_xor(val, step);
++            val = (j & step) ? (o - val) : (o + val);
++        }
++
++        pdst[ib*QK_TQ3_0 + j] = val * sign * norm;
++    }
++}
++
+ template<typename block_q, short nl, void (*dequantize_func)(device const block_q *, short, thread float4x4 &)>
+ kernel void kernel_get_rows_q(
+         constant ggml_metal_kargs_get_rows & args,
+@@ -12956,6 +13196,7 @@ template [[host_name("kernel_mul_mm_q4_1_f32")]]    kernel mul_mm_t kernel_mul_m
+ template [[host_name("kernel_mul_mm_q5_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_0,    2,     dequantize_q5_0,    float,  float4x4,  float, float2x4>;
+ template [[host_name("kernel_mul_mm_q5_1_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_1,    2,     dequantize_q5_1,    float,  float4x4,  float, float2x4>;
+ template [[host_name("kernel_mul_mm_q8_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q8_0,    2,     dequantize_q8_0,    float,  float4x4,  float, float2x4>;
++template [[host_name("kernel_mul_mm_tq3_4s_f32")]]  kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_tq3_4s,  2,     dequantize_tq3_4s,  float,  float4x4,  float, float2x4>;
+ template [[host_name("kernel_mul_mm_tq3_1s_f32")]]         kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_tq3_1s,  2,     dequantize_tq3_1s,  float,  float4x4,  float, float2x4>;
+ template [[host_name("kernel_mul_mm_tq3_1s_rotated_f32")]] kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_tq3_1s,  2,     dequantize_tq3_1s_rotated,  float,  float4x4,  float, float2x4>;
+ template [[host_name("kernel_mul_mm_tq4_1s_f32")]]         kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_tq4_1s,  2,     dequantize_tq4_1s,  float,  float4x4,  float, float2x4>;
