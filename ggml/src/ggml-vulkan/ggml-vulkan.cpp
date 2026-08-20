@@ -5430,7 +5430,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                                       (device->subgroup_size % 32) == 0 &&
                                       getenv("GGML_VK_DISABLE_TQ_SUBGROUP") == nullptr;
         const uint32_t tq_wg_size             = tq_subgroup_fast ? wg_size_subgroup : 32;
-        const uint32_t tq_num_rows            = tq_subgroup_fast ? 2 : 1;
+        const uint32_t tq_num_rows            = tq_subgroup_fast ? 4 : 1;
         const bool     tq_use_subgroups       = tq_subgroup_fast;
         const uint32_t tq_force_subgroup_size = 0;
 
