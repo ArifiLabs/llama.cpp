@@ -1,4 +1,4 @@
-From 49d4516264a6c655ed2a87f1c70dbdf407c45aff Mon Sep 17 00:00:00 2001
+From 8dc7bbdc79a3425880181744ad4cfa62645b465c Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Tue, 18 Aug 2026 11:18:22 -0400
 Subject: [PATCH] vulkan: wire the MoE expert cache provider into the build
@@ -31,7 +31,7 @@ index c895ec2d3..d89079950 100644
                              )
  
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 16f4e8099..02a7d3409 100644
+index 659d76b4d..43e0b87fa 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -95,6 +95,8 @@ typedef struct VkPhysicalDeviceCooperativeMatrixDecodeVectorFeaturesNV {
@@ -43,7 +43,7 @@ index 16f4e8099..02a7d3409 100644
  // remove this once it's more widely available in the SDK
  #if !defined(VK_KHR_shader_bfloat16)
  
-@@ -19273,6 +19275,9 @@ ggml_backend_reg_t ggml_backend_vk_reg() {
+@@ -19367,6 +19369,9 @@ ggml_backend_reg_t ggml_backend_vk_reg() {
      };
      try {
          ggml_vk_instance_init();
@@ -54,10 +54,10 @@ index 16f4e8099..02a7d3409 100644
      } catch (const vk::SystemError& e) {
          VK_LOG_DEBUG("ggml_backend_vk_reg() -> Error: System error: " << e.what());
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index 4bc70d75a..0e34c5854 100644
+index 100bc4268..cde715274 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-@@ -1304,6 +1304,32 @@ void process_shaders() {
+@@ -1310,6 +1310,32 @@ void process_shaders() {
  
      string_to_spv("topk_moe_f32", "topk_moe.comp", {});
  

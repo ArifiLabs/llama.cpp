@@ -1,4 +1,4 @@
-From 58ae9ab4c4ba7768b441aa32329494ad702cab91 Mon Sep 17 00:00:00 2001
+From ba4a008fd358da85c1e417651464fbf165396260 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Sat, 25 Jul 2026 01:38:06 -0400
 Subject: [PATCH] ggml: ROCmFP4/ROCmFPX weight formats behind
@@ -97,7 +97,7 @@ index b7110fa12..b5d446b5c 100644
  option(GGML_SANITIZE_THREAD    "ggml: enable thread sanitizer"    OFF)
  option(GGML_SANITIZE_ADDRESS   "ggml: enable address sanitizer"   OFF)
 diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
-index be9bee649..7de7f7b90 100644
+index ca114422b..647e9c58f 100644
 --- a/ggml/include/ggml.h
 +++ b/ggml/include/ggml.h
 @@ -436,10 +436,10 @@ extern "C" {
@@ -5297,7 +5297,7 @@ index 3c5c0c6c8..b9fe908ae 100644
          .from_float               = quantize_row_q4_1,
          .vec_dot                  = ggml_vec_dot_q4_1_q8_1,
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index e55e2b1e8..f57810ffc 100644
+index 021fdd4de..34b3c62d8 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -671,6 +671,14 @@ void ggml_compute_forward_add(
@@ -5479,7 +5479,7 @@ index d647000ba..7ef0f1484 100644
              {
                  VALIDATE_ROW_DATA_DM_F16_IMPL(block_q4_1, data, nb, d, m);
 diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
-index 897ec8fa7..6231e11a4 100644
+index 5ac7e7829..c9b88b3ab 100644
 --- a/ggml/src/ggml.c
 +++ b/ggml/src/ggml.c
 @@ -10,6 +10,11 @@
@@ -5601,7 +5601,7 @@ index 897ec8fa7..6231e11a4 100644
          case GGML_FTYPE_MOSTLY_Q5_0:          wtype = GGML_TYPE_Q5_0;  break;
          case GGML_FTYPE_MOSTLY_Q5_1:          wtype = GGML_TYPE_Q5_1;  break;
          case GGML_FTYPE_MOSTLY_Q8_0:          wtype = GGML_TYPE_Q8_0;  break;
-@@ -8166,6 +8257,27 @@ size_t ggml_quantize_chunk(
+@@ -8182,6 +8273,27 @@ size_t ggml_quantize_chunk(
          case GGML_TYPE_Q1_0:    result = quantize_q1_0   (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_Q2_0_G128: result = quantize_q2_0_g128(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_Q2_0:    result = quantize_q2_0   (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;

@@ -1,4 +1,4 @@
-From 62bd9e6267c84c042734ec7ae18781f9a9f568f4 Mon Sep 17 00:00:00 2001
+From 2dd2202f99d69a5e2f566f2034c70ffb879ff937 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 30 Jul 2026 01:50:14 -0400
 Subject: [PATCH] expert cache: stride the bundle by the PADDED matrix size --
@@ -129,10 +129,10 @@ index 03301c1ba..b4c65074d 100644
      bool debug_print = false;
  
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 5e23c973c..78b922891 100644
+index 84553c2a7..827b3c246 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -1722,8 +1722,18 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+@@ -1725,8 +1725,18 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
              const size_t pi_row_size     = ggml_row_size(GGML_TYPE_Q4_0, hparams.n_embd);
              const size_t pi_matrix_bytes = pi_row_size * hparams.n_ff_exp;
  

@@ -1,4 +1,4 @@
-From 7414afcd97535577dade3b5943f710fdf7b75dff Mon Sep 17 00:00:00 2001
+From 64d0dd7c6b993f34807eb503e683ac6e9f463fd6 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 19:19:27 -0400
 Subject: [PATCH] vulkan: ask the pipelines whether they exist, not the type id
@@ -31,10 +31,10 @@ Assisted-by: Claude Opus 5
  1 file changed, 31 insertions(+), 28 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 2d4614845..5248f1bb0 100644
+index 29b96c32f..f485061c9 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -18323,6 +18323,24 @@ static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const
+@@ -18417,6 +18417,24 @@ static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const
      return ggml_backend_vk_init(ctx->device);
  }
  
@@ -59,7 +59,7 @@ index 2d4614845..5248f1bb0 100644
  static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
      ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
      const vk_device& device = ggml_vk_get_device(ctx->device);
-@@ -18624,32 +18642,10 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18718,32 +18736,10 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      && (op->src[0]->ne[0] % 128 != 0)) {
                      return false;
                  }
@@ -96,7 +96,7 @@ index 2d4614845..5248f1bb0 100644
              }
          case GGML_OP_CONT:
          case GGML_OP_CPY:
-@@ -18663,6 +18659,11 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18757,6 +18753,11 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      case GGML_TYPE_F32:
                      case GGML_TYPE_F16:
                      case GGML_TYPE_BF16:
@@ -108,7 +108,7 @@ index 2d4614845..5248f1bb0 100644
                      case GGML_TYPE_Q1_0:
                      case GGML_TYPE_Q2_0:
                      case GGML_TYPE_Q2_0_G128:
-@@ -18679,7 +18680,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18773,7 +18774,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      case GGML_TYPE_Q8_0:
                      case GGML_TYPE_IQ4_NL:
                      case GGML_TYPE_TURBO3_0:
@@ -117,7 +117,7 @@ index 2d4614845..5248f1bb0 100644
                      default:
                          break;
                      }
-@@ -18688,6 +18689,8 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18782,6 +18783,8 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      switch (src0_type) {
                      case GGML_TYPE_F16:
                      case GGML_TYPE_BF16:
@@ -126,7 +126,7 @@ index 2d4614845..5248f1bb0 100644
                      case GGML_TYPE_Q1_0:
                      case GGML_TYPE_Q2_0:
                      case GGML_TYPE_Q2_0_G128:
-@@ -18704,7 +18707,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18798,7 +18801,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      case GGML_TYPE_Q8_0:
                      case GGML_TYPE_IQ4_NL:
                      case GGML_TYPE_TURBO3_0:

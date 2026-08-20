@@ -1,4 +1,4 @@
-From 1f75892b9c5cd55e85e39ad5c493a7d1f6c1dd80 Mon Sep 17 00:00:00 2001
+From 1ad1c03305992ebd92005cbf24abefbdb38e0e0a Mon Sep 17 00:00:00 2001
 From: Jian Chen <jianchen0311@gmail.com>
 Date: Tue, 18 Aug 2026 02:08:02 -0700
 Subject: [PATCH] support DFlash2
@@ -630,7 +630,7 @@ index 12ae31b7d..f7dd65267 100644
  
  common_speculative_draft_params & common_speculative_get_draft_params(common_speculative * spec, llama_seq_id seq_id);
 diff --git a/conversion/__init__.py b/conversion/__init__.py
-index 8c52fc8ca..b1c57bfd3 100644
+index 0a6a0c3ba..34298c491 100644
 --- a/conversion/__init__.py
 +++ b/conversion/__init__.py
 @@ -54,6 +54,7 @@ TEXT_MODEL_MAP: dict[str, str] = {
@@ -761,7 +761,7 @@ index 487ae03ab..d074f270f 100644
          {
              LOG_DBG("clear kv cache from any extra tokens, n_past = %d\n", n_past);
 diff --git a/gguf-py/gguf/constants.py b/gguf-py/gguf/constants.py
-index 28788c8d2..ec92be7f8 100644
+index a72f49f7e..7551df70d 100644
 --- a/gguf-py/gguf/constants.py
 +++ b/gguf-py/gguf/constants.py
 @@ -162,6 +162,10 @@ class Keys:
@@ -775,7 +775,7 @@ index 28788c8d2..ec92be7f8 100644
          SAMPLE_FROM_ANCHOR                = "{arch}.sample_from_anchor"
          NORM_BEFORE_RESIDUAL              = "{arch}.norm_before_residual"
          NORM_BEFORE_FC                    = "{arch}.norm_before_fc"
-@@ -1135,6 +1139,13 @@ class MODEL_TENSOR(IntEnum):
+@@ -1137,6 +1141,13 @@ class MODEL_TENSOR(IntEnum):
      DSPARK_MARKOV_W1       = auto()  # markov head: prev-token embed
      DSPARK_MARKOV_W2       = auto()  # markov head: bias projection
      DSPARK_CONF_PROJ       = auto()  # confidence head
@@ -789,7 +789,7 @@ index 28788c8d2..ec92be7f8 100644
      # lfm2 audio
      A_ENC_NORM_CONV        = auto()
      A_ENC_LINEAR_POS       = auto()
-@@ -1881,6 +1892,13 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
+@@ -1884,6 +1895,13 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
      MODEL_TENSOR.DSPARK_MARKOV_W1:          "markov_w1",
      MODEL_TENSOR.DSPARK_MARKOV_W2:          "markov_w2",
      MODEL_TENSOR.DSPARK_CONF_PROJ:          "conf_proj",
@@ -803,7 +803,7 @@ index 28788c8d2..ec92be7f8 100644
      MODEL_TENSOR.D2T:                       "d2t",
  }
  
-@@ -4856,6 +4874,13 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
+@@ -4884,6 +4902,13 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
          MODEL_TENSOR.DSPARK_MARKOV_W2,
          MODEL_TENSOR.DSPARK_CONF_PROJ,
          MODEL_TENSOR.ENC_AUX_NORM,
@@ -818,10 +818,10 @@ index 28788c8d2..ec92be7f8 100644
      MODEL_ARCH.MISTRAL4: [
          MODEL_TENSOR.TOKEN_EMBD,
 diff --git a/gguf-py/gguf/gguf_writer.py b/gguf-py/gguf/gguf_writer.py
-index 01e944449..1df6fcc30 100644
+index 1db64047c..3905a3221 100644
 --- a/gguf-py/gguf/gguf_writer.py
 +++ b/gguf-py/gguf/gguf_writer.py
-@@ -981,6 +981,18 @@ class GGUFWriter:
+@@ -984,6 +984,18 @@ class GGUFWriter:
      def add_block_size(self, value: int) -> None:
          self.add_uint32(Keys.LLM.BLOCK_SIZE.format(arch=self.arch), value)
  
@@ -841,10 +841,10 @@ index 01e944449..1df6fcc30 100644
          self.add_bool(Keys.LLM.SAMPLE_FROM_ANCHOR.format(arch=self.arch), value)
  
 diff --git a/gguf-py/gguf/tensor_mapping.py b/gguf-py/gguf/tensor_mapping.py
-index d98a78a5d..9a7015564 100644
+index 42800eb62..a85413d2f 100644
 --- a/gguf-py/gguf/tensor_mapping.py
 +++ b/gguf-py/gguf/tensor_mapping.py
-@@ -1353,6 +1353,35 @@ class TensorNameMap:
+@@ -1354,6 +1354,35 @@ class TensorNameMap:
          MODEL_TENSOR.DSPARK_CONF_PROJ: (
              "model.confidence_head.proj", # dspark
          ),
@@ -881,10 +881,10 @@ index d98a78a5d..9a7015564 100644
              "classifier",       # jina
              "classifier.dense", # roberta
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index ac1859508..46858c47c 100644
+index df572b539..03988f251 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -334,6 +334,11 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+@@ -337,6 +337,11 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
  
      { LLM_KV_TARGET_LAYERS,         "%s.target_layers"        },
      { LLM_KV_TARGET_HIDDEN_SIZE,    "%s.target_hidden_size"   },
@@ -896,7 +896,7 @@ index ac1859508..46858c47c 100644
      { LLM_KV_NORM_BEFORE_RESIDUAL,  "%s.norm_before_residual" },
      { LLM_KV_NORM_BEFORE_FC,        "%s.norm_before_fc"       },
      { LLM_KV_DECODER_ARCH,          "%s.decoder_arch"         },
-@@ -682,6 +687,14 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
+@@ -685,6 +690,14 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
      { LLM_TENSOR_DFLASH_FC,                              "fc" },
      { LLM_TENSOR_DFLASH_HIDDEN_NORM,                     "enc.output_norm" },
  
@@ -911,7 +911,7 @@ index ac1859508..46858c47c 100644
  };
  
  // declare information about the model weight tensors:
-@@ -958,6 +971,14 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
+@@ -961,6 +974,14 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
      {LLM_TENSOR_DFLASH_HIDDEN_NORM,                     {LLM_TENSOR_LAYER_INPUT,     GGML_OP_NONE}},
      {LLM_TENSOR_DFLASH_FC,                              {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
  
@@ -927,10 +927,10 @@ index ac1859508..46858c47c 100644
  
  LLM_KV::LLM_KV(llm_arch arch, const char * suffix) : arch(arch), suffix(suffix) {}
 diff --git a/src/llama-arch.h b/src/llama-arch.h
-index 0e22ad4c8..f2fc897e4 100644
+index 488511c7e..cc5fc34a8 100644
 --- a/src/llama-arch.h
 +++ b/src/llama-arch.h
-@@ -381,6 +381,11 @@ enum llm_kv {
+@@ -384,6 +384,11 @@ enum llm_kv {
  
      LLM_KV_TARGET_LAYERS,
      LLM_KV_TARGET_HIDDEN_SIZE,
@@ -942,7 +942,7 @@ index 0e22ad4c8..f2fc897e4 100644
      LLM_KV_NORM_BEFORE_RESIDUAL,
      LLM_KV_NORM_BEFORE_FC,
      LLM_KV_DECODER_ARCH,
-@@ -676,6 +681,13 @@ enum llm_tensor {
+@@ -679,6 +684,13 @@ enum llm_tensor {
      LLM_TENSOR_DSPARK_MARKOV_W1,
      LLM_TENSOR_DSPARK_MARKOV_W2,
      LLM_TENSOR_DSPARK_CONF_PROJ,
@@ -987,10 +987,10 @@ index cf68c300c..78efe6f87 100644
      // dense (out)
      //
 diff --git a/src/llama-hparams.h b/src/llama-hparams.h
-index 1cb303dca..2b074cdbc 100644
+index 6e22f7e6a..964de8184 100644
 --- a/src/llama-hparams.h
 +++ b/src/llama-hparams.h
-@@ -214,6 +214,12 @@ struct llama_hparams {
+@@ -218,6 +218,12 @@ struct llama_hparams {
      // output embedding dimension (0 = use n_embd)
      uint32_t n_embd_out_impl = 0;
  
@@ -1004,10 +1004,10 @@ index 1cb303dca..2b074cdbc 100644
      uint32_t n_moe_layer_step        = 0;
      uint32_t n_no_rope_layer_step    = 4;
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index a0b8a716b..5f10ec861 100644
+index 8c06c9878..04760f629 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -2585,6 +2585,7 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
+@@ -2588,6 +2588,7 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
  
      // add backend sampling layers (if any)
      llm->build_sampling();
@@ -1372,7 +1372,7 @@ index 8adfd1438..215f481eb 100644
  //   * embd batch  -> project main_x through each stage's wkv and inject K into the ring cache
  //   * token batch -> noise block through 3 full DSV4 stages (hc + MLA + MoE), markov + confidence heads
 diff --git a/src/models/models.h b/src/models/models.h
-index 1f021bc73..72581eef3 100644
+index 57b025b1c..d17ad399f 100644
 --- a/src/models/models.h
 +++ b/src/models/models.h
 @@ -1350,9 +1350,12 @@ struct llama_model_dflash : public llama_model_base {
@@ -1389,7 +1389,7 @@ index 1f021bc73..72581eef3 100644
  
      struct graph_dsv4 : public llama_model_deepseek4::graph {
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index db216e75c..81e312052 100644
+index 24ff2d66d..db321068c 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
 @@ -386,6 +386,7 @@ struct server_slot {
@@ -1408,7 +1408,7 @@ index db216e75c..81e312052 100644
              spec_i_batch.clear();
              spec_ckpt.clear();
          }
-@@ -3247,6 +3249,9 @@ private:
+@@ -3270,6 +3272,9 @@ private:
                              /* .id_last  = */ slot.sampled,
                              /* .prompt   = */ &slot.spec_prompt,
                              /* .result   = */ &slot.spec_draft,
@@ -1418,7 +1418,7 @@ index db216e75c..81e312052 100644
                          };
  
                          drafting.push_back(&slot);
-@@ -4132,7 +4137,13 @@ private:
+@@ -4155,7 +4160,13 @@ private:
                  common_sampler_ptr smpl_save(common_sampler_clone(slot.smpl.get()));
  
                  GGML_ASSERT(slot.spec_i_batch.size() == n_draft + 1);
@@ -1433,7 +1433,7 @@ index db216e75c..81e312052 100644
                  slot.spec_i_batch.clear();
  
                  GGML_ASSERT(accepted.size() >= 1);
-@@ -4153,6 +4164,7 @@ private:
+@@ -4176,6 +4187,7 @@ private:
                          // partial acceptance is not supported by the context -> truncate the draft and restore the state
                          slot.spec_is_replay = true;
                          slot.spec_draft = std::move(accepted);
@@ -1441,7 +1441,7 @@ index db216e75c..81e312052 100644
  
                          const auto & ckpt = slot.spec_ckpt;
  
-@@ -4180,6 +4192,7 @@ private:
+@@ -4203,6 +4215,7 @@ private:
                  common_speculative_accept(spec.get(), slot.id, accepted.size() - 1);
  
                  slot.spec_draft = std::move(accepted);

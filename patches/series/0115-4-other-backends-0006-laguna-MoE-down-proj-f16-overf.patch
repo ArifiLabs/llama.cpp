@@ -1,4 +1,4 @@
-From a7748ab8f4d3990a987b99c2a70192a571965c9f Mon Sep 17 00:00:00 2001
+From c05ac2ac6896a333b5bc59b9c36d10c3fb30318d Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:56:03 -0400
 Subject: [PATCH] 
@@ -2926,7 +2926,7 @@ index 6b36b8fbc..d1832f192 100644
              GGML_ABORT("%s: unsupported src0 type: %s\n", __func__, ggml_type_name(src0_type));
              break;
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index f2e381ee0..179bc6a0b 100644
+index 3b2a0ea85..1a5c2658a 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -61,6 +61,8 @@
@@ -3130,7 +3130,7 @@ index f2e381ee0..179bc6a0b 100644
                  // ref: https://github.com/ggml-org/llama.cpp/pull/18958
                  use_cuda_graph = false;
  #ifndef NDEBUG
-@@ -4961,6 +5045,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -4967,6 +5051,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                      case GGML_TYPE_IQ4_NL:
                      case GGML_TYPE_IQ4_XS:
                      case GGML_TYPE_BF16:
@@ -3139,7 +3139,7 @@ index f2e381ee0..179bc6a0b 100644
                          return true;
                      default:
                          return false;
-@@ -4995,6 +5081,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -5001,6 +5087,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                      case GGML_TYPE_IQ1_S:
                      case GGML_TYPE_IQ1_M:
                      case GGML_TYPE_IQ4_XS:
@@ -3148,7 +3148,7 @@ index f2e381ee0..179bc6a0b 100644
                          return true;
                      case GGML_TYPE_IQ4_NL:
                      case GGML_TYPE_MXFP4:
-@@ -5011,11 +5099,20 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -5017,11 +5105,20 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
              } break;
          case GGML_OP_SET_ROWS:
              {
@@ -3170,7 +3170,7 @@ index f2e381ee0..179bc6a0b 100644
                                 op->src[0]->type == GGML_TYPE_F32
                             ) || (
                                 op->type == GGML_TYPE_F16 && op->src[0]->type == GGML_TYPE_F16
-@@ -5181,6 +5278,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -5187,6 +5284,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
          case GGML_OP_CLAMP:
          case GGML_OP_LOG:
              return true;
@@ -3180,7 +3180,7 @@ index f2e381ee0..179bc6a0b 100644
          case GGML_OP_ADD:
          case GGML_OP_SUB:
          case GGML_OP_MUL:
-@@ -5340,7 +5440,7 @@ static ggml_backend_event_t ggml_backend_cuda_device_event_new(ggml_backend_dev_
+@@ -5346,7 +5446,7 @@ static ggml_backend_event_t ggml_backend_cuda_device_event_new(ggml_backend_dev_
      ggml_cuda_set_device(dev_ctx->device);
  
      cudaEvent_t event;
@@ -6530,7 +6530,7 @@ index 312b00dc4..e4534bef8 100644
                      default:
                          return false;
 diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
-index 1f6e8c48b..dd5b4d367 100644
+index 05ea7470e..cb2c16885 100644
 --- a/ggml/src/ggml-metal/ggml-metal-impl.h
 +++ b/ggml/src/ggml-metal/ggml-metal-impl.h
 @@ -87,8 +87,16 @@
@@ -6560,7 +6560,7 @@ index 1f6e8c48b..dd5b4d367 100644
  
  // op-specific constants
  #define OP_FLASH_ATTN_EXT_NQPSG 8
-@@ -442,6 +453,40 @@ typedef struct {
+@@ -444,6 +455,40 @@ typedef struct {
      float    logit_softcap;
  } ggml_metal_kargs_flash_attn_ext_vec;
  
@@ -6601,7 +6601,7 @@ index 1f6e8c48b..dd5b4d367 100644
  typedef struct {
      int32_t  nrows;
  } ggml_metal_kargs_flash_attn_ext_vec_reduce;
-@@ -946,6 +991,11 @@ typedef struct {
+@@ -948,6 +993,11 @@ typedef struct {
      uint64_t nb3;
  } ggml_metal_kargs_gated_delta_net;
  
@@ -6614,7 +6614,7 @@ index 1f6e8c48b..dd5b4d367 100644
      int32_t  ne00;
      int32_t  ne01;
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index b7f9b2d0d..f76c7e40a 100644
+index d8435e957..37be24f93 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 @@ -172,6 +172,26 @@ static bool ggml_metal_op_concurrency_add(ggml_metal_op_t ctx, const ggml_tensor
@@ -7312,7 +7312,7 @@ index b03b59e0b..79de592cd 100644
  int ggml_metal_op_set               (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_cpy               (ggml_metal_op_t ctx, int idx);
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 243c997fc..5cf724e35 100644
+index 0537fa4cf..71548f9ca 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -468,6 +468,7 @@ void quantize_iq4_nl(device const float * src, device block_iq4_nl & dst) {
@@ -7856,7 +7856,7 @@ index 243c997fc..5cf724e35 100644
  }
  
  template <typename type4x4>
-@@ -1049,6 +1576,7 @@ void dequantize_iq4_xs(device const block_iq4_xs * xb, short il, thread type4x4
+@@ -1047,6 +1574,7 @@ void dequantize_iq4_xs(device const block_iq4_xs * xb, short il, thread type4x4
      }
  }
  
@@ -7864,7 +7864,7 @@ index 243c997fc..5cf724e35 100644
  template <typename type4x4>
  void dequantize_tq2_0(device const block_tq2_0 * xb, short il, thread type4x4 & reg) {
      device const uint8_t * qs = xb->qs;
-@@ -1068,6 +1596,273 @@ void dequantize_tq2_0(device const block_tq2_0 * xb, short il, thread type4x4 &
+@@ -1066,6 +1594,273 @@ void dequantize_tq2_0(device const block_tq2_0 * xb, short il, thread type4x4 &
      reg = (type4x4) reg_f;
  }
  
@@ -8138,7 +8138,7 @@ index 243c997fc..5cf724e35 100644
  enum ggml_sort_order {
      GGML_SORT_ORDER_ASC,
      GGML_SORT_ORDER_DESC,
-@@ -2944,6 +3739,99 @@ template [[host_name("kernel_gated_delta_net_f32_2")]] kernel kernel_gated_delta
+@@ -2942,6 +3737,99 @@ template [[host_name("kernel_gated_delta_net_f32_2")]] kernel kernel_gated_delta
  template [[host_name("kernel_gated_delta_net_f32_4")]] kernel kernel_gated_delta_net_t kernel_gated_delta_net_impl<float4, 4>;
  #endif
  
@@ -8238,7 +8238,7 @@ index 243c997fc..5cf724e35 100644
  constant short FC_solve_tri_nsg [[function_constant(FC_SOLVE_TRI + 0)]];
  constant short FC_solve_tri_n   [[function_constant(FC_SOLVE_TRI + 1)]];
  constant short FC_solve_tri_k   [[function_constant(FC_SOLVE_TRI + 2)]];
-@@ -3981,6 +4869,180 @@ kernel void kernel_mul_mv_q8_0_f32(
+@@ -3979,6 +4867,180 @@ kernel void kernel_mul_mv_q8_0_f32(
      kernel_mul_mv_q8_0_f32_impl<N_R0_Q8_0, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
  }
  
@@ -8419,7 +8419,7 @@ index 243c997fc..5cf724e35 100644
  // mat-vec kernel processing in chunks of float4
  // chpb - chunks per quantization block
  template<short r1ptg, typename q_t, short chpb, void (*deq_t4)(device const q_t *, short, thread float4 &) >
-@@ -4283,6 +5345,16 @@ template [[host_name("kernel_mul_mv_ext_iq4_nl_f32_r1_3")]] kernel mul_mv_ext_q4
+@@ -4281,6 +5343,16 @@ template [[host_name("kernel_mul_mv_ext_iq4_nl_f32_r1_3")]] kernel mul_mv_ext_q4
  template [[host_name("kernel_mul_mv_ext_iq4_nl_f32_r1_4")]] kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<4, block_iq4_nl, 32, dequantize_iq4_nl_t4>;
  template [[host_name("kernel_mul_mv_ext_iq4_nl_f32_r1_5")]] kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<5, block_iq4_nl, 32, dequantize_iq4_nl_t4>;
  
@@ -8436,7 +8436,7 @@ index 243c997fc..5cf724e35 100644
  template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_2")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, block_q4_K, 256, dequantize_q4_K>;
  template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_3")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, block_q4_K, 256, dequantize_q4_K>;
  template [[host_name("kernel_mul_mv_ext_q4_K_f32_r1_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, block_q4_K, 256, dequantize_q4_K>;
-@@ -7180,135 +8252,346 @@ kernel void kernel_flash_attn_ext(
+@@ -7193,135 +8265,346 @@ kernel void kernel_flash_attn_ext(
  
  typedef decltype(kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16, 64, 64>) flash_attn_ext_t;
  
@@ -8908,7 +8908,7 @@ index 243c997fc..5cf724e35 100644
  
  #undef FA_TYPES
  #undef FA_TYPES_BF
-@@ -7524,6 +8807,71 @@ kernel void kernel_flash_attn_ext_vec(
+@@ -7537,6 +8820,71 @@ kernel void kernel_flash_attn_ext_vec(
                      } else {
                          device const kd4_t * pk = (device const kd4_t *) (k + ((ic + NE*cc + ty)*args.nb11));
  
@@ -8980,7 +8980,7 @@ index 243c997fc..5cf724e35 100644
                          k4_t mk;
  
                          FOR_UNROLL (short ii = 0; ii < DK4/NL; ++ii) {
-@@ -7533,6 +8881,7 @@ kernel void kernel_flash_attn_ext_vec(
+@@ -7546,6 +8894,7 @@ kernel void kernel_flash_attn_ext_vec(
  
                              mqk[cc] += dot((float4) mk, (float4) sq4[i]);
                          }
@@ -8988,7 +8988,7 @@ index 243c997fc..5cf724e35 100644
                      }
  
                      if (NE == 1) {
-@@ -7633,6 +8982,13 @@ kernel void kernel_flash_attn_ext_vec(
+@@ -7646,6 +8995,13 @@ kernel void kernel_flash_attn_ext_vec(
                      }
                  } else {
                      FOR_UNROLL (short cc = 0; cc < C/NE; ++cc) {
@@ -9002,7 +9002,7 @@ index 243c997fc..5cf724e35 100644
                          device const vd4_t * pv4 = (device const vd4_t *) (v + ((ic + NE*cc + ty)*args.nb21));
  
                          FOR_UNROLL (short ii = 0; ii < DV4/NL; ++ii) {
-@@ -7801,115 +9157,264 @@ kernel void kernel_flash_attn_ext_vec(
+@@ -7814,115 +9170,264 @@ kernel void kernel_flash_attn_ext_vec(
  
  typedef decltype(kernel_flash_attn_ext_vec<FA_TYPES, half4, 1, dequantize_f16_t4, half4, 1, dequantize_f16_t4, 128, 128, 4>) flash_attn_ext_vec_t;
  
@@ -9356,7 +9356,7 @@ index 243c997fc..5cf724e35 100644
  
  #undef FA_TYPES
  #undef FA_TYPES_F32
-@@ -7959,6 +9464,400 @@ kernel void kernel_flash_attn_ext_vec_reduce(
+@@ -7972,6 +9477,400 @@ kernel void kernel_flash_attn_ext_vec_reduce(
  #undef DV
  }
  
@@ -9757,7 +9757,7 @@ index 243c997fc..5cf724e35 100644
  template<typename T0, typename T1>
  kernel void kernel_cpy_t_t(
          constant ggml_metal_kargs_cpy & args,
-@@ -8114,9 +10013,17 @@ template [[host_name("kernel_cpy_q5_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<
+@@ -8127,9 +10026,17 @@ template [[host_name("kernel_cpy_q5_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<
  template [[host_name("kernel_cpy_q5_1_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q5_1, 2, dequantize_q5_1>;
  template [[host_name("kernel_cpy_q8_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q8_0, 2, dequantize_q8_0>;
  
@@ -9775,7 +9775,7 @@ index 243c997fc..5cf724e35 100644
  kernel void kernel_concat(
          constant ggml_metal_kargs_concat & args,
          device  const char * src0,
-@@ -10154,7 +12061,254 @@ kernel void kernel_set_rows_q32(
+@@ -10167,7 +12074,254 @@ kernel void kernel_set_rows_q32(
      }
  }
  
@@ -10031,7 +10031,7 @@ index 243c997fc..5cf724e35 100644
  kernel void kernel_set_rows_f(
          constant ggml_metal_kargs_set_rows & args,
          device const  void * src0,
-@@ -10659,6 +12813,13 @@ template [[host_name("kernel_mul_mm_id_map0_ne20_8" )]] kernel kernel_mul_mm_id_
+@@ -10672,6 +12826,13 @@ template [[host_name("kernel_mul_mm_id_map0_ne20_8" )]] kernel kernel_mul_mm_id_
  template [[host_name("kernel_mul_mm_id_map0_ne20_10")]] kernel kernel_mul_mm_id_map0_t kernel_mul_mm_id_map0<10>;
  template [[host_name("kernel_mul_mm_id_map0_ne20_16")]] kernel kernel_mul_mm_id_map0_t kernel_mul_mm_id_map0<16>;
  template [[host_name("kernel_mul_mm_id_map0_ne20_22")]] kernel kernel_mul_mm_id_map0_t kernel_mul_mm_id_map0<22>;
@@ -10045,7 +10045,7 @@ index 243c997fc..5cf724e35 100644
  
  template<typename S0, typename S0_4x4, typename S0_8x8, typename S1, typename S1_2x4, typename S1_8x8, typename block_q, short nl, void (*dequantize_func)(device const block_q *, short, thread S0_4x4 &), typename T0, typename T0_4x4, typename T1, typename T1_2x4>
  kernel void kernel_mul_mm_id(
-@@ -10983,6 +13144,10 @@ template [[host_name("kernel_mul_mm_q4_1_f32")]]    kernel mul_mm_t kernel_mul_m
+@@ -10996,6 +13157,10 @@ template [[host_name("kernel_mul_mm_q4_1_f32")]]    kernel mul_mm_t kernel_mul_m
  template [[host_name("kernel_mul_mm_q5_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_0,    2,     dequantize_q5_0,    float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_q5_1_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_1,    2,     dequantize_q5_1,    float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_q8_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q8_0,    2,     dequantize_q8_0,    float,  float4x4,  float, float2x4>;
@@ -10056,7 +10056,7 @@ index 243c997fc..5cf724e35 100644
  template [[host_name("kernel_mul_mm_mxfp4_f32")]]   kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_mxfp4,   2,     dequantize_mxfp4,   float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_q2_K_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q2_K,    QK_NL, dequantize_q2_K,    float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_q3_K_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q3_K,    QK_NL, dequantize_q3_K,    float,  float4x4,  float, float2x4>;
-@@ -11009,6 +13174,10 @@ template [[host_name("kernel_mul_mm_q4_1_f16")]]    kernel mul_mm_t kernel_mul_m
+@@ -11022,6 +13187,10 @@ template [[host_name("kernel_mul_mm_q4_1_f16")]]    kernel mul_mm_t kernel_mul_m
  template [[host_name("kernel_mul_mm_q5_0_f16")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_0,    2,     dequantize_q5_0,    float,  float4x4,  half, half2x4>;
  template [[host_name("kernel_mul_mm_q5_1_f16")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_1,    2,     dequantize_q5_1,    float,  float4x4,  half, half2x4>;
  template [[host_name("kernel_mul_mm_q8_0_f16")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q8_0,    2,     dequantize_q8_0,    float,  float4x4,  half, half2x4>;
@@ -10067,7 +10067,7 @@ index 243c997fc..5cf724e35 100644
  template [[host_name("kernel_mul_mm_mxfp4_f16")]]   kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_mxfp4,   2,     dequantize_mxfp4,   float,  float4x4,  half, half2x4>;
  template [[host_name("kernel_mul_mm_q2_K_f16")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q2_K,    QK_NL, dequantize_q2_K,    float,  float4x4,  half, half2x4>;
  template [[host_name("kernel_mul_mm_q3_K_f16")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q3_K,    QK_NL, dequantize_q3_K,    float,  float4x4,  half, half2x4>;
-@@ -11044,6 +13213,10 @@ template [[host_name("kernel_mul_mm_id_q4_1_f32")]]    kernel mul_mm_id kernel_m
+@@ -11057,6 +13226,10 @@ template [[host_name("kernel_mul_mm_id_q4_1_f32")]]    kernel mul_mm_id kernel_m
  template [[host_name("kernel_mul_mm_id_q5_0_f32")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_0,    2,     dequantize_q5_0,    float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_id_q5_1_f32")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_1,    2,     dequantize_q5_1,    float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_id_q8_0_f32")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q8_0,    2,     dequantize_q8_0,    float,  float4x4,  float, float2x4>;
@@ -10078,7 +10078,7 @@ index 243c997fc..5cf724e35 100644
  template [[host_name("kernel_mul_mm_id_mxfp4_f32")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_mxfp4,   2,     dequantize_mxfp4,   float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_id_q2_K_f32")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q2_K,    QK_NL, dequantize_q2_K,    float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_id_q3_K_f32")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q3_K,    QK_NL, dequantize_q3_K,    float,  float4x4,  float, float2x4>;
-@@ -11070,6 +13243,10 @@ template [[host_name("kernel_mul_mm_id_q4_1_f16")]]    kernel mul_mm_id kernel_m
+@@ -11083,6 +13256,10 @@ template [[host_name("kernel_mul_mm_id_q4_1_f16")]]    kernel mul_mm_id kernel_m
  template [[host_name("kernel_mul_mm_id_q5_0_f16")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_0,    2,     dequantize_q5_0,    float,  float4x4,  half, half2x4>;
  template [[host_name("kernel_mul_mm_id_q5_1_f16")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_1,    2,     dequantize_q5_1,    float,  float4x4,  half, half2x4>;
  template [[host_name("kernel_mul_mm_id_q8_0_f16")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q8_0,    2,     dequantize_q8_0,    float,  float4x4,  half, half2x4>;
@@ -10089,7 +10089,7 @@ index 243c997fc..5cf724e35 100644
  template [[host_name("kernel_mul_mm_id_mxfp4_f16")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_mxfp4,   2,     dequantize_mxfp4,   float,  float4x4,  half, half2x4>;
  template [[host_name("kernel_mul_mm_id_q2_K_f16")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q2_K,    QK_NL, dequantize_q2_K,    float,  float4x4,  half, half2x4>;
  template [[host_name("kernel_mul_mm_id_q3_K_f16")]]    kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q3_K,    QK_NL, dequantize_q3_K,    float,  float4x4,  half, half2x4>;
-@@ -11219,6 +13396,8 @@ template [[host_name("kernel_mul_mv_id_bf16_f32_4")]]  kernel kernel_mul_mv_id_4
+@@ -11232,6 +13409,8 @@ template [[host_name("kernel_mul_mv_id_bf16_f32_4")]]  kernel kernel_mul_mv_id_4
  #endif
  
  template [[host_name("kernel_mul_mv_id_q8_0_f32")]]    kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_q8_0_f32_impl<N_R0_Q8_0>>>;
@@ -19313,10 +19313,10 @@ index a85eb721f..8ce51b1e3 100644
  }
  
 diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
-index 5416d4f0f..d75d94552 100644
+index c7434a6bd..31cd21909 100644
 --- a/ggml/src/ggml-sycl/ggml-sycl.cpp
 +++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
-@@ -85,6 +85,7 @@
+@@ -86,6 +86,7 @@
  
  #define MEM_SIZE_2M	0x00200000
  #define MEM_SIZE_1G	0x40000000
@@ -19324,7 +19324,7 @@ index 5416d4f0f..d75d94552 100644
  
  static bool g_sycl_loaded = false;
  int g_ggml_sycl_debug = 0;
-@@ -5389,6 +5390,9 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
+@@ -5409,6 +5410,9 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
          case GGML_OP_FLASH_ATTN_EXT:
              ggml_sycl_flash_attn_ext(ctx, dst);
              break;
@@ -19334,7 +19334,7 @@ index 5416d4f0f..d75d94552 100644
          default:
              return false;
      }
-@@ -6038,9 +6042,27 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+@@ -6058,9 +6062,27 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
  
          case GGML_OP_SET_ROWS:
              {
@@ -19362,7 +19362,7 @@ index 5416d4f0f..d75d94552 100644
                  return res;
              }
              break;
-@@ -6300,6 +6322,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+@@ -6322,6 +6344,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
              return op->src[0]->ne[0] <= SYCL_SOLVE_TRI_MAX_N && op->src[1]->ne[0] <= SYCL_SOLVE_TRI_MAX_K;
          case GGML_OP_FLASH_ATTN_EXT:
              return ggml_sycl_flash_attn_ext_supported(device, op);

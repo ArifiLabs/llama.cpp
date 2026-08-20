@@ -1,4 +1,4 @@
-From b51ba66129304a4abe22806e74622ac7002f9298 Mon Sep 17 00:00:00 2001
+From af55226c97e60baf01fcc2a75da24714ed12eebe Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:26:32 -0400
 Subject: [PATCH] 
@@ -47,10 +47,10 @@ index 21b46edfa..e820c72c1 100644
      int physical_device = -1;
      int compute_capability = 0;
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 0b619da44..d2fedae9a 100644
+index c26631ead..04501aadc 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -1310,10 +1310,43 @@ private:
+@@ -1322,10 +1322,43 @@ private:
                  try {
                      auto mparams_tgt = common_model_params_to_llama(params_base);
                      auto cparams_tgt = common_context_params_to_llama(params_base);
@@ -98,7 +98,7 @@ index 0b619da44..d2fedae9a 100644
  
                      std::vector<std::pair<ggml_backend_dev_t, size_t>> reservations;
                      auto add_reservations = [&](const common_device_memory_data_vec & data,
-@@ -1334,19 +1367,26 @@ private:
+@@ -1346,19 +1379,26 @@ private:
                      };
                      add_reservations(dmd, devs);
  

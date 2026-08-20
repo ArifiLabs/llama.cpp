@@ -1,4 +1,4 @@
-From 68d640f9a78c382e5c198c6c8023d430ba5bb2a3 Mon Sep 17 00:00:00 2001
+From 830f165029ba0bcfa6e7c38c276d003e80a69886 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 08:48:24 -0400
 Subject: [PATCH] ggml: port the tq3 TQ3_4S family codec at ids 48-51
@@ -15,7 +15,7 @@ Subject: [PATCH] ggml: port the tq3 TQ3_4S family codec at ids 48-51
  7 files changed, 677 insertions(+)
 
 diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
-index b6adab36c..94650ef7f 100644
+index a407c3412..5fd83f25e 100644
 --- a/ggml/include/ggml.h
 +++ b/ggml/include/ggml.h
 @@ -434,6 +434,15 @@ extern "C" {
@@ -669,7 +669,7 @@ index 20635ed96..d8ec89f55 100644
      [GGML_TYPE_Q4_0] = {
          .from_float               = quantize_row_q4_0,
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 368e069c4..98ae8e6ae 100644
+index 3ea5bb6e5..4c2eab98d 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -684,6 +684,10 @@ void ggml_compute_forward_add(
@@ -776,7 +776,7 @@ index 168759354..7756df48f 100644
  
  #ifdef __cplusplus
 diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
-index 4e70b966e..d7f5444ac 100644
+index b913a2326..0e55a7581 100644
 --- a/ggml/src/ggml.c
 +++ b/ggml/src/ggml.c
 @@ -721,6 +721,40 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
@@ -820,7 +820,7 @@ index 4e70b966e..d7f5444ac 100644
  #endif
  #ifdef GGML_ARIFI_ROCMFPX_FORMATS
      // ROCmFPX weight formats, ids adopted verbatim (docs/TYPE-ID-ALLOCATION.md §3.1).
-@@ -8337,6 +8371,10 @@ size_t ggml_quantize_chunk(
+@@ -8353,6 +8387,10 @@ size_t ggml_quantize_chunk(
  #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
          case GGML_TYPE_TQ3_1S:  result = quantize_tq3_1s (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_TQ4_1S:  result = quantize_tq4_1s (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;

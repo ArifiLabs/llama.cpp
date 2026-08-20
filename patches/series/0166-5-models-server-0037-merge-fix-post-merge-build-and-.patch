@@ -1,4 +1,4 @@
-From a5786cfc771525aef8d04b725f8e994ed52757ea Mon Sep 17 00:00:00 2001
+From df5c7565e552f6d059edcccc17e0e34c9a7fdee3 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:36 -0400
 Subject: [PATCH] 
@@ -19,7 +19,7 @@ Subject: [PATCH]
  11 files changed, 1026 insertions(+), 6 deletions(-)
 
 diff --git a/common/common.cpp b/common/common.cpp
-index c8799b350..b90e9f8cd 100644
+index 9683ba2c2..bcf68e6a3 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
 @@ -1734,6 +1734,24 @@ struct llama_context_params common_context_params_to_llama(const common_params &
@@ -299,10 +299,10 @@ index dd1f3ef76..ab1280945 100644
          const char * path_model,
          const llama_model_params * mparams,
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index ac1859508..7ea00b592 100644
+index df572b539..7368fe8c1 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -1052,7 +1052,10 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
+@@ -1055,7 +1055,10 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
          case LLM_ARCH_QWEN35:
          case LLM_ARCH_QWEN35MOE:
          case LLM_ARCH_DEEPSEEK4:
@@ -313,7 +313,7 @@ index ac1859508..7ea00b592 100644
              return true;
          default:
              return false;
-@@ -1076,8 +1079,11 @@ bool llm_arch_supports_rs_rollback(const llm_arch & arch) {
+@@ -1079,8 +1082,11 @@ bool llm_arch_supports_rs_rollback(const llm_arch & arch) {
          case LLM_ARCH_QWEN35:
          case LLM_ARCH_QWEN35MOE:
          case LLM_ARCH_DEEPSEEK4:
@@ -974,10 +974,10 @@ index b235c68cb..da2ac7002 100644
      // TurboQuant rotation accessors
      ggml_tensor * get_turbo_rotation() const;
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index bedf9aacd..93cb5a79a 100644
+index 0509d6424..fd2369ec6 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -2307,6 +2307,10 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2310,6 +2310,10 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
          case LLM_ARCH_DEEPSEEK4:
              {
  <<<<<<< ours
@@ -988,7 +988,7 @@ index bedf9aacd..93cb5a79a 100644
                  GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
  
                  if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
-@@ -2347,6 +2351,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2350,6 +2354,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                              nullptr,
                              nullptr);
                  }
@@ -996,7 +996,7 @@ index bedf9aacd..93cb5a79a 100644
              } break;
          case LLM_ARCH_DFLASH:
              {
-@@ -2390,6 +2395,36 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2393,6 +2398,36 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                          nullptr,
                          nullptr);
              } break;
@@ -1209,7 +1209,7 @@ index e213c546b..e59a96f54 100644
      res->t_logits = cur;
  
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 51228006e..a8bc4dd52 100644
+index c1011a72d..6d2ad00e9 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
 @@ -42,6 +42,7 @@ constexpr int HTTP_POLLING_SECONDS = 1;
@@ -1307,7 +1307,7 @@ index 51228006e..a8bc4dd52 100644
  
      const uint64_t n_outputs = (uint64_t) params.n_parallel * n_outputs_per_seq;
  >>>>>>> theirs
-@@ -973,6 +1054,21 @@ private:
+@@ -985,6 +1066,21 @@ private:
                                          params_base.speculative.types.end(),
                                          COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end();
          const bool has_spec = has_draft || spec_mtp;

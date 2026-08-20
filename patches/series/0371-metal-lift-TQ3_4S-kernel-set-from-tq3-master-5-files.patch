@@ -1,4 +1,4 @@
-From 827f683e45c461a21da6e4b96d29c654e286dc77 Mon Sep 17 00:00:00 2001
+From 9da72a05cc33e968ea257682a864734311582424 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 07:12:25 -0400
 Subject: [PATCH] metal: lift TQ3_4S kernel set from tq3/master (5 files +
@@ -76,7 +76,7 @@ index 9a7c39ca6..58b868f7b 100644
              {
                  GGML_LOG_ERROR("Asserting on type %d\n", (int) tsrc0);
 diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
-index d36480e8b..bc7612a6a 100644
+index 1e27d6c77..c052295c7 100644
 --- a/ggml/src/ggml-metal/ggml-metal-impl.h
 +++ b/ggml/src/ggml-metal/ggml-metal-impl.h
 @@ -89,6 +89,9 @@
@@ -89,7 +89,7 @@ index d36480e8b..bc7612a6a 100644
  #define N_R0_TQ3_1S 8
  #define N_SG_TQ3_1S 2
  
-@@ -1035,6 +1038,18 @@ typedef struct {
+@@ -1037,6 +1040,18 @@ typedef struct {
      uint64_t nb3;
  } ggml_metal_kargs_get_rows;
  
@@ -109,7 +109,7 @@ index d36480e8b..bc7612a6a 100644
      int32_t  nk0;
      int32_t  ne01;
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 39a6180db..7fdaef6b0 100644
+index 667029eb5..39e8839f7 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 @@ -1225,9 +1225,17 @@ int ggml_metal_op_get_rows(ggml_metal_op_t ctx, int idx) {
@@ -336,7 +336,7 @@ index 32a6272e1..f2b3f662c 100644
              {
                  res += ggml_metal_op_mul_mat_id_extra_tpe(tensor);
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 89327c5e2..d2908af10 100644
+index 60778b46f..1d8b6c62e 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -103,6 +103,79 @@ static inline float sum(float4 x) {
@@ -419,7 +419,7 @@ index 89327c5e2..d2908af10 100644
  // NOTE: this is not dequantizing - we are simply fitting the template
  template <typename type4x4>
  void dequantize_f32(device const float4x4 * src, short il, thread type4x4 & reg) {
-@@ -11738,6 +11811,173 @@ kernel void kernel_mul_mv_mxfp4_f32(
+@@ -11751,6 +11824,173 @@ kernel void kernel_mul_mv_mxfp4_f32(
      kernel_mul_mv_mxfp4_f32_impl<N_R0_MXFP4, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
  }
  
@@ -593,7 +593,7 @@ index 89327c5e2..d2908af10 100644
  template<typename block_q, short nl, void (*dequantize_func)(device const block_q *, short, thread float4x4 &)>
  kernel void kernel_get_rows_q(
          constant ggml_metal_kargs_get_rows & args,
-@@ -12956,6 +13196,7 @@ template [[host_name("kernel_mul_mm_q4_1_f32")]]    kernel mul_mm_t kernel_mul_m
+@@ -12969,6 +13209,7 @@ template [[host_name("kernel_mul_mm_q4_1_f32")]]    kernel mul_mm_t kernel_mul_m
  template [[host_name("kernel_mul_mm_q5_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_0,    2,     dequantize_q5_0,    float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_q5_1_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_1,    2,     dequantize_q5_1,    float,  float4x4,  float, float2x4>;
  template [[host_name("kernel_mul_mm_q8_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q8_0,    2,     dequantize_q8_0,    float,  float4x4,  float, float2x4>;

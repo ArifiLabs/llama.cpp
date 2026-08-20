@@ -1,4 +1,4 @@
-From c44d689315f888d5822e1b22cfd3d0311b430b54 Mon Sep 17 00:00:00 2001
+From a7b35506908b2ac2f7126ac6fb8f1ea431172f6a Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Tue, 18 Aug 2026 21:52:18 -0400
 Subject: [PATCH] tests: initialise non-contiguous tensors row by row
@@ -30,7 +30,7 @@ Measured-effect: UNMEASURED as a delta - the sweep baseline 26213/26260 is
  1 file changed, 18 insertions(+), 1 deletion(-)
 
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 066461b77..81960656b 100644
+index b935cbd0d..ad6a57874 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
 @@ -129,7 +129,24 @@ static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float m
