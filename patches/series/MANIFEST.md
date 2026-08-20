@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10524`, `9ee9fc04c136ef2ae729bfc60d18961b23c13ddf`
-- Patches: **375**, all non-merge, applied in filename order.
+- Patches: **377**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 375 commit messages, same provenance trailers. Verified, not
+same file contents, same 377 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -454,6 +454,8 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 373 | `0373-sync-move-base-b10488-b10524-regenerate-series-372-p.patch` | arifi-fork-base | `f2da307f8` | upstream@9ee9fc04c (tag b10524) | `EXPERT_BUNDLE_PATH`, `LANE110_PREFETCH_CAP`, `LANE110_PROF`, `MAX_N_CACHED`, `GENERATE_EXPERT_BUNDLE`, `LLAMA_USE_PREBUILT_UI`, `GGML_RECURRENT_STATE_F16`, `POWERINFER_IOCP`, `GGML_ARIFI_VNNI_REPACK`, `GGML_ARIFI_TURBO_KV`, `ARIFI_TOOL_NVFP4_REMAP` | sync: move base b10488 -> b10524, regenerate series (372 patches) |
 | 374 | `0374-spec-ingest-turboquant-MTP-boost-wave-effective-KV-b.patch` | arifi-fork-base | `94dfaccc7` | llama-cpp-turboquant@bd1bf025f (524531e57, f9e04f5d7, 4be91d62b, 5b105dfb7, 4c4131bf8, b20e97012, 7544b18cf, 275963f50, cd638bc13, e82fe159b) | - | spec: ingest turboquant MTP-boost wave + effective-KV bench reporting |
 | 375 | `0375-sync-re-pin-wave-3-sources-regenerate-series-374-pat.patch` | arifi-fork-base | `f792f957e` | - | `GGML_ARIFI_VNNI_REPACK`, `GGML_ARIFI_TURBO_KV`, `GGML_RECURRENT_STATE_F16`, `POWERINFER_IOCP`, `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE`, `LANE110_PREFETCH_CAP`, `LANE110_PROF`, `MAX_N_CACHED`, `LLAMA_USE_PREBUILT_UI`, `ARIFI_TOOL_NVFP4_REMAP` | sync: re-pin wave-3 sources + regenerate series (374 patches) |
+| 376 | `0376-arifi-sync-provenance-native-class-root-fix-sha-pinn.patch` | arifi-fork-base | `e3c19d410` | - | - | arifi-sync: provenance native-class root fix - sha-pinned grandfather ledger + native Origin convention |
+| 377 | `0377-vulkan-subgroup-cooperative-TQ-mat-vec-tq3_1s-tq4_1s.patch` | ternary-g128 | `69324887f` | - | - | vulkan: subgroup-cooperative TQ mat-vec (tq3_1s/tq4_1s/tq3_4s) |
 
 ## Measured effect, per patch
 
@@ -899,6 +901,8 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0373-sync-move-base-b10488-b10524-regenerate-series-372-p.patch` | UNMEASURED (build+sweep follow in this lane) |
 | `0374-spec-ingest-turboquant-MTP-boost-wave-effective-KV-b.patch` | UNMEASURED (their mtp-boost numbers are theirs; no arm run on this rig yet) |
 | `0375-sync-re-pin-wave-3-sources-regenerate-series-374-pat.patch` | UNMEASURED (build+sweep follow) |
+| `0376-arifi-sync-provenance-native-class-root-fix-sha-pinn.patch` | provenance audit flips ambient-red to enforcing; 289 grandfathered, 0 missing, new untrailered commits fail again |
+| `0377-vulkan-subgroup-cooperative-TQ-mat-vec-tq3_1s-tq4_1s.patch` | 27B tq3_4s tg32 0.67->1.80 t/s; 0.5b tq4_1s tg64 44.7->126.7, tq3_1s 45.5->107.1; mat-vec kernel n=1 3.1-3.4x (780M, evidence lane-163) |
 
 ## Unclassified
 
@@ -1213,4 +1217,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `f2da307f8` sync: move base b10488 -> b10524, regenerate series (372 patches)
 - `94dfaccc7` spec: ingest turboquant MTP-boost wave + effective-KV bench reporting
 - `f792f957e` sync: re-pin wave-3 sources + regenerate series (374 patches)
+- `e3c19d410` arifi-sync: provenance native-class root fix - sha-pinned grandfather ledger + native Origin convention
 
