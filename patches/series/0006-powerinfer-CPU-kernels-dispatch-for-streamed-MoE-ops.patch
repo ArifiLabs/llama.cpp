@@ -1,4 +1,4 @@
-From 12ce69c54ab844ddb17b941ebf735aaf754935e5 Mon Sep 17 00:00:00 2001
+From 316d87d2f6d80c63381527840a5c901baafd907e Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:30:49 -0400
 Subject: [PATCH] powerinfer: CPU kernels + dispatch for streamed-MoE ops
@@ -128,10 +128,10 @@ index 87ac0a702..461b55540 100644
                      {
                          // temp buffer for dequantizing lightning indexer keys
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 001e1ae85..9d20b94b9 100644
+index 2b5f68444..1a78ce461 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -12012,3 +12012,284 @@ void ggml_compute_forward_lightning_indexer(
+@@ -12023,3 +12023,284 @@ void ggml_compute_forward_lightning_indexer(
          }
      }
  }

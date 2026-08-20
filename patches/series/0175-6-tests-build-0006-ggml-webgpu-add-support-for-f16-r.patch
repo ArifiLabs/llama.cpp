@@ -1,23 +1,24 @@
-From 77ac7a7347961f859f01c6309a98fbebcf567a8c Mon Sep 17 00:00:00 2001
+From c7a2f78f68d8a6f46bead316571bfef42625f448 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:53 -0400
 Subject: [PATCH] 
  6-tests-build/0006-ggml-webgpu-add-support-for-f16-repeat-26307.patch
 
 ---
- tests/test-llama-archs.cpp | 4 ++++
- 1 file changed, 4 insertions(+)
+ tests/test-llama-archs.cpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
 
 diff --git a/tests/test-llama-archs.cpp b/tests/test-llama-archs.cpp
-index 448f67544..f595e9bc7 100644
+index 4eb3763cb..44b67a199 100644
 --- a/tests/test-llama-archs.cpp
 +++ b/tests/test-llama-archs.cpp
 @@ -456,7 +456,11 @@ static bool arch_supported(const llm_arch arch) {
  
      // FIXME: these hit scheduler/view-backed-output issues with WebGPU on CI.
  #ifdef GGML_USE_WEBGPU
+-    if (arch == LLM_ARCH_DEEPSEEK32 || arch == LLM_ARCH_GLM_DSA) {
 +<<<<<<< ours
-     if (arch == LLM_ARCH_DEEPSEEK32 || arch == LLM_ARCH_GLM_DSA || arch == LLM_ARCH_MINIMAX_01) {
++    if (arch == LLM_ARCH_DEEPSEEK32 || arch == LLM_ARCH_GLM_DSA || arch == LLM_ARCH_MINIMAX_01) {
 +=======
 +    if (arch == LLM_ARCH_DEEPSEEK32 || arch == LLM_ARCH_GLM_DSA || arch == LLM_ARCH_MINIMAX_M3) {
 +>>>>>>> theirs

@@ -1,4 +1,4 @@
-From 51ec2c7007b892902c57f745042d8e8d061e5217 Mon Sep 17 00:00:00 2001
+From e373beea4d74cd0c07e78d9874cffa368704fbef Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 22:39:11 -0400
 Subject: [PATCH] lane-149 F-110 guard (rung b): arifi_sync_check.py + CMake
@@ -522,10 +522,10 @@ index 000000000..9da2e41ca
 +if __name__ == "__main__":
 +    sys.exit(main())
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 55e5a9633..21fe2ef38 100644
+index 1efd47b4f..72c52b4b3 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -3932,6 +3932,7 @@ static std::vector<uint32_t> get_fa_spec_constants(const vk_fa_pipeline_state& s
+@@ -3935,6 +3935,7 @@ static std::vector<uint32_t> get_fa_spec_constants(const vk_fa_pipeline_state& s
  static bool ggml_vk_matmul_shmem_support(const vk_device& device, const std::vector<uint32_t>& warptile, bool mul_mat_id, ggml_type src0_type) {
  
      uint32_t lut_size = 0;
@@ -533,7 +533,7 @@ index 55e5a9633..21fe2ef38 100644
      switch (src0_type) {
      case GGML_TYPE_IQ1_S:
      case GGML_TYPE_IQ1_M:
-@@ -4013,6 +4014,7 @@ static bool ggml_vk_matmul_int_shmem_support(const vk_device& device, const std:
+@@ -4016,6 +4017,7 @@ static bool ggml_vk_matmul_int_shmem_support(const vk_device& device, const std:
      };
  
      uint32_t block_a_size = 0;
@@ -541,7 +541,7 @@ index 55e5a9633..21fe2ef38 100644
      switch (src0_type) {
          case GGML_TYPE_Q2_0:    block_a_size = std430_size({{32, 4}, {fp_size,  fp_align}});                  break; // qs[8] + dm
          case GGML_TYPE_Q2_0_G128: block_a_size = std430_size({{32, 4}, {fp_size, fp_align}});                  break; // one Q8_1-sized sub-block + dm; four per g128 source block
-@@ -7823,6 +7825,7 @@ static void ggml_vk_init(ggml_backend_vk_context * ctx, size_t idx) {
+@@ -7829,6 +7831,7 @@ static void ggml_vk_init(ggml_backend_vk_context * ctx, size_t idx) {
  
  static vk_pipeline ggml_vk_get_to_fp16(ggml_backend_vk_context * ctx, ggml_type type) {
      VK_LOG_DEBUG("ggml_vk_get_to_fp16()");
@@ -549,7 +549,7 @@ index 55e5a9633..21fe2ef38 100644
      switch (type) {
          case GGML_TYPE_F32:
          case GGML_TYPE_Q1_0:
-@@ -7909,6 +7912,7 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_conte
+@@ -7915,6 +7918,7 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_conte
          return nullptr;
      }
  
@@ -557,7 +557,7 @@ index 55e5a9633..21fe2ef38 100644
      switch (src0_type) {
          case GGML_TYPE_Q1_0:
          case GGML_TYPE_Q2_0:
-@@ -7974,6 +7978,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context *
+@@ -7980,6 +7984,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context *
      GGML_ASSERT(num_cols >= 1 && num_cols <= mul_mat_vec_max_cols);
  
      if (b_type == GGML_TYPE_Q8_1) {
@@ -565,7 +565,7 @@ index 55e5a9633..21fe2ef38 100644
          switch (a_type) {
              case GGML_TYPE_Q2_0:
              case GGML_TYPE_Q2_0_G128:
-@@ -8002,6 +8007,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context *
+@@ -8008,6 +8013,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context *
          }
      }
  
@@ -573,7 +573,7 @@ index 55e5a9633..21fe2ef38 100644
      switch (a_type) {
          case GGML_TYPE_F32:
          case GGML_TYPE_F16:
-@@ -8117,6 +8123,7 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_id_pipeline(ggml_backend_vk_co
+@@ -8123,6 +8129,7 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_id_pipeline(ggml_backend_vk_co
  
      GGML_ASSERT(src1_type == GGML_TYPE_F32 || (ctx->device->coopmat2 && src1_type == GGML_TYPE_F16));
  
@@ -581,7 +581,7 @@ index 55e5a9633..21fe2ef38 100644
      switch (src0_type) {
          case GGML_TYPE_Q1_0:
          case GGML_TYPE_Q2_0:
-@@ -8190,6 +8197,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
+@@ -8196,6 +8203,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
      GGML_ASSERT(b_type == GGML_TYPE_F32 || b_type == GGML_TYPE_Q8_1);
  
      if (b_type == GGML_TYPE_Q8_1) {
@@ -589,7 +589,7 @@ index 55e5a9633..21fe2ef38 100644
          switch (a_type) {
              case GGML_TYPE_Q2_0:
              case GGML_TYPE_Q2_0_G128:
-@@ -8218,6 +8226,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
+@@ -8224,6 +8232,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
          }
      }
  
@@ -597,7 +597,7 @@ index 55e5a9633..21fe2ef38 100644
      switch (a_type) {
          case GGML_TYPE_F32:
          case GGML_TYPE_F16:
-@@ -9278,6 +9287,7 @@ static vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const
+@@ -9296,6 +9305,7 @@ static vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const
          }
      }
      if (src->type == GGML_TYPE_F32) {
@@ -605,7 +605,7 @@ index 55e5a9633..21fe2ef38 100644
          switch (to) {
          case GGML_TYPE_Q1_0:
          case GGML_TYPE_Q2_0:
-@@ -9301,6 +9311,7 @@ static vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const
+@@ -9319,6 +9329,7 @@ static vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const
      }
  
      if (to == GGML_TYPE_F32) {
@@ -613,7 +613,7 @@ index 55e5a9633..21fe2ef38 100644
          switch (src->type) {
          case GGML_TYPE_Q1_0:
          case GGML_TYPE_Q2_0:
-@@ -18471,6 +18482,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18565,6 +18576,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                          return false;
                      }
                  }
@@ -621,7 +621,7 @@ index 55e5a9633..21fe2ef38 100644
                  switch (src0_type) {
                      case GGML_TYPE_F32:
                      case GGML_TYPE_F16:
-@@ -18558,6 +18570,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18652,6 +18664,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      return false;
                  }
                  auto fa_kv_ok = [](ggml_type t) {
@@ -629,7 +629,7 @@ index 55e5a9633..21fe2ef38 100644
                      switch (t) {
                      case GGML_TYPE_F32:
                      case GGML_TYPE_F16:
-@@ -18594,6 +18607,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18688,6 +18701,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
              }
          case GGML_OP_GET_ROWS:
              {
@@ -637,7 +637,7 @@ index 55e5a9633..21fe2ef38 100644
                  switch (op->src[0]->type) {
                      case GGML_TYPE_F32:
                      case GGML_TYPE_F16:
-@@ -18662,6 +18676,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18756,6 +18770,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                  ggml_type src1_type = op->src[1] != nullptr ? op->src[1]->type : src0_type;
  
                  if (src0_type == GGML_TYPE_F32) {
@@ -645,7 +645,7 @@ index 55e5a9633..21fe2ef38 100644
                      switch (src1_type) {
                      case GGML_TYPE_F32:
                      case GGML_TYPE_F16:
-@@ -18693,6 +18708,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18787,6 +18802,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      }
                  }
                  if (src1_type == GGML_TYPE_F32) {

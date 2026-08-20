@@ -1,4 +1,4 @@
-From c0fe939fe0d1e3ffefc63c9d593814f02a0a0cfe Mon Sep 17 00:00:00 2001
+From a1c9a869622fd7c4d235fb090f935e29043e4487 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:11:24 -0400
 Subject: [PATCH] 
@@ -12,7 +12,7 @@ Assisted-by: Codex
  3 files changed, 41 insertions(+), 35 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index da83d7083..e60efa346 100644
+index 776e311a5..2bc7f8859 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -1933,7 +1933,11 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
@@ -97,7 +97,7 @@ index 967036b4d..fe1327acd 100644
  
  // ============================================================================
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 5cf724e35..9542270cc 100644
+index 71548f9ca..b6931ee0c 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -468,7 +468,6 @@ void quantize_iq4_nl(device const float * src, device block_iq4_nl & dst) {
@@ -124,7 +124,7 @@ index 5cf724e35..9542270cc 100644
  }
  
  template <typename type4x4>
-@@ -1576,7 +1573,6 @@ void dequantize_iq4_xs(device const block_iq4_xs * xb, short il, thread type4x4
+@@ -1574,7 +1571,6 @@ void dequantize_iq4_xs(device const block_iq4_xs * xb, short il, thread type4x4
      }
  }
  
@@ -132,7 +132,7 @@ index 5cf724e35..9542270cc 100644
  template <typename type4x4>
  void dequantize_tq2_0(device const block_tq2_0 * xb, short il, thread type4x4 & reg) {
      device const uint8_t * qs = xb->qs;
-@@ -1596,7 +1592,6 @@ void dequantize_tq2_0(device const block_tq2_0 * xb, short il, thread type4x4 &
+@@ -1594,7 +1590,6 @@ void dequantize_tq2_0(device const block_tq2_0 * xb, short il, thread type4x4 &
      reg = (type4x4) reg_f;
  }
  
@@ -140,7 +140,7 @@ index 5cf724e35..9542270cc 100644
  // ============================================================================
  // TQ3_1S / TQ4_1S: WHT-rotated weight quantization constants and dequant
  // ============================================================================
-@@ -1862,7 +1857,6 @@ kernel void kernel_tq3_unrotate_act(
+@@ -1860,7 +1855,6 @@ kernel void kernel_tq3_unrotate_act(
      x[base + tiisg] = val * tq3_inv_sqrt32 * tq3_signs[tiisg];
  }
  
@@ -148,7 +148,7 @@ index 5cf724e35..9542270cc 100644
  enum ggml_sort_order {
      GGML_SORT_ORDER_ASC,
      GGML_SORT_ORDER_DESC,
-@@ -10013,17 +10007,14 @@ template [[host_name("kernel_cpy_q5_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<
+@@ -10026,17 +10020,14 @@ template [[host_name("kernel_cpy_q5_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<
  template [[host_name("kernel_cpy_q5_1_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q5_1, 2, dequantize_q5_1>;
  template [[host_name("kernel_cpy_q8_0_f16")]] kernel cpy_q_f_t kernel_cpy_q_f32<half4x4, block_q8_0, 2, dequantize_q8_0>;
  
@@ -167,7 +167,7 @@ index 5cf724e35..9542270cc 100644
  kernel void kernel_concat(
          constant ggml_metal_kargs_concat & args,
          device  const char * src0,
-@@ -12029,6 +12020,8 @@ kernel void kernel_set_rows_q(
+@@ -12042,6 +12033,8 @@ kernel void kernel_set_rows_q(
          quantize_func(src_row + QK*ind, dst_row[ind]);
      }
  }
@@ -176,7 +176,7 @@ index 5cf724e35..9542270cc 100644
  
  template<typename TS, typename TI, typename block_q, void (*quantize_func)(device const float *, device block_q &)>
  kernel void kernel_set_rows_q32(
-@@ -12376,6 +12369,18 @@ typedef decltype(kernel_set_rows_q<float, int64_t, QK_K, block_tq2_0, quantize_t
+@@ -12389,6 +12382,18 @@ typedef decltype(kernel_set_rows_q<float, int64_t, QK_K, block_tq2_0, quantize_t
  
  template [[host_name("kernel_set_rows_f32_i64_tq2_0")]]  kernel set_rows_qK_t kernel_set_rows_q<float, int64_t, QK_K, block_tq2_0, quantize_tq2_0>;
  template [[host_name("kernel_set_rows_f32_i32_tq2_0")]]  kernel set_rows_qK_t kernel_set_rows_q<float, int32_t, QK_K, block_tq2_0, quantize_tq2_0>;
