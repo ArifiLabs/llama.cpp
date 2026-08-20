@@ -1163,6 +1163,13 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ3_S> {
     static constexpr int bs = sizeof(block_iq3_s);
 };
 
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_4S> {
+    static constexpr int qk = QK_TQ3_0;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
 //////////////////////
 
 struct ggml_cuda_device_info {
@@ -1459,6 +1466,16 @@ struct ggml_backend_cuda_context {
     size_t cublas_workspace_sizes[GGML_CUDA_MAX_DEVICES] = {0};
 
     int curr_stream_no = 0;
+
+    struct tq3_4s_nvfp4_cache_entry {
+        void * data = nullptr;
+        size_t size = 0;
+        size_t src_size = 0;
+        const void * src_data = nullptr;
+    };
+
+    std::mutex tq3_4s_nvfp4_cache_mutex;
+    std::unordered_map<const void *, tq3_4s_nvfp4_cache_entry> tq3_4s_nvfp4_cache;
 
 #ifdef USE_CUDA_GRAPH
     // Map from first_node_ptr to cuda_graph - allows multiple graphs per context
