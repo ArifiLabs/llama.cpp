@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10488`, `9d77fa17254e1dee4b9e92504c91611a60b1359f`
-- Patches: **368**, all non-merge, applied in filename order.
+- Patches: **369**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 368 commit messages, same provenance trailers. Verified, not
+same file contents, same 369 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -447,6 +447,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 366 | `0366-fix-kv-cache-probe-the-layer-ids-the-calibration-act.patch` | arifi-fork-base | `e820fb9c9` | - | - | fix(kv-cache): probe the layer ids the calibration actually has, and let an existing calibration be reused |
 | 367 | `0367-support-DFlash2.patch` | arifi-fork-base | `1f75892b9` | - | - | support DFlash2 |
 | 368 | `0368-dflash2-build-fixes-on-the-PR-27342-pick-dedupe-DFLA.patch` | arifi-fork-base | `4614eebf1` | - | - | dflash2: build fixes on the PR #27342 pick - dedupe DFLASH_BLOCK_SIZE enum/hparam/kv-map (fork DFlash1 originals keep authority, default 16) + ml. reference fix (the shadow the fork's own comment documents) |
+| 369 | `0369-sources-register-buun-spiritbuun-buun-llama-cpp-as-a.patch` | arifi-fork-base | `a458eab86` | - | - | sources: register buun (spiritbuun/buun-llama-cpp) as a greedy-ingestion watch source - President ruling, VBR/KV + DFlash2-for-3.8 lineage |
 
 ## Measured effect, per patch
 
@@ -885,6 +886,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0366-fix-kv-cache-probe-the-layer-ids-the-calibration-act.patch` | *(no Measured-effect trailer)* |
 | `0367-support-DFlash2.patch` | *(no Measured-effect trailer)* |
 | `0368-dflash2-build-fixes-on-the-PR-27342-pick-dedupe-DFLA.patch` | *(no Measured-effect trailer)* |
+| `0369-sources-register-buun-spiritbuun-buun-llama-cpp-as-a.patch` | *(no Measured-effect trailer)* |
 
 ## Unclassified
 
@@ -1192,4 +1194,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `e820fb9c9` fix(kv-cache): probe the layer ids the calibration actually has, and let an existing calibration be reused
 - `1f75892b9` support DFlash2
 - `4614eebf1` dflash2: build fixes on the PR #27342 pick - dedupe DFLASH_BLOCK_SIZE enum/hparam/kv-map (fork DFlash1 originals keep authority, default 16) + ml. reference fix (the shadow the fork's own comment documents)
+- `a458eab86` sources: register buun (spiritbuun/buun-llama-cpp) as a greedy-ingestion watch source - President ruling, VBR/KV + DFlash2-for-3.8 lineage
 
