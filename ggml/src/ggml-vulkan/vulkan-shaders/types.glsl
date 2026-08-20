@@ -2048,11 +2048,18 @@ struct block_tq3_1s
     uint8_t qs[12];    // 3-bit centroid indices, 8 packed per 3-byte group
 };
 
+// Word view of the 16-byte block: data[0] = d0 | d1 << 16, data[1..3] = qs.
+struct block_tq3_1s_packed32
+{
+    uint32_t data[4];
+};
+
 #if defined(DATA_A_TQ3_1S)
 #define QUANT_K QUANT_K_TQ3_1S
 #define QUANT_R QUANT_R_TQ3_1S
 #define QUANT_AUXF 1
 #define A_TYPE block_tq3_1s
+#define A_TYPE_PACKED32 block_tq3_1s_packed32
 #endif
 
 #define QUANT_K_TQ4_1S 32
@@ -2065,11 +2072,18 @@ struct block_tq4_1s
     uint8_t qs[16];    // 4-bit nibble-packed centroid indices (2 per byte)
 };
 
+// Word view of the 20-byte block: data[0] = d0 | d1 << 16, data[1..4] = qs.
+struct block_tq4_1s_packed32
+{
+    uint32_t data[5];
+};
+
 #if defined(DATA_A_TQ4_1S)
 #define QUANT_K QUANT_K_TQ4_1S
 #define QUANT_R QUANT_R_TQ4_1S
 #define QUANT_AUXF 1
 #define A_TYPE block_tq4_1s
+#define A_TYPE_PACKED32 block_tq4_1s_packed32
 #endif
 
 // tq3 family, type-id 48. Mirrors block_tq3_4s in ggml/src/ggml-common.h:
@@ -2088,11 +2102,18 @@ struct block_tq3_4s
     uint8_t qs[12];    // 3-bit centroid indices, 8 packed per 3-byte group
 };
 
+// Word view of the 16-byte block: data[0] = the four E3M5 scale bytes, data[1..3] = qs.
+struct block_tq3_4s_packed32
+{
+    uint32_t data[4];
+};
+
 #if defined(DATA_A_TQ3_4S)
 #define QUANT_K QUANT_K_TQ3_4S
 #define QUANT_R QUANT_R_TQ3_4S
 #define QUANT_AUXF 1
 #define A_TYPE block_tq3_4s
+#define A_TYPE_PACKED32 block_tq3_4s_packed32
 #endif
 
 // E3M5 mini-float scale decode. Byte 0 means "zero scale" and is NOT
