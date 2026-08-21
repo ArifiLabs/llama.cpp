@@ -7,9 +7,19 @@
 //   y = D(rout*s_out) * H128( decode(codes)^T * H128(D(rin*s_in) * x) ) + bias
 //
 // One workgroup = one 128-channel output block (8 adjacent 16x16 code tiles per
-// in-block) for one activation column. Thread j owns output channel ob*128+j.
-// The activation block is staged + Hadamard-transformed in shared memory
-// (portable barriers version; the lane-163 subgroup butterfly is an upgrade path).
+// in-block) for a BLOCK of ESCHA_COLS activation columns. Thread j owns output
+// channel ob*128+j. The activation blocks are staged + Hadamard-transformed in
+// shared memory (portable barriers version; the lane-163 subgroup butterfly is an
+// upgrade path).
+//
+// ESCHA_COLS (lane-164 part 2): decoding a weight tile does not depend on the
+// activation column, but the original kernel gave each workgroup exactly one column
+// and so re-decoded the ENTIRE weight matrix once per column - prefill paid the whole
+// decode ncols times. Staging C columns lets one decode serve C accumulators, so the
+// decode cost falls ~C-fold; only the far cheaper staging, Hadamard and LDS reads
+// scale with C. Shared memory is C*512 bytes and the butterfly is fused across the C
+// columns, so the barrier count does not depend on C. ESCHA_COLS=1 reproduces the
+// original kernel exactly and is kept as the A/B arm.
 //
 // Decode math is the recovered cbA generator (Terra-64, trial-evidence/escha-decoder):
 // deterministic-by-spec here — integer ops, unpackHalf2x16 (exact), one f32 add
@@ -18,6 +28,11 @@
 // Compile with ESCHA_K = 2 or 3.
 
 layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+#ifndef ESCHA_COLS
+#define ESCHA_COLS 1
+#endif
+#define NC (ESCHA_COLS)
 
 layout (push_constant) uniform parameter {
     uint n_in;
@@ -32,7 +47,7 @@ layout (binding = 1) readonly  buffer B { float data_b[]; };  // x [n_in, ncols]
 layout (binding = 2) readonly  buffer C { float data_c[]; };  // aux: rin | rout | bias
 layout (binding = 3) writeonly buffer D { float data_d[]; };  // y [n_out, ncols]
 
-shared float sh[128];
+shared float sh[NC][128];
 
 const float INV_SQRT128 = 0.08838834764831845;
 
@@ -88,12 +103,18 @@ uint shr64_32(uint lo, uint hi, uint s) {
     return hi >> (s - 32u);
 }
 
+// one butterfly over all NC staged columns; 2 barriers per step regardless of NC
 void hadamard128(uint tid) {
     [[unroll]] for (uint step = 1u; step < 128u; step <<= 1u) {
-        const float a = sh[tid];
-        const float o = sh[tid ^ step];
+        float a[NC], o[NC];
+        [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+            a[cj] = sh[cj][tid];
+            o[cj] = sh[cj][tid ^ step];
+        }
         barrier();
-        sh[tid] = ((tid & step) == 0u) ? (a + o) : (o - a);
+        [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+            sh[cj][tid] = ((tid & step) == 0u) ? (a[cj] + o[cj]) : (o[cj] - a[cj]);
+        }
         barrier();
     }
 }
@@ -101,7 +122,7 @@ void hadamard128(uint tid) {
 void main() {
     const uint tid  = gl_LocalInvocationID.x;
     const uint ob   = gl_WorkGroupID.x;      // output 128-block
-    const uint col  = p.col_offset + gl_WorkGroupID.y; // activation column (dispatch is chunked)
+    const uint col0 = p.col_offset + gl_WorkGroupID.y * NC; // first column of this block
     const uint ot   = ob * 8u + (tid >> 4u); // this thread's out tile
     const uint tcol = tid & 15u;             // column within the tile
 
@@ -111,12 +132,20 @@ void main() {
     // col >= 8 was produced by components c in 0..3; col < 8 by c in 4..7
     const uint c0      = (tcol >= 8u) ? 0u : 4u;
 
-    float acc = 0.0;
+    float acc[NC];
+    [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+        acc[cj] = 0.0;
+    }
 
     const uint n_ib = p.n_in / 128u;
     for (uint ib = 0u; ib < n_ib; ++ib) {
-        const uint gi = ib * 128u + tid;
-        sh[tid] = data_b[col * p.n_in + gi] * data_c[gi];
+        const uint  gi  = ib * 128u + tid;
+        const float rin = data_c[gi];
+        [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+            // clamp the tail: those lanes recompute a duplicate column that is never stored
+            const uint cc = min(col0 + cj, p.ncols - 1u);
+            sh[cj][tid] = data_b[cc * p.n_in + gi] * rin;
+        }
         barrier();
         hadamard128(tid);
         // fold the input-side 1/sqrt(128): sh is read-only below, scale at use
@@ -134,8 +163,11 @@ void main() {
                 const uint word = shr64_32(data_a[base + pw], data_a[base + qw], ((lane & 1u) == 0u) ? 16u : 0u);
                 [[unroll]] for (uint k = 0u; k < 4u; ++k) {
                     const uint c   = c0 + k;
-                    const uint row = 2u*b + (1u - (c & 1u)) + 8u*(1u - ((c >> 1u) & 1u));
-                    acc += sh[t*16u + row] * escha_F((word >> (2u*c)) & 0xFFFFu);
+                    const uint  row = 2u*b + (1u - (c & 1u)) + 8u*(1u - ((c >> 1u) & 1u));
+                    const float w   = escha_F((word >> (2u*c)) & 0xFFFFu); // decoded ONCE for all NC columns
+                    [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+                        acc[cj] += sh[cj][t*16u + row] * w;
+                    }
                 }
 #else
                 // K=3 crossed 96-byte bitstream (PTX lines 2282-2312)
@@ -152,8 +184,11 @@ void main() {
                 [[unroll]] for (uint k = 0u; k < 4u; ++k) {
                     const uint c   = c0 + k;
                     const uint row = 2u*b + (1u - (c & 1u)) + 8u*(1u - ((c >> 1u) & 1u));
-                    const uint win = (c < 4u) ? (pp >> (3u*c)) : (rr >> (3u*(c - 4u)));
-                    acc += sh[t*16u + row] * escha_F(win & 0xFFFFu);
+                    const uint  win = (c < 4u) ? (pp >> (3u*c)) : (rr >> (3u*(c - 4u)));
+                    const float w   = escha_F(win & 0xFFFFu);              // decoded ONCE for all NC columns
+                    [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+                        acc[cj] += sh[cj][t*16u + row] * w;
+                    }
                 }
 #endif
             }
@@ -162,11 +197,18 @@ void main() {
     }
 
     // output-side transform + scales + bias; both 1/sqrt(128) factors fold here
-    sh[tid] = acc;
+    [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+        sh[cj][tid] = acc[cj];
+    }
     barrier();
     hadamard128(tid);
-    const uint oc = ob * 128u + tid;
-    const float yv = sh[tid] * (INV_SQRT128 * INV_SQRT128) * data_c[p.n_in + oc]
-                   + data_c[p.n_in + p.n_out + oc];
-    data_d[col * p.n_out + oc] = yv;
+    const uint  oc   = ob * 128u + tid;
+    const float rout = data_c[p.n_in + oc];
+    const float bias = data_c[p.n_in + p.n_out + oc];
+    [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+        const uint cc = col0 + cj;
+        if (cc < p.ncols) {   // tail guard: never store outside the real column range
+            data_d[cc * p.n_out + oc] = sh[cj][tid] * (INV_SQRT128 * INV_SQRT128) * rout + bias;
+        }
+    }
 }

@@ -1297,8 +1297,13 @@ void process_shaders() {
     string_to_spv("fwht_shmem_f32", "fwht.comp", {{"FWHT_SHMEM", "1"}});
 
     // ArifiLabs Escha-W2 fused linear (lane-164)
+    // C=1 arm: byte-identical to the original one-column-per-workgroup kernel, kept for A/B
     string_to_spv("escha_mm_k2_f32", "escha_mm.comp", {{"ESCHA_K", "2"}});
     string_to_spv("escha_mm_k3_f32", "escha_mm.comp", {{"ESCHA_K", "3"}});
+    // multi-column arm: one weight decode serves ESCHA_MM_COLS columns (keep in sync with
+    // ESCHA_MM_COLS in ggml-vulkan.cpp)
+    string_to_spv("escha_mm_k2_c4_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "4"}});
+    string_to_spv("escha_mm_k3_c4_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "4"}});
     string_to_spv("count_equal_i32", "count_equal.comp", merge_maps(base_dict, {{"A_TYPE", "int"}, {"B_TYPE", "int"}, {"D_TYPE", "int"}}));
     string_to_spv("dsv4_hc_comb_f32", "dsv4_hc_comb.comp", {});
     string_to_spv("dsv4_hc_pre_f32",  "dsv4_hc_pre.comp",  {});
