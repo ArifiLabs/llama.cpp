@@ -108,7 +108,19 @@ layout (binding = 3) writeonly buffer D { float data_d[]; };  // y [n_out, ncols
 layout (binding = 4) readonly buffer L { uint data_l[]; };   // 32768 uints = 65536 f16 values
 #endif
 
+#ifndef ESCHA_F16_STAGE
+#define ESCHA_F16_STAGE 0
+#endif
+
+#if ESCHA_F16_STAGE
+shared float16_t sh[NB][NC][128];
+#define ESCHA_SH_STORE(v) float16_t(v)
+#define ESCHA_SH_LOAD(v)  float(v)
+#else
 shared float sh[NB][NC][128];
+#define ESCHA_SH_STORE(v) (v)
+#define ESCHA_SH_LOAD(v)  (v)
+#endif
 
 // The cooperative-matrix arm is deliberately C=16 only: the KHR shape selected
 // by the host is 16x16x16, so a smaller ladder rung would merely burn inactive
@@ -332,6 +344,38 @@ uint shr64_32(uint lo, uint hi, uint s) {
 #endif
 
 void hadamard128(uint hb, uint tid) {
+#if ESCHA_F16_STAGE
+    // Keep the butterfly in f32 registers. The shared f16 array is only the
+    // cross-subgroup exchange and tile-loop representation.
+    float a[NC];
+    [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+        a[cj] = float(sh[hb][cj][tid]);
+    }
+
+    [[unroll]] for (uint step = 1u; step < 128u; step <<= 1u) {
+        if (step < gl_SubgroupSize) {
+            [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+                const float o = subgroupShuffleXor(a[cj], step);
+                a[cj] = ((tid & step) == 0u) ? (a[cj] + o) : (o - a[cj]);
+            }
+        } else {
+            [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+                sh[hb][cj][tid] = float16_t(a[cj]);
+            }
+            barrier();
+            [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+                const float o = float(sh[hb][cj][tid ^ step]);
+                a[cj] = ((tid & step) == 0u) ? (a[cj] + o) : (o - a[cj]);
+            }
+            barrier();
+        }
+    }
+
+    [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+        sh[hb][cj][tid] = float16_t(a[cj]);
+    }
+    barrier();
+#else
     [[unroll]] for (uint step = 1u; step < 128u; step <<= 1u) {
 #if ESCHA_SG_HADAMARD
         if (step < gl_SubgroupSize) {          // uniform branch: partner is in my subgroup
@@ -357,6 +401,7 @@ void hadamard128(uint hb, uint tid) {
     }
 #if ESCHA_SG_HADAMARD
     barrier();                                 // the tile loop reads every lane's slot
+#endif
 #endif
 }
 
@@ -388,7 +433,7 @@ void main() {
         const float rin = data_c[gi];
         [[unroll]] for (uint cj = 0u; cj < 16u; ++cj) {
             const uint cc = min(col0 + cj, p.ncols - 1u);
-            sh[0][cj][tid] = data_b[cc * p.n_in + gi] * rin;
+            sh[0][cj][tid] = ESCHA_SH_STORE(data_b[cc * p.n_in + gi] * rin);
         }
         barrier();
         hadamard128(0u, tid);
@@ -441,7 +486,7 @@ void main() {
             [[unroll]] for (uint i = tid; i < 256u; i += 128u) {
                 const uint row = i >> 4u;
                 const uint cj  = i & 15u;
-                cm_input[i] = float16_t(sh[0][cj][t * 16u + row]);
+                cm_input[i] = float16_t(ESCHA_SH_LOAD(sh[0][cj][t * 16u + row]));
             }
             barrier();
 
@@ -464,7 +509,7 @@ void main() {
     barrier();
 
     [[unroll]] for (uint cj = 0u; cj < 16u; ++cj) {
-        sh[0][cj][tid] = cm_output[cj * 128u + tid];
+        sh[0][cj][tid] = ESCHA_SH_STORE(cm_output[cj * 128u + tid]);
     }
     barrier();
     hadamard128(0u, tid);
@@ -475,7 +520,7 @@ void main() {
     [[unroll]] for (uint cj = 0u; cj < 16u; ++cj) {
         const uint cc = col0 + cj;
         if (cc < p.ncols) {
-            data_d[cc * p.n_out + oc] = sh[0][cj][tid] * (INV_SQRT128 * INV_SQRT128) * rout + bias;
+            data_d[cc * p.n_out + oc] = ESCHA_SH_LOAD(sh[0][cj][tid]) * (INV_SQRT128 * INV_SQRT128) * rout + bias;
         }
     }
 }
@@ -506,7 +551,7 @@ void main() {
         [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
             // clamp the tail: those lanes recompute a duplicate column that is never stored
             const uint cc = min(col0 + cj, p.ncols - 1u);
-            sh[hb][cj][tid] = data_b[cc * p.n_in + gi] * rin;
+            sh[hb][cj][tid] = ESCHA_SH_STORE(data_b[cc * p.n_in + gi] * rin);
         }
         barrier();
         hadamard128(hb, tid);
@@ -532,8 +577,8 @@ void main() {
                     const vec2 ww  = escha_F2((word >> (2u*ca)) & 0xFFFFu,
                                               (word >> (2u*cb)) & 0xFFFFu);
                     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
-                        acc[cj] += sh[hb][cj][t*16u + rowa] * ww.x
-                                 + sh[hb][cj][t*16u + rowb] * ww.y;
+                        acc[cj] += ESCHA_SH_LOAD(sh[hb][cj][t*16u + rowa]) * ww.x
+                                 + ESCHA_SH_LOAD(sh[hb][cj][t*16u + rowb]) * ww.y;
                     }
                 }
 #else
@@ -542,7 +587,7 @@ void main() {
                     const uint  row = 2u*b + (1u - (c & 1u)) + 8u*(1u - ((c >> 1u) & 1u));
                     const float w   = escha_F((word >> (2u*c)) & 0xFFFFu); // decoded ONCE for all NC columns
                     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
-                        acc[cj] += sh[hb][cj][t*16u + row] * w;
+                        acc[cj] += ESCHA_SH_LOAD(sh[hb][cj][t*16u + row]) * w;
                     }
                 }
 #endif
@@ -564,7 +609,7 @@ void main() {
                     const uint  win = (c < 4u) ? (pp >> (3u*c)) : (rr >> (3u*(c - 4u)));
                     const float w   = escha_F(win & 0xFFFFu);              // decoded ONCE for all NC columns
                     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
-                        acc[cj] += sh[hb][cj][t*16u + row] * w;
+                        acc[cj] += ESCHA_SH_LOAD(sh[hb][cj][t*16u + row]) * w;
                     }
                 }
 #endif
@@ -575,7 +620,7 @@ void main() {
 
     // output-side transform + scales + bias; both 1/sqrt(128) factors fold here
     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
-        sh[hb][cj][tid] = acc[cj];
+        sh[hb][cj][tid] = ESCHA_SH_STORE(acc[cj]);
     }
     barrier();
     hadamard128(hb, tid);
@@ -585,7 +630,7 @@ void main() {
     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
         const uint cc = col0 + cj;
         if (cc < p.ncols) {   // tail guard: never store outside the real column range
-            data_d[cc * p.n_out + oc] = sh[hb][cj][tid] * (INV_SQRT128 * INV_SQRT128) * rout + bias;
+            data_d[cc * p.n_out + oc] = ESCHA_SH_LOAD(sh[hb][cj][tid]) * (INV_SQRT128 * INV_SQRT128) * rout + bias;
         }
     }
 }
