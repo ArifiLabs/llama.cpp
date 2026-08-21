@@ -1219,6 +1219,10 @@ void process_shaders() {
     // ESCHA_MM_COLS in ggml-vulkan.cpp)
     string_to_spv("escha_mm_k2_c8_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "8"}});
     string_to_spv("escha_mm_k3_c8_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "8"}});
+    // occupancy arm (seat-40): 256 threads covering two adjacent output blocks. Decode-shaped work
+    // only (one column), where 128 threads is two waves on a warp-64 device. Requires n_out % 256.
+    string_to_spv("escha_mm_k2_b2_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_BLOCKS", "2"}});
+    string_to_spv("escha_mm_k3_b2_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_BLOCKS", "2"}});
     string_to_spv("count_equal_i32", "count_equal.comp", merge_maps(base_dict, {{"A_TYPE", "int"}, {"B_TYPE", "int"}, {"D_TYPE", "int"}}));
     string_to_spv("cumsum_f32", "cumsum.comp", merge_maps(base_dict, {{"A_TYPE", "float"}, {"D_TYPE", "float"}}));
     string_to_spv("cumsum_multipass1_f32", "cumsum_multipass1.comp", merge_maps(base_dict, {{"A_TYPE", "float"}, {"D_TYPE", "float"}}));
