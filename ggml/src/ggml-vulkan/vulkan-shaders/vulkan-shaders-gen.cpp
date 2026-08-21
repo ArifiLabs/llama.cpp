@@ -1302,8 +1302,21 @@ void process_shaders() {
     string_to_spv("escha_mm_k3_f32", "escha_mm.comp", {{"ESCHA_K", "3"}});
     // multi-column arm: one weight decode serves ESCHA_MM_COLS columns (keep in sync with
     // ESCHA_MM_COLS in ggml-vulkan.cpp)
+    // COLUMN LADDER (seat-40). One weight decode costs ~6 operations and feeds ONE multiply-add per
+    // column, so the arithmetic intensity of this kernel is exactly C FMAs per decode. A two-rung
+    // ladder (C=1 and C=8) wastes half the lanes at 4 columns and needs two decode passes at 16.
+    // Every rung is a power of two so the host can match the batch it actually receives.
+    // table-generator arm (seat-40): same kernel, escha_F served from a 65,536-entry f16 table
+    string_to_spv("escha_mm_k2_lut_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_LUT", "1"}});
+    string_to_spv("escha_mm_k3_lut_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_LUT", "1"}});
+    string_to_spv("escha_mm_k2_c2_f32",  "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "2"}});
+    string_to_spv("escha_mm_k3_c2_f32",  "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "2"}});
+    string_to_spv("escha_mm_k2_c4_f32",  "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "4"}});
+    string_to_spv("escha_mm_k3_c4_f32",  "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "4"}});
     string_to_spv("escha_mm_k2_c8_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "8"}});
     string_to_spv("escha_mm_k3_c8_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "8"}});
+    string_to_spv("escha_mm_k2_c16_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "16"}});
+    string_to_spv("escha_mm_k3_c16_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "16"}});
     // occupancy arm (seat-40): 256 threads covering two adjacent output blocks. Decode-shaped work
     // only (one column), where 128 threads is two waves on a warp-64 device. Requires n_out % 256.
     string_to_spv("escha_mm_k2_b2_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_BLOCKS", "2"}});

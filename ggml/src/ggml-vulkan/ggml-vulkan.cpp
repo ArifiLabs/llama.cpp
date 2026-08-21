@@ -3763,6 +3763,16 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[1], "escha_mm_k3_c8_f32", escha_mm_k3_c8_f32_len, escha_mm_k3_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_b2[0], "escha_mm_k2_b2_f32", escha_mm_k2_b2_f32_len, escha_mm_k2_b2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_b2[1], "escha_mm_k3_b2_f32", escha_mm_k3_b2_f32_len, escha_mm_k3_b2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[0][0], "escha_mm_k2_c2_f32", escha_mm_k2_c2_f32_len, escha_mm_k2_c2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[0][1], "escha_mm_k3_c2_f32", escha_mm_k3_c2_f32_len, escha_mm_k3_c2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[1][0], "escha_mm_k2_c4_f32", escha_mm_k2_c4_f32_len, escha_mm_k2_c4_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[1][1], "escha_mm_k3_c4_f32", escha_mm_k3_c4_f32_len, escha_mm_k3_c4_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[2][0], "escha_mm_k2_c8_f32", escha_mm_k2_c8_f32_len, escha_mm_k2_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[2][1], "escha_mm_k3_c8_f32", escha_mm_k3_c8_f32_len, escha_mm_k3_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[3][0], "escha_mm_k2_c16_f32", escha_mm_k2_c16_f32_len, escha_mm_k2_c16_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[3][1], "escha_mm_k3_c16_f32", escha_mm_k3_c16_f32_len, escha_mm_k3_c16_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_lut[0], "escha_mm_k2_lut_f32", escha_mm_k2_lut_f32_len, escha_mm_k2_lut_f32_data, "main", 5, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_lut[1], "escha_mm_k3_lut_f32", escha_mm_k3_lut_f32_len, escha_mm_k3_lut_f32_data, "main", 5, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
 
     const uint32_t cumsum_elem_per_thread = (device->vendor_id == VK_VENDOR_ID_AMD || device->vendor_id == VK_VENDOR_ID_INTEL) ? 2 : 4;
     ggml_vk_create_pipeline(device, device->pipeline_cumsum_f32,       "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 256, device->subgroup_size, cumsum_elem_per_thread }, 1, true, true, device->subgroup_size);
@@ -7471,6 +7481,38 @@ void ggml_vk_dsv4_hc_post(ggml_backend_vk_context * ctx, vk_context& subctx, con
     ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { x_buf, r_buf, p_buf, c_buf, d_buf }, pc, { n_embd, n_tokens, 1 });
 }
 
+// The generator table, built on FIRST USE.
+//
+// It cannot be built at device-init time: ggml_vk_buffer_write needs the queues and command pool,
+// and neither exists while pipelines are still being created. Doing it there crashed every binary
+// with an access violation the instant the Vulkan device was enumerated.
+//
+// Values use the SAME arithmetic as the shader - same mix, same two f16 halves, same f16 add - so
+// the table is exact by construction rather than approximately equal. 65,536 entries, two f16 per
+// uint, 128 KiB.
+static void ggml_vk_escha_ensure_lut(ggml_backend_vk_context * ctx) {
+    if (ctx->device->escha_lut) {
+        return;
+    }
+    std::vector<uint32_t> lut(32768, 0u);
+    for (uint32_t xw = 0; xw < 65536u; ++xw) {
+        const uint32_t q = 0x3B603B60u ^ ((xw * 0xCBAC1FEDu) & 0x8FFF8FFFu);
+        ggml_fp16_t hlo, hhi;
+        memcpy(&hlo, &q, sizeof(ggml_fp16_t));
+        const uint16_t hi_bits = (uint16_t) (q >> 16);
+        memcpy(&hhi, &hi_bits, sizeof(ggml_fp16_t));
+        const float    sum  = ggml_fp16_to_fp32(hlo) + ggml_fp16_to_fp32(hhi);
+        const ggml_fp16_t r = ggml_fp32_to_fp16(sum);
+        uint16_t bits;
+        memcpy(&bits, &r, sizeof(uint16_t));
+        if ((xw & 1u) == 0u) { lut[xw >> 1] |= (uint32_t) bits; }
+        else                 { lut[xw >> 1] |= ((uint32_t) bits) << 16; }
+    }
+    ctx->device->escha_lut = ggml_vk_create_buffer_check(ctx->device, lut.size() * sizeof(uint32_t),
+        vk::MemoryPropertyFlagBits::eDeviceLocal);
+    ggml_vk_buffer_write(ctx->device->escha_lut, 0, lut.data(), lut.size() * sizeof(uint32_t));
+}
+
 // ArifiLabs Escha-W2 fused linear (lane-164)
 static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0]; // packed codes
@@ -7495,27 +7537,47 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     // and acc[16] registers); raise it only from a measurement, not from the trend.
     // Note this is NOT lane-165's rows=8, which was refuted on this device: that lever was
     // register row blocking inside one column, this one shares a decode across columns.
-    constexpr uint32_t ESCHA_MM_COLS = 8;
     static const bool no_multicol = getenv("GGML_VK_ESCHA_NO_MULTICOL") != nullptr;
 
-    // WHERE THE THRESHOLD BELONGS (seat-40 correction).
+    // WHY THE FLOOR IS 2 AND NOT 1 (seat-40).
     //
-    // It used to demand a FULL block, ncols >= 8. That silently disabled the whole optimisation
-    // for speculative decoding, which is the case that needs it most: DFlash2 runs with n_max=3,
-    // so a verify pass arrives with about 4 columns, took the one-column kernel, and re-decoded
-    // the entire weight matrix ONCE PER COLUMN. Four tokens cost four full decodes - precisely
-    // cancelling what speculation saves. It measured as "speculation gains nothing on Escha"
-    // (23/23 draft acceptance, decode 3.14 -> 3.09) and was very nearly written off as a property
-    // of the model.
+    // The threshold used to demand a FULL block, ncols >= 8, which silently disabled the whole
+    // optimisation for speculative decoding - the case that needs it most. DFlash2 runs n_max=3, so
+    // a verify pass arrives with about 4 columns, took the one-column kernel, and re-decoded the
+    // entire weight matrix ONCE PER COLUMN. Four tokens cost four full decodes, exactly cancelling
+    // what speculation saves. It measured as "speculation gains nothing on Escha" (23/23 draft
+    // acceptance, decode 3.14 -> 3.09) and was very nearly written off as a property of the model.
     //
-    // The multi-column kernel already handles a partial block correctly: staging clamps with
-    // min(col0+cj, ncols-1) and the store is guarded by cc < ncols, so the surplus lanes recompute
-    // a duplicate column that is never written. So the real trade is one decode pass for a partial
-    // block against ncols decode passes, and it pays from ncols=2 upward.
+    // A partial block is already handled: staging clamps with min(col0+cj, ncols-1) and the store is
+    // guarded by cc < ncols, so surplus lanes recompute a column that is never written. The floor is
+    // 2 because a single column has nothing to share a decode across - which is what the old ncols=1
+    // measurement (C=4 at 1537 us vs C=1 at 1208 us) actually showed.
+
+    // COLUMN LADDER SELECTION (seat-40).
     //
-    // The old comment's ncols=1 measurement (C=4 at 1537 us vs C=1 at 1208 us) stands and is why
-    // the floor is 2, not 1: with a single column there is nothing to share a decode across.
-    const bool use_mc = !no_multicol && ncols >= 2;
+    // The decode of one weight costs ~6 operations and feeds ONE multiply-add per column, so this
+    // kernel's arithmetic intensity is exactly C FMAs per decode. Everything else is second order.
+    // With only C=1 and C=8 available, a 4-column verify pass wasted half its lanes and a
+    // 16-column batch paid two decode passes for what one rung could do.
+    //
+    // Pick the SMALLEST rung that covers ncols, and the largest rung once ncols exceeds it: below
+    // the top rung a bigger C only adds idle lanes, above it a bigger C removes whole decode passes.
+    static const uint32_t ESCHA_COL_RUNGS[4] = { 2, 4, 8, 16 };
+    // Cap the ladder for A/B work: GGML_VK_ESCHA_MAX_COLS=8 makes a 10-column batch take C8 twice
+    // instead of C16 once, which is the comparison that decides whether the widest rung earns its
+    // register pressure. Unset means no cap.
+    static const char * const max_cols_env = getenv("GGML_VK_ESCHA_MAX_COLS");
+    static const uint32_t max_cols = max_cols_env ? (uint32_t) atoi(max_cols_env) : 0u;
+    int rung = -1;
+    if (!no_multicol && ncols >= 2) {
+        int top = 3;
+        while (top > 0 && max_cols && ESCHA_COL_RUNGS[top] > max_cols) { --top; }
+        rung = top;                                 // widest rung allowed
+        for (int r = 0; r <= top; ++r) {
+            if (ncols <= ESCHA_COL_RUNGS[r]) { rung = r; break; }
+        }
+    }
+    const bool use_mc = rung >= 0;
 
     // Occupancy arm (seat-40) - REFUTED BY MEASUREMENT, OFF BY DEFAULT.
     // The reasoning was that 128 threads is two waves at warp 64, too few to hide code-fetch
@@ -7534,11 +7596,17 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     static const bool want_block2 = getenv("GGML_VK_ESCHA_BLOCK2") != nullptr;
     const bool use_b2 = !use_mc && want_block2 && (n_out % 256 == 0);
 
+    // Table-generator arm (seat-40), opt-in, single-column path only for now: that is the clean
+    // arm to measure, since plain decode is the case with no column reuse to muddy the comparison.
+    static const bool want_lut = getenv("GGML_VK_ESCHA_LUT") != nullptr;
+    const bool use_lut = want_lut && !use_mc && !use_b2;
+
     const int kidx = src0->type == GGML_TYPE_ESCHA3 ? 1 : 0;
-    vk_pipeline pipeline = use_mc ? ctx->device->pipeline_escha_mm_mc[kidx]
-                         : use_b2 ? ctx->device->pipeline_escha_mm_b2[kidx]
-                                  : ctx->device->pipeline_escha_mm[kidx];
-    const uint32_t cols_per_wg = use_mc ? ESCHA_MM_COLS : 1;
+    vk_pipeline pipeline = use_mc  ? ctx->device->pipeline_escha_mm_col[rung][kidx]
+                         : use_b2  ? ctx->device->pipeline_escha_mm_b2[kidx]
+                         : use_lut ? ctx->device->pipeline_escha_mm_lut[kidx]
+                                   : ctx->device->pipeline_escha_mm[kidx];
+    const uint32_t cols_per_wg = use_mc ? ESCHA_COL_RUNGS[rung] : 1;
     const uint32_t out_per_wg  = use_b2 ? 256u : 128u;
     GGML_ASSERT(pipeline != nullptr);
 
@@ -7569,8 +7637,17 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     // per column, so raise it only from a measured ncols curve (test-backend-ops perf -o ESCHA_MM).
     constexpr uint32_t COLS_PER_DISPATCH = 32;
 
+    // Bind the table ONLY on the table arm. Handing every dispatch a fifth buffer it never reads
+    // cost 4.8x on single-column decode - the arithmetic arm keeps its four-buffer layout.
+    // (The dispatch helper takes an initializer_list, so the two arms are two literal calls.)
     const std::array<uint32_t, 3> elements = { wg_x, CEIL_DIV(std::min(ncols, COLS_PER_DISPATCH), cols_per_wg), 1 };
-    ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { a_buf, b_buf, aux_buf, dst_buf }, pc, elements);
+    if (use_lut) {
+        ggml_vk_escha_ensure_lut(ctx);
+        const vk_subbuffer lut_buf = { ctx->device->escha_lut, 0, VK_WHOLE_SIZE };
+        ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { a_buf, b_buf, aux_buf, dst_buf, lut_buf }, pc, elements);
+    } else {
+        ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { a_buf, b_buf, aux_buf, dst_buf }, pc, elements);
+    }
 
     for (uint32_t off = COLS_PER_DISPATCH; off < ncols; off += COLS_PER_DISPATCH) {
         pc.col_offset = off;
