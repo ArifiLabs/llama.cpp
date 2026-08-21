@@ -10058,6 +10058,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     // 205 = 6*32 + 13, 133 = 4*32 + 5 — both tails are also partial column-blocks for C>1.
     test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 205));
     test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 133));
+    // ncols=9 at the real 27B shapes: the only eval cases that reach the column-blocked kernel
+    // AT MODEL DEPTH. The two ncols=2 cases above sit below the ESCHA_MM_COLS=8 threshold and
+    // therefore exercise the one-column kernel, so without these the shipped prefill path is
+    // only ever checked at 512x256. 9 = one full column block plus a 1-wide tail.
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, 9));
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, 9));
 
     for (int64_t d_conv : {3, 4, 9}) {
         for (int64_t d_inner: {1024, 1536, 2048}) {
