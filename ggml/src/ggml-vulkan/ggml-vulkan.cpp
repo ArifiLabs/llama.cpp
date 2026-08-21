@@ -6100,8 +6100,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     // ArifiLabs Escha-W2 fused linear (lane-164): portable shared-memory shader, fixed 128 threads
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm[0], "escha_mm_k2_f32", escha_mm_k2_f32_len, escha_mm_k2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm[1], "escha_mm_k3_f32", escha_mm_k3_f32_len, escha_mm_k3_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
-    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[0], "escha_mm_k2_c4_f32", escha_mm_k2_c4_f32_len, escha_mm_k2_c4_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
-    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[1], "escha_mm_k3_c4_f32", escha_mm_k3_c4_f32_len, escha_mm_k3_c4_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[0], "escha_mm_k2_c8_f32", escha_mm_k2_c8_f32_len, escha_mm_k2_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[1], "escha_mm_k3_c8_f32", escha_mm_k3_c8_f32_len, escha_mm_k3_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
 
     const uint32_t cumsum_elem_per_thread = (device->vendor_id == VK_VENDOR_ID_AMD || device->vendor_id == VK_VENDOR_ID_INTEL) ? 2 : 4;
     ggml_vk_create_pipeline(device, device->pipeline_cumsum_f32,       "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 256, device->subgroup_size, cumsum_elem_per_thread }, 1, true, true, device->subgroup_size);
@@ -10491,13 +10491,23 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     // column, so blocking columns divides the decode cost by this factor; the knob keeps the
     // original one-column kernel reachable for A/B (lane-163 precedent).
     // Keep in sync with the ESCHA_COLS define for the _mc pipelines in vulkan-shaders-gen.cpp.
-    constexpr uint32_t ESCHA_MM_COLS = 4;
+    // 8 measured on a 780M at ncols=64: escha3 17408x5120 ran 135.4 ms at C=1, 45.7 ms at C=4,
+    // 38.6 ms at C=8, so 8 beat 4 by ~13%. C=16 is the next untested step (8 kB of shared memory
+    // and acc[16] registers); raise it only from a measurement, not from the trend.
+    // Note this is NOT lane-165's rows=8, which was refuted on this device: that lever was
+    // register row blocking inside one column, this one shares a decode across columns.
+    constexpr uint32_t ESCHA_MM_COLS = 8;
     static const bool no_multicol = getenv("GGML_VK_ESCHA_NO_MULTICOL") != nullptr;
 
+    // A short op (decode, ncols=1) would leave most of a column block idle, and the wasted
+    // lanes cost real time: at ncols=1 the C=4 kernel measured 1537 us vs 1208 us for C=1 on
+    // escha2 5120x12288. Below a full block the one-column kernel is simply the better one.
+    const bool use_mc = !no_multicol && ncols >= ESCHA_MM_COLS;
+
     const int kidx = src0->type == GGML_TYPE_ESCHA3 ? 1 : 0;
-    vk_pipeline pipeline = no_multicol ? ctx->device->pipeline_escha_mm[kidx]
-                                       : ctx->device->pipeline_escha_mm_mc[kidx];
-    const uint32_t cols_per_wg = no_multicol ? 1 : ESCHA_MM_COLS;
+    vk_pipeline pipeline = use_mc ? ctx->device->pipeline_escha_mm_mc[kidx]
+                                  : ctx->device->pipeline_escha_mm[kidx];
+    const uint32_t cols_per_wg = use_mc ? ESCHA_MM_COLS : 1;
     GGML_ASSERT(pipeline != nullptr);
 
     ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
