@@ -10502,10 +10502,24 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     constexpr uint32_t ESCHA_MM_COLS = 8;
     static const bool no_multicol = getenv("GGML_VK_ESCHA_NO_MULTICOL") != nullptr;
 
-    // A short op (decode, ncols=1) would leave most of a column block idle, and the wasted
-    // lanes cost real time: at ncols=1 the C=4 kernel measured 1537 us vs 1208 us for C=1 on
-    // escha2 5120x12288. Below a full block the one-column kernel is simply the better one.
-    const bool use_mc = !no_multicol && ncols >= ESCHA_MM_COLS;
+    // WHERE THE THRESHOLD BELONGS (seat-40 correction).
+    //
+    // It used to demand a FULL block, ncols >= 8. That silently disabled the whole optimisation
+    // for speculative decoding, which is the case that needs it most: DFlash2 runs with n_max=3,
+    // so a verify pass arrives with about 4 columns, took the one-column kernel, and re-decoded
+    // the entire weight matrix ONCE PER COLUMN. Four tokens cost four full decodes - precisely
+    // cancelling what speculation saves. It measured as "speculation gains nothing on Escha"
+    // (23/23 draft acceptance, decode 3.14 -> 3.09) and was very nearly written off as a property
+    // of the model.
+    //
+    // The multi-column kernel already handles a partial block correctly: staging clamps with
+    // min(col0+cj, ncols-1) and the store is guarded by cc < ncols, so the surplus lanes recompute
+    // a duplicate column that is never written. So the real trade is one decode pass for a partial
+    // block against ncols decode passes, and it pays from ncols=2 upward.
+    //
+    // The old comment's ncols=1 measurement (C=4 at 1537 us vs C=1 at 1208 us) stands and is why
+    // the floor is 2, not 1: with a single column there is nothing to share a decode across.
+    const bool use_mc = !no_multicol && ncols >= 2;
 
     // Occupancy arm (seat-40) - REFUTED BY MEASUREMENT, OFF BY DEFAULT.
     // The reasoning was that 128 threads is two waves at warp 64, too few to hide code-fetch
