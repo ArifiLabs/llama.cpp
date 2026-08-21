@@ -953,6 +953,7 @@ struct vk_device_struct {
     vk_pipeline pipeline_fwht_f32[4];
     vk_pipeline pipeline_escha_mm[2];    // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
     vk_pipeline pipeline_escha_mm_mc[2]; // same, multi-column (ESCHA_MM_COLS per workgroup)
+    vk_pipeline pipeline_escha_mm_b2[2]; // same, 256 threads over two output blocks (seat-40)
     vk_pipeline pipeline_cumsum_f32;
     vk_pipeline pipeline_cumsum_small_f32;
     vk_pipeline pipeline_cumsum_multipass1_f32;

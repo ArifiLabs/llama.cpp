@@ -3761,6 +3761,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm[1], "escha_mm_k3_f32", escha_mm_k3_f32_len, escha_mm_k3_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[0], "escha_mm_k2_c8_f32", escha_mm_k2_c8_f32_len, escha_mm_k2_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[1], "escha_mm_k3_c8_f32", escha_mm_k3_c8_f32_len, escha_mm_k3_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_b2[0], "escha_mm_k2_b2_f32", escha_mm_k2_b2_f32_len, escha_mm_k2_b2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_b2[1], "escha_mm_k3_b2_f32", escha_mm_k3_b2_f32_len, escha_mm_k3_b2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
 
     const uint32_t cumsum_elem_per_thread = (device->vendor_id == VK_VENDOR_ID_AMD || device->vendor_id == VK_VENDOR_ID_INTEL) ? 2 : 4;
     ggml_vk_create_pipeline(device, device->pipeline_cumsum_f32,       "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 256, device->subgroup_size, cumsum_elem_per_thread }, 1, true, true, device->subgroup_size);
@@ -7501,10 +7503,29 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     // escha2 5120x12288. Below a full block the one-column kernel is simply the better one.
     const bool use_mc = !no_multicol && ncols >= ESCHA_MM_COLS;
 
+    // Occupancy arm (seat-40) - REFUTED BY MEASUREMENT, OFF BY DEFAULT.
+    // The reasoning was that 128 threads is two waves at warp 64, too few to hide code-fetch
+    // latency behind the generator's ALU work, and that 256 threads over two adjacent output
+    // blocks would be four. Measured on the 27B Escha model, one binary, arms alternated, two
+    // rounds in one thermal session on Balanced:
+    //     one block  (128 thr)  pp512 16.33 / 16.44   tg32 3.95 / 3.87
+    //     two blocks (256 thr)  pp512 16.36 / 16.47   tg32 3.90 / 3.92
+    // Identical to three significant figures. The kernel is ALU-bound on the generator, not
+    // latency-bound, so more waves have nothing to hide. Same lesson the subgroup-Hadamard lever
+    // taught, for the same reason.
+    // The code stays behind an OPT-IN switch: on a device with a different wave size or a cheaper
+    // generator this may well win, and it costs nothing to keep reachable.
+    // Correctness at the time of refutation: test-backend-ops -o ESCHA_MM, 12 cases OK / 0 FAIL,
+    // including the model shapes at ncols=2 which take this exact path.
+    static const bool want_block2 = getenv("GGML_VK_ESCHA_BLOCK2") != nullptr;
+    const bool use_b2 = !use_mc && want_block2 && (n_out % 256 == 0);
+
     const int kidx = src0->type == GGML_TYPE_ESCHA3 ? 1 : 0;
     vk_pipeline pipeline = use_mc ? ctx->device->pipeline_escha_mm_mc[kidx]
+                         : use_b2 ? ctx->device->pipeline_escha_mm_b2[kidx]
                                   : ctx->device->pipeline_escha_mm[kidx];
     const uint32_t cols_per_wg = use_mc ? ESCHA_MM_COLS : 1;
+    const uint32_t out_per_wg  = use_b2 ? 256u : 128u;
     GGML_ASSERT(pipeline != nullptr);
 
     ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
@@ -7518,7 +7539,7 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     const vk_subbuffer aux_buf = ggml_vk_tensor_subbuffer(ctx, src2);
     const vk_subbuffer dst_buf = ggml_vk_tensor_subbuffer(ctx, dst);
 
-    const uint32_t wg_x = n_out / 128;
+    const uint32_t wg_x = n_out / out_per_wg;
 
     // F-124 host-freeze guard. One workgroup serves one (output 128-block, column) and re-decodes
     // the whole weight matrix for its own column, so a single dispatch costs O(ncols): decode pays
