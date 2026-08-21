@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10524`, `9ee9fc04c136ef2ae729bfc60d18961b23c13ddf`
-- Patches: **385**, all non-merge, applied in filename order.
+- Patches: **389**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 385 commit messages, same provenance trailers. Verified, not
+same file contents, same 389 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -464,6 +464,10 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 383 | `0383-escha-vulkan-column-blocked-escha_mm-one-weight-deco.patch` | arifi-fork-base | `93b427f3a` | - | - | escha vulkan: column-blocked escha_mm - one weight decode serves 4 columns (part 2) |
 | 384 | `0384-escha-vulkan-column-block-C-8-fall-back-to-the-one-c.patch` | arifi-fork-base | `9852454c4` | - | - | escha vulkan: column block C=8 + fall back to the one-column kernel below a full block |
 | 385 | `0385-escha-tests-cover-the-column-blocked-kernel-AT-MODEL.patch` | arifi-fork-base | `c650b8111` | - | - | escha tests: cover the column-blocked kernel AT MODEL DEPTH (ncols=9, real 27B shapes) |
+| 386 | `0386-escha-vulkan-one-hardware-f32-f16-convert-instead-of.patch` | arifi-fork-base | `1ee8e9ad7` | - | - | escha vulkan: one hardware f32->f16 convert instead of the 15-instruction software RTE |
+| 387 | `0387-escha-vulkan-subgroup-shuffle-Hadamard-14-barriers-p.patch` | arifi-fork-base | `48a61b2d6` | - | - | escha vulkan: subgroup-shuffle Hadamard - 14 barriers per input block become 3 |
+| 388 | `0388-escha-vulkan-the-hardware-f32-f16-convert-must-be-fl.patch` | arifi-fork-base | `4d9be18ce` | - | - | escha vulkan: the hardware f32->f16 convert must be float16_t, NOT packHalf2x16 (RTZ) |
+| 389 | `0389-escha-vulkan-ESCHA_SG_HADAMARD-defaults-OFF-the-leve.patch` | arifi-fork-base | `6ae6d52a1` | - | - | escha vulkan: ESCHA_SG_HADAMARD defaults OFF - the lever is refuted by measurement |
 
 ## Measured effect, per patch
 
@@ -919,6 +923,10 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0383-escha-vulkan-column-blocked-escha_mm-one-weight-deco.patch` | pending on this commit, before-numbers are 1.15 and 2.12 ms per column |
 | `0384-escha-vulkan-column-block-C-8-fall-back-to-the-one-c.patch` | 3.51x on escha3 17408x5120 at ncols=64, decode unchanged |
 | `0385-escha-tests-cover-the-column-blocked-kernel-AT-MODEL.patch` | shipped C=8 prefill path now covered at real 27B shapes, 10/10 GREEN |
+| `0386-escha-vulkan-one-hardware-f32-f16-convert-instead-of.patch` | UNMEASURED at commit time - per-weight instruction count drops ~21 to ~7 by inspection; decode/prefill deltas and the exhaustive rounding sweep are owed |
+| `0387-escha-vulkan-subgroup-shuffle-Hadamard-14-barriers-p.patch` | UNMEASURED at commit time - barrier count per 128-input block drops 14 to 3 at subgroup 64 by inspection; correctness gate and speed delta owed |
+| `0388-escha-vulkan-the-hardware-f32-f16-convert-must-be-fl.patch` | CORRECTNESS ONLY at this commit - removes a one-ulp truncation error affecting 25.6% of codewords that 1ee8e9ad7 would have shipped; speed deltas for this lever alone are measured next and reported separately. |
+| `0389-escha-vulkan-ESCHA_SG_HADAMARD-defaults-OFF-the-leve.patch` | SG lever OFF by default; no speed change vs the shipped RTE-only configuration, and ~3% of prefill recovered versus having it on |
 
 ## Unclassified
 
@@ -1241,4 +1249,8 @@ rather than silently bucketed - add a rule when a new source appears.
 - `93b427f3a` escha vulkan: column-blocked escha_mm - one weight decode serves 4 columns (part 2)
 - `9852454c4` escha vulkan: column block C=8 + fall back to the one-column kernel below a full block
 - `c650b8111` escha tests: cover the column-blocked kernel AT MODEL DEPTH (ncols=9, real 27B shapes)
+- `1ee8e9ad7` escha vulkan: one hardware f32->f16 convert instead of the 15-instruction software RTE
+- `48a61b2d6` escha vulkan: subgroup-shuffle Hadamard - 14 barriers per input block become 3
+- `4d9be18ce` escha vulkan: the hardware f32->f16 convert must be float16_t, NOT packHalf2x16 (RTZ)
+- `6ae6d52a1` escha vulkan: ESCHA_SG_HADAMARD defaults OFF - the lever is refuted by measurement
 
