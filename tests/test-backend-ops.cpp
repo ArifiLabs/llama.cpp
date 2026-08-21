@@ -10043,17 +10043,24 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
             }
         }
     }
+    // ArifiLabs Escha-W2 fused linear (lane-164): mat-vec + batched, both K rates,
+    // plus the real 27B projection shapes.
+    // (these were previously nested in the ssm_conv loops below and registered 9x each)
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 1));
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 4));
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 1));
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 4));
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, 2));
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, 2));
+    // ncols that cross several Vulkan column-chunks (ESCHA_MM_COLS_PER_DISPATCH=32) AND leave a
+    // ragged tail, so col_offset and the tail guards are actually exercised. Without these the
+    // chunk loop runs a single iteration with col_offset==0 and the guard is never tested.
+    // 205 = 6*32 + 13, 133 = 4*32 + 5 — both tails are also partial column-blocks for C>1.
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 205));
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 133));
+
     for (int64_t d_conv : {3, 4, 9}) {
         for (int64_t d_inner: {1024, 1536, 2048}) {
-            // ArifiLabs Escha-W2 fused linear (lane-164): mat-vec + batched, both K rates,
-            // plus the real 27B projection shapes
-            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 1));
-            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 4));
-            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 1));
-            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 4));
-            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, 2));
-            test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, 2));
-
             test_cases.emplace_back(new test_ssm_conv(GGML_TYPE_F32, {d_conv, d_inner, 1, 1}, {d_conv, d_inner, 1, 1}));
             test_cases.emplace_back(new test_ssm_conv(GGML_TYPE_F32, {2 * d_conv, d_inner, 1, 1}, {d_conv, d_inner, 1, 1}));
             test_cases.emplace_back(new test_ssm_conv(GGML_TYPE_F32, {d_conv, d_inner, 4, 1}, {d_conv, d_inner, 1, 1}));
@@ -11355,6 +11362,15 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
 // Test cases for performance evaluation: should be representative of real-world use cases
 static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     std::vector<std::unique_ptr<test_case>> test_cases;
+
+    // ArifiLabs Escha-W2 fused linear (lane-164): real 27B projection shapes across the
+    // decode->prefill ncols range. One workgroup per (output 128-block, column), so cost is
+    // linear in ncols and a single dispatch at prefill batch is ~1000x a decode dispatch —
+    // which is what puts it against the GPU watchdog (F-124). Measure it, don't infer it.
+    for (int64_t ncols : {1, 8, 64, 256, 512, 1024, 2048}) {
+        test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, ncols));
+        test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, ncols));
+    }
 
     // SWIGLU at a 27B-class FFN width, fused [gate|up] vs split operands
     // note: same bytes either way, so a backend that indexes them differently shows it here
