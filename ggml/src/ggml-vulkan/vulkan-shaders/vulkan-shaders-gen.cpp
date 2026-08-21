@@ -1317,6 +1317,22 @@ void process_shaders() {
     string_to_spv("escha_mm_k3_c8_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "8"}});
     string_to_spv("escha_mm_k2_c16_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "16"}});
     string_to_spv("escha_mm_k3_c16_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "16"}});
+    // PREFILL RUNGS (seat-40). Prefill is ~94% escha matmul and the cost inside it is the per-weight
+    // DECODE, which one workgroup pays once per C columns. At C=16 a 512-token prefill decodes the
+    // whole weight matrix 32 times; C=32 halves that and C=64 quarters it. Shared memory is
+    // C*128*4 bytes: 16 KiB at C=32 and 32 KiB at C=64, against the 32768 the 780M reports - so
+    // C=64 sits exactly at the ceiling and may fail to create, which the host tolerates.
+    string_to_spv("escha_mm_k2_c32_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "32"}});
+    string_to_spv("escha_mm_k3_c32_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "32"}});
+    string_to_spv("escha_mm_k2_c64_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "64"}});
+    string_to_spv("escha_mm_k3_c64_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "64"}});
+#if defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+    // KHR cooperative matrix arm: its native N dimension is 16, so only the
+    // widest Escha column rung maps without wasting matrix lanes. `coopmat`
+    // also tells the generator not to run spirv-opt on extension-bearing SPIR-V.
+    string_to_spv("escha_mm_k2_c16_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "16"}, {"ESCHA_COOPMAT", "1"}}, true, true);
+    string_to_spv("escha_mm_k3_c16_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "16"}, {"ESCHA_COOPMAT", "1"}}, true, true);
+#endif
     // occupancy arm (seat-40): 256 threads covering two adjacent output blocks. Decode-shaped work
     // only (one column), where 128 threads is two waves on a warp-64 device. Requires n_out % 256.
     string_to_spv("escha_mm_k2_b2_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_BLOCKS", "2"}});

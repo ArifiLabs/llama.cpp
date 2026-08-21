@@ -954,7 +954,9 @@ struct vk_device_struct {
     vk_pipeline pipeline_escha_mm[2];    // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
     vk_pipeline pipeline_escha_mm_mc[2]; // same, multi-column (ESCHA_MM_COLS per workgroup)
     // Column ladder (seat-40), indexed [rung][K]. Rung r serves ESCHA_COL_RUNGS[r] columns.
-    vk_pipeline pipeline_escha_mm_col[4][2];
+    vk_pipeline pipeline_escha_mm_col[6][2];
+    // KHR cooperative-matrix C=16 arm, f16 operands with an f32 accumulator.
+    vk_pipeline pipeline_escha_mm_cm[2];
     vk_pipeline pipeline_escha_mm_lut[2];   // table-generator arm (seat-40)
     vk_buffer   escha_lut;                  // 65,536 f16 generator values, 128 KiB
     vk_pipeline pipeline_escha_mm_b2[2]; // same, 256 threads over two output blocks (seat-40)
