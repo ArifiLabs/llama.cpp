@@ -66,6 +66,40 @@ layout (binding = 1) readonly  buffer B { float data_b[]; };  // x [n_in, ncols]
 layout (binding = 2) readonly  buffer C { float data_c[]; };  // aux: rin | rout | bias
 layout (binding = 3) writeonly buffer D { float data_d[]; };  // y [n_out, ncols]
 
+// SEAT-40 LEVER 4: the generator as a table instead of arithmetic.
+//
+// escha_F is a pure function of a 16-bit codeword, so all 65,536 of its values fit in a table of
+// 128 KiB (two f16 results per uint). The estate CLOSED this option by reasoning - "a 128 KB random
+// lookup per weight on a bandwidth-shared APU loses to ~7 ALU ops" - and never ran it. That is an
+// unverified refusal, and the arithmetic behind it has changed twice since: the generator is now
+// about six operations, and this device carries 2 MiB of L2, so the whole table can sit resident.
+//
+// The access is not really random either: consecutive codewords come from one 32-bit word shifted
+// by two bits at a time, so neighbouring lookups land in nearby table entries.
+//
+// MEASURED AND REFUTED, 2026-08-21. The table is 4.9x SLOWER than the arithmetic:
+//     arithmetic generator   pp512 16.78   tg32 3.92
+//     65,536-entry table     pp512 16.62   tg32 0.80
+// Same binary, arms alternated, idle rig, Balanced. The estate had closed this option by reasoning
+// and the reasoning was right - it is now closed by a number instead. Prefill is untouched because
+// the multi-column path amortises the lookup across columns; decode, one lookup per weight, is
+// where it dies. Correctness was proven first: test-backend-ops -o ESCHA_MM, 20 cases, 0 FAIL on
+// BOTH arms, so this is a speed verdict on a correct implementation.
+//
+// Values are computed host-side with the SAME arithmetic, so the table is exact by construction,
+// not approximately equal. ESCHA_LUT=0 restores the arithmetic generator.
+#ifndef ESCHA_LUT
+#define ESCHA_LUT 0
+#endif
+// Declared ONLY in the table arm. It was briefly declared in both so one pipeline layout could
+// serve either, and the assumption that "an unused binding costs nothing" was wrong on this
+// driver: binding a fifth buffer on every dispatch cost 4.8x on the single-column decode path
+// (3.91 -> 0.81 t/s, same box, same session, verified against a saved binary). The arithmetic arm
+// must not pay for a table it never reads.
+#if ESCHA_LUT
+layout (binding = 4) readonly buffer L { uint data_l[]; };   // 32768 uints = 65536 f16 values
+#endif
+
 shared float sh[NB][NC][128];
 
 const float INV_SQRT128 = 0.08838834764831845;
@@ -152,8 +186,42 @@ uint f32_to_f16_rte(float f) {
 #define ESCHA_F16_GEN 1
 #endif
 
+// SEAT-40 LEVER 3: get the generator's multiply off the quarter-rate path.
+//
+// Instruction COUNT was the wrong thing to minimise. On RDNA, V_MUL_LO_U32 is a quarter-rate
+// instruction - roughly four normal ALU slots - while V_MUL_U32_U24 is full rate. The generator's
+// `xw * 0xCBAC1FED` is a full 32-bit multiply, so by cost it can be a larger share of the
+// generator than every other step put together, and the earlier levers were all shaving the cheap
+// part.
+//
+// xw is a 16-bit window. Split the constant into two halves and the same low 32 bits fall out of
+// two multiplies whose operands are both under 2^24, which is the form the full-rate instruction
+// accepts:
+//     xw*M = xw*(M & 0xFFFF) + (xw*(M >> 16) << 16)   (mod 2^32)
+// Proven exhaustively over all 65,536 windows before it was written here: zero mismatches.
+//
+// Whether the driver actually selects the 24-bit form is its choice, not ours - GLSL has no way to
+// demand it. Hence a switch and a measurement.
+#ifndef ESCHA_MUL24
+#define ESCHA_MUL24 0
+#endif
+
+uint escha_mix(uint xw) {
+#if ESCHA_MUL24
+    const uint lo = xw * 0x1FEDu;                  // operands < 2^24: full-rate form available
+    const uint hi = xw * 0xCBACu;
+    return lo + (hi << 16);                        // low 32 bits of xw * 0xCBAC1FED
+#else
+    return xw * 0xCBAC1FEDu;                       // one quarter-rate V_MUL_LO_U32
+#endif
+}
+
 float escha_F(uint xw) {
-    const uint q = 0x3B603B60u ^ ((xw * 0xCBAC1FEDu) & 0x8FFF8FFFu);
+#if ESCHA_LUT
+    const uint packed = data_l[xw >> 1u];
+    return float(unpackFloat2x16(packed)[xw & 1u]);
+#else
+    const uint q = 0x3B603B60u ^ (escha_mix(xw) & 0x8FFF8FFFu);
 #if ESCHA_F16_GEN
     const f16vec2 hh = unpackFloat2x16(q);         // pure bit reinterpret, no convert
     return float(hh.x + hh.y);                     // one f16 add, one widen
@@ -164,6 +232,7 @@ float escha_F(uint xw) {
     return float(float16_t(s));                    // one hardware V_CVT_F16_F32, RTE-proven
 #else
     return unpackHalf2x16(f32_to_f16_rte(s)).x;    // value of the f16-rounded sum
+#endif
 #endif
 #endif
 }
@@ -194,8 +263,8 @@ float escha_F(uint xw) {
 #endif
 
 vec2 escha_F2(uint x0, uint x1) {
-    const uint q0 = 0x3B603B60u ^ ((x0 * 0xCBAC1FEDu) & 0x8FFF8FFFu);
-    const uint q1 = 0x3B603B60u ^ ((x1 * 0xCBAC1FEDu) & 0x8FFF8FFFu);
+    const uint q0 = 0x3B603B60u ^ (escha_mix(x0) & 0x8FFF8FFFu);
+    const uint q1 = 0x3B603B60u ^ (escha_mix(x1) & 0x8FFF8FFFu);
     const f16vec2 h0 = unpackFloat2x16(q0);
     const f16vec2 h1 = unpackFloat2x16(q1);
     const f16vec2 s  = f16vec2(h0.x, h1.x) + f16vec2(h0.y, h1.y);   // one v_pk_add_f16

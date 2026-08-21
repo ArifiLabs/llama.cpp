@@ -10058,12 +10058,28 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     // 205 = 6*32 + 13, 133 = 4*32 + 5 — both tails are also partial column-blocks for C>1.
     test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 205));
     test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 133));
-    // ncols=9 at the real 27B shapes: the only eval cases that reach the column-blocked kernel
-    // AT MODEL DEPTH. The two ncols=2 cases above sit below the ESCHA_MM_COLS=8 threshold and
-    // therefore exercise the one-column kernel, so without these the shipped prefill path is
-    // only ever checked at 512x256. 9 = one full column block plus a 1-wide tail.
+    // ncols=9 at the real 27B shapes: column-blocked kernel AT MODEL DEPTH.
+    // 9 = one full 8-wide block plus a 1-wide tail.
     test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, 9));
     test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, 9));
+
+    // COLUMN LADDER COVERAGE (seat-40). The Vulkan backend now selects among C = 1/2/4/8/16 by
+    // column count, so a case only proves the rung its ncols happens to select. Every rung needs a
+    // FULL block and a RAGGED tail, or the tail clamp and the store guard go unchecked on that rung.
+    //
+    // This is written against the SELECTION RULE, not against a remembered threshold: the previous
+    // comment here claimed the ncols=2 cases "exercise the one-column kernel", which was true when
+    // the floor was 8 and became false the moment it dropped to 2. A test comment that names a
+    // constant rots as soon as the constant moves; naming the rung it lands on does not.
+    //   ncols 2 -> C2 full     3 -> C4 ragged     4 -> C4 full
+    //   ncols 5 -> C8 ragged   8 -> C8 full      16 -> C16 full     17 -> C16 + 1-wide tail
+    for (int64_t ncols : {3, 5, 16, 17}) {
+        test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, ncols));
+        test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, ncols));
+    }
+    // and the two widest rungs at model depth, where register pressure is real
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, 16));
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, 17));
 
     for (int64_t d_conv : {3, 4, 9}) {
         for (int64_t d_inner: {1024, 1536, 2048}) {
