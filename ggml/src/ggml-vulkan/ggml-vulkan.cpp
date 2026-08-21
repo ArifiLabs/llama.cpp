@@ -3775,6 +3775,18 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[4][1], "escha_mm_k3_c32_f32", escha_mm_k3_c32_f32_len, escha_mm_k3_c32_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[5][0], "escha_mm_k2_c64_f32", escha_mm_k2_c64_f32_len, escha_mm_k2_c64_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[5][1], "escha_mm_k3_c64_f32", escha_mm_k3_c64_f32_len, escha_mm_k3_c64_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[0][0], "escha_mm_k2_c2_f16s", escha_mm_k2_c2_f16s_len, escha_mm_k2_c2_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[0][1], "escha_mm_k3_c2_f16s", escha_mm_k3_c2_f16s_len, escha_mm_k3_c2_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[1][0], "escha_mm_k2_c4_f16s", escha_mm_k2_c4_f16s_len, escha_mm_k2_c4_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[1][1], "escha_mm_k3_c4_f16s", escha_mm_k3_c4_f16s_len, escha_mm_k3_c4_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[2][0], "escha_mm_k2_c8_f16s", escha_mm_k2_c8_f16s_len, escha_mm_k2_c8_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[2][1], "escha_mm_k3_c8_f16s", escha_mm_k3_c8_f16s_len, escha_mm_k3_c8_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[3][0], "escha_mm_k2_c16_f16s", escha_mm_k2_c16_f16s_len, escha_mm_k2_c16_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[3][1], "escha_mm_k3_c16_f16s", escha_mm_k3_c16_f16s_len, escha_mm_k3_c16_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[4][0], "escha_mm_k2_c32_f16s", escha_mm_k2_c32_f16s_len, escha_mm_k2_c32_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[4][1], "escha_mm_k3_c32_f16s", escha_mm_k3_c32_f16s_len, escha_mm_k3_c32_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[5][0], "escha_mm_k2_c64_f16s", escha_mm_k2_c64_f16s_len, escha_mm_k2_c64_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[5][1], "escha_mm_k3_c64_f16s", escha_mm_k3_c64_f16s_len, escha_mm_k3_c64_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
 #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
     // Escha's cooperative arm maps one 128-output workgroup to eight 16x16x16
     // subgroup tiles.  It has an explicit 32/64-lane layout, so require the
@@ -7617,6 +7629,12 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     }
     const bool use_mc = rung >= 0;
 
+    // F16 staging is opt-in until the ESCHA_MM backend sweep proves the error budget on this GPU.
+    // Its shared-memory cost is half the f32 arm: C * 128 * 2 rather than C * 128 * 4 bytes.
+    static const bool want_f16_stage = getenv("GGML_VK_ESCHA_F16_STAGE") != nullptr;
+    const bool use_f16_stage = use_mc && want_f16_stage &&
+                               ctx->device->pipeline_escha_mm_col_f16s[rung][kidx] != nullptr;
+
     // Occupancy arm (seat-40) - REFUTED BY MEASUREMENT, OFF BY DEFAULT.
     // The reasoning was that 128 threads is two waves at warp 64, too few to hide code-fetch
     // latency behind the generator's ALU work, and that 256 threads over two adjacent output
@@ -7650,14 +7668,15 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     // in lane-164 evidence before changing this default or claiming a speedup.
 #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
     static const bool no_coopmat = getenv("GGML_VK_ESCHA_NO_COOPMAT") != nullptr;
-    const bool use_cm = use_mc && rung == 3 && !no_coopmat &&
+    const bool use_cm = use_mc && !use_f16_stage && rung == 3 && !no_coopmat &&
                         ctx->device->coopmat_support_16x16x16_f32acc &&
                         ctx->device->subgroup_size_control &&
                         (ctx->device->subgroup_size == 32 || ctx->device->subgroup_size == 64) &&
                         ctx->device->pipeline_escha_mm_cm[kidx] != nullptr;
 #endif
 
-    vk_pipeline pipeline = use_mc  ? ctx->device->pipeline_escha_mm_col[rung][kidx]
+    vk_pipeline pipeline = use_f16_stage ? ctx->device->pipeline_escha_mm_col_f16s[rung][kidx]
+                         : use_mc  ? ctx->device->pipeline_escha_mm_col[rung][kidx]
                          : use_b2  ? ctx->device->pipeline_escha_mm_b2[kidx]
                          : use_lut ? ctx->device->pipeline_escha_mm_lut[kidx]
                                    : ctx->device->pipeline_escha_mm[kidx];
@@ -7685,6 +7704,14 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
         }
     }
 #endif
+    {
+        static bool announced = false;
+        if (!announced && use_mc) {
+            announced = true;
+            GGML_LOG_INFO("escha_mm: f16 staging %s (rung=%d cols=%u)\n",
+                use_f16_stage ? "ACTIVE" : "inactive", rung, ESCHA_COL_RUNGS[rung]);
+        }
+    }
     const uint32_t cols_per_wg = use_mc ? ESCHA_COL_RUNGS[rung] : 1;
     const uint32_t out_per_wg  = use_b2 ? 256u : 128u;
     GGML_ASSERT(pipeline != nullptr);

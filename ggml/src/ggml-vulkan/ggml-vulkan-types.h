@@ -955,6 +955,7 @@ struct vk_device_struct {
     vk_pipeline pipeline_escha_mm_mc[2]; // same, multi-column (ESCHA_MM_COLS per workgroup)
     // Column ladder (seat-40), indexed [rung][K]. Rung r serves ESCHA_COL_RUNGS[r] columns.
     vk_pipeline pipeline_escha_mm_col[6][2];
+    vk_pipeline pipeline_escha_mm_col_f16s[6][2];
     // KHR cooperative-matrix C=16 arm, f16 operands with an f32 accumulator.
     vk_pipeline pipeline_escha_mm_cm[2];
     vk_pipeline pipeline_escha_mm_lut[2];   // table-generator arm (seat-40)
