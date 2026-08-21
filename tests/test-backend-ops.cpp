@@ -10080,6 +10080,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     // and the two widest rungs at model depth, where register pressure is real
     test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, 16));
     test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, 17));
+    // PREFILL RUNGS. C=32 and C=64 exist for prefill, where one decode is shared across far more
+    // columns. Every case above tops out at 17 columns and therefore selects C=16, so without these
+    // the two widest rungs ship untested - a sweep that passes while never entering the code it is
+    // supposed to clear. Full block and ragged tail for each.
+    for (int64_t ncols : {32, 33, 64, 65}) {
+        test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, ncols));
+        test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, ncols));
+    }
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, 32));
+    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, 64));
 
     for (int64_t d_conv : {3, 4, 9}) {
         for (int64_t d_inner: {1024, 1536, 2048}) {

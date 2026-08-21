@@ -1,9 +1,17 @@
 #version 450
 
+#ifndef ESCHA_COOPMAT
+#define ESCHA_COOPMAT 0
+#endif
+
 #extension GL_EXT_control_flow_attributes : require
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_shuffle : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#if ESCHA_COOPMAT
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#endif
 
 // ArifiLabs Escha-W2 fused linear mat-vec (lane-164).
 //
@@ -101,6 +109,16 @@ layout (binding = 4) readonly buffer L { uint data_l[]; };   // 32768 uints = 65
 #endif
 
 shared float sh[NB][NC][128];
+
+// The cooperative-matrix arm is deliberately C=16 only: the KHR shape selected
+// by the host is 16x16x16, so a smaller ladder rung would merely burn inactive
+// matrix lanes.  Per workgroup this is 8 KiB sh + 4 KiB weights + 512 B inputs
+// + 8 KiB result = 20,992 B, safely below the 32 KiB reported by the 780M.
+#if ESCHA_COOPMAT
+shared float16_t cm_weight[128 * 16]; // [output lane][16 input lanes], row-major
+shared float16_t cm_input [16 * 16];  // [input lane][activation column], row-major
+shared float     cm_output[128 * 16]; // [activation column][output lane], column-major
+#endif
 
 const float INV_SQRT128 = 0.08838834764831845;
 
@@ -342,6 +360,126 @@ void hadamard128(uint hb, uint tid) {
 #endif
 }
 
+#if ESCHA_COOPMAT
+// Matrix-core multi-column path.  Each subgroup owns gl_SubgroupSize/16 of the
+// eight 16-output tiles.  The pipeline forces either a 32- or 64-lane subgroup,
+// so the four-element accumulator array covers both supported layouts.
+//
+// `sums` is f32 even though the operands are f16.  The host only selects this
+// shader after confirming the device's 16x16x16 f16xf16->f32 KHR property.
+void main() {
+    const uint tid  = gl_LocalInvocationID.x;
+    const uint ob   = gl_WorkGroupID.x;
+    const uint col0 = p.col_offset + gl_WorkGroupID.y * 16u;
+
+    const uint tiles_per_subgroup = gl_SubgroupSize / 16u;
+    const uint subgroup_tile_base = gl_SubgroupID * tiles_per_subgroup;
+
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> mat_a;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> mat_b;
+    coopmat<float,     gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> sums[4];
+    [[unroll]] for (uint ct = 0u; ct < 4u; ++ct) {
+        sums[ct] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+    }
+
+    const uint n_ib = p.n_in / 128u;
+    for (uint ib = 0u; ib < n_ib; ++ib) {
+        const uint  gi  = ib * 128u + tid;
+        const float rin = data_c[gi];
+        [[unroll]] for (uint cj = 0u; cj < 16u; ++cj) {
+            const uint cc = min(col0 + cj, p.ncols - 1u);
+            sh[0][cj][tid] = data_b[cc * p.n_in + gi] * rin;
+        }
+        barrier();
+        hadamard128(0u, tid);
+
+        // One 16-wide K slab at a time.  Every thread decodes the 16 weights for
+        // its output lane once, then all 16 columns consume that shared f16 slab.
+        for (uint t = 0u; t < 8u; ++t) {
+            const uint ot   = ob * 8u + (tid >> 4u);
+            const uint tcol = tid & 15u;
+            const uint colbase = tcol & 7u;
+            const uint lhi     = ((colbase >> 1u) << 3u) | ((colbase & 1u) << 2u);
+            const uint c0      = (tcol >= 8u) ? 0u : 4u;
+            const uint it      = ib * 8u + t;
+            const uint base    = (it * p.Tout + ot) * TILE_U32S;
+
+            [[unroll]] for (uint b = 0u; b < 4u; ++b) {
+                const uint lane = lhi + b;
+#if ESCHA_K == 2
+                const uint pw   = (lane >> 1u) & 15u;
+                const uint qw   = (pw + 15u) & 15u;
+                const uint word = shr64_32(data_a[base + pw], data_a[base + qw], ((lane & 1u) == 0u) ? 16u : 0u);
+                [[unroll]] for (uint k = 0u; k < 4u; ++k) {
+                    const uint c   = c0 + k;
+                    const uint row = 2u*b + (1u - (c & 1u)) + 8u*(1u - ((c >> 1u) & 1u));
+                    cm_weight[tid * 16u + row] = float16_t(escha_F((word >> (2u*c)) & 0xFFFFu));
+                }
+#else
+                const uint tt   = 24u * lane;
+                const uint aa   = tt + 755u;
+                const uint bb   = tt + 791u;
+                const uint sh0  = ((bb & 2016u) - tt) - 760u;
+                const uint hw   = (lane == 0u) ? 23u : ((aa >> 5u) - 24u);
+                const uint lw   = (((bb >> 3u) & 252u) - 96u) >> 2u;
+                const uint zlo  = data_a[base + lw];
+                const uint zhi  = data_a[base + hw];
+                const uint pp   = shr64_32(zlo, zhi, sh0);
+                const uint rr   = shr64_32(zlo, zhi, sh0 + 12u);
+                [[unroll]] for (uint k = 0u; k < 4u; ++k) {
+                    const uint c   = c0 + k;
+                    const uint row = 2u*b + (1u - (c & 1u)) + 8u*(1u - ((c >> 1u) & 1u));
+                    const uint win = (c < 4u) ? (pp >> (3u*c)) : (rr >> (3u*(c - 4u)));
+                    cm_weight[tid * 16u + row] = float16_t(escha_F(win & 0xFFFFu));
+                }
+#endif
+            }
+
+            // Pack the f32 Hadamard output to the f16 operand required by KHR
+            // coopmat.  Ragged C=16 blocks duplicate their last valid column,
+            // exactly like the scalar ladder, and the final store remains guarded.
+            [[unroll]] for (uint i = tid; i < 256u; i += 128u) {
+                const uint row = i >> 4u;
+                const uint cj  = i & 15u;
+                cm_input[i] = float16_t(sh[0][cj][t * 16u + row]);
+            }
+            barrier();
+
+            [[unroll]] for (uint ct = 0u; ct < 4u; ++ct) {
+                if (ct < tiles_per_subgroup) {
+                    coopMatLoad(mat_a, cm_weight, (subgroup_tile_base + ct) * 16u * 16u, 16u, gl_CooperativeMatrixLayoutRowMajor);
+                    coopMatLoad(mat_b, cm_input, 0u, 16u, gl_CooperativeMatrixLayoutRowMajor);
+                    sums[ct] = coopMatMulAdd(mat_a, mat_b, sums[ct]);
+                }
+            }
+            barrier(); // both subgroups finished reading the staged K slab
+        }
+    }
+
+    [[unroll]] for (uint ct = 0u; ct < 4u; ++ct) {
+        if (ct < tiles_per_subgroup) {
+            coopMatStore(sums[ct], cm_output, (subgroup_tile_base + ct) * 16u, 128u, gl_CooperativeMatrixLayoutColumnMajor);
+        }
+    }
+    barrier();
+
+    [[unroll]] for (uint cj = 0u; cj < 16u; ++cj) {
+        sh[0][cj][tid] = cm_output[cj * 128u + tid];
+    }
+    barrier();
+    hadamard128(0u, tid);
+
+    const uint  oc   = ob * 128u + tid;
+    const float rout = data_c[p.n_in + oc];
+    const float bias = data_c[p.n_in + p.n_out + oc];
+    [[unroll]] for (uint cj = 0u; cj < 16u; ++cj) {
+        const uint cc = col0 + cj;
+        if (cc < p.ncols) {
+            data_d[cc * p.n_out + oc] = sh[0][cj][tid] * (INV_SQRT128 * INV_SQRT128) * rout + bias;
+        }
+    }
+}
+#else
 void main() {
     const uint hb   = gl_LocalInvocationID.x >> 7u;          // which output block within the group
     const uint tid  = gl_LocalInvocationID.x & 127u;         // thread within that block
@@ -451,3 +589,4 @@ void main() {
         }
     }
 }
+#endif // ESCHA_COOPMAT
