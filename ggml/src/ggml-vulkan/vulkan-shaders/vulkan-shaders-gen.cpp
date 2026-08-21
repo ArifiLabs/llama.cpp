@@ -1241,6 +1241,18 @@ void process_shaders() {
     string_to_spv("escha_mm_k3_c32_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "32"}});
     string_to_spv("escha_mm_k2_c64_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "64"}});
     string_to_spv("escha_mm_k3_c64_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "64"}});
+    string_to_spv("escha_mm_k2_c2_f16s",  "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "2"},  {"ESCHA_F16_STAGE", "1"}});
+    string_to_spv("escha_mm_k3_c2_f16s",  "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "2"},  {"ESCHA_F16_STAGE", "1"}});
+    string_to_spv("escha_mm_k2_c4_f16s",  "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "4"},  {"ESCHA_F16_STAGE", "1"}});
+    string_to_spv("escha_mm_k3_c4_f16s",  "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "4"},  {"ESCHA_F16_STAGE", "1"}});
+    string_to_spv("escha_mm_k2_c8_f16s",  "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "8"},  {"ESCHA_F16_STAGE", "1"}});
+    string_to_spv("escha_mm_k3_c8_f16s",  "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "8"},  {"ESCHA_F16_STAGE", "1"}});
+    string_to_spv("escha_mm_k2_c16_f16s", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "16"}, {"ESCHA_F16_STAGE", "1"}});
+    string_to_spv("escha_mm_k3_c16_f16s", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "16"}, {"ESCHA_F16_STAGE", "1"}});
+    string_to_spv("escha_mm_k2_c32_f16s", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "32"}, {"ESCHA_F16_STAGE", "1"}});
+    string_to_spv("escha_mm_k3_c32_f16s", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "32"}, {"ESCHA_F16_STAGE", "1"}});
+    string_to_spv("escha_mm_k2_c64_f16s", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "64"}, {"ESCHA_F16_STAGE", "1"}});
+    string_to_spv("escha_mm_k3_c64_f16s", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "64"}, {"ESCHA_F16_STAGE", "1"}});
 #if defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
     // KHR cooperative matrix arm: its native N dimension is 16, so only the
     // widest Escha column rung maps without wasting matrix lanes. `coopmat`
