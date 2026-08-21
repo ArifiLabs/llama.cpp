@@ -113,14 +113,42 @@ uint f32_to_f16_rte(float f) {
 #define ESCHA_HW_RTE 1
 #endif
 
+// SEAT-40 LEVER: stay in f16 for the whole generator.
+//
+// The profile says ESCHA_MM is 86.95% of decode GPU time (13,200 calls, 642 us each), so the
+// generator is still the whole cost after the RTE fix -- the bottleneck did not move.
+//
+// unpackHalf2x16 widens both halves to f32 (two V_CVT_F32_F16), adds in f32, then narrows back
+// (one V_CVT_F16_F32) and widens again for the FMA. unpackFloat2x16 reinterprets the same bits as
+// float16_t with no convert at all, so the add happens in f16 and only ONE widening survives.
+// Three instructions of roughly eight, on the single hottest line in the model.
+//
+// It is bit-identical, not approximately so: an f16 add is the exact sum rounded once to f16, and
+// the sum of two f16 values is always exact in f32, so both spellings round the same real number
+// the same way. PROVEN, not argued -- the exhaustive 65,536-codeword sweep carries a fourth column
+// comparing this against the shipped path: "CANDIDATE EXACT: F16ADD matches the SHIPPED F16CAST
+// path on all 524288 words, bit for bit" (rte-sweep/RTE-SWEEP-RESULT.txt).
+//
+// The device reports denorm-preserve TRUE for f16, which is the one behaviour that could have
+// separated the two paths. On a device that flushes f16 denormals this must be re-swept before it
+// is trusted; ESCHA_F16_GEN=0 restores the f32 path.
+#ifndef ESCHA_F16_GEN
+#define ESCHA_F16_GEN 1
+#endif
+
 float escha_F(uint xw) {
     const uint q = 0x3B603B60u ^ ((xw * 0xCBAC1FEDu) & 0x8FFF8FFFu);
+#if ESCHA_F16_GEN
+    const f16vec2 hh = unpackFloat2x16(q);         // pure bit reinterpret, no convert
+    return float(hh.x + hh.y);                     // one f16 add, one widen
+#else
     const vec2 h = unpackHalf2x16(q);
     const float s = h.x + h.y;                     // exact operands; correctly-rounded f32 add
 #if ESCHA_HW_RTE
     return float(float16_t(s));                    // one hardware V_CVT_F16_F32, RTE-proven
 #else
     return unpackHalf2x16(f32_to_f16_rte(s)).x;    // value of the f16-rounded sum
+#endif
 #endif
 }
 
