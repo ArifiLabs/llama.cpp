@@ -11364,10 +11364,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     std::vector<std::unique_ptr<test_case>> test_cases;
 
     // ArifiLabs Escha-W2 fused linear (lane-164): real 27B projection shapes across the
-    // decode->prefill ncols range. One workgroup per (output 128-block, column), so cost is
-    // linear in ncols and a single dispatch at prefill batch is ~1000x a decode dispatch —
-    // which is what puts it against the GPU watchdog (F-124). Measure it, don't infer it.
-    for (int64_t ncols : {1, 8, 64, 256, 512, 1024, 2048}) {
+    // decode->prefill ncols range. Cost is strictly linear in ncols (measured on a 780M:
+    // 1.15 us*1000/col for escha2 5120x12288, 2.12 for escha3 17408x5120, from ncols 1/8/64),
+    // which is what put an unguarded ncols=2048 dispatch at ~4.3 s, past the GPU watchdog
+    // (F-124). 1/8/64 pins the per-column slope in ~5 min; larger ncols adds no information
+    // and costs hours, because n_runs is sized from bytes moved, not from decode work.
+    for (int64_t ncols : {1, 8, 64}) {
         test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, ncols));
         test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, ncols));
     }
