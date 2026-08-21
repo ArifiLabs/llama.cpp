@@ -1093,7 +1093,9 @@ struct vk_device_struct {
     vk_pipeline pipeline_escha_mm[2];    // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
     vk_pipeline pipeline_escha_mm_mc[2]; // same, multi-column (ESCHA_MM_COLS per workgroup)
     // Column ladder (seat-40), indexed [rung][K]. Rung r serves ESCHA_COL_RUNGS[r] columns.
-    vk_pipeline pipeline_escha_mm_col[4][2];
+    vk_pipeline pipeline_escha_mm_col[6][2];
+    // KHR cooperative-matrix C=16 arm, f16 operands with an f32 accumulator.
+    vk_pipeline pipeline_escha_mm_cm[2];
     vk_pipeline pipeline_escha_mm_lut[2];   // table-generator arm (seat-40)
     vk_buffer   escha_lut;                  // 65,536 f16 generator values, 128 KiB
     vk_pipeline pipeline_escha_mm_b2[2]; // same, 256 threads over two output blocks (seat-40)
@@ -6118,6 +6120,20 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[2][1], "escha_mm_k3_c8_f32", escha_mm_k3_c8_f32_len, escha_mm_k3_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[3][0], "escha_mm_k2_c16_f32", escha_mm_k2_c16_f32_len, escha_mm_k2_c16_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[3][1], "escha_mm_k3_c16_f32", escha_mm_k3_c16_f32_len, escha_mm_k3_c16_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[4][0], "escha_mm_k2_c32_f32", escha_mm_k2_c32_f32_len, escha_mm_k2_c32_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[4][1], "escha_mm_k3_c32_f32", escha_mm_k3_c32_f32_len, escha_mm_k3_c32_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[5][0], "escha_mm_k2_c64_f32", escha_mm_k2_c64_f32_len, escha_mm_k2_c64_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[5][1], "escha_mm_k3_c64_f32", escha_mm_k3_c64_f32_len, escha_mm_k3_c64_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+#if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+    // Escha's cooperative arm maps one 128-output workgroup to eight 16x16x16
+    // subgroup tiles.  It has an explicit 32/64-lane layout, so require the
+    // driver to honour the selected subgroup size rather than assuming it.
+    if (device->coopmat_support && device->coopmat_support_16x16x16_f32acc &&
+        device->subgroup_size_control && (device->subgroup_size == 32 || device->subgroup_size == 64)) {
+        ggml_vk_create_pipeline(device, device->pipeline_escha_mm_cm[0], "escha_mm_k2_c16_f32_cm1", escha_mm_k2_c16_f32_cm1_len, escha_mm_k2_c16_f32_cm1_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1, false, true, device->subgroup_size);
+        ggml_vk_create_pipeline(device, device->pipeline_escha_mm_cm[1], "escha_mm_k3_c16_f32_cm1", escha_mm_k3_c16_f32_cm1_len, escha_mm_k3_c16_f32_cm1_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1, false, true, device->subgroup_size);
+    }
+#endif
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_lut[0], "escha_mm_k2_lut_f32", escha_mm_k2_lut_f32_len, escha_mm_k2_lut_f32_data, "main", 5, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_lut[1], "escha_mm_k3_lut_f32", escha_mm_k3_lut_f32_len, escha_mm_k3_lut_f32_data, "main", 5, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
 
@@ -10571,7 +10587,10 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     //
     // Pick the SMALLEST rung that covers ncols, and the largest rung once ncols exceeds it: below
     // the top rung a bigger C only adds idle lanes, above it a bigger C removes whole decode passes.
-    static const uint32_t ESCHA_COL_RUNGS[4] = { 2, 4, 8, 16 };
+    // kidx selects the K=2 or K=3 pipeline family; the rung skip below needs it, so it is
+    // declared before rung selection rather than after.
+    const int kidx = src0->type == GGML_TYPE_ESCHA3 ? 1 : 0;
+    static const uint32_t ESCHA_COL_RUNGS[6] = { 2, 4, 8, 16, 32, 64 };
     // Cap the ladder for A/B work: GGML_VK_ESCHA_MAX_COLS=8 makes a 10-column batch take C8 twice
     // instead of C16 once, which is the comparison that decides whether the widest rung earns its
     // register pressure. Unset means no cap.
@@ -10579,7 +10598,28 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     static const uint32_t max_cols = max_cols_env ? (uint32_t) atoi(max_cols_env) : 0u;
     int rung = -1;
     if (!no_multicol && ncols >= 2) {
+        // TOP RUNG IS 16 BY MEASUREMENT, not by what exists. C=32 and C=64 are built and correct,
+        // and both are SLOWER, because this kernel is occupancy-bound at prefill sizes rather than
+        // decode-count-bound. Staging costs C*128*4 bytes of shared memory, so C=64 takes the whole
+        // 32 KiB the 780M reports and only ONE workgroup fits per compute unit:
+        //     cap 16   pp512 17.08 / 16.89
+        //     cap 32   pp512 15.51 / 15.23
+        //     cap 64   pp512  6.82 /  6.63
+        // Sharing one decode across more columns is real work saved and it is swamped by the loss
+        // of parallelism that pays for it. The wide rungs stay reachable through
+        // GGML_VK_ESCHA_MAX_COLS because the trade flips on a device with more shared memory.
+        //
+        // This also names the NEXT prefill lever properly: reduce shared memory PER WORKGROUP
+        // rather than widen the block - staging activations as f16 would halve it.
         int top = 3;
+        while (top > 0 && ctx->device->pipeline_escha_mm_col[top][kidx] == nullptr) { --top; }
+        if (max_cols > ESCHA_COL_RUNGS[top]) {
+            // an explicit cap ABOVE the measured default opts back into the wide rungs
+            int want = 5;
+            while (want > top && (ctx->device->pipeline_escha_mm_col[want][kidx] == nullptr ||
+                                  ESCHA_COL_RUNGS[want] > max_cols)) { --want; }
+            top = want;
+        }
         while (top > 0 && max_cols && ESCHA_COL_RUNGS[top] > max_cols) { --top; }
         rung = top;                                 // widest rung allowed
         for (int r = 0; r <= top; ++r) {
@@ -10610,11 +10650,52 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     static const bool want_lut = getenv("GGML_VK_ESCHA_LUT") != nullptr;
     const bool use_lut = want_lut && !use_mc && !use_b2;
 
-    const int kidx = src0->type == GGML_TYPE_ESCHA3 ? 1 : 0;
+
+    // Matrix-core prefill arm.  A KHR cooperative matrix has a fixed N=16 tile,
+    // so C=16 is the only ladder rung that maps without throwing away columns.
+    // It is default-on only for a device that *reported* the exact f16xf16->f32
+    // 16x16x16 shape, supports forcing its 32/64-lane subgroup, and actually
+    // created the pipeline. GGML_VK_ESCHA_NO_COOPMAT is the A/B escape hatch.
+    //
+    // Measurement: unmeasured at authoring time by instruction; run the command
+    // in lane-164 evidence before changing this default or claiming a speedup.
+#if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+    static const bool no_coopmat = getenv("GGML_VK_ESCHA_NO_COOPMAT") != nullptr;
+    const bool use_cm = use_mc && rung == 3 && !no_coopmat &&
+                        ctx->device->coopmat_support_16x16x16_f32acc &&
+                        ctx->device->subgroup_size_control &&
+                        (ctx->device->subgroup_size == 32 || ctx->device->subgroup_size == 64) &&
+                        ctx->device->pipeline_escha_mm_cm[kidx] != nullptr;
+#endif
+
     vk_pipeline pipeline = use_mc  ? ctx->device->pipeline_escha_mm_col[rung][kidx]
                          : use_b2  ? ctx->device->pipeline_escha_mm_b2[kidx]
                          : use_lut ? ctx->device->pipeline_escha_mm_lut[kidx]
                                    : ctx->device->pipeline_escha_mm[kidx];
+#if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+    if (use_cm) {
+        pipeline = ctx->device->pipeline_escha_mm_cm[kidx];
+    }
+    // PROVE IT ENGAGES. A silent fallback here would make the coopmat arm identical to the scalar
+    // one, and an A/B of two identical binaries reads as "no gain" rather than "never ran" - the
+    // exact shape of F-112, where a bucket printed OK while executing nothing. One line, once.
+    {
+        // Announce on the first WIDE-RUNG dispatch, not the first dispatch of any kind. The first
+        // call in a run is single-column decode, where the coopmat arm is correctly inactive, and
+        // announcing there reports "inactive" for a run that goes on to use it heavily.
+        static bool announced = false;
+        if (!announced && rung == 3) {
+            announced = true;
+            GGML_LOG_INFO("escha_mm: coopmat arm %s (mc=%d rung=%d shape16=%d sgctl=%d sg=%u pipe=%d)\n",
+                use_cm ? "ACTIVE" : "inactive", (int) use_mc, rung,
+                (int) ctx->device->coopmat_support_16x16x16_f32acc,
+                (int) ctx->device->subgroup_size_control,
+                ctx->device->subgroup_size,
+                (int) (ctx->device->pipeline_escha_mm_cm[kidx] != nullptr),
+                (int) no_coopmat, (int) use_cm);
+        }
+    }
+#endif
     const uint32_t cols_per_wg = use_mc ? ESCHA_COL_RUNGS[rung] : 1;
     const uint32_t out_per_wg  = use_b2 ? 256u : 128u;
     GGML_ASSERT(pipeline != nullptr);
