@@ -1090,7 +1090,8 @@ struct vk_device_struct {
     vk_pipeline pipeline_cross_entropy_loss_f32, pipeline_cross_entropy_loss_f32_wg512;
     vk_pipeline pipeline_cross_entropy_loss_back_f32, pipeline_cross_entropy_loss_back_f32_wg512;
     vk_pipeline pipeline_fwht_f32[4];
-    vk_pipeline pipeline_escha_mm[2]; // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
+    vk_pipeline pipeline_escha_mm[2];    // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
+    vk_pipeline pipeline_escha_mm_mc[2]; // same, multi-column (ESCHA_MM_COLS per workgroup)
     vk_pipeline pipeline_cumsum_f32;
     vk_pipeline pipeline_cumsum_small_f32;
     vk_pipeline pipeline_cumsum_multipass1_f32;
@@ -6099,6 +6100,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     // ArifiLabs Escha-W2 fused linear (lane-164): portable shared-memory shader, fixed 128 threads
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm[0], "escha_mm_k2_f32", escha_mm_k2_f32_len, escha_mm_k2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_escha_mm[1], "escha_mm_k3_f32", escha_mm_k3_f32_len, escha_mm_k3_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[0], "escha_mm_k2_c4_f32", escha_mm_k2_c4_f32_len, escha_mm_k2_c4_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[1], "escha_mm_k3_c4_f32", escha_mm_k3_c4_f32_len, escha_mm_k3_c4_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
 
     const uint32_t cumsum_elem_per_thread = (device->vendor_id == VK_VENDOR_ID_AMD || device->vendor_id == VK_VENDOR_ID_INTEL) ? 2 : 4;
     ggml_vk_create_pipeline(device, device->pipeline_cumsum_f32,       "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 256, device->subgroup_size, cumsum_elem_per_thread }, 1, true, true, device->subgroup_size);
@@ -10484,7 +10487,17 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     const uint32_t n_out = (uint32_t) src0->ne[1];
     const uint32_t ncols = (uint32_t) (src1->ne[1] * src1->ne[2] * src1->ne[3]);
 
-    vk_pipeline pipeline = ctx->device->pipeline_escha_mm[src0->type == GGML_TYPE_ESCHA3 ? 1 : 0];
+    // Columns served by one workgroup. The weight decode dominates and does not depend on the
+    // column, so blocking columns divides the decode cost by this factor; the knob keeps the
+    // original one-column kernel reachable for A/B (lane-163 precedent).
+    // Keep in sync with the ESCHA_COLS define for the _mc pipelines in vulkan-shaders-gen.cpp.
+    constexpr uint32_t ESCHA_MM_COLS = 4;
+    static const bool no_multicol = getenv("GGML_VK_ESCHA_NO_MULTICOL") != nullptr;
+
+    const int kidx = src0->type == GGML_TYPE_ESCHA3 ? 1 : 0;
+    vk_pipeline pipeline = no_multicol ? ctx->device->pipeline_escha_mm[kidx]
+                                       : ctx->device->pipeline_escha_mm_mc[kidx];
+    const uint32_t cols_per_wg = no_multicol ? 1 : ESCHA_MM_COLS;
     GGML_ASSERT(pipeline != nullptr);
 
     ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
@@ -10514,14 +10527,14 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     // per column, so raise it only from a measured ncols curve (test-backend-ops perf -o ESCHA_MM).
     constexpr uint32_t COLS_PER_DISPATCH = 32;
 
-    const std::array<uint32_t, 3> elements = { wg_x, std::min(ncols, COLS_PER_DISPATCH), 1 };
+    const std::array<uint32_t, 3> elements = { wg_x, CEIL_DIV(std::min(ncols, COLS_PER_DISPATCH), cols_per_wg), 1 };
     ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { a_buf, b_buf, aux_buf, dst_buf }, pc, elements);
 
     for (uint32_t off = COLS_PER_DISPATCH; off < ncols; off += COLS_PER_DISPATCH) {
         pc.col_offset = off;
         subctx->s->buffer->buf.pushConstants(pipeline->layout, vk::ShaderStageFlagBits::eCompute,
                                              0, sizeof(pc), &pc);
-        subctx->s->buffer->buf.dispatch(wg_x, std::min(COLS_PER_DISPATCH, ncols - off), 1);
+        subctx->s->buffer->buf.dispatch(wg_x, CEIL_DIV(std::min(COLS_PER_DISPATCH, ncols - off), cols_per_wg), 1);
     }
 }
 
