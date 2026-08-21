@@ -10,6 +10,7 @@
 #include "build-info.h"
 #include "common.h"
 #include "fit.h"
+#include "gguf.h"
 #include "llama.h"
 #include "log.h"
 #include "sampling.h"
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cinttypes>
+#include <cstdlib>
 #include <exception>
 #include <memory>
 #include <filesystem>
@@ -127,6 +129,70 @@ static std::vector<ggml_backend_dev_t> server_target_fit_devices(const common_pa
         return {};
     }
     return { devices[params.main_gpu] };
+}
+
+// Resolve DFlash2 before output limits, device selection, fit and target-context
+// sizing. The local driver uses DRAFT_DFLASH directly, so do not import the
+// upstream legacy-type conversion here.
+static bool server_preflight_dflash2(common_params & params) {
+    auto & spec = params.speculative;
+    if (!spec.has_dft()) {
+        return false;
+    }
+
+    const std::string & path = spec.draft.mparams.path;
+    std::unique_ptr<gguf_context, decltype(&gguf_free)> metadata(
+        gguf_init_from_file(path.c_str(), {
+            /*.no_alloc =*/ true,
+            /*.ctx      =*/ nullptr,
+        }),
+        gguf_free);
+    if (!metadata) {
+        SRV_WRN("%s", "could not inspect draft metadata before target sizing; using configured DFlash sizing\n");
+        return false;
+    }
+
+    const int64_t arch_id = gguf_find_key(metadata.get(), "general.architecture");
+    const int64_t rank_id = gguf_find_key(metadata.get(), "dflash.selector_rank");
+    if (arch_id < 0 || rank_id < 0 ||
+        gguf_get_kv_type(metadata.get(), arch_id) != GGUF_TYPE_STRING ||
+        gguf_get_kv_type(metadata.get(), rank_id) != GGUF_TYPE_UINT32 ||
+        std::strcmp(gguf_get_val_str(metadata.get(), arch_id), "dflash") != 0 ||
+        gguf_get_val_u32(metadata.get(), rank_id) == 0) {
+        return false;
+    }
+
+    uint32_t block_size = 16;
+    int64_t block_id = gguf_find_key(metadata.get(), "dflash.block_size");
+    if (block_id < 0) {
+        block_id = gguf_find_key(metadata.get(), "dflash.dflash.block_size");
+    }
+    if (block_id >= 0 && gguf_get_kv_type(metadata.get(), block_id) == GGUF_TYPE_UINT32) {
+        block_size = gguf_get_val_u32(metadata.get(), block_id);
+    }
+
+    if (const char * value = std::getenv("GGML_DFLASH2_BLOCK_SIZE_OVERRIDE")) {
+        const int override = std::atoi(value);
+        if (override < 3 || override > 64) {
+            throw std::runtime_error("GGML_DFLASH2_BLOCK_SIZE_OVERRIDE must be between 3 and 64");
+        }
+        block_size = (uint32_t) override;
+    } else if (block_size == 8) {
+        block_size = 13;
+    }
+
+    auto & types = spec.types;
+    types.erase(std::remove(types.begin(), types.end(), COMMON_SPECULATIVE_TYPE_NONE), types.end());
+    if (std::find(types.begin(), types.end(), COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH) == types.end()) {
+        types.push_back(COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH);
+    }
+    spec.draft.dflash = true;
+    if (!spec.draft.n_max_set) {
+        spec.draft.n_max = block_size - 1;
+    }
+    SRV_INF("preselected DFlash2 shared driver (block_size=%u, draft-max=%d)\n",
+            block_size, spec.draft.n_max);
+    return true;
 }
 
 static server_shared_draft_device_config server_prepare_shared_draft_devices(const common_params & params) {
@@ -1198,6 +1264,7 @@ private:
         }
 
         params_base = params_load;
+        server_preflight_dflash2(params_base);
         const auto output_limits = server_output_limits(params_base);
         params_base.n_outputs_max = output_limits.total;
         params_base.n_outputs_max_per_seq = output_limits.per_seq;
