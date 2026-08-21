@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10524`, `9ee9fc04c136ef2ae729bfc60d18961b23c13ddf`
-- Patches: **379**, all non-merge, applied in filename order.
+- Patches: **385**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 379 commit messages, same provenance trailers. Verified, not
+same file contents, same 385 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -458,6 +458,12 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 377 | `0377-vulkan-subgroup-cooperative-TQ-mat-vec-tq3_1s-tq4_1s.patch` | ternary-g128 | `69324887f` | - | - | vulkan: subgroup-cooperative TQ mat-vec (tq3_1s/tq4_1s/tq3_4s) |
 | 378 | `0378-vulkan-register-blocked-4-elem-lane-TQ-subgroup-mat-.patch` | ternary-g128 | `4a54e52ee` | - | - | vulkan: register-blocked 4-elem/lane TQ subgroup mat-vec (packed32 loads, in-register WHT stages 1-2, rows=4) |
 | 379 | `0379-escha-native-Escha-W2-types-ESCHA2-55-ESCHA3-56-fuse.patch` | arifi-fork-base | `b62bfc925` | - | - | escha: native Escha-W2 types (ESCHA2=55/ESCHA3=56) + fused GGML_OP_ESCHA_MM, CPU + Vulkan |
+| 380 | `0380-escha-F-125-fix-full-64-bit-pair-sourcing-row-parity.patch` | arifi-fork-base | `0962687ba` | - | - | escha: F-125 fix - full 64-bit pair sourcing + row-parity correction (K=2 AND K=3) |
+| 381 | `0381-escha-test-backend-ops-un-nest-ESCHA_MM-eval-cases-m.patch` | arifi-fork-base | `e01e736f1` | - | - | escha: test-backend-ops — un-nest ESCHA_MM eval cases + multi-chunk ncols coverage + perf ncols curve |
+| 382 | `0382-escha-vulkan-bound-every-escha_mm-dispatch-to-32-col.patch` | arifi-fork-base | `816a242b6` | - | - | escha vulkan: bound every escha_mm dispatch to 32 columns (F-124 host-freeze guard) |
+| 383 | `0383-escha-vulkan-column-blocked-escha_mm-one-weight-deco.patch` | arifi-fork-base | `93b427f3a` | - | - | escha vulkan: column-blocked escha_mm - one weight decode serves 4 columns (part 2) |
+| 384 | `0384-escha-vulkan-column-block-C-8-fall-back-to-the-one-c.patch` | arifi-fork-base | `9852454c4` | - | - | escha vulkan: column block C=8 + fall back to the one-column kernel below a full block |
+| 385 | `0385-escha-tests-cover-the-column-blocked-kernel-AT-MODEL.patch` | arifi-fork-base | `c650b8111` | - | - | escha tests: cover the column-blocked kernel AT MODEL DEPTH (ncols=9, real 27B shapes) |
 
 ## Measured effect, per patch
 
@@ -907,6 +913,12 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0377-vulkan-subgroup-cooperative-TQ-mat-vec-tq3_1s-tq4_1s.patch` | 27B tq3_4s tg32 0.67->1.80 t/s; 0.5b tq4_1s tg64 44.7->126.7, tq3_1s 45.5->107.1; mat-vec kernel n=1 3.1-3.4x (780M, evidence lane-163) |
 | `0378-vulkan-register-blocked-4-elem-lane-TQ-subgroup-mat-.patch` | *(no Measured-effect trailer)* |
 | `0379-escha-native-Escha-W2-types-ESCHA2-55-ESCHA3-56-fuse.patch` | *(no Measured-effect trailer)* |
+| `0380-escha-F-125-fix-full-64-bit-pair-sourcing-row-parity.patch` | Escha-W2 native decode goes from token salad to coherent; worst-projection weight correlation 0.9358, K=2 and K=3 both correct |
+| `0381-escha-test-backend-ops-un-nest-ESCHA_MM-eval-cases-m.patch` | none yet (test registration only); unlocks the ncols duration curve |
+| `0382-escha-vulkan-bound-every-escha_mm-dispatch-to-32-col.patch` | per-dispatch column count capped at 32, was ncols up to 2048 |
+| `0383-escha-vulkan-column-blocked-escha_mm-one-weight-deco.patch` | pending on this commit, before-numbers are 1.15 and 2.12 ms per column |
+| `0384-escha-vulkan-column-block-C-8-fall-back-to-the-one-c.patch` | 3.51x on escha3 17408x5120 at ncols=64, decode unchanged |
+| `0385-escha-tests-cover-the-column-blocked-kernel-AT-MODEL.patch` | shipped C=8 prefill path now covered at real 27B shapes, 10/10 GREEN |
 
 ## Unclassified
 
@@ -1223,4 +1235,10 @@ rather than silently bucketed - add a rule when a new source appears.
 - `f792f957e` sync: re-pin wave-3 sources + regenerate series (374 patches)
 - `e3c19d410` arifi-sync: provenance native-class root fix - sha-pinned grandfather ledger + native Origin convention
 - `b62bfc925` escha: native Escha-W2 types (ESCHA2=55/ESCHA3=56) + fused GGML_OP_ESCHA_MM, CPU + Vulkan
+- `0962687ba` escha: F-125 fix - full 64-bit pair sourcing + row-parity correction (K=2 AND K=3)
+- `e01e736f1` escha: test-backend-ops — un-nest ESCHA_MM eval cases + multi-chunk ncols coverage + perf ncols curve
+- `816a242b6` escha vulkan: bound every escha_mm dispatch to 32 columns (F-124 host-freeze guard)
+- `93b427f3a` escha vulkan: column-blocked escha_mm - one weight decode serves 4 columns (part 2)
+- `9852454c4` escha vulkan: column block C=8 + fall back to the one-column kernel below a full block
+- `c650b8111` escha tests: cover the column-blocked kernel AT MODEL DEPTH (ncols=9, real 27B shapes)
 

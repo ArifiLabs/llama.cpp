@@ -1,0 +1,109 @@
+From 816a242b6efccfc0734fe4e465bd81a4cc2113eb Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 20:27:40 -0400
+Subject: [PATCH] escha vulkan: bound every escha_mm dispatch to 32 columns
+ (F-124 host-freeze guard)
+
+Root cause (HQ static read, corroborated by arithmetic): ggml_vk_escha_mm dispatched
+{n_out/128, ncols, 1}, one workgroup per (output block, COLUMN), and each workgroup
+re-decodes the whole weight matrix for its own column. Cost is linear in ncols inside a
+SINGLE dispatch. Decode (ncols=1) pays it once; prefill at batch 2048 pays it 2048 times
+in one dispatch. Measured prefill 1.8 t/s implies ~1.9 ms per column per large tensor, so
+the batch-2048 dispatch runs near 4 s, past the Windows GPU watchdog. Index math was
+audited and is in range: the fault is DURATION, not an out-of-bounds access. This is what
+hard-froze the host twice (F-124) and produced device lost in escha-ppl-32chunks.txt.
+
+Fix: new col_offset push constant; the host loops the dispatch in 32-column chunks so
+per-dispatch duration is bounded whatever ncols the caller asks for, and the driver gets a
+preemption point between chunks. Bindings are identical per chunk, so bind once and re-push
+only col_offset; a descriptor set per chunk would burn thousands per graph for no gain.
+Chunks write disjoint dst columns, so no barrier between them. No decode-math change.
+
+Origin: ArifiLabs (native)
+Measured-effect: per-dispatch column count capped at 32, was ncols up to 2048
+Lane: lane-164
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 31 ++++++++++++++++---
+ .../ggml-vulkan/vulkan-shaders/escha_mm.comp  |  5 +--
+ 2 files changed, 30 insertions(+), 6 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 89c7fefee..7420ed88e 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1423,6 +1423,7 @@ struct vk_op_escha_mm_push_constants {
+     uint32_t n_out;
+     uint32_t ncols;
+     uint32_t Tout;
++    uint32_t col_offset; // first activation column this dispatch covers (F-124 chunking)
+ };
+ 
+ struct vk_op_count_experts_push_constants {
+@@ -10370,8 +10371,8 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+ 
+     ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
+ 
+-    const vk_op_escha_mm_push_constants pc = {
+-        n_in, n_out, ncols, n_out / 16,
++    vk_op_escha_mm_push_constants pc = {
++        n_in, n_out, ncols, n_out / 16, 0,
+     };
+ 
+     const vk_subbuffer a_buf   = ggml_vk_tensor_subbuffer(ctx, src0);
+@@ -10379,9 +10380,31 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+     const vk_subbuffer aux_buf = ggml_vk_tensor_subbuffer(ctx, src2);
+     const vk_subbuffer dst_buf = ggml_vk_tensor_subbuffer(ctx, dst);
+ 
+-    const std::array<uint32_t, 3> elements = { n_out / 128, ncols, 1 };
+-
++    const uint32_t wg_x = n_out / 128;
++
++    // F-124 host-freeze guard. One workgroup serves one (output 128-block, column) and re-decodes
++    // the whole weight matrix for its own column, so a single dispatch costs O(ncols): decode pays
++    // it once, prefill at batch 2048 pays it 2048 times inside ONE dispatch. Measured prefill
++    // 1.8 t/s puts that dispatch near 4 s, past the Windows GPU watchdog — which is what took the
++    // host down twice (nothing is out of bounds; the fault is DURATION).
++    // Chunking the column dimension bounds every dispatch to COLS_PER_DISPATCH columns regardless
++    // of what the caller asks for, and gives the driver a preemption point between chunks.
++    // Chunks write disjoint columns of dst, so no barrier is needed between them, and the four
++    // bindings are identical for every chunk, so bind once and re-push only col_offset (a
++    // descriptor set per chunk would burn thousands per graph for no gain).
++    // 32 is deliberately conservative: chunk overhead is negligible against n_in*n_out decodes
++    // per column, so raise it only from a measured ncols curve (test-backend-ops perf -o ESCHA_MM).
++    constexpr uint32_t COLS_PER_DISPATCH = 32;
++
++    const std::array<uint32_t, 3> elements = { wg_x, std::min(ncols, COLS_PER_DISPATCH), 1 };
+     ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { a_buf, b_buf, aux_buf, dst_buf }, pc, elements);
++
++    for (uint32_t off = COLS_PER_DISPATCH; off < ncols; off += COLS_PER_DISPATCH) {
++        pc.col_offset = off;
++        subctx->s->buffer->buf.pushConstants(pipeline->layout, vk::ShaderStageFlagBits::eCompute,
++                                             0, sizeof(pc), &pc);
++        subctx->s->buffer->buf.dispatch(wg_x, std::min(COLS_PER_DISPATCH, ncols - off), 1);
++    }
+ }
+ 
+ static void ggml_vk_mul_mat(ggml_backend_vk_context * ctx, vk_context& subctx, const struct ggml_cgraph * cgraph, int node_idx) {
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+index 63c3ea346..44f1a2e8a 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+@@ -23,7 +23,8 @@ layout (push_constant) uniform parameter {
+     uint n_in;
+     uint n_out;
+     uint ncols;
+-    uint Tout;      // n_out/16
++    uint Tout;       // n_out/16
++    uint col_offset; // first activation column of this dispatch (host chunks Y — F-124)
+ } p;
+ 
+ layout (binding = 0) readonly  buffer A { uint  data_a[]; };  // packed codes, u32 view
+@@ -100,7 +101,7 @@ void hadamard128(uint tid) {
+ void main() {
+     const uint tid  = gl_LocalInvocationID.x;
+     const uint ob   = gl_WorkGroupID.x;      // output 128-block
+-    const uint col  = gl_WorkGroupID.y;      // activation column
++    const uint col  = p.col_offset + gl_WorkGroupID.y; // activation column (dispatch is chunked)
+     const uint ot   = ob * 8u + (tid >> 4u); // this thread's out tile
+     const uint tcol = tid & 15u;             // column within the tile
+ 
