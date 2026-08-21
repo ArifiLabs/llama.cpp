@@ -88,11 +88,30 @@ uint f32_to_f16_rte(float f) {
 }
 
 // the recovered cbA scalar generator F(x) on a 16-bit window
+//
+// PERF (HQ seat-38, 2026-08-21): this runs ONCE PER WEIGHT PER TOKEN and it dominated the kernel.
+// The software f32_to_f16_rte above is ~15 instructions with three branches; the rest of the
+// generator is five. AMD implements f32->f16 as a single V_CVT_F16_F32, which packHalf2x16 lowers
+// to, so the fast path replaces ~15 instructions with one. Kept behind a define because the whole
+// reason the software routine exists is Terra-66's finding that glslc does not emit float-control
+// execution modes -- so the hardware rounding mode is a DEVICE FACT to be proven, never assumed.
+//
+// ESCHA_HW_RTE=0 restores the software path. Do not flip the default back on taste: the fast path
+// is only legitimate while the exhaustive 65,536-codeword sweep against the CPU reference is GREEN
+// on this device (harness: trial-evidence/escha-decoder/rung1/run_sweep.py, the July rung-1 tool).
+#ifndef ESCHA_HW_RTE
+#define ESCHA_HW_RTE 1
+#endif
+
 float escha_F(uint xw) {
     const uint q = 0x3B603B60u ^ ((xw * 0xCBAC1FEDu) & 0x8FFF8FFFu);
     const vec2 h = unpackHalf2x16(q);
     const float s = h.x + h.y;                     // exact operands; correctly-rounded f32 add
+#if ESCHA_HW_RTE
+    return unpackHalf2x16(packHalf2x16(vec2(s, 0.0))).x;   // one hardware convert
+#else
     return unpackHalf2x16(f32_to_f16_rte(s)).x;    // value of the f16-rounded sum
+#endif
 }
 
 // 64-bit funnel shift via two u32s; no shaderInt64
