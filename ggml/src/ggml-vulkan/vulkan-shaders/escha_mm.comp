@@ -23,7 +23,8 @@ layout (push_constant) uniform parameter {
     uint n_in;
     uint n_out;
     uint ncols;
-    uint Tout;      // n_out/16
+    uint Tout;       // n_out/16
+    uint col_offset; // first activation column of this dispatch (host chunks Y — F-124)
 } p;
 
 layout (binding = 0) readonly  buffer A { uint  data_a[]; };  // packed codes, u32 view
@@ -100,7 +101,7 @@ void hadamard128(uint tid) {
 void main() {
     const uint tid  = gl_LocalInvocationID.x;
     const uint ob   = gl_WorkGroupID.x;      // output 128-block
-    const uint col  = gl_WorkGroupID.y;      // activation column
+    const uint col  = p.col_offset + gl_WorkGroupID.y; // activation column (dispatch is chunked)
     const uint ot   = ob * 8u + (tid >> 4u); // this thread's out tile
     const uint tcol = tid & 15u;             // column within the tile
 

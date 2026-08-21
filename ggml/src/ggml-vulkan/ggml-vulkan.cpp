@@ -7487,8 +7487,8 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
 
     ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
 
-    const vk_op_escha_mm_push_constants pc = {
-        n_in, n_out, ncols, n_out / 16,
+    vk_op_escha_mm_push_constants pc = {
+        n_in, n_out, ncols, n_out / 16, 0,
     };
 
     const vk_subbuffer a_buf   = ggml_vk_tensor_subbuffer(ctx, src0);
@@ -7496,9 +7496,31 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, 
     const vk_subbuffer aux_buf = ggml_vk_tensor_subbuffer(ctx, src2);
     const vk_subbuffer dst_buf = ggml_vk_tensor_subbuffer(ctx, dst);
 
-    const std::array<uint32_t, 3> elements = { n_out / 128, ncols, 1 };
+    const uint32_t wg_x = n_out / 128;
 
+    // F-124 host-freeze guard. One workgroup serves one (output 128-block, column) and re-decodes
+    // the whole weight matrix for its own column, so a single dispatch costs O(ncols): decode pays
+    // it once, prefill at batch 2048 pays it 2048 times inside ONE dispatch. Measured prefill
+    // 1.8 t/s puts that dispatch near 4 s, past the Windows GPU watchdog — which is what took the
+    // host down twice (nothing is out of bounds; the fault is DURATION).
+    // Chunking the column dimension bounds every dispatch to COLS_PER_DISPATCH columns regardless
+    // of what the caller asks for, and gives the driver a preemption point between chunks.
+    // Chunks write disjoint columns of dst, so no barrier is needed between them, and the four
+    // bindings are identical for every chunk, so bind once and re-push only col_offset (a
+    // descriptor set per chunk would burn thousands per graph for no gain).
+    // 32 is deliberately conservative: chunk overhead is negligible against n_in*n_out decodes
+    // per column, so raise it only from a measured ncols curve (test-backend-ops perf -o ESCHA_MM).
+    constexpr uint32_t COLS_PER_DISPATCH = 32;
+
+    const std::array<uint32_t, 3> elements = { wg_x, std::min(ncols, COLS_PER_DISPATCH), 1 };
     ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { a_buf, b_buf, aux_buf, dst_buf }, pc, elements);
+
+    for (uint32_t off = COLS_PER_DISPATCH; off < ncols; off += COLS_PER_DISPATCH) {
+        pc.col_offset = off;
+        subctx->s->buffer->buf.pushConstants(pipeline->layout, vk::ShaderStageFlagBits::eCompute,
+                                             0, sizeof(pc), &pc);
+        subctx->s->buffer->buf.dispatch(wg_x, std::min(COLS_PER_DISPATCH, ncols - off), 1);
+    }
 }
 
 void ggml_vk_mul_mat(ggml_backend_vk_context * ctx, vk_context& subctx, const struct ggml_cgraph * cgraph, int node_idx) {

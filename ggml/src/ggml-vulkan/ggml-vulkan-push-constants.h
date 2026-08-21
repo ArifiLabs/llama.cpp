@@ -213,6 +213,7 @@ struct vk_op_escha_mm_push_constants {
     uint32_t n_out;
     uint32_t ncols;
     uint32_t Tout;
+    uint32_t col_offset; // first activation column this dispatch covers (F-124 chunking)
 };
 
 struct vk_op_count_experts_push_constants {
