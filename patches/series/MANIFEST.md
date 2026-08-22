@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10524`, `9ee9fc04c136ef2ae729bfc60d18961b23c13ddf`
-- Patches: **389**, all non-merge, applied in filename order.
+- Patches: **397**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 389 commit messages, same provenance trailers. Verified, not
+same file contents, same 397 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -468,6 +468,14 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 387 | `0387-escha-vulkan-subgroup-shuffle-Hadamard-14-barriers-p.patch` | arifi-fork-base | `48a61b2d6` | - | - | escha vulkan: subgroup-shuffle Hadamard - 14 barriers per input block become 3 |
 | 388 | `0388-escha-vulkan-the-hardware-f32-f16-convert-must-be-fl.patch` | arifi-fork-base | `4d9be18ce` | - | - | escha vulkan: the hardware f32->f16 convert must be float16_t, NOT packHalf2x16 (RTZ) |
 | 389 | `0389-escha-vulkan-ESCHA_SG_HADAMARD-defaults-OFF-the-leve.patch` | arifi-fork-base | `6ae6d52a1` | - | - | escha vulkan: ESCHA_SG_HADAMARD defaults OFF - the lever is refuted by measurement |
+| 390 | `0390-escha-vulkan-f16-native-generator-decode-18-bit-exac.patch` | arifi-fork-base | `844c89105` | - | - | escha vulkan: f16-native generator - decode +18%, bit-exact |
+| 391 | `0391-escha-vulkan-two-more-levers-tried-and-REFUTED-by-me.patch` | arifi-fork-base | `dfeb5a759` | - | - | escha vulkan: two more levers tried and REFUTED by measurement - occupancy and packed-pair |
+| 392 | `0392-escha-vulkan-the-multi-column-threshold-was-disablin.patch` | arifi-fork-base | `e5909fb76` | - | - | escha vulkan: the multi-column threshold was disabling speculation - decode 3.96 -> 5.60 t/s |
+| 393 | `0393-escha-vulkan-column-ladder-C2-C4-C8-C16-and-the-gene.patch` | arifi-fork-base | `f3601326e` | - | - | escha vulkan: column ladder C2/C4/C8/C16, and the generator table measured and REFUTED |
+| 394 | `0394-dflash-ingest-buun-s-DFlash2-adaptive-controller-bui.patch` | arifi-fork-base | `b95c9e637` | - | - | dflash: ingest buun's DFlash2 adaptive controller - built, gated, and defaulted OFF by measurement |
+| 395 | `0395-escha-vulkan-prefill-is-OCCUPANCY-bound-coopmat-and-.patch` | arifi-fork-base | `8063eef43` | - | - | escha vulkan: prefill is OCCUPANCY-bound - coopmat and wider rungs both refuted, and the profile that said otherwise was lying |
+| 396 | `0396-escha-vulkan-f16-activation-staging-built-correct-an.patch` | arifi-fork-base | `9b27a3fe4` | - | - | escha vulkan: f16 activation staging - built, correct, and refuted; the real prefill win was the build |
+| 397 | `0397-dflash-reject-an-out-of-extent-draft-depth-instead-o.patch` | arifi-fork-base | `48361ae60` | - | - | dflash: reject an out-of-extent draft depth instead of silently clamping it, and block the mask token |
 
 ## Measured effect, per patch
 
@@ -927,6 +935,14 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0387-escha-vulkan-subgroup-shuffle-Hadamard-14-barriers-p.patch` | UNMEASURED at commit time - barrier count per 128-input block drops 14 to 3 at subgroup 64 by inspection; correctness gate and speed delta owed |
 | `0388-escha-vulkan-the-hardware-f32-f16-convert-must-be-fl.patch` | CORRECTNESS ONLY at this commit - removes a one-ulp truncation error affecting 25.6% of codewords that 1ee8e9ad7 would have shipped; speed deltas for this lever alone are measured next and reported separately. |
 | `0389-escha-vulkan-ESCHA_SG_HADAMARD-defaults-OFF-the-leve.patch` | SG lever OFF by default; no speed change vs the shipped RTE-only configuration, and ~3% of prefill recovered versus having it on |
+| `0390-escha-vulkan-f16-native-generator-decode-18-bit-exac.patch` | *(no Measured-effect trailer)* |
+| `0391-escha-vulkan-two-more-levers-tried-and-REFUTED-by-me.patch` | *(no Measured-effect trailer)* |
+| `0392-escha-vulkan-the-multi-column-threshold-was-disablin.patch` | *(no Measured-effect trailer)* |
+| `0393-escha-vulkan-column-ladder-C2-C4-C8-C16-and-the-gene.patch` | *(no Measured-effect trailer)* |
+| `0394-dflash-ingest-buun-s-DFlash2-adaptive-controller-bui.patch` | *(no Measured-effect trailer)* |
+| `0395-escha-vulkan-prefill-is-OCCUPANCY-bound-coopmat-and-.patch` | *(no Measured-effect trailer)* |
+| `0396-escha-vulkan-f16-activation-staging-built-correct-an.patch` | *(no Measured-effect trailer)* |
+| `0397-dflash-reject-an-out-of-extent-draft-depth-instead-o.patch` | *(no Measured-effect trailer)* |
 
 ## Unclassified
 
@@ -1253,4 +1269,12 @@ rather than silently bucketed - add a rule when a new source appears.
 - `48a61b2d6` escha vulkan: subgroup-shuffle Hadamard - 14 barriers per input block become 3
 - `4d9be18ce` escha vulkan: the hardware f32->f16 convert must be float16_t, NOT packHalf2x16 (RTZ)
 - `6ae6d52a1` escha vulkan: ESCHA_SG_HADAMARD defaults OFF - the lever is refuted by measurement
+- `844c89105` escha vulkan: f16-native generator - decode +18%, bit-exact
+- `dfeb5a759` escha vulkan: two more levers tried and REFUTED by measurement - occupancy and packed-pair
+- `e5909fb76` escha vulkan: the multi-column threshold was disabling speculation - decode 3.96 -> 5.60 t/s
+- `f3601326e` escha vulkan: column ladder C2/C4/C8/C16, and the generator table measured and REFUTED
+- `b95c9e637` dflash: ingest buun's DFlash2 adaptive controller - built, gated, and defaulted OFF by measurement
+- `8063eef43` escha vulkan: prefill is OCCUPANCY-bound - coopmat and wider rungs both refuted, and the profile that said otherwise was lying
+- `9b27a3fe4` escha vulkan: f16 activation staging - built, correct, and refuted; the real prefill win was the build
+- `48361ae60` dflash: reject an out-of-extent draft depth instead of silently clamping it, and block the mask token
 
