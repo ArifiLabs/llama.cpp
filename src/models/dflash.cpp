@@ -4,8 +4,6 @@
 #include "llama-kv-cache.h"
 #include "llama-kv-cache-iswa.h"
 
-#include <cstdlib>
-
 void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
 
     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
@@ -21,23 +19,6 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
     ml.get_key(LLM_KV_DFLASH_CONV_GROUP_SIZE,  hparams.dflash_conv_group_size,  false);
     ml.get_key(LLM_KV_DFLASH_SELECTOR_RANK,    hparams.dflash_selector_rank,    false);
     ml.get_key(LLM_KV_DFLASH_SELECTOR_TOP_K,   hparams.dflash_selector_top_k,   false);
-
-    if (hparams.dflash_selector_rank > 0) {
-        if (const char * value = std::getenv("GGML_DFLASH2_BLOCK_SIZE_OVERRIDE")) {
-            const int override = std::atoi(value);
-            if (override < 3 || override > 64) {
-                throw std::runtime_error("GGML_DFLASH2_BLOCK_SIZE_OVERRIDE must be between 3 and 64");
-            }
-            LLAMA_LOG_WARN("%s: overriding DFlash2 block size %u -> %d\n",
-                    __func__, hparams.dflash_block_size, override);
-            hparams.dflash_block_size = override;
-        } else if (hparams.dflash_block_size == 8) {
-            // DFlash2's released eight-position metadata is tuned here as anchor + 12.
-            // Keep other trained widths unchanged; GGML_DFLASH2_BLOCK_SIZE_OVERRIDE=8 restores it.
-            LLAMA_LOG_INFO("%s: using tuned DFlash2 block size 13 (metadata: 8)\n", __func__);
-            hparams.dflash_block_size = 13;
-        }
-    }
 
     if (!ml.get_arr(LLM_KV_TARGET_LAYERS, target_layer_ids, false)) {
         throw std::runtime_error("DFlash model requires 'target_layers' in GGUF metadata");

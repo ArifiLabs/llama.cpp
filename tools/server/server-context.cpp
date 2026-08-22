@@ -171,14 +171,13 @@ static bool server_preflight_dflash2(common_params & params) {
         block_size = gguf_get_val_u32(metadata.get(), block_id);
     }
 
-    if (const char * value = std::getenv("GGML_DFLASH2_BLOCK_SIZE_OVERRIDE")) {
-        const int override = std::atoi(value);
-        if (override < 3 || override > 64) {
-            throw std::runtime_error("GGML_DFLASH2_BLOCK_SIZE_OVERRIDE must be between 3 and 64");
-        }
-        block_size = (uint32_t) override;
-    } else if (block_size == 8) {
-        block_size = 13;
+    if (block_size < 2) {
+        throw std::runtime_error("DFlash2 GGUF declares an invalid block_size below 2");
+    }
+
+    const int32_t n_draft_max = (int32_t) block_size - 1;
+    if (spec.draft.n_max_set && spec.draft.n_max > n_draft_max) {
+        throw std::runtime_error("requested --spec-draft-n-max exceeds the DFlash2 GGUF-declared trained block extent");
     }
 
     auto & types = spec.types;
@@ -188,7 +187,7 @@ static bool server_preflight_dflash2(common_params & params) {
     }
     spec.draft.dflash = true;
     if (!spec.draft.n_max_set) {
-        spec.draft.n_max = block_size - 1;
+        spec.draft.n_max = n_draft_max;
     }
     SRV_INF("preselected DFlash2 shared driver (block_size=%u, draft-max=%d)\n",
             block_size, spec.draft.n_max);
