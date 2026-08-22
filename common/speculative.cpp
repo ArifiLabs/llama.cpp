@@ -1091,42 +1091,18 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
         // DFlash input is [id_last, <mask> * (block_size-1)]: in-place denoising yields at most
         // block_size-1 draft tokens, anchor-first DSpark yields a full block_size draft tokens
         const int32_t n_draft_max = is_dspark && sample_from_anchor ? block_size : block_size - 1;
-        if (this->params.n_max > n_draft_max || this->params.n_min > n_draft_max) {
-            LOG_WRN("%s: requested draft size (n_max=%d, n_min=%d) exceeds the trained block size %d -- clamping to %d\n",
-                    __func__, this->params.n_max, this->params.n_min, block_size, n_draft_max);
-            this->params.n_max = std::min(this->params.n_max, n_draft_max);
-            this->params.n_min = std::min(this->params.n_min, n_draft_max);
+        if (n_draft_max <= 0 || this->params.n_max > n_draft_max || this->params.n_min > n_draft_max) {
+            throw std::runtime_error("draft-dflash: requested draft size exceeds the GGUF-declared trained block extent");
         }
         this->n_max = this->params.n_max;
 
-        // DEFAULT IS OFF, BY MEASUREMENT (seat-40, 2026-08-21). Both adaptive policies were built,
-        // built clean, and GATED on a 16-prompt corpus weighted to prose, with depth 7 carried as a
-        // positive control and every arm scored for DEGENERATION (empty output, repeated n-gram,
-        // prompt echo) alongside throughput:
-        //     plain                3.91 t/s   clean
-        //     fixed cap 3          6.59 t/s   clean          <- incumbent, and the winner
-        //     reactive (buun)      4.04 t/s   8 of 16 degenerate
-        //     preventive (ours)    4.20 t/s   9 of 16 degenerate
-        //     control depth 7      5.36 t/s   8 of 16 degenerate
-        //     mtp self-draft       6.56 t/s   clean
-        // Both controllers are SLOWER than the fixed cap as well as broken, so nothing is traded
-        // away by defaulting them off.
-        //
-        // WHY THEY FAIL, which is the part worth keeping: both policies steer on DRAFT ACCEPTANCE,
-        // and acceptance does not track output quality on this model. The clean fixed-cap arm runs
-        // at 0.67-0.77 acceptance while the preventive arm scored a perfect 1.00 on a task inside a
-        // run that degenerated on 9 of 16 prompts. An acceptance-driven controller therefore climbs
-        // INTO the broken region precisely because everything looks perfect to it. The preventive
-        // variant starts at depth 2 - a depth measured clean - and still degenerates, which is that
-        // mechanism caught in the act.
-        //
-        // A controller that works here would have to steer on an output-degeneration signal, not on
-        // acceptance. Until one exists, a hard depth cap is the honest control.
+        // The adaptive policy remains opt-in.  It controls how many positions are verified, never
+        // the architecture's declared DFlash2 block width.
         dflash2_adaptive = is_dflash2 && common_speculative_env_enabled("GGML_DFLASH2_ADAPTIVE", false);
         dflash2_preventive = dflash2_adaptive && common_speculative_env_enabled("GGML_DFLASH2_PREVENTIVE", false);
         if (is_dflash2) {
             LOG_INF("%s: DFlash2 depth mode: %s\n", __func__,
-                    !dflash2_adaptive ? "fixed cap 3" :
+                    !dflash2_adaptive ? "requested depth" :
                     dflash2_preventive ? "preventive low-start" : "reactive timed");
         }
 
@@ -1548,16 +1524,17 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
             int32_t n_block_tokens = n_draft_seq + (is_dspark && sample_from_anchor ? 0 : 1);
             if (is_dflash2) {
                 const int32_t n_cap = std::min(params.n_max, block_size - 1);
-                // DFlash2's adaptive selector is trained over the full block. Depth control
-                // then limits only target verification. Keep the disabled-controller path on
-                // its historic short block so fixed cap 3 remains comparable to its measurement.
+                // The denoising block is exactly the anchor plus the positions we will verify.
+                // Decoding an unverified tail changes the selector's conditioning and makes an
+                // n-token depth request exercise a different graph.  Do not extend the model's
+                // metadata-declared block width here.
                 n_draft_seq = dflash2_adaptive
                     ? dflash2_adaptive_depth(seq_id, n_cap)
-                    : std::min(3, n_cap);
+                    : n_cap;
                 if (dp.n_max >= 0) {
                     n_draft_seq = std::min(n_draft_seq, dp.n_max);
                 }
-                n_block_tokens = dflash2_adaptive ? block_size : n_draft_seq + 1;
+                n_block_tokens = n_draft_seq + 1;
             }
 
             i_block_beg[seq_id] = batch.n_tokens;
@@ -1631,7 +1608,13 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                         }
                         std::discrete_distribution<int32_t> sample(dist.probs.begin(), dist.probs.end());
                         predecessor = sample(selector_rng[seq_id]);
-                        result.push_back(dist.ids[predecessor]);
+                        const llama_token id = dist.ids[predecessor];
+                        if (mask_token_id != LLAMA_TOKEN_NULL && id == mask_token_id) {
+                            LOG_WRN("%s: DFlash2 selector produced its mask token at draft position %d; truncating draft\n",
+                                    __func__, i);
+                            break;
+                        }
+                        result.push_back(id);
                         dp.dists->push_back(std::move(dist));
                     } else {
                         predecessor = (int32_t) std::distance(scores,
@@ -1646,7 +1629,13 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                                 break;
                             }
                         }
-                        result.push_back((llama_token) row[predecessor]);
+                        const llama_token id = (llama_token) row[predecessor];
+                        if (mask_token_id != LLAMA_TOKEN_NULL && id == mask_token_id) {
+                            LOG_WRN("%s: DFlash2 selector produced its mask token at draft position %d; truncating draft\n",
+                                    __func__, i);
+                            break;
+                        }
+                        result.push_back(id);
                     }
                 }
 
