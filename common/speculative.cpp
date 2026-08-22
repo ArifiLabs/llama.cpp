@@ -24,6 +24,7 @@
 #include <limits>
 #include <map>
 #include <random>
+#include <string>
 
 #define SPC_DBG(fmt, ...) LOG_DBG("spec %12.*s: " fmt, 12, __func__, __VA_ARGS__)
 #define SPC_TRC(fmt, ...) LOG_TRC("spec %12.*s: " fmt, 12, __func__, __VA_ARGS__)
@@ -1640,6 +1641,17 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                     if (dp.dists) {
                         dp.dists->clear();
                     }
+                }
+                if (common_speculative_env_enabled("LLAMA_DFLASH_VERIFY_TRACE", false)) {
+                    std::string ids;
+                    for (llama_token id : result) {
+                        if (!ids.empty()) {
+                            ids += ',';
+                        }
+                        ids += std::to_string(id);
+                    }
+                    LOG_INF("%s: dflash-verify draft seq=%d n_draft=%d ids=[%s]\n",
+                            __func__, (int) seq_id, (int) result.size(), ids.c_str());
                 }
                 dflash2_adpt[seq_id].n_draft_last = (int32_t) result.size();
                 if (dflash2_adaptive && result.empty()) {
@@ -3464,7 +3476,7 @@ common_speculative_init_result::common_speculative_init_result(
         model_path = params.speculative.draft.mparams.path;
         LOG_INF("%s: loading draft model '%s'\n", __func__, model_path.c_str());
 
-        llama_model * model_dft = llama_model_load_from_file(params.model.path.c_str(), mparams);
+        llama_model * model_dft = llama_model_load_from_file(model_path.c_str(), mparams);
         if (model_dft == NULL) {
             LOG_ERR("%s: failed to load draft model, '%s'\n", __func__, model_path.c_str());
             return;

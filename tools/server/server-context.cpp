@@ -26,6 +26,7 @@
 #include <memory>
 #include <filesystem>
 #include <random>
+#include <string>
 #include <utility>
 #include <fstream>
 
@@ -4153,6 +4154,10 @@ private:
 
             common_sampler_accept(slot.smpl.get(), id, true);
 
+            if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr) {
+                SLT_INF(slot, "dflash-verify baseline token=%d\n", id);
+            }
+
             // here we have synchronized the llama_context (due to the sampling above), so we can do time measurement
             const int64_t t_now = ggml_time_us();
 
@@ -4218,6 +4223,33 @@ private:
                        slot.spec_dists.size() == slot.spec_draft.size()
                         ? common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft, slot.spec_dists)
                         : common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft));
+
+                if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr && params_base.speculative.draft.dflash) {
+                    std::string draft_ids;
+                    for (llama_token id : slot.spec_draft) {
+                        if (!draft_ids.empty()) {
+                            draft_ids += ',';
+                        }
+                        draft_ids += std::to_string(id);
+                    }
+                    std::string target_ids;
+                    for (llama_token id : accepted) {
+                        if (!target_ids.empty()) {
+                            target_ids += ',';
+                        }
+                        target_ids += std::to_string(id);
+                    }
+                    std::string idxs;
+                    for (int i : slot.spec_i_batch) {
+                        if (!idxs.empty()) {
+                            idxs += ',';
+                        }
+                        idxs += std::to_string(i);
+                    }
+                    SLT_INF(slot, "dflash-verify anchor=%d target sampled=[%s] draft=[%s] i_batch=[%s] accepted=%zu/%zu\n",
+                            (int) slot.sampled, target_ids.c_str(), draft_ids.c_str(), idxs.c_str(),
+                            accepted.size() - 1, slot.spec_draft.size());
+                }
                 slot.spec_i_batch.clear();
 
                 GGML_ASSERT(accepted.size() >= 1);
