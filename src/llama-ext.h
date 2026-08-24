@@ -137,6 +137,15 @@ LLAMA_API void llama_set_embeddings_layer_inp(struct llama_context * ctx, uint32
 // LLAMA_API float * llama_get_embeddings(struct llama_context * ctx);
 LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid);
 
+// Debug helpers for inspecting the current logical batch output mapping.
+LLAMA_API int32_t llama_get_n_outputs(const struct llama_context * ctx);
+LLAMA_API int64_t llama_get_logits_ith_row(struct llama_context * ctx, int32_t i);
+
+// F-136 probe: FNV-1a hash of the recurrent-state device rows for seq_id, plus cell wiring.
+// Returns 0 if the memory has no recurrent part. Fills tail/src0/pos when pointers non-null.
+LLAMA_API uint64_t llama_rs_state_hash(struct llama_context * ctx, llama_seq_id seq_id,
+                                       int32_t * tail, int32_t * src0, llama_pos * pos);
+
 LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
 
 //

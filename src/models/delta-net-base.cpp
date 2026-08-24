@@ -501,9 +501,39 @@ ggml_tensor * llm_build_delta_net_base::build_conv_state(
 
         const int64_t K = (int64_t) cparams.n_rs_seq + 1;
 
-        for (int64_t t = 1; t <= K; ++t) {
-            const int64_t s_idx  = std::max<int64_t>(0, conv_input->ne[0] - conv_states->ne[0] - K + t);
-            const int64_t s_slot = K - t;
+        // Bank invariant (F-136 root fix): slot s must hold the conv state from s tokens before the
+        // end of the newest ubatch. A ubatch of n tokens can only derive slots 0..n-1 from its own
+        // inputs; the old code clamped s_idx to 0 for the rest, stamping the trailing slots with
+        // WRONG-AGE (too new) states. On the next deep rollback the ring then restored a state whose
+        // age was a lie - the speculative-decoding output divergence on every hybrid model.
+        // Correct content for slot s >= n is the PREVIOUS ubatch's slot (s - n): shift the surviving
+        // banks down by n first (descending, so a source is never read after being overwritten),
+        // then write the n fresh slots from this ubatch's inputs.
+        const int64_t n_tok_conv = conv_input->ne[0] - conv_states->ne[0];
+        // slots 0..n_tok_conv are all derivable from this ubatch (slot n_tok_conv = the pre-ubatch
+        // state, which is conv_input's leading kernel-1 columns); older slots must be shifted
+        const int64_t n_fresh    = std::min<int64_t>(n_tok_conv + 1, K);
+
+        for (int64_t s_slot = K - 1; s_slot >= n_fresh; --s_slot) {
+            const int64_t s_from = s_slot - n_tok_conv;
+
+            ggml_tensor * bank_src =
+                ggml_view_2d(ctx0,
+                        conv_states_all, row_count, n_seqs,
+                        conv_states_all->nb[1],
+                        (s_from * mem_size + kv_head) * row_size);
+
+            ggml_tensor * bank_dst =
+                ggml_view_2d(ctx0,
+                        conv_states_all, row_count, n_seqs,
+                        conv_states_all->nb[1],
+                        (s_slot * mem_size + kv_head) * row_size);
+
+            ggml_build_forward_expand(gf, ggml_cpy(ctx0, bank_src, bank_dst));
+        }
+
+        for (int64_t s_slot = n_fresh - 1; s_slot >= 0; --s_slot) {
+            const int64_t s_idx = n_tok_conv - s_slot;
 
             ggml_tensor * conv_state_last =
                 ggml_view_3d(ctx0, conv_input,
@@ -545,6 +575,15 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
 
     const bool keep = cparams.n_rs_seq > 0;
 
+    {
+        static bool once2 = false;
+        if (!once2 && getenv("LLAMA_GDN_SEQ_VERIFY") != nullptr && n_seq_tokens > 1) {
+            once2 = true;
+            LLAMA_LOG_INFO("GDN recurrent_attn: n_seq_tokens=%lld n_rs_seq=%u keep=%d\n",
+                           (long long) n_seq_tokens, cparams.n_rs_seq, (int) keep);
+        }
+    }
+
     if (!keep) {
         auto attn_out = build_delta_net(q, k, v, g, b, s, il);
         ggml_tensor * output    = attn_out.first;
@@ -562,6 +601,86 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
 
     const int64_t D = S_v * S_v * H_v;
     const int64_t K = cparams.n_rs_seq + 1;
+
+    // F-136 sequential-verify mode: a multi-token ubatch normally runs the CHUNKED variant of the
+    // fused op while plain decode runs the AUTOREGRESSIVE variant. If the two disagree numerically,
+    // speculative verification samples from different logits than plain decode would - which is the
+    // measured defect (position 0 divergence with no rollback involved). This mode runs the verify
+    // ubatch through the AR variant one token at a time with explicit state chaining, making the
+    // speculative path compute exactly what plain decode computes. Each intermediate state is
+    // written to its age-correct bank directly, superseding the op's own snapshot writes.
+    // The AR chain works for ANY ubatch length: K only bounds which bank slots exist, and both
+    // bank-write sites below carry their own s_slot < K guards. Gating on K here silently
+    // disabled the whole mode whenever the ring was small (e.g. --ctx-checkpoints 0 configs).
+    static const bool seq_verify = getenv("LLAMA_GDN_SEQ_VERIFY") != nullptr;
+    {
+        static bool once = false;
+        if (seq_verify && !once && n_seq_tokens > 1) {
+            once = true;
+            LLAMA_LOG_INFO("GDN seq-verify gate: n_seq_tokens=%lld K=%lld -> %s\n",
+                           (long long) n_seq_tokens, (long long) K, (n_seq_tokens <= 16) ? "SEQ PATH" : "chunked");
+        }
+    }
+    if (seq_verify && n_seq_tokens > 1 && n_seq_tokens <= 16) {
+        const size_t row_size_sv = hparams.n_embd_s() * ggml_element_size(ssm_states_all);
+
+        // age-shift the surviving banks FIRST (they are read before the fresh writes land)
+        for (int64_t s_slot = K - 1; s_slot >= n_seq_tokens; --s_slot) {
+            const int64_t s_from = s_slot - n_seq_tokens;
+            if (s_from < 0) {
+                continue;
+            }
+            ggml_tensor * bank_src = ggml_view_2d(ctx0, ssm_states_all,
+                hparams.n_embd_s(), n_seqs, ssm_states_all->nb[1],
+                (size_t) (s_from * mem_size + kv_head) * row_size_sv);
+            ggml_tensor * bank_dst = ggml_view_2d(ctx0, ssm_states_all,
+                hparams.n_embd_s(), n_seqs, ssm_states_all->nb[1],
+                (size_t) (s_slot * mem_size + kv_head) * row_size_sv);
+            ggml_build_forward_expand(gf, ggml_cpy(ctx0, bank_src, bank_dst));
+        }
+
+        ggml_tensor * s_cur  = s;
+        ggml_tensor * output = nullptr;
+
+        for (int64_t t = 0; t < n_seq_tokens; ++t) {
+            auto slice = [&](ggml_tensor * x) {
+                return ggml_view_4d(ctx0, x, x->ne[0], x->ne[1], 1, x->ne[3],
+                                    x->nb[1], x->nb[2], x->nb[3], t * x->nb[2]);
+            };
+            ggml_tensor * r = ggml_gated_delta_net(ctx0,
+                    slice(q), slice(k), slice(v), slice(g), slice(b), s_cur, /*K=*/1);
+            res->add_fused_node({LLM_FUSED_OP_GDN_AR, r, il});
+
+            ggml_tensor * out_t = ggml_view_4d(ctx0, r,
+                S_v, H_v, 1, n_seqs,
+                ggml_row_size(r->type, S_v),
+                ggml_row_size(r->type, S_v * H_v),
+                ggml_row_size(r->type, S_v * H_v),
+                0);
+
+            ggml_tensor * s_new = ggml_view_4d(ctx0, r,
+                S_v, S_v, H_v, n_seqs,
+                ggml_row_size(r->type, S_v),
+                ggml_row_size(r->type, S_v * S_v),
+                ggml_row_size(r->type, S_v * S_v * H_v),
+                ggml_row_size(r->type, S_v * H_v * n_seqs));
+
+            const int64_t s_slot = n_seq_tokens - 1 - t;
+            if (s_slot < (int64_t) K) {
+                ggml_tensor * bank_dst = ggml_view_2d(ctx0, ssm_states_all,
+                    hparams.n_embd_s(), n_seqs, ssm_states_all->nb[1],
+                    (size_t) (s_slot * mem_size + kv_head) * row_size_sv);
+                ggml_build_forward_expand(gf,
+                    ggml_cpy(ctx0, ggml_reshape_2d(ctx0, s_new, hparams.n_embd_s(), n_seqs), bank_dst));
+            }
+
+            output = output ? ggml_concat(ctx0, output, out_t, 2) : out_t;
+            s_cur  = s_new;
+        }
+
+        cb(output, "attn_output", il);
+        return output;
+    }
 
     // state s is 4D [S_v, S_v, H_v, n_seqs]; K snapshot slots are written into the output.
     ggml_tensor * gdn_out = ggml_gated_delta_net(ctx0, q, k, v, g, b, s, K);
@@ -586,6 +705,31 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
 
     // op writes the last min(n_seq_tokens, K) snapshots; trailing slots are left unwritten
     const int64_t n_written = std::min<int64_t>(n_seq_tokens, K);
+
+    // Bank invariant (F-136 root fix): slot s must hold the state from s tokens before the end of
+    // the NEWEST ubatch. The op only produces snapshots for this ubatch's tokens (slots
+    // 0..n_written-1); the old code left the trailing slots holding STALE states from earlier
+    // ubatches, so a rollback deeper than the last ubatch's length restored a state whose age was
+    // a lie - the speculative-decoding output divergence on every hybrid model. Correct content
+    // for slot s >= n_written is the previous ubatch's slot (s - n_seq_tokens): shift the
+    // surviving banks down before the op's fresh writes land (descending order, and these copies
+    // are expanded BEFORE the op's dst copy, so no source row is read after being overwritten).
+    for (int64_t s_slot = K - 1; s_slot >= n_written; --s_slot) {
+        const int64_t s_from = s_slot - n_seq_tokens;
+        if (s_from < 0) {
+            continue; // no state of that age exists yet (start of a sequence)
+        }
+
+        ggml_tensor * bank_src = ggml_view_2d(ctx0, ssm_states_all,
+            hparams.n_embd_s(), n_seqs, ssm_states_all->nb[1],
+            (size_t) (s_from * mem_size + kv_head) * row_size);
+
+        ggml_tensor * bank_dst = ggml_view_2d(ctx0, ssm_states_all,
+            hparams.n_embd_s(), n_seqs, ssm_states_all->nb[1],
+            (size_t) (s_slot * mem_size + kv_head) * row_size);
+
+        ggml_build_forward_expand(gf, ggml_cpy(ctx0, bank_src, bank_dst));
+    }
 
     // write the produced snapshots into the recurrent cache (snapshot slot i -> rollback group i)
     ggml_tensor * src = ggml_view_3d(ctx0, gdn_out,

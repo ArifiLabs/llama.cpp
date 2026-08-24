@@ -405,13 +405,18 @@ struct common_params_speculative {
     }
 
     uint32_t need_n_rs_seq() const {
-        bool needs_rs_seq = std::any_of(types.begin(), types.end(), [&](auto t) {
-            return t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP ||
-                   t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP_ADAPTIVE ||
-                   t == COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3 || t == COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH || t == COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK;
-        });
-
-        return needs_rs_seq ? draft.n_max : 0u;
+        // F-136 ROOT FIX: always 0. Returning draft.n_max here flipped the TARGET's whole recurrent
+        // graph (prefill, plain decode, and verification alike) onto the K>1 snapshot-bank path the
+        // moment an MTP/EAGLE3/DFLASH/DSPARK drafter was attached. Measured on Qwen3.5-4B with NO
+        // drafter and NO speculation, one variable (LLAMA_FORCE_RS_SEQ=7): 1/16 outputs identical
+        // to the K=1 path, five hard repetition loops. The bank machinery corrupts the recurrent
+        // state (wrong-age snapshot writes, and same-buffer bank copies with no dependency edges),
+        // so the target became a DIFFERENT, degraded model whenever a drafter was attached - the
+        // whole F-136 "speculative decoding changes the output" symptom, seeded at prefill.
+        // With n_rs_seq=0 the target computes identically with and without a drafter, and
+        // rejection rollback rides the server's speculative CHECKPOINT path (spec_ckpt
+        // save/restore), whose hybrid recurrent-state serialization is position-exact.
+        return 0u;
     }
 };
 

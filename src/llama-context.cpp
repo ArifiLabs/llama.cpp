@@ -1233,6 +1233,17 @@ float * llama_context::get_logits_ith(int32_t i) {
     }
 }
 
+int64_t llama_context::get_logits_ith_row(int32_t i) {
+    output_reorder();
+
+    try {
+        return output_resolve_row(i);
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: invalid logits id %d, reason: %s\n", __func__, i, err.what());
+        return -1;
+    }
+}
+
 float * llama_context::get_embeddings() {
     output_reorder();
 
@@ -4310,6 +4321,15 @@ float * llama_get_logits_ith(llama_context * ctx, int32_t i) {
     return res;
 }
 
+int32_t llama_get_n_outputs(const llama_context * ctx) {
+    return static_cast<int32_t>(ctx->get_n_outputs());
+}
+
+int64_t llama_get_logits_ith_row(llama_context * ctx, int32_t i) {
+    ctx->synchronize();
+    return ctx->get_logits_ith_row(i);
+}
+
 float * llama_get_embeddings(llama_context * ctx) {
     ctx->synchronize();
 
@@ -4794,4 +4814,24 @@ llama_memory_breakdown llama_get_memory_breakdown(const struct llama_context * c
 
 llama_context * llama_get_ctx_other(struct llama_context * ctx) {
     return ctx->get_cparams().ctx_other;
+}
+
+
+// F-136 probe implementation
+#include "llama-memory-hybrid.h"
+#include "llama-memory-recurrent.h"
+
+uint64_t llama_rs_state_hash(struct llama_context * ctx, llama_seq_id seq_id,
+                             int32_t * tail, int32_t * src0, llama_pos * pos) {
+    llama_memory_recurrent * recr = nullptr;
+    llama_memory_i * mem = llama_get_memory(ctx);
+    if (auto * hyb = dynamic_cast<llama_memory_hybrid *>(mem)) {
+        recr = hyb->get_mem_recr();
+    } else {
+        recr = dynamic_cast<llama_memory_recurrent *>(mem);
+    }
+    if (!recr) {
+        return 0;
+    }
+    return recr->debug_rs_hash(seq_id, tail, src0, pos);
 }
