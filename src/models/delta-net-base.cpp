@@ -476,7 +476,12 @@ ggml_tensor * llm_build_delta_net_base::build_conv_state(
 
     const size_t row_size  = ggml_row_size(conv_states_all->type, row_count);
 
-    if (cparams.n_rs_seq == 0) {
+    // ring-repair bisect gate (2026-08-24): force the single-slot write path even with K>1.
+    // Banks go stale (rollback unusable) but plain-decode output must then equal K=1 -
+    // discriminates bank-write machinery from the rest. Not a shipping mode.
+    static const bool rs_bank_off_conv = getenv("LLAMA_RS_BANK_OFF_CONV") != nullptr;
+
+    if (cparams.n_rs_seq == 0 || rs_bank_off_conv) {
         const int64_t s_idx  = conv_input->ne[0] - conv_states->ne[0];
         const int64_t s_slot = 0;
 
@@ -512,9 +517,61 @@ ggml_tensor * llm_build_delta_net_base::build_conv_state(
         const int64_t n_tok_conv = conv_input->ne[0] - conv_states->ne[0];
         // slots 0..n_tok_conv are all derivable from this ubatch (slot n_tok_conv = the pre-ubatch
         // state, which is conv_input's leading kernel-1 columns); older slots must be shifted
+        // ring-repair sub-bisect gates (2026-08-24): NOSHIFT skips the same-buffer shift copies,
+        // FRESH1 writes only slot 0 of the fresh loop. Diagnostic only.
+        static const bool rs_conv_noshift = getenv("LLAMA_RS_CONV_NOSHIFT") != nullptr;
+        static const bool rs_conv_fresh1  = getenv("LLAMA_RS_CONV_FRESH1") != nullptr;
+
         const int64_t n_fresh    = std::min<int64_t>(n_tok_conv + 1, K);
 
-        for (int64_t s_slot = K - 1; s_slot >= n_fresh; --s_slot) {
+        // ring-repair ROOT FIX (2026-08-24): per-plane ggml_cpy writes into the bank at plane
+        // offsets > 0 corrupt output on Vulkan (KFLIP: every arm that writes plane >= 1 fails,
+        // every arm that writes only plane 0 passes; CPU passes all arms). Compose the full
+        // K-slot bank contiguously in compute space and land it in ONE cpy whose dst view starts
+        // at the same base offset as the always-correct single-slot write.
+        // LLAMA_RS_CONV_MULTIWRITE=1 restores the old per-plane path (diagnostic).
+        static const bool rs_conv_multiwrite = getenv("LLAMA_RS_CONV_MULTIWRITE") != nullptr;
+
+        if (!rs_conv_multiwrite) {
+            ggml_tensor * bank_all = nullptr;   // [row_count, n_seqs, K] slot-major
+            for (int64_t s_slot = 0; s_slot < K; ++s_slot) {
+                ggml_tensor * part;
+                if (s_slot < n_fresh) {
+                    const int64_t s_idx = n_tok_conv - s_slot;
+                    part = ggml_cont(ctx0, ggml_view_3d(ctx0, conv_input,
+                            conv_kernel_size - 1, conv_channels, n_seqs,
+                            conv_input->nb[1], conv_input->nb[2],
+                            ggml_row_size(conv_input->type, s_idx)));
+                    part = ggml_reshape_3d(ctx0, part, row_count, n_seqs, 1);
+                } else {
+                    const int64_t s_from = s_slot - n_tok_conv;
+                    if (s_from < 0) {
+                        // no state of that age exists yet: keep the slot's current content
+                        part = ggml_cont(ctx0, ggml_view_2d(ctx0, conv_states_all,
+                                row_count, n_seqs, conv_states_all->nb[1],
+                                (s_slot * mem_size + kv_head) * row_size));
+                    } else {
+                        part = ggml_cont(ctx0, ggml_view_2d(ctx0, conv_states_all,
+                                row_count, n_seqs, conv_states_all->nb[1],
+                                (s_from * mem_size + kv_head) * row_size));
+                    }
+                    part = ggml_reshape_3d(ctx0, part, row_count, n_seqs, 1);
+                }
+                bank_all = bank_all ? ggml_concat(ctx0, bank_all, part, 2) : part;
+            }
+
+            ggml_tensor * bank_dst_all = ggml_view_3d(ctx0, conv_states_all,
+                    row_count, n_seqs, K,
+                    conv_states_all->nb[1],
+                    (size_t) mem_size * row_size,
+                    (size_t) kv_head * row_size);
+
+            ggml_build_forward_expand(gf, ggml_cpy(ctx0, bank_all, bank_dst_all));
+
+            return conv_input;
+        }
+
+        for (int64_t s_slot = rs_conv_noshift ? -1 : K - 1; s_slot >= n_fresh; --s_slot) {
             const int64_t s_from = s_slot - n_tok_conv;
 
             ggml_tensor * bank_src =
@@ -529,10 +586,23 @@ ggml_tensor * llm_build_delta_net_base::build_conv_state(
                         conv_states_all->nb[1],
                         (s_slot * mem_size + kv_head) * row_size);
 
-            ggml_build_forward_expand(gf, ggml_cpy(ctx0, bank_src, bank_dst));
+            // ring-repair probe: LLAMA_RS_SHIFT_CONT stages the same-buffer shift through a
+            // contiguous temp - discriminates aliased-read vs strided-write corruption on Vulkan.
+            static const bool rs_shift_cont = getenv("LLAMA_RS_SHIFT_CONT") != nullptr;
+            ggml_tensor * shift_src = rs_shift_cont ? ggml_cont(ctx0, bank_src) : bank_src;
+
+            ggml_build_forward_expand(gf, ggml_cpy(ctx0, shift_src, bank_dst));
         }
 
+        // ring-repair cont-staging probe (2026-08-24): the direct non-contiguous-view -> strided
+        // bank cpy corrupts output on Vulkan (KFLIP k8-noshift 1/16 with shifts disabled, K==0
+        // single-slot path clean). Env LLAMA_RS_CONV_DIRECT restores the old direct cpy.
+        static const bool rs_conv_direct = getenv("LLAMA_RS_CONV_DIRECT") != nullptr;
+
         for (int64_t s_slot = n_fresh - 1; s_slot >= 0; --s_slot) {
+            if (rs_conv_fresh1 && s_slot != 0) {
+                continue; // diagnostic: persist only the freshest slot
+            }
             const int64_t s_idx = n_tok_conv - s_slot;
 
             ggml_tensor * conv_state_last =
@@ -547,7 +617,11 @@ ggml_tensor * llm_build_delta_net_base::build_conv_state(
                         conv_states_all->nb[1],
                         (s_slot * mem_size + kv_head) * row_size);
 
-            ggml_build_forward_expand(gf, ggml_cpy(ctx0, conv_state_last, conv_state_update));
+            ggml_tensor * conv_state_src = rs_conv_direct
+                ? conv_state_last
+                : ggml_cont(ctx0, conv_state_last);
+
+            ggml_build_forward_expand(gf, ggml_cpy(ctx0, conv_state_src, conv_state_update));
         }
     }
 
@@ -704,7 +778,10 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
     const size_t row_size = hparams.n_embd_s() * ggml_element_size(ssm_states_all);
 
     // op writes the last min(n_seq_tokens, K) snapshots; trailing slots are left unwritten
-    const int64_t n_written = std::min<int64_t>(n_seq_tokens, K);
+    // ring-repair bisect gate (2026-08-24): persist only slot 0 (the freshest state), skip the
+    // shift copies - banks stale, but plain-decode output must then equal K=1. Not a shipping mode.
+    static const bool rs_bank_off_ssm = getenv("LLAMA_RS_BANK_OFF_SSM") != nullptr;
+    const int64_t n_written = rs_bank_off_ssm ? 1 : std::min<int64_t>(n_seq_tokens, K);
 
     // Bank invariant (F-136 root fix): slot s must hold the state from s tokens before the end of
     // the NEWEST ubatch. The op only produces snapshots for this ubatch's tokens (slots
@@ -714,7 +791,7 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
     // for slot s >= n_written is the previous ubatch's slot (s - n_seq_tokens): shift the
     // surviving banks down before the op's fresh writes land (descending order, and these copies
     // are expanded BEFORE the op's dst copy, so no source row is read after being overwritten).
-    for (int64_t s_slot = K - 1; s_slot >= n_written; --s_slot) {
+    for (int64_t s_slot = rs_bank_off_ssm ? -1 : K - 1; s_slot >= n_written; --s_slot) {
         const int64_t s_from = s_slot - n_seq_tokens;
         if (s_from < 0) {
             continue; // no state of that age exists yet (start of a sequence)

@@ -12840,6 +12840,13 @@ bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, in
         // dequantization or split_k, additional synchronization is needed between those passes.
         bool need_sync = false;
 
+        // GGML_VK_FORCE_SYNC: barrier before every node - bisect switch for hazard-elision bugs
+        // (ring-repair lane 2026-08-24; correctness reference, not a shipping mode)
+        static const bool vk_force_sync = getenv("GGML_VK_FORCE_SYNC") != nullptr;
+        if (vk_force_sync) {
+            need_sync = true;
+        }
+
         // Check whether "node" requires synchronization. The node requires synchronization if it
         // overlaps in memory with another unsynchronized node and at least one of them is a write.
         // Destination nodes are checked against both the written/read lists. Source nodes are only
