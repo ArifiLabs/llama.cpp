@@ -11081,7 +11081,8 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
     const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0);
     const int ith = params->ith;
 
-    float * delta       = (float *)params->wdata + ith * per_thread + CACHE_LINE_SIZE_F32;
+    // per-thread region = per_thread floats + a cache line of padding (sizing in ggml-cpu.c matches)
+    float * delta       = (float *)params->wdata + ith * (per_thread + CACHE_LINE_SIZE_F32);
     float * state_work  = K > 1 ? (delta + S_v) : nullptr;
 
     // output layout: [attn_scores | new_states]
