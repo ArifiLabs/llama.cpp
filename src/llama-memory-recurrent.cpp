@@ -159,6 +159,15 @@ void llama_memory_recurrent::clear(bool data) {
 }
 
 bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
+    {
+        static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
+        if (dbg) {
+            const int32_t tail = (seq_id >= 0 && (size_t) seq_id < cells.size()) ? cells[seq_id].tail : -9;
+            const llama_pos cp = (tail >= 0) ? cells[tail].pos : -9;
+            LLAMA_LOG_INFO("rs-trace seq_rm ENTER seq=%d p0=%d p1=%d tail=%d cellpos=%d n_rs_seq=%u\n",
+                           (int) seq_id, (int) p0, (int) p1, tail, (int) cp, n_rs_seq);
+        }
+    }
     uint32_t new_head = size;
 
     if (p0 < 0) {
@@ -193,12 +202,21 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
             // partial rollback via per-token snapshot index (bounded by n_rs_seq)
             if (0 < p0 && p0 <= cell.pos && p1 > cell.pos) {
                 const llama_pos rollback = cell.pos - (p0 - 1);
+                static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
                 // pending rollback is single-use
                 const bool pending = rs_idx[seq_id] != 0;
                 if (!pending && rollback >= 1 && rollback <= (llama_pos) n_rs_seq) {
+                    if (dbg) {
+                        LLAMA_LOG_INFO("rs-trace seq_rm RING seq=%d p0=%d cellpos=%d rollback=%d n_rs_seq=%u -> bank set\n",
+                                       (int) seq_id, (int) p0, (int) cell.pos, (int) rollback, n_rs_seq);
+                    }
                     set_rs_idx(seq_id, (uint32_t) rollback);
                     cell.pos = p0 - 1;
                     return true;
+                }
+                if (dbg) {
+                    LLAMA_LOG_INFO("rs-trace seq_rm REFUSED seq=%d p0=%d cellpos=%d rollback=%d n_rs_seq=%u\n",
+                                   (int) seq_id, (int) p0, (int) cell.pos, (int) rollback, n_rs_seq);
                 }
                 return false;
             }
@@ -1320,5 +1338,40 @@ int32_t llama_memory_recurrent_context::s_copy(int i) const {
             mem->rs_idx[seq] = 0;
         }
     }
+    static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
+    if (dbg && idx > 0) {
+        LLAMA_LOG_INFO("rs-trace s_copy READ-BANK idx=%u src0=%d -> row %d\n",
+                       idx, src0, (int32_t)(idx * mem->size) + src0);
+    }
     return (int32_t)(idx * mem->size) + src0;
+}
+
+
+uint64_t llama_memory_recurrent::debug_rs_hash(llama_seq_id seq_id, int32_t * tail_out, int32_t * src0_out, llama_pos * pos_out) const {
+    if (seq_id < 0 || (size_t) seq_id >= cells.size()) {
+        return 0;
+    }
+    const int32_t tail = cells[seq_id].tail;
+    if (tail_out) { *tail_out = tail; }
+    if (tail < 0) {
+        return 0;
+    }
+    if (src0_out) { *src0_out = cells[tail].src0; }
+    if (pos_out)  { *pos_out  = cells[tail].pos;  }
+
+    uint64_t h = 1469598103934665603ull;
+    std::vector<uint8_t> buf;
+    for (const auto & lay : { r_l, s_l }) {
+        for (size_t il = 0; il < lay.size(); ++il) {
+            ggml_tensor * t = lay[il];
+            if (!t) { continue; }
+            const size_t row_size = ggml_nbytes(t) / t->ne[1];
+            buf.resize(row_size);
+            ggml_backend_tensor_get(t, buf.data(), (size_t) tail * row_size, row_size);
+            for (uint8_t b : buf) {
+                h = (h ^ b) * 1099511628211ull;
+            }
+        }
+    }
+    return h;
 }
