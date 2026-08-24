@@ -480,6 +480,16 @@ struct server_batch {
     }
 };
 
+// Ring-repair lane 2026-08-24: the speculative checkpoint's host round-trip serialization of
+// recurrent state measured ~1.2 s per draft cycle (timing probe) - the whole drafter slowdown.
+// LLAMA_SPEC_CKPT_ON_DEVICE=1 keeps spec checkpoints in device-side buffers (llama_io_*_device).
+static llama_state_seq_flags spec_ckpt_flags() {
+    static const bool on_device = getenv("LLAMA_SPEC_CKPT_ON_DEVICE") != nullptr;
+    return on_device
+        ? (llama_state_seq_flags) (LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY | LLAMA_STATE_SEQ_FLAGS_ON_DEVICE)
+        : (llama_state_seq_flags) LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY;
+}
+
 struct server_slot {
     int id;
 
@@ -502,6 +512,13 @@ struct server_slot {
     common_prompt_checkpoint spec_ckpt;
     bool spec_is_replay = false;
     std::mt19937 spec_synth_rng;
+
+    // LLAMA_SPEC_CKPT_TIMING: per-slot spec cost accounting (ring-repair lane, 2026-08-24)
+    int64_t spec_t_save_us    = 0;
+    int64_t spec_t_restore_us = 0;
+    int64_t spec_n_saves      = 0;
+    int64_t spec_n_restores   = 0;
+    int64_t spec_n_replay_tok = 0;
 
     // TODO: move members that belong to the task (such as `generated_text`, `has_new_line`) to task_results_state
     //       see https://github.com/ggml-org/llama.cpp/pull/18283#issuecomment-3710175837
@@ -926,6 +943,11 @@ struct server_slot {
             SLT_INF(*this,
                     "draft acceptance = %0.5f (%5d accepted / %5d generated), mean len = %5.2f\n",
                     draft_ratio, n_draft_accepted, n_draft_total, mean_acc_len);
+            SLT_INF(*this,
+                    "spec ckpt cost   = save %lld us/%lld, restore %lld us/%lld, replay %lld tok (of %d accepted)\n",
+                    (long long) spec_t_save_us, (long long) spec_n_saves,
+                    (long long) spec_t_restore_us, (long long) spec_n_restores,
+                    (long long) spec_n_replay_tok, n_draft_accepted);
             SLT_TRC(*this,
                     "     acc per pos = (%s)\n", acceptance_rates_per_pos.c_str());
         }
@@ -3343,7 +3365,7 @@ private:
                                 llama_memory_seq_pos_max(llama_get_memory(ctx_tgt), slot.id));
 
                         if (use_ckpt_dft) {
-                            slot.spec_ckpt.update_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                            slot.spec_ckpt.update_dft(ctx_dft, slot.id, spec_ckpt_flags());
                         }
 
                         slot.spec_prompt = slot.prompt.tokens.get_text_tokens();
@@ -3385,7 +3407,7 @@ private:
 
             if (ctx_dft) {
                 if (use_ckpt_dft) {
-                    ckpt.load_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                    ckpt.load_dft(ctx_dft, slot.id, spec_ckpt_flags());
                 }
 
                 if (!llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, ckpt.pos_max + 1, -1)) {
@@ -3402,9 +3424,12 @@ private:
                    (ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && draft.size() > llama_n_rs_seq(ctx_dft));
 
                 if (use_ckpt_tgt) {
-                    //const int64_t t_start = ggml_time_us();
+                    const int64_t t_start = ggml_time_us();
 
-                    ckpt.update_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                    ckpt.update_tgt(ctx_tgt, slot.id, spec_ckpt_flags());
+
+                    slot.spec_t_save_us += ggml_time_us() - t_start;
+                    slot.spec_n_saves   += 1;
 
                     if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr) {
                         int32_t rs_tail = -2, rs_src0 = -2; llama_pos rs_pos = -2;
@@ -3423,7 +3448,7 @@ private:
                 }
 
                 if (use_ckpt_dft) {
-                    ckpt.update_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                    ckpt.update_dft(ctx_dft, slot.id, spec_ckpt_flags());
                 }
             }
         });
@@ -4334,11 +4359,17 @@ private:
 
                         SLT_DBG(slot, "restoring speculative checkpoint (pos_min = %d, pos_max = %d, size = %zu)\n", ckpt.pos_min, ckpt.pos_max, ckpt.size());
 
-                        ckpt.load_tgt(slot.ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                        const int64_t t_restore_start = ggml_time_us();
+
+                        ckpt.load_tgt(slot.ctx_tgt, slot.id, spec_ckpt_flags());
 
                         if (slot.ctx_dft) {
-                            ckpt.load_dft(slot.ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                            ckpt.load_dft(slot.ctx_dft, slot.id, spec_ckpt_flags());
                         }
+
+                        slot.spec_t_restore_us += ggml_time_us() - t_restore_start;
+                        slot.spec_n_restores   += 1;
+                        slot.spec_n_replay_tok += slot.spec_draft.size();
 
                         slot.mem.seq_rm(slot.id, ckpt.pos_max + 1, -1);
 

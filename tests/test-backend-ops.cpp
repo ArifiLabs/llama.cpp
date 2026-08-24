@@ -3396,6 +3396,7 @@ struct test_cpy : public test_case {
     const std::array<int64_t, 4> permute_src;
     const std::array<int64_t, 4> permute_dst;
     const std::array<int64_t, 4> dst_alloc; // if set, dst is a view into a larger buffer (strided)
+    const int64_t dst_view_offset_rows;     // with dst_alloc: view starts this many rows into dst_buf
     bool _src_use_permute;
     bool _dst_use_permute;
     bool _src_transpose;
@@ -3404,7 +3405,7 @@ struct test_cpy : public test_case {
 
     std::string vars() override {
         if (_use_dst_alloc) {
-            return VARS_TO_STR8(type_src, type_dst, ne_src, ne_dst, permute_src, permute_dst, _src_transpose, dst_alloc);
+            return VARS_TO_STR9(type_src, type_dst, ne_src, ne_dst, permute_src, permute_dst, _src_transpose, dst_alloc, dst_view_offset_rows);
         }
         if (_use_dst_shape) {
             return VARS_TO_STR7(type_src, type_dst, ne_src, ne_dst, permute_src, permute_dst, _src_transpose);
@@ -3454,9 +3455,10 @@ struct test_cpy : public test_case {
             std::array<int64_t, 4> permute_src = {0, 0, 0, 0},
             std::array<int64_t, 4> permute_dst = {0, 0, 0, 0},
             bool transpose_src = false,
-            std::array<int64_t, 4> dst_alloc = {0, 0, 0, 0})
+            std::array<int64_t, 4> dst_alloc = {0, 0, 0, 0},
+            int64_t dst_view_offset_rows = 0)
         : type_src(type_src), type_dst(type_dst), ne_src(ne_src), ne_dst(ne_dst), permute_src(permute_src), permute_dst(permute_dst),
-          dst_alloc(dst_alloc),
+          dst_alloc(dst_alloc), dst_view_offset_rows(dst_view_offset_rows),
           _src_use_permute(permute_src[0] + permute_src[1] + permute_src[2] + permute_src[3] > 0),
           _dst_use_permute(permute_dst[0] + permute_dst[1] + permute_dst[2] + permute_dst[3] > 0),
           _src_transpose(transpose_src),
@@ -3486,7 +3488,8 @@ struct test_cpy : public test_case {
             ggml_tensor * dst_buf = ggml_new_tensor(ctx, type_dst, 4, dst_alloc.data());
             ggml_set_name(dst_buf, "dst_buf");
             dst = ggml_view_4d(ctx, dst_buf, dst_ne[0], dst_ne[1], dst_ne[2], dst_ne[3],
-                dst_buf->nb[1], dst_buf->nb[2], dst_buf->nb[3], 0);
+                dst_buf->nb[1], dst_buf->nb[2], dst_buf->nb[3],
+                dst_view_offset_rows * dst_buf->nb[1]);
             ggml_set_name(dst, "dst_view");
         } else {
             dst = ggml_new_tensor(ctx, type_dst, 4, dst_ne.data());
@@ -9876,6 +9879,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         }
     }
 
+    // ring-repair 2026-08-24: recurrent-bank plane writes - cpy into an OFFSET view of a
+    // larger buffer (conv/ssm snapshot-bank shape). KFLIP showed Vulkan corrupting these
+    // while offset-0 writes are clean; these pin it at op level.
+    for (int64_t off : {1, 3, 7}) {
+        test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_F32, {12288, 1, 1, 1}, {-1,-1,-1,-1},
+            {0,0,0,0}, {0,0,0,0}, false, {12288, 8, 1, 1}, off));
+        test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_F32, {5760, 2, 1, 1}, {-1,-1,-1,-1},
+            {0,0,0,0}, {0,0,0,0}, false, {5760, 16, 1, 1}, off));
+        test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_F32, {12, 3, 1, 1}, {-1,-1,-1,-1},
+            {0,0,0,0}, {0,0,0,0}, false, {12, 24, 1, 1}, off));
+    }
+
     for (ggml_type type_dst : { GGML_TYPE_F32, GGML_TYPE_I32, GGML_TYPE_F16, GGML_TYPE_BF16 }) {
         for (bool use_view_slice : { true, false }) {
             for (std::array<int64_t, 4> ne : std::initializer_list<std::array<int64_t, 4>>{ {2, 1, 1, 1}, {2, 1, 3, 5},
@@ -11519,6 +11534,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     test_cases.emplace_back(new test_cpy(GGML_TYPE_F16, GGML_TYPE_F16, {768*1024, 256, 1, 1}, {-1,-1,-1,-1}, {0, 0, 0, 0}, {0, 0, 0, 0}, true));
     test_cases.emplace_back(new test_cpy(GGML_TYPE_F16, GGML_TYPE_F16, {768, 1024, 256, 1}, {-1,-1,-1,-1}, {0, 0, 0, 0}, {0, 0, 0, 0}, true));
     test_cases.emplace_back(new test_cpy(GGML_TYPE_BF16, GGML_TYPE_BF16, {768, 1024, 256, 1}, {-1,-1,-1,-1}, {0, 0, 0, 0}, {0, 0, 0, 0}, true));
+
+    // ring-repair 2026-08-24: recurrent-bank plane writes - cpy into an OFFSET view of a larger
+    // buffer (the conv/ssm snapshot bank shape: [row, seqs] planes at row offsets). KFLIP showed
+    // Vulkan corrupts these while offset-0 writes are clean; these cases pin it at op level.
+    for (int64_t off : {1, 3, 7}) {
+        test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_F32, {12288, 1, 1, 1}, {-1,-1,-1,-1},
+            {0,0,0,0}, {0,0,0,0}, false, {12288, 8, 1, 1}, off));
+        test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_F32, {5760, 2, 1, 1}, {-1,-1,-1,-1},
+            {0,0,0,0}, {0,0,0,0}, false, {5760, 16, 1, 1}, off));
+        test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_F32, {12, 3, 1, 1}, {-1,-1,-1,-1},
+            {0,0,0,0}, {0,0,0,0}, false, {12, 24, 1, 1}, off));
+    }
 
     test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {4096, 4096, 5, 1}, false, false, GGML_TYPE_F32, {1, 1}, 1.0f, 0.0f));
     test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {12888, 256, 5, 1}, false, false, GGML_TYPE_F32, {1, 1}, 1.0f, 0.0f));
