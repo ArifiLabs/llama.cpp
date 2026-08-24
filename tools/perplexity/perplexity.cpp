@@ -3,6 +3,7 @@
 #include "fit.h"
 #include "log.h"
 #include "llama.h"
+#include "../../src/llama-ext.h" // F-136 capture probe: llama_set_embeddings_nextn
 
 #include <algorithm>
 #include <array>
@@ -2060,6 +2061,16 @@ int llama_perplexity(int argc, char ** argv) {
     if (ctx == nullptr) {
         LOG_ERR("%s: failed to create context\n", __func__);
         return 1;
+    }
+
+    // F-136 REPRODUCER: perplexity is the only tool that decodes large batches with EVERY
+    // position output-enabled - the exact shape of speculative verification, with zero
+    // speculation code. Enabling the nextn capture here isolates captures-at-batch:
+    // a PPL shift vs the same run without this env proves the target graph computes
+    // different logits when the capture output is kept, on plain decode alone.
+    if (getenv("LLAMA_PPL_CAPTURE_PROBE") != nullptr) {
+        llama_set_embeddings_nextn(ctx, true, /*masked*/ false);
+        LOG_INF("%s: CAPTURE PROBE: embeddings_nextn enabled (unmasked) on the perplexity context\n", __func__);
     }
 
     const int n_ctx_train = llama_model_n_ctx_train(model);

@@ -1785,6 +1785,11 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     cparams.n_seq_max         = params.n_parallel;
     cparams.n_outputs_max     = params.n_outputs_max;
     cparams.n_rs_seq          = params.speculative.need_n_rs_seq();
+    // F-136 probe: force the recurrent snapshot ring size regardless of speculative types, so the
+    // K>1 kernel variant can be A/B'd against K=1 with no drafter and no speculation attached.
+    if (const char * frs = getenv("LLAMA_FORCE_RS_SEQ")) {
+        cparams.n_rs_seq = (uint32_t) std::max(0, atoi(frs));
+    }
     cparams.n_outputs_max     = std::max(params.n_outputs_max, 0);
     cparams.n_outputs_max_per_seq = std::max(params.n_outputs_max_per_seq, 0);
     cparams.n_batch           = params.n_batch;

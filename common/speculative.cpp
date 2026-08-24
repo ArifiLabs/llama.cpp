@@ -1163,7 +1163,14 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
         // DFlash1 keeps the masked path and the Laguna causal-noise-block detection (our fork).
         llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ !is_dflash2);
         if (is_dflash2) {
-            llama_set_causal_attn(ctx_dft, false); // DFlash2 needs non-causal attention
+            // F-136 PROBE: the draft context shares the TARGET's memory (llama-context.cpp:430,
+            // mem_other = llama_get_memory(cparams.ctx_other)), and DFlash2 is the only drafter type
+            // that then runs that shared cache non-causally. LLAMA_DFLASH2_FORCE_CAUSAL=1 keeps it
+            // causal. Drafts get worse, but speculative decoding is lossless by construction, so a
+            // byte-identical result under this flag convicts the non-causal mask.
+            const bool force_causal = common_speculative_env_enabled("LLAMA_DFLASH2_FORCE_CAUSAL", false);
+            llama_set_causal_attn(ctx_dft, force_causal);
+            LOG_INF("%s: DFlash2 draft attention: %s\n", __func__, force_causal ? "CAUSAL (probe)" : "non-causal");
         } else {
             // generic DFlash drafts with non-causal block attention; Laguna drafters
             // are trained with a causal noise block

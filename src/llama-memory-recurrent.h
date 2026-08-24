@@ -130,7 +130,12 @@ private:
     size_t size_p_bytes() const;
 
     void state_write_meta(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges, llama_seq_id seq_id = -1) const;
+
     void state_write_data(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges) const;
+
+public:
+    // F-136 probe: hash the device r/s rows of seq_id's tail cell (bank 0) + report wiring
+    uint64_t debug_rs_hash(llama_seq_id seq_id, int32_t * tail_out, int32_t * src0_out, llama_pos * pos_out) const;
 
     bool state_read_meta(llama_io_read_i & io, uint32_t cell_count, llama_seq_id dest_seq_id = -1);
     bool state_read_data(llama_io_read_i & io, uint32_t cell_count);

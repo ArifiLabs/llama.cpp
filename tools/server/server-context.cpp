@@ -12,6 +12,7 @@
 #include "fit.h"
 #include "gguf.h"
 #include "llama.h"
+#include "../../src/llama-ext.h"
 #include "log.h"
 #include "sampling.h"
 #include "speculative.h"
@@ -1391,6 +1392,36 @@ private:
 
         add_bos_token = llama_vocab_get_add_bos(vocab);
 
+        // F-136 ISOLATION PROBE. Every measurement so far confounds two things: DFlash's target
+        // captures being enabled, and speculation actually happening. This turns the captures on
+        // with NO drafter attached, so a plain run can be compared against itself.
+        //   output changes  -> captures alone corrupt the target; speculation is not involved
+        //   output identical -> captures are innocent; the damage is in the drafted batch decode
+        // Mirrors common/speculative.cpp:1115-1121 for the DFlash2 case (nextn tap + layer taps).
+        if (const char * probe = getenv("LLAMA_DFLASH_CAPTURE_PROBE")) {
+            const uint32_t n_layer_tgt = llama_model_n_layer(model_tgt);
+            llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
+            SRV_INF("CAPTURE PROBE: nextn tap enabled on the target (n_layer=%u)\n", n_layer_tgt);
+            // comma-separated layer indices, e.g. LLAMA_DFLASH_CAPTURE_PROBE=15,31,47
+            const std::string spec_layers(probe);
+            size_t pos = 0;
+            while (pos < spec_layers.size()) {
+                const size_t next = spec_layers.find(',', pos);
+                const std::string tok = spec_layers.substr(pos, next == std::string::npos ? std::string::npos : next - pos);
+                if (!tok.empty() && tok.find_first_not_of("0123456789") == std::string::npos) {
+                    const uint32_t il = (uint32_t) std::stoul(tok);
+                    if (il < n_layer_tgt) {
+                        llama_set_embeddings_layer_inp(ctx_tgt, il, true);
+                        SRV_INF("CAPTURE PROBE: layer tap enabled on layer %u\n", il);
+                    }
+                }
+                if (next == std::string::npos) {
+                    break;
+                }
+                pos = next + 1;
+            }
+        }
+
         if (has_spec) {
             // spec_mtp doesn't use load a model internally, so we report 0.0 and 1.0 manually
             load_progress_callback(0.0f, &load_progress_spec);
@@ -1514,6 +1545,13 @@ private:
         ctx_tgt_seq_rm_type = common_context_can_seq_rm(ctx_tgt);
         if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
             SRV_WRN("%s", "speculative decoding not supported by this context\n");
+        }
+
+        if (getenv("LLAMA_GDN_SEQ_VERIFY") != nullptr) {
+            // server-layer banner: lib-level logs are filtered at default verbosity, and a
+            // switchable path must PROVE it is armed (the coopmat arm read "no gain" twice
+            // because nobody noticed it was never compiled in)
+            SRV_INF("%s", "GDN sequential-verify mode ACTIVE (LLAMA_GDN_SEQ_VERIFY)\n");
         }
 
         if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
@@ -3384,6 +3422,13 @@ private:
 
                     ckpt.update_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
 
+                    if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr) {
+                        int32_t rs_tail = -2, rs_src0 = -2; llama_pos rs_pos = -2;
+                        const uint64_t h = llama_rs_state_hash(ctx_tgt, slot.id, &rs_tail, &rs_src0, &rs_pos);
+                        SLT_INF(slot, "rs-probe SAVE   pos_max=%d hash=%016llx tail=%d src0=%d cellpos=%d\n",
+                                ckpt.pos_max, (unsigned long long) h, rs_tail, rs_src0, rs_pos);
+                    }
+
                     //const int64_t t_total = ggml_time_us() - t_start;
                     //printf("checkpoint total: %f ms\n", t_total / 1000.0);
 
@@ -4241,6 +4286,17 @@ private:
                         : common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft));
 
                 if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr && params_base.speculative.draft.dflash) {
+                    std::string logits_rows;
+                    const float * logits_base = llama_get_logits(slot.ctx_tgt);
+                    const int32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(llama_get_model(slot.ctx_tgt)));
+                    for (int i : slot.spec_i_batch) {
+                        const int64_t row = llama_get_logits_ith_row(slot.ctx_tgt, i);
+                        const float * ptr = row < 0 ? nullptr : logits_base + row*n_vocab;
+                        if (!logits_rows.empty()) {
+                            logits_rows += ',';
+                        }
+                        logits_rows += string_format("%d:%" PRId64 ":%p", i, row, (const void *) ptr);
+                    }
                     std::string draft_ids;
                     for (llama_token id : slot.spec_draft) {
                         if (!draft_ids.empty()) {
@@ -4262,6 +4318,8 @@ private:
                         }
                         idxs += std::to_string(i);
                     }
+                    SLT_INF(slot, "dflash-verify logits n_outputs=%d n_vocab=%d base=%p rows=[%s]\n",
+                            llama_get_n_outputs(slot.ctx_tgt), n_vocab, (const void *) logits_base, logits_rows.c_str());
                     SLT_INF(slot, "dflash-verify anchor=%d target sampled=[%s] draft=[%s] i_batch=[%s] accepted=%zu/%zu\n",
                             (int) slot.sampled, target_ids.c_str(), draft_ids.c_str(), idxs.c_str(),
                             accepted.size() - 1, slot.spec_draft.size());
@@ -4299,6 +4357,13 @@ private:
                         }
 
                         slot.mem.seq_rm(slot.id, ckpt.pos_max + 1, -1);
+
+                        if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr) {
+                            int32_t rs_tail = -2, rs_src0 = -2; llama_pos rs_pos = -2;
+                            const uint64_t h = llama_rs_state_hash(slot.ctx_tgt, slot.id, &rs_tail, &rs_src0, &rs_pos);
+                            SLT_INF(slot, "rs-probe RESTORE pos_max=%d hash=%016llx tail=%d src0=%d cellpos=%d\n",
+                                    ckpt.pos_max, (unsigned long long) h, rs_tail, rs_src0, rs_pos);
+                        }
 
                         slot.prompt.tokens.keep_first(ckpt.n_tokens);
                         common_sampler_copy(smpl_save.get(), slot.smpl.get());
