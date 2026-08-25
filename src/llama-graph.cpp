@@ -3749,6 +3749,17 @@ ggml_tensor * llm_graph_context::build_rs(
     ggml_tensor * state_zero = ggml_view_1d(ctx0, states, state_size*(rs_zero >= 0), rs_zero*states->nb[1]*(rs_zero >= 0));
     ggml_build_forward_expand(gf, ggml_scale_inplace(ctx0, state_zero, 0));
 
+    // ring-repair 2026-08-25 ZERO TAP: env-gated copy of the just-zeroed row into a fresh output
+    // tensor, expanded right after the scale. Read host-side post-decode: nonzero tap = the scale
+    // never executed; zero tap + stale gather = the gather ran first or read other memory.
+    static const bool rs_zero_tap = getenv("LLAMA_RS_ZERO_TAP") != nullptr;
+    if (rs_zero_tap && rs_zero >= 0) {
+        ggml_tensor * tap = ggml_cont(ctx0, ggml_view_1d(ctx0, states, state_size, rs_zero*states->nb[1]));
+        ggml_set_output(tap);
+        ggml_format_name(tap, "rs_zero_tap_%s", s->name);
+        ggml_build_forward_expand(gf, tap);
+    }
+
     // copy states
     // NOTE: assuming the copy destinations are ALL contained between rs_head and rs_head + n_rs
     // {state_size, rs_size} -> {state_size, n_seqs}

@@ -2512,6 +2512,39 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
                 LLAMA_LOG_INFO("rs-trace PDH n_tokens=%d plane0=%016llx\n",
                         (int) n_tokens_all, (unsigned long long) mr->debug_hash_row(0, 0));
             }
+            // ring-repair 2026-08-25 ZERO AUDIT: for every SCALE node aliasing a recurrent cache
+            // tensor, check the executed node's data pointer against the cache base. A mismatch =
+            // the allocator rehomed the "inplace" zero into compute memory - the write never
+            // touched the cache, which is exactly the observed no-op.
+            static const bool rs_za = getenv("LLAMA_RS_ZERO_AUDIT") != nullptr;
+            if (rs_za && mr) {
+                ggml_cgraph * gf = gf_res_prev->get_gf();
+                for (int i = 0; i < ggml_graph_n_nodes(gf); ++i) {
+                    ggml_tensor * n = ggml_graph_node(gf, i);
+                    if (strncmp(n->name, "rs_zero_tap_", 12) == 0) {
+                        std::vector<uint8_t> tb(ggml_nbytes(n));
+                        ggml_backend_tensor_get(n, tb.data(), 0, tb.size());
+                        uint64_t h = 1469598103934665603ull;
+                        bool all_zero = true;
+                        for (uint8_t b : tb) { h = (h ^ b) * 1099511628211ull; all_zero &= (b == 0); }
+                        LLAMA_LOG_INFO("rs-trace ZERO-TAP %s all_zero=%d hash=%016llx\n",
+                                n->name, (int) all_zero, (unsigned long long) h);
+                        continue;
+                    }
+                    if (n->op != GGML_OP_SCALE) { continue; }
+                    const ggml_tensor * base = n;
+                    while (base->view_src) { base = base->view_src; }
+                    for (const auto & lay : { mr->r_l, mr->s_l }) {
+                        for (ggml_tensor * ct : lay) {
+                            if (!ct || base != ct) { continue; }
+                            LLAMA_LOG_INFO("rs-trace ZERO-AUDIT node=%s cache=%s node_data=%p cache_data=%p same_buf=%d src_data=%p\n",
+                                    n->name, ct->name, n->data, ct->data,
+                                    (int) (n->buffer == ct->buffer),
+                                    n->src[0] ? n->src[0]->data : nullptr);
+                        }
+                    }
+                }
+            }
         }
     }
 
