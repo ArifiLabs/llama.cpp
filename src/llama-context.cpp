@@ -2495,6 +2495,26 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
         }
     }
 
+    // ring-repair 2026-08-25: per-decode hash of seq 0's tail-cell recurrent rows. Repeat-repro
+    // discriminator: with in-graph zeroing working, identical requests give identical hash
+    // sequences; a diverging FIRST-decode hash pins the leak at the zeroing itself.
+    {
+        static const bool rs_pdh = getenv("LLAMA_RS_POST_DECODE_HASH") != nullptr;
+        if (rs_pdh) {
+            const llama_memory_recurrent * mr = dynamic_cast<const llama_memory_recurrent *>(memory.get());
+            if (!mr) {
+                if (const auto * mh = dynamic_cast<const llama_memory_hybrid *>(memory.get())) {
+                    mr = mh->get_mem_recr();
+                }
+            }
+            if (mr) {
+                synchronize();
+                LLAMA_LOG_INFO("rs-trace PDH n_tokens=%d plane0=%016llx\n",
+                        (int) n_tokens_all, (unsigned long long) mr->debug_hash_row(0, 0));
+            }
+        }
+    }
+
     // wait for the computation to finish (automatically done when obtaining the model output)
     //synchronize();
 

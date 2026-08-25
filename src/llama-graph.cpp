@@ -378,6 +378,13 @@ void llm_graph_input_rs::set_input(const llama_ubatch * ubatch) {
         for (uint32_t i = 0; i < n_rs; ++i) {
             data[i] = mctx->s_copy(i);
         }
+        // ring-repair 2026-08-25: leak hunt - see whether the fresh-seq read row matches the
+        // in-graph zeroed row (rs_z). A mismatch = indexing bug; a match = graph-exec gap.
+        static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
+        if (dbg) {
+            LLAMA_LOG_INFO("rs-trace set_input rs_z=%d head=%u rs_shift=%u s_copy0=%d n_rs=%lld\n",
+                    mctx->get_rs_z(), mctx->get_head(), mctx->get_rs_shift(), data[0], (long long) n_rs);
+        }
     }
 }
 
@@ -1145,6 +1152,13 @@ void llm_graph_input_mem_hybrid::set_input(const llama_ubatch * ubatch) {
         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
         for (uint32_t i = 0; i < n_rs; ++i) {
             data[i] = mctx->get_recr()->s_copy(i);
+        }
+        // ring-repair 2026-08-25: leak hunt (hybrid path) - fresh-seq read row vs zeroed row.
+        static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
+        if (dbg) {
+            LLAMA_LOG_INFO("rs-trace set_input(hybrid) rs_z=%d head=%u rs_shift=%u s_copy0=%d n_rs=%lld\n",
+                    mctx->get_recr()->get_rs_z(), mctx->get_recr()->get_head(),
+                    mctx->get_recr()->get_rs_shift(), data[0], (long long) n_rs);
         }
     }
 }
@@ -3739,6 +3753,12 @@ ggml_tensor * llm_graph_context::build_rs(
     // NOTE: assuming the copy destinations are ALL contained between rs_head and rs_head + n_rs
     // {state_size, rs_size} -> {state_size, n_seqs}
     ggml_tensor * output_states = get_state_rows(ctx0, states, state_copy_main);
+    // ring-repair 2026-08-25 diagnostic: force the GATHERED state to zero whenever a zero row is
+    // armed (fresh-seq graph). Leak persists -> the consumer does not read this gather output.
+    static const bool zero_gather_out = getenv("LLAMA_RS_ZERO_GATHER_OUT") != nullptr;
+    if (zero_gather_out && rs_zero >= 0) {
+        output_states = ggml_scale(ctx0, output_states, 0.0f);
+    }
     ggml_build_forward_expand(gf, output_states);
 
     // copy extra states which won't be changed further (between n_seqs and n_rs)

@@ -161,6 +161,26 @@ void llama_memory_recurrent::clear(bool data) {
     rs_shift_cur = 0;
 }
 
+uint64_t llama_memory_recurrent::debug_hash_row(llama_seq_id seq_id, uint32_t plane) const {
+    const int32_t t0 = (seq_id >= 0 && (size_t) seq_id < cells.size()) ? cells[seq_id].tail : -1;
+    if (t0 < 0) {
+        return 0;
+    }
+    uint64_t h = 1469598103934665603ull;
+    std::vector<uint8_t> buf;
+    for (const auto & lay : { r_l, s_l }) {
+        for (size_t il = 0; il < lay.size(); ++il) {
+            ggml_tensor * t = lay[il];
+            if (!t) { continue; }
+            const size_t row_size = ggml_nbytes(t) / t->ne[1];
+            buf.resize(row_size);
+            ggml_backend_tensor_get(t, buf.data(), ((size_t) plane * size + (size_t) t0) * row_size, row_size);
+            for (uint8_t b : buf) { h = (h ^ b) * 1099511628211ull; }
+        }
+    }
+    return h;
+}
+
 bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
     {
         static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
@@ -221,11 +241,22 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
             // F-136 "seeded at prefill" mechanism). Hard-zero the cleared cell's rows across
             // every plane, host-side, backend-independent. LLAMA_RS_NO_ZERO_ON_CLEAR disables.
             static const bool no_zero = getenv("LLAMA_RS_NO_ZERO_ON_CLEAR") != nullptr;
+            // ring-repair 2026-08-25 discriminator: zero plane 0 only (what the in-graph rs_z
+            // zero claims to cover). Leak persists -> the graph reads deeper planes at request
+            // start; leak gone -> the in-graph zero op itself is ineffective.
+            static const bool plane0_only = getenv("LLAMA_RS_ZERO_PLANE0_ONLY") != nullptr;
+            // second discriminator: restrict the belt to one layer bank. SL_ONLY zeroes only
+            // s_l (ssm states, build_rs-gathered); RL_ONLY only r_l (conv states, direct-read).
+            static const bool sl_only = getenv("LLAMA_RS_ZERO_SL_ONLY") != nullptr;
+            static const bool rl_only = getenv("LLAMA_RS_ZERO_RL_ONLY") != nullptr;
             if (n_rs_seq > 0 && !no_zero) {
                 const int32_t t0 = ((size_t) seq_id < cells.size()) ? cells[seq_id].tail : -1;
                 if (t0 >= 0) {
                     std::vector<uint8_t> zeros;
-                    for (const auto & lay : { r_l, s_l }) {
+                    for (int bank = 0; bank < 2; ++bank) {
+                        const auto & lay = bank == 0 ? r_l : s_l;
+                        if (sl_only && bank == 0) { continue; }
+                        if (rl_only && bank == 1) { continue; }
                         for (size_t il = 0; il < lay.size(); ++il) {
                             ggml_tensor * t = lay[il];
                             if (!t) { continue; }
@@ -233,7 +264,8 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
                             if (zeros.size() < row_size) {
                                 zeros.assign(row_size, 0);
                             }
-                            for (uint32_t plane = 0; plane <= n_rs_seq; ++plane) {
+                            const uint32_t plane_max = plane0_only ? 0 : n_rs_seq;
+                            for (uint32_t plane = 0; plane <= plane_max; ++plane) {
                                 ggml_backend_tensor_set(t, zeros.data(),
                                     ((size_t) plane * size + (size_t) t0) * row_size, row_size);
                             }
