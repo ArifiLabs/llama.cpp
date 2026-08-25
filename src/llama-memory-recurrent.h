@@ -61,6 +61,10 @@ public:
 
     bool get_can_shift() const override;
 
+    // ring-repair 2026-08-25: FNV hash of the seq's tail-cell rows (r_l+s_l) at the given
+    // plane, read host-side off the backend buffer. 0 if no tail. Debug probes only.
+    uint64_t debug_hash_row(llama_seq_id seq_id, uint32_t plane) const;
+
     // state write/load
 
     void state_write(llama_io_write_i & io, llama_seq_id seq_id = -1, llama_state_seq_flags flags = 0) const override;
