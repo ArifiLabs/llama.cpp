@@ -78,6 +78,15 @@ public:
 
     void set_rs_idx(llama_seq_id seq_id, uint32_t idx);
 
+    // DEEP-SLOT AGE FIX (ring-repair 2026-08-24): after a partial rollback of r tokens the
+    // surviving bank slots keep ages relative to the OLD sequence end; the next ubatch's
+    // shift-by-n relabel must become shift-by-(n - r) or deep restores read wrong-age states
+    // (measured: DFlash2 depth 5/7 repetition loops, depth 3 clean). rs_pending accumulates r
+    // per seq at seq_rm; find_slot snapshots it into rs_shift_cur and clears it; the graph
+    // builders subtract it from their shift distance.
+    std::vector<uint32_t> rs_pending;
+    uint32_t rs_shift_cur = 0;
+
     // computed before each graph build
     uint32_t n = 0;
 
@@ -181,6 +190,9 @@ public:
     ggml_tensor * get_p_l(int32_t il) const;
 
     int32_t s_copy(int i) const;
+
+    // consumed rollback distance for the current ubatch (see rs_pending in llama_memory_recurrent)
+    uint32_t get_rs_shift() const;
 
 private:
     const llama_memory_status status;
