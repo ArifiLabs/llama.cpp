@@ -34,6 +34,7 @@ llama_memory_recurrent::llama_memory_recurrent(
 
     this->n_rs_seq = n_rs_seq;
     rs_idx.assign(n_seq_max, 0);
+    rs_pending.assign(n_seq_max, 0);
 
     cells.clear();
     cells.resize(mem_size);
@@ -156,6 +157,8 @@ void llama_memory_recurrent::clear(bool data) {
     }
 
     std::fill(rs_idx.begin(), rs_idx.end(), 0);
+    std::fill(rs_pending.begin(), rs_pending.end(), 0);
+    rs_shift_cur = 0;
 }
 
 bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
@@ -185,7 +188,64 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
 
     const bool rm_all = p0 == 0 && p1 == std::numeric_limits<llama_pos>::max();
     if (rm_all) {
-        set_rs_idx(seq_id, 0);
+        // ring-repair 2026-08-24: with LLAMA_RS_TRACE, hash plane-0 of the cleared seq's cell at
+        // clear time - detects stale state surviving into the next request (cross-request leak).
+        {
+            static const bool dbg2 = getenv("LLAMA_RS_TRACE") != nullptr;
+            const int32_t t0 = (seq_id >= 0 && (size_t) seq_id < cells.size()) ? cells[seq_id].tail : -1;
+            if (dbg2 && t0 >= 0) {
+                uint64_t h = 1469598103934665603ull;
+                std::vector<uint8_t> buf;
+                for (const auto & lay : { r_l, s_l }) {
+                    for (size_t il = 0; il < lay.size(); ++il) {
+                        ggml_tensor * t = lay[il];
+                        if (!t) { continue; }
+                        const size_t row_size = ggml_nbytes(t) / t->ne[1];
+                        buf.resize(row_size);
+                        ggml_backend_tensor_get(t, buf.data(), (size_t) t0 * row_size, row_size);
+                        for (uint8_t b : buf) { h = (h ^ b) * 1099511628211ull; }
+                    }
+                }
+                LLAMA_LOG_INFO("rs-trace CLEAR-HASH cell=%d plane0=%016llx\n", t0, (unsigned long long) h);
+            }
+        }
+        if (seq_id >= 0) {
+            set_rs_idx(seq_id, 0);
+            if ((size_t) seq_id < rs_pending.size()) {
+                rs_pending[seq_id] = 0;
+            }
+            // ring-repair ROOT FIX (2026-08-24): with ring planes allocated (n_rs_seq > 0), the
+            // in-graph rs_z zeroing does not reliably clear state on the Vulkan backend - the
+            // next sequence starts from the PREVIOUS request's recurrent state (measured:
+            // same request 3x returns 3 different outputs, two echoing the prompt; the original
+            // F-136 "seeded at prefill" mechanism). Hard-zero the cleared cell's rows across
+            // every plane, host-side, backend-independent. LLAMA_RS_NO_ZERO_ON_CLEAR disables.
+            static const bool no_zero = getenv("LLAMA_RS_NO_ZERO_ON_CLEAR") != nullptr;
+            if (n_rs_seq > 0 && !no_zero) {
+                const int32_t t0 = ((size_t) seq_id < cells.size()) ? cells[seq_id].tail : -1;
+                if (t0 >= 0) {
+                    std::vector<uint8_t> zeros;
+                    for (const auto & lay : { r_l, s_l }) {
+                        for (size_t il = 0; il < lay.size(); ++il) {
+                            ggml_tensor * t = lay[il];
+                            if (!t) { continue; }
+                            const size_t row_size = ggml_nbytes(t) / t->ne[1];
+                            if (zeros.size() < row_size) {
+                                zeros.assign(row_size, 0);
+                            }
+                            for (uint32_t plane = 0; plane <= n_rs_seq; ++plane) {
+                                ggml_backend_tensor_set(t, zeros.data(),
+                                    ((size_t) plane * size + (size_t) t0) * row_size, row_size);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            std::fill(rs_idx.begin(), rs_idx.end(), 0);
+    std::fill(rs_pending.begin(), rs_pending.end(), 0);
+    rs_shift_cur = 0;
+        }
     }
 
     // models like Mamba or RWKV can't have a state partially erased at the end
@@ -203,14 +263,58 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
             if (0 < p0 && p0 <= cell.pos && p1 > cell.pos) {
                 const llama_pos rollback = cell.pos - (p0 - 1);
                 static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
-                // pending rollback is single-use
-                const bool pending = rs_idx[seq_id] != 0;
-                if (!pending && rollback >= 1 && rollback <= (llama_pos) n_rs_seq) {
+                // DEEP-SLOT AGE FIX: bank ages are relative to the end BEFORE any pending
+                // (not-yet-consumed) rollback, so the plane to restore from is pending + rollback.
+                const uint32_t pending = ((size_t) seq_id < rs_pending.size()) ? rs_pending[seq_id] : 0;
+                if (rollback >= 1 && (uint32_t) rollback + pending <= n_rs_seq) {
                     if (dbg) {
-                        LLAMA_LOG_INFO("rs-trace seq_rm RING seq=%d p0=%d cellpos=%d rollback=%d n_rs_seq=%u -> bank set\n",
-                                       (int) seq_id, (int) p0, (int) cell.pos, (int) rollback, n_rs_seq);
+                        LLAMA_LOG_INFO("rs-trace seq_rm RING seq=%d p0=%d cellpos=%d rollback=%d pending=%u n_rs_seq=%u -> bank set\n",
+                                       (int) seq_id, (int) p0, (int) cell.pos, (int) rollback, pending, n_rs_seq);
                     }
-                    set_rs_idx(seq_id, (uint32_t) rollback);
+                    // ring-repair 2026-08-24: with LLAMA_RS_TRACE, hash the plane about to be
+                    // restored (and plane 0 for contrast) straight off the device - detects
+                    // writes that never landed (all-zero planes) vs corrupted content.
+                    if (dbg) {
+                        auto plane_hash = [&](uint32_t plane) -> uint64_t {
+                            uint64_t h = 1469598103934665603ull;
+                            std::vector<uint8_t> buf;
+                            for (const auto & lay : { r_l, s_l }) {
+                                for (size_t il = 0; il < lay.size(); ++il) {
+                                    ggml_tensor * t = lay[il];
+                                    if (!t) { continue; }
+                                    const size_t row_size = ggml_nbytes(t) / t->ne[1];
+                                    buf.resize(row_size);
+                                    ggml_backend_tensor_get(t, buf.data(),
+                                        ((size_t) plane * size + (size_t) tail_id) * row_size, row_size);
+                                    for (uint8_t b : buf) { h = (h ^ b) * 1099511628211ull; }
+                                }
+                            }
+                            return h;
+                        };
+                        const uint64_t hz = [&]{
+                            uint64_t h = 1469598103934665603ull;
+                            for (const auto & lay : { r_l, s_l }) {
+                                for (size_t il = 0; il < lay.size(); ++il) {
+                                    ggml_tensor * t = lay[il];
+                                    if (!t) { continue; }
+                                    const size_t row_size = ggml_nbytes(t) / t->ne[1];
+                                    for (size_t b = 0; b < row_size; ++b) { h = (h ^ 0u) * 1099511628211ull; }
+                                }
+                            }
+                            return h;
+                        }();
+                        const uint64_t hp = plane_hash((uint32_t) rollback + pending);
+                        const uint64_t h0 = plane_hash(0);
+                        LLAMA_LOG_INFO("rs-trace RESTORE-HASH plane=%u hash=%016llx plane0=%016llx zerohash=%016llx %s\n",
+                                       (unsigned) ((uint32_t) rollback + pending),
+                                       (unsigned long long) hp, (unsigned long long) h0,
+                                       (unsigned long long) hz, hp == hz ? "<< PLANE IS ZEROS" : "");
+                    }
+                    static const bool age_fix = getenv("LLAMA_RS_AGE_FIX") != nullptr;
+                    set_rs_idx(seq_id, (uint32_t) rollback + pending);
+                    if (age_fix) {
+                        rs_pending[seq_id] = pending + (uint32_t) rollback;
+                    }
                     cell.pos = p0 - 1;
                     return true;
                 }
@@ -523,6 +627,28 @@ bool llama_memory_recurrent::prepare(const std::vector<llama_ubatch> & ubatches)
 bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
     const uint32_t n_seq_tokens = ubatch.n_seq_tokens;
     const uint32_t n_seqs       = ubatch.n_seqs;
+
+    // DEEP-SLOT AGE FIX: consume the pending rollback distance for the seqs in this ubatch.
+    // The graph builders subtract it from the bank shift-by-n so surviving slot ages stay true.
+    // Multi-seq ubatches with different pendings are not representable by one shift; take the
+    // value of the first seq and warn on mismatch (estate runs --parallel 1).
+    rs_shift_cur = 0;
+    if (n_rs_seq > 0) {
+        bool first = true;
+        for (uint32_t s = 0; s < n_seqs; ++s) {
+            const llama_seq_id seq_id = ubatch.seq_id[s*n_seq_tokens][0];
+            if (seq_id >= 0 && (size_t) seq_id < rs_pending.size()) {
+                if (first) {
+                    rs_shift_cur = rs_pending[seq_id];
+                    first = false;
+                } else if (rs_pending[seq_id] != rs_shift_cur) {
+                    LLAMA_LOG_WARN("%s: mixed rs_pending across seqs in one ubatch (%u vs %u)\n",
+                                   __func__, rs_pending[seq_id], rs_shift_cur);
+                }
+                rs_pending[seq_id] = 0;
+            }
+        }
+    }
 
     // if we have enough unused cells before the current head ->
     //   better to start searching from the beginning of the cache, hoping to fill it
@@ -889,7 +1015,13 @@ void llama_memory_recurrent::state_read(llama_io_read_i & io, llama_seq_id seq_i
     }
 
     if (n_rs_seq != 0) {
-        set_rs_idx(seq_id, 0);
+        if (seq_id == -1) {
+            std::fill(rs_idx.begin(), rs_idx.end(), 0);
+    std::fill(rs_pending.begin(), rs_pending.end(), 0);
+    rs_shift_cur = 0;
+        } else {
+            set_rs_idx(seq_id, 0);
+        }
     }
 }
 
@@ -1319,6 +1451,10 @@ ggml_tensor * llama_memory_recurrent_context::get_s_l(int32_t il) const {
 
 ggml_tensor * llama_memory_recurrent_context::get_p_l(int32_t il) const {
     return mem->p_l[il];
+}
+
+uint32_t llama_memory_recurrent_context::get_rs_shift() const {
+    return mem ? mem->rs_shift_cur : 0;
 }
 
 int32_t llama_memory_recurrent_context::s_copy(int i) const {
