@@ -281,6 +281,9 @@ public:
     // used in view offsets, need to match for valid graph reuse
     uint32_t head;
     int32_t rs_z;
+    // DEEP-SLOT AGE FIX: bank-shift distance is baked into the graph's cpy topology; a graph
+    // built for one consumed-rollback value must not be reused for another.
+    uint32_t rs_shift = 0;
 };
 
 class llm_graph_input_cross_embd : public llm_graph_input_i {

@@ -523,6 +523,10 @@ ggml_tensor * llm_build_delta_net_base::build_conv_state(
         // banks down by n first (descending, so a source is never read after being overwritten),
         // then write the n fresh slots from this ubatch's inputs.
         const int64_t n_tok_conv = conv_input->ne[0] - conv_states->ne[0];
+        // DEEP-SLOT AGE FIX: surviving slot ages are relative to the pre-rollback end; the
+        // relabel distance is n_tokens minus the consumed rollback (see rs_pending).
+        const int64_t rs_shift_conv = (int64_t) mctx_cur->get_rs_shift();
+        const int64_t eff_shift_conv = n_tok_conv - rs_shift_conv;
         // slots 0..n_tok_conv are all derivable from this ubatch (slot n_tok_conv = the pre-ubatch
         // state, which is conv_input's leading kernel-1 columns); older slots must be shifted
         // ring-repair sub-bisect gates (2026-08-24): NOSHIFT skips the same-buffer shift copies,
@@ -552,8 +556,8 @@ ggml_tensor * llm_build_delta_net_base::build_conv_state(
                             ggml_row_size(conv_input->type, s_idx)));
                     part = ggml_reshape_3d(ctx0, part, row_count, n_seqs, 1);
                 } else {
-                    const int64_t s_from = s_slot - n_tok_conv;
-                    if (s_from < 0) {
+                    const int64_t s_from = s_slot - eff_shift_conv;
+                    if (s_from < 0 || s_from >= K) {
                         // no state of that age exists yet: keep the slot's current content
                         part = ggml_cont(ctx0, ggml_view_2d(ctx0, conv_states_all,
                                 row_count, n_seqs, conv_states_all->nb[1],
@@ -580,7 +584,10 @@ ggml_tensor * llm_build_delta_net_base::build_conv_state(
         }
 
         for (int64_t s_slot = rs_conv_noshift ? -1 : K - 1; s_slot >= n_fresh; --s_slot) {
-            const int64_t s_from = s_slot - n_tok_conv;
+            const int64_t s_from = s_slot - eff_shift_conv;
+            if (s_from < 0 || s_from >= K || eff_shift_conv <= 0) {
+                continue; // no state of that age, or non-positive relabel (handled by one-write path)
+            }
 
             ggml_tensor * bank_src =
                 ggml_view_2d(ctx0,
@@ -707,9 +714,10 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
         const size_t row_size_sv = hparams.n_embd_s() * ggml_element_size(ssm_states_all);
 
         // age-shift the surviving banks FIRST (they are read before the fresh writes land)
+        const int64_t eff_shift_sv = n_seq_tokens - (int64_t) mctx_cur->get_rs_shift();
         for (int64_t s_slot = K - 1; s_slot >= n_seq_tokens; --s_slot) {
-            const int64_t s_from = s_slot - n_seq_tokens;
-            if (s_from < 0) {
+            const int64_t s_from = s_slot - eff_shift_sv;
+            if (s_from < 0 || s_from >= K || eff_shift_sv <= 0) {
                 continue;
             }
             ggml_tensor * bank_src = ggml_view_2d(ctx0, ssm_states_all,
@@ -799,10 +807,11 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
     // for slot s >= n_written is the previous ubatch's slot (s - n_seq_tokens): shift the
     // surviving banks down before the op's fresh writes land (descending order, and these copies
     // are expanded BEFORE the op's dst copy, so no source row is read after being overwritten).
+    const int64_t eff_shift_ssm = n_seq_tokens - (int64_t) mctx_cur->get_rs_shift();
     for (int64_t s_slot = rs_bank_off_ssm ? -1 : K - 1; s_slot >= n_written; --s_slot) {
-        const int64_t s_from = s_slot - n_seq_tokens;
-        if (s_from < 0) {
-            continue; // no state of that age exists yet (start of a sequence)
+        const int64_t s_from = s_slot - eff_shift_ssm;
+        if (s_from < 0 || s_from >= K || eff_shift_ssm <= 0) {
+            continue; // no state of that age (or non-positive relabel; DEEP-SLOT AGE FIX)
         }
 
         ggml_tensor * bank_src = ggml_view_2d(ctx0, ssm_states_all,

@@ -9286,6 +9286,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_get_rows(type, 300*256,   5,         4,   1,   2, false));
         test_cases.emplace_back(new test_get_rows(type,     256,   80000, 70000,   2,   1, false));
         test_cases.emplace_back(new test_get_rows(type,     256,   5,         4, 700, 100, false));
+        // ring-repair 2026-08-24: recurrent-bank restore gathers - HUGE rows (n_embd_s-scale),
+        // few rows, high row index. Vulkan restored garbage state on exactly this shape class.
+        test_cases.emplace_back(new test_get_rows(type,  163840,   6,         1,   1,   1, false));
+        test_cases.emplace_back(new test_get_rows(type,   36864,  12,         2,   1,   1, false));
     }
 
     test_cases.emplace_back(new test_get_rows(GGML_TYPE_F32, 1, 8, 2, 1, 1, false));
