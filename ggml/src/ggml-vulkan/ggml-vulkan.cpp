@@ -18802,7 +18802,14 @@ static void ggml_vk_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * 
         return node->op == GGML_OP_NONE || node->op == GGML_OP_RESHAPE || node->op == GGML_OP_TRANSPOSE || node->op == GGML_OP_VIEW || node->op == GGML_OP_PERMUTE;
     };
 
-    auto const &is_src_of = [&is_empty](const ggml_tensor *dst, const ggml_tensor *src) -> bool {
+    auto const &view_root = [](const ggml_tensor *t) -> const ggml_tensor * {
+        while (t->view_src) {
+            t = t->view_src;
+        }
+        return t;
+    };
+
+    auto const &is_src_of = [&is_empty, &view_root](const ggml_tensor *dst, const ggml_tensor *src) -> bool {
         auto const &base = [](const ggml_tensor * tensor) {
             return tensor->view_src ? tensor->view_src : tensor;
         };
@@ -18822,9 +18829,27 @@ static void ggml_vk_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * 
                 return true;
             }
         }
-        // implicit dependency if they view the same tensor
-        if (base(dst) == base(src)) {
+        // implicit dependency if they view the same tensor (full view chain, not one level -
+        // an inplace op on a view-of-a-view aliases the root tensor)
+        const ggml_tensor *dst2 = view_root(dst);
+        const ggml_tensor *src2 = view_root(src);
+        if (dst2 == src2) {
             return true;
+        }
+        // aliasing through SOURCES (ring-repair 2026-08-25, F-136 residual root):
+        // RAW: dst READS memory that src writes (dst's src views the tensor src aliases).
+        //   e.g. src = SCALE-inplace zeroing a cache row, dst = GET_ROWS whose input is a
+        //   reshape of that cache - reordering the read before the zero resurrects stale
+        //   cross-request recurrent state. Measured: repeat repro diverges/echoes with
+        //   graph_optimize on, byte-identical with it off.
+        // WAR: dst WRITES memory that one of src's sources reads.
+        for (uint32_t s = 0; s < GGML_MAX_SRC; ++s) {
+            if (dst->src[s] && view_root(dst->src[s]) == src2) {
+                return true;
+            }
+            if (src->src[s] && view_root(src->src[s]) == dst2) {
+                return true;
+            }
         }
         return false;
     };
