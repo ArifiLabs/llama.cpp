@@ -405,18 +405,22 @@ struct common_params_speculative {
     }
 
     uint32_t need_n_rs_seq() const {
-        // F-136 ROOT FIX: always 0. Returning draft.n_max here flipped the TARGET's whole recurrent
-        // graph (prefill, plain decode, and verification alike) onto the K>1 snapshot-bank path the
-        // moment an MTP/EAGLE3/DFLASH/DSPARK drafter was attached. Measured on Qwen3.5-4B with NO
-        // drafter and NO speculation, one variable (LLAMA_FORCE_RS_SEQ=7): 1/16 outputs identical
-        // to the K=1 path, five hard repetition loops. The bank machinery corrupts the recurrent
-        // state (wrong-age snapshot writes, and same-buffer bank copies with no dependency edges),
-        // so the target became a DIFFERENT, degraded model whenever a drafter was attached - the
-        // whole F-136 "speculative decoding changes the output" symptom, seeded at prefill.
-        // With n_rs_seq=0 the target computes identically with and without a drafter, and
-        // rejection rollback rides the server's speculative CHECKPOINT path (spec_ckpt
-        // save/restore), whose hybrid recurrent-state serialization is position-exact.
-        return 0u;
+        // F-136 history, two acts (evidence: lane-evidence/2026-08-22-f136-spec-losslessness/ and
+        // .../2026-08-24-ring-repair/):
+        // (1) The REAL corruption was the wrong-age snapshot-bank writes (fixed in delta-net-base,
+        //     rode 08a82030a). CPU KFLIP is byte-identical K=8 vs K=1 after that fix.
+        // (2) The residual Vulkan "divergence" attributed to the ring was proven to be graph-layout
+        //     float-order noise: ONE harmless extra graph node with NO ring and NO drafter flips
+        //     15/16 outputs (k1-dummy probe, 0 degenerate). Byte-identity across DIFFERENT graphs
+        //     is not a valid gate on Vulkan; the ring is not broken by that evidence.
+        // The ring path avoids the per-rejection checkpoint restore + accepted-token replay, so it
+        // is the fast rollback. LLAMA_RING_OFF=1 restores the checkpoint-only mode (n_rs_seq=0),
+        // which pairs with LLAMA_SPEC_CKPT_ON_DEVICE=1 (12 ms saves) as the conservative fallback.
+        static const bool ring_off = getenv("LLAMA_RING_OFF") != nullptr;
+        if (ring_off) {
+            return 0u;
+        }
+        return draft.n_max > 0 ? (uint32_t) draft.n_max : 0u;
     }
 };
 

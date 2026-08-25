@@ -476,6 +476,14 @@ ggml_tensor * llm_build_delta_net_base::build_conv_state(
 
     const size_t row_size  = ggml_row_size(conv_states_all->type, row_count);
 
+    // ring-repair alignment-noise probe (2026-08-24): one harmless extra node (cont of the conv
+    // state, result unused beyond a scratch write) on the PASSING minimal config. If plain-decode
+    // output drifts, the "bank machinery corruption" is really allocator-layout numeric noise.
+    static const bool rs_dummy_node = getenv("LLAMA_RS_DUMMY_NODE") != nullptr;
+    if (rs_dummy_node) {
+        ggml_build_forward_expand(gf, ggml_cont(ctx0, qkv_mixed));
+    }
+
     // ring-repair bisect gate (2026-08-24): force the single-slot write path even with K>1.
     // Banks go stale (rollback unusable) but plain-decode output must then equal K=1 -
     // discriminates bank-write machinery from the rest. Not a shipping mode.
