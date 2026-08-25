@@ -179,7 +179,11 @@ static bool server_preflight_dflash2(common_params & params) {
 
     const int32_t n_draft_max = (int32_t) block_size - 1;
     if (spec.draft.n_max_set && spec.draft.n_max > n_draft_max) {
-        throw std::runtime_error("requested --spec-draft-n-max exceeds the DFlash2 GGUF-declared trained block extent");
+        // ring-repair 2026-08-24: CLAMP to the trained extent instead of aborting the whole
+        // server load - the request is satisfiable at the sidecar's real capability.
+        SRV_WRN("requested --spec-draft-n-max %d exceeds the DFlash2 trained block extent; clamping to %d\n",
+                spec.draft.n_max, n_draft_max);
+        spec.draft.n_max = n_draft_max;
     }
 
     auto & types = spec.types;
