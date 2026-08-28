@@ -15,6 +15,7 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
 | `tq3-MIT.txt` | `git show refs/remotes/tq3/main:LICENSE` (turbo-tan/llama.cpp-tq3) | tq3 MIT — the `TQ3_4S` family at ids 48-51 is ported from this tree. **Retained 2026-08-18 (lane-151); this was the one real gap.** |
 | `prisml-MIT.txt` | `git show refs/remotes/prisml/prism:LICENSE` (PrismML-Eng/llama.cpp) | PrismML MIT. **Retained 2026-08-18 (lane-151) — see the correction below.** |
 | `ciru-MIT.txt` | `git show refs/remotes/ciru/main:LICENSE` (ciru-ai/ROCmFPX) | ciru MIT. Registered source, no code carried yet; retained ahead of any ingest so the notice can never lag the code. |
+| `buun-MIT.txt` | `git show refs/remotes/buun/master:LICENSE` (spiritbuun/buun-llama-cpp) | buun MIT. **Retained 2026-08-27; this was a GAP** — series patch `0394` ingested buun's DFlash2 controller on 2026-08-21 with no notice row, so the notice lagged the code by six days. Byte-identical to the upstream MIT text apart from LF termination. |
 
 `../LICENSE` is also the verbatim copy of upstream llama.cpp’s MIT license.
 

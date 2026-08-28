@@ -2437,18 +2437,30 @@ void common_prompt_checkpoint::load_dft(
         llama_context * ctx,
         llama_seq_id seq_id,
         llama_state_seq_flags flags) const {
+    // ctx == nullptr keeps its pre-existing no-op meaning here; only try_load_dft
+    // treats a missing context as a rejection, for callers that can recover.
     if (ctx == nullptr) {
         return;
     }
 
+    if (!try_load_dft(ctx, seq_id, flags)) {
+        GGML_ABORT("checkpoint size mismatch: expected %zu bytes\n", data_dft.size());
+    }
+}
+
+bool common_prompt_checkpoint::try_load_dft(
+        llama_context * ctx,
+        llama_seq_id seq_id,
+        llama_state_seq_flags flags) const {
     if (data_dft.empty()) {
-        return;
+        return true;
     }
 
-    const size_t n = llama_state_seq_set_data_ext(ctx, data_dft.data(), data_dft.size(), seq_id, flags);
-    if (n != data_dft.size()) {
-        GGML_ABORT("checkpoint size mismatch: expected %zu, got %zu\n", data_dft.size(), n);
+    if (ctx == nullptr) {
+        return false;
     }
+
+    return llama_state_seq_set_data_ext(ctx, data_dft.data(), data_dft.size(), seq_id, flags) == data_dft.size();
 }
 
 void common_prompt_checkpoint::clear_tgt() {

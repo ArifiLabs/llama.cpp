@@ -3410,8 +3410,11 @@ private:
             const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
 
             if (ctx_dft) {
-                if (use_ckpt_dft) {
-                    ckpt.load_dft(ctx_dft, slot.id, spec_ckpt_flags());
+                if (use_ckpt_dft && !ckpt.try_load_dft(ctx_dft, slot.id, spec_ckpt_flags())) {
+                    // An incompatible draft image must not kill the server process: drop the
+                    // drafter sequence and let the next prefill rebuild it. Taken-from buun.
+                    SLT_WRN(slot, "%s", "draft checkpoint image rejected - clearing drafter sequence\n");
+                    llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, -1, -1);
                 }
 
                 if (!llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, ckpt.pos_max + 1, -1)) {
@@ -3729,7 +3732,11 @@ private:
                                     if (!do_reset) {
                                         // restore the context checkpoint
                                         it->load_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-                                        it->load_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                                        if (ctx_dft && !it->try_load_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY)) {
+                                            // reject the draft image instead of aborting the process
+                                            SLT_WRN(slot, "%s", "draft checkpoint image rejected - clearing drafter sequence\n");
+                                            llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, -1, -1);
+                                        }
                                         // restore the draft's speculative state
                                         common_speculative_set_state(spec.get(), slot.id, it->data_spec);
 
@@ -4367,8 +4374,10 @@ private:
 
                         ckpt.load_tgt(slot.ctx_tgt, slot.id, spec_ckpt_flags());
 
-                        if (slot.ctx_dft) {
-                            ckpt.load_dft(slot.ctx_dft, slot.id, spec_ckpt_flags());
+                        if (slot.ctx_dft && !ckpt.try_load_dft(slot.ctx_dft, slot.id, spec_ckpt_flags())) {
+                            // reject the draft image instead of aborting the process
+                            SLT_WRN(slot, "%s", "draft checkpoint image rejected - clearing drafter sequence\n");
+                            llama_memory_seq_rm(llama_get_memory(slot.ctx_dft), slot.id, -1, -1);
                         }
 
                         slot.spec_t_restore_us += ggml_time_us() - t_restore_start;
