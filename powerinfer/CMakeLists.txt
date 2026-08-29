@@ -26,6 +26,13 @@ endif()
 
 add_compile_definitions(POWERINFER_BUILD)
 
+# POWERINFER_API only means dllexport/dllimport when powerinfer really is a DLL.
+# MinGW tolerates dllimport on a static symbol; lld-link/MSVC does not, so the
+# ROCm/clang static build needs the attribute gone on both sides of the header.
+if (BUILD_SHARED_LIBS AND POWERINFER_BUILD_SHARED)
+    add_compile_definitions(POWERINFER_SHARED)
+endif()
+
 # lane-110 Windows port: mingw/GCC emits 32B-aligned vmovdqa ymm spills at frame slots the 16B Windows ABI doesn't 32-align → SIGSEGV in every
 # hand-AVX TU (verified gdb-bt-4/6). Cap vector width to 128b so no aligned ymm spill is emitted.
 add_compile_options(-mprefer-vector-width=128)

@@ -154,6 +154,11 @@ endif()
 add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:${ARCH_FLAGS}>")
 add_compile_options("$<$<COMPILE_LANGUAGE:C>:${ARCH_FLAGS}>")
 
-list(APPEND OTHER_FLAGS -fPIC)
+# -fPIC is a no-op on Windows (all PE code is position-independent) and ROCm's
+# clang rejects it outright for the x86_64-pc-windows-msvc target. MinGW only
+# warns, which is why the Vulkan build never hit this.
+if (NOT WIN32)
+    list(APPEND OTHER_FLAGS -fPIC)
+endif()
 add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:${OTHER_FLAGS}>")
 add_compile_options("$<$<COMPILE_LANGUAGE:C>:${OTHER_FLAGS}>")

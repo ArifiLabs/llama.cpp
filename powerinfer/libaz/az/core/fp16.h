@@ -5,6 +5,7 @@
 #pragma once
 
 #include "az/core/intrinsics.hpp"
+#include "math.h"
 #include "stdint.h"
 
 #if defined(__cplusplus)
@@ -77,7 +78,10 @@ typedef struct az_fp16 az_fp16_t;
 
 #ifdef _MSC_VER
 #define AZ_COMPUTE_FP16_TO_FP32(x) _mm_cvtss_f32(_mm_cvtph_ps(_mm_cvtsi32_si128((x).value)))
-#define AZ_COMPUTE_FP32_TO_FP16(x) ((az_fp16_t){.value = _mm_extract_epi16(_mm_cvtps_ph(_mm_set_ss((x), 0), 0)})
+// Parentheses were misplaced here (_mm_set_ss got the cvtps_ph rounding arg and
+// _mm_extract_epi16 got no index), so this branch never compiled. It is dead on
+// MinGW/GCC; ROCm's clang defines _MSC_VER and takes it. Shape follows ggml-impl.h.
+#define AZ_COMPUTE_FP32_TO_FP16(x) ((az_fp16_t){.value = (uint16_t)_mm_extract_epi16(_mm_cvtps_ph(_mm_set_ss(x), 0), 0)})
 #else
 #define AZ_COMPUTE_FP16_TO_FP32(x) _cvtsh_ss((x).value)
 #define AZ_COMPUTE_FP32_TO_FP16(x) ((az_fp16_t){.value = _cvtss_sh((x), 0)})
