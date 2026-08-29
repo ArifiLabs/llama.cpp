@@ -943,7 +943,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
     bool    is_dflash2     = false;
     bool    is_mrope       = false;
     int32_t selector_top_k = 0;
-    int32_t selector_top_k = 0;
     std::vector<std::mt19937> selector_rng;
     std::vector<bool> selector_reset;
 
