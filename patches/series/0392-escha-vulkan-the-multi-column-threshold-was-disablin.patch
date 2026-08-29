@@ -1,4 +1,4 @@
-From e7d56f9750a925e30a4ecee5fb516181deb539d8 Mon Sep 17 00:00:00 2001
+From fdb215156d276e2a4c57ca3db0a21520fe9bdd2f Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 05:31:49 -0400
 Subject: [PATCH] escha vulkan: the multi-column threshold was disabling
@@ -36,10 +36,10 @@ Origin: ArifiLabs (native)
  1 file changed, 18 insertions(+), 4 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 74545d916..7f6fe6ab2 100644
+index 1f1ff897f..fe8e4102a 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -10386,10 +10386,24 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10464,10 +10464,24 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      constexpr uint32_t ESCHA_MM_COLS = 8;
      static const bool no_multicol = getenv("GGML_VK_ESCHA_NO_MULTICOL") != nullptr;
  

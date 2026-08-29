@@ -1,4 +1,4 @@
-From 55961be817610e40ed483d834e7af2277746346b Mon Sep 17 00:00:00 2001
+From 23af862bb519d5135bf0a9b07b21a55c26bfb11e Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 14:02:11 -0400
 Subject: [PATCH] escha vulkan: f16 activation staging - built, correct, and
@@ -46,10 +46,10 @@ Origin: ArifiLabs (native)
  3 files changed, 98 insertions(+), 13 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index d78bc8c80..297609c84 100644
+index 3a8cc760f..fadd6c590 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -1059,6 +1059,7 @@ struct vk_device_struct {
+@@ -1076,6 +1076,7 @@ struct vk_device_struct {
      vk_pipeline pipeline_escha_mm_mc[2]; // same, multi-column (ESCHA_MM_COLS per workgroup)
      // Column ladder (seat-40), indexed [rung][K]. Rung r serves ESCHA_COL_RUNGS[r] columns.
      vk_pipeline pipeline_escha_mm_col[6][2];
@@ -57,7 +57,7 @@ index d78bc8c80..297609c84 100644
      // KHR cooperative-matrix C=16 arm, f16 operands with an f32 accumulator.
      vk_pipeline pipeline_escha_mm_cm[2];
      vk_pipeline pipeline_escha_mm_lut[2];   // table-generator arm (seat-40)
-@@ -6017,6 +6018,18 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -6080,6 +6081,18 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[4][1], "escha_mm_k3_c32_f32", escha_mm_k3_c32_f32_len, escha_mm_k3_c32_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[5][0], "escha_mm_k2_c64_f32", escha_mm_k2_c64_f32_len, escha_mm_k2_c64_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[5][1], "escha_mm_k3_c64_f32", escha_mm_k3_c64_f32_len, escha_mm_k3_c64_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
@@ -76,7 +76,7 @@ index d78bc8c80..297609c84 100644
  #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
      // Escha's cooperative arm maps one 128-output workgroup to eight 16x16x16
      // subgroup tiles.  It has an explicit 32/64-lane layout, so require the
-@@ -10512,6 +10525,12 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10590,6 +10603,12 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      }
      const bool use_mc = rung >= 0;
  
@@ -89,7 +89,7 @@ index d78bc8c80..297609c84 100644
      // Occupancy arm (seat-40) - REFUTED BY MEASUREMENT, OFF BY DEFAULT.
      // The reasoning was that 128 threads is two waves at warp 64, too few to hide code-fetch
      // latency behind the generator's ALU work, and that 256 threads over two adjacent output
-@@ -10545,14 +10564,15 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10623,14 +10642,15 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      // in lane-164 evidence before changing this default or claiming a speedup.
  #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
      static const bool no_coopmat = getenv("GGML_VK_ESCHA_NO_COOPMAT") != nullptr;
@@ -107,7 +107,7 @@ index d78bc8c80..297609c84 100644
                           : use_b2  ? ctx->device->pipeline_escha_mm_b2[kidx]
                           : use_lut ? ctx->device->pipeline_escha_mm_lut[kidx]
                                     : ctx->device->pipeline_escha_mm[kidx];
-@@ -10580,6 +10600,14 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10658,6 +10678,14 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
          }
      }
  #endif
@@ -286,10 +286,10 @@ index 60389ad37..b76a413da 100644
      }
  }
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index d1d645af4..4ca02e5d4 100644
+index 6e2fbacbb..5ff561ff6 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-@@ -1236,6 +1236,18 @@ void process_shaders() {
+@@ -1238,6 +1238,18 @@ void process_shaders() {
      string_to_spv("escha_mm_k3_c32_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "32"}});
      string_to_spv("escha_mm_k2_c64_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "64"}});
      string_to_spv("escha_mm_k3_c64_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "64"}});

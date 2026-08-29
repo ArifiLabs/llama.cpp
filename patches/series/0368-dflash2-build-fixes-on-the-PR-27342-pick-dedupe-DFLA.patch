@@ -1,4 +1,4 @@
-From 93bfccc4ce5a817fef70f69c39b13a0b191ae32c Mon Sep 17 00:00:00 2001
+From 52ae301910d1c6c275262f6ce5b8e57c02d065fc Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 19 Aug 2026 11:24:11 -0400
 Subject: [PATCH] dflash2: build fixes on the PR #27342 pick - dedupe
@@ -13,10 +13,10 @@ Subject: [PATCH] dflash2: build fixes on the PR #27342 pick - dedupe
  4 files changed, 4 insertions(+), 4 deletions(-)
 
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index 177a6399b..f9a538fc7 100644
+index b01e2eb9c..9e6f9be37 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -341,7 +341,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+@@ -353,7 +353,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
  
      { LLM_KV_TARGET_LAYERS,         "%s.target_layers"        },
      { LLM_KV_TARGET_HIDDEN_SIZE,    "%s.target_hidden_size"   },
@@ -26,10 +26,10 @@ index 177a6399b..f9a538fc7 100644
      { LLM_KV_DFLASH_CONV_GROUP_SIZE,  "%s.conv_group_size"     },
      { LLM_KV_DFLASH_SELECTOR_RANK,    "%s.selector_rank"       },
 diff --git a/src/llama-arch.h b/src/llama-arch.h
-index f6bc20e26..f2d040f63 100644
+index 1565b5aa0..0131ab35c 100644
 --- a/src/llama-arch.h
 +++ b/src/llama-arch.h
-@@ -388,7 +388,7 @@ enum llm_kv {
+@@ -401,7 +401,7 @@ enum llm_kv {
  
      LLM_KV_TARGET_LAYERS,
      LLM_KV_TARGET_HIDDEN_SIZE,
@@ -39,10 +39,10 @@ index f6bc20e26..f2d040f63 100644
      LLM_KV_DFLASH_CONV_GROUP_SIZE,
      LLM_KV_DFLASH_SELECTOR_RANK,
 diff --git a/src/llama-hparams.h b/src/llama-hparams.h
-index 00ac084f3..86571b697 100644
+index 59a81267b..d57f27999 100644
 --- a/src/llama-hparams.h
 +++ b/src/llama-hparams.h
-@@ -223,7 +223,7 @@ struct llama_hparams {
+@@ -226,7 +226,7 @@ struct llama_hparams {
      // output embedding dimension (0 = use n_embd)
      uint32_t n_embd_out_impl = 0;
  
@@ -52,10 +52,10 @@ index 00ac084f3..86571b697 100644
      uint32_t dflash_conv_group_size  = 0;
      uint32_t dflash_selector_rank    = 0;
 diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
-index 2193596d3..c9ee83b52 100644
+index eef6b9d18..bf50b765f 100644
 --- a/src/models/dflash.cpp
 +++ b/src/models/dflash.cpp
-@@ -175,7 +175,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
+@@ -178,7 +178,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
          LLAMA_LOG_INFO("%s: DFlash with DSpark markov head (rank = %lld)\n", __func__, (long long) dspark_markov_rank);
      }
  

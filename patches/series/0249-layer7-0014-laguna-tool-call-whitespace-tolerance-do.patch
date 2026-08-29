@@ -1,4 +1,4 @@
-From 70aa80189b544c0c35440f6c3c803f621cef9f05 Mon Sep 17 00:00:00 2001
+From 886e109ed7451d2d0fdf30f24424665ea9109c55 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 20:52:28 -0400
 Subject: [PATCH] 
@@ -7,16 +7,16 @@ Subject: [PATCH]
 ---
  conversion/__init__.py      |  4 +++
  conversion/laguna.py        | 59 +++++++++++++++++++++++++++++++++++++
- conversion/qwen.py          |  5 ++--
+ conversion/qwen.py          |  3 ++
  docs/speculative.md         | 11 +++++++
  gguf-py/gguf/gguf_writer.py |  3 ++
- 5 files changed, 80 insertions(+), 2 deletions(-)
+ 5 files changed, 80 insertions(+)
 
 diff --git a/conversion/__init__.py b/conversion/__init__.py
-index 8de97e959..5ba1dbaf1 100644
+index a5632fcc4..b27165e7a 100644
 --- a/conversion/__init__.py
 +++ b/conversion/__init__.py
-@@ -60,7 +60,11 @@ TEXT_MODEL_MAP: dict[str, str] = {
+@@ -61,7 +61,11 @@ TEXT_MODEL_MAP: dict[str, str] = {
      "Lfm2DSparkDraftModel": "qwen",
      "LingDSparkModel": "qwen",
      "DeepseekV4ForCausalLM": "deepseek",
@@ -103,16 +103,12 @@ index 29e0b3d6b..88574bc0a 100644
 +
 +        yield from super().modify_tensors(data_torch, name, bid)
 diff --git a/conversion/qwen.py b/conversion/qwen.py
-index cdba8a63e..bbc080cf4 100644
+index 419611896..975f701b6 100644
 --- a/conversion/qwen.py
 +++ b/conversion/qwen.py
-@@ -678,10 +678,11 @@ class DFlashModel(Qwen3Model):
-     def set_gguf_parameters(self):
-         super().set_gguf_parameters()
- 
--        block_size = self.hparams.get("block_size", 16)
--        self.gguf_writer.add_block_size(block_size)
-         dflash_config = self.hparams.get("dflash_config", {})
+@@ -704,6 +704,9 @@ class DFlashModel(Qwen3Model):
+         if embedding_scale is not None:
+             self.gguf_writer.add_embedding_scale(float(embedding_scale))
  
 +        block_size = dflash_config.get("block_size", self.hparams.get("block_size", 16))
 +        self.gguf_writer.add_block_size(block_size)
@@ -121,10 +117,10 @@ index cdba8a63e..bbc080cf4 100644
          if target_layer_ids:
              extract_layer_ids = [i + 1 for i in target_layer_ids]
 diff --git a/docs/speculative.md b/docs/speculative.md
-index d15aa9dc8..6ffef5424 100644
+index 1ad37e7dc..f23d3c512 100644
 --- a/docs/speculative.md
 +++ b/docs/speculative.md
-@@ -375,6 +375,17 @@ Specifies a comma-separated list of speculative decoding types to use.
+@@ -384,6 +384,17 @@ Specifies a comma-separated list of speculative decoding types to use.
  ./llama-server [...] --spec-type ngram-mod,ngram-map-k4v
  ```
  
@@ -143,10 +139,10 @@ index d15aa9dc8..6ffef5424 100644
  
  Sets the size N of the lookup n-gram for n-gram map based speculative decoding.
 diff --git a/gguf-py/gguf/gguf_writer.py b/gguf-py/gguf/gguf_writer.py
-index d8a96a27b..56110652f 100644
+index d95fe9b1a..bb91d557f 100644
 --- a/gguf-py/gguf/gguf_writer.py
 +++ b/gguf-py/gguf/gguf_writer.py
-@@ -1002,6 +1002,9 @@ class GGUFWriter:
+@@ -1022,6 +1022,9 @@ class GGUFWriter:
      def add_target_hidden_size(self, value: int) -> None:
          self.add_uint32(Keys.LLM.TARGET_HIDDEN_SIZE.format(arch=self.arch), value)
  

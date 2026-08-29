@@ -1,4 +1,4 @@
-From 3345c796d6a687df6998af033bfbf8828560bf46 Mon Sep 17 00:00:00 2001
+From 3bd8d79bcec153a06a031e3f8cbd6bcb1f9961eb Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Sun, 16 Aug 2026 17:25:46 -0400
 Subject: [PATCH] merge repairs: seven defect classes, and one the compiler
@@ -71,7 +71,7 @@ index 387a94975..9ee04b88b 100644
  //
  // Super-block quantization structures
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index dd91faf6c..5f922c1e6 100644
+index 26b754093..d477b23a0 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -707,8 +707,6 @@ void ggml_compute_forward_add(
@@ -172,7 +172,7 @@ index c15b6ee2f..f87d7ac9c 100644
  }
 +#endif // !GGML_ARIFI_TURBO_WEIGHT_QUANTS
 diff --git a/include/llama.h b/include/llama.h
-index bcffa2694..e030f9aac 100644
+index 795dc57f8..74203ff22 100644
 --- a/include/llama.h
 +++ b/include/llama.h
 @@ -156,9 +156,6 @@ extern "C" {
@@ -186,10 +186,10 @@ index bcffa2694..e030f9aac 100644
          // its artifacts report the same general.file_type we do. Unconditional enum values;
          // the quantizer wiring behind them compiles only with GGML_ARIFI_TURBO_WEIGHT_QUANTS.
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
-index d540b8c50..811785d5c 100644
+index ac414d699..2569a738f 100644
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
-@@ -976,8 +976,6 @@ llama_model_loader::llama_model_loader(
+@@ -981,8 +981,6 @@ llama_model_loader::llama_model_loader(
              case GGML_TYPE_Q2_0:    ftype = LLAMA_FTYPE_MOSTLY_Q2_0;    break;
              case GGML_TYPE_Q2_0_G128: ftype = LLAMA_FTYPE_MOSTLY_Q2_0;  break;
  #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
@@ -199,10 +199,10 @@ index d540b8c50..811785d5c 100644
  #ifdef GGML_ARIFI_ROCMFPX_FORMATS
              // Taken-from: charlie12345/ROCmFPX@3edc3d31e (src/llama-model-loader.cpp).
 diff --git a/src/llama-quant.cpp b/src/llama-quant.cpp
-index 70d8b6a66..fb79c73ba 100644
+index d43bd48bc..572672f81 100644
 --- a/src/llama-quant.cpp
 +++ b/src/llama-quant.cpp
-@@ -861,8 +861,6 @@ ggml_type llama_ftype_get_default_type(llama_ftype ftype) {
+@@ -879,8 +879,6 @@ ggml_type llama_ftype_get_default_type(llama_ftype ftype) {
          case LLAMA_FTYPE_MOSTLY_Q6_K:    return GGML_TYPE_Q6_K;
          case LLAMA_FTYPE_MOSTLY_TQ1_0:   return GGML_TYPE_TQ1_0;
          case LLAMA_FTYPE_MOSTLY_TQ2_0:   return GGML_TYPE_TQ2_0;

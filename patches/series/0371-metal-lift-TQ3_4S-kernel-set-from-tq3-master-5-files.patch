@@ -1,4 +1,4 @@
-From e1706011f56afc6054002ff1164533300a997df2 Mon Sep 17 00:00:00 2001
+From 24f43e45cdf65dc539e62c55c6dd65e6be71c6d5 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 07:12:25 -0400
 Subject: [PATCH] metal: lift TQ3_4S kernel set from tq3/master (5 files +
@@ -76,7 +76,7 @@ index 9a7c39ca6..58b868f7b 100644
              {
                  GGML_LOG_ERROR("Asserting on type %d\n", (int) tsrc0);
 diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
-index e311ca355..19bfe261d 100644
+index df24f5a75..40cd1d1a8 100644
 --- a/ggml/src/ggml-metal/ggml-metal-impl.h
 +++ b/ggml/src/ggml-metal/ggml-metal-impl.h
 @@ -89,6 +89,9 @@
@@ -89,7 +89,7 @@ index e311ca355..19bfe261d 100644
  #define N_R0_TQ3_1S 8
  #define N_SG_TQ3_1S 2
  
-@@ -1055,6 +1058,18 @@ typedef struct {
+@@ -1056,6 +1059,18 @@ typedef struct {
      uint64_t nb3;
  } ggml_metal_kargs_get_rows;
  
@@ -109,7 +109,7 @@ index e311ca355..19bfe261d 100644
      int32_t  nk0;
      int32_t  ne01;
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 667029eb5..39e8839f7 100644
+index 175d858ed..f1ae97aa3 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 @@ -1225,9 +1225,17 @@ int ggml_metal_op_get_rows(ggml_metal_op_t ctx, int idx) {

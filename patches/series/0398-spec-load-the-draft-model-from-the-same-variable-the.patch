@@ -1,4 +1,4 @@
-From c66454aa4fbc26e702fd851de15f48bb74c157e0 Mon Sep 17 00:00:00 2001
+From 4a75a2484e94470709bc873a014a08e2354da827 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 12:27:17 -0400
 Subject: [PATCH] spec: load the draft model from the same variable the log
@@ -30,7 +30,7 @@ before and after, the corpus is byte-identical: plain 16/16, dflash-n3 4/16, dfl
  2 files changed, 45 insertions(+), 1 deletion(-)
 
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 891a1c143..36fe82678 100644
+index 12241a214..f941f8d28 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
 @@ -24,6 +24,7 @@
@@ -41,7 +41,7 @@ index 891a1c143..36fe82678 100644
  
  #define SPC_DBG(fmt, ...) LOG_DBG("spec %12.*s: " fmt, 12, __func__, __VA_ARGS__)
  #define SPC_TRC(fmt, ...) LOG_TRC("spec %12.*s: " fmt, 12, __func__, __VA_ARGS__)
-@@ -1566,6 +1567,17 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1615,6 +1616,17 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                          dp.dists->clear();
                      }
                  }
@@ -59,7 +59,7 @@ index 891a1c143..36fe82678 100644
                  dflash2_adpt[seq_id].n_draft_last = (int32_t) result.size();
                  if (dflash2_adaptive && result.empty()) {
                      // A target-only sample has no accept() callback. The next draft closes it.
-@@ -3291,7 +3303,7 @@ common_speculative_init_result::common_speculative_init_result(
+@@ -3438,7 +3450,7 @@ common_speculative_init_result::common_speculative_init_result(
          model_path = params.speculative.draft.mparams.path;
          LOG_INF("%s: loading draft model '%s'\n", __func__, model_path.c_str());
  
@@ -69,18 +69,18 @@ index 891a1c143..36fe82678 100644
              LOG_ERR("%s: failed to load draft model, '%s'\n", __func__, model_path.c_str());
              return;
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 2b6aaebb6..d6674c041 100644
+index e91e05be1..561f23d26 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -25,6 +25,7 @@
- #include <exception>
+@@ -26,6 +26,7 @@
  #include <memory>
  #include <filesystem>
+ #include <random>
 +#include <string>
  #include <utility>
  #include <fstream>
  
-@@ -4053,6 +4054,10 @@ private:
+@@ -4142,6 +4143,10 @@ private:
  
              common_sampler_accept(slot.smpl.get(), id, true);
  
@@ -91,10 +91,10 @@ index 2b6aaebb6..d6674c041 100644
              // here we have synchronized the llama_context (due to the sampling above), so we can do time measurement
              const int64_t t_now = ggml_time_us();
  
-@@ -4111,6 +4116,33 @@ private:
-                                 slot.spec_dists.size() == slot.spec_draft.size()
-                     ? common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft, slot.spec_dists)
-                     : common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft);
+@@ -4207,6 +4212,33 @@ private:
+                        slot.spec_dists.size() == slot.spec_draft.size()
+                         ? common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft, slot.spec_dists)
+                         : common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft));
 +
 +                if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr && params_base.speculative.draft.dflash) {
 +                    std::string draft_ids;

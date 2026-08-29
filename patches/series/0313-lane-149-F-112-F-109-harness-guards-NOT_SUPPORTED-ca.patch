@@ -1,4 +1,4 @@
-From 7248dfe7ebe8856c0476c904599cbb471e8a8676 Mon Sep 17 00:00:00 2001
+From ca25c77ebcbbb6ac73ee9b825f108e74d8935d45 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 22:43:39 -0400
 Subject: [PATCH] lane-149 F-112 + F-109 harness guards: NOT_SUPPORTED cases
@@ -10,7 +10,7 @@ Subject: [PATCH] lane-149 F-112 + F-109 harness guards: NOT_SUPPORTED cases
  1 file changed, 99 insertions(+), 1 deletion(-)
 
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 5a604eaca..a9d9122ac 100644
+index cfc1fd404..62435699a 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
 @@ -718,6 +718,12 @@ struct test_summary_info {
@@ -43,7 +43,7 @@ index 5a604eaca..a9d9122ac 100644
          }
      }
  
-@@ -8575,6 +8591,9 @@ static const ggml_type all_types[] = {
+@@ -8580,6 +8596,9 @@ static const ggml_type all_types[] = {
      GGML_TYPE_Q8_0,
      GGML_TYPE_Q1_0,
      GGML_TYPE_Q2_0,
@@ -53,7 +53,7 @@ index 5a604eaca..a9d9122ac 100644
      GGML_TYPE_MXFP4, GGML_TYPE_NVFP4,
      GGML_TYPE_Q2_K, GGML_TYPE_Q3_K,
      GGML_TYPE_Q4_K, GGML_TYPE_Q5_K,
-@@ -8597,6 +8616,61 @@ static const ggml_type all_types[] = {
+@@ -8602,6 +8621,61 @@ static const ggml_type all_types[] = {
      GGML_TYPE_Q6_0_ROCMFPX, GGML_TYPE_Q8_0_ROCMFPX,
  };
  
@@ -115,7 +115,7 @@ index 5a604eaca..a9d9122ac 100644
  static const ggml_type base_types[] = {
      GGML_TYPE_F32, GGML_TYPE_F16,
      GGML_TYPE_Q8_0, // for I8MM tests
-@@ -11254,6 +11328,8 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+@@ -11277,6 +11351,8 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
  
          std::atomic<size_t> n_ok = 0;
          std::atomic<size_t> tests_run = 0;
@@ -124,7 +124,7 @@ index 5a604eaca..a9d9122ac 100644
          std::vector<std::string> failed_tests;
          std::mutex failed_tests_mutex;
  
-@@ -11279,6 +11355,11 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+@@ -11302,6 +11378,11 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
                      auto & test = test_cases[i];
                      test_status_t status = test->eval(b, b_cpu, op_names_filter, output_printer);
                      if (status == test_status_t::SKIPPED || status == test_status_t::NOT_SUPPORTED) {
@@ -136,7 +136,7 @@ index 5a604eaca..a9d9122ac 100644
                          continue;
                      }
                      tests_run++;
-@@ -11332,11 +11413,21 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+@@ -11355,11 +11436,21 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
              }
          }
  
@@ -159,7 +159,7 @@ index 5a604eaca..a9d9122ac 100644
          return n_ok == tests_run && slice_ok;
      }
  
-@@ -11582,6 +11673,13 @@ int main(int argc, char ** argv) {
+@@ -11605,6 +11696,13 @@ int main(int argc, char ** argv) {
      // load and enumerate backends
      ggml_backend_load_all();
  

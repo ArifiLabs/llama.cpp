@@ -1,4 +1,4 @@
-From 8ceac6e1a12475e12d785a144110a14b6a1f2333 Mon Sep 17 00:00:00 2001
+From e96d7484aeae539637d4be1f52669f91f9c3f4db Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 14:28:42 -0400
 Subject: [PATCH] repack: CPU kernels for the 128-group ternary format
@@ -861,7 +861,7 @@ index 5bc48b649..00a7c649e 100644
  void ggml_quantize_mat_q8_0_4x1_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
  void ggml_quantize_mat_q8_K_4x1_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
 diff --git a/src/llama.cpp b/src/llama.cpp
-index cda923a24..8943fc061 100644
+index 0a95f5611..3b7006db7 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
 @@ -338,13 +338,13 @@ static void llama_arifi_vnni_repack_advisory(const llama_model_loader & ml, cons

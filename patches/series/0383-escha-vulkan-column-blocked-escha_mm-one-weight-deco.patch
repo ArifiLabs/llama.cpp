@@ -1,4 +1,4 @@
-From 8fb570d792788c4e2a22d918933a2d1a4b8d41ac Mon Sep 17 00:00:00 2001
+From edd9c152854ae318447215d3bd203c99d48cdc45 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 20:48:45 -0400
 Subject: [PATCH] escha vulkan: column-blocked escha_mm - one weight decode
@@ -33,12 +33,12 @@ Lane: lane-164
  4 files changed, 90 insertions(+), 28 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 031da3a78..a6f65f941 100644
+index 72c10f2d2..a59995a99 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -1055,7 +1055,8 @@ struct vk_device_struct {
-     vk_pipeline pipeline_topk_f32[num_topk_pipelines];
-     vk_pipeline pipeline_sum_rows_f32;
+@@ -1072,7 +1072,8 @@ struct vk_device_struct {
+     vk_pipeline pipeline_cross_entropy_loss_f32, pipeline_cross_entropy_loss_f32_wg512;
+     vk_pipeline pipeline_cross_entropy_loss_back_f32, pipeline_cross_entropy_loss_back_f32_wg512;
      vk_pipeline pipeline_fwht_f32[4];
 -    vk_pipeline pipeline_escha_mm[2]; // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
 +    vk_pipeline pipeline_escha_mm[2];    // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
@@ -46,7 +46,7 @@ index 031da3a78..a6f65f941 100644
      vk_pipeline pipeline_cumsum_f32;
      vk_pipeline pipeline_cumsum_small_f32;
      vk_pipeline pipeline_cumsum_multipass1_f32;
-@@ -5992,6 +5993,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -6055,6 +6056,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      // ArifiLabs Escha-W2 fused linear (lane-164): portable shared-memory shader, fixed 128 threads
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm[0], "escha_mm_k2_f32", escha_mm_k2_f32_len, escha_mm_k2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm[1], "escha_mm_k3_f32", escha_mm_k3_f32_len, escha_mm_k3_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
@@ -55,7 +55,7 @@ index 031da3a78..a6f65f941 100644
  
      const uint32_t cumsum_elem_per_thread = (device->vendor_id == VK_VENDOR_ID_AMD || device->vendor_id == VK_VENDOR_ID_INTEL) ? 2 : 4;
      ggml_vk_create_pipeline(device, device->pipeline_cumsum_f32,       "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 256, device->subgroup_size, cumsum_elem_per_thread }, 1, true, true, device->subgroup_size);
-@@ -10368,7 +10371,17 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10446,7 +10449,17 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      const uint32_t n_out = (uint32_t) src0->ne[1];
      const uint32_t ncols = (uint32_t) (src1->ne[1] * src1->ne[2] * src1->ne[3]);
  
@@ -74,7 +74,7 @@ index 031da3a78..a6f65f941 100644
      GGML_ASSERT(pipeline != nullptr);
  
      ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
-@@ -10398,14 +10411,14 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10476,14 +10489,14 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      // per column, so raise it only from a measured ncols curve (test-backend-ops perf -o ESCHA_MM).
      constexpr uint32_t COLS_PER_DISPATCH = 32;
  
@@ -247,10 +247,10 @@ index 44f1a2e8a..c70661caf 100644
 +    }
  }
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index ce6bf19b1..7e5415a89 100644
+index 709c4257f..e39b1a119 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-@@ -1207,8 +1207,13 @@ void process_shaders() {
+@@ -1209,8 +1209,13 @@ void process_shaders() {
      string_to_spv("fwht_shmem_f32", "fwht.comp", {{"FWHT_SHMEM", "1"}});
  
      // ArifiLabs Escha-W2 fused linear (lane-164)
@@ -265,10 +265,10 @@ index ce6bf19b1..7e5415a89 100644
      string_to_spv("cumsum_f32", "cumsum.comp", merge_maps(base_dict, {{"A_TYPE", "float"}, {"D_TYPE", "float"}}));
      string_to_spv("cumsum_multipass1_f32", "cumsum_multipass1.comp", merge_maps(base_dict, {{"A_TYPE", "float"}, {"D_TYPE", "float"}}));
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 33b48bbdb..28a33b574 100644
+index 656960b74..9881ef5d2 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -10818,10 +10818,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+@@ -10835,10 +10835,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
      std::vector<std::unique_ptr<test_case>> test_cases;
  
      // ArifiLabs Escha-W2 fused linear (lane-164): real 27B projection shapes across the
