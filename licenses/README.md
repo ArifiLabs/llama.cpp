@@ -15,9 +15,17 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
 | `tq3-MIT.txt` | `git show refs/remotes/tq3/main:LICENSE` (turbo-tan/llama.cpp-tq3) | tq3 MIT — the `TQ3_4S` family at ids 48-51 is ported from this tree. **Retained 2026-08-18 (lane-151); this was the one real gap.** |
 | `prisml-MIT.txt` | `git show refs/remotes/prisml/prism:LICENSE` (PrismML-Eng/llama.cpp) | PrismML MIT. **Retained 2026-08-18 (lane-151) — see the correction below.** |
 | `ciru-MIT.txt` | `git show refs/remotes/ciru/main:LICENSE` (ciru-ai/ROCmFPX) | ciru MIT. Registered source, no code carried yet; retained ahead of any ingest so the notice can never lag the code. |
+| `thecodacus-MIT.txt` | `https://github.com/thecodacus/llama.cpp` `LICENSE` at its public head — no remote is configured here, and none is needed (see the correction below) | thecodacus MIT. **Retained 2026-08-18 on the President's correction, in `19fd8719b`. Row added 2026-08-29 (gap G10)** — its provenance-of-copy had been recorded only in the prose below, never in this table. |
+| `zuijdwijk-MIT.txt` | `git show refs/remotes/zuijdwijk/master:LICENSE` (LaurentZuijdwijk/llama.cpp) | zuijdwijk MIT (llama.cpp lineage, "The ggml authors"). **Retained 2026-08-29 (gap G11)** — the remote was configured and fetched but registered nowhere. Registered source, **no code known to be carried**; retained ahead of any ingest on the `ciru` precedent so the notice can never lag the code. See the residual hole named below. |
 | `buun-MIT.txt` | `git show refs/remotes/buun/master:LICENSE` (spiritbuun/buun-llama-cpp) | buun MIT. **Retained 2026-08-27; this was a GAP** — series patch `0394` ingested buun's DFlash2 controller on 2026-08-21 with no notice row, so the notice lagged the code by six days. Byte-identical to the upstream MIT text apart from LF termination. |
 
 `../LICENSE` is also the verbatim copy of upstream llama.cpp’s MIT license.
+
+### Inherited from upstream, not retained by this fork
+
+| File | Origin | Disposition |
+|---|---|---|
+| `LICENSE-jsonhpp` | **upstream llama.cpp's own file**, present at `licenses/LICENSE-jsonhpp` on `upstream/master`; it arrived with the tree in `bd3f59f81` (`cmake : enable curl by default (#12761)`) | nlohmann/json MIT (Niels Lohmann), covering upstream's vendored `vendor/nlohmann/json.hpp` + `json_fwd.hpp`. **Not a fork retention** — no fork commit copied it and no fork take depends on it. Row added 2026-08-29 (gap G9), which flagged it as a retained notice with no row; the correction is that it is inherited, not retained, and the two tables above are for fork retentions only. |
 
 The three files added on 2026-08-18 are extracted with `git show` from the fetched remotes of this
 very repository, so their provenance is a ref, not a local checkout. They are 1078 bytes against the
@@ -29,7 +37,7 @@ means verbatim, so they are not re-normalized.
 Derived from the distinct `Taken-from:` values across every fork commit on `arifi/main`, then widened
 by hand. **The widening is not cosmetic and is stated so the table is not read as a purely mechanical
 derivation:** two rows below are NOT in git's parsed trailer set. `turbo-tan/llama.cpp-tq3` appears in
-commit `01b3065fe`'s *subject* as "Taken-from turbo-tan/llama.cpp-tq3@58ad80ffb" — no colon, so git
+commit `4c620f3d1`'s *subject* as "Taken-from turbo-tan/llama.cpp-tq3@58ad80ffb" — no colon, so git
 does not parse it as a trailer, and a tool that trusted the trailer block alone would have missed the
 one source with a real license GAP. `turboquant_plus` appears in no trailer at all; its notice is
 retained anyway because its Apache-2.0 NOTICE requires it. A trailer sweep is a starting point, not
@@ -45,7 +53,7 @@ the audit.
 | `PrismML-Eng/llama.cpp` | **yes — `prisml-MIT.txt`** | **CLOSED 2026-08-18.** See the correction below: the "Phase 0 observed no LICENSE" finding was about the retained *release material*, and it was carried forward for a year as though it were a fact about the project. `refs/remotes/prisml/prism:LICENSE` exists and is MIT. |
 | `turbo-tan/llama.cpp-tq3` | **yes — `tq3-MIT.txt`** | **CLOSED 2026-08-18.** Code IS ported (`58ad80ffb`, the `TQ3_4S` family at ids 48-51), and the license is now retained from `refs/remotes/tq3/main:LICENSE`. |
 | `ciru-ai/ROCmFPX` | **yes — `ciru-MIT.txt`** | registered source, no code carried yet; the notice is retained ahead of any ingest so it can never lag the code. |
-| `thecodacus/llama.cpp` | **yes — `thecodacus-MIT.txt`** | **CLOSED 2026-08-18** (President's correction, retained in `d40e42fae`; row landed lane-152). The last open attribution. The old text of this row is preserved in the correction below because the error in it is instructive. |
+| `thecodacus/llama.cpp` | **yes — `thecodacus-MIT.txt`** | **CLOSED 2026-08-18** (President's correction, retained in `19fd8719b`; row landed lane-152). The last open attribution. The old text of this row is preserved in the correction below because the error in it is instructive. |
 
 ### Correction, 2026-08-18 (lane-151): a false absence that stood for months
 
@@ -69,7 +77,11 @@ fetched head; `tqplus` also carries a `NOTICE`. Every one is now retained.
 observed no source `LICENSE` or `NOTICE` file in the retained PrismML release material, and no license
 grant inside the captured thecodacus patch artifacts. The PrismML half is now closed: `prisml-MIT.txt`
 is retained from `refs/remotes/prisml/prism:LICENSE`, and the correction above explains why the
-original finding was true of the material examined and false of the project. The thecodacus half
+original finding was true of the material examined and false of the project. (Both shas in this file
+were re-keyed 2026-08-29 after the b10524→b10636→b10680 base moves rewrote every fork sha: the tq3
+take was `01b3065fe`, the thecodacus retention `d40e42fae`. Neither pre-rebase object is on any
+branch — a reader who cloned the published fork could not have verified either claim. Gap G5.)
+The thecodacus half
 **FELL THE SAME DAY, to the same mistake one level out.** Its old text read: *"there is no
 `thecodacus` remote on this repository — the three prefetch patches were captured as patch artifacts,
 and those artifacts carry no license grant. There is nothing to `git show`. Documented, not
@@ -83,3 +95,18 @@ plus thecodacus are now closed; this directory still contains no fabricated lice
 A 2026-07-22 project decision authorizes their inclusion with maximal attribution and provenance; it
 does not authorize inventing a license text. Therefore this directory still contains no fabricated
 `thecodacus-*` license file, and never will.
+
+### Residual hole, named 2026-08-29 (gap G11) — `zuijdwijk`
+
+`zuijdwijk` (`LaurentZuijdwijk/llama.cpp`) was a configured, fetched remote that appeared in **no**
+governed artifact: not `sources.json`, not this file, not any `Taken-from:` value. It is now
+registered and its MIT notice retained. **Retaining the notice closes the notice obligation; it does
+not close the unknown-take question.** The remote carries `vulkan/strix-halo-port-2`,
+`vulkan/qwen4exp-rocmfpx` and `vulkan/iq3s-mmv-register-spill` — branches on *exactly* this rig's
+work area — and the audit's own coverage note says a subject-level or untrailered take would not be
+caught by a `Taken-from` sweep, while D7 proves untrailered takes exist on this branch. **No content
+diff of `zuijdwijk` against this tree has been run.** That diff is OWED before publication.
+
+`turbomerge` was the other unregistered remote and is a different thing entirely: it is a local path
+inside our own `src/`, authored by this estate (`hq`, `m`), a fork-owned merge workspace. It is
+registered in `sources.json` as a workspace and needs **no** third-party notice.
