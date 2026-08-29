@@ -297,8 +297,26 @@ def blck_sizes(enum):
     return out
 
 # ============================================================== 2. FA_TYPE ids
+# b10680 moved the `#define FA_TYPE_*` block out of flash_attn_base.glsl into the new shared header
+# fa_types.glsl (upstream extraction; lightning_indexer.comp includes it too). Reading only the old
+# file silently found ZERO ids and turned checks 2 and 5 into no-ops, which is the exact failure
+# class F-110 exists to catch. Read every file that can legally hold the block.
+FA_TYPE_SOURCES = ("fa_types.glsl", "flash_attn_base.glsl")
+
+
+def read_fa_type_defs():
+    out = []
+    for name in FA_TYPE_SOURCES:
+        path = os.path.join(SH, name)
+        if os.path.exists(path):
+            out.append(read(path))
+    if not out:
+        fail("none of %s exists — checks 2 and 5 cannot fire" % (FA_TYPE_SOURCES,))
+    return "\n".join(out)
+
+
 def check_fa_type_ids(enum):
-    text = read(os.path.join(SH, "flash_attn_base.glsl"))
+    text = read_fa_type_defs()
     n = 0
     # accept every legal spelling: `201u`, `201U`, `201`, `0xC9`, plus a trailing comment. The
     # first version demanded a lowercase `u` and a `44U` plant sailed through (checker, f.1).
@@ -478,8 +496,7 @@ def check_fa_kv_coverage():
         fail("fa_kv_ok lambda not found in ggml-vulkan.cpp (renamed?) — check 5 cannot fire")
         return 0
     host = {mm.group(1) for mm in re.finditer(r"case\s+GGML_TYPE_([A-Z0-9_]+)\s*:", m.group(1))}
-    glsl = set(re.findall(r"^#define\s+FA_TYPE_([A-Z0-9_]+)\s",
-                          read(os.path.join(SH, "flash_attn_base.glsl")), re.M))
+    glsl = set(re.findall(r"^#define\s+FA_TYPE_([A-Z0-9_]+)\s", read_fa_type_defs(), re.M))
     for t in sorted(host - glsl):
         fail("host admits GGML_TYPE_%s as a flash-attention K/V type but the shaders have no "
              "FA_TYPE_%s — both FA switches fall through and V dequantises to vec4(0)." % (t, t))
