@@ -6,7 +6,9 @@
 #include <filesystem>
 #include <fstream>
 #include <thread>  // lane-110 Windows port: hardware_concurrency
-#include <unistd.h>
+#if !defined(_WIN32) || defined(__MINGW32__)
+#include <unistd.h>  // MSVC-targeting toolchains (ROCm clang) have no unistd.h
+#endif
 
 namespace az {
 
