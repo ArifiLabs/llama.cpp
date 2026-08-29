@@ -1,4 +1,4 @@
-From 9887baae3e7d226ec71b0429d2700a7ce42acc2b Mon Sep 17 00:00:00 2001
+From 6e10fc420cbb090627dfd95758efd0d47cd5ac16 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:29:24 -0400
 Subject: [PATCH] resolved/0039-model-Muse-Glimmer-Support-26841.patch
@@ -11,27 +11,27 @@ Subject: [PATCH] resolved/0039-model-Muse-Glimmer-Support-26841.patch
  4 files changed, 67 insertions(+), 43 deletions(-)
 
 diff --git a/common/chat.cpp b/common/chat.cpp
-index a1b6a9c9e..eaaaaed6b 100644
+index 1a134f553..306a28679 100644
 --- a/common/chat.cpp
 +++ b/common/chat.cpp
-@@ -1215,7 +1215,6 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+@@ -1217,7 +1217,6 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
          data.prompt += data.generation_prompt;
      }
  
 -<<<<<<< ours
      std::vector<std::string> tool_call_starts = { "<tool_call>" };
  
-     // Match complete <function=name> opener for Qwen3-Coder models that occasionally omit the
-@@ -1226,8 +1225,6 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
-         tool_call_starts.push_back("<function=" + name + ">");
-     });
+     if (is_qwen3_coder) {
+@@ -1230,8 +1229,6 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+         });
+     }
  
 -=======
 ->>>>>>> theirs
      auto parser = build_chat_peg_parser([&](common_chat_peg_builder & p) {
          auto generation_prompt = p.literal(GEN_PREFIX);
  
-@@ -1300,11 +1297,7 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+@@ -1307,11 +1304,7 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
              auto tool_calls = p.trigger_rule("tool-call-root", p.repeat(calls, min_calls, 1));
  
              return generation_prompt +
@@ -43,7 +43,7 @@ index a1b6a9c9e..eaaaaed6b 100644
          }
  
          // Content only parser
-@@ -1330,18 +1323,9 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+@@ -1337,18 +1330,9 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
          });
  
          if (data.grammar_lazy) {
@@ -62,7 +62,7 @@ index a1b6a9c9e..eaaaaed6b 100644
          }
      }
  
-@@ -2330,23 +2314,10 @@ static common_chat_params common_chat_params_init_deepseek_v3_2(const common_cha
+@@ -2337,23 +2321,10 @@ static common_chat_params common_chat_params_init_deepseek_v3_2(const common_cha
          }
  
          if (extract_reasoning && inputs.enable_thinking) {
@@ -86,7 +86,7 @@ index a1b6a9c9e..eaaaaed6b 100644
              allow_reasoning_with_tc = true;
          } else if (extract_reasoning) {
              // Thinking disabled but reasoning extraction requested: the generation prompt
-@@ -3408,12 +3379,8 @@ static common_chat_params common_chat_params_init_muse_glimmer(const common_chat
+@@ -3415,12 +3386,8 @@ static common_chat_params common_chat_params_init_muse_glimmer(const common_chat
          auto analysis = p.ref("analysis");
  
          auto recipient  = p.optional(p.literal(" to=user"));
@@ -99,7 +99,7 @@ index a1b6a9c9e..eaaaaed6b 100644
  
          if (has_tools && inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_NONE) {
              auto string_value = p.ac(
-@@ -3469,12 +3436,8 @@ static common_chat_params common_chat_params_init_muse_glimmer(const common_chat
+@@ -3476,12 +3443,8 @@ static common_chat_params common_chat_params_init_muse_glimmer(const common_chat
              if (inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED) {
                  return p.zero_or_more(start + analysis) + start + tool_calls;
              }
@@ -113,10 +113,10 @@ index a1b6a9c9e..eaaaaed6b 100644
  
          return p.zero_or_more(start + analysis) + start + final_msg;
 diff --git a/tools/mtmd/clip-impl.h b/tools/mtmd/clip-impl.h
-index 036468699..ea8549776 100644
+index eef76d756..f6045093c 100644
 --- a/tools/mtmd/clip-impl.h
 +++ b/tools/mtmd/clip-impl.h
-@@ -488,13 +488,10 @@ enum projector_type {
+@@ -495,13 +495,10 @@ enum projector_type {
      PROJECTOR_TYPE_MINIMAX_M3,
      PROJECTOR_TYPE_GRANITE4_VISION,
      PROJECTOR_TYPE_MIMO_AUDIO,
@@ -130,7 +130,7 @@ index 036468699..ea8549776 100644
      PROJECTOR_TYPE_MUSE_GLIMMER,
      PROJECTOR_TYPE_UNKNOWN,
  };
-@@ -553,13 +550,10 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
+@@ -562,13 +559,10 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
      { PROJECTOR_TYPE_GRANITE4_VISION,   "granite4_vision"},
      { PROJECTOR_TYPE_MIMO_AUDIO,        "mimo_audio"},
      { PROJECTOR_TYPE_PARAKEET,          "parakeet"},
@@ -145,10 +145,10 @@ index 036468699..ea8549776 100644
  };
  
 diff --git a/tools/mtmd/models/models.h b/tools/mtmd/models/models.h
-index 27a36d28e..6c0101180 100644
+index 61df3b0ee..f8006d775 100644
 --- a/tools/mtmd/models/models.h
 +++ b/tools/mtmd/models/models.h
-@@ -434,3 +434,8 @@ struct clip_graph_muse_glimmer : clip_graph {
+@@ -439,3 +439,8 @@ struct clip_graph_muse_glimmer : clip_graph {
      clip_graph_muse_glimmer(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
      ggml_cgraph * build() override;
  };
@@ -158,10 +158,10 @@ index 27a36d28e..6c0101180 100644
 +    ggml_cgraph * build() override;
 +};
 diff --git a/tools/mtmd/mtmd-image.cpp b/tools/mtmd/mtmd-image.cpp
-index 57fc979ee..86eb4211e 100644
+index 30905fcec..c687ede07 100644
 --- a/tools/mtmd/mtmd-image.cpp
 +++ b/tools/mtmd/mtmd-image.cpp
-@@ -1807,3 +1807,65 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
+@@ -1645,3 +1645,65 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
      output.append(hparams, resized_image, true);
      return output;
  }

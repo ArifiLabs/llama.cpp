@@ -1,4 +1,4 @@
-From 89cc94baccdb1ec70d67efa1bf9dea09b14d6ac2 Mon Sep 17 00:00:00 2001
+From ddde547df7467d85060eed1a6e137dd7d41a4fad Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Sat, 25 Jul 2026 05:00:41 -0400
 Subject: [PATCH] feat: --arifi-profile and a CPU-only VNNI-repack startup
@@ -63,7 +63,7 @@ Measured-effect: FUNCTIONAL, NOT TIMED - no throughput number was produced or cl
  create mode 100644 common/arifi-profile.h
 
 diff --git a/common/CMakeLists.txt b/common/CMakeLists.txt
-index 54691da3f..2afea320a 100644
+index 36f1e0cd5..364867f32 100644
 --- a/common/CMakeLists.txt
 +++ b/common/CMakeLists.txt
 @@ -56,6 +56,8 @@ set(TARGET llama-common)
@@ -76,7 +76,7 @@ index 54691da3f..2afea320a 100644
      chat-auto-parser-generator.cpp
      chat-auto-parser-helpers.cpp
 diff --git a/common/arg.cpp b/common/arg.cpp
-index 6f5fe377d..e58230924 100644
+index 86f8610a5..6cf643991 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
 @@ -1,5 +1,6 @@
@@ -86,7 +86,7 @@ index 6f5fe377d..e58230924 100644
  #include "build-info.h"
  #include "chat.h"
  #include "common.h"
-@@ -889,6 +890,10 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
+@@ -888,6 +889,10 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
      // parse all CLI args now, so that -hf is available below for remote preset resolution
      parse_cli_args();
  
@@ -97,7 +97,7 @@ index 6f5fe377d..e58230924 100644
      postprocess_cpu_params(params.cpuparams,       nullptr);
      postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
  
-@@ -1511,6 +1516,23 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -1510,6 +1515,23 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
              }
          }
      ).set_examples({LLAMA_EXAMPLE_COMPLETION, LLAMA_EXAMPLE_CLI, LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_LOOKUP}));

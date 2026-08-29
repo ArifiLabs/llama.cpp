@@ -1,4 +1,4 @@
-From af55226c97e60baf01fcc2a75da24714ed12eebe Mon Sep 17 00:00:00 2001
+From bb312d715104e59c47d7522e922f82836d0d570f Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:26:32 -0400
 Subject: [PATCH] 
@@ -6,16 +6,15 @@ Subject: [PATCH]
 
 Assisted-by: Codex
 ---
- common/fit.cpp                  |  4 +--
- common/fit.h                    |  2 ++
- tools/server/server-context.cpp | 58 ++++++++++++++++++++++++++++-----
- 3 files changed, 53 insertions(+), 11 deletions(-)
+ common/fit.cpp | 4 ++--
+ common/fit.h   | 2 ++
+ 2 files changed, 4 insertions(+), 2 deletions(-)
 
 diff --git a/common/fit.cpp b/common/fit.cpp
-index 00494cc7c..58faf593e 100644
+index c8579e010..b0ffa892e 100644
 --- a/common/fit.cpp
 +++ b/common/fit.cpp
-@@ -843,7 +843,7 @@ static void common_params_fit_impl(
+@@ -928,7 +928,7 @@ static void common_params_fit_impl(
              }
          }
          candidate.tensor_split = split;
@@ -24,7 +23,7 @@ index 00494cc7c..58faf593e 100644
          overrides[1] = {nullptr, nullptr};
          candidate.tensor_buft_overrides = overrides;
          candidate.use_extra_bufts = false;
-@@ -883,7 +883,7 @@ static void common_params_fit_impl(
+@@ -968,7 +968,7 @@ static void common_params_fit_impl(
      int64_t global_surplus_cpu_moe = 0;
      if (hp_nex > 0) {
          ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
@@ -34,7 +33,7 @@ index 00494cc7c..58faf593e 100644
          mparams->tensor_buft_overrides = tensor_buft_overrides;
  
 diff --git a/common/fit.h b/common/fit.h
-index 21b46edfa..e820c72c1 100644
+index 7262ec1e3..9628d3a1c 100644
 --- a/common/fit.h
 +++ b/common/fit.h
 @@ -9,6 +9,8 @@
@@ -46,87 +45,3 @@ index 21b46edfa..e820c72c1 100644
  struct common_moe_cache_fit_device_input {
      int physical_device = -1;
      int compute_capability = 0;
-diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index c26631ead..04501aadc 100644
---- a/tools/server/server-context.cpp
-+++ b/tools/server/server-context.cpp
-@@ -1322,10 +1322,43 @@ private:
-                 try {
-                     auto mparams_tgt = common_model_params_to_llama(params_base);
-                     auto cparams_tgt = common_context_params_to_llama(params_base);
--                    auto dmd = common_get_device_memory_data_with_parent(
--                        params_dft.model.path.c_str(), &mparams_dft, &cparams_dft,
--                        params_base.model.path.c_str(), &mparams_tgt, &cparams_tgt,
--                        devs, hp_ngl, hp_nct, hp_nex, GGML_LOG_LEVEL_ERROR);
-+                    const char * path_dft = spec_mtp ? params_base.model.path.c_str() : params_dft.model.path.c_str();
-+                    auto measure_spec_memory = [&](const llama_model_params & mparams_measure,
-+                                                   const llama_model_params & mparams_parent,
-+                                                   std::vector<ggml_backend_dev_t> & measured_devs,
-+                                                   uint32_t & measured_ngl,
-+                                                   uint32_t & measured_nct,
-+                                                   uint32_t & measured_nex) {
-+                        auto data = common_get_device_memory_data_with_parent(
-+                            path_dft, &mparams_measure, &cparams_dft,
-+                            params_base.model.path.c_str(), &mparams_parent, &cparams_tgt,
-+                            measured_devs, measured_ngl, measured_nct, measured_nex, GGML_LOG_LEVEL_ERROR);
-+                        if (!spec_mtp) {
-+                            return data;
-+                        }
-+
-+                        std::vector<ggml_backend_dev_t> target_devs;
-+                        uint32_t target_ngl = 0;
-+                        uint32_t target_nct = 0;
-+                        uint32_t target_nex = 0;
-+                        const auto target = common_get_device_memory_data(
-+                            params_base.model.path.c_str(), &mparams_parent, &cparams_tgt,
-+                            target_devs, target_ngl, target_nct, target_nex, GGML_LOG_LEVEL_ERROR);
-+                        if (target_devs != measured_devs || target.size() != data.size()) {
-+                            throw std::runtime_error("MTP and target memory devices differ");
-+                        }
-+                        for (size_t i = 0; i < data.size(); i++) {
-+                            if (target[i].compute > SIZE_MAX - data[i].compute) {
-+                                throw std::runtime_error("MTP memory estimate overflowed");
-+                            }
-+                            data[i].compute += target[i].compute;
-+                        }
-+                        return data;
-+                    };
-+
-+                    const llama_model_params & mparams_measure = spec_mtp ? mparams_tgt : mparams_dft;
-+                    auto dmd = measure_spec_memory(
-+                        mparams_measure, mparams_tgt, devs, hp_ngl, hp_nct, hp_nex);
- 
-                     std::vector<std::pair<ggml_backend_dev_t, size_t>> reservations;
-                     auto add_reservations = [&](const common_device_memory_data_vec & data,
-@@ -1346,19 +1379,26 @@ private:
-                     };
-                     add_reservations(dmd, devs);
- 
--                    if (shared_draft_devices.prepared && mparams_tgt.split_mode != LLAMA_SPLIT_MODE_NONE &&
-+                    if ((shared_draft_devices.prepared || spec_mtp) && mparams_tgt.split_mode != LLAMA_SPLIT_MODE_NONE &&
-                         mparams_tgt.main_gpu >= 0) {
-                         try {
-                             llama_model_params mparams_tgt_main = mparams_tgt;
-                             mparams_tgt_main.split_mode = LLAMA_SPLIT_MODE_NONE;
-+                            llama_model_tensor_buft_override mtp_overrides[2] = {};
-+                            if (spec_mtp) {
-+                                mtp_overrides[0] = {
-+                                    common_moe_cache_tensor_override_pattern(), ggml_backend_cpu_buffer_type() };
-+                                mparams_tgt_main.tensor_buft_overrides = mtp_overrides;
-+                                mparams_tgt_main.use_extra_bufts = false;
-+                            }
-+                            const llama_model_params & mparams_measure_main = spec_mtp ? mparams_tgt_main : mparams_dft;
-                             std::vector<ggml_backend_dev_t> devs_main;
-                             uint32_t hp_ngl_main = 0;
-                             uint32_t hp_nct_main = 0;
-                             uint32_t hp_nex_main = 0;
--                            const auto dmd_main = common_get_device_memory_data_with_parent(
--                                params_dft.model.path.c_str(), &mparams_dft, &cparams_dft,
--                                params_base.model.path.c_str(), &mparams_tgt_main, &cparams_tgt,
--                                devs_main, hp_ngl_main, hp_nct_main, hp_nex_main, GGML_LOG_LEVEL_ERROR);
-+                            const auto dmd_main = measure_spec_memory(
-+                                mparams_measure_main, mparams_tgt_main,
-+                                devs_main, hp_ngl_main, hp_nct_main, hp_nex_main);
-                             add_reservations(dmd_main, devs_main);
-                         } catch (const std::exception & e) {
-                             SRV_DBG("[spec] failed to measure main-device shared-tensor memory: %s\n", e.what());

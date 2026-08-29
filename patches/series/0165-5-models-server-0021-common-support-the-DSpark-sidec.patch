@@ -1,4 +1,4 @@
-From fa2a8d83b83d010c6fa4e6ffde12d025b9383697 Mon Sep 17 00:00:00 2001
+From 93ee8e5e16d0d89996d68d0edb212ce1d8ef9eb2 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:30 -0400
 Subject: [PATCH] 
@@ -9,27 +9,27 @@ Subject: [PATCH]
  1 file changed, 16 insertions(+)
 
 diff --git a/common/chat.cpp b/common/chat.cpp
-index 669e5e8f4..c4c66f2ff 100644
+index 21b704bec..2a5b344c0 100644
 --- a/common/chat.cpp
 +++ b/common/chat.cpp
-@@ -1215,6 +1215,7 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+@@ -1217,6 +1217,7 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
          data.prompt += data.generation_prompt;
      }
  
 +<<<<<<< ours
      std::vector<std::string> tool_call_starts = { "<tool_call>" };
  
-     // Match complete <function=name> opener for Qwen3-Coder models that occasionally omit the
-@@ -1225,6 +1226,8 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
-         tool_call_starts.push_back("<function=" + name + ">");
-     });
+     if (is_qwen3_coder) {
+@@ -1229,6 +1230,8 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+         });
+     }
  
 +=======
 +>>>>>>> theirs
      auto parser = build_chat_peg_parser([&](common_chat_peg_builder & p) {
          auto generation_prompt = p.literal(GEN_PREFIX);
  
-@@ -1297,7 +1300,11 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+@@ -1304,7 +1307,11 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
              auto tool_calls = p.trigger_rule("tool-call-root", p.repeat(calls, min_calls, 1));
  
              return generation_prompt +
@@ -41,7 +41,7 @@ index 669e5e8f4..c4c66f2ff 100644
          }
  
          // Content only parser
-@@ -1323,9 +1330,18 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+@@ -1330,9 +1337,18 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
          });
  
          if (data.grammar_lazy) {

@@ -1,4 +1,4 @@
-From 92d74bc9b55acff9af5a643a08f2351b2ade4e93 Mon Sep 17 00:00:00 2001
+From 145f90a6929dc0d39be2d0671e15b3248c506eb0 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:39 -0400
 Subject: [PATCH] 
@@ -13,10 +13,10 @@ Subject: [PATCH]
  5 files changed, 95 insertions(+), 5 deletions(-)
 
 diff --git a/common/chat.cpp b/common/chat.cpp
-index c4c66f2ff..e52570af3 100644
+index 2a5b344c0..7eaee64ff 100644
 --- a/common/chat.cpp
 +++ b/common/chat.cpp
-@@ -3402,8 +3402,12 @@ static common_chat_params common_chat_params_init_muse_glimmer(const common_chat
+@@ -3409,8 +3409,12 @@ static common_chat_params common_chat_params_init_muse_glimmer(const common_chat
          auto analysis = p.ref("analysis");
  
          auto recipient  = p.optional(p.literal(" to=user"));
@@ -29,7 +29,7 @@ index c4c66f2ff..e52570af3 100644
  
          if (has_tools && inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_NONE) {
              auto string_value = p.ac(
-@@ -3459,8 +3463,12 @@ static common_chat_params common_chat_params_init_muse_glimmer(const common_chat
+@@ -3466,8 +3470,12 @@ static common_chat_params common_chat_params_init_muse_glimmer(const common_chat
              if (inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED) {
                  return p.zero_or_more(start + analysis) + start + tool_calls;
              }
@@ -43,7 +43,7 @@ index c4c66f2ff..e52570af3 100644
  
          return p.zero_or_more(start + analysis) + start + final_msg;
 diff --git a/common/fit.cpp b/common/fit.cpp
-index ab1280945..e60a5314c 100644
+index 3ea720bfb..7fddafc85 100644
 --- a/common/fit.cpp
 +++ b/common/fit.cpp
 @@ -183,8 +183,17 @@ static common_moe_cache_fit_result common_moe_cache_evaluate_fit(
@@ -94,10 +94,10 @@ index ab1280945..e60a5314c 100644
          shape_inputs.push_back({tensor.type, tensor.expert_size, tensor_bytes,
                  caps.scratch_bytes, caps.pool_bytes, cacheable});
 diff --git a/tools/mtmd/clip-impl.h b/tools/mtmd/clip-impl.h
-index ea8549776..036468699 100644
+index f6045093c..eef76d756 100644
 --- a/tools/mtmd/clip-impl.h
 +++ b/tools/mtmd/clip-impl.h
-@@ -488,10 +488,13 @@ enum projector_type {
+@@ -495,10 +495,13 @@ enum projector_type {
      PROJECTOR_TYPE_MINIMAX_M3,
      PROJECTOR_TYPE_GRANITE4_VISION,
      PROJECTOR_TYPE_MIMO_AUDIO,
@@ -111,7 +111,7 @@ index ea8549776..036468699 100644
      PROJECTOR_TYPE_MUSE_GLIMMER,
      PROJECTOR_TYPE_UNKNOWN,
  };
-@@ -550,10 +553,13 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
+@@ -559,10 +562,13 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
      { PROJECTOR_TYPE_GRANITE4_VISION,   "granite4_vision"},
      { PROJECTOR_TYPE_MIMO_AUDIO,        "mimo_audio"},
      { PROJECTOR_TYPE_PARAKEET,          "parakeet"},
@@ -126,10 +126,10 @@ index ea8549776..036468699 100644
  };
  
 diff --git a/tools/mtmd/models/models.h b/tools/mtmd/models/models.h
-index 3631d849b..27a36d28e 100644
+index 10546fa5d..61df3b0ee 100644
 --- a/tools/mtmd/models/models.h
 +++ b/tools/mtmd/models/models.h
-@@ -429,3 +429,8 @@ struct clip_graph_muse_glimmer : clip_graph {
+@@ -434,3 +434,8 @@ struct clip_graph_muse_glimmer : clip_graph {
      clip_graph_muse_glimmer(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
      ggml_cgraph * build() override;
  };
@@ -139,10 +139,10 @@ index 3631d849b..27a36d28e 100644
 +    ggml_cgraph * build() override;
 +};
 diff --git a/tools/mtmd/mtmd-image.cpp b/tools/mtmd/mtmd-image.cpp
-index 0d9db4f62..57fc979ee 100644
+index 0dda8770f..30905fcec 100644
 --- a/tools/mtmd/mtmd-image.cpp
 +++ b/tools/mtmd/mtmd-image.cpp
-@@ -1745,3 +1745,65 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
+@@ -1583,3 +1583,65 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
      output.append(hparams, resized_image, true);
      return output;
  }

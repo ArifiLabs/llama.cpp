@@ -1,4 +1,4 @@
-From b95c9e637577abb4b0ea42c1908b17609e32bf79 Mon Sep 17 00:00:00 2001
+From 5bc3068e1cbc13e5725bb4249ecc679795635c0e Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 11:34:48 -0400
 Subject: [PATCH] dflash: ingest buun's DFlash2 adaptive controller - built,
@@ -48,10 +48,10 @@ Origin: ArifiLabs (native), integrating github.com/spiritbuun/buun-llama-cpp 396
  5 files changed, 420 insertions(+), 5 deletions(-)
 
 diff --git a/common/arg.cpp b/common/arg.cpp
-index f1fc63d16..6a6093dfb 100644
+index f600d63cc..ee1af8183 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
-@@ -4224,6 +4224,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -4243,6 +4243,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
                  throw std::invalid_argument("invalid value");
              }
              params.speculative.draft.n_max = value;
@@ -59,7 +59,7 @@ index f1fc63d16..6a6093dfb 100644
          }
      ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_LOOKUP, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_DRAFT_N_MAX"));
      add_opt(common_arg(
-@@ -4255,6 +4256,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -4274,6 +4275,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
                  if (n < 1) throw std::invalid_argument("spec-chain depth must be >= 1");
                  params.speculative.draft.chain = true;
                  params.speculative.draft.n_max = n;
@@ -68,7 +68,7 @@ index f1fc63d16..6a6093dfb 100644
          }
      ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_CHAIN"));
 diff --git a/common/common.h b/common/common.h
-index 306e2e34e..eabb9168f 100644
+index 76e2423ac..81df37f87 100644
 --- a/common/common.h
 +++ b/common/common.h
 @@ -328,6 +328,7 @@ struct common_params_model {
@@ -80,7 +80,7 @@ index 306e2e34e..eabb9168f 100644
  
      float p_split = 0.1f; // speculative decoding split probability
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 1aca55729..2866e3f47 100644
+index 0ae9c7c94..22c5946ea 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
 @@ -18,8 +18,10 @@
@@ -516,7 +516,7 @@ index 1aca55729..2866e3f47 100644
  };
  
 diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
-index a06e64d6f..037b26f1b 100644
+index c9ee83b52..ed15ae9f4 100644
 --- a/src/models/dflash.cpp
 +++ b/src/models/dflash.cpp
 @@ -4,6 +4,8 @@
@@ -553,7 +553,7 @@ index a06e64d6f..037b26f1b 100644
          throw std::runtime_error("DFlash model requires 'target_layers' in GGUF metadata");
      }
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 3edb1cf12..e7c008194 100644
+index 714260424..6eec3ec3c 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
 @@ -10,6 +10,7 @@
@@ -572,7 +572,7 @@ index 3edb1cf12..e7c008194 100644
  #include <exception>
  #include <memory>
  #include <filesystem>
-@@ -130,6 +132,70 @@ static std::vector<ggml_backend_dev_t> server_target_fit_devices(const common_pa
+@@ -128,6 +130,70 @@ static std::vector<ggml_backend_dev_t> server_target_fit_devices(const common_pa
      return { devices[params.main_gpu] };
  }
  

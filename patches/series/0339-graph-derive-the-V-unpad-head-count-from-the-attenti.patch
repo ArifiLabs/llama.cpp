@@ -1,4 +1,4 @@
-From c51d29acd7bc003d8274196e7f7d442fd40dd3d6 Mon Sep 17 00:00:00 2001
+From 547cd7bd34fa4338c6190f28bd4093f910ed9d9a Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Tue, 18 Aug 2026 11:18:03 -0400
 Subject: [PATCH] graph: derive the V-unpad head count from the attention
@@ -17,10 +17,10 @@ Lane: lane-154
  1 file changed, 27 insertions(+), 15 deletions(-)
 
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index ea83e9b0b..10ce8f322 100644
+index 89935ce44..37f387979 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -2942,11 +2942,15 @@ ggml_tensor * llm_graph_context::build_attn(
+@@ -2962,11 +2962,15 @@ ggml_tensor * llm_graph_context::build_attn(
          if (padded_v_head != orig_v_head) {
              // Reshape to 4D, extract original head_dim, reshape back to 2D
              // Fix #78 (bingh0): cur shape post-MHA is (n_embd_head * n_head, n_tokens),
@@ -41,7 +41,7 @@ index ea83e9b0b..10ce8f322 100644
              const int64_t n_tokens_cur = cur->ne[1];
              cur = ggml_reshape_3d(ctx0, cur, padded_v_head, n_head_v, n_tokens_cur);
              // ggml_view_3d to extract first orig_v_head elements per head
-@@ -3069,11 +3073,15 @@ ggml_tensor * llm_graph_context::build_attn(
+@@ -3089,11 +3093,15 @@ ggml_tensor * llm_graph_context::build_attn(
          if (padded_v_head != orig_v_head) {
              // cur is 2D: (padded_v_head * n_head, n_tokens) after build_attn_mha
              // Fix #78 (bingh0): cur shape post-MHA is (n_embd_head * n_head, n_tokens),
@@ -62,7 +62,7 @@ index ea83e9b0b..10ce8f322 100644
              const int64_t n_tokens_cur = cur->ne[1];
              cur = ggml_reshape_3d(ctx0, cur, padded_v_head, n_head_v, n_tokens_cur);
              cur = ggml_view_3d(ctx0, cur, orig_v_head, n_head_v, n_tokens_cur,
-@@ -3265,11 +3273,15 @@ ggml_tensor * llm_graph_context::build_attn(
+@@ -3285,11 +3293,15 @@ ggml_tensor * llm_graph_context::build_attn(
          const int64_t padded_v_head = v->ne[0];
          if (padded_v_head != orig_v_head) {
              // Fix #78 (bingh0): cur shape post-MHA is (n_embd_head * n_head, n_tokens),

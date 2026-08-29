@@ -1,4 +1,4 @@
-From 4d07438dd393902d038d5fa01eba33a250ae5064 Mon Sep 17 00:00:00 2001
+From a642aee7b848405100a704bc82411c3fa552b1fc Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:20:20 -0400
 Subject: [PATCH] 
@@ -11,10 +11,10 @@ Assisted-by: Codex
  2 files changed, 3 insertions(+), 815 deletions(-)
 
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index 4b8c3c1f6..ea83e9b0b 100644
+index 3e759c1f0..89935ce44 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -1062,746 +1062,6 @@ bool llm_graph_input_attn_kv_iswa::can_reuse(const llm_graph_params & params) {
+@@ -1082,746 +1082,6 @@ bool llm_graph_input_attn_kv_iswa::can_reuse(const llm_graph_params & params) {
      return res;
  }
  
@@ -762,12 +762,12 @@ index 4b8c3c1f6..ea83e9b0b 100644
      GGML_ASSERT(cross_kq_mask);
  
 diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
-index e59a96f54..3251a8629 100644
+index 3c73aa5b9..a763bfdb6 100644
 --- a/src/models/dflash.cpp
 +++ b/src/models/dflash.cpp
-@@ -164,67 +164,11 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
-     output_norm_enc = create_tensor(tn(LLM_TENSOR_ENC_OUTPUT_NORM, "weight"), { n_embd }, 0); // encoder hidden_norm (after fc)
-     output_norm     = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM,    "weight"), { n_embd }, 0); // decoder final norm
+@@ -168,67 +168,11 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
+     // a draft with its own embeddings + head references no target tensors and can run on devices the target does not use (e.g. -devd with a tensor-split target)
+     output   = create_tensor(tn(LLM_TENSOR_OUTPUT,     "weight"), { n_embd, n_vocab_draft }, TENSOR_NOT_REQUIRED);
  
 -<<<<<<< ours
 -<<<<<<< ours
@@ -834,7 +834,7 @@ index e59a96f54..3251a8629 100644
  
      if (hparams.dsv4_hc_mult > 0) {
          const int64_t q_lora_rank     = hparams.n_lora_q;
-@@ -251,7 +195,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
+@@ -255,7 +199,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
              layer.wq_b          = create_tensor(tn(LLM_TENSOR_ATTN_Q_B,      "weight", i), {q_lora_rank, n_head * n_embd_head}, 0);
              layer.wkv           = create_tensor(tn(LLM_TENSOR_ATTN_KV,       "weight", i), {n_embd, n_embd_head}, 0);
              layer.attn_kv_norm  = create_tensor(tn(LLM_TENSOR_ATTN_KV_NORM,  "weight", i), {n_embd_head}, 0);
@@ -843,15 +843,15 @@ index e59a96f54..3251a8629 100644
              layer.wo_b          = create_tensor(tn(LLM_TENSOR_ATTN_OUT_B,    "weight", i), {o_groups * o_lora_rank, n_embd}, 0);
  
              layer.hc_attn_fn    = create_tensor(tn(LLM_TENSOR_HC_ATTN_FN,    "weight", i), {hc_dim, hc_mix_dim}, 0);
-@@ -275,7 +219,6 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
+@@ -279,7 +223,6 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
          }
          return;
  
 ->>>>>>> theirs
      }
  
-     // optional: reduced-vocab drafts ship their own, full-vocab drafts share the target's via ctx_other
-@@ -354,9 +297,6 @@ llama_model_dflash::graph<true>::graph(const llama_model & model, const llm_grap
+     for (int i = 0; i < n_layer; ++i) {
+@@ -355,9 +298,6 @@ llama_model_dflash::graph<true>::graph(const llama_model & model, const llm_grap
  
      ggml_tensor * cur = build_inp_embd_enc();
  
@@ -861,7 +861,7 @@ index e59a96f54..3251a8629 100644
      // Laguna drafters RMS-norm each captured feature before concat + fc.
      // View the concatenated input as [n_feat, n_aux, n_tokens], norm over
      // n_feat, and multiply by the stacked per-aux weights [n_feat, n_aux].
-@@ -371,8 +311,7 @@ llama_model_dflash::graph<true>::graph(const llama_model & model, const llm_grap
+@@ -372,8 +312,7 @@ llama_model_dflash::graph<true>::graph(const llama_model & model, const llm_grap
          cb(cur, "enc_aux_norm", -1);
      }
  
@@ -871,7 +871,7 @@ index e59a96f54..3251a8629 100644
      cb(cur, "fc_out", -1);
  
      cur = build_norm(cur, model.output_norm_enc, NULL, LLM_NORM_RMS, -1);
-@@ -896,28 +835,17 @@ llama_model_dflash::graph_dsv4::graph_dsv4(const llama_model & model, const llm_
+@@ -889,28 +828,17 @@ llama_model_dflash::graph_dsv4::graph_dsv4(const llama_model & model, const llm_
      cb(cur, "result_norm", -1);
  
      // lm_head from the target model (shared via ctx_other)

@@ -1,4 +1,4 @@
-From 80f359a5d6a94ed7b5fa25ef9307859a0f12f88e Mon Sep 17 00:00:00 2001
+From c3cbe241b938d612b21e0b8b4034972d1046d528 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:19 -0400
 Subject: [PATCH] 
@@ -12,10 +12,10 @@ Subject: [PATCH]
  4 files changed, 42 insertions(+), 1 deletion(-)
 
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index f45bd9963..23a5401e5 100644
+index f3af96d56..4e564e0e4 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -845,6 +845,7 @@ const char * llm_type_name(llm_type type) {
+@@ -936,6 +936,7 @@ const char * llm_type_name(llm_type type) {
          case LLM_TYPE_24B_A2B:       return "24B.A2B";
          case LLM_TYPE_26B_A4B:       return "26B.A4B";
          case LLM_TYPE_30B_A3B:       return "30B.A3B";
@@ -24,7 +24,7 @@ index f45bd9963..23a5401e5 100644
          case LLM_TYPE_35B_A3B:       return "35B.A3B";
          case LLM_TYPE_48B_A3B:       return "48B.A3B";
 diff --git a/src/llama-model.h b/src/llama-model.h
-index 51a9045a8..4f27164da 100644
+index 7932c5a66..8df9b39e6 100644
 --- a/src/llama-model.h
 +++ b/src/llama-model.h
 @@ -125,6 +125,7 @@ enum llm_type {
@@ -81,10 +81,10 @@ index 82c9a9538..78974d801 100644
      res->t_embd = cur;
  
 diff --git a/src/models/models.h b/src/models/models.h
-index 80f1e6dc4..770fd40df 100644
+index 35fbd6209..ce91d4839 100644
 --- a/src/models/models.h
 +++ b/src/models/models.h
-@@ -1339,6 +1339,15 @@ struct llama_model_dflash : public llama_model_base {
+@@ -1352,6 +1352,15 @@ struct llama_model_dflash : public llama_model_base {
      void load_arch_hparams(llama_model_loader & ml) override;
      void load_arch_tensors(llama_model_loader & ml) override;
  
@@ -100,7 +100,7 @@ index 80f1e6dc4..770fd40df 100644
      template <bool is_enc>
      struct graph : public llm_graph_context {
          graph(const llama_model & model, const llm_graph_params & params);
-@@ -1354,6 +1363,19 @@ struct llama_model_dflash : public llama_model_base {
+@@ -1367,6 +1376,19 @@ struct llama_model_dflash : public llama_model_base {
  };
  
  

@@ -1,4 +1,4 @@
-From de1c34a13ea459811f2a017add4e50e1c782153a Mon Sep 17 00:00:00 2001
+From 02cc66ec94278288d1798eeaad3df7a93e763818 Mon Sep 17 00:00:00 2001
 From: hq <hq@arifilabs>
 Date: Sat, 15 Aug 2026 21:40:14 -0400
 Subject: [PATCH] fix the merge so it builds: 5 files, 6 defects
@@ -34,10 +34,10 @@ restored-checkpoint protection. A partial merge that builds is the dangerous sha
  4 files changed, 18 insertions(+), 186 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 8fc6dad22..795e2f9db 100644
+index 540c69c3c..2a11ddb3f 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -5669,7 +5669,10 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5670,7 +5670,10 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_Q5_1], "cpy_f32_q5_1", cpy_f32_q5_1_len, cpy_f32_q5_1_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_Q8_0], "cpy_f32_q8_0", cpy_f32_q8_0_len, cpy_f32_q8_0_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_IQ4_NL], "cpy_f32_iq4_nl", cpy_f32_iq4_nl_len, cpy_f32_iq4_nl_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
@@ -50,10 +50,10 @@ index 8fc6dad22..795e2f9db 100644
  #define SET_ROWS(src_idx, src, itype) \
          ggml_vk_create_pipeline(device, device->pipeline_set_rows ## itype [src_idx][GGML_TYPE_F32],  "set_rows_" #src "_f32" #itype,  set_rows_ ## src ## _f32 ## itype ## _len,  set_rows_ ## src ## _f32 ## itype ## _data,  "main", 3, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {1}, 1, true); \
 diff --git a/tools/mtmd/models/models.h b/tools/mtmd/models/models.h
-index 6c0101180..bc7746586 100644
+index f8006d775..f4aabc2c8 100644
 --- a/tools/mtmd/models/models.h
 +++ b/tools/mtmd/models/models.h
-@@ -430,12 +430,3 @@ struct clip_graph_muse_glimmer : clip_graph {
+@@ -435,12 +435,3 @@ struct clip_graph_muse_glimmer : clip_graph {
      ggml_cgraph * build() override;
  };
  
@@ -67,10 +67,10 @@ index 6c0101180..bc7746586 100644
 -    ggml_cgraph * build() override;
 -};
 diff --git a/tools/mtmd/mtmd-image.cpp b/tools/mtmd/mtmd-image.cpp
-index 86eb4211e..17d368db6 100644
+index c687ede07..d93890135 100644
 --- a/tools/mtmd/mtmd-image.cpp
 +++ b/tools/mtmd/mtmd-image.cpp
-@@ -1751,121 +1751,8 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
+@@ -1589,121 +1589,8 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
  //
  
  // Replicates transformers' get_aspect_ratio_preserving_size
@@ -193,10 +193,10 @@ index 86eb4211e..17d368db6 100644
 -    return output;
 -}
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 04501aadc..24ff2d66d 100644
+index d41992861..c36f27319 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -230,69 +230,6 @@ static server_shared_draft_device_config server_prepare_shared_draft_devices(con
+@@ -228,69 +228,6 @@ static server_shared_draft_device_config server_prepare_shared_draft_devices(con
      return result;
  }
  
@@ -266,7 +266,7 @@ index 04501aadc..24ff2d66d 100644
  // state diagram: https://github.com/ggml-org/llama.cpp/pull/9283
  enum slot_state {
      SLOT_STATE_IDLE,
-@@ -482,6 +419,9 @@ struct server_slot {
+@@ -480,6 +417,9 @@ struct server_slot {
      bool has_next_token = true;
      bool has_new_line   = false;
      bool truncated      = false;
@@ -276,7 +276,7 @@ index 04501aadc..24ff2d66d 100644
  
      stop_type stop;
  
-@@ -571,6 +511,7 @@ struct server_slot {
+@@ -569,6 +509,7 @@ struct server_slot {
          generated_text = "";
          has_new_line   = false;
          truncated      = false;
@@ -284,7 +284,7 @@ index 04501aadc..24ff2d66d 100644
          stop           = STOP_TYPE_NONE;
          stopping_word  = "";
          n_sent_text    = 0;
-@@ -3269,12 +3210,20 @@ private:
+@@ -3144,12 +3085,20 @@ private:
          std::vector<server_slot *> generating;
          std::vector<server_slot *> drafting;
  
@@ -305,7 +305,7 @@ index 04501aadc..24ff2d66d 100644
              // check if we can batch this slot with the previous one
              if (!slot_batched) {
                  slot_batched = &slot;
-@@ -3662,6 +3611,7 @@ private:
+@@ -3537,6 +3486,7 @@ private:
  
                                          pos_next = std::min(pos_next, std::max(it->pos_min + 1, it->pos_max));
                                          n_past   = std::min(slot.prompt.tokens.size_up_to_pos(pos_next), (size_t) it->n_tokens);
@@ -313,7 +313,7 @@ index 04501aadc..24ff2d66d 100644
                                          SLT_TRC(slot, "restored context checkpoint (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", n_past = %d, size = %.3f MiB)\n", it->pos_min, it->pos_max, it->n_tokens, n_past, (float) it->size() / 1024 / 1024);
                                      }
  
-@@ -3892,6 +3842,7 @@ private:
+@@ -3767,6 +3717,7 @@ private:
  
                          slot.stats.n_gen = 0;
                          slot.i_batch     = batch.size() - 1;
