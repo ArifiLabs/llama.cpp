@@ -653,6 +653,9 @@ bool llm_graph_input_attn_k_dsa_iswa::can_reuse(const llm_graph_params & params)
     res &= inp_dsa->can_reuse_impl(params);
     res &= inp_swa->can_reuse_impl(params);
 
+    return res;
+}
+
 // dsv4 helpers
 
 void llm_graph_input_attn_k_iswa::set_input(const llama_ubatch * ubatch) {
