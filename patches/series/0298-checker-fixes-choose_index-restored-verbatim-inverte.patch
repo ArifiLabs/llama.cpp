@@ -1,4 +1,4 @@
-From 8e2ae2fd17f3eed30ae29d7088db9960ec207f0d Mon Sep 17 00:00:00 2001
+From 67f65ecf78a3127c348ea4ba9322a5320d4d0cea Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 13:15:28 -0400
 Subject: [PATCH] checker fixes: choose_index restored verbatim (inverted
@@ -70,7 +70,7 @@ index 294eeb52c..22dffab8a 100644
  void quantize_row_tq3_4se_ref(const float * GGML_RESTRICT x, block_tq3_4se * GGML_RESTRICT y, int64_t k) {
      assert(k % QK_TQ3_0 == 0);
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index d8ec89f55..b0ac920d5 100644
+index f71d99e98..12ca6b004 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -401,11 +401,9 @@ const float * arifi_tq3_centroids(void);

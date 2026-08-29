@@ -1,4 +1,4 @@
-From 491d1dac8228a69f981eec3c3152d5403bdb95ee Mon Sep 17 00:00:00 2001
+From 8f935fc30442ad84444899d740925a1a81a410db Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Tue, 18 Aug 2026 00:49:13 -0400
 Subject: [PATCH] lane-150 step 2: TQ4_1S write leg EXECUTES - SET_ROWS_TQ4_1S
@@ -14,10 +14,10 @@ Lane: lane-150
  3 files changed, 24 insertions(+), 8 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 30ebe1344..b66e41d23 100644
+index 905a61617..79fad6326 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -5734,7 +5734,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5793,7 +5793,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
          ggml_vk_create_pipeline(device, device->pipeline_set_rows ## itype [src_idx][GGML_TYPE_IQ4_NL], "set_rows_" #src "_iq4_nl" #itype, set_rows_ ## src ## _iq4_nl ## itype ## _len, set_rows_ ## src ## _iq4_nl ## itype ## _data, "main", 3, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {1}, 1, true); \
          ggml_vk_create_pipeline(device, device->pipeline_set_rows ## itype [src_idx][GGML_TYPE_TURBO2_0], "set_rows_" #src "_turbo2_0" #itype, set_rows_ ## src ## _turbo2_0 ## itype ## _len, set_rows_ ## src ## _turbo2_0 ## itype ## _data, "main", 3, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {1}, 1, true, true, 32u); \
          ggml_vk_create_pipeline(device, device->pipeline_set_rows ## itype [src_idx][GGML_TYPE_TURBO3_0], "set_rows_" #src "_turbo3_0" #itype, set_rows_ ## src ## _turbo3_0 ## itype ## _len, set_rows_ ## src ## _turbo3_0 ## itype ## _data, "main", 3, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {1}, 1, true, true, 32u); \
@@ -28,7 +28,7 @@ index 30ebe1344..b66e41d23 100644
  
      SET_ROWS(0, f32, _i32)
      SET_ROWS(0, f32, _i64)
-@@ -12694,6 +12696,13 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
+@@ -12801,6 +12803,13 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
              if (dst->type == GGML_TYPE_TURBO2_0 || dst->type == GGML_TYPE_TURBO3_0 || dst->type == GGML_TYPE_TURBO4_0) {
                  // turbo set_rows shaders: 128 threads per WG, one full QK=128 block per WG
                  ne = ne / 128;
@@ -43,7 +43,7 @@ index 30ebe1344..b66e41d23 100644
                  // quants run 32 threads each doing QUANT_K elements
                  ne = CEIL_DIV(ne, 32 * ggml_blck_size(dst->type));
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index d04f0982f..9280e12a1 100644
+index ff19f0063..554253f77 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 @@ -909,7 +909,9 @@ void process_shaders() {
@@ -58,10 +58,10 @@ index d04f0982f..9280e12a1 100644
              string_to_spv("set_rows_" + std::string(src.first) + "_" + dst + "_i64", "copy_to_quant.comp", {{"SET_ROWS", "1"}, {"DATA_A_" + to_uppercase(dst), "1"}, {"B_TYPE", "uvec2"}, {"B_SIZE", "64"}, {"S_TYPE", src.second}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
          }
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index fa770c578..969abdabb 100644
+index 6a2957789..032246726 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -2807,12 +2807,17 @@ struct test_set_rows_tq4_1s : public test_case {
+@@ -2812,12 +2812,17 @@ struct test_set_rows_tq4_1s : public test_case {
      }
  
      double max_nmse_err() override {

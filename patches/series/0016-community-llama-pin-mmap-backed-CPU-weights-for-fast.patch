@@ -1,4 +1,4 @@
-From b5ebf17a4ead6f9ad596d16d957ec6385d3c2361 Mon Sep 17 00:00:00 2001
+From d0112ab49c1d8f90f22efbb89e3bbf157b5f5766 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 20:58:50 -0400
 Subject: [PATCH] community: llama : pin mmap-backed CPU weights for faster H2D
@@ -14,13 +14,13 @@ Measured-effect: inert on GPU-resident unified memory (ki-prefetch-experts-condi
  3 files changed, 59 insertions(+), 1 deletion(-)
 
 diff --git a/src/llama-mmap.cpp b/src/llama-mmap.cpp
-index ed572da7f..4b073fd3e 100644
+index 4d183cbc9..96c3a45fc 100644
 --- a/src/llama-mmap.cpp
 +++ b/src/llama-mmap.cpp
-@@ -618,13 +618,47 @@ struct llama_mmap::impl {
- };
+@@ -664,13 +664,47 @@ struct llama_mmap::impl {
  
- llama_mmap::llama_mmap(struct llama_file * file, size_t prefetch, bool numa) : pimpl(std::make_unique<impl>(file, prefetch, numa)) {}
+ llama_mmap::llama_mmap(struct llama_file * file, size_t prefetch, bool numa,
+         const ranges & lazy_ranges) : pimpl(std::make_unique<impl>(file, prefetch, numa, lazy_ranges)) {}
 -llama_mmap::~llama_mmap() = default;
 +
 +llama_mmap::~llama_mmap() {
@@ -67,10 +67,10 @@ index ed572da7f..4b073fd3e 100644
  const bool llama_mmap::SUPPORTED  = true;
  #else
 diff --git a/src/llama-mmap.h b/src/llama-mmap.h
-index b7d5c61e9..6f118dbf6 100644
+index cc28c8a73..5a36db884 100644
 --- a/src/llama-mmap.h
 +++ b/src/llama-mmap.h
-@@ -50,11 +50,19 @@ struct llama_mmap {
+@@ -55,11 +55,19 @@ struct llama_mmap {
  
      void unmap_fragment(size_t first, size_t last);
  
@@ -91,10 +91,10 @@ index b7d5c61e9..6f118dbf6 100644
  
  struct llama_mlock {
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
-index 9b22cb05f..6c5a8af30 100644
+index 1b1f852a0..9c718a80a 100644
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
-@@ -1688,6 +1688,15 @@ bool llama_model_loader::load_all_data(
+@@ -1710,6 +1710,15 @@ bool llama_model_loader::load_all_data(
      if (size_done >= size_data) {
          // unmap offloaded tensors and metadata
          if (use_mmap) {
@@ -110,7 +110,7 @@ index 9b22cb05f..6c5a8af30 100644
              for (uint32_t idx = 0; idx < mappings.size(); idx++) {
                  const auto & mmap_used = mmaps_used.at(idx);
                  auto & mapping = mappings.at(idx);
-@@ -1695,6 +1704,13 @@ bool llama_model_loader::load_all_data(
+@@ -1717,6 +1726,13 @@ bool llama_model_loader::load_all_data(
                  if (mmap_used.second != 0) {
                      mapping->unmap_fragment(mmap_used.second, mapping->size());
                  }

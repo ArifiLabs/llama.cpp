@@ -1,4 +1,4 @@
-From f77dbab5fa407d7643da296d71981d9f3bea8eec Mon Sep 17 00:00:00 2001
+From b9aff56829f517d402d66e4bd3903645ae0f7128 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 24 Aug 2026 21:01:57 -0400
 Subject: [PATCH] spec: ring rollback re-enabled - DFlash2 depth 3 = 8.80 t/s
@@ -22,10 +22,10 @@ Evidence: research/local-inference/lane-evidence/2026-08-24-ring-repair/.
  2 files changed, 24 insertions(+), 12 deletions(-)
 
 diff --git a/common/common.h b/common/common.h
-index 5e6cd15ca..c3a68bc59 100644
+index 13bc5730a..adee3df7f 100644
 --- a/common/common.h
 +++ b/common/common.h
-@@ -397,18 +397,22 @@ struct common_params_speculative {
+@@ -405,18 +405,22 @@ struct common_params_speculative {
      }
  
      uint32_t need_n_rs_seq() const {

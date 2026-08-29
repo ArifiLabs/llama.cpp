@@ -1,4 +1,4 @@
-From 225d9da2472a09cd8ee8b8fcd3bba5cb49a83779 Mon Sep 17 00:00:00 2001
+From 7f096dbca7887e5078712ff66f991c45fe74a9fb Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:30:49 -0400
 Subject: [PATCH] powerinfer: CPU kernels + dispatch for streamed-MoE ops
@@ -14,7 +14,7 @@ Measured-effect: Kernel dispatch only; measured effects land with the hook.
  3 files changed, 380 insertions(+)
 
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index 87ac0a702..461b55540 100644
+index b9c0fa3dd..455db71c3 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -2120,6 +2120,40 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
@@ -80,7 +80,7 @@ index 87ac0a702..461b55540 100644
          default:
              {
                  fprintf(stderr, "%s: op not implemented: ", __func__);
-@@ -2997,6 +3046,46 @@ struct ggml_cplan ggml_graph_plan(
+@@ -2998,6 +3047,46 @@ struct ggml_cplan ggml_graph_plan(
                      {
                          GGML_ABORT("fatal error");
                      }
@@ -128,10 +128,10 @@ index 87ac0a702..461b55540 100644
                      {
                          // temp buffer for dequantizing lightning indexer keys
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index b869f4bdd..770f3265d 100644
+index b47ce5463..fc2d11387 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -12019,3 +12019,284 @@ void ggml_compute_forward_lightning_indexer(
+@@ -12025,3 +12025,284 @@ void ggml_compute_forward_lightning_indexer(
          }
      }
  }

@@ -1,4 +1,4 @@
-From b277882c7127abdeb3a34a1be5b62fc312aaf145 Mon Sep 17 00:00:00 2001
+From 4290421f499c1d043a078b441428a5afe68f93f5 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 23:55:43 -0400
 Subject: [PATCH] lane-149 F-112 second half (checker finding 11): per-op
@@ -10,10 +10,10 @@ Subject: [PATCH] lane-149 F-112 second half (checker finding 11): per-op
  1 file changed, 30 insertions(+)
 
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index a9d9122ac..fa770c578 100644
+index 62435699a..6a2957789 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -11330,6 +11330,11 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+@@ -11353,6 +11353,11 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
          std::atomic<size_t> tests_run = 0;
          std::atomic<size_t> n_not_supported = 0;   // F-112: declined cases, counted not swallowed
          std::atomic<size_t> n_filtered = 0;
@@ -25,7 +25,7 @@ index a9d9122ac..fa770c578 100644
          std::vector<std::string> failed_tests;
          std::mutex failed_tests_mutex;
  
-@@ -11357,11 +11362,17 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+@@ -11380,11 +11385,17 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
                      if (status == test_status_t::SKIPPED || status == test_status_t::NOT_SUPPORTED) {
                          if (status == test_status_t::NOT_SUPPORTED) {
                              n_not_supported++;
@@ -43,7 +43,7 @@ index a9d9122ac..fa770c578 100644
                      tests_run++;
                      if (status == test_status_t::OK) {
                          n_ok++;
-@@ -11420,6 +11431,25 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+@@ -11443,6 +11454,25 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
          output_printer->print_failed_tests(failed_tests);
  
          const bool slice_ok = run_fa_vec_slice(backend, backend_cpu.get(), op_names_filter);

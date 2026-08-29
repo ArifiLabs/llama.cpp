@@ -1,4 +1,4 @@
-From 6aae7ede0fc25134e36f535721ab0540849dcd68 Mon Sep 17 00:00:00 2001
+From ba13d4f847d5ccd4cdd3a76217a2ca7538ec5a8c Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:31:12 -0400
 Subject: [PATCH] powerinfer: down-projection transpose fix [series 0008c]
@@ -11,10 +11,10 @@ Measured-effect: Correctness fix documented in script header (RESULTS lane-110B)
  1 file changed, 24 insertions(+), 3 deletions(-)
 
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 05b9873db..ced93a97d 100644
+index f88bb157d..78316c8a8 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -1843,10 +1843,31 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+@@ -1861,10 +1861,31 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                      for (size_t expert_id = 0; expert_id < hparams.n_expert; expert_id++) {
                          for (int idx = 0; idx < 3; idx++) {
                              auto & [pi_data, pi_ne0, pi_ne1] = pi_matrices[idx];

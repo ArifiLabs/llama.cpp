@@ -1,4 +1,4 @@
-From f42422d44d9bc1440c38b17a3b4a7b5948e50d86 Mon Sep 17 00:00:00 2001
+From 2b41fdd9b46e00fa0a942aa0e634a1d9f56b7610 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:27:04 -0400
 Subject: [PATCH] 
@@ -13,7 +13,7 @@ Assisted-by: Codex
  4 files changed, 150 insertions(+), 5 deletions(-)
 
 diff --git a/common/common.cpp b/common/common.cpp
-index c68daab5b..455b5e0a6 100644
+index 5ce3cabd0..de40e6b3e 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
 @@ -1335,7 +1335,8 @@ common_init_result::common_init_result(common_params & params, bool model_only)
@@ -26,7 +26,7 @@ index c68daab5b..455b5e0a6 100644
          const char * placement = params.moe_cache.fit_selected ? " placement=cache-aware-fit" : "";
          if (params.moe_cache.mode == COMMON_MOE_CACHE_MODE_OFF) {
              COM_INF("%s", "MoE cache: mode=off\n");
-@@ -1781,6 +1782,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+@@ -1782,6 +1783,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
                  cparams.moe_cache_mode = LLAMA_MOE_CACHE_MODE_AUTO;
                  break;
              case COMMON_MOE_CACHE_MODE_ON:
@@ -35,10 +35,10 @@ index c68daab5b..455b5e0a6 100644
                  break;
          }
 diff --git a/common/common.h b/common/common.h
-index 0f609a55f..5a2729f69 100644
+index b0195dc17..3c1b48054 100644
 --- a/common/common.h
 +++ b/common/common.h
-@@ -447,6 +447,7 @@ enum common_moe_cache_mode {
+@@ -455,6 +455,7 @@ enum common_moe_cache_mode {
      COMMON_MOE_CACHE_MODE_OFF,
      COMMON_MOE_CACHE_MODE_AUTO,
      COMMON_MOE_CACHE_MODE_ON,
@@ -198,10 +198,10 @@ index 8d1cb6a5d..ef8d3b805 100644
              LOG_INF("%s: MoE cache fit kept stock placement because canonical dense weights do not meet the fit targets\n", __func__);
          } else {
 diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
-index 98808dca2..654d26375 100644
+index ab6e1cb44..bf9191125 100644
 --- a/tools/llama-bench/llama-bench.cpp
 +++ b/tools/llama-bench/llama-bench.cpp
-@@ -282,7 +282,7 @@ static std::string parse_moe_cache_mode(const std::string & value) {
+@@ -295,7 +295,7 @@ static std::string parse_moe_cache_mode(const std::string & value) {
      if (value == "off" || value == "0") {
          return "off";
      }
@@ -210,7 +210,7 @@ index 98808dca2..654d26375 100644
          return value;
      }
  
-@@ -297,7 +297,7 @@ static std::string parse_moe_cache_mode(const std::string & value) {
+@@ -310,7 +310,7 @@ static std::string parse_moe_cache_mode(const std::string & value) {
  }
  
  static bool moe_cache_mode_forces_canonical_weights(const std::string & mode) {
@@ -219,7 +219,7 @@ index 98808dca2..654d26375 100644
  }
  
  static common_moe_cache_params common_moe_cache_from_bench_mode(const std::string & mode) {
-@@ -307,6 +307,8 @@ static common_moe_cache_params common_moe_cache_from_bench_mode(const std::strin
+@@ -320,6 +320,8 @@ static common_moe_cache_params common_moe_cache_from_bench_mode(const std::strin
          result.mode = COMMON_MOE_CACHE_MODE_OFF;
      } else if (mode == "auto") {
          result.mode = COMMON_MOE_CACHE_MODE_AUTO;
@@ -228,7 +228,7 @@ index 98808dca2..654d26375 100644
      } else {
          result.mode = COMMON_MOE_CACHE_MODE_ON;
          if (mode != "on") {
-@@ -340,7 +342,7 @@ static void apply_moe_cache_mode(llama_context_params & cparams, const std::stri
+@@ -353,7 +355,7 @@ static void apply_moe_cache_mode(llama_context_params & cparams, const std::stri
      } else if (mode == "auto") {
          cparams.moe_cache_mode = LLAMA_MOE_CACHE_MODE_AUTO;
          cparams.moe_cache_budget_mib = 0;
@@ -237,7 +237,7 @@ index 98808dca2..654d26375 100644
          cparams.moe_cache_mode = LLAMA_MOE_CACHE_MODE_ON;
          cparams.moe_cache_budget_mib = 0;
      } else {
-@@ -546,7 +548,7 @@ static void print_usage(int /* argc */, char ** argv) {
+@@ -561,7 +563,7 @@ static void print_usage(int /* argc */, char ** argv) {
      printf("  --poll <0...100>                                  (default: %s)\n", join(cmd_params_defaults.poll, ",").c_str());
      printf("  -ngl, --n-gpu-layers <n>                          (default: %s)\n", join(cmd_params_defaults.n_gpu_layers, ",").c_str());
      printf("  -ncmoe, --n-cpu-moe <n>                           (default: %s)\n", join(cmd_params_defaults.n_cpu_moe, ",").c_str());

@@ -1,4 +1,4 @@
-From 47e9ed806c90f75efaa4e1656da680a714bcf555 Mon Sep 17 00:00:00 2001
+From 32036861bc8ba528738973504dd60916b6ddf99b Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:53 -0400
 Subject: [PATCH] 
@@ -9,10 +9,10 @@ Subject: [PATCH]
  1 file changed, 12 insertions(+)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 96374a9c6..ce7428cc0 100644
+index 7fbe21b52..1ac2cf799 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -921,6 +921,11 @@ struct vk_device_struct {
+@@ -936,6 +936,11 @@ struct vk_device_struct {
      vk_pipeline pipeline_dequant_mul_mat_vec_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
      vk_pipeline pipeline_dequant_mul_mat_vec_id_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
  
@@ -24,7 +24,7 @@ index 96374a9c6..ce7428cc0 100644
      vk_pipeline pipeline_mul_mat_vec_p021_f16_f32[p021_max_gqa_ratio];
      vk_pipeline pipeline_mul_mat_vec_nc_f16_f32;
      vk_pipeline pipeline_get_rows[GGML_TYPE_COUNT];
-@@ -5494,6 +5499,13 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5553,6 +5558,13 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_IQ4_NL],  "dequant_iq4_nl",  dequant_iq4_nl_len,  dequant_iq4_nl_data,  "main", 2, 5 * sizeof(uint32_t), {256 * 16, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_MXFP4],   "dequant_mxfp4",   dequant_mxfp4_len,   dequant_mxfp4_data,   "main", 2, 5 * sizeof(uint32_t), {256 * 16, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_NVFP4],   "dequant_nvfp4",   dequant_nvfp4_len,   dequant_nvfp4_data,   "main", 2, 5 * sizeof(uint32_t), {256 * 16, 1, 1}, {}, 1);

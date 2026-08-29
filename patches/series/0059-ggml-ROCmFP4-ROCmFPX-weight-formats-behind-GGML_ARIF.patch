@@ -1,4 +1,4 @@
-From 312b7b3e87ab66ffbe89ade709e81d52560d1249 Mon Sep 17 00:00:00 2001
+From bf0abf0be6ed1ce4f9c9cefb28fc4adb7ec4bb18 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Sat, 25 Jul 2026 01:38:06 -0400
 Subject: [PATCH] ggml: ROCmFP4/ROCmFPX weight formats behind
@@ -5064,7 +5064,7 @@ index 96535b49f..4921a71a6 100644
  if (GGML_BACKEND_DL)
      target_compile_definitions(ggml-base PUBLIC GGML_BACKEND_DL)
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index 3c5c0c6c8..b9fe908ae 100644
+index 99f74906f..d97bd16da 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -15,6 +15,11 @@
@@ -5297,7 +5297,7 @@ index 3c5c0c6c8..b9fe908ae 100644
          .from_float               = quantize_row_q4_1,
          .vec_dot                  = ggml_vec_dot_q4_1_q8_1,
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index ad1d05697..b7be8724a 100644
+index 5529cd6e2..9e90dfe1e 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -671,6 +671,14 @@ void ggml_compute_forward_add(

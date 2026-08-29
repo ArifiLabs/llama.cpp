@@ -1,4 +1,4 @@
-From 8768b5c409b95ab74d9c0a7324e516b86cfa316b Mon Sep 17 00:00:00 2001
+From a8c3594459370b9d3a37aa81f812b9d1f2fb2943 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 06:55:05 -0400
 Subject: [PATCH] ggml-cpu: dispatch Q2_0_G128 at the 7 Q2_0 sites
@@ -15,7 +15,7 @@ Measured-effect: build fix only
  1 file changed, 7 insertions(+)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 7de2e63cf..ad1d05697 100644
+index 17e30bdb1..5529cd6e2 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -670,6 +670,7 @@ void ggml_compute_forward_add(
