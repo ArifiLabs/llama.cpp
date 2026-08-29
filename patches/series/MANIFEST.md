@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10680`, `d7bd3bfcad3e29c7e49fd26f38c79ee3e9a3fd6b`
-- Patches: **414**, all non-merge, applied in filename order.
+- Patches: **415**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 414 commit messages, same provenance trailers. Verified, not
+same file contents, same 415 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -493,6 +493,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 412 | `0412-arifi-sync-base-move-b10636-4d19b2876-b10680-d7bd3bf.patch` | arifi-fork-base | `da9886013` | - | - | arifi-sync: base move b10636/4d19b2876 -> b10680/d7bd3bfca (LATEST upstream tag, President mandate 2026-08-29); upstream pin advanced as one pair |
 | 413 | `0413-vulkan-sync-check-follow-the-FA_TYPE-defines-into-b1.patch` | arifi-fork-base | `a05cc2a58` | - | - | vulkan sync-check: follow the FA_TYPE defines into b10680's new fa_types.glsl - reading only flash_attn_base.glsl found ZERO ids and silently turned checks 2 and 5 into no-ops (the exact F-110 class the guard exists for); now 16 FA_TYPE ids + 12 FA K/V types again |
 | 414 | `0414-b10680-bump-repair-common-fit.cpp-still-called-llm_f.patch` | arifi-fork-base | `9cee24cd3` | - | - | b10680 bump repair: common/fit.cpp still called llm_ffn_exps_block_regex(idx), which b10680 renamed to llm_ffn_block_regex(idx, ffn_regex) - the fork's moe_cache code auto-merged past the rename and the build failed. Same body, LLM_FFN_EXPS_REGEX passed explicitly, so behaviour is identical. |
+| 415 | `0415-b10680-bump-repair-2-my-hunk-1-union-in-the-3aa479a0.patch` | arifi-fork-base | `467f128c7` | - | - | b10680 bump repair 2: my hunk-1 union in the 3aa479a04 (support DFlash2) resolution kept selector_top_k from BOTH sides - duplicate member, build FAILED. One copy kept. The union trap the runbook already names, this time on a declaration rather than a shared block terminator. |
 
 ## Measured effect, per patch
 
@@ -977,6 +978,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0412-arifi-sync-base-move-b10636-4d19b2876-b10680-d7bd3bf.patch` | *(no Measured-effect trailer)* |
 | `0413-vulkan-sync-check-follow-the-FA_TYPE-defines-into-b1.patch` | *(no Measured-effect trailer)* |
 | `0414-b10680-bump-repair-common-fit.cpp-still-called-llm_f.patch` | *(no Measured-effect trailer)* |
+| `0415-b10680-bump-repair-2-my-hunk-1-union-in-the-3aa479a0.patch` | *(no Measured-effect trailer)* |
 
 ## Unclassified
 
@@ -1325,4 +1327,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `da9886013` arifi-sync: base move b10636/4d19b2876 -> b10680/d7bd3bfca (LATEST upstream tag, President mandate 2026-08-29); upstream pin advanced as one pair
 - `a05cc2a58` vulkan sync-check: follow the FA_TYPE defines into b10680's new fa_types.glsl - reading only flash_attn_base.glsl found ZERO ids and silently turned checks 2 and 5 into no-ops (the exact F-110 class the guard exists for); now 16 FA_TYPE ids + 12 FA K/V types again
 - `9cee24cd3` b10680 bump repair: common/fit.cpp still called llm_ffn_exps_block_regex(idx), which b10680 renamed to llm_ffn_block_regex(idx, ffn_regex) - the fork's moe_cache code auto-merged past the rename and the build failed. Same body, LLM_FFN_EXPS_REGEX passed explicitly, so behaviour is identical.
+- `467f128c7` b10680 bump repair 2: my hunk-1 union in the 3aa479a04 (support DFlash2) resolution kept selector_top_k from BOTH sides - duplicate member, build FAILED. One copy kept. The union trap the runbook already names, this time on a declaration rather than a shared block terminator.
 
