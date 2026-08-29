@@ -1,4 +1,4 @@
-From 002568907ddc8bf163065f7bf68c3886cd1a4042 Mon Sep 17 00:00:00 2001
+From 489d95de9c372b8ff5a6afbe8278772b1cef9236 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 21:50:18 -0400
 Subject: [PATCH] rows-per-workgroup on g128: a null, and F-10 confirmed on a
@@ -84,10 +84,10 @@ index 9e70e27ac..f45d17904 100644
  | `LANE110_PREFETCH_CAP` | implementation default, currently `3*n_expert_used` | Limits standalone expert prefetch aggressiveness. | Sweep under cache pressure after establishing the baseline. | Recorded server sequences: default approximately `[5.07/9.03/9.58/12.01]`; cap `1` `[5.13/9.88/10.29/11.22]`; cap `96` `[5.79/11.73/12.19/11.26]`. Default retained because apparent ramp differences require controlled retest. |
  | `--ctx-checkpoints 0` | `0` | Disables server prompt rewind/checkpoints. | Keep off unless a workload demonstrably requires rewind semantics. | Largest historical gain: stock rewind `39.9/68.4/280`; ON_DEVICE checkpoint `84.8/128.8/341.6`; disabled approximately `101/150/372` across short/medium/long prefill. |
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 1bb64086d..221139791 100644
+index 8f7230ace..1f259c0b9 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -5219,6 +5219,31 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5220,6 +5220,31 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      }
      uint32_t rm_iq = 2 * rm_kq;
  
@@ -119,7 +119,7 @@ index 1bb64086d..221139791 100644
      const bool use_subgroups = device->subgroup_arithmetic;
      // Ensure a subgroup size >= 16 is available
      const bool use_subgroups16 = use_subgroups && subgroup_min_size_16;
-@@ -5316,7 +5341,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5317,7 +5342,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                  const uint32_t wg_size_subgroup_int = (w == DMMV_WG_SIZE_SUBGROUP) ? subgroup_size_int : (subgroup_size_int * 4);
  
                  ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_0][i], "mul_mat_vec_q2_0_q8_1_f32", arr_dmmv_q2_0_q8_1_f32_len[reduc], arr_dmmv_q2_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_kq_int, 1, 1}, {wg_size_subgroup_int, 2*rm_kq_int, i+1}, 1, true, use_subgroups, subgroup_size_int);

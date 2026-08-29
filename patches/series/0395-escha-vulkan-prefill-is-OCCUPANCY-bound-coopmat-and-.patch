@@ -1,4 +1,4 @@
-From 8063eef436259964672d31e32435eb799b477a06 Mon Sep 17 00:00:00 2001
+From cdae587c06ea0729839469d6ed852d71b1b0762d Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 13:15:20 -0400
 Subject: [PATCH] escha vulkan: prefill is OCCUPANCY-bound - coopmat and wider
@@ -52,10 +52,10 @@ Origin: ArifiLabs (native)
  4 files changed, 249 insertions(+), 3 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 95d9fda22..827ae05b5 100644
+index 18d111008..d78bc8c80 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -1057,7 +1057,9 @@ struct vk_device_struct {
+@@ -1058,7 +1058,9 @@ struct vk_device_struct {
      vk_pipeline pipeline_escha_mm[2];    // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
      vk_pipeline pipeline_escha_mm_mc[2]; // same, multi-column (ESCHA_MM_COLS per workgroup)
      // Column ladder (seat-40), indexed [rung][K]. Rung r serves ESCHA_COL_RUNGS[r] columns.
@@ -66,7 +66,7 @@ index 95d9fda22..827ae05b5 100644
      vk_pipeline pipeline_escha_mm_lut[2];   // table-generator arm (seat-40)
      vk_buffer   escha_lut;                  // 65,536 f16 generator values, 128 KiB
      vk_pipeline pipeline_escha_mm_b2[2]; // same, 256 threads over two output blocks (seat-40)
-@@ -6009,6 +6011,20 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -6011,6 +6013,20 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[2][1], "escha_mm_k3_c8_f32", escha_mm_k3_c8_f32_len, escha_mm_k3_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[3][0], "escha_mm_k2_c16_f32", escha_mm_k2_c16_f32_len, escha_mm_k2_c16_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[3][1], "escha_mm_k3_c16_f32", escha_mm_k3_c16_f32_len, escha_mm_k3_c16_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
@@ -87,7 +87,7 @@ index 95d9fda22..827ae05b5 100644
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_lut[0], "escha_mm_k2_lut_f32", escha_mm_k2_lut_f32_len, escha_mm_k2_lut_f32_data, "main", 5, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_lut[1], "escha_mm_k3_lut_f32", escha_mm_k3_lut_f32_len, escha_mm_k3_lut_f32_data, "main", 5, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
  
-@@ -10453,7 +10469,10 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10455,7 +10471,10 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      //
      // Pick the SMALLEST rung that covers ncols, and the largest rung once ncols exceeds it: below
      // the top rung a bigger C only adds idle lanes, above it a bigger C removes whole decode passes.
@@ -99,7 +99,7 @@ index 95d9fda22..827ae05b5 100644
      // Cap the ladder for A/B work: GGML_VK_ESCHA_MAX_COLS=8 makes a 10-column batch take C8 twice
      // instead of C16 once, which is the comparison that decides whether the widest rung earns its
      // register pressure. Unset means no cap.
-@@ -10461,7 +10480,28 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10463,7 +10482,28 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      static const uint32_t max_cols = max_cols_env ? (uint32_t) atoi(max_cols_env) : 0u;
      int rung = -1;
      if (!no_multicol && ncols >= 2) {
@@ -128,7 +128,7 @@ index 95d9fda22..827ae05b5 100644
          while (top > 0 && max_cols && ESCHA_COL_RUNGS[top] > max_cols) { --top; }
          rung = top;                                 // widest rung allowed
          for (int r = 0; r <= top; ++r) {
-@@ -10492,11 +10532,52 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10494,11 +10534,52 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      static const bool want_lut = getenv("GGML_VK_ESCHA_LUT") != nullptr;
      const bool use_lut = want_lut && !use_mc && !use_b2;
  
@@ -354,10 +354,10 @@ index 5afce0c71..60389ad37 100644
  }
 +#endif // ESCHA_COOPMAT
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index e3ab8f07c..300805b43 100644
+index 49efdd89e..d1d645af4 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-@@ -1226,6 +1226,22 @@ void process_shaders() {
+@@ -1227,6 +1227,22 @@ void process_shaders() {
      string_to_spv("escha_mm_k3_c8_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "8"}});
      string_to_spv("escha_mm_k2_c16_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "16"}});
      string_to_spv("escha_mm_k3_c16_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "16"}});
@@ -381,10 +381,10 @@ index e3ab8f07c..300805b43 100644
      // only (one column), where 128 threads is two waves on a warp-64 device. Requires n_out % 256.
      string_to_spv("escha_mm_k2_b2_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_BLOCKS", "2"}});
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 4cff6de60..0babd265a 100644
+index 011706e01..c8d229cc6 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -9669,6 +9669,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+@@ -9672,6 +9672,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
      // and the two widest rungs at model depth, where register pressure is real
      test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, 16));
      test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, 17));

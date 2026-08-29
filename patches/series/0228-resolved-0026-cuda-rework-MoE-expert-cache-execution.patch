@@ -1,4 +1,4 @@
-From 3706b661869415cf09e11f7c169874a0a7553f0f Mon Sep 17 00:00:00 2001
+From 9da482fd6846ad02de8412bd86bb3ba7c2555eee Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:24:18 -0400
 Subject: [PATCH] resolved/0026-cuda-rework-MoE-expert-cache-execution.patch
@@ -8,7 +8,7 @@ Assisted-by: Codex
  common/arg.cpp                    |  45 +++-
  common/common.cpp                 |   4 +-
  common/common.h                   |  14 ++
- common/fit.cpp                    | 264 +++++++++++++++++++----
+ common/fit.cpp                    | 265 +++++++++++++++++++----
  common/fit.h                      |  59 ++++++
  include/llama.h                   |  10 +
  src/llama-cparams.h               |   3 +
@@ -17,15 +17,15 @@ Assisted-by: Codex
  tools/fit-params/fit-params.cpp   |  14 +-
  tools/llama-bench/README.md       | 192 +++--------------
  tools/llama-bench/llama-bench.cpp | 342 +++++++++++++++++++++++++++---
- tools/server/server-context.cpp   |  77 ++++++-
- 13 files changed, 823 insertions(+), 250 deletions(-)
+ tools/server/server-context.cpp   |  65 +++++-
+ 13 files changed, 814 insertions(+), 248 deletions(-)
 
 diff --git a/common/arg.cpp b/common/arg.cpp
-index 16615fc5a..1c867a474 100644
+index 1c26782be..9f3753e95 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
-@@ -26,10 +26,12 @@
- #include <nlohmann/json.hpp>
+@@ -24,10 +24,12 @@
+ #endif
  
  #include <algorithm>
 +#include <cerrno>
@@ -37,7 +37,7 @@ index 16615fc5a..1c867a474 100644
  #include <filesystem>
  #include <fstream>
  #include <list>
-@@ -896,6 +898,10 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
+@@ -895,6 +897,10 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
      // ArifiLabs: a build-time option set in the environment does nothing, and silently doing
      // nothing is the failure docs/HARDWARE-PROFILES.md exists to prevent. Runs profile or not.
      common_arifi_profile_warn_build_time_env();
@@ -48,7 +48,7 @@ index 16615fc5a..1c867a474 100644
  
      postprocess_cpu_params(params.cpuparams,       nullptr);
      postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
-@@ -2764,6 +2770,41 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -2783,6 +2789,41 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
              }
          }
      ).set_env("LLAMA_ARG_N_CPU_MOE"));
@@ -90,7 +90,7 @@ index 16615fc5a..1c867a474 100644
      GGML_ASSERT(params.n_gpu_layers < 0); // string_format would need to be extended for a default >= 0
      add_opt(common_arg(
          {"-ngl", "--gpu-layers", "--n-gpu-layers"}, "N",
-@@ -2817,7 +2858,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -2836,7 +2877,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
              const std::regex regex{ R"([,/]+)" };
              std::sregex_token_iterator it{ arg_next.begin(), arg_next.end(), regex, -1 };
              std::vector<std::string> split_arg{ it, {} };
@@ -99,7 +99,7 @@ index 16615fc5a..1c867a474 100644
                  throw std::invalid_argument(
                      string_format("got %zu input configs, but system only has %zu devices", split_arg.size(), llama_max_devices())
                  );
-@@ -2883,7 +2924,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -2902,7 +2943,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
              const std::regex regex{ R"([,/]+)" };
              std::sregex_token_iterator it{ arg_next.begin(), arg_next.end(), regex, -1 };
              std::vector<std::string> split_arg{ it, {} };
@@ -109,18 +109,18 @@ index 16615fc5a..1c867a474 100644
                      string_format("got %zu input configs, but system only has %zu devices", split_arg.size(), llama_max_devices())
                  );
 diff --git a/common/common.cpp b/common/common.cpp
-index 9bf7ccda4..9af04344e 100644
+index f62116fd5..c68daab5b 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -1303,6 +1303,7 @@ common_init_result::common_init_result(common_params & params, bool model_only)
+@@ -1326,6 +1326,7 @@ common_init_result::common_init_result(common_params & params, bool model_only)
          common_fit_params(params.model.path.c_str(), &mparams, &cparams,
              params.tensor_split,
              params.tensor_buft_overrides.data(),
 +            &params.moe_cache,
              params.fit_params_target.data(),
              params.fit_params_min_ctx,
-             params.verbosity >= LOG_LEVEL_DEBUG ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_ERROR);
-@@ -1747,8 +1748,6 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+             has_draft || spec_mtp ? &extra : nullptr,
+@@ -1771,8 +1772,6 @@ struct llama_context_params common_context_params_to_llama(const common_params &
      cparams.type_k = params.cache_type_k;
      cparams.type_v = params.cache_type_v;
  
@@ -129,7 +129,7 @@ index 9bf7ccda4..9af04344e 100644
      if (params.moe_cache.mode_explicit) {
          switch (params.moe_cache.mode) {
              case COMMON_MOE_CACHE_MODE_OFF:
-@@ -1764,7 +1763,6 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+@@ -1788,7 +1787,6 @@ struct llama_context_params common_context_params_to_llama(const common_params &
      }
      cparams.moe_cache_budget_mib = params.moe_cache.budget_mib;
  
@@ -138,7 +138,7 @@ index 9bf7ccda4..9af04344e 100644
  }
  
 diff --git a/common/common.h b/common/common.h
-index 81fca4ec7..2bb51ac55 100644
+index 0200d6374..0f609a55f 100644
 --- a/common/common.h
 +++ b/common/common.h
 @@ -443,6 +443,19 @@ struct lr_opt {
@@ -170,7 +170,7 @@ index 81fca4ec7..2bb51ac55 100644
  
      bool single_turn       = false; // single turn chat conversation
 diff --git a/common/fit.cpp b/common/fit.cpp
-index e60a5314c..00494cc7c 100644
+index 7fddafc85..c8579e010 100644
 --- a/common/fit.cpp
 +++ b/common/fit.cpp
 @@ -1,14 +1,17 @@
@@ -323,7 +323,7 @@ index e60a5314c..00494cc7c 100644
  
      return ret;
  }
-@@ -424,10 +416,53 @@ common_device_memory_data_vec common_get_device_memory_data(
+@@ -424,10 +416,54 @@ common_device_memory_data_vec common_get_device_memory_data(
      return ret;
  }
  
@@ -373,12 +373,13 @@ index e60a5314c..00494cc7c 100644
  static void common_params_fit_impl(
          const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams,
          float * tensor_split, struct llama_model_tensor_buft_override * tensor_buft_overrides,
--        size_t * margins_s, uint32_t n_ctx_min, enum ggml_log_level log_level) {
-+        common_moe_cache_params * moe_cache, size_t * margins_s, uint32_t n_ctx_min, enum ggml_log_level log_level) {
+-        size_t * margins_s, uint32_t n_ctx_min, const common_fit_extra_model * extra, enum ggml_log_level log_level) {
++        common_moe_cache_params * moe_cache, size_t * margins_s, uint32_t n_ctx_min,
++        const common_fit_extra_model * extra, enum ggml_log_level log_level) {
      if (mparams->split_mode == LLAMA_SPLIT_MODE_TENSOR) {
          throw common_params_fit_exception("llama_params_fit is not implemented for SPLIT_MODE_TENSOR, abort");
      }
-@@ -439,13 +474,28 @@ static void common_params_fit_impl(
+@@ -439,6 +475,11 @@ static void common_params_fit_impl(
      uint32_t hp_ngl = 0; // hparams.n_gpu_layers
      uint32_t hp_nct = 0; // hparams.n_ctx_train
      uint32_t hp_nex = 0; // hparams.n_expert
@@ -388,13 +389,27 @@ index e60a5314c..00494cc7c 100644
 +        moe_cache->fit_selected = false;
 +    }
  
+     // with non-unified kv, we need to take into account n_streams
+     // for example, if memory can hold more than model's trained context size, we must extend the n_ctx to hold enough n_streams
+@@ -509,7 +550,7 @@ static void common_params_fit_impl(
      // step 1: get data for default parameters and check whether any changes are necessary in the first place
  
      LOG_TRC("%s: getting device memory data for initial parameters:\n", __func__);
--    const dmds_t dmds_full = common_get_device_memory_data_impl(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
-+    const dmds_t dmds_full = common_get_device_memory_data_impl(
-+            path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex,
-+            log_level, &moe_tensors);
+-    dmds_t dmds_full = common_get_device_memory_data_impl(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
++    dmds_t dmds_full = common_get_device_memory_data_impl(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level, &moe_tensors);
+ 
+     // saturate instead of overflowing, this also preserves the UINT32_MAX sentinel of n_ctx_min:
+     const uint32_t n_ctx_max       = (uint32_t) std::min<uint64_t>(uint64_t(hp_nct)    * n_streams, UINT32_MAX);
+@@ -521,13 +562,21 @@ static void common_params_fit_impl(
+         if (n_streams > 1) {
+             LOG_TRC("%s: context size unset and KV cache not unified -> using %" PRIu32 " for %" PRIu32 " sequences:\n",
+                 __func__, n_ctx_max, n_streams);
+-            dmds_full = common_get_device_memory_data_impl(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
++            dmds_full = common_get_device_memory_data_impl(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level, &moe_tensors);
+         }
+     }
+     add_extra_memory(dmds_full);
+ 
      const size_t nd = devs.size(); // number of devices
  
 +    auto log_stock_fit = [&] {
@@ -408,7 +423,7 @@ index e60a5314c..00494cc7c 100644
      std::vector<int64_t> margins; // this function uses int64_t rather than size_t for memory sizes to more conveniently handle deficits
      margins.reserve(nd);
      if (nd == 0) {
-@@ -519,6 +569,7 @@ static void common_params_fit_impl(
+@@ -601,6 +650,7 @@ static void common_params_fit_impl(
              if (projected_free_per_device[0] >= margins[0]) {
                  LOG_TRC("%s: will leave %" PRId64 " >= %" PRId64 " MiB of free device memory, no changes needed\n",
                      __func__, projected_free_per_device[0]/MiB, margins[0]/MiB);
@@ -416,7 +431,7 @@ index e60a5314c..00494cc7c 100644
                  return;
              }
          } else {
-@@ -531,6 +582,7 @@ static void common_params_fit_impl(
+@@ -613,6 +663,7 @@ static void common_params_fit_impl(
              }
              if (!changes_needed) {
                  LOG_TRC("%s: targets for free memory can be met on all devices, no changes needed\n", __func__);
@@ -424,7 +439,7 @@ index e60a5314c..00494cc7c 100644
                  return;
              }
          }
-@@ -775,11 +827,63 @@ static void common_params_fit_impl(
+@@ -861,11 +912,63 @@ static void common_params_fit_impl(
          return ret;
      };
  
@@ -490,7 +505,7 @@ index e60a5314c..00494cc7c 100644
          tensor_buft_overrides[1] = {nullptr, nullptr};
          mparams->tensor_buft_overrides = tensor_buft_overrides;
  
-@@ -888,6 +992,35 @@ static void common_params_fit_impl(
+@@ -975,6 +1078,35 @@ static void common_params_fit_impl(
              "%s:   - %s: %2" PRIu32 " layers, %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
              __func__, dev_names[id].c_str(), ngl_per_device[id].n_layer, mem[id]/MiB, projected_margin/MiB);
      }
@@ -526,7 +541,7 @@ index e60a5314c..00494cc7c 100644
      if (hp_nex == 0 || global_surplus_cpu_moe <= 0) {
          set_ngl_tensor_split_tbo(ngl_per_device, overflow_bufts, *mparams);
          return;
-@@ -1034,6 +1167,44 @@ static void common_params_fit_impl(
+@@ -1121,6 +1253,44 @@ static void common_params_fit_impl(
              __func__, dev_names[id].c_str(), ngl_per_device[id].n_layer, ngl_per_device[id].n_part, mem[id]/MiB, projected_margin/MiB);
      }
  
@@ -571,24 +586,25 @@ index e60a5314c..00494cc7c 100644
      set_ngl_tensor_split_tbo(ngl_per_device, overflow_bufts, *mparams);
  }
  
-@@ -1043,13 +1214,14 @@ enum common_params_fit_status common_fit_params(
+@@ -1130,6 +1300,7 @@ enum common_params_fit_status common_fit_params(
          llama_context_params * cparams,
          float * tensor_split,
          llama_model_tensor_buft_override * tensor_buft_overrides,
 +        common_moe_cache_params * moe_cache,
          size_t * margins,
          uint32_t n_ctx_min,
-         ggml_log_level log_level) {
+         const common_fit_extra_model * extra,
+@@ -1137,7 +1308,7 @@ enum common_params_fit_status common_fit_params(
      const int64_t t0_us = llama_time_us();
      common_params_fit_status status = COMMON_PARAMS_FIT_STATUS_SUCCESS;
      try {
--        common_params_fit_impl(path_model, mparams, cparams, tensor_split, tensor_buft_overrides, margins, n_ctx_min, log_level);
-+        common_params_fit_impl(path_model, mparams, cparams, tensor_split, tensor_buft_overrides, moe_cache, margins, n_ctx_min, log_level);
+-        common_params_fit_impl(path_model, mparams, cparams, tensor_split, tensor_buft_overrides, margins, n_ctx_min, extra, log_level);
++        common_params_fit_impl(path_model, mparams, cparams, tensor_split, tensor_buft_overrides, moe_cache, margins, n_ctx_min, extra, log_level);
          LOG_TRC("%s: successfully fit params to free device memory\n", __func__);
      } catch (const common_params_fit_exception & e) {
          LOG_WRN("%s: failed to fit params to free device memory: %s\n", __func__, e.what());
 diff --git a/common/fit.h b/common/fit.h
-index 208fc3069..21b46edfa 100644
+index 824d386b0..7262ec1e3 100644
 --- a/common/fit.h
 +++ b/common/fit.h
 @@ -3,8 +3,52 @@
@@ -644,15 +660,15 @@ index 208fc3069..21b46edfa 100644
  enum common_params_fit_status {
      COMMON_PARAMS_FIT_STATUS_SUCCESS = 0, // found allocations that are projected to fit
      COMMON_PARAMS_FIT_STATUS_FAILURE = 1, // could not find allocations that are projected to fit
-@@ -22,6 +66,7 @@ common_params_fit_status common_fit_params(
+@@ -32,6 +76,7 @@ common_params_fit_status common_fit_params(
                 llama_context_params * cparams,
                                float * tensor_split,          // writable buffer for tensor split, needs at least llama_max_devices elements
     llama_model_tensor_buft_override * tensor_buft_overrides, // writable buffer for overrides, needs at least llama_max_tensor_buft_overrides elements
 +           common_moe_cache_params * moe_cache,
                               size_t * margins,               // margins of memory to leave per device in bytes
                             uint32_t   n_ctx_min,             // minimum context size to set when trying to reduce memory use
-                      ggml_log_level   log_level);            // minimum log level to print during fitting, lower levels go to debug log
-@@ -54,3 +99,17 @@ common_device_memory_data_vec common_get_device_memory_data(
+       const common_fit_extra_model * extra,                  // model to fit alongside the main one, nullptr if there is none
+@@ -65,3 +110,17 @@ common_device_memory_data_vec common_get_device_memory_data(
                             uint32_t & hp_n_ctx_train,
                             uint32_t & hp_n_expert,
                       ggml_log_level   log_level);
@@ -671,7 +687,7 @@ index 208fc3069..21b46edfa 100644
 +                           uint32_t & hp_n_expert,
 +                     ggml_log_level   log_level);
 diff --git a/include/llama.h b/include/llama.h
-index 6a86c7095..d520af946 100644
+index efb3065f8..bcffa2694 100644
 --- a/include/llama.h
 +++ b/include/llama.h
 @@ -259,6 +259,13 @@ extern "C" {
@@ -737,10 +753,10 @@ index 35d6e58ad..57acd8e3f 100644
  
  LLAMA_API llama_memory_breakdown llama_get_memory_breakdown(const struct llama_context * ctx);
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index fd2369ec6..597559fb8 100644
+index 71b4089a0..231f672d3 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -3080,6 +3080,42 @@ int32_t llama_model_n_expert(const struct llama_model * model) {
+@@ -3226,6 +3226,42 @@ int32_t llama_model_n_expert(const struct llama_model * model) {
      return model->hparams.n_expert;
  }
  
@@ -784,7 +800,7 @@ index fd2369ec6..597559fb8 100644
      return (int32_t)model->devices.size();
  }
 diff --git a/tools/fit-params/fit-params.cpp b/tools/fit-params/fit-params.cpp
-index 5d897bc46..c40ef6a34 100644
+index 3e78c8929..fa5e44578 100644
 --- a/tools/fit-params/fit-params.cpp
 +++ b/tools/fit-params/fit-params.cpp
 @@ -32,7 +32,8 @@ int llama_fit_params(int argc, char ** argv) {
@@ -794,10 +810,10 @@ index 5d897bc46..c40ef6a34 100644
 -                params.tensor_split, params.tensor_buft_overrides.data(), params.fit_params_target.data(), params.fit_params_min_ctx,
 +                params.tensor_split, params.tensor_buft_overrides.data(), &params.moe_cache,
 +                params.fit_params_target.data(), params.fit_params_min_ctx,
+                 nullptr,
                  params.verbosity >= LOG_LEVEL_DEBUG ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_ERROR);
          if (status != COMMON_PARAMS_FIT_STATUS_SUCCESS) {
-             LOG_ERR("%s: failed to fit CLI arguments to free memory, exiting...\n", __func__);
-@@ -43,6 +44,17 @@ int llama_fit_params(int argc, char ** argv) {
+@@ -44,6 +45,17 @@ int llama_fit_params(int argc, char ** argv) {
          common_log_flush(common_log_main());
          printf("-c %" PRIu32 " -ngl %" PRIi32, cparams.n_ctx, mparams.n_gpu_layers);
  
@@ -1080,7 +1096,7 @@ index 42cb14859..1f6f8093b 100644
 +$ ./llama-bench -o sql | sqlite3 benchmark.sqlite
  ```
 diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
-index d1e8a27d6..fa5df3182 100644
+index caea69934..98808dca2 100644
 --- a/tools/llama-bench/llama-bench.cpp
 +++ b/tools/llama-bench/llama-bench.cpp
 @@ -1,6 +1,7 @@
@@ -1749,7 +1765,7 @@ index d1e8a27d6..fa5df3182 100644
  
          std::vector<float> fit_tensor_split(llama_max_devices(), 0.0f);
          std::vector<llama_model_tensor_buft_override> fit_overrides(llama_max_tensor_buft_overrides(), {nullptr, nullptr});
-@@ -2301,15 +2559,18 @@ int llama_bench(int argc, char ** argv) {
+@@ -2301,16 +2559,19 @@ int llama_bench(int argc, char ** argv) {
  
              std::vector<size_t> margins(llama_max_devices(), inst.fit_target * 1024 * 1024);
  
@@ -1764,12 +1780,13 @@ index d1e8a27d6..fa5df3182 100644
 +                &fit_moe_cache,
                  margins.data(),
                  inst.fit_min_ctx,
+                 nullptr,
                  params.verbose ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_ERROR);
 +            cache_fit_selected = fit_moe_cache.fit_selected;
         }
  
          // keep the same model between tests when possible
-@@ -2333,7 +2594,7 @@ int llama_bench(int argc, char ** argv) {
+@@ -2334,7 +2595,7 @@ int llama_bench(int argc, char ** argv) {
              return 1;
          }
  
@@ -1778,7 +1795,7 @@ index d1e8a27d6..fa5df3182 100644
  
          llama_memory_clear(llama_get_memory(ctx), false);
  
-@@ -2369,8 +2630,8 @@ int llama_bench(int argc, char ** argv) {
+@@ -2370,8 +2631,8 @@ int llama_bench(int argc, char ** argv) {
                  if (params.progress) {
                      fprintf(stderr, "llama-bench: benchmark %d/%zu: warmup prompt run\n", params_idx, params_count);
                  }
@@ -1789,7 +1806,7 @@ index d1e8a27d6..fa5df3182 100644
                  if (!res) {
                      fprintf(stderr, "%s: error: failed to run prompt warmup\n", __func__);
                      llama_free(ctx);
-@@ -2378,11 +2639,13 @@ int llama_bench(int argc, char ** argv) {
+@@ -2379,11 +2640,13 @@ int llama_bench(int argc, char ** argv) {
                      exit(1);
                  }
              }
@@ -1806,7 +1823,7 @@ index d1e8a27d6..fa5df3182 100644
                  if (!res) {
                      fprintf(stderr, "%s: error: failed to run gen warmup\n", __func__);
                      llama_free(ctx);
-@@ -2396,10 +2659,13 @@ int llama_bench(int argc, char ** argv) {
+@@ -2397,10 +2660,13 @@ int llama_bench(int argc, char ** argv) {
              llama_memory_clear(llama_get_memory(ctx), false);
  
              if (t.n_depth > 0) {
@@ -1822,7 +1839,7 @@ index d1e8a27d6..fa5df3182 100644
                      const size_t ret = llama_state_seq_set_data(ctx, cstate.buf.data(), cstate.buf.size(), 0);
                      if (ret == 0) {
                          // if the old state is incompatible with the current context - reprocess from scratch
-@@ -2412,7 +2678,8 @@ int llama_bench(int argc, char ** argv) {
+@@ -2413,7 +2679,8 @@ int llama_bench(int argc, char ** argv) {
                          fprintf(stderr, "llama-bench: benchmark %d/%zu: depth run %d/%d\n", params_idx, params_count,
                                  i + 1, params.reps);
                      }
@@ -1832,7 +1849,7 @@ index d1e8a27d6..fa5df3182 100644
                      if (!res) {
                          fprintf(stderr, "%s: error: failed to run depth\n", __func__);
                          llama_free(ctx);
-@@ -2420,8 +2687,11 @@ int llama_bench(int argc, char ** argv) {
+@@ -2421,8 +2688,11 @@ int llama_bench(int argc, char ** argv) {
                          exit(1);
                      }
  
@@ -1846,7 +1863,7 @@ index d1e8a27d6..fa5df3182 100644
                      cstate.buf.resize(llama_state_seq_get_size(ctx, 0));
                      llama_state_seq_get_data(ctx, cstate.buf.data(), cstate.buf.size(), 0);
                  } else {
-@@ -2439,7 +2709,8 @@ int llama_bench(int argc, char ** argv) {
+@@ -2440,7 +2710,8 @@ int llama_bench(int argc, char ** argv) {
                      fprintf(stderr, "llama-bench: benchmark %d/%zu: prompt run %d/%d\n", params_idx, params_count,
                              i + 1, params.reps);
                  }
@@ -1856,7 +1873,7 @@ index d1e8a27d6..fa5df3182 100644
                  if (!res) {
                      fprintf(stderr, "%s: error: failed to run prompt\n", __func__);
                      llama_free(ctx);
-@@ -2452,7 +2723,8 @@ int llama_bench(int argc, char ** argv) {
+@@ -2453,7 +2724,8 @@ int llama_bench(int argc, char ** argv) {
                      fprintf(stderr, "llama-bench: benchmark %d/%zu: generation run %d/%d\n", params_idx, params_count,
                              i + 1, params.reps);
                  }
@@ -1867,10 +1884,10 @@ index d1e8a27d6..fa5df3182 100644
                      fprintf(stderr, "%s: error: failed to run gen\n", __func__);
                      llama_free(ctx);
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index b827c0861..c26631ead 100644
+index e4c0deafb..d41992861 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -230,6 +230,69 @@ static server_shared_draft_device_config server_prepare_shared_draft_devices(con
+@@ -228,6 +228,69 @@ static server_shared_draft_device_config server_prepare_shared_draft_devices(con
      return result;
  }
  
@@ -1940,48 +1957,7 @@ index b827c0861..c26631ead 100644
  // state diagram: https://github.com/ggml-org/llama.cpp/pull/9283
  enum slot_state {
      SLOT_STATE_IDLE,
-@@ -1243,7 +1306,7 @@ private:
-                 // MTP draft context lives on the target model, only context+compute are new
-                 bool measure_model_bytes = has_draft;
- 
--                common_params params_dft = common_base_params_to_speculative(params_base);
-+                common_params params_dft = make_params_dft();
- 
-                 auto mparams_dft = common_model_params_to_llama(params_dft);
-                 auto cparams_dft = common_context_params_to_llama(params_dft);
-@@ -1257,8 +1320,11 @@ private:
-                 uint32_t hp_nct = 0;
-                 uint32_t hp_nex = 0;
-                 try {
--                    auto dmd = common_get_device_memory_data(
-+                    auto mparams_tgt = common_model_params_to_llama(params_base);
-+                    auto cparams_tgt = common_context_params_to_llama(params_base);
-+                    auto dmd = common_get_device_memory_data_with_parent(
-                         params_dft.model.path.c_str(), &mparams_dft, &cparams_dft,
-+                        params_base.model.path.c_str(), &mparams_tgt, &cparams_tgt,
-                         devs, hp_ngl, hp_nct, hp_nex, GGML_LOG_LEVEL_ERROR);
- 
-                     std::vector<std::pair<ggml_backend_dev_t, size_t>> reservations;
-@@ -1306,6 +1372,9 @@ private:
- 
-                     for (const auto & [device, bytes] : reservations) {
-                         total += bytes;
-+                        if (bytes == 0) {
-+                            continue;
-+                        }
-                         for (size_t i = 0; i < tgt_devices.size(); i++) {
-                             if (tgt_devices[i] == device) {
-                                 SRV_INF("[spec] reserving %.2f MiB on %s for the speculative model and context\n",
-@@ -1318,7 +1387,7 @@ private:
-                             }
-                         }
-                     }
--                    SRV_TRC("[spec] estimated memory usage of %s is %.2f MiB\n",
-+                    SRV_INF("[spec] estimated memory usage of %s is %.2f MiB\n",
-                             has_draft ? "draft model" : "MTP context",
-                             total / (1024.0 * 1024.0));
-                 } catch (const std::exception & e) {
-@@ -1361,7 +1430,7 @@ private:
+@@ -1273,7 +1336,7 @@ private:
              load_progress_spec.t_last_load_progress_ms = 0;  // reset so internal cbs aren't delayed
  
              {

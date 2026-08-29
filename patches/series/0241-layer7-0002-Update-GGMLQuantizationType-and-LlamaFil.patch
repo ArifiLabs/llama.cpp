@@ -1,4 +1,4 @@
-From fd16f6a60acf906385662162726cd5c9521d30c8 Mon Sep 17 00:00:00 2001
+From c5f7aa4cdeceadc23d6bdeac23852d990971a2dd Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 20:52:13 -0400
 Subject: [PATCH] 
@@ -9,7 +9,7 @@ Subject: [PATCH]
  1 file changed, 18 insertions(+), 23 deletions(-)
 
 diff --git a/gguf-py/gguf/constants.py b/gguf-py/gguf/constants.py
-index 36c44bc3b..a72f49f7e 100644
+index 04d6074cc..6e5211679 100644
 --- a/gguf-py/gguf/constants.py
 +++ b/gguf-py/gguf/constants.py
 @@ -165,6 +165,7 @@ class Keys:
@@ -31,7 +31,7 @@ index 36c44bc3b..a72f49f7e 100644
          TEMPERATURE_LENGTH           = "{arch}.attention.temperature_length"
          KEY_LENGTH_MLA               = "{arch}.attention.key_length_mla"
          VALUE_LENGTH_MLA             = "{arch}.attention.value_length_mla"
-@@ -808,6 +809,7 @@ class MODEL_TENSOR(IntEnum):
+@@ -814,6 +815,7 @@ class MODEL_TENSOR(IntEnum):
      ENC_FFN_DOWN         = auto()
      ENC_FFN_UP           = auto()
      ENC_OUTPUT_NORM      = auto()
@@ -39,7 +39,7 @@ index 36c44bc3b..a72f49f7e 100644
      CLS                  = auto() # classifier
      CLS_OUT              = auto() # classifier output projection
      CLS_NORM             = auto()
-@@ -1246,9 +1248,9 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
+@@ -1257,9 +1259,9 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
      MODEL_ARCH.DEEPSEEK:         "deepseek",
      MODEL_ARCH.DEEPSEEK2:        "deepseek2",
      MODEL_ARCH.DEEPSEEK2OCR:     "deepseek2-ocr",
@@ -50,7 +50,7 @@ index 36c44bc3b..a72f49f7e 100644
      MODEL_ARCH.GLM4:             "glm4",
      MODEL_ARCH.GLM4_MOE:         "glm4moe",
      MODEL_ARCH.GLM_DSA:          "glm-dsa",
-@@ -1339,6 +1341,9 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
+@@ -1351,6 +1353,9 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
      MODEL_TENSOR.MASKED_EMBD_CENTROIDS:     "masked_embd_centroids",
      MODEL_TENSOR.MASKED_EMBD_ORDERING:      "masked_embd_ordering",
      MODEL_TENSOR.POS_EMBD:                  "position_embd",
@@ -60,7 +60,7 @@ index 36c44bc3b..a72f49f7e 100644
      MODEL_TENSOR.OUTPUT_NORM:               "output_norm",
      MODEL_TENSOR.OUTPUT:                    "output",
      MODEL_TENSOR.DENSE_2_OUT:               "dense_2", # embeddinggemma 2_Dense
-@@ -1386,8 +1391,8 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
+@@ -1398,8 +1403,8 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
      MODEL_TENSOR.FFN_DOWN_EXP:              "blk.{bid}.ffn_down_exps",
      MODEL_TENSOR.FFN_UP_EXP:                "blk.{bid}.ffn_up_exps",
      MODEL_TENSOR.FFN_GATE_UP_EXP:           "blk.{bid}.ffn_gate_up_exps",
@@ -70,7 +70,7 @@ index 36c44bc3b..a72f49f7e 100644
      MODEL_TENSOR.MOE_LATENT_DOWN:           "blk.{bid}.ffn_latent_down",      # nemotron 3 super
      MODEL_TENSOR.MOE_LATENT_UP:             "blk.{bid}.ffn_latent_up",        # nemotron 3 super
      MODEL_TENSOR.LAYER_OUT_NORM:            "blk.{bid}.layer_output_norm",
-@@ -1524,6 +1529,7 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
+@@ -1536,6 +1541,7 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
      MODEL_TENSOR.ENC_FFN_DOWN:              "enc.blk.{bid}.ffn_down",
      MODEL_TENSOR.ENC_FFN_UP:                "enc.blk.{bid}.ffn_up",
      MODEL_TENSOR.ENC_OUTPUT_NORM:           "enc.output_norm",
@@ -78,7 +78,7 @@ index 36c44bc3b..a72f49f7e 100644
      MODEL_TENSOR.CLS:                       "cls",
      MODEL_TENSOR.CLS_OUT:                   "cls.output",
      MODEL_TENSOR.CLS_NORM:                  "cls.norm",
-@@ -4857,23 +4863,7 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
+@@ -4917,23 +4923,7 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
          MODEL_TENSOR.ATTN_OUT,
          MODEL_TENSOR.ATTN_Q_NORM,
          MODEL_TENSOR.ATTN_K_NORM,
@@ -103,7 +103,7 @@ index 36c44bc3b..a72f49f7e 100644
          MODEL_TENSOR.FFN_NORM,
          MODEL_TENSOR.FFN_GATE,
          MODEL_TENSOR.FFN_DOWN,
-@@ -4893,6 +4883,7 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
+@@ -4953,6 +4943,7 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
          MODEL_TENSOR.DSPARK_MARKOV_W1,
          MODEL_TENSOR.DSPARK_MARKOV_W2,
          MODEL_TENSOR.DSPARK_CONF_PROJ,
@@ -111,7 +111,7 @@ index 36c44bc3b..a72f49f7e 100644
      ],
      MODEL_ARCH.MISTRAL4: [
          MODEL_TENSOR.TOKEN_EMBD,
-@@ -5336,9 +5327,10 @@ class GGMLQuantizationType(IntEnum):
+@@ -5396,9 +5387,10 @@ class GGMLQuantizationType(IntEnum):
  
  
  class ExpertGatingFuncType(IntEnum):
@@ -125,7 +125,7 @@ index 36c44bc3b..a72f49f7e 100644
  
  
  # TODO: add GGMLFileType from ggml_ftype in ggml.h
-@@ -5411,6 +5403,7 @@ class LlamaFileType(IntEnum):
+@@ -5471,6 +5463,7 @@ class LlamaFileType(IntEnum):
      MOSTLY_Q6_0_ROCMFPX_LEAN          = 116
      MOSTLY_Q6_0_ROCMFPX_AGENT_LEAN    = 117
  
@@ -133,7 +133,7 @@ index 36c44bc3b..a72f49f7e 100644
      GUESSED              = 1024  # not specified in the model file
  
  
-@@ -5550,6 +5543,8 @@ GGML_QUANT_SIZES: dict[GGMLQuantizationType, tuple[int, int]] = {
+@@ -5612,6 +5605,8 @@ GGML_QUANT_SIZES: dict[GGMLQuantizationType, tuple[int, int]] = {
      GGMLQuantizationType.Q8_0_ROCMFPX:      (32, 32 + 1),
      GGMLQuantizationType.Q3_0_ROCMFPX:      (32, 12 + 2),
      GGMLQuantizationType.Q2_0_ROCMFPX:      (32, 8 + 2),

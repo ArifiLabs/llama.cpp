@@ -1,4 +1,4 @@
-From 3e0c4f03c25f8b8222fdd302f206e6b05b12b9d4 Mon Sep 17 00:00:00 2001
+From ba9e60deafe38113e982ad86f5d17148c85439fb Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 17:46:20 -0400
 Subject: [PATCH] lane-144 CHECKER FIX: TQ3_4S was missing from the MUL_MAT_ID
@@ -10,10 +10,10 @@ Found by the independent checker, not by me. ggml-vulkan.cpp:18393-18394 shares 
  1 file changed, 9 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 25f0e47af..29b96c32f 100644
+index e666e9800..5f23fc5be 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -18511,7 +18511,15 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18534,7 +18534,15 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      // ids->ne[1] = 512, so a gate that answers differently at load and at decode
                      // parks the experts in one backend's buffer and then runs the op in the
                      // other, copying every expert tensor across the bus on every token.

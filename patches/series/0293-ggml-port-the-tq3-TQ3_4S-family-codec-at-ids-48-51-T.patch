@@ -1,4 +1,4 @@
-From 830f165029ba0bcfa6e7c38c276d003e80a69886 Mon Sep 17 00:00:00 2001
+From 9eeb8fddd51d63bfd405bbb8244136cf53fdeb3b Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 08:48:24 -0400
 Subject: [PATCH] ggml: port the tq3 TQ3_4S family codec at ids 48-51
@@ -15,7 +15,7 @@ Subject: [PATCH] ggml: port the tq3 TQ3_4S family codec at ids 48-51
  7 files changed, 677 insertions(+)
 
 diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
-index a407c3412..5fd83f25e 100644
+index 365121054..74dd07395 100644
 --- a/ggml/include/ggml.h
 +++ b/ggml/include/ggml.h
 @@ -434,6 +434,15 @@ extern "C" {
@@ -669,7 +669,7 @@ index 20635ed96..d8ec89f55 100644
      [GGML_TYPE_Q4_0] = {
          .from_float               = quantize_row_q4_0,
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 3ea5bb6e5..4c2eab98d 100644
+index 5f922c1e6..07c822e3b 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -684,6 +684,10 @@ void ggml_compute_forward_add(
@@ -705,7 +705,7 @@ index 3ea5bb6e5..4c2eab98d 100644
  #endif
  #ifdef GGML_ARIFI_ROCMFPX_FORMATS
          case GGML_TYPE_Q4_0_ROCMFP4:
-@@ -4579,6 +4591,10 @@ void ggml_compute_forward_out_prod(
+@@ -4575,6 +4587,10 @@ void ggml_compute_forward_out_prod(
  #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
          case GGML_TYPE_TQ3_1S:
          case GGML_TYPE_TQ4_1S:
@@ -716,7 +716,7 @@ index 3ea5bb6e5..4c2eab98d 100644
  #endif
  #ifdef GGML_ARIFI_ROCMFPX_FORMATS
          case GGML_TYPE_Q4_0_ROCMFP4:
-@@ -4868,6 +4884,10 @@ void ggml_compute_forward_set(
+@@ -4864,6 +4880,10 @@ void ggml_compute_forward_set(
  #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
          case GGML_TYPE_TQ3_1S:
          case GGML_TYPE_TQ4_1S:
@@ -727,7 +727,7 @@ index 3ea5bb6e5..4c2eab98d 100644
  #endif
  #ifdef GGML_ARIFI_ROCMFPX_FORMATS
          case GGML_TYPE_Q4_0_ROCMFP4:
-@@ -5106,6 +5126,10 @@ void ggml_compute_forward_get_rows(
+@@ -5102,6 +5122,10 @@ void ggml_compute_forward_get_rows(
  #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
          case GGML_TYPE_TQ3_1S:
          case GGML_TYPE_TQ4_1S:
@@ -738,7 +738,7 @@ index 3ea5bb6e5..4c2eab98d 100644
  #endif
  #ifdef GGML_ARIFI_ROCMFPX_FORMATS
          case GGML_TYPE_Q4_0_ROCMFP4:
-@@ -5879,6 +5903,10 @@ void ggml_compute_forward_clamp(
+@@ -5875,6 +5899,10 @@ void ggml_compute_forward_clamp(
          // and carries no default:, so gating these two would emit -Wswitch on the OFF build.
          case GGML_TYPE_TQ3_1S:
          case GGML_TYPE_TQ4_1S:
@@ -776,7 +776,7 @@ index 168759354..7756df48f 100644
  
  #ifdef __cplusplus
 diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
-index b913a2326..0e55a7581 100644
+index 17a6f8d77..45ea5982f 100644
 --- a/ggml/src/ggml.c
 +++ b/ggml/src/ggml.c
 @@ -721,6 +721,40 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
@@ -820,7 +820,7 @@ index b913a2326..0e55a7581 100644
  #endif
  #ifdef GGML_ARIFI_ROCMFPX_FORMATS
      // ROCmFPX weight formats, ids adopted verbatim (docs/TYPE-ID-ALLOCATION.md §3.1).
-@@ -8353,6 +8387,10 @@ size_t ggml_quantize_chunk(
+@@ -8369,6 +8403,10 @@ size_t ggml_quantize_chunk(
  #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
          case GGML_TYPE_TQ3_1S:  result = quantize_tq3_1s (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_TQ4_1S:  result = quantize_tq4_1s (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;

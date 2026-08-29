@@ -1,4 +1,4 @@
-From a1c9a869622fd7c4d235fb090f935e29043e4487 Mon Sep 17 00:00:00 2001
+From 9568085fab36c2af1d0516d9d42df1757b948ec2 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:11:24 -0400
 Subject: [PATCH] 
@@ -12,10 +12,10 @@ Assisted-by: Codex
  3 files changed, 41 insertions(+), 35 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 776e311a5..2bc7f8859 100644
+index d45d1a129..c5355b97c 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -1933,7 +1933,11 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
+@@ -1937,7 +1937,11 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
          ggml_cuda_mul_mat_f(ctx, src0, src1, nullptr, dst);
          return;
      }
@@ -28,7 +28,7 @@ index 776e311a5..2bc7f8859 100644
          ggml_cuda_mul_mat_vec_q(ctx, src0, src1, nullptr, dst);
          return;
      }
-@@ -1943,10 +1947,8 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
+@@ -1947,10 +1951,8 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
      }
  
      // TQ weight types: fused dp4a path (decode) or runtime q8_0 conversion + cuBLAS (prefill)

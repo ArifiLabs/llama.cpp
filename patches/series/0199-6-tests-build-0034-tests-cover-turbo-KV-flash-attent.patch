@@ -1,4 +1,4 @@
-From 5ebe1ebecc47df0a28126801f8568d051a7c2f67 Mon Sep 17 00:00:00 2001
+From 4fd14bb5001bb8ddeacaf34bf41c6fe67f127600 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:58:32 -0400
 Subject: [PATCH] 
@@ -9,7 +9,7 @@ Subject: [PATCH]
  1 file changed, 6 insertions(+), 19 deletions(-)
 
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 710c6929b..4cc6ecffd 100644
+index 1e5675049..15af7b3d7 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
 @@ -129,24 +129,7 @@ static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float m
@@ -38,7 +38,7 @@ index 710c6929b..4cc6ecffd 100644
      } else if (tensor->type == GGML_TYPE_I8 || tensor->type == GGML_TYPE_I16) {
          // This is going to create some weird integers though.
          ggml_backend_tensor_set(tensor, data.data(), 0, nels * ggml_type_size(tensor->type));
-@@ -10338,7 +10321,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+@@ -10353,7 +10336,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
                                                      if (hsk != 128 && prec == GGML_PREC_DEFAULT) continue;
                                                      for (ggml_type type_KV : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_BF16, GGML_TYPE_Q8_0, GGML_TYPE_Q5_1, GGML_TYPE_Q5_0, GGML_TYPE_Q4_1, GGML_TYPE_Q4_0, GGML_TYPE_IQ4_NL, GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO4_0}) {
                                                          if ((type_KV == GGML_TYPE_TURBO3_0 || type_KV == GGML_TYPE_TURBO4_0) && hsk < 128) continue;
@@ -48,6 +48,6 @@ index 710c6929b..4cc6ecffd 100644
 +                                                        // is exercised rather than silently skipped.
 +                                                        const bool turbo_kv = (type_KV == GGML_TYPE_TURBO3_0 || type_KV == GGML_TYPE_TURBO4_0 || type_KV == GGML_TYPE_TURBO2_0);
 +                                                        if (type_KV != GGML_TYPE_F16 && hsk != 64 && hsk != 72 && hsk != 128 && !(turbo_kv && hsk == 256)) continue;
+                                                         // DeepSeek MLA: the V cache is a sub-view of the K cache
+                                                         const bool v_is_view_of_k = hsk == 576;
                                                          test_cases.emplace_back(new test_flash_attn_ext(
-                                                                     hsk, hsv, nh, {nr2, nr3}, kv, nb, mask, sinks, max_bias, logit_softcap, prec, type_KV, type_KV));
-                                                         // run fewer test cases permuted

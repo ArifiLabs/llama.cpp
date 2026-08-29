@@ -1,4 +1,4 @@
-From 9a3367902575ad70eb7baaf78ca8706216a2bc8b Mon Sep 17 00:00:00 2001
+From b9715ac0554bbc986f1fc2c3153212ac53d2e402 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:13:38 -0400
 Subject: [PATCH] 
@@ -11,10 +11,10 @@ Assisted-by: Codex
  2 files changed, 59 insertions(+), 17 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 69dcce14b..f2ab8ec86 100644
+index 309d7d4ab..0dc228b84 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -1953,8 +1953,34 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
+@@ -1957,8 +1957,34 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
      // mmvq-tq.cu), so permuted/viewed activations (e.g. DeepSeek-V4 MLA projections) must take the
      // stride-aware cuBLAS fallback below, which dequantizes TQ via ggml_get_to_fp16_cuda.
      const bool tq_fast_path_ok = ggml_is_contiguous(src1) && ggml_is_contiguous(dst);

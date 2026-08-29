@@ -1,4 +1,4 @@
-From f3601326efc85732f2a53048c43c77f92b5ce7df Mon Sep 17 00:00:00 2001
+From 33718bdd1a6e118fb5a9bad0650a10ce03438879 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 06:55:47 -0400
 Subject: [PATCH] escha vulkan: column ladder C2/C4/C8/C16, and the generator
@@ -43,10 +43,10 @@ Origin: ArifiLabs (native)
  4 files changed, 208 insertions(+), 28 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 1bf3f055c..95d9fda22 100644
+index 7f6fe6ab2..18d111008 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -1056,6 +1056,10 @@ struct vk_device_struct {
+@@ -1057,6 +1057,10 @@ struct vk_device_struct {
      vk_pipeline pipeline_fwht_f32[4];
      vk_pipeline pipeline_escha_mm[2];    // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
      vk_pipeline pipeline_escha_mm_mc[2]; // same, multi-column (ESCHA_MM_COLS per workgroup)
@@ -57,7 +57,7 @@ index 1bf3f055c..95d9fda22 100644
      vk_pipeline pipeline_escha_mm_b2[2]; // same, 256 threads over two output blocks (seat-40)
      vk_pipeline pipeline_cumsum_f32;
      vk_pipeline pipeline_cumsum_small_f32;
-@@ -2092,6 +2096,7 @@ struct ggml_vk_garbage_collector {
+@@ -2093,6 +2097,7 @@ struct ggml_vk_garbage_collector {
  };
  
  static void ggml_vk_preallocate_buffers(ggml_backend_vk_context * ctx, vk_context subctx);
@@ -65,7 +65,7 @@ index 1bf3f055c..95d9fda22 100644
  static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested = nullptr);
  static void ggml_pipeline_allocate_descriptor_sets(ggml_backend_vk_context * ctx);
  static bool ggml_vk_intel_windows_driver_in_range(uint32_t driver_version, uint32_t lower_major, uint32_t lower_minor, uint32_t upper_major, uint32_t upper_minor);
-@@ -5996,6 +6001,16 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5998,6 +6003,16 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[1], "escha_mm_k3_c8_f32", escha_mm_k3_c8_f32_len, escha_mm_k3_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_b2[0], "escha_mm_k2_b2_f32", escha_mm_k2_b2_f32_len, escha_mm_k2_b2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_b2[1], "escha_mm_k3_b2_f32", escha_mm_k3_b2_f32_len, escha_mm_k3_b2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
@@ -82,7 +82,7 @@ index 1bf3f055c..95d9fda22 100644
  
      const uint32_t cumsum_elem_per_thread = (device->vendor_id == VK_VENDOR_ID_AMD || device->vendor_id == VK_VENDOR_ID_INTEL) ? 2 : 4;
      ggml_vk_create_pipeline(device, device->pipeline_cumsum_f32,       "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 256, device->subgroup_size, cumsum_elem_per_thread }, 1, true, true, device->subgroup_size);
-@@ -10357,6 +10372,38 @@ static void ggml_vk_fwht(ggml_backend_vk_context * ctx, vk_context& subctx, cons
+@@ -10359,6 +10374,38 @@ static void ggml_vk_fwht(ggml_backend_vk_context * ctx, vk_context& subctx, cons
      ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { src_buf, dst_buf }, pc, { workgroups_x, 1, 1 });
  }
  
@@ -121,7 +121,7 @@ index 1bf3f055c..95d9fda22 100644
  // ArifiLabs Escha-W2 fused linear (lane-164)
  static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, ggml_tensor * dst) {
      const ggml_tensor * src0 = dst->src[0]; // packed codes
-@@ -10381,27 +10428,47 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10383,27 +10430,47 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      // and acc[16] registers); raise it only from a measurement, not from the trend.
      // Note this is NOT lane-165's rows=8, which was refuted on this device: that lever was
      // register row blocking inside one column, this one shares a decode across columns.
@@ -185,7 +185,7 @@ index 1bf3f055c..95d9fda22 100644
  
      // Occupancy arm (seat-40) - REFUTED BY MEASUREMENT, OFF BY DEFAULT.
      // The reasoning was that 128 threads is two waves at warp 64, too few to hide code-fetch
-@@ -10420,11 +10487,17 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10422,11 +10489,17 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      static const bool want_block2 = getenv("GGML_VK_ESCHA_BLOCK2") != nullptr;
      const bool use_b2 = !use_mc && want_block2 && (n_out % 256 == 0);
  
@@ -207,7 +207,7 @@ index 1bf3f055c..95d9fda22 100644
      const uint32_t out_per_wg  = use_b2 ? 256u : 128u;
      GGML_ASSERT(pipeline != nullptr);
  
-@@ -10455,8 +10528,17 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10457,8 +10530,17 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      // per column, so raise it only from a measured ncols curve (test-backend-ops perf -o ESCHA_MM).
      constexpr uint32_t COLS_PER_DISPATCH = 32;
  
@@ -335,10 +335,10 @@ index 90ffea97d..5afce0c71 100644
      const f16vec2 h1 = unpackFloat2x16(q1);
      const f16vec2 s  = f16vec2(h0.x, h1.x) + f16vec2(h0.y, h1.y);   // one v_pk_add_f16
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index a418a0a06..e3ab8f07c 100644
+index d93059eab..49efdd89e 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-@@ -1211,8 +1211,21 @@ void process_shaders() {
+@@ -1212,8 +1212,21 @@ void process_shaders() {
      string_to_spv("escha_mm_k3_f32", "escha_mm.comp", {{"ESCHA_K", "3"}});
      // multi-column arm: one weight decode serves ESCHA_MM_COLS columns (keep in sync with
      // ESCHA_MM_COLS in ggml-vulkan.cpp)
@@ -361,10 +361,10 @@ index a418a0a06..e3ab8f07c 100644
      // only (one column), where 128 threads is two waves on a warp-64 device. Requires n_out % 256.
      string_to_spv("escha_mm_k2_b2_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_BLOCKS", "2"}});
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 8f679af6c..4cff6de60 100644
+index 447f79bb7..011706e01 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -9647,13 +9647,29 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+@@ -9650,13 +9650,29 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
      // 205 = 6*32 + 13, 133 = 4*32 + 5 — both tails are also partial column-blocks for C>1.
      test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 205));
      test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 133));

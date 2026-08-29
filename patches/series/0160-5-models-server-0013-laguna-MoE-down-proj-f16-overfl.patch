@@ -1,4 +1,4 @@
-From 53cc3e87338aed8e8e5c8c1bbe7f80d816083d23 Mon Sep 17 00:00:00 2001
+From c784b11be5325aa8668d4fede3e58a6479d0290d Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:21 -0400
 Subject: [PATCH] 
@@ -11,7 +11,7 @@ Subject: [PATCH]
  3 files changed, 154 insertions(+), 10 deletions(-)
 
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 25cf464ff..a6711e470 100644
+index c792ff75b..f05854de6 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
 @@ -14,6 +14,7 @@
@@ -115,10 +115,10 @@ index 25cf464ff..a6711e470 100644
                  llama_batch enc_batch = {
                      /*.n_tokens =*/ n_chunk,
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index 402270333..77525c946 100644
+index 60cc1bddf..429fa92c8 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -2256,7 +2256,18 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
+@@ -2276,7 +2276,18 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
              GGML_ABORT("fatal error");
      }
  
@@ -139,7 +139,7 @@ index 402270333..77525c946 100644
  
      if (down_exps_s) {
 diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
-index 2ed145a48..bbcbae796 100644
+index 4f21c3515..406e0cdf9 100644
 --- a/src/models/dflash.cpp
 +++ b/src/models/dflash.cpp
 @@ -75,11 +75,16 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
@@ -160,15 +160,15 @@ index 2ed145a48..bbcbae796 100644
      LLAMA_LOAD_LOCALS;
  
      const int64_t n_embd_inp = hparams.n_embd_inp_enc();
-@@ -117,6 +122,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
-     output_norm_enc = create_tensor(tn(LLM_TENSOR_ENC_OUTPUT_NORM, "weight"), { n_embd }, 0); // encoder hidden_norm (after fc)
-     output_norm     = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM,    "weight"), { n_embd }, 0); // decoder final norm
+@@ -121,6 +126,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
+     // a draft with its own embeddings + head references no target tensors and can run on devices the target does not use (e.g. -devd with a tensor-split target)
+     output   = create_tensor(tn(LLM_TENSOR_OUTPUT,     "weight"), { n_embd, n_vocab_draft }, TENSOR_NOT_REQUIRED);
  
 +<<<<<<< ours
      if (hparams.dsv4_hc_mult > 0) {
          const int64_t q_lora_rank     = hparams.n_lora_q;
          const int64_t n_ff_exp        = hparams.n_ff_exp;
-@@ -165,6 +171,12 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
+@@ -169,6 +175,12 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
              layer.ffn_up_shexp   = create_tensor(tn(LLM_TENSOR_FFN_UP_SHEXP,   "weight", i), {n_embd,                     n_ff_exp * n_expert_shared}, 0);
          }
          return;
@@ -180,8 +180,8 @@ index 2ed145a48..bbcbae796 100644
 +>>>>>>> theirs
      }
  
-     // optional: reduced-vocab drafts ship their own, full-vocab drafts share the target's via ctx_other
-@@ -183,6 +195,22 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
+     for (int i = 0; i < n_layer; ++i) {
+@@ -184,6 +196,22 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
          layer.attn_q_norm = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), { n_embd_head_k }, 0);
          layer.attn_k_norm = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), { n_embd_head_k }, 0);
  
@@ -204,7 +204,7 @@ index 2ed145a48..bbcbae796 100644
          layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), { n_embd }, 0);
          layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), { n_embd, n_ff }, 0);
          layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd }, 0);
-@@ -223,9 +251,29 @@ ggml_tensor * llama_model_dflash::graph<true>::build_inp_embd_enc() const {
+@@ -224,9 +252,29 @@ ggml_tensor * llama_model_dflash::graph<true>::build_inp_embd_enc() const {
  // DFlash Encoder: processes target model features through feature fusion layer
  template <>
  llama_model_dflash::graph<true>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
@@ -234,7 +234,7 @@ index 2ed145a48..bbcbae796 100644
      cb(cur, "fc_out", -1);
  
      cur = build_norm(cur, model.output_norm_enc, NULL, LLM_NORM_RMS, -1);
-@@ -380,11 +428,21 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -381,11 +429,21 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
  
          res->add_input(std::move(inp));
  
@@ -258,7 +258,7 @@ index 2ed145a48..bbcbae796 100644
  
              Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
              Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
-@@ -487,10 +545,37 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -488,10 +546,37 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
          cb(Kcur, "Kcur", il);
          cb(Vcur, "Vcur", il);
  

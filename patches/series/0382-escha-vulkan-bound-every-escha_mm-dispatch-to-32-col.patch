@@ -1,4 +1,4 @@
-From 816a242b6efccfc0734fe4e465bd81a4cc2113eb Mon Sep 17 00:00:00 2001
+From 68f3155739d80a4c91171859a87feb34e0eb467c Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 20:27:40 -0400
 Subject: [PATCH] escha vulkan: bound every escha_mm dispatch to 32 columns
@@ -28,10 +28,10 @@ Lane: lane-164
  2 files changed, 30 insertions(+), 6 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 89c7fefee..7420ed88e 100644
+index 277ce81ed..031da3a78 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -1423,6 +1423,7 @@ struct vk_op_escha_mm_push_constants {
+@@ -1424,6 +1424,7 @@ struct vk_op_escha_mm_push_constants {
      uint32_t n_out;
      uint32_t ncols;
      uint32_t Tout;
@@ -39,7 +39,7 @@ index 89c7fefee..7420ed88e 100644
  };
  
  struct vk_op_count_experts_push_constants {
-@@ -10370,8 +10371,8 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10372,8 +10373,8 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
  
      ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
  
@@ -50,7 +50,7 @@ index 89c7fefee..7420ed88e 100644
      };
  
      const vk_subbuffer a_buf   = ggml_vk_tensor_subbuffer(ctx, src0);
-@@ -10379,9 +10380,31 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10381,9 +10382,31 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      const vk_subbuffer aux_buf = ggml_vk_tensor_subbuffer(ctx, src2);
      const vk_subbuffer dst_buf = ggml_vk_tensor_subbuffer(ctx, dst);
  

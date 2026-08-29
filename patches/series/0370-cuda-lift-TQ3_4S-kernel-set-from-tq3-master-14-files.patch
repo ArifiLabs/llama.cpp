@@ -1,4 +1,4 @@
-From 1d43fab13e86cba9874ea3698e526722dd6e3ad4 Mon Sep 17 00:00:00 2001
+From e7ef1fe3f1c15683fad03fbbf15920e28d1642d1 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 07:12:06 -0400
 Subject: [PATCH] cuda: lift TQ3_4S kernel set from tq3/master (14 files)
@@ -48,7 +48,7 @@ Lane: lane-160
  create mode 100644 ggml/src/ggml-cuda/tq3-native.cuh
 
 diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
-index e5ed1c435..35d7680a7 100644
+index 64fb42821..0b3beb709 100644
 --- a/ggml/src/ggml-cuda/common.cuh
 +++ b/ggml/src/ggml-cuda/common.cuh
 @@ -1132,6 +1132,13 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ3_S> {
@@ -65,7 +65,7 @@ index e5ed1c435..35d7680a7 100644
  //////////////////////
  
  struct ggml_cuda_device_info {
-@@ -1427,6 +1434,16 @@ struct ggml_backend_cuda_context {
+@@ -1429,6 +1436,16 @@ struct ggml_backend_cuda_context {
  
      int curr_stream_no = 0;
  
@@ -313,10 +313,10 @@ index d1832f192..7c3b218b5 100644
              GGML_ABORT("%s: unsupported src0 type: %s\n", __func__, ggml_type_name(src0_type));
              break;
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index c84ea3f3d..5900954ae 100644
+index e011ca4f8..71e3eb3d3 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -733,6 +733,16 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
+@@ -734,6 +734,16 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
      std::unique_lock<std::mutex> lock(ggml_cuda_lock);
      ggml_cuda_lock_cv.wait(lock, []{ return ggml_cuda_lock_counter.load(std::memory_order_relaxed) == 0; });
  
@@ -333,7 +333,7 @@ index c84ea3f3d..5900954ae 100644
      if (copy_event != nullptr) {
          CUDA_CHECK(cudaEventDestroy(copy_event));
      }
-@@ -1941,7 +1951,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
+@@ -1945,7 +1955,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
          ggml_cuda_mul_mat_vec_q(ctx, src0, src1, nullptr, dst);
          return;
      }
@@ -342,7 +342,7 @@ index c84ea3f3d..5900954ae 100644
          ggml_cuda_mul_mat_q(ctx, src0, src1, nullptr, dst);
          return;
      }
-@@ -2036,7 +2046,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor *
+@@ -2040,7 +2050,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor *
              }
          }
  
@@ -351,7 +351,7 @@ index c84ea3f3d..5900954ae 100644
              ggml_cuda_mul_mat_q(ctx, src0, src1, ids, dst);
              return;
          }
-@@ -5055,6 +5065,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -5062,6 +5072,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                      case GGML_TYPE_BF16:
                      case GGML_TYPE_TQ4_1S:
                      case GGML_TYPE_TQ3_1S:
@@ -359,7 +359,7 @@ index c84ea3f3d..5900954ae 100644
                          return true;
                      default:
                          return false;
-@@ -5091,6 +5102,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -5098,6 +5109,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                      case GGML_TYPE_IQ4_XS:
                      case GGML_TYPE_TQ4_1S:
                      case GGML_TYPE_TQ3_1S:
@@ -395,7 +395,7 @@ index 9f9fd1973..04f1f6616 100644
      return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 256, 1, 128, 64, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, 256, false, true);
  }
 diff --git a/ggml/src/ggml-cuda/mmq.cu b/ggml/src/ggml-cuda/mmq.cu
-index 707437ea3..335e268dc 100644
+index 7fb440148..5ebc24eb9 100644
 --- a/ggml/src/ggml-cuda/mmq.cu
 +++ b/ggml/src/ggml-cuda/mmq.cu
 @@ -4,6 +4,137 @@
@@ -805,7 +805,7 @@ index 707437ea3..335e268dc 100644
          case GGML_TYPE_Q3_K:
          case GGML_TYPE_Q4_K:
 diff --git a/ggml/src/ggml-cuda/mmq.cuh b/ggml/src/ggml-cuda/mmq.cuh
-index 2eb15fdfa..367765385 100644
+index c978b4421..0d917c9a3 100644
 --- a/ggml/src/ggml-cuda/mmq.cuh
 +++ b/ggml/src/ggml-cuda/mmq.cuh
 @@ -2,6 +2,7 @@
@@ -824,7 +824,7 @@ index 2eb15fdfa..367765385 100644
              return MMQ_Q8_1_DS_LAYOUT_D4;
          case GGML_TYPE_Q2_K:
              return MMQ_Q8_1_DS_LAYOUT_D2S6;
-@@ -422,9 +424,124 @@ static __host__ int ggml_cuda_mmq_get_nbytes_shared_x(const ggml_cuda_mmq_config
+@@ -428,9 +430,124 @@ static __host__ int ggml_cuda_mmq_get_nbytes_shared_x(const ggml_cuda_mmq_config
  
  // ------------------------------------------------------------
  
@@ -949,7 +949,7 @@ index 2eb15fdfa..367765385 100644
  template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_write_back_dp4a(
          const float * __restrict__ sum, const int32_t * __restrict__ ids_dst, float * __restrict__ dst,
          const float * __restrict__ y_scale, const int stride, const int i_max, const int j_max) {
-@@ -580,6 +697,12 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
+@@ -586,6 +703,12 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
                      ggml_cuda_mmq_load_tiles_q8_0<type, J, fallback>,
                      ggml_cuda_mmq_vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
                      ggml_cuda_mmq_write_back_dp4a<type, J, fallback>);
@@ -962,7 +962,7 @@ index 2eb15fdfa..367765385 100644
  // ---------------------------------------------------------------------------------------------
              case GGML_TYPE_Q2_K:
                  return ggml_cuda_mmq_util_funcs(
-@@ -837,6 +960,12 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
+@@ -843,6 +966,12 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
                  ggml_cuda_mmq_load_tiles_nvfp4<type, J, fallback>,
                  ggml_cuda_mmq_vec_dot_q8_0_16_q8_1_mma<type, J, fallback>,
                  ggml_cuda_mmq_write_back_mma<type, J, fallback>);
@@ -975,7 +975,7 @@ index 2eb15fdfa..367765385 100644
          default:
              return ggml_cuda_mmq_util_funcs(1, nullptr, nullptr, nullptr);
      }
-@@ -1588,10 +1717,12 @@ extern DECL_MMQ_CASE(GGML_TYPE_IQ4_XS);
+@@ -1594,10 +1723,12 @@ extern DECL_MMQ_CASE(GGML_TYPE_IQ4_XS);
  // -----------------------------------------
  extern DECL_MMQ_CASE(GGML_TYPE_MXFP4);
  extern DECL_MMQ_CASE(GGML_TYPE_NVFP4);
@@ -990,7 +990,7 @@ index 2eb15fdfa..367765385 100644
 -bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t n_experts);
 +bool ggml_cuda_should_use_mmq(const ggml_tensor * src0, int cc, int64_t ne11, int64_t n_experts);
 diff --git a/ggml/src/ggml-cuda/mmvq.cu b/ggml/src/ggml-cuda/mmvq.cu
-index bb30100a0..4eeff0ccf 100644
+index 42d90cba3..e94ceac1f 100644
 --- a/ggml/src/ggml-cuda/mmvq.cu
 +++ b/ggml/src/ggml-cuda/mmvq.cu
 @@ -20,6 +20,7 @@ static constexpr __device__ vec_dot_q_cuda_t get_vec_dot_q_cuda(ggml_type type)
@@ -1009,7 +1009,7 @@ index bb30100a0..4eeff0ccf 100644
          case GGML_TYPE_Q2_K:    return VDR_Q2_K_Q8_1_MMVQ;
          case GGML_TYPE_Q3_K:    return VDR_Q3_K_Q8_1_MMVQ;
          case GGML_TYPE_Q4_K:    return VDR_Q4_K_Q8_1_MMVQ;
-@@ -506,6 +508,89 @@ static constexpr __host__ __device__ int calc_rows_per_block(int ncols_dst, int
+@@ -542,6 +544,89 @@ static constexpr __host__ __device__ int calc_rows_per_block(int ncols_dst, int
      return 1;
  }
  
@@ -1099,7 +1099,7 @@ index bb30100a0..4eeff0ccf 100644
  template <ggml_type type, int ncols_dst, bool has_fusion, bool small_k = false, bool halve_iters = false>
  __launch_bounds__(calc_nwarps(type, ncols_dst, get_device_table_id(), small_k, halve_iters)*ggml_cuda_get_physical_warp_size(), 1)
  static __global__ void mul_mat_vec_q(
-@@ -967,6 +1052,14 @@ static void mul_mat_vec_q_switch_ncols_dst(
+@@ -1003,6 +1088,14 @@ static void mul_mat_vec_q_switch_ncols_dst(
              use = false;
          }
  
@@ -1114,7 +1114,7 @@ index bb30100a0..4eeff0ccf 100644
          return use;
      };
  
-@@ -1151,6 +1244,12 @@ static void mul_mat_vec_q_switch_type(
+@@ -1187,6 +1280,12 @@ static void mul_mat_vec_q_switch_type(
                   nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
                   nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, ids_stride, stream, allow_small_k);
              break;
@@ -1127,7 +1127,7 @@ index bb30100a0..4eeff0ccf 100644
          case GGML_TYPE_MXFP4:
              mul_mat_vec_q_switch_ncols_dst<GGML_TYPE_MXFP4>
                  (vx, vy, ids, fusion, dst, ncols_x, nrows_x, ncols_dst, stride_row_x, stride_col_y, stride_col_dst,
-@@ -1361,6 +1460,16 @@ void ggml_cuda_mul_mat_vec_q(
+@@ -1397,6 +1496,16 @@ void ggml_cuda_mul_mat_vec_q(
  
      const int64_t ids_stride = ids ? ids->nb[1] / ggml_type_size(ids->type) : 0;
  
@@ -1144,7 +1144,7 @@ index bb30100a0..4eeff0ccf 100644
      mul_mat_vec_q_switch_type(
          src0->data, src0->type, src1_q8_1.get(), ids_d, fusion_local, dst_d, ne00,
          ne01,              ncols_dst,     s01, stride_col_y,     stride_col_dst,
-@@ -1388,6 +1497,29 @@ void ggml_cuda_op_mul_mat_vec_q(
+@@ -1424,6 +1533,29 @@ void ggml_cuda_op_mul_mat_vec_q(
      // nrows_dst == nrows of the matrix that the kernel writes into
      const int64_t nrows_dst = id == ctx.device ? ne0 : row_diff;
  

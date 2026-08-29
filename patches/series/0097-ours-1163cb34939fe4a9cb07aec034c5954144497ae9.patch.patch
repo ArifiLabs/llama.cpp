@@ -1,4 +1,4 @@
-From bdce2dbe62c569cc259b4e14eb611256407e84a9 Mon Sep 17 00:00:00 2001
+From b7c313dcc6300a4bef2eafd7ed2c7e398ea7b2d6 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:12 -0400
 Subject: [PATCH] ours/1163cb34939fe4a9cb07aec034c5954144497ae9.patch
@@ -8,7 +8,7 @@ Subject: [PATCH] ours/1163cb34939fe4a9cb07aec034c5954144497ae9.patch
  1 file changed, 251 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 89ed5cda0..193004123 100644
+index 8b89ff495..3128e3ec2 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -12,6 +12,93 @@
@@ -319,7 +319,7 @@ index 89ed5cda0..193004123 100644
      ggml_tensor * prev_ids_tensor = nullptr;
      std::vector<int32_t> ids;
      std::vector<ggml_bitset_t> used_ids;
-@@ -1994,6 +2178,22 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -2006,6 +2190,22 @@ ggml_backend_sched_t ggml_backend_sched_new(
          }
      }
  
@@ -342,7 +342,7 @@ index 89ed5cda0..193004123 100644
      sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
      sched->op_offload = op_offload;
  
-@@ -2011,10 +2211,59 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -2023,10 +2223,59 @@ ggml_backend_sched_t ggml_backend_sched_new(
      return sched;
  }
  

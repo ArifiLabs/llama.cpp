@@ -1,4 +1,4 @@
-From caedc70f3472639f6e945cde38b093ffa761989c Mon Sep 17 00:00:00 2001
+From 6e6fffce4b75443a2dfb42a3bc09b11ea6b7379a Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:21 -0400
 Subject: [PATCH] 
@@ -815,7 +815,7 @@ index 69aa15c33..20635ed96 100644
      }
  
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 3f5e741de..385664180 100644
+index ec78d687e..f7582506a 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -16,6 +16,10 @@
@@ -856,7 +856,7 @@ index 3f5e741de..385664180 100644
          case GGML_TYPE_IQ2_XXS:
          case GGML_TYPE_IQ2_XS:
          case GGML_TYPE_IQ3_XXS:
-@@ -4592,6 +4602,8 @@ void ggml_compute_forward_out_prod(
+@@ -4588,6 +4598,8 @@ void ggml_compute_forward_out_prod(
          case GGML_TYPE_Q6_K:
          case GGML_TYPE_TQ1_0:
          case GGML_TYPE_TQ2_0:
@@ -865,7 +865,7 @@ index 3f5e741de..385664180 100644
          case GGML_TYPE_IQ2_XXS:
          case GGML_TYPE_IQ2_XS:
          case GGML_TYPE_IQ3_XXS:
-@@ -4882,6 +4894,8 @@ void ggml_compute_forward_set(
+@@ -4878,6 +4890,8 @@ void ggml_compute_forward_set(
          case GGML_TYPE_Q6_K:
          case GGML_TYPE_TQ1_0:
          case GGML_TYPE_TQ2_0:
@@ -874,7 +874,7 @@ index 3f5e741de..385664180 100644
          case GGML_TYPE_IQ2_XXS:
          case GGML_TYPE_IQ2_XS:
          case GGML_TYPE_IQ3_XXS:
-@@ -5120,6 +5134,8 @@ void ggml_compute_forward_get_rows(
+@@ -5116,6 +5130,8 @@ void ggml_compute_forward_get_rows(
          case GGML_TYPE_Q6_K:
          case GGML_TYPE_TQ1_0:
          case GGML_TYPE_TQ2_0:
@@ -883,7 +883,7 @@ index 3f5e741de..385664180 100644
          case GGML_TYPE_IQ2_XXS:
          case GGML_TYPE_IQ2_XS:
          case GGML_TYPE_IQ3_XXS:
-@@ -5204,6 +5220,13 @@ static void ggml_compute_forward_set_rows_impl(
+@@ -5200,6 +5216,13 @@ static void ggml_compute_forward_set_rows_impl(
  
      ggml_from_float_t const from_float = ggml_get_type_traits_cpu(dst->type)->from_float;
  
@@ -897,7 +897,7 @@ index 3f5e741de..385664180 100644
      for (int64_t i03 = 0; i03 < ne03; ++i03) {
          for (int64_t i02 = 0; i02 < ne02; ++i02) {
              for (int64_t i = ir0; i < ir1; ++i) {
-@@ -5275,9 +5298,6 @@ void ggml_compute_forward_set_rows(
+@@ -5271,9 +5294,6 @@ void ggml_compute_forward_set_rows(
              }
      }
  }
@@ -907,7 +907,7 @@ index 3f5e741de..385664180 100644
  static void ggml_compute_forward_get_rows_back_f32_f16(
          const ggml_compute_params * params,
                ggml_tensor * dst) {
-@@ -5291,8 +5311,6 @@ static void ggml_compute_forward_get_rows_back_f32_f16(
+@@ -5287,8 +5307,6 @@ static void ggml_compute_forward_get_rows_back_f32_f16(
  
      GGML_ASSERT(ggml_is_contiguous(dst));
  
@@ -916,7 +916,7 @@ index 3f5e741de..385664180 100644
      memset(dst->data, 0, ggml_nbytes(dst));
  
      const int nc = src0->ne[0];
-@@ -5892,6 +5910,11 @@ void ggml_compute_forward_clamp(
+@@ -5888,6 +5906,11 @@ void ggml_compute_forward_clamp(
          case GGML_TYPE_Q6_K:
          case GGML_TYPE_TQ1_0:
          case GGML_TYPE_TQ2_0:
@@ -928,7 +928,7 @@ index 3f5e741de..385664180 100644
          case GGML_TYPE_IQ2_XXS:
          case GGML_TYPE_IQ2_XS:
          case GGML_TYPE_IQ3_XXS:
-@@ -11347,6 +11370,104 @@ void ggml_compute_forward_dsv4_hc_post(
+@@ -11343,6 +11366,104 @@ void ggml_compute_forward_dsv4_hc_post(
      }
  }
  

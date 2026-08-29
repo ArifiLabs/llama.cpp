@@ -1,4 +1,4 @@
-From df5c7565e552f6d059edcccc17e0e34c9a7fdee3 Mon Sep 17 00:00:00 2001
+From 9037b2844477737a5ee3dc2a2e07b834e315137a Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:36 -0400
 Subject: [PATCH] 
@@ -7,7 +7,7 @@ Subject: [PATCH]
 ---
  common/common.cpp               |  18 ++
  common/fit.cpp                  | 240 +++++++++++++++++++++
- src/llama-arch.cpp              |   6 +
+ src/llama-arch.cpp              |  10 +-
  src/llama-context.cpp           | 127 ++++++++++-
  src/llama-graph.cpp             | 370 ++++++++++++++++++++++++++++++++
  src/llama-kv-cache.cpp          |  22 +-
@@ -16,13 +16,13 @@ Subject: [PATCH]
  src/models/deepseek4.cpp        |   4 +
  src/models/dflash.cpp           | 110 ++++++++++
  tools/server/server-context.cpp |  96 +++++++++
- 11 files changed, 1026 insertions(+), 6 deletions(-)
+ 11 files changed, 1028 insertions(+), 8 deletions(-)
 
 diff --git a/common/common.cpp b/common/common.cpp
-index 9683ba2c2..bcf68e6a3 100644
+index deec2244c..3d96a5c38 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -1734,6 +1734,24 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+@@ -1758,6 +1758,24 @@ struct llama_context_params common_context_params_to_llama(const common_params &
      cparams.type_k = params.cache_type_k;
      cparams.type_v = params.cache_type_v;
  
@@ -48,7 +48,7 @@ index 9683ba2c2..bcf68e6a3 100644
  }
  
 diff --git a/common/fit.cpp b/common/fit.cpp
-index dd1f3ef76..ab1280945 100644
+index c601fe405..3ea720bfb 100644
 --- a/common/fit.cpp
 +++ b/common/fit.cpp
 @@ -26,6 +26,246 @@ class common_params_fit_exception : public std::runtime_error {
@@ -299,10 +299,10 @@ index dd1f3ef76..ab1280945 100644
          const char * path_model,
          const llama_model_params * mparams,
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index df572b539..7368fe8c1 100644
+index 5262dfa14..9ac6caea1 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -1055,7 +1055,10 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
+@@ -1059,7 +1059,10 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
          case LLM_ARCH_QWEN35:
          case LLM_ARCH_QWEN35MOE:
          case LLM_ARCH_DEEPSEEK4:
@@ -313,20 +313,25 @@ index df572b539..7368fe8c1 100644
              return true;
          default:
              return false;
-@@ -1079,8 +1082,11 @@ bool llm_arch_supports_rs_rollback(const llm_arch & arch) {
+@@ -1083,11 +1086,14 @@ bool llm_arch_supports_rs_rollback(const llm_arch & arch) {
          case LLM_ARCH_QWEN35:
          case LLM_ARCH_QWEN35MOE:
          case LLM_ARCH_DEEPSEEK4:
+-        case LLM_ARCH_NEMOTRON_H:
+-        case LLM_ARCH_NEMOTRON_H_MOE:
+         case LLM_ARCH_LFM2:
+         case LLM_ARCH_LFM2MOE:
+         case LLM_ARCH_BAILINGMOE3:
 +<<<<<<< ours
-         case LLM_ARCH_NEMOTRON_H:
-         case LLM_ARCH_NEMOTRON_H_MOE:
++        case LLM_ARCH_NEMOTRON_H:
++        case LLM_ARCH_NEMOTRON_H_MOE:
 +=======
 +>>>>>>> theirs
              return true;
          default:
              return false;
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index c4e0391ac..c8bf004a2 100644
+index 261d56303..d04215a58 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
 @@ -21,6 +21,9 @@
@@ -504,7 +509,7 @@ index c4e0391ac..c8bf004a2 100644
      }
  
      uint32_t n_sampling_nodes = 0;
-@@ -3665,6 +3780,8 @@ llama_context_params llama_context_default_params() {
+@@ -3661,6 +3776,8 @@ llama_context_params llama_context_default_params() {
          /*.cb_eval_user_data           =*/ nullptr,
          /*.type_k                      =*/ GGML_TYPE_F16,
          /*.type_v                      =*/ GGML_TYPE_F16,
@@ -514,10 +519,10 @@ index c4e0391ac..c8bf004a2 100644
          /*.abort_callback_data         =*/ nullptr,
          /*.embeddings                  =*/ false,
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index ea83e9b0b..bd9b37a5e 100644
+index 89935ce44..d50a4d0ef 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -1062,6 +1062,376 @@ bool llm_graph_input_attn_kv_iswa::can_reuse(const llm_graph_params & params) {
+@@ -1082,6 +1082,376 @@ bool llm_graph_input_attn_kv_iswa::can_reuse(const llm_graph_params & params) {
      return res;
  }
  
@@ -974,10 +979,10 @@ index b235c68cb..da2ac7002 100644
      // TurboQuant rotation accessors
      ggml_tensor * get_turbo_rotation() const;
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 0509d6424..fd2369ec6 100644
+index 7995b89ce..71b4089a0 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -2310,6 +2310,10 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2455,6 +2455,10 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
          case LLM_ARCH_DEEPSEEK4:
              {
  <<<<<<< ours
@@ -988,7 +993,7 @@ index 0509d6424..fd2369ec6 100644
                  GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
  
                  if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
-@@ -2350,6 +2354,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2495,6 +2499,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                              nullptr,
                              nullptr);
                  }
@@ -996,7 +1001,7 @@ index 0509d6424..fd2369ec6 100644
              } break;
          case LLM_ARCH_DFLASH:
              {
-@@ -2393,6 +2398,36 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2538,6 +2543,36 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                          nullptr,
                          nullptr);
              } break;
@@ -1034,10 +1039,10 @@ index 0509d6424..fd2369ec6 100644
          // Models that need standard caching should rely on recurrent/hybrid
          // checks
 diff --git a/src/models/deepseek4.cpp b/src/models/deepseek4.cpp
-index 89cd46176..ef1d742c8 100644
+index fc816e2ae..5f233febb 100644
 --- a/src/models/deepseek4.cpp
 +++ b/src/models/deepseek4.cpp
-@@ -114,9 +114,13 @@ void llama_model_deepseek4::load_arch_tensors(llama_model_loader & ml) {
+@@ -116,9 +116,13 @@ void llama_model_deepseek4::load_arch_tensors(llama_model_loader & ml) {
          layer.wq_b          = create_tensor(tn(LLM_TENSOR_ATTN_Q_B,      "weight", i), {q_lora_rank, n_head * n_embd_head}, flags);
          layer.wkv           = create_tensor(tn(LLM_TENSOR_ATTN_KV,       "weight", i), {n_embd, n_embd_head}, flags);
          layer.attn_kv_norm  = create_tensor(tn(LLM_TENSOR_ATTN_KV_NORM,  "weight", i), {n_embd_head}, flags);
@@ -1052,7 +1057,7 @@ index 89cd46176..ef1d742c8 100644
  
          layer.hc_attn_fn    = create_tensor(tn(LLM_TENSOR_HC_ATTN_FN,    "weight", i), {hc_dim, hc_mix_dim}, flags);
 diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
-index e213c546b..e59a96f54 100644
+index 195fb0f3d..3c73aa5b9 100644
 --- a/src/models/dflash.cpp
 +++ b/src/models/dflash.cpp
 @@ -67,6 +67,48 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
@@ -1104,15 +1109,15 @@ index e213c546b..e59a96f54 100644
      // optional interleaved sliding-window attention with per-layer pattern array.
      // DFlash has a single rope, so the SWA rope == main rope.
      if (ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW, hparams.n_swa, false) && hparams.n_swa > 0) {
-@@ -122,6 +164,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
-     output_norm_enc = create_tensor(tn(LLM_TENSOR_ENC_OUTPUT_NORM, "weight"), { n_embd }, 0); // encoder hidden_norm (after fc)
-     output_norm     = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM,    "weight"), { n_embd }, 0); // decoder final norm
+@@ -126,6 +168,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
+     // a draft with its own embeddings + head references no target tensors and can run on devices the target does not use (e.g. -devd with a tensor-split target)
+     output   = create_tensor(tn(LLM_TENSOR_OUTPUT,     "weight"), { n_embd, n_vocab_draft }, TENSOR_NOT_REQUIRED);
  
 +<<<<<<< ours
  <<<<<<< ours
      if (hparams.dsv4_hc_mult > 0) {
          const int64_t q_lora_rank     = hparams.n_lora_q;
-@@ -172,10 +215,66 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
+@@ -176,10 +219,66 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
          }
          return;
  =======
@@ -1179,7 +1184,7 @@ index e213c546b..e59a96f54 100644
  >>>>>>> theirs
      }
  
-@@ -797,17 +896,28 @@ llama_model_dflash::graph_dsv4::graph_dsv4(const llama_model & model, const llm_
+@@ -790,17 +889,28 @@ llama_model_dflash::graph_dsv4::graph_dsv4(const llama_model & model, const llm_
      cb(cur, "result_norm", -1);
  
      // lm_head from the target model (shared via ctx_other)
@@ -1209,10 +1214,10 @@ index e213c546b..e59a96f54 100644
      res->t_logits = cur;
  
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index c1011a72d..6d2ad00e9 100644
+index 70bc316ce..f3dc61fb3 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -42,6 +42,7 @@ constexpr int HTTP_POLLING_SECONDS = 1;
+@@ -40,6 +40,7 @@ constexpr int HTTP_POLLING_SECONDS = 1;
  static common_speculative_output_limits server_output_limits(const common_params & params) {
      if (params.embedding ||
              (params.pooling_type != LLAMA_POOLING_TYPE_UNSPECIFIED && params.pooling_type != LLAMA_POOLING_TYPE_NONE)) {
@@ -1220,7 +1225,7 @@ index c1011a72d..6d2ad00e9 100644
          return { params.n_batch, 1 };
      }
  
-@@ -56,6 +57,86 @@ static common_speculative_output_limits server_output_limits(const common_params
+@@ -54,6 +55,86 @@ static common_speculative_output_limits server_output_limits(const common_params
      }
  
      const uint32_t n_outputs_per_seq = 1 + n_max;
