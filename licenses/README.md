@@ -16,7 +16,7 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
 | `prisml-MIT.txt` | `git show refs/remotes/prisml/prism:LICENSE` (PrismML-Eng/llama.cpp) | PrismML MIT. **Retained 2026-08-18 (lane-151) — see the correction below.** |
 | `ciru-MIT.txt` | `git show refs/remotes/ciru/main:LICENSE` (ciru-ai/ROCmFPX) | ciru MIT. Registered source, no code carried yet; retained ahead of any ingest so the notice can never lag the code. |
 | `thecodacus-MIT.txt` | `https://github.com/thecodacus/llama.cpp` `LICENSE` at its public head — no remote is configured here, and none is needed (see the correction below) | thecodacus MIT. **Retained 2026-08-18 on the President's correction, in `19fd8719b`. Row added 2026-08-29 (gap G10)** — its provenance-of-copy had been recorded only in the prose below, never in this table. |
-| `zuijdwijk-MIT.txt` | `git show refs/remotes/zuijdwijk/master:LICENSE` (LaurentZuijdwijk/llama.cpp) | zuijdwijk MIT (llama.cpp lineage, "The ggml authors"). **Retained 2026-08-29 (gap G11)** — the remote was configured and fetched but registered nowhere. Registered source, **no code known to be carried**; retained ahead of any ingest on the `ciru` precedent so the notice can never lag the code. See the residual hole named below. |
+| `zuijdwijk-MIT.txt` | `git show refs/remotes/zuijdwijk/master:LICENSE` (LaurentZuijdwijk/llama.cpp) | zuijdwijk MIT (llama.cpp lineage, "The ggml authors"). **Retained 2026-08-29 (gap G11)** — the remote was configured and fetched but registered nowhere. **CODE IS CARRIED** (`e146c1175`, `c1440b85d` on lane-166 branches, both trailered `Taken-from: LaurentZuijdwijk/llama.cpp`); tracked source in `sources.json` `remotes`, pinned `f97c0e6fe`. |
 | `buun-MIT.txt` | `git show refs/remotes/buun/master:LICENSE` (spiritbuun/buun-llama-cpp) | buun MIT. **Retained 2026-08-27; this was a GAP** — series patch `0394` ingested buun's DFlash2 controller on 2026-08-21 with no notice row, so the notice lagged the code by six days. Byte-identical to the upstream MIT text apart from LF termination. |
 
 `../LICENSE` is also the verbatim copy of upstream llama.cpp’s MIT license.
@@ -96,16 +96,27 @@ A 2026-07-22 project decision authorizes their inclusion with maximal attributio
 does not authorize inventing a license text. Therefore this directory still contains no fabricated
 `thecodacus-*` license file, and never will.
 
-### Residual hole, named 2026-08-29 (gap G11) — `zuijdwijk`
+### `zuijdwijk` — an unregistered source that turned out to be a live one (gap G11, closed same day)
 
 `zuijdwijk` (`LaurentZuijdwijk/llama.cpp`) was a configured, fetched remote that appeared in **no**
-governed artifact: not `sources.json`, not this file, not any `Taken-from:` value. It is now
-registered and its MIT notice retained. **Retaining the notice closes the notice obligation; it does
-not close the unknown-take question.** The remote carries `vulkan/strix-halo-port-2`,
-`vulkan/qwen4exp-rocmfpx` and `vulkan/iq3s-mmv-register-spill` — branches on *exactly* this rig's
-work area — and the audit's own coverage note says a subject-level or untrailered take would not be
-caught by a `Taken-from` sweep, while D7 proves untrailered takes exist on this branch. **No content
-diff of `zuijdwijk` against this tree has been run.** That diff is OWED before publication.
+governed artifact: not `sources.json`, not this file, not any `Taken-from:` value on `arifi/main`.
+It was first registered here as "no code known to be carried". **That was wrong within hours, and
+the way it was wrong is the lesson:** two lane-166 commits carry `Taken-from:
+LaurentZuijdwijk/llama.cpp` in full — `e146c1175` (matvec `NUM_COLS>4` VGPR spill, from `211abf6a9`)
+and `c1440b85d` (coopmat LDS stride pad, from `f97c0e6fe`). The sweep that said "no code carried"
+read `arifi/main`, and **the takes were on unmerged branches.** A source-registration sweep that
+only reads the mainline misses every take still in flight. It is now a tracked source in
+`sources.json` `remotes`, pinned `f97c0e6fe`.
+
+**The content diff the audit called owed has been run, and `arifi/main` is clean.** Patch-id
+intersection of all 78 `zuijdwijk` non-upstream commits against all 478 commits of
+`d7bd3bfca..arifi/main`: **zero** verbatim matches. A distinctive-symbol scan (every `GGML_*` /
+`LLAMA_*` / `--long-opt` token those 78 commits add, minus everything already in `upstream/master`)
+leaves 46 tokens present in our tree — and all 46 are **ROCmFPX** symbols, reaching us through
+`charlie12345/ROCmFPX`, a licensed and registered source which is also `zuijdwijk`'s own upstream on
+its `qwen4exp-rocmfpx` branch. Shared ancestry, not zuijdwijk-originated content. **Nothing
+unattributed from this source is on the published branch**, and the notice was retained before the
+takes ever merge.
 
 `turbomerge` was the other unregistered remote and is a different thing entirely: it is a local path
 inside our own `src/`, authored by this estate (`hq`, `m`), a fork-owned merge workspace. It is

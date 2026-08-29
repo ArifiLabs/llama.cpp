@@ -1,0 +1,42 @@
+{
+  "purpose": "Trailer text OWED by commits that carry none, recorded here because the fix may not be an amend. HQ ruling 2026-08-29 (gap G7 of registers/2026-08-29-release-attribution-audit.md): append-only doctrine bars rewriting history, so an untrailered commit on an unmerged branch is NOT amended. Its trailers are recorded here and carried as trailer text when that work reaches arifi/main as a NEW commit. Same shape as native-grandfather.json: keyed by sha, prior keys kept as sha_pre_rebase if a base move rewrites them (see UPDATE-RUNBOOK 2.2.1).",
+  "recorded": "2026-08-29",
+  "recorded_by": "HQ seat-48 attribution gap-fix worker, on HQ's G7 ruling",
+  "law": "This file is a DEBT RECORD, not a grant. A row here does not make its commit compliant; it makes the debt legible so the merge-back cannot silently drop it. On merge-back: paste the trailers, then delete the row.",
+  "commits": [
+    {
+      "sha": "550e20479",
+      "branch": "lane-166/rdna3-wave32",
+      "subject": "vulkan: add RDNA3 to the subgroup-size config table (wave32) + surface the resolved subgroup size",
+      "classification": "FORK-NATIVE",
+      "evidence": "Upstream cf2270e4d (vulkan: subgroup size tuning, #12087) added gpu_pipeline_configs covering RDNA1 and RDNA2 only. The RDNA3 row is ours - upstream has no such entry, so there is nothing to take from. The upstream commit is cited as the CONTEXT for the omission, not as a source.",
+      "owed_trailers": {
+        "Origin": "ArifiLabs (native) - RDNA3 was absent from upstream's subgroup-size table, so get_subgroup_size() returned 0 and the backend was configured for wave64 on a part whose native compute mode is wave32.",
+        "Measured-effect": "AMD Radeon 780M (gfx1103), subgroupSize 64 / min 32 / max 64, subgroupSizeControl true. Banner before: \"warp size: 64\". After: \"warp size: 32\"."
+      }
+    },
+    {
+      "sha": "601e3d7a6",
+      "branch": "lane-166/khr-coopmat-decode",
+      "subject": "vulkan: runtime dispatch threshold for the matvec/GEMM fork (GGML_VK_MMV_MAX_COLS)",
+      "classification": "FORK-NATIVE",
+      "evidence": "Splits an existing compile-time bound (mul_mat_vec_max_cols) out as a clamped runtime env value so the matvec-vs-coopmat dispatch can be A/B'd on ONE binary. Original; no upstream or third-party equivalent is cited in the body or exists under that name.",
+      "owed_trailers": {
+        "Origin": "ArifiLabs (native) - the compile-time bound was also the runtime dispatch decision at three call sites, which put the VK_KHR_cooperative_matrix pipelines out of reach for 2-8 token rows (the drafted-verify batch widths) by software rather than by hardware.",
+        "Measured-effect": "UNMEASURED - default unset = 8 = unchanged behaviour; the knob lowers only, because raising would index the pipeline arrays out of bounds. It is an instrument, not a lever."
+      }
+    },
+    {
+      "sha": "f3e13bc94",
+      "branch": "lane-166/nontemporal-weights",
+      "subject": "lane-166 kernel2: port upstream PR #25362 - SPIR-V NonTemporal (SLC=1) hints on weight-buffer loads, env-gated GGML_VK_NONTEMPORAL_WEIGHTS",
+      "classification": "TAKE - and this is the one the audit called a take by any reading",
+      "evidence": "The subject names the source itself. Checked: #25362 is NOT in refs/remotes/upstream/master, i.e. an UNMERGED upstream pull request, so the source must be cited as a PR and not as an upstream commit. That distinction matters - a reader cannot resolve it with git log.",
+      "owed_trailers": {
+        "Taken-from": "ggml-org/llama.cpp#25362 (UNMERGED pull request - not in upstream/master at this fetch; cite the PR, not a sha)",
+        "Origin": "Ported and env-gated as GGML_VK_NONTEMPORAL_WEIGHTS so base and treatment are the SAME BINARY, plus a one-shot ENGAGEMENT RECEIPT at INFO so a TIED result cannot be mistaken for a no-op (the wave32 lesson).",
+        "Measured-effect": "UNMEASURED, and expected not to transfer: the PR's proven chain is Mesa-only (NonTemporal -> NIR -> ACO -> SLC) and this rig is DRIVER_ID_AMD_PROPRIETARY 26.7.1 (LLPC). Correctness gate + measurement owed before any verdict."
+      }
+    }
+  ]
+}
