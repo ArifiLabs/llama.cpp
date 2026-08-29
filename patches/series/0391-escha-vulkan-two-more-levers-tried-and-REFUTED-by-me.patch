@@ -1,4 +1,4 @@
-From dfeb5a7594e0ee1ad4d7516fa95e80de6147e261 Mon Sep 17 00:00:00 2001
+From 7d74886d141db57dccdc71086853495c3db9f4be Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 05:06:07 -0400
 Subject: [PATCH] escha vulkan: two more levers tried and REFUTED by
@@ -33,10 +33,10 @@ Origin: ArifiLabs (native)
  3 files changed, 110 insertions(+), 18 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 8194a1677..3399a3a7a 100644
+index 469b2637b..74545d916 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -1056,6 +1056,7 @@ struct vk_device_struct {
+@@ -1057,6 +1057,7 @@ struct vk_device_struct {
      vk_pipeline pipeline_fwht_f32[4];
      vk_pipeline pipeline_escha_mm[2];    // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
      vk_pipeline pipeline_escha_mm_mc[2]; // same, multi-column (ESCHA_MM_COLS per workgroup)
@@ -44,7 +44,7 @@ index 8194a1677..3399a3a7a 100644
      vk_pipeline pipeline_cumsum_f32;
      vk_pipeline pipeline_cumsum_small_f32;
      vk_pipeline pipeline_cumsum_multipass1_f32;
-@@ -5993,6 +5994,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5995,6 +5996,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm[1], "escha_mm_k3_f32", escha_mm_k3_f32_len, escha_mm_k3_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[0], "escha_mm_k2_c8_f32", escha_mm_k2_c8_f32_len, escha_mm_k2_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[1], "escha_mm_k3_c8_f32", escha_mm_k3_c8_f32_len, escha_mm_k3_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
@@ -53,7 +53,7 @@ index 8194a1677..3399a3a7a 100644
  
      const uint32_t cumsum_elem_per_thread = (device->vendor_id == VK_VENDOR_ID_AMD || device->vendor_id == VK_VENDOR_ID_INTEL) ? 2 : 4;
      ggml_vk_create_pipeline(device, device->pipeline_cumsum_f32,       "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 256, device->subgroup_size, cumsum_elem_per_thread }, 1, true, true, device->subgroup_size);
-@@ -10386,10 +10389,29 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10388,10 +10391,29 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      // escha2 5120x12288. Below a full block the one-column kernel is simply the better one.
      const bool use_mc = !no_multicol && ncols >= ESCHA_MM_COLS;
  
@@ -83,7 +83,7 @@ index 8194a1677..3399a3a7a 100644
      GGML_ASSERT(pipeline != nullptr);
  
      ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
-@@ -10403,7 +10425,7 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10405,7 +10427,7 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      const vk_subbuffer aux_buf = ggml_vk_tensor_subbuffer(ctx, src2);
      const vk_subbuffer dst_buf = ggml_vk_tensor_subbuffer(ctx, dst);
  
@@ -292,10 +292,10 @@ index d8c97d1c1..90ffea97d 100644
      }
  }
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index b5efb20f6..a418a0a06 100644
+index f9638a1c9..d93059eab 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-@@ -1213,6 +1213,10 @@ void process_shaders() {
+@@ -1214,6 +1214,10 @@ void process_shaders() {
      // ESCHA_MM_COLS in ggml-vulkan.cpp)
      string_to_spv("escha_mm_k2_c8_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "8"}});
      string_to_spv("escha_mm_k3_c8_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "8"}});

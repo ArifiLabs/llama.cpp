@@ -1,4 +1,4 @@
-From 20fced43e4ee00499edce8e99cdf24ef205355c1 Mon Sep 17 00:00:00 2001
+From 26f8aae4f46937fff81f07d6b2cea86213931d84 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:56:00 -0400
 Subject: [PATCH] 
@@ -10,10 +10,10 @@ Subject: [PATCH]
  2 files changed, 83 insertions(+), 15 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 443a7cc08..55955b60a 100644
+index 43b07b8ca..342364fdc 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -8058,7 +8058,16 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_id_pipeline(ggml_backend_vk_co
+@@ -8060,7 +8060,16 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_id_pipeline(ggml_backend_vk_co
          case GGML_TYPE_IQ4_NL:
          case GGML_TYPE_MXFP4:
          case GGML_TYPE_NVFP4:
@@ -30,7 +30,7 @@ index 443a7cc08..55955b60a 100644
              break;
          default:
              return nullptr;
-@@ -8070,6 +8079,16 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_id_pipeline(ggml_backend_vk_co
+@@ -8072,6 +8081,16 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_id_pipeline(ggml_backend_vk_co
      bool support_fp16acc = !mmp.f16acc->is_empty();
      bool support_fp32acc = !mmp.f32acc->is_empty();
  
@@ -47,7 +47,7 @@ index 443a7cc08..55955b60a 100644
      if (support_fp16acc && (prefer_fp16acc || !support_fp32acc)) {
          return mmp.f16acc;
      } else {
-@@ -10332,18 +10351,35 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
+@@ -10334,18 +10353,35 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
          quantize_y = false;
      }
  
@@ -87,7 +87,7 @@ index 443a7cc08..55955b60a 100644
  
      const uint32_t kpad = quantize_y ? 0 : ggml_vk_align_size(ne10, ggml_vk_guess_matmul_id_pipeline_align(ctx, mmp, ne01, nei1, qx_needs_dequant ? f16_type : src0->type, effective_src1_type));
      const bool aligned = !quantize_y && ne10 == kpad && ne01 > 8 && nei1 > 8;
-@@ -10362,7 +10398,7 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
+@@ -10364,7 +10400,7 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
      const uint64_t qx_sz = ggml_type_size(src0->type) * x_ne / ggml_blck_size(src0->type);
      const uint64_t qy_sz = ggml_type_size(src1->type) * ggml_nelements(src1) / ggml_blck_size(src1->type);
      const uint64_t x_sz = !qx_needs_dequant ? qx_sz : sizeof(ggml_fp16_t) * x_ne;
@@ -96,7 +96,7 @@ index 443a7cc08..55955b60a 100644
      const uint64_t ids_sz = nbi2;
      const uint64_t d_sz = sizeof(float) * d_ne;
  
-@@ -10385,7 +10421,12 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
+@@ -10387,7 +10423,12 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
      } else {
          to_fp16_vk_0 = ggml_vk_get_to_fp16(ctx, src0->type);
      }
@@ -110,7 +110,7 @@ index 443a7cc08..55955b60a 100644
          ggml_tensor y_staged_dst;
          const ggml_tensor * y_staged_dst_ptr = nullptr;
          if (y_decode_vector_staging) {
-@@ -10434,6 +10475,9 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
+@@ -10436,6 +10477,9 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
          if (qy_needs_dequant) {
              ggml_pipeline_request_descriptor_sets(ctx, to_fp16_vk_1, 1);
          }
@@ -120,7 +120,7 @@ index 443a7cc08..55955b60a 100644
          if (quantize_y) {
              ggml_pipeline_request_descriptor_sets(ctx, to_q8_1, 1);
          }
-@@ -10509,7 +10553,31 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
+@@ -10511,7 +10555,31 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
          ggml_vk_dispatch_pipeline(ctx, subctx, to_fp16_vk_0,
              { vk_subbuffer{ d_Qx, qx_buf_offset, qx_sz }, vk_subbuffer{ d_X, 0, x_sz } }, pc, { (uint32_t)x_ne, 1, 1});
      }

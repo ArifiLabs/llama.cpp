@@ -1,4 +1,4 @@
-From 9852454c4db78b0a722e47f902d1405db9846a5b Mon Sep 17 00:00:00 2001
+From 3724953ffb7d91ece10b681ed396e419720330b2 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 20:59:35 -0400
 Subject: [PATCH] escha vulkan: column block C=8 + fall back to the one-column
@@ -34,10 +34,10 @@ Lane: lane-164
  2 files changed, 18 insertions(+), 8 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 2d80e9c62..8194a1677 100644
+index a6f65f941..469b2637b 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -5991,8 +5991,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5993,8 +5993,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      // ArifiLabs Escha-W2 fused linear (lane-164): portable shared-memory shader, fixed 128 threads
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm[0], "escha_mm_k2_f32", escha_mm_k2_f32_len, escha_mm_k2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_escha_mm[1], "escha_mm_k3_f32", escha_mm_k3_f32_len, escha_mm_k3_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
@@ -48,7 +48,7 @@ index 2d80e9c62..8194a1677 100644
  
      const uint32_t cumsum_elem_per_thread = (device->vendor_id == VK_VENDOR_ID_AMD || device->vendor_id == VK_VENDOR_ID_INTEL) ? 2 : 4;
      ggml_vk_create_pipeline(device, device->pipeline_cumsum_f32,       "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 256, device->subgroup_size, cumsum_elem_per_thread }, 1, true, true, device->subgroup_size);
-@@ -10373,13 +10373,23 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10375,13 +10375,23 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
      // column, so blocking columns divides the decode cost by this factor; the knob keeps the
      // original one-column kernel reachable for A/B (lane-163 precedent).
      // Keep in sync with the ESCHA_COLS define for the _mc pipelines in vulkan-shaders-gen.cpp.
@@ -77,10 +77,10 @@ index 2d80e9c62..8194a1677 100644
  
      ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index 0534a9669..b5efb20f6 100644
+index 7e5415a89..f9638a1c9 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-@@ -1211,8 +1211,8 @@ void process_shaders() {
+@@ -1212,8 +1212,8 @@ void process_shaders() {
      string_to_spv("escha_mm_k3_f32", "escha_mm.comp", {{"ESCHA_K", "3"}});
      // multi-column arm: one weight decode serves ESCHA_MM_COLS columns (keep in sync with
      // ESCHA_MM_COLS in ggml-vulkan.cpp)

@@ -1,4 +1,4 @@
-From f85430f359f48deae72a0d7b1d490292a0e3092a Mon Sep 17 00:00:00 2001
+From e3b10a63c87f614b559639fee1306fe6709b6313 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 20:52:19 -0400
 Subject: [PATCH] 
@@ -8,15 +8,15 @@ Subject: [PATCH]
  .github/FUNDING.yml                           |   1 +
  .../actions/windows-setup-openvino/action.yml |  24 ---
  .github/labeler.yml                           |  45 ++---
- .github/workflows/build-wasm.yml              |  90 ---------
- .github/workflows/build-webgpu.yml            |  47 ++++-
+ .github/workflows/build-wasm.yml              | 100 ----------
+ .github/workflows/build-webgpu.yml            |  63 ++++--
  .github/workflows/docker.yml                  |  18 +-
  .github/workflows/hip-quality-check.yml       |   4 -
  .github/workflows/server-self-hosted.yml      |   5 +-
  .github/workflows/tqp-linux-release.yml       | 115 +++++++++++
  .github/workflows/tqp-release.yml             | 186 ++++++++++++++++++
  .github/workflows/ui-publish.yml              |   1 +
- 11 files changed, 371 insertions(+), 165 deletions(-)
+ 11 files changed, 369 insertions(+), 193 deletions(-)
  create mode 100644 .github/FUNDING.yml
  delete mode 100644 .github/actions/windows-setup-openvino/action.yml
  delete mode 100644 .github/workflows/build-wasm.yml
@@ -140,10 +140,10 @@ index 20e19c352..3361118ed 100644
          - any-glob-to-any-file:
 diff --git a/.github/workflows/build-wasm.yml b/.github/workflows/build-wasm.yml
 deleted file mode 100644
-index aa7ae887d..000000000
+index 2e4680f38..000000000
 --- a/.github/workflows/build-wasm.yml
 +++ /dev/null
-@@ -1,90 +0,0 @@
+@@ -1,100 +0,0 @@
 -name: CI (wasm)
 -
 -on:
@@ -234,8 +234,18 @@ index aa7ae887d..000000000
 -            -DEMDAWNWEBGPU_DIR=emdawnwebgpu_pkg
 -
 -          time cmake --build build-wasm --config Release --target test-backend-ops -j $(nproc)
+-
+-      - name: ccache-clear
+-        uses: ./.github/actions/ccache-clear
+-        env:
+-          GH_TOKEN: ${{ github.token }}
+-        with:
+-          key: webgpu-ubuntu-24.04-arm-wasm
+-          older: 5m
+-          min: 1
+-          dry-run: ${{ github.event_name != 'push' || github.ref != 'refs/heads/master' }}
 diff --git a/.github/workflows/build-webgpu.yml b/.github/workflows/build-webgpu.yml
-index ed73c185a..0f5ade7af 100644
+index b357851aa..0f5ade7af 100644
 --- a/.github/workflows/build-webgpu.yml
 +++ b/.github/workflows/build-webgpu.yml
 @@ -13,9 +13,7 @@ on:
@@ -249,11 +259,31 @@ index ed73c185a..0f5ade7af 100644
      ]
  
    pull_request:
-@@ -153,3 +151,46 @@ jobs:
-           # This is using llvmpipe and runs slower than other backends
+@@ -101,16 +99,6 @@ jobs:
+           cd build
+           ctest -L main --verbose --timeout 900
+ 
+-      - name: ccache-clear
+-        uses: ./.github/actions/ccache-clear
+-        env:
+-          GH_TOKEN: ${{ github.token }}
+-        with:
+-          key: webgpu-macos-latest
+-          older: 5m
+-          min: 1
+-          dry-run: ${{ github.event_name != 'push' || github.ref != 'refs/heads/master' }}
+-
+   ubuntu:
+     runs-on: ubuntu-24.04
+ 
+@@ -164,12 +152,45 @@ jobs:
            # test-backend-ops is too slow on llvmpipe, skip it
            ctest -L main -E test-backend-ops --verbose --timeout 900
-+
+ 
+-      - name: ccache-clear
+-        uses: ./.github/actions/ccache-clear
+-        env:
+-          GH_TOKEN: ${{ github.token }}
 +  ubuntu-wasm:
 +    runs-on: ubuntu-24.04-arm
 +
@@ -264,7 +294,11 @@ index ed73c185a..0f5ade7af 100644
 +
 +      - name: ccache
 +        uses: ggml-org/ccache-action@v1.2.21
-+        with:
+         with:
+-          key: webgpu-ubuntu-24.04
+-          older: 5m
+-          min: 1
+-          dry-run: ${{ github.event_name != 'push' || github.ref != 'refs/heads/master' }}
 +          key: webgpu-ubuntu-24.04-arm-wasm
 +          evict-old-files: 1d
 +          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
@@ -297,7 +331,7 @@ index ed73c185a..0f5ade7af 100644
 +
 +          time cmake --build build-wasm --config Release --target test-backend-ops -j $(nproc)
 diff --git a/.github/workflows/docker.yml b/.github/workflows/docker.yml
-index be2f840b1..64d536bd4 100644
+index 1de25b522..64d536bd4 100644
 --- a/.github/workflows/docker.yml
 +++ b/.github/workflows/docker.yml
 @@ -59,13 +59,6 @@ jobs:
@@ -309,7 +343,7 @@ index be2f840b1..64d536bd4 100644
 -    needs: create_tag
 -    uses: ./.github/workflows/ui-build.yml
 -    with:
--      hf_ui_version: ${{ needs.create_tag.outputs.source_tag }}
+-      ui_version: ${{ needs.create_tag.outputs.source_tag }}
 -
    prepare_matrices:
      name: Prepare Docker matrices
@@ -340,14 +374,14 @@ index be2f840b1..64d536bd4 100644
 -        if: ${{ matrix.config.prebuilt_ui == true }}
 -        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
 -        with:
--          name: ui-build
+-          name: llama-ui.zip
 -          path: tools/ui/dist
 -
        - name: Set up QEMU
          if: ${{ contains(matrix.config.platforms, 'linux/amd64') }}
          uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4
 diff --git a/.github/workflows/hip-quality-check.yml b/.github/workflows/hip-quality-check.yml
-index 5d23f01cf..14b9f41a6 100644
+index ecc4615a1..2080be7dc 100644
 --- a/.github/workflows/hip-quality-check.yml
 +++ b/.github/workflows/hip-quality-check.yml
 @@ -9,8 +9,6 @@ on:
@@ -712,7 +746,7 @@ index 000000000..23c059a3e
 +          draft: false
 +          prerelease: false
 diff --git a/.github/workflows/ui-publish.yml b/.github/workflows/ui-publish.yml
-index 99a6d8420..c3b7343c6 100644
+index e64ef32f8..1906c8835 100644
 --- a/.github/workflows/ui-publish.yml
 +++ b/.github/workflows/ui-publish.yml
 @@ -73,3 +73,4 @@ jobs:

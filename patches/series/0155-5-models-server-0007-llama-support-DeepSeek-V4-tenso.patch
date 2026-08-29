@@ -1,4 +1,4 @@
-From 2b6d774faf3d0b350a7a5e253e116b7272dda247 Mon Sep 17 00:00:00 2001
+From 6cd8dddda0d7e85e0f237d464fe71f1e9fd4badf Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:12 -0400
 Subject: [PATCH] 
@@ -11,22 +11,22 @@ Subject: [PATCH]
  3 files changed, 42 insertions(+), 9 deletions(-)
 
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index 4cfd53891..4d90665b1 100644
+index e74313eb4..509e335b1 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -1098,7 +1098,6 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
+@@ -1105,7 +1105,6 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
          case LLM_ARCH_OLMO2:
          case LLM_ARCH_OLMOE:
          case LLM_ARCH_DEEPSEEK2:
 -        case LLM_ARCH_DEEPSEEK4:
          case LLM_ARCH_DEEPSEEK32:
+         case LLM_ARCH_DOTS3NOTE:
          case LLM_ARCH_GLM_DSA:
-         case LLM_ARCH_BITNET:
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 8df813627..5aa054f7d 100644
+index 2342b43e6..8f1a62e4a 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -369,13 +369,14 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -374,6 +374,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
      static const std::regex pattern_q_weight        ("blk\\.\\d*\\.attn_q.weight");
      static const std::regex pattern_kv_weight       ("blk\\.\\d*\\.attn_(k|v).weight");
      static const std::regex pattern_qkv_weight      ("blk\\.\\d*\\.attn_qkv.weight");
@@ -34,15 +34,16 @@ index 8df813627..5aa054f7d 100644
      static const std::regex pattern_q_bias          ("blk\\.\\d*\\.attn_q\\.bias");
      static const std::regex pattern_kv_bias         ("blk\\.\\d*\\.attn_(k|v)\\.bias");
      static const std::regex pattern_qkv_bias        ("blk\\.\\d*\\.attn_qkv.bias");
-     static const std::regex pattern_qk_norm         ("blk\\.\\d*\\.attn_(q|k)_norm\\.weight");
+@@ -381,7 +382,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
      static const std::regex pattern_kv_cache        ("cache_(k|v)_l\\d*");
+     static const std::regex pattern_dsv4_state      ("dsv4_(csa|hca|lid)_state_(kv|score)_l\\d*");
      static const std::regex pattern_attn_sinks      ("blk\\.\\d*\\.attn_sinks.weight");
 -    static const std::regex pattern_attn_out_weight ("blk\\.\\d*\\.attn_output.weight");
 +    static const std::regex pattern_attn_out_weight ("blk\\.\\d*\\.attn_output(_[ab])?\\.weight");
      static const std::regex pattern_attn_out_bias   ("blk\\.\\d*\\.attn_output.bias");
-     static const std::regex pattern_attn_gate_weight("blk\\.\\d*\\.attn_gate.weight");
- 
-@@ -463,6 +464,10 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+     static const std::regex pattern_attn_out_a_weight("blk\\.\\d*\\.attn_output_a\\.weight");
+     static const std::regex pattern_attn_out_b_weight("blk\\.\\d*\\.attn_output_b\\.weight");
+@@ -501,6 +502,10 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
          if (std::regex_match(tensor_name, pattern_qkv_weight)) {
              return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1, "attn_output.weight", "ssm_out.weight");
          }
@@ -53,7 +54,7 @@ index 8df813627..5aa054f7d 100644
          if ( std::regex_match(tensor_name, pattern_qkv_bias)) {
              return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0, "attn_output.weight", "ssm_out.weight");
          }
-@@ -470,7 +475,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -508,7 +513,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
              return get_tensor_config_impl(tensor->ne[1] == 1 ? GGML_BACKEND_SPLIT_AXIS_MIRRORED : GGML_BACKEND_SPLIT_AXIS_1, "attn_output.weight");
          }
          if (std::regex_match(tensor_name, pattern_kv_cache) || std::regex_match(tensor_name, pattern_attn_sinks)) {
@@ -63,10 +64,10 @@ index 8df813627..5aa054f7d 100644
          if (std::regex_match(tensor_name, pattern_attn_out_weight)) {
              return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0);
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 21ff78394..c1011a72d 100644
+index a9edbd7be..70bc316ce 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -45,8 +45,20 @@ static common_speculative_output_limits server_output_limits(const common_params
+@@ -43,8 +43,20 @@ static common_speculative_output_limits server_output_limits(const common_params
          return { params.n_batch, 1 };
      }
  
@@ -87,7 +88,7 @@ index 21ff78394..c1011a72d 100644
  
      result.total   = std::max<int32_t>(1, result.total);
      result.per_seq = std::max<int32_t>(1, result.per_seq);
-@@ -1235,12 +1247,29 @@ private:
+@@ -1181,12 +1193,29 @@ private:
              slots.emplace_back();
          }
  

@@ -1,4 +1,4 @@
-From 1ad1c03305992ebd92005cbf24abefbdb38e0e0a Mon Sep 17 00:00:00 2001
+From 3aa479a04f5c9a3224c485e6842decb6031eca0d Mon Sep 17 00:00:00 2001
 From: Jian Chen <jianchen0311@gmail.com>
 Date: Tue, 18 Aug 2026 02:08:02 -0700
 Subject: [PATCH] support DFlash2
@@ -234,7 +234,7 @@ index ced3c8364..5f3273eae 100644
  std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sampler * gsmpl, struct llama_context * ctx, const llama_tokens & draft, bool grammar_first = false);
  
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 32408544f..1a6b6c62c 100644
+index 4d9dfeb5d..d31009619 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
 @@ -14,11 +14,13 @@
@@ -582,7 +582,7 @@ index 32408544f..1a6b6c62c 100644
              if (is_dspark) {
                  // DSpark: read from the first draft slot, truncate below the confidence threshold
                  const float * conf = params.p_min > 0.0f ? llama_get_embeddings_nextn(ctx_dft) : nullptr;
-@@ -2416,7 +2475,7 @@ common_params common_base_params_to_speculative(const common_params & params) {
+@@ -2419,7 +2478,7 @@ common_params common_base_params_to_speculative(const common_params & params) {
      result.n_outputs_max = params.n_parallel;
      result.n_outputs_max_per_seq = 1;
  
@@ -591,7 +591,7 @@ index 32408544f..1a6b6c62c 100644
      // TODO: refactor such properties to be announced by the speculative types
      //       something like `struct common_speculative_type_props common_speculative_type_get_props(...);`
      const bool has_block_draft = std::any_of(
-@@ -2428,6 +2487,8 @@ common_params common_base_params_to_speculative(const common_params & params) {
+@@ -2431,6 +2490,8 @@ common_params common_base_params_to_speculative(const common_params & params) {
          // per-seq output positions: DFlash decodes anchor + n_max masks (n_max + 1); DSpark n_max -> +1 covers both
          const int32_t per_seq = std::max(1, params_spec.n_max + 1);
          result.n_outputs_max = params.n_parallel * per_seq;
@@ -630,7 +630,7 @@ index 12ae31b7d..f7dd65267 100644
  
  common_speculative_draft_params & common_speculative_get_draft_params(common_speculative * spec, llama_seq_id seq_id);
 diff --git a/conversion/__init__.py b/conversion/__init__.py
-index 0a6a0c3ba..34298c491 100644
+index 0f94fda28..9b65bb1a2 100644
 --- a/conversion/__init__.py
 +++ b/conversion/__init__.py
 @@ -54,6 +54,7 @@ TEXT_MODEL_MAP: dict[str, str] = {
@@ -642,7 +642,7 @@ index 0a6a0c3ba..34298c491 100644
      "DSparkDraftModel": "qwen",
      "DSparkSpeculator": "qwen",
 diff --git a/conversion/qwen.py b/conversion/qwen.py
-index 10b645181..ce4ef4ca2 100644
+index bbc080cf4..674159fe7 100644
 --- a/conversion/qwen.py
 +++ b/conversion/qwen.py
 @@ -639,7 +639,7 @@ class Qwen3_5MoeTextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
@@ -761,7 +761,7 @@ index 487ae03ab..d074f270f 100644
          {
              LOG_DBG("clear kv cache from any extra tokens, n_past = %d\n", n_past);
 diff --git a/gguf-py/gguf/constants.py b/gguf-py/gguf/constants.py
-index a72f49f7e..7551df70d 100644
+index 6e5211679..07d2659aa 100644
 --- a/gguf-py/gguf/constants.py
 +++ b/gguf-py/gguf/constants.py
 @@ -162,6 +162,10 @@ class Keys:
@@ -775,7 +775,7 @@ index a72f49f7e..7551df70d 100644
          SAMPLE_FROM_ANCHOR                = "{arch}.sample_from_anchor"
          NORM_BEFORE_RESIDUAL              = "{arch}.norm_before_residual"
          NORM_BEFORE_FC                    = "{arch}.norm_before_fc"
-@@ -1137,6 +1141,13 @@ class MODEL_TENSOR(IntEnum):
+@@ -1148,6 +1152,13 @@ class MODEL_TENSOR(IntEnum):
      DSPARK_MARKOV_W1       = auto()  # markov head: prev-token embed
      DSPARK_MARKOV_W2       = auto()  # markov head: bias projection
      DSPARK_CONF_PROJ       = auto()  # confidence head
@@ -789,7 +789,7 @@ index a72f49f7e..7551df70d 100644
      # lfm2 audio
      A_ENC_NORM_CONV        = auto()
      A_ENC_LINEAR_POS       = auto()
-@@ -1884,6 +1895,13 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
+@@ -1901,6 +1912,13 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
      MODEL_TENSOR.DSPARK_MARKOV_W1:          "markov_w1",
      MODEL_TENSOR.DSPARK_MARKOV_W2:          "markov_w2",
      MODEL_TENSOR.DSPARK_CONF_PROJ:          "conf_proj",
@@ -803,7 +803,7 @@ index a72f49f7e..7551df70d 100644
      MODEL_TENSOR.D2T:                       "d2t",
  }
  
-@@ -4884,6 +4902,13 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
+@@ -4944,6 +4962,13 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
          MODEL_TENSOR.DSPARK_MARKOV_W2,
          MODEL_TENSOR.DSPARK_CONF_PROJ,
          MODEL_TENSOR.ENC_AUX_NORM,
@@ -818,10 +818,10 @@ index a72f49f7e..7551df70d 100644
      MODEL_ARCH.MISTRAL4: [
          MODEL_TENSOR.TOKEN_EMBD,
 diff --git a/gguf-py/gguf/gguf_writer.py b/gguf-py/gguf/gguf_writer.py
-index 1db64047c..3905a3221 100644
+index 56110652f..7962cb869 100644
 --- a/gguf-py/gguf/gguf_writer.py
 +++ b/gguf-py/gguf/gguf_writer.py
-@@ -984,6 +984,18 @@ class GGUFWriter:
+@@ -993,6 +993,18 @@ class GGUFWriter:
      def add_block_size(self, value: int) -> None:
          self.add_uint32(Keys.LLM.BLOCK_SIZE.format(arch=self.arch), value)
  
@@ -841,10 +841,10 @@ index 1db64047c..3905a3221 100644
          self.add_bool(Keys.LLM.SAMPLE_FROM_ANCHOR.format(arch=self.arch), value)
  
 diff --git a/gguf-py/gguf/tensor_mapping.py b/gguf-py/gguf/tensor_mapping.py
-index 42800eb62..a85413d2f 100644
+index 1a7ab21ae..81a1aca12 100644
 --- a/gguf-py/gguf/tensor_mapping.py
 +++ b/gguf-py/gguf/tensor_mapping.py
-@@ -1354,6 +1354,35 @@ class TensorNameMap:
+@@ -1355,6 +1355,35 @@ class TensorNameMap:
          MODEL_TENSOR.DSPARK_CONF_PROJ: (
              "model.confidence_head.proj", # dspark
          ),
@@ -881,10 +881,10 @@ index 42800eb62..a85413d2f 100644
              "classifier",       # jina
              "classifier.dense", # roberta
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index df572b539..03988f251 100644
+index 74fbd6498..177a6399b 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -337,6 +337,11 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+@@ -341,6 +341,11 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
  
      { LLM_KV_TARGET_LAYERS,         "%s.target_layers"        },
      { LLM_KV_TARGET_HIDDEN_SIZE,    "%s.target_hidden_size"   },
@@ -896,7 +896,7 @@ index df572b539..03988f251 100644
      { LLM_KV_NORM_BEFORE_RESIDUAL,  "%s.norm_before_residual" },
      { LLM_KV_NORM_BEFORE_FC,        "%s.norm_before_fc"       },
      { LLM_KV_DECODER_ARCH,          "%s.decoder_arch"         },
-@@ -685,6 +690,14 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
+@@ -689,6 +694,14 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
      { LLM_TENSOR_DFLASH_FC,                              "fc" },
      { LLM_TENSOR_DFLASH_HIDDEN_NORM,                     "enc.output_norm" },
  
@@ -911,7 +911,7 @@ index df572b539..03988f251 100644
  };
  
  // declare information about the model weight tensors:
-@@ -961,6 +974,14 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
+@@ -965,6 +978,14 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
      {LLM_TENSOR_DFLASH_HIDDEN_NORM,                     {LLM_TENSOR_LAYER_INPUT,     GGML_OP_NONE}},
      {LLM_TENSOR_DFLASH_FC,                              {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
  
@@ -927,10 +927,10 @@ index df572b539..03988f251 100644
  
  LLM_KV::LLM_KV(llm_arch arch, const char * suffix) : arch(arch), suffix(suffix) {}
 diff --git a/src/llama-arch.h b/src/llama-arch.h
-index 488511c7e..cc5fc34a8 100644
+index b6990ad2c..f6bc20e26 100644
 --- a/src/llama-arch.h
 +++ b/src/llama-arch.h
-@@ -384,6 +384,11 @@ enum llm_kv {
+@@ -388,6 +388,11 @@ enum llm_kv {
  
      LLM_KV_TARGET_LAYERS,
      LLM_KV_TARGET_HIDDEN_SIZE,
@@ -942,7 +942,7 @@ index 488511c7e..cc5fc34a8 100644
      LLM_KV_NORM_BEFORE_RESIDUAL,
      LLM_KV_NORM_BEFORE_FC,
      LLM_KV_DECODER_ARCH,
-@@ -679,6 +684,13 @@ enum llm_tensor {
+@@ -683,6 +688,13 @@ enum llm_tensor {
      LLM_TENSOR_DSPARK_MARKOV_W1,
      LLM_TENSOR_DSPARK_MARKOV_W2,
      LLM_TENSOR_DSPARK_CONF_PROJ,
@@ -957,7 +957,7 @@ index 488511c7e..cc5fc34a8 100644
  
  
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index fa5835d5d..74a49902b 100644
+index b699b5c20..5b9f00986 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
 @@ -2594,6 +2594,12 @@ uint32_t llama_context::graph_max_nodes(uint32_t n_tokens) const {
@@ -974,10 +974,10 @@ index fa5835d5d..74a49902b 100644
      uint32_t n_sampling_nodes_max = 0;
      for (const auto & [seq_id, sampler] : sampling.samplers) {
 diff --git a/src/llama-graph.h b/src/llama-graph.h
-index cf68c300c..78efe6f87 100644
+index a1a5821ae..b1906f822 100644
 --- a/src/llama-graph.h
 +++ b/src/llama-graph.h
-@@ -1322,6 +1322,8 @@ struct llm_graph_context {
+@@ -1357,6 +1357,8 @@ struct llm_graph_context {
  
      void build_sampling() const;
  
@@ -987,10 +987,10 @@ index cf68c300c..78efe6f87 100644
      // dense (out)
      //
 diff --git a/src/llama-hparams.h b/src/llama-hparams.h
-index 6e22f7e6a..964de8184 100644
+index 80b2e675a..00ac084f3 100644
 --- a/src/llama-hparams.h
 +++ b/src/llama-hparams.h
-@@ -218,6 +218,12 @@ struct llama_hparams {
+@@ -223,6 +223,12 @@ struct llama_hparams {
      // output embedding dimension (0 = use n_embd)
      uint32_t n_embd_out_impl = 0;
  
@@ -1004,10 +1004,10 @@ index 6e22f7e6a..964de8184 100644
      uint32_t n_moe_layer_step        = 0;
      uint32_t n_no_rope_layer_step    = 4;
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 8c06c9878..04760f629 100644
+index d98f25e88..8f060bd34 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -2588,6 +2588,7 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
+@@ -2733,6 +2733,7 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
  
      // add backend sampling layers (if any)
      llm->build_sampling();
@@ -1016,10 +1016,10 @@ index 8c06c9878..04760f629 100644
      // if the gguf model was converted with --sentence-transformers-dense-modules
      // there will be two additional dense projection layers
 diff --git a/src/llama-model.h b/src/llama-model.h
-index 6fa0cc713..48fb737d7 100644
+index 62e77ad43..305e9267e 100644
 --- a/src/llama-model.h
 +++ b/src/llama-model.h
-@@ -367,6 +367,11 @@ struct llama_layer {
+@@ -368,6 +368,11 @@ struct llama_layer {
      struct ggml_tensor * ffn_exp_probs_b = nullptr;
      struct ggml_tensor * ffn_gate_tid2eid = nullptr;
  
@@ -1031,7 +1031,7 @@ index 6fa0cc713..48fb737d7 100644
      // mamba proj
      struct ggml_tensor * ssm_in  = nullptr;
      struct ggml_tensor * ssm_x   = nullptr;
-@@ -658,6 +663,10 @@ struct llama_model {
+@@ -659,6 +664,10 @@ struct llama_model {
      struct ggml_tensor * dspark_conf_proj   = nullptr;
      struct ggml_tensor * dspark_conf_proj_b = nullptr;
  
@@ -1043,7 +1043,7 @@ index 6fa0cc713..48fb737d7 100644
      std::vector<int32_t> target_layer_ids;
      // dflash
 diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
-index 8adfd1438..215f481eb 100644
+index f148bd031..2193596d3 100644
 --- a/src/models/dflash.cpp
 +++ b/src/models/dflash.cpp
 @@ -7,6 +7,16 @@
@@ -1093,7 +1093,7 @@ index 8adfd1438..215f481eb 100644
      fc              = create_tensor(tn(LLM_TENSOR_FC,              "weight"), { n_embd_inp, n_embd }, 0);
      fc_s            = create_tensor(tn(LLM_TENSOR_FC,              "scale"),  { 1 }, TENSOR_NOT_REQUIRED);
      output_norm_enc = create_tensor(tn(LLM_TENSOR_ENC_OUTPUT_NORM, "weight"), { n_embd }, 0); // encoder hidden_norm (after fc)
-@@ -263,6 +296,16 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
+@@ -264,6 +297,16 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
          layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), { n_embd, n_ff }, 0);
          layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd }, 0);
          layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), { n_embd, n_ff }, 0);
@@ -1110,7 +1110,7 @@ index 8adfd1438..215f481eb 100644
      }
  }
  
-@@ -298,7 +341,7 @@ ggml_tensor * llama_model_dflash::graph<true>::build_inp_embd_enc() const {
+@@ -299,7 +342,7 @@ ggml_tensor * llama_model_dflash::graph<true>::build_inp_embd_enc() const {
  
  // DFlash Encoder: processes target model features through feature fusion layer
  template <>
@@ -1119,7 +1119,7 @@ index 8adfd1438..215f481eb 100644
      const auto & model_df = static_cast<const llama_model_dflash &>(model);
  
      ggml_tensor * cur = build_inp_embd_enc();
-@@ -436,11 +479,69 @@ static void build_dspark_markov_head(llm_graph_context & g, const llama_model &
+@@ -437,11 +480,69 @@ static void build_dspark_markov_head(llm_graph_context & g, const llama_model &
      ggml_build_forward_expand(g.gf, out);
  }
  
@@ -1190,7 +1190,7 @@ index 8adfd1438..215f481eb 100644
      const int64_t n_embd_head = hparams.n_embd_head_v();
  
      GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
-@@ -550,10 +651,14 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -551,10 +652,14 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
  
      inp->tokens = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens);
      ggml_set_input(inp->tokens);
@@ -1205,7 +1205,7 @@ index 8adfd1438..215f481eb 100644
      cb(inpL, "inp_noise_embd", -1);
  
      res->add_input(std::move(inp));
-@@ -564,6 +669,13 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -565,6 +670,13 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
          ggml_tensor * noise_norm = build_norm(inpL, layer.attn_norm, NULL, LLM_NORM_RMS, il);
          cb(noise_norm, "noise_norm", il);
  
@@ -1219,7 +1219,7 @@ index 8adfd1438..215f481eb 100644
          ggml_tensor * Qcur = build_lora_mm(layer.wq, noise_norm);
          ggml_tensor * Kcur = build_lora_mm(layer.wk, noise_norm);
          ggml_tensor * Vcur = build_lora_mm(layer.wv, noise_norm);
-@@ -621,12 +733,24 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -622,12 +734,24 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
              cur = build_lora_mm(layer.wo, cur);
          }
  
@@ -1244,7 +1244,7 @@ index 8adfd1438..215f481eb 100644
          cur = build_ffn(cur,
                  layer.ffn_up,   NULL, layer.ffn_up_s,
                  layer.ffn_gate, NULL, layer.ffn_gate_s,
-@@ -635,6 +759,11 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -636,6 +760,11 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
                  LLM_FFN_SILU, LLM_FFN_PAR, il);
          cb(cur, "ffn_out", il);
  
@@ -1256,7 +1256,7 @@ index 8adfd1438..215f481eb 100644
          cur = ggml_add(ctx0, cur, ffn_inp);
          cb(cur, "l_out", il);
  
-@@ -659,6 +788,15 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -660,6 +789,15 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
  
      cur = build_lora_mm(output, cur, output_s);
  
@@ -1272,7 +1272,7 @@ index 8adfd1438..215f481eb 100644
      // reduced-draft-vocab exports: scatter the draft logits to the target vocabulary via d2t
      if (model.d2t) {
          const int64_t n_draft_vocab = cur->ne[0];
-@@ -685,6 +823,98 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -686,6 +824,98 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
      }
  }
  
@@ -1372,10 +1372,10 @@ index 8adfd1438..215f481eb 100644
  //   * embd batch  -> project main_x through each stage's wkv and inject K into the ring cache
  //   * token batch -> noise block through 3 full DSV4 stages (hc + MLA + MoE), markov + confidence heads
 diff --git a/src/models/models.h b/src/models/models.h
-index 57b025b1c..d17ad399f 100644
+index 0a35a486d..a93198bda 100644
 --- a/src/models/models.h
 +++ b/src/models/models.h
-@@ -1350,9 +1350,12 @@ struct llama_model_dflash : public llama_model_base {
+@@ -1363,9 +1363,12 @@ struct llama_model_dflash : public llama_model_base {
  
      template <bool is_enc>
      struct graph : public llm_graph_context {
@@ -1389,10 +1389,10 @@ index 57b025b1c..d17ad399f 100644
  
      struct graph_dsv4 : public llama_model_deepseek4::graph {
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 24ff2d66d..db321068c 100644
+index c36f27319..5f1bb13cc 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -386,6 +386,7 @@ struct server_slot {
+@@ -384,6 +384,7 @@ struct server_slot {
      common_speculative * spec;
  
      llama_tokens spec_draft;
@@ -1400,7 +1400,7 @@ index 24ff2d66d..db321068c 100644
      llama_tokens spec_prompt;
      std::vector<int32_t> spec_i_batch;
      common_prompt_checkpoint spec_ckpt;
-@@ -518,6 +519,7 @@ struct server_slot {
+@@ -516,6 +517,7 @@ struct server_slot {
  
          if (can_speculate()) {
              spec_draft.clear();
@@ -1408,7 +1408,7 @@ index 24ff2d66d..db321068c 100644
              spec_i_batch.clear();
              spec_ckpt.clear();
          }
-@@ -3270,6 +3272,9 @@ private:
+@@ -3145,6 +3147,9 @@ private:
                              /* .id_last  = */ slot.sampled,
                              /* .prompt   = */ &slot.spec_prompt,
                              /* .result   = */ &slot.spec_draft,
@@ -1418,7 +1418,7 @@ index 24ff2d66d..db321068c 100644
                          };
  
                          drafting.push_back(&slot);
-@@ -4155,7 +4160,13 @@ private:
+@@ -4030,7 +4035,13 @@ private:
                  common_sampler_ptr smpl_save(common_sampler_clone(slot.smpl.get()));
  
                  GGML_ASSERT(slot.spec_i_batch.size() == n_draft + 1);
@@ -1433,7 +1433,7 @@ index 24ff2d66d..db321068c 100644
                  slot.spec_i_batch.clear();
  
                  GGML_ASSERT(accepted.size() >= 1);
-@@ -4176,6 +4187,7 @@ private:
+@@ -4051,6 +4062,7 @@ private:
                          // partial acceptance is not supported by the context -> truncate the draft and restore the state
                          slot.spec_is_replay = true;
                          slot.spec_draft = std::move(accepted);
@@ -1441,7 +1441,7 @@ index 24ff2d66d..db321068c 100644
  
                          const auto & ckpt = slot.spec_ckpt;
  
-@@ -4203,6 +4215,7 @@ private:
+@@ -4078,6 +4090,7 @@ private:
                  common_speculative_accept(spec.get(), slot.id, accepted.size() - 1);
  
                  slot.spec_draft = std::move(accepted);

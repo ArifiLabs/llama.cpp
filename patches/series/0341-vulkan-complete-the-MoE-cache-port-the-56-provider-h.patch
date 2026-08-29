@@ -1,4 +1,4 @@
-From 377137d8e317faf2329e49d3a9f7fc741c941261 Mon Sep 17 00:00:00 2001
+From e948f7ea3a0e5018a0d33e1015c60e1046b90f2d Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Tue, 18 Aug 2026 11:59:16 -0400
 Subject: [PATCH] vulkan: complete the MoE-cache port - the +56 provider-header
@@ -121,7 +121,7 @@ index 1dc9ed6b6..8ce7b7ba6 100644
  GGML_API void ggml_moe_cache_unregister(const void * owner);
  // Returns a copy of the provider table registered for owner, zeroed if absent.
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 43e0b87fa..f6d337211 100644
+index 38020d162..3e102ff07 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -1,5 +1,10 @@
@@ -136,7 +136,7 @@ index 43e0b87fa..f6d337211 100644
  #if defined(GGML_VULKAN_RUN_TESTS) || defined(GGML_VULKAN_CHECK_RESULTS)
  #include <chrono>
  #include "ggml-cpu.h"
-@@ -18298,6 +18303,51 @@ bool ggml_backend_is_vk(ggml_backend_t backend) {
+@@ -18321,6 +18326,51 @@ bool ggml_backend_is_vk(ggml_backend_t backend) {
      return backend != NULL && ggml_guid_matches(backend->guid, ggml_backend_vk_guid());
  }
  

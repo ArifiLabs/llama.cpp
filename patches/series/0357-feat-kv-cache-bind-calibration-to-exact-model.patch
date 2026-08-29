@@ -1,4 +1,4 @@
-From 7508a163abff790d4a4f4f837a45b4e5e97ceca9 Mon Sep 17 00:00:00 2001
+From 38378c66e96b85576f16b99be2c71dc37e5a6834 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 19 Aug 2026 02:23:47 -0400
 Subject: [PATCH] feat(kv-cache): bind calibration to exact model
@@ -23,10 +23,10 @@ Measured-effect: UNMEASURED (native toolchain execution denied in managed seat)
  13 files changed, 308 insertions(+), 40 deletions(-)
 
 diff --git a/common/CMakeLists.txt b/common/CMakeLists.txt
-index 5c015267c..37e77ba34 100644
+index 835861a47..9d8f5eabe 100644
 --- a/common/CMakeLists.txt
 +++ b/common/CMakeLists.txt
-@@ -126,6 +126,7 @@ if (GGML_ARIFI_KV_MEANCENTER)
+@@ -128,6 +128,7 @@ if (GGML_ARIFI_KV_MEANCENTER)
      target_sources(${TARGET} PRIVATE
          kv-mean-center.cpp
          kv-mean-center.h)
@@ -35,7 +35,7 @@ index 5c015267c..37e77ba34 100644
  
  set_target_properties(${TARGET} PROPERTIES
 diff --git a/common/common.cpp b/common/common.cpp
-index f9bacb0d1..9c6eed05d 100644
+index ee1e8ad13..50f013e08 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
 @@ -6,6 +6,9 @@
@@ -48,7 +48,7 @@ index f9bacb0d1..9c6eed05d 100644
  #include "sampling.h"
  #include "speculative.h"
  #include "unicode.h"
-@@ -1357,6 +1360,17 @@ common_init_result::common_init_result(common_params & params, bool model_only)
+@@ -1381,6 +1384,17 @@ common_init_result::common_init_result(common_params & params, bool model_only)
  
      pimpl->model.reset(model);
  
@@ -66,7 +66,7 @@ index f9bacb0d1..9c6eed05d 100644
      if (model_only) {
          return;
      }
-@@ -1796,6 +1810,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+@@ -1820,6 +1834,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
      // note: params (and therefore params.kv_mean_center_path) is kept alive by the caller for
      // at least as long as it takes to call llama_init_from_model() with the returned cparams
      cparams.path_kv_mean_center = params.kv_mean_center_path.empty() ? nullptr : params.kv_mean_center_path.c_str();
@@ -75,7 +75,7 @@ index f9bacb0d1..9c6eed05d 100644
  
      return cparams;
 diff --git a/common/common.h b/common/common.h
-index 73bb4da23..c74fe8cbe 100644
+index 86cd5e786..b3c3b4266 100644
 --- a/common/common.h
 +++ b/common/common.h
 @@ -605,6 +605,7 @@ struct common_params {
@@ -290,7 +290,7 @@ index 4aca53815..d57e44880 100644
  
  `tools/kv-mean-center` computes the bias by running a plain text calibration corpus through the
 diff --git a/include/llama.h b/include/llama.h
-index 6729e5943..0492b287d 100644
+index 1ce6f0ca5..d3db94ea5 100644
 --- a/include/llama.h
 +++ b/include/llama.h
 @@ -436,6 +436,9 @@ extern "C" {
@@ -304,7 +304,7 @@ index 6729e5943..0492b287d 100644
  
          // Abort callback
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 9928f04fe..fa5835d5d 100644
+index e0a12e27e..b699b5c20 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
 @@ -437,7 +437,9 @@ llama_context::llama_context(
@@ -318,7 +318,7 @@ index 9928f04fe..fa5835d5d 100644
                      throw std::runtime_error("failed to load K-cache mean-centering bias file");
                  }
              }
-@@ -3820,6 +3822,7 @@ llama_context_params llama_context_default_params() {
+@@ -3816,6 +3818,7 @@ llama_context_params llama_context_default_params() {
          /*.moe_cache_budget_mib        =*/ 0,
  #ifdef GGML_ARIFI_KV_MEANCENTER
          /*.path_kv_mean_center         =*/ nullptr,

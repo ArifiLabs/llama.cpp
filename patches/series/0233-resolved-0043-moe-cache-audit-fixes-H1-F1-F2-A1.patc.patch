@@ -1,4 +1,4 @@
-From 4363f5896f7f34a9dcae692604380e2b99d8015a Mon Sep 17 00:00:00 2001
+From e4f8f028a1b48b0da5e49de10a3c84f43e79f2b6 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:30:05 -0400
 Subject: [PATCH] resolved/0043-moe-cache-audit-fixes-H1-F1-F2-A1.patch
@@ -12,13 +12,13 @@ Subject: [PATCH] resolved/0043-moe-cache-audit-fixes-H1-F1-F2-A1.patch
  5 files changed, 88 insertions(+), 9 deletions(-)
 
 diff --git a/common/common.cpp b/common/common.cpp
-index e38609795..b7a068020 100644
+index 455b5e0a6..ac6411d3c 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -1300,13 +1300,38 @@ common_init_result::common_init_result(common_params & params, bool model_only)
-     if (params.fit_params) {
-         COM_TRC("%s", "fitting params to device memory ...\n");
-         COM_TRC("%s", "(for bugs during this step try to reproduce them with -fit off, or provide --verbose logs if the bug only occurs with -fit on)\n");
+@@ -1323,7 +1323,17 @@ common_init_result::common_init_result(common_params & params, bool model_only)
+             /*.shares_model =*/ !has_draft, // an MTP context runs on the weights of the main model
+         };
+ 
 -        common_fit_params(params.model.path.c_str(), &mparams, &cparams,
 +        // Snapshot the pre-fit state so a failed fit can be rolled back to a
 +        // documented fallback instead of continuing with an unproven placement.
@@ -34,8 +34,9 @@ index e38609795..b7a068020 100644
              params.tensor_split,
              params.tensor_buft_overrides.data(),
              &params.moe_cache,
-             params.fit_params_target.data(),
+@@ -1331,6 +1341,21 @@ common_init_result::common_init_result(common_params & params, bool model_only)
              params.fit_params_min_ctx,
+             has_draft || spec_mtp ? &extra : nullptr,
              params.verbosity >= LOG_LEVEL_DEBUG ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_ERROR);
 +        if (fit_status == COMMON_PARAMS_FIT_STATUS_ERROR) {
 +            throw std::runtime_error(
@@ -56,10 +57,10 @@ index e38609795..b7a068020 100644
  
      if (params.moe_cache.mode_explicit || params.moe_cache.fit_selected) {
 diff --git a/common/fit.cpp b/common/fit.cpp
-index 46db65525..2c30d0318 100644
+index ef8d3b805..f9d0c05d3 100644
 --- a/common/fit.cpp
 +++ b/common/fit.cpp
-@@ -1216,15 +1216,38 @@ static void common_params_fit_impl(
+@@ -1302,15 +1302,38 @@ static void common_params_fit_impl(
                  pattern_strings.clear();
                  pattern_strings.reserve(total_layers);
  
@@ -100,7 +101,7 @@ index 46db65525..2c30d0318 100644
                      std::vector<float> candidate_split(llama_max_devices(), 0.0f);
                      std::vector<llama_model_tensor_buft_override> candidate_overrides(ntbo, {nullptr, nullptr});
                      llama_model_params candidate = *mparams;
-@@ -1237,11 +1260,11 @@ static void common_params_fit_impl(
+@@ -1323,11 +1346,11 @@ static void common_params_fit_impl(
                      }
                      candidate.tensor_split = candidate_split.data();
  
@@ -114,7 +115,7 @@ index 46db65525..2c30d0318 100644
                          candidate_overrides[n_overrides++] = {pattern_strings.back().c_str(), ggml_backend_cpu_buffer_type()};
                      }
                      candidate_overrides[n_overrides] = {nullptr, nullptr};
-@@ -1271,6 +1294,10 @@ static void common_params_fit_impl(
+@@ -1357,6 +1380,10 @@ static void common_params_fit_impl(
                                  moe_cache, moe_tensors, devs, candidate_memory, margins);
                          if (cf.feasible) {
                              best_n_evict = mid;
@@ -125,7 +126,7 @@ index 46db65525..2c30d0318 100644
                              best_memory = std::move(candidate_memory);
                              best_cache_fit = cf;
                              hi = mid - 1;  // Try fewer evictions
-@@ -1296,7 +1323,7 @@ static void common_params_fit_impl(
+@@ -1382,7 +1409,7 @@ static void common_params_fit_impl(
                      pattern_strings.clear();
                      int n_overrides = 0;
                      for (int i = 0; i < best_n_evict && n_overrides < (int)ntbo - 1; i++) {
@@ -134,7 +135,7 @@ index 46db65525..2c30d0318 100644
                          tensor_buft_overrides[n_overrides++] = {pattern_strings.back().c_str(), ggml_backend_cpu_buffer_type()};
                      }
                      tensor_buft_overrides[n_overrides] = {nullptr, nullptr};
-@@ -1309,10 +1336,15 @@ static void common_params_fit_impl(
+@@ -1395,10 +1422,15 @@ static void common_params_fit_impl(
                          ? 100.0 * (double)std::min(best_cache_fit.cache_bytes, best_cache_fit.expert_bytes) /
                              (double)best_cache_fit.expert_bytes
                          : 0.0;
@@ -167,10 +168,10 @@ index 57acd8e3f..872ff3c2b 100644
  
  LLAMA_API size_t llama_model_get_moe_tensor_info(
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 597559fb8..dec684b48 100644
+index 231f672d3..486b0f0ff 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -3102,6 +3102,15 @@ size_t llama_model_get_moe_tensor_info(
+@@ -3248,6 +3248,15 @@ size_t llama_model_get_moe_tensor_info(
              continue;
          }
  
@@ -186,7 +187,7 @@ index 597559fb8..dec684b48 100644
          if (info && count < capacity) {
              info[count] = {
                  tensor->type,
-@@ -3109,6 +3118,7 @@ size_t llama_model_get_moe_tensor_info(
+@@ -3255,6 +3264,7 @@ size_t llama_model_get_moe_tensor_info(
                  tensor->ne[0],
                  tensor->ne[1],
                  tensor->ne[2],
@@ -195,10 +196,10 @@ index 597559fb8..dec684b48 100644
          }
          count++;
 diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
-index 1161185b6..88837f06d 100644
+index 654d26375..7db3cd50f 100644
 --- a/tools/llama-bench/llama-bench.cpp
 +++ b/tools/llama-bench/llama-bench.cpp
-@@ -2565,13 +2565,22 @@ int llama_bench(int argc, char ** argv) {
+@@ -2565,7 +2565,8 @@ int llama_bench(int argc, char ** argv) {
              cparams.n_ctx = std::max(cparams.n_ctx, n_ctx_needed);
              common_moe_cache_params fit_moe_cache = common_moe_cache_from_bench_mode(inst.moe_cache);
  
@@ -208,8 +209,9 @@ index 1161185b6..88837f06d 100644
                  fit_tensor_split.data(),
                  fit_overrides.data(),
                  &fit_moe_cache,
-                 margins.data(),
+@@ -2573,6 +2574,14 @@ int llama_bench(int argc, char ** argv) {
                  inst.fit_min_ctx,
+                 nullptr,
                  params.verbose ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_ERROR);
 +            if (fit_status != COMMON_PARAMS_FIT_STATUS_SUCCESS) {
 +                // Never report PP/TG numbers for a failed fit. The logger is

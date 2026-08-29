@@ -1,4 +1,4 @@
-From 0e000710c459d57b01a42fcd748a6326475dda18 Mon Sep 17 00:00:00 2001
+From 693bf2e98ce31c10d20f4e7812de28470f9d5612 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:34:49 -0400
 Subject: [PATCH] resolved/remaining-conflict-markers
@@ -14,7 +14,7 @@ Subject: [PATCH] resolved/remaining-conflict-markers
  7 files changed, 4 insertions(+), 112 deletions(-)
 
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index a6711e470..4ae364194 100644
+index f05854de6..9f9f6b655 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
 @@ -1026,7 +1026,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
@@ -39,7 +39,7 @@ index a6711e470..4ae364194 100644
          for (uint32_t k = 0; k < target_layer_ids_n; ++k) {
              if (target_layer_ids[k] == n_layer_tgt) {
                  llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
-@@ -2535,34 +2528,11 @@ common_speculative * common_speculative_init(common_params_speculative & params,
+@@ -2541,34 +2534,11 @@ common_speculative * common_speculative_init(common_params_speculative & params,
      {
          uint32_t enabled_configs = common_get_enabled_speculative_configs(params.types);
  
@@ -75,7 +75,7 @@ index a6711e470..4ae364194 100644
          // when adding a new type - update here the logic above
          static_assert(COMMON_SPECULATIVE_TYPE_COUNT == 11);
 diff --git a/ggml/src/ggml-sycl/set_rows.cpp b/ggml/src/ggml-sycl/set_rows.cpp
-index 284858c9a..d79eadb2e 100644
+index 47f07b5c3..16c0dce1a 100644
 --- a/ggml/src/ggml-sycl/set_rows.cpp
 +++ b/ggml/src/ggml-sycl/set_rows.cpp
 @@ -106,7 +106,6 @@ static void set_rows_sycl_q(const char * __restrict__ src0_d,
@@ -104,7 +104,7 @@ index 284858c9a..d79eadb2e 100644
  }
  
  template<typename TIn, typename TIdx, typename TOut>
-@@ -924,12 +923,8 @@ void ggml_sycl_op_set_rows(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+@@ -925,12 +924,8 @@ void ggml_sycl_op_set_rows(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
      const ggml_tensor * src0 = dst->src[0];
      const ggml_tensor * src1 = dst->src[1];
  
@@ -119,10 +119,10 @@ index 284858c9a..d79eadb2e 100644
  
      // dispatch on the index type (src1) and the source value type (src0)
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index 7368fe8c1..df572b539 100644
+index 9ac6caea1..74fbd6498 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -1055,10 +1055,7 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
+@@ -1059,10 +1059,7 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
          case LLM_ARCH_QWEN35:
          case LLM_ARCH_QWEN35MOE:
          case LLM_ARCH_DEEPSEEK4:
@@ -133,10 +133,10 @@ index 7368fe8c1..df572b539 100644
              return true;
          default:
              return false;
-@@ -1082,11 +1079,8 @@ bool llm_arch_supports_rs_rollback(const llm_arch & arch) {
-         case LLM_ARCH_QWEN35:
-         case LLM_ARCH_QWEN35MOE:
-         case LLM_ARCH_DEEPSEEK4:
+@@ -1089,11 +1086,8 @@ bool llm_arch_supports_rs_rollback(const llm_arch & arch) {
+         case LLM_ARCH_LFM2:
+         case LLM_ARCH_LFM2MOE:
+         case LLM_ARCH_BAILINGMOE3:
 -<<<<<<< ours
          case LLM_ARCH_NEMOTRON_H:
          case LLM_ARCH_NEMOTRON_H_MOE:
@@ -146,10 +146,10 @@ index 7368fe8c1..df572b539 100644
          default:
              return false;
 diff --git a/src/llama-graph.h b/src/llama-graph.h
-index 864dfe9c3..cf68c300c 100644
+index cf6a15688..a1a5821ae 100644
 --- a/src/llama-graph.h
 +++ b/src/llama-graph.h
-@@ -901,18 +901,11 @@ public:
+@@ -934,18 +934,11 @@ public:
  
      std::vector<ggml_tensor *> t_layer_inp;
  
@@ -169,10 +169,10 @@ index 864dfe9c3..cf68c300c 100644
      std::vector<llm_graph_input_ptr> inputs;
  
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index dec684b48..8c06c9878 100644
+index 486b0f0ff..d98f25e88 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -2309,11 +2309,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2454,11 +2454,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
              } break;
          case LLM_ARCH_DEEPSEEK4:
              {
@@ -184,7 +184,7 @@ index dec684b48..8c06c9878 100644
                  GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
  
                  if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
-@@ -2354,7 +2349,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2499,7 +2494,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                              nullptr,
                              nullptr);
                  }
@@ -192,7 +192,7 @@ index dec684b48..8c06c9878 100644
              } break;
          case LLM_ARCH_DFLASH:
              {
-@@ -2382,53 +2376,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+@@ -2527,53 +2521,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
                  }
              }
              [[fallthrough]];
@@ -247,10 +247,10 @@ index dec684b48..8c06c9878 100644
          // checks
          default:
 diff --git a/src/models/deepseek4.cpp b/src/models/deepseek4.cpp
-index ef1d742c8..89cd46176 100644
+index 5f233febb..fc816e2ae 100644
 --- a/src/models/deepseek4.cpp
 +++ b/src/models/deepseek4.cpp
-@@ -114,13 +114,9 @@ void llama_model_deepseek4::load_arch_tensors(llama_model_loader & ml) {
+@@ -116,13 +116,9 @@ void llama_model_deepseek4::load_arch_tensors(llama_model_loader & ml) {
          layer.wq_b          = create_tensor(tn(LLM_TENSOR_ATTN_Q_B,      "weight", i), {q_lora_rank, n_head * n_embd_head}, flags);
          layer.wkv           = create_tensor(tn(LLM_TENSOR_ATTN_KV,       "weight", i), {n_embd, n_embd_head}, flags);
          layer.attn_kv_norm  = create_tensor(tn(LLM_TENSOR_ATTN_KV_NORM,  "weight", i), {n_embd_head}, flags);

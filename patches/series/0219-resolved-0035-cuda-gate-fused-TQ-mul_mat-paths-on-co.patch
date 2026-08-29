@@ -1,4 +1,4 @@
-From ebd10b2f0e8d6b492784ac12155ffe71f619b3ae Mon Sep 17 00:00:00 2001
+From c13f985dc12bc0943434a9eee13d06fbdae7f556 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:13:20 -0400
 Subject: [PATCH] 
@@ -10,10 +10,10 @@ Assisted-by: Codex
  1 file changed, 10 insertions(+), 11 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 2bc7f8859..69dcce14b 100644
+index c5355b97c..309d7d4ab 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -1945,15 +1945,21 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
+@@ -1949,15 +1949,21 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
          ggml_cuda_mul_mat_q(ctx, src0, src1, nullptr, dst);
          return;
      }
@@ -39,7 +39,7 @@ index 2bc7f8859..69dcce14b 100644
          ggml_cuda_mul_mat_tq4_1s_cublas(ctx, src0, src1, dst);
          return;
      }
-@@ -2657,15 +2663,8 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
+@@ -2664,15 +2670,8 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
          const bool is_tq_w = (node->src[0]->type == GGML_TYPE_TQ4_1S || node->src[0]->type == GGML_TYPE_TQ3_1S);
          if (node->op == GGML_OP_MUL_MAT_ID) {
              const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;

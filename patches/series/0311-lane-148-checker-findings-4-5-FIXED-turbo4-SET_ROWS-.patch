@@ -1,4 +1,4 @@
-From 0c3f152aeda71119b73b80f939085eaa4a9c0c67 Mon Sep 17 00:00:00 2001
+From 26d061cc86cc5708d1cd74c4e4dd24cd6449ec9a Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 21:59:08 -0400
 Subject: [PATCH] lane-148 checker findings 4+5 FIXED: turbo4 SET_ROWS was 0/21
@@ -18,10 +18,10 @@ Subject: [PATCH] lane-148 checker findings 4+5 FIXED: turbo4 SET_ROWS was 0/21
  4 files changed, 137 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index f485061c9..1efd47b4f 100644
+index 9f95de477..da9b22fba 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -5749,7 +5749,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5750,7 +5750,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_Q5_1], "cpy_q5_1_f32", cpy_q5_1_f32_len, cpy_q5_1_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_Q5_1), 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_Q8_0], "cpy_q8_0_f32", cpy_q8_0_f32_len, cpy_q8_0_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_Q8_0), 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_IQ4_NL], "cpy_iq4_nl_f32", cpy_iq4_nl_f32_len, cpy_iq4_nl_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_IQ4_NL), 1, 1}, {}, 1);
@@ -31,7 +31,7 @@ index f485061c9..1efd47b4f 100644
  
      auto get_suffix = [](bool src0_f16, bool src1_f16, bool dst_f16) {
          std::string s;
-@@ -9332,7 +9334,12 @@ static vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const
+@@ -9334,7 +9336,12 @@ static vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const
          case GGML_TYPE_Q5_0:
          case GGML_TYPE_Q5_1:
          case GGML_TYPE_Q8_0:
@@ -44,7 +44,7 @@ index f485061c9..1efd47b4f 100644
          case GGML_TYPE_IQ4_NL:
              return ctx->device->pipeline_cpy_quant_f32[src->type];
          default:
-@@ -18800,7 +18807,9 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18823,7 +18830,9 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      case GGML_TYPE_Q5_1:
                      case GGML_TYPE_Q8_0:
                      case GGML_TYPE_IQ4_NL:
@@ -117,7 +117,7 @@ index 651ad80a2..efd60a051 100644
  vec2 dequantize(uint ib, uint iqs, uint a_offset) {
      // TQ3_1S: 8-level Lloyd-Max centroids for N(0,1). ASYMMETRIC -- must match
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index a284d8bdd..398abc6d1 100644
+index 3fc199f5b..d4936d4ff 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 @@ -896,8 +896,12 @@ void process_shaders() {
@@ -136,7 +136,7 @@ index a284d8bdd..398abc6d1 100644
      for (auto src : {std::pair{"f32", "float"}, std::pair{"f16", "float16_t"}}) {
          for (std::string dst : {"f32", "f16", "bf16", "q1_0", "q2_0", "q2_0_g128", "q4_0", "q4_1", "q5_0", "q5_1", "q8_0", "iq4_nl", "turbo2_0", "turbo3_0", "turbo4_0"}) {
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 3e3165f24..52f63f32b 100644
+index 5ae7a9ef0..5a604eaca 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
 @@ -2672,6 +2672,65 @@ struct test_set_rows_turbo4 : public test_case {
@@ -205,7 +205,7 @@ index 3e3165f24..52f63f32b 100644
  // Test SET_ROWS with TQ4_1S destination (weight quantization), then dequantize and compare.
  // Validates: f32 -> WHT forward -> 16-centroid quantize -> nibble pack -> SET_ROWS
  // followed by: GET_ROWS/CPY -> WHT inverse -> f32 dequant. Round-trip error is bounded.
-@@ -8779,6 +8838,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+@@ -8782,6 +8841,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
      test_cases.emplace_back(new test_set_rows_turbo4(GGML_TYPE_I32, 256, 2048, 512));
      test_cases.emplace_back(new test_set_rows_turbo4(GGML_TYPE_I32, 512, 1024, 256));
  

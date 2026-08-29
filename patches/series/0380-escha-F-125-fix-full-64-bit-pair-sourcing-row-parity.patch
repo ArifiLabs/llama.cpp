@@ -1,4 +1,4 @@
-From 0962687ba130e7add7e3d7929d5c8b4258a7ebc0 Mon Sep 17 00:00:00 2001
+From 6c5915aea8214ca7529da609b5bb62d06a00d806 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 19:27:44 -0400
 Subject: [PATCH] escha: F-125 fix - full 64-bit pair sourcing + row-parity
@@ -22,10 +22,10 @@ Measured-effect: Escha-W2 native decode goes from token salad to coherent; worst
  2 files changed, 15 insertions(+), 13 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 98eacd616..a964b98aa 100644
+index 4595e4913..830ee717f 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -12644,11 +12644,16 @@ static void escha_build_k3_lanes(void) {
+@@ -12640,11 +12640,16 @@ static void escha_build_k3_lanes(void) {
  // decode one 16x16 tile into wtile[row=in][col=out]
  static inline void escha_decode_tile_k2(const uint16_t * w, float wtile[16][16]) {
      for (int lane = 0; lane < 32; ++lane) {
@@ -44,7 +44,7 @@ index 98eacd616..a964b98aa 100644
              const int col = (c < 4 ? 8 : 0) + colbase;
              wtile[row][col] = escha_cba_lut[(word >> (2*c)) & 0xFFFF];
          }
-@@ -12668,7 +12673,7 @@ static inline void escha_decode_tile_k3(const uint16_t * w, float wtile[16][16])
+@@ -12664,7 +12669,7 @@ static inline void escha_decode_tile_k3(const uint16_t * w, float wtile[16][16])
          const int colbase = 2*(lane >> 3) + ((lane >> 2) & 1);
          const int rowbase = 2*(lane & 3);
          for (int c = 0; c < 8; ++c) {

@@ -1,4 +1,4 @@
-From ad9e9bb147b0b90270aff6dab36cb92179493423 Mon Sep 17 00:00:00 2001
+From d7b3dbf7dca7d1a148942ca2391000196b8b9058 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:30:25 -0400
 Subject: [PATCH] 
@@ -9,10 +9,10 @@ Subject: [PATCH]
  1 file changed, 2 insertions(+)
 
 diff --git a/common/common.cpp b/common/common.cpp
-index b7a068020..aaf66052f 100644
+index ac6411d3c..3b1c79f3c 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -1308,6 +1308,7 @@ common_init_result::common_init_result(common_params & params, bool model_only)
+@@ -1331,6 +1331,7 @@ common_init_result::common_init_result(common_params & params, bool model_only)
                  params.tensor_split, params.tensor_split + llama_max_devices());
          const std::vector<llama_model_tensor_buft_override> tbo_before =
              params.tensor_buft_overrides;
@@ -20,7 +20,7 @@ index b7a068020..aaf66052f 100644
  
          const common_params_fit_status fit_status = common_fit_params(
              params.model.path.c_str(), &mparams, &cparams,
-@@ -1327,6 +1328,7 @@ common_init_result::common_init_result(common_params & params, bool model_only)
+@@ -1351,6 +1352,7 @@ common_init_result::common_init_result(common_params & params, bool model_only)
              cparams = cparams_before;
              std::copy(tensor_split_before.begin(), tensor_split_before.end(), params.tensor_split);
              params.tensor_buft_overrides = tbo_before;

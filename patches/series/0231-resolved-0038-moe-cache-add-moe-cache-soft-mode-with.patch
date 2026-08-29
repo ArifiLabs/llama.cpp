@@ -1,4 +1,4 @@
-From 2c0c473796166aa06a661f224a47a2c32cee7b68 Mon Sep 17 00:00:00 2001
+From f42422d44d9bc1440c38b17a3b4a7b5948e50d86 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Sat, 15 Aug 2026 20:27:04 -0400
 Subject: [PATCH] 
@@ -13,10 +13,10 @@ Assisted-by: Codex
  4 files changed, 150 insertions(+), 5 deletions(-)
 
 diff --git a/common/common.cpp b/common/common.cpp
-index 9af04344e..e38609795 100644
+index c68daab5b..455b5e0a6 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -1311,7 +1311,8 @@ common_init_result::common_init_result(common_params & params, bool model_only)
+@@ -1335,7 +1335,8 @@ common_init_result::common_init_result(common_params & params, bool model_only)
  
      if (params.moe_cache.mode_explicit || params.moe_cache.fit_selected) {
          const char * mode = params.moe_cache.mode == COMMON_MOE_CACHE_MODE_OFF ? "off" :
@@ -26,7 +26,7 @@ index 9af04344e..e38609795 100644
          const char * placement = params.moe_cache.fit_selected ? " placement=cache-aware-fit" : "";
          if (params.moe_cache.mode == COMMON_MOE_CACHE_MODE_OFF) {
              COM_INF("%s", "MoE cache: mode=off\n");
-@@ -1757,6 +1758,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+@@ -1781,6 +1782,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
                  cparams.moe_cache_mode = LLAMA_MOE_CACHE_MODE_AUTO;
                  break;
              case COMMON_MOE_CACHE_MODE_ON:
@@ -35,7 +35,7 @@ index 9af04344e..e38609795 100644
                  break;
          }
 diff --git a/common/common.h b/common/common.h
-index 2bb51ac55..92e293f00 100644
+index 0f609a55f..5a2729f69 100644
 --- a/common/common.h
 +++ b/common/common.h
 @@ -447,6 +447,7 @@ enum common_moe_cache_mode {
@@ -47,10 +47,10 @@ index 2bb51ac55..92e293f00 100644
  
  struct common_moe_cache_params {
 diff --git a/common/fit.cpp b/common/fit.cpp
-index 20288e752..46db65525 100644
+index 8d1cb6a5d..ef8d3b805 100644
 --- a/common/fit.cpp
 +++ b/common/fit.cpp
-@@ -1186,6 +1186,146 @@ static void common_params_fit_impl(
+@@ -1272,6 +1272,146 @@ static void common_params_fit_impl(
      if (moe_cache && moe_cache->mode != COMMON_MOE_CACHE_MODE_OFF) {
          if (!stock_spills_experts) {
              LOG_INF("%s: MoE cache fit kept stock placement because all routed expert weights fit in VRAM\n", __func__);
@@ -198,7 +198,7 @@ index 20288e752..46db65525 100644
              LOG_INF("%s: MoE cache fit kept stock placement because canonical dense weights do not meet the fit targets\n", __func__);
          } else {
 diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
-index fa5df3182..1161185b6 100644
+index 98808dca2..654d26375 100644
 --- a/tools/llama-bench/llama-bench.cpp
 +++ b/tools/llama-bench/llama-bench.cpp
 @@ -282,7 +282,7 @@ static std::string parse_moe_cache_mode(const std::string & value) {

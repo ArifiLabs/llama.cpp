@@ -1,4 +1,4 @@
-From 9da72a05cc33e968ea257682a864734311582424 Mon Sep 17 00:00:00 2001
+From e1706011f56afc6054002ff1164533300a997df2 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 07:12:25 -0400
 Subject: [PATCH] metal: lift TQ3_4S kernel set from tq3/master (5 files +
@@ -76,7 +76,7 @@ index 9a7c39ca6..58b868f7b 100644
              {
                  GGML_LOG_ERROR("Asserting on type %d\n", (int) tsrc0);
 diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
-index 1e27d6c77..c052295c7 100644
+index e311ca355..19bfe261d 100644
 --- a/ggml/src/ggml-metal/ggml-metal-impl.h
 +++ b/ggml/src/ggml-metal/ggml-metal-impl.h
 @@ -89,6 +89,9 @@
@@ -89,7 +89,7 @@ index 1e27d6c77..c052295c7 100644
  #define N_R0_TQ3_1S 8
  #define N_SG_TQ3_1S 2
  
-@@ -1037,6 +1040,18 @@ typedef struct {
+@@ -1055,6 +1058,18 @@ typedef struct {
      uint64_t nb3;
  } ggml_metal_kargs_get_rows;
  
@@ -307,7 +307,7 @@ index 667029eb5..39e8839f7 100644
      GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
      GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.h b/ggml/src/ggml-metal/ggml-metal-ops.h
-index 79de592cd..787388ff7 100644
+index c84de16fe..d8481c65a 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.h
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.h
 @@ -30,6 +30,9 @@ int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx);
@@ -321,10 +321,10 @@ index 79de592cd..787388ff7 100644
  size_t ggml_metal_op_mul_mat_id_extra_tpe(const struct ggml_tensor * op);
  
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index 32a6272e1..f2b3f662c 100644
+index f1014e24b..cc1efd9a5 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -217,6 +217,10 @@ static size_t ggml_backend_metal_buffer_type_get_alloc_size(ggml_backend_buffer_
+@@ -223,6 +223,10 @@ static size_t ggml_backend_metal_buffer_type_get_alloc_size(ggml_backend_buffer_
  
      // some operations require additional memory for fleeting data:
      switch (tensor->op) {

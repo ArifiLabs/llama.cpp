@@ -1,4 +1,4 @@
-From 48361ae6064856313f0e70c6402e430801d51b1e Mon Sep 17 00:00:00 2001
+From 19c1174cb7a47c8a6eee3bd27821e0d2423dc012 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 23:41:25 -0400
 Subject: [PATCH] dflash: reject an out-of-extent draft depth instead of
@@ -43,7 +43,7 @@ Origin: ArifiLabs (native)
  3 files changed, 35 insertions(+), 79 deletions(-)
 
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 2866e3f47..bbfe0bdfa 100644
+index 22c5946ea..891a1c143 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
 @@ -1027,19 +1027,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
@@ -166,7 +166,7 @@ index 2866e3f47..bbfe0bdfa 100644
                  }
  
 diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
-index 037b26f1b..a06e64d6f 100644
+index ed15ae9f4..c9ee83b52 100644
 --- a/src/models/dflash.cpp
 +++ b/src/models/dflash.cpp
 @@ -4,8 +4,6 @@
@@ -203,10 +203,10 @@ index 037b26f1b..a06e64d6f 100644
          throw std::runtime_error("DFlash model requires 'target_layers' in GGUF metadata");
      }
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index e7c008194..d1dc6bd7e 100644
+index 6eec3ec3c..2b6aaebb6 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -172,14 +172,13 @@ static bool server_preflight_dflash2(common_params & params) {
+@@ -170,14 +170,13 @@ static bool server_preflight_dflash2(common_params & params) {
          block_size = gguf_get_val_u32(metadata.get(), block_id);
      }
  
@@ -228,7 +228,7 @@ index e7c008194..d1dc6bd7e 100644
      }
  
      auto & types = spec.types;
-@@ -189,7 +188,7 @@ static bool server_preflight_dflash2(common_params & params) {
+@@ -187,7 +186,7 @@ static bool server_preflight_dflash2(common_params & params) {
      }
      spec.draft.dflash = true;
      if (!spec.draft.n_max_set) {

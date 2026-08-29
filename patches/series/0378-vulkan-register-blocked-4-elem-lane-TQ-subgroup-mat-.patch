@@ -1,4 +1,4 @@
-From 4a54e52eec13af7ed6e559936ac57f1b95a60ab5 Mon Sep 17 00:00:00 2001
+From 3fb632865dcc13cb5185fa635c6139eecc8b310d Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 15:20:55 -0400
 Subject: [PATCH] vulkan: register-blocked 4-elem/lane TQ subgroup mat-vec
@@ -15,10 +15,10 @@ Lane: lane-165
  3 files changed, 119 insertions(+), 42 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index ab8bd8c3a..a6d16dbab 100644
+index 322ae7497..cdc52fb04 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -5338,7 +5338,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5339,7 +5339,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                                        (device->subgroup_size % 32) == 0 &&
                                        getenv("GGML_VK_DISABLE_TQ_SUBGROUP") == nullptr;
          const uint32_t tq_wg_size             = tq_subgroup_fast ? wg_size_subgroup : 32;
