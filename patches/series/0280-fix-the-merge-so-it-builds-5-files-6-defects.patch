@@ -1,4 +1,4 @@
-From 02cc66ec94278288d1798eeaad3df7a93e763818 Mon Sep 17 00:00:00 2001
+From d241d2faab58f0da1d88150b6f4160ae31447332 Mon Sep 17 00:00:00 2001
 From: hq <hq@arifilabs>
 Date: Sat, 15 Aug 2026 21:40:14 -0400
 Subject: [PATCH] fix the merge so it builds: 5 files, 6 defects
@@ -34,10 +34,10 @@ restored-checkpoint protection. A partial merge that builds is the dangerous sha
  4 files changed, 18 insertions(+), 186 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 540c69c3c..2a11ddb3f 100644
+index d7e44c441..e32436b02 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -5670,7 +5670,10 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5729,7 +5729,10 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_Q5_1], "cpy_f32_q5_1", cpy_f32_q5_1_len, cpy_f32_q5_1_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_Q8_0], "cpy_f32_q8_0", cpy_f32_q8_0_len, cpy_f32_q8_0_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_quant[GGML_TYPE_IQ4_NL], "cpy_f32_iq4_nl", cpy_f32_iq4_nl_len, cpy_f32_iq4_nl_data, "main", 2, sizeof(vk_op_unary_push_constants), {32, 1, 1}, {}, 1);
@@ -193,10 +193,10 @@ index c687ede07..d93890135 100644
 -    return output;
 -}
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index d41992861..c36f27319 100644
+index 43ad242ac..bcf30e206 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -228,69 +228,6 @@ static server_shared_draft_device_config server_prepare_shared_draft_devices(con
+@@ -273,69 +273,6 @@ static std::vector<llama_token> server_sample_and_accept_synth(
      return result;
  }
  
@@ -266,7 +266,7 @@ index d41992861..c36f27319 100644
  // state diagram: https://github.com/ggml-org/llama.cpp/pull/9283
  enum slot_state {
      SLOT_STATE_IDLE,
-@@ -480,6 +417,9 @@ struct server_slot {
+@@ -526,6 +463,9 @@ struct server_slot {
      bool has_next_token = true;
      bool has_new_line   = false;
      bool truncated      = false;
@@ -276,7 +276,7 @@ index d41992861..c36f27319 100644
  
      stop_type stop;
  
-@@ -569,6 +509,7 @@ struct server_slot {
+@@ -615,6 +555,7 @@ struct server_slot {
          generated_text = "";
          has_new_line   = false;
          truncated      = false;
@@ -284,7 +284,7 @@ index d41992861..c36f27319 100644
          stop           = STOP_TYPE_NONE;
          stopping_word  = "";
          n_sent_text    = 0;
-@@ -3144,12 +3085,20 @@ private:
+@@ -3233,12 +3174,20 @@ private:
          std::vector<server_slot *> generating;
          std::vector<server_slot *> drafting;
  
@@ -305,7 +305,7 @@ index d41992861..c36f27319 100644
              // check if we can batch this slot with the previous one
              if (!slot_batched) {
                  slot_batched = &slot;
-@@ -3537,6 +3486,7 @@ private:
+@@ -3626,6 +3575,7 @@ private:
  
                                          pos_next = std::min(pos_next, std::max(it->pos_min + 1, it->pos_max));
                                          n_past   = std::min(slot.prompt.tokens.size_up_to_pos(pos_next), (size_t) it->n_tokens);
@@ -313,7 +313,7 @@ index d41992861..c36f27319 100644
                                          SLT_TRC(slot, "restored context checkpoint (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", n_past = %d, size = %.3f MiB)\n", it->pos_min, it->pos_max, it->n_tokens, n_past, (float) it->size() / 1024 / 1024);
                                      }
  
-@@ -3767,6 +3717,7 @@ private:
+@@ -3856,6 +3806,7 @@ private:
  
                          slot.stats.n_gen = 0;
                          slot.i_batch     = batch.size() - 1;

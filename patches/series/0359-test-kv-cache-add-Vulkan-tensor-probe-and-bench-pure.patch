@@ -1,4 +1,4 @@
-From 07c98aaabab87722648b9ce3b57bdb34a974ee53 Mon Sep 17 00:00:00 2001
+From 3f33c621e65a4522a65d7cacd948b4a169332343 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 19 Aug 2026 02:45:21 -0400
 Subject: [PATCH] test(kv-cache): add Vulkan tensor probe and bench-pure A/B
@@ -19,10 +19,10 @@ Measured-effect: harness selftest PASS; native build/model effect UNMEASURED (HQ
  create mode 100644 tools/kv-mean-center/ab-proof.py
 
 diff --git a/common/arg.cpp b/common/arg.cpp
-index 935de2bba..de06819de 100644
+index c239b48ae..995fb2a96 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
-@@ -2493,6 +2493,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -2501,6 +2501,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
              params.kv_mean_center_path = value;
          }
      ).set_env("LLAMA_ARG_KV_MEAN_CENTER"));
@@ -37,10 +37,10 @@ index 935de2bba..de06819de 100644
      add_opt(common_arg(
          {"--hellaswag"},
 diff --git a/common/common.h b/common/common.h
-index b3c3b4266..e89646dfd 100644
+index 7967b795c..ca4e3080d 100644
 --- a/common/common.h
 +++ b/common/common.h
-@@ -606,6 +606,7 @@ struct common_params {
+@@ -616,6 +616,7 @@ struct common_params {
      // only takes effect when cache_type_k == GGML_TYPE_Q4_0; see docs/kv-mean-center.md
      std::string kv_mean_center_path = "";
      std::string kv_mean_center_model_sha256 = "";
@@ -49,10 +49,10 @@ index b3c3b4266..e89646dfd 100644
  
      common_conversation_mode conversation_mode = COMMON_CONVERSATION_MODE_AUTO;
 diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
-index 283548f83..b4991ed21 100644
+index 8704af714..9a3384164 100644
 --- a/src/llama-kv-cache.cpp
 +++ b/src/llama-kv-cache.cpp
-@@ -1604,6 +1604,7 @@ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggm
+@@ -1620,6 +1620,7 @@ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggm
              bias = ggml_cast(ctx, bias, k_cur->type);
          }
          k_cur = ggml_sub(ctx, k_cur, bias);
@@ -855,7 +855,7 @@ index aedffe989..1d5850b5e 100644
      if (!common_kv_mean_center_model_sha256(params.model.path, model, model_sha256)) {
          LOG_ERR("%s: refusing to emit an unbound calibration artifact\n", __func__);
 diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
-index 7db3cd50f..bd1d1d5d3 100644
+index da88ab927..39ff6f1aa 100644
 --- a/tools/llama-bench/llama-bench.cpp
 +++ b/tools/llama-bench/llama-bench.cpp
 @@ -28,6 +28,9 @@
@@ -868,7 +868,7 @@ index 7db3cd50f..bd1d1d5d3 100644
  
  #ifdef _WIN32
  #    define WIN32_LEAN_AND_MEAN
-@@ -415,6 +418,9 @@ struct cmd_params {
+@@ -428,6 +431,9 @@ struct cmd_params {
      std::vector<int>                 n_ubatch;
      std::vector<ggml_type>           type_k;
      std::vector<ggml_type>           type_v;
@@ -878,7 +878,7 @@ index 7db3cd50f..bd1d1d5d3 100644
      std::vector<int>                 n_threads;
      std::vector<std::string>         cpu_mask;
      std::vector<bool>                cpu_strict;
-@@ -465,6 +471,9 @@ static const cmd_params cmd_params_defaults = {
+@@ -479,6 +485,9 @@ static const cmd_params cmd_params_defaults = {
      /* n_ubatch             */ { 512 },
      /* type_k               */ { GGML_TYPE_F16 },
      /* type_v               */ { GGML_TYPE_F16 },
@@ -888,7 +888,7 @@ index 7db3cd50f..bd1d1d5d3 100644
      /* n_threads            */ { common_cpu_get_num_math() },
      /* cpu_mask             */ { "0x0" },
      /* cpu_strict           */ { false },
-@@ -542,6 +551,9 @@ static void print_usage(int /* argc */, char ** argv) {
+@@ -557,6 +566,9 @@ static void print_usage(int /* argc */, char ** argv) {
      printf("  -ub, --ubatch-size <n>                            (default: %s)\n", join(cmd_params_defaults.n_ubatch, ",").c_str());
      printf("  -ctk, --cache-type-k <t>                          (default: %s)\n", join(transform_to_str(cmd_params_defaults.type_k, ggml_type_name), ",").c_str());
      printf("  -ctv, --cache-type-v <t>                          (default: %s)\n", join(transform_to_str(cmd_params_defaults.type_v, ggml_type_name), ",").c_str());
@@ -898,7 +898,7 @@ index 7db3cd50f..bd1d1d5d3 100644
      printf("  -t, --threads <n>                                 (default: %s)\n", join(cmd_params_defaults.n_threads, ",").c_str());
      printf("  -C, --cpu-mask <hex,hex>                          (default: %s)\n", join(cmd_params_defaults.cpu_mask, ",").c_str());
      printf("  --cpu-strict <0|1>                                (default: %s)\n", join(cmd_params_defaults.cpu_strict, ",").c_str());
-@@ -781,6 +793,14 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
+@@ -797,6 +809,14 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                      break;
                  }
                  params.type_v.insert(params.type_v.end(), types.begin(), types.end());
@@ -913,7 +913,7 @@ index 7db3cd50f..bd1d1d5d3 100644
              } else if (arg == "-dev" || arg == "--device") {
                  if (++i >= argc) {
                      invalid_param = true;
-@@ -2522,6 +2542,9 @@ int llama_bench(int argc, char ** argv) {
+@@ -2581,6 +2601,9 @@ int llama_bench(int argc, char ** argv) {
  
      llama_model *               lmodel    = nullptr;
      const cmd_params_instance * prev_inst = nullptr;
@@ -923,7 +923,7 @@ index 7db3cd50f..bd1d1d5d3 100644
  
      // store context state for repeated benchmarks with matching cache and repack settings
      // ref: https://github.com/ggml-org/llama.cpp/pull/16944#issuecomment-3478151721
-@@ -2596,9 +2619,26 @@ int llama_bench(int argc, char ** argv) {
+@@ -2655,9 +2678,26 @@ int llama_bench(int argc, char ** argv) {
                  fprintf(stderr, "%s: error: failed to load model '%s'\n", __func__, inst.model.c_str());
                  return 1;
              }

@@ -1,4 +1,4 @@
-From 6a46f775c2030eac80eccc545ccc81a00a64d47c Mon Sep 17 00:00:00 2001
+From f026d3a421a39c85966acb5091cb782fd3bcf306 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Tue, 25 Aug 2026 00:38:22 -0400
 Subject: [PATCH] rs zeroing hunt CLOSED: leak is backend-independent (CPU
@@ -14,10 +14,10 @@ Subject: [PATCH] rs zeroing hunt CLOSED: leak is backend-independent (CPU
  4 files changed, 78 insertions(+), 2 deletions(-)
 
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index d5f1ed2c1..13d43ce6d 100644
+index aef91581b..eea9c3fb4 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -2425,6 +2425,26 @@ int llama_context::decode(const llama_batch & batch_inp) {
+@@ -2436,6 +2436,26 @@ int llama_context::decode(const llama_batch & batch_inp) {
          }
      }
  
@@ -90,10 +90,10 @@ index f100813b7..7d22d657f 100644
  
      // copy extra states which won't be changed further (between n_seqs and n_rs)
 diff --git a/src/llama-memory-recurrent.cpp b/src/llama-memory-recurrent.cpp
-index c72bb319d..99e954fb1 100644
+index 469aa2ab9..9f5845d46 100644
 --- a/src/llama-memory-recurrent.cpp
 +++ b/src/llama-memory-recurrent.cpp
-@@ -150,6 +150,26 @@ void llama_memory_recurrent::clear(bool data) {
+@@ -161,6 +161,26 @@ void llama_memory_recurrent::clear(bool data) {
      rs_shift_cur = 0;
  }
  
@@ -120,7 +120,7 @@ index c72bb319d..99e954fb1 100644
  bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
      {
          static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
-@@ -210,11 +230,22 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
+@@ -221,11 +241,22 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
              // F-136 "seeded at prefill" mechanism). Hard-zero the cleared cell's rows across
              // every plane, host-side, backend-independent. LLAMA_RS_NO_ZERO_ON_CLEAR disables.
              static const bool no_zero = getenv("LLAMA_RS_NO_ZERO_ON_CLEAR") != nullptr;
@@ -144,7 +144,7 @@ index c72bb319d..99e954fb1 100644
                          for (size_t il = 0; il < lay.size(); ++il) {
                              ggml_tensor * t = lay[il];
                              if (!t) { continue; }
-@@ -222,7 +253,8 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
+@@ -233,7 +264,8 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
                              if (zeros.size() < row_size) {
                                  zeros.assign(row_size, 0);
                              }
@@ -155,7 +155,7 @@ index c72bb319d..99e954fb1 100644
                                      ((size_t) plane * size + (size_t) t0) * row_size, row_size);
                              }
 diff --git a/src/llama-memory-recurrent.h b/src/llama-memory-recurrent.h
-index 8bb5c98bc..7984456c8 100644
+index d555816ca..7dcf1fd2c 100644
 --- a/src/llama-memory-recurrent.h
 +++ b/src/llama-memory-recurrent.h
 @@ -61,6 +61,10 @@ public:

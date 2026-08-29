@@ -1,4 +1,4 @@
-From 30b6c666889ac37c782fc7b2fa04c1e9b96a9de9 Mon Sep 17 00:00:00 2001
+From ef2ed94a03309dd3235e98fa962e212f01a191cf Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:31:02 -0400
 Subject: [PATCH] build: wire powerinfer lib + AVX-spill cure into CMake
@@ -48,10 +48,10 @@ index 3c6343fb2..631782136 100644
      target_compile_definitions(${GGML_CPU_NAME} PRIVATE ${ARCH_DEFINITIONS})
  
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index c6df19f2e..ce8a4a558 100644
+index 8922dc12a..b88043b21 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -60,6 +60,8 @@ target_include_directories(llama PRIVATE .)
+@@ -61,6 +61,8 @@ target_include_directories(llama PRIVATE .)
  target_include_directories(llama PUBLIC ../include)
  target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
  

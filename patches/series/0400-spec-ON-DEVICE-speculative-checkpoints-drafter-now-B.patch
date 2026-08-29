@@ -1,4 +1,4 @@
-From 2321e601d893f1ac36edf662221d3931fb49b0dd Mon Sep 17 00:00:00 2001
+From 9e3c90a4cc692ec71ebeff99a54997cf4eb51e70 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 24 Aug 2026 18:38:24 -0400
 Subject: [PATCH] spec: ON-DEVICE speculative checkpoints - drafter now BEATS
@@ -31,10 +31,10 @@ Rides along, same lane:
  6 files changed, 163 insertions(+), 19 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index a65d67e29..16c9f9361 100644
+index 650db5da8..d0fae320b 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
-@@ -3710,7 +3710,8 @@ struct ggml_cplan ggml_graph_plan(
+@@ -3711,7 +3711,8 @@ struct ggml_cplan ggml_graph_plan(
                          const int64_t S_v = node->src[2]->ne[0];
                          const int64_t K   = ggml_get_op_params_i32(node, 0);
                          const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0);
@@ -45,10 +45,10 @@ index a65d67e29..16c9f9361 100644
                  case GGML_OP_TURBO_WHT:
                      {
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 830ee717f..4c1ccb9fe 100644
+index b4feedcb6..8889196de 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -10938,7 +10938,8 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
+@@ -10944,7 +10944,8 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
      const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0);
      const int ith = params->ith;
  
@@ -59,10 +59,10 @@ index 830ee717f..4c1ccb9fe 100644
  
      // output layout: [attn_scores | new_states]
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 297609c84..04c3289c9 100644
+index fadd6c590..ad085201e 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -16093,6 +16093,13 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
+@@ -16346,6 +16346,13 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
          // dequantization or split_k, additional synchronization is needed between those passes.
          bool need_sync = false;
  
@@ -217,10 +217,10 @@ index ebccb757a..3e4aa7e1d 100644
          if (s_from < 0) {
              continue; // no state of that age exists yet (start of a sequence)
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index c8d229cc6..37d793324 100644
+index 9d017f03e..d014c597e 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -3306,6 +3306,7 @@ struct test_cpy : public test_case {
+@@ -3311,6 +3311,7 @@ struct test_cpy : public test_case {
      const std::array<int64_t, 4> permute_src;
      const std::array<int64_t, 4> permute_dst;
      const std::array<int64_t, 4> dst_alloc; // if set, dst is a view into a larger buffer (strided)
@@ -228,7 +228,7 @@ index c8d229cc6..37d793324 100644
      bool _src_use_permute;
      bool _dst_use_permute;
      bool _src_transpose;
-@@ -3314,7 +3315,7 @@ struct test_cpy : public test_case {
+@@ -3319,7 +3320,7 @@ struct test_cpy : public test_case {
  
      std::string vars() override {
          if (_use_dst_alloc) {
@@ -237,7 +237,7 @@ index c8d229cc6..37d793324 100644
          }
          if (_use_dst_shape) {
              return VARS_TO_STR7(type_src, type_dst, ne_src, ne_dst, permute_src, permute_dst, _src_transpose);
-@@ -3364,9 +3365,10 @@ struct test_cpy : public test_case {
+@@ -3369,9 +3370,10 @@ struct test_cpy : public test_case {
              std::array<int64_t, 4> permute_src = {0, 0, 0, 0},
              std::array<int64_t, 4> permute_dst = {0, 0, 0, 0},
              bool transpose_src = false,
@@ -250,7 +250,7 @@ index c8d229cc6..37d793324 100644
            _src_use_permute(permute_src[0] + permute_src[1] + permute_src[2] + permute_src[3] > 0),
            _dst_use_permute(permute_dst[0] + permute_dst[1] + permute_dst[2] + permute_dst[3] > 0),
            _src_transpose(transpose_src),
-@@ -3396,7 +3398,8 @@ struct test_cpy : public test_case {
+@@ -3401,7 +3403,8 @@ struct test_cpy : public test_case {
              ggml_tensor * dst_buf = ggml_new_tensor(ctx, type_dst, 4, dst_alloc.data());
              ggml_set_name(dst_buf, "dst_buf");
              dst = ggml_view_4d(ctx, dst_buf, dst_ne[0], dst_ne[1], dst_ne[2], dst_ne[3],
@@ -260,7 +260,7 @@ index c8d229cc6..37d793324 100644
              ggml_set_name(dst, "dst_view");
          } else {
              dst = ggml_new_tensor(ctx, type_dst, 4, dst_ne.data());
-@@ -9478,6 +9481,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+@@ -9484,6 +9487,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
          }
      }
  
@@ -279,7 +279,7 @@ index c8d229cc6..37d793324 100644
      for (ggml_type type_dst : { GGML_TYPE_F32, GGML_TYPE_I32, GGML_TYPE_F16, GGML_TYPE_BF16 }) {
          for (bool use_view_slice : { true, false }) {
              for (std::array<int64_t, 4> ne : std::initializer_list<std::array<int64_t, 4>>{ {2, 1, 1, 1}, {2, 1, 3, 5},
-@@ -10974,6 +10989,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+@@ -10991,6 +11006,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
      test_cases.emplace_back(new test_cpy(GGML_TYPE_F16, GGML_TYPE_F16, {768, 1024, 256, 1}, {-1,-1,-1,-1}, {0, 0, 0, 0}, {0, 0, 0, 0}, true));
      test_cases.emplace_back(new test_cpy(GGML_TYPE_BF16, GGML_TYPE_BF16, {768, 1024, 256, 1}, {-1,-1,-1,-1}, {0, 0, 0, 0}, {0, 0, 0, 0}, true));
  
@@ -299,10 +299,10 @@ index c8d229cc6..37d793324 100644
      test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {12888, 256, 5, 1}, false, false, GGML_TYPE_F32, {1, 1}, 1.0f, 0.0f));
      test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {77, 4096, 5, 1}, false, false, GGML_TYPE_F32, {1, 1}, 1.0f, 0.0f));
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 308d6e267..48b69e242 100644
+index 72ab7d271..78fa937ce 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -435,6 +435,16 @@ struct server_batch {
+@@ -480,6 +480,16 @@ struct server_batch {
      }
  };
  
@@ -319,9 +319,9 @@ index 308d6e267..48b69e242 100644
  struct server_slot {
      int id;
  
-@@ -457,6 +467,13 @@ struct server_slot {
-     common_prompt_checkpoint spec_ckpt;
+@@ -503,6 +513,13 @@ struct server_slot {
      bool spec_is_replay = false;
+     std::mt19937 spec_synth_rng;
  
 +    // LLAMA_SPEC_CKPT_TIMING: per-slot spec cost accounting (ring-repair lane, 2026-08-24)
 +    int64_t spec_t_save_us    = 0;
@@ -333,7 +333,7 @@ index 308d6e267..48b69e242 100644
      // TODO: move members that belong to the task (such as `generated_text`, `has_new_line`) to task_results_state
      //       see https://github.com/ggml-org/llama.cpp/pull/18283#issuecomment-3710175837
      std::unique_ptr<const server_task> task;
-@@ -880,6 +897,11 @@ struct server_slot {
+@@ -926,6 +943,11 @@ struct server_slot {
              SLT_INF(*this,
                      "draft acceptance = %0.5f (%5d accepted / %5d generated), mean len = %5.2f\n",
                      draft_ratio, n_draft_accepted, n_draft_total, mean_acc_len);
@@ -345,7 +345,7 @@ index 308d6e267..48b69e242 100644
              SLT_TRC(*this,
                      "     acc per pos = (%s)\n", acceptance_rates_per_pos.c_str());
          }
-@@ -3243,7 +3265,7 @@ private:
+@@ -3332,7 +3354,7 @@ private:
                                  llama_memory_seq_pos_max(llama_get_memory(ctx_tgt), slot.id));
  
                          if (use_ckpt_dft) {
@@ -354,7 +354,7 @@ index 308d6e267..48b69e242 100644
                          }
  
                          slot.spec_prompt = slot.prompt.tokens.get_text_tokens();
-@@ -3285,7 +3307,7 @@ private:
+@@ -3374,7 +3396,7 @@ private:
  
              if (ctx_dft) {
                  if (use_ckpt_dft) {
@@ -363,7 +363,7 @@ index 308d6e267..48b69e242 100644
                  }
  
                  if (!llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, ckpt.pos_max + 1, -1)) {
-@@ -3302,9 +3324,12 @@ private:
+@@ -3391,9 +3413,12 @@ private:
                     (ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && draft.size() > llama_n_rs_seq(ctx_dft));
  
                  if (use_ckpt_tgt) {
@@ -378,7 +378,7 @@ index 308d6e267..48b69e242 100644
  
                      if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr) {
                          int32_t rs_tail = -2, rs_src0 = -2; llama_pos rs_pos = -2;
-@@ -3323,7 +3348,7 @@ private:
+@@ -3412,7 +3437,7 @@ private:
                  }
  
                  if (use_ckpt_dft) {
@@ -387,7 +387,7 @@ index 308d6e267..48b69e242 100644
                  }
              }
          });
-@@ -4227,12 +4252,18 @@ private:
+@@ -4323,12 +4348,18 @@ private:
  
                          SLT_DBG(slot, "restoring speculative checkpoint (pos_min = %d, pos_max = %d, size = %zu)\n", ckpt.pos_min, ckpt.pos_max, ckpt.size());
  

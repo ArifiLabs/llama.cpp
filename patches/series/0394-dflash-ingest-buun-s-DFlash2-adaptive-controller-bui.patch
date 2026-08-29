@@ -1,4 +1,4 @@
-From 5bc3068e1cbc13e5725bb4249ecc679795635c0e Mon Sep 17 00:00:00 2001
+From 51c02dfb1bca711bfb9af977dfcf12bda44cb698 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 11:34:48 -0400
 Subject: [PATCH] dflash: ingest buun's DFlash2 adaptive controller - built,
@@ -48,10 +48,10 @@ Origin: ArifiLabs (native), integrating github.com/spiritbuun/buun-llama-cpp 396
  5 files changed, 420 insertions(+), 5 deletions(-)
 
 diff --git a/common/arg.cpp b/common/arg.cpp
-index f600d63cc..ee1af8183 100644
+index e790e8975..c7847bc66 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
-@@ -4243,6 +4243,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -4287,6 +4287,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
                  throw std::invalid_argument("invalid value");
              }
              params.speculative.draft.n_max = value;
@@ -59,7 +59,7 @@ index f600d63cc..ee1af8183 100644
          }
      ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_LOOKUP, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_DRAFT_N_MAX"));
      add_opt(common_arg(
-@@ -4274,6 +4275,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -4350,6 +4351,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
                  if (n < 1) throw std::invalid_argument("spec-chain depth must be >= 1");
                  params.speculative.draft.chain = true;
                  params.speculative.draft.n_max = n;
@@ -68,10 +68,10 @@ index f600d63cc..ee1af8183 100644
          }
      ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_CHAIN"));
 diff --git a/common/common.h b/common/common.h
-index 76e2423ac..81df37f87 100644
+index a497d059c..1492a760f 100644
 --- a/common/common.h
 +++ b/common/common.h
-@@ -328,6 +328,7 @@ struct common_params_model {
+@@ -329,6 +329,7 @@ struct common_params_model {
  struct common_params_speculative_draft {
      int32_t n_max = 3; // maximum number of tokens to draft during speculative decoding
      int32_t n_min = 0; // minimum number of draft tokens to use for speculative decoding
@@ -80,7 +80,7 @@ index 76e2423ac..81df37f87 100644
  
      float p_split = 0.1f; // speculative decoding split probability
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 0ae9c7c94..22c5946ea 100644
+index 12b5d8ca5..ebc773bb6 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
 @@ -18,8 +18,10 @@
@@ -106,7 +106,7 @@ index 0ae9c7c94..22c5946ea 100644
  struct common_speculative_config {
      common_speculative_type type;
      common_params_speculative params;
-@@ -938,6 +945,39 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -941,6 +948,39 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
      std::vector<std::mt19937> selector_rng;
      std::vector<bool> selector_reset;
  
@@ -146,10 +146,10 @@ index 0ae9c7c94..22c5946ea 100644
      // draft-dspark: the draft carries a Markov head and uses an anchor-first block layout
      const bool is_dspark;
  
-@@ -987,6 +1027,19 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
-                 is_dflash2 = selector_top_k > 0;
-             }
-         }
+@@ -995,6 +1035,19 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+ 
+         selector_top_k = llama_model_dflash_selector_top_k(model_dft);
+         is_dflash2     = selector_top_k > 0;
 +        if (is_dflash2) {
 +            if (const char * value = std::getenv("GGML_DFLASH2_BLOCK_SIZE_OVERRIDE")) {
 +                const int override = std::atoi(value);
@@ -166,9 +166,9 @@ index 0ae9c7c94..22c5946ea 100644
          mask_token_id = llama_vocab_mask(llama_model_get_vocab(model_dft));
          if (mask_token_id == LLAMA_TOKEN_NULL) {
              // A DFlash/DSpark drafter legitimately ships WITHOUT a vocabulary of its own -- it
-@@ -1032,6 +1085,37 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
-             this->params.n_min = std::min(this->params.n_min, n_draft_max);
+@@ -1051,6 +1104,37 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
          }
+         this->n_max = this->params.n_max;
  
 +        // DEFAULT IS OFF, BY MEASUREMENT (seat-40, 2026-08-21). Both adaptive policies were built,
 +        // built clean, and GATED on a 16-prompt corpus weighted to prose, with depth 7 carried as a
@@ -204,7 +204,7 @@ index 0ae9c7c94..22c5946ea 100644
          batch        = llama_batch_init(llama_n_batch(ctx_dft), 0,          n_seq);
          batch_inject = llama_batch_init(llama_n_batch(ctx_dft), n_embd_dec, n_seq);
  
-@@ -1046,6 +1130,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1072,6 +1156,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
  
          selector_rng.resize(n_seq);
          selector_reset.assign(n_seq, true);
@@ -212,7 +212,7 @@ index 0ae9c7c94..22c5946ea 100644
  
          // offload draft sampling to the backend
          backend_chains.assign(n_seq, nullptr);
-@@ -1106,6 +1191,145 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1132,6 +1217,145 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
          llama_batch_free(batch_inject);
      }
  
@@ -358,7 +358,7 @@ index 0ae9c7c94..22c5946ea 100644
      void begin(llama_seq_id seq_id, const llama_tokens & prompt) override {
          if (seq_id < 0 || seq_id >= (llama_seq_id) n_seq) {
              return;
-@@ -1117,6 +1341,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1143,6 +1367,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
          }
  
          selector_reset[seq_id] = true;
@@ -366,7 +366,7 @@ index 0ae9c7c94..22c5946ea 100644
  
          const llama_pos pos_max = llama_memory_seq_pos_max(llama_get_memory(params.ctx_dft), seq_id);
          if (pos_max < N - 1) {
-@@ -1247,6 +1472,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1273,6 +1498,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
          // record where each block starts and its size
          std::vector<int32_t> i_block_beg(n_seq, -1);
          std::vector<int32_t> n_block    (n_seq,  0);
@@ -374,7 +374,7 @@ index 0ae9c7c94..22c5946ea 100644
  
          for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
              auto & dp = dparams[seq_id];
-@@ -1258,11 +1484,29 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1284,11 +1510,29 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
  
              const int32_t n = (int32_t) dp.n_past;
  
@@ -406,7 +406,7 @@ index 0ae9c7c94..22c5946ea 100644
              for (int32_t i = 0; i < n_block_tokens; ++i) {
                  common_batch_add(batch, i == 0 ? dp.id_last : mask_token_id, n + i, { seq_id }, !is_dflash2);
              }
-@@ -1311,7 +1555,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1337,7 +1581,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                  }
  
                  int32_t predecessor = 0;
@@ -415,7 +415,7 @@ index 0ae9c7c94..22c5946ea 100644
                      const float * row = lattice + (size_t) (beg + i) * n_embd_dec;
                      const float * scores = row + selector_top_k + (size_t) predecessor * selector_top_k;
  
-@@ -1346,6 +1590,11 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1382,6 +1626,11 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                          dp.dists->clear();
                      }
                  }
@@ -427,7 +427,7 @@ index 0ae9c7c94..22c5946ea 100644
                  continue;
              }
  
-@@ -1408,8 +1657,85 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1444,8 +1693,85 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
          }
      }
  
@@ -516,7 +516,7 @@ index 0ae9c7c94..22c5946ea 100644
  };
  
 diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
-index c9ee83b52..ed15ae9f4 100644
+index bf50b765f..cbcd63076 100644
 --- a/src/models/dflash.cpp
 +++ b/src/models/dflash.cpp
 @@ -4,6 +4,8 @@
@@ -528,7 +528,7 @@ index c9ee83b52..ed15ae9f4 100644
  void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
  
      ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
-@@ -18,6 +20,23 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
+@@ -20,6 +22,23 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
      ml.get_key(LLM_KV_DFLASH_SELECTOR_RANK,    hparams.dflash_selector_rank,    false);
      ml.get_key(LLM_KV_DFLASH_SELECTOR_TOP_K,   hparams.dflash_selector_top_k,   false);
  
@@ -553,7 +553,7 @@ index c9ee83b52..ed15ae9f4 100644
          throw std::runtime_error("DFlash model requires 'target_layers' in GGUF metadata");
      }
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 714260424..6eec3ec3c 100644
+index 09317105a..e850d97f6 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
 @@ -10,6 +10,7 @@
@@ -572,7 +572,7 @@ index 714260424..6eec3ec3c 100644
  #include <exception>
  #include <memory>
  #include <filesystem>
-@@ -128,6 +130,70 @@ static std::vector<ggml_backend_dev_t> server_target_fit_devices(const common_pa
+@@ -129,6 +131,70 @@ static std::vector<ggml_backend_dev_t> server_target_fit_devices(const common_pa
      return { devices[params.main_gpu] };
  }
  
@@ -643,7 +643,7 @@ index 714260424..6eec3ec3c 100644
  static server_shared_draft_device_config server_prepare_shared_draft_devices(const common_params & params) {
      server_shared_draft_device_config result;
      const auto & types = params.speculative.types;
-@@ -1150,6 +1216,7 @@ private:
+@@ -1198,6 +1264,7 @@ private:
          }
  
          params_base = params_load;

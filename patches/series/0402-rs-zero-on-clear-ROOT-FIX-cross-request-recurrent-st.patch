@@ -1,4 +1,4 @@
-From 6eec8fbfa924cf690ecc518ff786edafb6b2d7a3 Mon Sep 17 00:00:00 2001
+From b62506af1de89cd8606c6e11d17077ca2962294a Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 24 Aug 2026 22:39:07 -0400
 Subject: [PATCH] rs: zero-on-clear ROOT FIX - cross-request recurrent-state
@@ -90,7 +90,7 @@ index 6555908f7..e5d5bc616 100644
  
  class llm_graph_input_cross_embd : public llm_graph_input_i {
 diff --git a/src/llama-memory-recurrent.cpp b/src/llama-memory-recurrent.cpp
-index dcb52e099..c72bb319d 100644
+index b2ecba228..469aa2ab9 100644
 --- a/src/llama-memory-recurrent.cpp
 +++ b/src/llama-memory-recurrent.cpp
 @@ -34,6 +34,7 @@ llama_memory_recurrent::llama_memory_recurrent(
@@ -101,7 +101,7 @@ index dcb52e099..c72bb319d 100644
  
      cells.clear();
      cells.resize(mem_size);
-@@ -145,6 +146,8 @@ void llama_memory_recurrent::clear(bool data) {
+@@ -156,6 +157,8 @@ void llama_memory_recurrent::clear(bool data) {
      }
  
      std::fill(rs_idx.begin(), rs_idx.end(), 0);
@@ -110,7 +110,7 @@ index dcb52e099..c72bb319d 100644
  }
  
  bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
-@@ -174,7 +177,64 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
+@@ -185,7 +188,64 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
  
      const bool rm_all = p0 == 0 && p1 == std::numeric_limits<llama_pos>::max();
      if (rm_all) {
@@ -176,7 +176,7 @@ index dcb52e099..c72bb319d 100644
      }
  
      // models like Mamba or RWKV can't have a state partially erased at the end
-@@ -192,14 +252,58 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
+@@ -203,14 +263,58 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
              if (0 < p0 && p0 <= cell.pos && p1 > cell.pos) {
                  const llama_pos rollback = cell.pos - (p0 - 1);
                  static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
@@ -241,7 +241,7 @@ index dcb52e099..c72bb319d 100644
                      cell.pos = p0 - 1;
                      return true;
                  }
-@@ -513,6 +617,28 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
+@@ -524,6 +628,28 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
      const uint32_t n_seq_tokens = ubatch.n_seq_tokens;
      const uint32_t n_seqs       = ubatch.n_seqs;
  
@@ -270,7 +270,7 @@ index dcb52e099..c72bb319d 100644
      // if we have enough unused cells before the current head ->
      //   better to start searching from the beginning of the cache, hoping to fill it
      if (head > used + 2*n_seqs) {
-@@ -866,7 +992,13 @@ void llama_memory_recurrent::state_read(llama_io_read_i & io, llama_seq_id seq_i
+@@ -889,7 +1015,13 @@ void llama_memory_recurrent::state_read(llama_io_read_i & io, llama_seq_id seq_i
      }
  
      if (n_rs_seq != 0) {
@@ -285,8 +285,8 @@ index dcb52e099..c72bb319d 100644
      }
  }
  
-@@ -1269,6 +1401,10 @@ ggml_tensor * llama_memory_recurrent_context::get_s_l(int32_t il) const {
-     return mem->s_l[il];
+@@ -1321,6 +1453,10 @@ ggml_tensor * llama_memory_recurrent_context::get_p_l(int32_t il) const {
+     return mem->p_l[il];
  }
  
 +uint32_t llama_memory_recurrent_context::get_rs_shift() const {
@@ -297,7 +297,7 @@ index dcb52e099..c72bb319d 100644
      const uint32_t cell_idx = i + mem->head;
      const int32_t  src0     = mem->cells[cell_idx].src0;
 diff --git a/src/llama-memory-recurrent.h b/src/llama-memory-recurrent.h
-index 9f9f44dab..8bb5c98bc 100644
+index 32085dbe1..d555816ca 100644
 --- a/src/llama-memory-recurrent.h
 +++ b/src/llama-memory-recurrent.h
 @@ -78,6 +78,15 @@ public:
@@ -316,7 +316,7 @@ index 9f9f44dab..8bb5c98bc 100644
      // computed before each graph build
      uint32_t n = 0;
  
-@@ -178,6 +187,9 @@ public:
+@@ -182,6 +191,9 @@ public:
  
      int32_t s_copy(int i) const;
  
@@ -393,10 +393,10 @@ index 6b919cccc..97efa2120 100644
  
          ggml_tensor * bank_src = ggml_view_2d(ctx0, ssm_states_all,
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 37d793324..14e193821 100644
+index d014c597e..63686e89d 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -8889,6 +8889,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+@@ -8894,6 +8894,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
          test_cases.emplace_back(new test_get_rows(type, 300*256,   5,         4,   1,   2, false));
          test_cases.emplace_back(new test_get_rows(type,     256,   80000, 70000,   2,   1, false));
          test_cases.emplace_back(new test_get_rows(type,     256,   5,         4, 700, 100, false));

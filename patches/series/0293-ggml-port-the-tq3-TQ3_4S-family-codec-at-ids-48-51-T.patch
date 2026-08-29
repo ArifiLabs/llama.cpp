@@ -1,4 +1,4 @@
-From 9eeb8fddd51d63bfd405bbb8244136cf53fdeb3b Mon Sep 17 00:00:00 2001
+From 4c620f3d1a2c493805a0f57d471a016aba29afae Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 08:48:24 -0400
 Subject: [PATCH] ggml: port the tq3 TQ3_4S family codec at ids 48-51
@@ -505,7 +505,7 @@ index 9ee04b88b..2844142de 100644
  typedef struct {
      ggml_half d;           // delta
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index 20635ed96..d8ec89f55 100644
+index c7645eb30..f71d99e98 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -401,6 +401,11 @@ const float * arifi_tq3_centroids(void);
@@ -669,7 +669,7 @@ index 20635ed96..d8ec89f55 100644
      [GGML_TYPE_Q4_0] = {
          .from_float               = quantize_row_q4_0,
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 5f922c1e6..07c822e3b 100644
+index d477b23a0..3cbf3c8de 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -684,6 +684,10 @@ void ggml_compute_forward_add(

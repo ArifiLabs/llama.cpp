@@ -1,4 +1,4 @@
-From 38378c66e96b85576f16b99be2c71dc37e5a6834 Mon Sep 17 00:00:00 2001
+From 02f0fd3604c70e3ed7cae1625a32abf1290ab878 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 19 Aug 2026 02:23:47 -0400
 Subject: [PATCH] feat(kv-cache): bind calibration to exact model
@@ -35,7 +35,7 @@ index 835861a47..9d8f5eabe 100644
  
  set_target_properties(${TARGET} PROPERTIES
 diff --git a/common/common.cpp b/common/common.cpp
-index ee1e8ad13..50f013e08 100644
+index 90e12e699..b72e43b62 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
 @@ -6,6 +6,9 @@
@@ -66,7 +66,7 @@ index ee1e8ad13..50f013e08 100644
      if (model_only) {
          return;
      }
-@@ -1820,6 +1834,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+@@ -1821,6 +1835,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
      // note: params (and therefore params.kv_mean_center_path) is kept alive by the caller for
      // at least as long as it takes to call llama_init_from_model() with the returned cparams
      cparams.path_kv_mean_center = params.kv_mean_center_path.empty() ? nullptr : params.kv_mean_center_path.c_str();
@@ -75,10 +75,10 @@ index ee1e8ad13..50f013e08 100644
  
      return cparams;
 diff --git a/common/common.h b/common/common.h
-index 86cd5e786..b3c3b4266 100644
+index 542cbbd8a..7967b795c 100644
 --- a/common/common.h
 +++ b/common/common.h
-@@ -605,6 +605,7 @@ struct common_params {
+@@ -615,6 +615,7 @@ struct common_params {
      // path to a K-cache mean-centering bias file (GGUF), or empty to disable.
      // only takes effect when cache_type_k == GGML_TYPE_Q4_0; see docs/kv-mean-center.md
      std::string kv_mean_center_path = "";
@@ -290,10 +290,10 @@ index 4aca53815..d57e44880 100644
  
  `tools/kv-mean-center` computes the bias by running a plain text calibration corpus through the
 diff --git a/include/llama.h b/include/llama.h
-index 1ce6f0ca5..d3db94ea5 100644
+index 349acf0be..9bdad4b1d 100644
 --- a/include/llama.h
 +++ b/include/llama.h
-@@ -436,6 +436,9 @@ extern "C" {
+@@ -444,6 +444,9 @@ extern "C" {
          // which softmax is invariant to). currently only supported when type_k == GGML_TYPE_Q4_0.
          // see tools/kv-mean-center to generate this file and docs/kv-mean-center.md for details.
          const char * path_kv_mean_center;
@@ -304,10 +304,10 @@ index 1ce6f0ca5..d3db94ea5 100644
  
          // Abort callback
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index e0a12e27e..b699b5c20 100644
+index 7d732e3e3..4c509bbf0 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -437,7 +437,9 @@ llama_context::llama_context(
+@@ -440,7 +440,9 @@ llama_context::llama_context(
                          "(not recurrent-only or MLA/DSA memory types)");
              }
              for (auto * kv : kvs) {
@@ -318,7 +318,7 @@ index e0a12e27e..b699b5c20 100644
                      throw std::runtime_error("failed to load K-cache mean-centering bias file");
                  }
              }
-@@ -3816,6 +3818,7 @@ llama_context_params llama_context_default_params() {
+@@ -3902,6 +3904,7 @@ llama_context_params llama_context_default_params() {
          /*.moe_cache_budget_mib        =*/ 0,
  #ifdef GGML_ARIFI_KV_MEANCENTER
          /*.path_kv_mean_center         =*/ nullptr,
@@ -327,10 +327,10 @@ index e0a12e27e..b699b5c20 100644
          /*.abort_callback              =*/ nullptr,
          /*.abort_callback_data         =*/ nullptr,
 diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
-index 43f50ec6e..283548f83 100644
+index 8505575fe..8704af714 100644
 --- a/src/llama-kv-cache.cpp
 +++ b/src/llama-kv-cache.cpp
-@@ -1727,7 +1727,10 @@ ggml_tensor * llama_kv_cache::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggm
+@@ -1743,7 +1743,10 @@ ggml_tensor * llama_kv_cache::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggm
  }
  
  #ifdef GGML_ARIFI_KV_MEANCENTER
@@ -342,7 +342,7 @@ index 43f50ec6e..283548f83 100644
      GGML_ASSERT(path != nullptr);
      GGML_ASSERT(k_bar.empty() && "K-cache mean-centering already loaded");
  
-@@ -1744,6 +1747,51 @@ bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
+@@ -1760,6 +1763,51 @@ bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
          return false;
      }
  
@@ -394,7 +394,7 @@ index 43f50ec6e..283548f83 100644
      // validate the cache type first, so an unsupported cache type gets its actionable error
      // even when the bias file's basis would also mismatch
      if (require_q4_0) {
-@@ -1764,30 +1812,20 @@ bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
+@@ -1780,30 +1828,20 @@ bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
      // improving it (see tools/kv-mean-center/README.md), so refuse it outright.
      {
          const int64_t idx_k_rot = gguf_find_key(ctx_gguf, "kv_mean_center.k_rot");
@@ -439,7 +439,7 @@ index 43f50ec6e..283548f83 100644
          }
      }
  
-@@ -1828,8 +1866,10 @@ bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
+@@ -1844,8 +1882,10 @@ bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
  
          ggml_tensor * src = ggml_get_tensor(ctx_data, name.c_str());
          if (!src) {
@@ -453,10 +453,10 @@ index 43f50ec6e..283548f83 100644
  
          if (src->type != GGML_TYPE_F32) {
 diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
-index cecd362fb..a29adf0f8 100644
+index 3c73db75a..c02810af4 100644
 --- a/src/llama-kv-cache.h
 +++ b/src/llama-kv-cache.h
-@@ -203,7 +203,10 @@ public:
+@@ -216,7 +216,10 @@ public:
      // validate the softmax-invariance argument without confounding it with quantization error.
      //
      // returns false (and logs an error) on failure; the cache is left with centering disabled.

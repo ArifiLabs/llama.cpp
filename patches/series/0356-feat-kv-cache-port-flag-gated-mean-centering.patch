@@ -1,4 +1,4 @@
-From aaf20fde116f133b085d93a3bb9150d59c61ed77 Mon Sep 17 00:00:00 2001
+From f3ae9dde4611f1f1a847a8ac2e35a1dfc5684c5e Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 19 Aug 2026 02:13:35 -0400
 Subject: [PATCH] feat(kv-cache): port flag-gated mean centering
@@ -21,14 +21,14 @@ Measured-effect: UNMEASURED
  src/llama-graph.cpp                       |   7 +
  src/llama-kv-cache.cpp                    | 207 +++++++++++++
  src/llama-kv-cache.h                      |  30 ++
- tests/CMakeLists.txt                      |   4 +
+ tests/CMakeLists.txt                      |   3 +
  tests/test-kv-mean-center.cpp             | 338 ++++++++++++++++++++++
  tools/CMakeLists.txt                      |   3 +
  tools/kv-mean-center/CMakeLists.txt       |   8 +
  tools/kv-mean-center/README.md            |  93 ++++++
  tools/kv-mean-center/kv-mean-center.cpp   | 305 +++++++++++++++++++
  tools/kv-mean-center/make-calib-corpus.sh | 126 ++++++++
- 21 files changed, 1439 insertions(+), 2 deletions(-)
+ 21 files changed, 1438 insertions(+), 2 deletions(-)
  create mode 100644 common/kv-mean-center.cpp
  create mode 100644 common/kv-mean-center.h
  create mode 100644 docs/kv-mean-center.md
@@ -72,10 +72,10 @@ index 364867f32..835861a47 100644
      VERSION ${LLAMA_VERSION_BASE}
      SOVERSION ${LLAMA_VERSION_MAJOR}
 diff --git a/common/arg.cpp b/common/arg.cpp
-index 9f3753e95..935de2bba 100644
+index 50f4f4325..c239b48ae 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
-@@ -1770,7 +1770,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -1778,7 +1778,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
          [](common_params & params, int value) {
              params.n_chunks = value;
          }
@@ -88,7 +88,7 @@ index 9f3753e95..935de2bba 100644
      add_opt(common_arg({ "-fa", "--flash-attn" }, "[on|off|auto]",
                         string_format("set Flash Attention use ('on', 'off', or 'auto', default: '%s')",
                                       llama_flash_attn_type_name(params.flash_attn_type)),
-@@ -2479,6 +2483,17 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -2487,6 +2491,17 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
              params.cache_type_v = kv_cache_type_from_str(value);
          }
      ).set_env("LLAMA_ARG_CACHE_TYPE_V"));
@@ -106,7 +106,7 @@ index 9f3753e95..935de2bba 100644
      add_opt(common_arg(
          {"--hellaswag"},
          "compute HellaSwag score over random tasks from datafile supplied with -f",
-@@ -3189,7 +3204,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+@@ -3237,7 +3252,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
              params.out_file = value;
          }
      ).set_examples({LLAMA_EXAMPLE_IMATRIX, LLAMA_EXAMPLE_CVECTOR_GENERATOR, LLAMA_EXAMPLE_EXPORT_LORA, LLAMA_EXAMPLE_TTS, LLAMA_EXAMPLE_FINETUNE,
@@ -120,10 +120,10 @@ index 9f3753e95..935de2bba 100644
          {"-ofreq", "--output-frequency"}, "N",
          string_format("output the imatrix every N iterations (default: %d)", params.n_out_freq),
 diff --git a/common/common.cpp b/common/common.cpp
-index 3b1c79f3c..ee1e8ad13 100644
+index e26e11af4..90e12e699 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -1816,6 +1816,12 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+@@ -1817,6 +1817,12 @@ struct llama_context_params common_context_params_to_llama(const common_params &
      }
      cparams.moe_cache_budget_mib = params.moe_cache.budget_mib;
  
@@ -137,10 +137,10 @@ index 3b1c79f3c..ee1e8ad13 100644
  }
  
 diff --git a/common/common.h b/common/common.h
-index 5a2729f69..86cd5e786 100644
+index 3c1b48054..542cbbd8a 100644
 --- a/common/common.h
 +++ b/common/common.h
-@@ -107,6 +107,9 @@ enum llama_example {
+@@ -108,6 +108,9 @@ enum llama_example {
      LLAMA_EXAMPLE_EXPORT_GRAPH_OPS,
      LLAMA_EXAMPLE_DOWNLOAD,
      LLAMA_EXAMPLE_TOKENIZE,
@@ -150,7 +150,7 @@ index 5a2729f69..86cd5e786 100644
  
      LLAMA_EXAMPLE_COUNT,
  };
-@@ -598,6 +601,12 @@ struct common_params {
+@@ -608,6 +611,12 @@ struct common_params {
      ggml_type cache_type_k = GGML_TYPE_F16; // KV cache data type for the K
      ggml_type cache_type_v = GGML_TYPE_F16; // KV cache data type for the V
  
@@ -391,10 +391,10 @@ index 000000000..4aca53815
 +  a mismatch. In the matching basis the two features compose; see tools/kv-mean-center/README.md
 +  for measured numbers.
 diff --git a/include/llama.h b/include/llama.h
-index e030f9aac..1ce6f0ca5 100644
+index 74203ff22..349acf0be 100644
 --- a/include/llama.h
 +++ b/include/llama.h
-@@ -428,6 +428,16 @@ extern "C" {
+@@ -436,6 +436,16 @@ extern "C" {
          enum llama_moe_cache_mode moe_cache_mode; // runtime MoE expert cache mode
          size_t moe_cache_budget_mib;               // 0 uses the provider's available-memory budget
  
@@ -412,10 +412,10 @@ index e030f9aac..1ce6f0ca5 100644
          // if it returns true, execution of llama_decode() will be aborted
          // currently works only with CPU execution
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index ce8a4a558..cdac5ff94 100644
+index b88043b21..df7da3c15 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -56,6 +56,10 @@ target_compile_definitions(llama PRIVATE
+@@ -57,6 +57,10 @@ target_compile_definitions(llama PRIVATE
      LLAMA_COMMIT="${LLAMA_BUILD_COMMIT}"
  )
  
@@ -427,7 +427,7 @@ index ce8a4a558..cdac5ff94 100644
  target_include_directories(llama PUBLIC ../include)
  target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index d04215a58..e0a12e27e 100644
+index e2737b8e4..7d732e3e3 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
 @@ -15,6 +15,12 @@
@@ -443,7 +443,7 @@ index d04215a58..e0a12e27e 100644
  #include "llama-mmap.h"
  #include "llama-model.h"
  #include "llama-ext.h"
-@@ -407,6 +413,36 @@ llama_context::llama_context(
+@@ -410,6 +416,36 @@ llama_context::llama_context(
          };
  
          memory.reset(model.create_memory(params_mem, cparams));
@@ -480,7 +480,7 @@ index d04215a58..e0a12e27e 100644
      }
  
      // init backends
-@@ -3778,6 +3814,9 @@ llama_context_params llama_context_default_params() {
+@@ -3864,6 +3900,9 @@ llama_context_params llama_context_default_params() {
          /*.type_v                      =*/ GGML_TYPE_F16,
          /*.moe_cache_mode              =*/ LLAMA_MOE_CACHE_MODE_UNSPECIFIED,
          /*.moe_cache_budget_mib        =*/ 0,
@@ -490,7 +490,7 @@ index d04215a58..e0a12e27e 100644
          /*.abort_callback              =*/ nullptr,
          /*.abort_callback_data         =*/ nullptr,
          /*.embeddings                  =*/ false,
-@@ -3891,6 +3930,15 @@ llama_context * llama_init_from_model(
+@@ -3977,6 +4016,15 @@ llama_context * llama_init_from_model(
          }
      }
  
@@ -525,7 +525,7 @@ index 37f387979..0c55766f8 100644
          ggml_build_forward_expand(gf, mctx_cur->cpy_v(ctx0, v_cur, v_idxs, il));
      }
 diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
-index 11b80bb8b..43f50ec6e 100644
+index 6693d99c4..8505575fe 100644
 --- a/src/llama-kv-cache.cpp
 +++ b/src/llama-kv-cache.cpp
 @@ -1,5 +1,8 @@
@@ -537,9 +537,9 @@ index 11b80bb8b..43f50ec6e 100644
  #include "llama-impl.h"
  #include "llama-io.h"
  #include "llama-model.h"
-@@ -7,11 +10,17 @@
- 
+@@ -8,12 +11,18 @@
  #include <algorithm>
+ #include <array>
  #include <cassert>
 +#ifdef GGML_ARIFI_KV_MEANCENTER
 +#include <cinttypes>
@@ -549,13 +549,14 @@ index 11b80bb8b..43f50ec6e 100644
  #include <limits>
  #include <map>
  #include <stdexcept>
+ #include <unordered_map>
 +#ifdef GGML_ARIFI_KV_MEANCENTER
 +#include <string>
 +#endif
  
  static bool ggml_is_power_of_2(int n) {
      return (n & (n - 1)) == 0;
-@@ -1584,6 +1593,20 @@ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggm
+@@ -1600,6 +1609,20 @@ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggm
  
      ggml_tensor * k = layers[ikv].k;
  
@@ -576,7 +577,7 @@ index 11b80bb8b..43f50ec6e 100644
      int64_t n_embd_head = k_cur->ne[0];
      const int64_t n_head      = k_cur->ne[1];
      const int64_t n_tokens    = k_cur->ne[2];
-@@ -1703,6 +1726,190 @@ ggml_tensor * llama_kv_cache::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggm
+@@ -1719,6 +1742,190 @@ ggml_tensor * llama_kv_cache::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggm
      return ggml_set_rows(ctx, v_view, v_cur, v_idxs);
  }
  
@@ -768,10 +769,10 @@ index 11b80bb8b..43f50ec6e 100644
      const uint32_t n_tokens = ubatch.n_tokens;
  
 diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
-index ac4a61707..cecd362fb 100644
+index f1f732443..3c73db75a 100644
 --- a/src/llama-kv-cache.h
 +++ b/src/llama-kv-cache.h
-@@ -187,6 +187,25 @@ public:
+@@ -200,6 +200,25 @@ public:
      ggml_tensor * cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggml_tensor * k_idxs, int32_t il, const slot_info & sinfo) const;
      ggml_tensor * cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggml_tensor * v_idxs, int32_t il, const slot_info & sinfo) const;
  
@@ -797,7 +798,7 @@ index ac4a61707..cecd362fb 100644
      //
      // preparation API
      //
-@@ -302,6 +321,17 @@ private:
+@@ -326,6 +345,17 @@ private:
      // model layer id -> KV cache layer id
      std::unordered_map<int32_t, int32_t> map_layer_ids;
  
@@ -816,14 +817,13 @@ index ac4a61707..cecd362fb 100644
  
      size_t size_k_bytes() const;
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
-index e4d8b5076..c70dfd1fb 100644
+index cb58fa129..65e0cba70 100644
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
-@@ -245,6 +245,10 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
-     set_tests_properties(test-recurrent-state-rollback-dsv4 PROPERTIES
-         FIXTURES_REQUIRED generate-models
+@@ -254,6 +254,9 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
+         ARGS --models "${MODEL_DIR}"
      )
-+
+     set_tests_properties(test-save-load-state PROPERTIES FIXTURES_REQUIRED generate-models)
 +    if (GGML_ARIFI_KV_MEANCENTER)
 +        llama_build_and_test(test-kv-mean-center.cpp)
 +    endif()

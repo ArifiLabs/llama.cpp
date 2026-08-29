@@ -1,4 +1,4 @@
-From ddde547df7467d85060eed1a6e137dd7d41a4fad Mon Sep 17 00:00:00 2001
+From 7d6f8d16386306e6ce310a48b6484f498d771d12 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Sat, 25 Jul 2026 05:00:41 -0400
 Subject: [PATCH] feat: --arifi-profile and a CPU-only VNNI-repack startup
@@ -76,7 +76,7 @@ index 36f1e0cd5..364867f32 100644
      chat-auto-parser-generator.cpp
      chat-auto-parser-helpers.cpp
 diff --git a/common/arg.cpp b/common/arg.cpp
-index 86f8610a5..6cf643991 100644
+index 4469612cd..762ecc35b 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
 @@ -1,5 +1,6 @@
@@ -465,7 +465,7 @@ index a63a2e758..fc26552a1 100644
 +- **Any measurement off this rig.** Every number quoted by the profile and the advisory was
 +  measured on one machine. That is stated in the log text itself, not just here.
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 1609fec88..cda923a24 100644
+index 6ec5d315d..0a95f5611 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
 @@ -21,6 +21,7 @@
@@ -534,7 +534,7 @@ index 1609fec88..cda923a24 100644
  // Returns 0 on success, -1 on error, and -2 on cancellation via llama_progress_callback
  static std::pair<int, llama_model *> llama_model_load(struct gguf_context * metadata, llama_model_set_tensor_data_t set_tensor_data, void * set_tensor_data_ud,
          const std::string & fname, std::vector<std::string> & splits, FILE * file, llama_model_params & params) {
-@@ -363,6 +415,8 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
+@@ -365,6 +417,8 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
              return {0, model_ptr.release()};
          }
  

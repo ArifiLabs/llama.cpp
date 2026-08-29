@@ -1,4 +1,4 @@
-From 6cd8dddda0d7e85e0f237d464fe71f1e9fd4badf Mon Sep 17 00:00:00 2001
+From 4533a514b3651ec11cc6ad54901ce8e6cf6a53f2 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:12 -0400
 Subject: [PATCH] 
@@ -6,15 +6,15 @@ Subject: [PATCH]
 
 ---
  src/llama-arch.cpp              |  1 -
- src/llama-model.cpp             |  9 ++++++--
- tools/server/server-context.cpp | 41 ++++++++++++++++++++++++++++-----
- 3 files changed, 42 insertions(+), 9 deletions(-)
+ src/llama-model.cpp             |  9 +++++--
+ tools/server/server-context.cpp | 45 +++++++++++++++++++++++++++------
+ 3 files changed, 44 insertions(+), 11 deletions(-)
 
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index e74313eb4..509e335b1 100644
+index 3350981f3..8adc15ee8 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -1105,7 +1105,6 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
+@@ -1171,7 +1171,6 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
          case LLM_ARCH_OLMO2:
          case LLM_ARCH_OLMOE:
          case LLM_ARCH_DEEPSEEK2:
@@ -23,10 +23,10 @@ index e74313eb4..509e335b1 100644
          case LLM_ARCH_DOTS3NOTE:
          case LLM_ARCH_GLM_DSA:
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 2342b43e6..8f1a62e4a 100644
+index 471d14367..c756874d3 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -374,6 +374,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -377,6 +377,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
      static const std::regex pattern_q_weight        ("blk\\.\\d*\\.attn_q.weight");
      static const std::regex pattern_kv_weight       ("blk\\.\\d*\\.attn_(k|v).weight");
      static const std::regex pattern_qkv_weight      ("blk\\.\\d*\\.attn_qkv.weight");
@@ -34,8 +34,8 @@ index 2342b43e6..8f1a62e4a 100644
      static const std::regex pattern_q_bias          ("blk\\.\\d*\\.attn_q\\.bias");
      static const std::regex pattern_kv_bias         ("blk\\.\\d*\\.attn_(k|v)\\.bias");
      static const std::regex pattern_qkv_bias        ("blk\\.\\d*\\.attn_qkv.bias");
-@@ -381,7 +382,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
-     static const std::regex pattern_kv_cache        ("cache_(k|v)_l\\d*");
+@@ -385,7 +386,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+     static const std::regex pattern_idx_cache       ("cache_idx_(k|v)_l\\d*");
      static const std::regex pattern_dsv4_state      ("dsv4_(csa|hca|lid)_state_(kv|score)_l\\d*");
      static const std::regex pattern_attn_sinks      ("blk\\.\\d*\\.attn_sinks.weight");
 -    static const std::regex pattern_attn_out_weight ("blk\\.\\d*\\.attn_output.weight");
@@ -43,7 +43,7 @@ index 2342b43e6..8f1a62e4a 100644
      static const std::regex pattern_attn_out_bias   ("blk\\.\\d*\\.attn_output.bias");
      static const std::regex pattern_attn_out_a_weight("blk\\.\\d*\\.attn_output_a\\.weight");
      static const std::regex pattern_attn_out_b_weight("blk\\.\\d*\\.attn_output_b\\.weight");
-@@ -501,6 +502,10 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -516,6 +517,10 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
          if (std::regex_match(tensor_name, pattern_qkv_weight)) {
              return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1, "attn_output.weight", "ssm_out.weight");
          }
@@ -54,7 +54,7 @@ index 2342b43e6..8f1a62e4a 100644
          if ( std::regex_match(tensor_name, pattern_qkv_bias)) {
              return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0, "attn_output.weight", "ssm_out.weight");
          }
-@@ -508,7 +513,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -523,7 +528,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
              return get_tensor_config_impl(tensor->ne[1] == 1 ? GGML_BACKEND_SPLIT_AXIS_MIRRORED : GGML_BACKEND_SPLIT_AXIS_1, "attn_output.weight");
          }
          if (std::regex_match(tensor_name, pattern_kv_cache) || std::regex_match(tensor_name, pattern_attn_sinks)) {
@@ -64,10 +64,10 @@ index 2342b43e6..8f1a62e4a 100644
          if (std::regex_match(tensor_name, pattern_attn_out_weight)) {
              return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0);
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index a9edbd7be..70bc316ce 100644
+index f5477356d..a12acaa48 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -43,8 +43,20 @@ static common_speculative_output_limits server_output_limits(const common_params
+@@ -44,8 +44,20 @@ static common_speculative_output_limits server_output_limits(const common_params
          return { params.n_batch, 1 };
      }
  
@@ -88,7 +88,7 @@ index a9edbd7be..70bc316ce 100644
  
      result.total   = std::max<int32_t>(1, result.total);
      result.per_seq = std::max<int32_t>(1, result.per_seq);
-@@ -1181,12 +1193,29 @@ private:
+@@ -1255,14 +1267,31 @@ private:
              slots.emplace_back();
          }
  
@@ -98,6 +98,8 @@ index a9edbd7be..70bc316ce 100644
 -                spec.reset(common_speculative_init(params_base.speculative, params_base.n_parallel));
 -            } catch (const std::exception & e) {
 -                SRV_ERR("failed to initialize speculative decoding context: %s\n", e.what());
+-                if (params_base.speculative.has_synth()) {
+-                    return false;
 +        // Initialize speculative decoding only when a type or convenience flag is set.
 +        const bool is_speculative_enabled =
 +            params_base.speculative.draft.dflash ||
@@ -120,7 +122,9 @@ index a9edbd7be..70bc316ce 100644
 +                    spec.reset(common_speculative_init(params_base.speculative, params_base.n_parallel));
 +                } catch (const std::exception & e) {
 +                    SRV_ERR("failed to initialize speculative decoding context: %s\n", e.what());
-+                }
++                    if (params_base.speculative.has_synth()) {
++                        return false;
++                    }
+                 }
              }
          }
- 

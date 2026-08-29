@@ -1,4 +1,4 @@
-From 663a8f4d051b58cbb530cae8f041ae24d8c897bf Mon Sep 17 00:00:00 2001
+From cd94ce0c54ab0d1ea93bd36568f17f932418ddd5 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 19 Aug 2026 02:25:23 -0400
 Subject: [PATCH] fix(server): keep target calibration out of draft contexts
@@ -12,10 +12,10 @@ Measured-effect: UNMEASURED (native toolchain execution denied in managed seat)
  2 files changed, 21 insertions(+)
 
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 9f9f6b655..4d9dfeb5d 100644
+index 28efc17e9..fb6e6b220 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
-@@ -2400,6 +2400,13 @@ common_params common_base_params_to_speculative(const common_params & params) {
+@@ -2579,6 +2579,13 @@ common_params common_base_params_to_speculative(const common_params & params) {
          result.model                 = params_spec.mparams;
          result.n_gpu_layers          = params_spec.n_gpu_layers;
          result.tensor_buft_overrides = params_spec.tensor_buft_overrides;
@@ -30,10 +30,10 @@ index 9f9f6b655..4d9dfeb5d 100644
          if (params_spec.cpuparams.n_threads > 0) {
              result.cpuparams.n_threads       = params_spec.cpuparams.n_threads;
 diff --git a/tests/test-arg-parser.cpp b/tests/test-arg-parser.cpp
-index b2a455be1..e875b9e24 100644
+index 1f4e581a6..fc56fc53d 100644
 --- a/tests/test-arg-parser.cpp
 +++ b/tests/test-arg-parser.cpp
-@@ -45,6 +45,20 @@ static void test(void) {
+@@ -102,6 +102,20 @@ static void test(void) {
          assert(draft.n_outputs_max_per_seq == 1);
      }
  

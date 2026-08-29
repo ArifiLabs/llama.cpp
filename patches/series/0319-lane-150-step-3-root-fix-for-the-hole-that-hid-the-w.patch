@@ -1,4 +1,4 @@
-From 32cdb2b40911468ffb3315f4ad1fa38603d18266 Mon Sep 17 00:00:00 2001
+From 3c4ddc590e99433a3d1cb35789bfcfd8c037128c Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Tue, 18 Aug 2026 00:54:05 -0400
 Subject: [PATCH] lane-150 step 3 (root fix for the hole that hid the whole
@@ -12,10 +12,10 @@ Lane: lane-150
  1 file changed, 58 insertions(+)
 
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 969abdabb..d727d0565 100644
+index 032246726..fca6b51ed 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -11340,6 +11340,29 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+@@ -11363,6 +11363,29 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
          // Per-op tallies make that visible at the end of every run.
          std::map<std::string, std::pair<size_t, size_t>> per_op;   // op -> {executed, declined}
          std::mutex per_op_mutex;
@@ -45,7 +45,7 @@ index 969abdabb..d727d0565 100644
          std::vector<std::string> failed_tests;
          std::mutex failed_tests_mutex;
  
-@@ -11369,6 +11392,10 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+@@ -11392,6 +11415,10 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
                              n_not_supported++;
                              std::lock_guard<std::mutex> guard(per_op_mutex);
                              per_op[test->current_op_name].second++;
@@ -56,7 +56,7 @@ index 969abdabb..d727d0565 100644
                          } else {
                              n_filtered++;
                          }
-@@ -11377,6 +11404,10 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+@@ -11400,6 +11427,10 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
                      {
                          std::lock_guard<std::mutex> guard(per_op_mutex);
                          per_op[test->current_op_name].first++;
@@ -67,7 +67,7 @@ index 969abdabb..d727d0565 100644
                      }
                      tests_run++;
                      if (status == test_status_t::OK) {
-@@ -11456,6 +11487,33 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+@@ -11479,6 +11510,33 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
              }
          }
  

@@ -1,4 +1,4 @@
-From 19c1174cb7a47c8a6eee3bd27821e0d2423dc012 Mon Sep 17 00:00:00 2001
+From 1c107c936947d1dc40e86952d1efd761012c4c16 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 23:41:25 -0400
 Subject: [PATCH] dflash: reject an out-of-extent draft depth instead of
@@ -37,36 +37,16 @@ needs target logits and causal state traced side by side - not another depth kno
 
 Origin: ArifiLabs (native)
 ---
- common/speculative.cpp          | 78 ++++++++++++---------------------
- src/models/dflash.cpp           | 19 --------
- tools/server/server-context.cpp | 17 ++++---
- 3 files changed, 35 insertions(+), 79 deletions(-)
+ common/speculative.cpp          | 61 ++++++++++++++-------------------
+ src/models/dflash.cpp           | 19 ----------
+ tools/server/server-context.cpp | 17 +++++----
+ 3 files changed, 33 insertions(+), 64 deletions(-)
 
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 22c5946ea..891a1c143 100644
+index ebc773bb6..12241a214 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
-@@ -1027,19 +1027,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
-                 is_dflash2 = selector_top_k > 0;
-             }
-         }
--        if (is_dflash2) {
--            if (const char * value = std::getenv("GGML_DFLASH2_BLOCK_SIZE_OVERRIDE")) {
--                const int override = std::atoi(value);
--                if (override < 3 || override > 64) {
--                    throw std::runtime_error("GGML_DFLASH2_BLOCK_SIZE_OVERRIDE must be between 3 and 64");
--                }
--                block_size = override;
--            } else if (block_size == 8) {
--                // Match model loading and server preflight: the controller, model graph,
--                // and output allocation must use the same tuned DFlash2 block width.
--                block_size = 13;
--            }
--        }
-         mask_token_id = llama_vocab_mask(llama_model_get_vocab(model_dft));
-         if (mask_token_id == LLAMA_TOKEN_NULL) {
-             // A DFlash/DSpark drafter legitimately ships WITHOUT a vocabulary of its own -- it
-@@ -1078,41 +1065,17 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1096,42 +1096,18 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
          // DFlash input is [id_last, <mask> * (block_size-1)]: in-place denoising yields at most
          // block_size-1 draft tokens, anchor-first DSpark yields a full block_size draft tokens
          const int32_t n_draft_max = is_dspark && sample_from_anchor ? block_size : block_size - 1;
@@ -75,8 +55,11 @@ index 22c5946ea..891a1c143 100644
 -                    __func__, this->params.n_max, this->params.n_min, block_size, n_draft_max);
 -            this->params.n_max = std::min(this->params.n_max, n_draft_max);
 -            this->params.n_min = std::min(this->params.n_min, n_draft_max);
--        }
--
++        if (n_draft_max <= 0 || this->params.n_max > n_draft_max || this->params.n_min > n_draft_max) {
++            throw std::runtime_error("draft-dflash: requested draft size exceeds the GGUF-declared trained block extent");
+         }
+         this->n_max = this->params.n_max;
+ 
 -        // DEFAULT IS OFF, BY MEASUREMENT (seat-40, 2026-08-21). Both adaptive policies were built,
 -        // built clean, and GATED on a 16-prompt corpus weighted to prose, with depth 7 carried as a
 -        // positive control and every arm scored for DEGENERATION (empty output, repeated n-gram,
@@ -100,10 +83,6 @@ index 22c5946ea..891a1c143 100644
 -        //
 -        // A controller that works here would have to steer on an output-degeneration signal, not on
 -        // acceptance. Until one exists, a hard depth cap is the honest control.
-+        if (n_draft_max <= 0 || this->params.n_max > n_draft_max || this->params.n_min > n_draft_max) {
-+            throw std::runtime_error("draft-dflash: requested draft size exceeds the GGUF-declared trained block extent");
-+        }
-+
 +        // The adaptive policy remains opt-in.  It controls how many positions are verified, never
 +        // the architecture's declared DFlash2 block width.
          dflash2_adaptive = is_dflash2 && common_speculative_env_enabled("GGML_DFLASH2_ADAPTIVE", false);
@@ -115,7 +94,7 @@ index 22c5946ea..891a1c143 100644
                      dflash2_preventive ? "preventive low-start" : "reactive timed");
          }
  
-@@ -1492,16 +1455,17 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1518,16 +1494,17 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
              int32_t n_block_tokens = n_draft_seq + (is_dspark && sample_from_anchor ? 0 : 1);
              if (is_dflash2) {
                  const int32_t n_cap = std::min(params.n_max, block_size - 1);
@@ -138,7 +117,7 @@ index 22c5946ea..891a1c143 100644
              }
  
              i_block_beg[seq_id] = batch.n_tokens;
-@@ -1575,12 +1539,24 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1601,7 +1578,13 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                          }
                          std::discrete_distribution<int32_t> sample(dist.probs.begin(), dist.probs.end());
                          predecessor = sample(selector_rng[seq_id]);
@@ -153,7 +132,10 @@ index 22c5946ea..891a1c143 100644
                          dp.dists->push_back(std::move(dist));
                      } else {
                          predecessor = (int32_t) std::distance(scores,
-                                 std::max_element(scores, scores + selector_top_k));
+@@ -1616,7 +1599,13 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+                                 break;
+                             }
+                         }
 -                        result.push_back((llama_token) row[predecessor]);
 +                        const llama_token id = (llama_token) row[predecessor];
 +                        if (mask_token_id != LLAMA_TOKEN_NULL && id == mask_token_id) {
@@ -166,7 +148,7 @@ index 22c5946ea..891a1c143 100644
                  }
  
 diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
-index ed15ae9f4..c9ee83b52 100644
+index cbcd63076..bf50b765f 100644
 --- a/src/models/dflash.cpp
 +++ b/src/models/dflash.cpp
 @@ -4,8 +4,6 @@
@@ -178,7 +160,7 @@ index ed15ae9f4..c9ee83b52 100644
  void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
  
      ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
-@@ -20,23 +18,6 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
+@@ -22,23 +20,6 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
      ml.get_key(LLM_KV_DFLASH_SELECTOR_RANK,    hparams.dflash_selector_rank,    false);
      ml.get_key(LLM_KV_DFLASH_SELECTOR_TOP_K,   hparams.dflash_selector_top_k,   false);
  
@@ -203,10 +185,10 @@ index ed15ae9f4..c9ee83b52 100644
          throw std::runtime_error("DFlash model requires 'target_layers' in GGUF metadata");
      }
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 6eec3ec3c..2b6aaebb6 100644
+index e850d97f6..e91e05be1 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -170,14 +170,13 @@ static bool server_preflight_dflash2(common_params & params) {
+@@ -171,14 +171,13 @@ static bool server_preflight_dflash2(common_params & params) {
          block_size = gguf_get_val_u32(metadata.get(), block_id);
      }
  
@@ -228,7 +210,7 @@ index 6eec3ec3c..2b6aaebb6 100644
      }
  
      auto & types = spec.types;
-@@ -187,7 +186,7 @@ static bool server_preflight_dflash2(common_params & params) {
+@@ -188,7 +187,7 @@ static bool server_preflight_dflash2(common_params & params) {
      }
      spec.draft.dflash = true;
      if (!spec.draft.n_max_set) {

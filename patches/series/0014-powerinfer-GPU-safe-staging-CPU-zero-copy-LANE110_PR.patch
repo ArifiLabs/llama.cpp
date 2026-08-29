@@ -1,4 +1,4 @@
-From e63a775bcb58413c1eca46c1c01feccb3d1dcf4d Mon Sep 17 00:00:00 2001
+From bca0f5b9aada62a95639e407fa4fe1de3e6ec585 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:31:14 -0400
 Subject: [PATCH] powerinfer: GPU-safe staging, CPU zero-copy, LANE110_PROF
@@ -13,7 +13,7 @@ Measured-effect: GPU -ngl99 -cmoe clean 4.9 t/s; CPU zero-copy kept (RESULTS lan
  2 files changed, 59 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 770f3265d..7de2e63cf 100644
+index fc2d11387..17e30bdb1 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -1,5 +1,6 @@
@@ -34,7 +34,7 @@ index 770f3265d..7de2e63cf 100644
  
  // ggml_compute_forward_dup
  
-@@ -12195,8 +12199,21 @@ void powerinfer_forward_fused_sparse_moe(const ggml_compute_params *params, size
+@@ -12201,8 +12205,21 @@ void powerinfer_forward_fused_sparse_moe(const ggml_compute_params *params, size
      }
  }
  
@@ -56,7 +56,7 @@ index 770f3265d..7de2e63cf 100644
          powerinfer_init_f16_table(ggml_table_f32_f16);
  
          const struct ggml_tensor *expert_ids = dst->src[0];
-@@ -12212,11 +12229,19 @@ void powerinfer_forward_moe_pipeline_prefetch(const ggml_compute_params *params,
+@@ -12218,11 +12235,19 @@ void powerinfer_forward_moe_pipeline_prefetch(const ggml_compute_params *params,
              max_n_prefetch,
              (const int32_t *)expert_ids->data
          );
@@ -76,7 +76,7 @@ index 770f3265d..7de2e63cf 100644
          powerinfer_init_f16_table(ggml_table_f32_f16);
  
          const struct ggml_tensor *expert_ids = dst->src[0];
-@@ -12224,22 +12249,38 @@ void powerinfer_forward_moe_pipeline_build_tasks(const ggml_compute_params *para
+@@ -12230,22 +12255,38 @@ void powerinfer_forward_moe_pipeline_build_tasks(const ggml_compute_params *para
          const int ffn_op_type = ggml_get_op_params_i32(dst, 1);
          const size_t batch_size = dst->ne[1];
  
@@ -115,7 +115,7 @@ index 770f3265d..7de2e63cf 100644
      if (params->ith == 0) { powerinfer_init_f16_table(ggml_table_f32_f16); }
  
      struct PowerInferCPUParam param = {
-@@ -12250,14 +12291,27 @@ void powerinfer_forward_moe_pipeline_forward(const ggml_compute_params *params,
+@@ -12256,14 +12297,27 @@ void powerinfer_forward_moe_pipeline_forward(const ggml_compute_params *params,
          params->wsize
      };
  

@@ -1,4 +1,4 @@
-From 4dcf0a27eabc42081d3a08ce02cc31472bdfd2d7 Mon Sep 17 00:00:00 2001
+From 818ec24c280435bd43088216f2b8a9590acb57fb Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 24 Aug 2026 23:55:53 -0400
 Subject: [PATCH] tests: zero_gather + CPY/GET_ROWS Vulkan probe cases; server:
@@ -10,10 +10,10 @@ Subject: [PATCH] tests: zero_gather + CPY/GET_ROWS Vulkan probe cases; server:
  2 files changed, 58 insertions(+), 1 deletion(-)
 
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 14e193821..055db829d 100644
+index 63686e89d..755f1fcf4 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -3428,6 +3428,55 @@ struct test_cpy : public test_case {
+@@ -3433,6 +3433,55 @@ struct test_cpy : public test_case {
  // GGML_OP_CONT
  // permute = {0, 0, 0, 0} means no permutation: the source is transposed (or
  // view-sliced). A non-identity permute applies ggml_permute before ggml_cont.
@@ -69,7 +69,7 @@ index 14e193821..055db829d 100644
  struct test_cont : public test_case {
      const ggml_type type;
      const std::array<int64_t, 4> ne;
-@@ -9488,6 +9537,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+@@ -9494,6 +9543,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
      // ring-repair 2026-08-24: recurrent-bank plane writes - cpy into an OFFSET view of a
      // larger buffer (conv/ssm snapshot-bank shape). KFLIP showed Vulkan corrupting these
      // while offset-0 writes are clean; these pin it at op level.
@@ -81,10 +81,10 @@ index 14e193821..055db829d 100644
          test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_F32, {12288, 1, 1, 1}, {-1,-1,-1,-1},
              {0,0,0,0}, {0,0,0,0}, false, {12288, 8, 1, 1}, off));
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index 48b69e242..014908135 100644
+index 78fa937ce..146ef1acf 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -178,7 +178,11 @@ static bool server_preflight_dflash2(common_params & params) {
+@@ -179,7 +179,11 @@ static bool server_preflight_dflash2(common_params & params) {
  
      const int32_t n_draft_max = (int32_t) block_size - 1;
      if (spec.draft.n_max_set && spec.draft.n_max > n_draft_max) {

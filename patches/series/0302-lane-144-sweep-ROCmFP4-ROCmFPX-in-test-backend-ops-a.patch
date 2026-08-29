@@ -1,4 +1,4 @@
-From 38cb15b5a3e64a98bfcd8942085d3a9815ee456a Mon Sep 17 00:00:00 2001
+From 02483eb4a49f71dcc29736205ade4ab0a07fe95c Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 17 Aug 2026 17:27:33 -0400
 Subject: [PATCH] lane-144: sweep ROCmFP4/ROCmFPX in test-backend-ops all_types
@@ -10,10 +10,10 @@ Exposes Q6_0_ROCMFPX (id 102) failing all ten MUL_MAT cases at ERR ~1.0, mat-vec
  1 file changed, 7 insertions(+)
 
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 629862413..53fe2231f 100644
+index f789fa22f..e06ca0456 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -8529,6 +8529,13 @@ static const ggml_type all_types[] = {
+@@ -8534,6 +8534,13 @@ static const ggml_type all_types[] = {
      // tq3 family (ids 48..51, TYPE-ID-ALLOCATION 3.1.1). Listing them here is the
      // whole backend sweep: get_rows, mul_mat and cpy on every built backend.
      GGML_TYPE_TQ3_4S, GGML_TYPE_TQ3_0, GGML_TYPE_TQ3_4SE, GGML_TYPE_TQ3_1S_SHIFT,

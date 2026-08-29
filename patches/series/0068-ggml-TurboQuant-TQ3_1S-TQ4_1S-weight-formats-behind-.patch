@@ -1,4 +1,4 @@
-From 1f67e7d7dbaf91ee1e38abf9c5b7fe9a4bafb796 Mon Sep 17 00:00:00 2001
+From 7ae2b583db3dc75c7a6cc9fa1fc486782f40f67d Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 00:41:44 -0400
 Subject: [PATCH] ggml: TurboQuant TQ3_1S/TQ4_1S weight formats behind
@@ -539,7 +539,7 @@ index 0ce6f3da9..3df709343 100644
  typedef struct {
      ggml_half d;           // delta
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index b9fe908ae..323ee9274 100644
+index d97bd16da..671994027 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -380,6 +380,67 @@ static void ggml_vec_dot_rocmfpx_fp8_q8_0(int n, float * GGML_RESTRICT s, size_t
@@ -632,7 +632,7 @@ index b9fe908ae..323ee9274 100644
          .from_float               = quantize_row_q4_0,
          .vec_dot                  = ggml_vec_dot_q4_0_q8_0,
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index b7be8724a..ec78d687e 100644
+index 9e90dfe1e..4d224f5c9 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -671,6 +671,10 @@ void ggml_compute_forward_add(
@@ -808,10 +808,10 @@ index 8225b58db..41cbbf22c 100644
  #ifdef GGML_ARIFI_ROCMFPX_FORMATS
          // Taken-from: charlie12345/ROCmFPX@3edc3d31e (ggml/src/ggml.c).
 diff --git a/gguf-py/gguf/constants.py b/gguf-py/gguf/constants.py
-index b48b89efb..04d6074cc 100644
+index 7ada9a98d..7ad2cb00b 100644
 --- a/gguf-py/gguf/constants.py
 +++ b/gguf-py/gguf/constants.py
-@@ -5384,6 +5384,8 @@ class GGMLQuantizationType(IntEnum):
+@@ -5511,6 +5511,8 @@ class GGMLQuantizationType(IntEnum):
      NVFP4   = 40
      Q1_0    = 41
      Q2_0    = 42
@@ -820,7 +820,7 @@ index b48b89efb..04d6074cc 100644
      # ROCmFPX weight formats. Taken-from: charlie12345/ROCmFPX@3edc3d31e.
      Q4_0_ROCMFP4      = 100
      Q4_0_ROCMFP4_FAST = 101
-@@ -5447,6 +5449,8 @@ class LlamaFileType(IntEnum):
+@@ -5574,6 +5576,8 @@ class LlamaFileType(IntEnum):
      MOSTLY_NVFP4         = 39  # except 1d tensors
      MOSTLY_Q1_0          = 40  # except 1d tensors
      MOSTLY_Q2_0          = 41  # except 1d tensors
@@ -830,7 +830,7 @@ index b48b89efb..04d6074cc 100644
      # recipe ftypes 101,102,104,105,106,113-117 are a separate mechanism).
      MOSTLY_Q4_0_ROCMFP4      = 100  # except 1d tensors
 diff --git a/include/llama.h b/include/llama.h
-index 7959af89a..7298f169e 100644
+index 824f98e5c..9edf1025b 100644
 --- a/include/llama.h
 +++ b/include/llama.h
 @@ -157,6 +157,12 @@ extern "C" {
@@ -847,10 +847,10 @@ index 7959af89a..7298f169e 100644
          // so that its artifacts report the same general.file_type we do.
          // These are unconditional enum values (they may appear in any GGUF's
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
-index 34808c373..a3bf82def 100644
+index fa4895bb7..970a5aa6d 100644
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
-@@ -970,6 +970,10 @@ llama_model_loader::llama_model_loader(
+@@ -975,6 +975,10 @@ llama_model_loader::llama_model_loader(
              case GGML_TYPE_Q1_0:    ftype = LLAMA_FTYPE_MOSTLY_Q1_0;    break;
              case GGML_TYPE_Q2_0:    ftype = LLAMA_FTYPE_MOSTLY_Q2_0;    break;
              case GGML_TYPE_Q2_0_G128: ftype = LLAMA_FTYPE_MOSTLY_Q2_0;  break;
@@ -862,10 +862,10 @@ index 34808c373..a3bf82def 100644
              // Taken-from: charlie12345/ROCmFPX@3edc3d31e (src/llama-model-loader.cpp).
              case GGML_TYPE_Q4_0_ROCMFP4:      ftype = LLAMA_FTYPE_MOSTLY_Q4_0_ROCMFP4;      break;
 diff --git a/src/llama-quant.cpp b/src/llama-quant.cpp
-index 248e511b0..fb79c73ba 100644
+index 51973ee84..572672f81 100644
 --- a/src/llama-quant.cpp
 +++ b/src/llama-quant.cpp
-@@ -828,6 +828,10 @@ ggml_type llama_ftype_get_default_type(llama_ftype ftype) {
+@@ -846,6 +846,10 @@ ggml_type llama_ftype_get_default_type(llama_ftype ftype) {
          case LLAMA_FTYPE_ALL_F32:     return GGML_TYPE_F32;
          case LLAMA_FTYPE_MOSTLY_Q1_0: return GGML_TYPE_Q1_0;
          case LLAMA_FTYPE_MOSTLY_Q2_0: return GGML_TYPE_Q2_0;
@@ -877,7 +877,7 @@ index 248e511b0..fb79c73ba 100644
  #ifdef GGML_ARIFI_ROCMFPX_FORMATS
          // Taken-from: charlie12345/ROCmFPX@3edc3d31e (src/llama-quant.cpp).
 diff --git a/tools/quantize/quantize.cpp b/tools/quantize/quantize.cpp
-index fe1b2cfcf..4362c7e96 100644
+index d4e93165f..5fac29343 100644
 --- a/tools/quantize/quantize.cpp
 +++ b/tools/quantize/quantize.cpp
 @@ -34,6 +34,10 @@ struct quant_option {

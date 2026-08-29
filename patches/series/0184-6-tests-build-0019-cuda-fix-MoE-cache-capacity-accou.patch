@@ -1,4 +1,4 @@
-From 8f1fa85f7d0a765ec93b41de2bc31d589e2f2de9 Mon Sep 17 00:00:00 2001
+From 242330d5bc21d265e0579284c7d43721b6188ad7 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:58:09 -0400
 Subject: [PATCH] 
@@ -14,10 +14,10 @@ Subject: [PATCH]
  create mode 100644 tests/test-moe-cache.cpp
 
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
-index 1b936258d..c6f518dc4 100644
+index fd647b6e7..a9e0a7724 100644
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
-@@ -297,6 +297,13 @@ if (NOT LLAMA_SANITIZE_ADDRESS AND NOT GGML_SCHED_NO_REALLOC)
+@@ -306,6 +306,13 @@ if (NOT LLAMA_SANITIZE_ADDRESS AND NOT GGML_SCHED_NO_REALLOC)
    llama_build_and_test(test-opt.cpp)
  endif()
  llama_build_and_test(test-backend-ops.cpp)
@@ -32,13 +32,13 @@ index 1b936258d..c6f518dc4 100644
  llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
  llama_build_and_test(test-autorelease.cpp       LABEL "model")
 diff --git a/tests/test-arg-parser.cpp b/tests/test-arg-parser.cpp
-index ba58f852e..8e2087c00 100644
+index e0907631a..e8f216651 100644
 --- a/tests/test-arg-parser.cpp
 +++ b/tests/test-arg-parser.cpp
-@@ -4,7 +4,11 @@
- #include "llama.h"
+@@ -5,7 +5,11 @@
  #include "speculative.h"
  
+ #include <cmath>
 +<<<<<<< ours
  #include <limits>
 +=======
@@ -47,7 +47,7 @@ index ba58f852e..8e2087c00 100644
  #include <string>
  #include <vector>
  #include <sstream>
-@@ -226,6 +230,98 @@ static void test(void) {
+@@ -303,6 +307,98 @@ static void test(void) {
      assert(params.lora_adapters[2].path == "file3\"3\".gguf");
      assert(params.lora_adapters[3].path == "file4\".gguf");
  
@@ -146,7 +146,7 @@ index ba58f852e..8e2087c00 100644
  // skip this part on windows, because setenv is not supported
  #ifdef _WIN32
      printf("test-arg-parser: skip on windows build\n");
-@@ -257,6 +353,32 @@ static void test(void) {
+@@ -334,6 +430,32 @@ static void test(void) {
      assert(true == common_params_parse(argv.size(), list_str_to_char(argv).data(), params, LLAMA_EXAMPLE_COMMON));
      assert(params.load_mode == LLAMA_LOAD_MODE_MLOCK);
  

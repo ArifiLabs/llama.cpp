@@ -1,4 +1,4 @@
-From b454aa9a30879d19befd52534188c726d66e0f17 Mon Sep 17 00:00:00 2001
+From 8ed797f1d81eb7dc940398f1d803dde3375e3ee5 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Mon, 24 Aug 2026 12:57:23 -0400
 Subject: [PATCH] F-136 ROOT CAUSE + FIX: the recurrent snapshot-bank
@@ -51,10 +51,10 @@ Also in this change, all measured on the way to the root cause:
  11 files changed, 357 insertions(+), 11 deletions(-)
 
 diff --git a/common/common.cpp b/common/common.cpp
-index 544217911..54a4ba266 100644
+index 8ddbcdd33..f6f53fb1d 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -1785,6 +1785,11 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+@@ -1786,6 +1786,11 @@ struct llama_context_params common_context_params_to_llama(const common_params &
      cparams.n_seq_max         = params.n_parallel;
      cparams.n_outputs_max     = params.n_outputs_max;
      cparams.n_rs_seq          = params.speculative.need_n_rs_seq();
@@ -67,10 +67,10 @@ index 544217911..54a4ba266 100644
      cparams.n_outputs_max_per_seq = std::max(params.n_outputs_max_per_seq, 0);
      cparams.n_batch           = params.n_batch;
 diff --git a/common/common.h b/common/common.h
-index 81df37f87..5e6cd15ca 100644
+index 1492a760f..13bc5730a 100644
 --- a/common/common.h
 +++ b/common/common.h
-@@ -397,13 +397,18 @@ struct common_params_speculative {
+@@ -405,13 +405,18 @@ struct common_params_speculative {
      }
  
      uint32_t need_n_rs_seq() const {
@@ -97,10 +97,10 @@ index 81df37f87..5e6cd15ca 100644
  };
  
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 36fe82678..714bc8d1c 100644
+index f941f8d28..91bc65889 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
-@@ -1125,7 +1125,14 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1164,7 +1164,14 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
          // DFlash1 keeps the masked path and the Laguna causal-noise-block detection (our fork).
          llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ !is_dflash2);
          if (is_dflash2) {
@@ -117,10 +117,10 @@ index 36fe82678..714bc8d1c 100644
              // generic DFlash drafts with non-causal block attention; Laguna drafters
              // are trained with a causal noise block
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 2d4f6d2a4..d5f1ed2c1 100644
+index 5f4c6ea37..aef91581b 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -1221,6 +1221,17 @@ float * llama_context::get_logits_ith(int32_t i) {
+@@ -1232,6 +1232,17 @@ float * llama_context::get_logits_ith(int32_t i) {
      }
  }
  
@@ -138,7 +138,7 @@ index 2d4f6d2a4..d5f1ed2c1 100644
  float * llama_context::get_embeddings() {
      output_reorder();
  
-@@ -4192,6 +4203,15 @@ float * llama_get_logits_ith(llama_context * ctx, int32_t i) {
+@@ -4278,6 +4289,15 @@ float * llama_get_logits_ith(llama_context * ctx, int32_t i) {
      return res;
  }
  
@@ -154,7 +154,7 @@ index 2d4f6d2a4..d5f1ed2c1 100644
  float * llama_get_embeddings(llama_context * ctx) {
      ctx->synchronize();
  
-@@ -4677,3 +4697,23 @@ llama_memory_breakdown llama_get_memory_breakdown(const struct llama_context * c
+@@ -4763,3 +4783,23 @@ llama_memory_breakdown llama_get_memory_breakdown(const struct llama_context * c
  llama_context * llama_get_ctx_other(struct llama_context * ctx) {
      return ctx->get_cparams().ctx_other;
  }
@@ -192,7 +192,7 @@ index 434d0cba8..5294a3615 100644
      float * get_embeddings();
      float * get_embeddings_ith(int32_t i);
 diff --git a/src/llama-ext.h b/src/llama-ext.h
-index dfe05f234..e98967090 100644
+index 39214d639..70c153107 100644
 --- a/src/llama-ext.h
 +++ b/src/llama-ext.h
 @@ -137,6 +137,15 @@ LLAMA_API void llama_set_embeddings_layer_inp(struct llama_context * ctx, uint32
@@ -212,10 +212,10 @@ index dfe05f234..e98967090 100644
  
  //
 diff --git a/src/llama-memory-recurrent.cpp b/src/llama-memory-recurrent.cpp
-index e2990972e..dcb52e099 100644
+index 57919accf..b2ecba228 100644
 --- a/src/llama-memory-recurrent.cpp
 +++ b/src/llama-memory-recurrent.cpp
-@@ -148,6 +148,15 @@ void llama_memory_recurrent::clear(bool data) {
+@@ -159,6 +159,15 @@ void llama_memory_recurrent::clear(bool data) {
  }
  
  bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
@@ -231,7 +231,7 @@ index e2990972e..dcb52e099 100644
      uint32_t new_head = size;
  
      if (p0 < 0) {
-@@ -182,13 +191,22 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
+@@ -193,13 +202,22 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
              // partial rollback via per-token snapshot index (bounded by n_rs_seq)
              if (0 < p0 && p0 <= cell.pos && p1 > cell.pos) {
                  const llama_pos rollback = cell.pos - (p0 - 1);
@@ -254,7 +254,7 @@ index e2990972e..dcb52e099 100644
                  return false;
              }
              // invalidate tails which will be cleared
-@@ -1268,5 +1286,40 @@ int32_t llama_memory_recurrent_context::s_copy(int i) const {
+@@ -1320,5 +1338,40 @@ int32_t llama_memory_recurrent_context::s_copy(int i) const {
              mem->rs_idx[seq] = 0;
          }
      }
@@ -296,11 +296,11 @@ index e2990972e..dcb52e099 100644
 +    return h;
 +}
 diff --git a/src/llama-memory-recurrent.h b/src/llama-memory-recurrent.h
-index b13b7b748..9f9f44dab 100644
+index 4abb3f5cf..32085dbe1 100644
 --- a/src/llama-memory-recurrent.h
 +++ b/src/llama-memory-recurrent.h
-@@ -127,8 +127,13 @@ private:
-     size_t size_s_bytes() const;
+@@ -130,8 +130,13 @@ private:
+     size_t size_p_bytes() const;
  
      void state_write_meta(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges, llama_seq_id seq_id = -1) const;
 +
@@ -525,7 +525,7 @@ index ba41287d8..8e74beec1 100644
  
      if (params.n_ctx > n_ctx_train) {
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index d6674c041..308d6e267 100644
+index 561f23d26..72ab7d271 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
 @@ -12,6 +12,7 @@
@@ -536,7 +536,7 @@ index d6674c041..308d6e267 100644
  #include "log.h"
  #include "sampling.h"
  #include "speculative.h"
-@@ -1343,6 +1344,36 @@ private:
+@@ -1391,6 +1392,36 @@ private:
  
          add_bos_token = llama_vocab_get_add_bos(vocab);
  
@@ -573,7 +573,7 @@ index d6674c041..308d6e267 100644
          if (has_spec) {
              // spec_mtp doesn't use load a model internally, so we report 0.0 and 1.0 manually
              load_progress_callback(0.0f, &load_progress_spec);
-@@ -1442,6 +1473,13 @@ private:
+@@ -1516,6 +1547,13 @@ private:
              SRV_WRN("%s", "speculative decoding not supported by this context\n");
          }
  
@@ -587,7 +587,7 @@ index d6674c041..308d6e267 100644
          if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
              SRV_TRC("%s", "speculative decoding will use checkpoints\n");
          }
-@@ -3268,6 +3306,13 @@ private:
+@@ -3357,6 +3395,13 @@ private:
  
                      ckpt.update_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
  
@@ -601,8 +601,8 @@ index d6674c041..308d6e267 100644
                      //const int64_t t_total = ggml_time_us() - t_start;
                      //printf("checkpoint total: %f ms\n", t_total / 1000.0);
  
-@@ -4118,6 +4163,17 @@ private:
-                     : common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft);
+@@ -4214,6 +4259,17 @@ private:
+                         : common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft));
  
                  if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr && params_base.speculative.draft.dflash) {
 +                    std::string logits_rows;
@@ -619,7 +619,7 @@ index d6674c041..308d6e267 100644
                      std::string draft_ids;
                      for (llama_token id : slot.spec_draft) {
                          if (!draft_ids.empty()) {
-@@ -4139,6 +4195,8 @@ private:
+@@ -4235,6 +4291,8 @@ private:
                          }
                          idxs += std::to_string(i);
                      }
@@ -628,7 +628,7 @@ index d6674c041..308d6e267 100644
                      SLT_INF(slot, "dflash-verify anchor=%d target sampled=[%s] draft=[%s] i_batch=[%s] accepted=%zu/%zu\n",
                              (int) slot.sampled, target_ids.c_str(), draft_ids.c_str(), idxs.c_str(),
                              accepted.size() - 1, slot.spec_draft.size());
-@@ -4177,6 +4235,13 @@ private:
+@@ -4273,6 +4331,13 @@ private:
  
                          slot.mem.seq_rm(slot.id, ckpt.pos_max + 1, -1);
  
