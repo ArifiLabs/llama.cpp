@@ -807,6 +807,50 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
     // for slot s >= n_written is the previous ubatch's slot (s - n_seq_tokens): shift the
     // surviving banks down before the op's fresh writes land (descending order, and these copies
     // are expanded BEFORE the op's dst copy, so no source row is read after being overwritten).
+    //
+    // R1 BANK PLANE AS RUNTIME INDEX (lane-176) — THIS IS THE ENTIRE PRIZE.
+    //
+    // state@g lives at physical plane (-g) mod K, so aging is not an operation: it is what already
+    // happened when the position advanced. The K-1 shift copies per ubatch per layer below
+    // disappear (2.097 MB/layer/token x 31 layers on the seated model, lane-168), and the surviving
+    // planes are age-correct by construction.
+    //
+    // The plane reaches the GPU as a RUNTIME ROW INDEX (inp->s_wrow), never as a baked view offset.
+    // That is the whole difference from lane-175's C4, which expressed the same relabel as a
+    // constant ggml view offset: the offset changed every token, so the cached graph had to be
+    // rebuilt every token (1 graph reused vs 379-631), and the rebuild cost exactly cancelled the
+    // ~12% the copy elimination won (A/B 0.9568, CI95 [0.8988, 1.0429], TIED). Here the graph
+    // topology is fixed and only the index tensor's CONTENTS move - the same mechanism by which the
+    // KV cache writes a different row every token and still reuses its graph
+    // (llama-kv-cache.cpp, ggml_set_rows(k, k_cur, k_idxs); can_reuse compares only k_idxs->ne[0]).
+    //
+    if (mctx_cur->get_rs_r1()) {
+        // ggml_set_rows: dst 2D [n_embd_s, mem_size*K], src 2D [D, n_written], idx I32 [n_written].
+        // n_seqs == 1 under the R1 scope bound, so the op's n_written snapshots are contiguous.
+        //
+        // Neither assert introduces a new requirement. D == n_embd_s is already assumed by the
+        // shipped write below, whose view_3d uses D as the row length against a `row_size` stride
+        // computed from n_embd_s; they would disagree if these differed. Asserting is loud where
+        // the shipped code would have been silent.
+        GGML_ASSERT(n_seqs == 1);
+        GGML_ASSERT(D == (int64_t) hparams.n_embd_s());
+
+        ggml_tensor * src2 = ggml_view_2d(ctx0, gdn_out,
+            D, n_written,
+            ggml_row_size(gdn_out->type, D),
+            ggml_row_size(gdn_out->type, attn_score_elems));
+
+        ggml_tensor * dst2 = ggml_reshape_2d(ctx0, ssm_states_all,
+            hparams.n_embd_s(), ssm_states_all->ne[1]);
+
+        // rows 0..n_written-1 of s_wrow; the tensor holds all K so the view is a prefix.
+        ggml_tensor * wrow = ggml_view_1d(ctx0, inp->s_wrow, n_written, 0);
+
+        ggml_build_forward_expand(gf, ggml_set_rows(ctx0, dst2, src2, wrow));
+
+        return output;
+    }
+
     const int64_t eff_shift_ssm = n_seq_tokens - (int64_t) mctx_cur->get_rs_shift();
     for (int64_t s_slot = rs_bank_off_ssm ? -1 : K - 1; s_slot >= n_written; --s_slot) {
         const int64_t s_from = s_slot - eff_shift_ssm;
