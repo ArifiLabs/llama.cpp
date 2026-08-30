@@ -36,6 +36,22 @@ llama_memory_recurrent::llama_memory_recurrent(
     rs_idx.assign(n_seq_max, 0);
     rs_pending.assign(n_seq_max, 0);
 
+    // R1 BANK PLANE AS RUNTIME INDEX (lane-176) - see the long note on `rs_r1` in the header.
+    // The 2026-08-24 ring diagnostics all assume the LOGICAL plane layout, so any of them being set
+    // forces the shipped path rather than producing a hybrid that is worse than either.
+    rs_r1 = (n_rs_seq > 0)
+         && (n_seq_max == 1)
+         && (getenv("LLAMA_RS_R1_OFF")          == nullptr)
+         && (getenv("LLAMA_RS_CONV_MULTIWRITE") == nullptr)
+         && (getenv("LLAMA_RS_CONV_NOSHIFT")    == nullptr)
+         && (getenv("LLAMA_RS_CONV_FRESH1")     == nullptr)
+         && (getenv("LLAMA_RS_BANK_OFF_SSM")    == nullptr)
+         && (getenv("LLAMA_GDN_SEQ_VERIFY")     == nullptr);
+    if (rs_r1) {
+        LLAMA_LOG_INFO("%s: R1 runtime-index ring ACTIVE (K = %u planes, no ssm age-shift copies)\n",
+                       __func__, n_rs_seq + 1);
+    }
+
     cells.clear();
     cells.resize(mem_size);
 
@@ -142,6 +158,10 @@ llama_memory_recurrent::llama_memory_recurrent(
 void llama_memory_recurrent::clear(bool data) {
     for (int32_t i = 0; i < (int32_t) size; ++i) {
         cells[i].pos = -1;
+        // R1 ring (lane-176): the anchors follow pos's lifecycle exactly. A stale anchor on a
+        // reused cell would resolve the first ubatch's reads against the previous occupant.
+        cells[i].pos_bank      = -1;
+        cells[i].pos_bank_prev = -1;
         cells[i].seq_id.clear();
         cells[i].src = -1;
         cells[i].tail = -1;
@@ -384,6 +404,10 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
                     used--;
                 }
                 cells[i].pos = -1;
+                // R1 ring (lane-176): the anchors follow pos's lifecycle exactly. A stale anchor on a
+                // reused cell would resolve the first ubatch's reads against the previous occupant.
+                cells[i].pos_bank      = -1;
+                cells[i].pos_bank_prev = -1;
                 cells[i].src = -1;
                 if (new_head == size) {
                     new_head = i;
@@ -424,6 +448,10 @@ void llama_memory_recurrent::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id
             tail_dst.tail = -1;
             if (cell_dst.seq_id.empty()) {
                 cell_dst.pos = -1;
+                // R1 ring (lane-176): the anchors follow pos's lifecycle exactly. A stale anchor on a
+                // reused cell would resolve the first ubatch's reads against the previous occupant.
+                cell_dst.pos_bank      = -1;
+                cell_dst.pos_bank_prev = -1;
                 cell_dst.src = -1;
                 used -= 1;
             }
@@ -451,6 +479,10 @@ void llama_memory_recurrent::seq_keep(llama_seq_id seq_id) {
             }
 
             cells[i].pos = -1;
+            // R1 ring (lane-176): the anchors follow pos's lifecycle exactly. A stale anchor on a
+            // reused cell would resolve the first ubatch's reads against the previous occupant.
+            cells[i].pos_bank      = -1;
+            cells[i].pos_bank_prev = -1;
             cells[i].src = -1;
             cells[i].seq_id.clear();
 
@@ -722,6 +754,10 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
                     seq.tail = -1;
                     if (cell.seq_id.empty()) {
                         cell.pos = -1;
+                        // R1 ring (lane-176): the anchors follow pos's lifecycle exactly. A stale anchor on a
+                        // reused cell would resolve the first ubatch's reads against the previous occupant.
+                        cell.pos_bank      = -1;
+                        cell.pos_bank_prev = -1;
                         cell.src = -1;
                         used -= 1;
                     }
@@ -780,6 +816,9 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
             if (seq_meta.tail >= 0) {
                 auto & orig_cell = cells[seq_meta.tail];
                 empty_cell.pos = orig_cell.pos;
+                // R1 ring (lane-176): the anchors belong to the SEQUENCE, so they move with it.
+                empty_cell.pos_bank      = orig_cell.pos_bank;
+                empty_cell.pos_bank_prev = orig_cell.pos_bank_prev;
                 empty_cell.src = orig_cell.src;
                 orig_cell.seq_id.erase(seq_id);
                 empty_cell.seq_id.insert(seq_id); // will be overwritten
@@ -810,6 +849,12 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
             auto & src_cell = cells[src_id];
 
             std::swap(dst_cell.pos, src_cell.pos);
+            // R1 ring (lane-176): the anchor must follow the sequence, exactly like pos. It is NOT
+            // re-derived from pos in the update loop below, so omitting this desynchronises the ring
+            // on any reordered ubatch - 206 of 243 exhaustive reorder scripts diverge without it
+            // (lane-175 ring_anchor_sim.py, carried over as this lane's cell-layer gate).
+            std::swap(dst_cell.pos_bank,      src_cell.pos_bank);
+            std::swap(dst_cell.pos_bank_prev, src_cell.pos_bank_prev);
             std::swap(dst_cell.src, src_cell.src);
             std::swap(dst_cell.seq_id, src_cell.seq_id);
 
@@ -838,6 +883,11 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
             LLAMA_LOG_WARN("%s: non-consecutive token position %d after %d for sequence %d with %u new tokens\n",
                 __func__, last_pos, cell.pos, ubatch.seq_id[i][0], n_seq_tokens);
         }
+        // R1 ring (lane-176): advance the anchor. ASSIGNMENT, never accumulation - that is what
+        // makes prepare()'s dry run idempotent (cells are saved and restored wholesale around it).
+        // Neither field is derived from `pos`, so seq_rm's rewind of pos cannot poison them.
+        cell.pos_bank_prev = cell.pos_bank;
+        cell.pos_bank      = last_pos;
         cell.pos = last_pos;
         cell.seq_id.clear();
         for (int32_t j = 0; j < ubatch.n_seq_id[i]; ++j) {
@@ -1233,6 +1283,13 @@ bool llama_memory_recurrent::state_read_meta(llama_io_read_i & io, uint32_t cell
             io.read(&n_seq_id, sizeof(n_seq_id));
 
             cell.pos = pos;
+            // R1 ring (lane-176): the bank planes are restored byte-for-byte in PHYSICAL order and
+            // `pos` is restored verbatim, so the position-derived labelling is self-consistent with
+            // no rotation at either end. Bound: a state saved between a seq_rm rollback and the next
+            // decode restores with pos_bank == the rewound pos, so that blob's deep planes are not
+            // addressable. State files are NOT portable between an R1 and a non-R1 build.
+            cell.pos_bank      = pos;
+            cell.pos_bank_prev = pos;
 
             for (uint32_t j = 0; j < n_seq_id; ++j) {
                 llama_seq_id seq_id;
@@ -1469,6 +1526,51 @@ int32_t llama_memory_recurrent_context::get_rs_z() const {
     return is_full ? 0 : mem->rs_z;
 }
 
+bool llama_memory_recurrent_context::get_rs_r1() const {
+    return mem && mem->rs_r1;
+}
+
+uint32_t llama_memory_recurrent_context::get_n_rs_planes() const {
+    return mem ? mem->rs_planes() : 1;
+}
+
+// R1 write anchor. With the n_seq_max == 1 bound, head is the one cell in the ubatch.
+llama_pos llama_memory_recurrent_context::get_rs_pos() const {
+    // MUST return a constant when R1 is inactive (F-146's binding_fix): a live pos on the shipped
+    // path would break every can_reuse comparison it participates in and silently poison any A/B.
+    if (!mem || !mem->rs_r1 || mem->head >= mem->cells.size()) {
+        return -1;
+    }
+    return mem->cells[mem->head].pos_bank;
+}
+
+int32_t llama_memory_recurrent_context::get_rs_z_bank() const {
+    const int32_t z = get_rs_z();
+    // -1 means "no row to zero", and it is the steady-decode value: rs_z is recomputed every ubatch
+    // in find_slot and stays -1 while every used cell is its own source. So this rotation fires only
+    // on a fresh-sequence ubatch, costs one graph rebuild, and is already covered by can_reuse.
+    if (!mem || !mem->rs_r1 || z < 0) {
+        return z;
+    }
+    // The in-graph zero must land on the plane the ssm gather will READ, not on plane 0. This is
+    // the F-136-LEAK-ROOT-CLOSE defect class re-entered through a new door, so it is the site
+    // ring_content_probe repeat mode exists to guard.
+    const llama_pos anchor = (mem->head < mem->cells.size())
+                           ? mem->cells[mem->head].pos_bank_prev : -1;
+    return z + (int32_t) (mem->rs_plane(anchor, 0) * mem->size);
+}
+
+// Physical row for the ssm bank's snapshot of the given age, or -1 when R1 is inactive.
+int32_t llama_memory_recurrent_context::s_wrow(int64_t age) const {
+    if (!mem || !mem->rs_r1 || mem->head >= mem->cells.size()) {
+        return -1;
+    }
+    // Snapshot `age` is state@(pos_bank - age). Reads anchor on pos_bank_prev; writes anchor on
+    // pos_bank, which find_slot has already advanced for this ubatch.
+    const llama_pos anchor = mem->cells[mem->head].pos_bank;
+    return (int32_t) (mem->rs_plane(anchor, age) * mem->size + mem->head);
+}
+
 uint32_t llama_memory_recurrent_context::get_size() const {
     return mem->size;
 }
@@ -1490,10 +1592,15 @@ uint32_t llama_memory_recurrent_context::get_rs_shift() const {
 }
 
 int32_t llama_memory_recurrent_context::s_copy(int i) const {
+    return s_copy2(i, nullptr);
+}
+
+int32_t llama_memory_recurrent_context::s_copy2(int i, int32_t * bank_row) const {
     const uint32_t cell_idx = i + mem->head;
     const int32_t  src0     = mem->cells[cell_idx].src0;
 
     if (mem->n_rs_seq == 0) {
+        if (bank_row) { *bank_row = src0; }
         return src0;
     }
 
@@ -1505,6 +1612,17 @@ int32_t llama_memory_recurrent_context::s_copy(int i) const {
             // reset rollback idx
             mem->rs_idx[seq] = 0;
         }
+    }
+
+    // R1 ring (lane-176): the CONV bank keeps the shipped LOGICAL layout, so its row is the plain
+    // `idx`. The SSM bank is position-labelled, so logical slot `idx` - which is state@(anchor-idx)
+    // - lives at plane (idx - pos_bank_prev) mod K. The two banks are read through separate index
+    // tensors for exactly this reason; they are never the same row under R1.
+    if (bank_row) {
+        const uint32_t plane = mem->rs_r1
+            ? mem->rs_plane(mem->cells[cell_idx].pos_bank_prev, (int64_t) idx)
+            : idx;
+        *bank_row = (int32_t) (plane * mem->size) + src0;
     }
     static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
     if (dbg && idx > 0) {
