@@ -289,7 +289,10 @@ llama_model_bailingmoe3::graph::graph(const llama_model & model, const llm_graph
             k = build_gdn_l2_norm(ctx0, k, hparams.f_norm_rms_eps);
 
             ggml_tensor * states_all = mctx_cur->get_s_l(il);
-            ggml_tensor * state = build_rs(inp_rs, states_all, hparams.n_embd_s(), n_seqs);
+            // R1 (lane-176): read the ssm bank through the ROTATED index. Paired with
+            // build_recurrent_attn's R1 write - read and write must agree on the layout.
+            ggml_tensor * state = build_rs(inp_rs, states_all, hparams.n_embd_s(), n_seqs,
+                                           ggml_get_rows, /*bank=*/true);
             state = ggml_reshape_4d(ctx0, state, head_dim, head_dim, n_head, n_seqs);
 
             ggml_tensor * out = ggml_cont(ctx0, build_recurrent_attn(

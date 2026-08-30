@@ -365,6 +365,20 @@ void llm_graph_input_cls::set_input(const llama_ubatch * ubatch) {
     }
 }
 
+// R1 (lane-176): fill the ssm bank per-snapshot WRITE rows. Snapshot i is the state i tokens
+// older than this ubatch newest, and it lands at plane (i - pos_bank) mod K. This is a
+// CONTENT-only change per ubatch; the node consuming it is a fixed-topology GGML_OP_SET_ROWS.
+static void set_input_rs_wrow(ggml_tensor * t, const llama_memory_recurrent_context * m) {
+    if (!t || !m->get_rs_r1()) {
+        return;
+    }
+    GGML_ASSERT(ggml_backend_buffer_is_host(t->buffer));
+    int32_t * w = (int32_t *) t->data;
+    for (int64_t i = 0; i < t->ne[0]; ++i) {
+        w[i] = m->s_wrow(i);
+    }
+}
+
 void llm_graph_input_rs::set_input(const llama_ubatch * ubatch) {
     GGML_UNUSED(ubatch);
 
@@ -375,9 +389,14 @@ void llm_graph_input_rs::set_input(const llama_ubatch * ubatch) {
         int32_t * data = (int32_t *) s_copy->data;
 
         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
+        GGML_ASSERT(ggml_backend_buffer_is_host(s_copy_bank->buffer));
+        int32_t * bank = (int32_t *) s_copy_bank->data;
+        // ONE traversal: s_copy() CONSUMES the rollback index (rs_idx[seq] = 0), so a second pass
+        // would read 0 and silently resolve every rolled-back read to slot 0.
         for (uint32_t i = 0; i < n_rs; ++i) {
-            data[i] = mctx->s_copy(i);
+            data[i] = mctx->s_copy2(i, &bank[i]);
         }
+        set_input_rs_wrow(s_wrow, mctx);
         // ring-repair 2026-08-25: leak hunt - see whether the fresh-seq read row matches the
         // in-graph zeroed row (rs_z). A mismatch = indexing bug; a match = graph-exec gap.
         static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
@@ -400,8 +419,15 @@ bool llm_graph_input_rs::can_reuse(const llm_graph_params & params) {
     res &= s_copy_main->ne[0]  == params.ubatch.n_seqs;
     res &= s_copy_extra->ne[0] == mctx->get_n_rs() - params.ubatch.n_seqs;
 
+    // R1 (lane-176): SHAPE ONLY, never contents. The rows these carry change every token and the
+    // graph stays valid, exactly as for the KV cache self_k_idxs. Comparing their CONTENTS here
+    // would be C4 mistake with extra steps - it would force a rebuild on every ubatch.
+    res &= s_copy_bank->ne[0] == mctx->get_n_rs();
+    res &= s_wrow->ne[0]      == (int64_t) (mctx->get_rs_r1() ? mctx->get_n_rs_planes() : 1);
+
     res &= head == mctx->get_head();
     res &= rs_z == mctx->get_rs_z();
+    res &= rs_z_bank == mctx->get_rs_z_bank();
     res &= rs_shift == mctx->get_rs_shift();
 
     return res;
@@ -1153,9 +1179,13 @@ void llm_graph_input_mem_hybrid::set_input(const llama_ubatch * ubatch) {
         int32_t * data = (int32_t *) inp_rs->s_copy->data;
 
         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
+        GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
+        int32_t * bank = (int32_t *) inp_rs->s_copy_bank->data;
+        // ONE traversal - see the note on the non-hybrid path above.
         for (uint32_t i = 0; i < n_rs; ++i) {
-            data[i] = mctx->get_recr()->s_copy(i);
+            data[i] = mctx->get_recr()->s_copy2(i, &bank[i]);
         }
+        set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
         // ring-repair 2026-08-25: leak hunt (hybrid path) - fresh-seq read row vs zeroed row.
         static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
         if (dbg) {
@@ -1183,8 +1213,14 @@ bool llm_graph_input_mem_hybrid::can_reuse(const llm_graph_params & params) {
     res &= inp_rs->s_copy_main->ne[0]  == params.ubatch.n_seqs;
     res &= inp_rs->s_copy_extra->ne[0] == mctx->get_recr()->get_n_rs() - params.ubatch.n_seqs;
 
+    // R1 (lane-176): shape only - see the note on the non-hybrid path.
+    res &= inp_rs->s_copy_bank->ne[0] == mctx->get_recr()->get_n_rs();
+    res &= inp_rs->s_wrow->ne[0]      ==
+        (int64_t) (mctx->get_recr()->get_rs_r1() ? mctx->get_recr()->get_n_rs_planes() : 1);
+
     res &= inp_rs->head == mctx->get_recr()->get_head();
     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
+    res &= inp_rs->rs_z_bank == mctx->get_recr()->get_rs_z_bank();
     res &= inp_rs->rs_shift == mctx->get_recr()->get_rs_shift();
 
     return res;
@@ -1205,9 +1241,13 @@ void llm_graph_input_mem_hybrid_k::set_input(const llama_ubatch * ubatch) {
         int32_t * data = (int32_t *) inp_rs->s_copy->data;
 
         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
+        GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
+        int32_t * bank = (int32_t *) inp_rs->s_copy_bank->data;
+        // ONE traversal - see the note on the non-hybrid path above.
         for (uint32_t i = 0; i < n_rs; ++i) {
-            data[i] = mctx->get_recr()->s_copy(i);
+            data[i] = mctx->get_recr()->s_copy2(i, &bank[i]);
         }
+        set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
     }
 }
 
@@ -1227,8 +1267,14 @@ bool llm_graph_input_mem_hybrid_k::can_reuse(const llm_graph_params & params) {
     res &= inp_rs->s_copy_main->ne[0]  == params.ubatch.n_seqs;
     res &= inp_rs->s_copy_extra->ne[0] == mctx->get_recr()->get_n_rs() - params.ubatch.n_seqs;
 
+    // R1 (lane-176): shape only - see the note on the non-hybrid path.
+    res &= inp_rs->s_copy_bank->ne[0] == mctx->get_recr()->get_n_rs();
+    res &= inp_rs->s_wrow->ne[0]      ==
+        (int64_t) (mctx->get_recr()->get_rs_r1() ? mctx->get_recr()->get_n_rs_planes() : 1);
+
     res &= inp_rs->head == mctx->get_recr()->get_head();
     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
+    res &= inp_rs->rs_z_bank == mctx->get_recr()->get_rs_z_bank();
     res &= inp_rs->rs_shift == mctx->get_recr()->get_rs_shift();
 
     return res;
@@ -1280,9 +1326,13 @@ void llm_graph_input_mem_hybrid_iswa::set_input(const llama_ubatch * ubatch) {
         int32_t * data = (int32_t *) inp_rs->s_copy->data;
 
         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
+        GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
+        int32_t * bank = (int32_t *) inp_rs->s_copy_bank->data;
+        // ONE traversal - see the note on the non-hybrid path above.
         for (uint32_t i = 0; i < n_rs; ++i) {
-            data[i] = mctx->get_recr()->s_copy(i);
+            data[i] = mctx->get_recr()->s_copy2(i, &bank[i]);
         }
+        set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
     }
 }
 
@@ -1316,8 +1366,14 @@ bool llm_graph_input_mem_hybrid_iswa::can_reuse(const llm_graph_params & params)
     res &= inp_rs->s_copy_main->ne[0]  == params.ubatch.n_seqs;
     res &= inp_rs->s_copy_extra->ne[0] == mctx->get_recr()->get_n_rs() - params.ubatch.n_seqs;
 
+    // R1 (lane-176): shape only - see the note on the non-hybrid path.
+    res &= inp_rs->s_copy_bank->ne[0] == mctx->get_recr()->get_n_rs();
+    res &= inp_rs->s_wrow->ne[0]      ==
+        (int64_t) (mctx->get_recr()->get_rs_r1() ? mctx->get_recr()->get_n_rs_planes() : 1);
+
     res &= inp_rs->head == mctx->get_recr()->get_head();
     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
+    res &= inp_rs->rs_z_bank == mctx->get_recr()->get_rs_z_bank();
     res &= inp_rs->rs_shift == mctx->get_recr()->get_rs_shift();
 
     return res;
@@ -3794,6 +3850,8 @@ static std::unique_ptr<llm_graph_input_rs> build_rs_inp_impl(
 
     const int64_t n_rs   = mctx_cur->get_n_rs();
     const int64_t n_seqs = ubatch.n_seqs;
+    // K bank planes; the write-row tensor is sized 1 when R1 is off so it costs nothing there.
+    const int64_t n_planes = (int64_t) mctx_cur->get_n_rs_planes();
 
     inp->s_copy = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_rs);
     ggml_set_input(inp->s_copy);
@@ -3802,8 +3860,21 @@ static std::unique_ptr<llm_graph_input_rs> build_rs_inp_impl(
     inp->s_copy_main  = ggml_view_1d(ctx0, inp->s_copy, n_seqs, 0);
     inp->s_copy_extra = ggml_view_1d(ctx0, inp->s_copy, n_rs - n_seqs, n_seqs * inp->s_copy->nb[0]);
 
+    // R1 (lane-176): the ssm bank rotated read rows, and its per-snapshot write rows. Both are
+    // plain input tensors - refilled by set_input every ubatch, shape-checked (never
+    // content-checked) by can_reuse - which is what carries the position dependence WITHOUT baking
+    // it into the graph. Modelled on the KV cache self_k_idxs, whose row also moves every token.
+    inp->s_copy_bank       = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_rs);
+    ggml_set_input(inp->s_copy_bank);
+    inp->s_copy_bank_main  = ggml_view_1d(ctx0, inp->s_copy_bank, n_seqs, 0);
+    inp->s_copy_bank_extra = ggml_view_1d(ctx0, inp->s_copy_bank, n_rs - n_seqs, n_seqs * inp->s_copy_bank->nb[0]);
+
+    inp->s_wrow = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, mctx_cur->get_rs_r1() ? n_planes : 1);
+    ggml_set_input(inp->s_wrow);
+
     inp->head = mctx_cur->get_head();
     inp->rs_z = mctx_cur->get_rs_z();
+    inp->rs_z_bank = mctx_cur->get_rs_z_bank();
     inp->rs_shift = mctx_cur->get_rs_shift();
 
     return inp;
@@ -3822,11 +3893,21 @@ ggml_tensor * llm_graph_context::build_rs(
         ggml_tensor * s,
             int32_t   state_size,
             int32_t   n_seqs,
-        const llm_graph_get_rows_fn & get_state_rows) const {
+        const llm_graph_get_rows_fn & get_state_rows,
+               bool   bank) const {
     const auto * kv_state = inp->mctx;
 
-    return build_rs(s, inp->s_copy_main, inp->s_copy_extra, state_size, n_seqs,
-                    kv_state->get_n_rs(), kv_state->get_head(), kv_state->get_size(), kv_state->get_rs_z(),
+    // R1 (lane-176): the ssm bank is position-labelled, the conv bank is not, so they are gathered
+    // through different index tensors and zeroed at different rows. `bank` selects which, and it is
+    // set explicitly by the five callers whose model also WRITES through the R1 path.
+    const bool r1 = bank && kv_state->get_rs_r1();
+
+    return build_rs(s,
+                    r1 ? inp->s_copy_bank_main  : inp->s_copy_main,
+                    r1 ? inp->s_copy_bank_extra : inp->s_copy_extra,
+                    state_size, n_seqs,
+                    kv_state->get_n_rs(), kv_state->get_head(), kv_state->get_size(),
+                    r1 ? kv_state->get_rs_z_bank() : kv_state->get_rs_z(),
                     get_state_rows);
 }
 

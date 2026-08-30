@@ -277,14 +277,37 @@ public:
     ggml_tensor * s_copy_main;   // I32 [n_seqs]
     ggml_tensor * s_copy_extra;  // I32 [n_rs - n_seqs]
 
+    // R1 BANK PLANE AS RUNTIME INDEX (lane-176).
+    //
+    // The SSM bank is position-labelled, so its rows differ from the conv bank's LOGICAL rows.
+    // These carry the ssm rows. Being INPUT TENSORS is the entire point: their CONTENTS change
+    // every ubatch and are refilled by set_input, while the graph topology never moves - so
+    // can_reuse compares only their SHAPE, exactly as it does for the KV cache's self_k_idxs.
+    // That is what lets the age-shift copies disappear while graph reuse stays true.
+    ggml_tensor * s_copy_bank;        // I32 [n_rs]     - rotated read rows for the ssm bank
+    ggml_tensor * s_copy_bank_main;   // I32 [n_seqs]
+    ggml_tensor * s_copy_bank_extra;  // I32 [n_rs - n_seqs]
+    ggml_tensor * s_wrow;             // I32 [K]        - rotated WRITE rows for the ssm bank
+
     const llama_memory_recurrent_context * mctx;
 
     // used in view offsets, need to match for valid graph reuse
     uint32_t head;
     int32_t rs_z;
+    // R1: the rotated twin of rs_z. It is a BAKED view offset (build_rs zeroes a row by offset),
+    // so it must be compared - F-146's rule applied to the one position-dependent offset R1 keeps.
+    // It is -1 on every steady-decode ubatch, so it costs no reuse; see get_rs_z_bank().
+    int32_t rs_z_bank = -1;
     // DEEP-SLOT AGE FIX: bank-shift distance is baked into the graph's cpy topology; a graph
     // built for one consumed-rollback value must not be reused for another.
     uint32_t rs_shift = 0;
+    //
+    // NOTE, and it is the lane's whole result: there is deliberately NO `rs_pos` here.
+    // lane-175's C4 had to add one, because it expressed the bank plane as a constant view offset
+    // that changed every token - which forced can_reuse false on every ubatch (receipt: 1 graph
+    // reused vs 379-631) and cancelled the copy saving it had just won. R1 passes the plane as a
+    // runtime index instead, so NO graph offset depends on position and there is nothing to
+    // compare. Adding rs_pos back here would silently re-forfeit reuse and reproduce C4's TIE.
 };
 
 class llm_graph_input_cross_embd : public llm_graph_input_i {
@@ -1339,12 +1362,18 @@ struct llm_graph_context {
 
     llm_graph_input_rs * build_rs_inp() const;
 
+    // `bank`: read through the R1 ROTATED index instead of the logical one. Pass true if and only
+    // if this tensor is also written by build_recurrent_attn's R1 path - the read and the write must
+    // agree on the layout. Five call sites qualify (the models that call build_recurrent_attn);
+    // every other s_l reader (mamba, rwkv6/7, plamo2, lfm2, kimi-*, minimax) leaves it false and is
+    // therefore physically unable to pick up a rotation it does not write. No arch list to drift.
     ggml_tensor * build_rs(
             llm_graph_input_rs * inp,
             ggml_tensor * s,
                 int32_t   state_size,
                 int32_t   n_seqs,
-            const llm_graph_get_rows_fn & get_state_rows = ggml_get_rows) const;
+            const llm_graph_get_rows_fn & get_state_rows = ggml_get_rows,
+                   bool   bank = false) const;
 
     ggml_tensor * build_rwkv_token_shift_load(
         llm_graph_input_rs * inp,
