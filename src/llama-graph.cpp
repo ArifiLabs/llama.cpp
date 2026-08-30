@@ -369,7 +369,13 @@ void llm_graph_input_cls::set_input(const llama_ubatch * ubatch) {
 // older than this ubatch newest, and it lands at plane (i - pos_bank) mod K. This is a
 // CONTENT-only change per ubatch; the node consuming it is a fixed-topology GGML_OP_SET_ROWS.
 static void set_input_rs_wrow(ggml_tensor * t, const llama_memory_recurrent_context * m) {
-    if (!t || !m->get_rs_r1()) {
+    // ALLOCATION is the guard, not rs_r1. These tensors are created unconditionally but consumed
+    // only when R1 is active AND the model's build_rs call passed bank=true, and the graph
+    // allocator allocates only what the graph reaches - so `buffer` is null on the shipped arm,
+    // on the ring-off arm, and on any recurrent model outside the five paired sites that
+    // nonetheless satisfies rs_r1 (n_rs_seq > 0 && n_seq_max == 1). Dereferencing there is the
+    // crash llama-context.cpp:1731 warns about in as many words.
+    if (!t || !t->buffer || !m->get_rs_r1()) {
         return;
     }
     GGML_ASSERT(ggml_backend_buffer_is_host(t->buffer));
@@ -389,12 +395,17 @@ void llm_graph_input_rs::set_input(const llama_ubatch * ubatch) {
         int32_t * data = (int32_t *) s_copy->data;
 
         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
-        GGML_ASSERT(ggml_backend_buffer_is_host(s_copy_bank->buffer));
-        int32_t * bank = (int32_t *) s_copy_bank->data;
+        // See the note on set_input_rs_wrow: guard on ALLOCATION, not on rs_r1.
+        const bool bank_live = s_copy_bank && s_copy_bank->buffer;
+        int32_t * bank = nullptr;
+        if (bank_live) {
+            GGML_ASSERT(ggml_backend_buffer_is_host(s_copy_bank->buffer));
+            bank = (int32_t *) s_copy_bank->data;
+        }
         // ONE traversal: s_copy() CONSUMES the rollback index (rs_idx[seq] = 0), so a second pass
         // would read 0 and silently resolve every rolled-back read to slot 0.
         for (uint32_t i = 0; i < n_rs; ++i) {
-            data[i] = mctx->s_copy2(i, &bank[i]);
+            data[i] = mctx->s_copy2(i, bank_live ? &bank[i] : nullptr);
         }
         set_input_rs_wrow(s_wrow, mctx);
         // ring-repair 2026-08-25: leak hunt - see whether the fresh-seq read row matches the
@@ -1179,11 +1190,15 @@ void llm_graph_input_mem_hybrid::set_input(const llama_ubatch * ubatch) {
         int32_t * data = (int32_t *) inp_rs->s_copy->data;
 
         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
-        GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
-        int32_t * bank = (int32_t *) inp_rs->s_copy_bank->data;
+        const bool bank_live = inp_rs->s_copy_bank && inp_rs->s_copy_bank->buffer;
+        int32_t * bank = nullptr;
+        if (bank_live) {
+            GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
+            bank = (int32_t *) inp_rs->s_copy_bank->data;
+        }
         // ONE traversal - see the note on the non-hybrid path above.
         for (uint32_t i = 0; i < n_rs; ++i) {
-            data[i] = mctx->get_recr()->s_copy2(i, &bank[i]);
+            data[i] = mctx->get_recr()->s_copy2(i, bank_live ? &bank[i] : nullptr);
         }
         set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
         // ring-repair 2026-08-25: leak hunt (hybrid path) - fresh-seq read row vs zeroed row.
@@ -1241,11 +1256,15 @@ void llm_graph_input_mem_hybrid_k::set_input(const llama_ubatch * ubatch) {
         int32_t * data = (int32_t *) inp_rs->s_copy->data;
 
         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
-        GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
-        int32_t * bank = (int32_t *) inp_rs->s_copy_bank->data;
+        const bool bank_live = inp_rs->s_copy_bank && inp_rs->s_copy_bank->buffer;
+        int32_t * bank = nullptr;
+        if (bank_live) {
+            GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
+            bank = (int32_t *) inp_rs->s_copy_bank->data;
+        }
         // ONE traversal - see the note on the non-hybrid path above.
         for (uint32_t i = 0; i < n_rs; ++i) {
-            data[i] = mctx->get_recr()->s_copy2(i, &bank[i]);
+            data[i] = mctx->get_recr()->s_copy2(i, bank_live ? &bank[i] : nullptr);
         }
         set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
     }
@@ -1326,11 +1345,15 @@ void llm_graph_input_mem_hybrid_iswa::set_input(const llama_ubatch * ubatch) {
         int32_t * data = (int32_t *) inp_rs->s_copy->data;
 
         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
-        GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
-        int32_t * bank = (int32_t *) inp_rs->s_copy_bank->data;
+        const bool bank_live = inp_rs->s_copy_bank && inp_rs->s_copy_bank->buffer;
+        int32_t * bank = nullptr;
+        if (bank_live) {
+            GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
+            bank = (int32_t *) inp_rs->s_copy_bank->data;
+        }
         // ONE traversal - see the note on the non-hybrid path above.
         for (uint32_t i = 0; i < n_rs; ++i) {
-            data[i] = mctx->get_recr()->s_copy2(i, &bank[i]);
+            data[i] = mctx->get_recr()->s_copy2(i, bank_live ? &bank[i] : nullptr);
         }
         set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
     }
