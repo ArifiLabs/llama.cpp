@@ -818,8 +818,10 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
     // The plane reaches the GPU as a RUNTIME ROW INDEX (inp->s_wrow), never as a baked view offset.
     // That is the whole difference from lane-175's C4, which expressed the same relabel as a
     // constant ggml view offset: the offset changed every token, so the cached graph had to be
-    // rebuilt every token (1 graph reused vs 379-631), and the rebuild cost exactly cancelled the
-    // ~12% the copy elimination won (A/B 0.9568, CI95 [0.8988, 1.0429], TIED). Here the graph
+    // rebuilt every token (1 graph reused vs 379-631), and the rebuild cost MORE than the copy
+    // elimination won. Independent review (982310ae, 2026-08-30) corrected the magnitudes to
+    // A/D = 1.0766 (+7.7% from deleting the copies) x D/B = 0.8830 (-11.7% from forfeiting reuse)
+    // = 0.9506, matching the server's A/B 0.9568 CI95 [0.8988, 1.0429] TIED. Here the graph
     // topology is fixed and only the index tensor's CONTENTS move - the same mechanism by which the
     // KV cache writes a different row every token and still reuses its graph
     // (llama-kv-cache.cpp, ggml_set_rows(k, k_cur, k_idxs); can_reuse compares only k_idxs->ne[0]).
