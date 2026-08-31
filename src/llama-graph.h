@@ -289,6 +289,19 @@ public:
     ggml_tensor * s_copy_bank_extra;  // I32 [n_rs - n_seqs]
     ggml_tensor * s_wrow;             // I32 [K]        - rotated WRITE rows for the ssm bank
 
+    // lane-180: ONE view of s_wrow for the whole graph, not one per recurrent layer.
+    // The write path takes a length-n_written prefix view of s_wrow at offset 0, and n_written is
+    // the same in every recurrent layer of a ubatch - so the 40 per-layer views were 40 IDENTICAL
+    // tensors. Each one is a separate CPU-resident SPLIT INPUT to the Vulkan split, and the
+    // scheduler's input loop pays a per-input ggml_backend_synchronize + backend graph cleanup +
+    // host-to-device write for every one of them, every graph evaluation
+    // (ggml-backend.cpp:1950-2103). Sharing one view is the same read, once.
+    // Built lazily by the write path (nullptr until first use) and reset by construction: a new
+    // llm_graph_input_rs is made for every graph BUILD, and a REUSED graph never re-enters the
+    // builder, so this pointer is only ever written while the graph it belongs to is being built.
+    // Opt-in via LLAMA_RS_WROW_SHARE=1; the shipped default is byte-for-byte unchanged.
+    ggml_tensor * s_wrow_view = nullptr;
+
     const llama_memory_recurrent_context * mctx;
 
     // used in view offsets, need to match for valid graph reuse
