@@ -1018,27 +1018,37 @@ struct ggml_backend_sched {
 #define tensor_id_copy(id, backend_id, copy_id) sched->hv_tensor_copies[(id) * sched->n_backends * sched->n_copies + (backend_id) * sched->n_copies + (copy_id)]
 #define tensor_copy(tensor, backend_id, copy_id) tensor_id_copy(hash_id(tensor), backend_id, copy_id)
 
-// ARIFI lane-178: the INITIAL split-inputs capacity is the only thing that decides where pass 5
-// cuts a split for input-count reasons (:1507, `split->n_inputs >= split->inputs_capacity`) - a cut
-// that happens with NO backend change, so it costs an extra graph_compute_async submit (:2073) plus
-// the input syncs before it (:2060) on a boundary nothing computational asked for.
+// ARIFI lane-178: the INITIAL split-inputs capacity decides where pass 5 cuts a split for
+// input-count reasons (:1507, split->n_inputs >= split->inputs_capacity). That cut happens with NO
+// backend change, so it costs an extra graph_compute_async submit (:2073) plus the input syncs
+// before it (:2060) on a boundary nothing computational asked for.
 //
-// Measured on this rig (lane-178 SPLITDIAG, Qwen3.5-4B, GGML_SCHED_DEBUG=1): ring OFF = 2 splits
-// (CPU 0 inputs, Vulkan0 8 inputs); ring ON at the shipped K=4 = 3 splits (CPU 0, Vulkan0 **30**,
-// Vulkan0 26). 30 is GGML_SCHED_MAX_SPLIT_INPUTS EXACTLY, and both Vulkan splits are the SAME
-// backend - so the ring's extra split is the input CAP, not a CPU fallback.
+// Measured on this rig (lane-178 CAPGATE, GGML_SCHED_DEBUG=1): ring OFF = 2 splits (CPU 0 inputs,
+// Vulkan0 8); ring ON at the shipped K=4 = 3 splits (CPU 0, Vulkan0 30, Vulkan0 4). 30 is
+// GGML_SCHED_MAX_SPLIT_INPUTS exactly, and both Vulkan splits are the SAME backend - so the ring's
+// extra split is the input CAP, not a CPU fallback.
 //
-// Runtime-selectable so ONE binary serves both arms of the discriminator (F-145: no rebuild between
-// arms, and this moves the split count WITHOUT moving the ring - the arm lane-177 never had).
-// Default is GGML_SCHED_MAX_SPLIT_INPUTS, so the shipped path is behaviour-identical unless the env
-// var is set.
+// ADOPTED as the default (lane-178, seat-48, 2026-08-31). Seated Ornith-1.5-35B-A3B on
+// llama-server, 8 rounds x 3 arms counterbalanced: cap 64 vs cap 30 = 1.0168, CI95
+// [1.0068, 1.0273], SIGNIFICANT. Both arms had identical decode nodes (3739), reuse and n_rs_seq;
+// only the split count differed (2 vs 3). F-141 content gate 0/8 on every arm.
+//
+// SAFE AT ANY CAP: the macro still sizes nodes_size (:2187) and context_buffer_size (:2196), and
+// both bounds are per-graph-NODE, not per-split. The total cross-backend inputs is a property of
+// the graph (34 either way, measured), so a wider initial capacity can only merge splits, never
+// overflow.
+//
+// The env var stays as an override in EITHER direction, clamped at the upstream constant: 30
+// reproduces the pre-adopt line for A/B, a higher value widens further. Below the constant is
+// almost certainly a typo (it could only ADD splits) and falls back to the default.
+#define ARIFI_SCHED_SPLIT_INPUTS_CAP 64
+
 static int ggml_backend_sched_split_inputs_cap0(void) {
     static int cap = -1;
     if (cap < 0) {
         const char * s = getenv("GGML_SCHED_SPLIT_INPUTS_CAP");
         const int v = s ? atoi(s) : 0;
-        // a cap below the default could only ADD splits and is almost certainly a typo; ignore it
-        cap = v > GGML_SCHED_MAX_SPLIT_INPUTS ? v : GGML_SCHED_MAX_SPLIT_INPUTS;
+        cap = v >= GGML_SCHED_MAX_SPLIT_INPUTS ? v : ARIFI_SCHED_SPLIT_INPUTS_CAP;
     }
     return cap;
 }
