@@ -846,7 +846,31 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
             hparams.n_embd_s(), ssm_states_all->ne[1]);
 
         // rows 0..n_written-1 of s_wrow; the tensor holds all K so the view is a prefix.
-        ggml_tensor * wrow = ggml_view_1d(ctx0, inp->s_wrow, n_written, 0);
+        //
+        // lane-180: this view is IDENTICAL in every recurrent layer (offset 0, length n_written,
+        // same parent), but ggml_view_1d mints a fresh tensor per call - so the shipped path hands
+        // the scheduler one distinct CPU-side split input PER RECURRENT LAYER. Measured on
+        // Qwen3.5-4B (lane-178 capgate receipt): 23 inputs named "leaf_14 (view)" out of 34 total,
+        // against 8 with the ring off. Sharing one view collapses those 23 to 1. The tensors are
+        // interchangeable by construction - equal parent, equal offset, equal length - so this
+        // changes the number of input COPIES, never the value any layer reads.
+        //
+        // F-138: the view chain (view -> s_wrow) is UNCHANGED; what changes is that one tensor is
+        // is_src_of 23 nodes instead of 23 tensors each is_src_of one. Rooting full view chains in
+        // is_src_of covers exactly that, and the premise holds on a grep of src/: s_wrow is never a
+        // write destination inside the graph - it is an INPUT filled host-side by
+        // set_input_rs_wrow() before the graph runs (llama-graph.cpp:371-384), and every other
+        // mention is a can_reuse SHAPE check. No RAW/WAR edge is created or removed.
+        static const bool wrow_share = getenv("LLAMA_RS_WROW_SHARE") != nullptr;
+        ggml_tensor * wrow;
+        if (wrow_share) {
+            if (inp->s_wrow_view == nullptr || inp->s_wrow_view->ne[0] != n_written) {
+                inp->s_wrow_view = ggml_view_1d(ctx0, inp->s_wrow, n_written, 0);
+            }
+            wrow = inp->s_wrow_view;
+        } else {
+            wrow = ggml_view_1d(ctx0, inp->s_wrow, n_written, 0);
+        }
 
         ggml_build_forward_expand(gf, ggml_set_rows(ctx0, dst2, src2, wrow));
 
