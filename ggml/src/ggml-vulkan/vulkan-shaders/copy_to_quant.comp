@@ -360,8 +360,7 @@ void quantize(uint dst_idx, uint src_idx)
         amax = max(amax, abs(v));
     }
 
-    const float d  = amax;
-    const float id = d > 0.0 ? 1.0/d : 0.0;
+    const float d = amax;
 
     data_q[dst_idx].d = float16_t(d);
 
@@ -370,13 +369,19 @@ void quantize(uint dst_idx, uint src_idx)
     }
 
     [[unroll]] for (int j = 0; j < QUANT_K_Q2_0_G128; ++j) {
-        // GLSL round() breaks ties in an IMPLEMENTATION-CHOSEN direction (GLSL spec 8.3); the CPU
-        // reference (quantize_row_q2_0_g128_ref, ggml-quants.c) uses roundf = half AWAY from zero.
-        // f16 sources land on exact .5 ties often enough that the two disagreed on real cases —
-        // 8 SET_ROWS(f16 -> q2_0_g128) failures, ERR up to 5.1e-4, found the moment lane-149 added
-        // q2_0_g128 to all_types (F-109). Same expression as quantize_q2_0() above.
-        const float x = float(data_s[src_idx + j]) * id;
-        int q = int(x >= 0.0 ? floor(x + 0.5) : ceil(x - 0.5)) + 1;
+        // EXACT level predicate |x| >= d/2, written as 2*|x| >= d, matching
+        // quantize_row_q2_0_g128_ref (ggml-quants.c) expression for expression. Multiply-by-2 and
+        // compare are correctly rounded here and on the CPU, so the two agree bit-for-bit for every
+        // input. The reciprocal form both sides used before was NOT reproducible across backends:
+        // 1/d rounds down for 4427 of the 31743 finite positive f16 scales, turning an exact tie
+        // x = d/2 into 0.5 - 2^-25 and rounding it to 0. lane-149 fixed the GLSL round() tie
+        // direction (F-109) and cut the failures 8 -> 3 without reaching this, the real cause.
+        // |x| <= amax = d, so level +2 is unreachable; the clamp is belt and braces.
+        const float v = float(data_s[src_idx + j]);
+        int q = 1;
+        if (d > 0.0 && abs(v) * 2.0 >= d) {
+            q += v < 0.0 ? -1 : 1;
+        }
         q = clamp(q, 0, 3);
         data_q[dst_idx].qs[j / 4] |= uint8_t(q << ((j % 4) * 2));
     }
