@@ -254,6 +254,58 @@ static void run_group(const char * label, kernel_fn gemv, kernel_fn gemv_generic
     }
 }
 
+// lane-179 regression: the q2_0_g128 quantizer must resolve the exact tie |x| = d/2 AWAY from
+// zero, for EVERY scale d. It did not: the old form roundf(x * (1.0f/d)) rounds the tie to 0
+// whenever fl(1/d) rounds down, which happens for 4427 of the 31743 finite positive f16 scales.
+// f16 sources hit exact ties constantly, so this showed up as SET_ROWS(f16 -> q2_0_g128) failures
+// on Vulkan against the CPU reference - both sides were wrong, in different places.
+//
+// Sweeping every f16 scale (not sampling) is the point: the defect is scale-dependent and a
+// random draw misses it 86% of the time.
+static void test_g128_quantize_ties(void) {
+    printf("\nq2_0_g128 quantizer: |x| = d/2 must encode as +-1, at every f16 scale\n");
+
+    int checked = 0;
+    int bad     = 0;
+
+    for (uint32_t bits = 1; bits < 0x7C00u; ++bits) {
+        ggml_fp16_t h;
+        memcpy(&h, &bits, sizeof(h));
+        const float d = ggml_fp16_to_fp32(h);
+        if (!(d > 0.0f) || !std::isfinite(d)) {
+            continue;
+        }
+
+        // amax = d, so x = +-d/2 sits exactly on the level boundary. The rest is zero.
+        std::vector<float> x(QK2_0_G128, 0.0f);
+        x[0] = d;
+        x[1] = -d;
+        x[2] = d * 0.5f;
+        x[3] = -(d * 0.5f);
+
+        block_q2_0_g128 blk;
+        quantize_row_q2_0_g128(x.data(), &blk, QK2_0_G128);
+
+        // codes 0..3 decode to -1..2; qs packs four per byte, low pair first.
+        const int want[4] = { 2, 0, 2, 0 };
+        for (int j = 0; j < 4; ++j) {
+            const int got = (blk.qs[j / 4] >> (2 * (j % 4))) & 0x03;
+            if (got != want[j]) {
+                if (bad < 3) {
+                    printf("  MISMATCH d=%.9g x[%d]=%.9g got code %d want %d\n", d, j, x[j], got, want[j]);
+                }
+                ++bad;
+            }
+        }
+        ++checked;
+    }
+
+    printf("  %d scales checked, %d wrong codes\n", checked, bad);
+    if (checked == 0 || bad != 0) {
+        ++failures;
+    }
+}
+
 int main(void) {
     // Populates ggml_table_f32_f16, which GGML_CPU_FP16_TO_FP32 reads. Without it every block
     // scale decodes as zero and every kernel returns zero, which reads exactly like a broken
@@ -279,6 +331,8 @@ int main(void) {
     // stride is silent wrong math, not a crash - so a test that could not see it would be worse
     // than no test. The buffer is deliberately oversized: at g64 the kernel walks 2x the blocks
     // and would otherwise read past the g128 allocation.
+    test_g128_quantize_ties();
+
     printf("\nnegative control: g128 data through the g64 kernel must NOT match\n");
     {
         const int nb = 2, n = nb * QK2_0_G128, nc = 4;

@@ -130,8 +130,7 @@ void quantize_row_q2_0_g128_ref(const float * GGML_RESTRICT x, block_q2_0_g128 *
             }
         }
 
-        const float d  = amax;
-        const float id = d > 0.0f ? 1.0f / d : 0.0f;
+        const float d = amax;
 
         y[i].d = GGML_FP32_TO_FP16(d);
 
@@ -140,8 +139,23 @@ void quantize_row_q2_0_g128_ref(const float * GGML_RESTRICT x, block_q2_0_g128 *
         }
 
         // Encode {-1, 0, +1, +2} as {0, 1, 2, 3}, four values per byte.
+        //
+        // The level predicate is the EXACT one, |x| >= d/2, written as 2*|x| >= d: fp32 multiply
+        // by 2 and compare are correctly rounded on every backend, so this is bit-identical on
+        // CPU and GPU by construction. The old form, roundf(x * (1.0f/d)), was not: fp32 division
+        // is correctly rounded but 1/d still rounds DOWN for 4427 of the 31743 finite positive
+        // f16 scales, and then an exact tie x = d/2 evaluates to 0.5 - 2^-25 and roundf returns
+        // 0 instead of +-1. f16 sources land on exact ties constantly (11-bit mantissas), f32
+        // sources essentially never -- which is exactly why only type_src=f16 SET_ROWS cases
+        // failed test-backend-ops. lane-179; the Vulkan shader (copy_to_quant.comp) carries the
+        // same predicate and the same note. |x| <= amax = d, so level +2 is unreachable.
         for (int j = 0; j < qk; ++j) {
-            int q = (int) roundf(x[i*qk + j] * id) + 1;
+            const float xj = x[i*qk + j];
+
+            int q = 1;
+            if (d > 0.0f && fabsf(xj) * 2.0f >= d) {
+                q += xj < 0.0f ? -1 : 1;
+            }
             q = MAX(0, MIN(3, q));
 
             y[i].qs[j / 4] |= (uint8_t) q << (2 * (j % 4));
