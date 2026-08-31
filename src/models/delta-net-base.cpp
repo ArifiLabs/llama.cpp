@@ -861,7 +861,27 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
         // write destination inside the graph - it is an INPUT filled host-side by
         // set_input_rs_wrow() before the graph runs (llama-graph.cpp:371-384), and every other
         // mention is a can_reuse SHAPE check. No RAW/WAR edge is created or removed.
-        static const bool wrow_share = getenv("LLAMA_RS_WROW_SHARE") != nullptr;
+        // lane-184 ADOPT (President ruling 2026-08-31, "a win is a win as long as it breaks
+        // nothing and doesn't degrade quality"): sharing is now the DEFAULT, and the env var
+        // becomes the OPT-OUT. Same shape as lane-178's split-inputs-cap adopt
+        // (ggml-backend.cpp:1035-1042): the value lives in the code, the env can still override
+        // it, so ONE binary continues to serve both arms and F-145 A/Bs stay possible.
+        //   unset  -> shared view    (the adopted default)
+        //   =0     -> per-layer views (the pre-adopt path, byte-for-byte)
+        // Gates that permitted this, all on the lane-180 binary at 41febdc56, both arms:
+        //   F-141 content, seated Ornith-1.5-35B  0/8 and 0/8 (baseline first)
+        //   ring_content_probe repeat mode        3/3 identical, both arms (leak guard)
+        //   ring_content_probe ring vs fresh      3/4 both arms - no regression, and 3/4 IS the
+        //                                         banked passing state (F-136-LEAK-ROOT-CLOSE)
+        //   4B ring/fresh/repeat outputs          BYTE-IDENTICAL across the two arms
+        // Measured ceiling is ~0.1% of a token (lane-182 §2.1 GATE 0: the graph buffer is
+        // host-visible at the shipped K, so the per-input cost is the ~2 us branch). It is NOT
+        // singly measurable on this box and is NOT claimed as a measured speed win.
+        // No <cstring> in this TU, and none is added for a one-character test.
+        static const bool wrow_share = [] {
+            const char * s = getenv("LLAMA_RS_WROW_SHARE");
+            return s == nullptr || s[0] != '0';
+        }();
         ggml_tensor * wrow;
         if (wrow_share) {
             if (inp->s_wrow_view == nullptr || inp->s_wrow_view->ne[0] != n_written) {
