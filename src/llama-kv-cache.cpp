@@ -124,6 +124,27 @@ static uint32_t llama_kv_tail_cells() {
     return (uint32_t) cached;
 }
 
+// ONE-VARIABLE CONTROL. LLAMA_KV_TAIL_NORING=1 keeps the ENTIRE compose path - same split,
+// same dequantized body segment, same ggml_concat, same F32 tensor into FA - but takes the
+// newest cells from the QUANTIZED BODY instead of the exact ring.
+//
+// It exists because the shipping tail's natural denominator (tail off, plain -ctk q4_0) does
+// not run the same attention kernel: tail-off feeds FA a quantized K/V and takes the
+// direct-quantized kernel, while tail-on feeds it a composed F32 and takes the mature F16
+// kernel (lane-186 SS3.1 measured that difference at ~1.3%). Comparing the feature against
+// tail-off therefore conflates "exact newest cells" with "a different FA kernel". This arm
+// holds the kernel fixed and moves ONLY where the newest cells come from.
+static bool llama_kv_tail_noring() {
+    static int cached = -1;
+
+    if (cached < 0) {
+        const char * s = getenv("LLAMA_KV_TAIL_NORING");
+        cached = (s && atoi(s) != 0) ? 1 : 0;
+    }
+
+    return cached != 0;
+}
+
 static bool llama_kv_tail_broken_env() {
     static int cached = -1;
 
@@ -467,6 +488,10 @@ llama_kv_cache::llama_kv_cache(
             else if (n_stream > 1)                      refuse = "n_stream > 1";
             else if (v_trans)                           refuse = "V cache is transposed (enable flash attention)";
             else if (swa_type != LLAMA_SWA_TYPE_NONE)   refuse = "SWA cache (origin commits 7/8 not ported)";
+            // MLA models drive extra idxs inputs (k_idxs_mla / k_idxs_lid) whose set_input path
+            // does NOT advance tail_next, so the monotonic-write detector would go quiet on
+            // exactly the path that diverged. Refuse rather than police an invariant we cannot see.
+            else if (is_mla)                            refuse = "MLA cache (the write-order detector does not see the mla/lid idxs paths)";
             else if (!llama_kv_tail_body_ok(layer_type_k) ||
                      !llama_kv_tail_body_ok(layer_type_v))
                                                         refuse = "body type is not a supported quantized type";
@@ -1696,6 +1721,15 @@ ggml_tensor * llama_kv_cache::tail_compose(
         ggml_tensor * seg = ggml_view_4d(ctx, body, body->ne[0], body->ne[1], split, 1,
                 body->nb[1], body->nb[2], body->nb[3], 0);
         out = ggml_cast(ctx, seg, GGML_TYPE_F32);
+    }
+
+    if (llama_kv_tail_noring()) {
+        // one-variable control: same split, same concat, newest cells from the QUANTIZED body
+        ggml_tensor * seg = ggml_view_4d(ctx, body, body->ne[0], body->ne[1], n_tail, 1,
+                body->nb[1], body->nb[2], body->nb[3], split*body->nb[2]);
+        ggml_tensor * tail = ggml_cast(ctx, seg, GGML_TYPE_F32);
+
+        return out ? ggml_concat(ctx, out, tail, 2) : tail;
     }
 
     // ring segments, rotated back into slot order: cell (split + j) lives at (split + j) % tail_n
