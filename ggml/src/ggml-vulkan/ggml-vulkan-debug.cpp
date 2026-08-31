@@ -19,7 +19,14 @@ void vk_memory_logger::log_allocation(vk_buffer_ref buf_ref, size_t size) {
     std::lock_guard<std::mutex> guard(log_mutex);
     vk_buffer buf = buf_ref.lock();
     const bool device = bool(buf->memory_property_flags & vk::MemoryPropertyFlagBits::eDeviceLocal);
-    const std::string type = device ? "device" : "host";
+    // lane-180: report HOST-VISIBILITY too, not just device-local. On a UMA device
+    // ggml_vk_create_buffer_device tries DeviceLocal|HostVisible|HostCoherent FIRST and falls back
+    // to DeviceLocal alone (:3665-3670) - and those two land on OPPOSITE branches of
+    // ggml_vk_buffer_write_2d (:8932 memcpy vs :8942 temp-ctx + submit + waitForFences), a ~5x
+    // difference in what every graph INPUT copy costs. The old string printed "device" for both.
+    // Diagnostic only: inside a logger that is off unless GGML_VK_MEMORY_LOGGER is set.
+    const bool hostvis = bool(buf->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible);
+    const std::string type = std::string(device ? "device" : "host") + (hostvis ? "+hostvisible" : "");
     allocations[buf->buffer] = size;
     total_device += device ? size : 0;
     total_host += device ? 0 : size;
