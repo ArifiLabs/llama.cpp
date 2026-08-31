@@ -111,6 +111,46 @@ TURBO_IQ_IMPORT void turbo_innerq_mark_tensor_updated(void);
 // llama_kv_cache
 //
 
+// tail length in cells. 0 = feature off. Read once.
+static uint32_t llama_kv_tail_cells() {
+    static int64_t cached = -1;
+
+    if (cached < 0) {
+        const char * s = getenv("LLAMA_KV_TAIL");
+        const int64_t v = s ? atoll(s) : 0;
+        cached = v > 0 ? v : 0;
+    }
+
+    return (uint32_t) cached;
+}
+
+static bool llama_kv_tail_broken_env() {
+    static int cached = -1;
+
+    if (cached < 0) {
+        const char * s = getenv("LLAMA_KV_TAIL_BREAK");
+        cached = (s && atoi(s) != 0) ? 1 : 0;
+    }
+
+    return cached != 0;
+}
+
+// LL-121: the body types the tail is validated against, as an EXPLICIT table.
+// An exact body (f16/bf16/f32) is refused on purpose - a tail beside an exact body buys
+// nothing and would only cost memory, so asking for it is a configuration mistake.
+static bool llama_kv_tail_body_ok(ggml_type t) {
+    switch (t) {
+        case GGML_TYPE_Q4_0:
+        case GGML_TYPE_Q4_1:
+        case GGML_TYPE_Q5_0:
+        case GGML_TYPE_Q5_1:
+        case GGML_TYPE_Q8_0:
+            return true;
+        default:
+            return false;
+    }
+}
+
 llama_kv_cache::llama_kv_cache(
         const llama_model & model,
         const llama_hparams & hparams,
@@ -415,6 +455,43 @@ llama_kv_cache::llama_kv_cache(
         ggml_tensor * k = has_k ? ggml_new_tensor_3d(ctx, layer_type_k, n_embd_k_gqa_eff, kv_size, n_stream) : nullptr;
         ggml_tensor * v = has_v ? ggml_new_tensor_3d(ctx, layer_type_v, n_embd_v_gqa_eff, kv_size, n_stream) : nullptr;
 
+        // lane-188 precision tail: decide ONCE, on the first layer, then allocate one exact
+        // F16 ring per layer beside the quantized body. Every refusal below is a hard
+        // structural one, taken here rather than per graph, so that "the tail is on" is a
+        // property of the cache and never changes underneath a reused graph.
+        if (layers.empty()) {
+            const uint32_t want = llama_kv_tail_cells();
+
+            const char * refuse = nullptr;
+            if (want == 0)                              refuse = nullptr;  // feature simply off
+            else if (n_stream > 1)                      refuse = "n_stream > 1";
+            else if (v_trans)                           refuse = "V cache is transposed (enable flash attention)";
+            else if (swa_type != LLAMA_SWA_TYPE_NONE)   refuse = "SWA cache (origin commits 7/8 not ported)";
+            else if (!llama_kv_tail_body_ok(layer_type_k) ||
+                     !llama_kv_tail_body_ok(layer_type_v))
+                                                        refuse = "body type is not a supported quantized type";
+            else if (want % n_pad != 0)                 refuse = "tail length is not a multiple of the cache padding";
+            else if (want > kv_size)                    refuse = "tail length exceeds the context";
+
+            if (want > 0 && refuse) {
+                LLAMA_LOG_WARN("%s: KV precision tail OFF - %s\n", __func__, refuse);
+            } else if (want > 0) {
+                tail_n = want;
+                LLAMA_LOG_INFO("%s: KV precision tail ON - %u exact F16 cells per layer beside a %s/%s body\n",
+                        __func__, tail_n, ggml_type_name(layer_type_k), ggml_type_name(layer_type_v));
+            }
+        }
+
+        ggml_tensor * k_tail = nullptr;
+        ggml_tensor * v_tail = nullptr;
+        if (tail_n > 0) {
+            k_tail = has_k ? ggml_new_tensor_2d(ctx, GGML_TYPE_F16, n_embd_k_gqa_eff, tail_n) : nullptr;
+            v_tail = has_v ? ggml_new_tensor_2d(ctx, GGML_TYPE_F16, n_embd_v_gqa_eff, tail_n) : nullptr;
+
+            has_k && ggml_format_name(k_tail, "cache_%sk_tail_l%d", name_tag, il);
+            has_v && ggml_format_name(v_tail, "cache_%sv_tail_l%d", name_tag, il);
+        }
+
         has_k && ggml_format_name(k, "cache_%sk_l%d", name_tag, il);
         has_v && ggml_format_name(v, "cache_%sv_l%d", name_tag, il);
 
@@ -428,7 +505,7 @@ llama_kv_cache::llama_kv_cache(
 
         map_layer_ids[il] = layers.size();
 
-        layers.push_back({ il, k, v, k_stream, v_stream });
+        layers.push_back({ il, k, v, k_stream, v_stream, k_tail, v_tail });
 
         // TurboQuant: create rotation matrix tensors (once, shared across layers)
         if (turbo_rotation == nullptr &&
@@ -624,6 +701,11 @@ llama_kv_cache::llama_kv_cache(
 }
 
 void llama_kv_cache::clear(bool data) {
+    // lane-188: a full clear restarts the sequential fill, which is exactly the regime
+    // the ring needs - so it RESETS the invariant instead of breaking it.
+    tail_next   = 0;
+    tail_broken = 0;
+
     for (uint32_t s = 0; s < n_stream; ++s) {
         v_cells[s].reset();
         v_heads[s] = 0;
@@ -651,6 +733,11 @@ void llama_kv_cache::clear(bool data) {
 }
 
 bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
+    // lane-188: seq_rm needs NO hook. It only FREES cells - it never moves one. Any refill
+    // that lands out of order is caught where it actually matters, by the monotonic-write
+    // detector in set_input_k_idxs. seq_add/seq_div/seq_cp/seq_keep and defrag DO move cells
+    // without a write, so those keep their tail_break().
+
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
         return true;
@@ -720,6 +807,9 @@ bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
 }
 
 void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) {
+    // lane-188: the precision-tail ring is positional, so any cell surgery invalidates it.
+    tail_break("seq_cp");
+
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
         return;
@@ -812,6 +902,9 @@ void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, ll
 }
 
 void llama_kv_cache::seq_keep(llama_seq_id seq_id) {
+    // lane-188: the precision-tail ring is positional, so any cell surgery invalidates it.
+    tail_break("seq_keep");
+
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
         return;
@@ -839,6 +932,9 @@ void llama_kv_cache::seq_keep(llama_seq_id seq_id) {
 }
 
 void llama_kv_cache::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, llama_pos shift) {
+    // lane-188: the precision-tail ring is positional, so any cell surgery invalidates it.
+    tail_break("seq_add");
+
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
         return;
@@ -889,6 +985,9 @@ void llama_kv_cache::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, ll
 }
 
 void llama_kv_cache::seq_div(llama_seq_id seq_id, llama_pos p0, llama_pos p1, int d) {
+    // lane-188: the precision-tail ring is positional, so any cell surgery invalidates it.
+    tail_break("seq_div");
+
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
         return;
@@ -1534,6 +1633,99 @@ uint32_t llama_kv_cache::get_n_kv(const slot_info & sinfo) const {
     return result;
 }
 
+
+//
+// lane-188 - THE SHIPPING KV PRECISION TAIL (store-side).
+//
+// Ported in DESIGN from Anbeeld/BeeLlama (origin 52c9acec / a0a884b9 / 9f5850a0, MIT): a
+// quantized KV body with a small EXACT tail of the newest cells. lane-186 verified the
+// mechanism with a READ-time instrument that bought no memory; this is the store-side
+// version, so the body is genuinely quantized and the memory is genuinely bought.
+//
+//   store: cpy_k/cpy_v write the SAME k_cur/v_cur twice - once into the quantized body at
+//          the absolute slot, once into an exact F16 ring at (slot % tail_n).
+//   read:  get_k/get_v dequantize the body's older cells, rotate the ring back into slot
+//          order, and ggml_concat the two into ONE tensor. FA still runs ONE softmax.
+//
+// LL-121: nothing here is a -ctk cache type. The body type is whatever -ctk already gave us
+// and is checked against the explicit table in llama_kv_tail_body_ok(); the tail LENGTH is a
+// plain cell count. No member is added to common/arg.cpp kv_cache_types, and no type is ever
+// inferred from a shader or pipeline name.
+//
+
+void llama_kv_cache::tail_break(const char * why) const {
+    if (!tail_on()) {
+        return;
+    }
+
+    if (tail_broken == 0) {
+        LLAMA_LOG_ERROR("%s: KV PRECISION TAIL INVARIANT BROKEN (%s). The ring is positional and is "
+                        "now unreliable for this session. Treat any measurement from this run as FAIL.\n",
+                        __func__, why);
+    }
+
+    tail_broken++;
+}
+
+// Join the dequantized quantized body with the exact ring.
+//
+// `body` is the 4d cache view [head_eff, n_head_kv, n_kv, 1] get_k/get_v would have returned.
+// `ring` is the SET_ROWS node cpy_k/cpy_v produced this graph - using the node rather than the
+// bare ring tensor is what puts the store into the graph, since every call site expands only
+// the cpy_* return value and the attention output.
+ggml_tensor * llama_kv_cache::tail_compose(
+        ggml_context * ctx, ggml_tensor * body, ggml_tensor * ring,
+        int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il) const {
+    GGML_UNUSED(il);
+
+    const int64_t n_head_kv = body->ne[1];
+
+    if (head_eff*n_head_kv != n_embd_gqa_eff) {
+        return body; // padded/turbo layout: the ring's row split would not line up
+    }
+
+    const int64_t n_tail = std::min<int64_t>(tail_n, n_kv);
+    const int64_t split  = n_kv - n_tail;
+    const int64_t rot    = split % (int64_t) tail_n;
+
+    // body segment: the older cells, dequantized. q4_0 -> f32 is already wired end to end
+    // (cpy.quant_to_f32 carries Q4_0, and fa_kv_ok admits F32), so no new op and no fifth
+    // ARIFI-SYNC-SET pair - lane-186 0.2, confirmed still true here.
+    ggml_tensor * out = nullptr;
+    if (split > 0) {
+        ggml_tensor * seg = ggml_view_4d(ctx, body, body->ne[0], body->ne[1], split, 1,
+                body->nb[1], body->nb[2], body->nb[3], 0);
+        out = ggml_cast(ctx, seg, GGML_TYPE_F32);
+    }
+
+    // ring segments, rotated back into slot order: cell (split + j) lives at (split + j) % tail_n
+    auto ring_seg = [&](int64_t i0, int64_t n) -> ggml_tensor * {
+        ggml_tensor * seg = ggml_view_4d(ctx, ring, head_eff, n_head_kv, n, 1,
+                ggml_row_size(ring->type, head_eff),
+                ring->nb[1],
+                ring->nb[1]*n,
+                i0*ring->nb[1]);
+        return ggml_cast(ctx, seg, GGML_TYPE_F32);
+    };
+
+    const int64_t n_hi = std::min<int64_t>(n_tail, (int64_t) tail_n - rot);
+    const int64_t n_lo = n_tail - n_hi;
+
+    ggml_tensor * parts[2] = {
+        n_hi > 0 ? ring_seg(rot, n_hi) : nullptr,
+        n_lo > 0 ? ring_seg(0,   n_lo) : nullptr,
+    };
+
+    for (int i = 0; i < 2; ++i) {
+        if (!parts[i]) {
+            continue;
+        }
+        out = out ? ggml_concat(ctx, out, parts[i], 2) : parts[i];
+    }
+
+    return out ? out : body;
+}
+
 ggml_tensor * llama_kv_cache::get_k(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const {
     const int32_t ikv = map_layer_ids.at(il);
 
@@ -1557,12 +1749,28 @@ ggml_tensor * llama_kv_cache::get_k(ggml_context * ctx, int32_t il, uint32_t n_k
 
     const uint32_t ns = sinfo.s1 - sinfo.s0 + 1;
 
-    return ggml_view_4d(ctx, k,
+    ggml_tensor * view = ggml_view_4d(ctx, k,
             head_k_eff, hparams.n_head_kv(il), n_kv, ns,
             ggml_row_size(k->type, head_k_eff),
             ggml_row_size(k->type, n_embd_k_gqa),
             ggml_row_size(k->type, n_embd_k_gqa*kv_size),
             ggml_row_size(k->type, n_embd_k_gqa*kv_size)*sinfo.s0);
+
+    if (!tail_on() || ns != 1) {
+        return view;
+    }
+
+    // consume the ring-store node cpy_k built for THIS graph; without it the store would be
+    // unreachable from any expanded output and the ring would silently go stale.
+    if (tail_ctx != ctx || tail_pend_k.empty() || tail_pend_k[ikv] == nullptr) {
+        tail_break("get_k reached without a matching cpy_k ring store");
+        return view;
+    }
+
+    ggml_tensor * ring = tail_pend_k[ikv];
+    tail_pend_k[ikv] = nullptr;
+
+    return tail_compose(ctx, view, ring, n_kv, n_embd_k_gqa, head_k_eff, il);
 }
 
 ggml_tensor * llama_kv_cache::get_v(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const {
@@ -1586,12 +1794,26 @@ ggml_tensor * llama_kv_cache::get_v(ggml_context * ctx, int32_t il, uint32_t n_k
 
     if (!v_trans) {
         // note: v->nb[1] <= v->nb[2]
-        return ggml_view_4d(ctx, v,
+        ggml_tensor * view = ggml_view_4d(ctx, v,
                 head_v_eff, hparams.n_head_kv(il), n_kv, ns,
                 ggml_row_size(v->type, head_v_eff),                      // v->nb[1]
                 ggml_row_size(v->type, n_embd_v_gqa),                    // v->nb[2]
                 ggml_row_size(v->type, n_embd_v_gqa*kv_size),            // v->nb[3]
                 ggml_row_size(v->type, n_embd_v_gqa*kv_size)*sinfo.s0);
+
+        if (!tail_on() || ns != 1) {
+            return view;
+        }
+
+        if (tail_ctx != ctx || tail_pend_v.empty() || tail_pend_v[ikv] == nullptr) {
+            tail_break("get_v reached without a matching cpy_v ring store");
+            return view;
+        }
+
+        ggml_tensor * ring = tail_pend_v[ikv];
+        tail_pend_v[ikv] = nullptr;
+
+        return tail_compose(ctx, view, ring, n_kv, n_embd_v_gqa, head_v_eff, il);
     }
 
     // note: v->nb[1] > v->nb[2]
@@ -1660,8 +1882,32 @@ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggm
         k = ggml_reshape_2d(ctx, k, n_embd_gqa, kv_size*n_stream);
     }
 
+
+    // lane-188 precision tail: write the SAME k_cur into the exact ring as well, at
+    // (slot % tail_n). The node is stashed rather than returned because every call site
+    // expands only this function's return value; get_k consumes it and hangs it off the
+    // attention output, which is also the honest data dependency - the read genuinely needs
+    // this write. k_idxs carries the ring slots in row 1 (see build_input_k_idxs).
+    ggml_tensor * k_idxs_body = k_idxs;
+
+    if (tail_on() && layers[ikv].k_tail != nullptr) {
+        if (tail_ctx != ctx) {
+            tail_ctx = ctx;
+            tail_pend_k.assign(layers.size(), nullptr);
+            tail_pend_v.assign(layers.size(), nullptr);
+        }
+
+        const int64_t n_idx = k_idxs->ne[0];
+
+        k_idxs_body = ggml_view_1d(ctx, k_idxs, n_idx, 0);
+
+        ggml_tensor * ring_idxs = ggml_view_1d(ctx, k_idxs, n_idx, n_idx*k_idxs->nb[0]);
+
+        tail_pend_k[ikv] = ggml_set_rows(ctx, layers[ikv].k_tail, k_cur, ring_idxs);
+    }
+
     // store the current K values into the cache
-    ggml_tensor * result = ggml_set_rows(ctx, k, k_cur, k_idxs);
+    ggml_tensor * result = ggml_set_rows(ctx, k, k_cur, k_idxs_body);
 
     // For turbo: store WHT group size in op_params so the CUDA kernel knows.
     // With zero-padding, all groups are always full 128-element WHT groups.
@@ -1714,7 +1960,31 @@ ggml_tensor * llama_kv_cache::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggm
             v = ggml_reshape_2d(ctx, v, n_embd_gqa, kv_size*n_stream);
         }
 
-        ggml_tensor * result = ggml_set_rows(ctx, v, v_cur, v_idxs);
+        
+    // lane-188 precision tail: write the SAME v_cur into the exact ring as well, at
+    // (slot % tail_n). The node is stashed rather than returned because every call site
+    // expands only this function's return value; get_v consumes it and hangs it off the
+    // attention output, which is also the honest data dependency - the read genuinely needs
+    // this write. v_idxs carries the ring slots in row 1 (see build_input_v_idxs).
+    ggml_tensor * v_idxs_body = v_idxs;
+
+    if (tail_on() && layers[ikv].v_tail != nullptr) {
+        if (tail_ctx != ctx) {
+            tail_ctx = ctx;
+            tail_pend_k.assign(layers.size(), nullptr);
+            tail_pend_v.assign(layers.size(), nullptr);
+        }
+
+        const int64_t n_idx = v_idxs->ne[0];
+
+        v_idxs_body = ggml_view_1d(ctx, v_idxs, n_idx, 0);
+
+        ggml_tensor * ring_idxs = ggml_view_1d(ctx, v_idxs, n_idx, n_idx*v_idxs->nb[0]);
+
+        tail_pend_v[ikv] = ggml_set_rows(ctx, layers[ikv].v_tail, v_cur, ring_idxs);
+    }
+
+    ggml_tensor * result = ggml_set_rows(ctx, v, v_cur, v_idxs_body);
         // With zero-padding, all groups are always full 128-element WHT groups
         if (v_is_turbo) {
             int32_t wht_group = 128;  // always 128 with padding
@@ -1971,7 +2241,13 @@ bool llama_kv_cache::load_kv_mean_center(
 ggml_tensor * llama_kv_cache::build_input_k_idxs(ggml_context * ctx, const llama_ubatch & ubatch) const {
     const uint32_t n_tokens = ubatch.n_tokens;
 
-    ggml_tensor * k_idxs = ggml_new_tensor_1d(ctx, GGML_TYPE_I64, n_tokens);
+    // lane-188: with the tail on the idxs tensor carries TWO rows - row 0 is the absolute
+    // slot (what the body store has always used), row 1 is (slot % tail_n) for the ring
+    // store. ne[0] stays n_tokens on purpose: llm_graph_result::can_reuse compares only
+    // ne[0], so the extra row costs no graph rebuilds and needs no llama-graph.cpp change.
+    ggml_tensor * k_idxs = tail_on()
+        ? ggml_new_tensor_2d(ctx, GGML_TYPE_I64, n_tokens, 2)
+        : ggml_new_tensor_1d(ctx, GGML_TYPE_I64, n_tokens);
 
     ggml_set_input(k_idxs);
 
@@ -1984,7 +2260,9 @@ ggml_tensor * llama_kv_cache::build_input_v_idxs(ggml_context * ctx, const llama
     ggml_tensor * v_idxs;
 
     if (!v_trans) {
-        v_idxs = ggml_new_tensor_1d(ctx, GGML_TYPE_I64, n_tokens);
+        v_idxs = tail_on()
+            ? ggml_new_tensor_2d(ctx, GGML_TYPE_I64, n_tokens, 2)
+            : ggml_new_tensor_1d(ctx, GGML_TYPE_I64, n_tokens);
     } else {
         v_idxs = ggml_new_tensor_1d(ctx, GGML_TYPE_I64, n_tokens*hparams.n_embd_v_gqa_max());
     }
@@ -2058,6 +2336,37 @@ void llama_kv_cache::set_input_k_idxs(ggml_tensor * dst, const llama_ubatch * ub
             data[s*sinfo.size() + i] = offs + sinfo.idxs[s][i];
         }
     }
+
+    if (tail_on()) {
+        // row 1: the ring slot for each cell. Also the ONE place the positional invariant is
+        // checked - the ring is only correct while cells are appended in increasing order.
+        int64_t * ring = data + n_tokens;
+
+        for (uint32_t i = 0; i < n_tokens; ++i) {
+            const int64_t idx = data[i];
+
+            if (idx != tail_next) {
+                // a rewind, a hole, or a defragmented cache. tail_next == idx would be the
+                // sequential case; anything else means some ring cell now holds a value that
+                // does not belong to the slot the read path will attribute it to.
+                if (idx == 0 && tail_next != 0) {
+                    // a full restart from slot 0 restores the invariant rather than breaking it
+                    tail_broken = 0;
+                } else {
+                    tail_break("non-sequential KV slot write");
+                }
+            }
+
+            tail_next = idx + 1;
+            ring[i]   = idx % (int64_t) tail_n;
+
+            if (llama_kv_tail_broken_env()) {
+                // negative control: store each cell half a ring away from where the read path
+                // will look for it. Identical graph, identical cost, wrong rows.
+                ring[i] = (ring[i] + tail_n/2) % (int64_t) tail_n;
+            }
+        }
+    }
 }
 
 void llama_kv_cache::set_input_v_idxs(ggml_tensor * dst, const llama_ubatch * ubatch, const slot_info & sinfo) const {
@@ -2073,6 +2382,18 @@ void llama_kv_cache::set_input_v_idxs(ggml_tensor * dst, const llama_ubatch * ub
 
             for (uint32_t i = 0; i < sinfo.size(); ++i) {
                 data[s*sinfo.size() + i] = offs + sinfo.idxs[s][i];
+            }
+        }
+
+        if (tail_on()) {
+            // note: the invariant is policed in set_input_k_idxs, which runs for the same
+            // ubatch; here we only mirror the ring slots so cpy_v can use them.
+            int64_t * ring = data + n_tokens;
+            for (uint32_t i = 0; i < n_tokens; ++i) {
+                ring[i] = data[i] % (int64_t) tail_n;
+                if (llama_kv_tail_broken_env()) {
+                    ring[i] = (ring[i] + tail_n/2) % (int64_t) tail_n;
+                }
             }
         }
     } else {
@@ -2697,6 +3018,8 @@ void llama_kv_cache::state_write(llama_io_write_i & io, llama_seq_id seq_id, lla
 }
 
 void llama_kv_cache::state_read(llama_io_read_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) {
+    tail_break("state_read");
+
     state_read_sinfo(io, seq_id, flags, nullptr, nullptr);
 }
 
