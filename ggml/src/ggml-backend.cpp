@@ -1018,8 +1018,33 @@ struct ggml_backend_sched {
 #define tensor_id_copy(id, backend_id, copy_id) sched->hv_tensor_copies[(id) * sched->n_backends * sched->n_copies + (backend_id) * sched->n_copies + (copy_id)]
 #define tensor_copy(tensor, backend_id, copy_id) tensor_id_copy(hash_id(tensor), backend_id, copy_id)
 
+// ARIFI lane-178: the INITIAL split-inputs capacity is the only thing that decides where pass 5
+// cuts a split for input-count reasons (:1507, `split->n_inputs >= split->inputs_capacity`) - a cut
+// that happens with NO backend change, so it costs an extra graph_compute_async submit (:2073) plus
+// the input syncs before it (:2060) on a boundary nothing computational asked for.
+//
+// Measured on this rig (lane-178 SPLITDIAG, Qwen3.5-4B, GGML_SCHED_DEBUG=1): ring OFF = 2 splits
+// (CPU 0 inputs, Vulkan0 8 inputs); ring ON at the shipped K=4 = 3 splits (CPU 0, Vulkan0 **30**,
+// Vulkan0 26). 30 is GGML_SCHED_MAX_SPLIT_INPUTS EXACTLY, and both Vulkan splits are the SAME
+// backend - so the ring's extra split is the input CAP, not a CPU fallback.
+//
+// Runtime-selectable so ONE binary serves both arms of the discriminator (F-145: no rebuild between
+// arms, and this moves the split count WITHOUT moving the ring - the arm lane-177 never had).
+// Default is GGML_SCHED_MAX_SPLIT_INPUTS, so the shipped path is behaviour-identical unless the env
+// var is set.
+static int ggml_backend_sched_split_inputs_cap0(void) {
+    static int cap = -1;
+    if (cap < 0) {
+        const char * s = getenv("GGML_SCHED_SPLIT_INPUTS_CAP");
+        const int v = s ? atoi(s) : 0;
+        // a cap below the default could only ADD splits and is almost certainly a typo; ignore it
+        cap = v > GGML_SCHED_MAX_SPLIT_INPUTS ? v : GGML_SCHED_MAX_SPLIT_INPUTS;
+    }
+    return cap;
+}
+
 static void ggml_backend_sched_split_inputs_grow(struct ggml_backend_sched_split * split) {
-    int new_cap = GGML_SCHED_MAX_SPLIT_INPUTS;
+    int new_cap = ggml_backend_sched_split_inputs_cap0();
     if (split->inputs_capacity > 0) {
         new_cap = 2*split->inputs_capacity;
         GGML_LOG_WARN("%s: increasing split inputs capacity from %d to %d\n", __func__, split->inputs_capacity, new_cap);
