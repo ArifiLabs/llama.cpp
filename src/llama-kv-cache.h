@@ -201,6 +201,30 @@ public:
     ggml_tensor * cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggml_tensor * v_idxs, int32_t il, const slot_info & sinfo) const;
 
     //
+    // lane-188: SHIPPING KV PRECISION TAIL (store-side)
+    //
+    // The cache BODY stays quantized (-ctk/-ctv q4_0) - that is where the memory is bought.
+    // Beside it each layer keeps an EXACT F16 ring of `tail_n` cells, written at STORE time
+    // from the same k_cur/v_cur the body store consumes, indexed by (slot % tail_n).
+    // At READ time the body is dequantized and the ring is rotated back into slot order and
+    // ggml_concat'd onto it, so ggml_flash_attn_ext still sees ONE tensor and runs ONE softmax.
+    //
+    // Opt-in: LLAMA_KV_TAIL=<cells>. Unset/0 => tail_n == 0 => every function below is a
+    // no-op that adds ZERO graph nodes and allocates ZERO bytes (the shipped path).
+    //
+    // CEILING (ponytail, and it is a real one): the ring is POSITIONAL. It is correct only
+    // while cells are appended monotonically. Any non-monotonic write, seq_rm/cp/keep/add/div
+    // or defrag breaks the invariant; tail_break() records that permanently and loudly, and a
+    // harness must treat a broken run as FAIL rather than read its numbers. Upgrade path is a
+    // per-cell source selector (BeeLlama does this per QUERY), not a wider ring.
+    bool          tail_on()  const { return tail_n > 0; }
+    ggml_tensor * tail_compose(ggml_context * ctx, ggml_tensor * body, ggml_tensor * ring,
+                               int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il) const;
+    void          tail_break(const char * why) const;
+    // ring_content_probe: 0 = never broken, >0 = number of invalidating events seen.
+    uint64_t      tail_broken_count() const { return tail_broken; }
+
+    //
     // K-cache mean-centering (see docs/kv-mean-center.md)
     //
 
@@ -285,6 +309,11 @@ private:
         ggml_tensor * v;
         std::vector<ggml_tensor *> k_stream;
         std::vector<ggml_tensor *> v_stream;
+
+        // lane-188 shipping precision tail: a small EXACT ring beside the quantized body.
+        // nullptr unless the tail is enabled. shape [n_embd_gqa_eff, tail_n], F16.
+        ggml_tensor * k_tail = nullptr;
+        ggml_tensor * v_tail = nullptr;
     };
 
     bool v_trans = true;  // the value tensor is transposed
@@ -347,6 +376,18 @@ private:
 
     // model layer id -> KV cache layer id
     std::unordered_map<int32_t, int32_t> map_layer_ids;
+
+    // lane-188 precision tail state. tail_n == 0 means the feature is off everywhere.
+    uint32_t tail_n = 0;
+    // the ring-store nodes built by cpy_k/cpy_v for the CURRENT graph, consumed by get_k/get_v
+    // so that the store is reachable from the attention output and gets expanded into the graph.
+    // tail_ctx pins them to one ggml_context so a stale pointer from a previous build is never used.
+    mutable ggml_context *              tail_ctx = nullptr;
+    mutable std::vector<ggml_tensor *>  tail_pend_k;
+    mutable std::vector<ggml_tensor *>  tail_pend_v;
+    // next slot index expected by the monotonic-append invariant, and the breakage counter
+    mutable int64_t  tail_next  = 0;
+    mutable uint64_t tail_broken = 0;
 
 #ifdef GGML_ARIFI_KV_MEANCENTER
     // K-cache mean-centering bias (see load_kv_mean_center()):
