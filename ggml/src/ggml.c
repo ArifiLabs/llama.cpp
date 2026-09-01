@@ -5775,6 +5775,56 @@ void ggml_flash_attn_ext_add_sinks(
     a->src[4] = sinks;
 }
 
+// ARIFI lane-195: extra K/V segments, read in place at their own dtype (see ggml.h).
+//
+// src[5..8] = { k0, v0, k1, v1 }. op_params[4] = the segment count, so a backend can decline the
+// node in supports_op without walking the src array.
+void ggml_flash_attn_ext_add_segments(
+        struct ggml_tensor * a,
+        struct ggml_tensor * k0,
+        struct ggml_tensor * v0,
+        struct ggml_tensor * k1,
+        struct ggml_tensor * v1) {
+    GGML_ASSERT(a->op == GGML_OP_FLASH_ATTN_EXT);
+    GGML_ASSERT(a->src[5] == NULL && "segments already attached");
+    // a second segment without a first would leave a hole in the KV column order
+    GGML_ASSERT((k0 && v0) || (!k1 && !v1));
+
+    int n_seg = 0;
+
+    if (k0 && v0) {
+        // same head dims and same batch as the primary K/V - only the row count may differ
+        GGML_ASSERT(k0->ne[0] == a->src[1]->ne[0]);
+        GGML_ASSERT(v0->ne[0] == a->src[2]->ne[0]);
+        GGML_ASSERT(k0->ne[1] == v0->ne[1]);
+        GGML_ASSERT(k0->ne[2] == a->src[1]->ne[2] && k0->ne[3] == a->src[1]->ne[3]);
+        GGML_ASSERT(v0->ne[2] == a->src[2]->ne[2] && v0->ne[3] == a->src[2]->ne[3]);
+        a->src[5] = k0;
+        a->src[6] = v0;
+        n_seg = 1;
+    }
+
+    if (k1 && v1) {
+        GGML_ASSERT(k1->ne[0] == a->src[1]->ne[0]);
+        GGML_ASSERT(v1->ne[0] == a->src[2]->ne[0]);
+        GGML_ASSERT(k1->ne[1] == v1->ne[1]);
+        GGML_ASSERT(k1->ne[2] == a->src[1]->ne[2] && k1->ne[3] == a->src[1]->ne[3]);
+        GGML_ASSERT(v1->ne[2] == a->src[2]->ne[2] && v1->ne[3] == a->src[2]->ne[3]);
+        a->src[7] = k1;
+        a->src[8] = v1;
+        n_seg = 2;
+    }
+
+    ggml_set_op_params_i32(a, 4, n_seg);
+}
+
+int ggml_flash_attn_ext_n_segments(const struct ggml_tensor * a) {
+    if (a->op != GGML_OP_FLASH_ATTN_EXT) {
+        return 0;
+    }
+    return ggml_get_op_params_i32(a, 4);
+}
+
 // ggml_flash_attn_back
 
 struct ggml_tensor * ggml_flash_attn_back(

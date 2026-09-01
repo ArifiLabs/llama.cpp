@@ -2580,6 +2580,27 @@ extern "C" {
             struct ggml_tensor * a,
             struct ggml_tensor * sinks);
 
+    // ARIFI lane-195 (per-query source selection): attach up to 2 EXTRA K/V segments that are read
+    // IN PLACE, each at its own dtype, and folded into the SAME online softmax as src[1]/src[2].
+    //
+    // This exists so a KV cache whose newest cells live in an exact F16 ring beside a quantized body
+    // never has to MATERIALISE the window: the concat that forced one dtype on both is what cost the
+    // scratch (596.58 MiB @131K, lane-194 3.4) and the body-leg precision (F16 cannot represent
+    // d*(q-8) for q4_0 - the loss lane-194's keyed row measured at -0.5/-0.6 pp same-top).
+    //
+    // The KV columns are ordered [ src[1] | k0 | k1 ], and each segment's mask columns start where
+    // the previous segment's ended - so the mask base is DERIVED from ne[1] and is never a parameter
+    // that can disagree with the tensors.
+    GGML_API void ggml_flash_attn_ext_add_segments(
+            struct ggml_tensor * a,
+            struct ggml_tensor * k0,
+            struct ggml_tensor * v0,
+            struct ggml_tensor * k1,
+            struct ggml_tensor * v1);
+
+    // 0 when the node is an ordinary single-source flash attention.
+    GGML_API int ggml_flash_attn_ext_n_segments(const struct ggml_tensor * a);
+
     // TODO: needs to be adapted to ggml_flash_attn_ext
     GGML_API struct ggml_tensor * ggml_flash_attn_back(
            struct ggml_context * ctx,

@@ -360,6 +360,10 @@ if (NOT GGML_BACKEND_DL)
     llama_build_and_test(test-quantize-fns.cpp)
     llama_build_and_test(test-quantize-perf.cpp)
     llama_build_and_test(test-rope.cpp)
+    # ArifiLabs lane-195: per-query source selection - flash attention over several K/V segments,
+    # each at its own dtype, in ONE online softmax. Split-equivalence + negative control + a mixed
+    # q4_0/F16 leg against an independent reference. CPU only, no GPU time.
+    llama_build_and_test(test-fa-segments.cpp)
     llama_build_and_test(test-col2im-1d.cpp)
 endif()
 
