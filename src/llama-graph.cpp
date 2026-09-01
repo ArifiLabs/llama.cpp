@@ -582,6 +582,12 @@ bool llm_graph_input_attn_kv::can_reuse(const llm_graph_params & params) {
 
     res &= can_reuse_kq_mask(self_kq_mask, mctx, params.ubatch, params.cparams);
 
+    // lane-192: the precision tail bakes its split into VIEW OFFSETS, and after the rewind fix
+    // that split is a function of the high-water mark as well as n_kv - two ubatches can share
+    // an n_kv and disagree about how much ring is valid. F-146: a per-ubatch quantity that moves
+    // a baked offset joins can_reuse in the same commit. It is 0 when the tail is off.
+    res &= kv_tail_valid == mctx->tail_valid();
+
     return res;
 }
 
@@ -3051,6 +3057,10 @@ static std::unique_ptr<llm_graph_input_attn_kv> build_attn_inp_kv_impl(
     inp->self_k_rot = mctx_cur->build_input_k_rot(ctx0);
     inp->self_v_rot = mctx_cur->build_input_v_rot(ctx0);
 
+    // lane-192: record the ring length this graph is being BUILT for, so can_reuse can refuse a
+    // graph whose baked tail split no longer matches the cache's state.
+    inp->kv_tail_valid = mctx_cur->tail_valid();
+
     return inp;
 }
 
@@ -3109,6 +3119,17 @@ ggml_tensor * llm_graph_context::build_attn(
 
         ggml_build_forward_expand(gf, mctx_cur->cpy_k(ctx0, k_cur, k_idxs, il));
         ggml_build_forward_expand(gf, mctx_cur->cpy_v(ctx0, v_cur, v_idxs, il));
+
+        // lane-192 precision tail: expand the ring store HERE rather than relying on get_k/get_v
+        // to consume it. After the rewind fix the read path may legitimately compose without the
+        // ring, and a store reachable only through the read would then be dropped for exactly
+        // the ubatches that are refilling it - the ring would never heal. nullptr when off.
+        if (ggml_tensor * k_ring = mctx_cur->tail_pending_k(il)) {
+            ggml_build_forward_expand(gf, k_ring);
+        }
+        if (ggml_tensor * v_ring = mctx_cur->tail_pending_v(il)) {
+            ggml_build_forward_expand(gf, v_ring);
+        }
     }
 
     ggml_tensor * kq_mask = inp->get_kq_mask();

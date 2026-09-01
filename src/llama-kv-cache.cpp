@@ -726,10 +726,12 @@ llama_kv_cache::llama_kv_cache(
 }
 
 void llama_kv_cache::clear(bool data) {
-    // lane-188: a full clear restarts the sequential fill, which is exactly the regime
-    // the ring needs - so it RESETS the invariant instead of breaking it.
-    tail_next   = 0;
-    tail_broken = 0;
+    // lane-188: a full clear restarts the fill from slot 0, so nothing that was ever written
+    // can still be read - the high-water mark resets with it.
+    tail_hi       = 0;
+    tail_broken   = 0;
+    tail_degraded = 0;
+    tail_bypass   = 0;
 
     for (uint32_t s = 0; s < n_stream; ++s) {
         v_cells[s].reset();
@@ -825,6 +827,20 @@ bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
             if (new_head != cells.size() && new_head < head) {
                 head = new_head;
             }
+        }
+    }
+
+    // lane-192: if nothing is left, nothing that was ever written can be read again, so the
+    // high-water mark resets. Without this a NEW conversation on a recycled slot would compose
+    // from the body until n_kv climbed back past the old tail_hi - the feature would be off
+    // for the first few thousand tokens of every chat.
+    if (tail_on()) {
+        bool empty = true;
+        for (uint32_t s = 0; s < n_stream && empty; ++s) {
+            empty = v_cells[s].used_max_p1() == 0;
+        }
+        if (empty) {
+            tail_hi = 0;
         }
     }
 
@@ -1684,12 +1700,53 @@ void llama_kv_cache::tail_break(const char * why) const {
     }
 
     if (tail_broken == 0) {
-        LLAMA_LOG_ERROR("%s: KV PRECISION TAIL INVARIANT BROKEN (%s). The ring is positional and is "
-                        "now unreliable for this session. Treat any measurement from this run as FAIL.\n",
+        // lane-192: this is no longer a wrong-output condition. tail_valid() returns 0 once
+        // tail_broken > 0, so the read path composes entirely from the quantized body - the
+        // run stays CORRECT and merely loses the feature. It is still an ERROR line because a
+        // fidelity measurement taken after it is measuring q4_0, not the tail.
+        LLAMA_LOG_ERROR("%s: KV PRECISION TAIL DISABLED (%s). A cell moved without a write, so the "
+                        "positional ring cannot be repaired; composing from the quantized body for "
+                        "the rest of this session. Fidelity numbers from this run are q4_0's.\n",
                         __func__, why);
     }
 
     tail_broken++;
+}
+
+// lane-192 - HOW MUCH OF THE RING IS STILL TRUE.
+//
+// Ring entry i holds whichever slot s (s % tail_n == i) was written to it LAST. A slot s is
+// therefore still faithfully represented iff no aliasing slot s + tail_n was written after it,
+// i.e. iff s + tail_n >= tail_hi. The read window is the newest cells of [0, n_kv), so the
+// oldest trustworthy slot is lo = tail_hi - tail_n and the trustworthy run is [lo, n_kv).
+//
+// Steady append: tail_hi == n_kv, lo == n_kv - tail_n, the full ring is valid - identical to
+// lane-188. After a prefix-cache rewind tail_hi runs AHEAD of n_kv for a few ubatches and the
+// exact tail is that much shorter, then it heals by itself. Nothing latches.
+int64_t llama_kv_cache::tail_valid(int64_t n_kv) const {
+    if (!tail_on() || tail_broken > 0) {
+        return 0;
+    }
+
+    const int64_t lo = std::max<int64_t>(0, tail_hi - (int64_t) tail_n);
+
+    return std::max<int64_t>(0, std::min<int64_t>(n_kv - lo, (int64_t) tail_n));
+}
+
+ggml_tensor * llama_kv_cache::tail_pending_k(int32_t il) const {
+    if (!tail_on()) {
+        return nullptr;
+    }
+    const int32_t ikv = map_layer_ids.at(il);
+    return ikv < (int32_t) tail_pend_k.size() ? tail_pend_k[ikv] : nullptr;
+}
+
+ggml_tensor * llama_kv_cache::tail_pending_v(int32_t il) const {
+    if (!tail_on()) {
+        return nullptr;
+    }
+    const int32_t ikv = map_layer_ids.at(il);
+    return ikv < (int32_t) tail_pend_v.size() ? tail_pend_v[ikv] : nullptr;
 }
 
 // Join the dequantized quantized body with the exact ring.
@@ -1709,9 +1766,46 @@ ggml_tensor * llama_kv_cache::tail_compose(
         return body; // padded/turbo layout: the ring's row split would not line up
     }
 
-    const int64_t n_tail = std::min<int64_t>(tail_n, n_kv);
+    // lane-192: the exact segment is the part of the ring a rewind has NOT aliased over.
+    // In steady append this is min(tail_n, n_kv) - lane-188's value, unchanged.
+    const int64_t n_full = std::min<int64_t>(tail_n, n_kv);
+    const int64_t n_tail = std::min<int64_t>(tail_valid(n_kv), n_full);
     const int64_t split  = n_kv - n_tail;
-    const int64_t rot    = split % (int64_t) tail_n;
+    const int64_t rot    = tail_n > 0 ? split % (int64_t) tail_n : 0;
+
+    if (n_tail < n_full) {
+        // FIDELITY RECEIPT, not a silent degradation: these ubatches read q4_0 where the
+        // feature promises F16, and a KLD/perf number taken over them is diluted by exactly
+        // this much. Counted per graph BUILD (a reused graph keeps the split it was built for,
+        // which is why can_reuse compares tail_valid()).
+        if (n_tail <= 0) {
+            if (tail_bypass == 0) {
+                LLAMA_LOG_WARN("%s: KV PRECISION TAIL BYPASSED (n_kv %lld, high-water %lld, ring %u): "
+                               "a rewind discarded more than the ring holds, so this graph reads the "
+                               "quantized body only. It heals as n_kv catches up.\n",
+                               __func__, (long long) n_kv, (long long) tail_hi, tail_n);
+            }
+            tail_bypass++;
+        } else {
+            if (tail_degraded == 0) {
+                LLAMA_LOG_INFO("%s: KV precision tail SHORTENED to %lld of %lld cells after a rewind "
+                               "(n_kv %lld, high-water %lld). Expected on a prefix-cache reuse; it "
+                               "heals as n_kv catches up.\n",
+                               __func__, (long long) n_tail, (long long) n_full,
+                               (long long) n_kv, (long long) tail_hi);
+            }
+            tail_degraded++;
+        }
+    }
+
+    if (n_tail <= 0) {
+        // no trustworthy ring cell: the whole window comes from the body. The ring STORE is
+        // still in the graph - build_attn expands it directly - so the ring keeps filling and
+        // heals as soon as n_kv catches up with tail_hi.
+        ggml_tensor * seg = ggml_view_4d(ctx, body, body->ne[0], body->ne[1], n_kv, 1,
+                body->nb[1], body->nb[2], body->nb[3], 0);
+        return ggml_cast(ctx, seg, GGML_TYPE_F32);
+    }
 
     // body segment: the older cells, dequantized. q4_0 -> f32 is already wired end to end
     // (cpy.quant_to_f32 carries Q4_0, and fa_kv_ok admits F32), so no new op and no fifth
@@ -2381,19 +2475,15 @@ void llama_kv_cache::set_input_k_idxs(ggml_tensor * dst, const llama_ubatch * ub
         for (uint32_t i = 0; i < n_tokens; ++i) {
             const int64_t idx = data[i];
 
-            if (idx != tail_next) {
-                // a rewind, a hole, or a defragmented cache. tail_next == idx would be the
-                // sequential case; anything else means some ring cell now holds a value that
-                // does not belong to the slot the read path will attribute it to.
-                if (idx == 0 && tail_next != 0) {
-                    // a full restart from slot 0 restores the invariant rather than breaking it
-                    tail_broken = 0;
-                } else {
-                    tail_break("non-sequential KV slot write");
-                }
+            // lane-192: a rewind is NOT a break. The write itself is always correct for its
+            // own slot; what a rewind can spoil is an OLDER ring entry that a discarded write
+            // aliased onto. That is a function of the high-water mark alone, and the read path
+            // prices it in tail_valid(). lane-188 broke the session here instead, which is why
+            // the feature could not survive llama-server's prefix cache (lane-191 §1.2).
+            if (idx + 1 > tail_hi) {
+                tail_hi = idx + 1;
             }
 
-            tail_next = idx + 1;
             ring[i]   = idx % (int64_t) tail_n;
 
             if (llama_kv_tail_broken_env()) {
@@ -3729,6 +3819,18 @@ ggml_tensor * llama_kv_cache_context::cpy_k(ggml_context * ctx, ggml_tensor * k_
 
 ggml_tensor * llama_kv_cache_context::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggml_tensor * v_idxs, int32_t il) const {
     return kv->cpy_v(ctx, v_cur, v_idxs, il, sinfos[i_cur]);
+}
+
+ggml_tensor * llama_kv_cache_context::tail_pending_k(int32_t il) const {
+    return kv->tail_pending_k(il);
+}
+
+ggml_tensor * llama_kv_cache_context::tail_pending_v(int32_t il) const {
+    return kv->tail_pending_v(il);
+}
+
+int64_t llama_kv_cache_context::tail_valid() const {
+    return kv->tail_valid(n_kv);
 }
 
 ggml_tensor * llama_kv_cache_context::build_input_k_idxs(ggml_context * ctx, const llama_ubatch & ubatch) const {
