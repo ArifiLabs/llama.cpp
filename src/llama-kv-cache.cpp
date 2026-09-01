@@ -525,8 +525,19 @@ llama_kv_cache::llama_kv_cache(
                 LLAMA_LOG_WARN("%s: KV precision tail OFF - %s\n", __func__, refuse);
             } else if (want > 0) {
                 tail_n = want;
-                LLAMA_LOG_INFO("%s: KV precision tail ON - %u exact F16 cells per layer beside a %s/%s body\n",
-                        __func__, tail_n, ggml_type_name(layer_type_k), ggml_type_name(layer_type_v));
+                // lane-194: NAME THE COMPOSE TYPE. Without this there is no way to tell from a log
+                // which compose actually ran, and the F16 request silently falls back to F32 on a
+                // non-q4_0 body (llama_kv_tail_f16_compose / tail_compose's ct). A fidelity row taken
+                // on an unnoticed fallback would reproduce the F32 numbers exactly and read as
+                // "F16 is lossless" - a vacuous green carrying a PLAUSIBLE number, which is worse
+                // than a skipped test. Any F16 claim must quote this line.
+                const bool f16_req = llama_kv_tail_f16_compose();
+                const bool f16_eff = f16_req && layer_type_k == GGML_TYPE_Q4_0 && layer_type_v == GGML_TYPE_Q4_0;
+                LLAMA_LOG_INFO("%s: KV precision tail ON - %u exact F16 cells per layer beside a %s/%s body; "
+                        "compose=%s%s\n",
+                        __func__, tail_n, ggml_type_name(layer_type_k), ggml_type_name(layer_type_v),
+                        f16_eff ? "F16" : "F32",
+                        (f16_req && !f16_eff) ? " (F16 REQUESTED BUT REFUSED: body is not q4_0/q4_0)" : "");
             }
         }
 
