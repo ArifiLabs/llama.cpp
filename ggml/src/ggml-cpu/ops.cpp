@@ -531,6 +531,20 @@ static void ggml_compute_forward_dup_from_q(
         const int64_t i10 = i - i13*ne10*ne11*ne12 - i12*ne10*ne11 - i11*ne10;
         const int64_t dst_offset = i10*nb10 + i11*nb11 + i12*nb12 + i13*nb13;
 
+        // lane-194: F16 destinations. to_float writes float, so one block is dequantized into
+        // a stack buffer and narrowed. Only reachable for dst F16 - the F32 path below is
+        // byte-identical to before and still writes straight through with no copy.
+        if (dst->type == GGML_TYPE_F16) {
+            float tmp[256]; // >= max ggml block size; asserted rather than assumed
+            GGML_ASSERT(qk <= sizeof(tmp)/sizeof(tmp[0]));
+            dequantize_row_q((const void *) ((char *) src0->data + x_offset), tmp, qk);
+            ggml_fp16_t * dst_ptr = (ggml_fp16_t *) ((char *) dst->data + dst_offset);
+            for (size_t j = 0; j < qk; ++j) {
+                dst_ptr[j] = GGML_CPU_FP32_TO_FP16(tmp[j]);
+            }
+            continue;
+        }
+
         dequantize_row_q(
                 (const void *) ((char *) src0->data + x_offset),
                      (float *) ((char *)  dst->data + dst_offset), qk);
@@ -578,7 +592,11 @@ void ggml_compute_forward_dup(
             } break;
         default:
             {
-                if (ggml_is_quantized(src0->type) && dst->type == GGML_TYPE_F32) {
+                // lane-194: F16 added beside F32. Without it a quant->F16 copy reached the
+                // GGML_ABORT below, which is what the new CPY q4_0->F16 cases hit: the Vulkan
+                // shader was fine, the CPU REFERENCE the test compares against did not exist.
+                if (ggml_is_quantized(src0->type) &&
+                    (dst->type == GGML_TYPE_F32 || dst->type == GGML_TYPE_F16)) {
                     ggml_compute_forward_dup_from_q(params, dst);
                     break;
                 }
