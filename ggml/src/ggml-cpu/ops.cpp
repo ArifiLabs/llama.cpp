@@ -8816,12 +8816,7 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
     GGML_ASSERT(nb1 <= nb2);
     GGML_ASSERT(nb2 <= nb3);
 
-    // broadcast factors
-    const int64_t rk2 = neq2/nek2;
-    const int64_t rk3 = neq3/nek3;
-
-    const int64_t rv2 = neq2/nev2;
-    const int64_t rv3 = neq3/nev3;
+    // broadcast factors are computed PER SEGMENT below (each segment carries its own ne2/ne3)
 
     // parallelize by q rows using ggml_vec_dot_f32
 
@@ -8843,13 +8838,36 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
     const float m0 = powf(2.0f, -(max_bias       ) / n_head_log2);
     const float m1 = powf(2.0f, -(max_bias / 2.0f) / n_head_log2);
 
-    ggml_type         const k_vec_dot_type = ggml_get_type_traits_cpu(k->type)->vec_dot_type;
-    ggml_from_float_t const q_to_vec_dot   = ggml_get_type_traits_cpu(k_vec_dot_type)->from_float;
-    ggml_vec_dot_t    const kq_vec_dot     = ggml_get_type_traits_cpu(k->type)->vec_dot;
-    ggml_to_float_t   const v_to_float     = ggml_get_type_traits(v->type)->to_float;
+    // ARIFI lane-195 (per-query source selection): the KV columns are [ src[1] | src[5] | src[7] ],
+    // each read IN PLACE at its own dtype and folded into the SAME running online softmax below.
+    // This is the CPU reference for the design; nothing is materialised or converted here either.
+    //
+    // Segment 0 is always the primary K/V over [ic_start, ic_end) - so with n_seg == 0 every line
+    // below reduces to the shipped single-source path, and its numbers are unchanged.
+    const int n_seg = ggml_flash_attn_ext_n_segments(dst);
 
-    GGML_ASSERT((                            q_to_vec_dot) && "fattn: unsupported K-type");
-    GGML_ASSERT((v->type == GGML_TYPE_F32 || v_to_float  ) && "fattn: unsupported V-type");
+    struct fa_seg {
+        const ggml_tensor * k;
+        const ggml_tensor * v;
+        int64_t ic0;
+        int64_t ic1;
+        int64_t mask_base;  // absolute mask column of this segment's ic == ic0
+    } segs[3];
+
+    segs[0] = { k, v, ic_start, ic_end, 0 };
+    {
+        int64_t base = nek1;  // the primary K/V owns mask columns [0, nek1)
+        for (int s = 0; s < n_seg; ++s) {
+            const ggml_tensor * ks = dst->src[5 + 2*s];
+            const ggml_tensor * vs = dst->src[6 + 2*s];
+            segs[1 + s] = { ks, vs, 0, ks->ne[1], base };
+            base += ks->ne[1];
+        }
+    }
+
+    // A mixed-dtype window cannot keep an F16 accumulator that flips type between segments, and the
+    // whole point of the design is an fp32 online softmax - so segments force the F32 accumulator.
+    const bool acc_f16 = (n_seg == 0) && (v->type == GGML_TYPE_F16);
 
     int ith = params->ith;
 
@@ -8870,7 +8888,7 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
         ggml_fp16_t * VKQ16 = (ggml_fp16_t *) (VKQ32 + 1*DV); // (temporary) FP16 VKQ accumulator
         ggml_fp16_t * Q_q   = (ggml_fp16_t *) (VKQ32 + 2*DV); // (temporary) buffer for Q converted to quantized/FP16
 
-        if (v->type == GGML_TYPE_F16) {
+        if (acc_f16) {
             memset(VKQ16, 0, DV*sizeof(ggml_fp16_t));
         } else {
             memset(VKQ32, 0, DV*sizeof(float));
@@ -8878,89 +8896,107 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
 
         const ggml_fp16_t * mp = mask ? (ggml_fp16_t *)((char *) mask->data + iq1*mask->nb[1] + (iq2%mask->ne[2])*mask->nb[2] + (iq3%mask->ne[3])*mask->nb[3]) : NULL;
 
-        // k indices
-        const int ik3 = iq3 / rk3;
-        const int ik2 = iq2 / rk2;
-
-        // v indices
-        const int iv3 = iq3 / rv3;
-        const int iv2 = iq2 / rv2;
-
         const float * pq = (const float *) ((char *) q->data + (iq1*nbq1 + iq2*nbq2 + iq3*nbq3));
-        q_to_vec_dot(pq, Q_q, DK);
 
         // online softmax / attention
         // loop over n_kv and n_head_kv
         // ref: https://arxiv.org/pdf/2112.05682.pdf
+        //
+        // ARIFI lane-195: ONE running (S, M, VKQ) across every segment. The segment loop is OUTSIDE
+        // the accumulator, never inside it - that is what makes this a single online softmax over
+        // heterogeneous sources rather than two attentions glued together.
+        for (int seg = 0; seg <= n_seg; ++seg) {
+            const ggml_tensor * ks = segs[seg].k;
+            const ggml_tensor * vs_t = segs[seg].v;
 
-        for (int64_t ic = ic_start; ic < ic_end; ++ic) {
-            const float mv = mp ? slope*GGML_CPU_FP16_TO_FP32(mp[ic]) : 0.0f;
-            if (mv == -INFINITY) {
-                continue;
-            }
+            // per-segment type traits: each source is read at ITS OWN dtype
+            const ggml_type   seg_kvdt = ggml_get_type_traits_cpu(ks->type)->vec_dot_type;
+            ggml_from_float_t seg_q_to = ggml_get_type_traits_cpu(seg_kvdt)->from_float;
+            ggml_vec_dot_t    seg_dot  = ggml_get_type_traits_cpu(ks->type)->vec_dot;
+            ggml_to_float_t   seg_v2f  = ggml_get_type_traits(vs_t->type)->to_float;
 
-            float s; // KQ value
+            GGML_ASSERT((                             seg_q_to) && "fattn: unsupported K-type");
+            GGML_ASSERT((vs_t->type == GGML_TYPE_F32 || seg_v2f) && "fattn: unsupported V-type");
 
-            const char * k_data = (const char *) k->data + ( ic*nbk1 + ik2*nbk2 + ik3*nbk3);
-            kq_vec_dot(DK, &s, 0, k_data, 0, Q_q, 0, 1);
+            // Q must be re-encoded whenever the segment's vec_dot type differs from the last one.
+            // Reconverting unconditionally keeps this a reference, not a fast path.
+            seg_q_to(pq, Q_q, DK);
 
-            s = s*scale; // scale KQ value
+            // k/v indices are per-segment: broadcast factors are computed against THIS segment
+            const int ik3s = iq3 / (int)(neq3/ks->ne[3]);
+            const int ik2s = iq2 / (int)(neq2/ks->ne[2]);
+            const int iv3s = iq3 / (int)(neq3/vs_t->ne[3]);
+            const int iv2s = iq2 / (int)(neq2/vs_t->ne[2]);
 
-            if (logit_softcap != 0.0f) {
-                s = logit_softcap*tanhf(s);
-            }
-
-            s += mv; // apply mask
-
-            const float Mold = M;
-
-            float ms = 1.0f; // upon new higher max val, scale VKQ and KQ sum with this value
-            float vs = 1.0f; // post-softmax KQ value, expf(s - M)
-
-            const char * v_data = ((const char *) v->data + (ic*nbv1 + iv2*nbv2 + iv3*nbv3));
-
-            if (v->type == GGML_TYPE_F16) {
-                if (s > M) {
-                    // s is new maximum, ms < 1.0f, vs == expf(s - s) == 1.0f
-                    M = s;
-                    ms = expf(Mold - M);
-
-                    // V = V*expf(Mold - M)
-                    ggml_vec_scale_f16(DV, VKQ16, ms);
-                } else {
-                    // no new maximum, ms == 1.0f, vs != 1.0f
-                    vs = expf(s - M);
+            for (int64_t ic = segs[seg].ic0; ic < segs[seg].ic1; ++ic) {
+                const float mv = mp ? slope*GGML_CPU_FP16_TO_FP32(mp[segs[seg].mask_base + ic]) : 0.0f;
+                if (mv == -INFINITY) {
+                    continue;
                 }
 
-                // V += v*expf(s - M)
-                ggml_vec_mad_f16(DV, VKQ16, (const ggml_fp16_t *) v_data, vs);
-            } else {
-                if (s > M) {
-                    // s is new maximum, ms < 1.0f, vs == expf(s - s) == 1.0f
-                    M = s;
-                    ms = expf(Mold - M);
+                float s; // KQ value
 
-                    // V = V*expf(Mold - M)
-                    ggml_vec_scale_f32(DV, VKQ32, ms);
-                } else {
-                    // no new maximum, ms == 1.0f, vs != 1.0f
-                    vs = expf(s - M);
+                const char * k_data = (const char *) ks->data + ( ic*ks->nb[1] + ik2s*ks->nb[2] + ik3s*ks->nb[3]);
+                seg_dot(DK, &s, 0, k_data, 0, Q_q, 0, 1);
+
+                s = s*scale; // scale KQ value
+
+                if (logit_softcap != 0.0f) {
+                    s = logit_softcap*tanhf(s);
                 }
 
-                // V += v*expf(s - M)
-                if (v_to_float) {
-                    v_to_float(v_data, V32, DV);
-                    ggml_vec_mad_f32(DV, VKQ32, V32, vs);
+                s += mv; // apply mask
+
+                const float Mold = M;
+
+                float ms = 1.0f; // upon new higher max val, scale VKQ and KQ sum with this value
+                float vs = 1.0f; // post-softmax KQ value, expf(s - M)
+
+                const char * v_data = ((const char *) vs_t->data + (ic*vs_t->nb[1] + iv2s*vs_t->nb[2] + iv3s*vs_t->nb[3]));
+
+                if (acc_f16) {
+                    if (s > M) {
+                        // s is new maximum, ms < 1.0f, vs == expf(s - s) == 1.0f
+                        M = s;
+                        ms = expf(Mold - M);
+
+                        // V = V*expf(Mold - M)
+                        ggml_vec_scale_f16(DV, VKQ16, ms);
+                    } else {
+                        // no new maximum, ms == 1.0f, vs != 1.0f
+                        vs = expf(s - M);
+                    }
+
+                    // V += v*expf(s - M)
+                    ggml_vec_mad_f16(DV, VKQ16, (const ggml_fp16_t *) v_data, vs);
                 } else {
-                    // V is F32
-                    ggml_vec_mad_f32(DV, VKQ32, (const float *) v_data, vs);
+                    if (s > M) {
+                        // s is new maximum, ms < 1.0f, vs == expf(s - s) == 1.0f
+                        M = s;
+                        ms = expf(Mold - M);
+
+                        // V = V*expf(Mold - M)
+                        ggml_vec_scale_f32(DV, VKQ32, ms);
+                    } else {
+                        // no new maximum, ms == 1.0f, vs != 1.0f
+                        vs = expf(s - M);
+                    }
+
+                    // V += v*expf(s - M)
+                    if (seg_v2f) {
+                        seg_v2f(v_data, V32, DV);
+                        ggml_vec_mad_f32(DV, VKQ32, V32, vs);
+                    } else {
+                        // V is F32
+                        ggml_vec_mad_f32(DV, VKQ32, (const float *) v_data, vs);
+                    }
                 }
+
+                S = S*ms + vs; // scale and increment sum with partial sum
             }
-
-            S = S*ms + vs; // scale and increment sum with partial sum
         }
 
-        if (v->type == GGML_TYPE_F16) {
+        if (acc_f16) {
             for (int64_t d = 0; d < DV; ++d) {
                 VKQ32[d] = GGML_CPU_FP16_TO_FP32(VKQ16[d]);
             }
@@ -9415,8 +9451,13 @@ static void ggml_compute_forward_flash_attn_ext_f16(
     // When use_ref is set, force the vec-only reference implementation (no tiling, no KV-chunking)
     const bool use_ref = params->use_ref;
 
+    // ARIFI lane-195: the KV-chunked and tiled paths both assume the whole window lives in src[1]/
+    // src[2]. With extra segments attached they would attend over the body ONLY and silently drop
+    // the ring - a wrong-and-green result. Both are refused here, at the one place that selects them.
+    const bool has_segments = ggml_flash_attn_ext_n_segments(dst) > 0;
+
     const bool kv_is_f32_or_f16 = (k->type == GGML_TYPE_F32 || k->type == GGML_TYPE_F16);
-    const bool use_split_kv_path = !use_ref && (neq1 == 1 && neq3 == 1) && kv_is_f32_or_f16 && (k->type == v->type) && q->type == GGML_TYPE_F32 && nek1 >= 512;
+    const bool use_split_kv_path = !use_ref && !has_segments && (neq1 == 1 && neq3 == 1) && kv_is_f32_or_f16 && (k->type == v->type) && q->type == GGML_TYPE_F32 && nek1 >= 512;
 
     if (use_split_kv_path) {
         const int64_t chunk_size = (nek1 + nth - 1) / nth;
@@ -9473,7 +9514,7 @@ static void ggml_compute_forward_flash_attn_ext_f16(
         const int64_t dr = (nr + nchunk - 1) / nchunk;
 
         static constexpr int64_t Q_TILE_SZ  = ggml_fa_tile_config::Q;
-        bool use_tiled = !use_ref &&
+        bool use_tiled = !use_ref && !has_segments &&
                                (q->type == GGML_TYPE_F32 &&
                                 kv_is_f32_or_f16 &&
                                 k->type == v->type &&
