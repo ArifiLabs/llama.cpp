@@ -908,6 +908,20 @@ void process_shaders() {
         string_to_spv("cpy_" + t + "_f32", "copy_from_quant.comp", {{"DATA_A_" + to_uppercase(t), "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
     }
 
+    // lane-194: q4_0 -> F16 read-back. The SAME copy_from_quant.comp, emitted once more with
+    // D_TYPE=float16_t - the dequant math is unchanged, only the store width differs.
+    //
+    // ONE type on purpose. This variant exists to serve the KV precision tail's compose path,
+    // whose ring is already F16 (llama-kv-cache.cpp:514) and whose body is q4_0. Emitting the
+    // other twelve quant types "for symmetry" would add twelve pipelines, twelve supports_op
+    // rows and twelve test keys that nothing dispatches - exactly the unbacked-surface shape
+    // that cost lane-148 and lane-150 a silent 0-executed green (see the note above).
+    string_to_spv("cpy_q4_0_f16", "copy_from_quant.comp", {{"DATA_A_Q4_0", "1"}, {"D_TYPE", "float16_t"}, {"FLOAT_TYPE", "float"}});
+    // lane-194 negative control: identical but for a deliberately wrong dequant scale. Swapped
+    // into the same pipeline slot under GGML_VK_ARIFI_NEG_CPY_F16=1 so the gate can prove the
+    // q4_0->F16 cases actually detect a broken shader (F-116).
+    string_to_spv("cpy_q4_0_f16_neg", "copy_from_quant.comp", {{"DATA_A_Q4_0", "1"}, {"D_TYPE", "float16_t"}, {"FLOAT_TYPE", "float"}, {"ARIFI_NEG_SCALE", "1"}});
+
     for (auto src : {std::pair{"f32", "float"}, std::pair{"f16", "float16_t"}}) {
         // tq4_1s (lane-150): copy_to_quant.comp has carried a complete SET_ROWS+DATA_A_TQ4_1S main()
         // (RHT + 9-point scale search + 6-iteration refinement + nibble pack) that was never emitted.
