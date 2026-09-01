@@ -9002,7 +9002,13 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
             }
         }
 
-        // sinks - apply only on the first kv-chunk
+        // sinks - apply only on the first kv-chunk.
+        //
+        // ARIFI lane-195: with segments this must fire ONCE for the whole segment sequence, not
+        // once per segment - and it does, because it sits outside the segment loop and the sequence
+        // is driven by segs[0], whose ic_start is the one tested here. Segmented nodes are only ever
+        // dispatched un-chunked (ic_start == 0), which the two refusals in
+        // ggml_compute_forward_flash_attn_ext_f16 guarantee. Load-bearing, so stated.
         if (sinks && ic_start == 0) {
             const float s = ((float *)((char *) sinks->data))[h];
 

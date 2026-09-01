@@ -298,6 +298,28 @@ int main() {
         {257, 129, 65, 63 },
     };
 
+    // LEG 0 is the REGRESSION leg, and it is first on purpose. The segment support was added by
+    // editing the hot loop of the shipped kernel: `acc_f16` replaced three inline `v->type ==
+    // GGML_TYPE_F16` tests, the hoisted type traits were removed, and the k/v broadcast indices
+    // moved to per-segment computation. Every one of those edits is on the path a real model takes
+    // with an F16 V and NO segments — so that path is exercised here, against the same independent
+    // reference LEG 3 uses. test-backend-ops cannot do this job: it skips the CPU backend it uses
+    // as its own reference, so a CPU-only run of it is a 0-executed green.
+    printf("LEG 0 - REGRESSION: n_seg == 0 with F16 K/V (the shipped path) vs the independent reference.\n");
+    printf("        MUST AGREE: this is the path every model takes when the tail is off.\n");
+    for (const auto & s : splits) {
+        fa_case c;
+        c.kv = s.kv; c.body = s.kv; c.seg0 = 0; c.seg1 = 0;   // no segments at all
+        c.body_type = GGML_TYPE_F16; c.ring_type = GGML_TYPE_F16;
+        fa_data d = make_data(c);
+        char name[128];
+        snprintf(name, sizeof(name), "f16 monolithic kv=%lld (no segments)", (long long) s.kv);
+        // F16 K/V and an F16 accumulator: tolerance is set by half precision, not by this lane
+        report("LEG0", name, nmse(run_case(c, d, false), reference(c, d)), 1e-4, true);
+    }
+
+    printf("\n");
+
     // LEG 1/2 run in F32. That is not cosmetic: with an F16 V and no segments the CPU kernel keeps
     // an F16 accumulator, while any segmented node is forced to F32 (a mixed-dtype window cannot
     // carry an accumulator whose type flips mid-row). Comparing those two arms measures the
