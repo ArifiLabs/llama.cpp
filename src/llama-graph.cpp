@@ -2778,6 +2778,13 @@ ggml_tensor * llm_graph_context::build_attn_mha(
         ggml_flash_attn_ext_set_n_kv_max(cur, static_cast<int32_t>(n_kv_max));
         ggml_flash_attn_ext_set_prec (cur, GGML_PREC_F32);
 
+        // lane-196 per-query source selection: if get_k/get_v stashed exact-ring segments for this
+        // layer, attach them as extra FA sources (heterogeneous split-k partitions, one online
+        // softmax). No-op for every other memory type and whenever the tail composes.
+        if (mctx) {
+            mctx->fa_attach_segments(ctx0, cur);
+        }
+
         // TurboQuant: inverse WHT on FA output when V values are WHT-rotated.
         // For MLA, V is a view of K with different ne[0] (e.g. V=512, K=576).
         // Group size must come from K (which determines the WHT rotation), not V.

@@ -168,6 +168,25 @@ static bool llama_kv_tail_f16_compose() {
     return cached != 0;
 }
 
+// lane-196 Design B: PER-QUERY SOURCE SELECTION. LLAMA_KV_TAIL_PERQ=1 stops materialising the
+// attention window entirely: the quantized body is handed to flash attention IN PLACE (the
+// tail-off kernel — fa_kv_ok already admits q4_0 K/V) and the exact F16 ring segments ride the
+// SAME FA node as extra sources, dispatched as heterogeneous split-k partitions and merged by the
+// fp32 online-softmax reduce. No compose scratch, no dtype conversion, no F16 intermediate for the
+// body — lane-194's body-leg fidelity mechanism cannot occur by construction (lane-195 §1).
+// Default OFF keeps every shipped arm byte-identical; NORING=1 wins over it (the control arm must
+// stay a one-variable control of the COMPOSE path).
+static bool llama_kv_tail_perq() {
+    static int cached = -1;
+
+    if (cached < 0) {
+        const char * s = getenv("LLAMA_KV_TAIL_PERQ");
+        cached = (s && atoi(s) != 0) ? 1 : 0;
+    }
+
+    return cached != 0;
+}
+
 static bool llama_kv_tail_broken_env() {
     static int cached = -1;
 
@@ -533,9 +552,14 @@ llama_kv_cache::llama_kv_cache(
                 // than a skipped test. Any F16 claim must quote this line.
                 const bool f16_req = llama_kv_tail_f16_compose();
                 const bool f16_eff = f16_req && layer_type_k == GGML_TYPE_Q4_0 && layer_type_v == GGML_TYPE_Q4_0;
+                // lane-196: NAME THE READ MODE too — a fidelity row without "mode=per-query" in
+                // its log was measuring the compose, not the per-query path (same vacuous-green
+                // law as the compose type line below).
+                const bool perq = llama_kv_tail_perq() && !llama_kv_tail_noring();
                 LLAMA_LOG_INFO("%s: KV precision tail ON - %u exact F16 cells per layer beside a %s/%s body; "
-                        "compose=%s%s\n",
+                        "mode=%s; compose=%s%s\n",
                         __func__, tail_n, ggml_type_name(layer_type_k), ggml_type_name(layer_type_v),
+                        perq ? "per-query" : "compose",
                         f16_eff ? "F16" : "F32",
                         (f16_req && !f16_eff) ? " (F16 REQUESTED BUT REFUSED: body is not q4_0/q4_0)" : "");
             }
@@ -1791,7 +1815,8 @@ ggml_tensor * llama_kv_cache::tail_pending_v(int32_t il) const {
 // the cpy_* return value and the attention output.
 ggml_tensor * llama_kv_cache::tail_compose(
         ggml_context * ctx, ggml_tensor * body, ggml_tensor * ring,
-        int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il) const {
+        int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il,
+        ggml_tensor ** perq_pend) const {
     GGML_UNUSED(il);
 
     const int64_t n_head_kv = body->ne[1];
@@ -1829,6 +1854,43 @@ ggml_tensor * llama_kv_cache::tail_compose(
                                (long long) n_kv, (long long) tail_hi);
             }
             tail_degraded++;
+        }
+    }
+
+    // lane-196 Design B: never materialise. The body view is returned BARE (flash attention reads
+    // q4_0 in place — the tail-off kernel), and the ring segments are stashed as RAW F16 views for
+    // build_attn_mha to attach as extra sources on the FA node (heterogeneous split-k partitions
+    // merged by the fp32 reduce). ggml_concat disappears from the graph. Falls through to the
+    // shipped compose — never to a bare body-only window, which would drop the ring silently —
+    // when the ring has nothing trustworthy (n_tail <= 0) or the whole window is ring (split == 0,
+    // session start: a zero-row FA source is not worth a special case).
+    if (perq_pend != nullptr && llama_kv_tail_perq() && !llama_kv_tail_noring() &&
+        n_tail > 0 && split > 0) {
+        if (perq_pend[0] != nullptr || perq_pend[1] != nullptr) {
+            // the previous layer's segments were never attached: the FA node they belonged to was
+            // not built (kq_b path?), so that layer attended over its body only. Refuse the
+            // feature for the session rather than keep silently dropping the ring.
+            tail_break("per-query ring segments were stashed but never attached to a flash-attention node");
+            perq_pend[0] = perq_pend[1] = nullptr;
+        } else {
+            const int64_t n_hi = std::min<int64_t>(n_tail, (int64_t) tail_n - rot);
+            const int64_t n_lo = n_tail - n_hi;
+
+            auto raw_seg = [&](int64_t i0, int64_t n) -> ggml_tensor * {
+                return ggml_view_4d(ctx, ring, head_eff, n_head_kv, n, 1,
+                        ggml_row_size(ring->type, head_eff),
+                        ring->nb[1],
+                        ring->nb[1]*n,
+                        i0*ring->nb[1]);
+            };
+
+            // rot < tail_n always, so the hi segment is never empty while n_tail > 0
+            perq_pend[0] = raw_seg(rot, n_hi);
+            perq_pend[1] = n_lo > 0 ? raw_seg(0, n_lo) : nullptr;
+
+            // the FA columns are [ body | hi | lo ]: the body partition covers [0, split) only
+            return ggml_view_4d(ctx, body, body->ne[0], body->ne[1], split, 1,
+                    body->nb[1], body->nb[2], body->nb[3], 0);
         }
     }
 
@@ -1899,6 +1961,46 @@ ggml_tensor * llama_kv_cache::tail_compose(
     return out ? out : body;
 }
 
+// lane-196: attach the per-query ring segments stashed by tail_compose to the flash-attention
+// node built for this layer. The segments get the SAME permute build_attn_mha applies to K/V, so
+// they arrive in FA layout [head, rows, n_head_kv, 1]; mask column bases are derived from row
+// counts downstream (ggml + CPU + Vulkan all derive, none is passed). Consumed per layer:
+// get_k -> get_v -> build_attn_mha, strictly sequential within one graph build.
+void llama_kv_cache::fa_attach_segments(ggml_context * ctx, ggml_tensor * fa) const {
+    if (tail_perq_k[0] == nullptr && tail_perq_v[0] == nullptr) {
+        return;
+    }
+
+    // K and V must have stashed the SAME segmentation (same layer, same split, same rotation)
+    if (tail_perq_k[0] == nullptr || tail_perq_v[0] == nullptr ||
+        (tail_perq_k[1] != nullptr) != (tail_perq_v[1] != nullptr)) {
+        tail_break("per-query ring segments stashed for only one of K/V");
+        tail_perq_k[0] = tail_perq_k[1] = nullptr;
+        tail_perq_v[0] = tail_perq_v[1] = nullptr;
+        return;
+    }
+
+    auto perm = [&](ggml_tensor * t) -> ggml_tensor * {
+        return t ? ggml_permute(ctx, t, 0, 2, 1, 3) : nullptr;
+    };
+
+    ggml_flash_attn_ext_add_segments(fa,
+            perm(tail_perq_k[0]), perm(tail_perq_v[0]),
+            perm(tail_perq_k[1]), perm(tail_perq_v[1]));
+
+    // ONE-TIME RECEIPT, at WARN so llama-server's default verbosity cannot drop it (the lane-194
+    // banner lesson): a fidelity or perf number without this line was NOT measuring the
+    // per-query path.
+    if (!tail_perq_logged) {
+        LLAMA_LOG_WARN("%s: KV precision tail PER-QUERY ACTIVE - body read in place beside %s exact F16 ring segment(s); nothing materialised\n",
+                       __func__, tail_perq_k[1] ? "two" : "one");
+        tail_perq_logged = true;
+    }
+
+    tail_perq_k[0] = tail_perq_k[1] = nullptr;
+    tail_perq_v[0] = tail_perq_v[1] = nullptr;
+}
+
 ggml_tensor * llama_kv_cache::get_k(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const {
     const int32_t ikv = map_layer_ids.at(il);
 
@@ -1943,7 +2045,7 @@ ggml_tensor * llama_kv_cache::get_k(ggml_context * ctx, int32_t il, uint32_t n_k
     ggml_tensor * ring = tail_pend_k[ikv];
     tail_pend_k[ikv] = nullptr;
 
-    return tail_compose(ctx, view, ring, n_kv, n_embd_k_gqa, head_k_eff, il);
+    return tail_compose(ctx, view, ring, n_kv, n_embd_k_gqa, head_k_eff, il, tail_perq_k);
 }
 
 ggml_tensor * llama_kv_cache::get_v(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const {
@@ -1986,7 +2088,7 @@ ggml_tensor * llama_kv_cache::get_v(ggml_context * ctx, int32_t il, uint32_t n_k
         ggml_tensor * ring = tail_pend_v[ikv];
         tail_pend_v[ikv] = nullptr;
 
-        return tail_compose(ctx, view, ring, n_kv, n_embd_v_gqa, head_v_eff, il);
+        return tail_compose(ctx, view, ring, n_kv, n_embd_v_gqa, head_v_eff, il, tail_perq_v);
     }
 
     // note: v->nb[1] > v->nb[2]
@@ -3834,6 +3936,10 @@ ggml_tensor * llama_kv_cache_context::get_k(ggml_context * ctx, int32_t il) cons
 
 ggml_tensor * llama_kv_cache_context::get_v(ggml_context * ctx, int32_t il) const {
     return kv->get_v(ctx, il, n_kv, sinfos[i_cur]);
+}
+
+void llama_kv_cache_context::fa_attach_segments(ggml_context * ctx, ggml_tensor * fa) const {
+    kv->fa_attach_segments(ctx, fa);
 }
 
 ggml_tensor * llama_kv_cache_context::get_turbo_rotation() const {

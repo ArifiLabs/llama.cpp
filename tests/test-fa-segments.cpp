@@ -50,7 +50,8 @@ static std::vector<float> rand_vec(size_t n, float lo = -1.0f, float hi = 1.0f) 
 
 struct fa_case {
     int64_t hs   = 64;   // head size (K and V)
-    int64_t nh   = 4;    // heads
+    int64_t nh   = 4;    // KV heads
+    int64_t nh_q = 0;    // Q heads (0 = same as nh; > nh exercises the GQA broadcast)
     int64_t n_q  = 1;    // query rows (decode = 1)
     int64_t kv   = 0;    // TOTAL kv columns = body + seg0 + seg1
     int64_t body = 0;    // rows served by src[1]/src[2]
@@ -80,7 +81,8 @@ struct fa_data {
 
 static fa_data make_data(const fa_case & c) {
     fa_data d;
-    d.q = rand_vec(c.hs * c.n_q * c.nh);
+    const int64_t nhq = c.nh_q > 0 ? c.nh_q : c.nh;
+    d.q = rand_vec(c.hs * c.n_q * nhq);
     d.k = rand_vec(c.hs * c.kv * c.nh);
     d.v = rand_vec(c.hs * c.kv * c.nh);
     // an all-visible mask with a few blocked columns, so the -INFINITY skip path is exercised too
@@ -120,16 +122,20 @@ static std::vector<float> quant_round_trip(ggml_type type, const float * src, in
 }
 
 // Run the case and return dst as floats. `segmented` picks which of the two builds to use.
-static std::vector<float> run_case(const fa_case & c, const fa_data & d, bool segmented) {
+// `backend` is borrowed, not owned (nullptr = a fresh CPU backend, freed on exit, the original
+// behaviour). Returns an empty vector iff the backend DECLINES the node — the caller decides
+// whether that is a skip or an executed-assert failure.
+static std::vector<float> run_case(const fa_case & c, const fa_data & d, bool segmented, ggml_backend_t backend0 = nullptr) {
     const int64_t body = segmented ? c.body : c.kv;
     const int64_t s0   = segmented ? c.seg0 : 0;
     const int64_t s1   = segmented ? c.seg1 : 0;
+    const int64_t nhq  = c.nh_q > 0 ? c.nh_q : c.nh;
 
     ggml_init_params ip = { /*.mem_size =*/ ggml_tensor_overhead() * 64 + ggml_graph_overhead(),
                             /*.mem_buffer =*/ nullptr, /*.no_alloc =*/ true };
     ggml_context * ctx = ggml_init(ip);
 
-    ggml_tensor * q = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, c.hs, c.n_q, c.nh);
+    ggml_tensor * q = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, c.hs, c.n_q, nhq);
 
     // Body and ring are SEPARATE tensors even in the monolithic build (where the ring rows are
     // simply zero-length), so the two builds differ in exactly one thing: where the rows live.
@@ -148,11 +154,21 @@ static std::vector<float> run_case(const fa_case & c, const fa_data & d, bool se
         ggml_flash_attn_ext_add_segments(out, k0, v0, k1, v1);
     }
 
-    ggml_backend_t backend = ggml_backend_cpu_init();
+    ggml_backend_t backend = backend0 ? backend0 : ggml_backend_cpu_init();
+
+    // EXECUTED-asserted, not silently green: a declined node returns empty and the caller reports.
+    if (!ggml_backend_supports_op(backend, out)) {
+        if (!backend0) {
+            ggml_backend_free(backend);
+        }
+        ggml_free(ctx);
+        return {};
+    }
+
     ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(ctx, backend);
 
     // --- load, splitting the SAME source rows across whatever tensors this build has -------------
-    set_tensor_from_f32(q, d.q.data(), c.hs * c.n_q * c.nh);
+    set_tensor_from_f32(q, d.q.data(), c.hs * c.n_q * nhq);
 
     // K/V are [hs, rows, nh]: row-major within a head, heads outermost. Copy per head so a split
     // lands on the right rows of the right head.
@@ -188,7 +204,9 @@ static std::vector<float> run_case(const fa_case & c, const fa_data & d, bool se
     ggml_backend_tensor_get(out, res.data(), 0, res.size() * sizeof(float));
 
     ggml_backend_buffer_free(buf);
-    ggml_backend_free(backend);
+    if (!backend0) {
+        ggml_backend_free(backend);
+    }
     ggml_free(ctx);
     return res;
 }
@@ -196,10 +214,13 @@ static std::vector<float> run_case(const fa_case & c, const fa_data & d, bool se
 // The independent reference for leg 3: plain (non-online) softmax attention over rows that have
 // been put through the SAME quantisation the tensors will hold.
 static std::vector<float> reference(const fa_case & c, const fa_data & d) {
-    // dst layout matches ggml_flash_attn_ext: permute(0,2,1,3) -> [hs, nh, n_q]
-    std::vector<float> out((size_t)(c.hs * c.nh * c.n_q), 0.0f);
+    const int64_t nhq = c.nh_q > 0 ? c.nh_q : c.nh;
+    // dst layout matches ggml_flash_attn_ext: permute(0,2,1,3) -> [hs, nh_q, n_q]
+    std::vector<float> out((size_t)(c.hs * nhq * c.n_q), 0.0f);
 
-    for (int64_t h = 0; h < c.nh; ++h) {
+    for (int64_t hq = 0; hq < nhq; ++hq) {
+        // GQA broadcast: q head hq attends over kv head hq / (nhq/nh)
+        const int64_t h = hq / (nhq / c.nh);
         // rows [0, body) are body_type; the rest are ring_type
         std::vector<float> kq(c.hs * c.kv), vq(c.hs * c.kv);
         for (int64_t r = 0; r < c.kv; ++r) {
@@ -211,7 +232,7 @@ static std::vector<float> reference(const fa_case & c, const fa_data & d) {
         }
 
         for (int64_t iq = 0; iq < c.n_q; ++iq) {
-            const float * qp = d.q.data() + (h * c.n_q + iq) * c.hs;
+            const float * qp = d.q.data() + (hq * c.n_q + iq) * c.hs;
             const float scale = 1.0f / sqrtf((float) c.hs);
 
             std::vector<float> s(c.kv);
@@ -237,7 +258,7 @@ static std::vector<float> reference(const fa_case & c, const fa_data & d) {
                 sum += s[r];
             }
 
-            float * o = out.data() + (iq * c.nh + h) * c.hs;
+            float * o = out.data() + (iq * nhq + hq) * c.hs;
             for (int64_t r = 0; r < c.kv; ++r) {
                 if (s[r] == 0.0f) {
                     continue;
@@ -373,6 +394,111 @@ int main() {
                  (long long) s.body, (long long) s.seg0, (long long) s.seg1);
         // tolerance is set by q4_0's own grid, not by the segment machinery
         report("LEG3", name, nmse(run_case(c, d, true), reference(c, d)), 5e-4, true);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // LEG V — lane-196: the SAME gate on the GPU backend, where the segments dispatch as
+    // heterogeneous split-k partitions (q4_0 body in place + F16 ring in place) merged by
+    // flash_attn_split_k_reduce. EXECUTED-asserted (F-112/F-114): a build without a GPU prints a
+    // skip, but a GPU that DECLINES the segmented node is a FAILURE — a 0-executed green is the
+    // exact failure class this estate refuses. Runs both broadcast shapes, because the gqa and
+    // non-gqa epilogues index the shared scratch differently and their agreement across
+    // partitions is this design's one new risk.
+    ggml_backend_t gpu = nullptr;
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        // the 780M is a UMA part and registers as IGPU, not GPU - accept both
+        if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU ||
+            ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+            gpu = ggml_backend_dev_init(dev, nullptr);
+            break;
+        }
+    }
+
+    if (gpu == nullptr) {
+        printf("\nLEG V SKIPPED - no GPU backend registered in this build (CPU-only gate).\n");
+    } else {
+        int executed = 0;
+        auto run_gpu = [&](const fa_case & c, const fa_data & d, bool seg, const char * what) {
+            std::vector<float> r = run_case(c, d, seg, gpu);
+            if (r.empty()) {
+                printf("  LEGV   %-46s DECLINED by the backend  <<<< UNEXPECTED\n", what);
+                g_fail++;
+            } else {
+                executed++;
+            }
+            return r;
+        };
+
+        for (int gqa = 0; gqa < 2; ++gqa) {
+            printf("\nLEG V%s on %s - split-equivalence, poison control, mixed dtype.\n",
+                   gqa ? " (GQA nh_q=8 over nh=2)" : " (nh_q == nh)", ggml_backend_name(gpu));
+            for (const auto & s : splits) {
+                fa_case c;
+                c.kv = s.kv; c.body = s.body; c.seg0 = s.seg0; c.seg1 = s.seg1;
+                if (gqa) { c.nh = 2; c.nh_q = 8; }
+
+                char name[128];
+
+                // V1: F32 body + F32 ring vs one monolithic F32 tensor, both on the GPU.
+                //
+                // TOLERANCE IS NOT the CPU leg's zero, and the reason is measured, not assumed:
+                // when the segmented partition boundaries happen to COINCIDE with the monolithic
+                // split-k boundaries (kv=96 body=64 seg0=32: 32/32/32 both ways) the GPU result
+                // is bit-identical (nmse = 0 exactly). When the grouping differs, the per-partition
+                // O accumulators round differently (FLOAT_TYPE f16 on this pipeline) and the merge
+                // lands at ~1e-7..1e-6 nmse - the same accumulator-vs-indexing confound lane-195
+                // §2.3 defect 1 documented on the CPU. 1e-5 keeps >3 orders of separation from the
+                // poison control (>= 0.017 observed); the DISCRIMINATING fidelity leg is V3
+                // against the independent reference, not this regrouping comparison.
+                c.body_type = GGML_TYPE_F32; c.ring_type = GGML_TYPE_F32;
+                {
+                    fa_data d = make_data(c);
+                    auto a = run_gpu(c, d, true,  "split-equivalence (segmented arm)");
+                    auto b = run_gpu(c, d, false, "split-equivalence (monolithic arm)");
+                    if (!a.empty() && !b.empty()) {
+                        snprintf(name, sizeof(name), "gpu f32 kv=%lld body=%lld seg0=%lld seg1=%lld",
+                                 (long long) s.kv, (long long) s.body, (long long) s.seg0, (long long) s.seg1);
+                        report("LEGV1", name, nmse(a, b), 1e-5, true);
+                    }
+                }
+
+                // V2: the poison control MUST fire on the GPU too, or V1 was not looking.
+                // Same tolerance as V1, so the control fires against the bar V1 passes at.
+                if (s.seg1 >= 1) {
+                    fa_case cp = c;
+                    cp.poison = 1;
+                    fa_data d = make_data(cp);
+                    auto a = run_gpu(cp, d, true,  "poison control (segmented arm)");
+                    auto b = run_gpu(cp, d, false, "poison control (monolithic arm)");
+                    if (!a.empty() && !b.empty()) {
+                        snprintf(name, sizeof(name), "gpu f32 kv=%lld seg1 rows-1", (long long) s.kv);
+                        report("LEGV2", name, nmse(a, b), 1e-5, false);
+                    }
+                }
+
+                // V3: q4_0 body IN PLACE + F16 ring IN PLACE vs the independent CPU reference —
+                // the design's whole claim, measured on the real dispatch.
+                {
+                    fa_case cm = c;
+                    cm.body_type = GGML_TYPE_Q4_0; cm.ring_type = GGML_TYPE_F16;
+                    fa_data d = make_data(cm);
+                    auto a = run_gpu(cm, d, true, "mixed dtype (segmented arm)");
+                    if (!a.empty()) {
+                        snprintf(name, sizeof(name), "gpu q4_0 body=%lld + f16 ring=%lld/%lld",
+                                 (long long) s.body, (long long) s.seg0, (long long) s.seg1);
+                        report("LEGV3", name, nmse(a, reference(cm, d)), 5e-4, true);
+                    }
+                }
+            }
+        }
+
+        printf("\nLEG V executed %d GPU cases.\n", executed);
+        if (executed == 0) {
+            printf("LEG V EXECUTED ZERO CASES with a GPU present - refused as a vacuous green.  <<<< UNEXPECTED\n");
+            g_fail++;
+        }
+        ggml_backend_free(gpu);
     }
 
     printf("\n%s (%d unexpected)\n", g_fail == 0 ? "ALL LEGS AS EXPECTED" : "FAILURES", g_fail);
