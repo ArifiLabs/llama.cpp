@@ -8647,7 +8647,46 @@ bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, const vk_
     return supported;
 }
 
-void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * q, const ggml_tensor * k, const ggml_tensor * v, const ggml_tensor * mask, const ggml_tensor * sinks, ggml_tensor * dst) {
+// The split-k heuristic, ONE home: the single-dispatch path and the segmented wrapper both call it,
+// so the wrapper's k_total (baked into every partition's push constants) cannot disagree with what
+// the body dispatch actually does.
+static void ggml_vk_fa_choose_split_k(const vk_device& device, uint32_t gqa_ratio,
+                                      uint32_t workgroups_x, uint32_t workgroups_y, uint32_t workgroups_z,
+                                      uint32_t Br, uint32_t N, uint32_t KV, uint32_t alignment,
+                                      uint32_t * split_kv_out, uint32_t * split_k_out) {
+    uint32_t split_kv = KV;
+    uint32_t split_k = 1;
+
+    // Intel Alchemist prefers more workgroups
+    const uint32_t shader_core_count_multiplier = (device->vendor_id == VK_VENDOR_ID_INTEL && device->architecture != INTEL_XE2) ? 2 : 1;
+
+    // Use a placeholder core count if one isn't available. split_k is a big help for perf.
+    const uint32_t shader_core_count = device->shader_core_count ? device->shader_core_count * shader_core_count_multiplier : 16;
+
+    const uint32_t Tr = CEIL_DIV(N, Br);
+
+    // Try to use split_k when KV is large enough to be worth the overhead.
+    if (gqa_ratio > 1 && workgroups_x <= Br) {
+        split_k = shader_core_count * 2 / (workgroups_x * workgroups_y * workgroups_z);
+    } else if (gqa_ratio <= 1) {
+        uint32_t total_wgs_no_split = Tr * workgroups_y * workgroups_z;
+        if (total_wgs_no_split < shader_core_count * 2) {
+            split_k = shader_core_count * 2 / total_wgs_no_split;
+        }
+    }
+
+    if (split_k > 1) {
+        // Try to evenly split KV into split_k chunks, but it needs to be a multiple
+        // of "align", so recompute split_k based on that.
+        split_kv = ROUNDUP_POW2(std::max(1u, KV / split_k), alignment);
+        split_k = CEIL_DIV(KV, split_kv);
+    }
+
+    *split_kv_out = split_kv;
+    *split_k_out  = split_k;
+}
+
+void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * q, const ggml_tensor * k, const ggml_tensor * v, const ggml_tensor * mask, const ggml_tensor * sinks, ggml_tensor * dst, const vk_fa_seg_part * part) {
     VK_LOG_DEBUG("ggml_vk_flash_attn((" << q << ", name=" << q->name << ", type=" << q->type << ", ne0=" << q->ne[0] << ", ne1=" << q->ne[1] << ", ne2=" << q->ne[2] << ", ne3=" << q->ne[3] << ", nb0=" << q->nb[0] << ", nb1=" << q->nb[1] << ", nb2=" << q->nb[2] << ", nb3=" << q->nb[3];
     std::cerr << "), (" << k << ", name=" << k->name << ", type=" << k->type << ", ne0=" << k->ne[0] << ", ne1=" << k->ne[1] << ", ne2=" << k->ne[2] << ", ne3=" << k->ne[3] << ", nb0=" << k->nb[0] << ", nb1=" << k->nb[1] << ", nb2=" << k->nb[2] << ", nb3=" << k->nb[3];
     std::cerr << "), (" << v << ", name=" << v->name << ", type=" << v->type << ", ne0=" << v->ne[0] << ", ne1=" << v->ne[1] << ", ne2=" << v->ne[2] << ", ne3=" << v->ne[3] << ", nb0=" << v->nb[0] << ", nb1=" << v->nb[1] << ", nb2=" << v->nb[2] << ", nb3=" << v->nb[3];
@@ -8720,7 +8759,9 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
     };
     const bool k_quant = k->type != GGML_TYPE_F16 && k->type != GGML_TYPE_BF16 && k->type != GGML_TYPE_F32;
     const bool v_quant = v->type != GGML_TYPE_F16 && v->type != GGML_TYPE_BF16 && v->type != GGML_TYPE_F32;
-    const bool use_dequant_kv = k_quant && v_quant && neq1 >= 64 &&
+    // lane-196: a segmented partition reads its tensor IN PLACE — materialising an F16 copy of the
+    // body is the exact cost this design removes, so the dequant-scratch fast path is refused here.
+    const bool use_dequant_kv = part == nullptr && k_quant && v_quant && neq1 >= 64 &&
                                 is_dense_kv_cache(k) && is_dense_kv_cache(v) &&
                                 (uint64_t)ggml_nelements(k) * sizeof(ggml_fp16_t) <= ctx->device->properties.limits.maxStorageBufferRange &&
                                 (uint64_t)ggml_nelements(v) * sizeof(ggml_fp16_t) <= ctx->device->properties.limits.maxStorageBufferRange &&
@@ -8739,7 +8780,17 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
     vk_fa_tuning_params tuning_params = get_fa_tuning_params(ctx->device, HSK, HSV, 512, KV, k_type_eff, v_type_eff, f32acc);
     const uint32_t max_gqa = std::min(tuning_params.block_rows, 32u);
 
-    if (N <= 8 && qk_ratio > 1 && qk_ratio <= max_gqa &&
+    if (part) {
+        // lane-196: the gqa decision must be COMMON across every partition of one node — the gqa
+        // and non-gqa epilogues index the shared scratch differently, so a per-partition
+        // disagreement is a wrong-and-green merge. The wrapper decided once; obey it.
+        if (part->gqa_ratio > 1) {
+            GGML_ASSERT(part->gqa_ratio == qk_ratio);
+            gqa_ratio = qk_ratio;
+            N = gqa_ratio;
+            workgroups_y /= gqa_ratio;
+        }
+    } else if (N <= 8 && qk_ratio > 1 && qk_ratio <= max_gqa &&
         qk_ratio * nek2 == neq2 && nek2 == nev2 && nem2 <= 1) {
         // grouped query attention - make the N dimension equal to gqa_ratio, reduce
         // workgroups proportionally in y dimension. The shader will detect gqa_ratio > 1
@@ -8768,7 +8819,8 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
     static const bool disable_sparse = getenv("GGML_VK_FA_SPARSE_DISABLE") != nullptr;
     // cm2 dense is fast, so it needs a larger reduction to win.
     const int64_t min_ratio = tuning_params.path == FA_COOPMAT2 ? 4 : 2;
-    const bool use_sparse = !disable_sparse && n_kv_max > 0 && mask &&
+    // lane-196: a segmented partition never takes the sparse path (its split_k/k_total are fixed by the wrapper)
+    const bool use_sparse = part == nullptr && !disable_sparse && n_kv_max > 0 && mask &&
                             max_bias == 0.0f && logit_softcap == 0.0f &&
                             k_type_eff == GGML_TYPE_F16 && v_type_eff == GGML_TYPE_F16 &&
                             nem0 == KV &&
@@ -8807,9 +8859,20 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
         aligned = false;
     }
 
+    // lane-196 trap #3: ring segments have small arbitrary row counts, and the body partition of a
+    // segmented node ends at an arbitrary split. The arithmetic above already lands on false for
+    // those — FORCED rather than left to arithmetic, per the lane-195 classification.
+    if (part) {
+        aligned = false;
+    }
+
     // Only use mask opt when the mask is fairly large. This hasn't been tuned extensively.
-    bool use_mask_opt = mask && !use_sparse && nem1 >= 32 && nem0 * nem1 > 32768 && nem0 >= tuning_params.block_cols * 16
+    // lane-196 trap #4: mask-opt strides are computed against the dispatch's own KV and segment
+    // offsets are not Bc-aligned — REFUSED BY THE CONDITION on segmented dispatches, and asserted
+    // below so an edit that re-enables it cannot drift in silently.
+    bool use_mask_opt = part == nullptr && mask && !use_sparse && nem1 >= 32 && nem0 * nem1 > 32768 && nem0 >= tuning_params.block_cols * 16
                         && (ctx->device->architecture != vk_device_architecture::AMD_GCN || HSK > 256 || HSV > 256);
+    GGML_ASSERT(!(part && use_mask_opt));
     vk_fa_pipeline_state fa_pipeline_state = get_fa_pipeline_state(ctx->device, tuning_params, HSK, HSV, aligned, f32acc,
                                                                    mask != nullptr, use_mask_opt, logit_softcap != 0, use_sparse, k_type_eff, v_type_eff);
 
@@ -8845,21 +8908,23 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
     uint32_t split_kv = KV;
     uint32_t split_k = 1;
 
-    // Intel Alchemist prefers more workgroups
-    const uint32_t shader_core_count_multiplier = (ctx->device->vendor_id == VK_VENDOR_ID_INTEL && ctx->device->architecture != INTEL_XE2) ? 2 : 1;
-
-    // Use a placeholder core count if one isn't available. split_k is a big help for perf.
-    const uint32_t shader_core_count = ctx->device->shader_core_count ? ctx->device->shader_core_count * shader_core_count_multiplier : 16;
-
     const uint32_t Br = fa_pipeline_state.Br;
     const uint32_t Bc = fa_pipeline_state.Bc;
 
     GGML_ASSERT(Br == pipeline->wg_denoms[0]);
     const uint32_t Tr = CEIL_DIV(N, Br);
 
-    // Try to use split_k when KV is large enough to be worth the overhead.
-    // Sparse: split_kv carries n_kv_max, split_k partitions its blocks for occupancy.
-    if (use_sparse) {
+    if (part) {
+        // lane-196: the wrapper already ran the ONE split-k heuristic for the body and fixed the
+        // ring segments at one partition each; this dispatch obeys its slice.
+        split_k  = part->k_local;
+        split_kv = part->split_kv;
+    } else if (use_sparse) {
+        // Sparse: split_kv carries n_kv_max, split_k partitions its blocks for occupancy.
+        // lane-196 moved shader_core_count into ggml_vk_fa_choose_split_k; same value here
+        const uint32_t shader_core_count = ctx->device->shader_core_count
+            ? ctx->device->shader_core_count * ((ctx->device->vendor_id == VK_VENDOR_ID_INTEL && ctx->device->architecture != INTEL_XE2) ? 2 : 1)
+            : 16;
         split_kv = (uint32_t)n_kv_max;
         const uint32_t total_blocks = CEIL_DIV((uint32_t)n_kv_max, Bc);
         const uint32_t base_wgs = (gqa_ratio > 1 ? workgroups_x : Tr) * workgroups_y * workgroups_z;
@@ -8870,20 +8935,14 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
         // Match the shader's per-split block count so no split is empty.
         const uint32_t per_blocks = CEIL_DIV(total_blocks, split_k);
         split_k = CEIL_DIV(total_blocks, per_blocks);
-    } else if (gqa_ratio > 1 && workgroups_x <= Br) {
-        split_k = shader_core_count * 2 / (workgroups_x * workgroups_y * workgroups_z);
-    } else if (gqa_ratio <= 1) {
-        uint32_t total_wgs_no_split = Tr * workgroups_y * workgroups_z;
-        if (total_wgs_no_split < shader_core_count * 2) {
-            split_k = shader_core_count * 2 / total_wgs_no_split;
-        }
+    } else {
+        ggml_vk_fa_choose_split_k(ctx->device, gqa_ratio, workgroups_x, workgroups_y, workgroups_z,
+                                  Br, N, KV, alignment, &split_kv, &split_k);
     }
 
-    if (!use_sparse && split_k > 1) {
-        // Try to evenly split KV into split_k chunks, but it needs to be a multiple
-        // of "align", so recompute split_k based on that.
-        split_kv = ROUNDUP_POW2(std::max(1u, KV / split_k), alignment);
-        split_k = CEIL_DIV(KV, split_kv);
+    // upstream 4ceb17191 Intel Xe FA; the KV re-split it followed is inside ggml_vk_fa_choose_split_k (lane-196),
+    // and a segmented partition never takes the two-phase Xe path.
+    if (part == nullptr && !use_sparse && split_k > 1) {
         xe_fa_opt = xe_fa_supported_platform && xe_fa_supported_usage && xe_fa_supported_dtype;
         if (xe_fa_opt) {
             std::lock_guard<std::mutex> guard(ctx->device->compile_mutex);
@@ -8917,11 +8976,15 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
         use_mask_opt = false;
     }
 
+    // Total partitions the reduce will see: for a segmented node this spans EVERY dispatch of the
+    // node, and it is what replaces k_num in the shaders' scratch offsets and store-path selector.
+    const uint32_t k_total = part ? part->k_total : split_k;
+
     // Reserve space for split_k temporaries. For each split x batch, we need to store the O matrix (D x ne1)
     // and the per-row m and L values (ne1 rows). We store all the matrices first, followed by the rows.
     // For matrices, the order is (inner to outer) [HSV, ne1, k, ne2, ne3].
     // For L/M, the order is (inner to outer) [ne1, k, ne2, ne3].
-    const uint64_t split_k_size = split_k > 1 ? (HSV * ne1 * sizeof(float) + ne1 * sizeof(float) * 2) * split_k * ne2 * ne3 : 0;
+    const uint64_t split_k_size = k_total > 1 ? (HSV * ne1 * sizeof(float) + ne1 * sizeof(float) * 2) * k_total * ne2 * ne3 : 0;
     if (split_k_size > ctx->device->properties.limits.maxStorageBufferRange) {
         GGML_ABORT("Requested preallocation size is too large");
     }
@@ -9068,7 +9131,10 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
                                               v_stride, nbv2_eff, nbv3_eff,
                                               scale, max_bias, logit_softcap,
                                               mask_n_head_log2, m0, m1,
-                                              gqa_ratio, split_kv, split_k };
+                                              gqa_ratio, split_kv, split_k,
+                                              part ? part->k_base : 0, k_total,
+                                              part ? part->m_width : KV,
+                                              part ? part->mask_col_base : 0 };
 
     if (xe_fa_opt && split_k > 1) {
         auto upper_power_of_2 = [&](uint32_t in) {
@@ -9131,8 +9197,12 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
             pc_ph2, { (uint32_t)ph2_wg, (uint32_t)nev2, (uint32_t)neq3 });
 
         ctx->prealloc_x_need_sync = true;
-    } else if (split_k > 1) {
-        ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_flash_attn_split_k_reduce, 1);
+    } else if (k_total > 1) {
+        const bool emit_reduce = part == nullptr || part->emit_reduce;
+
+        if (emit_reduce) {
+            ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_flash_attn_split_k_reduce, 1);
+        }
 
         if (ctx->prealloc_split_k_need_sync) {
             ggml_vk_sync_buffers(ctx, subctx);
@@ -9153,12 +9223,16 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
                                     {q_buf, k_buf, v_buf, mask_buf, sinks_buf, split_k_buf, mask_opt_buf, sparse_buf},
                                     pc, { dispatch_x, workgroups_y, workgroups_z });
 
-        ggml_vk_sync_buffers(ctx, subctx);
-        const vk_op_flash_attn_split_k_reduce_push_constants pc2 = { HSV, (uint32_t)ne1, (uint32_t)ne2, (uint32_t)ne3, split_k, (sinks != nullptr) };
-        ggml_vk_dispatch_pipeline(ctx, subctx, ctx->device->pipeline_flash_attn_split_k_reduce,
-                                    {split_k_buf, sinks_buf, dst_buf},
-                                    pc2, { (uint32_t)ne1, HSV, (uint32_t)(ne2 * ne3) });
-        ctx->prealloc_split_k_need_sync = true;
+        if (emit_reduce) {
+            // For a segmented node this is the ONE merge over every dispatch's partitions — the
+            // reduce is what makes heterogeneous split-k a single online softmax.
+            ggml_vk_sync_buffers(ctx, subctx);
+            const vk_op_flash_attn_split_k_reduce_push_constants pc2 = { HSV, (uint32_t)ne1, (uint32_t)ne2, (uint32_t)ne3, k_total, (sinks != nullptr) };
+            ggml_vk_dispatch_pipeline(ctx, subctx, ctx->device->pipeline_flash_attn_split_k_reduce,
+                                        {split_k_buf, sinks_buf, dst_buf},
+                                        pc2, { (uint32_t)ne1, HSV, (uint32_t)(ne2 * ne3) });
+            ctx->prealloc_split_k_need_sync = true;
+        }
     } else {
         if (gqa_ratio > 1) {
             // When using gqa, we want one actual workgroup per batch, so cancel out wg_denoms
@@ -9175,6 +9249,88 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
     if (use_mask_opt || use_sparse) {
         ctx->prealloc_y_need_sync = true;
     }
+}
+
+// ARIFI lane-196 — Design B: heterogeneous split-k flash attention (per-query source selection).
+//
+// One FA node whose KV window lives in several tensors at their own dtypes: the quantized body is
+// read IN PLACE (fa_kv_ok already admits q4_0 K/V — the tail-off path), and each exact F16 ring
+// segment is read IN PLACE as one more split-k partition. flash_attn_split_k_reduce is already a
+// general fp32 online-softmax merge over partitions and does not care where they came from.
+// Nothing is materialised, nothing is converted, and no F16 intermediate exists for the body —
+// lane-194's body-leg fidelity loss cannot occur BY CONSTRUCTION (lane-195 §1).
+static void ggml_vk_flash_attn_segmented(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * q, const ggml_tensor * k, const ggml_tensor * v, const ggml_tensor * mask, const ggml_tensor * sinks, ggml_tensor * dst) {
+    const int n_seg = ggml_flash_attn_ext_n_segments(dst);
+    GGML_ASSERT(n_seg >= 1 && n_seg <= 2);
+    GGML_ASSERT(mask != nullptr);
+    // All partitions share one fp32 scratch and one reduce; segmented nodes are F32-prec only
+    // (the graph side sets it, the CPU reference forces it).
+    GGML_ASSERT(ggml_flash_attn_ext_get_prec(dst) == GGML_PREC_F32);
+
+    const uint32_t HSK  = (uint32_t)k->ne[0];
+    const uint32_t HSV  = (uint32_t)v->ne[0];
+    const uint32_t neq1 = (uint32_t)q->ne[1];
+    const uint32_t neq2 = (uint32_t)q->ne[2];
+    const uint32_t neq3 = (uint32_t)q->ne[3];
+    const uint32_t nek2 = (uint32_t)k->ne[2];
+    const uint32_t nev2 = (uint32_t)v->ne[2];
+    const uint32_t nem2 = (uint32_t)mask->ne[2];
+    const uint32_t m_width = (uint32_t)mask->ne[0];
+
+    // prec is F32 (asserted above), so the callee will compute f32acc = true for every partition;
+    // the tuning pre-pass below must see the same value.
+    const bool f32acc = true;
+
+    const ggml_tensor * parts_kv[3][2] = { { k, v }, { dst->src[5], dst->src[6] }, { dst->src[7], dst->src[8] } };
+
+    // ONE gqa decision for the whole node — the gqa and non-gqa epilogues index the shared scratch
+    // differently, so a per-partition disagreement is a wrong-and-green merge (lane-196 §1 step 2).
+    // gqa engages only if EVERY partition's pipeline admits the ratio.
+    const uint32_t qk_ratio = neq2 / nek2;
+    bool gqa_ok = neq1 <= 8 && qk_ratio > 1 && qk_ratio * nek2 == neq2 && nek2 == nev2 && nem2 <= 1;
+    for (int i = 0; i < 1 + n_seg && gqa_ok; ++i) {
+        vk_fa_tuning_params tp = get_fa_tuning_params(ctx->device, HSK, HSV, 512, (uint32_t)parts_kv[i][0]->ne[1],
+                                                      parts_kv[i][0]->type, parts_kv[i][1]->type, f32acc);
+        gqa_ok = qk_ratio <= std::min(tp.block_rows, 32u);
+    }
+    const uint32_t gqa_ratio = gqa_ok ? qk_ratio : 1;
+
+    // The body's split count, from the ONE heuristic the callee also uses (extracted so the
+    // k_total baked into every partition's push constants cannot disagree with the body dispatch).
+    const uint32_t KV_body = (uint32_t)k->ne[1];
+    const uint32_t N_eff   = gqa_ok ? gqa_ratio : neq1;
+    vk_fa_tuning_params tuning_body = get_fa_tuning_params(ctx->device, HSK, HSV, N_eff, KV_body, k->type, v->type, f32acc);
+    uint32_t wx = neq1, wy = neq2, wz = neq3;
+    if (gqa_ok) {
+        wy /= gqa_ratio;
+    }
+    uint32_t body_split_kv = KV_body, body_split_k = 1;
+    ggml_vk_fa_choose_split_k(ctx->device, gqa_ratio, wx, wy, wz, tuning_body.block_rows, N_eff, KV_body,
+                              tuning_body.block_cols, &body_split_kv, &body_split_k);
+    body_split_k = std::max(body_split_k, 1u);
+
+    const uint32_t k_total = body_split_k + (uint32_t)n_seg;
+
+    // Body: the quantized cache read in place, partitions [0, body_split_k).
+    vk_fa_seg_part part = { body_split_k, body_split_kv, 0, k_total, 0, m_width, gqa_ratio, false };
+    ggml_vk_flash_attn(ctx, subctx, q, k, v, mask, sinks, dst, &part);
+
+    // Ring segments: read in place, ONE partition each. Mask column bases are DERIVED from the
+    // row counts — the same derivation the CPU reference uses, so they cannot disagree with the
+    // tensors. The LAST dispatch emits the one reduce over all k_total partitions.
+    uint32_t k_base = body_split_k;
+    uint32_t col    = KV_body;
+    for (int i = 0; i < n_seg; ++i) {
+        const ggml_tensor * sk = parts_kv[1 + i][0];
+        const ggml_tensor * sv = parts_kv[1 + i][1];
+        const uint32_t rows = (uint32_t)sk->ne[1];
+        part = { 1, rows, k_base, k_total, col, m_width, gqa_ratio, i == n_seg - 1 };
+        ggml_vk_flash_attn(ctx, subctx, q, sk, sv, mask, sinks, dst, &part);
+        k_base += 1;
+        col    += rows;
+    }
+    // the KV columns [ body | seg0 | seg1 ] must tile the mask row exactly
+    GGML_ASSERT(col == m_width);
 }
 
 static vk_conv_shapes ggml_vk_conv_select_shape(ggml_backend_vk_context * ctx, uint32_t K, uint32_t NPQ) {
@@ -13335,7 +13491,13 @@ bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, in
         break;
 
     case GGML_OP_FLASH_ATTN_EXT:
-        ggml_vk_flash_attn(ctx, compute_ctx, src0, src1, src2, src3, node->src[4], node);
+        if (ggml_flash_attn_ext_n_segments(node) > 0) {
+            // lane-196: per-query source selection — body + ring segments as heterogeneous
+            // split-k partitions, merged by the one reduce.
+            ggml_vk_flash_attn_segmented(ctx, compute_ctx, src0, src1, src2, src3, node->src[4], node);
+        } else {
+            ggml_vk_flash_attn(ctx, compute_ctx, src0, src1, src2, src3, node->src[4], node);
+        }
 
         break;
 
@@ -16296,6 +16458,29 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                 if (!coopmat2 && !(device->subgroup_shuffle && device->subgroup_vote)) {
                     // scalar/coopmat1 FA uses subgroupShuffle/subgroupAll
                     return false;
+                }
+                // ARIFI lane-196: the push-constant block is 144 B — above Vulkan's guaranteed
+                // 128-B minimum. A device at the floor cannot create the pipelines at all, so it
+                // is refused FA here (falls back to the non-FA path) rather than crashing at
+                // pipeline creation. The 780M (and virtually every real GPU) reports 256.
+                if (device->properties.limits.maxPushConstantsSize < sizeof(vk_flash_attn_push_constants)) {
+                    return false;
+                }
+                // ARIFI lane-196: segmented FA (per-query source selection) — every segment must
+                // itself be an admitted FA K/V type, and the mask column accounting needs a mask.
+                {
+                    const int n_seg = ggml_flash_attn_ext_n_segments(op);
+                    if (n_seg > 0) {
+                        if (!op->src[3]) {
+                            return false;
+                        }
+                        for (int s = 0; s < n_seg; ++s) {
+                            if (!op->src[5 + 2*s] || !op->src[6 + 2*s] ||
+                                !fa_kv_ok(op->src[5 + 2*s]->type) || !fa_kv_ok(op->src[6 + 2*s]->type)) {
+                                return false;
+                            }
+                        }
+                    }
                 }
                 return true;
             }

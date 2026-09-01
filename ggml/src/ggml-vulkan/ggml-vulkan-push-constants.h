@@ -120,9 +120,36 @@ struct vk_flash_attn_push_constants {
     uint32_t gqa_ratio;
     uint32_t split_kv;
     uint32_t k_num;
-};
 
-static_assert(sizeof(vk_flash_attn_push_constants) <= 128, "sizeof(vk_flash_attn_push_constants) must be <= 128");
+    // ARIFI lane-196 (per-query source selection): heterogeneous split-k partitions.
+    // k_num stays the LOCAL partition count of one dispatch; k_base/k_total place it inside the
+    // shared split-k scratch and drive the store-path selector (lane-195 trap #1: a 1-partition
+    // ring dispatch with k_num==1 would otherwise take the non-split epilogue and be silently
+    // dropped). m_width/mask_col_base decouple the mask stride from the dispatch's own KV
+    // (lane-195 trap #2). Single-dispatch nodes pass k_base=0, k_total=k_num, m_width=KV,
+    // mask_col_base=0 — bit-identical arithmetic to the old 128-byte block.
+    uint32_t k_base;
+    uint32_t k_total;
+    uint32_t m_width;
+    uint32_t mask_col_base;
+};
+// 144 bytes. Above Vulkan's guaranteed 128-byte minimum ON PURPOSE: the 780M (and virtually every
+// real GPU) reports maxPushConstantsSize = 256. Devices below sizeof() are refused flash attention
+// in supports_op rather than handed a pipeline that cannot be created (lane-195 §3.1).
+static_assert(sizeof(vk_flash_attn_push_constants) <= 144, "sizeof(vk_flash_attn_push_constants) must be <= 144");
+
+// One heterogeneous split-k partition group of a segmented flash-attention node: which slice of
+// the shared scratch this dispatch owns, and where its mask columns start.
+struct vk_fa_seg_part {
+    uint32_t k_local;        // partitions in THIS dispatch (body may split; ring segments are 1)
+    uint32_t split_kv;       // KV rows per partition inside this dispatch
+    uint32_t k_base;         // first partition index in the shared scratch
+    uint32_t k_total;        // total partitions across all dispatches of the node
+    uint32_t mask_col_base;  // first mask column this dispatch covers
+    uint32_t m_width;        // full mask row width (mask->ne[0])
+    uint32_t gqa_ratio;      // COMMON gqa decision for all partitions (1 = off)
+    bool     emit_reduce;    // the last dispatch emits the fp32 online-softmax merge
+};
 
 struct vk_fa_xe_opt_push_constants {
     uint32_t kv_seq_len;
