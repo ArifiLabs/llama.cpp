@@ -556,7 +556,10 @@ llama_kv_cache::llama_kv_cache(
                 // its log was measuring the compose, not the per-query path (same vacuous-green
                 // law as the compose type line below).
                 const bool perq = llama_kv_tail_perq() && !llama_kv_tail_noring();
-                LLAMA_LOG_INFO("%s: KV precision tail ON - %u exact F16 cells per layer beside a %s/%s body; "
+                // lane-196: WARN, not INFO - llama-server drops INFO at default verbosity, which
+                // made lane-192/194's harnesses read tail_banner: null on live launches (the
+                // WARN->INFO regression SPINE banked against kv-cache:537; this is that fix).
+                LLAMA_LOG_WARN("%s: KV precision tail ON - %u exact F16 cells per layer beside a %s/%s body; "
                         "mode=%s; compose=%s%s\n",
                         __func__, tail_n, ggml_type_name(layer_type_k), ggml_type_name(layer_type_v),
                         perq ? "per-query" : "compose",
