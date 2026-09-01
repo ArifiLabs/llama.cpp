@@ -212,17 +212,32 @@ public:
     // Opt-in: LLAMA_KV_TAIL=<cells>. Unset/0 => tail_n == 0 => every function below is a
     // no-op that adds ZERO graph nodes and allocates ZERO bytes (the shipped path).
     //
-    // CEILING (ponytail, and it is a real one): the ring is POSITIONAL. It is correct only
-    // while cells are appended monotonically. Any non-monotonic write, seq_rm/cp/keep/add/div
-    // or defrag breaks the invariant; tail_break() records that permanently and loudly, and a
-    // harness must treat a broken run as FAIL rather than read its numbers. Upgrade path is a
-    // per-cell source selector (BeeLlama does this per QUERY), not a wider ring.
+    // CEILING: the ring is POSITIONAL, and lane-192 made that precise instead of fatal.
+    // A ring entry is the newest write for its own slot unless a LATER slot aliased onto it
+    // (s' == s mod tail_n). lane-188 read any non-sequential write as a permanent break, which
+    // made the feature unusable under llama-server's prefix cache (lane-191: 4/4 launches).
+    // tail_valid() computes how much of the window is actually trustworthy, so a rewind costs
+    // exact CELLS for a few ubatches instead of the whole session. Ops that MOVE a cell
+    // (seq_cp/keep/add/div, defrag, state_read) still tail_break() - they invalidate the ring
+    // in a way no positional rule can repair.
     bool          tail_on()  const { return tail_n > 0; }
+    // how many of the newest n_kv cells still have a trustworthy ring entry (0 .. tail_n)
+    int64_t       tail_valid(int64_t n_kv) const;
     ggml_tensor * tail_compose(ggml_context * ctx, ggml_tensor * body, ggml_tensor * ring,
                                int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il) const;
     void          tail_break(const char * why) const;
     // ring_content_probe: 0 = never broken, >0 = number of invalidating events seen.
     uint64_t      tail_broken_count() const { return tail_broken; }
+    // lane-192 FIDELITY RECEIPT. Zero breaks no longer proves the ring was USED: a rewind now
+    // degrades silently instead of breaking. These count graph builds that composed with a
+    // SHORTER-than-full ring (degraded) and with NO ring at all (bypassed). A run that reports
+    // a fidelity number must report these beside it.
+    uint64_t      tail_degraded_count() const { return tail_degraded; }
+    uint64_t      tail_bypass_count()   const { return tail_bypass;   }
+    // the ring-store node cpy_k/cpy_v built for the current graph, or nullptr. build_attn
+    // expands these so the store stays reachable even on ubatches the read path bypasses.
+    ggml_tensor * tail_pending_k(int32_t il) const;
+    ggml_tensor * tail_pending_v(int32_t il) const;
 
     //
     // K-cache mean-centering (see docs/kv-mean-center.md)
@@ -385,9 +400,13 @@ private:
     mutable ggml_context *              tail_ctx = nullptr;
     mutable std::vector<ggml_tensor *>  tail_pend_k;
     mutable std::vector<ggml_tensor *>  tail_pend_v;
-    // next slot index expected by the monotonic-append invariant, and the breakage counter
-    mutable int64_t  tail_next  = 0;
+    // HIGH-WATER MARK: one past the highest KV slot ever written since the last full reset.
+    // This is the whole positional invariant. Ring entry (s % tail_n) still holds slot s iff
+    // s + tail_n >= tail_hi, because only a slot that aliases onto it can have overwritten it.
+    mutable int64_t  tail_hi     = 0;
     mutable uint64_t tail_broken = 0;
+    mutable uint64_t tail_degraded = 0;
+    mutable uint64_t tail_bypass   = 0;
 
 #ifdef GGML_ARIFI_KV_MEANCENTER
     // K-cache mean-centering bias (see load_kv_mean_center()):
@@ -504,6 +523,13 @@ public:
     //   - v_idxs [n_tokens] or [n_tokens*n_embd_v_gqa] depending if V cache is transposed
     ggml_tensor * cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggml_tensor * k_idxs, int32_t il) const;
     ggml_tensor * cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggml_tensor * v_idxs, int32_t il) const;
+
+    // lane-192 precision tail: the ring-store node for this graph (nullptr when the tail is
+    // off), and how much of the ring the read path may trust for the CURRENT n_kv. The latter
+    // is a baked view offset, so llm_graph_input_attn_kv::can_reuse compares it (F-146).
+    ggml_tensor * tail_pending_k(int32_t il) const;
+    ggml_tensor * tail_pending_v(int32_t il) const;
+    int64_t       tail_valid() const;
 
     // create destination indices for each head of the current batch for where it would be written in the KV cache
     // the indices address the global KV cache (not per stream) - this is not relevant for the user of this API, but
