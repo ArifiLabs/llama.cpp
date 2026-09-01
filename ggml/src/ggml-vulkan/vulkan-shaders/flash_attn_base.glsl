@@ -70,6 +70,21 @@ layout (push_constant) uniform parameter {
     uint32_t gqa_ratio;
     uint32_t split_kv;
     uint32_t k_num;
+
+    // ARIFI lane-196 (per-query source selection): one FA node may be dispatched as SEVERAL
+    // heterogeneous split-k partitions (q4_0 body in place + F16 ring segments in place), merged by
+    // flash_attn_split_k_reduce. k_num stays the LOCAL partition count of THIS dispatch (it decodes
+    // gl_WorkGroupID.x); k_base is where this dispatch's partitions start in the shared scratch;
+    // k_total is the partition count the reduce will see and REPLACES k_num in every scratch offset
+    // and in the store-path selector — a 1-partition ring dispatch with k_total > 1 must take the
+    // split epilogue or its output is silently dropped (lane-195 trap #1). m_width is the FULL mask
+    // row width (the dispatch's KV is only its own column count) and mask_col_base folds into
+    // m_offset so no mask read site changes. Single-dispatch nodes pass
+    // k_base=0, k_total=k_num, m_width=KV, mask_col_base=0 — bit-identical arithmetic.
+    uint32_t k_base;
+    uint32_t k_total;
+    uint32_t m_width;
+    uint32_t mask_col_base;
 } p;
 
 #define SINK_ENABLE_BIT (1<<24)
@@ -207,7 +222,9 @@ void init_indices()
     // "p.gqa_ratio >> 16" is just a roundabout way of writing zero
     // that prevents the compiler from folding the "&" through the select
     // and breaking the alignment detection.
-    m_stride = (p.gqa_ratio > 1) ? (p.gqa_ratio >> 16) : KV;
+    // lane-196: the mask row is m_width wide (== KV except on segmented dispatches, whose KV is
+    // only their own column count — lane-195 trap #2, KV-as-stride-proxy).
+    m_stride = (p.gqa_ratio > 1) ? (p.gqa_ratio >> 16) : p.m_width;
 }
 
 // Bias applied to softmax to stay in fp16 range.

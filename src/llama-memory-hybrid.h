@@ -125,6 +125,9 @@ public:
     ggml_tensor * get_turbo_rot_inverse() const override;
     ggml_tensor * get_turbo_innerq_scale_inv() const override;
 
+    // lane-196: delegate the per-query segment attach to the attention child
+    void fa_attach_segments(ggml_context * ctx, ggml_tensor * fa) const override;
+
     //
     // llama_memory_hybrid_context
     //

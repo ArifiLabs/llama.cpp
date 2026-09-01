@@ -73,6 +73,11 @@ struct llama_memory_context_i {
     // TurboQuant InnerQ: get per-channel scale_inv tensor for Q/V equalization
     // Returns nullptr when InnerQ is not active. Override in KV cache contexts.
     virtual ggml_tensor * get_turbo_innerq_scale_inv() const { return nullptr; }
+
+    // lane-196 per-query source selection: attach any pending exact-ring segments to the
+    // flash-attention node just built for this layer. No-op by default; the unified KV cache
+    // context overrides it (and the hybrid context forwards to its attention child).
+    virtual void fa_attach_segments(ggml_context * /*ctx*/, ggml_tensor * /*fa*/) const {}
 };
 
 using llama_memory_context_ptr = std::unique_ptr<llama_memory_context_i>;

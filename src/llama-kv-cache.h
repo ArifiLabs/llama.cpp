@@ -223,8 +223,15 @@ public:
     bool          tail_on()  const { return tail_n > 0; }
     // how many of the newest n_kv cells still have a trustworthy ring entry (0 .. tail_n)
     int64_t       tail_valid(int64_t n_kv) const;
+    // lane-196: perq_pend (tail_perq_k / tail_perq_v, nullable) receives the raw ring segment
+    // views in per-query mode, in which case the BARE body view [0, split) is returned instead of
+    // a composed window.
     ggml_tensor * tail_compose(ggml_context * ctx, ggml_tensor * body, ggml_tensor * ring,
-                               int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il) const;
+                               int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il,
+                               ggml_tensor ** perq_pend = nullptr) const;
+    // lane-196: attach the stashed per-query ring segments to this layer's FA node (no-op when
+    // nothing is stashed).
+    void          fa_attach_segments(ggml_context * ctx, ggml_tensor * fa) const;
     void          tail_break(const char * why) const;
     // ring_content_probe: 0 = never broken, >0 = number of invalidating events seen.
     uint64_t      tail_broken_count() const { return tail_broken; }
@@ -400,6 +407,13 @@ private:
     mutable ggml_context *              tail_ctx = nullptr;
     mutable std::vector<ggml_tensor *>  tail_pend_k;
     mutable std::vector<ggml_tensor *>  tail_pend_v;
+    // lane-196 per-query source selection: the raw ring segment views {hi, lo} stashed by
+    // tail_compose for the layer CURRENTLY being built, consumed by fa_attach_segments.
+    // One slot, not per-layer: get_k -> get_v -> build_attn_mha is strictly sequential per layer
+    // within one graph build, and a leftover is a tail_break, never a carry-over.
+    mutable ggml_tensor * tail_perq_k[2] = { nullptr, nullptr };
+    mutable ggml_tensor * tail_perq_v[2] = { nullptr, nullptr };
+    mutable bool          tail_perq_logged = false;
     // HIGH-WATER MARK: one past the highest KV slot ever written since the last full reset.
     // This is the whole positional invariant. Ring entry (s % tail_n) still holds slot s iff
     // s + tail_n >= tail_hi, because only a slot that aliases onto it can have overwritten it.
@@ -530,6 +544,9 @@ public:
     ggml_tensor * tail_pending_k(int32_t il) const;
     ggml_tensor * tail_pending_v(int32_t il) const;
     int64_t       tail_valid() const;
+
+    // lane-196: forward the per-query segment attach to the cache (no-op when nothing stashed)
+    void fa_attach_segments(ggml_context * ctx, ggml_tensor * fa) const override;
 
     // create destination indices for each head of the current batch for where it would be written in the KV cache
     // the indices address the global KV cache (not per stream) - this is not relevant for the user of this API, but
