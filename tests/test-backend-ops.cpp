@@ -10228,6 +10228,20 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_Q4_0, {96, 1, 1, 1}));
     test_cases.emplace_back(new test_cpy(GGML_TYPE_Q4_0, GGML_TYPE_F32, {96, 1, 1, 1}));
 
+    // lane-194: q4_0 -> F16 read-back (ARIFI-SYNC-SET cpy.quant_to_f16). This is the path the
+    // KV precision tail's F16 compose dispatches, so it is covered at the shapes that path
+    // actually produces: a small block-aligned row, a multi-dim contiguous block, and a
+    // NON-CONTIGUOUS permuted source - the ring/body segments reach ggml_cast as strided
+    // views, and the contiguous case alone would not exercise src0_idx_quant's stride math.
+    //
+    // F-112 / F-114: these MUST be asserted EXECUTED, not merely green. A missing shader
+    // variant makes supports_op decline them and the harness prints a pass banner over zero
+    // runs - the exact failure that hid lane-148's SET_ROWS_TURBO4 and lane-150's TQ4_1S.
+    // Verify with: test-backend-ops test -o CPY, then read the "NOT SUPPORTED" line.
+    test_cases.emplace_back(new test_cpy(GGML_TYPE_Q4_0, GGML_TYPE_F16, {96, 1, 1, 1}));
+    test_cases.emplace_back(new test_cpy(GGML_TYPE_Q4_0, GGML_TYPE_F16, {256, 4, 4, 4}));
+    test_cases.emplace_back(new test_cpy(GGML_TYPE_Q4_0, GGML_TYPE_F16, {256, 2, 3, 4}, {-1,-1,-1,-1}, {0, 2, 1, 3}));
+
     // Types the Vulkan supports_op names for CPY that all_types does not carry. Without a case
     // here, a backend that claims one of them with no pipeline behind it stays invisible until a
     // real graph aborts: that is how the ROCmFP SET_ROWS/CPY abort hid. TURBO3_0 is the live one

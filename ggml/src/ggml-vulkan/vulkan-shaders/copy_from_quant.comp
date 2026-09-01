@@ -62,25 +62,38 @@ void main() {
 
     // Normalize and apply sign pattern
     for (int j = 0; j < 32; j++) {
-        data_d[dst_idx + j] = buf[j] * TQ4_INV_SQRT32 * tq4_signs[j];
+        // lane-194: explicit D_TYPE() so this shader can also be emitted with
+        // D_TYPE=float16_t. A no-op when D_TYPE is float (the only prior variant);
+        // required because GLSL forbids the implicit float->float16_t narrowing.
+        data_d[dst_idx + j] = D_TYPE(buf[j] * TQ4_INV_SQRT32 * tq4_signs[j]);
     }
 #else
-    const vec2 dm = get_dm(ib, a_offset);
+    vec2 dm = get_dm(ib, a_offset);
+
+#ifdef ARIFI_NEG_SCALE
+    // lane-194 NEGATIVE CONTROL (F-116). A deliberately wrong dequant scale. This variant is
+    // built into the same binary and swapped into the SAME pipeline slot at device init when
+    // GGML_VK_ARIFI_NEG_CPY_F16=1, so a run with it on exercises the identical dispatch path
+    // and MUST fail the q4_0->F16 cases. If those cases still pass with it on, they are not
+    // comparing anything and their green is worthless.
+    dm.x *= 1.5;
+#endif
 
     [[unroll]] for (int j = 0; j < QUANT_K; j += 4) {
         vec4 v = dequantize4(ib, j / QUANT_R, a_offset);
         v = v * dm.x + vec4(dm.y);
 
+        // lane-194: see the D_TYPE() note above - identical reason, identical no-op for float.
 #if QUANT_R == 2
-        data_d[dst_idx + j/2 +             0] = v[0];
-        data_d[dst_idx + j/2 + QUANT_K/2 + 0] = v[1];
-        data_d[dst_idx + j/2 +             1] = v[2];
-        data_d[dst_idx + j/2 + QUANT_K/2 + 1] = v[3];
+        data_d[dst_idx + j/2 +             0] = D_TYPE(v[0]);
+        data_d[dst_idx + j/2 + QUANT_K/2 + 0] = D_TYPE(v[1]);
+        data_d[dst_idx + j/2 +             1] = D_TYPE(v[2]);
+        data_d[dst_idx + j/2 + QUANT_K/2 + 1] = D_TYPE(v[3]);
 #else
-        data_d[dst_idx + j + 0] = v[0];
-        data_d[dst_idx + j + 1] = v[1];
-        data_d[dst_idx + j + 2] = v[2];
-        data_d[dst_idx + j + 3] = v[3];
+        data_d[dst_idx + j + 0] = D_TYPE(v[0]);
+        data_d[dst_idx + j + 1] = D_TYPE(v[1]);
+        data_d[dst_idx + j + 2] = D_TYPE(v[2]);
+        data_d[dst_idx + j + 3] = D_TYPE(v[3]);
 #endif
     }
 #endif

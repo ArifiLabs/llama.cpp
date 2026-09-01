@@ -3516,6 +3516,26 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     // TQ4_1S write-path test case dies in supports_op before anything runs.
     ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_TQ4_1S], "cpy_tq4_1s_f32", cpy_tq4_1s_f32_len, cpy_tq4_1s_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_TQ4_1S), 1, 1}, {}, 1);
 
+    // lane-194: the one quant -> F16 read-back pipeline. Same push-constant layout and same
+    // workgroup shape as its f32 sibling above; only the emitted D_TYPE differs.
+    //
+    // NEGATIVE CONTROL (F-116): under GGML_VK_ARIFI_NEG_CPY_F16=1 the SAME slot is filled with
+    // the deliberately-wrong-scale variant. Same slot on purpose - it proves the dispatch path
+    // under test is the one being corrupted, so a still-green gate is provably vacuous.
+    {
+        const char * neg = getenv("GGML_VK_ARIFI_NEG_CPY_F16");
+        const bool use_neg = neg && atoi(neg) != 0;
+        if (use_neg) {
+            GGML_LOG_WARN("ggml_vulkan: ARIFI NEGATIVE CONTROL ACTIVE - cpy_q4_0_f16 is the "
+                          "WRONG-SCALE variant. q4_0->F16 results are intentionally corrupt.\n");
+        }
+        ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f16[GGML_TYPE_Q4_0],
+            use_neg ? "cpy_q4_0_f16_neg" : "cpy_q4_0_f16",
+            use_neg ? cpy_q4_0_f16_neg_len  : cpy_q4_0_f16_len,
+            use_neg ? cpy_q4_0_f16_neg_data : cpy_q4_0_f16_data,
+            "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_Q4_0), 1, 1}, {}, 1);
+    }
+
     auto get_suffix = [](bool src0_f16, bool src1_f16, bool dst_f16) {
         std::string s;
         s += std::string(src0_f16 ? "_f16" : "_f32");
@@ -6431,6 +6451,20 @@ vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const ggml_t
         case GGML_TYPE_TQ4_1S:
         case GGML_TYPE_IQ4_NL:
             return ctx->device->pipeline_cpy_quant_f32[src->type];
+        default:
+            break;
+        }
+    }
+
+    if (to == GGML_TYPE_F16) {
+        // ARIFI-SYNC-SET: cpy.quant_to_f16
+        // The FIFTH hand-synced pair (lane-194). Its partner is the quant->F16 list in
+        // supports_op. Adding a type to one list and not the other either aborts below with
+        // "Missing CPY op for types" (supports_op says yes, this says no) or silently declines
+        // the op to the CPU (this says yes, supports_op says no).
+        switch (src->type) {
+        case GGML_TYPE_Q4_0:
+            return ctx->device->pipeline_cpy_quant_f16[src->type];
         default:
             break;
         }
@@ -16395,6 +16429,19 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                     case GGML_TYPE_TURBO4_0:
                     case GGML_TYPE_TQ4_1S:
                         return device->pipeline_cpy_quant_f32[src0_type] != nullptr;
+                    default:
+                        break;
+                    }
+                }
+
+                if (src1_type == GGML_TYPE_F16) {
+                    // Partner of the quant->F16 switch in ggml_vk_get_cpy_pipeline. Keyed on the
+                    // pipeline being non-null so an unemitted variant DECLINES here instead of
+                    // aborting at dispatch.
+                    // ARIFI-SYNC-SET: cpy.quant_to_f16
+                    switch (src0_type) {
+                    case GGML_TYPE_Q4_0:
+                        return device->pipeline_cpy_quant_f16[src0_type] != nullptr;
                     default:
                         break;
                     }

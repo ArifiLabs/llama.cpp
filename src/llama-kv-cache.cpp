@@ -145,6 +145,29 @@ static bool llama_kv_tail_noring() {
     return cached != 0;
 }
 
+// lane-194: compose the read-side window in F16 instead of F32.
+//
+// WHY THIS IS NOT A PRECISION CHANGE ON THE LEG THAT MATTERS: the ring is ALREADY F16
+// (ggml_new_tensor_2d(..., GGML_TYPE_F16, ...) below). The F32 compose upcast it to F32 for
+// the sole reason that ggml_concat needs both operands to share a type, and the body leg was
+// F32 because quant->F32 was the only Vulkan cpy path that existed. Composing in F16 DELETES
+// that upcast; it does not discard anything the ring held. On the body leg, q4_0 dequantizes
+// to d*(q-8) with d an F16 scale and q a 4-bit code - F16 carries that product to ~2^-11
+// relative, three orders below q4_0's own ~2^-4 grid, so the body leg is lossless against its
+// own source too. This is why it is a memory win rather than a quality trade.
+//
+// F-145: one binary, two arms. Default OFF keeps the shipped F32 compose byte-identical.
+static bool llama_kv_tail_f16_compose() {
+    static int cached = -1;
+
+    if (cached < 0) {
+        const char * s = getenv("LLAMA_KV_TAIL_F16");
+        cached = (s && atoi(s) != 0) ? 1 : 0;
+    }
+
+    return cached != 0;
+}
+
 static bool llama_kv_tail_broken_env() {
     static int cached = -1;
 
@@ -1798,30 +1821,39 @@ ggml_tensor * llama_kv_cache::tail_compose(
         }
     }
 
+    // lane-194: the compose target. F16 halves the materialised window, and is admitted ONLY
+    // when the body is q4_0 - that is the one type with a quant->F16 Vulkan cpy pipeline
+    // (ARIFI-SYNC-SET cpy.quant_to_f16). Asking for F16 over a q5_0/q8_0 body would make
+    // supports_op decline the cast and silently push the whole compose onto the CPU, so the
+    // body type is checked here rather than trusted from the env var. fa_kv_ok admits F16
+    // (ggml-vulkan.cpp), and ggml_concat is byte-width generic (unit_size 2), so nothing
+    // downstream needs a new path.
+    const ggml_type ct = (llama_kv_tail_f16_compose() && body->type == GGML_TYPE_Q4_0)
+        ? GGML_TYPE_F16 : GGML_TYPE_F32;
+
     if (n_tail <= 0) {
         // no trustworthy ring cell: the whole window comes from the body. The ring STORE is
         // still in the graph - build_attn expands it directly - so the ring keeps filling and
         // heals as soon as n_kv catches up with tail_hi.
         ggml_tensor * seg = ggml_view_4d(ctx, body, body->ne[0], body->ne[1], n_kv, 1,
                 body->nb[1], body->nb[2], body->nb[3], 0);
-        return ggml_cast(ctx, seg, GGML_TYPE_F32);
+        return ggml_cast(ctx, seg, ct);
     }
 
-    // body segment: the older cells, dequantized. q4_0 -> f32 is already wired end to end
-    // (cpy.quant_to_f32 carries Q4_0, and fa_kv_ok admits F32), so no new op and no fifth
-    // ARIFI-SYNC-SET pair - lane-186 0.2, confirmed still true here.
+    // body segment: the older cells, dequantized.
     ggml_tensor * out = nullptr;
     if (split > 0) {
         ggml_tensor * seg = ggml_view_4d(ctx, body, body->ne[0], body->ne[1], split, 1,
                 body->nb[1], body->nb[2], body->nb[3], 0);
-        out = ggml_cast(ctx, seg, GGML_TYPE_F32);
+        out = ggml_cast(ctx, seg, ct);
     }
 
     if (llama_kv_tail_noring()) {
-        // one-variable control: same split, same concat, newest cells from the QUANTIZED body
+        // one-variable control: same split, same concat, newest cells from the QUANTIZED body.
+        // Uses the SAME ct as the ring arm so it stays a one-variable control under F16 too.
         ggml_tensor * seg = ggml_view_4d(ctx, body, body->ne[0], body->ne[1], n_tail, 1,
                 body->nb[1], body->nb[2], body->nb[3], split*body->nb[2]);
-        ggml_tensor * tail = ggml_cast(ctx, seg, GGML_TYPE_F32);
+        ggml_tensor * tail = ggml_cast(ctx, seg, ct);
 
         return out ? ggml_concat(ctx, out, tail, 2) : tail;
     }
@@ -1833,7 +1865,9 @@ ggml_tensor * llama_kv_cache::tail_compose(
                 ring->nb[1],
                 ring->nb[1]*n,
                 i0*ring->nb[1]);
-        return ggml_cast(ctx, seg, GGML_TYPE_F32);
+        // ct == F16 makes this an F16 -> F16 materialisation of a strided view: the cast is
+        // still needed (concat wants a contiguous operand) but it no longer WIDENS the ring.
+        return ggml_cast(ctx, seg, ct);
     };
 
     const int64_t n_hi = std::min<int64_t>(n_tail, (int64_t) tail_n - rot);
