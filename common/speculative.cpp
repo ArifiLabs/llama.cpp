@@ -1599,6 +1599,20 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                     const float * row = lattice + (size_t) (beg + i) * n_embd_dec;
                     const float * scores = row + selector_top_k + (size_t) predecessor * selector_top_k;
 
+                    // selector confidence gate: softmax(scores) at the argmax, i.e. 1 / sum(exp(s_k - s_max)).
+                    // hoisted above the temperature branch so --spec-draft-p-min also gates sampled drafting;
+                    // before this, the sampled path (the common temp > 0 serve case) ignored the flag entirely.
+                    if (params.p_min > 0.0f) {
+                        const float s_max = *std::max_element(scores, scores + selector_top_k);
+                        float p_sum = 0.0f;
+                        for (int32_t k = 0; k < selector_top_k; ++k) {
+                            p_sum += std::exp(scores[k] - s_max);
+                        }
+                        if (1.0f / p_sum < params.p_min) {
+                            break;
+                        }
+                    }
+
                     if (dp.temperature > 0.0f) {
                         common_speculative_token_dist dist;
                         dist.ids.resize(selector_top_k);
@@ -1626,16 +1640,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                     } else {
                         predecessor = (int32_t) std::distance(scores,
                                 std::max_element(scores, scores + selector_top_k));
-                        if (params.p_min > 0.0f) {
-                            // softmax(scores) at the argmax, i.e. 1 / sum(exp(s_k - s_max))
-                            float p_sum = 0.0f;
-                            for (int32_t k = 0; k < selector_top_k; ++k) {
-                                p_sum += std::exp(scores[k] - scores[predecessor]);
-                            }
-                            if (1.0f / p_sum < params.p_min) {
-                                break;
-                            }
-                        }
                         const llama_token id = (llama_token) row[predecessor];
                         if (mask_token_id != LLAMA_TOKEN_NULL && id == mask_token_id) {
                             LOG_WRN("%s: DFlash2 selector produced its mask token at draft position %d; truncating draft\n",
