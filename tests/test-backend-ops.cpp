@@ -12140,6 +12140,15 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
         }
     }
 
+    // ArifiLabs lane-209: the 27B ffn row (17408x5120) at the plain / DFlash2-verify widths, for the types the
+    // seat and the Unleashed quality winners actually carry there (q4_K = the yardstick shader at 96-100% of
+    // best on the 780M). `-p "m=17408"` narrows perf to these 24 rows.
+    for (int bs : {1, 2, 3, 4, 5, 8}) {
+        for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_IQ4_XS, GGML_TYPE_IQ3_S, GGML_TYPE_Q4_0_ROCMFP4_FAST}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, bs, 5120, {1,  1}, {1, 1}));
+        }
+    }
+
     // qwen3-30b-a3b
     for (int bs : {1, 4, 8, 32, 64, 128, 256, 512}) {
         for (ggml_type type_a : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ2_XS, GGML_TYPE_IQ4_XS}) {
