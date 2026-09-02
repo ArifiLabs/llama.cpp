@@ -10034,6 +10034,20 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
         return false;
     }
 
+    // arifi lane-198 (AMD 780M, proprietary driver, measured on the live speculative-verify graph):
+    // the q8_1 MMVQ shader's per-dispatch cost STEPS from NUM_COLS 4 to 5 - Q4_K 2.0-2.3x, Q5_K
+    // 1.55x (width-3 baseline) - while the f32 dequant shader rises 1.4-1.6x on the same rows, and
+    // Q5_K is faster on the f32 shader at every measured n>1 (0.73-0.88x). Route them where they win.
+    // GGML_VK_FORCE_MMVQ / GGML_VK_DISABLE_MMVQ (mmvq_mode above) still override this.
+    if (device->vendor_id == VK_VENDOR_ID_AMD && n > 1) {
+        if (src0_type == GGML_TYPE_Q5_K) {
+            return false;
+        }
+        if (src0_type == GGML_TYPE_Q4_K && n >= 5) {
+            return false;
+        }
+    }
+
     // MMVQ is generally good for batches
     if (n > 1) {
         return true;
