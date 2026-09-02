@@ -323,6 +323,21 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
                                         kvalues_mxfp4[vui2 >>  4] * d));
 
 #endif
+#elif defined(DATA_A_ROCMFP4_FAST)
+            // arifi lane-204: ROCmFP4-FAST mat-mat A loader (rocmfpx/main mul_mm_funcs.glsl:602-607 on the store_a() API;
+            // block = qs[16] + one ue4m3 scale, same 8-position layout as mxfp4 above)
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib = idx / 8;
+            const uint iqs = (idx & 0x07) * 2;
+
+            const uint vui = uint(data_a[ib].qs[iqs]);
+            const uint vui2 = uint(data_a[ib].qs[iqs+1]);
+            const float d = ue4m3_to_fp32(data_a[ib].e);
+            store_a(col, row,     FLOAT_TYPEV2(float(kvalues_rocmfp4[vui  & 0xF]) * d,
+                                              float(kvalues_rocmfp4[vui2 & 0xF]) * d));
+            store_a(col, row + 8, FLOAT_TYPEV2(float(kvalues_rocmfp4[vui  >>  4]) * d,
+                                              float(kvalues_rocmfp4[vui2 >>  4]) * d));
 #elif defined(DATA_A_NVFP4)
     const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
     const uint eff_row = (row & 3) + (row & ~3) * 2;

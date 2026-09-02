@@ -2246,6 +2246,10 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
 // arifi: TurboQuant TQ3_1S/TQ4_1S ROTATED mul_mm_id - f32 B only (the activation is pre-rotated in f32 by
 // pipeline_tq_rotate_act), never coopmat2 (no dequant_funcs_cm2 entry); SPIR-V from the explicit tq stanza
 // in vulkan-shaders-gen.cpp. Correct ONLY against a pre-rotated activation.
+// arifi: fork types with NON-id mat-mat pipelines only (f16 on coopmat2, f32 B elsewhere); MUL_MAT_ID for
+// them takes the dequant + f16 path, as it always did
+#define FOR_EACH_ARIFI_MM_NOID_TYPE(X) \
+    X(GGML_TYPE_Q4_0_ROCMFP4_FAST, rocmfp4_fast)
 #define FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X) \
     X(GGML_TYPE_TQ3_1S, tq3_1s) \
     X(GGML_TYPE_TQ4_1S, tq4_1s)
@@ -2369,6 +2373,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
           } }
         FOR_EACH_LUT_TYPE_NONFP4(X_CM2)
         FOR_EACH_ARIFI_MM_TYPE(X_CM2)
+        FOR_EACH_ARIFI_MM_NOID_TYPE(X_CM2)
 #if defined(GGML_VULKAN_FLOAT_E2M1_GLSLC_SUPPORT) && defined(GGML_VULKAN_FLOAT_E4M3_GLSLC_SUPPORT)
         if (device->ocp_fp4) {
 #define X_CM2_OCP(TYPE, tstr) \
@@ -2517,7 +2522,16 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             cm1_create({TYPE, GGML_TYPE_F16, false, false}, tc_mmq, "matmul_" #tstr "_f16",        matmul_##tstr##_f16_cm1_len,        matmul_##tstr##_f16_cm1_data,        sizeof(vk_mat_mat_push_constants), 3); \
         }
         FOR_EACH_LUT_TYPE_NONFP4(X_CM1)
-        FOR_EACH_ARIFI_MM_TYPE(X_CM1)
+#define X_CM1_F32B(TYPE, tstr) \
+        if (device->coopmat_acc_f16_support) { \
+            cm1_create({TYPE, GGML_TYPE_F32, false, true},  tc_mmq, "matmul_" #tstr "_f32_f16acc", matmul_##tstr##_f32_f16acc_cm1_len, matmul_##tstr##_f32_f16acc_cm1_data, sizeof(vk_mat_mat_push_constants), 3); \
+        } \
+        if (device->coopmat_acc_f32_support) { \
+            cm1_create({TYPE, GGML_TYPE_F32, false, false}, tc_mmq, "matmul_" #tstr "_f32",        matmul_##tstr##_f32_cm1_len,        matmul_##tstr##_f32_cm1_data,        sizeof(vk_mat_mat_push_constants), 3); \
+        }
+        FOR_EACH_ARIFI_MM_TYPE(X_CM1_F32B)
+        FOR_EACH_ARIFI_MM_NOID_TYPE(X_CM1_F32B)
+#undef X_CM1_F32B
 #if defined(GGML_VULKAN_FLOAT_E2M1_GLSLC_SUPPORT) && defined(GGML_VULKAN_FLOAT_E4M3_GLSLC_SUPPORT)
         if (device->ocp_fp4) {
 #define X_CM1_OCP(TYPE, tstr) \
@@ -2591,7 +2605,6 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             cm1_create({TYPE, GGML_TYPE_F16, true, false}, tc_mmq_id, "matmul_id_subgroup_" #tstr "_f16",        matmul_id_subgroup_##tstr##_f16_cm1_len,        matmul_id_subgroup_##tstr##_f16_cm1_data,        sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count); \
         }
         FOR_EACH_LUT_TYPE_NONFP4(X_CM1_ID)
-        FOR_EACH_ARIFI_MM_TYPE(X_CM1_ID)
 #define X_CM1_ID_F32B(TYPE, tstr) \
         if (device->coopmat_acc_f16_support) { \
             cm1_create({TYPE, GGML_TYPE_F32, true, true},  tc_mmq_id, "matmul_id_subgroup_" #tstr "_f32_f16acc", matmul_id_subgroup_##tstr##_f32_f16acc_cm1_len, matmul_id_subgroup_##tstr##_f32_f16acc_cm1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count); \
@@ -2599,6 +2612,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         if (device->coopmat_acc_f32_support) { \
             cm1_create({TYPE, GGML_TYPE_F32, true, false}, tc_mmq_id, "matmul_id_subgroup_" #tstr "_f32",        matmul_id_subgroup_##tstr##_f32_cm1_len,        matmul_id_subgroup_##tstr##_f32_cm1_data,        sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count); \
         }
+        FOR_EACH_ARIFI_MM_TYPE(X_CM1_ID_F32B)
         FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X_CM1_ID_F32B)
 #undef X_CM1_ID_F32B
 #if defined(GGML_VULKAN_FLOAT_E2M1_GLSLC_SUPPORT) && defined(GGML_VULKAN_FLOAT_E4M3_GLSLC_SUPPORT)
@@ -2695,6 +2709,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             sg_create({TYPE, GGML_TYPE_F32, false, false}, tc_mmq, "matmul_" #tstr "_f32",        SPV_DOT2(matmul_##tstr##_f32),        sizeof(vk_mat_mat_push_constants), 3);
             FOR_EACH_LUT_TYPE(X_SG)
             FOR_EACH_ARIFI_MM_TYPE(X_SG)
+            FOR_EACH_ARIFI_MM_NOID_TYPE(X_SG)
 #undef X_SG
 
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
@@ -2817,6 +2832,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             sg_create({TYPE, GGML_TYPE_F32, false, false}, tc_mmq, "matmul_" #tstr "_f32", matmul_##tstr##_f32_fp32_len, matmul_##tstr##_f32_fp32_data, sizeof(vk_mat_mat_push_constants), 3);
             FOR_EACH_LUT_TYPE(X_SG_FP32)
             FOR_EACH_ARIFI_MM_TYPE(X_SG_FP32)
+            FOR_EACH_ARIFI_MM_NOID_TYPE(X_SG_FP32)
 #undef X_SG_FP32
 
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
