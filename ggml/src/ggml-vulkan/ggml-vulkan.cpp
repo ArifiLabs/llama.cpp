@@ -10090,6 +10090,14 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
     // 1.55x (width-3 baseline) - while the f32 dequant shader rises 1.4-1.6x on the same rows, and
     // Q5_K is faster on the f32 shader at every measured n>1 (0.73-0.88x). Route them where they win.
     // GGML_VK_FORCE_MMVQ / GGML_VK_DISABLE_MMVQ (mmvq_mode above) still override this.
+    // arifi lane-209 rank 8: keep ROCmFP4 MMVQ off the n=1 decode path.  This check must remain
+    // outside the n > 1 batch-routing block below; placing it inside that block makes n < 2
+    // unreachable and silently routes n=1 back through MMVQ.
+    if (device->vendor_id == VK_VENDOR_ID_AMD &&
+        src0_type == GGML_TYPE_Q4_0_ROCMFP4_FAST && (n < 2 || n > 5)) {
+        return false;
+    }
+
     if (device->vendor_id == VK_VENDOR_ID_AMD && n > 1) {
         if (src0_type == GGML_TYPE_Q5_K) {
             return false;
@@ -10104,9 +10112,6 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
         // BOTH replicates of the plain arm, where the f32 arm produced 72 tokens on the same prompt and seed.
         // test-backend-ops passes the type (13 cases, 0 FAIL) so the divergence is inside the op's NMSE gate -
         // but a width that buys nothing measured is not worth a token-0 flip, so MMVQ is kept to n=2..5 only.
-        if (src0_type == GGML_TYPE_Q4_0_ROCMFP4_FAST && (n < 2 || n > 5)) {
-            return false;
-        }
     }
 
     // MMVQ is generally good for batches
