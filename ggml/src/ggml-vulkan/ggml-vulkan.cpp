@@ -6955,7 +6955,7 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
     // outside the n > 1 batch-routing block below; placing it inside that block makes n < 2
     // unreachable and silently routes n=1 back through MMVQ.
     if (device->vendor_id == VK_VENDOR_ID_AMD &&
-        src0_type == GGML_TYPE_Q4_0_ROCMFP4_FAST && (n < 2 || n == 4 || n > 5)) {
+        src0_type == GGML_TYPE_Q4_0_ROCMFP4_FAST && (n <= 2 || n == 4 || n > 5)) {
         return false;
     }
 
@@ -6972,7 +6972,8 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
         // replicates of the plain arm, where the f32 arm produced 72 tokens on the same prompt and seed. Moving
         // n=1 back to f32 did not clear it: a reproducing live-graph census found n=4 in the prefix-cache update.
         // test-backend-ops passes the type (13 cases, 0 FAIL), so the divergence is inside the op's NMSE gate.
-        // Since n=4 buys only 1.02x measured, keep MMVQ only at the useful n=2,3,5 widths.
+        // Removing n=4 did not clear the cache-history flip; the same census leaves n=2 as the remaining
+        // MMVQ width in that sequence. Keep MMVQ only at n=3 and n=5.
     }
 
     // MMVQ is generally good for batches
