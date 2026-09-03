@@ -6971,7 +6971,8 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
         // (x0.998). The lane-209 rank-7 serve A/B returned predicted_n=1 / text_len=0 on prompt cell 3 in BOTH
         // replicates of the plain arm, where the f32 arm produced 72 tokens on the same prompt and seed. Moving
         // n=1 back to f32 did not clear it: a reproducing live-graph census found n=4 in the prefix-cache update.
-        // test-backend-ops passes the type (13 cases, 0 FAIL), so the divergence is inside the op's NMSE gate.
+        // test-backend-ops passes the measured route (10 MUL_MAT + 2 MUL_MAT_ID cases, 0 FAIL), so the
+        // divergence is inside the op's NMSE gate.
         // Removing n=4 did not clear the cache-history flip; the same census leaves n=2 as the remaining
         // MMVQ width in that sequence. Keep MMVQ only at n=3 and n=5.
     }
