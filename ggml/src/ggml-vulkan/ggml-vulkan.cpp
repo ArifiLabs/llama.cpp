@@ -6958,9 +6958,14 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
         if (src0_type == GGML_TYPE_Q4_K && n >= 5) {
             return false;
         }
-        // arifi lane-209 (same box, test-backend-ops 17408x5120, r4b/TBO-17408.txt): the rocmfp4_fast q8_1 MMVQ
-        // port beats the f32 shader at n=2..5 (x1.21 / x1.36 / x1.03 / x1.33) and loses at n=8 (x0.80); n=1 is a tie.
-        if (src0_type == GGML_TYPE_Q4_0_ROCMFP4_FAST && n > 5) {
+        // arifi lane-209 (same box, test-backend-ops 17408x5120, r4c/TBO-17408.txt): the rocmfp4_fast q8_1 MMVQ
+        // port beats the f32 shader at n=2..5 (x1.18 / x1.34 / x1.02 / x1.32) and loses above it; n=1 is a TIE
+        // (x0.998). n=1 is also the only width where the int-dot path was observed to change a sampled token:
+        // the lane-209 rank-7 serve A/B (r7/FP4/AB.json) returned predicted_n=1 / text_len=0 on prompt cell 3 in
+        // BOTH replicates of the plain arm, where the f32 arm produced 72 tokens on the same prompt and seed.
+        // test-backend-ops passes the type (13 cases, 0 FAIL) so the divergence is inside the op's NMSE gate -
+        // but a width that buys nothing measured is not worth a token-0 flip, so MMVQ is kept to n=2..5 only.
+        if (src0_type == GGML_TYPE_Q4_0_ROCMFP4_FAST && (n < 2 || n > 5)) {
             return false;
         }
     }
