@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "authority": "C:/ArifiLabs/registers/2026-09-04-local-inference-win-preservation-mandate.md",
+  "_what_this_is": [
+    "The machine-readable register of every measured ArifiLabs win that an upstream bump or a",
+    "fork ingest must not silently overwrite. President mandate 2026-09-04, assignment 2.",
+    "",
+    "Read by: arifi_sync.py `protected-win validate|check|discover`, and by `bump` at leg 1b,",
+    "which REFUSES when an incoming change collides with an entry and no measured comparison",
+    "authorises it. Operator procedure: UPDATE-RUNBOOK.md 4.1c.",
+    "",
+    "AUTHORED, NOT GENERATED. protected_paths, anchors, quality_gate and workload are not",
+    "derivable from a commit trailer, and a fabricated value would make the guard lie. The",
+    "candidate set IS derivable and `protected-win discover` prints it, so a measured win",
+    "cannot quietly stay unregistered. An entry that cannot be completed honestly stays out",
+    "of this file and stays on that list."
+  ],
+  "_schema": {
+    "required_when_active": [
+      "id", "status", "mechanism", "commit", "protected_paths", "anchors",
+      "evidence", "quality_gate", "workload", "measured_effect"
+    ],
+    "required_when_superseded": ["superseded_by", "comparison_evidence", "valid_conditions"],
+    "status": "active | superseded",
+    "evidence": "a repo- or studio-relative path, or `commit:<sha>` when the measurement table lives in the commit message",
+    "anchors": "distinctive symbols/env gates whose REMOVAL by an incoming diff is itself a collision, even when the file survives",
+    "supersession_law": "A superseded win is NEVER deleted. It keeps its entry, its evidence and the valid_conditions it still wins under, per the mandate's condition of validity."
+  },
+  "wins": [
+    {
+      "id": "vulkan-concat-transpose-deltanet",
+      "status": "active",
+      "mechanism": "Tiled CONCAT dispatch for a transposed src1, taken on the delta-net conv state. A dedicated concat_transpose shader plus a selector branch ahead of the pre-existing cpy_transpose_02_32/02_16 tiled branch; the two predicates select disjoint pipelines.",
+      "commit": "5b1b416cb9beec3f9d987de47149b06a989e1783",
+      "protected_paths": [
+        "ggml/src/ggml-vulkan/vulkan-shaders/concat_transpose.comp",
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
+      ],
+      "anchors": [
+        "pipeline_concat_transpose_i32",
+        "ggml_vk_concat_is_transposed",
+        "GGML_VK_CONCAT_TRANSPOSE"
+      ],
+      "opt_out": "GGML_VK_CONCAT_TRANSPOSE=0",
+      "evidence": [
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/rank3-r10",
+        "commit:5b1b416cb9beec3f9d987de47149b06a989e1783"
+      ],
+      "quality_gate": "ON-vs-OFF generated text byte-identical at temp 0 / top_k 1 / presence_penalty 0 on the canonical binary (QUALITY-CANON.json, 3/3), F-141 0/8 on every slot (f141-canon/F141.json), test-backend-ops -o CONCAT 195/195 0 FAIL both arms.",
+      "workload": "Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL on the seat serve line (-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -t 16 -tb 32 -ctk q8_0 -ctv q8_0 --jinja); op-level receipt via llama-bench -p 2048 -n 0 -ub 512 -ngl 999 -fa 1 -t 16 -r 1 with GGML_VK_PERF_LOGGER=1, Balanced power plan.",
+      "measured_effect": "CONCAT dispatch -12.79% (-15.66 ms per ub512 prefill graph) on the LANE binary; end-to-end ceiling +0.18%, serve-level TIED on all three shapes across two counterbalanced takes. A canonical-binary re-measurement is banked separately in rank3-r10/71-PERF-CANON.json.",
+      "valid_conditions": "Fires only where src1 is transposed with nb[0] > nb[1] and src0 ne[2]==ne[3]==1 - the delta-net conv-state shape. test-backend-ops carries no case of that shape, so the suite proves non-regression, not coverage.",
+      "notes": "The win is op-level and statistically zero at the seat. It is retained anyway: a win is a win even if it is small (mandate root cause 1)."
+    },
+    {
+      "id": "vulkan-tq-matvec-subgroup",
+      "status": "active",
+      "mechanism": "Subgroup-cooperative TQ mat-vec. Register WHT via subgroupShuffleXor replaces the 32-thread shared-memory butterfly, removing hot-loop barriers and unpinning the workgroup. The legacy 32-thread shaders remain as the fallback for devices without 32-multiple subgroups.",
+      "commit": "7749cace6",
+      "protected_paths": [
+        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq_sg.comp",
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
+      ],
+      "anchors": ["mul_mat_vec_tq_sg", "GGML_VK_DISABLE_TQ_SUBGROUP"],
+      "opt_out": "GGML_VK_DISABLE_TQ_SUBGROUP=1",
+      "evidence": [
+        "board/programs/local-inference/lanes/2026-08-20-lane-163-REPORT.md",
+        "commit:7749cace6"
+      ],
+      "quality_gate": "Build-time CPU/GLSL mirror-pair registration in ggml/src/ggml-vulkan/arifi_sync_check.py (49 -> 52 pairs); float rotated activation throughout, so the mmvq-tq fp16-store bias cannot recur; test-backend-ops TQ coverage green.",
+      "workload": "780M, llama-bench/llama-server: 27B tq3_4s tg32, and 0.5b tq4_1s / tq3_1s tg64 (lane-163).",
+      "measured_effect": "27B tq3_4s tg32 0.67 -> 1.80 t/s; 0.5b tq4_1s tg64 44.7 -> 126.7, tq3_1s 45.5 -> 107.1; mat-vec kernel n=1 3.1-3.4x.",
+      "valid_conditions": "Devices whose subgroup size is a multiple of 32. Elsewhere the legacy shaders are the correct path and must survive with it."
+    },
+    {
+      "id": "vulkan-escha-mm-column-block",
+      "status": "active",
+      "mechanism": "Column-blocked escha_mm: one weight decode serves C columns, removing redundant decode work rather than load pressure. C=8 shipped, with a fall-back to the one-column pipeline below a full block, and every dispatch bounded to 32 columns (the F-124 host-freeze guard).",
+      "commit": "146f1bf8b",
+      "also_commits": ["edd9c1528", "b0d9c3152", "59f328d25", "974d46603"],
+      "protected_paths": [
+        "ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp",
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
+      ],
+      "anchors": ["ESCHA_MM_COLS", "ESCHA_SG_HADAMARD"],
+      "evidence": [
+        "commit:146f1bf8b",
+        "commit:edd9c1528",
+        "board/hq/2026-08-21-escha-seat-verdict.html"
+      ],
+      "quality_gate": "tests/test-backend-ops.cpp ESCHA_MM cases at real 27B shapes (ncols=9), 10/10 GREEN; the f32->f16 convert must stay float16_t, not packed - a one-ulp truncation there corrupted 25.6% of codewords once already (974d46603).",
+      "workload": "test-backend-ops perf -b Vulkan0 -o ESCHA_MM, Balanced, one session: escha2 5120x12288 and escha3 17408x5120 at ncols 1 / 8 / 64.",
+      "measured_effect": "3.51x on escha3 17408x5120 at ncols=64 (135386 -> 38587 us), 3.09x at ncols=8; decode held at baseline (2856 vs 2831 us at ncols=1) by the threshold.",
+      "valid_conditions": "Prefill shapes with ncols >= ESCHA_MM_COLS. Below the threshold the one-column pipeline is the winner - C=4 made decode 11-27% SLOWER - so the threshold is part of the win, not an optimisation of it. ESCHA_SG_HADAMARD stays OFF by default: the lever was refuted by measurement.",
+      "notes": "C=16 is the next untested step and is deliberately not assumed."
+    },
+    {
+      "id": "escha-w2-decode-correctness",
+      "status": "active",
+      "mechanism": "Full 64-bit pair sourcing plus the row-parity correction in the Escha weight decode. K=2 had windowed a bare u16 where the reference PTX builds a 64-bit pair and windows a 32-bit suffix, so 7 of every 8 weights decoded from truncated data; the tile scatter row term used (c & 1) where the PTX predicate inverts it, which nulled K=3.",
+      "commit": "be74d3cff",
+      "protected_paths": [
+        "ggml/src/ggml-cpu/ops.cpp",
+        "ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp"
+      ],
+      "anchors": ["escha_mm", "escha2"],
+      "evidence": ["commit:be74d3cff", "research/local-inference/2026-08-28-escha-eosfix-report.md"],
+      "quality_gate": "Whole-tensor correlation against a known-good GGUF of the same base checkpoint over 25 projections: worst 0.9358, median 0.987, with the positive control run FIRST. End-to-end Vulkan coherence PASSES. A test that compares our two implementations against each other does NOT satisfy this gate - that is precisely what missed both defects.",
+      "workload": "Escha-W2 native decode, Vulkan path, K=2 and K=3.",
+      "measured_effect": "Escha-W2 native decode goes from token salad to coherent; worst-projection weight correlation 0.000 -> 0.9358, K=2 and K=3 both correct.",
+      "valid_conditions": "Escha weight decode at K=2 and K=3. This is a CORRECTNESS win, so an incoming change that is faster but re-truncates the pair sourcing loses outright - speed cannot buy this one back.",
+      "notes": "Registered because the mandate's protection is of the winning FORMULA, and a decode that is fast and wrong is not a candidate at all."
+    },
+    {
+      "id": "cpu-vnni-repack-dual-residency",
+      "status": "active",
+      "mechanism": "Dual residency for the VNNI weight repack (GGML_ARIFI_VNNI_REPACK=2): keeps the decode win of mode 1 while leaving prefill on its original path, and fixes the hot-path cost that ate the first implementation.",
+      "commit": "2fb12c5c6",
+      "protected_paths": ["ggml/src/ggml-cpu/repack.cpp"],
+      "anchors": ["GGML_ARIFI_VNNI_REPACK"],
+      "opt_out": "GGML_ARIFI_VNNI_REPACK unset (mode 0)",
+      "evidence": ["commit:2fb12c5c6", "docs/FINDINGS.md", "docs/OPTIONS-REGISTRY.md"],
+      "quality_gate": "Bit-identical to mode 1 and placement-identical to mode 0 across the correctness sweep. That sweep alone is NOT sufficient - the first version passed it and was slower than doing nothing - so the timed A/B is part of the gate.",
+      "workload": "RIG-A, llama-server, two g64 models, -ngl 0 --no-host -c 2048 -t 8, 519-token prefill, n_predict 128, temp 0, three interleaved replicates x 5 rolls, roll 1 dropped, n=12 per cell, one binary with only the env flip.",
+      "measured_effect": "decode +22.0% (mixed) and +23.7% (all-Q2_0) against mode 0, ranges DISJOINT, with prefill held at baseline (958.96 vs 898.11 and 963.51 vs 905.25 prompt t/s, ranges overlapping so no prefill gain is claimed).",
+      "valid_conditions": "CPU tier, g64 ternary models, -ngl 0. Mode 1 remains the wrong trade on this workload: it pays -65% to -80% of prefill for the same decode."
+    },
+    {
+      "id": "powerinfer-moe-streaming-hook",
+      "status": "active",
+      "mechanism": "Generic MoE streaming hook with a SiLU op-type and standalone expert prefetch - the warm-regime fix for disk-streamed sparse inference.",
+      "commit": "52fb1de16",
+      "protected_paths": ["src/llama-graph.cpp"],
+      "anchors": ["EXPERT_BUNDLE_PATH"],
+      "evidence": [
+        "board/programs/local-inference/lanes/2026-07-19-lane-110-REPORT.md",
+        "commit:52fb1de16"
+      ],
+      "quality_gate": "Coherent output on the streamed path (the repack carve-out at 11c9a7702 exists because AARCH64 repack of streamed experts produced garbage), verified per lane-110C round.",
+      "workload": "llama-server, streamed-MoE expert bundle, lane-110C rounds on RIG-A.",
+      "measured_effect": "server decode climbs 5.99 / 9.79 / 10.48 / 12.31 t/s against the fork's best 9.00 (RESULTS lane-110C).",
+      "valid_conditions": "Disk-streamed sparse MoE with an expert bundle present. Inert without one."
+    },
+    {
+      "id": "powerinfer-pipeline-init-reuse",
+      "status": "active",
+      "mechanism": "Per-ubatch pipeline init with guarded reuse, so the streamed-MoE pipeline is rebuilt only when it must be.",
+      "commit": "297eec3d2",
+      "protected_paths": ["src/llama-context.cpp"],
+      "anchors": ["LANE110_PROF"],
+      "evidence": [
+        "board/programs/local-inference/lanes/2026-07-19-lane-110-REPORT.md",
+        "commit:297eec3d2"
+      ],
+      "quality_gate": "Output coherence re-checked on the reuse path (lane-110C round 2); the guard is what makes reuse safe, so a change that reuses unguarded fails this entry even if it is faster.",
+      "workload": "llama-server, streamed-MoE, lane-110C round 2 on RIG-A.",
+      "measured_effect": "9 of 263 rebuilds; pipeline init 2472 us -> 0-2 us, about 2.5 ms per token, output coherent.",
+      "valid_conditions": "Streamed-MoE path with the per-ubatch pipeline in play."
+    }
+  ]
+}
