@@ -1332,7 +1332,8 @@ def cmd_protected_win_check(repo: str, cfg: dict, args) -> int:
             match = r
             break
         if match is None:
-            unresolved.append((c, ["no resolution recorded for (%s, %s)" % (wid, incoming[:12])]))
+            unresolved.append((c, ["no resolution recorded for (%s, %s @ %s)"
+                                   % (wid, incoming, inc_full[:9])]))
             continue
         bad = _resolution_problems(match)
         bad += ["evidence locator %r does not resolve" % e
