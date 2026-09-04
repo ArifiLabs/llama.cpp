@@ -338,8 +338,19 @@ bool ggml_vk_concat_supported(const ggml_tensor * src0, const ggml_tensor * src1
 // is 160 * 256 B with 160 % 16 == 0, so every read lands on the same one of the 16 memory channels.
 // Route that exact shape to a tiled-transpose kernel instead.
 static bool ggml_vk_concat_is_transposed(const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * dst) {
-    // On by default: +45% pp2048 on a delta-net MoE, +3.3% on a dense hybrid, never measured
-    // negative. GGML_VK_CONCAT_TRANSPOSE=0 opts out.
+    // On by default. GGML_VK_CONCAT_TRANSPOSE=0 opts out.
+    //
+    // UPSTREAM-REPORTED, NOT REPRODUCED HERE: the prior art this kernel is ported from reports
+    // +45% pp2048 on a delta-net MoE, +3.3% on a dense hybrid, and never measured negative, on
+    // gfx1151. ArifiLabs has neither reproduced nor contradicted those figures.
+    //
+    // MEASURED BY ArifiLabs, on a Radeon 780M (gfx1103), Huihui-Qwen3.8-27B UD-Q4_K_XL: the
+    // CONCAT dispatch itself is 11-13% faster, which is about -13 to -16 ms per ub512 prefill
+    // graph. CONCAT is ~1.4% of that graph, so the end-to-end ceiling is +0.18% and the
+    // whole-model prefill A/B is a statistical TIE on this device - measured twice,
+    // counterbalanced. The op-level gain is real and the serve-level tie is not a loss; both are
+    // true at once. Evidence: lane-209 rank 3, and `git notes show` on the commit that added
+    // this function.
     static const char * env = getenv("GGML_VK_CONCAT_TRANSPOSE");
     if (env && env[0] == '0') {
         return false;
