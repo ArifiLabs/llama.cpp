@@ -1070,6 +1070,7 @@ def cmd_judge(repo: str, cfg: dict, args) -> int:
 
 PROTECTED_WINS = "protected-wins.json"
 PROTECTED_RESOLUTIONS = "protected-win-resolutions.json"
+PROTECTED_BASELINE = "protected-win-baseline.json"
 
 WIN_REQUIRED = ("id", "status", "mechanism", "commit", "protected_paths", "anchors",
                 "evidence", "quality_gate", "workload", "measured_effect")
@@ -1077,7 +1078,14 @@ WIN_STATUSES = ("active", "superseded")
 RESOLUTION_REQUIRED = ("win_id", "incoming", "verdict", "arms", "quality", "evidence",
                        "decided_utc", "decided_by")
 RESOLUTION_VERDICTS = ("keep-ours", "adopt-upstream", "adopt-union")
-NO_EFFECT_PREFIXES = ("unmeasured", "none", "n/a", "-", "documentation only", "docs only",
+# A dash alone is the placeholder for "no effect stated". It used to live in NO_EFFECT_PREFIXES,
+# where it was a PREFIX test - so `Measured-effect: -12.79% per dispatch` classified as NO EFFECT.
+# Every speedup this fork writes as a negative delta was therefore invisible to discovery: the one
+# shape a win is most likely to take was the one shape the classifier could not see. Caught
+# 2026-09-04 by the WI-1688 fail-closed tests, on a fixture whose effect read `-9.4% per dispatch`.
+# It is an EXACT match now, and `test_a_negative_delta_is_a_real_measured_effect` keeps it one.
+NO_EFFECT_EXACT = ("-", "--", "n/a", "none", "tbd")
+NO_EFFECT_PREFIXES = ("unmeasured", "none", "n/a", "documentation only", "docs only",
                       "no code", "no runtime", "generated artifact", "packaging only",
                       "analysis only", "comment only", "tooling and documentation",
                       "tooling only", "build fix only", "build-system only", "build variant",
@@ -1133,13 +1141,21 @@ def _evidence_resolves(repo: str, locator: str) -> bool:
 STUDIO_ROOT = "C:/ArifiLabs"
 
 
-def validate_protected_wins(repo: str, ref: str) -> list:
+def validate_protected_wins(repo: str, ref: str, cfg=None) -> list:
     """Return the list of problems. Empty list = the manifest is complete AND still true.
 
     'Still true' is the half a schema check cannot do: a protected path that no longer exists,
     or an anchor that no longer appears in the tree, means the win was renamed or removed and
     the manifest is now guarding nothing. That is exactly the silent-overwrite the mandate is
-    about, so it is a validation failure and not a warning."""
+    about, so it is a validation failure and not a warning.
+
+    When `cfg` is supplied, STRICT REGISTRATION is also enforced (WI-1688): a commit that landed
+    with a real `Measured-effect:` and is covered neither by a manifest entry nor by the dated
+    discovery baseline is a problem, not a note. That is the enforcement gap `R2-CLOSURE-REPORT`
+    6 named as the honest weak point of the previous pass - the manifest could be complete and
+    still true while a win landed beside it completely unguarded. Because `cmd_protected_win_check`
+    runs this function first and `cmd_bump` leg 1b runs `check`, wiring it HERE is what makes an
+    unregistered win refuse the normal update path, with no parallel updater invented."""
     problems = []
     wins = load_protected_wins(repo)
     seen = set()
@@ -1174,13 +1190,22 @@ def validate_protected_wins(repo: str, ref: str) -> list:
         for e in w["evidence"]:
             if not _evidence_resolves(repo, e):
                 problems.append("%s: evidence locator %r does not resolve" % (wid, e))
+    if cfg is not None:
+        for sha, subject, eff in unregistered_measured_wins(repo, cfg, ref):
+            problems.append(
+                "UNREGISTERED measured win %s %r - it landed with `Measured-effect: %s` and is "
+                "covered by no manifest entry and no baseline row. Register it in %s, or, if it "
+                "is honestly not a protectable win, add it to %s with a written disposition. "
+                "Never invent a field to close a row."
+                % (sha[:9], subject[:70], " ".join(eff.split())[:90],
+                   PROTECTED_WINS, PROTECTED_BASELINE))
     return problems
 
 
 def cmd_protected_win_validate(repo: str, cfg: dict, args) -> int:
     ref = args.ref
     step("Validating %s against %s" % (PROTECTED_WINS, ref))
-    problems = validate_protected_wins(repo, ref)
+    problems = validate_protected_wins(repo, ref, cfg)
     wins = load_protected_wins(repo)
     active = [w for w in wins if w.get("status") == "active"]
     say("entries          : %d  (%d active, %d superseded)"
@@ -1198,43 +1223,91 @@ def cmd_protected_win_validate(repo: str, cfg: dict, args) -> int:
 
 def _measured_effect_is_real(value: str) -> bool:
     v = (value or "").strip().lower()
-    if not v:
+    if not v or v in NO_EFFECT_EXACT:
         return False
     return not v.startswith(NO_EFFECT_PREFIXES)
 
 
-def cmd_protected_win_discover(repo: str, cfg: dict, args) -> int:
-    """Every commit in the series carrying a real Measured-effect that no entry covers.
+def load_discovery_baseline(repo: str) -> dict:
+    """Sha-pinned, dated disposition ledger for the measured-effect commits that were already
+    landed when strict registration was switched on (WI-1688, 2026-09-04).
 
-    This is the anti-silence half of assignment 2. The manifest is authored, so the failure mode
-    it cannot see by itself is a win that was measured, landed, and then never registered. This
-    command makes that set printable, and `--strict` makes it a gate."""
-    base = cfg["base"]["upstream_sha"]
-    ref = args.ref
+    Same shape and same reasoning as `load_grandfather`: the alternative to a baseline is either
+    bricking `validate`/`check`/`bump` on 24 pre-existing rows, or - far worse - filing real wins
+    under a soft reason to make the gate go quiet. Neither is acceptable, and the second one is
+    the discard the President's mandate forbids. So the pre-existing set is recorded ONCE, with a
+    written disposition per row, and strict registration then bites on everything AFTER it.
+
+    Rows whose disposition is `REGISTRATION OWED` are real wins that are not yet fully described;
+    they stay visible in the baseline and in `discover --all` until their entry can be written
+    honestly. The baseline is CLOSED to new shas by convention - a new measured win must be
+    registered, not baselined - and `protected-win discover` prints it so the ledger cannot rot
+    unseen."""
+    data = _load_json(repo, PROTECTED_BASELINE, {"commits": []})
+    return {row["sha"]: row for row in data.get("commits", []) if row.get("sha")}
+
+
+def covered_win_commits(repo: str) -> set:
     covered = set()
     for w in _load_json(repo, PROTECTED_WINS, {"wins": []}).get("wins", []):
         for c in [w.get("commit")] + list(w.get("also_commits") or []):
             if c:
                 full = _resolve_ref(repo, c)
                 covered.add(full or c)
-    step("Scanning %s..%s for measured wins with no manifest entry" % (base[:9], ref))
+    return covered
+
+
+def unregistered_measured_wins(repo: str, cfg: dict, ref: str) -> list:
+    """The STRICT set: landed commits with a real `Measured-effect:` that no manifest entry covers
+    AND no baseline row dispositions. This is the single predicate `discover` prints and
+    `validate` fails on, so the report and the gate can never disagree about the set - the same
+    discipline `has_loose_provenance` already gives `cmd_provenance` and `regen_preflight`."""
+    base = cfg["base"]["upstream_sha"]
+    covered = covered_win_commits(repo)
+    baseline = load_discovery_baseline(repo)
     rows = []
     for sha in gout(repo, "rev-list", "--reverse", "%s..%s" % (base, ref)).split():
-        if sha in covered:
+        if sha in covered or sha in baseline:
             continue
         eff = commit_trailers(repo, sha)["Measured-effect"]
         if _measured_effect_is_real(eff):
             rows.append((sha, gout(repo, "log", "-1", "--format=%s", sha), eff))
-    say("uncovered commits with a real Measured-effect: %d" % len(rows))
+    return rows
+
+
+def cmd_protected_win_discover(repo: str, cfg: dict, args) -> int:
+    """Every commit in the series carrying a real Measured-effect that no entry covers.
+
+    This is the anti-silence half of assignment 2. The manifest is authored, so the failure mode
+    it cannot see by itself is a win that was measured, landed, and then never registered.
+
+    Two modes, deliberately kept apart:
+      * default - the STRICT set (unregistered AND un-baselined). This is exactly what
+        `validate`, and therefore `check` and `bump`, now refuse on, so what this prints is what
+        will block an update. `--strict` additionally makes THIS command exit non-zero, for use
+        as a standalone job.
+      * `--all` - the INFORMATIONAL candidate set, which also lists every baselined row with its
+        recorded disposition. Nothing is hidden by the baseline; it is a ledger, not a mute."""
+    base = cfg["base"]["upstream_sha"]
+    ref = args.ref
+    step("Scanning %s..%s for measured wins with no manifest entry" % (base[:9], ref))
+    rows = unregistered_measured_wins(repo, cfg, ref)
+    baseline = load_discovery_baseline(repo)
+    say("UNREGISTERED and un-baselined (this set REFUSES validate/check/bump): %d" % len(rows))
     for sha, subject, eff in rows:
         say("  %s  %s" % (sha[:9], subject))
         say("             %s" % " ".join(eff.split())[:150])
+    if getattr(args, "all", False):
+        say("\nbaselined rows (recorded disposition, %s): %d" % (PROTECTED_BASELINE, len(baseline)))
+        for sha, row in baseline.items():
+            say("  %s  %s" % (sha[:9], row.get("subject", "")[:80]))
+            say("             %s" % row.get("disposition", "")[:150])
     if rows and getattr(args, "strict", False):
         say("\nFAIL (--strict): the set above is measured, landed and unprotected.")
         return 1
-    say("\nNOTE: this list is a CANDIDATE set, not a defect list. A row belongs in the manifest")
-    say("only when its protected paths, anchors, evidence, quality gate and workload are all")
-    say("known. Never invent a field to close a row - leave it here instead.")
+    say("\nNOTE: a row belongs in the manifest only when its protected paths, anchors, evidence,")
+    say("quality gate and workload are all known. Never invent a field to close a row - record a")
+    say("written disposition in %s instead, which is visible and dated." % PROTECTED_BASELINE)
     return 0
 
 
@@ -1291,7 +1364,7 @@ def cmd_protected_win_check(repo: str, cfg: dict, args) -> int:
     incoming = args.incoming
     step("Protected-win preflight: %s vs incoming %s" % (ref, incoming))
 
-    problems = validate_protected_wins(repo, ref)
+    problems = validate_protected_wins(repo, ref, cfg)
     if problems:
         say("FAIL: the manifest itself does not validate, so the preflight cannot run.")
         for p in problems:
@@ -1492,6 +1565,8 @@ def main(argv=None) -> int:
     a.add_argument("--ref", default=None)
     a.add_argument("--strict", action="store_true",
                    help="exit 1 when a measured win has no manifest entry")
+    a.add_argument("--all", action="store_true",
+                   help="informational: also list the dated baseline rows and their dispositions")
 
     sub.add_parser("build")
     p = sub.add_parser("judge")
