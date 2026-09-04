@@ -17,6 +17,10 @@ Subcommands
     recipe diff   recover the build recipe by DIFFING CMakeCache against the committed snapshot
     recipe export write a CMake -C initial-cache file that replays the recorded configuration
     bump          replay + build + judge onto a new upstream ref; refuses unless ALL THREE pass
+    protected-win validate   check the protected-win manifest is complete and still true of the tree
+    protected-win check      FAIL-CLOSED ingest preflight: refuse an incoming change that touches a
+                             protected win without a recorded, evidence-backed comparison verdict
+    protected-win discover   list commits with a real Measured-effect that no manifest entry covers
 
 Exit code is 0 only when the subcommand fully passed.
 """
@@ -123,6 +127,15 @@ def load_grandfather(repo: str) -> set:
     with open(p, "r", encoding="utf-8-sig") as fh:
         data = json.load(fh)
     return {row["sha"] for row in data.get("commits", [])}
+
+
+def has_loose_provenance(repo: str, sha: str) -> bool:
+    """The LOOSE test: the token appears anywhere in the message. Deliberately the loose one -
+    it is what `cmd_provenance` uses to decide `NO PROVENANCE AT ALL`, the only provenance
+    condition that is a hard failure. Shared with `regen_preflight` so the pre-flight and the
+    report can never disagree about which commits are offenders."""
+    body = gout(repo, "log", "-1", "--format=%B", sha)
+    return ("Taken-from:" in body) or ("Origin:" in body)
 
 
 def cmd_provenance(repo: str, cfg: dict, args) -> int:
@@ -463,28 +476,81 @@ def build_manifest(repo: str, cfg: dict, ref: str, files: list, outdir: str) -> 
     return "\n".join(L) + "\n"
 
 
+def regen_preflight(repo: str, cfg: dict, ref: str) -> None:
+    """Every condition that can abort a regen, evaluated BEFORE anything is deleted.
+
+    Linearity is not checked here because `format_patch` already raises on it, and this
+    function's callers generate into a temp directory first - so generation IS a pre-flight.
+    What is checked here is the condition generation cannot see: a commit in the range with no
+    provenance at all produces a MANIFEST row that asserts an attribution the repository does
+    not have. `provenance` reports that as a hard failure; regen must not publish it."""
+    base = cfg["base"]["upstream_sha"]
+    shas = gout(repo, "rev-list", "--reverse", "%s..%s" % (base, ref)).split()
+    if not shas:
+        raise Loud("empty range %s..%s - is the base pin correct?" % (base[:9], ref))
+    grandfathered = load_grandfather(repo)
+    missing = [s for s in shas
+               if not has_loose_provenance(repo, s) and s not in grandfathered]
+    if missing:
+        raise Loud(
+            "%d commit(s) in %s..%s carry no provenance; the series would publish a MANIFEST\n"
+            "  that attributes them to nothing. Add a Taken-from:/Origin: trailer (or a\n"
+            "  grandfather row for a pre-2026-08-20 native commit), then regenerate.\n"
+            "  Full report: python tools/arifi-sync/arifi_sync.py provenance --ref %s\n"
+            "  offenders:\n%s"
+            % (len(missing), base[:9], ref, ref,
+               "\n".join("    %s  %s" % (s[:9], gout(repo, "log", "-1", "--format=%s", s))
+                         for s in missing[:10])))
+
+
 def cmd_series_regen(repo: str, cfg: dict, args) -> int:
+    """Generate to a temp directory, verify, and only then swap. NEVER delete first.
+
+    Until 2026-09-04 this function ran its `os.remove` loop over every file in
+    `patches/series/` and only THEN called `format_patch()`, which is where the linearity
+    pre-flight STOP lives. On a branch that fails that pre-flight - which `arifi/main` did,
+    with 10 merge commits - it therefore exited rc=2 having left the repository with NO SERIES
+    AT ALL. Measured (lane-209 rank 3): 415 tracked `.patch` files deleted by what its operator
+    ran as a read-only probe. The files were tracked so `git restore` recovered them, but a
+    destructive-then-abort chokepoint that depends on the operator noticing is not a safe
+    chokepoint, and UPDATE-RUNBOOK 4.1 could only warn about it.
+
+    The order is now: pre-flight -> generate to temp -> build every artifact from the temp
+    directory -> swap. Any failure anywhere above the swap leaves `patches/series/`
+    byte-for-byte untouched, which is what the tests in test_arifi_sync.py assert."""
     base = cfg["base"]["upstream_sha"]
     outdir = os.path.join(repo, cfg["series_dir"])
     step("Regenerating %s from %s..%s" % (cfg["series_dir"], base[:9], args.ref))
-    for old in series_files(outdir):
-        os.remove(os.path.join(outdir, old))
-    made = format_patch(repo, cfg, base, args.ref, outdir)
-    say("generated %d patches" % len(made))
+    tmp = tempfile.mkdtemp(prefix="arifi-regen-")
+    try:
+        regen_preflight(repo, cfg, args.ref)
+        made = format_patch(repo, cfg, base, args.ref, tmp)
+        say("generated %d patches (staged, nothing swapped yet)" % len(made))
+        files = series_files(tmp)
 
-    files = series_files(outdir)
-    with open(os.path.join(outdir, "SERIES"), "w", encoding="utf-8", newline="\n") as fh:
-        fh.write("# Apply order. Machine-readable; independent of glob sorting.\n")
-        fh.write("# git am $(sed '/^#/d' patches/series/SERIES | sed 's|^|patches/series/|')\n")
+        series_txt = ("# Apply order. Machine-readable; independent of glob sorting.\n"
+                      "# git am $(sed '/^#/d' patches/series/SERIES | sed 's|^|patches/series/|')\n"
+                      + "".join(f + "\n" for f in files))
+        # build_manifest reads the patch files it is given, so it runs against the STAGED set.
+        # It raises on a patch that attributes itself outside the range - one more failure that
+        # now happens while the committed series is still intact.
+        manifest = build_manifest(repo, cfg, args.ref, files, tmp)
+
+        # ---- swap. This is the first line in the function that touches patches/series/. ----
+        os.makedirs(outdir, exist_ok=True)
+        for old in series_files(outdir):
+            os.remove(os.path.join(outdir, old))
         for f in files:
-            fh.write(f + "\n")
-    say("wrote SERIES (%d entries)" % len(files))
-
-    manifest = build_manifest(repo, cfg, args.ref, files, outdir)
-    with open(os.path.join(outdir, "MANIFEST.md"), "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(manifest)
-    say("wrote MANIFEST.md")
-    return 0
+            shutil.move(os.path.join(tmp, f), os.path.join(outdir, f))
+        with open(os.path.join(outdir, "SERIES"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(series_txt)
+        say("wrote SERIES (%d entries)" % len(files))
+        with open(os.path.join(outdir, "MANIFEST.md"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(manifest)
+        say("wrote MANIFEST.md")
+        return 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def cmd_series_check(repo: str, cfg: dict, args) -> int:
@@ -984,6 +1050,328 @@ def cmd_judge(repo: str, cfg: dict, args) -> int:
         logf.close()
 
 
+# ------------------------------------------------- protected wins (President mandate 2026-09-04)
+#
+# Authority: registers/2026-09-04-local-inference-win-preservation-mandate.md, VERBATIM:
+#
+#   "a win is a win even if it's small. Never throw away. ... anything from upstream of llama.cpp
+#    or the forks we ingest, must not overwrite what we have, we must compare and make sure we
+#    keep the winning formula, maybe something upstream from anyone might be better than ours but
+#    we must confirm/test be aware of those changes so we dont overwrite the specific win"
+#
+# Mandate assignment 2 is this manifest; assignment 3 is `cmd_protected_win_check`, the
+# fail-closed preflight; assignment 4 is UPDATE-RUNBOOK 4.1c, which drives both by name.
+#
+# The manifest is AUTHORED, not generated, because the four fields that make an entry useful -
+# protected paths, semantic anchors, the quality condition, and the workload the number was
+# measured on - are not derivable from a commit trailer. What IS derivable is the CANDIDATE SET,
+# and `discover` prints it: any commit with a real Measured-effect that no entry covers. So a
+# proven win cannot quietly stay unregistered, and no field is ever invented to fill a row.
+
+PROTECTED_WINS = "protected-wins.json"
+PROTECTED_RESOLUTIONS = "protected-win-resolutions.json"
+
+WIN_REQUIRED = ("id", "status", "mechanism", "commit", "protected_paths", "anchors",
+                "evidence", "quality_gate", "workload", "measured_effect")
+WIN_STATUSES = ("active", "superseded")
+RESOLUTION_REQUIRED = ("win_id", "incoming", "verdict", "arms", "quality", "evidence",
+                       "decided_utc", "decided_by")
+RESOLUTION_VERDICTS = ("keep-ours", "adopt-upstream", "adopt-union")
+NO_EFFECT_PREFIXES = ("unmeasured", "none", "n/a", "-", "documentation only", "docs only",
+                      "no code", "no runtime", "generated artifact", "packaging only",
+                      "analysis only", "comment only", "tooling and documentation",
+                      "tooling only", "build fix only", "build-system only", "build variant",
+                      "ci contract only", "process guardrail", "file relocation only",
+                      "structure and tooling", "default-only change", "enables the",
+                      "kernel dispatch only", "correctness fix", "documents placement",
+                      "build-variant documentation", "source census", "clean fixture",
+                      "harness selftest", "series check pass", "provenance audit",
+                      "'currency' subcommand")
+
+
+def _load_json(repo: str, name: str, default=None):
+    p = os.path.join(repo, "tools", "arifi-sync", name)
+    if not os.path.exists(p):
+        if default is None:
+            raise Loud("%s is missing. The protected-win preflight is FAIL-CLOSED: without the\n"
+                       "  manifest it cannot know what an incoming change would overwrite, so it\n"
+                       "  refuses rather than passing vacuously." % name)
+        return default
+    with open(p, "r", encoding="utf-8-sig") as fh:
+        return json.load(fh)
+
+
+def load_protected_wins(repo: str) -> list:
+    data = _load_json(repo, PROTECTED_WINS)
+    wins = data.get("wins", [])
+    if not wins:
+        raise Loud("%s carries zero entries. FAIL-CLOSED: an empty manifest is indistinguishable\n"
+                   "  from a manifest nobody wrote, so it is refused rather than trusted." % PROTECTED_WINS)
+    return wins
+
+
+def _anchor_present(repo: str, ref: str, anchor: str) -> bool:
+    rc, _, _ = git(repo, "grep", "-q", "-F", anchor, ref, check=False)
+    return rc == 0
+
+
+def _evidence_resolves(repo: str, locator: str) -> bool:
+    """An evidence locator is a path or a `commit:<sha>`. Both are checked, never assumed.
+
+    `commit:<sha>` is a first-class form on purpose: several wins carry their measurement table
+    in the commit message itself (146f1bf8b's per-op ESCHA_MM grid is the clearest), and
+    pointing at a report that paraphrases it would be weaker evidence, not stronger."""
+    if locator.startswith("commit:"):
+        return _resolve_ref(repo, locator.split(":", 1)[1]) != ""
+    for root in (repo, os.path.dirname(os.path.dirname(os.path.dirname(repo.rstrip("/\\")))),
+                 STUDIO_ROOT):
+        if root and os.path.exists(os.path.join(root, locator)):
+            return True
+    return False
+
+
+STUDIO_ROOT = "C:/ArifiLabs"
+
+
+def validate_protected_wins(repo: str, ref: str) -> list:
+    """Return the list of problems. Empty list = the manifest is complete AND still true.
+
+    'Still true' is the half a schema check cannot do: a protected path that no longer exists,
+    or an anchor that no longer appears in the tree, means the win was renamed or removed and
+    the manifest is now guarding nothing. That is exactly the silent-overwrite the mandate is
+    about, so it is a validation failure and not a warning."""
+    problems = []
+    wins = load_protected_wins(repo)
+    seen = set()
+    for i, w in enumerate(wins):
+        wid = w.get("id") or "<entry %d>" % i
+        if wid in seen:
+            problems.append("%s: duplicate id" % wid)
+        seen.add(wid)
+        status = w.get("status")
+        if status not in WIN_STATUSES:
+            problems.append("%s: status must be one of %s, got %r" % (wid, WIN_STATUSES, status))
+        missing = [f for f in WIN_REQUIRED if not w.get(f)]
+        if missing:
+            problems.append("%s: INCOMPLETE - missing/empty %s" % (wid, ", ".join(missing)))
+            continue
+        if status == "superseded":
+            for f in ("superseded_by", "comparison_evidence", "valid_conditions"):
+                if not w.get(f):
+                    problems.append("%s: superseded entries must keep %s - the mandate banks the "
+                                    "superseded win with the conditions it still wins on" % (wid, f))
+        if _resolve_ref(repo, w["commit"]) == "":
+            problems.append("%s: commit %s does not resolve" % (wid, w["commit"]))
+        for p in w["protected_paths"]:
+            rc, _, _ = git(repo, "cat-file", "-e", "%s:%s" % (ref, p), check=False)
+            if rc != 0:
+                problems.append("%s: protected path %s does not exist at %s - the win was moved, "
+                                "renamed or removed and this entry now guards nothing" % (wid, p, ref))
+        for a in w["anchors"]:
+            if not _anchor_present(repo, ref, a):
+                problems.append("%s: anchor %r is absent from %s - the mechanism it names is gone "
+                                "or was renamed" % (wid, a, ref))
+        for e in w["evidence"]:
+            if not _evidence_resolves(repo, e):
+                problems.append("%s: evidence locator %r does not resolve" % (wid, e))
+    return problems
+
+
+def cmd_protected_win_validate(repo: str, cfg: dict, args) -> int:
+    ref = args.ref
+    step("Validating %s against %s" % (PROTECTED_WINS, ref))
+    problems = validate_protected_wins(repo, ref)
+    wins = load_protected_wins(repo)
+    active = [w for w in wins if w.get("status") == "active"]
+    say("entries          : %d  (%d active, %d superseded)"
+        % (len(wins), len(active), len(wins) - len(active)))
+    say("protected paths  : %d" % sum(len(w.get("protected_paths") or []) for w in wins))
+    say("anchors          : %d" % sum(len(w.get("anchors") or []) for w in wins))
+    if problems:
+        say("\nFAIL: %d problem(s):" % len(problems))
+        for p in problems:
+            say("  %s" % p)
+        return 1
+    say("\nPASS: every entry is complete and every path/anchor/evidence locator still resolves.")
+    return 0
+
+
+def _measured_effect_is_real(value: str) -> bool:
+    v = (value or "").strip().lower()
+    if not v:
+        return False
+    return not v.startswith(NO_EFFECT_PREFIXES)
+
+
+def cmd_protected_win_discover(repo: str, cfg: dict, args) -> int:
+    """Every commit in the series carrying a real Measured-effect that no entry covers.
+
+    This is the anti-silence half of assignment 2. The manifest is authored, so the failure mode
+    it cannot see by itself is a win that was measured, landed, and then never registered. This
+    command makes that set printable, and `--strict` makes it a gate."""
+    base = cfg["base"]["upstream_sha"]
+    ref = args.ref
+    covered = set()
+    for w in _load_json(repo, PROTECTED_WINS, {"wins": []}).get("wins", []):
+        for c in [w.get("commit")] + list(w.get("also_commits") or []):
+            if c:
+                full = _resolve_ref(repo, c)
+                covered.add(full or c)
+    step("Scanning %s..%s for measured wins with no manifest entry" % (base[:9], ref))
+    rows = []
+    for sha in gout(repo, "rev-list", "--reverse", "%s..%s" % (base, ref)).split():
+        if sha in covered:
+            continue
+        eff = commit_trailers(repo, sha)["Measured-effect"]
+        if _measured_effect_is_real(eff):
+            rows.append((sha, gout(repo, "log", "-1", "--format=%s", sha), eff))
+    say("uncovered commits with a real Measured-effect: %d" % len(rows))
+    for sha, subject, eff in rows:
+        say("  %s  %s" % (sha[:9], subject))
+        say("             %s" % " ".join(eff.split())[:150])
+    if rows and getattr(args, "strict", False):
+        say("\nFAIL (--strict): the set above is measured, landed and unprotected.")
+        return 1
+    say("\nNOTE: this list is a CANDIDATE set, not a defect list. A row belongs in the manifest")
+    say("only when its protected paths, anchors, evidence, quality gate and workload are all")
+    say("known. Never invent a field to close a row - leave it here instead.")
+    return 0
+
+
+def load_resolutions(repo: str) -> list:
+    data = _load_json(repo, PROTECTED_RESOLUTIONS, {"resolutions": []})
+    return data.get("resolutions", [])
+
+
+def _resolution_problems(r: dict) -> list:
+    """A resolution is what buys the right to change a protected mechanism. It is checked hard,
+    because a resolution nobody validated is the silent overwrite wearing a receipt."""
+    bad = [f for f in RESOLUTION_REQUIRED if not r.get(f)]
+    out = ["missing/empty %s" % ", ".join(bad)] if bad else []
+    if r.get("verdict") and r["verdict"] not in RESOLUTION_VERDICTS:
+        out.append("verdict must be one of %s" % (RESOLUTION_VERDICTS,))
+    arms = r.get("arms") or {}
+    # Three arms, President 2026-09-02 (UPDATE-RUNBOOK 4.1b duty 3): upstream alone, ours alone,
+    # and the UNION. An arm may be declared inapplicable, but only in writing and by name -
+    # "not run" is not a value.
+    for arm in ("upstream", "ours", "union"):
+        if not arms.get(arm):
+            out.append("arms.%s is missing - name its result, or state in that field why the arm "
+                       "is inapplicable" % arm)
+    return out
+
+
+def protected_collisions(repo: str, wins: list, changed: set, diff_text: str) -> list:
+    """A collision is a protected PATH the incoming change touches, or a protected ANCHOR whose
+    line the incoming diff removes. The anchor half matters: upstream can delete our dispatch
+    branch while leaving the file name intact, and a path-only check would pass that."""
+    removed = set()
+    for line in diff_text.splitlines():
+        if line.startswith("-") and not line.startswith("---"):
+            removed.add(line)
+    out = []
+    for w in wins:
+        if w.get("status") != "active":
+            continue
+        paths = sorted(set(w["protected_paths"]) & changed)
+        anchors = sorted(a for a in w["anchors"] if any(a in l for l in removed))
+        if paths or anchors:
+            out.append({"win": w, "paths": paths, "anchors": anchors})
+    return out
+
+
+def cmd_protected_win_check(repo: str, cfg: dict, args) -> int:
+    """FAIL-CLOSED ingest/update preflight (mandate assignment 3).
+
+    Refuses when an incoming upstream/fork change touches a protected path, or deletes a line
+    carrying a protected anchor, unless a recorded comparison resolution covers that exact
+    (win, incoming) pair. The resolution must name three arms, a quality result and resolvable
+    evidence - i.e. upstream superiority has to be MEASURED before it may replace ours."""
+    ref = args.ref
+    incoming = args.incoming
+    step("Protected-win preflight: %s vs incoming %s" % (ref, incoming))
+
+    problems = validate_protected_wins(repo, ref)
+    if problems:
+        say("FAIL: the manifest itself does not validate, so the preflight cannot run.")
+        for p in problems:
+            say("  %s" % p)
+        say("\nThis is fail-closed by design: an incomplete manifest cannot be used to prove that")
+        say("nothing is at risk. Fix the manifest, then re-run.")
+        return 1
+    wins = load_protected_wins(repo)
+
+    if _resolve_ref(repo, incoming) == "":
+        raise Loud("cannot resolve --incoming %s" % incoming)
+    mb = gout(repo, "merge-base", ref, incoming)
+    if not mb:
+        raise Loud("no merge base between %s and %s" % (ref, incoming))
+    rng = "%s..%s" % (mb, incoming)
+    changed = set(p for p in gout(repo, "diff", "--name-only", rng).splitlines() if p)
+    _, diff_text, _ = git(repo, "diff", "--unified=0", rng)
+    say("incoming range   : %s (%d file(s))" % (rng[:24] + "...", len(changed)))
+
+    collisions = protected_collisions(repo, wins, changed, diff_text)
+    if not collisions:
+        say("\nPASS: the incoming change touches no protected path and removes no protected anchor.")
+        say("That is a CHECKED claim over %d active entr(ies), not an assumption." %
+            len([w for w in wins if w.get("status") == "active"]))
+        return 0
+
+    resolutions = load_resolutions(repo)
+    inc_full = _resolve_ref(repo, incoming)
+    unresolved, accepted = [], []
+    for c in collisions:
+        wid = c["win"]["id"]
+        match = None
+        for r in resolutions:
+            if r.get("win_id") != wid:
+                continue
+            if _resolve_ref(repo, str(r.get("incoming", ""))) != inc_full:
+                continue
+            match = r
+            break
+        if match is None:
+            unresolved.append((c, ["no resolution recorded for (%s, %s)" % (wid, incoming[:12])]))
+            continue
+        bad = _resolution_problems(match)
+        bad += ["evidence locator %r does not resolve" % e
+                for e in (match.get("evidence") or []) if not _evidence_resolves(repo, e)]
+        if bad:
+            unresolved.append((c, bad))
+        else:
+            accepted.append((c, match))
+
+    for c, r in accepted:
+        say("  RESOLVED  %-28s verdict=%s  (%s)" % (c["win"]["id"], r["verdict"], r["decided_by"]))
+    if not unresolved:
+        say("\nPASS: every collision carries an evidence-backed comparison verdict.")
+        return 0
+
+    say("\n" + "=" * 78)
+    say("REFUSED: %d protected win(s) collide with the incoming change and are NOT resolved."
+        % len(unresolved))
+    say("=" * 78)
+    for c, why in unresolved:
+        w = c["win"]
+        say("\n  win        : %s" % w["id"])
+        say("  mechanism  : %s" % w["mechanism"])
+        say("  measured   : %s" % " ".join(w["measured_effect"].split())[:140])
+        if c["paths"]:
+            say("  paths hit  : %s" % ", ".join(c["paths"]))
+        if c["anchors"]:
+            say("  anchors cut: %s" % ", ".join(c["anchors"]))
+        for b in why:
+            say("  BLOCKER    : %s" % b)
+    say("\nWhat unblocks this is measurement, never source priority. Run the weakest-successor")
+    say("procedure in UPDATE-RUNBOOK 4.1c: preserve the local candidate, build upstream / ours /")
+    say("union, run the registered workload and the quality gate on each arm, retain the winner,")
+    say("archive every arm's result, and record the verdict in")
+    say("  tools/arifi-sync/%s" % PROTECTED_RESOLUTIONS)
+    say("A superseded local win stays in the manifest with the conditions it still wins on.")
+    return 1
+
+
 def cmd_bump(repo: str, cfg: dict, args) -> int:
     step("BUMP to %s - replay, then build, then judge. All three must pass." % args.onto)
     if _resolve_ref(repo, args.onto) == "":
@@ -1008,6 +1396,18 @@ def cmd_bump(repo: str, cfg: dict, args) -> int:
         say("    %s" % p)
     if len(overlap) > 80:
         say("    ... and %d more" % (len(overlap) - 80))
+
+    # President mandate 2026-09-04, assignment 3. The collision set above is exactly the surface
+    # the mandate is about, so the protected-win preflight runs HERE, on it, before a single
+    # further leg. It is fail-closed: an unresolved collision refuses the bump.
+    step("1b/4 protected-win preflight over the rebase surface")
+    pw = argparse.Namespace(ref=args.ref, incoming=args.onto)
+    if cmd_protected_win_check(repo, cfg, pw) != 0:
+        say("\nBUMP REFUSED: an incoming change collides with a protected win and no measured")
+        say("comparison authorises it. This is the President's law, not a style preference:")
+        say("upstream superiority is an empirical replacement proposal, never authority to")
+        say("overwrite. Run UPDATE-RUNBOOK 4.1c and record the verdict, then re-run bump.")
+        return 1
 
     step("2/4  replay the series onto %s" % args.onto)
     if _replay(repo, cfg, args.onto, os.path.join(repo, cfg["series_dir"])) != 0:
@@ -1080,6 +1480,18 @@ def main(argv=None) -> int:
     a.add_argument("--live"); a.add_argument("--initial-cache", default=None)
     a.add_argument("--snapshot", action="store_true", help="also refresh the committed snapshot")
 
+    pw = sub.add_parser("protected-win")
+    pws = pw.add_subparsers(dest="sub", required=True)
+    a = pws.add_parser("validate"); a.add_argument("--ref", default=None)
+    a = pws.add_parser("check")
+    a.add_argument("--ref", default=None)
+    a.add_argument("--incoming", required=True,
+                   help="the upstream tag/sha or fork ref you are about to ingest")
+    a = pws.add_parser("discover")
+    a.add_argument("--ref", default=None)
+    a.add_argument("--strict", action="store_true",
+                   help="exit 1 when a measured win has no manifest entry")
+
     sub.add_parser("build")
     p = sub.add_parser("judge")
     p.add_argument("--i-have-read-bench-purity", action="store_true")
@@ -1108,6 +1520,9 @@ def main(argv=None) -> int:
         ("build", None): cmd_build,
         ("judge", None): cmd_judge,
         ("bump", None): cmd_bump,
+        ("protected-win", "validate"): cmd_protected_win_validate,
+        ("protected-win", "check"): cmd_protected_win_check,
+        ("protected-win", "discover"): cmd_protected_win_discover,
     }
     fn = table[(args.cmd, getattr(args, "sub", None))]
     try:
