@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "authority": "C:/ArifiLabs/registers/2026-09-04-local-inference-win-preservation-mandate.md, and WI-1688 (the unregistered-win enforcement gap named in R2-CLOSURE-REPORT.md section 6)",
+  "recorded_utc": "2026-09-04T22:55:00Z",
+  "recorded_by": "lane-209 rank-3 FINAL closure session (Claude Opus 5, guarded Claude Max subscription wrapper)",
+  "ref": "arifi/main",
+  "tip_when_recorded": "bda5865cb",
+  "_what_this_is": [
+    "The dated, sha-pinned disposition ledger for every commit that had ALREADY landed with a real",
+    "`Measured-effect:` trailer at the moment strict registration was switched on. It exists for the",
+    "same reason `native-grandfather.json` exists: turning a fail-closed gate on over an estate that",
+    "predates it has exactly two honest options, and this is the second one.",
+    "",
+    "Option one - fail `validate` on all 24 rows - bricks `protected-win validate`, and therefore",
+    "`check` and `bump`, on day one. A gate nobody can pass is a gate somebody switches off.",
+    "Option two - file the real wins under a soft reason so the gate goes quiet - is the DISCARD the",
+    "President's mandate forbids, and it is worse than no gate at all because it looks like custody.",
+    "",
+    "So: every pre-existing row is recorded ONCE, with a written disposition, and strict registration",
+    "bites on everything landed AFTER this baseline. Rows marked REGISTRATION OWED are REAL WINS that",
+    "are not yet fully describable (protected paths, anchors, quality gate and workload must all be",
+    "honestly known before an entry may be written). They are not dismissed and they are not closed -",
+    "they stay here, visible, until their manifest entry can be written truthfully. A win is a win.",
+    "",
+    "This ledger is CLOSED to new shas by convention. A newly landed measured win must be REGISTERED",
+    "in protected-wins.json, not added here. `protected-win discover --all` prints every row below",
+    "with its disposition, so the ledger cannot rot unseen."
+  ],
+  "_disposition_vocabulary": {
+    "REGISTRATION OWED": "a real, landed win; its manifest entry is owed and cannot yet be written without inventing a field",
+    "NOT A MECHANISM": "the commit records a measurement, a bench, a negative result or generated artifacts - there is no mechanism of ours for an upstream change to overwrite",
+    "NO RUNTIME EFFECT": "the commit's own trailer states it changes no engine behaviour and moves no shipped default",
+    "CORRECTNESS ONLY, SPEED UNMEASURED": "the commit's own trailer declines to make a speed claim",
+    "NOT LANDED AS A WORKING WIN": "the change is blocked or inert on this seat by its own trailer"
+  },
+  "commits": [
+    {
+      "sha": "4f3e075a90bd0014100fd456aff3ca07b7e88e18",
+      "subject": "chore: establish ArifiLabs fork identity and retained notices",
+      "disposition": "NO RUNTIME EFFECT - the trailer states 'Documentation and retained-notice baseline only; no runtime change.'"
+    },
+    {
+      "sha": "4672638cf8eb0bdedb30b264ede342c4ad82803a",
+      "subject": "powerinfer: vendor streaming library incl. lane-110 Windows port [series 0003]",
+      "disposition": "REGISTRATION OWED - real: io_uring->Win32 read path plus the -mprefer-vector-width=128 AVX-spill cure (a novel MinGW codegen finding, RESULTS lane-110). Its protected paths and anchors span a vendored tree and must be enumerated before an entry is honest."
+    },
+    {
+      "sha": "655f2f9a33f9c78fe4b375404476bb58a33d75ff",
+      "subject": "powerinfer: expert-bundle loader + GENERATE_EXPERT_BUNDLE [series 0005]",
+      "disposition": "REGISTRATION OWED - real: first disk-streamed sparse inference on Windows proven on this path (RESULTS M2a). The registered `powerinfer-moe-streaming-hook` entry may or may not be the same mechanism; folding it in as also_commits without checking would be an invented claim."
+    },
+    {
+      "sha": "11c9a7702b75135496880546e0660c4f5e1c897a",
+      "subject": "powerinfer: repack carve-out for streamed tensors [series 0008a]",
+      "disposition": "REGISTRATION OWED - a correctness mechanism of the same class as the registered `escha-w2-decode-correctness` win (it fixes garbage output from AARCH64 repack of streamed experts, RESULTS rung2). Correctness mechanisms ARE protectable; its quality gate must be stated before the entry is written."
+    },
+    {
+      "sha": "bca0f5b9aada62a95639e407fa4fe1de3e6ec585",
+      "subject": "powerinfer: GPU-safe staging, CPU zero-copy, LANE110_PROF [series 0011]",
+      "disposition": "REGISTRATION OWED - real and measured: GPU -ngl99 -cmoe clean 4.9 t/s with CPU zero-copy kept (RESULTS lane-110B/C)."
+    },
+    {
+      "sha": "d0112ab49c1d8f90f22efbb89e3bbf157b5f5766",
+      "subject": "community: llama : pin mmap-backed CPU weights for faster H2D uploads",
+      "disposition": "REGISTRATION OWED - a CARRIED community mechanism, inert on this seat's GPU-resident unified memory (ki-prefetch-experts-conditionality) and retained for a discrete-GPU + streamed-path trial that is owed. Zero on our seat is not zero: it must not be lost on a bump. No measured effect exists on this hardware to register yet."
+    },
+    {
+      "sha": "f81c6dfdf07ffa0267cf99a27a4cad276ed70325",
+      "subject": "community: ggml : overlap offloaded expert weight uploads with compute",
+      "disposition": "REGISTRATION OWED - as d0112ab49: carried community mechanism, inert on this seat, trial owed."
+    },
+    {
+      "sha": "159c3a21d91a1b19053c09592cf08184c48e69f2",
+      "subject": "community: ggml : size prefetch slots per layer and fix fallback use-after-free",
+      "disposition": "REGISTRATION OWED - as d0112ab49: carried community mechanism, inert on this seat, trial owed."
+    },
+    {
+      "sha": "550b87da9cb57c6b5592cfdc223b6eeabb7875e4",
+      "subject": "g128 engine port applied - BUILD-BLOCKED on copy_to_quant.comp shader (Sol's fix owed)",
+      "disposition": "NOT LANDED AS A WORKING WIN - the trailer states the port is build-blocked at one Vulkan shader. There is no working mechanism to protect until that is fixed."
+    },
+    {
+      "sha": "693167a537dad1ae7a84c742532a023206c2870a",
+      "subject": "patches: make the series generator implement its own convergence rule",
+      "disposition": "NO RUNTIME EFFECT - the trailer states 'tooling and generated-artifact rules only; no engine behaviour changed'."
+    },
+    {
+      "sha": "bf0abf0be6ed1ce4f9c9cefb28fc4adb7ec4bb18",
+      "subject": "ggml: ROCmFP4/ROCmFPX weight formats behind GGML_ARIFI_ROCMFPX_FORMATS",
+      "disposition": "NO RUNTIME EFFECT - OFF by default is a no-op on every existing path by the trailer's own statement; no throughput number was produced."
+    },
+    {
+      "sha": "39a585bd51901738f3fd9221f2b430270bfd42b9",
+      "subject": "llama: ROCmFPX file types, quantizer wiring and the gguf-py registry",
+      "disposition": "NO RUNTIME EFFECT - the wiring is inside the same OFF-by-default guard as bf0abf0be; no behaviour change on any existing file type."
+    },
+    {
+      "sha": "7d6f8d16386306e6ce310a48b6484f498d771d12",
+      "subject": "feat: --arifi-profile and a CPU-only VNNI-repack startup advisory",
+      "disposition": "CORRECTNESS ONLY, SPEED UNMEASURED - the trailer states 'FUNCTIONAL, NOT TIMED - no throughput number was produced or claimed, and no shipped default moved'."
+    },
+    {
+      "sha": "2545a6c337014d429e7ae557975bece663c59908",
+      "subject": "sync: bump base to upstream b10173 (e9fa0781f) - series replayed, judge harness wired",
+      "disposition": "NOT A MECHANISM - a BUMP record whose Measured-effect is a three-arm bench of the whole series against upstream (F>=O all cells; gemma fit-path 39.1 t/s vs stock-upstream 15-21). The wins it measures belong to the series' own mechanism commits, not to this commit."
+    },
+    {
+      "sha": "bcd977730af3c92f3fcce6e685da0c4b5642c0e3",
+      "subject": "repack: dual residency - GGML_ARIFI_VNNI_REPACK=2 keeps prefill on the GPU AND repacks decode",
+      "disposition": "CORRECTNESS ONLY, SPEED UNMEASURED at this commit - its own trailer says 'the SPEED claim is deliberately not made here and is owed from a timed run'. The dual-residency MECHANISM is registered as `cpu-vnni-repack-dual-residency` (commit 2fb12c5c6) with the timed decode result; whether this commit belongs to that entry as an also_commit is a check the next lane owes, not an assertion made here."
+    },
+    {
+      "sha": "e96d7484aeae539637d4be1f52669f91f9c3f4db",
+      "subject": "repack: CPU kernels for the 128-group ternary format",
+      "disposition": "CORRECTNESS ONLY, SPEED UNMEASURED - the trailer states 'correctness only; speed UNMEASURED'."
+    },
+    {
+      "sha": "8cbdb863d648611481f1a06a0c8ba18bd530499e",
+      "subject": "F-06: measure the GPU tier on one binary, and count the placement the prompt claim rested on",
+      "disposition": "NOT A MECHANISM - a MEASUREMENT commit. It records the GPU tier on one binary; it introduces no mechanism an upstream change could overwrite."
+    },
+    {
+      "sha": "1189cef1a6c2e2efc18321a5719c2bce9e94bb52",
+      "subject": "powerinfer: MAX_N_CACHED admitted two values that break the eviction invariant",
+      "disposition": "NO RUNTIME EFFECT - the trailer states 'no throughput effect by construction - the default (6144) and unset paths are unchanged'."
+    },
+    {
+      "sha": "ced6379ad37304f2dd4ad6e8137609156e45202a",
+      "subject": "registry: our DSpark verdict was never ours -- the drafter cannot load on this fork",
+      "disposition": "NOT A MECHANISM - a NEGATIVE RESULT record. The trailer states 'no throughput measurement was possible -- that IS the result'."
+    },
+    {
+      "sha": "56a6df94e898b269e86d827fe1b4b7f03d7c7492",
+      "subject": "sync: regenerate series for lane-158 K-cache stack",
+      "disposition": "NOT A MECHANISM - generated artifacts only; the Measured-effect is a patch count."
+    },
+    {
+      "sha": "601f007bdeba7888547d5ae40b7a31226c792bd4",
+      "subject": "sync: regenerate series after lane-158 source review",
+      "disposition": "NOT A MECHANISM - generated artifacts only; the Measured-effect is a patch count."
+    },
+    {
+      "sha": "960abababcb0e47077a617b9980a3e76ee019f2d",
+      "subject": "sync: regenerate series after OFF-identity guard",
+      "disposition": "NOT A MECHANISM - generated artifacts only; the Measured-effect is a patch count."
+    },
+    {
+      "sha": "cbadf28498eca7e57ff4b4cc7f2af2f7035c372e",
+      "subject": "escha tests: cover the column-blocked kernel AT MODEL DEPTH (ncols=9, real 27B shapes)",
+      "disposition": "NOT A MECHANISM - TEST COVERAGE for the already-registered `vulkan-escha-mm-column-block` win. The kernel it covers is protected by that entry; this commit adds no new mechanism."
+    },
+    {
+      "sha": "ef3d91f580189a52a15fa2112c560bb51ea88aad",
+      "subject": "arifi-sync: root-fix the destructive series regen, and mechanize protected-win preservation",
+      "disposition": "NO RUNTIME EFFECT - the trailer states 'no engine behaviour changed and no shipped default moved; tooling and documentation only'. It is the commit that BUILT this mechanism."
+    }
+  ]
+}
