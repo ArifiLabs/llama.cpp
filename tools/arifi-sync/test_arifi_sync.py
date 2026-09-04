@@ -89,13 +89,13 @@ class Repo:
         with open(p, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
 
-    def commit(self, subject, files, trailers=True, ref=None):
+    def commit(self, subject, files, trailers=True, ref=None, effect="test fixture"):
         for rel, text in files.items():
             self.write(rel, text)
         git(self.path, "add", "--", *files)
         msg = subject
         if trailers:
-            msg += "\n\nOrigin: ArifiLabs (native)\nMeasured-effect: test fixture\n"
+            msg += "\n\nOrigin: ArifiLabs (native)\nMeasured-effect: %s\n" % effect
         git(self.path, "commit", "-q", "-m", msg)
         return git(self.path, "rev-parse", "HEAD")
 
@@ -293,6 +293,128 @@ class ProtectedWinTest(unittest.TestCase):
             "decided_by": "HQ",
         })
         self.assertEqual(1, self._check(inc))
+
+
+class StrictRegistrationTest(unittest.TestCase):
+    """WI-1688: a landed measured win that nobody registered must REFUSE the normal update path.
+
+    `R2-CLOSURE-REPORT.md` section 6 named this as the honest weak point of the previous pass:
+    the manifest could be complete and still true while a measured win landed beside it,
+    completely unguarded, because nothing forced a lane to register what it landed. The
+    enforcement lives inside `validate_protected_wins`, which `check` calls and which `bump` leg
+    1b calls through `check` - so there is one predicate and no parallel updater.
+
+    The cases below are the fail-closed half plus, deliberately, the two ways this gate could be
+    WORSE than no gate: refusing a registered win (it would be switched off within a week), and
+    firing on a documentation commit (the same, with extra noise)."""
+
+    def setUp(self):
+        self.r = Repo()
+        self.win_sha = self.r.commit("vulkan: our measured win", dict(PATHS))
+        self.manifest = os.path.join(self.r.path, "tools", "arifi-sync", "protected-wins.json")
+        with open(self.manifest, "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "wins": [{
+                "id": "test-win", "status": "active", "mechanism": "the fast path",
+                "commit": self.win_sha, "protected_paths": ["ggml/kernel.c"],
+                "anchors": ["ARIFI_FAST_PATH"], "evidence": ["commit:" + self.win_sha],
+                "quality_gate": "byte-identical output", "workload": "the seat serve line",
+                "measured_effect": "-12% per dispatch"}]}, fh)
+
+    def tearDown(self):
+        self.r.close()
+
+    def _baseline(self, sha, disposition="NOT A MECHANISM - fixture"):
+        p = os.path.join(self.r.path, "tools", "arifi-sync", "protected-win-baseline.json")
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "commits": [
+                {"sha": sha, "subject": "fixture", "disposition": disposition}]}, fh)
+
+    def _validate(self):
+        return A.validate_protected_wins(self.r.path, "main", self.r.cfg)
+
+    def _check(self):
+        """An incoming change that touches nothing protected. Without strict registration this
+        preflight PASSES, so any refusal here can only come from the new gate."""
+        git(self.r.path, "checkout", "-q", "-b", "incoming", self.r.base)
+        inc = self.r.commit("upstream: unrelated", {"docs/x.md": "unrelated\n"})
+        git(self.r.path, "checkout", "-q", "main")
+        args = type("A", (), {"ref": "main", "incoming": inc})()
+        return A.cmd_protected_win_check(self.r.path, self.r.cfg, args)
+
+    # -- the gate bites -------------------------------------------------------
+    def test_an_unregistered_measured_win_fails_validate(self):
+        landed = self.r.commit("vulkan: a SECOND measured win nobody registered",
+                               {"ggml/other.c": "int f(void){return 1;}\n"},
+                               effect="-9.4% per dispatch, 8 launches")
+        problems = self._validate()
+        self.assertTrue(any("UNREGISTERED" in p and landed[:9] in p for p in problems), problems)
+
+    def test_an_unregistered_measured_win_REFUSES_the_preflight(self):
+        self.r.commit("vulkan: a SECOND measured win nobody registered",
+                      {"ggml/other.c": "int f(void){return 1;}\n"},
+                      effect="-9.4% per dispatch, 8 launches")
+        self.assertEqual(1, self._check())
+
+    def test_an_unregistered_measured_win_REFUSES_bump_before_it_replays(self):
+        """Leg 1b must refuse BEFORE the series is replayed. Asserting the return code alone
+        would pass even if the refusal happened after a replay had already run, so `_replay` is
+        replaced with something that fails the test loudly if it is ever reached."""
+        self.r.commit("vulkan: a SECOND measured win nobody registered",
+                      {"ggml/other.c": "int f(void){return 1;}\n"},
+                      effect="-9.4% per dispatch, 8 launches")
+        git(self.r.path, "checkout", "-q", "-b", "onto", self.r.base)
+        self.r.commit("upstream: unrelated", {"docs/x.md": "unrelated\n"})
+        git(self.r.path, "checkout", "-q", "main")
+
+        def boom(*a, **k):
+            raise AssertionError("bump replayed the series despite an unregistered measured win")
+
+        real_replay, real_build = A._replay, A.cmd_build
+        A._replay, A.cmd_build = boom, boom
+        try:
+            args = type("A", (), {"ref": "main", "onto": "onto"})()
+            self.assertEqual(1, A.cmd_bump(self.r.path, self.r.cfg, args))
+        finally:
+            A._replay, A.cmd_build = real_replay, real_build
+
+    # -- the gate does NOT bite where it must not -----------------------------
+    def test_a_registered_win_passes(self):
+        self.assertEqual([], self._validate())
+        self.assertEqual(0, self._check())
+
+    def test_a_baselined_win_passes(self):
+        landed = self.r.commit("vulkan: a win with a written disposition",
+                               {"ggml/other.c": "int f(void){return 1;}\n"},
+                               effect="-9.4% per dispatch")
+        self._baseline(landed)
+        self.assertEqual([], self._validate())
+        self.assertEqual(0, self._check())
+
+    def test_documentation_and_unmeasured_trailers_are_NOT_false_positives(self):
+        """The classifier decides what counts as a measured win. If it fired on every docs commit
+        the gate would be noise, and noise is how a fail-closed gate gets a skip flag."""
+        for effect in ("documentation only", "tooling only - no runtime change",
+                       "unmeasured", "n/a", "comment only", "no code change"):
+            self.r.commit("docs: %s" % effect, {"docs/%s.md" % abs(hash(effect)): "x\n"},
+                          effect=effect)
+        self.assertEqual([], self._validate())
+        self.assertEqual(0, self._check())
+
+    def test_a_negative_delta_is_a_real_measured_effect(self):
+        """Regression for the defect these tests found on 2026-09-04. `NO_EFFECT_PREFIXES` used to
+        contain a bare `-` and was tested as a PREFIX, so `Measured-effect: -12.79% per dispatch`
+        classified as NO EFFECT - the classifier was blind to the single most common shape a win
+        on this fork takes. A dash placeholder is an EXACT match now."""
+        self.assertTrue(A._measured_effect_is_real("-12.79% per dispatch, -15.66 ms"))
+        self.assertTrue(A._measured_effect_is_real("-9.4%"))
+        self.assertFalse(A._measured_effect_is_real("-"))
+        self.assertFalse(A._measured_effect_is_real(" -- "))
+        self.assertFalse(A._measured_effect_is_real(""))
+        self.assertFalse(A._measured_effect_is_real("n/a"))
+
+    def test_a_commit_with_no_trailers_at_all_is_not_a_false_positive(self):
+        self.r.commit("chore: no trailers", {"docs/none.md": "x\n"}, trailers=False)
+        self.assertEqual([], self._validate())
 
 
 if __name__ == "__main__":
