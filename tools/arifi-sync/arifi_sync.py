@@ -1091,7 +1091,8 @@ NO_EFFECT_PREFIXES = ("unmeasured", "none", "n/a", "documentation only", "docs o
                       "tooling only", "build fix only", "build-system only", "build variant",
                       "ci contract only", "process guardrail", "file relocation only",
                       "structure and tooling", "default-only change", "enables the",
-                      "kernel dispatch only", "correctness fix", "documents placement",
+                      "kernel dispatch only", "correctness fix", "correctness only",
+                      "documents placement",
                       "build-variant documentation", "source census", "clean fixture",
                       "harness selftest", "series check pass", "provenance audit",
                       "'currency' subcommand")
