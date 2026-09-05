@@ -242,6 +242,38 @@ class ProtectedWinTest(unittest.TestCase):
                              "fork: drop the fast path", start="main")
         self.assertEqual(1, self._check(inc))
 
+    def test_a_pure_RENAME_of_a_protected_file_is_REFUSED(self):
+        """CHECKER-R3 finding 1, 2026-09-04, reproduced here as a regression.
+
+        A 100%-similarity rename was the one mutation of a protected file that PASSED the
+        fail-closed preflight. `git diff --name-only` reports only the DESTINATION path, so the
+        protected path never entered `changed`; and the unified body is `similarity index 100% /
+        rename from / rename to` with no content lines, so no anchor appeared as removed either.
+        Both halves of the guard went blind at once, on the exact move that takes a win out from
+        under its manifest entry while leaving the code intact.
+
+        `--no-renames` on both git calls turns the rename back into delete+add, which restores the
+        path hit AND the `-` anchor lines. This test fails on the old code."""
+        git(self.r.path, "checkout", "-q", "-b", "incoming", "main")
+        git(self.r.path, "mv", "ggml/kernel.c", "ggml/kernel_renamed.c")
+        git(self.r.path, "commit", "-q", "-m", "fork: rename the kernel file")
+        inc = git(self.r.path, "rev-parse", "HEAD")
+        git(self.r.path, "checkout", "-q", "main")
+        self.assertEqual(1, self._check(inc))
+
+    def test_renaming_an_UNPROTECTED_file_still_passes(self):
+        """The must-not-fire half: `--no-renames` widens what the diff shows, so the guard has to
+        stay quiet on a rename that touches nothing of ours. Otherwise every upstream file move
+        would refuse the ingest and the gate gets switched off."""
+        self.r.commit("chore: an unprotected file", {"docs/notes.md": "text\n"},
+                      effect="documentation only")
+        git(self.r.path, "checkout", "-q", "-b", "incoming", "main")
+        git(self.r.path, "mv", "docs/notes.md", "docs/notes-renamed.md")
+        git(self.r.path, "commit", "-q", "-m", "upstream: move the notes")
+        inc = git(self.r.path, "rev-parse", "HEAD")
+        git(self.r.path, "checkout", "-q", "main")
+        self.assertEqual(0, self._check(inc))
+
     def test_incomplete_active_entry_fails_closed(self):
         self._write_manifest(self._entry(quality_gate=""))
         problems = A.validate_protected_wins(self.r.path, "main")
@@ -323,11 +355,19 @@ class StrictRegistrationTest(unittest.TestCase):
     def tearDown(self):
         self.r.close()
 
-    def _baseline(self, sha, disposition="NOT A MECHANISM - fixture"):
+    def _baseline(self, sha, disposition="NOT A MECHANISM - fixture", tip="__main__"):
+        """`tip` defaults to whatever `main` is RIGHT NOW, which is what a genuine baseline looks
+        like: it was recorded at a tip, and every row it dispositions predates that tip. Pass an
+        explicit tip (or `None`) to model the tampering shapes."""
         p = os.path.join(self.r.path, "tools", "arifi-sync", "protected-win-baseline.json")
+        if tip == "__main__":
+            tip = git(self.r.path, "rev-parse", "main").strip()
+        doc = {"version": 1, "commits": [
+            {"sha": sha, "subject": "fixture", "disposition": disposition}]}
+        if tip is not None:
+            doc["tip_when_recorded"] = tip
         with open(p, "w", encoding="utf-8") as fh:
-            json.dump({"version": 1, "commits": [
-                {"sha": sha, "subject": "fixture", "disposition": disposition}]}, fh)
+            json.dump(doc, fh)
 
     def _validate(self):
         return A.validate_protected_wins(self.r.path, "main", self.r.cfg)
@@ -415,6 +455,163 @@ class StrictRegistrationTest(unittest.TestCase):
     def test_a_commit_with_no_trailers_at_all_is_not_a_false_positive(self):
         self.r.commit("chore: no trailers", {"docs/none.md": "x\n"}, trailers=False)
         self.assertEqual([], self._validate())
+
+    # -- D2: a measured quantity cannot be laundered behind a prefix ----------
+    #
+    # CHECKER-R3 finding 2, 2026-09-04. The classifier was prefix-ONLY, so a real win hidden
+    # behind any of the thirty NO_EFFECT_PREFIXES was invisible to discover/validate/check/bump.
+    # It is the SAME class as the bare `-` bug the previous pass fixed, on the other thirty
+    # prefixes - which is why the fix is an ORDER change (quantity first, prefix as the tiebreak)
+    # and not another entry added to a list.
+    LAUNDERED = (
+        "correctness fix, and -12.79% per dispatch on the ub512 graph",
+        "kernel dispatch only; +9.4% prefill",
+        "enables the fused path; measured +7% decode",
+        "none on CPU, but -18% per dispatch on Vulkan",
+        "unmeasured on our seat; on the reporter's box we reproduced +14%",
+        "documentation only. Also: -20% per dispatch",
+        "no runtime change is claimed, though decode rose 12%",
+        "comment only -- and the reorder underneath it is worth -11.4% per dispatch",
+    )
+
+    def test_every_laundered_shape_CHECKER_R3_found_is_a_real_measured_effect(self):
+        for shape in self.LAUNDERED:
+            self.assertTrue(A._measured_effect_is_real(shape),
+                            "laundered shape classified NO EFFECT: %r" % shape)
+
+    def test_a_laundered_win_FAILS_validate_and_REFUSES_the_preflight(self):
+        """The unit assertion above is not enough on its own: it proves the predicate, not the
+        gate. This drives the whole path - a commit lands with the effect stated behind a
+        NO_EFFECT prefix, and the preflight must refuse it."""
+        landed = self.r.commit("vulkan: a laundered second win",
+                               {"ggml/other.c": "int f(void){return 1;}\n"},
+                               effect="correctness fix, and -12.79% per dispatch")
+        problems = self._validate()
+        self.assertTrue(any("UNREGISTERED" in p and landed[:9] in p for p in problems), problems)
+        self.assertEqual(1, self._check())
+
+    def test_true_no_effect_values_STILL_classify_as_no_effect(self):
+        """The must-not-fire half. A gate that fires on every documentation commit is switched
+        off within a week, so the widening is only safe if these stay quiet. Each of these states
+        an absence and carries no measured quantity."""
+        for shape in ("documentation only",
+                      "documentation only; no code, build option or engine behaviour changed",
+                      "unmeasured",
+                      "unmeasured on this seat; no number was produced",
+                      "none",
+                      "n/a",
+                      "comment only",
+                      "no runtime change",
+                      "build fix only",
+                      "packaging only",
+                      "tooling and documentation",
+                      "generated artifact refresh: 415 patches",
+                      "file relocation only",
+                      "process guardrail; 24 rows recorded",
+                      "-", "--", "", "tbd"):
+            self.assertFalse(A._measured_effect_is_real(shape),
+                             "must-not-fire shape classified REAL: %r" % shape)
+
+    def test_a_bare_multiplier_is_configuration_not_effect(self):
+        """`x` is the one risky unit: `2x16 GB` sizes a memory carve and `4x tile` names a shape.
+        It counts only when signed or decimal, which is how a real speedup is written."""
+        self.assertFalse(A._measured_effect_is_real("build variant only: 2x16 GB configuration"))
+        self.assertFalse(A._measured_effect_is_real("documentation only; the 4x tile is unchanged"))
+        self.assertTrue(A._measured_effect_is_real("comment only, but the path is 3.3x faster"))
+
+    def test_the_discover_command_sees_the_laundered_win(self):
+        """`discover` and `validate` must agree about the set, which is only true because they
+        share one predicate. Asserted rather than assumed."""
+        landed = self.r.commit("vulkan: a laundered second win",
+                               {"ggml/other.c": "int f(void){return 1;}\n"},
+                               effect="kernel dispatch only; +9.4% prefill")
+        rows = A.unregistered_measured_wins(self.r.path, self.r.cfg, "main")
+        self.assertIn(landed, [r[0] for r in rows])
+
+
+class BaselineBoundaryTest(unittest.TestCase):
+    """CHECKER-R3 residual, 2026-09-04: the baseline was closed to new shas BY CONVENTION only.
+
+    Appending one line to `protected-win-baseline.json` silenced the gate for a brand-new win
+    forever, and the previous pass disclosed that honestly rather than mechanizing it. Disclosure
+    is not a wall. The wall is the ledger's own `tip_when_recorded`: the baseline exists to
+    disposition what had ALREADY landed, so every row must be an ancestor of that tip.
+
+    Both directions are pinned, because only the pair is evidence: genuine historical rows must
+    keep passing (a gate that bricks real history gets switched off), and a post-baseline sha must
+    fail (a gate that lets it through is the hole itself)."""
+
+    def setUp(self):
+        self.r = Repo()
+        self.win_sha = self.r.commit("vulkan: our measured win", dict(PATHS))
+        self.manifest = os.path.join(self.r.path, "tools", "arifi-sync", "protected-wins.json")
+        with open(self.manifest, "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "wins": [{
+                "id": "test-win", "status": "active", "mechanism": "the fast path",
+                "commit": self.win_sha, "protected_paths": ["ggml/kernel.c"],
+                "anchors": ["ARIFI_FAST_PATH"], "evidence": ["commit:" + self.win_sha],
+                "quality_gate": "byte-identical output", "workload": "the seat serve line",
+                "measured_effect": "-12% per dispatch"}]}, fh)
+        self.bpath = os.path.join(self.r.path, "tools", "arifi-sync",
+                                  "protected-win-baseline.json")
+
+    def tearDown(self):
+        self.r.close()
+
+    def _write(self, rows, tip):
+        doc = {"version": 1, "commits": rows}
+        if tip is not None:
+            doc["tip_when_recorded"] = tip
+        with open(self.bpath, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh)
+
+    def _row(self, sha):
+        return {"sha": sha, "subject": "fixture", "disposition": "NOT A MECHANISM - fixture"}
+
+    def _validate(self):
+        return A.validate_protected_wins(self.r.path, "main", self.r.cfg)
+
+    def test_genuine_historical_rows_pass(self):
+        pre = self.r.commit("vulkan: a win that predates the gate",
+                            {"ggml/pre.c": "int p(void){return 1;}\n"},
+                            effect="-9.4% per dispatch")
+        tip = git(self.r.path, "rev-parse", "main")
+        self._write([self._row(pre)], tip)
+        self.assertEqual([], self._validate())
+
+    def test_a_post_baseline_sha_CANNOT_be_grandfathered_by_appending_it(self):
+        pre = self.r.commit("vulkan: a win that predates the gate",
+                            {"ggml/pre.c": "int p(void){return 1;}\n"},
+                            effect="-9.4% per dispatch")
+        tip = git(self.r.path, "rev-parse", "main")
+        after = self.r.commit("vulkan: a win that landed AFTER the gate went on",
+                              {"ggml/after.c": "int a(void){return 1;}\n"},
+                              effect="-18% per dispatch")
+        # The tamper: silence the new win by adding its sha to the ledger.
+        self._write([self._row(pre), self._row(after)], tip)
+        problems = self._validate()
+        self.assertTrue(any("NOT an ancestor" in p and after[:9] in p for p in problems), problems)
+
+    def test_deleting_the_boundary_field_is_refused_not_treated_as_no_limit(self):
+        pre = self.r.commit("vulkan: a win that predates the gate",
+                            {"ggml/pre.c": "int p(void){return 1;}\n"},
+                            effect="-9.4% per dispatch")
+        self._write([self._row(pre)], None)
+        problems = self._validate()
+        self.assertTrue(any("tip_when_recorded" in p for p in problems), problems)
+
+    def test_an_unresolvable_boundary_is_refused(self):
+        pre = self.r.commit("vulkan: a win that predates the gate",
+                            {"ggml/pre.c": "int p(void){return 1;}\n"},
+                            effect="-9.4% per dispatch")
+        self._write([self._row(pre)], "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+        problems = self._validate()
+        self.assertTrue(any("does not resolve" in p for p in problems), problems)
+
+    def test_an_empty_baseline_needs_no_boundary(self):
+        """A repo that never recorded a baseline must not be forced to invent one."""
+        self._write([], None)
+        self.assertEqual([], A.baseline_boundary_problems(self.r.path))
 
 
 if __name__ == "__main__":
