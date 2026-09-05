@@ -1119,15 +1119,31 @@ def load_protected_wins(repo: str) -> list:
 
 
 def _anchor_present(repo: str, ref: str, anchor: str) -> bool:
-    """The generated series is EXCLUDED, and that exclusion is load-bearing (R6 finding 2).
+    """SOURCE-ONLY. Every home that merely RECORDS an anchor is excluded, and that is load-bearing.
 
-    This fork bakes every mechanism into `patches/series/*.patch` by design, so a whole-tree grep
-    finds our own anchor inside our own generated patch long after a fork ingest deleted the branch
-    from the source file. `validate` then reported the manifest healthy over a win that no longer
-    existed in live code - a green gate on a silent overwrite, which is the one failure this
-    function is here to catch. The series is a RECORD of the mechanism, never the mechanism."""
+    An anchor names a mechanism in live code. A whole-tree grep cannot tell the mechanism from a
+    file that only writes the mechanism's name down, so after a fork ingest deleted the branch from
+    the source file the grep still hit - in our own record - and `validate` reported the manifest
+    healthy over a win that no longer existed. A green gate on a silent overwrite is the one failure
+    this function exists to catch. Each excluded home is a record, never the mechanism:
+
+    - `patches/series` (R6 finding 2): this fork bakes every mechanism into a generated
+      `*.patch` by design, so the series always carries the anchor as removed-then-added text.
+    - `tools/arifi-sync` (R6B, the blocking finding): `protected-wins.json` is TRACKED and lists
+      every anchor literal by construction, so the grep had a guaranteed non-source hit for all 35
+      of them - the rule could never report an anchor absent while its own manifest was committed.
+      `protected-win-resolutions.json` and `protected-win-baseline.json` quote anchors the same way.
+    - `*.md` (R6B, note N2): prose. This pattern has no FNM_PATHNAME, so it matches Markdown at
+      ANY depth - which is what makes docs/CATALOG.md, README.md and CHANGELOG.md stop counting.
+    - `docs` (R6B, note N2): the non-Markdown record files under the root docs tree; root-relative,
+      so it does not reach a nested `<subsystem>/docs/`, which `*.md` already covers for prose.
+
+    CHECKED lossless when written: all 35 current anchors still resolve in code under these four
+    exclusions (`81-R6B-anchor-exclusion-probe.txt`). A future anchor that lives ONLY in prose
+    would now fail validation - correctly, because prose is not a mechanism."""
     rc, _, _ = git(repo, "grep", "-q", "-F", anchor, ref,
-                   "--", ".", ":(exclude)patches/series", check=False)
+                   "--", ".", ":(exclude)patches/series", ":(exclude)tools/arifi-sync",
+                   ":(exclude)docs", ":(exclude)*.md", check=False)
     return rc == 0
 
 
