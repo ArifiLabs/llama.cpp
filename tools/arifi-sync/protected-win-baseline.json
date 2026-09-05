@@ -11,7 +11,7 @@
     "same reason `native-grandfather.json` exists: turning a fail-closed gate on over an estate that",
     "predates it has exactly two honest options, and this is the second one.",
     "",
-    "Option one - fail `validate` on all 24 rows - bricks `protected-win validate`, and therefore",
+    "Option one - fail `validate` on all 30 rows - bricks `protected-win validate`, and therefore",
     "`check` and `bump`, on day one. A gate nobody can pass is a gate somebody switches off.",
     "Option two - file the real wins under a soft reason so the gate goes quiet - is the DISCARD the",
     "President's mandate forbids, and it is worse than no gate at all because it looks like custody.",
@@ -22,10 +22,33 @@
     "honestly known before an entry may be written). They are not dismissed and they are not closed -",
     "they stay here, visible, until their manifest entry can be written truthfully. A win is a win.",
     "",
-    "This ledger is CLOSED to new shas by convention. A newly landed measured win must be REGISTERED",
-    "in protected-wins.json, not added here. `protected-win discover --all` prints every row below",
-    "with its disposition, so the ledger cannot rot unseen."
+    "This ledger is CLOSED to new shas BY MECHANISM as of 2026-09-04 (it was closed by CONVENTION",
+    "until then, and CHECKER-R3 named that as a real hole). `baseline_boundary_problems()` refuses",
+    "any row that is not an ANCESTOR of `tip_when_recorded`, so a win landed after the gate was",
+    "switched on can no longer be grandfathered by appending its sha - it has to be REGISTERED in",
+    "protected-wins.json. A missing or unresolvable `tip_when_recorded` is itself refused, so the",
+    "hole cannot be reopened by deleting the field. `protected-win discover --all` prints every row",
+    "below with its disposition, so the ledger cannot rot unseen.",
+    "",
+    "AMENDED 2026-09-04 by the CHECKER-R3 fix pass, and the amendment is a FINDING, not bookkeeping.",
+    "This ledger was authored under a PREFIX-ONLY measured-effect classifier. That classifier could",
+    "not see a real measured quantity stated behind any of the thirty NO_EFFECT prefixes (D2), so",
+    "SIX pre-existing commits that carry real numbers were structurally invisible when the original",
+    "24 rows were written. Fixing the classifier surfaced them; all six are ancestors of",
+    "`tip_when_recorded` and therefore belong here, each with its own written disposition. They are",
+    "marked `_surfaced_by`. Two further rows (bf0abf0be, 39a585bd5) were RE-DISPOSITIONED from",
+    "terminal to REGISTRATION OWED under the President's capability law (D4). Nothing was removed.",
+    "",
+    "COUNTS, in both scopes, because a single blended number would misread:",
+    "  original 24 rows, D4 applied :  9 REGISTRATION OWED / 15 terminal",
+    "  + 6 surfaced by the D2 fix   :  5 REGISTRATION OWED /  1 terminal",
+    "  this ledger as a whole       : 14 REGISTRATION OWED / 16 terminal / 30 rows"
   ],
+  "_amended": {
+    "utc": "2026-09-04T23:58:45Z (19:58:45 EDT), read from the machine clock when this block was written; the pass's close boundary is commit-derived and lives in R3-FIX-REPORT.md",
+    "by": "CHECKER-R3 defect-closure pass (fresh maker, guarded Claude Max subscription wrapper)",
+    "closes": ["D4 re-disposition", "the D2 classifier widening", "baseline tampering residual"]
+  },
   "_disposition_vocabulary": {
     "REGISTRATION OWED": "a real, landed win; its manifest entry is owed and cannot yet be written without inventing a field",
     "NOT A MECHANISM": "the commit records a measurement, a bench, a negative result or generated artifacts - there is no mechanism of ours for an upstream change to overwrite",
@@ -87,12 +110,12 @@
     {
       "sha": "bf0abf0be6ed1ce4f9c9cefb28fc4adb7ec4bb18",
       "subject": "ggml: ROCmFP4/ROCmFPX weight formats behind GGML_ARIFI_ROCMFPX_FORMATS",
-      "disposition": "NO RUNTIME EFFECT - OFF by default is a no-op on every existing path by the trailer's own statement; no throughput number was produced."
+      "disposition": "REGISTRATION OWED - RE-DISPOSITIONED 2026-09-04 by the CHECKER-R3 fix pass (D4). It was 'NO RUNTIME EFFECT - OFF by default is a no-op on every existing path by the trailer's own statement; no throughput number was produced.' That reasoning is the SAME reasoning d0112ab49/f81c6dfdf/159c3a21d are marked REGISTRATION OWED under, with the opposite verdict in one ledger. CHECKED against this commit's own trailer: a native ROCmFP4 artifact LOADED in llama-server and completed at 3.24 tok/s, both ROCmFPX conformance suites pass, and `Origin: ArifiLabs/rocmfp-weight-formats` makes the mechanism ours. That is a WORKING capability, not an absence. Under the President's capability law a capability is droppable only when BROKEN, never when merely inert here, so an upstream bump removing the ROCMFP* type ids would silently drop a capability this ledger previously called 'no runtime effect'. Terminal treatment is withdrawn for want of checked evidence, not because the mechanism changed."
     },
     {
       "sha": "39a585bd51901738f3fd9221f2b430270bfd42b9",
       "subject": "llama: ROCmFPX file types, quantizer wiring and the gguf-py registry",
-      "disposition": "NO RUNTIME EFFECT - the wiring is inside the same OFF-by-default guard as bf0abf0be; no behaviour change on any existing file type."
+      "disposition": "REGISTRATION OWED - RE-DISPOSITIONED 2026-09-04 by the CHECKER-R3 fix pass (D4), for the same reason as bf0abf0be, whose guard this shares. It was 'NO RUNTIME EFFECT - the wiring is inside the same OFF-by-default guard as bf0abf0be; no behaviour change on any existing file type.' The file types, quantizer wiring and gguf-py registry ARE the mechanism that makes bf0abf0be's working artifact loadable; dropping them drops the capability whether or not the default is OFF. Default-OFF describes the SHIPPED DEFAULT, not the existence of the mechanism, and only the second is what this ledger protects."
     },
     {
       "sha": "7d6f8d16386306e6ce310a48b6484f498d771d12",
@@ -153,6 +176,42 @@
       "sha": "ef3d91f580189a52a15fa2112c560bb51ea88aad",
       "subject": "arifi-sync: root-fix the destructive series regen, and mechanize protected-win preservation",
       "disposition": "NO RUNTIME EFFECT - the trailer states 'no engine behaviour changed and no shipped default moved; tooling and documentation only'. It is the commit that BUILT this mechanism."
+    },
+    {
+      "sha": "0f30256f63775c65887373449cc8044bc3faf51a",
+      "_surfaced_by": "the D2 classifier fix, 2026-09-04 - invisible to the prefix-only classifier this ledger was authored under",
+      "subject": "docs: OPTIONS-REGISTRY GGML_ARIFI_VNNI_REPACK - bit-divergence ADJUDICATED, performance MEASURED",
+      "disposition": "NOT A MECHANISM - CHECKED docs-only (`git show --stat`: docs/OPTIONS-REGISTRY.md, one line). The percentages the trailer quotes were measured by the run this row documents, and the mechanism behind them is ALREADY REGISTERED as `cpu-vnni-repack-dual-residency`, whose anchor is literally `GGML_ARIFI_VNNI_REPACK`. Terminal because the registered entry, not this commit, is what an incoming change would have to get past."
+    },
+    {
+      "sha": "e44c0bb0d39808d40ec06649dabfb58a93595a7d",
+      "_surfaced_by": "the D2 classifier fix, 2026-09-04",
+      "subject": "ggml-cpu: GGML_ARIFI_VNNI_REPACK defaults to OFF (diverging from upstream, on measurement)",
+      "disposition": "REGISTRATION OWED - the registered `cpu-vnni-repack-dual-residency` entry protects the KERNEL; this commit is the measured DEFAULT decision on top of it, and the two are not the same object. Its own trailer records the pair the default was chosen on: it avoids a -77.1%/-88.1% prompt regression and forgoes a +20.1%/+28.4% decode gain. An upstream bump that flipped the default back would silently forfeit a measured decision while every registered anchor still resolved, so the manifest as it stands would not see it. Not describable as an entry yet: the protected paths and quality gate for a DEFAULT (as distinct from a kernel) are not settled."
+    },
+    {
+      "sha": "e20a8df7f5dc1b0761e56019f5eecdbcd1bc707f",
+      "_surfaced_by": "the D2 classifier fix, 2026-09-04",
+      "subject": "docs: the g128 repack SPEED numbers, measured",
+      "disposition": "REGISTRATION OWED - CHECKED docs-only in its own diff (CHANGELOG.md, docs/FINDINGS.md, docs/OPTIONS-REGISTRY.md), but the numbers it banks are a 3.3x g128 decode win (2.01 -> 6.67/6.69 tok/s, n=12 per cell, ranges disjoint) and the g128 CPU repack KERNEL SET behind them is not demonstrably covered: the one registered repack entry names GGML_ARIFI_VNNI_REPACK and the dual-residency mode, not the g128 kernels of lane-110F mission #1. Terminal treatment is refused for want of checked coverage rather than granted on 'docs-only', because the burden under the capability law sits on terminal. What is owed is the KERNEL commit's registration, which this row names so it cannot be lost."
+    },
+    {
+      "sha": "a38d6c409f856be1aaeb5003a91045af65ca9aec",
+      "_surfaced_by": "the D2 classifier fix, 2026-09-04",
+      "subject": "moe-cache: heat-protected eviction keeps hot experts resident (turboquant tail)",
+      "disposition": "REGISTRATION OWED - a CARRIED mechanism whose only numbers are third-party (+12% TG soft / +7.5% auto on an RTX 5090, quoted and explicitly NOT adopted as ours). Exactly the d0112ab49 class: zero on our seat is not zero, and no measured effect exists on this hardware to register yet. It must not be lost on a bump."
+    },
+    {
+      "sha": "8561db37993c9b326549aed2c996b0dcb24ecfc7",
+      "_surfaced_by": "the D2 classifier fix, 2026-09-04",
+      "subject": "cuda: lift TQ3_4S kernel set from tq3/master (14 files)",
+      "disposition": "REGISTRATION OWED - a lifted CUDA kernel set, UNMEASURABLE on this seat (no CUDA silicon) with tq3-side references RTX 3090 tg128 43.1 -> 47.4 t/s and Ampere decode +35%. Carried capability, inert here, not broken. The d0112ab49 reasoning applies unchanged."
+    },
+    {
+      "sha": "24f43e45cdf65dc539e62c55c6dd65e6be71c6d5",
+      "_surfaced_by": "the D2 classifier fix, 2026-09-04",
+      "subject": "metal: lift TQ3_4S kernel set from tq3/master (5 files + alloc hook)",
+      "disposition": "REGISTRATION OWED - as 8561db379, on Metal: UNMEASURABLE on this seat (no Metal silicon), tq3-side reference M3 Pro 27B decode ~4 t/s. Carried capability, inert here, not broken."
     }
   ]
 }

@@ -1191,6 +1191,7 @@ def validate_protected_wins(repo: str, ref: str, cfg=None) -> list:
             if not _evidence_resolves(repo, e):
                 problems.append("%s: evidence locator %r does not resolve" % (wid, e))
     if cfg is not None:
+        problems.extend(baseline_boundary_problems(repo))
         for sha, subject, eff in unregistered_measured_wins(repo, cfg, ref):
             problems.append(
                 "UNREGISTERED measured win %s %r - it landed with `Measured-effect: %s` and is "
@@ -1221,10 +1222,46 @@ def cmd_protected_win_validate(repo: str, cfg: dict, args) -> int:
     return 0
 
 
+def _has_measured_quantity(value: str) -> bool:
+    """True when the trailer states a NUMBER next to a THROUGHPUT/LATENCY UNIT.
+
+    This is the half that cannot be laundered. A prefix test alone lets a real win hide behind any
+    of the 30 NO_EFFECT_PREFIXES - `correctness fix, and -12.79% per dispatch` classified as NO
+    EFFECT, and so did seven other shapes CHECKER-R3 reproduced (D2, 2026-09-04). It is the same
+    class as the bare `-` prefix bug the previous pass fixed, on the other thirty prefixes.
+
+    Units are unconditional where they can only mean a rate or a duration (`%`, `ms`, `us`, `µs`,
+    `s/tok`, `t/s`, `tok/s`, `GB/s`, `MB/s`). A bare `x` multiplier is NOT unconditional: `2x16 GB`
+    and `4x tile` are configuration, not effect, so `x` counts only when the number carries a sign
+    or a decimal point (`-1.8x`, `+2.0x`). Plain `GB`/`MB` never count - they size a carve, not a
+    speed."""
+    v = value or ""
+    if _MEASURED_QUANTITY.search(v):
+        return True
+    return bool(_MEASURED_MULTIPLIER.search(v))
+
+
+_MEASURED_QUANTITY = re.compile(
+    r"[-+−]?\d+(?:\.\d+)?\s*(?:%|ms\b|msec\b|us\b|usec\b|µs\b|s/tok\b|"
+    r"tok/s\b|tokens?/s\b|t/s\b|[KMGT]B/s\b)",
+    re.IGNORECASE)
+_MEASURED_MULTIPLIER = re.compile(r"(?:[-+−]\d+(?:\.\d+)?|\d+\.\d+)\s*x\b", re.IGNORECASE)
+
+
 def _measured_effect_is_real(value: str) -> bool:
+    """Quantity FIRST, prefix list only as the tiebreak when no quantity is stated.
+
+    Order is the whole fix (D2). The exact placeholders still win - `-`, `n/a`, `none` and friends
+    state an absence and carry no number. After that, a stated measured quantity makes the value
+    REAL no matter what words precede it, because a number with a throughput unit in a
+    `Measured-effect:` trailer IS a measured effect; the prose in front of it is the author's
+    framing, not a classification. Only when no quantity is present does the prefix vocabulary
+    decide, which is what keeps `unmeasured on this seat` and `documentation only` quiet."""
     v = (value or "").strip().lower()
     if not v or v in NO_EFFECT_EXACT:
         return False
+    if _has_measured_quantity(v):
+        return True
     return not v.startswith(NO_EFFECT_PREFIXES)
 
 
@@ -1245,6 +1282,53 @@ def load_discovery_baseline(repo: str) -> dict:
     unseen."""
     data = _load_json(repo, PROTECTED_BASELINE, {"commits": []})
     return {row["sha"]: row for row in data.get("commits", []) if row.get("sha")}
+
+
+def baseline_boundary_problems(repo: str) -> list:
+    """The baseline is closed BY MECHANISM now, not by convention (CHECKER-R3 residual, 2026-09-04).
+
+    The hole this closes: `unregistered_measured_wins` skips any sha listed in the baseline, so
+    appending one line to `protected-win-baseline.json` silenced the gate for a brand-new win
+    forever. The previous pass disclosed that honestly rather than implying it away; disclosure is
+    not a wall.
+
+    The wall is the ledger's own `tip_when_recorded` field. The baseline exists to disposition what
+    had ALREADY landed when strict registration was switched on, so every row must be an ANCESTOR
+    of that tip. A commit made after the tip cannot have predated the gate, so it can never be
+    grandfathered by appending its sha - it has to be REGISTERED. Genuine history is untouched:
+    all 24 original rows are ancestors of `bda5865cb` and stay silent.
+
+    Fail-closed on the field itself: a missing, unresolvable or emptied `tip_when_recorded` is a
+    problem, not a pass. Otherwise deleting one line would restore the old hole."""
+    data = _load_json(repo, PROTECTED_BASELINE, {"commits": []})
+    rows = [r for r in data.get("commits", []) if r.get("sha")]
+    if not rows:
+        return []
+    tip = (data.get("tip_when_recorded") or "").strip()
+    if not tip:
+        return ["%s: %d row(s) but no `tip_when_recorded` - the baseline boundary is what stops a "
+                "post-gate win being grandfathered by appending its sha, so an absent boundary is "
+                "refused rather than treated as 'no limit'." % (PROTECTED_BASELINE, len(rows))]
+    tip_full = _resolve_ref(repo, tip)
+    # `_resolve_ref` echoes a well-formed hex string back even when no such object exists, so the
+    # existence of the commit is asked for separately. Otherwise a boundary of forty `f`s would
+    # read as "resolved" and every row would then fail as a non-ancestor - a confusing refusal
+    # instead of the true one.
+    rc_tip, _, _ = git(repo, "cat-file", "-e", "%s^{commit}" % tip_full, check=False)
+    if not tip_full or rc_tip != 0:
+        return ["%s: `tip_when_recorded` %r does not resolve in this repo - the boundary cannot be "
+                "checked, so it is refused." % (PROTECTED_BASELINE, tip)]
+    problems = []
+    for r in rows:
+        sha = r["sha"]
+        rc, _, _ = git(repo, "merge-base", "--is-ancestor", sha, tip_full, check=False)
+        if rc != 0:
+            problems.append(
+                "%s: baseline row %s is NOT an ancestor of tip_when_recorded %s, so it landed "
+                "AFTER strict registration was switched on and cannot be grandfathered. Register "
+                "it in %s instead - the baseline dispositions pre-existing history only."
+                % (PROTECTED_BASELINE, sha[:9], tip[:9], PROTECTED_WINS))
+    return problems
 
 
 def covered_win_commits(repo: str) -> set:
@@ -1380,8 +1464,16 @@ def cmd_protected_win_check(repo: str, cfg: dict, args) -> int:
     if not mb:
         raise Loud("no merge base between %s and %s" % (ref, incoming))
     rng = "%s..%s" % (mb, incoming)
-    changed = set(p for p in gout(repo, "diff", "--name-only", rng).splitlines() if p)
-    _, diff_text, _ = git(repo, "diff", "--unified=0", rng)
+    # `--no-renames` on BOTH calls, and it is load-bearing on both (D1, CHECKER-R3 2026-09-04).
+    # With rename detection on, a 100%-similarity rename of a protected file reports ONLY the
+    # destination path (`--name-only` prints `kernel_renamed.c` alone) and emits NO content lines
+    # (`similarity index 100% / rename from / rename to`), so `protected_collisions` sees neither
+    # the protected path nor an anchor removal and the fail-closed preflight PASSES a change that
+    # moved the win out from under the manifest. Suppressing rename detection restores both halves
+    # at once: the rename becomes delete+add, the old path returns to `changed`, and every line of
+    # the old file returns as a `-` line so the anchors fire too.
+    changed = set(p for p in gout(repo, "diff", "--no-renames", "--name-only", rng).splitlines() if p)
+    _, diff_text, _ = git(repo, "diff", "--no-renames", "--unified=0", rng)
     say("incoming range   : %s (%d file(s))" % (rng[:24] + "...", len(changed)))
 
     collisions = protected_collisions(repo, wins, changed, diff_text)
