@@ -112,6 +112,53 @@ least divergent of the three measured.
 
 ---
 
+### F-13 — A kernel that passes `test-backend-ops` can still change the first token to end-of-generation
+
+**Status: mitigated by a width gate, not root-fixed. The mechanism is still live at two widths, and
+the change is held off the default branch because of it.**
+
+While measuring the ROCmFP4-FAST integer-dot mat-vec (the `+27%` drafted win in the changelog), the
+new arm returned an **empty completion** — one token, immediately end-of-generation, no text — on one
+prompt, twice, deterministically. The float arm, on the same file with the same seed on the same
+prompt, returned 72 tokens both times. Those were the only two empty rounds in all 64 rounds of the
+comparison.
+
+That is a numerical result, not a harness artifact, and ruling out the harness came first: the
+request that produced it sets no presence penalty (see F-16 for why that check is not optional here),
+and the two arms differ only in which mat-vec pipelines exist.
+
+The useful part is what happened next, because **three hypotheses were falsified in a row before the
+cause was found**, and each falsification was a real experiment rather than an argument.
+
+| # | hypothesis | test | result |
+|---|---|---|---|
+| 1 | the integer-dot path at width 1 is wrong | rebuild with that width forced back to the float path | **falsified** — the same prompt still returned empty, in both replicates |
+| 2 | it is server slot state or prompt cache, not the kernel | run the identical comparison with the two binaries **swapped between slots** | **falsified** — the empties moved *with the binary*, not with the slot. The float binary has never produced one |
+| 3 | some other change in the binary, not this port | force the float path for the whole run with `GGML_VK_DISABLE_MMVQ=1` | the empties **disappeared** — the port is implicated, but no width is named |
+
+Naming the width needed one more instrument. The prompt only reproduced under its **exact** cache
+history — the same fill and the same preceding rounds, replayed — never in isolation, which is itself
+worth knowing. A dispatch census over that exact sequence showed only three widths live on it: 1, 2
+and 4. Removing width 4 still reproduced. Removing width 2 returned 72 tokens, twice. **The cause is
+width 2**, and the shipped gate retains the path only at widths 3 and 5.
+
+**Two things this finding leaves standing.**
+
+`test-backend-ops` passed the type throughout — 13 correctness cases, 0 FAIL, and the identity-path
+suite green. It is not a broken test: the divergence sits **inside** the op's own normalized-error
+tolerance, which is exactly the size of divergence that tolerance is designed to admit. A test that
+gates on aggregate numerical error over a tensor cannot see a distribution shift at one position that
+crosses a sampling boundary. **A green op-level suite is not a statement about the first token.**
+
+And the same arithmetic is still live at widths 3 and 5 — which is where the `+27%` comes from,
+because a draft depth of 2 verifies at width 3. The reproducer cannot reach those widths: it is a
+plain, undrafted sequence. So what is owed before this can be called closed is named, not implied: an
+adversarial cache-history corpus that runs in drafted mode and reaches width 3, or a direct
+comparison of the integer-dot and float logits, or a tightened backend error gate. Until one of those
+exists, the mechanism stays on its own branch. **Fast but numerically wrong is not a win.**
+
+---
+
 ## Format findings
 
 ### F-06 — Ternary `Q2_0` at 128-value groups is not upstream's `Q2_0`
@@ -475,6 +522,48 @@ measure, which is the one thing its defaults policy (F-08) exists to prevent.
 
 ---
 
+### F-14 — The leading explanation for the `q6_K` mat-vec deficit is dead, and the deficit is not
+
+**Status: the change measured neutral and shipped anyway; the deficit it was aimed at is OPEN.**
+
+`q6_K` mat-vec runs about **35% below `q5_K`** at the identical shape on RIG-A. Profiled at
+`m=17408 n=3 k=5120`: **41.0 GB/s against 63.8**, a ratio of 0.643, with every `q6_K` row in the
+profile sitting in a tight **39.2–41.6 GB/s** band and no `q4_K` or `q5_K` row coming near it. The
+deficit is stable and reproducible, and it is not a single unlucky dispatch.
+
+There was one obvious mechanism, and it was structural rather than guessed. `q6_K` was the **only**
+`q*_k` mat-vec shader staging its scales through shared memory: it loaded all 16 int8 scales of the
+superblock into a double-buffered tile and paid a **`barrier()` per row, inside the row loop**.
+`q4_k` and `q5_k` unpack their scales in registers, with no shared memory and no barrier at all. A
+per-row workgroup barrier in the hot loop of the one slow shader, absent from the two fast ones, is
+about as clean a suspect as this kind of profile produces.
+
+It is not the cause.
+
+The exchange turned out to move no data between threads: all 16 threads of a group work on the same
+block, each writes its own scale, and each then reads only four bytes of that same block — off the
+same 16-byte cache line the staging was already fetching. So the barrier could be removed for a
+**bit-identical** result, and it was, behind a specialization constant so one binary serves both
+arms. Measured on the seat serve line, 6 position-balanced interleaved launches per phase: the
+`q6_k` op rows read a median ON/OFF ratio of **0.9796** against a control of **78 untouched op rows
+at 0.9990, p10–p90 [0.952, 1.053]**. **No `q6_k` row separates from the control band.** Serve level:
+tied on all six cells. Output: byte-identical, one distinct hash per prompt across 12 arm-launches.
+
+**The deficit stands, unexplained, and the next attempt has to look somewhere else.** This entry
+exists so that nobody spends the same day on the same barrier.
+
+Two corrections to the claim that motivated the work, since they matter to whoever picks it up:
+`q5_K` at 63.8 GB/s is confirmed, but `q4_K` **at that same shape** is **60.6 GB/s, not 72.5** — the
+72.5 figure is not reproducible there, and the nearest number of that magnitude in the profile belongs
+to a *different* shape. The ~35% deficit survives on the `q5_K` comparison alone.
+
+The change is shipped despite measuring neutral, on the ground that it is strictly less work for an
+identical result on an engine that runs on other people's hardware, where barrier cost and
+shared-memory pressure are not what they are here. **Whether it helps anywhere is unmeasured.** It is
+listed in this file, and not in the wins, for that reason.
+
+---
+
 ## Measurement findings
 
 ### F-12 — A "performance" power plan halved our iGPU inference, and every inference-level suspect read clean
@@ -527,9 +616,117 @@ The one thing this finding cannot do is repair the numbers taken inside the wind
 box hides a real win exactly as easily as it invents a fake one, so measurements from those eight
 days are re-verified before they are quoted, not adjusted.
 
+### F-15 — This box's undrafted decode is bimodal, and the mean of a paired comparison follows the slow rounds
+
+**Status: characterised, and mechanised into how verdicts are read. The cause of the slow regime is
+itself unresolved.**
+
+On the plain (undrafted) decode line, a minority of rounds land in a slow regime — roughly 3.5–4.4
+tok/s against a 5.2 plateau — while generating perfectly normal, complete text. They are not empty
+completions and not a content defect. The problem is what they do to a paired A/B: **the cell-wise
+mean of differences is dominated by whichever arm catches them**, so the same unchanged kernel can
+read as a large win or a large loss depending on where the slow rounds fell.
+
+That was demonstrated, not argued, and the demonstration is the finding. One comparison read the
+"after" arm **−1.45 tok/s** with 1 of 8 cells positive — a −33% apparent regression on a width where
+the shader is the upstream body bit for bit, so a real loss was mechanically impossible. The obvious
+confound was tested first and eliminated: across 28 plain launches over 7 palindromes, the middle
+slots the arm occupies read a median-of-medians **5.230** against **5.185** early and **5.076** late,
+so there is **no slot-position penalty**. Re-running the identical pair on the identical binaries in
+the same epoch then settled it: **medians 5.081 against 5.091 — and the slow rounds landed on the
+other arm**, flipping the cell-wise read to +0.60 with nothing changed between the runs. The rounds
+are arm-agnostic.
+
+**The rule this pins down:** on the plain line of this box, a verdict is read from the **median plus a
+clean-cell interval**, never from the raw cell-wise mean interval alone. The median is stable to
+within 0.2% across runs (5.081 / 5.091 / 5.143 / 5.223 over four palindromes in two epochs). The
+drafted line does not show this — its medians and its cell-wise intervals agree in every take taken
+here — which is worth knowing on its own.
+
+What causes the slow regime is **open**. It cost four separate verdict rows across two mechanisms
+before it was characterised, which is why it is written down here rather than left as lore.
+
+### F-16 — A sampler setting on the serve line, inherited by a request that omitted it, manufactured empty completions
+
+A batch of benchmark rounds across several harnesses returned one token and stopped — the same
+signature as a real kernel defect, and for a while indistinguishable from one.
+
+The cause was the request shape, not the model and not any kernel. The serve line carries
+`--presence-penalty 1.5`. A raw `/v1/completions` body that simply **omits** the field inherits that
+value from the server. On a raw, untemplated prompt the presence ring is then primed with the
+**prompt's own tokens**, which is enough to put end-of-generation on top at position 0 — the slot
+sets its stop reason after one token and releases with no text. Every log signature matched: zero
+evaluation time over one token, no draft acceptance line, nothing truncated.
+
+Two things make this worth publishing rather than just fixing.
+
+**It never touched the served product.** The chat endpoint applies a template and was never exposed;
+the effect is specific to raw completions, which is exactly where benchmarks live and exactly where
+nobody was looking.
+
+**It changed what other measurements were allowed to conclude.** Once the presence penalty is forced
+to 0 on every raw request — one shared helper, so a stale caller passing 1.5 is *overridden* rather
+than defaulted — an empty completion becomes evidence again. F-13 above rests directly on that: the
+sentence "presence is 0 on this endpoint, so this is not the harness class" is only true because this
+was fixed first. A measurement harness that can manufacture the exact symptom under investigation
+does not merely add noise; it makes the whole class of finding unattributable until it is repaired.
+
+### F-17 — Provenance in a commit message does not stop the next rebase from deleting the result
+
+A fork that keeps rebasing onto upstream has a failure mode that no amount of careful commit
+authorship prevents: a measured win is quietly reverted by a bump, an ingest from another fork, or a
+conflict resolved the wrong way, and nothing refuses. The commit message still records what was
+measured. The code no longer does it.
+
+This fork now carries a machine-readable register of measured wins that a bump has to get past. Each
+entry names the mechanism, its commit, the **paths** it lives in, and its **anchors** — the
+distinctive symbols and environment gates whose *removal* is itself a collision, so a change that
+leaves the file in place but strips the mechanism out of it is caught too. It also carries the entry's
+quality gate, the workload the number was taken on, and the measured effect. A bump that touches a
+protected path **refuses** unless a comparison authorising it has been recorded.
+
+Three design decisions in it are worth stating, because each one was a defect first:
+
+- **It is authored, never generated.** Protected paths, anchors, quality gates and workloads are not
+  derivable from a commit trailer, and a fabricated field makes the guard *lie* — it would pass while
+  defending nothing. What *is* derivable is the candidate set, so a `discover` command prints every
+  measured commit no entry covers. An entry that cannot be filled in honestly stays out of the
+  register and stays on that list, visible.
+- **Anchors are searched in source only.** The first version searched the whole tree, which meant the
+  register file itself — which lists every anchor by construction — always matched. The rule was
+  structurally incapable of reporting any anchor missing. Generated patch mirrors and prose are
+  excluded for the same reason: **an anchor that only a document mentions is correctly reported
+  absent.**
+- **A superseded win is never deleted.** It keeps its entry, its evidence, and the conditions it still
+  wins under. "This lost to something better on this box" is not the same statement as "this does not
+  work", and on an engine that runs on hardware we do not own, the difference is the whole point.
+
+One bug found by the register's own tests rather than by reading is worth the space, because it is the
+shape this whole file exists for: the classifier deciding whether a commit *stated* a measured effect
+tested its no-effect vocabulary by **prefix**, and that vocabulary contained a bare `-`. So
+`Measured-effect: -12.79% per dispatch` classified as *no effect* — and a speedup written as a
+negative delta is the single most common shape a win takes here. **A guard blind to the most likely
+shape of the thing it guards is not a guard.** The test that pins it is named after exactly that case.
+
 ## Open questions
 
 Listed because they are unresolved, not because they are unimportant.
+
+- **The `q6_K` mat-vec bandwidth deficit** — about 35% below `q5_K` at the same shape. The per-row
+  barrier was the leading explanation and is **falsified** (F-14). No replacement hypothesis has been
+  measured.
+- **The ROCmFP4-FAST integer-dot mat-vec at widths 3 and 5.** The width that changed a sampled token
+  is gated out and the win reproduces without it, but the same arithmetic is live at the two retained
+  widths and the reproducer cannot reach them (F-13). An adversarial drafted-mode corpus, or a direct
+  logits comparison, is owed before that mechanism can go on the default branch.
+- **Why some undrafted decode rounds run at two-thirds speed** while generating normal text (F-15).
+  Characterised well enough to read verdicts correctly; not explained.
+- **The tiled concat-transpose on decode and on mixture-of-experts models.** Only the prefill graph was
+  measured. The upstream author's larger claims are on the paths not measured here.
+- **One benchmark launch ran about 45% faster than every other launch of either arm**, whole-graph
+  totals included. A session-first-launch position effect is real and measured at 7–11%, which is four
+  to five times too small to absorb it. The launch is retained and labelled; the pooled figure it sits
+  in is **not quotable**.
 
 - **Asynchronous disk reads for expert streaming.** Built and correct; speed effect
   **unresolved**, because the test model's experts largely fit in the OS file cache and there
