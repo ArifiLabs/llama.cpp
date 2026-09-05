@@ -35,7 +35,9 @@ git apply --check <the patch> # against the replay result f78ac1ee1 -> rc=0
 
 Independently re-verified with a negative control. The series counts before and after that landing:
 **513 → 517 commits, 10 → 10 merge commits (it adds none), provenance FAIL 57 → 57 (every new commit
-is trailered), 415 → 415 patches on disk** — the last pair being precisely the blocked step.
+is trailered), 415 → 415 patches on disk** — the last pair being precisely the blocked step. Basis:
+these counts were banked at `84ebe1269` and re-held at `a0cf8ef33`; they were **not** re-measured at
+`131fad035`.
 
 ## Rows, in the generator's format
 
@@ -85,6 +87,7 @@ Not part of the chain:
 ## Superseded, and kept
 
 `616b877b8` is listed above and is **superseded by `aa9f0e2aa`**. It applied the `iq3_s` split at
-every width and measured **7–9% slower** at `n=2` and `n=4` on the reference machine. It stays in the
+every width and measured **`n=4` ×0.823** on its own ladder on the reference machine (an intermediate
+build carrying the same no-`sum[]` body at the stock widths read `n=2` ×0.907 / `n=4` ×0.925). It stays in the
 list because the series is the fork's history and a measured loss is a result — and because the row
 records *why* the shipped gate has the shape it has.

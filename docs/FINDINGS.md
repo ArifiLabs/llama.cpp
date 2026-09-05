@@ -144,8 +144,9 @@ width 2**, and the shipped gate retains the path only at widths 3 and 5.
 
 **Two things this finding leaves standing.**
 
-`test-backend-ops` passed the type throughout — 13 correctness cases, 0 FAIL, and the identity-path
-suite green. It is not a broken test: the divergence sits **inside** the op's own normalized-error
+`test-backend-ops` passed the type throughout — 10 MUL_MAT correctness cases and 2 MUL_MAT_ID,
+0 FAIL, and the identity-path suite green. It is not a broken test: the divergence sits **inside**
+the op's own normalized-error
 tolerance, which is exactly the size of divergence that tolerance is designed to admit. A test that
 gates on aggregate numerical error over a tensor cannot see a distribution shift at one position that
 crosses a sampling boundary. **A green op-level suite is not a statement about the first token.**
@@ -545,9 +546,11 @@ block, each writes its own scale, and each then reads only four bytes of that sa
 same 16-byte cache line the staging was already fetching. So the barrier could be removed for a
 **bit-identical** result, and it was, behind a specialization constant so one binary serves both
 arms. Measured on the seat serve line, 6 position-balanced interleaved launches per phase: the
-`q6_k` op rows read a median ON/OFF ratio of **0.9796** against a control of **78 untouched op rows
-at 0.9990, p10–p90 [0.952, 1.053]**. **No `q6_k` row separates from the control band.** Serve level:
-tied on all six cells. Output: byte-identical, one distinct hash per prompt across 12 arm-launches.
+`q6_k` op rows read a median ON/OFF ratio of **0.9796** against its own control of **78 untouched op
+rows at 1.0061, p10–p90 [0.9479, 1.0636]** (one binary, env-gated); the two-binary diagnostic read
+**0.9880** against **0.9990, p10–p90 [0.9520, 1.0527]**. **No `q6_k` row separates from the control
+band in either pairing.** Serve level: tied on all six cells. Output: byte-identical, one distinct
+sha256 per prompt across 6 serve launches (18 completions).
 
 **The deficit stands, unexplained, and the next attempt has to look somewhere else.** This entry
 exists so that nobody spends the same day on the same barrier.

@@ -66,10 +66,10 @@ why no row is a continuation of the row above it.
 | Dedicated `iq4_xs` mat-vec shader (`1884a620a`) | outsourc-e Unleashed UD-Q3_K_XL, 13.22 GB | drafted **8.173 → 8.323 (+2%)**; plain **4.952 → 5.426 (+10%)** | E1 | rolled 35/40 → 35/40, F-141 0/8 | **WIN** |
 | `iq3_s` mat-vec split at `NUM_COLS == 3 \|\| > 4` (`aa9f0e2aa`) | outsourc-e Unleashed UD-Q3_K_XL, 13.22 GB | drafted decode **8.367 → 9.268 t/s (+11%)**; plain identical | E1 | rolled 35/40 → 35/40, F-141 0/8 | **WIN** |
 | `iq3_s` mat-vec split (`aa9f0e2aa`) | outsourc-e Unleashed UD-IQ4_XS, 14.30 GB | drafted decode **+0.199 t/s (+2%)**, twice, across a driver change | E1 and E2 | rolled 35/40 → 35/40, F-141 0/8 | **WIN** (small, reproduced) |
-| `iq3_s` split applied at **every** width (`616b877b8`) | — (kernel bench only) | `n=2` ×0.907, `n=4` ×0.925 | E1 | — | **LOSS — superseded by `aa9f0e2aa`** |
+| `iq3_s` split applied at **every** width (`616b877b8`) | — (kernel bench only) | `n=4` ×0.823 on its own ladder | E1 | — | **LOSS — superseded by `aa9f0e2aa`** |
 | ROCmFP4-FAST `q8_1` MMVQ mat-vec, retained at `n=3` and `n=5` (`f68a4bd25`) | julianmb Qwen3.8-27B-ROCmFP4-FAST, 14.56 GB | drafted decode **7.498 → 9.518 t/s (+27%)**; plain tied | E2 | rolled 32/40 → 33/40, F-141 0/8, zero empty completions | **MEASURED WIN — default-branch integration BLOCKED**, see below |
 | Tiled concat-transpose for the delta-net conv state (`5b1b416cb`) | huihui-ai Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL, 16.2 GB | CONCAT dispatch **−13%**; whole-model **TIED**, twice | E3 | output byte-identical gate ON vs OFF 3/3, F-141 0/8 | **WIN at the op, TIE at the seat** |
-| `q6_k` mat-vec reads scales from the block, not through LDS (`4bbebd619`) | huihui-ai Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL, 16.2 GB | op-level ratio **0.9796** against a control of **0.9990** — no row separates | 32+16 GB | output byte-identical, `test-backend-ops` MUL_MAT 1394/1394 | **NEUTRAL** — shipped for less work, **never quote it as a win** |
+| `q6_k` mat-vec reads scales from the block, not through LDS (`4bbebd619`) | huihui-ai Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL, 16.2 GB | op-level ratio **0.9796** against its own control of **1.0061** — no row separates | 32+16 GB | output byte-identical, `test-backend-ops` MUL_MAT 1394/1394 | **NEUTRAL** — shipped for less work, **never quote it as a win** |
 | Draft length sized from measured acceptance, `--spec-draft-adaptive` (`6c7d9275f`) | — | **not measured here** | — | — | **UNMEASURED on RIG-A**, default OFF |
 | Server: do not re-verify replayed draft tokens after a checkpoint restore (`8a4044a82`) | — | no throughput claim | — | — | **BUG FIX** |
 
@@ -129,8 +129,10 @@ quality gate is the 40-prompt rolled smoke score with thinking OFF, reported in 
 
 - **A split `iq3_s` mat-vec, at the two widths where it wins.** An unmerged community change reshapes
   this shader to 16 invocations per superblock and drops its `sum[]` array. Applied at **every** width
-  it measured a **7–9% loss** on RIG-A at `n=2` (×0.907) and `n=4` (×0.925) — that build (`616b877b8`)
-  is listed here because it is a result, and it is superseded. The shipped gate is
+  it measured a loss on RIG-A: the committed every-width build (`616b877b8`) read **`n=4` ×0.823** on
+  its own ladder, and an intermediate build carrying the same no-`sum[]` body at the stock widths read
+  **`n=2` ×0.907 / `n=4` ×0.925**. Both are superseded by `aa9f0e2aa`, and `616b877b8`
+  is listed here because it is a result. The shipped gate is
   `NUM_COLS == 3 || NUM_COLS > 4`: the source's own widths plus the one width below them that measured
   a win, with every other width taking the upstream body **bit for bit** under a specialization
   constant that folds at pipeline creation.
@@ -187,8 +189,8 @@ quality gate is the 40-prompt rolled smoke score with thinking OFF, reported in 
   **Kernel, on RIG-A** (one binary, arms selected by the environment variable, 4 interleaved launches,
   32 graph blocks, epoch E3): CONCAT **2550.2 → 2224.1 µs per dispatch = −12.79%**, **−15.66 ms per
   `ub512` prefill graph**. The arms do not overlap — `min(OFF) 2510.5 µs > max(ON) 2325.7 µs`. On a
-  binary built from the default branch ten commits later, re-measured over three counterbalanced takes
-  and reported position-balanced, the same op reads **−11.4349% / −13.988 ms**. Both are banked; neither
+  binary built from the default branch ten commits later, re-measured as a position-1-excluded median
+  over three takes (9 launches), the same op reads **−11.4349% / −13.988 ms**. Both are banked; neither
   replaces the other, because they are different binaries and, per this project's equipment register,
   potentially different memory configurations.
 
@@ -261,12 +263,13 @@ quality gate is the 40-prompt rolled smoke score with thinking OFF, reported in 
 
   **This measured NEUTRAL on RIG-A and must not be quoted as a speed win.** One binary, arms selected
   by a specialization constant, 6 position-balanced interleaved launches per phase, on the seat serve
-  line: at the op level the `q6_k` rows read a median ON/OFF ratio of **0.9796** against a control of
-  **78 untouched op rows at 0.9990, p10–p90 [0.952, 1.053]** — **no `q6_k` row separates from the
-  control band**. At the serve level, **TIED on all six cells** — prefill and decode, reported
-  separately, at three prompt lengths, every arm range overlapping. Output is **byte-identical**: one
-  distinct hash per prompt across all 12 arm-launches. `test-backend-ops -o MUL_MAT` **1394/1394, 0
-  FAIL, both arms**.
+  line: at the op level the `q6_k` rows read a median ON/OFF ratio of **0.9796** against its own
+  control of **78 untouched op rows at 1.0061, p10–p90 [0.9479, 1.0636]** (one binary, env-gated);
+  the two-binary diagnostic read **0.9880** against **0.9990, p10–p90 [0.9520, 1.0527]** — **no
+  `q6_k` row separates from the control band in either pairing**. At the serve level, **TIED on all
+  six cells** — prefill and decode, reported separately, at three prompt lengths, every arm range
+  overlapping. Output is **byte-identical**: one distinct sha256 per prompt across 6 serve launches
+  (18 completions). `test-backend-ops -o MUL_MAT` **1394/1394, 0 FAIL, both arms**.
 
   It is kept because it is **strictly less work for a bit-identical result** — one fewer workgroup
   barrier per row per superblock, and no shared-memory tile — on an engine that ships to other people's
@@ -287,8 +290,8 @@ quality gate is the 40-prompt rolled smoke score with thinking OFF, reported in 
   retained at. What is owed before it lands is named rather than left implicit: an adversarial
   cache-history corpus that reaches width 3, or a direct comparison of the integer-dot and float logits.
 
-- **The `iq3_s` split applied at every width** (`616b877b8`) — **7–9% slower** at `n=2` and `n=4` on
-  RIG-A. Superseded by the gated version above rather than kept as an option, because the two widths it
+- **The `iq3_s` split applied at every width** (`616b877b8`) — **`n=4` ×0.823** on its own ladder on
+  RIG-A. Superseded by the gated version above rather than kept as an option, because the widths it
   loses on are widths the shipped gate simply does not touch.
 
 - **`--spec-draft-adaptive` as a default.** Compiled in, off, and unmeasured here.
@@ -305,7 +308,7 @@ to prevent.
 | `6c7d9275f`, `8a4044a82` — adaptive drafting, replay fix | on their working branch | awaiting integration |
 | `e3220bed0` — ROCmFP4-FAST mat-mat + mat-vec hoist | on its working branch | awaiting integration |
 | `1884a620a`, `aa9f0e2aa` — `iq4_xs` and `iq3_s` mat-vec | on their working branch | measured wins, awaiting integration |
-| `616b877b8` — the every-width `iq3_s` split | on its working branch | **superseded by `aa9f0e2aa`** and kept as history; it is the measured 7–9% loss listed above |
+| `616b877b8` — the every-width `iq3_s` split | on its working branch | **superseded by `aa9f0e2aa`** and kept as history; it is the measured `n=4` ×0.823 loss listed above |
 | `60f57787f`, `ab04258bf`, `294dfdbdd`, `8e2acfd21`, `f68a4bd25` — ROCmFP4-FAST MMVQ | on its working branch | **held there deliberately** — see the residual above. The five narrow the width gate in order, each on what the one before ruled out, so a subset of them is a different and untested change rather than a smaller one |
 | `da218bab7` — comment correction | on its working branch | comment-only; no behaviour |
 | `4bbebd619` — `q6_k` direct scales | on its working branch | awaiting integration |
