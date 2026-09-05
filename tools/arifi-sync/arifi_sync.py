@@ -1119,7 +1119,15 @@ def load_protected_wins(repo: str) -> list:
 
 
 def _anchor_present(repo: str, ref: str, anchor: str) -> bool:
-    rc, _, _ = git(repo, "grep", "-q", "-F", anchor, ref, check=False)
+    """The generated series is EXCLUDED, and that exclusion is load-bearing (R6 finding 2).
+
+    This fork bakes every mechanism into `patches/series/*.patch` by design, so a whole-tree grep
+    finds our own anchor inside our own generated patch long after a fork ingest deleted the branch
+    from the source file. `validate` then reported the manifest healthy over a win that no longer
+    existed in live code - a green gate on a silent overwrite, which is the one failure this
+    function is here to catch. The series is a RECORD of the mechanism, never the mechanism."""
+    rc, _, _ = git(repo, "grep", "-q", "-F", anchor, ref,
+                   "--", ".", ":(exclude)patches/series", check=False)
     return rc == 0
 
 
@@ -1421,7 +1429,18 @@ def _resolution_problems(r: dict) -> list:
 def protected_collisions(repo: str, wins: list, changed: set, diff_text: str) -> list:
     """A collision is a protected PATH the incoming change touches, or a protected ANCHOR whose
     line the incoming diff removes. The anchor half matters: upstream can delete our dispatch
-    branch while leaving the file name intact, and a path-only check would pass that."""
+    branch while leaving the file name intact, and a path-only check would pass that.
+
+    A protected path may name a DIRECTORY, and that case is matched on the directory boundary
+    (R6 finding 1). `git cat-file -e <ref>:<dir>` succeeds on a tree, so `validate` called such an
+    entry healthy, while this function's set-intersection could never hit it - `git diff
+    --name-only` emits files only. A whole vendored subtree could therefore be registered and
+    guarded by nothing at all. Matching on `<dir>/` rather than the raw string keeps a sibling
+    like `kernel.c.bak` out of `kernel.c`'s guard.
+
+    The cost is deliberate: any touch anywhere under a protected subtree now REFUSES until a
+    comparison resolution is recorded. Under a fail-closed mandate that is the designed price of
+    protecting a whole tree, and it is why a subtree is registered only where the tree is ours."""
     removed = set()
     for line in diff_text.splitlines():
         if line.startswith("-") and not line.startswith("---"):
@@ -1430,7 +1449,9 @@ def protected_collisions(repo: str, wins: list, changed: set, diff_text: str) ->
     for w in wins:
         if w.get("status") != "active":
             continue
-        paths = sorted(set(w["protected_paths"]) & changed)
+        paths = sorted(p for p in set(w["protected_paths"])
+                       if p in changed
+                       or any(c.startswith(p.rstrip("/") + "/") for c in changed))
         anchors = sorted(a for a in w["anchors"] if any(a in l for l in removed))
         if paths or anchors:
             out.append({"win": w, "paths": paths, "anchors": anchors})
