@@ -329,6 +329,35 @@ class ProtectedWinTest(unittest.TestCase):
         problems = A.validate_protected_wins(self.r.path, "main")
         self.assertTrue(any("anchor" in p for p in problems), problems)
 
+    def test_an_anchor_that_survives_only_in_the_COMMITTED_MANIFEST_is_STALE(self):
+        """R6B finding, 2026-09-05. The real fork shape the series test could not reach.
+
+        `_write_manifest` writes `protected-wins.json` to disk and never `git add`s it, so in the
+        fixture the manifest was UNTRACKED and `git grep <ref>` could not see it. The real fork
+        always has it committed - and it lists every anchor literal by construction. So the
+        whole-tree grep had a guaranteed hit for every anchor that was not source, and `validate`
+        could never report an anchor absent. Deleting the mechanism from live code left the gate
+        GREEN: a record of the win satisfying a check meant for the win.
+
+        This commits the manifest first, exactly as the fork carries it, then deletes the anchor
+        from the source file while KEEPING the file - so only the anchor half of validation can
+        fire, not the protected-path half. This test fails with `:(exclude)tools/arifi-sync`
+        removed from `_anchor_present`, and passes with it."""
+        git(self.r.path, "add", "--", "tools/arifi-sync/protected-wins.json")
+        git(self.r.path, "commit", "-q", "-m", "register: bank the manifest")
+        # The manifest is now tracked and carries the anchor literal, same as the fork. Asserted,
+        # because a fixture that quietly failed to reproduce that shape would make this test pass
+        # for the wrong reason - which is exactly how the untracked-manifest blind spot survived.
+        tracked = git(self.r.path, "grep", "-l", "-F", "ARIFI_FAST_PATH", "main")
+        self.assertIn("tools/arifi-sync/protected-wins.json", tracked,
+                      "fixture did not reproduce the real shape: manifest not tracked")
+
+        self.r.commit("fork: drop the fast path but keep the file",
+                      {"ggml/kernel.c": "int win(void) { return 0; }\n"},
+                      effect="correctness only")
+        problems = A.validate_protected_wins(self.r.path, "main")
+        self.assertTrue(any("anchor" in p and "ARIFI_FAST_PATH" in p for p in problems), problems)
+
     def test_evidence_backed_resolution_unblocks_the_collision(self):
         inc = self._incoming({"ggml/kernel.c": "int win(void) { return 0; }\n"},
                              "upstream: rewrite the kernel")
