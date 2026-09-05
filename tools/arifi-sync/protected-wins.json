@@ -377,6 +377,51 @@
       "measured_effect": "UNMEASURED ON THIS SEAT (no Metal silicon). THIRD-PARTY reference from tq3/master, quoted and not adopted as ours: M3 Pro 27B decode ~4 t/s, about 27x over CPU (02d51f048).",
       "valid_conditions": "Apple Metal devices running TQ3_4S. Carried capability, inert here, not broken.",
       "notes": "protected_paths are shared upstream Metal files, so an upstream Metal bump will refuse this entry until a comparison is recorded. Accepted deliberately: there is no Metal file that is wholly ours, and the alternative is a capability nobody on this estate can test disappearing without anyone noticing. The dispatch-hook placement is part of the win - the tip regression it restores is the failure mode to compare against."
+    },
+    {
+      "id": "vulkan-iq4xs-matvec-dedicated",
+      "status": "active",
+      "_registered": "2026-09-05, lane-206 integration (R8). Landed on the integration branch by merge of lane-209/kernels; registered at the same time so the mechanism is guarded before any upstream bump touches it.",
+      "mechanism": "IQ4_XS gets a dedicated K-quant-style mat-vec shader (16 threads per 256-superblock, each thread taking both nibble halves of 2 packed32 words = 16 MACs per row per superblock, sub-block scale decoded once per row per superblock) instead of the generic mul_mat_vec.comp, which re-decoded the scale per dequantize4() call and used only one nibble half of each fetched word. Routed by `tname == \"iq4_xs\"` in vulkan-shaders-gen.cpp; the MUL_MAT_ID vec path picks up the same shader.",
+      "commit": "1884a620a",
+      "protected_paths": ["ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp", "ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp"],
+      "anchors": ["mul_mat_vec_iq4_xs.comp", "tname == \"iq4_xs\""],
+      "evidence": ["board/programs/local-inference/lanes/2026-09-02-lane-209-kernel-attacks-REPORT.md", "research/local-inference/lane-evidence/2026-09-02-lane-209/r5", "commit:1884a620a"],
+      "quality_gate": "test-backend-ops -o MUL_MAT and -o MUL_MAT_ID, 0 FAIL; F-141 content floor 0/8 on every slot with the baseline arm run first. A dequant mat-vec kernel fails silently, so a speed number alone is never the gate.",
+      "workload": "Radeon 780M gfx1103 Vulkan, llama-server serve A/B on U-IQ4XS and U-Q3KXL, DFlash2 Q4_K_M drafter at --spec-draft-n-max 2 (df2) and plain; palindrome 2 launches x 8 rounds per slot, cell-wise CI95. Op-level ladder: test-backend-ops perf m=17408 k=5120 n=1,2,3,4,5,8.",
+      "measured_effect": "LANE-BINARY MEASUREMENT (engine-before -> engine-r5, epochs E1/E2, matched 2x16 GB RAM): U-IQ4XS df2 +0.617 t/s [+0.255, +0.978], 8/8 cells positive; U-Q3KXL df2 +0.293 [+0.060, +0.527]; U-Q3KXL plain +0.742 [+0.208, +1.276]. Op ladder 98-105% of q4_K at n=1..4. U-IQ4XS plain +9.5% median with a CI straddling zero on both takes.",
+      "valid_conditions": "Radeon 780M gfx1103 under Vulkan; models carrying a material IQ4_XS share (U-IQ4XS 49.7%, U-Q3KXL 36.6%, U-Q4KM 28.7% by bytes). No remote carries an IQ4_XS mat-vec shader, so there is no upstream arm to compare against - an incoming change that adds one is a named collision, not a free replacement.",
+      "notes": "Registered from the lane's banked verdict, not re-measured at registration time. The numbers above were produced on engine-r5, a different binary from the integration tip; a different tree produces a different binary, so they are lane-binary facts and must be labelled as such."
+    },
+    {
+      "id": "vulkan-iq3s-matvec-tpb16-union-gate",
+      "status": "active",
+      "_registered": "2026-09-05, lane-206 integration (R8), same reasoning as the IQ4_XS row above.",
+      "mechanism": "IQ3_S mat-vec runs 16 invocations per superblock (zuijdwijk 211abf6a9 body, via lane-166) at the UNION of the widths where it wins on this box: ARIFI_TPB16 = (NUM_COLS == 3) || (NUM_COLS > 4). NUM_COLS 3 is the DFlash2 n-max-2 verify width. Widths 1, 2 and 4 keep the upstream body bit for bit, because the no-sum[] form measured 7-9% slower at n=2 and about 20% slower at n=4 on the 780M - the `>= 2` gate (616b877b8) is superseded by this union gate for exactly that reason.",
+      "commit": "aa9f0e2aa",
+      "protected_paths": ["ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp"],
+      "anchors": ["ARIFI_TPB16"],
+      "evidence": ["board/programs/local-inference/lanes/2026-09-02-lane-209-kernel-attacks-REPORT.md", "research/local-inference/lane-evidence/2026-09-02-lane-209/r4c", "commit:aa9f0e2aa"],
+      "quality_gate": "test-backend-ops -o MUL_MAT and -o MUL_MAT_ID, 0 FAIL; F-141 content floor 0/8 on every slot, baseline arm first.",
+      "workload": "Radeon 780M gfx1103 Vulkan, llama-server serve A/B on U-Q3KXL (iq3_s 26.6% by bytes) and U-IQ4XS (11.3%), df2 and plain, palindrome 2 launches x 8 rounds per slot. Op ladder test-backend-ops perf m=17408 k=5120 across n.",
+      "measured_effect": "LANE-BINARY MEASUREMENT (engine-r5 -> engine-r4c, E1/E2, matched 2x16 GB RAM): U-Q3KXL df2 +0.820 t/s [+0.622, +1.018], 8/8 positive (8.367 -> 9.268, +10.8%); U-IQ4XS df2 +0.198 [-0.033, +0.430] take 1 and +0.199 [-0.004, +0.403] take 2, agreeing to three decimals across a driver epoch; plain arms identical, as the control predicts. Kernel ladder: n=3 39.7 -> 53.8 GB/s = +35%, n=5 x1.472, n=8 x4.803, n=1/2/4 unchanged bit for bit.",
+      "valid_conditions": "Radeon 780M gfx1103 under Vulkan, models with a material IQ3_S share. The width GATE is itself the win: an incoming change that widens or narrows ARIFI_TPB16 must be compared at n=1..8 on this box before it replaces the union, because the 16-invocation body is measurably WORSE at n=2 and n=4 here.",
+      "notes": "Body taken from zuijdwijk 211abf6a9; the gate is ours and is the part that must not be overwritten. Registered from the lane verdict; the numbers are lane-binary facts, not integration-tip measurements."
+    },
+    {
+      "id": "vulkan-q6k-matvec-direct-scales",
+      "status": "active",
+      "_registered": "2026-09-05, lane-206 integration (R8). Registered as a KEPT NEUTRAL: no speed win is claimed here and none may be quoted from this entry.",
+      "mechanism": "mul_mat_vec_q6_k.comp reads its 16 int8 superblock scales directly out of the block instead of staging them through a double-buffered LDS tile with a barrier() per row. The exchange moved no data between threads, so the direct read is bit-identical by construction, and measured so. Specialization constant 3 selects the path; GGML_VK_Q6K_DIRECT_SCALES=0 restores upstream's LDS path byte for byte in the same binary.",
+      "commit": "4bbebd619",
+      "protected_paths": ["ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q6_k.comp"],
+      "anchors": ["GGML_VK_Q6K_DIRECT_SCALES"],
+      "evidence": ["research/local-inference/lane-evidence/2026-09-02-lane-209/rank3-r10/OPUS-5-R7-780M-KERNEL-ATTACK-REPORT.md", "commit:4bbebd619"],
+      "quality_gate": "test-backend-ops -o MUL_MAT 1394/1394, 0 FAIL, on BOTH arms; plus byte-identical llama-server output between the arms (1 distinct sha256 per prompt across all arm-launches). Bit-identity is the gate this entry lives or dies on - it is the whole basis for keeping a change that buys no measured speed.",
+      "workload": "Radeon 780M gfx1103 Vulkan, Huihui-Qwen3.8-27B UD-Q4_K_XL + DFlash2 Q4_K_M drafter at --spec-draft-n-max 2; one binary, arms env-gated, 6 position-balanced interleaved launches per phase, Balanced power plan, 32+16 GB asymmetric RAM.",
+      "measured_effect": "NEUTRAL on gfx1103, and that is the whole claim. Op level: q6_k rows median ON/OFF 0.9796 against a control of 78 untouched op rows at 0.9990, p10-p90 [0.952, 1.053] - no q6_k row separates. Serve level TIED on all six prefill/decode cells at three prompt lengths. Output byte-identical, 1 sha256 per prompt over 12 arm-launches. NO SPEED WIN IS CLAIMED.",
+      "valid_conditions": "Kept because it is strictly less work for a bit-identical result - one fewer workgroup barrier per row per superblock, and no shared-memory tile - on an engine that ships to other people's hardware, where LDS pressure and barrier cost are not what they are on a 780M. Protected as a NEUTRAL: an incoming upstream change that reverts it is not a regression to fight on speed grounds here, but it must be compared rather than silently taken, because the mechanism's value is off-seat.",
+      "notes": "Also banks the falsification the next attempt needs: the per-row barrier was the leading mechanism for q6_k's reproducible ~35% mat-vec deficit on this box (41.0 GB/s against q5_k 63.8 and q4_k 72.5 at m=17408 n=3 k=5120). Removing it moves nothing. The deficit stands, unexplained."
     }
   ]
 }
