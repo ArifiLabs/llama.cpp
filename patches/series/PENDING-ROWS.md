@@ -62,17 +62,24 @@ regeneration will emit **once a commit is on the default branch**, not a claim t
 
 ### Pending integration — the ROCmFP4-FAST MMVQ chain, HELD
 
-These five are ordered and must stay ordered: each one narrows the width gate on the basis of what
-the one before it ruled out, so a subset of them is not a smaller version of the change but a
-different and untested one. **This chain is deliberately not on the default branch** — the measured
-`+27%` stands, and the shader arithmetic behind it is unvalidated at the two widths the final gate
-retains. See `docs/FINDINGS.md` F-13.
+Six rows, of which **the first five are an ordered chain and must stay ordered**: each one narrows
+the width gate on the basis of what the one before it ruled out, so a subset of them is not a smaller
+version of the change but a different and untested one. The sixth, `da218bab7`, is a comment-only
+correction that carries no behaviour and is not part of the chain — it is listed so the range is
+complete, not because the ordering claim covers it.
+
+**This chain is deliberately not on the default branch** — the measured `+27%` stands, and the shader
+arithmetic behind it is unvalidated at the two widths the final gate retains. See
+`docs/FINDINGS.md` F-13.
 
 - `60f57787f` vulkan: create the ROCmFP4-FAST q8_1 MMVQ mat-vec pipelines and gate them to n <= 5 on AMD
 - `ab04258bf` vulkan: keep the ROCmFP4-FAST q8_1 MMVQ path to n=2..5 only
 - `294dfdbdd` vulkan: enforce ROCmFP4 MMVQ width gate before batch routing
 - `8e2acfd21` vulkan: exclude ROCmFP4 MMVQ n=4 tie width
 - `f68a4bd25` vulkan: isolate ROCmFP4 MMVQ to n=3 and n=5
+
+Not part of the chain:
+
 - `da218bab7` vulkan: correct lane-209 backend coverage comment
 
 ## Superseded, and kept
