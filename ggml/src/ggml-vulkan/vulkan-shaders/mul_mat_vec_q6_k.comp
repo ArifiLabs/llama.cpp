@@ -6,25 +6,54 @@
 
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
+// ArifiLabs lane-209 R7 - DIRECT SCALES.
+//
+// This is the only q*_k mat-vec shader that stages its scales through LDS: upstream loads all 16
+// int8 scales of the superblock into a double-buffered shared tile and pays a barrier() per ROW,
+// INSIDE the row loop (q4_k / q5_k unpack their scales in registers, no shared memory, no
+// barrier). The barrier is a workgroup-wide ordering point in the middle of that loop, so row
+// n+1's global loads cannot be issued underneath row n's math and the shader runs latency-bound
+// rather than bandwidth-bound.
+//
+// The exchange moves NO data between threads: every thread only ever consumed
+// scales[s_offset + {0,2,4,6}] of its OWN block (the group of 16 threads all work on block i, and
+// each writes scales[itid] before reading four fixed indices back). Reading those four bytes
+// straight out of the block yields the identical values in the identical fma order, so the result
+// is bit-identical - the block's scale array is 16 bytes, so all four reads are the same cache
+// line the LDS staging was fetching anyway.
+//
+// Gated by specialization constant 3 so ONE binary serves both arms:
+//   1 (default) = direct register reads       0 = upstream LDS + barrier path, byte for byte.
+// The host reads GGML_VK_Q6K_DIRECT_SCALES=0 to build the pipelines with 0.
+layout (constant_id = 3) const uint ARIFI_Q6K_DIRECT_SCALES = 1;
+
 shared FLOAT_TYPE sccache[2][BLOCK_SIZE/16][16];
 
 FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
 uint csel = 0;
 
 void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, const uint ix, const uint ql_offset, const uint qh_offset, const uint s_offset, const uint y_offset, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows, const bool all_threads) {
+    if (ARIFI_Q6K_DIRECT_SCALES != 0 && i >= num_blocks_per_row) {
+        // no cross-thread exchange to join, so a thread with no block simply has no work
+        return;
+    }
+
     const uint y_idx = i * QUANT_K + y_offset;
 
     [[unroll]] for (uint n = 0; n < num_rows; ++n) {
         const uint ib0 = a_offset + (first_row+n)*num_blocks_per_row;
-        csel ^= 1;
 
-        if (!all_threads) { // when we don't have enough blocks to use all threads
-            if (i < num_blocks_per_row)
-                sccache[csel][ix][itid] = FLOAT_TYPE(data_a[ib0 + i].scales[itid]);
-            barrier();
+        if (ARIFI_Q6K_DIRECT_SCALES == 0) {
+            csel ^= 1;
 
-            if (i >= num_blocks_per_row)
-                continue;
+            if (!all_threads) { // when we don't have enough blocks to use all threads
+                if (i < num_blocks_per_row)
+                    sccache[csel][ix][itid] = FLOAT_TYPE(data_a[ib0 + i].scales[itid]);
+                barrier();
+
+                if (i >= num_blocks_per_row)
+                    continue;
+            }
         }
 
         const uint32_t ql0_u32 =  uint32_t(data_a_packed16[ib0 + i].ql[ql_offset / 2]) | (uint32_t(data_a_packed16[ib0 + i].ql[ql_offset / 2 + 1]) << 16);
@@ -51,9 +80,23 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
         const vec4 q2 = vec4(unpack8(q2_u32)) - 32;
         const vec4 q3 = vec4(unpack8(q3_u32)) - 32;
 
-        if (all_threads) {
-            sccache[csel][ix][itid] = FLOAT_TYPE(data_a[ib0 + i].scales[itid]);
-            barrier();
+        FLOAT_TYPE sc0, sc2, sc4, sc6;
+        if (ARIFI_Q6K_DIRECT_SCALES == 0) {
+            if (all_threads) {
+                sccache[csel][ix][itid] = FLOAT_TYPE(data_a[ib0 + i].scales[itid]);
+                barrier();
+            }
+            // hoisted out of the j loop below; nothing writes sccache in between, so the values
+            // and the fma order are unchanged from upstream reading them inside the loop.
+            sc0 = sccache[csel][ix][s_offset    ];
+            sc2 = sccache[csel][ix][s_offset + 2];
+            sc4 = sccache[csel][ix][s_offset + 4];
+            sc6 = sccache[csel][ix][s_offset + 6];
+        } else {
+            sc0 = FLOAT_TYPE(data_a[ib0 + i].scales[s_offset    ]);
+            sc2 = FLOAT_TYPE(data_a[ib0 + i].scales[s_offset + 2]);
+            sc4 = FLOAT_TYPE(data_a[ib0 + i].scales[s_offset + 4]);
+            sc6 = FLOAT_TYPE(data_a[ib0 + i].scales[s_offset + 6]);
         }
 
         const FLOAT_TYPE d = FLOAT_TYPE(data_a[ib0 + i].d);
@@ -71,7 +114,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
                 sum[2] = fma(FLOAT_TYPE(by64[l]), q2[l], sum[2]);
                 sum[3] = fma(FLOAT_TYPE(by96[l]), q3[l], sum[3]);
             }
-            temp[j][n] = fma(fma(sum[0], sccache[csel][ix][s_offset], fma(sum[1], sccache[csel][ix][s_offset + 2], fma(sum[2], sccache[csel][ix][s_offset + 4], sum[3] * sccache[csel][ix][s_offset + 6]))), d, temp[j][n]);
+            temp[j][n] = fma(fma(sum[0], sc0, fma(sum[1], sc2, fma(sum[2], sc4, sum[3] * sc6))), d, temp[j][n]);
         }
     }
 }
