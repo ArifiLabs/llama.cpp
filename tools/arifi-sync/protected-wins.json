@@ -164,6 +164,10 @@
       "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` in protected-win-baseline.json (4672638cf). Its own row said the protected paths span a vendored tree and had to be enumerated first; the R6 subtree fix makes `powerinfer/` a guardable path, so the enumeration is no longer owed.",
       "mechanism": "The ArifiLabs Windows port of the vendored PowerInfer streaming library: the io_uring read path rewritten onto Win32, plus the `-mprefer-vector-width=128` MinGW codegen cure carried on ggml-cpu. The flag is not a tuning preference - the hand-written AVX in this tree spills and crashes under the MinGW/winlibs toolchain without it.",
       "commit": "4672638cf8eb0bdedb30b264ede342c4ad82803a",
+      "also_commits": [
+        "ef2ed94a03309dd3235e98fa962e212f01a191cf"
+      ],
+      "_also_commits_why": "R6B note N1, 2026-09-05. `4672638cf` wrote the port but did NOT touch `ggml/src/ggml-cpu/CMakeLists.txt`; the `-mprefer-vector-width=128` cure landed there in `ef2ed94a0` (`build: wire powerinfer lib + AVX-spill cure into CMake [series 0004]`, 2026-07-22, CHECKED ancestor of this branch, CHECKED touches that file). The entry protects that path and anchors on that flag, so the commit that put it there belongs on the entry. `ef2ed94a0`'s trailer is build-system only, so it is not in the strict registration set and this field changes no count - it closes a provenance gap, not a gate.",
       "protected_paths": [
         "powerinfer",
         "ggml/src/ggml-cpu/CMakeLists.txt"
