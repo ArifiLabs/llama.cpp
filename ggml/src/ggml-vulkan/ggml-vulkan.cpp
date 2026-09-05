@@ -10113,6 +10113,38 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
     // 1.55x (width-3 baseline) - while the f32 dequant shader rises 1.4-1.6x on the same rows, and
     // Q5_K is faster on the f32 shader at every measured n>1 (0.73-0.88x). Route them where they win.
     // GGML_VK_FORCE_MMVQ / GGML_VK_DISABLE_MMVQ (mmvq_mode above) still override this.
+
+    // arifi lane-206: ROCmFP4 MMVQ is OPT-IN. GGML_ARIFI_ROCMFP4_MMVQ=1 enables the n=3/n=5 route
+    // that the block below describes; without it every width takes the f32 dequant shader.
+    //
+    // The mechanism is a MEASURED WIN and is kept in full - +26.9% drafted decode on the ROCmFP4
+    // file, CI [1.3212, 2.7186], 8/8 cells (lane-209 r10). It ships OFF because it is not yet
+    // CLEARED, which is a different statement from unsafe, and the two must not be collapsed:
+    //
+    //   - n=5 has never executed in served generation. Not in lane-209, and not in the lane-206
+    //     gate either: the seated --spec-draft-n-max 2 line emits n=3 and never n=5, so the width
+    //     is live in this selector and completely unexercised outside test-backend-ops.
+    //   - the lane-206 adversarial op gate came back CLEAN at n=3 and n=5 - six patterns that break
+    //     q8_1 activation quantization, at the seat shape and at a ragged k, MMVQ closer to the CPU
+    //     reference than the f32 shader on every one, zero NaN, zero FAIL - but the CPU reference
+    //     for this type is ITSELF a q8_0 int-dot (ggml-cpu.c, vec_dot_type), so MMVQ agreeing with
+    //     it more closely is partly structural and cannot be read as "more accurate".
+    //   - served ON vs OFF is NOT byte-identical: 1 of 3 prompts diverges by one synonym at equal
+    //     token count with both arms finishing `stop`, against an ON-vs-ON control that reproduces
+    //     3/3. That is the expected consequence of a different numerical path, not a defect - but
+    //     three prompts is a far weaker probe than the cache-history replay that found the n=2
+    //     first-token EOG in the first place.
+    //
+    // So: the evidence is good and the coverage is thin, and this session is the maker. Flipping
+    // the default is an independent checker's call, and costs one line when it is made.
+    if (device->vendor_id == VK_VENDOR_ID_AMD && src0_type == GGML_TYPE_Q4_0_ROCMFP4_FAST) {
+        static const char * rocmfp4_mmvq_env = getenv("GGML_ARIFI_ROCMFP4_MMVQ");
+        static const bool   rocmfp4_mmvq     = rocmfp4_mmvq_env && rocmfp4_mmvq_env[0] == '1';
+        if (!rocmfp4_mmvq) {
+            return false;
+        }
+    }
+
     // arifi lane-209 rank 8: keep ROCmFP4 MMVQ off the n=1 decode path.  This check must remain
     // outside the n > 1 batch-routing block below; placing it inside that block makes n < 2
     // unreachable and silently routes n=1 back through MMVQ.
