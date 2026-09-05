@@ -42,12 +42,33 @@
     "COUNTS, in both scopes, because a single blended number would misread:",
     "  original 24 rows, D4 applied :  9 REGISTRATION OWED / 15 terminal",
     "  + 6 surfaced by the D2 fix   :  5 REGISTRATION OWED /  1 terminal",
-    "  this ledger as a whole       : 14 REGISTRATION OWED / 16 terminal / 30 rows"
+    "  this ledger as a whole       : 14 REGISTRATION OWED / 16 terminal / 30 rows",
+    "",
+    "AMENDED AGAIN 2026-09-05 by the lane-209 rank-3 R6 registration pass, which is what the 14",
+    "owed rows were waiting for. ELEVEN of them are now DISCHARGED - each is covered by a real",
+    "entry in protected-wins.json and carries a `_now_registered` note naming that entry. THREE",
+    "stay owed (d0112ab49, f81c6dfdf, 159c3a21d) and now carry a `_still_owed` note stating the",
+    "exact missing measurement and the action, not 'more evidence'. Those three are the only rows",
+    "in this ledger with NO number from any source, so the register's required `measured_effect`",
+    "could not be filled without inventing one. Leaving them visible is the mandate; filling them",
+    "softly to reach zero would be the discard.",
+    "",
+    "NOT ONE ROW WAS DELETED, DOWNGRADED, RELABELLED OR SQUASHED. Every disposition above is the",
+    "text it was written with; the R6 notes are APPENDED beside them. A registered sha appearing",
+    "in both files is harmless by construction - `unregistered_measured_wins` skips it either way.",
+    "",
+    "COUNTS AFTER R6:",
+    "  30 rows, unchanged           : 16 terminal (unchanged)",
+    "  of the 14 REGISTRATION OWED  : 11 DISCHARGED (registered) / 3 still owed, with exact gaps"
   ],
   "_amended": {
     "utc": "2026-09-04T23:58:45Z (19:58:45 EDT), read from the machine clock when this block was written; the pass's close boundary is commit-derived and lives in R3-FIX-REPORT.md",
     "by": "CHECKER-R3 defect-closure pass (fresh maker, guarded Claude Max subscription wrapper)",
-    "closes": ["D4 re-disposition", "the D2 classifier widening", "baseline tampering residual"]
+    "closes": [
+      "D4 re-disposition",
+      "the D2 classifier widening",
+      "baseline tampering residual"
+    ]
   },
   "_disposition_vocabulary": {
     "REGISTRATION OWED": "a real, landed win; its manifest entry is owed and cannot yet be written without inventing a field",
@@ -65,37 +86,44 @@
     {
       "sha": "4672638cf8eb0bdedb30b264ede342c4ad82803a",
       "subject": "powerinfer: vendor streaming library incl. lane-110 Windows port [series 0003]",
-      "disposition": "REGISTRATION OWED - real: io_uring->Win32 read path plus the -mprefer-vector-width=128 AVX-spill cure (a novel MinGW codegen finding, RESULTS lane-110). Its protected paths and anchors span a vendored tree and must be enumerated before an entry is honest."
+      "disposition": "REGISTRATION OWED - real: io_uring->Win32 read path plus the -mprefer-vector-width=128 AVX-spill cure (a novel MinGW codegen finding, RESULTS lane-110). Its protected paths and anchors span a vendored tree and must be enumerated before an entry is honest.",
+      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `powerinfer-windows-port-avx-cure`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
     },
     {
       "sha": "655f2f9a33f9c78fe4b375404476bb58a33d75ff",
       "subject": "powerinfer: expert-bundle loader + GENERATE_EXPERT_BUNDLE [series 0005]",
-      "disposition": "REGISTRATION OWED - real: first disk-streamed sparse inference on Windows proven on this path (RESULTS M2a). The registered `powerinfer-moe-streaming-hook` entry may or may not be the same mechanism; folding it in as also_commits without checking would be an invented claim."
+      "disposition": "REGISTRATION OWED - real: first disk-streamed sparse inference on Windows proven on this path (RESULTS M2a). The registered `powerinfer-moe-streaming-hook` entry may or may not be the same mechanism; folding it in as also_commits without checking would be an invented claim.",
+      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `powerinfer-expert-bundle-generator`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
     },
     {
       "sha": "11c9a7702b75135496880546e0660c4f5e1c897a",
       "subject": "powerinfer: repack carve-out for streamed tensors [series 0008a]",
-      "disposition": "REGISTRATION OWED - a correctness mechanism of the same class as the registered `escha-w2-decode-correctness` win (it fixes garbage output from AARCH64 repack of streamed experts, RESULTS rung2). Correctness mechanisms ARE protectable; its quality gate must be stated before the entry is written."
+      "disposition": "REGISTRATION OWED - a correctness mechanism of the same class as the registered `escha-w2-decode-correctness` win (it fixes garbage output from AARCH64 repack of streamed experts, RESULTS rung2). Correctness mechanisms ARE protectable; its quality gate must be stated before the entry is written.",
+      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `powerinfer-streamed-repack-carveout`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
     },
     {
       "sha": "bca0f5b9aada62a95639e407fa4fe1de3e6ec585",
       "subject": "powerinfer: GPU-safe staging, CPU zero-copy, LANE110_PROF [series 0011]",
-      "disposition": "REGISTRATION OWED - real and measured: GPU -ngl99 -cmoe clean 4.9 t/s with CPU zero-copy kept (RESULTS lane-110B/C)."
+      "disposition": "REGISTRATION OWED - real and measured: GPU -ngl99 -cmoe clean 4.9 t/s with CPU zero-copy kept (RESULTS lane-110B/C).",
+      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `powerinfer-gpu-safe-staging`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
     },
     {
       "sha": "d0112ab49c1d8f90f22efbb89e3bbf157b5f5766",
       "subject": "community: llama : pin mmap-backed CPU weights for faster H2D uploads",
-      "disposition": "REGISTRATION OWED - a CARRIED community mechanism, inert on this seat's GPU-resident unified memory (ki-prefetch-experts-conditionality) and retained for a discrete-GPU + streamed-path trial that is owed. Zero on our seat is not zero: it must not be lost on a bump. No measured effect exists on this hardware to register yet."
+      "disposition": "REGISTRATION OWED - a CARRIED community mechanism, inert on this seat's GPU-resident unified memory (ki-prefetch-experts-conditionality) and retained for a discrete-GPU + streamed-path trial that is owed. Zero on our seat is not zero: it must not be lost on a bump. No measured effect exists on this hardware to register yet.",
+      "_still_owed": "2026-09-05, lane-209 rank-3 R6: STAYS `REGISTRATION OWED`, and the gap is now EXACT rather than 'more evidence'. Unlike every other owed row, this one carries NO number at all - not ours and not a third party's; its own trailer states only 'inert on GPU-resident unified memory; carried for discrete-GPU + streamed-path trial owed'. So a `measured_effect` field could not be filled without inventing one, and the register requires it. MISSING EVIDENCE, precisely: a decode tok/s A/B (arm ON vs arm OFF, one binary, env or build flip only, n>=9 interleaved, ranges reported) on a DISCRETE-GPU host running the streamed-expert path - the H2D upload is the thing this mechanism changes, and it does nothing on this seat's unified memory. ACTION: run that A/B on the first discrete-GPU host the estate gets, then register all three together (they are one upload-pipeline mechanism in three commits). Until then the row is the guard: it is visible in `discover --all`, it is not dismissed, and it is not closed."
     },
     {
       "sha": "f81c6dfdf07ffa0267cf99a27a4cad276ed70325",
       "subject": "community: ggml : overlap offloaded expert weight uploads with compute",
-      "disposition": "REGISTRATION OWED - as d0112ab49: carried community mechanism, inert on this seat, trial owed."
+      "disposition": "REGISTRATION OWED - as d0112ab49: carried community mechanism, inert on this seat, trial owed.",
+      "_still_owed": "2026-09-05, lane-209 rank-3 R6: STAYS `REGISTRATION OWED`, and the gap is now EXACT rather than 'more evidence'. Unlike every other owed row, this one carries NO number at all - not ours and not a third party's; its own trailer states only 'inert on GPU-resident unified memory; carried for discrete-GPU + streamed-path trial owed'. So a `measured_effect` field could not be filled without inventing one, and the register requires it. MISSING EVIDENCE, precisely: a decode tok/s A/B (arm ON vs arm OFF, one binary, env or build flip only, n>=9 interleaved, ranges reported) on a DISCRETE-GPU host running the streamed-expert path - the H2D upload is the thing this mechanism changes, and it does nothing on this seat's unified memory. ACTION: run that A/B on the first discrete-GPU host the estate gets, then register all three together (they are one upload-pipeline mechanism in three commits). Until then the row is the guard: it is visible in `discover --all`, it is not dismissed, and it is not closed."
     },
     {
       "sha": "159c3a21d91a1b19053c09592cf08184c48e69f2",
       "subject": "community: ggml : size prefetch slots per layer and fix fallback use-after-free",
-      "disposition": "REGISTRATION OWED - as d0112ab49: carried community mechanism, inert on this seat, trial owed."
+      "disposition": "REGISTRATION OWED - as d0112ab49: carried community mechanism, inert on this seat, trial owed.",
+      "_still_owed": "2026-09-05, lane-209 rank-3 R6: STAYS `REGISTRATION OWED`, and the gap is now EXACT rather than 'more evidence'. Unlike every other owed row, this one carries NO number at all - not ours and not a third party's; its own trailer states only 'inert on GPU-resident unified memory; carried for discrete-GPU + streamed-path trial owed'. So a `measured_effect` field could not be filled without inventing one, and the register requires it. MISSING EVIDENCE, precisely: a decode tok/s A/B (arm ON vs arm OFF, one binary, env or build flip only, n>=9 interleaved, ranges reported) on a DISCRETE-GPU host running the streamed-expert path - the H2D upload is the thing this mechanism changes, and it does nothing on this seat's unified memory. ACTION: run that A/B on the first discrete-GPU host the estate gets, then register all three together (they are one upload-pipeline mechanism in three commits). Until then the row is the guard: it is visible in `discover --all`, it is not dismissed, and it is not closed."
     },
     {
       "sha": "550b87da9cb57c6b5592cfdc223b6eeabb7875e4",
@@ -110,12 +138,14 @@
     {
       "sha": "bf0abf0be6ed1ce4f9c9cefb28fc4adb7ec4bb18",
       "subject": "ggml: ROCmFP4/ROCmFPX weight formats behind GGML_ARIFI_ROCMFPX_FORMATS",
-      "disposition": "REGISTRATION OWED - RE-DISPOSITIONED 2026-09-04 by the CHECKER-R3 fix pass (D4). It was 'NO RUNTIME EFFECT - OFF by default is a no-op on every existing path by the trailer's own statement; no throughput number was produced.' That reasoning is the SAME reasoning d0112ab49/f81c6dfdf/159c3a21d are marked REGISTRATION OWED under, with the opposite verdict in one ledger. CHECKED against this commit's own trailer: a native ROCmFP4 artifact LOADED in llama-server and completed at 3.24 tok/s, both ROCmFPX conformance suites pass, and `Origin: ArifiLabs/rocmfp-weight-formats` makes the mechanism ours. That is a WORKING capability, not an absence. Under the President's capability law a capability is droppable only when BROKEN, never when merely inert here, so an upstream bump removing the ROCMFP* type ids would silently drop a capability this ledger previously called 'no runtime effect'. Terminal treatment is withdrawn for want of checked evidence, not because the mechanism changed."
+      "disposition": "REGISTRATION OWED - RE-DISPOSITIONED 2026-09-04 by the CHECKER-R3 fix pass (D4). It was 'NO RUNTIME EFFECT - OFF by default is a no-op on every existing path by the trailer's own statement; no throughput number was produced.' That reasoning is the SAME reasoning d0112ab49/f81c6dfdf/159c3a21d are marked REGISTRATION OWED under, with the opposite verdict in one ledger. CHECKED against this commit's own trailer: a native ROCmFP4 artifact LOADED in llama-server and completed at 3.24 tok/s, both ROCmFPX conformance suites pass, and `Origin: ArifiLabs/rocmfp-weight-formats` makes the mechanism ours. That is a WORKING capability, not an absence. Under the President's capability law a capability is droppable only when BROKEN, never when merely inert here, so an upstream bump removing the ROCMFP* type ids would silently drop a capability this ledger previously called 'no runtime effect'. Terminal treatment is withdrawn for want of checked evidence, not because the mechanism changed.",
+      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `rocmfpx-weight-formats`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
     },
     {
       "sha": "39a585bd51901738f3fd9221f2b430270bfd42b9",
       "subject": "llama: ROCmFPX file types, quantizer wiring and the gguf-py registry",
-      "disposition": "REGISTRATION OWED - RE-DISPOSITIONED 2026-09-04 by the CHECKER-R3 fix pass (D4), for the same reason as bf0abf0be, whose guard this shares. It was 'NO RUNTIME EFFECT - the wiring is inside the same OFF-by-default guard as bf0abf0be; no behaviour change on any existing file type.' The file types, quantizer wiring and gguf-py registry ARE the mechanism that makes bf0abf0be's working artifact loadable; dropping them drops the capability whether or not the default is OFF. Default-OFF describes the SHIPPED DEFAULT, not the existence of the mechanism, and only the second is what this ledger protects."
+      "disposition": "REGISTRATION OWED - RE-DISPOSITIONED 2026-09-04 by the CHECKER-R3 fix pass (D4), for the same reason as bf0abf0be, whose guard this shares. It was 'NO RUNTIME EFFECT - the wiring is inside the same OFF-by-default guard as bf0abf0be; no behaviour change on any existing file type.' The file types, quantizer wiring and gguf-py registry ARE the mechanism that makes bf0abf0be's working artifact loadable; dropping them drops the capability whether or not the default is OFF. Default-OFF describes the SHIPPED DEFAULT, not the existence of the mechanism, and only the second is what this ledger protects.",
+      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `rocmfpx-weight-formats`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
     },
     {
       "sha": "7d6f8d16386306e6ce310a48b6484f498d771d12",
@@ -187,31 +217,36 @@
       "sha": "e44c0bb0d39808d40ec06649dabfb58a93595a7d",
       "_surfaced_by": "the D2 classifier fix, 2026-09-04",
       "subject": "ggml-cpu: GGML_ARIFI_VNNI_REPACK defaults to OFF (diverging from upstream, on measurement)",
-      "disposition": "REGISTRATION OWED - the registered `cpu-vnni-repack-dual-residency` entry protects the KERNEL; this commit is the measured DEFAULT decision on top of it, and the two are not the same object. Its own trailer records the pair the default was chosen on: it avoids a -77.1%/-88.1% prompt regression and forgoes a +20.1%/+28.4% decode gain. An upstream bump that flipped the default back would silently forfeit a measured decision while every registered anchor still resolved, so the manifest as it stands would not see it. Not describable as an entry yet: the protected paths and quality gate for a DEFAULT (as distinct from a kernel) are not settled."
+      "disposition": "REGISTRATION OWED - the registered `cpu-vnni-repack-dual-residency` entry protects the KERNEL; this commit is the measured DEFAULT decision on top of it, and the two are not the same object. Its own trailer records the pair the default was chosen on: it avoids a -77.1%/-88.1% prompt regression and forgoes a +20.1%/+28.4% decode gain. An upstream bump that flipped the default back would silently forfeit a measured decision while every registered anchor still resolved, so the manifest as it stands would not see it. Not describable as an entry yet: the protected paths and quality gate for a DEFAULT (as distinct from a kernel) are not settled.",
+      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `cpu-vnni-repack-default-off`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
     },
     {
       "sha": "e20a8df7f5dc1b0761e56019f5eecdbcd1bc707f",
       "_surfaced_by": "the D2 classifier fix, 2026-09-04",
       "subject": "docs: the g128 repack SPEED numbers, measured",
-      "disposition": "REGISTRATION OWED - CHECKED docs-only in its own diff (CHANGELOG.md, docs/FINDINGS.md, docs/OPTIONS-REGISTRY.md), but the numbers it banks are a 3.3x g128 decode win (2.01 -> 6.67/6.69 tok/s, n=12 per cell, ranges disjoint) and the g128 CPU repack KERNEL SET behind them is not demonstrably covered: the one registered repack entry names GGML_ARIFI_VNNI_REPACK and the dual-residency mode, not the g128 kernels of lane-110F mission #1. Terminal treatment is refused for want of checked coverage rather than granted on 'docs-only', because the burden under the capability law sits on terminal. What is owed is the KERNEL commit's registration, which this row names so it cannot be lost."
+      "disposition": "REGISTRATION OWED - CHECKED docs-only in its own diff (CHANGELOG.md, docs/FINDINGS.md, docs/OPTIONS-REGISTRY.md), but the numbers it banks are a 3.3x g128 decode win (2.01 -> 6.67/6.69 tok/s, n=12 per cell, ranges disjoint) and the g128 CPU repack KERNEL SET behind them is not demonstrably covered: the one registered repack entry names GGML_ARIFI_VNNI_REPACK and the dual-residency mode, not the g128 kernels of lane-110F mission #1. Terminal treatment is refused for want of checked coverage rather than granted on 'docs-only', because the burden under the capability law sits on terminal. What is owed is the KERNEL commit's registration, which this row names so it cannot be lost.",
+      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `cpu-vnni-repack-g128-kernels`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
     },
     {
       "sha": "a38d6c409f856be1aaeb5003a91045af65ca9aec",
       "_surfaced_by": "the D2 classifier fix, 2026-09-04",
       "subject": "moe-cache: heat-protected eviction keeps hot experts resident (turboquant tail)",
-      "disposition": "REGISTRATION OWED - a CARRIED mechanism whose only numbers are third-party (+12% TG soft / +7.5% auto on an RTX 5090, quoted and explicitly NOT adopted as ours). Exactly the d0112ab49 class: zero on our seat is not zero, and no measured effect exists on this hardware to register yet. It must not be lost on a bump."
+      "disposition": "REGISTRATION OWED - a CARRIED mechanism whose only numbers are third-party (+12% TG soft / +7.5% auto on an RTX 5090, quoted and explicitly NOT adopted as ours). Exactly the d0112ab49 class: zero on our seat is not zero, and no measured effect exists on this hardware to register yet. It must not be lost on a bump.",
+      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `moe-cache-heat-protected-eviction`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
     },
     {
       "sha": "8561db37993c9b326549aed2c996b0dcb24ecfc7",
       "_surfaced_by": "the D2 classifier fix, 2026-09-04",
       "subject": "cuda: lift TQ3_4S kernel set from tq3/master (14 files)",
-      "disposition": "REGISTRATION OWED - a lifted CUDA kernel set, UNMEASURABLE on this seat (no CUDA silicon) with tq3-side references RTX 3090 tg128 43.1 -> 47.4 t/s and Ampere decode +35%. Carried capability, inert here, not broken. The d0112ab49 reasoning applies unchanged."
+      "disposition": "REGISTRATION OWED - a lifted CUDA kernel set, UNMEASURABLE on this seat (no CUDA silicon) with tq3-side references RTX 3090 tg128 43.1 -> 47.4 t/s and Ampere decode +35%. Carried capability, inert here, not broken. The d0112ab49 reasoning applies unchanged.",
+      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `cuda-tq3-4s-kernels`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
     },
     {
       "sha": "24f43e45cdf65dc539e62c55c6dd65e6be71c6d5",
       "_surfaced_by": "the D2 classifier fix, 2026-09-04",
       "subject": "metal: lift TQ3_4S kernel set from tq3/master (5 files + alloc hook)",
-      "disposition": "REGISTRATION OWED - as 8561db379, on Metal: UNMEASURABLE on this seat (no Metal silicon), tq3-side reference M3 Pro 27B decode ~4 t/s. Carried capability, inert here, not broken."
+      "disposition": "REGISTRATION OWED - as 8561db379, on Metal: UNMEASURABLE on this seat (no Metal silicon), tq3-side reference M3 Pro 27B decode ~4 t/s. Carried capability, inert here, not broken.",
+      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `metal-tq3-4s-kernels`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
     }
   ]
 }

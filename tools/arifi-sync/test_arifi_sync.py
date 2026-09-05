@@ -290,6 +290,45 @@ class ProtectedWinTest(unittest.TestCase):
         problems = A.validate_protected_wins(self.r.path, "main")
         self.assertTrue(any("anchor" in p for p in problems), problems)
 
+    def test_a_protected_SUBTREE_is_actually_guarded(self):
+        """R6 finding 1, 2026-09-05. A directory `protected_path` validated but guarded NOTHING.
+
+        `git cat-file -e <ref>:<dir>` succeeds on a tree, so `validate` reported the entry healthy.
+        `protected_collisions` then intersected the path SET against `git diff --name-only`, which
+        only ever emits FILES, so a registered subtree could never produce a hit. Registered path,
+        zero guard, green gate - the exact silent overwrite the mandate is about. This test fails
+        on the old code."""
+        self._write_manifest(self._entry(protected_paths=["ggml"]))
+        self.assertEqual([], A.validate_protected_wins(self.r.path, "main"))
+        inc = self._incoming({"ggml/other.c": "int upstream(void) { return 1; }\n"},
+                             "upstream: land a file inside our protected subtree")
+        self.assertEqual(1, self._check(inc))
+
+    def test_a_path_that_merely_SHARES_A_PREFIX_still_passes(self):
+        """The must-not-fire half of the subtree fix: prefix matching is on the DIRECTORY boundary,
+        not on the raw string, so a sibling that happens to start with a protected file's name is
+        not a collision. Without this, `ggml/kernel.c` would swallow `ggml/kernel.c.bak`."""
+        inc = self._incoming({"ggml/kernel.c.bak": "backup\n"}, "upstream: an unrelated sibling")
+        self.assertEqual(0, self._check(inc))
+
+    def test_an_anchor_that_survives_only_in_patches_series_is_STALE(self):
+        """R6 finding 2, 2026-09-05. `_anchor_present` grepped the WHOLE tree, and this fork bakes
+        every mechanism into `patches/series/*.patch` by design. So after a fork ingest deleted our
+        branch from the source file, the anchor was still found - in our own generated patch - and
+        `validate` stayed GREEN over a manifest that no longer guarded live code.
+
+        The series is a RECORD of the mechanism, never the mechanism itself, so it is excluded from
+        the anchor search. This test fails on the old code."""
+        self.r.commit("regen: bank the series",
+                      {"patches/series/0001-our-win.patch":
+                       "+int win(void) { return ARIFI_FAST_PATH; }\n"},
+                      effect="generated artifacts only")
+        self.r.commit("fork: drop the fast path",
+                      {"ggml/kernel.c": "int win(void) { return 0; }\n"},
+                      effect="correctness only")
+        problems = A.validate_protected_wins(self.r.path, "main")
+        self.assertTrue(any("anchor" in p for p in problems), problems)
+
     def test_evidence_backed_resolution_unblocks_the_collision(self):
         inc = self._incoming({"ggml/kernel.c": "int win(void) { return 0; }\n"},
                              "upstream: rewrite the kernel")
