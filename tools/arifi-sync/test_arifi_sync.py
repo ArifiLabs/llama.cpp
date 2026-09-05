@@ -587,6 +587,18 @@ class StrictRegistrationTest(unittest.TestCase):
         self.assertFalse(A._measured_effect_is_real("documentation only; the 4x tile is unchanged"))
         self.assertTrue(A._measured_effect_is_real("comment only, but the path is 3.3x faster"))
 
+    def test_correctness_only_is_no_effect_vocabulary_but_quantity_still_wins(self):
+        """R6C: `correctness only` states the same absence as the already-recognised
+        `correctness fix`, so it joins the vocabulary. The classifier stays quantity-FIRST, so a
+        trailer that carries a number with a throughput unit remains REAL whatever words precede
+        it, and the neighbouring vocabulary entries are unchanged."""
+        self.assertFalse(A._measured_effect_is_real("correctness only, no throughput claim"))
+        self.assertFalse(A._measured_effect_is_real("correctness only"))
+        self.assertTrue(A._measured_effect_is_real("correctness only, improved 12%"))
+        self.assertFalse(A._measured_effect_is_real("correctness fix"))
+        self.assertTrue(A._measured_effect_is_real("correctness fix, and -12.79% per dispatch"))
+        self.assertFalse(A._measured_effect_is_real("kernel dispatch only"))
+
     def test_the_discover_command_sees_the_laundered_win(self):
         """`discover` and `validate` must agree about the set, which is only true because they
         share one predicate. Asserted rather than assumed."""
