@@ -694,5 +694,112 @@ class BaselineBoundaryTest(unittest.TestCase):
         self.assertEqual([], A.baseline_boundary_problems(self.r.path))
 
 
+class SymbolDefinitionTest(unittest.TestCase):
+    """WI-1700, 2026-09-06. The anchor half proves a STRING survives; it cannot see a lost
+    DEFINITION. R13's b10819 merge deleted the body of ggml_cuda_moe_cache_mmv_fused from
+    ggml-cuda/mmvq.cu while the .cuh declaration and the moe-cache.cu call site both survived, and
+    `validate` reported 41/41 anchors healthy over a tree that does not link on CUDA (WI-1699).
+    These tests plant exactly that shape and require the `symbols` class to go RED on it."""
+
+    KERNEL = ("#include \"kernel.h\"\n"
+              "int win(void) { return ARIFI_FAST_PATH; }\n"
+              "int caller(void) { return win() + 1; }\n")
+    HEADER = "int win(void);\n"
+    # the defect shape: declaration kept, caller kept, BODY gone
+    KERNEL_HOLLOW = ("#include \"kernel.h\"\n"
+                     "int win(void);\n"
+                     "int caller(void) { return win() + 1; }\n"
+                     "/* ARIFI_FAST_PATH is still mentioned, so the anchor half stays green */\n")
+
+    def setUp(self):
+        self.r = Repo()
+        self.win_sha = self.r.commit("cuda: our fused entry point",
+                                     {"ggml/kernel.c": self.KERNEL, "ggml/kernel.h": self.HEADER})
+        self.manifest = os.path.join(self.r.path, "tools", "arifi-sync", "protected-wins.json")
+        self._write_manifest(self._entry())
+
+    def tearDown(self):
+        self.r.close()
+
+    def _entry(self, **over):
+        e = {
+            "id": "sym-win", "status": "active", "mechanism": "the fused entry point",
+            "commit": self.win_sha, "protected_paths": ["ggml/kernel.h"],
+            "anchors": ["ARIFI_FAST_PATH"], "evidence": ["commit:" + self.win_sha],
+            "quality_gate": "links on CUDA", "workload": "n/a", "measured_effect": "-12% per dispatch",
+            "symbols": {"ggml/kernel.c": ["win"]},
+        }
+        e.update(over)
+        return e
+
+    def _write_manifest(self, *entries):
+        with open(self.manifest, "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "wins": list(entries)}, fh)
+
+    def test_definition_deleted_while_declaration_and_caller_survive_is_RED_then_GREEN_when_restored(self):
+        self.assertEqual([], A.validate_protected_wins(self.r.path, "main"), "GREEN baseline first")
+        self.r.commit("upstream: rewrite mmvq, drop our body", {"ggml/kernel.c": self.KERNEL_HOLLOW},
+                      effect="unmeasured - merge")
+        problems = A.validate_protected_wins(self.r.path, "main")
+        self.assertEqual(1, len(problems), problems)
+        p = problems[0]
+        self.assertIn("'win'", p)
+        self.assertIn("NO DEFINITION in ggml/kernel.c", p)
+        self.assertIn("ggml/kernel.h:1", p, "the surviving declaration is named")
+        self.assertIn(self.win_sha[:7], p, "the last commit that touched the definition is named")
+        # the preflight inherits the refusal: check runs validate first
+        git(self.r.path, "checkout", "-q", "-b", "incoming", self.r.base)
+        self.r.commit("upstream: unrelated", {"docs/x.md": "text\n"})
+        git(self.r.path, "checkout", "-q", "main")
+        args = type("A", (), {"ref": "main", "incoming": "incoming"})()
+        self.assertEqual(1, A.cmd_protected_win_check(self.r.path, self.r.cfg, args))
+        # restore the body: GREEN again, and nothing else changed
+        self.r.commit("cuda: graft the body back", {"ggml/kernel.c": self.KERNEL},
+                      effect="unmeasured - restores a lost definition")
+        self.assertEqual([], A.validate_protected_wins(self.r.path, "main"))
+
+    def test_a_call_site_or_a_header_declaration_never_counts_as_a_definition(self):
+        text = ("void ggml_cuda_moe_cache_mmv_fused(const void * up, float * dst);\n"
+                "static void go(void) {\n"
+                "    if (ok) {\n"
+                "        ggml_cuda_moe_cache_mmv_fused(up, dst);\n"
+                "    }\n"
+                "    while (ggml_cuda_moe_cache_mmv_fused_ready(x)) { spin(); }\n"
+                "}\n"
+                "[[host_name(\"ggml_cuda_moe_cache_mmv_fused\")]]\n")
+        self.assertFalse(A._definition_present(text, "ggml_cuda_moe_cache_mmv_fused"))
+
+    def test_the_definition_shapes_this_fork_actually_uses_are_recognised(self):
+        # C/CUDA body, parameters across lines, qualifier before the brace
+        self.assertTrue(A._definition_present(
+            "void ggml_cuda_moe_cache_mmv_fused(\n        const void * up_pool,\n"
+            "        cudaStream_t stream) {\n    body();\n}\n", "ggml_cuda_moe_cache_mmv_fused"))
+        self.assertTrue(A._definition_present("int f(void) const noexcept {\n}\n", "f"))
+        # GLSL / Metal
+        self.assertTrue(A._definition_present("void main() {\n}\n", "main"))
+        self.assertTrue(A._definition_present(
+            "[[host_name(\"kernel_mul_mv_tq3_4s_f32\")]]\nkernel void kernel_mul_mv_tq3_4s_f32(\n"
+            "        device const void * src0) {\n}\n", "kernel_mul_mv_tq3_4s_f32"))
+        # template helper, and an explicit instantiation line
+        self.assertTrue(A._definition_present(
+            "template <ggml_type type>\nstatic void helper_t(const void * a) {\n}\n", "helper_t"))
+        self.assertTrue(A._definition_present(
+            "template void mul_mat_q_case<GGML_TYPE_TQ3_4S>(ggml_backend_cuda_context & ctx);\n",
+            "mul_mat_q_case"))
+        # K&R / Allman brace on the next line
+        self.assertTrue(A._definition_present("int g(int a)\n{\n    return a;\n}\n", "g"))
+
+    def test_a_malformed_symbols_field_is_a_problem_not_a_skip(self):
+        self._write_manifest(self._entry(symbols=[]))
+        problems = A.validate_protected_wins(self.r.path, "main")
+        self.assertTrue(any("`symbols` must be a non-empty object" in p for p in problems), problems)
+        self._write_manifest(self._entry(symbols={"ggml/kernel.c": []}))
+        problems = A.validate_protected_wins(self.r.path, "main")
+        self.assertTrue(any("non-empty list of names" in p for p in problems), problems)
+        self._write_manifest(self._entry(symbols={"ggml/gone.c": ["win"]}))
+        problems = A.validate_protected_wins(self.r.path, "main")
+        self.assertTrue(any("does not exist" in p for p in problems), problems)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -36,6 +36,7 @@
     "status": "active | superseded",
     "evidence": "a repo- or studio-relative path, or `commit:<sha>` when the measurement table lives in the commit message",
     "anchors": "distinctive symbols/env gates whose REMOVAL by an incoming diff is itself a collision, even when the file survives. Searched in SOURCE only: an anchor names a mechanism in LIVE CODE, so every home that merely RECORDS the name is excluded - `patches/series/` because this fork bakes every mechanism into a generated patch (R6 finding 2); `tools/arifi-sync/` because THIS FILE is tracked and lists every anchor literal by construction, which made the rule structurally unable to report any anchor absent (R6B, the blocking finding); and `*.md` plus root `docs/` because prose is not a mechanism (R6B note N2). Write an anchor that only prose says, and validation will correctly call it absent. Full contract: UPDATE-RUNBOOK 4.3 and the `_anchor_present` docstring",
+    "symbols": "OPTIONAL, {\"<file>\": [\"function_or_kernel\", ...]}. Each named symbol must have a DEFINITION in that file at the validated ref - a definition-shaped match (name, its parameter list, then `{` after optional qualifiers, or an explicit template instantiation line). A `.cuh`/`.h` declaration ending in `;` or a call site NEVER satisfies it. This is the class the anchor half cannot see (WI-1700): during the R13 b10819 sync `ggml_cuda_moe_cache_mmv_fused` lost its body in ggml-cuda/mmvq.cu while its declaration and caller survived, 41/41 anchors validated, and the fork stopped linking on CUDA (WI-1699). The build catches this on the backends this estate compiles; on CUDA/Metal/SYCL nothing else does. On a miss, validate names the symbol, the file, every surviving mention, and the last commit that touched the definition (`git log -S`). The file need not be in protected_paths - name the file that holds the body, wherever it is",
     "protected_paths": "a file, or a DIRECTORY. A directory is matched on the `<dir>/` boundary against the incoming change, so a whole subtree is genuinely guarded (R6 finding 1). The price is real - ANY touch under a protected subtree refuses until a comparison is recorded - so a subtree is registered only where the tree is ours",
     "supersession_law": "A superseded win is NEVER deleted. It keeps its entry, its evidence and the valid_conditions it still wins under, per the mandate's condition of validity."
   },
@@ -54,6 +55,10 @@
         "ggml_vk_concat_is_transposed",
         "GGML_VK_CONCAT_TRANSPOSE"
       ],
+      "symbols": {
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": ["ggml_vk_concat_is_transposed"],
+        "ggml/src/ggml-vulkan/vulkan-shaders/concat_transpose.comp": ["main"]
+      },
       "opt_out": "GGML_VK_CONCAT_TRANSPOSE=0",
       "evidence": [
         "research/local-inference/lane-evidence/2026-09-02-lane-209/rank3-r10",
@@ -81,6 +86,9 @@
         "mul_mat_vec_tq_sg",
         "GGML_VK_DISABLE_TQ_SUBGROUP"
       ],
+      "symbols": {
+        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq_sg.comp": ["compute_outputs", "main"]
+      },
       "opt_out": "GGML_VK_DISABLE_TQ_SUBGROUP=1",
       "evidence": [
         "board/programs/local-inference/lanes/2026-08-20-lane-163-REPORT.md",
@@ -118,6 +126,10 @@
         "ESCHA_MM_COLS",
         "ESCHA_SG_HADAMARD"
       ],
+      "symbols": {
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": ["ggml_vk_escha_mm", "ggml_vk_escha_ensure_lut"],
+        "ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp": ["escha_F", "hadamard128", "main"]
+      },
       "evidence": [
         "commit:596c640f4c149991ea1790cbb9699871357d1c85",
         "commit:edd9c1528",
@@ -145,6 +157,9 @@
         "escha_mm",
         "escha2"
       ],
+      "symbols": {
+        "ggml/src/ggml-cpu/ops.cpp": ["ggml_compute_forward_escha_mm", "escha_decode_tile_k2", "escha_decode_tile_k3"]
+      },
       "evidence": [
         "commit:93ea397ce390bd630b95f8685dac39c7b12e14ae",
         "research/local-inference/2026-08-28-escha-eosfix-report.md"
@@ -169,6 +184,9 @@
       "anchors": [
         "GGML_ARIFI_VNNI_REPACK"
       ],
+      "symbols": {
+        "ggml/src/ggml-cpu/repack.cpp": ["ggml_arifi_vnni_repack_dual_enabled", "ggml_arifi_dual_eligible", "ggml_arifi_dual_shadow_ensure"]
+      },
       "opt_out": "GGML_ARIFI_VNNI_REPACK unset (mode 0)",
       "evidence": [
         "commit:a77a2f9f369d62cf4708365171ddf02cde1d2ee1",
@@ -328,6 +346,9 @@
         "tag:gpu-copy",
         "GGML_OP_MOE_PIPELINE_BUILD_TASKS"
       ],
+      "symbols": {
+        "ggml/src/ggml-cpu/ops.cpp": ["powerinfer_forward_moe_pipeline_build_tasks"]
+      },
       "evidence": [
         "board/programs/local-inference/lanes/2026-07-19-lane-110-REPORT.md",
         "commit:0bc4169e125d191800903f8242aac2fc07284331"
@@ -388,6 +409,9 @@
         "ggml_arifi_vnni_repack_enabled",
         "DEFAULT OFF. Only an exact \"1\" enables the slot"
       ],
+      "symbols": {
+        "ggml/src/ggml-cpu/repack.cpp": ["ggml_arifi_vnni_repack_enabled"]
+      },
       "opt_out": "GGML_ARIFI_VNNI_REPACK=1 restores the upstream default behaviour exactly",
       "evidence": [
         "docs/OPTIONS-REGISTRY.md",
@@ -424,6 +448,9 @@
         "block_q2_0_g128x4",
         "GGML_TYPE_Q2_0_G128"
       ],
+      "symbols": {
+        "ggml/src/ggml-cpu/arch/x86/repack.cpp": ["ggml_gemv_q2_0_g128_4x8_q8_0", "ggml_gemm_q2_0_g128_4x8_q8_0"]
+      },
       "opt_out": "GGML_ARIFI_VNNI_REPACK unset (the g128 arm is inside the same slot)",
       "evidence": [
         "docs/FINDINGS.md",
@@ -457,6 +484,14 @@
         "GGML_CUDA_MOE_CACHE_HOT_USES",
         "heat_evictions"
       ],
+      "symbols": {
+        "ggml/src/ggml-moe-cache-common.h": ["moe_cache_pick_victim"],
+        "ggml/src/ggml-cuda/moe-cache.cu": ["moe_cache_fused_begin"],
+        "ggml/src/ggml-cuda/mmvq.cu": ["ggml_cuda_moe_cache_mmv_fused", "ggml_cuda_moe_cache_mmv"],
+        "ggml/src/ggml-metal/ggml-metal-moe-cache.mm": ["metal_fused_begin"],
+        "ggml/src/ggml-vulkan/ggml-vulkan-moe-cache.cpp": ["vk_moe_fused_begin"]
+      },
+      "_symbols_why": "WI-1700, 2026-09-06. The four-backend fused_begin implementations and the CUDA mat-vec entry they call. ggml_cuda_moe_cache_mmv_fused is the planted-red case of WI-1699: its body was deleted from mmvq.cu by the R13 b10819 merge while mmvq.cuh still declares it and moe-cache.cu:2545 still calls it, so this entry is RED on lane-206/upstream-b10819-2026-09-05 by design until the graft lands. mmvq.cu is deliberately NOT in protected_paths (upstream rewrites it every bump); the symbol class guards the body without refusing every sync.",
       "opt_out": "GGML_CUDA_MOE_CACHE_HOT_USES=0 (every slot is cold, i.e. plain LRU)",
       "evidence": [
         "docs/backend/MOE-CACHE.md",
@@ -486,6 +521,9 @@
         "tq3_4s_native",
         "tq3-native.cuh"
       ],
+      "symbols": {
+        "ggml/src/ggml-cuda/tq3-native.cu": ["ggml_cuda_tq3_rotate_act", "tq3_rotate_act_kernel"]
+      },
       "evidence": [
         "commit:f61556205533067aa96ad9570a50cc516463ebf9"
       ],
@@ -510,6 +548,9 @@
       "anchors": [
         "kernel_mul_mv_tq3_4s"
       ],
+      "symbols": {
+        "ggml/src/ggml-metal/ggml-metal.metal": ["kernel_mul_mv_tq3_4s_f32", "kernel_mul_mv_tq3_4s_f32_impl", "kernel_tq3_4s_rht_f32"]
+      },
       "evidence": [
         "commit:eaf380ec00d88e75c7e8916b1b7062e67df7e580"
       ],
@@ -536,6 +577,9 @@
         "mul_mat_vec_iq4_xs.comp",
         "tname == \"iq4_xs\""
       ],
+      "symbols": {
+        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp": ["compute_outputs", "main"]
+      },
       "evidence": [
         "board/programs/local-inference/lanes/2026-09-02-lane-209-kernel-attacks-REPORT.md",
         "research/local-inference/lane-evidence/2026-09-02-lane-209/r5",
