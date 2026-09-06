@@ -115,7 +115,8 @@ least divergent of the three measured.
 ### F-13 — A kernel that passes `test-backend-ops` can still change the first token to end-of-generation
 
 **Status: mitigated by a width gate, not root-fixed. The mechanism is still live at two widths, and
-the change is held off the default branch because of it.**
+the change is held off the default branch because of it.** *(Since 2026-09-05: on the default branch as
+an opt-in, default OFF, re-measured at +20% — see F-19 for the gate that still stands.)*
 
 While measuring the ROCmFP4-FAST integer-dot mat-vec (the `+27%` drafted win in the changelog), the
 new arm returned an **empty completion** — one token, immediately end-of-generation, no text — on one
@@ -711,6 +712,105 @@ tested its no-effect vocabulary by **prefix**, and that vocabulary contained a b
 negative delta is the single most common shape a win takes here. **A guard blind to the most likely
 shape of the thing it guards is not a guard.** The test that pins it is named after exactly that case.
 
+### F-18 — A pre-registered "tie" cell moved 3.5× on prefill, and the decode table could not have shown it
+
+**Status: measured on the integrated binary; attribution to one commit is an inference, and the
+isolation that would make it a measurement is named below and owed.**
+
+When the `b10680` wave was merged onto the default branch and re-measured as one binary (the
+integration table in the changelog), the ROCmFP4-FAST cell was pre-registered as the control: the
+integer-dot mat-vec on that type is gated off on both arms, so the design document wrote, before any
+number was read, that *"a TIE on that cell is the CORRECT result"*.
+
+It was not a tie. On RIG-A, `llama-server`, integration tip `50e78fdc5` against base `131fad035`, both
+arms in one session, 8 paired prompt/seed cells each measured twice, thinking OFF, DFlash2 Q4_K_M at
+draft depth 2, Balanced plan, 48 GB (32 + 16):
+
+| line | decode, base → tip | prefill 107 tok, base → tip | prefill 782 tok, base → tip |
+|---|---|---|---|
+| drafted | 5.8 → 6.9 t/s, **+1.15 [+0.99, +1.30], 8 of 8 cells** | 14.3 → 53.9 t/s, **3.78×** | 19.1 → 71.6 t/s, **3.75×** |
+| plain | 4.77 → 4.74 t/s, −0.02 [−0.05, +0.01] — tied | 15.5 → 56.9 t/s, **3.67×** | 20.8 → 73.2 t/s, **3.53×** |
+
+The rolled 40-prompt smoke score is 32/40 on both arms, per prompt; the content floor read 0/8 on both.
+The 17-token fill moved further still (about 5×) and is deliberately not in the table: at that length
+the request is dominated by fixed per-call cost, so its ratio is directional and nothing else. Prefill
+fills are single medians over the two launches per slot and carry no interval, which is why the decode
+column has one and the prefill columns do not.
+
+**What moved it, as far as this measurement can say.** The pre-registration conflated two commits. The
+MMVQ mat-vec (`f68a4bd25`) is gated off, as designed. But the same integration carries the ROCmFP4-FAST
+**mat-mat pipelines** (`e3220bed0`) — default on, independent of that gate — and the changelog's own
+entry for that commit records what it fixed: the shaders existed and the type was listed in the mat-mat
+selector, but no line ever created the pipelines, so every `n > 1` matmul on the type fell back to
+staging the whole tensor to f16, a 2.4 GB staging buffer on the 248320×5120 head. A 3.5–3.8× change in
+prefill at 107 and 782 tokens, with decode moving a fifth as much and the plain decode line not at all,
+is what a mat-mat pipeline replacing a whole-tensor fallback looks like. The earlier branch-level
+measurement of that commit alone read the FP4 prefill graph **16112 → 4683 ms** on the perf logger,
+which is the same ratio from the other direction.
+
+**And what it cannot say.** That attribution is an inference from two co-measured numbers, not an A/B
+of `e3220bed0` by itself: the design authorised the aggregate arm pair only, so no isolated served
+measurement of that commit exists on the integrated binary. The isolation is one build — the tip with
+that commit's pipeline creation reverted, nothing else — on the same file under the same design. Until
+it is run, the sentence this fork is entitled to is *"the integration moved ROCmFP4-FAST prefill 3.5×,
+and the only default-on mechanism in it that touches that type's batched matmuls is the mat-mat
+pipeline commit"*, and not *"`e3220bed0` measured 3.5×"*.
+
+Two smaller things the cell left standing. The pre-registered prediction being wrong is itself the
+useful output of pre-registering: a design that names its expected tie, and then reads a 3.5×, has
+found a mechanism it did not know was live, which a design written after the numbers would have
+"explained" instead. And the drafted decode +20% on this row is **with MMVQ off** — it is not the
+integer-dot win, which is measured separately on the same binary in F-19 and stacks on top of it.
+
+### F-19 — Why a measured +20% ships default OFF, and what an opt-in is allowed to mean
+
+**Status: accepted with a gate. The ROCmFP4-FAST integer-dot mat-vec is on the default branch, compiled
+in, and dispatched only when `GGML_ARIFI_ROCMFP4_MMVQ=1` is set. Default-on needs the check named at the
+end, which has not been run.**
+
+F-13 ends with the mechanism held on its own branch until the arithmetic at widths 3 and 5 is
+validated. It is now on the default branch, and this finding is the record of why that is not a
+contradiction.
+
+The integration re-measured it on the integrated tip, **same binary on both arms, only the environment
+differing**, under the conditions in F-18:
+
+| line | env unset → `=1` | rolled 40 | route receipt |
+|---|---|---|---|
+| drafted | 7.0 → 8.2 t/s, **+1.41 [+0.79, +2.03], 8 of 8 cells** | 32 → 33 of 40 | integer-dot path dispatched at **width 3**; width 5 never occurs at draft depth 2 (verify width = depth + 1) |
+| plain | 4.74 → 4.74 t/s, −0.003 [−0.005, −0.001], 1 of 8 | — | never reaches the gated widths |
+
+The plain row's interval excludes zero on the negative side and is not a regression by any reading a
+serve can act on: the difference is 0.003 t/s against a within-arm spread of 0.009 t/s, and the plain
+line never dispatches the gated kernel. It is listed because the rule is that every measured cell is
+listed.
+
+**The number is +20%, not +27%.** The branch-level measurement in the changelog's mechanism table read
++2.02 t/s. On the integrated binary, against the same base path, it reads +1.41 t/s. Both intervals
+exclude zero; they are different binaries in different epochs and neither replaces the other, but the
+figure carried forward for this mechanism as shipped is the one measured on what shipped.
+
+**What the independent check did and did not accept.** The adversarial op-level corpus built for this
+mechanism — 63 cases over six families (denormals, extreme range, an exhaustive FP4 code sweep, mixed
+block scales, sign alternation, zero rows) at widths 1 through 5 — returned **nothing materially worse**
+than the float path. The served identity arm is the one that did not pass: two launches with the gate
+on are byte-identical to each other, and **the gate-on and gate-off outputs are not**. That is the F-05
+result in a new place — integer-dot accumulation is a different summation from the float shader, and
+byte-identity across them is not the standard the fork's own repack kernels meet either. But F-13 was a
+byte-level divergence that crossed a sampling boundary and changed the first token, and the corpus that
+found it cannot reach width 3. So the check's verdict was **integrate with the default off**, and the
+condition for default-on was written down rather than left implicit: **a served byte-identity pass at
+width 3 on at least three prompts**, in drafted mode, on this file — or a ruling that accepts
+F-05-class divergence on this path the way it is accepted on the repack path. Neither exists yet.
+
+**What an opt-in is allowed to mean here, then.** Not "we think it is fine". It means: the speed is
+measured and reproduced on two binaries; the op-level adversarial corpus is clean; the route receipt
+proves the path runs where the number says it runs; the content floor and the smoke score are green;
+and the one check that would close F-13 at the shipped widths has not been run, so the fork does not
+choose it for anyone by default. A user who sets the variable is choosing a measured +20% on this file
+with that one gap named. That is a different statement from the one on the changelog's "not shipped"
+list, and it is the whole of the difference.
+
 ## Open questions
 
 Listed because they are unresolved, not because they are unimportant.
@@ -720,8 +820,12 @@ Listed because they are unresolved, not because they are unimportant.
   measured.
 - **The ROCmFP4-FAST integer-dot mat-vec at widths 3 and 5.** The width that changed a sampled token
   is gated out and the win reproduces without it, but the same arithmetic is live at the two retained
-  widths and the reproducer cannot reach them (F-13). An adversarial drafted-mode corpus, or a direct
-  logits comparison, is owed before that mechanism can go on the default branch.
+  widths and the reproducer cannot reach them (F-13). It is now on the default branch **as an opt-in**
+  (F-19); the served byte-identity pass at width 3, or a ruling on F-05-class divergence there, is
+  owed before it can be the default.
+- **Which commit moved ROCmFP4-FAST prefill 3.5×.** The integration measured it; the mat-mat pipeline
+  commit is the only default-on candidate, and an isolated build of the tip without it is owed before
+  the attribution is a measurement (F-18).
 - **Why some undrafted decode rounds run at two-thirds speed** while generating normal text (F-15).
   Characterised well enough to read verdicts correctly; not explained.
 - **The tiled concat-transpose on decode and on mixture-of-experts models.** Only the prefill graph was
