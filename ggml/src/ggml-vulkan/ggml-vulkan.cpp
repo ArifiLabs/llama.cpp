@@ -11388,7 +11388,9 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context& 
                 { tq_rows * (uint32_t)ne10, 1, 1 });
             ctx->prealloc_y_last_pipeline_used = ctx->device->pipeline_tq_rotate_act.get();
             ctx->prealloc_y_last_tensor_used = src1;
-            ctx->prealloc_y_last_decode_vector_staging = false;
+            // b10819 (77f132cb1) replaced decode-vector staging with K-padding;
+            // the rotate path never K-pads, same as the quantize_y path below.
+            ctx->prealloc_y_last_k_padded = false;
         }
     } else if (y_needs_reformat) {
         if (ctx->prealloc_y_last_pipeline_used != to_fp16_vk_1.get() ||

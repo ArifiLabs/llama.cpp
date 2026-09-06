@@ -223,6 +223,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
         }
         return;
 
+    }
 
     for (int i = 0; i < n_layer; ++i) {
         auto & layer = layers[i];
