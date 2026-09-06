@@ -11185,7 +11185,14 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context& 
     // Coopmat2 MUL_MAT_ID BK specialization constants in ggml_vk_load_shaders are at most 64.
     const uint32_t y_staged_row_stride = ctx->device->coopmat2 && !quantize_y ? ggml_vk_align_size(ne10, 64) : ne10;
     const bool y_needs_k_padding = ne10 != y_staged_row_stride;
-    const bool y_needs_reformat = y_non_contig || y_needs_k_padding;
+    // tq_rotate belongs here: it FORCES staging into prealloc_y (see the block above), so by
+    // definition src1 is reformatted. b10819 (77f132cb1) derived this flag from y_non_contig and
+    // the new K-padding only; the fork's tq_rotate exception was threaded into the older assert at
+    // ~11179 but not into this one, so a TQ3_1S/TQ4_1S MUL_MAT_ID aborted the whole sweep on the
+    // assert below. Both `else if (y_needs_reformat)` sites are guarded by an `if (tq_rotate)`
+    // branch that wins first, so this only widens the assert and the prealloc_y sync mark - the
+    // latter being a second, quieter defect: the rotate writes prealloc_y and was not marking it.
+    const bool y_needs_reformat = y_non_contig || y_needs_k_padding || tq_rotate;
     qy_needs_dequant = qy_needs_dequant || y_needs_k_padding;
 
     // Not implemented
