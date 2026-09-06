@@ -769,6 +769,22 @@ class SymbolDefinitionTest(unittest.TestCase):
                 "[[host_name(\"ggml_cuda_moe_cache_mmv_fused\")]]\n")
         self.assertFalse(A._definition_present(text, "ggml_cuda_moe_cache_mmv_fused"))
 
+    def test_a_commented_out_definition_is_not_a_definition(self):
+        """WI-1700 check FIX-1: a maker who disables a kernel by commenting it out must go RED."""
+        self.assertFalse(A._definition_present(
+            "// void win(int x) {\n//     body();\n// }\n", "win"))
+        self.assertFalse(A._definition_present(
+            "/*\nvoid win(int x) {\n    body();\n}\n*/\n", "win"))
+        # a `//` inside a block comment does not swallow the closer
+        self.assertFalse(A._definition_present(
+            "/* see http://example.org\nvoid win(int x) { } */\n", "win"))
+        # a `//` inside a string literal is text, not a comment: the definition after it survives
+        self.assertTrue(A._definition_present(
+            "const char * url = \"http://x\"; void win(int x) {\n}\n", "win"))
+        # a trailing comment on the definition line does not hide the body
+        self.assertTrue(A._definition_present(
+            "void win(int x) // ArifiLabs fast path\n{\n}\n", "win"))
+
     def test_the_definition_shapes_this_fork_actually_uses_are_recognised(self):
         # C/CUDA body, parameters across lines, qualifier before the brace
         self.assertTrue(A._definition_present(

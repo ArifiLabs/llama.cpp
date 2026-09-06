@@ -489,9 +489,10 @@
         "ggml/src/ggml-cuda/moe-cache.cu": ["moe_cache_fused_begin"],
         "ggml/src/ggml-cuda/mmvq.cu": ["ggml_cuda_moe_cache_mmv_fused", "ggml_cuda_moe_cache_mmv"],
         "ggml/src/ggml-metal/ggml-metal-moe-cache.mm": ["metal_fused_begin"],
+        "ggml/src/ggml-metal/ggml-metal.metal": ["kernel_moe_cache_mv_block_dot", "kernel_moe_cache_mv_generic"],
         "ggml/src/ggml-vulkan/ggml-vulkan-moe-cache.cpp": ["vk_moe_fused_begin"]
       },
-      "_symbols_why": "WI-1700, 2026-09-06. The four-backend fused_begin implementations and the CUDA mat-vec entry they call. ggml_cuda_moe_cache_mmv_fused is the planted-red case of WI-1699: its body was deleted from mmvq.cu by the R13 b10819 merge while mmvq.cuh still declares it and moe-cache.cu:2545 still calls it, so this entry is RED on lane-206/upstream-b10819-2026-09-05 by design until the graft lands. mmvq.cu is deliberately NOT in protected_paths (upstream rewrites it every bump); the symbol class guards the body without refusing every sync.",
+      "_symbols_why": "WI-1700, 2026-09-06. The four-backend fused_begin implementations and the CUDA mat-vec entry they call. ggml_cuda_moe_cache_mmv_fused is the planted-red case of WI-1699: its body was deleted from mmvq.cu by the R13 b10819 merge while mmvq.cuh still declares it and moe-cache.cu:2545 still calls it, so this entry is RED on lane-206/upstream-b10819-2026-09-05 by design until the graft lands. mmvq.cu is deliberately NOT in protected_paths (upstream rewrites it every bump); the symbol class guards the body without refusing every sync. FIX-2 of the WI-1700 check (FABLE-53-LOW): the Metal MoE-cache mat-vec kernels (series 0343) are seeded the same way - ggml-metal.metal is shared upstream, so it is guarded by symbol, not by path.",
       "opt_out": "GGML_CUDA_MOE_CACHE_HOT_USES=0 (every slot is cold, i.e. plain LRU)",
       "evidence": [
         "docs/backend/MOE-CACHE.md",
@@ -522,8 +523,10 @@
         "tq3-native.cuh"
       ],
       "symbols": {
-        "ggml/src/ggml-cuda/tq3-native.cu": ["ggml_cuda_tq3_rotate_act", "tq3_rotate_act_kernel"]
+        "ggml/src/ggml-cuda/tq3-native.cu": ["ggml_cuda_tq3_rotate_act", "tq3_rotate_act_kernel", "ggml_cuda_native_tq3_dot_kernel"],
+        "ggml/src/ggml-cuda/mmq.cuh": ["ggml_cuda_mmq_load_tiles_tq3_4s"]
       },
+      "_symbols_why": "WI-1700 check FIX-2 (FABLE-53-LOW, 2026-09-06): the native dot kernel (series 0370) and the MMQ tile loader. mmq.cuh is shared upstream and deliberately NOT a protected path; the symbol guards the TQ3_4S loader body without refusing every MMQ bump.",
       "evidence": [
         "commit:f61556205533067aa96ad9570a50cc516463ebf9"
       ],
@@ -549,8 +552,9 @@
         "kernel_mul_mv_tq3_4s"
       ],
       "symbols": {
-        "ggml/src/ggml-metal/ggml-metal.metal": ["kernel_mul_mv_tq3_4s_f32", "kernel_mul_mv_tq3_4s_f32_impl", "kernel_tq3_4s_rht_f32"]
+        "ggml/src/ggml-metal/ggml-metal.metal": ["kernel_mul_mv_tq3_4s_f32", "kernel_mul_mv_tq3_4s_f32_impl", "kernel_tq3_4s_rht_f32", "kernel_get_rows_tq3_4s"]
       },
+      "_symbols_why": "WI-1700 check FIX-2 (FABLE-53-LOW, 2026-09-06): kernel_get_rows_tq3_4s (series 0371) added. The check's last row - kernel_mul_mv_tq3_1s_f32, kernel_tq3_rotate_act, kernel_tq3_unrotate_act from series 0115 (a `laguna` lift, author `m <m@l>`, grandfather-ledger row 37af31769 with no reaudit note) - is NOT seeded here: it is a different mechanism (TQ3_1S + activation rotation) and the check gates it on HQ confirming authorship first.",
       "evidence": [
         "commit:eaf380ec00d88e75c7e8916b1b7062e67df7e580"
       ],
