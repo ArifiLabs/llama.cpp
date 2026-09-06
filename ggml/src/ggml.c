@@ -5777,8 +5777,15 @@ void ggml_flash_attn_ext_add_sinks(
 
 // ARIFI lane-195: extra K/V segments, read in place at their own dtype (see ggml.h).
 //
-// src[5..8] = { k0, v0, k1, v1 }. op_params[4] = the segment count, so a backend can decline the
+// src[5..8] = { k0, v0, k1, v1 }. op_params[5] = the segment count, so a backend can decline the
 // node in supports_op without walking the src array.
+//
+// op_params slot map for GGML_OP_FLASH_ATTN_EXT (never share a slot):
+//   [0] scale  [1] max_bias  [2] logit_softcap  [3] prec  [4] n_kv_max (upstream, sparse mask)
+//   [5] segment count (ARIFI lane-195)
+// Lane-216 (2026-09-06): the count sat in [4] and collided with upstream b10819's n_kv_max, so a
+// node with n_kv_max=512 read back 512 segments and overran segs[] on the CPU path.
+#define GGML_FA_OP_PARAM_N_SEGMENTS 5
 void ggml_flash_attn_ext_add_segments(
         struct ggml_tensor * a,
         struct ggml_tensor * k0,
@@ -5815,14 +5822,14 @@ void ggml_flash_attn_ext_add_segments(
         n_seg = 2;
     }
 
-    ggml_set_op_params_i32(a, 4, n_seg);
+    ggml_set_op_params_i32(a, GGML_FA_OP_PARAM_N_SEGMENTS, n_seg);
 }
 
 int ggml_flash_attn_ext_n_segments(const struct ggml_tensor * a) {
     if (a->op != GGML_OP_FLASH_ATTN_EXT) {
         return 0;
     }
-    return ggml_get_op_params_i32(a, 4);
+    return ggml_get_op_params_i32(a, GGML_FA_OP_PARAM_N_SEGMENTS);
 }
 
 // ggml_flash_attn_back
