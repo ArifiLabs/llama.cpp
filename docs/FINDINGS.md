@@ -723,8 +723,9 @@ integer-dot mat-vec on that type is gated off on both arms, so the design docume
 number was read, that *"a TIE on that cell is the CORRECT result"*.
 
 It was not a tie. On RIG-A, `llama-server`, integration tip `50e78fdc5` against base `131fad035`, both
-arms in one session, 8 paired prompt/seed cells each measured twice, thinking OFF, DFlash2 Q4_K_M at
-draft depth 2, Balanced plan, 48 GB (32 + 16):
+arms in one session, 8 paired prompt/seed cells each measured twice, thinking OFF, context 8192,
+DFlash2 Q4_K_M at draft depth 2, Balanced plan and 48 GB (32 + 16) as declared in the pre-registration
+(not receipted per launch; free RAM before and after each launch is):
 
 | line | decode, base → tip | prefill 107 tok, base → tip | prefill 782 tok, base → tip |
 |---|---|---|---|

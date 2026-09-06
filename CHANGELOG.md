@@ -181,8 +181,10 @@ prefill than any decode number shows.
 **Conditions, stated once for every row:** integration tip `50e78fdc5` against base `131fad035`,
 `llama-server` on RIG-A, both arms in the same session, an 8-cell × 2-launch paired palindrome per slot
 (8 independent prompt/seed cells, each measured twice, 16 rounds per slot), thinking OFF, context 8192,
-drafter DFlash2 Q4_K_M at `--spec-draft-n-max 2`, **Balanced** power plan, RAM 48 GB (32 + 16,
-asymmetric). Decode is the server's own `predicted_per_second`, median of the 16 rounds; the bracketed
+drafter DFlash2 Q4_K_M at `--spec-draft-n-max 2`, **Balanced** power plan and RAM 48 GB (32 + 16,
+asymmetric) as declared in the run's pre-registration, not receipted per launch (what each launch does
+receipt is free RAM before and after, the load-governor guard and the RAM-floor wait). Decode is the
+server's own `predicted_per_second`, median of the 16 rounds; the bracketed
 figure is the paired cell-wise mean difference with its 95% interval over the 8 cells, and the whole
 percent is that mean difference over the base arm's cell mean. Prefill is the 782-token fill request,
 median of the two launches per slot — a per-launch figure with no interval. The quality gate is the
