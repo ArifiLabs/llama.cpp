@@ -1148,6 +1148,138 @@ def _anchor_present(repo: str, ref: str, anchor: str) -> bool:
     return rc == 0
 
 
+# ------------------------------------------------- symbols: a DEFINITION, not a mention (WI-1700)
+#
+# An anchor proves a STRING is still in source. It does not prove a symbol still has a body. During
+# the R13 b10819 sync `ggml_cuda_moe_cache_mmv_fused` was deleted from ggml-cuda/mmvq.cu while its
+# declaration (mmvq.cuh) and its only caller (moe-cache.cu) both survived, and `validate` reported
+# 41/41 anchors healthy over a tree that does not link on CUDA (WI-1699). This estate compiles Vulkan
+# only, so nothing else could catch it. The `symbols` class closes that: an entry may name, per file,
+# the functions/kernels that must have a DEFINITION in that file, and a declaration ending in `;` or
+# a call site never satisfies it.
+
+_DEF_TAIL_KEYWORDS = ("const", "noexcept", "override", "final", "__restrict__", "volatile")
+
+
+def _close_paren(text: str, start: int, limit: int = 8000):
+    """Index of the `)` that closes the `(` just before `start`, or None. Bounded so a stray `(`
+    in a comment cannot make the scan quadratic over a 20k-line file."""
+    depth = 1
+    for i in range(start, min(len(text), start + limit)):
+        c = text[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return None
+
+
+def _definition_present(text: str, name: str) -> bool:
+    """True when `text` DEFINES `name`: a definition-shaped match is `name` + `(` ... `)` followed,
+    after optional trailing qualifiers, by `{` on the same or following lines - or an explicit
+    template instantiation `template ... name<...>(...);`. What does NOT satisfy it, by
+    construction: a `.cuh`/`.h` declaration (`)` is followed by `;`), a call site (`;` again, or the
+    enclosing `)` of an `if`/`while` condition), a macro argument, and a `[[host_name("name")]]`
+    attribute (no `(` follows the name)."""
+    pat = re.compile(r"(?<![\w.>])" + re.escape(name) + r"\s*(?:<[^;{}()]*>)?\s*\(")
+    for m in pat.finditer(text):
+        e = _close_paren(text, m.end())
+        if e is None:
+            continue
+        tail = text[e + 1:e + 200].lstrip()
+        changed = True
+        while changed:
+            changed = False
+            for kw in _DEF_TAIL_KEYWORDS:
+                if tail.startswith(kw):
+                    tail = tail[len(kw):].lstrip()
+                    changed = True
+            am = re.match(r"__attribute__\s*\(\(.*?\)\)\s*", tail, re.S)
+            if am:
+                tail = tail[am.end():]
+                changed = True
+        if tail.startswith("{"):
+            return True
+    inst = re.compile(r"^\s*template\b[^;{]*?(?<![\w.>])" + re.escape(name) +
+                      r"\s*<[^;{]*>\s*\([^;{]*\)\s*;", re.M)
+    return inst.search(text) is not None
+
+
+def _symbol_defined_at(repo: str, ref: str, path: str, name: str):
+    """(exists, defined) for `name` in `ref:path`."""
+    rc, blob, _ = git(repo, "show", "%s:%s" % (ref, path), check=False, binary=True)
+    if rc != 0:
+        return False, False
+    text = blob.decode("utf-8", "ignore") if isinstance(blob, bytes) else blob
+    return True, _definition_present(text, name)
+
+
+def _symbol_survivors(repo: str, ref: str, path: str, name: str) -> list:
+    """Where the name is STILL mentioned in source at `ref` - the declaration and the callers that
+    make a lost definition a link failure rather than dead code. Same source-only exclusions as
+    anchors; the file that should hold the definition is excluded too."""
+    rc, out, _ = git(repo, "grep", "-n", "-F", name, ref,
+                     "--", ".", ":(exclude)" + path, ":(exclude)patches/series",
+                     ":(exclude)tools/arifi-sync", ":(exclude)docs", ":(exclude)*.md", check=False)
+    if rc != 0:
+        return []
+    rows = []
+    for line in out.splitlines():
+        # `<ref>:<path>:<line>:<text>` - drop the ref prefix, keep path:line
+        parts = line.split(":", 3)
+        if len(parts) == 4:
+            rows.append("%s:%s" % (parts[1], parts[2]))
+    return rows[:6]
+
+
+def _symbol_last_definer(repo: str, ref: str, path: str, name: str) -> str:
+    """The last commit whose diff added or removed the symbol (`git log -S`). On a tree where the
+    definition is gone that is the commit that put it there, which is what a repairer needs to read
+    first. Scope widens file -> directory -> whole tree: with a single-file pathspec, history
+    simplification drops the merge that deleted the body AND the commit that added it (CHECKED on
+    697027562: the file scope returned nothing, the directory scope returned 1c3e9547a)."""
+    scopes = [path, os.path.dirname(path) + "/", None]
+    for scope in scopes:
+        args = ["log", "-n1", "--format=%h %ad %s", "--date=short", "-m", "-S" + name, ref]
+        if scope:
+            args += ["--", scope]
+        out = gout(repo, *args)
+        if out:
+            return "%s  [pickaxe scope: %s]" % (out, scope or "whole tree")
+    return "(no commit in %s ever touched %r)" % (ref, name)
+
+
+def _symbols_problems(repo: str, ref: str, wid: str, symbols) -> list:
+    """Problems for one entry's `symbols` field. Shape: {"<file>": ["name", ...], ...}. A malformed
+    field is itself a problem - fail closed, never skip silently."""
+    out = []
+    if not isinstance(symbols, dict) or not symbols:
+        return ["%s: `symbols` must be a non-empty object {file: [names]} - got %r" % (wid, symbols)]
+    for path, names in symbols.items():
+        if not isinstance(names, list) or not names or not all(isinstance(n, str) and n for n in names):
+            out.append("%s: symbols[%r] must be a non-empty list of names" % (wid, path))
+            continue
+        for name in names:
+            exists, defined = _symbol_defined_at(repo, ref, path, name)
+            if not exists:
+                out.append("%s: symbols file %s does not exist at %s - the file that must DEFINE %r "
+                           "is gone" % (wid, path, ref, name))
+                continue
+            if defined:
+                continue
+            survivors = _symbol_survivors(repo, ref, path, name)
+            out.append(
+                "%s: symbol %r has NO DEFINITION in %s at %s (WI-1700). A declaration or a call site "
+                "is not a mechanism%s. Last commit that touched the definition: %s"
+                % (wid, name, path, ref,
+                   " - it is still mentioned at %s" % ", ".join(survivors) if survivors
+                   else " - and nothing else in source mentions it either",
+                   _symbol_last_definer(repo, ref, path, name)))
+    return out
+
+
 def _evidence_resolves(repo: str, locator: str) -> bool:
     """An evidence locator is a path or a `commit:<sha>`. Both are checked, never assumed.
 
@@ -1212,6 +1344,8 @@ def validate_protected_wins(repo: str, ref: str, cfg=None) -> list:
             if not _anchor_present(repo, ref, a):
                 problems.append("%s: anchor %r is absent from %s - the mechanism it names is gone "
                                 "or was renamed" % (wid, a, ref))
+        if "symbols" in w:
+            problems.extend(_symbols_problems(repo, ref, wid, w["symbols"]))
         for e in w["evidence"]:
             if not _evidence_resolves(repo, e):
                 problems.append("%s: evidence locator %r does not resolve" % (wid, e))
@@ -1238,6 +1372,8 @@ def cmd_protected_win_validate(repo: str, cfg: dict, args) -> int:
         % (len(wins), len(active), len(wins) - len(active)))
     say("protected paths  : %d" % sum(len(w.get("protected_paths") or []) for w in wins))
     say("anchors          : %d" % sum(len(w.get("anchors") or []) for w in wins))
+    say("symbols          : %d  (definitions required, WI-1700)"
+        % sum(len(v) for w in wins for v in (w.get("symbols") or {}).values() if isinstance(v, list)))
     if problems:
         say("\nFAIL: %d problem(s):" % len(problems))
         for p in problems:
