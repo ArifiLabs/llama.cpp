@@ -1,0 +1,202 @@
+# ArifiLabs backend compile matrix.
+#
+# Why this exists, and why it does not replace any upstream workflow.
+#
+# The ArifiLabs rig is a single Radeon 780M box: it compiles CPU, Vulkan, src/,
+# common/ and tools/ and NOTHING else. CUDA, Metal, SYCL, HIP, OpenCL and WebGPU
+# have no toolchain here, so every fork change on those backends has historically
+# been unverifiable — which is how a half-applied merge left the Metal tree with
+# five missing function definitions and no one noticed (lane-210).
+#
+# Upstream's own workflows (build-cuda-ubuntu.yml, build-apple.yml, build-sycl.yml,
+# build-vulkan.yml) are kept and still run. They do NOT close this gap, because
+# GGML_ARIFI_ROCMFPX_FORMATS and GGML_ARIFI_TURBO_WEIGHT_QUANTS both default to OFF
+# (ggml/CMakeLists.txt:144,151) — upstream's matrix compiles the fork with every
+# ArifiLabs weight format switched off. This workflow turns them ON, so the code
+# that actually differentiates this fork is the code being compiled.
+#
+# Scope: COMPILE + LINK only, plus test-quantize-fns, which is a pure-CPU
+# correctness test and runs on every job. GitHub runners have no NVIDIA, Apple or
+# Intel GPU, so nothing here executes a GPU kernel and nothing here is a benchmark.
+# A green run means "compile-verified, not benched" and must be reported that way.
+
+name: CI (ArifiLabs backends matrix)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - 'arifi/**'
+      - 'lane-*/**'
+    paths:
+      - '.github/workflows/arifi-backends-matrix.yml'
+      - 'ggml/**'
+      - 'src/**'
+      - 'common/**'
+      - '**/CMakeLists.txt'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/arifi-backends-matrix.yml'
+      - 'ggml/src/ggml-cuda/**'
+      - 'ggml/src/ggml-metal/**'
+      - 'ggml/src/ggml-sycl/**'
+      - 'ggml/src/ggml-vulkan/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  # every job compiles the ArifiLabs weight formats; see the header note
+  ARIFI_CMAKE_COMMON: >-
+    -DCMAKE_BUILD_TYPE=Release
+    -DGGML_NATIVE=OFF
+    -DGGML_ARIFI_ROCMFPX_FORMATS=ON
+    -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON
+    -DLLAMA_BUILD_EXAMPLES=OFF
+    -DLLAMA_BUILD_TOOLS=OFF
+    -DLLAMA_BUILD_TESTS=ON
+
+jobs:
+  cuda-ubuntu:
+    name: CUDA (compile only, no GPU)
+    runs-on: ubuntu-24.04
+    container: nvidia/cuda:12.6.2-devel-ubuntu24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt update
+          apt install -y cmake build-essential ninja-build libgomp1 git libssl-dev
+
+      - name: Configure + build
+        run: |
+          set -o pipefail
+          cmake -S . -B build -G Ninja \
+            ${ARIFI_CMAKE_COMMON} \
+            -DGGML_CUDA=ON \
+            -DCMAKE_CUDA_ARCHITECTURES=89-real \
+            -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined \
+            2>&1 | tee build-cuda.log
+          cmake --build build --target test-quantize-fns 2>&1 | tee -a build-cuda.log
+
+      - name: test-quantize-fns (CPU)
+        run: ./build/bin/test-quantize-fns 2>&1 | tee -a build-cuda.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arifi-build-log-cuda
+          path: build-cuda.log
+
+  metal-macos:
+    name: Metal (compile only, no GPU dispatch)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Dependencies
+        run: brew install ninja
+
+      - name: Configure + build
+        run: |
+          set -o pipefail
+          cmake -S . -B build -G Ninja \
+            ${ARIFI_CMAKE_COMMON} \
+            -DGGML_METAL=ON \
+            -DGGML_METAL_EMBED_LIBRARY=ON \
+            2>&1 | tee build-metal.log
+          cmake --build build --target test-quantize-fns 2>&1 | tee -a build-metal.log
+
+      - name: test-quantize-fns (CPU)
+        run: ./build/bin/test-quantize-fns 2>&1 | tee -a build-metal.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arifi-build-log-metal
+          path: build-metal.log
+
+  sycl-ubuntu:
+    name: SYCL (compile only, no GPU)
+    runs-on: ubuntu-24.04
+    env:
+      ONEAPI_ROOT: /opt/intel/oneapi/
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install oneAPI
+        run: |
+          cd /tmp
+          wget -q https://registrationcenter-download.intel.com/akdlm/IRC_NAS/56f7923a-adb8-43f3-8b02-2b60fcac8cab/intel-deep-learning-essentials-2025.3.3.16_offline.sh -O oneapi.sh
+          sudo bash oneapi.sh -s -a --silent --eula accept
+
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build cmake libssl-dev
+
+      - name: Configure + build
+        run: |
+          set -o pipefail
+          source /opt/intel/oneapi/setvars.sh
+          cmake -S . -B build -G Ninja \
+            ${ARIFI_CMAKE_COMMON} \
+            -DGGML_SYCL=ON \
+            -DCMAKE_C_COMPILER=icx \
+            -DCMAKE_CXX_COMPILER=icpx \
+            2>&1 | tee build-sycl.log
+          cmake --build build --target test-quantize-fns 2>&1 | tee -a build-sycl.log
+
+      - name: test-quantize-fns (CPU)
+        run: ./build/bin/test-quantize-fns 2>&1 | tee -a build-sycl.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arifi-build-log-sycl
+          path: build-sycl.log
+
+  vulkan-windows:
+    name: Vulkan on Windows (the rig's own path)
+    runs-on: windows-latest
+    env:
+      VULKAN_SDK_VERSION: 1.4.313.2
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          $ver = $env:VULKAN_SDK_VERSION
+          curl.exe -o $env:RUNNER_TEMP/VulkanSDK.exe -L "https://sdk.lunarg.com/sdk/download/$ver/windows/vulkansdk-windows-X64-$ver.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK.exe" --accept-licenses --default-answer --confirm-command install
+          "VULKAN_SDK=C:\VulkanSDK\$ver"       | Out-File -FilePath $env:GITHUB_ENV -Append
+          "C:\VulkanSDK\$ver\Bin"              | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Configure + build
+        shell: pwsh
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DGGML_NATIVE=OFF `
+            -DGGML_ARIFI_ROCMFPX_FORMATS=ON `
+            -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON `
+            -DLLAMA_BUILD_EXAMPLES=OFF `
+            -DLLAMA_BUILD_TOOLS=OFF `
+            -DLLAMA_BUILD_TESTS=ON `
+            -DGGML_VULKAN=ON 2>&1 | Tee-Object -FilePath build-vulkan.log
+          cmake --build build --config Release --target test-quantize-fns 2>&1 | Tee-Object -FilePath build-vulkan.log -Append
+
+      - name: test-quantize-fns (CPU)
+        shell: pwsh
+        run: ./build/bin/Release/test-quantize-fns.exe 2>&1 | Tee-Object -FilePath build-vulkan.log -Append
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arifi-build-log-vulkan
+          path: build-vulkan.log

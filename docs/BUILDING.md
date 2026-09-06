@@ -213,3 +213,36 @@ Everything marked `MEASURED` on this page was measured on:
 **UNTESTED anywhere in this repository:** Linux, macOS, MSVC, clang-cl, CUDA, ROCm/HIP, Arm/NEON,
 and every non-gfx1103 GPU. Upstream supports all of them and this fork does not remove that
 support — but no one has built or run this fork on them, and we will not imply otherwise.
+
+---
+
+## The off-rig backends, and how they are verified
+
+The box above is the only hardware this project owns, so CUDA, Metal, SYCL, HIP, OpenCL and WebGPU
+have **no toolchain here**. That is a verification gap, not a scope decision: this engine is a
+distributable product and its off-rig backends are somebody else's only backend.
+
+`.github/workflows/arifi-backends-matrix.yml` is what closes it. Four jobs, all **compile + link
+only**, all with the ArifiLabs weight formats switched **ON**:
+
+| job | runner | configure |
+|---|---|---|
+| `cuda-ubuntu` | `ubuntu-24.04`, `nvidia/cuda:12.6.2-devel` container | `-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=89-real` |
+| `metal-macos` | `macos-latest` | `-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON` |
+| `sycl-ubuntu` | `ubuntu-24.04` + oneAPI | `-DGGML_SYCL=ON`, `icx`/`icpx` |
+| `vulkan-windows` | `windows-latest` + Vulkan SDK | `-DGGML_VULKAN=ON` — the rig's own path, on a second toolchain |
+
+Every job also runs `test-quantize-fns`, which is a pure-CPU correctness test, and uploads its full
+build log as an artifact.
+
+**Why this is not redundant with upstream's workflows.** `build-cuda-ubuntu.yml`, `build-apple.yml`,
+`build-sycl.yml` and `build-vulkan.yml` are kept and still run — but they configure with default
+options, and `GGML_ARIFI_ROCMFPX_FORMATS` and `GGML_ARIFI_TURBO_WEIGHT_QUANTS` both default to `OFF`
+([`ggml/CMakeLists.txt`](../ggml/CMakeLists.txt) lines 144 and 151). Upstream's matrix therefore
+compiles this fork with the code that differentiates it switched off. This matrix turns it on.
+
+**What a green run does and does not prove.** GitHub's runners have no NVIDIA, Apple or Intel GPU.
+Nothing in this matrix executes a GPU kernel and nothing in it is a benchmark. A green run licenses
+exactly one claim — **"compile-verified, not benched"** — and any report that says more than that
+about an off-rig change is overclaiming. Numbers still come from the rig, under the bench-purity
+rules above.
