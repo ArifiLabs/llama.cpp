@@ -1176,13 +1176,25 @@ def _close_paren(text: str, start: int, limit: int = 8000):
     return None
 
 
+_COMMENT_OR_STRING = re.compile(r'"(?:\\.|[^"\\\n])*"|/\*.*?\*/|//[^\n]*', re.S)
+
+
+def _strip_comments(text: str) -> str:
+    """Blank `//…$` and `/*…*/` so a commented-out body cannot read as a definition (WI-1700 check
+    FIX-1). One left-to-right alternation, string literals kept verbatim: `/* http://x */` is one
+    block comment, `// see /* x` is one line comment, and a `//` inside `"…"` is text. `#if 0`
+    blocks are deliberately out of scope - the preprocessor is not a lexer's job."""
+    return _COMMENT_OR_STRING.sub(lambda m: m.group(0) if m.group(0)[0] == '"' else " ", text)
+
+
 def _definition_present(text: str, name: str) -> bool:
     """True when `text` DEFINES `name`: a definition-shaped match is `name` + `(` ... `)` followed,
     after optional trailing qualifiers, by `{` on the same or following lines - or an explicit
     template instantiation `template ... name<...>(...);`. What does NOT satisfy it, by
     construction: a `.cuh`/`.h` declaration (`)` is followed by `;`), a call site (`;` again, or the
-    enclosing `)` of an `if`/`while` condition), a macro argument, and a `[[host_name("name")]]`
-    attribute (no `(` follows the name)."""
+    enclosing `)` of an `if`/`while` condition), a macro argument, a `[[host_name("name")]]`
+    attribute (no `(` follows the name), and a body inside a `//` or `/* */` comment."""
+    text = _strip_comments(text)
     pat = re.compile(r"(?<![\w.>])" + re.escape(name) + r"\s*(?:<[^;{}()]*>)?\s*\(")
     for m in pat.finditer(text):
         e = _close_paren(text, m.end())
