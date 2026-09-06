@@ -1826,21 +1826,21 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
                 pi_cached_batch != (int) ubatch.n_tokens ||
                 pi_cached_layers != (int) model.hparams.n_layer() ||
                 pi_cached_embd != (int) model.hparams.n_embd ||
-                pi_cached_ffn != (int) model.hparams.n_ff_exp ||
+                pi_cached_ffn != (int) model.hparams.n_ff_exp() ||
                 pi_cached_experts != (int) model.hparams.n_expert ||
-                pi_cached_experts_used != (int) model.hparams.n_expert_used;
+                pi_cached_experts_used != (int) model.hparams.n_expert_used();
             if (pi_shape_changed) {
                 powerinfer_init_moe_pipeline(pi_nth, model.hparams.n_layer(), model.hparams.n_embd,
-                                             model.hparams.n_ff_exp, ubatch.n_tokens,
-                                             model.hparams.n_expert, model.hparams.n_expert_used, true);
+                                             model.hparams.n_ff_exp(), ubatch.n_tokens,
+                                             model.hparams.n_expert, model.hparams.n_expert_used(), true);
                 az::global_spin_barrier.init(pi_nth);
                 pi_cached_nth = pi_nth;
                 pi_cached_batch = (int) ubatch.n_tokens;
                 pi_cached_layers = (int) model.hparams.n_layer();
                 pi_cached_embd = (int) model.hparams.n_embd;
-                pi_cached_ffn = (int) model.hparams.n_ff_exp;
+                pi_cached_ffn = (int) model.hparams.n_ff_exp();
                 pi_cached_experts = (int) model.hparams.n_expert;
-                pi_cached_experts_used = (int) model.hparams.n_expert_used;
+                pi_cached_experts_used = (int) model.hparams.n_expert_used();
                 pi_rebuilt = true;
             }
         }

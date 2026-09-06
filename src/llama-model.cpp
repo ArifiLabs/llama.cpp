@@ -1955,9 +1955,9 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                 break;
             }
         }
-        if (hparams.n_expert != 0 && pi_use_moe && hparams.n_ff_exp > 0) {
+        if (hparams.n_expert != 0 && pi_use_moe && hparams.n_ff_exp() > 0) {
             const size_t pi_row_size     = ggml_row_size(GGML_TYPE_Q4_0, hparams.n_embd);
-            const size_t pi_matrix_bytes = pi_row_size * hparams.n_ff_exp;
+            const size_t pi_matrix_bytes = pi_row_size * hparams.n_ff_exp();
 
             // The `pi_matrix_bytes % 4096 == 0` condition that used to guard this is GONE. It existed
             // only because ExpertCache strode the file by the UNPADDED matrix size and asserted that
@@ -1978,7 +1978,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             const char * pi_gen = getenv("GENERATE_EXPERT_BUNDLE");
             if (pi_gen != nullptr) {
                 LLAMA_LOG_INFO("%s: PowerInfer: generating expert bundle -> \"%s\" (n_ff_exp=%u n_embd=%u matrix=%zu B)\n",
-                               __func__, pi_gen, hparams.n_ff_exp, hparams.n_embd, pi_matrix_bytes);
+                               __func__, pi_gen, hparams.n_ff_exp(), hparams.n_embd, pi_matrix_bytes);
                 moe_sparse_pipeline::ExpertBundleBuilder pi_builder(pi_gen);
                 for (int64_t layer_id = 0; layer_id < pi_n_layer; layer_id++) {
                     const auto & L = layers[layer_id];
@@ -1986,11 +1986,11 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                     void * pi_gate = L.ffn_gate_exps ? L.ffn_gate_exps->data : nullptr;
                     void * pi_down = L.ffn_down_exps ? L.ffn_down_exps->data : nullptr;
                     std::tuple<void *, int, int> pi_matrices[] = {
-                        { pi_up,   (int) hparams.n_embd, (int) hparams.n_ff_exp },
-                        { pi_gate, (int) hparams.n_embd, (int) hparams.n_ff_exp },
+                        { pi_up,   (int) hparams.n_embd, (int) hparams.n_ff_exp() },
+                        { pi_gate, (int) hparams.n_embd, (int) hparams.n_ff_exp() },
                         pi_down_transposed
-                            ? std::make_tuple(pi_down, (int) hparams.n_embd,   (int) hparams.n_ff_exp)
-                            : std::make_tuple(pi_down, (int) hparams.n_ff_exp, (int) hparams.n_embd),
+                            ? std::make_tuple(pi_down, (int) hparams.n_embd,     (int) hparams.n_ff_exp())
+                            : std::make_tuple(pi_down, (int) hparams.n_ff_exp(), (int) hparams.n_embd),
                     };
                     for (size_t expert_id = 0; expert_id < hparams.n_expert; expert_id++) {
                         for (int idx = 0; idx < 3; idx++) {
@@ -2004,7 +2004,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                                 // already transposed) must be dequant->transpose->requant at bundle-gen.
                                 const char * pi_src = static_cast<const char *>(pi_data) + expert_id * pi_matrix_bytes;
                                 const auto * pi_tt = ggml_get_type_traits(GGML_TYPE_Q4_0);
-                                const int pi_nff = (int) hparams.n_ff_exp, pi_nem = (int) hparams.n_embd;
+                                const int pi_nff = (int) hparams.n_ff_exp(), pi_nem = (int) hparams.n_embd;
                                 std::vector<float> pi_f((size_t) pi_nff * pi_nem), pi_ft((size_t) pi_nff * pi_nem);
                                 const size_t pi_src_row = ggml_row_size(GGML_TYPE_Q4_0, pi_nff);
                                 for (int r = 0; r < pi_nem; r++) {

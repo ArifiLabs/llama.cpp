@@ -1452,6 +1452,21 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
 
         const int32_t n_tokens = batch_in.n_tokens;
 
+        // per-seq inclusive batch range (assumes each seq's tokens are contiguous in the batch)
+        std::vector<int32_t> i_batch_beg(n_seq, -1);
+        std::vector<int32_t> i_batch_end(n_seq, -1);
+        for (int32_t k = 0; k < n_tokens; ++k) {
+            GGML_ASSERT(batch_in.n_seq_id[k] == 1);
+            const llama_seq_id seq_id = batch_in.seq_id[k][0];
+            if (seq_id < 0 || seq_id >= (llama_seq_id) n_seq) {
+                continue;
+            }
+            i_batch_end[seq_id] = k;
+            if (i_batch_beg[seq_id] < 0) {
+                i_batch_beg[seq_id] = k;
+            }
+        }
+
         auto * ctx_tgt = this->params.ctx_tgt;
         auto * ctx_dft = this->params.ctx_dft;
 
@@ -1489,6 +1504,33 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                         std::memcpy(dst, src, (size_t) n_embd_tgt * sizeof(float));
                     }
                 }
+
+                // sanitize non-finite feature values before the fused decode. on Metal, the
+                // mat-mat kernels stage f32 activations as f16 for the simdgroup multiply;
+                // Laguna's massive-activation rows (attention-sink tokens, |x| ~ 1e6 in the
+                // pre-final-norm residual) overflow f16 -> inf/nan. one poisoned row would
+                // otherwise NaN the whole drafter KV cache. Re-grafted onto b10819's chunked
+                // encoder buffer; it used to run over the fork's own features_buf.
+                {
+                    size_t n_bad = 0;
+                    float * feats = batch_inject.embd;
+                    for (size_t v = 0; v < (size_t) n_chunk * n_embd_enc; ++v) {
+                        float & x = feats[v];
+                        if (!std::isfinite(x)) {
+                            x = x != x ? 0.0f : (x > 0.0f ? 65504.0f : -65504.0f);
+                            n_bad++;
+                        }
+                    }
+                    if (n_bad > 0) {
+                        static bool warned = false;
+                        if (!warned) {
+                            LOG_WRN("%s: sanitized %zu non-finite target feature values (f16 overflow on massive activations); "
+                                    "draft quality may degrade slightly on affected rows\n", __func__, n_bad);
+                            warned = true;
+                        }
+                    }
+                }
+
                 for (int32_t i = 0; i < n_chunk; ++i) {
                     const llama_pos p = batch_in.pos[i_batch_beg[seq_id] + offset + i];
                     batch_inject.pos[i] = p;
@@ -1509,68 +1551,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                 }
             }
 
-            // sanitize non-finite feature values before fusing. on Metal, the
-            // mat-mat kernels stage f32 activations as f16 for the simdgroup
-            // multiply; Laguna's massive-activation rows (attention-sink tokens,
-            // |x| ~ 1e6 in the pre-final-norm residual) overflow f16 -> inf/nan.
-            // one poisoned row would otherwise NaN the whole drafter KV cache.
-            {
-                size_t n_bad = 0;
-                for (auto & v : features_buf) {
-                    if (!std::isfinite(v)) {
-                        v = v != v ? 0.0f : (v > 0.0f ? 65504.0f : -65504.0f);
-                        n_bad++;
-                    }
-                }
-                if (n_bad > 0) {
-                    static bool warned = false;
-                    if (!warned) {
-                        LOG_WRN("%s: sanitized %zu non-finite target feature values (f16 overflow on massive activations); "
-                                "draft quality may degrade slightly on affected rows\n", __func__, n_bad);
-                        warned = true;
-                    }
-                }
-            }
-
-            llama_batch enc_batch = {
-                /*.n_tokens =*/ n_chunk,
-                /*.token    =*/ nullptr,
-                /*.embd     =*/ features_buf.data(),
-                /*.pos      =*/ nullptr,
-                /*.n_seq_id =*/ nullptr,
-                /*.seq_id   =*/ nullptr,
-                /*.logits   =*/ nullptr,
-            };
-
-            int32_t rc = llama_encode(ctx_dft, enc_batch);
-            if (rc != 0) {
-                LOG_ERR("%s: llama_encode(ctx_dft) failed rc=%d (n_tokens=%d, offset=%d)\n",
-                        __func__, rc, (int) n_chunk, (int) offset);
-                return false;
-            }
-
-            const float * inp_g = llama_get_embeddings_nextn(ctx_dft);
-            GGML_ASSERT(inp_g && "DFlash encoder produced no output.");
-
-            batch_inject.n_tokens = n_chunk;
-            std::memcpy(batch_inject.embd, inp_g, (size_t) n_chunk * n_embd_dec * sizeof(float));
-            for (int32_t i = 0; i < n_chunk; ++i) {
-                const int32_t j = offset + i;
-                GGML_ASSERT(batch_in.n_seq_id[j] == 1);
-                const llama_seq_id seq_id = batch_in.seq_id[j][0];
-                GGML_ASSERT(seq_id >= 0 && seq_id < (llama_seq_id) n_seq);
-                batch_inject.pos[i]       = batch_in.pos[j];
-                batch_inject.n_seq_id[i]  = 1;
-                batch_inject.seq_id[i][0] = seq_id;
-                batch_inject.logits[i]    = false;
-            }
-
-            rc = llama_decode(ctx_dft, batch_inject);
-            if (rc != 0) {
-                LOG_ERR("%s: llama_decode(ctx_dft) failed rc=%d (n_tokens=%d, offset=%d)\n",
-                        __func__, rc, (int) n_chunk, (int) offset);
-                return false;
-            }
             // The server may switch contexts before the next draft decode.
             llama_synchronize(ctx_dft);
         }
