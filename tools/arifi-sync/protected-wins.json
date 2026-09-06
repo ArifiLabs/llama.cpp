@@ -92,7 +92,12 @@
       "valid_conditions": "Devices whose subgroup size is a multiple of 32. Elsewhere the legacy shaders are the correct path and must survive with it.",
       "commit_pre_rebase_chain": [
         "7749cace6"
-      ]
+      ],
+      "also_commits": [
+        "69702756272e2112b717dad2662c52ce066c41d2",
+        "6ef196cd1320dcea2181a60d10bbc2dd641f1bac"
+      ],
+      "_also_commits_note": "2026-09-06 R17B (Fable 5.1 MEDIUM, lane-210): also_commits attached for R13B's b10819 repair commits, which carry a `Measured-effect:` trailer (build/test result) and therefore refuse `protected-win validate` as UNREGISTERED. They are REPAIRS of this registered mechanism on the new base, not new wins: the baseline ledger is closed by mechanism to post-tip shas, and registering a repair as its own win would be an invented entry. R13B/HQ may re-home them; the disposition is recorded here so the gate's silence is explained, not bought. 697027562: tq_rotate joins upstream's y_needs_reformat flag in ggml-vulkan.cpp (the TurboQuant activation-rotate staging this entry's mat-vec consumes) - closes the assert abort at test-backend-ops case 12343 and the unsynced prealloc_y hazard. 6ef196cd1: six merge-defect repairs including defect 2 (the tq_rotate staging member rename in ggml-vulkan.cpp, this entry's protected path); the other five surfaces (llama-context/llama-model per-layer accessors for the PowerInfer grafts, dflash.cpp brace, qwen35.cpp n_kv_max, speculative.cpp chunked DFlash union) are named in its own message."
     },
     {
       "id": "vulkan-escha-mm-column-block",
@@ -222,7 +227,11 @@
       "valid_conditions": "Streamed-MoE path with the per-ubatch pipeline in play.",
       "commit_pre_rebase_chain": [
         "297eec3d2"
-      ]
+      ],
+      "also_commits": [
+        "6ef196cd1320dcea2181a60d10bbc2dd641f1bac"
+      ],
+      "_also_commits_note": "2026-09-06 R17B (Fable 5.1 MEDIUM, lane-210): also_commits attached for R13B's b10819 repair commits, which carry a `Measured-effect:` trailer (build/test result) and therefore refuse `protected-win validate` as UNREGISTERED. They are REPAIRS of this registered mechanism on the new base, not new wins: the baseline ledger is closed by mechanism to post-tip shas, and registering a repair as its own win would be an invented entry. R13B/HQ may re-home them; the disposition is recorded here so the gate's silence is explained, not bought. 6ef196cd1 defect 1: src/llama-context.cpp (this entry's protected path) - upstream turned n_ff_exp/n_expert_used into per-layer accessors; the pipeline graft reads them with il=0, the prior single-value semantics. Same commit as the vulkan-tq-matvec-subgroup also_commit; one sha, two homes, because one repair commit touched two registered mechanisms."
     },
     {
       "id": "powerinfer-windows-port-avx-cure",
