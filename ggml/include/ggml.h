@@ -2648,6 +2648,7 @@ extern "C" {
             struct ggml_tensor * v1);
 
     // 0 when the node is an ordinary single-source flash attention.
+    // Stored in op_params[5]; [4] belongs to ggml_flash_attn_ext_set_n_kv_max and the two coexist.
     GGML_API int ggml_flash_attn_ext_n_segments(const struct ggml_tensor * a);
 
     // TODO: needs to be adapted to ggml_flash_attn_ext
