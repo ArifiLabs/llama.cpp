@@ -33,6 +33,82 @@ Unless an entry says otherwise, every measurement was taken on:
 
 ---
 
+## On upstream `b10819` (`6a1a922d2`) — 2026-09-05 to 2026-09-06
+
+One entry: the base move itself. No fork mechanism was added, changed or measured on this base yet.
+Every performance figure in the `b10680` section below was taken on `b10680` binaries and is **not**
+re-stated here; whether any of it moved under the new base is a measurement, and that measurement's
+report is pending (see the table at the end of this entry).
+
+### Changed
+
+- **Base moved to `b10819` (`6a1a922d2`)** — the tag, not the head of `master`, and 139 upstream commits
+  absorbed. The default branch had to be **linearised first**: it carried 14 merge commits, which is why
+  the patch-series regeneration in the `b10680` section stayed blocked. The flatten is lossless by the
+  only test that matters — `git diff` between the merged tip and the flattened one is **empty** — and
+  534 commits replayed onto the new base with **532 landing**; the two that replayed empty (a
+  `mul_mat_vec_id` addition and a `mul_mm_id` dispatch for the TurboQuant weight types, both already
+  present upstream-side or earlier in the series) are named in the sync report rather than silently
+  dropped. **0** conflict markers were introduced, and the protected-win register validates on the new
+  tip: 21 entries, 39 protected paths, **41 of 41 anchors** found in source.
+
+  **Fifteen named collisions**, every one resolved against the parent that owns the surface and never by
+  dropping a side. Two are worth a sentence each. On `mul_mat_vec_iq3_s.comp` upstream independently
+  landed the **same** 16-invocations-per-superblock mechanism this fork ships (`ba8818cbf`), with the gate
+  `NUM_COLS <= 4 ? 8 : 16` written as a division of a specialization constant at global scope; ours is
+  kept, because its gate is the wider one measured on RIG-A and it does not trip the AMD driver's
+  `OpSpecConstantOp UDiv` fold that raised `STATUS_INTEGER_DIVIDE_BY_ZERO` here. On the Metal
+  flash-attention dispatch upstream's new sparse path and this fork's TurboFlash two-pass are
+  structurally exclusive at one insertion point, and Metal cannot be built on this estate: ours is kept
+  and **upstream's Metal sparse flash-attention is not adopted** — recorded as an open item, not as a
+  drop. The other thirteen are unions or logged adoptions of upstream's newer form of code that carried
+  no fork mechanism; the full map is in the sync report.
+
+  **The tree did not build after the replay, and six resolutions were why.** Per-layer accessors that
+  two grafts still read as fields, a Vulkan staging member that `77f132cb1` renamed under the TurboQuant
+  rotate branch, a closing brace lost in the DFlash model file, a batched call site not updated for a
+  new `build_attn_mha` argument, and a DFlash encoder setup block dropped by an incomplete adoption of
+  upstream's per-sequence chunked form. All six are repaired in one commit against the parent that owns
+  each surface, and a brace-balance scan over all 226 code files the bump touched, checked against
+  **both** parents, returns no further file. A second repair restored the TurboQuant `MUL_MAT_ID` path
+  that the staging rename had bypassed.
+
+  **One thing this base does NOT do yet: link on CUDA.** Upstream rewrote the CUDA MoE mat-vec around a
+  fusion-arguments struct, and the merge lost the definition of the fork's expert-cache fused entry
+  point while its declaration survived — which is exactly the shape a source-text anchor check cannot
+  see, and the protected-win register passed 41/41 while it happened. This estate compiles Vulkan and
+  CPU only, so the loss was found by a link-contract audit over 185 backend headers and 566 declared
+  entry points, which returns exactly that one hit. It is restored on a separate branch with a
+  four-backend CI matrix as the compile proof, and **is not on the tip this entry describes**.
+
+  **What was checked on RIG-A, on the new tip.** `test-backend-ops`: **27789 of 27833** pass, 44 fail,
+  and all 44 are `DIV(type=f16, …)` with errors of 1.14e-7 to 2.63e-7 against a 1.0e-7 threshold — the
+  same single family the `b10680` engine of record fails (45 cases there), so the total case count rose
+  by 1,184 while the failing band did not move. `test-quantize-fns`: the same six error-budget rows as
+  the `b10680` bank, same three types, same numbers to the digit. The content floor is **0/8 on all ten
+  slots** (five model files, drafted and plain) — on the `b10819` build only; the comparator arm was not
+  run in that leg. Both ArifiLabs weight formats load and generate end to end.
+
+  **Served A/B — measured, report pending.** The five-file comparison against the `b10680` engine of
+  record has run under the same paired-palindrome design as the integration table below, and its
+  report is being written at the time of this entry. No number from it is stated here; a cell that
+  reads "pending" is not a tie and not a claim.
+
+  | model file (publisher) | drafted decode, base → tip | plain decode | prefill | quality gate |
+  |---|---|---|---|---|
+  | Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL (huihui-ai) | measured, report pending | measured, report pending | measured, report pending | F-141 0/8 on the tip |
+  | Qwen3.8-27B-Unleashed UD-IQ4_XS (outsourc-e) | measured, report pending | measured, report pending | measured, report pending | F-141 0/8 on the tip |
+  | Qwen3.8-27B-Unleashed UD-Q3_K_XL (outsourc-e) | measured, report pending | measured, report pending | measured, report pending | F-141 0/8 on the tip |
+  | Qwen3.8-27B-Unleashed UD-Q4_K_M (outsourc-e) | measured, report pending | measured, report pending | measured, report pending | F-141 0/8 on the tip |
+  | Qwen3.8-27B-ROCmFP4-FAST (julianmb), MMVQ off | measured, report pending | measured, report pending | measured, report pending | F-141 0/8 on the tip |
+
+  Upstream commits on the watch list for that report, because they touch exactly what this box decodes
+  through: `2cdae802e` (mat-vec row tuning for batched inference on Strix Halo — RDNA3, the same family
+  as gfx1103), `77f132cb1` (`mul_mat_id` pads K rather than N), `c7bda030e` (flash-attention dequant
+  path engagement on quantized KV).
+
+---
+
 ## On upstream `b10680` (`d7bd3bfca`) — 2026-08-23 to 2026-09-05
 
 Five Vulkan mat-vec / mat-mat mechanisms, one server bug fix, one drafting controller, and one
@@ -68,8 +144,8 @@ why no row is a continuation of the row above it.
 | `iq3_s` mat-vec split (`aa9f0e2aa`) | outsourc-e Unleashed UD-IQ4_XS, 14.30 GB | drafted decode **+0.199 t/s (+2%)**, twice, across a driver change | E1 and E2 | rolled 35/40 → 35/40, F-141 0/8 | **WIN** (small, reproduced) |
 | `iq3_s` split applied at **every** width (`616b877b8`) | — (kernel bench only) | `n=4` ×0.823 on its own ladder | E1 | — | **LOSS — superseded by `aa9f0e2aa`** |
 | ROCmFP4-FAST `q8_1` MMVQ mat-vec, retained at `n=3` and `n=5` (`f68a4bd25`) | julianmb Qwen3.8-27B-ROCmFP4-FAST, 14.56 GB | drafted decode **7.498 → 9.518 t/s (+27%)**; plain tied | E2 | rolled 32/40 → 33/40, F-141 0/8, zero empty completions | **MEASURED WIN — default-branch integration BLOCKED**, see below |
-| Tiled concat-transpose for the delta-net conv state (`5b1b416cb`) | huihui-ai Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL, 16.2 GB | CONCAT dispatch **−13%**; whole-model **TIED**, twice | E3 | output byte-identical gate ON vs OFF 3/3, F-141 0/8 | **WIN at the op, TIE at the seat** |
-| `q6_k` mat-vec reads scales from the block, not through LDS (`4bbebd619`) | huihui-ai Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL, 16.2 GB | op-level ratio **0.9796** against its own control of **1.0061** — no row separates | 32+16 GB | output byte-identical, `test-backend-ops` MUL_MAT 1394/1394 | **NEUTRAL** — shipped for less work, **never quote it as a win** |
+| Tiled concat-transpose for the delta-net conv state (`5b1b416cb`) | huihui-ai Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL, 17.38 GB | CONCAT dispatch **−13%**; whole-model **TIED**, twice | E3 | output byte-identical gate ON vs OFF 3/3, F-141 0/8 | **WIN at the op, TIE at the seat** |
+| `q6_k` mat-vec reads scales from the block, not through LDS (`4bbebd619`) | huihui-ai Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL, 17.38 GB | op-level ratio **0.9796** against its own control of **1.0061** — no row separates | 32+16 GB | output byte-identical, `test-backend-ops` MUL_MAT 1394/1394 | **NEUTRAL** — shipped for less work, **never quote it as a win** |
 | Draft length sized from measured acceptance, `--spec-draft-adaptive` (`6c7d9275f`) | — | **not measured here** | — | — | **UNMEASURED on RIG-A**, default OFF |
 | Server: do not re-verify replayed draft tokens after a checkpoint restore (`8a4044a82`) | — | no throughput claim | — | — | **BUG FIX** |
 
@@ -83,7 +159,7 @@ confidence intervals and cell counts that the verdicts actually rest on.
 | Qwen3.8-27B-Unleashed **UD-IQ4_XS** (outsourc-e) | 14.30 GB | `iq4_xs` shader **+12%** drafted; `iq3_s` split **+2%** drafted, reproduced across two epochs | MMLU / HumanEval / GSM8K on this exact quant — the harness matrix holds `UD-Q4_K_M`, not this file |
 | Qwen3.8-27B-Unleashed **UD-Q3_K_XL** (outsourc-e) | 13.22 GB | `iq4_xs` shader **+2%** drafted / **+10%** plain; `iq3_s` split **+11%** drafted | MMLU / HumanEval / GSM8K on this exact quant — OWED |
 | Qwen3.8-27B-**ROCmFP4-FAST** (julianmb) | 14.56 GB | mat-mat pipelines **3.4× prefill**; MMVQ mat-vec **+27%** drafted | adversarial numerical validation at `n=3` / `n=5`; MMLU / HumanEval / GSM8K OWED |
-| Huihui-Qwen3.8-27B-abliterated-**UD Q4_K_XL** (huihui-ai) | 16.2 GB | concat-transpose **−13%** on the op, tied at the seat; `q6_k` scales neutral | decode/verify-graph arm of the concat work; the `q6_k` **~35% deficit against `q5_K`** is open |
+| Huihui-Qwen3.8-27B-abliterated-**UD Q4_K_XL** (huihui-ai) | 17.38 GB | concat-transpose **−13%** on the op, tied at the seat; `q6_k` scales neutral | decode/verify-graph arm of the concat work; the `q6_k` **~35% deficit against `q5_K`** is open |
 | DFlash2 **Q4_K_M** drafter (incoai) | — | used as the drafter in every drafted arm above at `--spec-draft-n-max 2` (verify width 3) | — |
 
 Quality on the seat file, from the harness matrix rather than from this work:
@@ -91,6 +167,76 @@ MMLU `mmlu_arifi` **0.7333**, HumanEval pass@1 **0.9329** (153/164), GSM8K stric
 ARC-challenge is **OWED-RESCORE** — this project has no trustworthy harness scorer for it. None of
 these moved: every mechanism below is a kernel change under a fixed model file, and the per-A/B
 quality gate is the 40-prompt rolled smoke score with thinking OFF, reported in every entry.
+
+### Integrated onto the default branch, and re-measured as one binary
+
+Every mechanism in the tables above was measured on its own working branch, each against its own
+base. On 2026-09-05 they were merged onto the default branch in one pass — lane-204 (ROCmFP4-FAST
+mat-mat), the lane-209 kernels, lane-202 (adaptive drafting and the replay fix), then the `q6_k`
+scales change; base `131fad035`, integration tip `50e78fdc5`, 22 commits — and the **whole integration
+was measured as a single binary against the base binary**, so that the per-branch wins above are not
+simply assumed to add. They mostly do, with one cell that ties and one file that moved far more on
+prefill than any decode number shows.
+
+**Conditions, stated once for every row:** integration tip `50e78fdc5` against base `131fad035`,
+`llama-server` on RIG-A, both arms in the same session, an 8-cell × 2-launch paired palindrome per slot
+(8 independent prompt/seed cells, each measured twice, 16 rounds per slot), thinking OFF, context 8192,
+drafter DFlash2 Q4_K_M at `--spec-draft-n-max 2`, **Balanced** power plan, RAM 48 GB (32 + 16,
+asymmetric). Decode is the server's own `predicted_per_second`, median of the 16 rounds; the bracketed
+figure is the paired cell-wise mean difference with its 95% interval over the 8 cells, and the whole
+percent is that mean difference over the base arm's cell mean. Prefill is the 782-token fill request,
+median of the two launches per slot — a per-launch figure with no interval. The quality gate is the
+40-prompt rolled smoke score, thinking OFF, before → after; the content floor read **0/8 on every slot**.
+Model file sizes are decimal gigabytes of the file on disk.
+
+| model file (publisher, GB) | drafted decode, base → tip | plain decode, base → tip | prefill (782 tok), base → tip | rolled 40 | verdict |
+|---|---|---|---|---|---|
+| Huihui-Qwen3.8-27B-abliterated-UD **Q4_K_XL** (huihui-ai, 17.38) | **6.9 → 6.9 t/s, +0%** — +0.03 [−0.28, +0.33], 5 of 8 | **3.65 → 3.88 t/s, +11%** — +0.38 [+0.14, +0.61], 8 of 8 | drafted 51.6 → 53.6; plain 59.3 → 66.6 (+12%) | 82.5% → 87.5% (33 → 35) | drafted **NEUTRAL**, plain **WIN** |
+| Qwen3.8-27B-Unleashed **UD-IQ4_XS** (outsourc-e, 14.30) | **7.5 → 8.3 t/s, +10%** — +0.78 [+0.49, +1.07], 8 of 8 | not measured | 62.0 → 64.1 (+3%) | 87.5% → 87.5% (35 → 35) | **WIN** |
+| Qwen3.8-27B-Unleashed **UD-Q3_K_XL** (outsourc-e, 13.22) | **7.7 → 8.6 t/s, +13%** — +1.00 [+0.79, +1.22], 8 of 8 | not measured | 62.9 → 63.1 (+0%) | 87.5% → 87.5% (35 → 35) | **WIN** |
+| Qwen3.8-27B-Unleashed **UD-Q4_K_M** (outsourc-e, 16.52) | **6.9 → 7.6 t/s, +10%** — +0.68 [+0.57, +0.79], 8 of 8 | not measured | 56.7 → 65.4 (+15%) | 87.5% → 87.5% (35 → 35) | **WIN** |
+| Qwen3.8-27B-**ROCmFP4-FAST** (julianmb, 14.56), MMVQ **off** (the shipped default) | **5.8 → 6.9 t/s, +20%** — +1.15 [+0.99, +1.30], 8 of 8 | **4.77 → 4.74 t/s, −0%** — −0.02 [−0.05, +0.01], 2 of 8 | drafted **19.1 → 71.6 (+275%)**; plain **20.8 → 73.2 (+253%)** | 80.0% → 80.0% (32 → 32) | drafted **WIN**, plain **NEUTRAL**, prefill **WIN** |
+| same file, **same tip binary**, `GGML_ARIFI_ROCMFP4_MMVQ=1` against unset | **7.0 → 8.2 t/s, +20%** — +1.41 [+0.79, +2.03], 8 of 8 | **4.74 → 4.74 t/s, −0%** — −0.003 [−0.005, −0.001], 1 of 8 | drafted 67.6 → 68.8; plain 73.5 → 73.2 | 80.0% → 82.5% (32 → 33) | **WIN, opt-in only** — see below |
+
+Four things the table needs said beside it.
+
+- **The seat file's drafted line is a tie, and that is the expected reading.** Nothing in this wave
+  targets the `q4_K`/`q5_K`/`q6_K` mat-vecs the Huihui file decodes through in drafted mode; the concat
+  transpose was already a seat-level tie on its own, and the `q6_k` change is neutral by construction.
+  The plain line on the same file moves +11% with the interval clear of zero on 8 of 8 cells, and its
+  782-token prefill +12%; the seat's smoke score also rose two points, which is inside that gate's
+  round-to-round movement and is not claimed as a quality gain.
+- **The ROCmFP4-FAST file changed regime on prefill, with MMVQ off.** The pre-registration for this
+  measurement predicted a tie on that cell, because the MMVQ path is gated off on both arms. The
+  prediction is falsified: drafted decode +20%, and prefill **3.5–3.8× at 107 and 782 tokens**
+  (the 17-token fill reads 5.1×, but that length is dominated by fixed per-request cost and is
+  directional only). The attribution — the default-on mat-mat pipelines (`e3220bed0`), which replaced a
+  whole-tensor f16 fallback on every batched matmul of this type — is an inference from two co-measured
+  numbers, not an isolated A/B of that commit: the design authorised the aggregate arm pair only.
+  Ranked as a finding, with what an isolation would need, in [`docs/FINDINGS.md`](docs/FINDINGS.md) F-18.
+- **The MMVQ mat-vec's `+27%` is not reproduced, and `+20%` is now the figure.** Measured on the same
+  tip binary with only the environment differing, the integer-dot path reads +1.41 t/s [+0.79, +2.03],
+  8 of 8 cells, against the earlier branch-level +2.02 t/s. The win is real and the interval excludes
+  zero; the magnitude is lower, and the `+27%` in the mechanism table above is the earlier measurement,
+  not this one. The plain-line "loss" on this row is −0.003 t/s — the interval excludes zero because the
+  plain arm's spread is tiny (SD 0.009), not because anything moved. **The path ships compiled in and
+  default OFF**, and stays that way until a served byte-identity pass at width 3 exists;
+  [`docs/FINDINGS.md`](docs/FINDINGS.md) F-19 says why an opt-in was accepted where a default was not.
+- **Two things the design fell short of, named rather than smoothed.** The mandate asked for at least
+  six launches per arm; delivered per engine arm were 4 (seat and both FP4 cells) and 2 (the three
+  Unleashed files). The statistical unit is the 8 paired cells measured twice, with the palindrome doing
+  the launch-order counterbalancing, and the independent check accepted that shape as the unit of record
+  for this integration — but it is not "≥ 6 launches per arm" and is not to be quoted as such. And the
+  op suite is not at 0 FAIL: **43 cases fail on the base binary and 43 on the tip**, every one a
+  `DIV(type=f16, …)` tolerance case, with 41 shared and 2 in / 2 out churning identically on a repeat of
+  the unchanged tip binary. The integration touches no elementwise path; the band is inherited, and a
+  fix or re-tolerance of it is owed separately.
+
+The raw cells, one directory per row in reading order — `SEAT`, `U-IQ4XS`, `U-Q3KXL`, `U-Q4KM`, `FP4`,
+`FP4-MMVQ`, each an `AB.json` with the per-round decode, the per-fill prefill, the cell-wise statistic,
+the rolled score and the draft-acceptance rate — are banked with the lane's evidence under
+`lane-evidence/2026-09-02-lane-209/r8-integrate/ab/`, beside the build receipts, the op-suite runs and
+the untimed route receipt that proves the MMVQ arm actually dispatched the integer-dot path at width 3.
 
 ### Added
 
@@ -298,9 +444,14 @@ quality gate is the 40-prompt rolled smoke score with thinking OFF, reported in 
 
 ### Where these actually are, right now
 
-This section documents measured work in this fork's git history. **Most of it is not yet on the
-default branch**, and saying otherwise would be the exact overstatement this changelog's rules exist
-to prevent.
+**Superseded on 2026-09-05 by the integration above**: every row below that reads "awaiting
+integration" or "held there deliberately" is now on the default branch at tip `50e78fdc5`, the MMVQ
+commits included — compiled in and default OFF. The table is kept as the record of the state it
+describes, and because its notes on *why* each commit was held are still the reasons the gates exist.
+
+This section documents measured work in this fork's git history as of 2026-09-05, before the
+integration. **At that point most of it was not yet on the default branch**, and saying otherwise
+would have been the exact overstatement this changelog's rules exist to prevent.
 
 | commit(s) | where | note |
 |---|---|---|
