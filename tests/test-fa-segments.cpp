@@ -308,6 +308,44 @@ static void report(const char * leg, const char * what, double err, double tol, 
 int main() {
     printf("lane-195: flash-attention per-query source selection - CPU gate\n\n");
 
+    // LANE-216 (2026-09-06) — OP_PARAMS SLOT GUARD. The segment count once shared op_params[4]
+    // with upstream's ggml_flash_attn_ext_set_n_kv_max (b10819, sparse mask); a plain node with
+    // n_kv_max=512 read back 512 segments and overran segs[] in the CPU kernel. Both values must
+    // round-trip on ONE node, in both set orders.
+    {
+        ggml_init_params ip = { ggml_tensor_overhead() * 16, nullptr, true };
+        ggml_context * ctx = ggml_init(ip);
+        ggml_tensor * q  = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 64, 4, 2);
+        ggml_tensor * k  = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, 64, 96, 2);
+        ggml_tensor * v  = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, 64, 96, 2);
+        ggml_tensor * k0 = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, 64, 32, 2);
+        ggml_tensor * v0 = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, 64, 32, 2);
+        ggml_tensor * m  = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, 128, 4, 1, 1);
+
+        ggml_tensor * a = ggml_flash_attn_ext(ctx, q, k, v, m, 0.125f, 0.0f, 0.0f);
+        ggml_flash_attn_ext_set_n_kv_max(a, 512);
+        ggml_flash_attn_ext_add_segments(a, k0, v0, nullptr, nullptr);
+        const bool ok_a = ggml_flash_attn_ext_n_segments(a) == 1 && ((const int32_t *) a->op_params)[4] == 512;
+
+        ggml_tensor * b = ggml_flash_attn_ext(ctx, q, k, v, m, 0.125f, 0.0f, 0.0f);
+        ggml_flash_attn_ext_add_segments(b, k0, v0, nullptr, nullptr);
+        ggml_flash_attn_ext_set_n_kv_max(b, 512);
+        const bool ok_b = ggml_flash_attn_ext_n_segments(b) == 1 && ((const int32_t *) b->op_params)[4] == 512;
+
+        ggml_tensor * c = ggml_flash_attn_ext(ctx, q, k, v, m, 0.125f, 0.0f, 0.0f);
+        ggml_flash_attn_ext_set_n_kv_max(c, 512);
+        const bool ok_c = ggml_flash_attn_ext_n_segments(c) == 0;
+
+        printf("SLOT-GUARD n_kv_max=512 + 1 segment round-trip: %s / %s / plain n_kv_max reads 0 segments: %s\n",
+               ok_a ? "OK" : "FAIL", ok_b ? "OK" : "FAIL", ok_c ? "OK" : "FAIL");
+        ggml_free(ctx);
+        if (!(ok_a && ok_b && ok_c)) {
+            printf("\nFAIL: flash-attention op_params slot collision (n_kv_max vs segment count)\n");
+            return 1;
+        }
+        printf("\n");
+    }
+
     // Boundaries chosen to be awkward on purpose: not multiples of any block size, a segment of 1,
     // and a case where the body is smaller than the ring.
     const struct { int64_t kv, body, seg0, seg1; } splits[] = {
