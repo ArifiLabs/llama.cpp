@@ -1,6 +1,7 @@
 #include "ggml-metal-device.h"
 
 #include "ggml-metal-impl.h"
+#include "ggml-metal-tuning.h"
 
 #include "ggml-impl.h"
 
@@ -1582,6 +1583,26 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_p
     return res;
 }
 
+// upstream b10819 (PR #27390): dequantize the quantized KV cache to F16 before the F16 FA kernels.
+// The definition was lost in the b10819 base move while the declaration in ggml-metal-device.h and
+// the call in ggml-metal-ops.cpp survived, so the Metal backend did not link. Restored verbatim.
+ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_kv_f16(
+        ggml_metal_library_t lib,
+        const ggml_tensor * op) {
+    assert(op->op == GGML_OP_FLASH_ATTN_EXT);
+
+    char base[256];
+
+    snprintf(base, 256, "kernel_flash_attn_ext_kv_%s_f16", ggml_type_name(op->src[1]->type));
+
+    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, base);
+    if (!res.pipeline) {
+        res = ggml_metal_library_compile_pipeline(lib, base, base, nullptr);
+    }
+
+    return res;
+}
+
 ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_blk(
         ggml_metal_library_t lib,
         const struct ggml_tensor * op,
@@ -1633,7 +1654,10 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext(
         bool    has_bias,
         bool    has_scap,
         bool    has_kvpad,
-        int32_t nsg) {
+        int32_t nsg,
+        bool    use_kv_f16,
+        int32_t ns10,
+        int32_t ns20) {
     assert(op->op == GGML_OP_FLASH_ATTN_EXT);
 
     char base[256];
@@ -1642,19 +1666,25 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext(
     const int32_t dk = (int32_t) op->src[1]->ne[0];
     const int32_t dv = (int32_t) op->src[2]->ne[0];
 
-    const int32_t ns10 = op->src[1]->nb[1]/op->src[1]->nb[0];
-    const int32_t ns20 = op->src[2]->nb[1]/op->src[2]->nb[0];
-
     // do bounds checks for the mask?
     const bool bc_mask = op->src[3] && (op->src[3]->ne[1] % 8 != 0);
+
+    // UNION (R17, lane-210): the ArifiLabs asymmetric K/V pipeline naming, over upstream b10819's
+    // use_kv_f16 type selection. When the KV cache is pre-dequantized to F16 both operands are f16,
+    // so both name slots read "f16"; otherwise each slot keeps its own type, which is what makes the
+    // turbo/q8_0 mixed pairs addressable. ns10/ns20 now arrive from the caller (upstream b10819 form,
+    // and the signature this fork's own ggml-metal-device.h already declared) instead of being
+    // recomputed here, because the F16 path changes the strides the caller passes.
+    const char * type_k = use_kv_f16 ? "f16" : ggml_type_name(op->src[1]->type);
+    const char * type_v = use_kv_f16 ? "f16" : ggml_type_name(op->src[2]->type);
 
     // Asymmetric K/V: always encode both K and V types in the pipeline name.
     // Symmetric case: ktype == vtype, so the name just has the type twice.
     // This avoids ambiguity if a type name contains underscores (e.g. q4_0).
     snprintf(base, 256, "kernel_%s_k%s_v%s_dk%d_dv%d",
             "flash_attn_ext",
-            ggml_type_name(op->src[1]->type),
-            ggml_type_name(op->src[2]->type),
+            type_k,
+            type_v,
             dk,
             dv);
 
@@ -1727,7 +1757,10 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_v
         int32_t nqpsg,
         int32_t ne,
         int32_t nsg,
-        int32_t nwg) {
+        int32_t nwg,
+        bool    use_kv_f16,
+        int32_t ns10,
+        int32_t ns20) {
     assert(op->op == GGML_OP_FLASH_ATTN_EXT);
 
     char base[256];
@@ -1736,17 +1769,27 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_v
     const int32_t dk = (int32_t) op->src[1]->ne[0];
     const int32_t dv = (int32_t) op->src[2]->ne[0];
 
-    const int32_t ns10 = op->src[1]->nb[1]/op->src[1]->nb[0];
-    const int32_t ns20 = op->src[2]->nb[1]/op->src[2]->nb[0];
+    // UNION (R17, lane-210): ArifiLabs asymmetric K/V naming over upstream b10819's use_kv_f16
+    // selection and its qne_suffix. The suffix is not cosmetic - without it two different
+    // (nqpsg, ne) tunings hash to the SAME cached pipeline name, because neither nqpsg nor ne
+    // appears anywhere else in the key.
+    const char * type_k = use_kv_f16 ? "f16" : ggml_type_name(op->src[1]->type);
+    const char * type_v = use_kv_f16 ? "f16" : ggml_type_name(op->src[2]->type);
+
+    char qne_suffix[16] = {0};
+    if (!(nqpsg == 1 && ne == ggml_metal_tuning::fa_vec_baseline_ne(dk, dv))) {
+        snprintf(qne_suffix, sizeof(qne_suffix), "_q%d_ne%d", nqpsg, ne);
+    }
 
     // Asymmetric K/V: always encode both K and V types in the pipeline name.
     // Uses k/v prefix to avoid ambiguity with type names containing underscores.
-    snprintf(base, 256, "kernel_%s_k%s_v%s_dk%d_dv%d",
+    snprintf(base, 256, "kernel_%s_k%s_v%s_dk%d_dv%d%s",
             "flash_attn_ext_vec",
-            ggml_type_name(op->src[1]->type),
-            ggml_type_name(op->src[2]->type),
+            type_k,
+            type_v,
             dk,
-            dv);
+            dv,
+            qne_suffix);
 
 
     snprintf(name, 256, "%s_mask=%d_sink=%d_bias=%d_scap=%d_kvpad=%d_sparse=%d_ns10=%d_ns20=%d_nsg=%d_nwg=%d",
