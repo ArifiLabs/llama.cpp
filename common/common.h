@@ -679,6 +679,11 @@ struct common_params {
     int32_t n_ctx_checkpoints   = 32;    // max number of context checkpoints per slot
     int32_t kv_unified_per_slot = 0;     // max context per parallel slot; 0 = unset
     int32_t checkpoint_min_step = 8192;  // minimum spacing between context checkpoints
+    // R31/M14: keep context checkpoints in device buffers instead of host copies
+    // -1 = auto (on when the target memory has a recurrent part), 0 = off (host copy), 1 = on
+    int32_t ctx_checkpoints_device   = -1;
+    // R31/M15: freeze a checkpoint at the first sampled tool-call opener (FreeToken anchor)
+    bool    ctx_checkpoints_toolcall = true;
     int32_t cache_ram_mib       = 8192;  // -1 = no limit, 0 - disable, 1 = 1 MiB, etc.
 
     std::string hostname      = "127.0.0.1";
@@ -1229,6 +1234,16 @@ struct common_prompt_checkpoint {
     // (optional) speculative-decoding implementation state stashed with the checkpoint
     // (e.g. eagle3's deferred-boundary g_embd row)
     std::vector<uint8_t> data_spec;
+
+    // flags the data was captured with; a restore must reuse them (device storage slot lives here)
+    llama_state_seq_flags flags_tgt = 0;
+    llama_state_seq_flags flags_dft = 0;
+
+    // R31/M15: tool-call anchor checkpoint - exempt from min-step thinning
+    bool anchor = false;
+
+    // true when data_tgt only describes a device-resident copy (cannot survive a prompt-cache round trip)
+    bool on_device() const { return (flags_tgt & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) != 0; }
 
     size_t size() const;
 
