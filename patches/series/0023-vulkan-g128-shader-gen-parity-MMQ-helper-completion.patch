@@ -1,4 +1,4 @@
-From 97f4d018b6f7de3bb2bb4d53428cc898ba50cb8a Mon Sep 17 00:00:00 2001
+From eaaceefa32c5b43dd6746eea966466efabfa5a4a Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 05:00:07 -0400
 Subject: [PATCH] vulkan: g128 shader-gen parity + MMQ helper completion
@@ -12,10 +12,10 @@ Measured-effect: build fix only
  3 files changed, 15 insertions(+), 4 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index a0c983938..d13118751 100644
+index 4d32fad22..a95eab556 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -4066,7 +4066,7 @@ static bool ggml_vk_matmul_int_shmem_support(const vk_device& device, const std:
+@@ -4093,7 +4093,7 @@ static bool ggml_vk_matmul_int_shmem_support(const vk_device& device, const std:
      uint32_t block_a_size = 0;
      switch (src0_type) {
          case GGML_TYPE_Q2_0:    block_a_size = std430_size({{32, 4}, {fp_size,  fp_align}});                  break; // qs[8] + dm
@@ -49,7 +49,7 @@ index 0026127c0..789fa9ff4 100644
  #endif
  
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index c3105d105..64cf9efaa 100644
+index c4154717b..8d27bd29c 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 @@ -235,7 +235,7 @@ bool is_quantized_type(const std::string& type_name) {

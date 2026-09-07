@@ -1,24 +1,30 @@
-From db0a330cc4ba36210a26e5b5627764d68d1022be Mon Sep 17 00:00:00 2001
+From 5864d15fa5ccff41db287a0f3829a21c00561adb Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:56:18 -0400
 Subject: [PATCH] 4-other-backends/0018-cuda-bound-MoE-MMV-tail-row-reads.patch
 
 ---
- ggml/src/ggml-cuda/mmvq.cu | 4 +++-
- 1 file changed, 3 insertions(+), 1 deletion(-)
+ ggml/src/ggml-cuda/mmvq.cu | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/mmvq.cu b/ggml/src/ggml-cuda/mmvq.cu
-index 0dc4ac255..56a0b2a80 100644
+index 32fc5e7d8..ed6c4dcfb 100644
 --- a/ggml/src/ggml-cuda/mmvq.cu
 +++ b/ggml/src/ggml-cuda/mmvq.cu
-@@ -820,7 +820,9 @@ static __global__ void mul_mat_vec_q_moe(
+@@ -860,10 +860,12 @@ static __global__ void mul_mat_vec_q_moe(
  
  #pragma unroll
          for (int i = 0; i < c_rows_per_block; ++i) {
 -            tmp[i] += vec_dot_q_cuda(vx, &y[kby], kbx_offset + i*stride_row_x + kbx, kqs);
+-            if constexpr (has_fusion) {
+-                if (use_gate) {
+-                    tmp_gate[i] += vec_dot_q_cuda(vgate, &y[kby], kbx_offset + i*stride_row_x + kbx, kqs);
 +            if (uint32_t(row0 + i) < nrows_x) {
 +                tmp[i] += vec_dot_q_cuda(vx, &y[kby], kbx_offset + i*stride_row_x + kbx, kqs);
-+            }
++                if constexpr (has_fusion) {
++                    if (use_gate) {
++                        tmp_gate[i] += vec_dot_q_cuda(vgate, &y[kby], kbx_offset + i*stride_row_x + kbx, kqs);
++                    }
+                 }
+             }
          }
-     }
- 

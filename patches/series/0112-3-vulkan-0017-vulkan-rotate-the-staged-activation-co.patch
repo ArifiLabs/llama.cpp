@@ -1,4 +1,4 @@
-From 1c0102510d4271d9ddc8c37fb385bfa65700b877 Mon Sep 17 00:00:00 2001
+From ea05afd414c70a60bf0a2e2a2e4d8b4c70f1bcfc Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:56 -0400
 Subject: [PATCH] 
@@ -10,10 +10,10 @@ Subject: [PATCH]
  2 files changed, 25 insertions(+), 16 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 1ac2cf799..9a6f12898 100644
+index 0e0301bf2..1bf29828c 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -5562,8 +5562,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5597,8 +5597,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      // mat-vec pipelines: the butterfly pairs lanes through a 32-entry shared
      // array, so it is only correct when the workgroup is exactly the block size
      // (RADV on gfx1151 reports warp size 64, so this must not be widened).
