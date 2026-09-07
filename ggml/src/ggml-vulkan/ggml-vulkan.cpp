@@ -11941,9 +11941,35 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
     };
     const bool k_quant = k->type != GGML_TYPE_F16 && k->type != GGML_TYPE_BF16 && k->type != GGML_TYPE_F32;
     const bool v_quant = v->type != GGML_TYPE_F16 && v->type != GGML_TYPE_BF16 && v->type != GGML_TYPE_F32;
+    // arifi R19 (lane-215) / R27 (lane-220): upstream c7bda030e made this f16-scratch path engage for the
+    // first time on a --parallel 1 seat (ne[3] == 1 short-circuits the cache-view nb[3] check); it reaches
+    // prefill only (neq1 >= 64). R19 shipped the device default OFF on AMD RDNA3 after R13 read the seated
+    // line's plain prefill at -4.05% [-7.73%, -0.38%] with it engaged. R19D then measured the gate on ONE
+    // binary, same day, receipts bound: on the Radeon 780M (gfx1103, AMD RDNA3, coopmat1 FA) forced-ON
+    // prefill BEATS OFF, clean +8.08% [+1.63%, +14.52%], and the R13 loss did not replicate (day drift).
+    // So the device default is ON everywhere = upstream behaviour. The runtime switch stays:
+    // GGML_ARIFI_FA_DEQUANT_KV=1 forces the scratch path ON anywhere, =0 forces it OFF anywhere,
+    // unset = the device default. A device that measures the scratch copy as a cost flips its own
+    // default HERE, with its number. Bit-identical either way (same FA math, f32 accumulation forced above).
+    static const int fa_deq_env = [] {
+        const char * s = getenv("GGML_ARIFI_FA_DEQUANT_KV");
+        return s == nullptr ? -1 : (s[0] == '0' ? 0 : 1);
+    }();
+    const bool fa_deq_device_default = true; // every device, AMD RDNA3 included (R19D D1, 2026-09-06)
+    const bool fa_deq_allowed = fa_deq_env < 0 ? fa_deq_device_default : (fa_deq_env == 1);
+    if (k_quant && v_quant && neq1 >= 64) {
+        static bool once = false;
+        if (!once) {
+            once = true;
+            // stderr on purpose: llama-server drops ggml INFO at default verbosity; this receipt must
+            // be readable in an A/B's own server log (same channel as the q6_k direct-scales line).
+            fprintf(stderr, "ggml_vulkan: FA dequant-KV scratch: %s (%s)\n", fa_deq_allowed ? "ON" : "OFF",
+                    fa_deq_env < 0 ? "device default" : "GGML_ARIFI_FA_DEQUANT_KV");
+        }
+    }
     // lane-196: a segmented partition reads its tensor IN PLACE — materialising an F16 copy of the
     // body is the exact cost this design removes, so the dequant-scratch fast path is refused here.
-    const bool use_dequant_kv = part == nullptr && k_quant && v_quant && neq1 >= 64 &&
+    const bool use_dequant_kv = part == nullptr && k_quant && v_quant && neq1 >= 64 && fa_deq_allowed &&
                                 is_dense_kv_cache(k) && is_dense_kv_cache(v) &&
                                 (uint64_t)ggml_nelements(k) * sizeof(ggml_fp16_t) <= ctx->device->properties.limits.maxStorageBufferRange &&
                                 (uint64_t)ggml_nelements(v) * sizeof(ggml_fp16_t) <= ctx->device->properties.limits.maxStorageBufferRange &&
