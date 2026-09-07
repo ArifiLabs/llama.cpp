@@ -1,4 +1,4 @@
-From 19654fce11b62f983e70e4b843be661ee2e1b411 Mon Sep 17 00:00:00 2001
+From 299db0849583b8d7abf65f0e96957f509a70425b Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:40 -0400
 Subject: [PATCH] 
@@ -9,10 +9,10 @@ Subject: [PATCH]
  1 file changed, 2 insertions(+), 4 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 3438dce7e..2ba2377eb 100644
+index cd49f1273..b5fdf5169 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -18617,8 +18617,6 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18850,8 +18850,6 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      case GGML_TYPE_TURBO3_0:
                      case GGML_TYPE_TURBO4_0:
                          return true;
@@ -21,7 +21,7 @@ index 3438dce7e..2ba2377eb 100644
                      default:
                          return false;
                      }
-@@ -18678,6 +18676,8 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18911,6 +18909,8 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
              {
                  if ((op->src[0]->type != GGML_TYPE_F32 && op->src[0]->type != GGML_TYPE_F16) ||
                      (op->src[1]->type != GGML_TYPE_I32 && op->src[1]->type != GGML_TYPE_I64)) {
@@ -30,7 +30,7 @@ index 3438dce7e..2ba2377eb 100644
                  // turbo shaders use a 128-element block: head_dim must be divisible by 128
                  if ((op->type == GGML_TYPE_TURBO2_0 || op->type == GGML_TYPE_TURBO3_0 || op->type == GGML_TYPE_TURBO4_0)
                      && (op->src[0]->ne[0] % 128 != 0)) {
-@@ -18945,8 +18945,6 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -19177,8 +19177,6 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
          case GGML_OP_CONV_2D_DW:
              return (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16)
                  && op->src[1]->type == GGML_TYPE_F32;

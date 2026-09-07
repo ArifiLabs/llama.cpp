@@ -1,4 +1,4 @@
-From fa41d2ca1786eb61277595f324287a9121d21308 Mon Sep 17 00:00:00 2001
+From b276a9b1c278af013be1774bc7470120fc9859a5 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:16 -0400
 Subject: [PATCH] 
@@ -10,10 +10,10 @@ Subject: [PATCH]
  2 files changed, 16 insertions(+), 5 deletions(-)
 
 diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
-index c3b8fe7e7..a0582a7f7 100644
+index c6e27f4ef..4b8cc2c42 100644
 --- a/src/llama-kv-cache.cpp
 +++ b/src/llama-kv-cache.cpp
-@@ -2134,6 +2134,11 @@ void llama_kv_cache::set_input_pos_bucket(ggml_tensor * dst, const llama_ubatch
+@@ -2141,6 +2141,11 @@ void llama_kv_cache::set_input_pos_bucket(ggml_tensor * dst, const llama_ubatch
  }
  
  void llama_kv_cache::set_input_k_rot(ggml_tensor * dst) const {
@@ -26,10 +26,10 @@ index c3b8fe7e7..a0582a7f7 100644
  
      const auto n_rot = dst->ne[0];
 diff --git a/src/models/glm-dsa.cpp b/src/models/glm-dsa.cpp
-index 93a1448b4..03da613ad 100644
+index 44d883274..6e64c1215 100644
 --- a/src/models/glm-dsa.cpp
 +++ b/src/models/glm-dsa.cpp
-@@ -292,11 +292,17 @@ llama_model_glm_dsa::graph::graph(const llama_model & model, const llm_graph_par
+@@ -286,11 +286,17 @@ llama_model_glm_dsa::graph::graph(const llama_model & model, const llm_graph_par
                                       ext_factor, attn_factor, beta_fast, beta_slow);
                  cb(indexer_k, "indexer_k", il);
  

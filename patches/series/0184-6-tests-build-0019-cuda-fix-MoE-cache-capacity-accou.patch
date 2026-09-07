@@ -1,4 +1,4 @@
-From 242330d5bc21d265e0579284c7d43721b6188ad7 Mon Sep 17 00:00:00 2001
+From 813569dbd6977324c00f2f9720dc7d9a02025a2e Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:58:09 -0400
 Subject: [PATCH] 
@@ -14,7 +14,7 @@ Subject: [PATCH]
  create mode 100644 tests/test-moe-cache.cpp
 
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
-index fd647b6e7..a9e0a7724 100644
+index 621415ae8..c5b3fe7a0 100644
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
 @@ -306,6 +306,13 @@ if (NOT LLAMA_SANITIZE_ADDRESS AND NOT GGML_SCHED_NO_REALLOC)
@@ -29,8 +29,8 @@ index fd647b6e7..a9e0a7724 100644
 +
 +llama_build_and_test(test-moe-cache-fit.cpp)
  
- llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
- llama_build_and_test(test-autorelease.cpp       LABEL "model")
+ # the tensor API kernels come from a separate metallib - check they produce correct results
+ # ref: https://github.com/ggml-org/llama.cpp/issues/27473
 diff --git a/tests/test-arg-parser.cpp b/tests/test-arg-parser.cpp
 index e0907631a..e8f216651 100644
 --- a/tests/test-arg-parser.cpp

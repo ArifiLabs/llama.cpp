@@ -37,6 +37,57 @@
         "Origin": "Ported and env-gated as GGML_VK_NONTEMPORAL_WEIGHTS so base and treatment are the SAME BINARY, plus a one-shot ENGAGEMENT RECEIPT at INFO so a TIED result cannot be mistaken for a no-op (the wave32 lesson).",
         "Measured-effect": "UNMEASURED, and expected not to transfer: the PR's proven chain is Mesa-only (NonTemporal -> NIR -> ACO -> SLC) and this rig is DRIVER_ID_AMD_PROPRIETARY 26.7.1 (LLPC). Correctness gate + measurement owed before any verdict."
       }
+    },
+    {
+      "sha": "7a40b423e",
+      "sha_full": "7a40b423eca672670b7425a02fd13049f18a091c",
+      "branch": "lane-220/b10825-2026-09-06 (arifi/main line)",
+      "subject": "b10636 bump repair: restore upstream's DOTS3NOTE indexer arch + the two TAG_LLAMA_SEQ_ID_NEG TODOs that a whole-file --theirs resolution reverted. checkout --theirs takes stage 3 (the WHOLE file), not just the conflicting hunks - upstream's 4-line b10524..b10636 delta to this file was lost with it. GLM_DSA is absent here PRE-EXISTING (also absent on lane165-pre-bump-arifi-main), so it is NOT restored by this commit and stays a President item.",
+      "classification": "UPSTREAM",
+      "evidence": "['registers/2026-08-29-fork-base-move-report.md', 'research/local-inference/lane-evidence/2026-08-29-b10636-bump-proofs/04-RESOLUTIONS.md']",
+      "trailers_owed": [
+        "Taken-from: ggml-org/llama.cpp@5a32f7b66 (Xuan-Son Nguyen, \"model: add dots3-note (#27060)\", MIT licenses/llama.cpp-MIT.txt)",
+        "Origin: bump repair - restores the upstream b10524..b10636 delta a whole-file --theirs resolution lost",
+        "Measured-effect: correctness only - restores 4 upstream lines lost to a whole-file --theirs resolution; no throughput claim"
+      ],
+      "recorded": "2026-09-07",
+      "recorded_by": "HQ seat-54 route B under the 2026-08-29 G7 ruling (no amend)",
+      "sha_pre_rebase": "434df54873c559230e9f53d5760b0f413e5ac214",
+      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
+    },
+    {
+      "sha": "197f8f343",
+      "sha_full": "197f8f343ca767d36ffe88946f3b6b86bea4e46f",
+      "branch": "lane-220/b10825-2026-09-06 (arifi/main line)",
+      "subject": "server: re-add the shared_draft_devices VRAM accounting on top of common_fit_extra_model (multi-device only)",
+      "classification": "FORK",
+      "evidence": "['registers/2026-08-29-latest-bump-report.md', 'registers/2026-08-29-release-attribution-audit.md', 'licenses/README.md (buun row)']",
+      "trailers_owed": [
+        "Taken-from: spiritbuun/buun-llama-cpp@26eb3d131 + @6d54354f7 (leloch, 2026-08-05, \"server: harden shared draft device placement\" / \"server: account for MTP placement in fit reservations\", MIT licenses/buun-MIT.txt)",
+        "Origin: RE-ADD after the b10636 base move (President ruling 2 of 2026-08-29); first carried by the fork on 2026-08-15 as lane-139 patches resolved/0029 + resolved/0033 (592e29ee2, af55226c9 - trailered only \"Assisted-by: Codex\")",
+        "Measured-effect: correctness only - multi-device VRAM accounting; inert on the single-device 780M (no A/B owed)"
+      ],
+      "recorded": "2026-09-07",
+      "recorded_by": "HQ seat-54 route B under the 2026-08-29 G7 ruling (no amend)",
+      "sha_pre_rebase": "5d644f0c59d4a2f99b638bc32d759a9204d833be",
+      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
+    },
+    {
+      "sha": "74ea96ac6",
+      "sha_full": "74ea96ac644bf0aee18aed2b8e406630dd2c067e",
+      "branch": "lane-220/b10825-2026-09-06 (arifi/main line)",
+      "subject": "vulkan: IQ3_S mat-vec 16 invocations per superblock at NUM_COLS >= 2 (zuijdwijk 211abf6a9 via lane-166, gate extended from >4; lane-209 rank 4; gates run next)",
+      "classification": "FORK",
+      "evidence": "['board/programs/local-inference/lanes/2026-09-02-lane-209-kernel-attacks-REPORT.md (§4 rank 4)', 'board/programs/local-inference/lanes/2026-08-29-lane-166-matvec-fix-REPORT.md', 'licenses/README.md (zuijdwijk row)']",
+      "trailers_owed": [
+        "Taken-from: LaurentZuijdwijk/llama.cpp@211abf6a9 (Marshall, 2026-08-20, \"vulkan: handle larger batch sizes (>4) efficiently for IQ3_S mat-vec\", MIT licenses/zuijdwijk-MIT.txt)",
+        "Origin: gate extended from NUM_COLS > 4 to >= 2 by lane-209 rank 4 (superseded by 4cfca0c08 union gate); first ported by lane-166 e146c1175",
+        "Measured-effect: n=3 39.7 -> 53.8 GB/s (+35%) test-backend-ops 17408x5120, n=5 x1.472, n=8 x4.803; serve U-Q3KXL df2 8.367 -> 9.268 t/s (+10.8%, CI [+0.622,+1.018], 8/8) - lane-209 rank 4 verdict"
+      ],
+      "recorded": "2026-09-07",
+      "recorded_by": "HQ seat-54 route B under the 2026-08-29 G7 ruling (no amend)",
+      "sha_pre_rebase": "10b2ed4afaa0d9c2121467f7a2c0fdb3ef17567e",
+      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
     }
   ]
 }

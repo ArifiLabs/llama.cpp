@@ -1,4 +1,4 @@
-From 9c484098fd37fff09b81c3c603a9815e7d3044ba Mon Sep 17 00:00:00 2001
+From c5dfc46e2c8b240e3c39d99ed1f890bc71ebbe00 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:39 -0400
 Subject: [PATCH] 
@@ -94,10 +94,10 @@ index 3ea720bfb..7fddafc85 100644
          shape_inputs.push_back({tensor.type, tensor.expert_size, tensor_bytes,
                  caps.scratch_bytes, caps.pool_bytes, cacheable});
 diff --git a/tools/mtmd/clip-impl.h b/tools/mtmd/clip-impl.h
-index f6045093c..eef76d756 100644
+index 72148a4d9..7fcf21f3e 100644
 --- a/tools/mtmd/clip-impl.h
 +++ b/tools/mtmd/clip-impl.h
-@@ -495,10 +495,13 @@ enum projector_type {
+@@ -499,10 +499,13 @@ enum projector_type {
      PROJECTOR_TYPE_MINIMAX_M3,
      PROJECTOR_TYPE_GRANITE4_VISION,
      PROJECTOR_TYPE_MIMO_AUDIO,
@@ -111,7 +111,7 @@ index f6045093c..eef76d756 100644
      PROJECTOR_TYPE_MUSE_GLIMMER,
      PROJECTOR_TYPE_UNKNOWN,
  };
-@@ -559,10 +562,13 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
+@@ -564,10 +567,13 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
      { PROJECTOR_TYPE_GRANITE4_VISION,   "granite4_vision"},
      { PROJECTOR_TYPE_MIMO_AUDIO,        "mimo_audio"},
      { PROJECTOR_TYPE_PARAKEET,          "parakeet"},
@@ -126,10 +126,10 @@ index f6045093c..eef76d756 100644
  };
  
 diff --git a/tools/mtmd/models/models.h b/tools/mtmd/models/models.h
-index 10546fa5d..61df3b0ee 100644
+index 5945c6d92..3b6525a5e 100644
 --- a/tools/mtmd/models/models.h
 +++ b/tools/mtmd/models/models.h
-@@ -434,3 +434,8 @@ struct clip_graph_muse_glimmer : clip_graph {
+@@ -439,3 +439,8 @@ struct clip_graph_muse_glimmer : clip_graph {
      clip_graph_muse_glimmer(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
      ggml_cgraph * build() override;
  };
@@ -139,10 +139,10 @@ index 10546fa5d..61df3b0ee 100644
 +    ggml_cgraph * build() override;
 +};
 diff --git a/tools/mtmd/mtmd-image.cpp b/tools/mtmd/mtmd-image.cpp
-index 0dda8770f..30905fcec 100644
+index c11d35c87..8dd99eefa 100644
 --- a/tools/mtmd/mtmd-image.cpp
 +++ b/tools/mtmd/mtmd-image.cpp
-@@ -1583,3 +1583,65 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
+@@ -1735,3 +1735,65 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
      output.append(hparams, resized_image, true);
      return output;
  }

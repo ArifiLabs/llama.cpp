@@ -1,4 +1,4 @@
-From 43c058851cac2d141a02cbfb512f3eeff5d44fc1 Mon Sep 17 00:00:00 2001
+From 210a1bcb1c54090d7d35579b6e704fc60aed30a2 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:00 -0400
 Subject: [PATCH] 
@@ -7,14 +7,14 @@ Subject: [PATCH]
 ---
  ggml/src/ggml-cuda/fattn-common.cuh |  6 ++++--
  ggml/src/ggml-cuda/ggml-cuda.cu     | 17 ++++++++++++-----
- ggml/src/ggml-sycl/ggml-sycl.cpp    |  3 +++
- 3 files changed, 19 insertions(+), 7 deletions(-)
+ ggml/src/ggml-sycl/ggml-sycl.cpp    |  2 ++
+ 3 files changed, 18 insertions(+), 7 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/fattn-common.cuh b/ggml/src/ggml-cuda/fattn-common.cuh
-index 9e6059787..c14ab85a2 100644
+index dd62b7269..e3022c18f 100644
 --- a/ggml/src/ggml-cuda/fattn-common.cuh
 +++ b/ggml/src/ggml-cuda/fattn-common.cuh
-@@ -1406,8 +1406,10 @@ void launch_fattn(
+@@ -1410,8 +1410,10 @@ void launch_fattn(
          hip_f16_alloc & operator=(const hip_f16_alloc &) = delete;
          ~hip_f16_alloc() {
              if (ptr) {
@@ -28,10 +28,10 @@ index 9e6059787..c14ab85a2 100644
          }
          void alloc(size_t nelements) {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 9176d2236..d45d1a129 100644
+index 1ce53a39f..07f856db0 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -601,12 +601,19 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+@@ -602,12 +602,19 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
              prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
              prop.location.id = physical_device;
              CUmemGenericAllocationHandle handle;
@@ -57,18 +57,15 @@ index 9176d2236..d45d1a129 100644
                  create_result = cuMemCreate(&handle, reserve_size, &prop, 0);
              }
 diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
-index 31cd21909..c8426b83e 100644
+index b2c90e2ef..9ea2897d2 100644
 --- a/ggml/src/ggml-sycl/ggml-sycl.cpp
 +++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
-@@ -6082,8 +6082,11 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
-                          op->type == GGML_TYPE_TURBO2_0 || op->type == GGML_TYPE_TURBO3_0 || op->type == GGML_TYPE_TURBO4_0) &&
-                         op->src[0]->type == GGML_TYPE_F32 &&
-                         (op->src[1]->type == GGML_TYPE_I64 || op->src[1]->type == GGML_TYPE_I32));
-+<<<<<<< ours
- >>>>>>> theirs
-                 return res;
-+=======
+@@ -6298,6 +6298,8 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+                 auto res = (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 ||
+                             op->src[0]->type == GGML_TYPE_BF16) &&
+                            (op->src[1]->type == GGML_TYPE_I64 || op->src[1]->type == GGML_TYPE_I32);
 +>>>>>>> theirs
++>>>>>>> 43c058851 (4-other-backends/0048-cuda-fit-fix-two-Werror-build-failures-in-the-new-ca.patch)
+                 return res;
              }
              break;
-         case GGML_OP_DSV4_HC_PRE:

@@ -1,4 +1,4 @@
-From 4533a514b3651ec11cc6ad54901ce8e6cf6a53f2 Mon Sep 17 00:00:00 2001
+From 08ee85906fc89b6cdc25436304694593508f6a64 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:12 -0400
 Subject: [PATCH] 
@@ -11,22 +11,22 @@ Subject: [PATCH]
  3 files changed, 44 insertions(+), 11 deletions(-)
 
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index 3350981f3..8adc15ee8 100644
+index aaf6d6aaa..0c1930e88 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -1171,7 +1171,6 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
+@@ -1176,7 +1176,6 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
          case LLM_ARCH_OLMO2:
          case LLM_ARCH_OLMOE:
          case LLM_ARCH_DEEPSEEK2:
 -        case LLM_ARCH_DEEPSEEK4:
          case LLM_ARCH_DEEPSEEK32:
+         case LLM_ARCH_HY_V4:
          case LLM_ARCH_DOTS3NOTE:
-         case LLM_ARCH_GLM_DSA:
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 471d14367..c756874d3 100644
+index aa64e1b08..a471ad2bd 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -377,6 +377,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -379,6 +379,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
      static const std::regex pattern_q_weight        ("blk\\.\\d*\\.attn_q.weight");
      static const std::regex pattern_kv_weight       ("blk\\.\\d*\\.attn_(k|v).weight");
      static const std::regex pattern_qkv_weight      ("blk\\.\\d*\\.attn_qkv.weight");
@@ -34,7 +34,7 @@ index 471d14367..c756874d3 100644
      static const std::regex pattern_q_bias          ("blk\\.\\d*\\.attn_q\\.bias");
      static const std::regex pattern_kv_bias         ("blk\\.\\d*\\.attn_(k|v)\\.bias");
      static const std::regex pattern_qkv_bias        ("blk\\.\\d*\\.attn_qkv.bias");
-@@ -385,7 +386,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -387,7 +388,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
      static const std::regex pattern_idx_cache       ("cache_idx_(k|v)_l\\d*");
      static const std::regex pattern_dsv4_state      ("dsv4_(csa|hca|lid)_state_(kv|score)_l\\d*");
      static const std::regex pattern_attn_sinks      ("blk\\.\\d*\\.attn_sinks.weight");
@@ -43,7 +43,7 @@ index 471d14367..c756874d3 100644
      static const std::regex pattern_attn_out_bias   ("blk\\.\\d*\\.attn_output.bias");
      static const std::regex pattern_attn_out_a_weight("blk\\.\\d*\\.attn_output_a\\.weight");
      static const std::regex pattern_attn_out_b_weight("blk\\.\\d*\\.attn_output_b\\.weight");
-@@ -516,6 +517,10 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -518,6 +519,10 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
          if (std::regex_match(tensor_name, pattern_qkv_weight)) {
              return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1, "attn_output.weight", "ssm_out.weight");
          }
@@ -54,7 +54,7 @@ index 471d14367..c756874d3 100644
          if ( std::regex_match(tensor_name, pattern_qkv_bias)) {
              return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0, "attn_output.weight", "ssm_out.weight");
          }
-@@ -523,7 +528,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
+@@ -525,7 +530,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
              return get_tensor_config_impl(tensor->ne[1] == 1 ? GGML_BACKEND_SPLIT_AXIS_MIRRORED : GGML_BACKEND_SPLIT_AXIS_1, "attn_output.weight");
          }
          if (std::regex_match(tensor_name, pattern_kv_cache) || std::regex_match(tensor_name, pattern_attn_sinks)) {
@@ -64,7 +64,7 @@ index 471d14367..c756874d3 100644
          if (std::regex_match(tensor_name, pattern_attn_out_weight)) {
              return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0);
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index f5477356d..a12acaa48 100644
+index f78cfb36d..031bba5a0 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
 @@ -44,8 +44,20 @@ static common_speculative_output_limits server_output_limits(const common_params

@@ -1,4 +1,4 @@
-From 3c0deecf11528d5a9713820094ba6b1bd6fa464d Mon Sep 17 00:00:00 2001
+From 7404be1918071f2f6c4c7aa89f11d6427073299f Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:19 -0400
 Subject: [PATCH] 
@@ -12,10 +12,10 @@ Subject: [PATCH]
  4 files changed, 42 insertions(+), 1 deletion(-)
 
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 30c0018e0..08d74b095 100644
+index 79343d8c1..619f72eab 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -953,6 +953,7 @@ const char * llm_type_name(llm_type type) {
+@@ -955,6 +955,7 @@ const char * llm_type_name(llm_type type) {
          case LLM_TYPE_24B_A2B:       return "24B.A2B";
          case LLM_TYPE_26B_A4B:       return "26B.A4B";
          case LLM_TYPE_30B_A3B:       return "30B.A3B";
@@ -24,7 +24,7 @@ index 30c0018e0..08d74b095 100644
          case LLM_TYPE_35B_A3B:       return "35B.A3B";
          case LLM_TYPE_48B_A3B:       return "48B.A3B";
 diff --git a/src/llama-model.h b/src/llama-model.h
-index f2944599e..861f6e6f8 100644
+index effbf84c9..2e77c03a8 100644
 --- a/src/llama-model.h
 +++ b/src/llama-model.h
 @@ -125,6 +125,7 @@ enum llm_type {
@@ -36,7 +36,7 @@ index f2944599e..861f6e6f8 100644
      LLM_TYPE_35B_A3B, // Qwen3.5
      LLM_TYPE_48B_A3B, // Kimi Linear
 diff --git a/src/models/laguna.cpp b/src/models/laguna.cpp
-index 82c9a9538..78974d801 100644
+index 556400bfc..54bb83140 100644
 --- a/src/models/laguna.cpp
 +++ b/src/models/laguna.cpp
 @@ -172,6 +172,9 @@ llama_model_laguna::graph::graph(const llama_model & model, const llm_graph_para
@@ -81,7 +81,7 @@ index 82c9a9538..78974d801 100644
      res->t_embd = cur;
  
 diff --git a/src/models/models.h b/src/models/models.h
-index 06b8d077e..5c3b60b61 100644
+index 893f8d898..32671ca1c 100644
 --- a/src/models/models.h
 +++ b/src/models/models.h
 @@ -1355,6 +1355,15 @@ struct llama_model_dflash : public llama_model_base {
