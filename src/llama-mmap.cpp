@@ -35,6 +35,10 @@
         #define PATH_MAX MAX_PATH
     #endif
     #include <io.h>
+    #include <fcntl.h>   // _O_RDONLY for the unbuffered handle wrap (R31/M17)
+    #include <malloc.h>  // _aligned_malloc
+    #include <memory>
+    #include <vector>
 #endif
 
 #if defined(__APPLE__)
@@ -84,7 +88,23 @@ struct llama_file::impl {
         return ret;
     }
 
-    impl(const char * fname, const char * mode, [[maybe_unused]] const bool use_direct_io = false) {
+    impl(const char * fname, const char * mode, const bool use_direct_io = false) {
+        // R31/M17 (lane-223): the Windows O_DIRECT. FILE_FLAG_NO_BUFFERING bypasses the page cache, which
+        // is what a model far bigger than RAM needs (a buffered read of a 93 GB file thrashes the cache the
+        // resident tensors live in). Unbuffered handles require sector-aligned offset/length/buffer, so
+        // reads go through read_aligned_chunk() with `alignment` = the volume's physical sector size.
+        // Runtime switch: --load-mode direct_io (use_direct_io) selects it; any failure falls back to the
+        // buffered fopen path below, exactly like the Linux O_DIRECT branch.
+        // Origin: FreeToken host_banks.py:380-471 (O_DIRECT readers) + upstream PR #25294 (llama_moe_stream_pread);
+        // this is the llama_file half, shared by --load-mode direct_io and any future expert streamer.
+        if (use_direct_io && std::strcmp(mode, "rb") == 0) {
+            if (init_unbuffered(fname)) {
+                return;
+            }
+            LLAMA_LOG_WARN("Failed to open file '%s' unbuffered (FILE_FLAG_NO_BUFFERING): %s. Falling back to buffered I/O\n",
+                           fname, GetErrorMessageWin32(GetLastError()).c_str());
+        }
+
         fp = ggml_fopen(fname, mode);
         if (fp == NULL) {
             throw std::runtime_error(format("failed to open %s: %s", fname, strerror(errno)));
@@ -93,6 +113,77 @@ struct llama_file::impl {
         seek(0, SEEK_END);
         size = tell();
         seek(0, SEEK_SET);
+    }
+
+    // open with FILE_FLAG_NO_BUFFERING; on success fp/fp_win32/size/alignment are set and true is returned
+    bool init_unbuffered(const char * fname) {
+        // UTF-8 -> UTF-16, as ggml_fopen does
+        const int wlen = MultiByteToWideChar(CP_UTF8, 0, fname, -1, NULL, 0);
+        if (wlen <= 0) {
+            return false;
+        }
+        std::vector<wchar_t> wfname(wlen);
+        MultiByteToWideChar(CP_UTF8, 0, fname, -1, wfname.data(), wlen);
+
+        HANDLE h = CreateFileW(wfname.data(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                               FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+        if (h == INVALID_HANDLE_VALUE) {
+            return false;
+        }
+
+        // sector size for the alignment rule; FILE_STORAGE_INFO is Win8+, 4096 is a multiple of any
+        // logical/physical sector size in use, so it is the safe default
+        size_t sector = 4096;
+#if _WIN32_WINNT >= 0x602
+        FILE_STORAGE_INFO fsi;
+        if (GetFileInformationByHandleEx(h, FileStorageInfo, &fsi, sizeof(fsi)) && fsi.PhysicalBytesPerSectorForAtomicity > 0) {
+            sector = std::max<size_t>(sector, fsi.PhysicalBytesPerSectorForAtomicity);
+        }
+#endif
+
+        LARGE_INTEGER li;
+        if (!GetFileSizeEx(h, &li)) {
+            CloseHandle(h);
+            return false;
+        }
+
+        // wrap the handle in a FILE* so file_id()/_fileno() and the mmap path keep working unchanged
+        const int fd = _open_osfhandle((intptr_t) h, _O_RDONLY);
+        if (fd == -1) {
+            CloseHandle(h);
+            return false;
+        }
+        FILE * f = _fdopen(fd, "rb");
+        if (f == NULL) {
+            _close(fd); // closes h too
+            return false;
+        }
+
+        fp        = f;
+        fp_win32  = h;
+        size      = (size_t) li.QuadPart;
+        alignment = sector;
+
+        // probe: one aligned read at offset 0 proves the volume honours the flag (network/overlay
+        // filesystems can accept the flag and then refuse aligned reads)
+        try {
+            std::vector<uint8_t> probe_dst(std::min<size_t>(size, 64));
+            if (!probe_dst.empty()) {
+                seek(0, SEEK_SET);
+                read_aligned_chunk(probe_dst.data(), probe_dst.size());
+                seek(0, SEEK_SET);
+            }
+        } catch (const std::exception & e) {
+            LLAMA_LOG_WARN("unbuffered probe read failed on '%s': %s\n", fname, e.what());
+            std::fclose(fp);
+            fp = NULL;
+            fp_win32 = NULL;
+            alignment = 1;
+            return false;
+        }
+
+        LLAMA_LOG_INFO("%s: opened '%s' unbuffered (FILE_FLAG_NO_BUFFERING, sector %zu)\n", __func__, fname, alignment);
+        return true;
     }
 
     impl(FILE * file) : owns_fp(false) {
@@ -127,7 +218,9 @@ struct llama_file::impl {
         }
     }
 
-    void read_raw(void * ptr, size_t len) {
+    // plain ReadFile loop; on an unbuffered handle the caller guarantees the alignment rule.
+    // allow_eof_pad: an unbuffered read of the last partial sector legitimately comes back short at EOF
+    void read_raw_unsafe(void * ptr, size_t len, bool allow_eof_pad = false) {
         size_t bytes_read = 0;
         while (bytes_read < len) {
             size_t chunk_size = std::min<size_t>(len - bytes_read, 64*1024*1024);
@@ -137,10 +230,48 @@ struct llama_file::impl {
                 throw std::runtime_error(format("read error: %s", GetErrorMessageWin32(GetLastError()).c_str()));
             }
             if (chunk_read < chunk_size || chunk_read == 0) {
+                if (allow_eof_pad && tell() == size) {
+                    // EOF inside the alignment padding: zero the rest, the caller only copies `len` real bytes
+                    std::memset(reinterpret_cast<char *>(ptr) + bytes_read + chunk_read, 0, len - bytes_read - chunk_read);
+                    return;
+                }
                 throw std::runtime_error("unexpectedly reached end of file");
             }
 
             bytes_read += chunk_read;
+        }
+    }
+
+    // unbuffered handles: read the sector-aligned superset into an aligned staging buffer, copy `size` bytes out
+    void read_aligned_chunk(void * dest, size_t sz) {
+        const size_t offset = tell();
+        const size_t aligned_offset      = offset & ~(alignment - 1);
+        const size_t offset_from_aligned = offset - aligned_offset;
+        const size_t bytes_to_read       = (offset_from_aligned + sz + alignment - 1) & ~(alignment - 1);
+
+        void * raw_buffer = _aligned_malloc(bytes_to_read, alignment);
+        if (raw_buffer == nullptr) {
+            throw std::runtime_error(format("_aligned_malloc(%zu, %zu) failed", bytes_to_read, alignment));
+        }
+        struct aligned_buffer_deleter {
+            void operator()(void * p) const { _aligned_free(p); }
+        };
+        std::unique_ptr<void, aligned_buffer_deleter> buffer(raw_buffer);
+
+        seek(aligned_offset, SEEK_SET);
+        read_raw_unsafe(buffer.get(), bytes_to_read, /*allow_eof_pad =*/ true);
+
+        std::memcpy(dest, reinterpret_cast<const char *>(buffer.get()) + offset_from_aligned, sz);
+
+        // leave the logical position where a buffered read would have left it
+        seek(offset + sz, SEEK_SET);
+    }
+
+    void read_raw(void * ptr, size_t len) {
+        if (has_direct_io()) {
+            read_aligned_chunk(ptr, len);
+        } else {
+            read_raw_unsafe(ptr, len);
         }
     }
 
@@ -171,8 +302,9 @@ struct llama_file::impl {
         write_raw(&val, sizeof(val));
     }
 
+    // true only for a FILE_FLAG_NO_BUFFERING handle (alignment = sector size); buffered opens read plainly
     bool has_direct_io() const {
-        return true;
+        return alignment > 1;
     }
 
     ~impl() {
@@ -427,7 +559,7 @@ int llama_file::file_id() const {
 void llama_file::seek(size_t offset, int whence) const { pimpl->seek(offset, whence); }
 void llama_file::read_raw(void * ptr, size_t len) { pimpl->read_raw(ptr, len); }
 #ifdef _WIN32
-void llama_file::read_raw_unsafe(void * ptr, size_t len) { pimpl->read_raw(ptr, len); }
+void llama_file::read_raw_unsafe(void * ptr, size_t len) { pimpl->read_raw_unsafe(ptr, len); }
 #else
 void llama_file::read_raw_unsafe(void * ptr, size_t len) { pimpl->read_raw_unsafe(ptr, len); }
 #endif
