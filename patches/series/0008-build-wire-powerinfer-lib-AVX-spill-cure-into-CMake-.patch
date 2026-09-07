@@ -1,4 +1,4 @@
-From ef2ed94a03309dd3235e98fa962e212f01a191cf Mon Sep 17 00:00:00 2001
+From da03505ec297a38d45f4b291a8d4d4584aab2441 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:31:02 -0400
 Subject: [PATCH] build: wire powerinfer lib + AVX-spill cure into CMake
@@ -14,7 +14,7 @@ Measured-effect: Build-system only.
  3 files changed, 14 insertions(+)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 1d4bcf45f..6a19395ef 100644
+index 86b09dfd4..4a80cd020 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -207,6 +207,14 @@ if (LLAMA_USE_SYSTEM_GGML)
@@ -33,10 +33,10 @@ index 1d4bcf45f..6a19395ef 100644
      set(GGML_BUILD_NUMBER ${LLAMA_BUILD_NUMBER})
      set(GGML_BUILD_COMMIT ${LLAMA_BUILD_COMMIT})
 diff --git a/ggml/src/ggml-cpu/CMakeLists.txt b/ggml/src/ggml-cpu/CMakeLists.txt
-index 3c6343fb2..631782136 100644
+index 17540faa6..4ae5b85da 100644
 --- a/ggml/src/ggml-cpu/CMakeLists.txt
 +++ b/ggml/src/ggml-cpu/CMakeLists.txt
-@@ -664,6 +664,10 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
+@@ -670,6 +670,10 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
  
      message(STATUS "Adding CPU backend variant ${GGML_CPU_NAME}: ${ARCH_FLAGS} ${ARCH_DEFINITIONS}")
      target_sources(${GGML_CPU_NAME} PRIVATE ${GGML_CPU_SOURCES})
@@ -48,10 +48,10 @@ index 3c6343fb2..631782136 100644
      target_compile_definitions(${GGML_CPU_NAME} PRIVATE ${ARCH_DEFINITIONS})
  
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 8922dc12a..b88043b21 100644
+index 221e14f7f..72e28adcc 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -61,6 +61,8 @@ target_include_directories(llama PRIVATE .)
+@@ -58,6 +58,8 @@ target_include_directories(llama PRIVATE . ${CMAKE_CURRENT_BINARY_DIR})
  target_include_directories(llama PUBLIC ../include)
  target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
  

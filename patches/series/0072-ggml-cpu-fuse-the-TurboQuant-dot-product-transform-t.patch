@@ -1,4 +1,4 @@
-From 12bb082349e11536f25190e0412d718b2306277c Mon Sep 17 00:00:00 2001
+From 8f7895381a7c386c5b5f03ab5deede89e40d9438 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 01:07:42 -0400
 Subject: [PATCH] ggml-cpu: fuse the TurboQuant dot product - transform the
@@ -52,10 +52,10 @@ index d0ffc37c2..90880f979 100644
 +const float * arifi_tq3_centroids(void) { return TQ3_0_CENTROIDS; }
 +const float * arifi_tq4_centroids(void) { return TQ4_0_CENTROIDS; }
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index 671994027..1e2cef814 100644
+index bc11918e4..87d929916 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
-@@ -382,43 +382,103 @@ static void ggml_vec_dot_rocmfpx_fp8_q8_0(int n, float * GGML_RESTRICT s, size_t
+@@ -383,43 +383,103 @@ static void ggml_vec_dot_rocmfpx_fp8_q8_0(int n, float * GGML_RESTRICT s, size_t
  
  
  #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
@@ -190,7 +190,7 @@ index 671994027..1e2cef814 100644
      }
  
      *s = sum;
-@@ -429,7 +489,7 @@ static void ggml_vec_dot_tq3_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
+@@ -430,7 +490,7 @@ static void ggml_vec_dot_tq3_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
                                       const void * GGML_RESTRICT vy, size_t by, int nrc) {
      GGML_ASSERT(nrc == 1);
      GGML_UNUSED(bs); GGML_UNUSED(bx); GGML_UNUSED(by); GGML_UNUSED(nrc);
@@ -199,7 +199,7 @@ index 671994027..1e2cef814 100644
  }
  
  static void ggml_vec_dot_tq4_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
-@@ -437,7 +497,7 @@ static void ggml_vec_dot_tq4_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
+@@ -438,7 +498,7 @@ static void ggml_vec_dot_tq4_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs,
                                       const void * GGML_RESTRICT vy, size_t by, int nrc) {
      GGML_ASSERT(nrc == 1);
      GGML_UNUSED(bs); GGML_UNUSED(bx); GGML_UNUSED(by); GGML_UNUSED(nrc);

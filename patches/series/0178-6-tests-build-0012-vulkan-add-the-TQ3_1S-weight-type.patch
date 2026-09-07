@@ -1,4 +1,4 @@
-From 24cf38ca5617bf9debb6139329fcf6236e40be71 Mon Sep 17 00:00:00 2001
+From 45ba6c62c3fe4bb4205f71a4725c0fd0c66d656d Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:59 -0400
 Subject: [PATCH] 6-tests-build/0012-vulkan-add-the-TQ3_1S-weight-type.patch
@@ -8,10 +8,10 @@ Subject: [PATCH] 6-tests-build/0012-vulkan-add-the-TQ3_1S-weight-type.patch
  1 file changed, 29 insertions(+), 3 deletions(-)
 
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index 8ad2e153d..e3fa52e42 100644
+index bac1d5e18..926645d72 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -2463,9 +2463,10 @@ struct test_set_rows : public test_case {
+@@ -2548,9 +2548,10 @@ struct test_set_rows : public test_case {
              err_estimate /= 0.25f*float(ne[0] * r * ne[2]*nr23[0] * ne[3]*nr23[1]);
              return err_estimate;
          }
@@ -25,7 +25,7 @@ index 8ad2e153d..e3fa52e42 100644
              return 0.01;
          }
          return 1e-7;
-@@ -9534,6 +9535,31 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+@@ -9964,6 +9965,31 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
          }
      }
  

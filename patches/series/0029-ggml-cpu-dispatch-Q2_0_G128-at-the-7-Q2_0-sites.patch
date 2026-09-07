@@ -1,4 +1,4 @@
-From a8c3594459370b9d3a37aa81f812b9d1f2fb2943 Mon Sep 17 00:00:00 2001
+From f569b47cc5a14e35c886410ad2b9ff79e71f2d4b Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 06:55:05 -0400
 Subject: [PATCH] ggml-cpu: dispatch Q2_0_G128 at the 7 Q2_0 sites
@@ -15,7 +15,7 @@ Measured-effect: build fix only
  1 file changed, 7 insertions(+)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 17e30bdb1..5529cd6e2 100644
+index 119229512..bf36d4b97 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -670,6 +670,7 @@ void ggml_compute_forward_add(
@@ -42,7 +42,7 @@ index 17e30bdb1..5529cd6e2 100644
          case GGML_TYPE_Q4_0:
          case GGML_TYPE_Q4_1:
          case GGML_TYPE_Q5_0:
-@@ -4522,6 +4525,7 @@ void ggml_compute_forward_out_prod(
+@@ -4655,6 +4658,7 @@ void ggml_compute_forward_out_prod(
      switch (src0->type) {
          case GGML_TYPE_Q1_0:
          case GGML_TYPE_Q2_0:
@@ -50,7 +50,7 @@ index 17e30bdb1..5529cd6e2 100644
          case GGML_TYPE_Q4_0:
          case GGML_TYPE_Q4_1:
          case GGML_TYPE_Q5_0:
-@@ -4798,6 +4802,7 @@ void ggml_compute_forward_set(
+@@ -4931,6 +4935,7 @@ void ggml_compute_forward_set(
          case GGML_TYPE_BF16:
          case GGML_TYPE_Q1_0:
          case GGML_TYPE_Q2_0:
@@ -58,7 +58,7 @@ index 17e30bdb1..5529cd6e2 100644
          case GGML_TYPE_Q4_0:
          case GGML_TYPE_Q4_1:
          case GGML_TYPE_Q5_0:
-@@ -5023,6 +5028,7 @@ void ggml_compute_forward_get_rows(
+@@ -5156,6 +5161,7 @@ void ggml_compute_forward_get_rows(
      switch (src0->type) {
          case GGML_TYPE_Q1_0:
          case GGML_TYPE_Q2_0:
@@ -66,7 +66,7 @@ index 17e30bdb1..5529cd6e2 100644
          case GGML_TYPE_Q4_0:
          case GGML_TYPE_Q4_1:
          case GGML_TYPE_Q5_0:
-@@ -5780,6 +5786,7 @@ void ggml_compute_forward_clamp(
+@@ -5913,6 +5919,7 @@ void ggml_compute_forward_clamp(
          case GGML_TYPE_BF16:
          case GGML_TYPE_Q1_0:
          case GGML_TYPE_Q2_0:

@@ -1,4 +1,4 @@
-From 375dca315ed9d511305c4a5c119db0d798009112 Mon Sep 17 00:00:00 2001
+From 9dd1c2bbb30ebe2e4fdd6efb2b09c4e984124768 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:50 -0400
 Subject: [PATCH] 
@@ -12,10 +12,10 @@ Subject: [PATCH]
  create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/tq_rotate_act.comp
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 2e4714f95..7fbe21b52 100644
+index eccff2da7..c44b0119e 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -5478,6 +5478,17 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5510,6 +5510,17 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
          ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_MXFP4],   "mul_mat_vec_id_mxfp4_f32",   OCP_DMMV_LEN(arr_dmmv_id_mxfp4_f32_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_id_mxfp4_f32_f32, reduc16), "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
          ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_NVFP4],   "mul_mat_vec_id_nvfp4_f32",   OCP_DMMV_LEN(arr_dmmv_id_nvfp4_f32_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_id_nvfp4_f32_f32, reduc16), "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
  
@@ -33,7 +33,7 @@ index 2e4714f95..7fbe21b52 100644
  #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
          if (device->integer_dot_product) {
              const uint32_t subgroup_size_int = (device->vendor_id == VK_VENDOR_ID_INTEL && device->subgroup_size_control) ? device->subgroup_min_size : device->subgroup_size;
-@@ -8164,7 +8175,14 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
+@@ -8202,7 +8213,14 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
          case GGML_TYPE_IQ4_NL:
          case GGML_TYPE_MXFP4:
          case GGML_TYPE_NVFP4:
@@ -48,7 +48,7 @@ index 2e4714f95..7fbe21b52 100644
              break;
          default:
              return nullptr;
-@@ -8187,6 +8205,13 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
+@@ -8225,6 +8243,13 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
          }
      }
  
@@ -62,7 +62,7 @@ index 2e4714f95..7fbe21b52 100644
      if (b_type == GGML_TYPE_Q8_1) {
          if (ctx->device->vendor_id == VK_VENDOR_ID_INTEL) {
              dmmv_wg = DMMV_WG_SIZE_SUBGROUP;
-@@ -18553,19 +18578,24 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -18786,19 +18811,24 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
              {
                  ggml_type src0_type = op->src[0]->type;
                  if (op->op == GGML_OP_MUL_MAT_ID) {
