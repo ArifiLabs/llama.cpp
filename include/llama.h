@@ -1011,6 +1011,16 @@ extern "C" {
 // Getting the state for a seq_id with this flag invalidates all prior states gotten for that seq_id with this flag.
 #define LLAMA_STATE_SEQ_FLAGS_ON_DEVICE 2
 
+// Device storage slot selector for LLAMA_STATE_SEQ_FLAGS_ON_DEVICE (bits 8..15, 0..255).
+// Each (seq_id, storage) pair owns its own device copy, so a ring of N on-device
+// checkpoints per sequence coexists: get with STORAGE(i), set with the same STORAGE(i).
+// Storage 0 keeps the historical single-copy behaviour (a new get invalidates the prior one).
+// Origin: FreeToken linear_state_pool.py:188-194 (pooled GDN snapshot slots) ported onto the
+// upstream on-device state path (lane-223, R31/M14).
+#define LLAMA_STATE_SEQ_FLAGS_STORAGE_SHIFT 8
+#define LLAMA_STATE_SEQ_FLAGS_STORAGE_MASK  0xFF00u
+#define LLAMA_STATE_SEQ_FLAGS_STORAGE(i)    (((uint32_t) (i) << LLAMA_STATE_SEQ_FLAGS_STORAGE_SHIFT) & LLAMA_STATE_SEQ_FLAGS_STORAGE_MASK)
+
     typedef uint32_t llama_state_seq_flags;
 
     LLAMA_API size_t llama_state_seq_get_size_ext(

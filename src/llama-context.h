@@ -396,7 +396,14 @@ private:
     ggml_backend_buffer_ptr buf_output;
 
     // keep copies of the per-sequence memory on the device
-    std::map<llama_seq_id, llama_memory_buffers> mem_storage;
+    // key = (storage slot from LLAMA_STATE_SEQ_FLAGS_STORAGE(i)) << 32 | seq_id, so several
+    // on-device checkpoints per sequence coexist (R31/M14 device checkpoint ring)
+    std::map<int64_t, llama_memory_buffers> mem_storage;
+
+    static int64_t mem_storage_key(llama_seq_id seq_id, llama_state_seq_flags flags) {
+        const int64_t storage = (flags & LLAMA_STATE_SEQ_FLAGS_STORAGE_MASK) >> LLAMA_STATE_SEQ_FLAGS_STORAGE_SHIFT;
+        return (storage << 32) | (int64_t) (uint32_t) seq_id;
+    }
 
     bool has_evaluated_once = false;
 

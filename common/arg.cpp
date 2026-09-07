@@ -262,6 +262,12 @@ static void parse_tensor_buffer_overrides(const std::string & value, std::vector
         if (buft) {
             buft_list[ggml_backend_buft_name(buft)] = buft;
         }
+        // host buffer types (e.g. CUDA_Host) so CPU-resident tensors can use pinned memory
+        // Origin: upstream PR #28223 (Inovello), union by ArifiLabs lane-223 R31
+        auto * host_buft = ggml_backend_dev_host_buffer_type(dev);
+        if (host_buft) {
+            buft_list[ggml_backend_buft_name(host_buft)] = host_buft;
+        }
     }
 
     for (const auto & override : string_split<std::string>(value, ',')) {
@@ -1751,6 +1757,36 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.checkpoint_min_step = value;
         }
     ).set_env("LLAMA_ARG_CHECKPOINT_MIN_SPACING_NT").set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--ctx-checkpoints-device"}, "{auto,on,off}",
+        "keep context checkpoints in device buffers instead of host copies (default: auto = on for recurrent/hybrid models); "
+        "off = the host copy path (generic fallback)",
+        [](common_params & params, const std::string & value) {
+            if (value == "auto") {
+                params.ctx_checkpoints_device = -1;
+            } else if (value == "on" || value == "1") {
+                params.ctx_checkpoints_device = 1;
+            } else if (value == "off" || value == "0") {
+                params.ctx_checkpoints_device = 0;
+            } else {
+                throw std::invalid_argument("invalid value for --ctx-checkpoints-device: " + value);
+            }
+        }
+    ).set_env("LLAMA_ARG_CTX_CHECKPOINTS_DEVICE").set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--ctx-checkpoints-toolcall"}, "{on,off}",
+        "create a context checkpoint at the first sampled tool-call opener so the next turn resumes there "
+        "even when the client rewrites the echoed tool call (default: on; needs --ctx-checkpoints > 0)",
+        [](common_params & params, const std::string & value) {
+            if (value == "on" || value == "1") {
+                params.ctx_checkpoints_toolcall = true;
+            } else if (value == "off" || value == "0") {
+                params.ctx_checkpoints_toolcall = false;
+            } else {
+                throw std::invalid_argument("invalid value for --ctx-checkpoints-toolcall: " + value);
+            }
+        }
+    ).set_env("LLAMA_ARG_CTX_CHECKPOINTS_TOOLCALL").set_examples({LLAMA_EXAMPLE_SERVER}));
     add_opt(common_arg(
         {"-cram", "--cache-ram"}, "N",
         string_format("set the maximum cache size in MiB (default: %d, -1 - no limit, 0 - disable)"

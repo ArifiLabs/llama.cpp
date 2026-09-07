@@ -3629,7 +3629,7 @@ size_t llama_context::state_seq_get_size(llama_seq_id seq_id, llama_state_seq_fl
 size_t llama_context::state_seq_get_data(llama_seq_id seq_id, uint8_t * dst, size_t size, llama_state_seq_flags flags) {
     std::unique_ptr<llama_io_write_i> io;
     if (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) {
-        io = std::make_unique<llama_io_write_device>(dst, size, mem_storage[seq_id]);
+        io = std::make_unique<llama_io_write_device>(dst, size, mem_storage[mem_storage_key(seq_id, flags)]);
     } else {
         io = std::make_unique<llama_io_write_host>(dst, size);
     }
@@ -3660,9 +3660,11 @@ size_t llama_context::state_seq_set_data(llama_seq_id seq_id, const uint8_t * sr
         llama_seq_id seq_id_read;
         io->read(&seq_id_read, sizeof(seq_id_read));
 
-        GGML_ASSERT(mem_storage.find(seq_id_read) != mem_storage.end());
+        const int64_t key = mem_storage_key(seq_id_read, flags);
 
-        io = std::make_unique<llama_io_read_device>(src, size, mem_storage[seq_id_read]);
+        GGML_ASSERT(mem_storage.find(key) != mem_storage.end());
+
+        io = std::make_unique<llama_io_read_device>(src, size, mem_storage[key]);
     } else {
         io = std::make_unique<llama_io_read_host>(src, size);
     }

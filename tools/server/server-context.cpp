@@ -556,6 +556,15 @@ struct server_slot {
     // must not append more prompt tokens on top of a restored state
     bool prompt_checkpoint_restored = false;
 
+    // R31/M14: round-robin device storage id for the on-device context checkpoint ring
+    // (ids 1..n_ctx_checkpoints+1; storage 0 stays with the speculative checkpoint)
+    uint32_t ckpt_storage_next = 0;
+
+    // R31/M15: tool-call anchor (FreeToken scheduler.py:117-125, :357-362, :866-871)
+    std::vector<llama_token> toolcall_anchor_tokens; // opener token ids for this task's template
+    bool toolcall_anchor_pending = false;            // sampled the opener, checkpoint owed before its decode
+    bool toolcall_anchor_done    = false;            // one anchor per task
+
     stop_type stop;
 
     std::string stopping_word;
@@ -645,6 +654,9 @@ struct server_slot {
         has_new_line   = false;
         truncated      = false;
         prompt_checkpoint_restored = false;
+        toolcall_anchor_pending = false;
+        toolcall_anchor_done    = false;
+        toolcall_anchor_tokens.clear();
         stop           = STOP_TYPE_NONE;
         stopping_word  = "";
         n_sent_text    = 0;
@@ -2246,6 +2258,29 @@ private:
         // the per-request limit takes priority over the global one
         slot.n_predict_max = task.params.n_predict != -1 ? task.params.n_predict : params_base.n_predict;
 
+        // R31/M15: the tool-call opener ids come from the chat template's grammar triggers
+        // (token triggers directly; word triggers when the word is a single token). ASSUMED: templates
+        // whose opener is a multi-token word get no anchor - env LLAMA_TOOLCALL_ANCHOR_TOKEN=<id> overrides.
+        slot.toolcall_anchor_tokens.clear();
+        slot.toolcall_anchor_pending = false;
+        slot.toolcall_anchor_done    = false;
+        if (params_base.ctx_checkpoints_toolcall && params_base.n_ctx_checkpoints > 0) {
+            for (const auto & trigger : task.params.sampling.grammar_triggers) {
+                if (trigger.type == COMMON_GRAMMAR_TRIGGER_TYPE_TOKEN && trigger.token != LLAMA_TOKEN_NULL) {
+                    slot.toolcall_anchor_tokens.push_back(trigger.token);
+                } else if (trigger.type == COMMON_GRAMMAR_TRIGGER_TYPE_WORD && !trigger.value.empty()) {
+                    const auto ids = common_tokenize(vocab, trigger.value, /*add_special =*/ false, /*parse_special =*/ true);
+                    if (ids.size() == 1) {
+                        slot.toolcall_anchor_tokens.push_back(ids[0]);
+                    }
+                }
+            }
+            static const char * env_anchor = getenv("LLAMA_TOOLCALL_ANCHOR_TOKEN");
+            if (env_anchor != nullptr) {
+                slot.toolcall_anchor_tokens.push_back((llama_token) atoi(env_anchor));
+            }
+        }
+
         slot.task = std::make_unique<const server_task>(std::move(task));
 
         slot.state = slot.task->is_child()
@@ -2263,6 +2298,14 @@ private:
         // remember which tokens were sampled - used for repetition penalties during sampling
         const std::string token_str = result.text_to_send;
         slot.sampled = result.tok;
+
+        // R31/M15: first sampled tool-call opener -> freeze a checkpoint right before it is decoded.
+        // A client that rewrites the echoed tool call diverges strictly after the opener, so the
+        // next turn resumes at the anchor instead of re-prefilling the whole assistant turn.
+        if (params_base.ctx_checkpoints_toolcall && !slot.toolcall_anchor_done && !slot.toolcall_anchor_tokens.empty() &&
+            std::find(slot.toolcall_anchor_tokens.begin(), slot.toolcall_anchor_tokens.end(), result.tok) != slot.toolcall_anchor_tokens.end()) {
+            slot.toolcall_anchor_pending = true;
+        }
 
         slot.generated_text += token_str;
         if (slot.task->params.return_tokens) {
@@ -2734,18 +2777,61 @@ private:
         return true;
     }
 
+    // R31/M14: context checkpoints can live in device buffers (llama_io_*_device) instead of the
+    // host copy that costs ~0.9 s per prompt on the GDN hybrids (SPINE section 6). Runtime switch:
+    // --ctx-checkpoints-device auto|on|off; auto = on when the target memory has a recurrent part
+    // (that is the state the host copy is slow for), generic path = the host copy.
+    // Origin: FreeToken hybrid_radix_cache.py:76-113 + linear_state_pool.py:188-194 (pooled device
+    // snapshots), expressed through upstream's LLAMA_STATE_SEQ_FLAGS_ON_DEVICE + the storage ring.
+    bool ctx_ckpt_on_device() const {
+        if (params_base.ctx_checkpoints_device == 0) {
+            return false;
+        }
+        if (params_base.ctx_checkpoints_device == 1) {
+            return true;
+        }
+        return ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS ||
+               ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+    }
+
+    llama_state_seq_flags ctx_ckpt_flags(server_slot & slot) {
+        llama_state_seq_flags flags = LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY;
+        if (ctx_ckpt_on_device()) {
+            // ring of n_ctx_checkpoints + 1 storage ids: the live list never exceeds
+            // n_ctx_checkpoints entries, all among the last n created, so a reused id is dead
+            const uint32_t n_ring  = (uint32_t) params_base.n_ctx_checkpoints + 1;
+            const uint32_t storage = 1 + (slot.ckpt_storage_next++ % n_ring);
+            flags |= LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(storage);
+        }
+        return flags;
+    }
+
+    // the checkpoint gate shared by the prompt path and the tool-call anchor
+    bool slot_can_checkpoint(const server_slot & slot) const {
+        if (params_base.n_ctx_checkpoints <= 0) {
+            return false;
+        }
+        if (!slot.task || slot.task->type != SERVER_TASK_TYPE_COMPLETION) {
+            return false;
+        }
+        return ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
+               ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS ||
+               n_swa > 0;
+    }
+
     // n_tokens_cur: the number of tokens added to the batch for the current slot
-    void create_checkpoint(server_slot & slot, const int64_t n_tokens_cur, llama_pos pos_min, llama_pos pos_max) {
+    // anchor: R31/M15 tool-call anchor - exempt from min-step thinning
+    void create_checkpoint(server_slot & slot, const int64_t n_tokens_cur, llama_pos pos_min, llama_pos pos_max, bool anchor = false) {
         const int id_task = slot.task->id;
 
         // evict checkpoints within min-step of a previous checkpoint, unless they were
-        // created by the current task
+        // created by the current task (or are tool-call anchors)
         // only when the list is full, otherwise short prompts keep just the oldest checkpoint
         int64_t last = -1;
         for (auto it = slot.prompt.checkpoints.begin();
                 slot.prompt.checkpoints.size() + 1 >= (size_t) params_base.n_ctx_checkpoints &&
                 it != slot.prompt.checkpoints.end(); ) {
-            if (it->id_task != id_task && last >= 0 && it->n_tokens <= last + params_base.checkpoint_min_step) {
+            if (!it->anchor && it->id_task != id_task && last >= 0 && it->n_tokens <= last + params_base.checkpoint_min_step) {
                 SLT_TRC(slot, "erasing context checkpoint too close to an earlier one (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", size = %.3f MiB)\n",
                         it->pos_min, it->pos_max, it->n_tokens, (float) it->size() / 1024 / 1024);
 
@@ -2783,21 +2869,29 @@ private:
         auto & cur = slot.prompt.checkpoints.emplace_back();
 
         cur.id_task = id_task;
+        cur.anchor  = anchor;
 
         // [TAG_CHECKPOINTS_FIX_POS_MIN]
         // TODO: here we incorrectly deterimne that the saved checkpoint data covers the [pos_min, pos_max] range
         //       this is not true for SWA models: https://github.com/ggml-org/llama.cpp/pull/24411#issuecomment-4677983225
         cur.update_pos(slot.prompt.n_tokens() - n_tokens_cur, pos_min, pos_max);
 
-        cur.update_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-        cur.update_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+        const int64_t t_start = ggml_time_us();
+
+        // one storage id per checkpoint; the draft context has its own storage map, so the
+        // same flags address the matching draft copy
+        const llama_state_seq_flags flags = ctx_ckpt_flags(slot);
+
+        cur.update_tgt(ctx_tgt, slot.id, flags);
+        cur.update_dft(ctx_dft, slot.id, flags);
         // stash the draft's speculative state with the checkpoint
         common_speculative_get_state(spec.get(), slot.id, cur.data_spec);
 
         SLT_TRC(slot,
-                "created context checkpoint %d of %d (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", size = %.3f MiB)\n",
+                "created context checkpoint %d of %d (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", size = %.3f MiB, %s, anchor = %d, %.3f ms)\n",
                 (int) slot.prompt.checkpoints.size(), params_base.n_ctx_checkpoints, cur.pos_min,
-                cur.pos_max, cur.n_tokens, (float) cur.size() / 1024 / 1024);
+                cur.pos_max, cur.n_tokens, (float) cur.size() / 1024 / 1024,
+                cur.on_device() ? "device" : "host", (int) anchor, (ggml_time_us() - t_start) / 1000.0);
     }
 
     // returns false to decline the task, it is offered again after the decode is done
@@ -3550,6 +3644,25 @@ private:
 
         // update the batch with the sampled/drafted tokens
         iterate(generating, [&](server_slot & slot) {
+            // R31/M15: tool-call anchor - the sampled opener is not in the batch yet, so the
+            // checkpoint covers exactly the state before the tool call (FreeToken scheduler.py:866-871)
+            if (slot.toolcall_anchor_pending) {
+                slot.toolcall_anchor_pending = false;
+                slot.toolcall_anchor_done    = true;
+
+                // ASSUMED (verify in the A/B with the DFlash2 drafter on): at this point the target
+                // memory holds exactly prompt.n_tokens() tokens in both the plain and the drafted path
+                // (the speculative checkpoint above captures the same state), so no spec gate is needed
+                if (slot_can_checkpoint(slot)) {
+                    const auto pos_min = llama_memory_seq_pos_min(llama_get_memory(ctx_tgt), slot.id);
+                    const auto pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_tgt), slot.id);
+                    if (pos_min >= 0) {
+                        create_checkpoint(slot, /*n_tokens_cur =*/ 0, pos_min, pos_max, /*anchor =*/ true);
+                        SLT_INF(slot, "tool-call anchor checkpoint at n_tokens = %d (opener token %d)\n", slot.prompt.n_tokens(), slot.sampled);
+                    }
+                }
+            }
+
             slot.handle_last_sampled_token(batch);
         });
 
@@ -3818,9 +3931,10 @@ private:
                                     bool do_reset = it == slot.prompt.checkpoints.rend();
 
                                     if (!do_reset) {
-                                        // restore the context checkpoint
-                                        it->load_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-                                        if (ctx_dft && !it->try_load_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY)) {
+                                        // restore the context checkpoint (with the flags it was captured under:
+                                        // the device storage id lives in them - R31/M14)
+                                        it->load_tgt(ctx_tgt, slot.id, it->flags_tgt);
+                                        if (ctx_dft && !it->try_load_dft(ctx_dft, slot.id, it->flags_dft)) {
                                             // reject the draft image instead of aborting the process
                                             SLT_WRN(slot, "%s", "draft checkpoint image rejected - clearing drafter sequence\n");
                                             llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, -1, -1);

@@ -446,6 +446,100 @@ static bool test_seq_cp_device(struct llama_model * model, const struct common_p
 }
 
 
+// Test 9: device storage ring (R31/M14, LLAMA_STATE_SEQ_FLAGS_STORAGE)
+// - snapshot seq 0 into device storage 1, then advance seq 0 and snapshot into storage 2
+// - restoring storage 1 into seq 1 must reproduce the ORIGINAL continuation (storage 2 did not clobber it)
+// - restoring storage 2 must still work afterwards (both copies coexist)
+// RED on the single-store code (storage bits ignored -> the second get overwrites the first)
+static bool test_seq_storage_ring(struct llama_model * model, const struct common_params & params, const llama_tokens & tokens, const generation_result & expected_result) {
+    auto params_ctx = common_context_params_to_llama(params);
+    params_ctx.n_seq_max = 2;
+    auto ctx = llama_context_ptr{llama_init_from_model(model, params_ctx)};
+
+    auto sparams = llama_sampler_chain_default_params();
+    auto smpl = llama_sampler_ptr{llama_sampler_chain_init(sparams)};
+    llama_sampler_chain_add(smpl.get(), llama_sampler_init_dist(params.sampling.seed));
+
+    LOGV(LOG_LEVEL_INFO, "\n=== Test 9: device storage ring ===\n");
+
+    llama_tokens unused_sts(tokens.size());
+    size_t n_token_count_out = 0;
+
+    if (!llama_state_load_file(ctx.get(), params.out_file.data(), unused_sts.data(), unused_sts.size(), &n_token_count_out)) {
+        LOG_ERR("\n%s: failed to load state\n", __func__);
+        return false;
+    }
+
+    int n_past = (int) n_token_count_out - 1;
+    if (!common_replay_last_token(ctx.get(), tokens.back(), n_past)) {
+        return false;
+    }
+    n_past++;
+
+    const uint32_t fl1 = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(1);
+    const uint32_t fl2 = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(2);
+
+    auto get_state = [&](uint32_t fl, std::vector<uint8_t> & store) {
+        store.resize(llama_state_seq_get_size_ext(ctx.get(), 0, fl));
+        const size_t n = llama_state_seq_get_data_ext(ctx.get(), store.data(), store.size(), 0, fl);
+        if (n != store.size()) {
+            LOG_ERR("\n%s: get_data returned %zd, expected %zd\n", __func__, n, store.size());
+            return false;
+        }
+        return true;
+    };
+
+    std::vector<uint8_t> store1;
+    std::vector<uint8_t> store2;
+
+    // snapshot 1: the state at n_past
+    if (!get_state(fl1, store1)) {
+        return false;
+    }
+
+    // advance seq 0, then snapshot 2 into a different storage slot
+    {
+        auto smpl_tmp = llama_sampler_ptr{llama_sampler_chain_init(sparams)};
+        llama_sampler_chain_add(smpl_tmp.get(), llama_sampler_init_dist(params.sampling.seed));
+        int n_past_adv = n_past; // generate_tokens advances its n_past; keep the snapshot position
+        const auto advanced = generate_tokens(ctx.get(), smpl_tmp.get(), n_past_adv, params.n_predict, 0);
+        if (advanced.empty()) {
+            return false;
+        }
+    }
+    if (!get_state(fl2, store2)) {
+        return false;
+    }
+
+    // restore snapshot 1 into seq 1 and continue: must match the baseline continuation
+    llama_memory_clear(llama_get_memory(ctx.get()), true);
+    {
+        const size_t nset = llama_state_seq_set_data_ext(ctx.get(), store1.data(), store1.size(), 1, fl1);
+        if (nset != store1.size()) {
+            LOG_ERR("\n%s: storage 1 restore returned %zd, expected %zd\n", __func__, nset, store1.size());
+            return false;
+        }
+    }
+
+    if (!generate_tokens_compare(ctx.get(), smpl.get(), n_past, params.n_predict, 1, expected_result)) {
+        LOG_ERR("\n%s: error: storage 1 was clobbered by the storage 2 snapshot (generation differs from expected)\n", __func__);
+        return false;
+    }
+
+    // storage 2 must still be restorable after storage 1 was used
+    llama_memory_clear(llama_get_memory(ctx.get()), true);
+    {
+        const size_t nset = llama_state_seq_set_data_ext(ctx.get(), store2.data(), store2.size(), 1, fl2);
+        if (nset != store2.size()) {
+            LOG_ERR("\n%s: storage 2 restore returned %zd, expected %zd\n", __func__, nset, store2.size());
+            return false;
+        }
+    }
+
+    LOGV(LOG_LEVEL_INFO, "\nPASS\n");
+    return true;
+}
+
 // Test 6/7: seq copy (scatter)
 // - decode the same prefix on two sequences, interleaving seq 0 cells between the seq 1 cells
 // - save the seq 1 state, free the interleaved seq 0 cells, and restore via the given io path
@@ -609,7 +703,7 @@ struct test_suite {
 
 // column headers for the --models table, one per test, in the order they are run
 static const std::vector<const char *> test_names = {
-    "baseline", "seq_rm", "state_load", "cp_h", "cp_d", "cp_h_s", "cp_d_s", "rt",
+    "baseline", "seq_rm", "state_load", "cp_h", "cp_d", "cp_h_s", "cp_d_s", "rt", "ring",
 };
 
 // Run the full save/load test suite (tests 1-8) for a single model.
@@ -687,6 +781,13 @@ static test_suite run_save_load_tests_for_model(const std::string & model_path, 
 
     // Test 8: state blob round-trip
     suite.results.push_back(test_state_roundtrip(model, params, tokens) ? test_status::PASS : test_status::FAIL);
+
+    // Test 9: device storage ring (R31/M14); compares against the baseline generation
+    if (!result_baseline.empty()) {
+        suite.results.push_back(test_seq_storage_ring(model, params, tokens, result_baseline) ? test_status::PASS : test_status::FAIL);
+    } else {
+        suite.results.push_back(test_status::SKIP);
+    }
 
     return suite;
 }

@@ -1776,10 +1776,20 @@ server_prompt_cache_state * server_prompt_cache::alloc(const server_prompt & pro
         return nullptr;
     }
 
+    // R31/M14: device-resident checkpoints reference storage slots the slot keeps reusing, so a
+    // copy parked in the RAM cache would go stale; keep only the host-resident ones (device
+    // checkpoints are cheap to recreate, that is their point)
+    std::list<common_prompt_checkpoint> checkpoints_host;
+    for (const auto & ckpt : prompt.checkpoints) {
+        if (!ckpt.on_device()) {
+            checkpoints_host.push_back(ckpt);
+        }
+    }
+
     states.push_back({
         /*.prompt =*/ {
             /*.tokens      =*/ prompt.tokens.clone(),
-            /*.checkpoints =*/ prompt.checkpoints,
+            /*.checkpoints =*/ std::move(checkpoints_host),
         },
         /*.data   =*/ {
             /*.main =*/ std::move(state_data_tgt),
