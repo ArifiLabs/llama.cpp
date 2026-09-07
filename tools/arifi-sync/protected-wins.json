@@ -45,7 +45,7 @@
       "id": "vulkan-concat-transpose-deltanet",
       "status": "active",
       "mechanism": "Tiled CONCAT dispatch for a transposed src1, taken on the delta-net conv state. A dedicated concat_transpose shader plus a selector branch ahead of the pre-existing cpy_transpose_02_32/02_16 tiled branch; the two predicates select disjoint pipelines.",
-      "commit": "50ad74343bfd349e8782c546ed2cd0a979f441bf",
+      "commit": "3caa602adc45d27fc3f265618d7625750fefd234",
       "protected_paths": [
         "ggml/src/ggml-vulkan/vulkan-shaders/concat_transpose.comp",
         "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
@@ -56,8 +56,12 @@
         "GGML_VK_CONCAT_TRANSPOSE"
       ],
       "symbols": {
-        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": ["ggml_vk_concat_is_transposed"],
-        "ggml/src/ggml-vulkan/vulkan-shaders/concat_transpose.comp": ["main"]
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": [
+          "ggml_vk_concat_is_transposed"
+        ],
+        "ggml/src/ggml-vulkan/vulkan-shaders/concat_transpose.comp": [
+          "main"
+        ]
       },
       "opt_out": "GGML_VK_CONCAT_TRANSPOSE=0",
       "evidence": [
@@ -71,13 +75,16 @@
       "notes": "The win is op-level and statistically zero at the seat. It is retained anyway: a win is a win even if it is small (mandate root cause 1).",
       "commit_pre_rebase_chain": [
         "5b1b416cb9beec3f9d987de47149b06a989e1783"
+      ],
+      "sha_pre_rebase_chain": [
+        "50ad74343bfd349e8782c546ed2cd0a979f441bf"
       ]
     },
     {
       "id": "vulkan-tq-matvec-subgroup",
       "status": "active",
       "mechanism": "Subgroup-cooperative TQ mat-vec. Register WHT via subgroupShuffleXor replaces the 32-thread shared-memory butterfly, removing hot-loop barriers and unpinning the workgroup. The legacy 32-thread shaders remain as the fallback for devices without 32-multiple subgroups.",
-      "commit": "963c25b44ffdf657ce1e78b67af30b69ce39bec0",
+      "commit": "3c5ac214e9c1dbd189ccc18c4cca88decb54b404",
       "protected_paths": [
         "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq_sg.comp",
         "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
@@ -87,7 +94,10 @@
         "GGML_VK_DISABLE_TQ_SUBGROUP"
       ],
       "symbols": {
-        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq_sg.comp": ["compute_outputs", "main"]
+        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq_sg.comp": [
+          "compute_outputs",
+          "main"
+        ]
       },
       "opt_out": "GGML_VK_DISABLE_TQ_SUBGROUP=1",
       "evidence": [
@@ -102,16 +112,21 @@
         "7749cace6"
       ],
       "also_commits": [
+        "cb2bd09a7189b89b6b158d0029c9b1bda16f8e21",
+        "aa8f8feca2cb10e753cc0f052a8ce35e63293ad9"
+      ],
+      "_also_commits_note": "2026-09-06 R17B (Fable 5.1 MEDIUM, lane-210): also_commits attached for R13B's b10819 repair commits, which carry a `Measured-effect:` trailer (build/test result) and therefore refuse `protected-win validate` as UNREGISTERED. They are REPAIRS of this registered mechanism on the new base, not new wins: the baseline ledger is closed by mechanism to post-tip shas, and registering a repair as its own win would be an invented entry. R13B/HQ may re-home them; the disposition is recorded here so the gate's silence is explained, not bought. 697027562: tq_rotate joins upstream's y_needs_reformat flag in ggml-vulkan.cpp (the TurboQuant activation-rotate staging this entry's mat-vec consumes) - closes the assert abort at test-backend-ops case 12343 and the unsynced prealloc_y hazard. 6ef196cd1: six merge-defect repairs including defect 2 (the tq_rotate staging member rename in ggml-vulkan.cpp, this entry's protected path); the other five surfaces (llama-context/llama-model per-layer accessors for the PowerInfer grafts, dflash.cpp brace, qwen35.cpp n_kv_max, speculative.cpp chunked DFlash union) are named in its own message.",
+      "sha_pre_rebase_chain": [
+        "963c25b44ffdf657ce1e78b67af30b69ce39bec0",
         "69702756272e2112b717dad2662c52ce066c41d2",
         "6ef196cd1320dcea2181a60d10bbc2dd641f1bac"
-      ],
-      "_also_commits_note": "2026-09-06 R17B (Fable 5.1 MEDIUM, lane-210): also_commits attached for R13B's b10819 repair commits, which carry a `Measured-effect:` trailer (build/test result) and therefore refuse `protected-win validate` as UNREGISTERED. They are REPAIRS of this registered mechanism on the new base, not new wins: the baseline ledger is closed by mechanism to post-tip shas, and registering a repair as its own win would be an invented entry. R13B/HQ may re-home them; the disposition is recorded here so the gate's silence is explained, not bought. 697027562: tq_rotate joins upstream's y_needs_reformat flag in ggml-vulkan.cpp (the TurboQuant activation-rotate staging this entry's mat-vec consumes) - closes the assert abort at test-backend-ops case 12343 and the unsynced prealloc_y hazard. 6ef196cd1: six merge-defect repairs including defect 2 (the tq_rotate staging member rename in ggml-vulkan.cpp, this entry's protected path); the other five surfaces (llama-context/llama-model per-layer accessors for the PowerInfer grafts, dflash.cpp brace, qwen35.cpp n_kv_max, speculative.cpp chunked DFlash union) are named in its own message."
+      ]
     },
     {
       "id": "vulkan-escha-mm-column-block",
       "status": "active",
       "mechanism": "Column-blocked escha_mm: one weight decode serves C columns, removing redundant decode work rather than load pressure. C=8 shipped, with a fall-back to the one-column pipeline below a full block, and every dispatch bounded to 32 columns (the F-124 host-freeze guard).",
-      "commit": "596c640f4c149991ea1790cbb9699871357d1c85",
+      "commit": "f8716ab56a7538ac466c9d35238dd78ad36e0a09",
       "also_commits": [
         "edd9c1528",
         "b0d9c3152",
@@ -127,8 +142,15 @@
         "ESCHA_SG_HADAMARD"
       ],
       "symbols": {
-        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": ["ggml_vk_escha_mm", "ggml_vk_escha_ensure_lut"],
-        "ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp": ["escha_F", "hadamard128", "main"]
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": [
+          "ggml_vk_escha_mm",
+          "ggml_vk_escha_ensure_lut"
+        ],
+        "ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp": [
+          "escha_F",
+          "hadamard128",
+          "main"
+        ]
       },
       "evidence": [
         "commit:596c640f4c149991ea1790cbb9699871357d1c85",
@@ -142,13 +164,16 @@
       "notes": "C=16 is the next untested step and is deliberately not assumed.",
       "commit_pre_rebase_chain": [
         "146f1bf8b"
+      ],
+      "sha_pre_rebase_chain": [
+        "596c640f4c149991ea1790cbb9699871357d1c85"
       ]
     },
     {
       "id": "escha-w2-decode-correctness",
       "status": "active",
       "mechanism": "Full 64-bit pair sourcing plus the row-parity correction in the Escha weight decode. K=2 had windowed a bare u16 where the reference PTX builds a 64-bit pair and windows a 32-bit suffix, so 7 of every 8 weights decoded from truncated data; the tile scatter row term used (c & 1) where the PTX predicate inverts it, which nulled K=3.",
-      "commit": "93ea397ce390bd630b95f8685dac39c7b12e14ae",
+      "commit": "c5982591fcf4375ae661362701e7cfefa7f663e3",
       "protected_paths": [
         "ggml/src/ggml-cpu/ops.cpp",
         "ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp"
@@ -158,7 +183,11 @@
         "escha2"
       ],
       "symbols": {
-        "ggml/src/ggml-cpu/ops.cpp": ["ggml_compute_forward_escha_mm", "escha_decode_tile_k2", "escha_decode_tile_k3"]
+        "ggml/src/ggml-cpu/ops.cpp": [
+          "ggml_compute_forward_escha_mm",
+          "escha_decode_tile_k2",
+          "escha_decode_tile_k3"
+        ]
       },
       "evidence": [
         "commit:93ea397ce390bd630b95f8685dac39c7b12e14ae",
@@ -171,13 +200,16 @@
       "notes": "Registered because the mandate's protection is of the winning FORMULA, and a decode that is fast and wrong is not a candidate at all.",
       "commit_pre_rebase_chain": [
         "be74d3cff"
+      ],
+      "sha_pre_rebase_chain": [
+        "93ea397ce390bd630b95f8685dac39c7b12e14ae"
       ]
     },
     {
       "id": "cpu-vnni-repack-dual-residency",
       "status": "active",
       "mechanism": "Dual residency for the VNNI weight repack (GGML_ARIFI_VNNI_REPACK=2): keeps the decode win of mode 1 while leaving prefill on its original path, and fixes the hot-path cost that ate the first implementation.",
-      "commit": "a77a2f9f369d62cf4708365171ddf02cde1d2ee1",
+      "commit": "eae07ca1c6a326ef8b56ab04af6548cfae2cc67c",
       "protected_paths": [
         "ggml/src/ggml-cpu/repack.cpp"
       ],
@@ -185,7 +217,11 @@
         "GGML_ARIFI_VNNI_REPACK"
       ],
       "symbols": {
-        "ggml/src/ggml-cpu/repack.cpp": ["ggml_arifi_vnni_repack_dual_enabled", "ggml_arifi_dual_eligible", "ggml_arifi_dual_shadow_ensure"]
+        "ggml/src/ggml-cpu/repack.cpp": [
+          "ggml_arifi_vnni_repack_dual_enabled",
+          "ggml_arifi_dual_eligible",
+          "ggml_arifi_dual_shadow_ensure"
+        ]
       },
       "opt_out": "GGML_ARIFI_VNNI_REPACK unset (mode 0)",
       "evidence": [
@@ -199,13 +235,16 @@
       "valid_conditions": "CPU tier, g64 ternary models, -ngl 0. Mode 1 remains the wrong trade on this workload: it pays -65% to -80% of prefill for the same decode.",
       "commit_pre_rebase_chain": [
         "2fb12c5c6"
+      ],
+      "sha_pre_rebase_chain": [
+        "a77a2f9f369d62cf4708365171ddf02cde1d2ee1"
       ]
     },
     {
       "id": "powerinfer-moe-streaming-hook",
       "status": "active",
       "mechanism": "Generic MoE streaming hook with a SiLU op-type and standalone expert prefetch - the warm-regime fix for disk-streamed sparse inference.",
-      "commit": "418f711ac1bd3c900a3e5fa6dadf75de571ae8d8",
+      "commit": "782a730b5b293482e3bf662f3131c680830f8d90",
       "protected_paths": [
         "src/llama-graph.cpp"
       ],
@@ -222,13 +261,16 @@
       "valid_conditions": "Disk-streamed sparse MoE with an expert bundle present. Inert without one.",
       "commit_pre_rebase_chain": [
         "52fb1de16"
+      ],
+      "sha_pre_rebase_chain": [
+        "418f711ac1bd3c900a3e5fa6dadf75de571ae8d8"
       ]
     },
     {
       "id": "powerinfer-pipeline-init-reuse",
       "status": "active",
       "mechanism": "Per-ubatch pipeline init with guarded reuse, so the streamed-MoE pipeline is rebuilt only when it must be.",
-      "commit": "cc52b658de83a75287e2396484f66ab3ae0e64ce",
+      "commit": "cfb977c9356fab569e0b9d32ca2da58abf7f9218",
       "protected_paths": [
         "src/llama-context.cpp"
       ],
@@ -247,16 +289,20 @@
         "297eec3d2"
       ],
       "also_commits": [
-        "6ef196cd1320dcea2181a60d10bbc2dd641f1bac"
+        "aa8f8feca2cb10e753cc0f052a8ce35e63293ad9"
       ],
-      "_also_commits_note": "2026-09-06 R17B (Fable 5.1 MEDIUM, lane-210): also_commits attached for R13B's b10819 repair commits, which carry a `Measured-effect:` trailer (build/test result) and therefore refuse `protected-win validate` as UNREGISTERED. They are REPAIRS of this registered mechanism on the new base, not new wins: the baseline ledger is closed by mechanism to post-tip shas, and registering a repair as its own win would be an invented entry. R13B/HQ may re-home them; the disposition is recorded here so the gate's silence is explained, not bought. 6ef196cd1 defect 1: src/llama-context.cpp (this entry's protected path) - upstream turned n_ff_exp/n_expert_used into per-layer accessors; the pipeline graft reads them with il=0, the prior single-value semantics. Same commit as the vulkan-tq-matvec-subgroup also_commit; one sha, two homes, because one repair commit touched two registered mechanisms."
+      "_also_commits_note": "2026-09-06 R17B (Fable 5.1 MEDIUM, lane-210): also_commits attached for R13B's b10819 repair commits, which carry a `Measured-effect:` trailer (build/test result) and therefore refuse `protected-win validate` as UNREGISTERED. They are REPAIRS of this registered mechanism on the new base, not new wins: the baseline ledger is closed by mechanism to post-tip shas, and registering a repair as its own win would be an invented entry. R13B/HQ may re-home them; the disposition is recorded here so the gate's silence is explained, not bought. 6ef196cd1 defect 1: src/llama-context.cpp (this entry's protected path) - upstream turned n_ff_exp/n_expert_used into per-layer accessors; the pipeline graft reads them with il=0, the prior single-value semantics. Same commit as the vulkan-tq-matvec-subgroup also_commit; one sha, two homes, because one repair commit touched two registered mechanisms.",
+      "sha_pre_rebase_chain": [
+        "cc52b658de83a75287e2396484f66ab3ae0e64ce",
+        "6ef196cd1320dcea2181a60d10bbc2dd641f1bac"
+      ]
     },
     {
       "id": "powerinfer-windows-port-avx-cure",
       "status": "active",
       "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` in protected-win-baseline.json (4672638cf). Its own row said the protected paths span a vendored tree and had to be enumerated first; the R6 subtree fix makes `powerinfer/` a guardable path, so the enumeration is no longer owed.",
       "mechanism": "The ArifiLabs Windows port of the vendored PowerInfer streaming library: the io_uring read path rewritten onto Win32, plus the `-mprefer-vector-width=128` MinGW codegen cure carried on ggml-cpu. The flag is not a tuning preference - the hand-written AVX in this tree spills and crashes under the MinGW/winlibs toolchain without it.",
-      "commit": "be7d592a37cc8c9c0dbf4a1326ae4d4776176a42",
+      "commit": "e258435da9a92398d778b970f8ba5764ebc4cade",
       "also_commits": [
         "ef2ed94a03309dd3235e98fa962e212f01a191cf"
       ],
@@ -279,6 +325,9 @@
       "notes": "`powerinfer` is registered as a SUBTREE deliberately: it is a vendored tree carrying our port, new files land inside it, and a file-by-file list would go stale silently. The cost is that any incoming touch under it refuses until a comparison is recorded.",
       "commit_pre_rebase_chain": [
         "4672638cf8eb0bdedb30b264ede342c4ad82803a"
+      ],
+      "sha_pre_rebase_chain": [
+        "be7d592a37cc8c9c0dbf4a1326ae4d4776176a42"
       ]
     },
     {
@@ -286,7 +335,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (655f2f9a3). Its row asked whether the already-registered `powerinfer-moe-streaming-hook` is the same mechanism. CHECKED, and it is not: that entry protects src/llama-graph.cpp on the anchor EXPERT_BUNDLE_PATH (the READ side); this commit is src/llama-model.cpp on GENERATE_EXPERT_BUNDLE (the WRITE side). Different file, different gate, so it is registered separately rather than folded in as an also_commit.",
       "mechanism": "Expert-bundle WRITER inside the model loader: with GENERATE_EXPERT_BUNDLE set, the up/gate/down expert matrices of every layer are streamed out through ExpertBundleBuilder in the layout the streaming reader expects, then the process exits. Without it there is no bundle for the streaming hook to consume.",
-      "commit": "7d5efbad57a92b366f20b3981834d12e564db10e",
+      "commit": "e5b4c84e1c024e5db8a390b95e8d6581f96853e7",
       "protected_paths": [
         "src/llama-model.cpp"
       ],
@@ -305,6 +354,9 @@
       "valid_conditions": "MoE models with per-expert ffn_up/gate/down tensors. Inert with the env unset.",
       "commit_pre_rebase_chain": [
         "655f2f9a33f9c78fe4b375404476bb58a33d75ff"
+      ],
+      "sha_pre_rebase_chain": [
+        "7d5efbad57a92b366f20b3981834d12e564db10e"
       ]
     },
     {
@@ -312,7 +364,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (11c9a7702); its row asked only that the quality gate be stated before an entry was written, and it is stated below.",
       "mechanism": "Carve-out in ggml_repack_get_optimal_repack_type: while either expert-bundle env is set, the ffn_up/gate/down expert tensors are refused a repack traits object and fall through to the plain path. The bundle holds plain Q4_0 bytes and the streaming kernels read plain Q4_0, so an AARCH64 repack of those tensors silently reinterprets them.",
-      "commit": "df6ec6a1fc0efe675f9bf02a0e05313678815192",
+      "commit": "87dd24346704e5267980c5636aab747ea8408bad",
       "protected_paths": [
         "ggml/src/ggml-cpu/repack.cpp"
       ],
@@ -330,6 +382,9 @@
       "notes": "Correctness class, same as escha-w2-decode-correctness: an incoming change that is faster but lets the repack claim streamed experts loses outright. Speed cannot buy this one back.",
       "commit_pre_rebase_chain": [
         "11c9a7702b75135496880546e0660c4f5e1c897a"
+      ],
+      "sha_pre_rebase_chain": [
+        "df6ec6a1fc0efe675f9bf02a0e05313678815192"
       ]
     },
     {
@@ -337,7 +392,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (bca0f5b9a), noted as real and measured; the entry below is that row written out.",
       "mechanism": "GPU-safe staging edge for the streamed-MoE pipeline: ggml_moe_pipeline_build_tasks builds its output with ggml_dup, not ggml_view_tensor. A view keeps sharing the source buffer, so with -ngl the CPU-side pipeline op would dereference a device pointer; the dup gives the op its own tensor and lets the scheduler insert the device-to-host copy. Carries the CPU zero-copy path and the LANE110_PROF per-op timing gate alongside it.",
-      "commit": "0bc4169e125d191800903f8242aac2fc07284331",
+      "commit": "a6324c47c091fcd1fccc6458cf3864be8bbc13e5",
       "protected_paths": [
         "ggml/src/ggml.c",
         "ggml/src/ggml-cpu/ops.cpp"
@@ -347,7 +402,9 @@
         "GGML_OP_MOE_PIPELINE_BUILD_TASKS"
       ],
       "symbols": {
-        "ggml/src/ggml-cpu/ops.cpp": ["powerinfer_forward_moe_pipeline_build_tasks"]
+        "ggml/src/ggml-cpu/ops.cpp": [
+          "powerinfer_forward_moe_pipeline_build_tasks"
+        ]
       },
       "evidence": [
         "board/programs/local-inference/lanes/2026-07-19-lane-110-REPORT.md",
@@ -359,6 +416,9 @@
       "valid_conditions": "Streamed-MoE with any GPU offload in play. With -ngl 0 the dup is redundant but harmless; it must survive anyway, because the defect only appears on the offloaded arm.",
       "commit_pre_rebase_chain": [
         "bca0f5b9aada62a95639e407fa4fe1de3e6ec585"
+      ],
+      "sha_pre_rebase_chain": [
+        "0bc4169e125d191800903f8242aac2fc07284331"
       ]
     },
     {
@@ -366,7 +426,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-209 rank-3 R6. Was TWO `REGISTRATION OWED` rows (bf0abf0be and 39a585bd5), re-dispositioned there on 2026-09-04 under the President's capability law. They share one guard and one capability, so they are one entry with an also_commit rather than two entries that could drift apart.",
       "mechanism": "ROCmFP4 / ROCmFPX serialized weight formats: the format sources and their CPU quant, dequant, validate and vec_dot paths, plus the type ids, ftype ids, quantizer wiring and gguf-py registry that make a ROCmFPX artifact loadable. Adopted verbatim from charlie12345/ROCmFPX so its GGUFs and its convert/quantize tooling interoperate byte-for-byte.",
-      "commit": "8639a12e616b8a3d82aeb624a70be9ae853f1aaf",
+      "commit": "667ee75c4d3793c3b130d56cf578ee9703ec20a2",
       "also_commits": [
         "39a585bd51901738f3fd9221f2b430270bfd42b9"
       ],
@@ -394,6 +454,9 @@
       "notes": "protected_paths names only the two subtrees that are wholly this mechanism. The shared core files it also touches (ggml.h, ggml.c, ggml-quants.c, ggml-cpu.c, ops.cpp, llama.h, llama-model-loader.cpp, llama-quant.cpp, quantize.cpp, gguf-py/gguf/constants.py) are guarded by the ANCHOR half instead, deliberately: those files change on nearly every bump, and pinning them as paths would refuse every sync for a reason that is almost never the real one. The anchors catch what actually threatens this win - a renumbering or removal of the type/ftype ids. That is a signal-to-noise choice and it is named here so it can be revisited, not discovered.",
       "commit_pre_rebase_chain": [
         "bf0abf0be6ed1ce4f9c9cefb28fc4adb7ec4bb18"
+      ],
+      "sha_pre_rebase_chain": [
+        "8639a12e616b8a3d82aeb624a70be9ae853f1aaf"
       ]
     },
     {
@@ -401,7 +464,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (e44c0bb0d), which said the protected paths and quality gate for a DEFAULT, as distinct from a kernel, were not settled. They are settled below: the path is the predicate's own file and the gate is engagement in both arms.",
       "mechanism": "The measured DEFAULT decision on top of the VNNI repack slot: ggml_arifi_vnni_repack_enabled() returns true only for an exact \"1\", so unset takes the no-repack branch. This DIVERGES DELIBERATELY from PrismML's upstream default of ON. It is a different object from the kernel it gates - `cpu-vnni-repack-dual-residency` protects the kernel, and every anchor of that entry would still resolve after this default was flipped back.",
-      "commit": "244acd58ebf7b3042340545e12355592d24b4cc1",
+      "commit": "43f2d29b15a0e9276d7c39b4498e9cbfc626b4b9",
       "protected_paths": [
         "ggml/src/ggml-cpu/repack.cpp"
       ],
@@ -410,7 +473,9 @@
         "DEFAULT OFF. Only an exact \"1\" enables the slot"
       ],
       "symbols": {
-        "ggml/src/ggml-cpu/repack.cpp": ["ggml_arifi_vnni_repack_enabled"]
+        "ggml/src/ggml-cpu/repack.cpp": [
+          "ggml_arifi_vnni_repack_enabled"
+        ]
       },
       "opt_out": "GGML_ARIFI_VNNI_REPACK=1 restores the upstream default behaviour exactly",
       "evidence": [
@@ -425,6 +490,9 @@
       "notes": "NOT a pre-slot restore switch on x86: c7645a0df also replaced the x86 ggml_vec_dot_q2_0_q8_0, which is selected at compile time and sits outside this toggle. OFF selects the new vec_dot kernel, not the one that predated the slot.",
       "commit_pre_rebase_chain": [
         "e44c0bb0d39808d40ec06649dabfb58a93595a7d"
+      ],
+      "sha_pre_rebase_chain": [
+        "244acd58ebf7b3042340545e12355592d24b4cc1"
       ]
     },
     {
@@ -432,7 +500,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-209 rank-3 R6. Closes the `REGISTRATION OWED` row on e20a8df7f, whose own disposition said: 'What is owed is the KERNEL commit's registration, which this row names so it cannot be lost.' So the entry is keyed on the kernel commit e96d7484a, with the docs commit that banks its speed as an also_commit. e96d7484a's own baseline row is terminal ('CORRECTNESS ONLY, SPEED UNMEASURED') and stays exactly as written - it was true when written; the speed arrived later, in e20a8df7f.",
       "mechanism": "CPU repack kernel set for the 128-group ternary format: its own block type (block_q2_0_g128x4), its own gemv/gemm instantiations and its own dispatch arm for GGML_TYPE_Q2_0_G128. It deliberately does NOT share the g64 kernels - a g128 row driven through a g64 kernel is mis-strided silent wrong math rather than a crash.",
-      "commit": "dbdd056b9411cc1eb4912ea80dbd4f00d9d47eca",
+      "commit": "50132f88c17d967f9efa0bda24b34efd290bb2db",
       "also_commits": [
         "e20a8df7f5dc1b0761e56019f5eecdbcd1bc707f"
       ],
@@ -449,7 +517,10 @@
         "GGML_TYPE_Q2_0_G128"
       ],
       "symbols": {
-        "ggml/src/ggml-cpu/arch/x86/repack.cpp": ["ggml_gemv_q2_0_g128_4x8_q8_0", "ggml_gemm_q2_0_g128_4x8_q8_0"]
+        "ggml/src/ggml-cpu/arch/x86/repack.cpp": [
+          "ggml_gemv_q2_0_g128_4x8_q8_0",
+          "ggml_gemm_q2_0_g128_4x8_q8_0"
+        ]
       },
       "opt_out": "GGML_ARIFI_VNNI_REPACK unset (the g128 arm is inside the same slot)",
       "evidence": [
@@ -465,6 +536,9 @@
       "notes": "Registered separately from cpu-vnni-repack-dual-residency because the objects are separate: that entry's measured effect is g64 and its anchor is the env var, and neither would notice the g128 block type, kernels or dispatch arm going away.",
       "commit_pre_rebase_chain": [
         "e96d7484aeae539637d4be1f52669f91f9c3f4db"
+      ],
+      "sha_pre_rebase_chain": [
+        "dbdd056b9411cc1eb4912ea80dbd4f00d9d47eca"
       ]
     },
     {
@@ -472,7 +546,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (a38d6c409) as a carried mechanism with third-party numbers only. It is registered rather than left owed because every required field IS honestly describable - including the measured effect, which is describable precisely as somebody else's.",
       "mechanism": "Heat-aware MoE cache eviction: each slot counts resident uses, and the victim picker prefers the least-recently-used slot at or below the hot threshold, falling back to the LRU head only when every eligible slot is hot. A hot-sacrifice counter (heat_evictions) makes the policy observable rather than assumed.",
-      "commit": "c6d0f3d146f055c543d40e0ac08aab82f63157a7",
+      "commit": "4e32775f4f7a8350b7b793fea6f561994c95b3be",
       "protected_paths": [
         "ggml/src/ggml-moe-cache-common.h",
         "ggml/src/ggml-cuda/moe-cache.cu",
@@ -485,12 +559,26 @@
         "heat_evictions"
       ],
       "symbols": {
-        "ggml/src/ggml-moe-cache-common.h": ["moe_cache_pick_victim"],
-        "ggml/src/ggml-cuda/moe-cache.cu": ["moe_cache_fused_begin"],
-        "ggml/src/ggml-cuda/mmvq.cu": ["ggml_cuda_moe_cache_mmv_fused", "ggml_cuda_moe_cache_mmv"],
-        "ggml/src/ggml-metal/ggml-metal-moe-cache.mm": ["metal_fused_begin"],
-        "ggml/src/ggml-metal/ggml-metal.metal": ["kernel_moe_cache_mv_block_dot", "kernel_moe_cache_mv_generic"],
-        "ggml/src/ggml-vulkan/ggml-vulkan-moe-cache.cpp": ["vk_moe_fused_begin"]
+        "ggml/src/ggml-moe-cache-common.h": [
+          "moe_cache_pick_victim"
+        ],
+        "ggml/src/ggml-cuda/moe-cache.cu": [
+          "moe_cache_fused_begin"
+        ],
+        "ggml/src/ggml-cuda/mmvq.cu": [
+          "ggml_cuda_moe_cache_mmv_fused",
+          "ggml_cuda_moe_cache_mmv"
+        ],
+        "ggml/src/ggml-metal/ggml-metal-moe-cache.mm": [
+          "metal_fused_begin"
+        ],
+        "ggml/src/ggml-metal/ggml-metal.metal": [
+          "kernel_moe_cache_mv_block_dot",
+          "kernel_moe_cache_mv_generic"
+        ],
+        "ggml/src/ggml-vulkan/ggml-vulkan-moe-cache.cpp": [
+          "vk_moe_fused_begin"
+        ]
       },
       "_symbols_why": "WI-1700, 2026-09-06. The four-backend fused_begin implementations and the CUDA mat-vec entry they call. ggml_cuda_moe_cache_mmv_fused is the planted-red case of WI-1699: its body was deleted from mmvq.cu by the R13 b10819 merge while mmvq.cuh still declares it and moe-cache.cu:2545 still calls it, so this entry is RED on lane-206/upstream-b10819-2026-09-05 by design until the graft lands. mmvq.cu is deliberately NOT in protected_paths (upstream rewrites it every bump); the symbol class guards the body without refusing every sync. FIX-2 of the WI-1700 check (FABLE-53-LOW): the Metal MoE-cache mat-vec kernels (series 0343) are seeded the same way - ggml-metal.metal is shared upstream, so it is guarded by symbol, not by path.",
       "opt_out": "GGML_CUDA_MOE_CACHE_HOT_USES=0 (every slot is cold, i.e. plain LRU)",
@@ -505,6 +593,9 @@
       "notes": "Registered with a third-party number stated AS third-party, first, so the truncated `measured :` line the preflight prints on a refusal still carries the label. An estate measurement is owed the day this seat runs a model that overflows the pool; until then the entry protects the mechanism, not a number of ours.",
       "commit_pre_rebase_chain": [
         "a38d6c409f856be1aaeb5003a91045af65ca9aec"
+      ],
+      "sha_pre_rebase_chain": [
+        "c6d0f3d146f055c543d40e0ac08aab82f63157a7"
       ]
     },
     {
@@ -512,7 +603,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (8561db379). Registered on describability, not on an on-seat number, exactly as vulkan-tq-matvec-subgroup is registered with valid_conditions naming the hardware it wins on.",
       "mechanism": "TQ3_4S CUDA kernel set lifted from tq3/master: native TQ3_4S convert, getrows, mmq, mmvq and quantize paths including the PRMT vec_dot, trimmed to TQ3_4S only and adapted to upstream b10488. A hunk port, not a cherry-pick - the trees diverge by whole subsystems.",
-      "commit": "f61556205533067aa96ad9570a50cc516463ebf9",
+      "commit": "8225dbd0e9d69f762cd82330197d28867233ed80",
       "protected_paths": [
         "ggml/src/ggml-cuda/tq3-native.cu",
         "ggml/src/ggml-cuda/tq3-native.cuh",
@@ -523,8 +614,14 @@
         "tq3-native.cuh"
       ],
       "symbols": {
-        "ggml/src/ggml-cuda/tq3-native.cu": ["ggml_cuda_tq3_rotate_act", "tq3_rotate_act_kernel", "ggml_cuda_native_tq3_dot_kernel"],
-        "ggml/src/ggml-cuda/mmq.cuh": ["ggml_cuda_mmq_load_tiles_tq3_4s"]
+        "ggml/src/ggml-cuda/tq3-native.cu": [
+          "ggml_cuda_tq3_rotate_act",
+          "tq3_rotate_act_kernel",
+          "ggml_cuda_native_tq3_dot_kernel"
+        ],
+        "ggml/src/ggml-cuda/mmq.cuh": [
+          "ggml_cuda_mmq_load_tiles_tq3_4s"
+        ]
       },
       "_symbols_why": "WI-1700 check FIX-2 (FABLE-53-LOW, 2026-09-06): the native dot kernel (series 0370) and the MMQ tile loader. mmq.cuh is shared upstream and deliberately NOT a protected path; the symbol guards the TQ3_4S loader body without refusing every MMQ bump.",
       "evidence": [
@@ -536,6 +633,9 @@
       "valid_conditions": "NVIDIA CUDA devices running TQ3_4S. Carried capability, inert here, not broken. The anchor `tq3_4s_native` is CUDA-unique on purpose: the bare string TQ3_4S also lives in the CPU and Metal paths, so it would keep validating after the CUDA set alone was deleted.",
       "commit_pre_rebase_chain": [
         "8561db37993c9b326549aed2c996b0dcb24ecfc7"
+      ],
+      "sha_pre_rebase_chain": [
+        "f61556205533067aa96ad9570a50cc516463ebf9"
       ]
     },
     {
@@ -543,7 +643,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (24f43e45c), on the same reasoning as the CUDA row above.",
       "mechanism": "TQ3_4S Metal kernel set lifted from tq3/master: the TQ3_4S mat-vec kernels and their device/ops wiring plus the alloc hook, trimmed to TQ3_4S only, with the dispatch-hook placement restored to the 02d51f048 original because the tip had regressed it.",
-      "commit": "eaf380ec00d88e75c7e8916b1b7062e67df7e580",
+      "commit": "541fa63744a895dcbf537bffb17e5fee791ce121",
       "protected_paths": [
         "ggml/src/ggml-metal/ggml-metal.metal",
         "ggml/src/ggml-metal/ggml-metal-ops.cpp"
@@ -552,7 +652,12 @@
         "kernel_mul_mv_tq3_4s"
       ],
       "symbols": {
-        "ggml/src/ggml-metal/ggml-metal.metal": ["kernel_mul_mv_tq3_4s_f32", "kernel_mul_mv_tq3_4s_f32_impl", "kernel_tq3_4s_rht_f32", "kernel_get_rows_tq3_4s"]
+        "ggml/src/ggml-metal/ggml-metal.metal": [
+          "kernel_mul_mv_tq3_4s_f32",
+          "kernel_mul_mv_tq3_4s_f32_impl",
+          "kernel_tq3_4s_rht_f32",
+          "kernel_get_rows_tq3_4s"
+        ]
       },
       "_symbols_why": "WI-1700 check FIX-2 (FABLE-53-LOW, 2026-09-06): kernel_get_rows_tq3_4s (series 0371) added. The check's last row - kernel_mul_mv_tq3_1s_f32, kernel_tq3_rotate_act, kernel_tq3_unrotate_act from series 0115 (a `laguna` lift, author `m <m@l>`, grandfather-ledger row 37af31769 with no reaudit note) - is NOT seeded here: it is a different mechanism (TQ3_1S + activation rotation) and the check gates it on HQ confirming authorship first.",
       "evidence": [
@@ -565,6 +670,9 @@
       "notes": "protected_paths are shared upstream Metal files, so an upstream Metal bump will refuse this entry until a comparison is recorded. Accepted deliberately: there is no Metal file that is wholly ours, and the alternative is a capability nobody on this estate can test disappearing without anyone noticing. The dispatch-hook placement is part of the win - the tip regression it restores is the failure mode to compare against.",
       "commit_pre_rebase_chain": [
         "24f43e45cdf65dc539e62c55c6dd65e6be71c6d5"
+      ],
+      "sha_pre_rebase_chain": [
+        "eaf380ec00d88e75c7e8916b1b7062e67df7e580"
       ]
     },
     {
@@ -572,7 +680,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-206 integration (R8). Landed on the integration branch by merge of lane-209/kernels; registered at the same time so the mechanism is guarded before any upstream bump touches it.",
       "mechanism": "IQ4_XS gets a dedicated K-quant-style mat-vec shader (16 threads per 256-superblock, each thread taking both nibble halves of 2 packed32 words = 16 MACs per row per superblock, sub-block scale decoded once per row per superblock) instead of the generic mul_mat_vec.comp, which re-decoded the scale per dequantize4() call and used only one nibble half of each fetched word. Routed by `tname == \"iq4_xs\"` in vulkan-shaders-gen.cpp; the MUL_MAT_ID vec path picks up the same shader.",
-      "commit": "b4486cbdd8a96659620cd461ee22b6a99cb91a2e",
+      "commit": "7062c6794965a3e7ee5e260a41fb60602cc2773c",
       "protected_paths": [
         "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp",
         "ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp"
@@ -582,7 +690,10 @@
         "tname == \"iq4_xs\""
       ],
       "symbols": {
-        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp": ["compute_outputs", "main"]
+        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp": [
+          "compute_outputs",
+          "main"
+        ]
       },
       "evidence": [
         "board/programs/local-inference/lanes/2026-09-02-lane-209-kernel-attacks-REPORT.md",
@@ -596,6 +707,9 @@
       "notes": "Registered from the lane's banked verdict, not re-measured at registration time. The numbers above were produced on engine-r5, a different binary from the integration tip; a different tree produces a different binary, so they are lane-binary facts and must be labelled as such.",
       "commit_pre_rebase_chain": [
         "1884a620a"
+      ],
+      "sha_pre_rebase_chain": [
+        "b4486cbdd8a96659620cd461ee22b6a99cb91a2e"
       ]
     },
     {
@@ -603,7 +717,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-206 integration (R8), same reasoning as the IQ4_XS row above.",
       "mechanism": "IQ3_S mat-vec runs 16 invocations per superblock (zuijdwijk 211abf6a9 body, via lane-166) at the UNION of the widths where it wins on this box: ARIFI_TPB16 = (NUM_COLS == 3) || (NUM_COLS > 4). NUM_COLS 3 is the DFlash2 n-max-2 verify width. Widths 1, 2 and 4 keep the upstream body bit for bit, because the no-sum[] form measured 7-9% slower at n=2 and about 20% slower at n=4 on the 780M - the `>= 2` gate (616b877b8) is superseded by this union gate for exactly that reason.",
-      "commit": "4cfca0c0861a11c8da655905a0cc5cd0e23d58f1",
+      "commit": "32a480d5430af31a46f5a5e768e5b8dd03e1e602",
       "protected_paths": [
         "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp"
       ],
@@ -622,6 +736,9 @@
       "notes": "Body taken from zuijdwijk 211abf6a9; the gate is ours and is the part that must not be overwritten. Registered from the lane verdict; the numbers are lane-binary facts, not integration-tip measurements.",
       "commit_pre_rebase_chain": [
         "aa9f0e2aa"
+      ],
+      "sha_pre_rebase_chain": [
+        "4cfca0c0861a11c8da655905a0cc5cd0e23d58f1"
       ]
     },
     {
@@ -629,7 +746,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-206 integration (R8). Registered as a KEPT NEUTRAL: no speed win is claimed here and none may be quoted from this entry.",
       "mechanism": "mul_mat_vec_q6_k.comp reads its 16 int8 superblock scales directly out of the block instead of staging them through a double-buffered LDS tile with a barrier() per row. The exchange moved no data between threads, so the direct read is bit-identical by construction, and measured so. Specialization constant 3 selects the path; GGML_VK_Q6K_DIRECT_SCALES=0 restores upstream's LDS path byte for byte in the same binary.",
-      "commit": "8bfaeeff463a9d40b82449a05e9d330482cbe0e5",
+      "commit": "10b7c23502e2e69f6a8b6cd50568d9168c4b98bd",
       "protected_paths": [
         "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q6_k.comp"
       ],
@@ -647,6 +764,9 @@
       "notes": "Also banks the falsification the next attempt needs: the per-row barrier was the leading mechanism for q6_k's reproducible ~35% mat-vec deficit on this box (41.0 GB/s against q5_k 63.8 and q4_k 72.5 at m=17408 n=3 k=5120). Removing it moves nothing. The deficit stands, unexplained.",
       "commit_pre_rebase_chain": [
         "4bbebd619"
+      ],
+      "sha_pre_rebase_chain": [
+        "8bfaeeff463a9d40b82449a05e9d330482cbe0e5"
       ]
     },
     {
@@ -654,7 +774,7 @@
       "status": "active",
       "_registered": "2026-09-05, lane-206 integration (R8), once the disposition was decided. Registered although the mechanism ships DEFAULT OFF: the President's capability law makes a capability droppable only when BROKEN, never when it is merely gated, and default-OFF describes the shipped default rather than the existence of the mechanism (same reading as the CHECKER-R3 R3-5 rows).",
       "mechanism": "ROCmFP4-FAST gets the integer-dot q8_1 MMVQ mat-vec pipelines it never had. The q8_1 selector (ggml_vk_get_dequantize_mul_mat_vec) already LISTED GGML_TYPE_Q4_0_ROCMFP4_FAST, but no pipeline was ever created for it, so quantize_y was computed true on every FP4 mat-vec, the selector returned null, and the dispatch fell back to the f32 dequant shader silently at every width. The port creates the pipelines and gates them to the widths where they win on this box: MMVQ at n=3 and n=5 only, f32 at n<=2, n=4 and n>5. Since lane-206 the whole route is additionally opt-in behind GGML_ARIFI_ROCMFP4_MMVQ=1.",
-      "commit": "4a13b108bbbe3dd645ea4fe89ee1d723002b1800",
+      "commit": "2ac18271f39a6be235952c4dcd8a744007d87262",
       "also_commits": [
         "60f57787f",
         "ab04258bf",
@@ -684,6 +804,9 @@
       "commit_pre_rebase_chain": [
         "f68a4bd25",
         "4b361889c6d957b72891fe9db4e3b08df3fd7273"
+      ],
+      "sha_pre_rebase_chain": [
+        "4a13b108bbbe3dd645ea4fe89ee1d723002b1800"
       ]
     },
     {
@@ -704,6 +827,33 @@
       "quality_gate": "N/A - this entry protects a verification harness, not a kernel. The harness's own contract: compile + link only, plus test-quantize-fns on CPU on every job. GitHub runners carry no NVIDIA, Apple or Intel GPU, so a green run licenses exactly one claim, 'compile-verified, not benched'.",
       "workload": "GitHub-hosted runners: ubuntu-24.04 (nvidia/cuda:12.6.2-devel container), macos-latest, ubuntu-24.04 + oneAPI 2025.3.3, windows-latest + Vulkan SDK 1.4.313.2.",
       "measured_effect": "UNMEASURED and unmeasurable by construction - a build matrix has no t/s. Its value is the defect class it makes visible: at lane-206/upstream-b10819 the Metal tree was missing five function definitions whose callers survived, and the CUDA tree was missing one, and no gate on this estate could see either. protected-win validate PASSed 41/41 while a definition was being deleted (WI-1700), because anchors match source TEXT and a surviving declaration reads like a surviving mechanism. A compiler does not make that mistake."
+    },
+    {
+      "id": "vulkan-fa-dequant-kv-runtime-gate",
+      "status": "active",
+      "mechanism": "Runtime switch over upstream c7bda030e's f16 dequant-KV scratch path in Vulkan flash attention (quantized K and V, prefill only: neq1 >= 64). `GGML_ARIFI_FA_DEQUANT_KV=1` forces the scratch copy ON on any device, `=0` forces the in-place quantized-KV read, unset = the device default, which is ON everywhere (= upstream behaviour). One stderr receipt line `ggml_vulkan: FA dequant-KV scratch: ON|OFF (device default|GGML_ARIFI_FA_DEQUANT_KV)` binds every A/B log to the path it ran. Bit-identical either way (same FA math, f32 accumulation). A device that measures the scratch copy as a cost flips its own default at `fa_deq_device_default`, with its number - the runtime-switch law (President 2026-09-06). History: lane-215 (R19) shipped the AMD RDNA3 default OFF on R13's -4.05% read; R19D measured the gate on one binary the same day and the loss did not replicate, so lane-220 (R27) flipped the default to ON and kept the knob.",
+      "commit": "9d26dc5cea8aa4a1c75dbf70ef65d0ccb2e1b35f",
+      "protected_paths": [
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
+      ],
+      "anchors": [
+        "GGML_ARIFI_FA_DEQUANT_KV",
+        "fa_deq_allowed",
+        "fa_deq_device_default",
+        "FA dequant-KV scratch"
+      ],
+      "symbols": {
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": [
+          "ggml_vk_flash_attn"
+        ]
+      },
+      "evidence": [
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r19-seat-prefill/R19D-ENGAGEMENT-LEGS.md",
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r27-bump-b10825"
+      ],
+      "quality_gate": "F-141 0/8 on the seated line (Huihui UD-Q4_K_XL, df2 + plain) on the binary carrying the gate; the path is bit-identical to upstream by construction (same kernels, only the KV read strategy differs), and the ON default IS upstream's behaviour.",
+      "workload": "Radeon 780M (gfx1103, Vulkan0, coopmat1 FA), Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL, q8_0 KV, plain prefill (the only regime where the path engages: --parallel 1 seat, prompt >= 64 tokens); lane209.py palindrome, 2 launches x 8 rounds per arm, CI governs.",
+      "measured_effect": "R19D D1 (ON vs OFF, ONE binary, same day): plain prefill clean +8.08% [+1.63%, +14.52%], pooled +24.14%; decode unaffected (path never engages, neq1 < 64). The R13 7.2 row-2 -4.05% [-7.73%, -0.38%] did NOT replicate same-day (-2.12%, CI includes 0) = day drift. The protectable thing is the KNOB plus the receipt line, and the ON default that R19D licensed; the R27 tip-vs-record A/B (r27-bump-b10825) is the engine-of-record flip evidence."
     }
   ]
 }
