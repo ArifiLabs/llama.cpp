@@ -1,0 +1,44 @@
+#version 450
+
+#include "dequant_head.glsl"
+
+// S-X8 v4.3 (MarlaLabs, type-id 57) full-block dequant. This is the f16-staging
+// path: S-X8 has no mul_mm branch, so prompt processing reaches it by converting
+// the weight tensor to f16 first, exactly as TQ3_4S does.
+//
+// Decode is per-weight and branch-free -- no LUT, no rotation, nothing shared
+// between threads -- so one thread owns one whole 32-weight block. Reference:
+// dequantize_row_sx8() in ggml/src/ggml-quants.c.
+//
+// 256 threads per workgroup = 256 blocks = 8192 elements, which keeps the x
+// dispatch under maxComputeWorkGroupCount[0] on large tensors.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {block_sx8 data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
+
+void main() {
+    const uint ib = gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+    if (ib >= p.nel / 32) return;
+
+    const float lo_f = float(data_a[ib].dmin);
+    const float hi_f = float(data_a[ib].dmax);
+    const uint  cfg  = uint(data_a[ib].config);
+
+    const uint out_base = ib * 32u;
+
+    // One sub-block of 8 at a time: the strategy, and so rlo/step, is constant
+    // across the eight weights, so the range algebra runs 4x per block, not 32x.
+    [[unroll]] for (uint sb = 0u; sb < 4u; sb++) {
+        float rlo, step;
+        sx8_range(lo_f, hi_f, (cfg >> (sb * 2u)) & 3u, rlo, step);
+
+        [[unroll]] for (uint i = 0u; i < 8u; i++) {
+            const uint j  = sb * 8u + i;
+            const uint hi = (uint(data_a[ib].qh[j >> 1u]) >> ((j & 1u) * 4u)) & 0xFu;
+            const uint lo = (uint(data_a[ib].ql[j >> 2u]) >> ((3u - (j & 3u)) * 2u)) & 0x3u;
+            const uint lv = (hi << 2u) | lo;
+            data_b[out_base + j] = D_TYPE(rlo + step * float(lv));
+        }
+    }
+}

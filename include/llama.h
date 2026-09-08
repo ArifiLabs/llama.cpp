@@ -168,6 +168,11 @@ extern "C" {
         LLAMA_FTYPE_MOSTLY_TBQ3_0        = 45, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_TBQ4_0        = 46, // except 1d tensors
 
+        // S-X8 v4.3 (MarlaLabs), lane-224. The value MIRRORS the ggml type id (57) on purpose:
+        // there is no upstream or fork claim on it, and a file type that reads the same as the
+        // tensor type is one less number to get wrong. Values 45-56 are unallocated here.
+        LLAMA_FTYPE_MOSTLY_SX8           = 57, // except 1d tensors
+
         // ROCmFPX file types, adopted VERBATIM from charlie12345/ROCmFPX@3edc3d31e
         // so that its artifacts report the same general.file_type we do.
         // These are unconditional enum values (they may appear in any GGUF's
