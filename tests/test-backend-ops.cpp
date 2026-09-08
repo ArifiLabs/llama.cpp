@@ -11895,6 +11895,17 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
         }
     }
 
+    // arifi R18 / R15-C3: Ornith-1.5 35B-A3B expert shape (qwen35moe, 256 experts, 8 used, n_embd 2048,
+    // n_ff_exp 512): gate/up = 512 rows x k 2048, down = 2048 rows x k 512. Q4_K is the file's expert
+    // type (down is Q4_K on 20 layers, Q6_K on 21). bs 1 = decode, 3 = DFlash2 n-max-2 verify, <= 8 is
+    // the mul_mat_vec_id width gate. `-p "n_mats=256"` narrows perf to these rows.
+    for (int bs : {1, 2, 3, 4, 8}) {
+        for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_Q6_K}) {
+            test_cases.emplace_back(new test_mul_mat_id(type_a, GGML_TYPE_F32, 256, 8, false,  512, bs, 2048));
+            test_cases.emplace_back(new test_mul_mat_id(type_a, GGML_TYPE_F32, 256, 8, false, 2048, bs,  512));
+        }
+    }
+
 
     // gpt-oss-20b
     for (int bs : {1, 4, 8, 512}) {
