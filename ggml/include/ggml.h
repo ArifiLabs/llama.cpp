@@ -443,6 +443,12 @@ extern "C" {
         GGML_TYPE_TQ3_0        = 49, // tq3 200: one f16 RMS scale + 3-bit RHT payload,    14 B / 32
         GGML_TYPE_TQ3_4SE      = 50, // tq3 36: 4 x E3M5 scales + 2 x u8 shifts,           18 B / 32
         GGML_TYPE_TQ3_1S_SHIFT = 51, // tq3: 3 x f16 (d0,d1,mean) + 3-bit payload,         18 B / 32
+        // 58..59 - jtrefon/llama.cpp-turboq-mtp TBQ family, the SECOND family we RENUMBER
+        // (TYPE-ID-ALLOCATION 3.1.3): their 42/43 are upstream Q2_0 and our Q2_0_G128.
+        // Serialized (llama-quantize targets there) AND usable as KV cache types.
+        // 57 is left for S-X8 (WI-1692). jtrefon-authored GGUFs need a retag before they load here.
+        GGML_TYPE_TBQ3_0 = 58, // TurboQuant 3-bit, signed FWHT + 8 Lloyd-Max centroids, 50 B / 128
+        GGML_TYPE_TBQ4_0 = 59, // TurboQuant 4-bit, signed FWHT + 16 Lloyd-Max centroids, 66 B / 128
         // ---------------------------------------------------------------------
         // ArifiLabs type-ID allocation. THE CONTRACT IS docs/TYPE-ID-ALLOCATION.md
         // — read it before adding any value here. Summary of the binding rules:
@@ -514,6 +520,8 @@ extern "C" {
         GGML_TYPE_TURBO2_0 = 200, // TurboQuant 2-bit KV cache: WHT + 2-bit PolarQuant (runtime-only)
         GGML_TYPE_TURBO3_0 = 201, // TurboQuant 3-bit KV cache: WHT + 3-bit PolarQuant (runtime-only)
         GGML_TYPE_TURBO4_0 = 202, // TurboQuant 4-bit KV cache: WHT + 4-bit PolarQuant (runtime-only)
+        // 203..206 RESERVED, NOT allocated (TYPE-ID-ALLOCATION 3.2): jtrefon RotorQuant KV codecs
+        // PLANAR3_0 / ISO3_0 / PLANAR4_0 / ISO4_0 (their 44/45/46/47). No enumerator until the codec lands.
 
         GGML_TYPE_COUNT   = 256,
     };
@@ -560,6 +568,9 @@ extern "C" {
         GGML_FTYPE_MOSTLY_NVFP4   = 26, // except 1d tensors
         GGML_FTYPE_MOSTLY_Q1_0    = 27, // except 1d tensors
         GGML_FTYPE_MOSTLY_Q2_0    = 28, // except 1d tensors
+        // jtrefon TBQ file types, RENUMBERED (theirs are 28/29 = our Q2_0 and the next free value).
+        GGML_FTYPE_MOSTLY_TBQ3_0  = 29, // except 1d tensors
+        GGML_FTYPE_MOSTLY_TBQ4_0  = 30, // except 1d tensors
         // ROCmFPX file types, adopted VERBATIM from charlie12345/ROCmFPX@3edc3d31e.
         // NOTE these are ggml_ftype values and do NOT match the llama_ftype values
         // of the same names - ROCmFPX numbers the two enums differently

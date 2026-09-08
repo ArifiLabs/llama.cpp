@@ -7,14 +7,36 @@ quantization:
 
 | Type               | Enum                       | Size            | Compression vs f16 |
 |--------------------|----------------------------|-----------------|--------------------|
-| `turbo2`           | `GGML_TYPE_TURBO2_0` (43)  | 2 bits/value    | 6.4x               |
-| `turbo3`           | `GGML_TYPE_TURBO3_0` (44)  | 3.25 bits/value | 4.9x               |
-| `turbo4`           | `GGML_TYPE_TURBO4_0` (47)  | 4.25 bits/value | 3.8x               |
+| `turbo2`           | `GGML_TYPE_TURBO2_0` (200) | 2 bits/value    | 6.4x               |
+| `turbo3`           | `GGML_TYPE_TURBO3_0` (201) | 3.25 bits/value | 4.9x               |
+| `turbo4`           | `GGML_TYPE_TURBO4_0` (202) | 4.25 bits/value | 3.8x               |
+
+(Ids corrected 2026-09-07: the fork numbers these 43/44/47; this tree carries them in the
+runtime-only block at 200..202, see `docs/TYPE-ID-ALLOCATION.md` 3.2.)
 
 These are KV-cache-only types: they are never stored in model files. The
 corresponding model-weight quantization types are `TQ3_1S` (45) and `TQ4_1S`
 (46) - 3/4-bit WHT-rotated Lloyd-Max quantization, block size 32, exposed in
 `llama-quantize` as `TQ3_1S` / `TQ4_1S`.
+
+## Second family: `tbq3_0` / `tbq4_0` (jtrefon/llama.cpp-turboq-mtp)
+
+| Type      | Enum                     | Block                | Size             | Backends with a kernel |
+|-----------|--------------------------|----------------------|------------------|------------------------|
+| `tbq3_0`  | `GGML_TYPE_TBQ3_0` (58)  | 128 values, 50 bytes | 3.125 bits/value | CPU reference only     |
+| `tbq4_0`  | `GGML_TYPE_TBQ4_0` (59)  | 128 values, 66 bytes | 4.125 bits/value | CPU reference only     |
+
+Taken from `jtrefon/llama.cpp-turboq-mtp@6a02d0494` (their ids 42/43, renumbered here because 42 is
+upstream `Q2_0` and 43 is our `Q2_0_G128`). Unlike the turbo family above, these are BOTH
+`llama-quantize` targets (`TBQ3_0` / `TBQ4_0`, one f16 norm per 128 values, signed Walsh-Hadamard
+rotation, Lloyd-Max centroids) and KV cache types (`-ctk tbq4_0 -ctv tbq4_0`). The codec's
+dequantizer returns the original domain, so no graph rotation op is involved: the cache holds one
+quantized row per token across all heads (the block must divide `n_embd_k_gqa`), and
+`build_attn_mha` dequantizes the K view to f32 and the V view to f16 before attention. That is the
+source fork's own non-fused path (its Metal and CPU arms); its fused CUDA flash-attention kernel is
+not carried yet. On a backend without a SET_ROWS/CPY kernel for 58/59 the scheduler runs those
+nodes on the CPU. `tbq3_0` V is refused unless `LLAMA_ALLOW_TBQ3_KV=1` (the source fork measured a
+token-repetition collapse with it); `tbq4_0` is the supported member.
 
 ## Usage
 

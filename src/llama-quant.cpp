@@ -395,6 +395,8 @@ static ggml_type tensor_type_fallback(quantize_state_impl & qs, const ggml_tenso
             case GGML_TYPE_Q3_K:
             case GGML_TYPE_TQ1_0:
             case GGML_TYPE_TQ2_0:   return_type = GGML_TYPE_Q4_0;   break;
+            case GGML_TYPE_TBQ3_0:  // 128-value blocks: rows the block does not divide fall back like the fork does
+            case GGML_TYPE_TBQ4_0:  return_type = GGML_TYPE_Q4_0;   break;
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
             // Taken-from: charlie12345/ROCmFPX@3edc3d31e (src/llama-quant.cpp).
             case GGML_TYPE_Q4_0_ROCMFP4:
@@ -883,6 +885,8 @@ ggml_type llama_ftype_get_default_type(llama_ftype ftype) {
         case LLAMA_FTYPE_MOSTLY_TQ3_1S: return GGML_TYPE_TQ3_1S;
         case LLAMA_FTYPE_MOSTLY_TQ4_1S: return GGML_TYPE_TQ4_1S;
 #endif
+        case LLAMA_FTYPE_MOSTLY_TBQ3_0: return GGML_TYPE_TBQ3_0;
+        case LLAMA_FTYPE_MOSTLY_TBQ4_0: return GGML_TYPE_TBQ4_0;
 
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
         // Taken-from: charlie12345/ROCmFPX@3edc3d31e (src/llama-quant.cpp).

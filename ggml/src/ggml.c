@@ -746,6 +746,24 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .to_float                 = (ggml_to_float_t) dequantize_row_tq4_1s,
         .from_float_ref           = (ggml_from_float_t) quantize_row_tq4_1s_ref,
     },
+    // jtrefon TBQ family, ids RENUMBERED 58..59 (TYPE-ID-ALLOCATION 3.1.3; their 42/43 are
+    // upstream Q2_0 and our Q2_0_G128). Taken-from: jtrefon/llama.cpp-turboq-mtp@6a02d0494.
+    [GGML_TYPE_TBQ3_0] = {
+        .type_name                = "tbq3_0",
+        .blck_size                = QK_TBQ3,
+        .type_size                = sizeof(block_tbq3_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tbq3_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tbq3_0_ref,
+    },
+    [GGML_TYPE_TBQ4_0] = {
+        .type_name                = "tbq4_0",
+        .blck_size                = QK_TBQ4,
+        .type_size                = sizeof(block_tbq4_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tbq4_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tbq4_0_ref,
+    },
     // tq3 family, ids RENUMBERED 48..51 (TYPE-ID-ALLOCATION §3.1.1 — their TQ3_4S
     // is serialized at 46, which is our TQ4_1S). Taken-from: turbo-tan/llama.cpp-tq3@58ad80ffb.
     [GGML_TYPE_TQ3_4S] = {
@@ -1643,6 +1661,8 @@ enum ggml_type ggml_ftype_to_ggml_type(enum ggml_ftype ftype) {
         case GGML_FTYPE_MOSTLY_Q4_1:          wtype = GGML_TYPE_Q4_1;  break;
         case GGML_FTYPE_MOSTLY_Q1_0:          wtype = GGML_TYPE_Q1_0;  break;
         case GGML_FTYPE_MOSTLY_Q2_0:          wtype = GGML_TYPE_Q2_0;  break;
+        case GGML_FTYPE_MOSTLY_TBQ3_0:        wtype = GGML_TYPE_TBQ3_0; break;
+        case GGML_FTYPE_MOSTLY_TBQ4_0:        wtype = GGML_TYPE_TBQ4_0; break;
         // Taken-from: charlie12345/ROCmFPX@3edc3d31e (ggml/src/ggml.c).
         // The labels are unconditional (this switch is exhaustive over ggml_ftype,
         // so gating them costs six -Wswitch warnings in the OFF arm); only the
@@ -8543,6 +8563,8 @@ size_t ggml_quantize_chunk(
         case GGML_TYPE_TQ3_1S_SHIFT: result = quantize_tq3_1s_shift(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
 #endif
         case GGML_TYPE_Q2_0:    result = quantize_q2_0   (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_TBQ3_0:  result = quantize_tbq3_0 (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_TBQ4_0:  result = quantize_tbq4_0 (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
 #ifdef GGML_ARIFI_ROCMFPX_FORMATS
         // Taken-from: charlie12345/ROCmFPX@3edc3d31e (ggml/src/ggml.c).
         case GGML_TYPE_Q4_0_ROCMFP4:
