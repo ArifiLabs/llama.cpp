@@ -139,6 +139,7 @@ are **not ours to choose**: we adopt whatever the format's originator serialized
 | 54 | `GGML_TYPE_TQ3_1S_TQ3` | tq3 (**retagged**, their 44) | *hypothesis:* same wire as our 45 | *hypothesis:* 16 | 32 | **RESERVED — not implemented** (lane-151) — see §3.1.2 |
 | 55 | `GGML_TYPE_ESCHA2` | **ArifiLabs** (lane-164) | packed EschaLabs cbA K=2 code tiles, `[in/16][out/16][32] i16 LE` | 64 | 256 (one 16x16 tile) | **implemented** — NOT row-separable; sole consumer `GGML_OP_ESCHA_MM`; f32 aux sidecar `<base>.escha_aux` required |
 | 56 | `GGML_TYPE_ESCHA3` | **ArifiLabs** (lane-164) | packed EschaLabs cbA K=3 code tiles, `[in/16][out/16][48] i16 LE` | 96 | 256 | **implemented** — same rules as 55 |
+| 57 | `GGML_TYPE_SX8` | MarlaLabs S-X8 v4.3 (**retagged**, their 41) | `dmin(f16) + dmax(f16) + config(u8) + qh[16] + ql[8] + coeff(u8)` | 30 | 32 | **implemented, CPU only** (lane-212 / WI-1692). Their 41 is upstream `Q1_0` in files that exist, so this is the second family we renumber (same reasoning as §3.1.1). Files carrying 41 go through `tools/gguf-retag-sx8/retag_sx8.py`, which refuses unless every id-41 tensor spans exactly 30 B / 32 values. No `LLAMA_FTYPE`: serialized-but-not-quantizable by our tooling, like `Q2_0_G128`. No Vulkan/CUDA kernel yet (the author's CUDA hunks are staged, not ported). |
 
 `44` is left as a hole. It is the value TurboQuant uses for a runtime-only type and the value our
 current `GGML_TYPE_COUNT` occupies; leaving it unassigned costs nothing and removes a whole class of

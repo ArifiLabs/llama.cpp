@@ -703,6 +703,15 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .to_float                 = (ggml_to_float_t) dequantize_row_q2_0_g128,
         .from_float_ref           = (ggml_from_float_t) quantize_row_q2_0_g128_ref,
     },
+    // S-X8 v4.3, retagged 41 -> 57 (TYPE-ID-ALLOCATION 3.1). Taken-from: MarlaLabs llama-cpp-sx8.patch.
+    [GGML_TYPE_SX8] = {
+        .type_name                = "sx8",
+        .blck_size                = QKSX8,
+        .type_size                = sizeof(block_sx8),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_sx8,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_sx8_ref,
+    },
     // ArifiLabs Escha-W2 packed cbA code tiles (lane-164, TYPE-ID-ALLOCATION §3.1).
     // NOT row-separable: no to_float / from_float. Sole consumer is GGML_OP_ESCHA_MM;
     // every generic row-wise path must reject these types.
@@ -8524,6 +8533,7 @@ size_t ggml_quantize_chunk(
     switch (type) {
         case GGML_TYPE_Q1_0:    result = quantize_q1_0   (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
         case GGML_TYPE_Q2_0_G128: result = quantize_q2_0_g128(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_SX8:     result = quantize_sx8    (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:  result = quantize_tq3_1s (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
         case GGML_TYPE_TQ4_1S:  result = quantize_tq4_1s (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;

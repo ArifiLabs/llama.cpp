@@ -325,6 +325,20 @@ typedef struct {
 } block_q8_0;
 static_assert(sizeof(block_q8_0) == sizeof(ggml_half) + QK8_0, "wrong q8_0 block size/padding");
 
+// S-X8 v4.3 (MarlaLabs). Byte-identical to the .sx8v43 container: 30 B per 32 weights.
+// Taken-from: MarlaLabs llama-cpp-sx8.patch (ggml-common.h). coeff is the PCA correction,
+// ignored by the llama.cpp decoders (the author's patch ignores it too).
+#define QKSX8 32
+typedef struct {
+    ggml_half dmin;        // range low
+    ggml_half dmax;        // range high
+    uint8_t   config;      // 4 x 2-bit range strategy, one per 8-weight sub-block
+    uint8_t   qh[QKSX8/2]; // 6-bit level high nibbles
+    uint8_t   ql[QKSX8/4]; // 6-bit level low 2-bit quads
+    uint8_t   coeff;       // PCA 2 x 4-bit, unused here
+} block_sx8;
+static_assert(sizeof(block_sx8) == 2 * sizeof(ggml_half) + 2 + QKSX8/2 + QKSX8/4, "wrong sx8 block size/padding");
+
 #define QK8_1 32
 typedef struct {
     GGML_EXTENSION union {

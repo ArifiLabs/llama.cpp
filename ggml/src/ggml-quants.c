@@ -2385,6 +2385,116 @@ size_t quantize_q8_0(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, 
     return nrow * row_size;
 }
 
+// ====================== S-X8 v4.3 (MarlaLabs)
+// Taken-from: MarlaLabs llama-cpp-sx8.patch (ggml-quants.c), the "decode V6" of kernel_sx8_v43.py.
+// Per 8-weight sub-block the 2-bit strategy s picks the range [rlo, rhi] out of the block range
+// [lo, hi] with q = (hi - lo) / 4: s=0 [lo,hi], s=1 [lo,lo+q], s=2 [hi-q,hi], s=3 [lo+q,hi-q].
+// The 6-bit level lv then maps linearly onto that range. The PCA byte is ignored.
+
+static inline void sx8_sub_range(float lo_f, float hi_f, int s, float * rlo, float * step) {
+    const float q = (hi_f - lo_f) * 0.25f;
+    const float r0 = lo_f + q * (float)(3 * (s == 2) + (s == 3));
+    const float r1 = hi_f - q * (float)(3 * (s == 1) + (s == 3));
+    float st = (r1 - r0) * 0.015873f; // 1/63, the author's constant, kept for byte-exact decode parity
+    if (st < 1e-10f) st = 1e-10f;
+    *rlo = r0;
+    *step = st;
+}
+
+static inline int sx8_level(const block_sx8 * GGML_RESTRICT x, int j) {
+    const int hi = (x->qh[j >> 1] >> ((j & 1) * 4)) & 0xF;
+    const int lo = (x->ql[j >> 2] >> ((3 - (j & 3)) * 2)) & 0x3;
+    return (hi << 2) | lo;
+}
+
+void dequantize_row_sx8(const block_sx8 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    static const int qk = QKSX8;
+
+    assert(k % qk == 0);
+
+    const int nb = k / qk;
+
+    for (int i = 0; i < nb; i++) {
+        const float lo_f = GGML_FP16_TO_FP32(x[i].dmin);
+        const float hi_f = GGML_FP16_TO_FP32(x[i].dmax);
+        const uint8_t cfg = x[i].config;
+
+        for (int sb = 0; sb < 4; ++sb) {
+            float rlo, step;
+            sx8_sub_range(lo_f, hi_f, (cfg >> (sb * 2)) & 3, &rlo, &step);
+            for (int j = sb * 8; j < sb * 8 + 8; ++j) {
+                y[i*qk + j] = rlo + step * (float) sx8_level(&x[i], j);
+            }
+        }
+    }
+}
+
+void quantize_row_sx8_ref(const float * GGML_RESTRICT x, block_sx8 * GGML_RESTRICT y, int64_t k) {
+    static const int qk = QKSX8;
+
+    assert(k % qk == 0);
+
+    const int nb = k / qk;
+
+    for (int i = 0; i < nb; i++) {
+        float lo_f = x[i*qk];
+        float hi_f = x[i*qk];
+        for (int j = 1; j < qk; ++j) {
+            lo_f = MIN(lo_f, x[i*qk + j]);
+            hi_f = MAX(hi_f, x[i*qk + j]);
+        }
+        y[i].dmin = GGML_FP32_TO_FP16(lo_f);
+        y[i].dmax = GGML_FP32_TO_FP16(hi_f);
+        // decode from the stored halves so the chosen strategy matches what the decoder will see
+        lo_f = GGML_FP16_TO_FP32(y[i].dmin);
+        hi_f = GGML_FP16_TO_FP32(y[i].dmax);
+
+        uint8_t cfg = 0;
+        for (int sb = 0; sb < 4; ++sb) {
+            float best = INFINITY;
+            int best_s = 0;
+            for (int s = 0; s < 4; ++s) {
+                float rlo, step;
+                sx8_sub_range(lo_f, hi_f, s, &rlo, &step);
+                float err = 0.0f;
+                for (int j = sb * 8; j < sb * 8 + 8; ++j) {
+                    const float v = x[i*qk + j];
+                    int lv = (int) roundf((v - rlo) / step);
+                    lv = lv < 0 ? 0 : (lv > 63 ? 63 : lv);
+                    const float d = v - (rlo + step * (float) lv);
+                    err += d * d;
+                }
+                if (err < best) {
+                    best = err;
+                    best_s = s;
+                }
+            }
+            cfg |= (uint8_t) (best_s << (sb * 2));
+        }
+        y[i].config = cfg;
+
+        memset(y[i].qh, 0, sizeof(y[i].qh));
+        memset(y[i].ql, 0, sizeof(y[i].ql));
+        for (int sb = 0; sb < 4; ++sb) {
+            float rlo, step;
+            sx8_sub_range(lo_f, hi_f, (cfg >> (sb * 2)) & 3, &rlo, &step);
+            for (int j = sb * 8; j < sb * 8 + 8; ++j) {
+                int lv = (int) roundf((x[i*qk + j] - rlo) / step);
+                lv = lv < 0 ? 0 : (lv > 63 ? 63 : lv);
+                y[i].qh[j >> 1] |= (uint8_t) ((lv >> 2) << ((j & 1) * 4));
+                y[i].ql[j >> 2] |= (uint8_t) ((lv & 3) << ((3 - (j & 3)) * 2));
+            }
+        }
+        y[i].coeff = 0;
+    }
+}
+
+size_t quantize_sx8(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrow, int64_t n_per_row, const float * quant_weights) {
+    GGML_UNUSED(quant_weights);
+    quantize_row_sx8_ref(src, dst, (int64_t)nrow*n_per_row);
+    return nrow * ggml_row_size(GGML_TYPE_SX8, n_per_row);
+}
+
 size_t quantize_mxfp4(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrow, int64_t n_per_row, const float * quant_weights) {
     GGML_UNUSED(quant_weights);
     quantize_row_mxfp4_ref(src, dst, (int64_t)nrow*n_per_row);
@@ -5626,6 +5736,10 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
         case GGML_TYPE_Q2_0_G128:
             {
                 VALIDATE_ROW_DATA_D_F16_IMPL(block_q2_0_g128, data, nb);
+            } break;
+        case GGML_TYPE_SX8:
+            {
+                VALIDATE_ROW_DATA_DM_F16_IMPL(block_sx8, data, nb, dmin, dmax);
             } break;
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         // TurboQuant weight formats carry TWO half-block fp16 scales, so the single-`d`
