@@ -2029,6 +2029,20 @@ ggml_tensor * llama_kv_cache::get_k(ggml_context * ctx, int32_t il, uint32_t n_k
 
     const uint32_t ns = sinfo.s1 - sinfo.s0 + 1;
 
+    // TBQ types quantize ONE row per token across all heads (block 128 divides n_embd_k_gqa, not
+    // every head dim). Return the 3-D row view; build_attn_mha dequantizes and splits the heads.
+    // Taken-from: jtrefon/llama.cpp-turboq-mtp@6a02d0494 (llama-kv-cache.cpp get_k).
+    if (k->type == GGML_TYPE_TBQ3_0 || k->type == GGML_TYPE_TBQ4_0) {
+        if (tail_on() && ns == 1) {
+            tail_break("TBQ K cache rows are per-token, not per-head; the exact-ring tail cannot compose them");
+        }
+        return ggml_view_3d(ctx, k,
+                n_embd_k_gqa, n_kv, ns,
+                ggml_row_size(k->type, n_embd_k_gqa),
+                ggml_row_size(k->type, n_embd_k_gqa*kv_size),
+                ggml_row_size(k->type, n_embd_k_gqa*kv_size)*sinfo.s0);
+    }
+
     ggml_tensor * view = ggml_view_4d(ctx, k,
             head_k_eff, hparams.n_head_kv(il), n_kv, ns,
             ggml_row_size(k->type, head_k_eff),
@@ -2071,6 +2085,19 @@ ggml_tensor * llama_kv_cache::get_v(ggml_context * ctx, int32_t il, uint32_t n_k
         ? ((head_v + 127) / 128) * 128 : head_v;
 
     const uint32_t ns = sinfo.s1 - sinfo.s0 + 1;
+
+    // TBQ V: same per-token row view as get_k (quantized V requires flash attention, so v_trans is false)
+    if (v->type == GGML_TYPE_TBQ3_0 || v->type == GGML_TYPE_TBQ4_0) {
+        GGML_ASSERT(!v_trans && "TBQ V cache requires the non-transposed (flash attention) layout");
+        if (tail_on() && ns == 1) {
+            tail_break("TBQ V cache rows are per-token, not per-head; the exact-ring tail cannot compose them");
+        }
+        return ggml_view_3d(ctx, v,
+                n_embd_v_gqa, n_kv, ns,
+                ggml_row_size(v->type, n_embd_v_gqa),
+                ggml_row_size(v->type, n_embd_v_gqa*kv_size),
+                ggml_row_size(v->type, n_embd_v_gqa*kv_size)*sinfo.s0);
+    }
 
     if (!v_trans) {
         // note: v->nb[1] <= v->nb[2]

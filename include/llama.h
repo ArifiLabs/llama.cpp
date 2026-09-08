@@ -162,6 +162,11 @@ extern "C" {
         // the quantizer wiring behind them compiles only with GGML_ARIFI_TURBO_WEIGHT_QUANTS.
         LLAMA_FTYPE_MOSTLY_TQ3_1S        = 43, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_TQ4_1S        = 44, // except 1d tensors
+        // jtrefon/llama.cpp-turboq-mtp TBQ file types, RENUMBERED: theirs are 41/42, which are
+        // our Q2_0 and a hole beside the TQ pair. A file from their llama-quantize therefore
+        // reports a DIFFERENT general.file_type here; the retag tool (owed) rewrites it.
+        LLAMA_FTYPE_MOSTLY_TBQ3_0        = 45, // except 1d tensors
+        LLAMA_FTYPE_MOSTLY_TBQ4_0        = 46, // except 1d tensors
 
         // ROCmFPX file types, adopted VERBATIM from charlie12345/ROCmFPX@3edc3d31e
         // so that its artifacts report the same general.file_type we do.

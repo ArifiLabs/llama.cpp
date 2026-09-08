@@ -140,6 +140,8 @@ are **not ours to choose**: we adopt whatever the format's originator serialized
 | 55 | `GGML_TYPE_ESCHA2` | **ArifiLabs** (lane-164) | packed EschaLabs cbA K=2 code tiles, `[in/16][out/16][32] i16 LE` | 64 | 256 (one 16x16 tile) | **implemented** — NOT row-separable; sole consumer `GGML_OP_ESCHA_MM`; f32 aux sidecar `<base>.escha_aux` required |
 | 56 | `GGML_TYPE_ESCHA3` | **ArifiLabs** (lane-164) | packed EschaLabs cbA K=3 code tiles, `[in/16][out/16][48] i16 LE` | 96 | 256 | **implemented** — same rules as 55 |
 | 57 | `GGML_TYPE_SX8` | MarlaLabs S-X8 v4.3 (**retagged**, their 41) | `dmin(f16) + dmax(f16) + config(u8) + qh[16] + ql[8] + coeff(u8)` | 30 | 32 | **implemented, CPU only** (lane-212 / WI-1692). Their 41 is upstream `Q1_0` in files that exist, so this is the second family we renumber (same reasoning as §3.1.1). Files carrying 41 go through `tools/gguf-retag-sx8/retag_sx8.py`, which refuses unless every id-41 tensor spans exactly 30 B / 32 values. No `LLAMA_FTYPE`: serialized-but-not-quantizable by our tooling, like `Q2_0_G128`. No Vulkan/CUDA kernel yet (the author's CUDA hunks are staged, not ported). |
+| 58 | `GGML_TYPE_TBQ3_0` | jtrefon (**retagged**, their 42) | `d + qs[48]`, signed FWHT + 8 Lloyd-Max centroids | 50 | 128 | **implemented** (lane-212, WI-1694) — see §3.1.3 |
+| 59 | `GGML_TYPE_TBQ4_0` | jtrefon (**retagged**, their 43) | `d + qs[64]`, signed FWHT + 16 Lloyd-Max centroids | 66 | 128 | **implemented** (lane-212, WI-1694) — see §3.1.3 |
 
 `44` is left as a hole. It is the value TurboQuant uses for a runtime-only type and the value our
 current `GGML_TYPE_COUNT` occupies; leaving it unassigned costs nothing and removes a whole class of
@@ -249,6 +251,45 @@ loads and emits garbage. Wiring these three ids into the retag map before their 
 precisely that. Whoever ports one of them: port the codec, prove coherent output on a real file,
 THEN delete that id's line from `TQ3_ID_UNMAPPED` — in that order, and one id at a time.
 
+#### 3.1.3 jtrefon TBQ3_0 / TBQ4_0 — the second family we renumber (lane-212, 2026-09-07)
+
+`github.com/jtrefon/llama.cpp-turboq-mtp` (pinned `6a02d0494`, `sources.json` remote `turboq`) numbers
+**`TBQ3_0` at 42 and `TBQ4_0` at 43**. Their 42 is upstream's own `Q2_0` (never renumbered, §2) and their
+43 is our `Q2_0_G128` (§5). So, exactly as in §3.1.1, adopting the originator's ids is not available, and
+the family moves to **58 / 59**. 57 is left for S-X8 (the WI-1692 lane), as the R16 proposal named it.
+
+Two facts decide the classification, both read from the fetched source rather than its README:
+
+1. **They are serialized.** `include/llama.h:158-159` declares `LLAMA_FTYPE_MOSTLY_TBQ3_0 = 41` and
+   `_TBQ4_0 = 42`, `tools/quantize/quantize.cpp:49-50` offers both as `llama-quantize` targets, and
+   `src/llama-quant.cpp:387-388, 488, 825-826` dispatches on them. A GGUF written by that tool carries
+   tensors tagged 42/43 meaning TBQ. The README's "lossless KV cache" framing is the use they advertise,
+   not the whole of what the enum permits. Block W, not block R.
+2. **The four RotorQuant types are KV-only.** `PLANAR3_0 / ISO3_0 / PLANAR4_0 / ISO4_0` (their 44..47)
+   have no FTYPE, no quantize row and appear in `common/arg.cpp:399-404` as cache types only. They are
+   **RESERVED at 203..206 in §3.2**, not allocated: no enumerator, no traits row, exactly the §3.1.2 rule.
+
+The FTYPEs are renumbered too (theirs collide): `LLAMA_FTYPE_MOSTLY_TBQ3_0 = 45`, `_TBQ4_0 = 46`;
+`GGML_FTYPE_MOSTLY_TBQ3_0 = 29`, `_TBQ4_0 = 30`. A jtrefon-authored file therefore reports a different
+`general.file_type` here until it is retagged.
+
+**Geometry is survivable, not silent** — and only by luck, the same luck as §3.1.1. A jtrefon file read
+at its own ids: 42 → our `Q2_0` (18 B / 64 values) against `block_tbq3_0` (50 B / 128) computes a row
+size 28% too small; 43 → our `Q2_0_G128` (34 B / 128) against `block_tbq4_0` (66 B / 128) is 48% too
+small. Both fail at `gguf_init` on the span check. Note the second one: `Q2_0_G128` and `TBQ4_0` share
+the 128-value block size, so a future 34-byte TBQ variant would be exactly the §4 hazard.
+
+**What the port carries** (all at 58/59, `ggml/src/ggml-tbq-quant.c` + `ggml-tbq-tables.h`, `Taken-from`
+trailer on the commit): the reference codec, the two block structs, `type_traits` / `type_traits_cpu`
+rows (dequant-then-dot against `q8_K`), the seven `ops.cpp` switch sites of §7.6, the KV-cache
+per-token-row views and the non-fused `build_attn_mha` arm, the context guards (including the fork's
+own `LLAMA_ALLOW_TBQ3_KV` quality guard), `-ctk/-ctv tbq3_0|tbq4_0`, the quantize targets, the gguf-py
+registry rows and the `test-quantize-fns` bounds. **Not carried, each named:** their CUDA fused TBQ4
+flash-attention kernels (unbuildable on this box), the RotorQuant codecs (ids reserved), the Metal
+kernels. **Owed, in this order (§3.1.1 rule):** a coherence proof on a real TBQ4_0 file, THEN a retag
+tool (`tools/gguf-retag-tbq/`, 42→58, 43→59, `general.file_type` 41/42→45/46), and a Vulkan
+SET_ROWS/CPY/FA path before any speed claim on the rig.
+
 ### 3.2 Block R — ArifiLabs runtime-only types, **200-255**
 
 Types that exist only as live tensors — KV-cache codecs, repack/interleave layouts, scratch formats.
@@ -259,7 +300,11 @@ They never enter a GGUF, so no external file constrains their ids, and we choose
 | 200 | `GGML_TYPE_ARIFI_POLAR2` | PolarQuant 2-bit KV (was provisional 44) | **reassigned**, see §6 |
 | 201 | `GGML_TYPE_ARIFI_POLAR3` | PolarQuant 3-bit KV (was provisional 45) | **reassigned** |
 | 202 | `GGML_TYPE_ARIFI_POLAR4` | PolarQuant 4-bit KV (was provisional 46) | **reassigned** |
-| 203-255 | reserved | future ArifiLabs runtime-only types | free |
+| 203 | `PLANAR3_0` (jtrefon 44) | RotorQuant 3-bit KV: 2-D Givens + 2-bit + 1-bit QJL, 50 B / 128 | **RESERVED — not implemented** (lane-212, §3.1.3) |
+| 204 | `ISO3_0` (jtrefon 45) | RotorQuant 3-bit KV: quaternion 4-D + 2-bit + 1-bit QJL, 50 B / 128 | **RESERVED — not implemented** |
+| 205 | `PLANAR4_0` (jtrefon 46) | RotorQuant 4-bit KV: 2-D Givens + 4-bit nibble, 66 B / 128 (same layout as `TBQ4_0`) | **RESERVED — not implemented** |
+| 206 | `ISO4_0` (jtrefon 47) | RotorQuant 4-bit KV: quaternion 4-D + 4-bit nibble, 66 B / 128 | **RESERVED — not implemented** |
+| 207-255 | reserved | future ArifiLabs runtime-only types | free |
 
 `GGML_TYPE_COUNT` becomes **256** once block R is populated.
 

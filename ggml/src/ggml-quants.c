@@ -5712,6 +5712,14 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
             {
                 VALIDATE_ROW_DATA_DM_F16_IMPL(block_sx8, data, nb, dmin, dmax);
             } break;
+        case GGML_TYPE_TBQ3_0:
+            {
+                VALIDATE_ROW_DATA_D_F16_IMPL(block_tbq3_0, data, nb);
+            } break;
+        case GGML_TYPE_TBQ4_0:
+            {
+                VALIDATE_ROW_DATA_D_F16_IMPL(block_tbq4_0, data, nb);
+            } break;
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         // TurboQuant weight formats carry TWO half-block fp16 scales, so the single-`d`
         // macro does not fit; check both fields per block.

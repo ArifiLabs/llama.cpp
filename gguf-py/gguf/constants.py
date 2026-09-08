@@ -5719,6 +5719,9 @@ class GGMLQuantizationType(IntEnum):
     Q2_0    = 42
     TQ3_1S  = 45
     TQ4_1S  = 46
+    # jtrefon/llama.cpp-turboq-mtp TBQ family, RENUMBERED (their 42/43; TYPE-ID-ALLOCATION 3.1.3)
+    TBQ3_0  = 58
+    TBQ4_0  = 59
     # ArifiLabs Escha-W2 packed cbA code tiles (lane-164, TYPE-ID-ALLOCATION §3.1)
     ESCHA2  = 55
     ESCHA3  = 56
@@ -5790,6 +5793,8 @@ class LlamaFileType(IntEnum):
     MOSTLY_Q2_0          = 41  # except 1d tensors
     MOSTLY_TQ3_1S        = 43  # except 1d tensors
     MOSTLY_TQ4_1S        = 44  # except 1d tensors
+    MOSTLY_TBQ3_0        = 45  # except 1d tensors (jtrefon TBQ, renumbered from their 41)
+    MOSTLY_TBQ4_0        = 46  # except 1d tensors (jtrefon TBQ, renumbered from their 42)
     # ROCmFPX file types (base formats only - the LEAN/COHERENT/STRIX/AGENT
     # recipe ftypes 101,102,104,105,106,113-117 are a separate mechanism).
     MOSTLY_Q4_0_ROCMFP4      = 100  # except 1d tensors
@@ -5959,6 +5964,8 @@ GGML_QUANT_SIZES: dict[GGMLQuantizationType, tuple[int, int]] = {
     GGMLQuantizationType.Q2_0_ROCMFPX:      (32, 8 + 2),
     GGMLQuantizationType.TQ3_1S:  (32, 2 + 2 + 12),
     GGMLQuantizationType.TQ4_1S:  (32, 2 + 2 + 16),
+    GGMLQuantizationType.TBQ3_0:  (128, 2 + 48),
+    GGMLQuantizationType.TBQ4_0:  (128, 2 + 64),
 }
 
 

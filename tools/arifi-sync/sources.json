@@ -382,6 +382,15 @@
       "role": "third-party llama.cpp fork (authors Marshall, Daniel Han, Laurent Zuijdwijk): RDNA3/strix-halo Vulkan kernel work, qwen4exp arch, a ROCmFPX merge - our exact rig area",
       "license": "MIT - licenses/zuijdwijk-MIT.txt",
       "track_tags": false
+    },
+    "turboq": {
+      "url": "https://github.com/jtrefon/llama.cpp-turboq-mtp",
+      "ref": "turboq/master",
+      "pin": "6a02d0494",
+      "pin_review_2026_09_07_lane212": "REGISTERED AND PINNED at first ingest (WI-1694 half A, R18 kernel wave). The pin is the head of `master` at the 2026-09-07 00:4x fetch (`git ls-remote --heads` = 6a02d0494), read from a shallow clone at cache/r18-turboq-src; NO remote is configured in this repository yet - the tracked `ref` names the remote to add (`git remote add turboq <url>`) so that `currency` can measure drift, and this row is the receipt that the fetch happened outside it. WHAT WAS TAKEN, at our ids: the TBQ3_0/TBQ4_0 reference codec (ggml/src/ggml-turboq.c TBQ sections + ggml-turboq-tables.h -> ggml/src/ggml-tbq-quant.c + ggml-tbq-tables.h), the two block structs, the CPU type_traits rows and dequant-then-dot vec_dot against q8_K, the per-token-row KV cache views (get_k/get_v) and the non-fused build_attn_mha arm (K -> f32, V -> f16), the context-creation guards including LLAMA_ALLOW_TBQ3_KV, the kv-type names, llama-quantize targets TBQ3_0/TBQ4_0, gguf-py registry rows, and the two test-quantize-fns bounds. THREE CORRECTIONS TO R16 (fragment 000003) FROM THE SOURCE: (1) TBQ3_0/TBQ4_0 are SERIALIZED weight types in their tree (include/llama.h:158-159 FTYPEs, llama-quant.cpp:387-388/488/825-826, tools/quantize/quantize.cpp:49-50), not KV-only, so they take Block-W ids 58/59 by the tq3 renumber precedent (TYPE-ID-ALLOCATION 3.1.3) and a retag tool is OWED after a coherence proof; (2) PLANAR3_0/ISO3_0/PLANAR4_0/ISO4_0 are KV-only and are RESERVED at 203..206, not allocated; (3) their fused TBQ4 flash attention is a FORMAT we lack, not a MECHANISM - fattn-mma-turbo.cuh and the Vulkan flash_attn_dequant path already fuse the TURBO family here. NOT TAKEN, each named: the CUDA fused FA (fattn-mma-tbq4*.cuh, template-instances, tbq4-cuda.cuh, set-rows.cu, cpy.cu, ~2k lines, unbuildable on this Vulkan box), the RotorQuant codecs (ggml-planar-quant.c, ggml-planar4-quant.c, ggml-iso-quant.c, ggml-iso4-quant.c, CUDA kernels), the Metal TBQ kernels, link_shared_tensors (WI-1694 B1, DEAD not-applicable), LLAMA_KV_PAD_MIN (B2, GO-TO-GPU), --spec-adapt and their custom --spec-type mtp (upstream draft-mtp is in our base), the async checkpoint capture (CUDA pinned-memory ring). Their numbers (80-179 tok/s, 262K ctx on a 4090) are theirs and are not restated as ours; no speed claim is made for the 780M until a Vulkan in-kernel TBQ path exists (owed row).",
+      "role": "TurboQuant-KV + MTP fork tuned for one RTX 4090: TBQ3_0/TBQ4_0 codec (taken, ids 58/59), fused TBQ4 CUDA flash attention (not taken), RotorQuant planar/iso KV codecs (ids reserved 203..206)",
+      "license": "MIT - licenses/turboq-mtp-MIT.txt",
+      "track_tags": false
     }
   },
   "local_checkouts": {
