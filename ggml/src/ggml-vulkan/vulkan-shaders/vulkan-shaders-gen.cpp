@@ -1029,6 +1029,25 @@ void process_shaders() {
             merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {da, "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
     }
 
+    // S-X8 v4.3 (MarlaLabs, type-id 57) -- lane-224 / WI-1717. Generated explicitly
+    // rather than by adding "sx8" to type_names, for the same reason the tq entries
+    // above are: a type_names row demands a mul_mm_funcs.glsl unpack branch and the
+    // whole matmul/coopmat family. S-X8 has no mul_mm and reaches prompt processing
+    // through f16 staging (dequant_sx8), exactly as TQ3_4S does. GET_ROWS, CPY and
+    // SET_ROWS are deliberately not generated: nothing quantizes TO S-X8 on the GPU,
+    // and supports_op declines them rather than aborting (the honest-supports_op law).
+    // Unlike the tq shaders, mul_mat_vec_sx8.comp needs no 32-thread pin -- it derives
+    // its weight position from tid & 31 and strides whole blocks by BLOCK_SIZE/32, so
+    // any workgroup size that is a multiple of 32 is correct.
+    string_to_spv("mul_mat_vec_sx8_f32_f32", "mul_mat_vec_sx8.comp",
+        merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
+    string_to_spv("mul_mat_vec_sx8_f16_f32", "mul_mat_vec_sx8.comp",
+        merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"B_TYPE", "float16_t"}, {"B_TYPEV2", "f16vec2"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}));
+    string_to_spv("mul_mat_vec_id_sx8_f32_f32", "mul_mat_vec_sx8.comp",
+        merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {"DATA_A_SX8", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
+    string_to_spv("dequant_sx8", "dequant_sx8.comp",
+        merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"D_TYPE", "float16_t"}}));
+
     // Activation pre-rotation for the rotated matmul path. Type-independent:
     // TQ3 and TQ4 share the same 32-element sign pattern and butterfly, so one
     // pipeline serves both. Takes no DATA_A_* define -- it only touches the

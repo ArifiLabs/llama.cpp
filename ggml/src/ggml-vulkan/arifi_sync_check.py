@@ -516,7 +516,7 @@ def main():
     # EXPECTED COUNTS. Without these, every "the parser stopped seeing it" bug is invisible: the
     # summary line prints a smaller number and the build goes green (lane-149 checker, f.5).
     # Changing a count is a DELIBERATE edit that lands with the change that caused it.
-    for label, got, want in (("FA_TYPE ids", n_fa, 16), ("QUANT_K sizes", n_qk, 35),
+    for label, got, want in (("FA_TYPE ids", n_fa, 16), ("QUANT_K sizes", n_qk, 36),   # 36 since lane-224 added QUANT_K_SX8 (type-id 57)
                              # +2 regions / +1 set: lane-194's cpy.quant_to_f16 pair (the FIFTH
                              # hand-synced pair) - the quant->F16 switch in
                              # ggml_vk_get_cpy_pipeline and its partner in supports_op.

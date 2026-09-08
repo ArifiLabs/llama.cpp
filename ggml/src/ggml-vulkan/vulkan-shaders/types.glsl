@@ -2064,6 +2064,52 @@ float tq3_4s_decode_scale(uint b) {
 }
 #endif
 
+// S-X8 v4.3 (MarlaLabs), type-id 57. Mirrors block_sx8 in ggml/src/ggml-common.h:
+// 2 + 2 + 1 + 16 + 8 + 1 = 30 bytes for 32 weights (7.50 bpp). Six-bit levels split
+// across two planes -- qh holds the 4 high bits as nibbles, ql the 2 low bits as
+// quads -- plus one config byte carrying four 2-bit range strategies, one per
+// sub-block of 8. Reference: dequantize_row_sx8() in ggml/src/ggml-quants.c.
+//
+// 30 is not a multiple of 4. That is fine and already exercised in this tree:
+// block_q8_0 is 34 bytes. Struct alignment is 2 (the float16_t members) and 30 is
+// even, so the std430 array stride is 30 and matches the C layout byte for byte.
+// coeff is the author's PCA byte; llama.cpp ignores it, on both the CPU and here.
+#define QUANT_K_SX8 32
+#define QUANT_R_SX8 1
+
+struct block_sx8
+{
+    float16_t dmin;    // range low
+    float16_t dmax;    // range high
+    uint8_t   config;  // 4 sub-block strategies, 2 bits each
+    uint8_t   qh[16];  // level high nibbles
+    uint8_t   ql[8];   // level low quads
+    uint8_t   coeff;   // PCA correction -- unused
+};
+
+#if defined(DATA_A_SX8)
+#define QUANT_K QUANT_K_SX8
+#define QUANT_R QUANT_R_SX8
+#define QUANT_AUXF 2
+#define A_TYPE block_sx8
+#endif
+
+// The S-X8 v4.3 decode, shared by dequant_sx8.comp and mul_mat_vec_sx8.comp.
+// EVERY constant below is a hand-synced mirror of dequantize_row_sx8()
+// (ggml/src/ggml-quants.c): 0.25 for the quarter-range step, 0.015873 for 1/63,
+// and the 1e-10 floor. A drift here is silent -- slightly wrong numbers, never an
+// abort (failure-ledger F-110). Cross-checked by the correctness sweep, and the
+// planted-RED recipe in the lane PREREG flips 0.015873 to prove the cases run.
+#if defined(DATA_A_SX8)
+// Range endpoints for sub-block strategy s, given the block's fp16 endpoints.
+void sx8_range(float lo_f, float hi_f, uint s, out float rlo, out float step) {
+    const float q = (hi_f - lo_f) * 0.25;
+    rlo = lo_f + q * float(3u * uint(s == 2u) + uint(s == 3u));
+    const float rhi = hi_f - q * float(3u * uint(s == 1u) + uint(s == 3u));
+    step = max((rhi - rlo) * 0.015873, 1e-10);
+}
+#endif
+
 #if defined(DATA_A_IQ4_NL) || defined(DATA_A_IQ4_XS)
 const int8_t kvalues_iq4nl_const[16] = {
     int8_t(-127), int8_t(-104), int8_t(-83), int8_t(-65), int8_t(-49), int8_t(-35), int8_t(-22), int8_t(-10),
