@@ -1547,6 +1547,11 @@ static bool ggml_vk_matmul_int_shmem_support(const vk_device& device, const std:
         case GGML_TYPE_Q5_1:    block_a_size = std430_size({{16, 4}, {4, 4}, {fp2_size, fp2_align}});         break; // qs[16/4] + qh + dm(vec2)
         case GGML_TYPE_Q8_0:    block_a_size = std430_size({{32, 4}, {fp_size,  fp_align}});                  break; // qs[8] + dm
         case GGML_TYPE_IQ4_XS:  block_a_size = std430_size({{32, 4}, {fp_size,  fp_align}});                  break; // qs[8] + d
+        // WI-1722. qs[8] + rlo[4] + step[4], the four per-sub-block affine pairs decoded
+        // once at shmem-fill time. 48 B with fp16 FLOAT_TYPE, 64 B without -- the largest
+        // non-k block_a_cache in this table, so the _int warptile check below is what
+        // decides whether the l-tile survives for S-X8.
+        case GGML_TYPE_SX8:     block_a_size = std430_size({{32, 4}, {4 * fp_size, fp_align}, {4 * fp_size, fp_align}}); break;
         case GGML_TYPE_MXFP4:   block_a_size = std430_size({{32, 4}, {fp_size,  fp_align}});                  break; // qs[8] + d
         case GGML_TYPE_IQ4_NL:  block_a_size = std430_size({{32, 4}, {fp_size,  fp_align}});                  break; // qs[8] + d
         case GGML_TYPE_NVFP4:   block_a_size = std430_size({{32, 4}, {fp2_size, fp2_align}});                 break; // qs[8] + d_scales(vec2)
@@ -2717,6 +2722,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 std::vector<vk_tile_config> tc_mmq_int = {{s_warptile_mmq_int, s_mmq_wg_denoms, s_align}, {m_warptile_mmq_int, m_mmq_wg_denoms, m_align}, {l_warptile_mmq_int, l_mmq_wg_denoms, l_align}};
                 std::vector<vk_tile_config> tc_mmq_int_k = {{s_warptile_mmq_int_k, s_mmq_wg_denoms, s_align}, {m_warptile_mmq_int_k, m_mmq_wg_denoms, m_align}, {l_warptile_mmq_int_k, l_mmq_wg_denoms, l_align}};
                 sg_create_mmq({GGML_TYPE_Q2_0, GGML_TYPE_Q8_1, false, false}, tc_mmq_int, "matmul_q2_0_q8_1", matmul_q2_0_q8_1_len, matmul_q2_0_q8_1_data, sizeof(vk_mat_mat_push_constants), 3);
+                // arifi lane-224 / WI-1722: S-X8 v4.3 integer MMQ (its only mat-mat route besides mul_mm)
+                sg_create_mmq({GGML_TYPE_SX8, GGML_TYPE_Q8_1, false, false}, tc_mmq_int, "matmul_sx8_q8_1", matmul_sx8_q8_1_len, matmul_sx8_q8_1_data, sizeof(vk_mat_mat_push_constants), 3);
                 sg_create_mmq({GGML_TYPE_Q2_0_G128, GGML_TYPE_Q8_1, false, false}, tc_mmq_int, "matmul_q2_0_g128_q8_1", matmul_q2_0_g128_q8_1_len, matmul_q2_0_g128_q8_1_data, sizeof(vk_mat_mat_push_constants), 3);
                 sg_create_mmq({GGML_TYPE_Q4_0, GGML_TYPE_Q8_1, false, false}, tc_mmq_int, "matmul_q4_0_q8_1", matmul_q4_0_q8_1_len, matmul_q4_0_q8_1_data, sizeof(vk_mat_mat_push_constants), 3);
                 sg_create_mmq({GGML_TYPE_Q4_1, GGML_TYPE_Q8_1, false, false}, tc_mmq_int, "matmul_q4_1_q8_1", matmul_q4_1_q8_1_len, matmul_q4_1_q8_1_data, sizeof(vk_mat_mat_push_constants), 3);
@@ -2758,6 +2765,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                     std::vector<vk_tile_config> tc_mmqid_int = {{s_warptile_mmqid_int, s_mmq_wg_denoms, s_align}, {m_warptile_mmqid_int, m_mmq_wg_denoms, m_align}, {l_warptile_mmqid_int, l_mmq_wg_denoms, l_align}};
                     std::vector<vk_tile_config> tc_mmqid_int_k = {{s_warptile_mmqid_int_k, s_mmq_wg_denoms, s_align}, {m_warptile_mmqid_int_k, m_mmq_wg_denoms, m_align}, {l_warptile_mmqid_int_k, l_mmq_wg_denoms, l_align}};
                     sg_create_mmq({GGML_TYPE_Q2_0, GGML_TYPE_Q8_1, true, false}, tc_mmqid_int, "matmul_id_subgroup_q2_0_q8_1", matmul_id_subgroup_q2_0_q8_1_len, matmul_id_subgroup_q2_0_q8_1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count, mul_mat_subgroup_size);
+                    // arifi lane-224 / WI-1722: S-X8 v4.3 integer MMQ (its only mat-mat route besides mul_mm)
+                    sg_create_mmq({GGML_TYPE_SX8, GGML_TYPE_Q8_1, true, false}, tc_mmqid_int, "matmul_id_subgroup_sx8_q8_1", matmul_id_subgroup_sx8_q8_1_len, matmul_id_subgroup_sx8_q8_1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count, mul_mat_subgroup_size);
                     sg_create_mmq({GGML_TYPE_Q2_0_G128, GGML_TYPE_Q8_1, true, false}, tc_mmqid_int, "matmul_id_subgroup_q2_0_g128_q8_1", matmul_id_subgroup_q2_0_g128_q8_1_len, matmul_id_subgroup_q2_0_g128_q8_1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count, mul_mat_subgroup_size);
                     sg_create_mmq({GGML_TYPE_Q4_0, GGML_TYPE_Q8_1, true, false}, tc_mmqid_int, "matmul_id_subgroup_q4_0_q8_1", matmul_id_subgroup_q4_0_q8_1_len, matmul_id_subgroup_q4_0_q8_1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count, mul_mat_subgroup_size);
                     sg_create_mmq({GGML_TYPE_Q4_1, GGML_TYPE_Q8_1, true, false}, tc_mmqid_int, "matmul_id_subgroup_q4_1_q8_1", matmul_id_subgroup_q4_1_q8_1_len, matmul_id_subgroup_q4_1_q8_1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count, mul_mat_subgroup_size);
@@ -2798,6 +2807,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                     std::vector<vk_tile_config> tc_mmqid_int = {{s_warptile_mmqid_int, s_mmq_wg_denoms, s_align}, {m_warptile_mmqid_int, m_mmq_wg_denoms, m_align}, {l_warptile_mmqid_int, l_mmq_wg_denoms, l_align}};
                     std::vector<vk_tile_config> tc_mmqid_int_k = {{s_warptile_mmqid_int_k, s_mmq_wg_denoms, s_align}, {m_warptile_mmqid_int_k, m_mmq_wg_denoms, m_align}, {l_warptile_mmqid_int_k, l_mmq_wg_denoms, l_align}};
                     sg_create_mmq({GGML_TYPE_Q2_0, GGML_TYPE_Q8_1, true, false}, tc_mmqid_int, "matmul_id_q2_0_q8_1", matmul_id_q2_0_q8_1_len, matmul_id_q2_0_q8_1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count);
+                    // arifi lane-224 / WI-1722: S-X8 v4.3 integer MMQ (its only mat-mat route besides mul_mm)
+                    sg_create_mmq({GGML_TYPE_SX8, GGML_TYPE_Q8_1, true, false}, tc_mmqid_int, "matmul_id_sx8_q8_1", matmul_id_sx8_q8_1_len, matmul_id_sx8_q8_1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count);
                     sg_create_mmq({GGML_TYPE_Q2_0_G128, GGML_TYPE_Q8_1, true, false}, tc_mmqid_int, "matmul_id_q2_0_g128_q8_1", matmul_id_q2_0_g128_q8_1_len, matmul_id_q2_0_g128_q8_1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count);
                     sg_create_mmq({GGML_TYPE_Q4_0, GGML_TYPE_Q8_1, true, false}, tc_mmqid_int, "matmul_id_q4_0_q8_1", matmul_id_q4_0_q8_1_len, matmul_id_q4_0_q8_1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count);
                     sg_create_mmq({GGML_TYPE_Q4_1, GGML_TYPE_Q8_1, true, false}, tc_mmqid_int, "matmul_id_q4_1_q8_1", matmul_id_q4_1_q8_1_len, matmul_id_q4_1_q8_1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count);
@@ -2840,6 +2851,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 std::vector<vk_tile_config> tc_mmq_int = {{s_warptile_mmq_int, s_mmq_wg_denoms, s_align}, {m_warptile_mmq_int, m_mmq_wg_denoms, m_align}, {l_warptile_mmq_int, l_mmq_wg_denoms, l_align}};
                 std::vector<vk_tile_config> tc_mmq_int_k = {{s_warptile_mmq_int_k, s_mmq_wg_denoms, s_align}, {m_warptile_mmq_int_k, m_mmq_wg_denoms, m_align}, {l_warptile_mmq_int_k, l_mmq_wg_denoms, l_align}};
                 sg_create_mmq({GGML_TYPE_Q2_0, GGML_TYPE_Q8_1, false, false}, tc_mmq_int, "matmul_q2_0_q8_1", matmul_q2_0_q8_1_fp32_len, matmul_q2_0_q8_1_fp32_data, sizeof(vk_mat_mat_push_constants), 3);
+                // arifi lane-224 / WI-1722: S-X8 v4.3 integer MMQ (its only mat-mat route besides mul_mm)
+                sg_create_mmq({GGML_TYPE_SX8, GGML_TYPE_Q8_1, false, false}, tc_mmq_int, "matmul_sx8_q8_1", matmul_sx8_q8_1_fp32_len, matmul_sx8_q8_1_fp32_data, sizeof(vk_mat_mat_push_constants), 3);
                 sg_create_mmq({GGML_TYPE_Q2_0_G128, GGML_TYPE_Q8_1, false, false}, tc_mmq_int, "matmul_q2_0_g128_q8_1", matmul_q2_0_g128_q8_1_fp32_len, matmul_q2_0_g128_q8_1_fp32_data, sizeof(vk_mat_mat_push_constants), 3);
                 sg_create_mmq({GGML_TYPE_Q4_0, GGML_TYPE_Q8_1, false, false}, tc_mmq_int, "matmul_q4_0_q8_1", matmul_q4_0_q8_1_fp32_len, matmul_q4_0_q8_1_fp32_data, sizeof(vk_mat_mat_push_constants), 3);
                 sg_create_mmq({GGML_TYPE_Q4_1, GGML_TYPE_Q8_1, false, false}, tc_mmq_int, "matmul_q4_1_q8_1", matmul_q4_1_q8_1_fp32_len, matmul_q4_1_q8_1_fp32_data, sizeof(vk_mat_mat_push_constants), 3);
@@ -16581,6 +16594,13 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                     // mul_mat_vec_id pipeline but no mul_mm_id at all, so f16 staging
                     // of the whole expert tensor is the only prompt-processing route
                     // and the size guard must apply.
+                    // WI-1722 gave S-X8 a mul_mat_id q8_1 (integer MMQ) pipeline, and it
+                    // DELIBERATELY STAYS in this list anyway: have_rotated below reads
+                    // pipeline_dequant_mul_mat_mat_id, the f16 array, and the q8_1 route
+                    // does not exist on every device (integer_dot_product off, the _int
+                    // shmem probe failing, or the no-fp16 shader branch which creates no
+                    // id-MMQ at all). Removing the type would re-open the GGML_ABORT this
+                    // guard exists to prevent on exactly those devices.
                     if (src0_type == GGML_TYPE_TQ3_1S || src0_type == GGML_TYPE_TQ4_1S ||
                         src0_type == GGML_TYPE_TQ3_4S || src0_type == GGML_TYPE_SX8) {
                         // Only reachable when we would fall back to the f16 dequant path.

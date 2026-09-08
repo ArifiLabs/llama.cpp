@@ -702,6 +702,25 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
         }
     }
 
+#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+    // S-X8 v4.3 (type-id 57) integer MMQ -- lane-224 / WI-1722. Generated here rather
+    // than from type_names for the same reason the mat-vec block near the bottom of
+    // process_shaders() is: a type_names row would also demand a mul_mm_funcs.glsl
+    // unpack branch and the whole matmul/coopmat family, and S-X8 has neither. It has
+    // a mul_mmq_funcs.glsl branch, so it gets the mul_mmq pipeline and nothing else.
+    // Same gate as the q8_0 line above: f32 accumulators, no coopmat, no dot2.
+    if (!f16acc && !coopmat && !coopmat2 && !dot2) {
+        const std::map<std::string, std::string> sx8_float_type_dict = {
+            {"FLOAT_TYPE",   FLOAT_TYPE(1, "sx8")},
+            {"FLOAT_TYPEV2", FLOAT_TYPE(2, "sx8")},
+            {"FLOAT_TYPEV4", FLOAT_TYPE(4, "sx8")},
+            {"FLOAT_TYPEV8", FLOAT_TYPE(8, "sx8")},
+        };
+        string_to_spv(shader_name + "_sx8_q8_1", "mul_mmq.comp",
+            merge_maps(merge_maps(base_dict, sx8_float_type_dict), {{"DATA_A_SX8", "1"}, {"D_TYPE", "float"},}), fp16, coopmat, coopmat2, f16acc);
+    }
+#endif
+
     // TurboQuant weight types, ROTATED matmul.
     //
     // Generated explicitly rather than by adding them to type_names, for the

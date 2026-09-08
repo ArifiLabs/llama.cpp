@@ -212,6 +212,92 @@ ACC_TYPE mmq_dot_product(const uint ib_a) {
 }
 #endif
 
+#if defined(DATA_A_SX8)
+// S-X8 v4.3 (MarlaLabs, type-id 57) integer MMQ -- WI-1722.
+//
+// The arithmetic of record is ggml_vec_dot_sx8_q8_1_generic() in
+// ggml/src/ggml-cpu/quants.c:375-393, mirrored here term for term. S-X8 is affine
+// inside every sub-block of 8 (the author's technique 1, docs/S-X-METHODOLOGY.md
+// section 2), w_i = rlo_sb + step_sb * lv_i, so a dot against Q8_1 activations
+// decomposes exactly:
+//
+//   dot_32 = d_b * sum_sb [ step_sb * sum_i(lv_i * q_i) + rlo_sb * sum_i(q_i) ]
+//
+// Levels are 0..63, inside signed int8 range, so the plain signed dotPacked4x8EXT
+// q8_0 uses is BIT-EXACT here; the mixed-signedness variant is not needed.
+//
+// THE LOAD-BEARING DECISION: sum_i(q_i) per sub-block depends only on the
+// ACTIVATION block, never on the weight column, so it is hoisted into
+// block_b_to_registers() and amortised across every row of the M tile. Written
+// naively the offset term would cost 8 more dotPacked4x8 per 32 weights -- 16
+// against q8_0's 8 -- and at 2x the integer-dot work this kernel could fail to
+// beat the f16-staging path it replaces. Hoisted, the inner loop is 8 dots + 8
+// FMAs against q8_0's 8 dots + 1 FMA.
+//
+// The hoisted sums live in a separate global rather than on block_b_cache on
+// purpose: block_b_cache is also the SHARED buf_b element, and its size is
+// mirrored by hand in ggml_vk_matmul_int_shmem_support() (ggml-vulkan.cpp).
+// Growing it would silently desync that probe and cost BN*BK_STEP*16 B of LDS
+// for a value that only ever lives in registers.
+//
+// Packing: qh holds the 4 high bits as nibbles (low nibble first), ql the 2 low
+// bits as quads stored BIG-endian within their byte -- (3 - (j & 3)) -- which is
+// the detail worth re-reading against sx8_level() in ggml/src/ggml-quants.c
+// before trusting a number out of this kernel. F-110: this is a hand mirror.
+int32_t cache_b_qsum[4];
+
+void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
+    // iqs covers weight positions 4*iqs .. 4*iqs+3: qh bytes 2*iqs and 2*iqs+1
+    // (nibble 0 then nibble 1 of each), ql byte iqs (quads 3,2,1,0).
+    const uint h0 = uint(data_a[ib].qh[iqs * 2    ]);
+    const uint h1 = uint(data_a[ib].qh[iqs * 2 + 1]);
+    const uint lq = uint(data_a[ib].ql[iqs]);
+
+    buf_a[buf_ib].qs[iqs] = pack32(i8vec4(
+        int8_t((( h0       & 0xFu) << 2) | ((lq >> 6) & 3u)),
+        int8_t((((h0 >> 4) & 0xFu) << 2) | ((lq >> 4) & 3u)),
+        int8_t((( h1       & 0xFu) << 2) | ((lq >> 2) & 3u)),
+        int8_t((((h1 >> 4) & 0xFu) << 2) | ( lq       & 3u))));
+
+    if (iqs == 0) {
+        const float lo_f = float(data_a[ib].dmin);
+        const float hi_f = float(data_a[ib].dmax);
+        const uint  cfg  = uint(data_a[ib].config);
+
+        [[unroll]] for (uint sb = 0; sb < 4; ++sb) {
+            float rlo, step;
+            sx8_range(lo_f, hi_f, (cfg >> (sb * 2u)) & 3u, rlo, step);
+            buf_a[buf_ib].rlo[sb]  = FLOAT_TYPE(rlo);
+            buf_a[buf_ib].step[sb] = FLOAT_TYPE(step);
+        }
+    }
+}
+
+void block_a_to_registers(const uint reg_ib, const uint buf_ib) {
+    [[unroll]] for (uint iqs = 0; iqs < 8; iqs++) {
+        cache_a[reg_ib].qs[iqs] = buf_a[buf_ib].qs[iqs];
+    }
+    [[unroll]] for (uint sb = 0; sb < 4; ++sb) {
+        cache_a[reg_ib].rlo[sb]  = buf_a[buf_ib].rlo[sb];
+        cache_a[reg_ib].step[sb] = buf_a[buf_ib].step[sb];
+    }
+}
+
+ACC_TYPE mmq_dot_product(const uint ib_a) {
+    float result = 0.0;
+
+    [[unroll]] for (uint sb = 0; sb < 4; ++sb) {
+        int32_t lv_sum = dotPacked4x8EXT(cache_a[ib_a].qs[sb * 2    ], cache_b.qs[sb * 2    ])
+                       + dotPacked4x8EXT(cache_a[ib_a].qs[sb * 2 + 1], cache_b.qs[sb * 2 + 1]);
+
+        result += float(cache_a[ib_a].step[sb]) * float(lv_sum)
+                + float(cache_a[ib_a].rlo[sb])  * float(cache_b_qsum[sb]);
+    }
+
+    return ACC_TYPE(float(cache_b.ds.x) * result);
+}
+#endif
+
 #if defined(DATA_A_MXFP4)
 // 1-byte loads for mxfp4 blocks (17 bytes)
 void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
@@ -603,4 +689,13 @@ void block_b_to_registers(const uint ib) {
     [[unroll]] for (uint iqs = 0; iqs < BK / 4; iqs++) {
         cache_b.qs[iqs] = buf_b[ib].qs[iqs];
     }
+#if defined(DATA_A_SX8)
+    // WI-1722, the hoist. Four per-8 activation sums, computed once per activation
+    // block here (mul_mmq.comp calls this before the row loop) and reused by every
+    // weight row of the M tile. dotPacked4x8EXT against 0x01010101 = four +1 bytes.
+    [[unroll]] for (uint sb = 0; sb < 4; ++sb) {
+        cache_b_qsum[sb] = dotPacked4x8EXT(cache_b.qs[sb * 2    ], 0x01010101)
+                         + dotPacked4x8EXT(cache_b.qs[sb * 2 + 1], 0x01010101);
+    }
+#endif
 }
