@@ -853,7 +853,204 @@
       ],
       "quality_gate": "F-141 0/8 on the seated line (Huihui UD-Q4_K_XL, df2 + plain) on the binary carrying the gate; the path is bit-identical to upstream by construction (same kernels, only the KV read strategy differs), and the ON default IS upstream's behaviour.",
       "workload": "Radeon 780M (gfx1103, Vulkan0, coopmat1 FA), Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL, q8_0 KV, plain prefill (the only regime where the path engages: --parallel 1 seat, prompt >= 64 tokens); lane209.py palindrome, 2 launches x 8 rounds per arm, CI governs.",
-      "measured_effect": "R19D D1 (ON vs OFF, ONE binary, same day): plain prefill clean +8.08% [+1.63%, +14.52%], pooled +24.14%; decode unaffected (path never engages, neq1 < 64). The R13 7.2 row-2 -4.05% [-7.73%, -0.38%] did NOT replicate same-day (-2.12%, CI includes 0) = day drift. The protectable thing is the KNOB plus the receipt line, and the ON default that R19D licensed; the R27 tip-vs-record A/B (r27-bump-b10825) is the engine-of-record flip evidence."
+      "measured_effect": "R19D D1 (ON vs OFF, ONE binary, same day): plain prefill clean +8.08% [+1.63%, +14.52%], pooled +24.14%; decode unaffected (path never engages, neq1 < 64). The R13 7.2 row-2 -4.05% [-7.73%, -0.38%] did NOT replicate same-day (-2.12%, CI includes 0) = day drift. The protectable thing is the KNOB plus the receipt line, and the ON default that R19D licensed; the R27 tip-vs-record A/B (r27-bump-b10825) is the engine-of-record flip evidence. AMENDED 2026-09-08 (lane-225 R38, from the R18 kernel wave recomputation): the R19D +8.08% prefill claim DOES NOT REPRODUCE. Recomputed from the banked round lines, the gate OFF vs ON contrast on ONE binary reads decode +0.49% CI95 [-1.62%, +2.59%] and prefill +0.85% [+0.36%, +1.33%], and the DFlash2 arm reads decode -0.91% [-1.93%, +0.12%]. The knob, the receipt and the ON default stand; the prefill magnitude does not, and must not be quoted. Evidence: research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/R18-KERNEL-WAVE-REPORT.md."
+    },
+    {
+      "id": "spec-dflash-fused-inject-switch",
+      "status": "active",
+      "mechanism": "Runtime switch over upstream 662a0b012's fused DFlash encoder injection. Fused = one llama_decode per chunk with the encoder (fc + rms norm) in-graph; legacy = llama_encode the chunk, read the encoded rows back through llama_get_embeddings_nextn, feed them to the injection decode at the draft width. Both paths stay compiled and dispatchable, so the fusion is A/B-able on ONE binary instead of a revert-only second build. LLAMA_DFLASH_FUSED_INJECT=1 selects fused; unset = LEGACY on this fork (lane-225 R38), because the R18 wave measured the fused path negative on the seat decode cell. The C API default (llama_cparams::dflash_fused_inject = true) is deliberately left at upstream-fused: the legacy shape is a CALLER contract, so only common/speculative.cpp, which owns both halves, defaults it off. One receipt line per process names the arm.",
+      "commit": "f9746db7bf97e500283f8d217eb0705c7fc15d76",
+      "protected_paths": [
+        "common/speculative.cpp",
+        "src/models/dflash.cpp"
+      ],
+      "anchors": [
+        "LLAMA_DFLASH_FUSED_INJECT",
+        "dflash_fused_inject",
+        "llama_set_dflash_fused_inject",
+        "DFlash KV injection"
+      ],
+      "symbols": {
+        "src/llama-context.cpp": [
+          "llama_set_dflash_fused_inject"
+        ]
+      },
+      "opt_out": "LLAMA_DFLASH_FUSED_INJECT=1 (restores upstream 662a0b012 behaviour)",
+      "evidence": [
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/r15c2-dflash-encoder-fusion",
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/R18-KERNEL-WAVE-REPORT.md"
+      ],
+      "quality_gate": "F-141 both arms on the seat (40-f141-fused-SEAT.txt, 40-f141-legacy-SEAT.txt); test-quantize-fns identical to the bank (11-test-quantize-fns.diff-vs-bank.txt); test-backend-ops MUL_MAT arm recorded (11-tbo-test-MUL_MAT.txt). The two paths are the same arithmetic in a different graph split, not a different kernel.",
+      "workload": "Radeon 780M (gfx1103, Vulkan0), seat line Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL with the DFlash2 Q4_K_M drafter, plus U-IQ4XS and U-Q3KXL arms; lane209 palindrome, paired t on n=8 cells, decode is the verdict axis.",
+      "measured_effect": "DOCUMENTED-TAKE, no gain. Seat DFlash2 decode -0.98% CI95 [-1.16%, -0.80%] fused vs legacy; U-IQ4XS +0.05% [-0.56%, +0.67%]; U-Q3KXL -0.87% [-2.50%, +0.77%]. The INERT control on the same pair (identical code both arms) moved +3.71% [+0.80%, +6.61%] on decode, so nothing here clears this box's build floor. The protectable thing is the SWITCH plus its receipt line plus the legacy path, not a speed claim.",
+      "notes": "The default flip to legacy is a lane-225 decision on a sub-floor number, recorded as such in docs/OPTIONS-REGISTRY.md and in the commit. It is one env var from upstream behaviour and must not be quoted as a measured win."
+    },
+    {
+      "id": "vulkan-rdna3-mmv-id-rows-switch",
+      "status": "active",
+      "mechanism": "Runtime override of the RDNA3 mul_mat_vec_id rows-per-workgroup selection. The device probe (is_rdna3) stays the selector; GGML_ARIFI_MMV_ID_ROWS = 1|2|4|8 overrides it on RDNA3 only, and every other device keeps the generic per-type rows and ignores the env. Unset or invalid = upstream's 4, so no default moves. One GGML_LOG_INFO receipt names the rows and their source, so a served arm is provable from its log rather than its command line.",
+      "commit": "0c4b9444dff01432446eafbe3bf195aff4462700",
+      "protected_paths": [
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
+      ],
+      "anchors": [
+        "GGML_ARIFI_MMV_ID_ROWS",
+        "rm_id_rdna3",
+        "RDNA3 mul_mat_vec_id rows"
+      ],
+      "evidence": [
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/r15c3-rm-id-moe",
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/R18-KERNEL-WAVE-REPORT.md"
+      ],
+      "quality_gate": "Correctness 80/80 per setting on test-backend-ops MUL_MAT_ID, TBOID GREEN at every row count. A wrong row count in this kernel is silent wrong math rather than a crash, which is why the per-setting sweep is the gate.",
+      "workload": "Radeon 780M (gfx1103, Vulkan0), test-backend-ops perf rows at the Ornith-1.5 35B-A3B expert shape (qwen35moe, 256 experts, 8 used, gate/up 512x2048, down 2048x512, Q4_K + Q6_K, bs 1,2,3,4,8), 20 op rows x 3 rounds per setting.",
+      "measured_effect": "DOCUMENTED-TAKE, no gain. x0.979 to x1.031 against the upstream default of 4 - no setting separates from the ladder's own spread at n=3. NO SERVE CELL RAN: no mixture-of-experts file that fits this box was staged, so the serve-level question is OWED, not answered.",
+      "notes": "Registered for the KNOB and its receipt, not for a number. The same knob is the cheap way to re-ask the question on other RDNA3 hardware, where the shipped 4 is equally untuned."
+    },
+    {
+      "id": "kv-ple-ngram-index-switch",
+      "status": "active",
+      "mechanism": "Runtime switch over upstream b356fa262's seq_pos-indexed PLE n-gram history lookup, with the pre-b356fa262 window scan (62acc89c2 form) restored beside it as for_each_token_in(). LLAMA_KV_NGRAM_INDEX unset or 1 = the index (upstream default, unchanged); 0 = the restored cell scan with its M-RoPE below[] fallback. Union, not revert: both lookups compile and both answer identically. One WARN receipt on the first call names the arm - WARN because llama-server drops INFO at default verbosity (cfefa1847), so an A/B log with no receipt proves the model has no PLE heads and the path never ran.",
+      "commit": "0fe8c7f4955f6ac74e4771c8a32f05b08a051048",
+      "protected_paths": [
+        "src/llama-kv-cache.cpp",
+        "src/llama-kv-cells.h"
+      ],
+      "anchors": [
+        "LLAMA_KV_NGRAM_INDEX",
+        "llama_kv_ngram_index_enabled",
+        "for_each_token_in",
+        "PLE n-gram history"
+      ],
+      "symbols": {
+        "src/llama-kv-cache.cpp": [
+          "llama_kv_ngram_index_enabled"
+        ]
+      },
+      "opt_out": "LLAMA_KV_NGRAM_INDEX=0 (the pre-b356fa262 cell scan)",
+      "evidence": [
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/r15c4-kv-ngram-index",
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/R18-KERNEL-WAVE-REPORT.md"
+      ],
+      "quality_gate": "Both arms answer the same n-gram history by construction, and the path is model-gated: get_prev_tokens() has exactly one caller, llm_graph_input_ple::set_input (src/models/qwen4exp.cpp), reached only when ple_n_heads > 0. Direct witness OWED: test-llama-archs -a qwen4exp under both envs (PREREG-r15c4-kv-ngram-index.md).",
+      "workload": "NONE THAT REACHES IT. Nothing on the estate is a qwen4exp file (the one Flash-Next on disk is 90 GB), so the wave's cells ran on models where this code never executes.",
+      "measured_effect": "DOCUMENTED-TAKE, mechanism NEVER MEASURED. Receipt grep: 0 hits in 10 server logs - it never ran. The same engine pair still moved DFlash2 prefill +8.03% CI95 [+5.56%, +10.49%] and plain decode -2.20% [-2.79%, -1.60%], which is therefore pure build floor and must never be attributed to this switch.",
+      "notes": "The R38 brief ordered this merged with its default flipped to the cell scan. It is registered with the UPSTREAM INDEXED DEFAULT: the =0 arm is an O(used cells) rescan, the mechanism's inertness is a fact about our model inventory rather than about the path, and the distributable-engine ruling allows dropping a capability only when it is BROKEN. One env var reverses this if HQ overrules."
+    },
+    {
+      "id": "vulkan-mul-mat-id-staging-receipt-hazard-assert",
+      "status": "active",
+      "mechanism": "Two things, neither of which changes a default. (1) A receipt: one GGML_LOG_INFO per distinct MUL_MAT_ID B-staging mode per process - contiguous | K-padded | q8_1 - naming coopmat2, both source types, ne10, the staged row stride and ne11, so an A/B log proves which path the dispatch took. Upstream 77f132cb1's K-padded staging is a coopmat2 requirement (its B decode callback does not bounds-check K); on a coopmat1/scalar device the padded mode is never selected and this line is the runtime witness of that. No override is offered on purpose. (2) A hazard assert: the fork's tq_rotate staging wins the tq_rotate / y_needs_reformat ladder and copies B CONTIGUOUS f32 while stride_b_y still follows y_needs_k_padding, so GGML_ASSERT(!(tq_rotate && y_needs_k_padding)) aborts instead of reading B with a padded stride over an unpadded copy.",
+      "commit": "abdb774783fc9802399c9d9483e4c1e77cf6acfb",
+      "protected_paths": [
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
+      ],
+      "anchors": [
+        "MUL_MAT_ID B staging",
+        "tq_rotate && y_needs_k_padding"
+      ],
+      "evidence": [
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/r15c6-mul-mat-id-kpad",
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/R18-KERNEL-WAVE-REPORT.md"
+      ],
+      "quality_gate": "No default and no dispatch changes, so the arms are the same kernel: 48 MUL_MAT_ID ops, 3 rounds per arm, correctness unchanged. The assert converts a silent wrong-math read into an abort.",
+      "workload": "Radeon 780M (gfx1103, Vulkan0, coopmat1 - no coopmat2), test-backend-ops MUL_MAT_ID op ladder plus seven server logs read for the receipt.",
+      "measured_effect": "DOCUMENTED-TAKE, and the receipt is the result: 0 K-padded rows in 7 logs, so the upstream K-padding path CANNOT engage on this GPU. Op ladder x0.976 to x1.032, no CI claimed at n=3. The real cure for the hazard - padded f32 rotate staging - is OWED to the off-rig lane where a coopmat2 device exists.",
+      "notes": "The protectable thing is the receipt line and the assert. Removing either restores a state where a wrong staging mode is unprovable from a log, and where the rotate x padding combination computes garbage instead of aborting."
+    },
+    {
+      "id": "vulkan-uma-read-path-probe",
+      "status": "active",
+      "mechanism": "The UMA read-back direct memcpy is taken only when the buffer's OWN matched memory type is HOST_CACHED, probed per call from the flags stored at allocation, instead of unconditionally for every host-visible buffer on a UMA device. An uncached mapping falls through to the staging branch that every non-UMA host-visible (rebar) buffer already uses. GGML_ARIFI_UMA_READ_PATH = auto (default, probe) | direct (upstream behaviour) | staging (always staging). One stderr receipt per process names the resolved path and the env value, because llama-server drops ggml INFO records. Writes are untouched: write-combined is the right mode for CPU writes.",
+      "commit": "2f241c57dd1dfb7d9430e851a0bc73db338e8adf",
+      "protected_paths": [
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
+      ],
+      "anchors": [
+        "GGML_ARIFI_UMA_READ_PATH",
+        "ggml_vk_uma_direct_read_ok",
+        "ARIFI UMA read path"
+      ],
+      "symbols": {
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": [
+          "ggml_vk_uma_direct_read_ok"
+        ]
+      },
+      "opt_out": "GGML_ARIFI_UMA_READ_PATH=direct (upstream behaviour)",
+      "evidence": [
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/wi1693a-uma-read-path",
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/R18-KERNEL-WAVE-REPORT.md"
+      ],
+      "quality_gate": "Bit-identical by construction: the same bytes, copied by the copy engine instead of the CPU. F-141 recorded in the cell; no arithmetic is touched.",
+      "workload": "Radeon 780M (gfx1103, Vulkan0), UMA device whose host-visible mapping is NOT host-cached, seat line plus four c3 files; lane209 palindrome.",
+      "measured_effect": "DOCUMENTED-TAKE, flat. Mechanism cell (ONE binary, direct vs auto) read decode +0.21% CI95 [-0.26%, +0.69%] - one of the two quietest cells in the whole wave. The four c3 files land within -1.88% and -0.03% on DFlash2 decode. Cell c1 was NOT BANKED (resumed across the 21:30 job). OWED: a host-cached unified-memory device, which is where the probe would actually select direct and where the fix can pay.",
+      "notes": "Origin is ucicelos/flashnext-hybrid fix 3 ('boundary tensors read through the wrong memory mapping'); the Vulkan/UMA port is native to ArifiLabs."
+    },
+    {
+      "id": "ggml-sx8-type-57-cpu-decoder",
+      "status": "active",
+      "mechanism": "GGML_TYPE_SX8 = 57: the MarlaLabs S-X8 v4.3 weight format (dmin/dmax f16 + 4 x 2-bit range strategy + 6-bit levels, 30 B / 32, 7.50 bpw) as a CPU decoder - dequant, vec_dot against q8_1, and the GET_ROWS / CPY / SET_ROWS arms - plus gguf-py constants and test-backend-ops coverage. Retagged from the author's id 41, which this tree spends on upstream Q1_0, under the fork's type-id arbitration; tools/gguf-retag-sx8/retag_sx8.py rewrites a file's ids on a COPY and refuses unless every id-41 tensor spans exactly 30 B / 32 values. OPT-IN BY TYPE NAME: no env, no build flag, no default moved, so any launch that does not name the type is byte-identical to the pre-port engine.",
+      "commit": "174ead5cace018c9d0a10ee45067ca5536df743d",
+      "protected_paths": [
+        "tools/gguf-retag-sx8"
+      ],
+      "anchors": [
+        "GGML_TYPE_SX8",
+        "block_sx8",
+        "ggml_vec_dot_sx8_q8_1",
+        "quantize_row_sx8_ref"
+      ],
+      "symbols": {
+        "ggml/src/ggml-cpu/quants.c": [
+          "ggml_vec_dot_sx8_q8_1_generic"
+        ],
+        "ggml/src/ggml-cpu/arch/x86/quants.c": [
+          "ggml_vec_dot_sx8_q8_1"
+        ]
+      },
+      "evidence": [
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/wi1692-sx8-port",
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/R18-KERNEL-WAVE-REPORT.md",
+        "research/local-inference/2026-08-15-ggml-type-id-arbitration.md"
+      ],
+      "quality_gate": "Codec cross-check against the author's reference (tools/gguf-retag-sx8/test_sx8_codec.py) plus the test-backend-ops rows for the type; no S-X8 file exists on the estate, so an end-to-end quality cell is OWED, not claimed.",
+      "workload": "CPU path only. The harmless cell measured the port PRESENT and UNREACHABLE on the seat line (Radeon 780M, Vulkan0, Huihui UD-Q4_K_XL), which is what proves it costs nothing when unused.",
+      "measured_effect": "DOCUMENTED-TAKE. Harmless cell: DFlash2 decode +0.43% CI95 [-0.47%, +1.33%], plain decode -5.33% [-12.26%, +1.60%], and plain PREFILL -8.28% [-11.00%, -5.56%] - the wave's largest inert move and therefore a measurement of the build, not of this port. TBO ladder x0.991 to x1.033. The S-X8 FILE cell never ran: no such file exists and the decoder is CPU-only.",
+      "notes": "The Vulkan kernel (WI-1717, lane-224) builds ON this enum value. It must extend id 57, never re-add it. Blocked until that lands: any GPU-side S-X8 measurement."
+    },
+    {
+      "id": "ggml-turboq-tbq-kv-types-58-59",
+      "status": "active",
+      "mechanism": "GGML_TYPE_TBQ3_0 = 58 (d + qs[48], signed FWHT + 8 Lloyd-Max centroids, 50 B / 128) and GGML_TYPE_TBQ4_0 = 59 (d + qs[64], 16 centroids, 66 B / 128), ported from jtrefon/llama.cpp-turboq-mtp and retagged from the author's 42/43 under the fork's type-id arbitration. CPU reference only: every backend without a kernel must report them not supported, never a wrong value. OPT-IN BY TYPE NAME (-ctk/-ctv tbq4_0), so no default moves. Two guards ride with them: LLAMA_ALLOW_TBQ3_KV (default OFF) refuses a tbq3_0 V cache, which the source fork measured collapsing into token repetition, and warns on tbq3_0 K; and a runtime DEVICE guard refuses a TBQ KV cache at context init when the offload device cannot run SET_ROWS into it, instead of letting the scheduler abort at graph time.",
+      "commit": "3e3eb64d0df3bba8d4723a880fc46766eabc8b90",
+      "protected_paths": [
+        "ggml/src/ggml-tbq-quant.c",
+        "ggml/src/ggml-tbq-tables.h",
+        "licenses/turboq-mtp-MIT.txt"
+      ],
+      "anchors": [
+        "GGML_TYPE_TBQ3_0",
+        "GGML_TYPE_TBQ4_0",
+        "LLAMA_ALLOW_TBQ3_KV",
+        "block_tbq3_0",
+        "block_tbq4_0"
+      ],
+      "symbols": {
+        "ggml/src/ggml-tbq-quant.c": [
+          "quantize_row_tbq3_0_ref",
+          "dequantize_row_tbq3_0"
+        ]
+      },
+      "opt_out": "-nkvo, -dev none, or a supported KV type (the device guard); LLAMA_ALLOW_TBQ3_KV=1 (the 3-bit KV quality guard)",
+      "evidence": [
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/wi1694a-turboq-port",
+        "research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/R18-KERNEL-WAVE-REPORT.md",
+        "research/local-inference/2026-08-15-ggml-type-id-arbitration.md"
+      ],
+      "quality_gate": "test-quantize-fns rows for both types; the tbq3_0 V-cache refusal is itself the quality guard, carried from the source fork's 2026-08-11 measurement (Qwen3.5-4B, CPU path). An end-to-end quality cell on a TBQ KV cache is OWED.",
+      "workload": "Radeon 780M (gfx1103, Vulkan0) for the harmless cell; the KV cells ran at KV-on-host on a 0.515 t/s crawl and did not complete.",
+      "measured_effect": "DOCUMENTED-TAKE. Harmless cell (types present, no launch names them): DFlash2 decode +0.60% CI95 [-1.28%, +2.47%], DFlash2 prefill +8.15% [+5.38%, +10.92%] - the latter pure build floor. THE KV MECHANISM WAS NEVER MEASURED: the baseline arm refused the type ('Unsupported cache type: tbq4_0') and the candidate arm was aborted by the schedule horizon. What ran is engine-vs-engine at KV-on-host, +1.60% [+1.30%, +1.90%] on a 0.515 t/s crawl, which is not a claim about TBQ.",
+      "notes": "The re-run design is named: candidate-engine tbq4_0 vs candidate-engine q8_0. A baseline-engine arm is impossible, because the base engine does not know the type - that is what produced the refusal."
     }
   ]
 }
