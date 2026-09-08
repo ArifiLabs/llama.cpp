@@ -336,6 +336,31 @@ public:
         return ext[(--it)->second].tok;
     }
 
+    // gather the token ids of the cells in `seqs` with position in [p0, p1)
+    // the callback receives (seq_id, pos, token) for every such (cell, seq) pair
+    // note: the pre-b356fa262 scan (62acc89c2 form: the sequence loop stops once the cell's own sequences are seen)
+    //       kept beside seq_pos_tok_le() as the LLAMA_KV_NGRAM_INDEX=0 arm of get_prev_tokens(); union, not replace
+    template<typename F>
+    void for_each_token_in(const std::bitset<LLAMA_MAX_SEQ> & seqs, llama_pos p0, llama_pos p1, F && f) const {
+        for (const auto & i : used) {
+            if (pos[i] < p0 || pos[i] >= p1) {
+                continue;
+            }
+
+            const auto m = seq[i] & seqs;
+
+            // a cell carries a handful of sequences at most, out of LLAMA_MAX_SEQ
+            size_t left = m.count();
+
+            for (llama_seq_id s = 0; left > 0 && s < (llama_seq_id) LLAMA_MAX_SEQ; ++s) {
+                if (m.test(s)) {
+                    f(s, pos[i], ext[i].tok);
+                    --left;
+                }
+            }
+        }
+    }
+
     // note: call only if the cell is not empty and the seq_id is not in the cell
     void seq_add(uint32_t i, llama_seq_id seq_id) {
         assert(i < pos.size());
