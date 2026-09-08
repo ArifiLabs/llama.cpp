@@ -111,6 +111,15 @@ LLAMA_API llama_memory_breakdown llama_get_memory_breakdown(const struct llama_c
 // If masked == false, output the embeddings for all tokens in the batch regardless of batch.logits
 LLAMA_API void llama_set_embeddings_nextn(struct llama_context * ctx, bool value, bool masked);
 
+// DFlash draft context: select how target features reach the draft K/V cache.
+// true  (default) = fused (upstream 662a0b012): the embd batch carries raw target features at the
+//                   encoder input width and the decoder applies fc + norm in-graph - one llama_decode.
+// false           = legacy: the caller runs llama_encode, reads the encoded rows back through
+//                   llama_get_embeddings_nextn and feeds them to llama_decode at the draft width.
+// Both paths are kept; the switch exists so the fusion can be measured on one binary and so the
+// pre-fusion path stays available as a fallback. Call before the first decode on the context.
+LLAMA_API void llama_set_dflash_fused_inject(struct llama_context * ctx, bool value);
+
 // Select which appended NextN block the DECODER_MTP graph runs (offset past
 // the trunk: il = n_layer() + offset). Used by the speculative NextN driver to
 // chain multiple trained NextN heads. Default 0 (first head).

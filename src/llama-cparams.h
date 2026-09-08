@@ -39,6 +39,11 @@ struct llama_cparams {
     bool embeddings_nextn;        // also extract the hidden state before the final output norm
     bool embeddings_nextn_masked; // extract for only rows where batch.logits != 0
     bool mtp_chain;               // DECODER_MTP: chain rows in-graph from the first row's inputs
+    // DFlash draft contexts: true (default, upstream 662a0b012) = embd batches carry raw target features
+    // at the encoder input width and the decoder graph applies fc + norm itself (one decode per
+    // injection); false = the pre-fusion shape, the caller runs llama_encode first and the embd batch
+    // carries already-encoded rows at the draft hidden width. Runtime switch, both paths kept (lane-212).
+    bool dflash_fused_inject = true;
     bool causal_attn;
     bool offload_kqv;
     bool flash_attn;

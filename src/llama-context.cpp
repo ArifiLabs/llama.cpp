@@ -1515,6 +1515,15 @@ void llama_context::set_embeddings_nextn(bool value, bool masked) {
     cparams.embeddings_nextn_masked = masked;
 }
 
+void llama_context::set_dflash_fused_inject(bool value) {
+    LLAMA_LOG_DEBUG("%s: value = %d\n", __func__, value);
+
+    cparams.dflash_fused_inject = value;
+
+    // the embd-branch graph shape (input width, fc + norm present or not) follows this flag
+    sched_need_reserve = true;
+}
+
 void llama_context::set_embeddings_layer_inp(uint32_t lid, bool enable) {
     LLAMA_LOG_DEBUG("%s: lid = %d, enable = %d\n", __func__, lid, enable);
 
@@ -2068,8 +2077,9 @@ int llama_context::decode(const llama_batch & batch_inp) {
 
     const int64_t n_vocab = vocab.n_tokens();
     const bool    mtp_embd = cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP && batch_inp.embd;
-    // DFlash embd batches carry the fused target features at the encoder input width
-    const bool    dflash_embd = model.arch == LLM_ARCH_DFLASH && batch_inp.embd;
+    // DFlash embd batches carry the fused target features at the encoder input width; with the fused
+    // injection switched off (LLAMA_DFLASH_FUSED_INJECT=0) they carry pre-encoded rows at the draft width
+    const bool    dflash_embd = model.arch == LLM_ARCH_DFLASH && batch_inp.embd && cparams.dflash_fused_inject;
     const int64_t n_embd  = mtp_embd ? hparams.n_embd_out() : dflash_embd ? hparams.n_embd_inp_enc() : hparams.n_embd_inp();
 
     // when computing embeddings, all tokens are output
@@ -4403,6 +4413,10 @@ float * llama_get_embeddings_seq(llama_context * ctx, llama_seq_id seq_id) {
 
 void llama_set_embeddings_nextn(llama_context * ctx, bool value, bool masked) {
     ctx->set_embeddings_nextn(value, masked);
+}
+
+void llama_set_dflash_fused_inject(llama_context * ctx, bool value) {
+    ctx->set_dflash_fused_inject(value);
 }
 
 void llama_set_embeddings_layer_inp(llama_context * ctx, uint32_t lid, bool value) {
