@@ -2983,7 +2983,28 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     const bool is_rdna3 = device->vendor_id == VK_VENDOR_ID_AMD && device->architecture == AMD_RDNA3;
     auto const &rm_int_n = [&](uint32_t rows, uint32_t i) { return (is_rdna3 && i >= 4) ? 4u : rows; };
     // RDNA3: Static 4 rows for all types bench faster than the default
-    auto const &rm_id = [&](uint32_t rows) { return is_rdna3 ? 4u : rows; };
+    //
+    // arifi R18 / R15-C3 (upstream 2cdae802e, benched on a Strix Halo): the 4 above is applied to every
+    // q8_1 mul_mat_vec_id pipeline on every RDNA3 device with no width gate, and it has never been
+    // measured on gfx1103 (subgroup 64, 64 KB LDS): 4 rows raises the per-workgroup B live set 2-4x
+    // over the shipped rm_kq_int, which is the shape that spilled in lane-166. Runtime-switch law:
+    // the device probe (is_rdna3) stays the selector, GGML_ARIFI_MMV_ID_ROWS = 1|2|4|8 overrides it
+    // on RDNA3 only, and every other device keeps the generic per-type rows and ignores the env.
+    // Unset or invalid = upstream's 4, so no default moves (F-08). One receipt line so a served arm
+    // is provable from its log, not from its command line (R19D).
+    uint32_t rm_id_rdna3 = 4;
+    const char * rm_id_src = "default";
+    if (const char * e = getenv("GGML_ARIFI_MMV_ID_ROWS")) {
+        const int v = atoi(e);
+        if (v == 1 || v == 2 || v == 4 || v == 8) {
+            rm_id_rdna3 = (uint32_t) v;
+            rm_id_src = "GGML_ARIFI_MMV_ID_ROWS";
+        }
+    }
+    if (is_rdna3) {
+        GGML_LOG_INFO("ggml_vulkan: RDNA3 mul_mat_vec_id rows = %u (%s)\n", rm_id_rdna3, rm_id_src);
+    }
+    auto const &rm_id = [&](uint32_t rows) { return is_rdna3 ? rm_id_rdna3 : rows; };
     uint32_t rm_iq = 2 * rm_kq;
 
     // Rows per workgroup for the g128 ternary mul_mat_vec, made runtime-selectable.
