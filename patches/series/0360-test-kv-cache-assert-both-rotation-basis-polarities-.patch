@@ -1,0 +1,115 @@
+From a410fc9b376f471037a026277c0b6ce6c6c160a8 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 19 Aug 2026 06:01:30 -0400
+Subject: [PATCH] test(kv-cache): assert both rotation-basis polarities against
+ the resolved attn_rot_k
+
+test_q4_0_gate assumed a Q4_0 K cache activates the Hadamard rotation. That is false on this fork:
+llama_kv_cache resolves attn_rot_k = false by default and turns rotation on only via
+LLAMA_ATTN_ROT_K_OVERRIDE=1, on a quantized K cache whose head dim is a multiple of 64.
+
+The test was therefore fail-open in both directions on the configuration the engine actually ships.
+It aborted at the mismatch assertion in a default environment, and its accept case expected a
+rotated bias to load into an unrotated cache.
+
+Both polarities now run, each against the state the test itself puts the cache in: with rotation
+off the unrotated bias loads and the rotated one is refused, and with rotation on the reverse. The
+rotation state is set through common_set_env rather than assumed, so the suite is green in a default
+environment and no longer depends on an env var set outside it.
+
+Assisted-by: Claude Opus 5
+---
+ tests/test-kv-mean-center.cpp | 73 ++++++++++++++++++++++-------------
+ 1 file changed, 47 insertions(+), 26 deletions(-)
+
+diff --git a/tests/test-kv-mean-center.cpp b/tests/test-kv-mean-center.cpp
+index 028da0774..4a3f071e4 100644
+--- a/tests/test-kv-mean-center.cpp
++++ b/tests/test-kv-mean-center.cpp
+@@ -236,39 +236,60 @@ static void test_q4_0_gate() {
+         layers.push_back(std::move(layer));
+     }
+ 
+-    // this synthetic model has a 64-wide K head, so a Q4_0 K cache activates the Hadamard
+-    // rotation; the bias must be marked as measured in the rotated basis to be accepted there
+-    const std::string tmp_path = "test-kv-mean-center-gate.gguf";
+-    TEST_ASSERT(common_kv_mean_center_write(tmp_path, layers, k_model_sha256, /*k_rot=*/true));
++    const std::string path_rot   = "test-kv-mean-center-gate-rot.gguf";
++    const std::string path_unrot = "test-kv-mean-center-gate-unrot.gguf";
++    TEST_ASSERT(common_kv_mean_center_write(path_rot,   layers, k_model_sha256, /*k_rot=*/true));
++    TEST_ASSERT(common_kv_mean_center_write(path_unrot, layers, k_model_sha256, /*k_rot=*/false));
+ 
+     // F16 K cache + --kv-mean-center must be rejected outright (llama_init_from_model returns
+     // nullptr), matching this codebase's convention for other cache-type-gated mismatches (e.g.
+-    // "V cache quantization requires flash_attn"). use a basis-matching file (F16 cache means
+-    // the rotation is off, so k_rot=false matches) so this exercises the cache-type gate
+-    // specifically, not the basis check
+-    const std::string tmp_path_unrot = "test-kv-mean-center-gate-unrot.gguf";
+-    TEST_ASSERT(common_kv_mean_center_write(tmp_path_unrot, layers, k_model_sha256, /*k_rot=*/false));
+-    llama_context_ptr ctx_bad = build_context(model.get(), GGML_TYPE_F16, tmp_path_unrot.c_str());
++    // "V cache quantization requires flash_attn"). F16 is not quantized, so the rotation never
++    // engages and k_rot=false is the basis-matching file: this isolates the cache-type gate
++    llama_context_ptr ctx_bad = build_context(model.get(), GGML_TYPE_F16, path_unrot.c_str());
+     TEST_ASSERT(ctx_bad == nullptr);
+ 
+-    // a bias measured in the unrotated basis must be rejected by a rotated (Q4_0) K cache:
+-    // a basis mismatch degrades quantization quality instead of improving it
+-    llama_context_ptr ctx_mismatch = build_context(model.get(), GGML_TYPE_Q4_0, tmp_path_unrot.c_str());
+-    TEST_ASSERT(ctx_mismatch == nullptr);
+-    remove(tmp_path_unrot.c_str());
+-
+-    // Q4_0 K cache + --kv-mean-center must succeed end-to-end, through the real public entry
+-    // point (not the require_q4_0=false test seam used in test_softmax_invariance)
+-    llama_context_ptr ctx_good = build_context(model.get(), GGML_TYPE_Q4_0, tmp_path.c_str());
+-    TEST_ASSERT(ctx_good != nullptr);
+-
+-    const std::vector<llama_token> tokens = make_tokens(16, k_n_vocab, /*seed=*/ 3);
+-    const std::vector<float> logits = decode_and_get_logits(ctx_good.get(), tokens);
+-    for (float v : logits) {
+-        TEST_ASSERT(std::isfinite(v));
++    // The basis check compares the file's k_rot against the RESOLVED attn_rot_k. Do not assume a
++    // rotation state from the cache type: this fork resolves attn_rot_k = false by default and
++    // turns rotation on only via LLAMA_ATTN_ROT_K_OVERRIDE=1, on a quantized K cache whose head
++    // dim is a multiple of 64. So both polarities are exercised, each against the state this test
++    // puts the cache in. A test that assumed "Q4_0 means rotated" would be fail-open in both
++    // directions on the configuration the engine actually ships (rotation off).
++    GGML_ASSERT(n_embd_head % 64 == 0 && "the rotation override path needs a 64-aligned K head");
++    common_set_env("LLAMA_ATTN_ROT_DISABLE", "");
++
++    struct basis_case { const char * rot_k_override; bool rot_active; };
++    const basis_case cases[] = {
++        { "",  false }, // fork default: rotation OFF
++        { "1", true  }, // explicit override: rotation ON
++    };
++
++    for (const basis_case & bc : cases) {
++        common_set_env("LLAMA_ATTN_ROT_K_OVERRIDE", bc.rot_k_override);
++
++        const std::string & matching   = bc.rot_active ? path_rot   : path_unrot;
++        const std::string & mismatched = bc.rot_active ? path_unrot : path_rot;
++
++        // a bias measured in the other basis must be refused: a mismatch degrades quantization
++        // quality instead of improving it
++        llama_context_ptr ctx_mismatch = build_context(model.get(), GGML_TYPE_Q4_0, mismatched.c_str());
++        TEST_ASSERT(ctx_mismatch == nullptr);
++
++        // the matching basis must succeed end-to-end, through the real public entry point (not the
++        // require_q4_0=false test seam used in test_softmax_invariance)
++        llama_context_ptr ctx_good = build_context(model.get(), GGML_TYPE_Q4_0, matching.c_str());
++        TEST_ASSERT(ctx_good != nullptr);
++
++        const std::vector<llama_token> tokens = make_tokens(16, k_n_vocab, /*seed=*/ 3);
++        const std::vector<float> logits = decode_and_get_logits(ctx_good.get(), tokens);
++        for (float v : logits) {
++            TEST_ASSERT(std::isfinite(v));
++        }
+     }
+ 
+-    remove(tmp_path.c_str());
++    common_set_env("LLAMA_ATTN_ROT_K_OVERRIDE", "");
++
++    remove(path_rot.c_str());
++    remove(path_unrot.c_str());
+ 
+     LOG_INF("%s: OK\n", __func__);
+ }

@@ -1,0 +1,52 @@
+From e0829d3631e20f19c4ef1b02037c969e71147146 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 19:51:07 -0400
+Subject: [PATCH] series: point base.ref at the LINEAR branch -
+ recut-linear/2026-08-17 is the byte-identical flatten of the blessed union
+ branch, so the series is replayable at last (lane-147)
+
+---
+ tools/arifi-sync/sources.json | 26 +++++++++++++-------------
+ 1 file changed, 13 insertions(+), 13 deletions(-)
+
+diff --git a/tools/arifi-sync/sources.json b/tools/arifi-sync/sources.json
+index 831eaed9d..0cb40d870 100644
+--- a/tools/arifi-sync/sources.json
++++ b/tools/arifi-sync/sources.json
+@@ -21,23 +21,23 @@
+   "base": {
+     "upstream_tag": "b10453",
+     "upstream_sha": "4df29be4f4c3673f428170fda944a5b19f743bb8",
+-    "ref": "recut/2026-08-16",
++    "ref": "recut-linear/2026-08-17",
+     "_ref_comment": [
+       "The branch the series describes. `series regen|check` and `provenance` default `--ref` to this.",
+       "",
+-      "KNOWN RED, lane-139 2026-08-17: this pair does NOT produce a replayable series yet, and the",
+-      "tool now says so out loud instead of implying it in the `status` header. `4df29be4f..recut/",
+-      "2026-08-16` is 312 commits containing ONE merge, `70a752991` (the union merge). `format-patch`",
+-      "omits merge commits by construction, so the three conflict resolutions that merge made by hand",
+-      "(fork README, the Vulkan mul_mm store_a refactor, repack.cpp make_block_q1_0x4) are not in any",
+-      "patch, and the commits that BUILD ON those resolutions cannot apply. Measured, not predicted:",
+-      "replaying all 300 generated patches onto 4df29be4f dies at 0081, `merge-fix-post-merge-build-",
+-      "and-crash-issues`, with an unparseable conflict in src/llama-context.cpp. Evidence:",
+-      "research/local-inference/lane-evidence/2026-08-17-lane-139-proofs/C-series-replay-FAILS-merge-not-linear.log",
++      "GREEN since lane-147, 2026-08-17. The RED above is FIXED, not waived. `recut/2026-08-16` was",
++      "the blessed union branch and carried ONE merge, `70a752991`; `format-patch` omits merges, so",
++      "that merge's hand-made conflict resolutions never reached the series and the replay died at",
++      "patch 0081 (lane-139 measured it). `recut-linear/2026-08-17` is that same branch FLATTENED:",
++      "`git rebase 4df29be4f`, every conflict resolved by taking the blessed tree's own content.",
+       "",
+-      "The fix is to LINEARIZE the union branch (rebase the TurboQuant series onto 4df29be4f instead",
+-      "of merging it), which re-shapes a branch a checker has already blessed. That is a President/HQ",
+-      "call, not a lane's - lane-139 surfaced it and stopped."
++      "The two branches are BYTE-IDENTICAL - both `^{tree}` are a34fb38ef1d19bb1589a6e771a999152212",
++      "ed302 and `git diff recut/2026-08-16 recut-linear/2026-08-17` is empty at the flatten point,",
++      "tagged `lane147/flatten-point` (f5de271ad) so the identity is permanently re-checkable. The",
++      "range is 301 commits with ZERO merges, so the linearity gate in format_patch passes on merit.",
++      "",
++      "`recut/2026-08-16` is NEVER rewritten - it stays as the blessed record. Evidence:",
++      "research/local-inference/lane-evidence/2026-08-17-lane-147-linearize-proofs/"
+     ]
+   },
+   "series_dir": "patches/series",

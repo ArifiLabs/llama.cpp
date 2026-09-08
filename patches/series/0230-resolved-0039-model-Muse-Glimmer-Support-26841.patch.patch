@@ -1,0 +1,229 @@
+From 975016049b3e699cf4df767f2447ffe55e89afb4 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:29:24 -0400
+Subject: [PATCH] resolved/0039-model-Muse-Glimmer-Support-26841.patch
+
+---
+ common/chat.cpp            | 37 -----------------------
+ tools/mtmd/clip-impl.h     |  6 ----
+ tools/mtmd/models/models.h |  5 +++
+ tools/mtmd/mtmd-image.cpp  | 62 ++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 67 insertions(+), 43 deletions(-)
+
+diff --git a/common/chat.cpp b/common/chat.cpp
+index 1a134f553..306a28679 100644
+--- a/common/chat.cpp
++++ b/common/chat.cpp
+@@ -1217,7 +1217,6 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+         data.prompt += data.generation_prompt;
+     }
+ 
+-<<<<<<< ours
+     std::vector<std::string> tool_call_starts = { "<tool_call>" };
+ 
+     if (is_qwen3_coder) {
+@@ -1230,8 +1229,6 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+         });
+     }
+ 
+-=======
+->>>>>>> theirs
+     auto parser = build_chat_peg_parser([&](common_chat_peg_builder & p) {
+         auto generation_prompt = p.literal(GEN_PREFIX);
+ 
+@@ -1307,11 +1304,7 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+             auto tool_calls = p.trigger_rule("tool-call-root", p.repeat(calls, min_calls, 1));
+ 
+             return generation_prompt +
+-<<<<<<< ours
+                    (reasoning << p.content(p.until_one_of(tool_call_starts)) << tool_calls);
+-=======
+-                   (reasoning << p.content(p.until_one_of({ "<tool_call>", "<function=" })) << tool_calls);
+->>>>>>> theirs
+         }
+ 
+         // Content only parser
+@@ -1337,18 +1330,9 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
+         });
+ 
+         if (data.grammar_lazy) {
+-<<<<<<< ours
+             for (const auto & start : tool_call_starts) {
+                 data.grammar_triggers.push_back({ COMMON_GRAMMAR_TRIGGER_TYPE_WORD, start });
+             }
+-=======
+-            data.grammar_triggers = {
+-                { COMMON_GRAMMAR_TRIGGER_TYPE_WORD, "<tool_call>" },
+-                // Trigger on "<function" and not "<function=" because the trailing "=" is part of
+-                // the token with the function name e.g. "=read"
+-                { COMMON_GRAMMAR_TRIGGER_TYPE_WORD, "<function"   },
+-            };
+->>>>>>> theirs
+         }
+     }
+ 
+@@ -2337,23 +2321,10 @@ static common_chat_params common_chat_params_init_deepseek_v3_2(const common_cha
+         }
+ 
+         if (extract_reasoning && inputs.enable_thinking) {
+-<<<<<<< ours
+-            reasoning = p.optional(THINK_START + p.reasoning(p.until(THINK_END)) + THINK_END);
+-            reasoning_with_tc = THINK_START +
+-                p.reasoning(p.until_one_of({ TC_SEPARATOR + FC_START, FC_START, THINK_END })) +
+-                p.space() + obligatory_tool_calls;
+-=======
+-            // Allow optional whitespace before <think> — some models emit a
+-            // newline between the generation prompt and the thinking tag.
+             reasoning = p.optional(p.space() + THINK_START + p.reasoning(p.until(THINK_END)) + THINK_END);
+-<<<<<<< ours
+-            reasoning_with_tc = THINK_START + p.reasoning(p.until_one_of({ FC_START, THINK_END })) + obligatory_tool_calls;
+->>>>>>> theirs
+-=======
+             reasoning_with_tc = THINK_START +
+                 p.reasoning(p.until_one_of({ TC_SEPARATOR + FC_START, FC_START, THINK_END })) +
+                 p.space() + obligatory_tool_calls;
+->>>>>>> theirs
+             allow_reasoning_with_tc = true;
+         } else if (extract_reasoning) {
+             // Thinking disabled but reasoning extraction requested: the generation prompt
+@@ -3415,12 +3386,8 @@ static common_chat_params common_chat_params_init_muse_glimmer(const common_chat
+         auto analysis = p.ref("analysis");
+ 
+         auto recipient  = p.optional(p.literal(" to=user"));
+-<<<<<<< ours
+         auto final_msg  = p.rule("final", recipient + p.literal("<|message|>") +
+                                               p.content(p.until_one_of({ "<|eot|>", "<|eom|>" })));
+-=======
+-        auto final_msg  = p.rule("final", recipient + p.literal("<|message|>") + p.content(p.until("<|eot|>")));
+->>>>>>> theirs
+ 
+         if (has_tools && inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_NONE) {
+             auto string_value = p.ac(
+@@ -3476,12 +3443,8 @@ static common_chat_params common_chat_params_init_muse_glimmer(const common_chat
+             if (inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED) {
+                 return p.zero_or_more(start + analysis) + start + tool_calls;
+             }
+-<<<<<<< ours
+             auto trailing_calls = p.optional(p.literal("<|eom|>") + start + tool_calls);
+             return p.zero_or_more(start + analysis) + start + (tool_calls | (final_msg + trailing_calls));
+-=======
+-            return p.zero_or_more(start + analysis) + start + (tool_calls | final_msg);
+->>>>>>> theirs
+         }
+ 
+         return p.zero_or_more(start + analysis) + start + final_msg;
+diff --git a/tools/mtmd/clip-impl.h b/tools/mtmd/clip-impl.h
+index 7fcf21f3e..72148a4d9 100644
+--- a/tools/mtmd/clip-impl.h
++++ b/tools/mtmd/clip-impl.h
+@@ -499,13 +499,10 @@ enum projector_type {
+     PROJECTOR_TYPE_MINIMAX_M3,
+     PROJECTOR_TYPE_GRANITE4_VISION,
+     PROJECTOR_TYPE_MIMO_AUDIO,
+-<<<<<<< ours
+     PROJECTOR_TYPE_QWEN3TTS_SPKENC,
+     PROJECTOR_TYPE_QWEN3TTS_GEN,
+     PROJECTOR_TYPE_POCKETTTS_SPKENC,
+     PROJECTOR_TYPE_POCKETTTS_GEN,
+-=======
+->>>>>>> theirs
+     PROJECTOR_TYPE_MUSE_GLIMMER,
+     PROJECTOR_TYPE_UNKNOWN,
+ };
+@@ -567,13 +564,10 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
+     { PROJECTOR_TYPE_GRANITE4_VISION,   "granite4_vision"},
+     { PROJECTOR_TYPE_MIMO_AUDIO,        "mimo_audio"},
+     { PROJECTOR_TYPE_PARAKEET,          "parakeet"},
+-<<<<<<< ours
+     { PROJECTOR_TYPE_QWEN3TTS_SPKENC,   "qwen3tts_spkenc"},
+     { PROJECTOR_TYPE_QWEN3TTS_GEN,      "qwen3tts_gen"},
+     { PROJECTOR_TYPE_POCKETTTS_SPKENC,  "pockettts_spkenc"},
+     { PROJECTOR_TYPE_POCKETTTS_GEN,     "pockettts_gen"},
+-=======
+->>>>>>> theirs
+     { PROJECTOR_TYPE_MUSE_GLIMMER,      "muse-glimmer"},
+ };
+ 
+diff --git a/tools/mtmd/models/models.h b/tools/mtmd/models/models.h
+index 3b6525a5e..b28687d6e 100644
+--- a/tools/mtmd/models/models.h
++++ b/tools/mtmd/models/models.h
+@@ -444,3 +444,8 @@ struct clip_graph_muse_glimmer : clip_graph {
+     clip_graph_muse_glimmer(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
+     ggml_cgraph * build() override;
+ };
++
++struct clip_graph_muse_glimmer : clip_graph {
++    clip_graph_muse_glimmer(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
++    ggml_cgraph * build() override;
++};
+diff --git a/tools/mtmd/mtmd-image.cpp b/tools/mtmd/mtmd-image.cpp
+index 8dd99eefa..840aa73b6 100644
+--- a/tools/mtmd/mtmd-image.cpp
++++ b/tools/mtmd/mtmd-image.cpp
+@@ -1797,3 +1797,65 @@ mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const cl
+     output.append(hparams, resized_image, true);
+     return output;
+ }
++
++//
++// mtmd_image_preprocessor_muse_glimmer
++//
++
++// Replicates transformers' get_aspect_ratio_preserving_size
++static clip_image_size muse_glimmer_grid_size(int img_w, int img_h, int patch_hw, int max_tokens) {
++    double i_nph = (double) img_h / patch_hw;
++    double i_npw = (double) img_w / patch_hw;
++    const double ratio = i_nph > 0.0 ? i_npw / i_nph : 1.0;
++    if (i_nph * i_npw > (double) max_tokens) {
++        i_nph = std::sqrt((double) max_tokens / ratio);
++        i_npw = i_nph * ratio;
++    }
++    const int hs[2] = { (int) std::floor(i_nph), (int) std::ceil(i_nph) };
++    const int ws[2] = { (int) std::floor(i_npw), (int) std::ceil(i_npw) };
++    const double target_ar = (double) img_h / (double) img_w;
++    int    best_nph = -1;
++    int    best_npw = -1;
++    double best_d   = 0.0;
++    for (int a = 0; a < 2; ++a) {
++        for (int b = 0; b < 2; ++b) {
++            const int nph = hs[a];
++            const int npw = ws[b];
++            if (nph < 1 || npw < 1 || nph * npw > max_tokens) {
++                continue;
++            }
++            const double d = std::fabs((double) nph / (double) npw - target_ar);
++            const int n_tokens      = nph * npw;
++            const int best_n_tokens = best_nph * best_npw;
++            if (best_nph < 0 || d < best_d || (d == best_d && n_tokens > best_n_tokens)) {
++                best_nph = nph;
++                best_npw = npw;
++                best_d   = d;
++            }
++        }
++    }
++    if (best_nph < 0) { // no candidate fit under the cap: round and clamp
++        best_nph = std::max(1, (int) std::lround(i_nph));
++        best_npw = std::max(1, (int) std::lround(i_npw));
++    }
++    return clip_image_size{ best_npw * patch_hw, best_nph * patch_hw };
++}
++
++mtmd_image_preproc_out mtmd_image_preprocessor_muse_glimmer::preprocess(const clip_image_u8 & img) {
++    const int patch_hw   = hparams.patch_size * hparams.n_merge;
++    const int patch_area = hparams.patch_size * hparams.patch_size * hparams.n_merge * hparams.n_merge;
++    GGML_ASSERT(patch_area > 0 && hparams.image_max_pixels > 0);
++    const int max_tokens = hparams.image_max_pixels / patch_area;
++
++    const clip_image_size original_size = img.get_size();
++    const clip_image_size target_size   = muse_glimmer_grid_size(
++        original_size.width, original_size.height, patch_hw, max_tokens);
++
++    // PIL resizes directly to (target_w, target_h) -- a stretch, no padding.
++    clip_image_u8 resized_image;
++    img_tool::resize(img, resized_image, target_size, hparams.image_resize_algo, PAD_NONE);
++
++    mtmd_image_preproc_out output;
++    output.append(hparams, resized_image, true);
++    return output;
++}

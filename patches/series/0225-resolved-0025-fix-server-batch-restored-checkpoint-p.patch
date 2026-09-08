@@ -1,0 +1,26 @@
+From 93f370d47854d5387c007759d6cbc7b23b6f2214 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:22:43 -0400
+Subject: [PATCH] 
+ resolved/0025-fix-server-batch-restored-checkpoint-prompt-processi.patch
+
+Assisted-by: Codex
+---
+ tools/server/server-context.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 5788877d6..bc91f369c 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -3633,6 +3633,10 @@ private:
+                         }
+                     }
+ 
++                    if (slot.prompt_checkpoint_restored && n_tokens_prev > 0) {
++                        return;
++                    }
++
+                     // note: the prompt timing is advanced in post_decode(), so it does not cover
+                     //       the tokens added to the batch below
+                     slot.print_timings_pp();

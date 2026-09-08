@@ -1,0 +1,601 @@
+From f1105c9d75224955a61cf992fe3f4df9d6d6fa51 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 5 Sep 2026 15:00:43 -0400
+Subject: [PATCH] docs: the public trail for the b10680 kernel wave - lanes
+ 202, 204 and 209
+
+Documentation only. No source file is touched, no default moves, and no number
+here is new: every figure is transcribed from a measurement already banked under
+research/local-inference/lane-evidence/ or in the cited commit's own message.
+
+CHANGELOG.md gains a section for upstream base b10680 with a per-mechanism
+BEFORE/AFTER table and a per-model-file table, then one entry per mechanism:
+the dedicated iq4_xs mat-vec (+12% drafted on UD-IQ4_XS), the gated iq3_s split
+(+11% drafted on UD-Q3_K_XL, and the superseded every-width build listed with
+its 7-9% loss), the ROCmFP4-FAST mat-mat pipelines (prefill 16112 -> 4683 ms),
+the ROCmFP4-FAST MMVQ mat-vec (+27% drafted, integration BLOCKED), the tiled
+concat-transpose (-13% on the op, TIED at the seat, twice), the q6_k direct
+scales (MEASURED NEUTRAL, never to be quoted as a win), --spec-draft-adaptive
+(UNMEASURED here; its table is upstream-reported on a Radeon 8060S and is not
+restated as ours) and the draft-replay server fix.
+
+Three rules of that file are load-bearing here and were applied rather than
+assumed. Every row names its own BEFORE binary, AFTER binary, model file and
+measurement epoch, because a driver update, a reboot and a RAM change separate
+the runs and their absolutes must never be differenced. Neutral, superseded and
+blocked mechanisms are listed with their numbers, not omitted. And a new closing
+subsection states where each commit actually is: only 5b1b416cb is on the
+default branch today.
+
+docs/FINDINGS.md gains five rows. F-13: a kernel that passes test-backend-ops
+can still flip the first token to end-of-generation - three falsified hypotheses
+and the width the defect was finally isolated to. F-14: the per-row barrier was
+the leading explanation for the ~35% q6_K bandwidth deficit and is falsified;
+the deficit is open, and the motivating q4_K figure is corrected. F-15: this
+box's undrafted decode is bimodal and the cell-wise mean follows the slow
+rounds, which is why plain verdicts are read from the median. F-16: a serve-line
+presence penalty inherited by a request that omitted it manufactured empty
+completions, which is what made F-13 attributable once fixed. F-17: why commit
+provenance alone does not stop a rebase from deleting a measured result. Open
+questions gains five entries.
+
+docs/OPTIONS-REGISTRY.md gains four rows: GGML_VK_CONCAT_TRANSPOSE,
+GGML_VK_Q6K_DIRECT_SCALES (which defaults ON, inverting this registry's usual
+shape, and says so), the ROCmFP4-FAST MMVQ width gate - recorded as code with
+NO new environment variable, cross-referencing the pre-existing upstream
+GGML_VK_DISABLE_MMVQ rather than inventing a fork lever - and
+--spec-draft-adaptive.
+
+patches/series/PENDING-ROWS.md is new and hand-written, and is the only
+hand-written file in that directory. series regen still stops on ten
+pre-existing merge commits, so the rows it will emit are staged there in the
+generator's format instead of being hand-edited into the generated MANIFEST.md,
+which would produce a green-looking artifact that dies at the next git am. It is
+invisible to the tooling (patch enumeration matches ^\d{4}-.*\.patch$) and is
+superseded the moment regen runs.
+
+One divergence from the assignment is recorded rather than quietly resolved: it
+described the rank-7 empty completion as a file/prompt defect rather than a
+kernel one. The lane evidence says otherwise - forcing the float path removed
+the empties, and removing width 2 repaired them - so F-13 follows the evidence.
+
+Origin: lane-209 public trail (HQ seat-52, R9), docs-only branch
+  lane-209/public-trail-2026-09-05 off arifi/main 131fad035
+Measured-effect: UNMEASURED - documentation only; no source, shader, default or
+  build input is modified, and every performance figure is transcribed from a
+  cited prior measurement rather than taken here
+---
+ CHANGELOG.md             | 277 +++++++++++++++++++++++++++++++++++++++
+ docs/FINDINGS.md         | 197 ++++++++++++++++++++++++++++
+ docs/OPTIONS-REGISTRY.md |   4 +
+ 3 files changed, 478 insertions(+)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index c4741a7ab..719d00d12 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -33,6 +33,283 @@ Unless an entry says otherwise, every measurement was taken on:
+ 
+ ---
+ 
++## On upstream `b10680` (`d7bd3bfca`) — 2026-08-23 to 2026-09-05
++
++Five Vulkan mat-vec / mat-mat mechanisms, one server bug fix, one drafting controller, and one
++change that measured neutral and is shipped anyway. Every serve figure below was taken with
++`llama-server` on **RIG-A** under the **Balanced** power plan, one binary per arm or one binary with
++the arms selected by an environment variable, and a fresh server per arm.
++
++**Read the summary table with its columns, not across them.** Three of these runs sit in different
++measurement epochs — the box took an AMD driver update (to `32.0.31041.1004`) and a reboot on
++2026-09-03, and the RAM configuration later moved from 2×16 GB to an asymmetric 32+16 GB. An A/B is
++internally valid inside one epoch and its absolute numbers are never differenced against another
++epoch's. That is why each row names its own BEFORE binary, AFTER binary, model file and epoch, and
++why no row is a continuation of the row above it.
++
++### Before and after, one row per mechanism
++
++| mechanism | model file | BEFORE → AFTER | epoch | quality | verdict |
++|---|---|---|---|---|---|
++| ROCmFP4-FAST mat-mat pipelines + mat-vec dequant hoist (`e3220bed0`) | julianmb Qwen3.8-27B-ROCmFP4-FAST, 14.56 GB | prefill graph **16112 → 4683 ms**; width-3 verify 338 → 271 ms | E1 | F-141 0/8 ×3, `test-backend-ops` MUL_MAT 0 FAIL | **WIN** |
++| Dedicated `iq4_xs` mat-vec shader (`1884a620a`) | outsourc-e Qwen3.8-27B-Unleashed UD-IQ4_XS, 14.30 GB | drafted decode **7.675 → 8.610 t/s (+12%)** | E1 | rolled 35/40 → 35/40, F-141 0/8 | **WIN** |
++| Dedicated `iq4_xs` mat-vec shader (`1884a620a`) | outsourc-e Unleashed UD-Q3_K_XL, 13.22 GB | drafted **8.173 → 8.323 (+2%)**; plain **4.952 → 5.426 (+10%)** | E1 | rolled 35/40 → 35/40, F-141 0/8 | **WIN** |
++| `iq3_s` mat-vec split at `NUM_COLS == 3 \|\| > 4` (`aa9f0e2aa`) | outsourc-e Unleashed UD-Q3_K_XL, 13.22 GB | drafted decode **8.367 → 9.268 t/s (+11%)**; plain identical | E1 | rolled 35/40 → 35/40, F-141 0/8 | **WIN** |
++| `iq3_s` mat-vec split (`aa9f0e2aa`) | outsourc-e Unleashed UD-IQ4_XS, 14.30 GB | drafted decode **+0.199 t/s (+2%)**, twice, across a driver change | E1 and E2 | rolled 35/40 → 35/40, F-141 0/8 | **WIN** (small, reproduced) |
++| `iq3_s` split applied at **every** width (`616b877b8`) | — (kernel bench only) | `n=2` ×0.907, `n=4` ×0.925 | E1 | — | **LOSS — superseded by `aa9f0e2aa`** |
++| ROCmFP4-FAST `q8_1` MMVQ mat-vec, retained at `n=3` and `n=5` (`f68a4bd25`) | julianmb Qwen3.8-27B-ROCmFP4-FAST, 14.56 GB | drafted decode **7.498 → 9.518 t/s (+27%)**; plain tied | E2 | rolled 32/40 → 33/40, F-141 0/8, zero empty completions | **MEASURED WIN — default-branch integration BLOCKED**, see below |
++| Tiled concat-transpose for the delta-net conv state (`5b1b416cb`) | huihui-ai Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL, 16.2 GB | CONCAT dispatch **−13%**; whole-model **TIED**, twice | E3 | output byte-identical gate ON vs OFF 3/3, F-141 0/8 | **WIN at the op, TIE at the seat** |
++| `q6_k` mat-vec reads scales from the block, not through LDS (`4bbebd619`) | huihui-ai Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL, 16.2 GB | op-level ratio **0.9796** against a control of **0.9990** — no row separates | 32+16 GB | output byte-identical, `test-backend-ops` MUL_MAT 1394/1394 | **NEUTRAL** — shipped for less work, **never quote it as a win** |
++| Draft length sized from measured acceptance, `--spec-draft-adaptive` (`6c7d9275f`) | — | **not measured here** | — | — | **UNMEASURED on RIG-A**, default OFF |
++| Server: do not re-verify replayed draft tokens after a checkpoint restore (`8a4044a82`) | — | no throughput claim | — | — | **BUG FIX** |
++
++Whole-percent figures above are for reading at a glance; the detail entries carry the raw values,
++confidence intervals and cell counts that the verdicts actually rest on.
++
++### Per model file
++
++| model file (publisher) | size | what moved on it | what is still OWED |
++|---|---|---|---|
++| Qwen3.8-27B-Unleashed **UD-IQ4_XS** (outsourc-e) | 14.30 GB | `iq4_xs` shader **+12%** drafted; `iq3_s` split **+2%** drafted, reproduced across two epochs | MMLU / HumanEval / GSM8K on this exact quant — the harness matrix holds `UD-Q4_K_M`, not this file |
++| Qwen3.8-27B-Unleashed **UD-Q3_K_XL** (outsourc-e) | 13.22 GB | `iq4_xs` shader **+2%** drafted / **+10%** plain; `iq3_s` split **+11%** drafted | MMLU / HumanEval / GSM8K on this exact quant — OWED |
++| Qwen3.8-27B-**ROCmFP4-FAST** (julianmb) | 14.56 GB | mat-mat pipelines **3.4× prefill**; MMVQ mat-vec **+27%** drafted | adversarial numerical validation at `n=3` / `n=5`; MMLU / HumanEval / GSM8K OWED |
++| Huihui-Qwen3.8-27B-abliterated-**UD Q4_K_XL** (huihui-ai) | 16.2 GB | concat-transpose **−13%** on the op, tied at the seat; `q6_k` scales neutral | decode/verify-graph arm of the concat work; the `q6_k` **~35% deficit against `q5_K`** is open |
++| DFlash2 **Q4_K_M** drafter (incoai) | — | used as the drafter in every drafted arm above at `--spec-draft-n-max 2` (verify width 3) | — |
++
++Quality on the seat file, from the harness matrix rather than from this work:
++MMLU `mmlu_arifi` **0.7333**, HumanEval pass@1 **0.9329** (153/164), GSM8K strict **0.84**.
++ARC-challenge is **OWED-RESCORE** — this project has no trustworthy harness scorer for it. None of
++these moved: every mechanism below is a kernel change under a fixed model file, and the per-A/B
++quality gate is the 40-prompt rolled smoke score with thinking OFF, reported in every entry.
++
++### Added
++
++- **A dedicated `iq4_xs` mat-vec shader.** `iq4_xs` was the one widely-used K-quant-sized format with
++  no shader of its own: the shader generator routed only the `*_k` types, the `iq1/iq2/iq3` family and
++  `tq2_0` to a dedicated mat-vec, so `iq4_xs` fell to the generic path. That path decodes each block's
++  scales once per `dequantize4()` call and uses one nibble half of every word it fetches, so the other
++  half is fetched again by the thread sixteen positions away. The new shader follows the K-quant shape
++  — 16 threads per 256-value superblock, each taking both nibble halves of two packed words for 16
++  values per row, with the scale decoded once per row per superblock.
++
++  **Kernel, on RIG-A** (`test-backend-ops perf`, `m=17408 k=5120`, 3-round medians): `iq4_xs` moves
++  from **58–78%** of the `q4_K` yardstick's effective bandwidth to **98–105%** at widths 1 through 4,
++  and **117%** at 5 and **144%** at 8. On the `m=4096 k=14336` rows both binaries carry, before against
++  after: **×1.209** at `n=1`, ×1.107 at 2, ×1.114 at 3, **×1.863** at 4 (the generic shader's knee),
++  ×1.129 at 5, ×1.112 at 8. Three untouched types measured on the same runs read **0.96–1.03**, which
++  is this ladder's noise band.
++
++  **Serve, on RIG-A** (`llama-server`, same model file per arm, palindrome of 2 launches × 8 rounds =
++  16 rounds per slot, cell-wise CI95 over 8 paired prompt/seed cells, epoch E1): on
++  `Unleashed UD-IQ4_XS` the drafted line — DFlash2 Q4_K_M at `--spec-draft-n-max 2`, the mode this
++  project actually serves — moves **7.675 → 8.610 tok/s**, cell-wise **+0.617 [+0.255, +0.978], 8 of 8
++  cells positive**. On `Unleashed UD-Q3_K_XL` a second clean take reads drafted **8.173 → 8.323**
++  (**+0.293 [+0.060, +0.527]**, 7 of 8) and plain **4.952 → 5.426** (**+0.742 [+0.208, +1.276]**,
++  7 of 8). Prefill is tied on both files, as expected — the mat-mat path is untouched.
++
++  Correctness: `test-backend-ops -o MUL_MAT -p type_a=iq4_xs` **13 cases OK, 0 FAIL**, and `MUL_MAT_ID`
++  OK. Output is not bit-identical to the generic shader — the summation order differs — and sits inside
++  the op's own NMSE gate. The rolled 40-prompt smoke score with thinking OFF is **35/40 before and
++  35/40 after** on both files, per prompt.
++
++  A caveat that belongs with the number: on the plain (undrafted) line this box is bimodal, and a
++  minority of rounds land in a slow regime regardless of which arm they fall on. That is demonstrated,
++  not asserted — see [`docs/FINDINGS.md`](docs/FINDINGS.md) F-15. Plain verdicts here are read from the
++  median plus a clean-cell interval, never from the raw cell-wise mean alone.
++
++- **A split `iq3_s` mat-vec, at the two widths where it wins.** An unmerged community change reshapes
++  this shader to 16 invocations per superblock and drops its `sum[]` array. Applied at **every** width
++  it measured a **7–9% loss** on RIG-A at `n=2` (×0.907) and `n=4` (×0.925) — that build (`616b877b8`)
++  is listed here because it is a result, and it is superseded. The shipped gate is
++  `NUM_COLS == 3 || NUM_COLS > 4`: the source's own widths plus the one width below them that measured
++  a win, with every other width taking the upstream body **bit for bit** under a specialization
++  constant that folds at pipeline creation.
++
++  **Kernel, on RIG-A** (`m=17408 k=5120`, 3-round medians): `n=3` **964.9 → 711.9 µs, 39.7 → 53.8 GB/s
++  = +35%**; `n=5` ×1.472; `n=8` ×4.803 (the previously-measured cliff at that width, closed);
++  `n=1`, `n=2` and `n=4` ×1.002 / ×0.993 / ×1.000 — the control that the untouched widths did not move.
++
++  `n=3` is the verify width of DFlash2 at draft depth 2, which is why the serve effect tracks each
++  file's `iq3_s` share. **Serve, epoch E1:** on `UD-Q3_K_XL` (26.6% `iq3_s` by bytes) drafted decode
++  **8.367 → 9.268 tok/s**, **+0.820 [+0.622, +1.018], 8 of 8 cells**; the plain line is identical, which
++  is the control proving the non-split widths are unchanged. On `UD-IQ4_XS` (11.3% `iq3_s`) the drafted
++  gain is small and was therefore taken twice, across a driver update and a reboot: **+0.1984
++  [−0.0334, +0.4301]** in epoch E1 and **+0.1994 [−0.0039, +0.4028]** in epoch E2 — the same sign and
++  the same magnitude to three decimals, 6 of 8 cells positive both times. Each interval grazes zero
++  alone; the agreement across two independent epochs is the result.
++
++  Correctness `MUL_MAT` 13 OK / 0 FAIL and `MUL_MAT_ID` OK on every build. Rolled 35/40 → 35/40.
++
++- **`q8_1` integer-dot mat-vec pipelines for the ROCmFP4-FAST format, at widths 3 and 5.** The Vulkan
++  backend already *listed* this type in its `q8_1` selector and already returned true from
++  `should_use_mmvq` for it on AMD — so it quantized the activations on every mat-vec of this type, then
++  looked up a pipeline **that had never been created**, got null, and fell back to the float path in
++  silence. It was paying the quantize cost for nothing. The port creates the pipelines and the repack
++  and dot-product the shader needs.
++
++  **Kernel, on RIG-A** (`m=17408 k=5120`, epoch E2 ladder): `n=1` ×0.991, `n=2` ×1.192, **`n=3` ×1.361**,
++  `n=4` ×1.018, **`n=5` ×1.310**, `n=8` ×1.025. The epoch-E1 ladder read ×0.998 / ×1.183 / ×1.335 /
++  ×1.015 / ×1.316 / ×1.040 — the gains reproduce across the driver change. The discriminator is the
++  control arm: with `GGML_VK_DISABLE_MMVQ=1` both arms take the identical float shader and every row
++  flattens to **×0.991–1.007**, so the 1.19–1.36× is this port and not build drift.
++
++  **Serve, on RIG-A, epoch E2** (julianmb ROCmFP4-FAST, 14.56 GB, DFlash2 at draft depth 2, palindrome,
++  16 rounds per slot): drafted decode **7.498 → 9.518 tok/s mean**, **+2.0199 [1.3212, 2.7186], 8 of 8
++  cells positive = +27%**; median 7.461 → 9.282. Plain decode **5.084 → 5.086**, **+0.0016
++  [−0.0168, +0.0199] = tied**. Prefill tied. Rolled **32/40 → 33/40**. **Zero empty completions across
++  all 64 rounds.**
++
++  **This is shipped on the fork's kernel branch and is NOT integrated into the default branch, on
++  purpose.** Reaching this result cost four intermediate builds, because an earlier version of this
++  port made the model emit an empty completion — deterministically, on one prompt, on this file only.
++  Three hypotheses were falsified before the cause was isolated to the `n=2` width, which is why the
++  shipped gate excludes it. The same shader arithmetic is still live at `n=3` and `n=5`, and the
++  reproducer that found the defect cannot reach those widths. Until an adversarial corpus does,
++  **fast-but-numerically-wrong is not a win** and this stays off the default branch. The full trail is
++  [`docs/FINDINGS.md`](docs/FINDINGS.md) F-13.
++
++- **A tiled concat-transpose for the delta-net conv state**, taken verbatim from an upstream
++  contributor. That path transposes straight into a dim-0 concat, so the generic concat walks its second
++  source with a 40960-byte stride — one cache line per element, and one memory channel per row. The
++  shape, and only that shape, is routed to a 32×32 shared-memory tile transpose.
++  **`GGML_VK_CONCAT_TRANSPOSE=0` opts out**, which also gave the measurement its second arm for free.
++
++  **Kernel, on RIG-A** (one binary, arms selected by the environment variable, 4 interleaved launches,
++  32 graph blocks, epoch E3): CONCAT **2550.2 → 2224.1 µs per dispatch = −12.79%**, **−15.66 ms per
++  `ub512` prefill graph**. The arms do not overlap — `min(OFF) 2510.5 µs > max(ON) 2325.7 µs`. On a
++  binary built from the default branch ten commits later, re-measured over three counterbalanced takes
++  and reported position-balanced, the same op reads **−11.4349% / −13.988 ms**. Both are banked; neither
++  replaces the other, because they are different binaries and, per this project's equipment register,
++  potentially different memory configurations.
++
++  **The whole-model effect is a TIE, and this entry does not claim otherwise.** CONCAT is **1.42%** of
++  the prefill graph on this box, so the ceiling on the end-to-end effect is **+0.18%** — far below what
++  a serve A/B here resolves (paired CI95 halfwidths of **±6.7% / ±5.9% / ±31.2%** on the three prompt
++  shapes). Two counterbalanced 8-launch palindromes both read **TIED** at `pp512@ub512`,
++  `pp2048@ub512` and `pp2048@ub2048`, and the *sign* flips between the takes on two of the three
++  shapes. That is the arithmetically predicted outcome of a +0.18% ceiling under a ±4–31% instrument,
++  not a refutation of the op-level gain. The upstream author's **+3.3%** was measured on gfx1151, where
++  this op is a larger share of prefill; it is **upstream-reported, neither reproduced nor contradicted
++  here**.
++
++  Non-regression: `test-backend-ops -o CONCAT` **195/195, 0 FAIL, both arms** — and that suite
++  provably carries **no** transposed-second-source case, so it proves non-regression and **not** coverage
++  of the new kernel. The covering checks are the three that do bear on it: generated text
++  **byte-identical with the gate on and off, 3/3 prompts** at temperature 0 on two genuinely separate
++  server processes; the content floor **0/8 on every slot**; and a reachability receipt showing
++  **1392 generation-time dispatches** of the new kernel with the gate on against **0** with it off.
++
++- **`--spec-draft-adaptive`** — draft length sized from a per-sequence moving average of accepted
++  tokens instead of a fixed `--spec-draft-n-max`, taken from an upstream contributor. A fixed depth can
++  only be right for one kind of content, and its author measured the correct setting to be *opposite*
++  for prose and for JSON. The interesting part is that the action censors the measurement: when every
++  drafted token is accepted you learn only that acceptance was *at least* the draft length, so
++  averaging that lower bound ratchets the depth down and strands it. Full acceptance therefore probes
++  upward while partial acceptance is averaged.
++
++  **The numbers in the source commit are upstream-reported, measured on a Radeon 8060S, and are not
++  ours.** They are not restated here for that reason. **Default OFF**, and **UNMEASURED on RIG-A** —
++  this fork has no A/B for it. Speculation stays distribution-preserving, so the mechanism can move
++  throughput and cannot move output.
++
++### Fixed
++
++- **A server slot could loop forever on one token after a partial draft acceptance.** On a partial
++  accept the slot restores the pre-round state and re-decodes the accepted tokens to rebuild it — and
++  that replay went back through the same verification as a fresh draft. On a backend whose logits move
++  with batch shape or memory layout, **and Vulkan is one**, the re-verification can reject a token the
++  original verification already accepted; the rejection restores the same checkpoint and replays again,
++  and the slot spins on one position emitting nothing. The replayed prefix is now accepted without
++  re-verification and only the continuation is sampled. On backends with batch-shape-invariant logits
++  the re-verification always agreed, so nothing changes there.
++
++- **Whole-tensor dequantization on every batched matmul of the ROCmFP4-FAST format.** The shaders were
++  generated and the type was listed in the mat-mat selector, but no line ever *created* the pipelines —
++  the same selector-without-a-pipeline shape as the MMVQ entry above. Every `n>1` matmul on the type
++  therefore fell back to staging the whole tensor to f16, which on the 248320×5120 head meant a
++  **2.4 GB** staging buffer. The pipelines are created, and the mat-mat loader gained the case for this
++  type that it was missing (without which `test-backend-ops` reported an error of 1.0 above `n=8`).
++  Separately, the generic mat-vec had its column loop nested *outside* its row loop with the
++  dequantization inside, so each block was decoded once per column; the dequantization is hoisted out,
++  with the arithmetic per (row, column) unchanged.
++
++  **Measured on RIG-A** (perf logger): the FP4 prefill graph **16112 → 4683 ms** — parity with `q4_K`
++  at 5183 GFLOPS — the FP4 width-3 verify graph **338 → 271 ms**, and the seat file's verify graph
++  **268 → 259 ms** from the mat-vec hoist alone. `test-backend-ops` MUL_MAT **0 FAIL**; content floor
++  **0/8 on three slots**; the serve A/B reads FP4 prefill **+16–20%** against the seat file with the
++  interval excluding zero.
++
++### Changed
++
++- **The `q6_k` mat-vec now reads its scales out of the block instead of staging them through shared
++  memory.** It was the only `q*_k` mat-vec shader doing so — it loaded all 16 int8 scales of the
++  superblock into a double-buffered tile and paid a **`barrier()` per row, inside the row loop**, while
++  `q4_k` and `q5_k` unpack their scales in registers with no shared memory and no barrier at all. The
++  exchange moves no data between threads: the 16 threads all work on the same block, each writes its
++  own scale, and each then reads only four bytes of that same block. Reading them straight from the
++  block yields identical values in identical order off the same 16-byte cache line.
++
++  **This measured NEUTRAL on RIG-A and must not be quoted as a speed win.** One binary, arms selected
++  by a specialization constant, 6 position-balanced interleaved launches per phase, on the seat serve
++  line: at the op level the `q6_k` rows read a median ON/OFF ratio of **0.9796** against a control of
++  **78 untouched op rows at 0.9990, p10–p90 [0.952, 1.053]** — **no `q6_k` row separates from the
++  control band**. At the serve level, **TIED on all six cells** — prefill and decode, reported
++  separately, at three prompt lengths, every arm range overlapping. Output is **byte-identical**: one
++  distinct hash per prompt across all 12 arm-launches. `test-backend-ops -o MUL_MAT` **1394/1394, 0
++  FAIL, both arms**.
++
++  It is kept because it is **strictly less work for a bit-identical result** — one fewer workgroup
++  barrier per row per superblock, and no shared-memory tile — on an engine that ships to other people's
++  hardware, where barrier cost and shared-memory pressure differ. `GGML_VK_Q6K_DIRECT_SCALES=0`
++  restores the upstream path byte for byte. What this pass did *not* find is why `q6_K` runs about
++  **35% below `q5_K`** at the same shape; the per-row barrier was the leading explanation for that
++  deficit and it is now **falsified**. See [`docs/FINDINGS.md`](docs/FINDINGS.md) F-14.
++
++- **Base moved to `b10680` (`d7bd3bfca`)**, the latest upstream tag at the time. Two repairs were
++  needed after the merge and both are recorded in the series: a call site that upstream renamed and the
++  fork's own code had auto-merged past, and a declaration kept from both sides of a resolution.
++
++### Not shipped on the default branch, with reasons
++
++- **The ROCmFP4-FAST MMVQ mat-vec.** A measured **+27%** on the drafted line of its own file, with the
++  interval excluding zero on 8 of 8 cells and the content gates green — and still not on the default
++  branch, because the shader arithmetic that produced it is unvalidated at the two widths it is
++  retained at. What is owed before it lands is named rather than left implicit: an adversarial
++  cache-history corpus that reaches width 3, or a direct comparison of the integer-dot and float logits.
++
++- **The `iq3_s` split applied at every width** (`616b877b8`) — **7–9% slower** at `n=2` and `n=4` on
++  RIG-A. Superseded by the gated version above rather than kept as an option, because the two widths it
++  loses on are widths the shipped gate simply does not touch.
++
++- **`--spec-draft-adaptive` as a default.** Compiled in, off, and unmeasured here.
++
++### Where these actually are, right now
++
++This section documents measured work in this fork's git history. **Most of it is not yet on the
++default branch**, and saying otherwise would be the exact overstatement this changelog's rules exist
++to prevent.
++
++| commit(s) | where | note |
++|---|---|---|
++| `5b1b416cb` — tiled concat-transpose | **on the default branch** | landed by compare-and-swap, four fast-forwards, **0 merge commits added**; all four of its gates were re-run on binaries built from the default branch itself rather than carried over from the measuring branch |
++| `6c7d9275f`, `8a4044a82` — adaptive drafting, replay fix | on their working branch | awaiting integration |
++| `e3220bed0` — ROCmFP4-FAST mat-mat + mat-vec hoist | on its working branch | awaiting integration |
++| `1884a620a`, `aa9f0e2aa` — `iq4_xs` and `iq3_s` mat-vec | on their working branch | measured wins, awaiting integration |
++| `60f57787f` … `f68a4bd25` — ROCmFP4-FAST MMVQ | on its working branch | **held there deliberately** — see the residual above |
++| `4bbebd619` — `q6_k` direct scales | on its working branch | awaiting integration |
++
++None of them, including the one that landed, is yet a file in
++[`patches/series/`](patches/series/). That directory is a generated mirror of the default branch, and
++the only lawful way to add to it is a regeneration that currently **stops on ten pre-existing merge
++commits** in the fork's history. Regenerating by hand would produce a green-looking artifact that
++fails at the next replay, so it was not done. The commit that did land was instead verified at the
++right scope — its own patch applies cleanly against the replay result — and the manifest rows the
++regeneration will emit are staged in
++[`patches/series/PENDING-ROWS.md`](patches/series/PENDING-ROWS.md). Unblocking it needs the fork's
++default branch linearized.
++
++---
++
+ ## On upstream `b10173` (`e9fa0781f`) — 2026-07-29
+ 
+ ### Fixed
+diff --git a/docs/FINDINGS.md b/docs/FINDINGS.md
+index 667f057b8..6abbdc006 100644
+--- a/docs/FINDINGS.md
++++ b/docs/FINDINGS.md
+@@ -112,6 +112,53 @@ least divergent of the three measured.
+ 
+ ---
+ 
++### F-13 — A kernel that passes `test-backend-ops` can still change the first token to end-of-generation
++
++**Status: mitigated by a width gate, not root-fixed. The mechanism is still live at two widths, and
++the change is held off the default branch because of it.**
++
++While measuring the ROCmFP4-FAST integer-dot mat-vec (the `+27%` drafted win in the changelog), the
++new arm returned an **empty completion** — one token, immediately end-of-generation, no text — on one
++prompt, twice, deterministically. The float arm, on the same file with the same seed on the same
++prompt, returned 72 tokens both times. Those were the only two empty rounds in all 64 rounds of the
++comparison.
++
++That is a numerical result, not a harness artifact, and ruling out the harness came first: the
++request that produced it sets no presence penalty (see F-16 for why that check is not optional here),
++and the two arms differ only in which mat-vec pipelines exist.
++
++The useful part is what happened next, because **three hypotheses were falsified in a row before the
++cause was found**, and each falsification was a real experiment rather than an argument.
++
++| # | hypothesis | test | result |
++|---|---|---|---|
++| 1 | the integer-dot path at width 1 is wrong | rebuild with that width forced back to the float path | **falsified** — the same prompt still returned empty, in both replicates |
++| 2 | it is server slot state or prompt cache, not the kernel | run the identical comparison with the two binaries **swapped between slots** | **falsified** — the empties moved *with the binary*, not with the slot. The float binary has never produced one |
++| 3 | some other change in the binary, not this port | force the float path for the whole run with `GGML_VK_DISABLE_MMVQ=1` | the empties **disappeared** — the port is implicated, but no width is named |
++
++Naming the width needed one more instrument. The prompt only reproduced under its **exact** cache
++history — the same fill and the same preceding rounds, replayed — never in isolation, which is itself
++worth knowing. A dispatch census over that exact sequence showed only three widths live on it: 1, 2
++and 4. Removing width 4 still reproduced. Removing width 2 returned 72 tokens, twice. **The cause is
++width 2**, and the shipped gate retains the path only at widths 3 and 5.
++
++**Two things this finding leaves standing.**
++
++`test-backend-ops` passed the type throughout — 13 correctness cases, 0 FAIL, and the identity-path
++suite green. It is not a broken test: the divergence sits **inside** the op's own normalized-error
++tolerance, which is exactly the size of divergence that tolerance is designed to admit. A test that
++gates on aggregate numerical error over a tensor cannot see a distribution shift at one position that
++crosses a sampling boundary. **A green op-level suite is not a statement about the first token.**
++
++And the same arithmetic is still live at widths 3 and 5 — which is where the `+27%` comes from,
++because a draft depth of 2 verifies at width 3. The reproducer cannot reach those widths: it is a
++plain, undrafted sequence. So what is owed before this can be called closed is named, not implied: an
++adversarial cache-history corpus that runs in drafted mode and reaches width 3, or a direct
++comparison of the integer-dot and float logits, or a tightened backend error gate. Until one of those
++exists, the mechanism stays on its own branch. **Fast but numerically wrong is not a win.**
++
++---
++
+ ## Format findings
+ 
+ ### F-06 — Ternary `Q2_0` at 128-value groups is not upstream's `Q2_0`
+@@ -475,6 +522,48 @@ measure, which is the one thing its defaults policy (F-08) exists to prevent.
+ 
+ ---
+ 
++### F-14 — The leading explanation for the `q6_K` mat-vec deficit is dead, and the deficit is not
++
++**Status: the change measured neutral and shipped anyway; the deficit it was aimed at is OPEN.**
++
++`q6_K` mat-vec runs about **35% below `q5_K`** at the identical shape on RIG-A. Profiled at
++`m=17408 n=3 k=5120`: **41.0 GB/s against 63.8**, a ratio of 0.643, with every `q6_K` row in the
++profile sitting in a tight **39.2–41.6 GB/s** band and no `q4_K` or `q5_K` row coming near it. The
++deficit is stable and reproducible, and it is not a single unlucky dispatch.
++
++There was one obvious mechanism, and it was structural rather than guessed. `q6_K` was the **only**
++`q*_k` mat-vec shader staging its scales through shared memory: it loaded all 16 int8 scales of the
++superblock into a double-buffered tile and paid a **`barrier()` per row, inside the row loop**.
++`q4_k` and `q5_k` unpack their scales in registers, with no shared memory and no barrier at all. A
++per-row workgroup barrier in the hot loop of the one slow shader, absent from the two fast ones, is
++about as clean a suspect as this kind of profile produces.
++
++It is not the cause.
++
++The exchange turned out to move no data between threads: all 16 threads of a group work on the same
++block, each writes its own scale, and each then reads only four bytes of that same block — off the
++same 16-byte cache line the staging was already fetching. So the barrier could be removed for a
++**bit-identical** result, and it was, behind a specialization constant so one binary serves both
++arms. Measured on the seat serve line, 6 position-balanced interleaved launches per phase: the
++`q6_k` op rows read a median ON/OFF ratio of **0.9796** against a control of **78 untouched op rows
++at 0.9990, p10–p90 [0.952, 1.053]**. **No `q6_k` row separates from the control band.** Serve level:
++tied on all six cells. Output: byte-identical, one distinct hash per prompt across 12 arm-launches.
++
++**The deficit stands, unexplained, and the next attempt has to look somewhere else.** This entry
++exists so that nobody spends the same day on the same barrier.
++
++Two corrections to the claim that motivated the work, since they matter to whoever picks it up:
++`q5_K` at 63.8 GB/s is confirmed, but `q4_K` **at that same shape** is **60.6 GB/s, not 72.5** — the
++72.5 figure is not reproducible there, and the nearest number of that magnitude in the profile belongs
++to a *different* shape. The ~35% deficit survives on the `q5_K` comparison alone.
++
++The change is shipped despite measuring neutral, on the ground that it is strictly less work for an
++identical result on an engine that runs on other people's hardware, where barrier cost and
++shared-memory pressure are not what they are here. **Whether it helps anywhere is unmeasured.** It is
++listed in this file, and not in the wins, for that reason.
++
++---
++
+ ## Measurement findings
+ 
+ ### F-12 — A "performance" power plan halved our iGPU inference, and every inference-level suspect read clean
+@@ -527,10 +616,118 @@ The one thing this finding cannot do is repair the numbers taken inside the wind
+ box hides a real win exactly as easily as it invents a fake one, so measurements from those eight
+ days are re-verified before they are quoted, not adjusted.
+ 
++### F-15 — This box's undrafted decode is bimodal, and the mean of a paired comparison follows the slow rounds
++
++**Status: characterised, and mechanised into how verdicts are read. The cause of the slow regime is
++itself unresolved.**
++
++On the plain (undrafted) decode line, a minority of rounds land in a slow regime — roughly 3.5–4.4
++tok/s against a 5.2 plateau — while generating perfectly normal, complete text. They are not empty
++completions and not a content defect. The problem is what they do to a paired A/B: **the cell-wise
++mean of differences is dominated by whichever arm catches them**, so the same unchanged kernel can
++read as a large win or a large loss depending on where the slow rounds fell.
++
++That was demonstrated, not argued, and the demonstration is the finding. One comparison read the
++"after" arm **−1.45 tok/s** with 1 of 8 cells positive — a −33% apparent regression on a width where
++the shader is the upstream body bit for bit, so a real loss was mechanically impossible. The obvious
++confound was tested first and eliminated: across 28 plain launches over 7 palindromes, the middle
++slots the arm occupies read a median-of-medians **5.230** against **5.185** early and **5.076** late,
++so there is **no slot-position penalty**. Re-running the identical pair on the identical binaries in
++the same epoch then settled it: **medians 5.081 against 5.091 — and the slow rounds landed on the
++other arm**, flipping the cell-wise read to +0.60 with nothing changed between the runs. The rounds
++are arm-agnostic.
++
++**The rule this pins down:** on the plain line of this box, a verdict is read from the **median plus a
++clean-cell interval**, never from the raw cell-wise mean interval alone. The median is stable to
++within 0.2% across runs (5.081 / 5.091 / 5.143 / 5.223 over four palindromes in two epochs). The
++drafted line does not show this — its medians and its cell-wise intervals agree in every take taken
++here — which is worth knowing on its own.
++
++What causes the slow regime is **open**. It cost four separate verdict rows across two mechanisms
++before it was characterised, which is why it is written down here rather than left as lore.
++
++### F-16 — A sampler setting on the serve line, inherited by a request that omitted it, manufactured empty completions
++
++A batch of benchmark rounds across several harnesses returned one token and stopped — the same
++signature as a real kernel defect, and for a while indistinguishable from one.
++
++The cause was the request shape, not the model and not any kernel. The serve line carries
++`--presence-penalty 1.5`. A raw `/v1/completions` body that simply **omits** the field inherits that
++value from the server. On a raw, untemplated prompt the presence ring is then primed with the
++**prompt's own tokens**, which is enough to put end-of-generation on top at position 0 — the slot
++sets its stop reason after one token and releases with no text. Every log signature matched: zero
++evaluation time over one token, no draft acceptance line, nothing truncated.
++
++Two things make this worth publishing rather than just fixing.
++
++**It never touched the served product.** The chat endpoint applies a template and was never exposed;
++the effect is specific to raw completions, which is exactly where benchmarks live and exactly where
++nobody was looking.
++
++**It changed what other measurements were allowed to conclude.** Once the presence penalty is forced
++to 0 on every raw request — one shared helper, so a stale caller passing 1.5 is *overridden* rather
++than defaulted — an empty completion becomes evidence again. F-13 above rests directly on that: the
++sentence "presence is 0 on this endpoint, so this is not the harness class" is only true because this
++was fixed first. A measurement harness that can manufacture the exact symptom under investigation
++does not merely add noise; it makes the whole class of finding unattributable until it is repaired.
++
++### F-17 — Provenance in a commit message does not stop the next rebase from deleting the result
++
++A fork that keeps rebasing onto upstream has a failure mode that no amount of careful commit
++authorship prevents: a measured win is quietly reverted by a bump, an ingest from another fork, or a
++conflict resolved the wrong way, and nothing refuses. The commit message still records what was
++measured. The code no longer does it.
++
++This fork now carries a machine-readable register of measured wins that a bump has to get past. Each
++entry names the mechanism, its commit, the **paths** it lives in, and its **anchors** — the
++distinctive symbols and environment gates whose *removal* is itself a collision, so a change that
++leaves the file in place but strips the mechanism out of it is caught too. It also carries the entry's
++quality gate, the workload the number was taken on, and the measured effect. A bump that touches a
++protected path **refuses** unless a comparison authorising it has been recorded.
++
++Three design decisions in it are worth stating, because each one was a defect first:
++
++- **It is authored, never generated.** Protected paths, anchors, quality gates and workloads are not
++  derivable from a commit trailer, and a fabricated field makes the guard *lie* — it would pass while
++  defending nothing. What *is* derivable is the candidate set, so a `discover` command prints every
++  measured commit no entry covers. An entry that cannot be filled in honestly stays out of the
++  register and stays on that list, visible.
++- **Anchors are searched in source only.** The first version searched the whole tree, which meant the
++  register file itself — which lists every anchor by construction — always matched. The rule was
++  structurally incapable of reporting any anchor missing. Generated patch mirrors and prose are
++  excluded for the same reason: **an anchor that only a document mentions is correctly reported
++  absent.**
++- **A superseded win is never deleted.** It keeps its entry, its evidence, and the conditions it still
++  wins under. "This lost to something better on this box" is not the same statement as "this does not
++  work", and on an engine that runs on hardware we do not own, the difference is the whole point.
++
++One bug found by the register's own tests rather than by reading is worth the space, because it is the
++shape this whole file exists for: the classifier deciding whether a commit *stated* a measured effect
++tested its no-effect vocabulary by **prefix**, and that vocabulary contained a bare `-`. So
++`Measured-effect: -12.79% per dispatch` classified as *no effect* — and a speedup written as a
++negative delta is the single most common shape a win takes here. **A guard blind to the most likely
++shape of the thing it guards is not a guard.** The test that pins it is named after exactly that case.
++
+ ## Open questions
+ 
+ Listed because they are unresolved, not because they are unimportant.
+ 
++- **The `q6_K` mat-vec bandwidth deficit** — about 35% below `q5_K` at the same shape. The per-row
++  barrier was the leading explanation and is **falsified** (F-14). No replacement hypothesis has been
++  measured.
++- **The ROCmFP4-FAST integer-dot mat-vec at widths 3 and 5.** The width that changed a sampled token
++  is gated out and the win reproduces without it, but the same arithmetic is live at the two retained
++  widths and the reproducer cannot reach them (F-13). An adversarial drafted-mode corpus, or a direct
++  logits comparison, is owed before that mechanism can go on the default branch.
++- **Why some undrafted decode rounds run at two-thirds speed** while generating normal text (F-15).
++  Characterised well enough to read verdicts correctly; not explained.
++- **The tiled concat-transpose on decode and on mixture-of-experts models.** Only the prefill graph was
++  measured. The upstream author's larger claims are on the paths not measured here.
++- **One benchmark launch ran about 45% faster than every other launch of either arm**, whole-graph
++  totals included. A session-first-launch position effect is real and measured at 7–11%, which is four
++  to five times too small to absorb it. The launch is retained and labelled; the pooled figure it sits
++  in is **not quotable**.
++
+ - **Asynchronous disk reads for expert streaming.** Built and correct; speed effect
+   **unresolved**, because the test model's experts largely fit in the OS file cache and there
+   was little disk traffic to hide. Needs a model genuinely larger than memory.
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index 62dcf5334..054e10dc7 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -52,6 +52,10 @@ safe measurement posture.
+ | `GGML_SCHED_PREFETCH_EXPERTS` | OFF on unified-memory defaults | thecodacus patch 2: overlaps host-offloaded expert upload with compute. | Discrete-GPU or proven host-offloaded transfer regime. | Documented `+64.5%` prefill in the host-offloaded `-cmoe` condition. Inert when experts are already GPU-resident; it does not enable MTP. |
+ | `GGML_SCHED_MAX_PREFETCH_SLOTS` | implementation default | thecodacus patch 3: sizes per-layer prefetch slots. | Tune only with patch 1 and 2 in dependency order and a transfer-bound workload. | No independent isolated gain accepted; part of the host-transfer bundle and inert in the shipped GPU-resident Vulkan configuration. |
+ | mmap pinning | compiled capability; no universal default | thecodacus patch 1 pins mmap-backed CPU weights. | Use only where CPU-mapped weights must cross a host-to-device boundary. | First dependency in the bundle; inert as part of the triplet on GPU-resident unified-memory Vulkan. |
++| `GGML_VK_CONCAT_TRANSPOSE` | **ON when unset.** Only an exact `0` disables. Added 2026-09-04. | Scope: `GGML_OP_CONCAT` where `src1` is transposed (`nb[0] > nb[1]`) and `src0` has `ne[2] == ne[3] == 1` — the delta-net conv-state shape, and nothing else. That shape sends the generic concat down a 40960-byte stride (`conv_channels * 4`), one cache line per element and one memory channel per row; the gate routes it to a 32×32 tiled kernel with a `[32][33]` padded shared tile so the strided read coalesces and the write stays linear. The predicate falls back to the generic concat when the tiled grid would exceed `maxComputeWorkGroupCount`. Disjoint from the pre-existing `cpy_transpose_02_32/02_16` tiled branch. | Leave it on. Set `0` to reproduce the BEFORE arm, or if a device's tiled dispatch misbehaves. | **Op-level WIN, serve-level TIE, both measured; the tie is not a loss.** RIG-A, one binary with the arms env-gated, Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL on the seat serve line, 4 interleaved launches / 32 graph blocks, Balanced: CONCAT **2550.2 → 2224.1 µs per dispatch = −12.79%**, **−15.66 ms per `ub512` prefill graph**, arms **non-overlapping** (`min(OFF) 2510.5 > max(ON) 2325.7`). On a default-branch binary ten commits later, three counterbalanced takes reported position-balanced: **−11.4349% / −13.988 ms**. Both banked; neither replaces the other (different binaries, and per the equipment register a possibly different memory configuration).<br>**The end-to-end claim is a TIE and must stay one.** CONCAT is **1.42%** of the prefill graph here, so the ceiling is **+0.18%** — far under this box's paired CI95 halfwidths of **±6.7% / ±5.9% / ±31.2%**. Two counterbalanced 8-launch palindromes both read TIED at `pp512@ub512`, `pp2048@ub512`, `pp2048@ub2048`, with the **sign flipping between takes on two of three shapes**; neither direction is quotable. Upstream's **+3.3% pp2048** was measured on gfx1151 where the op is a larger share — **upstream-reported, not reproduced, not contradicted.**<br>**Quality:** generated text **byte-identical ON vs OFF, 3/3 prompts**, temp 0, on two genuinely separate processes (distinct ports, each listener proven a descendant of its own launcher — an earlier ON-vs-ON result on a shared port was **VOID and is withdrawn**); F-141 content floor **0/8 on every slot**; reachability **1392 generation-time dispatches ON vs 0 OFF**. `test-backend-ops -o CONCAT` **195/195, 0 FAIL, both arms** — but that suite provably carries **no transposed-`src1` case**, so it proves non-regression, **not coverage**. **UNMEASURED:** the decode/verify graph, and MoE models (where the upstream claims live). |
++| `GGML_VK_Q6K_DIRECT_SCALES` | **ON when unset — this row inverts the usual shape of this registry, read it before assuming.** Specialization constant 3; default `1` = read scales directly from the block. **`GGML_VK_Q6K_DIRECT_SCALES=0` restores upstream's shared-memory staging path byte for byte.** One binary serves both arms; the host prints the resolved mode on stderr at pipeline creation. Added 2026-09-05. | Scope: `mul_mat_vec_q6_k.comp` only. Upstream stages all 16 int8 scales of the superblock into a double-buffered shared tile and pays a `barrier()` **per row, inside the row loop** — the only `q*_k` mat-vec that does; `q4_k` and `q5_k` unpack in registers with no barrier. The exchange moves no data between threads: the 16 threads share one block, each writes its own scale and each reads only four bytes of that same block, off the cache line the staging already fetched. Direct reads yield identical values in identical fma order, so the result is **bit-identical by construction** and measured so. | **Leave it at the default and do not quote it as a speed lever.** Set `0` to A/B the two paths on other hardware, or to fall back if a driver mishandles the specialization constant. It is a plausible win where barriers are costlier or shared memory is scarcer than on gfx1103 — **unmeasured there**. | **MEASURED NEUTRAL on RIG-A. No speed win is claimed and none may be quoted.** Seat line (Huihui UD-Q4_K_XL + DFlash2 Q4_K_M drafter at `--spec-draft-n-max 2`, so verify width 3), one binary, arms env-gated, **6 position-balanced interleaved launches per phase**, Balanced power plan, 32+16 GB asymmetric RAM: op level, `q6_k` rows read a median ON/OFF ratio **0.9796** against a **control of 78 untouched op rows at median 0.9990, p10–p90 [0.952, 1.053]** — **no `q6_k` row separates from the control band.** Serve level **TIED on all six cells** — prefill and decode reported separately at three prompt lengths, every arm range overlapping. Identity: **byte-identical output, one distinct sha256 per prompt across all 12 arm-launches** (3 prompts × 6 launches). Correctness `test-backend-ops -o MUL_MAT` **1394/1394, 0 FAIL, both arms**.<br>**Kept on the distributable-engine ground, not on a measured gain:** strictly less work — one fewer workgroup barrier per row per superblock and no shared tile — for a bit-identical result.<br>**What it did NOT fix, stated:** `q6_K` mat-vec runs **~35% below `q5_K`** at the identical shape (`m=17408 n=3 k=5120`: **41.0 vs 63.8 GB/s**, ratio 0.643), every `q6_K` row in a 39.2–41.6 band. The per-row barrier was the leading mechanism for that deficit and is now **FALSIFIED**; the deficit is **OPEN**. Correction to the motivating claim: `q4_K` at that same shape is **60.6 GB/s, not 72.5** — the deficit survives on the `q5_K` comparison only. See [`FINDINGS.md`](FINDINGS.md) F-14. |
++| ROCmFP4-FAST `q8_1` MMVQ width gate | **Code, not an environment variable. No new environment variable was added for this mechanism** — the pre-existing `GGML_VK_DISABLE_MMVQ=1` is the only runtime lever, and it is upstream's, applying to every MMVQ type rather than this one (its own measured effect on `Q2_0_G128` is in the `GGML_ARIFI_G128_MMV_ROWS` row above). `ggml_vk_should_use_mmvq` returns true for `GGML_TYPE_Q4_0_ROCMFP4_FAST` on AMD at **`n == 3` and `n == 5` only**; every other width takes the f32 dequant shader. | Scope: the `q8_1` integer-dot mat-vec and mat-vec-id pipelines for `Q4_0_ROCMFP4_FAST`. Before the port the selector **listed** the type and `should_use_mmvq` **returned true**, but no line ever created the pipeline — so activations were quantized on every mat-vec, the lookup returned null, and the backend fell back to f32 in silence, paying the quantize cost for nothing. The port creates the pipelines and adds the repack and dot product (ue4m3 scale, exact-int LUT so `d_a * d_b * int-dot` forms the same product the f32 path does). | **Do not enable it more widely, and do not put this on a default branch yet.** Width 3 is the verify width of a depth-2 draft, which is where the gain is. Width 1 is a measured tie; width 4 is a tie; width 2 is the width that changed a sampled token; above 5 the port loses. | **MEASURED WIN, INTEGRATION BLOCKED.** Ladder, RIG-A, `m=17408 k=5120`, 3-round medians, epoch E2: `n=1` ×0.991, `n=2` ×1.192, **`n=3` ×1.361**, `n=4` ×1.018, **`n=5` ×1.310**, `n=8` ×1.025. Epoch E1 read ×0.998 / ×1.183 / ×1.335 / ×1.015 / ×1.316 / ×1.040 — **the gains reproduce across a driver change**. The discriminator is the control arm: under `GGML_VK_DISABLE_MMVQ=1` both arms take the identical f32 shader and every row flattens to **×0.991–1.007**, so this is the port and not build drift. Ungated at `n=8` the port read **×0.796**, which is why the gate has an upper bound at all.<br>**Serve, epoch E2** (julianmb Qwen3.8-27B-ROCmFP4-FAST 14.56 GB, DFlash2 depth 2, palindrome, 16 rounds/slot): drafted decode **7.498 → 9.518 t/s mean, +2.0199 [1.3212, 2.7186], 8/8 cells positive = +27%**; median 7.461 → 9.282. Plain **5.084 → 5.086, +0.0016 [−0.0168, +0.0199] = tied**. Prefill tied. Rolled **32/40 → 33/40**. **Zero empty completions in 64 rounds.** F-141 **0/8** on all three slots; `test-backend-ops` **10 MUL_MAT + 2 MUL_MAT_ID cases, 0 FAIL**.<br>**BLOCKING RESIDUAL, and it is why widths 2 and 4 are excluded:** an earlier build of this port made the model emit an empty completion — first token end-of-generation — deterministically on one prompt on this file. Three hypotheses were falsified before the cause was isolated to **width 2** (the n=1 dispatch gate did not remove it; a slot-swap proved the empties follow the **binary**, not the slot; forcing f32 for the whole run removed them). The same shader arithmetic is **still live at widths 3 and 5**, and the reproducer is a plain sequence that cannot reach them. Owed before default-branch integration: an adversarial drafted-mode cache-history corpus reaching width 3, or an MMVQ-vs-f32 logits comparison, or a tightened backend error gate. See [`FINDINGS.md`](FINDINGS.md) F-13. |
++| `--spec-draft-adaptive` | **OFF.** CLI flag; sizes each draft from a per-sequence EMA of accepted tokens instead of a fixed `--spec-draft-n-max`, which becomes a safety ceiling rather than a tuning parameter. Backing off is averaged (alpha 0.25, ~4-step memory); probing upward is additive. Reset on `begin()` — a new prompt or a reused server slot — never mid-generation. | Scope: `common/speculative.cpp` draft-length selection. Sits in the `else` of this fork's existing DFlash2 adaptive selector, so a controller already armed keeps precedence; the MTP sites keep their own adaptive precedence. Speculation stays distribution-preserving, so the flag can move throughput and **cannot** move output. | Turn it on where content type varies within a session and no single fixed depth is right — its author's motivating measurement is that the correct depth is *opposite* for prose and for JSON. Sweep it against your own fixed depth before adopting. | **UNMEASURED ON RIG-A — no A/B for this flag exists on this hardware, and none should be quoted.** The measured table in the source commit was taken on a **Radeon 8060S** by the upstream author (three drafter configurations × prose/json × fixed-vs-adaptive, 300 greedy tokens on a Qwen3.8-27B ROCmFP4-FAST target). Those are **upstream-reported numbers for a different GPU** and are deliberately not restated here as results of this fork. Default OFF for that reason alone: the mechanism is sound and the evidence for it is somebody else's box. |
+ 
+ ## Required benchmark discipline
+ 

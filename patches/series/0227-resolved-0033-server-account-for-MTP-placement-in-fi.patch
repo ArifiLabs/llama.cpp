@@ -1,0 +1,47 @@
+From 4419e16d373ea5a9fe28d5b6654e3fd05a083725 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:26:32 -0400
+Subject: [PATCH] 
+ resolved/0033-server-account-for-MTP-placement-in-fit-reservations.patch
+
+Assisted-by: Codex
+---
+ common/fit.cpp | 4 ++--
+ common/fit.h   | 2 ++
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/common/fit.cpp b/common/fit.cpp
+index c8579e010..b0ffa892e 100644
+--- a/common/fit.cpp
++++ b/common/fit.cpp
+@@ -928,7 +928,7 @@ static void common_params_fit_impl(
+             }
+         }
+         candidate.tensor_split = split;
+-        overrides[0] = {common_moe_cache_tensor_pattern.c_str(), ggml_backend_cpu_buffer_type()};
++        overrides[0] = {common_moe_cache_tensor_override_pattern(), ggml_backend_cpu_buffer_type()};
+         overrides[1] = {nullptr, nullptr};
+         candidate.tensor_buft_overrides = overrides;
+         candidate.use_extra_bufts = false;
+@@ -968,7 +968,7 @@ static void common_params_fit_impl(
+     int64_t global_surplus_cpu_moe = 0;
+     if (hp_nex > 0) {
+         ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
+-        tensor_buft_overrides[0] = {common_moe_cache_tensor_pattern.c_str(), cpu_buft};
++        tensor_buft_overrides[0] = {common_moe_cache_tensor_override_pattern(), cpu_buft};
+         tensor_buft_overrides[1] = {nullptr, nullptr};
+         mparams->tensor_buft_overrides = tensor_buft_overrides;
+ 
+diff --git a/common/fit.h b/common/fit.h
+index 7262ec1e3..9628d3a1c 100644
+--- a/common/fit.h
++++ b/common/fit.h
+@@ -9,6 +9,8 @@
+ 
+ struct common_moe_cache_params;
+ 
++const char * common_moe_cache_tensor_override_pattern();
++
+ struct common_moe_cache_fit_device_input {
+     int physical_device = -1;
+     int compute_capability = 0;

@@ -1,0 +1,221 @@
+From 2b2b070a45d7f51ca8156c277dd9ed47641971de Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:34:49 -0400
+Subject: [PATCH] resolved/remaining-conflict-markers
+
+---
+ ggml/src/ggml-sycl/set_rows.cpp | 11 ++-----
+ src/llama-arch.cpp              |  6 ----
+ src/llama-graph.h               |  7 -----
+ src/llama-model.cpp             | 53 ---------------------------------
+ src/models/deepseek4.cpp        |  4 ---
+ tests/test-arg-parser.cpp       |  5 +---
+ 6 files changed, 4 insertions(+), 82 deletions(-)
+
+diff --git a/ggml/src/ggml-sycl/set_rows.cpp b/ggml/src/ggml-sycl/set_rows.cpp
+index 47f07b5c3..16c0dce1a 100644
+--- a/ggml/src/ggml-sycl/set_rows.cpp
++++ b/ggml/src/ggml-sycl/set_rows.cpp
+@@ -106,7 +106,6 @@ static void set_rows_sycl_q(const char * __restrict__ src0_d,
+     GGML_UNUSED(nb13);
+ }
+ 
+-<<<<<<< ours
+ template<typename blockType>
+ using quantize_row_qk_t = void (*)(const float *, blockType *, int64_t);
+ 
+@@ -238,7 +237,8 @@ static void set_rows_sycl_iq_host(
+             }
+         }
+     }
+-=======
++}
++
+ // ============================================================
+ // TurboQuant SET_ROWS cooperative kernels (128 work-items each)
+ // Ported from ggml-cuda/set-rows.cu
+@@ -593,7 +593,6 @@ static void set_rows_sycl_turbo2(ggml_backend_sycl_context & ctx,
+     GGML_UNUSED(ne13);
+     GGML_UNUSED(nb00);
+     GGML_UNUSED(nb13);
+->>>>>>> theirs
+ }
+ 
+ template<typename TIn, typename TIdx, typename TOut>
+@@ -925,12 +924,8 @@ void ggml_sycl_op_set_rows(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+     const ggml_tensor * src0 = dst->src[0];
+     const ggml_tensor * src1 = dst->src[1];
+ 
+-<<<<<<< ours
+     GGML_ASSERT(dst->src[0]->type == GGML_TYPE_F32 || dst->src[0]->type == GGML_TYPE_F16);
+-=======
+-    GGML_ASSERT(dst->src[0]->type == GGML_TYPE_F32);
+-    GGML_ASSERT(dst->src[0]->nb[0] == sizeof(float));
+->>>>>>> theirs
++    GGML_ASSERT(dst->src[0]->nb[0] == ggml_type_size(dst->src[0]->type));
+     GGML_ASSERT(dst->src[1]->type == GGML_TYPE_I64 || dst->src[1]->type == GGML_TYPE_I32);
+ 
+     // dispatch on the index type (src1) and the source value type (src0)
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index 902d0494a..7e424377a 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -1129,10 +1129,7 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
+         case LLM_ARCH_QWEN35MOE:
+         case LLM_ARCH_QWEN4EXP:
+         case LLM_ARCH_DEEPSEEK4:
+-<<<<<<< ours
+         case LLM_ARCH_MINIMAX_01:
+-=======
+->>>>>>> theirs
+             return true;
+         default:
+             return false;
+@@ -1160,11 +1157,8 @@ bool llm_arch_supports_rs_rollback(const llm_arch & arch) {
+         case LLM_ARCH_LFM2:
+         case LLM_ARCH_LFM2MOE:
+         case LLM_ARCH_BAILINGMOE3:
+-<<<<<<< ours
+         case LLM_ARCH_NEMOTRON_H:
+         case LLM_ARCH_NEMOTRON_H_MOE:
+-=======
+->>>>>>> theirs
+             return true;
+         default:
+             return false;
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+index 0bbf379db..bed1b80b5 100644
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -934,18 +934,11 @@ public:
+ 
+     std::vector<ggml_tensor *> t_layer_inp;
+ 
+-<<<<<<< ours
+     std::vector<ggml_tensor *> t_sampled;
+     std::vector<ggml_tensor *> t_sampled_probs;
+     std::vector<ggml_tensor *> t_sampled_logits;
+     std::vector<ggml_tensor *> t_candidates;
+-=======
+-    std::map<llama_seq_id, ggml_tensor *> t_sampled_logits;
+-    std::map<llama_seq_id, ggml_tensor *> t_candidates;
+-    std::map<llama_seq_id, ggml_tensor *> t_sampled;
+     std::vector<llm_graph_fused_node> fused_nodes;
+-    std::map<llama_seq_id, ggml_tensor *> t_sampled_probs;
+->>>>>>> theirs
+ 
+     std::vector<llm_graph_input_ptr> inputs;
+ 
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 321971b5c..163ca23da 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -2538,11 +2538,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+             } break;
+         case LLM_ARCH_DEEPSEEK4:
+             {
+-<<<<<<< ours
+-<<<<<<< ours
+-=======
+-
+->>>>>>> theirs
+                 GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
+ 
+                 if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
+@@ -2583,7 +2578,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+                             nullptr,
+                             nullptr);
+                 }
+-<<<<<<< ours
+             } break;
+         case LLM_ARCH_DFLASH:
+             {
+@@ -2611,53 +2605,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+                 }
+             }
+             [[fallthrough]];
+-=======
+-                res = new llama_kv_cache_dsv4(
+-                        *this,
+-                        params.type_k,
+-                        params.type_v,
+-                        !cparams.flash_attn,
+-                        cparams.offload_kqv,
+-                        params.swa_full,
+-                        cparams.kv_unified,
+-                        cparams.n_ctx_seq,
+-                        cparams.n_seq_max,
+-                        cparams.n_ubatch,
+-                        1,
+-                        nullptr,
+-                        nullptr);
+-            } break;
+->>>>>>> theirs
+-=======
+-            } break;
+-        case LLM_ARCH_DFLASH:
+-            {
+-                // DSV4 DSpark stages store a single MLA-style K per position (window = the draft ring)
+-                if (hparams.dsv4_hc_mult > 0) {
+-                    GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
+-
+-                    res = new llama_kv_cache_iswa(
+-                            *this,
+-                            params.type_k,
+-                            params.type_v,
+-                            !cparams.flash_attn,
+-                            cparams.offload_kqv,
+-                            params.swa_full,
+-                            cparams.kv_unified,
+-                            cparams.n_ctx_seq,
+-                            cparams.n_seq_max,
+-                            cparams.n_ubatch,
+-                            1,
+-                            nullptr,
+-                            nullptr,
+-                            nullptr,
+-                            nullptr);
+-                    break;
+-                }
+-            }
+-            [[fallthrough]];
+-
+->>>>>>> theirs
+         // Models that need standard caching should rely on recurrent/hybrid
+         // checks
+         default:
+diff --git a/src/models/deepseek4.cpp b/src/models/deepseek4.cpp
+index 17a4d8a84..6bf9d3444 100644
+--- a/src/models/deepseek4.cpp
++++ b/src/models/deepseek4.cpp
+@@ -117,13 +117,9 @@ void llama_model_deepseek4::load_arch_tensors(llama_model_loader & ml) {
+         layer.wq_b          = create_tensor(tn(LLM_TENSOR_ATTN_Q_B,      "weight", i), {q_lora_rank, n_head * n_embd_head}, flags);
+         layer.wkv           = create_tensor(tn(LLM_TENSOR_ATTN_KV,       "weight", i), {n_embd, n_embd_head}, flags);
+         layer.attn_kv_norm  = create_tensor(tn(LLM_TENSOR_ATTN_KV_NORM,  "weight", i), {n_embd_head}, flags);
+-<<<<<<< ours
+         // for wo_a, the shape in the file is (n_head * n_embd_head / o_groups, o_lora_rank*o_groups)
+         // so we reshape here, to avoid reshaping the tensor in the graph
+         layer.wo_a          = create_tensor(tn(LLM_TENSOR_ATTN_OUT_A,    "weight", i), {n_head * n_embd_head / o_groups, o_lora_rank, o_groups}, flags | TENSOR_ALLOW_RESHAPE);
+-=======
+-        layer.wo_a          = create_tensor(tn(LLM_TENSOR_ATTN_OUT_A,    "weight", i), {n_head * n_embd_head / o_groups, o_lora_rank * o_groups}, flags);
+->>>>>>> theirs
+         layer.wo_b          = create_tensor(tn(LLM_TENSOR_ATTN_OUT_B,    "weight", i), {o_groups * o_lora_rank, n_embd}, flags);
+ 
+         layer.hc_attn_fn    = create_tensor(tn(LLM_TENSOR_HC_ATTN_FN,    "weight", i), {hc_dim, hc_mix_dim}, flags);
+diff --git a/tests/test-arg-parser.cpp b/tests/test-arg-parser.cpp
+index ce690330a..1f4e581a6 100644
+--- a/tests/test-arg-parser.cpp
++++ b/tests/test-arg-parser.cpp
+@@ -5,11 +5,8 @@
+ #include "speculative.h"
+ 
+ #include <cmath>
+-<<<<<<< ours
+-#include <limits>
+-=======
+ #include <cstdlib>
+->>>>>>> theirs
++#include <limits>
+ #include <string>
+ #include <vector>
+ #include <sstream>

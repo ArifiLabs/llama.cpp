@@ -1,0 +1,24 @@
+From 2382acd5551b0fceb723a6fe790f7b33ac3529c2 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:15:05 -0400
+Subject: [PATCH] 
+ resolved/0047-sycl-hip-fix-two-build-breaks-in-fork-added-code.patch
+
+Assisted-by: Codex
+---
+ ggml/src/ggml-sycl/ggml-sycl.cpp | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
+index 9ea2897d2..b2c90e2ef 100644
+--- a/ggml/src/ggml-sycl/ggml-sycl.cpp
++++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
+@@ -6298,8 +6298,6 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+                 auto res = (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 ||
+                             op->src[0]->type == GGML_TYPE_BF16) &&
+                            (op->src[1]->type == GGML_TYPE_I64 || op->src[1]->type == GGML_TYPE_I32);
+->>>>>>> theirs
+->>>>>>> 43c058851 (4-other-backends/0048-cuda-fit-fix-two-Werror-build-failures-in-the-new-ca.patch)
+                 return res;
+             }
+             break;

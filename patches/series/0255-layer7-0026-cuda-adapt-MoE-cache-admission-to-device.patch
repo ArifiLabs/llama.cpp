@@ -1,0 +1,32 @@
+From 41d862b388e009ba14760ff9b33756cb6cda25ec Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 20:52:43 -0400
+Subject: [PATCH] 
+ layer7/0026-cuda-adapt-MoE-cache-admission-to-device-capability.patch
+
+---
+ ggml/src/ggml-backend-moe-cache.h | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/ggml/src/ggml-backend-moe-cache.h b/ggml/src/ggml-backend-moe-cache.h
+index 4cab8391e..ea8737580 100644
+--- a/ggml/src/ggml-backend-moe-cache.h
++++ b/ggml/src/ggml-backend-moe-cache.h
+@@ -13,6 +13,8 @@ struct ggml_moe_cache_config {
+     size_t budget_bytes;
+     size_t reserve_bytes;
+     size_t min_expert_bytes;
++    // 0 lets each selected device raise or lower the admission floor.
++    int32_t min_expert_explicit;
+     int32_t max_batch;
+     int32_t min_compute_capability;
+     int32_t min_devices;
+@@ -24,6 +26,8 @@ struct ggml_moe_cache_device_caps {
+     int32_t logical_device;
+     int32_t physical_device;
+     int32_t compute_capability;
++    // Effective admission floor for this device and configuration.
++    size_t min_expert_bytes;
+ };
+ 
+ struct ggml_moe_cache_shape_caps {

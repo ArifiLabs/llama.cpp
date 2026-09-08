@@ -1,0 +1,772 @@
+From a04638027308c4dc4941bf6cc11636ce970f8c24 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 1 Sep 2026 09:21:53 -0400
+Subject: [PATCH] lane-195: multi-segment flash attention - the ggml API + CPU
+ reference + its gate
+
+ggml_flash_attn_ext_add_segments() attaches up to 2 extra K/V segments (src[5..8], count in
+op_params[4]) that are read IN PLACE at their own dtype and folded into ONE fp32 online softmax.
+This is what lets a KV cache with an exact F16 ring beside a quantized body skip materialising the
+window entirely: the concat that forced one dtype on both operands is the whole cost the precision
+tail pays (596.58 MiB of scratch at 131K, plus the body-leg -0.5/-0.6 pp F16 cannot avoid).
+
+CPU reference: the segment loop sits OUTSIDE the (S, M, VKQ) accumulator in
+flash_attn_ext_f16_one_chunk, so it is one continued online softmax rather than two attentions
+glued together. Mask bases are DERIVED from each segment's ne[1] and can never disagree with the
+tensors. The KV-chunked and tiled CPU paths are refused when segments are present - both assume the
+window lives entirely in src[1]/src[2] and would have attended over the body only: green, and wrong.
+With no segments every line reduces to the shipped path.
+
+Gate (tests/test-fa-segments.cpp, CPU only, zero GPU time), all as expected:
+  LEG 1 split-equivalence, 6 awkward splits          nmse = 0 EXACTLY (bit-identical)
+  LEG 2 negative control, segment rows shifted by 1  nmse 0.031-0.282, fires on all 5
+  LEG 3 q4_0 body + F16 ring vs an INDEPENDENT       nmse 3e-9..1.2e-6 against tol 5e-4
+        plain-softmax reference computed in-file
+
+Two defects in my own first draft of that gate, both found by running it and both recorded in the
+file: LEG 1 compared an F16 accumulator against a forced-F32 one and so measured the accumulator
+(~2e-6) rather than the indexing; and the first negative control shifted segment SIZES, which moved
+the mask bases with them and was arithmetically a no-op. Corrected controls are what produced the
+numbers above.
+---
+ ggml/include/ggml.h        |  21 +++
+ ggml/src/ggml-cpu/ops.cpp  | 189 ++++++++++++--------
+ ggml/src/ggml.c            |  50 ++++++
+ tests/CMakeLists.txt       |   4 +
+ tests/test-fa-segments.cpp | 358 +++++++++++++++++++++++++++++++++++++
+ 5 files changed, 548 insertions(+), 74 deletions(-)
+ create mode 100644 tests/test-fa-segments.cpp
+
+diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
+index ec27394bd..79b03fb1d 100644
+--- a/ggml/include/ggml.h
++++ b/ggml/include/ggml.h
+@@ -2580,6 +2580,27 @@ extern "C" {
+             struct ggml_tensor * a,
+             struct ggml_tensor * sinks);
+ 
++    // ARIFI lane-195 (per-query source selection): attach up to 2 EXTRA K/V segments that are read
++    // IN PLACE, each at its own dtype, and folded into the SAME online softmax as src[1]/src[2].
++    //
++    // This exists so a KV cache whose newest cells live in an exact F16 ring beside a quantized body
++    // never has to MATERIALISE the window: the concat that forced one dtype on both is what cost the
++    // scratch (596.58 MiB @131K, lane-194 3.4) and the body-leg precision (F16 cannot represent
++    // d*(q-8) for q4_0 - the loss lane-194's keyed row measured at -0.5/-0.6 pp same-top).
++    //
++    // The KV columns are ordered [ src[1] | k0 | k1 ], and each segment's mask columns start where
++    // the previous segment's ended - so the mask base is DERIVED from ne[1] and is never a parameter
++    // that can disagree with the tensors.
++    GGML_API void ggml_flash_attn_ext_add_segments(
++            struct ggml_tensor * a,
++            struct ggml_tensor * k0,
++            struct ggml_tensor * v0,
++            struct ggml_tensor * k1,
++            struct ggml_tensor * v1);
++
++    // 0 when the node is an ordinary single-source flash attention.
++    GGML_API int ggml_flash_attn_ext_n_segments(const struct ggml_tensor * a);
++
+     // TODO: needs to be adapted to ggml_flash_attn_ext
+     GGML_API struct ggml_tensor * ggml_flash_attn_back(
+            struct ggml_context * ctx,
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+index 2d104baef..b6a1d0941 100644
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -8816,12 +8816,7 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
+     GGML_ASSERT(nb1 <= nb2);
+     GGML_ASSERT(nb2 <= nb3);
+ 
+-    // broadcast factors
+-    const int64_t rk2 = neq2/nek2;
+-    const int64_t rk3 = neq3/nek3;
+-
+-    const int64_t rv2 = neq2/nev2;
+-    const int64_t rv3 = neq3/nev3;
++    // broadcast factors are computed PER SEGMENT below (each segment carries its own ne2/ne3)
+ 
+     // parallelize by q rows using ggml_vec_dot_f32
+ 
+@@ -8843,13 +8838,36 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
+     const float m0 = powf(2.0f, -(max_bias       ) / n_head_log2);
+     const float m1 = powf(2.0f, -(max_bias / 2.0f) / n_head_log2);
+ 
+-    ggml_type         const k_vec_dot_type = ggml_get_type_traits_cpu(k->type)->vec_dot_type;
+-    ggml_from_float_t const q_to_vec_dot   = ggml_get_type_traits_cpu(k_vec_dot_type)->from_float;
+-    ggml_vec_dot_t    const kq_vec_dot     = ggml_get_type_traits_cpu(k->type)->vec_dot;
+-    ggml_to_float_t   const v_to_float     = ggml_get_type_traits(v->type)->to_float;
++    // ARIFI lane-195 (per-query source selection): the KV columns are [ src[1] | src[5] | src[7] ],
++    // each read IN PLACE at its own dtype and folded into the SAME running online softmax below.
++    // This is the CPU reference for the design; nothing is materialised or converted here either.
++    //
++    // Segment 0 is always the primary K/V over [ic_start, ic_end) - so with n_seg == 0 every line
++    // below reduces to the shipped single-source path, and its numbers are unchanged.
++    const int n_seg = ggml_flash_attn_ext_n_segments(dst);
++
++    struct fa_seg {
++        const ggml_tensor * k;
++        const ggml_tensor * v;
++        int64_t ic0;
++        int64_t ic1;
++        int64_t mask_base;  // absolute mask column of this segment's ic == ic0
++    } segs[3];
++
++    segs[0] = { k, v, ic_start, ic_end, 0 };
++    {
++        int64_t base = nek1;  // the primary K/V owns mask columns [0, nek1)
++        for (int s = 0; s < n_seg; ++s) {
++            const ggml_tensor * ks = dst->src[5 + 2*s];
++            const ggml_tensor * vs = dst->src[6 + 2*s];
++            segs[1 + s] = { ks, vs, 0, ks->ne[1], base };
++            base += ks->ne[1];
++        }
++    }
+ 
+-    GGML_ASSERT((                            q_to_vec_dot) && "fattn: unsupported K-type");
+-    GGML_ASSERT((v->type == GGML_TYPE_F32 || v_to_float  ) && "fattn: unsupported V-type");
++    // A mixed-dtype window cannot keep an F16 accumulator that flips type between segments, and the
++    // whole point of the design is an fp32 online softmax - so segments force the F32 accumulator.
++    const bool acc_f16 = (n_seg == 0) && (v->type == GGML_TYPE_F16);
+ 
+     int ith = params->ith;
+ 
+@@ -8870,7 +8888,7 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
+         ggml_fp16_t * VKQ16 = (ggml_fp16_t *) (VKQ32 + 1*DV); // (temporary) FP16 VKQ accumulator
+         ggml_fp16_t * Q_q   = (ggml_fp16_t *) (VKQ32 + 2*DV); // (temporary) buffer for Q converted to quantized/FP16
+ 
+-        if (v->type == GGML_TYPE_F16) {
++        if (acc_f16) {
+             memset(VKQ16, 0, DV*sizeof(ggml_fp16_t));
+         } else {
+             memset(VKQ32, 0, DV*sizeof(float));
+@@ -8878,89 +8896,107 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
+ 
+         const ggml_fp16_t * mp = mask ? (ggml_fp16_t *)((char *) mask->data + iq1*mask->nb[1] + (iq2%mask->ne[2])*mask->nb[2] + (iq3%mask->ne[3])*mask->nb[3]) : NULL;
+ 
+-        // k indices
+-        const int ik3 = iq3 / rk3;
+-        const int ik2 = iq2 / rk2;
+-
+-        // v indices
+-        const int iv3 = iq3 / rv3;
+-        const int iv2 = iq2 / rv2;
+-
+         const float * pq = (const float *) ((char *) q->data + (iq1*nbq1 + iq2*nbq2 + iq3*nbq3));
+-        q_to_vec_dot(pq, Q_q, DK);
+ 
+         // online softmax / attention
+         // loop over n_kv and n_head_kv
+         // ref: https://arxiv.org/pdf/2112.05682.pdf
++        //
++        // ARIFI lane-195: ONE running (S, M, VKQ) across every segment. The segment loop is OUTSIDE
++        // the accumulator, never inside it - that is what makes this a single online softmax over
++        // heterogeneous sources rather than two attentions glued together.
++        for (int seg = 0; seg <= n_seg; ++seg) {
++            const ggml_tensor * ks = segs[seg].k;
++            const ggml_tensor * vs_t = segs[seg].v;
++
++            // per-segment type traits: each source is read at ITS OWN dtype
++            const ggml_type   seg_kvdt = ggml_get_type_traits_cpu(ks->type)->vec_dot_type;
++            ggml_from_float_t seg_q_to = ggml_get_type_traits_cpu(seg_kvdt)->from_float;
++            ggml_vec_dot_t    seg_dot  = ggml_get_type_traits_cpu(ks->type)->vec_dot;
++            ggml_to_float_t   seg_v2f  = ggml_get_type_traits(vs_t->type)->to_float;
++
++            GGML_ASSERT((                             seg_q_to) && "fattn: unsupported K-type");
++            GGML_ASSERT((vs_t->type == GGML_TYPE_F32 || seg_v2f) && "fattn: unsupported V-type");
++
++            // Q must be re-encoded whenever the segment's vec_dot type differs from the last one.
++            // Reconverting unconditionally keeps this a reference, not a fast path.
++            seg_q_to(pq, Q_q, DK);
++
++            // k/v indices are per-segment: broadcast factors are computed against THIS segment
++            const int ik3s = iq3 / (int)(neq3/ks->ne[3]);
++            const int ik2s = iq2 / (int)(neq2/ks->ne[2]);
++            const int iv3s = iq3 / (int)(neq3/vs_t->ne[3]);
++            const int iv2s = iq2 / (int)(neq2/vs_t->ne[2]);
++
++            for (int64_t ic = segs[seg].ic0; ic < segs[seg].ic1; ++ic) {
++                const float mv = mp ? slope*GGML_CPU_FP16_TO_FP32(mp[segs[seg].mask_base + ic]) : 0.0f;
++                if (mv == -INFINITY) {
++                    continue;
++                }
+ 
+-        for (int64_t ic = ic_start; ic < ic_end; ++ic) {
+-            const float mv = mp ? slope*GGML_CPU_FP16_TO_FP32(mp[ic]) : 0.0f;
+-            if (mv == -INFINITY) {
+-                continue;
+-            }
++                float s; // KQ value
+ 
+-            float s; // KQ value
++                const char * k_data = (const char *) ks->data + ( ic*ks->nb[1] + ik2s*ks->nb[2] + ik3s*ks->nb[3]);
++                seg_dot(DK, &s, 0, k_data, 0, Q_q, 0, 1);
+ 
+-            const char * k_data = (const char *) k->data + ( ic*nbk1 + ik2*nbk2 + ik3*nbk3);
+-            kq_vec_dot(DK, &s, 0, k_data, 0, Q_q, 0, 1);
++                s = s*scale; // scale KQ value
+ 
+-            s = s*scale; // scale KQ value
++                if (logit_softcap != 0.0f) {
++                    s = logit_softcap*tanhf(s);
++                }
+ 
+-            if (logit_softcap != 0.0f) {
+-                s = logit_softcap*tanhf(s);
+-            }
++                s += mv; // apply mask
+ 
+-            s += mv; // apply mask
++                const float Mold = M;
+ 
+-            const float Mold = M;
++                float ms = 1.0f; // upon new higher max val, scale VKQ and KQ sum with this value
++                float vs = 1.0f; // post-softmax KQ value, expf(s - M)
+ 
+-            float ms = 1.0f; // upon new higher max val, scale VKQ and KQ sum with this value
+-            float vs = 1.0f; // post-softmax KQ value, expf(s - M)
++                const char * v_data = ((const char *) vs_t->data + (ic*vs_t->nb[1] + iv2s*vs_t->nb[2] + iv3s*vs_t->nb[3]));
+ 
+-            const char * v_data = ((const char *) v->data + (ic*nbv1 + iv2*nbv2 + iv3*nbv3));
++                if (acc_f16) {
++                    if (s > M) {
++                        // s is new maximum, ms < 1.0f, vs == expf(s - s) == 1.0f
++                        M = s;
++                        ms = expf(Mold - M);
+ 
+-            if (v->type == GGML_TYPE_F16) {
+-                if (s > M) {
+-                    // s is new maximum, ms < 1.0f, vs == expf(s - s) == 1.0f
+-                    M = s;
+-                    ms = expf(Mold - M);
++                        // V = V*expf(Mold - M)
++                        ggml_vec_scale_f16(DV, VKQ16, ms);
++                    } else {
++                        // no new maximum, ms == 1.0f, vs != 1.0f
++                        vs = expf(s - M);
++                    }
+ 
+-                    // V = V*expf(Mold - M)
+-                    ggml_vec_scale_f16(DV, VKQ16, ms);
++                    // V += v*expf(s - M)
++                    ggml_vec_mad_f16(DV, VKQ16, (const ggml_fp16_t *) v_data, vs);
+                 } else {
+-                    // no new maximum, ms == 1.0f, vs != 1.0f
+-                    vs = expf(s - M);
+-                }
++                    if (s > M) {
++                        // s is new maximum, ms < 1.0f, vs == expf(s - s) == 1.0f
++                        M = s;
++                        ms = expf(Mold - M);
+ 
+-                // V += v*expf(s - M)
+-                ggml_vec_mad_f16(DV, VKQ16, (const ggml_fp16_t *) v_data, vs);
+-            } else {
+-                if (s > M) {
+-                    // s is new maximum, ms < 1.0f, vs == expf(s - s) == 1.0f
+-                    M = s;
+-                    ms = expf(Mold - M);
++                        // V = V*expf(Mold - M)
++                        ggml_vec_scale_f32(DV, VKQ32, ms);
++                    } else {
++                        // no new maximum, ms == 1.0f, vs != 1.0f
++                        vs = expf(s - M);
++                    }
+ 
+-                    // V = V*expf(Mold - M)
+-                    ggml_vec_scale_f32(DV, VKQ32, ms);
+-                } else {
+-                    // no new maximum, ms == 1.0f, vs != 1.0f
+-                    vs = expf(s - M);
++                    // V += v*expf(s - M)
++                    if (seg_v2f) {
++                        seg_v2f(v_data, V32, DV);
++                        ggml_vec_mad_f32(DV, VKQ32, V32, vs);
++                    } else {
++                        // V is F32
++                        ggml_vec_mad_f32(DV, VKQ32, (const float *) v_data, vs);
++                    }
+                 }
+ 
+-                // V += v*expf(s - M)
+-                if (v_to_float) {
+-                    v_to_float(v_data, V32, DV);
+-                    ggml_vec_mad_f32(DV, VKQ32, V32, vs);
+-                } else {
+-                    // V is F32
+-                    ggml_vec_mad_f32(DV, VKQ32, (const float *) v_data, vs);
+-                }
++                S = S*ms + vs; // scale and increment sum with partial sum
+             }
+-
+-            S = S*ms + vs; // scale and increment sum with partial sum
+         }
+ 
+-        if (v->type == GGML_TYPE_F16) {
++        if (acc_f16) {
+             for (int64_t d = 0; d < DV; ++d) {
+                 VKQ32[d] = GGML_CPU_FP16_TO_FP32(VKQ16[d]);
+             }
+@@ -9415,8 +9451,13 @@ static void ggml_compute_forward_flash_attn_ext_f16(
+     // When use_ref is set, force the vec-only reference implementation (no tiling, no KV-chunking)
+     const bool use_ref = params->use_ref;
+ 
++    // ARIFI lane-195: the KV-chunked and tiled paths both assume the whole window lives in src[1]/
++    // src[2]. With extra segments attached they would attend over the body ONLY and silently drop
++    // the ring - a wrong-and-green result. Both are refused here, at the one place that selects them.
++    const bool has_segments = ggml_flash_attn_ext_n_segments(dst) > 0;
++
+     const bool kv_is_f32_or_f16 = (k->type == GGML_TYPE_F32 || k->type == GGML_TYPE_F16);
+-    const bool use_split_kv_path = !use_ref && (neq1 == 1 && neq3 == 1) && kv_is_f32_or_f16 && (k->type == v->type) && q->type == GGML_TYPE_F32 && nek1 >= 512;
++    const bool use_split_kv_path = !use_ref && !has_segments && (neq1 == 1 && neq3 == 1) && kv_is_f32_or_f16 && (k->type == v->type) && q->type == GGML_TYPE_F32 && nek1 >= 512;
+ 
+     if (use_split_kv_path) {
+         const int64_t chunk_size = (nek1 + nth - 1) / nth;
+@@ -9473,7 +9514,7 @@ static void ggml_compute_forward_flash_attn_ext_f16(
+         const int64_t dr = (nr + nchunk - 1) / nchunk;
+ 
+         static constexpr int64_t Q_TILE_SZ  = ggml_fa_tile_config::Q;
+-        bool use_tiled = !use_ref &&
++        bool use_tiled = !use_ref && !has_segments &&
+                                (q->type == GGML_TYPE_F32 &&
+                                 kv_is_f32_or_f16 &&
+                                 k->type == v->type &&
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+index 16c8b627e..22e2508a7 100644
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -5775,6 +5775,56 @@ void ggml_flash_attn_ext_add_sinks(
+     a->src[4] = sinks;
+ }
+ 
++// ARIFI lane-195: extra K/V segments, read in place at their own dtype (see ggml.h).
++//
++// src[5..8] = { k0, v0, k1, v1 }. op_params[4] = the segment count, so a backend can decline the
++// node in supports_op without walking the src array.
++void ggml_flash_attn_ext_add_segments(
++        struct ggml_tensor * a,
++        struct ggml_tensor * k0,
++        struct ggml_tensor * v0,
++        struct ggml_tensor * k1,
++        struct ggml_tensor * v1) {
++    GGML_ASSERT(a->op == GGML_OP_FLASH_ATTN_EXT);
++    GGML_ASSERT(a->src[5] == NULL && "segments already attached");
++    // a second segment without a first would leave a hole in the KV column order
++    GGML_ASSERT((k0 && v0) || (!k1 && !v1));
++
++    int n_seg = 0;
++
++    if (k0 && v0) {
++        // same head dims and same batch as the primary K/V - only the row count may differ
++        GGML_ASSERT(k0->ne[0] == a->src[1]->ne[0]);
++        GGML_ASSERT(v0->ne[0] == a->src[2]->ne[0]);
++        GGML_ASSERT(k0->ne[1] == v0->ne[1]);
++        GGML_ASSERT(k0->ne[2] == a->src[1]->ne[2] && k0->ne[3] == a->src[1]->ne[3]);
++        GGML_ASSERT(v0->ne[2] == a->src[2]->ne[2] && v0->ne[3] == a->src[2]->ne[3]);
++        a->src[5] = k0;
++        a->src[6] = v0;
++        n_seg = 1;
++    }
++
++    if (k1 && v1) {
++        GGML_ASSERT(k1->ne[0] == a->src[1]->ne[0]);
++        GGML_ASSERT(v1->ne[0] == a->src[2]->ne[0]);
++        GGML_ASSERT(k1->ne[1] == v1->ne[1]);
++        GGML_ASSERT(k1->ne[2] == a->src[1]->ne[2] && k1->ne[3] == a->src[1]->ne[3]);
++        GGML_ASSERT(v1->ne[2] == a->src[2]->ne[2] && v1->ne[3] == a->src[2]->ne[3]);
++        a->src[7] = k1;
++        a->src[8] = v1;
++        n_seg = 2;
++    }
++
++    ggml_set_op_params_i32(a, 4, n_seg);
++}
++
++int ggml_flash_attn_ext_n_segments(const struct ggml_tensor * a) {
++    if (a->op != GGML_OP_FLASH_ATTN_EXT) {
++        return 0;
++    }
++    return ggml_get_op_params_i32(a, 4);
++}
++
+ // ggml_flash_attn_back
+ 
+ struct ggml_tensor * ggml_flash_attn_back(
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 00020ee89..29b67be7c 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -360,6 +360,10 @@ if (NOT GGML_BACKEND_DL)
+     llama_build_and_test(test-quantize-fns.cpp)
+     llama_build_and_test(test-quantize-perf.cpp)
+     llama_build_and_test(test-rope.cpp)
++    # ArifiLabs lane-195: per-query source selection - flash attention over several K/V segments,
++    # each at its own dtype, in ONE online softmax. Split-equivalence + negative control + a mixed
++    # q4_0/F16 leg against an independent reference. CPU only, no GPU time.
++    llama_build_and_test(test-fa-segments.cpp)
+     llama_build_and_test(test-col2im-1d.cpp)
+ endif()
+ 
+diff --git a/tests/test-fa-segments.cpp b/tests/test-fa-segments.cpp
+new file mode 100644
+index 000000000..71685c8d2
+--- /dev/null
++++ b/tests/test-fa-segments.cpp
+@@ -0,0 +1,358 @@
++// ArifiLabs lane-195 — PER-QUERY SOURCE SELECTION, the CPU gate.
++//
++// `ggml_flash_attn_ext_add_segments()` lets one flash-attention node read its KV window from
++// SEVERAL tensors, each at its own dtype, folded into ONE fp32 online softmax — so a KV cache whose
++// newest cells live in an exact F16 ring beside a quantized body never has to materialise the
++// window at all.
++//
++// The whole risk in that design is INDEXING: which mask column a segment's row `ic` corresponds to,
++// and whether the running (S, M, VKQ) really carries across a segment boundary. Both are decidable
++// on the CPU with no GPU time, and this file decides them:
++//
++//   LEG 1  SPLIT-EQUIVALENCE.  Identical F16 data, attended once as ONE tensor and once as a body
++//          plus two segments cut at every awkward boundary. The two must agree. This is the check
++//          that fails if a mask base, a row offset or the softmax continuation is wrong.
++//   LEG 2  NEGATIVE CONTROL.   Leg 1 re-run with the segment boundary deliberately off by one row.
++//          It MUST disagree. Without this, leg 1's green could be vacuous — two code paths that are
++//          both wrong in the same way, or a comparison that never actually looked.
++//   LEG 3  MIXED DTYPE.        q4_0 body + F16 ring against an INDEPENDENT reference computed in
++//          this file (plain softmax, q4_0 dequantised through ggml's own to_float). This is the leg
++//          that proves segments are read at their own dtype rather than silently reinterpreted.
++//
++// Leg 3's reference is deliberately not another ggml graph: a bug shared by both graphs would
++// cancel, and the point of a reference is that it cannot share our bug.
++
++#include "ggml.h"
++#include "ggml-alloc.h"
++#include "ggml-backend.h"
++#include "ggml-cpu.h"
++
++#include <cmath>
++#include <cstdio>
++#include <cstring>
++#include <random>
++#include <vector>
++
++static std::mt19937 g_rng(1195);
++
++static std::vector<float> rand_vec(size_t n, float lo = -1.0f, float hi = 1.0f) {
++    std::uniform_real_distribution<float> d(lo, hi);
++    std::vector<float> v(n);
++    for (size_t i = 0; i < n; ++i) {
++        v[i] = d(g_rng);
++    }
++    return v;
++}
++
++// ---------------------------------------------------------------------------------------------
++// A tiny harness: one FA node, optionally with segments, evaluated on the CPU backend.
++// ---------------------------------------------------------------------------------------------
++
++struct fa_case {
++    int64_t hs   = 64;   // head size (K and V)
++    int64_t nh   = 4;    // heads
++    int64_t n_q  = 1;    // query rows (decode = 1)
++    int64_t kv   = 0;    // TOTAL kv columns = body + seg0 + seg1
++    int64_t body = 0;    // rows served by src[1]/src[2]
++    int64_t seg0 = 0;
++    int64_t seg1 = 0;
++    ggml_type body_type = GGML_TYPE_F16;
++    ggml_type ring_type = GGML_TYPE_F16;
++    // NEGATIVE CONTROL: feed the LAST segment rows that are shifted back by one, while leaving its
++    // size and therefore its mask columns alone. That breaks the row<->mask-column correspondence -
++    // exactly the class of bug leg 1 exists to catch - without changing any shape, so a build that
++    // only checks shapes still looks healthy.
++    //
++    // (An earlier version of this control shifted the segment SIZES instead. That was not a control
++    // at all: the segments stayed contiguous and the mask bases moved with them, so the poisoned
++    // build was arithmetically identical to the clean one. It "fired" only because of the unrelated
++    // accumulator difference below, which is how it was caught.)
++    int64_t poison = 0;
++};
++
++// Source data, shared between the monolithic and the segmented build so the comparison is real.
++struct fa_data {
++    std::vector<float> q;     // [hs, n_q, nh]
++    std::vector<float> k;     // [hs, kv, nh]
++    std::vector<float> v;     // [hs, kv, nh]
++    std::vector<float> mask;  // [kv, n_q]  (as float; converted to F16 on the way in)
++};
++
++static fa_data make_data(const fa_case & c) {
++    fa_data d;
++    d.q = rand_vec(c.hs * c.n_q * c.nh);
++    d.k = rand_vec(c.hs * c.kv * c.nh);
++    d.v = rand_vec(c.hs * c.kv * c.nh);
++    // an all-visible mask with a few blocked columns, so the -INFINITY skip path is exercised too
++    d.mask.assign(c.kv * c.n_q, 0.0f);
++    for (int64_t r = 0; r < c.n_q; ++r) {
++        for (int64_t j = 0; j < c.kv; j += 7) {
++            d.mask[r * c.kv + j] = -INFINITY;
++        }
++    }
++    return d;
++}
++
++// Fill a tensor from float data, quantising when the tensor's type asks for it.
++static void set_tensor_from_f32(ggml_tensor * t, const float * src, int64_t n) {
++    const ggml_type_traits * tr = ggml_get_type_traits(t->type);
++    if (t->type == GGML_TYPE_F32) {
++        ggml_backend_tensor_set(t, src, 0, n * sizeof(float));
++        return;
++    }
++    std::vector<uint8_t> buf(ggml_nbytes(t));
++    tr->from_float_ref(src, buf.data(), n);
++    ggml_backend_tensor_set(t, buf.data(), 0, buf.size());
++}
++
++// Round-trip float data through a quantised type, so the reference sees the SAME values the kernel
++// will see. Without this, leg 3 would be measuring q4_0's quantisation error, not our indexing.
++static std::vector<float> quant_round_trip(ggml_type type, const float * src, int64_t n) {
++    if (type == GGML_TYPE_F32) {
++        return std::vector<float>(src, src + n);
++    }
++    const ggml_type_traits * tr = ggml_get_type_traits(type);
++    std::vector<uint8_t> q(ggml_row_size(type, n));
++    tr->from_float_ref(src, q.data(), n);
++    std::vector<float> out(n);
++    tr->to_float(q.data(), out.data(), n);
++    return out;
++}
++
++// Run the case and return dst as floats. `segmented` picks which of the two builds to use.
++static std::vector<float> run_case(const fa_case & c, const fa_data & d, bool segmented) {
++    const int64_t body = segmented ? c.body : c.kv;
++    const int64_t s0   = segmented ? c.seg0 : 0;
++    const int64_t s1   = segmented ? c.seg1 : 0;
++
++    ggml_init_params ip = { /*.mem_size =*/ ggml_tensor_overhead() * 64 + ggml_graph_overhead(),
++                            /*.mem_buffer =*/ nullptr, /*.no_alloc =*/ true };
++    ggml_context * ctx = ggml_init(ip);
++
++    ggml_tensor * q = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, c.hs, c.n_q, c.nh);
++
++    // Body and ring are SEPARATE tensors even in the monolithic build (where the ring rows are
++    // simply zero-length), so the two builds differ in exactly one thing: where the rows live.
++    ggml_tensor * k  = ggml_new_tensor_3d(ctx, c.body_type, c.hs, body, c.nh);
++    ggml_tensor * v  = ggml_new_tensor_3d(ctx, c.body_type, c.hs, body, c.nh);
++    ggml_tensor * k0 = s0 > 0 ? ggml_new_tensor_3d(ctx, c.ring_type, c.hs, s0, c.nh) : nullptr;
++    ggml_tensor * v0 = s0 > 0 ? ggml_new_tensor_3d(ctx, c.ring_type, c.hs, s0, c.nh) : nullptr;
++    ggml_tensor * k1 = s1 > 0 ? ggml_new_tensor_3d(ctx, c.ring_type, c.hs, s1, c.nh) : nullptr;
++    ggml_tensor * v1 = s1 > 0 ? ggml_new_tensor_3d(ctx, c.ring_type, c.hs, s1, c.nh) : nullptr;
++
++    ggml_tensor * m = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, c.kv, c.n_q, 1, 1);
++
++    ggml_tensor * out = ggml_flash_attn_ext(ctx, q, k, v, m, 1.0f / sqrtf((float) c.hs), 0.0f, 0.0f);
++    ggml_flash_attn_ext_set_prec(out, GGML_PREC_F32);
++    if (k0) {
++        ggml_flash_attn_ext_add_segments(out, k0, v0, k1, v1);
++    }
++
++    ggml_backend_t backend = ggml_backend_cpu_init();
++    ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(ctx, backend);
++
++    // --- load, splitting the SAME source rows across whatever tensors this build has -------------
++    set_tensor_from_f32(q, d.q.data(), c.hs * c.n_q * c.nh);
++
++    // K/V are [hs, rows, nh]: row-major within a head, heads outermost. Copy per head so a split
++    // lands on the right rows of the right head.
++    auto load_kv = [&](ggml_tensor * t, const std::vector<float> & src, int64_t row0, int64_t nrow) {
++        if (!t || nrow <= 0) {
++            return;
++        }
++        std::vector<float> tmp((size_t)(c.hs * nrow * c.nh));
++        for (int64_t h = 0; h < c.nh; ++h) {
++            const float * s = src.data() + (h * c.kv + row0) * c.hs;
++            memcpy(tmp.data() + h * nrow * c.hs, s, (size_t)(nrow * c.hs) * sizeof(float));
++        }
++        set_tensor_from_f32(t, tmp.data(), c.hs * nrow * c.nh);
++    };
++
++    load_kv(k,  d.k, 0,           body);
++    load_kv(v,  d.v, 0,           body);
++    load_kv(k0, d.k, body,        s0);
++    load_kv(v0, d.v, body,        s0);
++    // the poison shifts only WHICH rows segment 1 gets, never how many
++    load_kv(k1, d.k, body + s0 - c.poison, s1);
++    load_kv(v1, d.v, body + s0 - c.poison, s1);
++
++    std::vector<ggml_fp16_t> mh(d.mask.size());
++    ggml_fp32_to_fp16_row(d.mask.data(), mh.data(), (int64_t) d.mask.size());
++    ggml_backend_tensor_set(m, mh.data(), 0, mh.size() * sizeof(ggml_fp16_t));
++
++    ggml_cgraph * gf = ggml_new_graph(ctx);
++    ggml_build_forward_expand(gf, out);
++    ggml_backend_graph_compute(backend, gf);
++
++    std::vector<float> res(ggml_nelements(out));
++    ggml_backend_tensor_get(out, res.data(), 0, res.size() * sizeof(float));
++
++    ggml_backend_buffer_free(buf);
++    ggml_backend_free(backend);
++    ggml_free(ctx);
++    return res;
++}
++
++// The independent reference for leg 3: plain (non-online) softmax attention over rows that have
++// been put through the SAME quantisation the tensors will hold.
++static std::vector<float> reference(const fa_case & c, const fa_data & d) {
++    // dst layout matches ggml_flash_attn_ext: permute(0,2,1,3) -> [hs, nh, n_q]
++    std::vector<float> out((size_t)(c.hs * c.nh * c.n_q), 0.0f);
++
++    for (int64_t h = 0; h < c.nh; ++h) {
++        // rows [0, body) are body_type; the rest are ring_type
++        std::vector<float> kq(c.hs * c.kv), vq(c.hs * c.kv);
++        for (int64_t r = 0; r < c.kv; ++r) {
++            const ggml_type t = (r < c.body) ? c.body_type : c.ring_type;
++            auto kr = quant_round_trip(t, d.k.data() + (h * c.kv + r) * c.hs, c.hs);
++            auto vr = quant_round_trip(t, d.v.data() + (h * c.kv + r) * c.hs, c.hs);
++            memcpy(kq.data() + r * c.hs, kr.data(), c.hs * sizeof(float));
++            memcpy(vq.data() + r * c.hs, vr.data(), c.hs * sizeof(float));
++        }
++
++        for (int64_t iq = 0; iq < c.n_q; ++iq) {
++            const float * qp = d.q.data() + (h * c.n_q + iq) * c.hs;
++            const float scale = 1.0f / sqrtf((float) c.hs);
++
++            std::vector<float> s(c.kv);
++            float mx = -INFINITY;
++            for (int64_t r = 0; r < c.kv; ++r) {
++                // the mask is stored F16 in the graph, so the reference must see the F16 value too
++                const float mv = ggml_fp16_to_fp32(ggml_fp32_to_fp16(d.mask[iq * c.kv + r]));
++                if (mv == -INFINITY) {
++                    s[r] = -INFINITY;
++                    continue;
++                }
++                float acc = 0.0f;
++                for (int64_t e = 0; e < c.hs; ++e) {
++                    acc += qp[e] * kq[r * c.hs + e];
++                }
++                s[r] = acc * scale + mv;
++                mx = std::fmax(mx, s[r]);
++            }
++
++            float sum = 0.0f;
++            for (int64_t r = 0; r < c.kv; ++r) {
++                s[r] = (s[r] == -INFINITY) ? 0.0f : expf(s[r] - mx);
++                sum += s[r];
++            }
++
++            float * o = out.data() + (iq * c.nh + h) * c.hs;
++            for (int64_t r = 0; r < c.kv; ++r) {
++                if (s[r] == 0.0f) {
++                    continue;
++                }
++                for (int64_t e = 0; e < c.hs; ++e) {
++                    o[e] += s[r] * vq[r * c.hs + e];
++                }
++            }
++            const float inv = sum == 0.0f ? 0.0f : 1.0f / sum;
++            for (int64_t e = 0; e < c.hs; ++e) {
++                o[e] *= inv;
++            }
++        }
++    }
++    return out;
++}
++
++static double nmse(const std::vector<float> & a, const std::vector<float> & b) {
++    if (a.size() != b.size()) {
++        return INFINITY;
++    }
++    double num = 0.0, den = 0.0;
++    for (size_t i = 0; i < a.size(); ++i) {
++        const double d = (double) a[i] - (double) b[i];
++        num += d * d;
++        den += (double) b[i] * (double) b[i];
++    }
++    return den == 0.0 ? num : num / den;
++}
++
++// ---------------------------------------------------------------------------------------------
++
++static int g_fail = 0;
++
++static void report(const char * leg, const char * what, double err, double tol, bool want_pass) {
++    const bool passed = (err <= tol);
++    const bool ok     = (passed == want_pass);
++    printf("  %-6s %-46s nmse=%-14.6g tol=%-9.3g %s%s\n",
++           leg, what, err, tol,
++           passed ? "AGREE " : "DIFFER",
++           ok ? "  OK" : "  <<<< UNEXPECTED");
++    if (!ok) {
++        g_fail++;
++    }
++}
++
++int main() {
++    printf("lane-195: flash-attention per-query source selection - CPU gate\n\n");
++
++    // Boundaries chosen to be awkward on purpose: not multiples of any block size, a segment of 1,
++    // and a case where the body is smaller than the ring.
++    const struct { int64_t kv, body, seg0, seg1; } splits[] = {
++        { 96, 64, 32,  0 },
++        { 96, 64, 20, 12 },
++        { 96,  1, 90,  5 },
++        { 96, 31,  1, 64 },
++        {130, 66, 33, 31 },
++        {257, 129, 65, 63 },
++    };
++
++    // LEG 1/2 run in F32. That is not cosmetic: with an F16 V and no segments the CPU kernel keeps
++    // an F16 accumulator, while any segmented node is forced to F32 (a mixed-dtype window cannot
++    // carry an accumulator whose type flips mid-row). Comparing those two arms measures the
++    // ACCUMULATOR, not the indexing - it lands at ~2e-6 whatever the segments do, which is loud
++    // enough to bury a real defect and did exactly that on the first run of this file. F32 on both
++    // sides removes the confound, so the only remaining difference is where the rows live.
++    printf("LEG 1 - split-equivalence (F32 body + F32 ring vs one monolithic F32 tensor)\n");
++    printf("        MUST AGREE: same rows, same values, only the tensor boundary moves.\n");
++    for (const auto & s : splits) {
++        fa_case c;
++        c.kv = s.kv; c.body = s.body; c.seg0 = s.seg0; c.seg1 = s.seg1;
++        c.body_type = GGML_TYPE_F32; c.ring_type = GGML_TYPE_F32;
++        fa_data d = make_data(c);
++        char name[128];
++        snprintf(name, sizeof(name), "kv=%lld body=%lld seg0=%lld seg1=%lld",
++                 (long long) s.kv, (long long) s.body, (long long) s.seg0, (long long) s.seg1);
++        report("LEG1", name, nmse(run_case(c, d, true), run_case(c, d, false)), 1e-8, true);
++    }
++
++    printf("\nLEG 2 - NEGATIVE CONTROL: segment 1 is fed rows shifted back by one, same sizes.\n");
++    printf("        MUST DIFFER. If any of these agrees, LEG 1 was not looking at anything.\n");
++    for (const auto & s : splits) {
++        if (s.seg1 < 1) {
++            continue;  // no second segment to poison
++        }
++        fa_case c;
++        c.kv = s.kv; c.body = s.body; c.seg0 = s.seg0; c.seg1 = s.seg1;
++        c.body_type = GGML_TYPE_F32; c.ring_type = GGML_TYPE_F32;
++        c.poison = 1;
++        fa_data d = make_data(c);
++        char name[128];
++        snprintf(name, sizeof(name), "kv=%lld body=%lld seg0=%lld seg1=%lld rows-1",
++                 (long long) s.kv, (long long) s.body, (long long) s.seg0, (long long) s.seg1);
++        report("LEG2", name, nmse(run_case(c, d, true), run_case(c, d, false)), 1e-8, false);
++    }
++
++    printf("\nLEG 3 - mixed dtype: q4_0 body + F16 ring vs an INDEPENDENT plain-softmax reference.\n");
++    printf("        MUST AGREE: each segment must be read at its OWN dtype.\n");
++    for (const auto & s : splits) {
++        fa_case c;
++        c.kv = s.kv; c.body = s.body; c.seg0 = s.seg0; c.seg1 = s.seg1;
++        c.hs = 64;  // a multiple of the q4_0 block
++        c.body_type = GGML_TYPE_Q4_0;
++        c.ring_type = GGML_TYPE_F16;
++        if (c.body % 1 != 0 || c.hs % ggml_blck_size(GGML_TYPE_Q4_0) != 0) {
++            continue;
++        }
++        fa_data d = make_data(c);
++        char name[128];
++        snprintf(name, sizeof(name), "q4_0 body=%lld + f16 ring=%lld/%lld",
++                 (long long) s.body, (long long) s.seg0, (long long) s.seg1);
++        // tolerance is set by q4_0's own grid, not by the segment machinery
++        report("LEG3", name, nmse(run_case(c, d, true), reference(c, d)), 5e-4, true);
++    }
++
++    printf("\n%s (%d unexpected)\n", g_fail == 0 ? "ALL LEGS AS EXPECTED" : "FAILURES", g_fail);
++    return g_fail == 0 ? 0 : 1;
++}
