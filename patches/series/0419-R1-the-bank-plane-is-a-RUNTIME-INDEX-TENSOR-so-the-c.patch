@@ -1,0 +1,775 @@
+From 6b2a7943bd17b249b167af2e66702a07a1efad72 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 30 Aug 2026 11:47:29 -0400
+Subject: [PATCH] R1: the bank plane is a RUNTIME INDEX TENSOR, so the copies
+ go AND graph reuse stays
+
+lane-175 closed C4 on the finding that position-derived plane offsets cannot be baked into a
+cached graph (F-146). That is true of a baked VIEW OFFSET. It is not true of the plane itself:
+llama-kv-cache.cpp:1665 already scatters into a persistent cache at a destination row that
+advances every token - ggml_set_rows(k, k_cur, k_idxs) - llama-graph.cpp:519 refills that index
+every ubatch, and llama-graph.cpp:544's can_reuse compares only its SHAPE. Runtime-indexed
+scatter and graph reuse already coexist in this tree. llama-context.cpp:1732 is why: set_inputs
+runs OUTSIDE the can_reuse/build branch, so input tensors are refilled on the reuse path too.
+
+So the ssm bank write becomes ggml_set_rows(ssm_states_2d, snapshots, s_wrow), the K-1 age-shift
+copies per layer per ubatch are deleted (lane-168's 2.097 MB/layer/token x 31 layers), and NO
+graph offset depends on token position - which is why rs_pos is deliberately absent from
+can_reuse here. Adding it back would re-forfeit reuse and reproduce C4's TIE.
+
+Carried from lane-175 verbatim, adding no new cell-layer risk: the corrected two-field
+pos_bank/pos_bank_prev anchor and its whole lifecycle (clear sites, seq_cp, the find_slot
+gather-and-reorder swap, state_read_meta). ring_anchor_sim.py still gates it.
+
+Two scope cuts, both deliberate:
+- The conv bank is NOT rotated. Its F-136 root fix already lands all K planes in one contiguous
+  write, so it has no per-plane shift copies to delete. Rotating it buys nothing and costs an
+  indirection. The two banks therefore need separate read indices, which is why s_copy2()
+  returns both rows in ONE traversal - s_copy() consumes rs_idx, so two passes would resolve
+  every rolled-back read to slot 0.
+- The rotated read is requested by an explicit /*bank=*/true at exactly the five build_rs call
+  sites whose model also calls build_recurrent_attn. mamba, rwkv6/7, plamo2, lfm2, kimi-* and
+  minimax cannot pick up a rotation they do not write. No arch enum to drift.
+
+n_seq_max == 1; LLAMA_RS_R1_OFF=1 restores the shipped path in the SAME binary (F-145);
+every 2026-08-24 ring diagnostic env var forces the shipped path rather than a hybrid.
+
+F-146 compliance: the only baked offset that still varies is rs_z_bank, and it is added to all
+four can_reuse sites in THIS commit. get_rs_pos() still returns a constant when R1 is off.
+
+Gate: r1_index_sim.py - 32480 reads, 0 divergent, both negative controls RED.
+---
+ src/llama-graph.cpp            |  95 ++++++++++++++++++++++++--
+ src/llama-graph.h              |  31 ++++++++-
+ src/llama-memory-recurrent.cpp | 118 +++++++++++++++++++++++++++++++++
+ src/llama-memory-recurrent.h   |  80 ++++++++++++++++++++++
+ src/models/bailingmoe3.cpp     |   5 +-
+ src/models/delta-net-base.cpp  |  44 ++++++++++++
+ src/models/qwen35.cpp          |   5 +-
+ src/models/qwen35moe.cpp       |   5 +-
+ src/models/qwen3next.cpp       |   5 +-
+ src/models/qwen4exp.cpp        |   5 +-
+ 10 files changed, 380 insertions(+), 13 deletions(-)
+
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index 4abe18778..803a3f51b 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -365,6 +365,20 @@ void llm_graph_input_cls::set_input(const llama_ubatch * ubatch) {
+     }
+ }
+ 
++// R1 (lane-176): fill the ssm bank per-snapshot WRITE rows. Snapshot i is the state i tokens
++// older than this ubatch newest, and it lands at plane (i - pos_bank) mod K. This is a
++// CONTENT-only change per ubatch; the node consuming it is a fixed-topology GGML_OP_SET_ROWS.
++static void set_input_rs_wrow(ggml_tensor * t, const llama_memory_recurrent_context * m) {
++    if (!t || !m->get_rs_r1()) {
++        return;
++    }
++    GGML_ASSERT(ggml_backend_buffer_is_host(t->buffer));
++    int32_t * w = (int32_t *) t->data;
++    for (int64_t i = 0; i < t->ne[0]; ++i) {
++        w[i] = m->s_wrow(i);
++    }
++}
++
+ void llm_graph_input_rs::set_input(const llama_ubatch * ubatch) {
+     GGML_UNUSED(ubatch);
+ 
+@@ -375,9 +389,14 @@ void llm_graph_input_rs::set_input(const llama_ubatch * ubatch) {
+         int32_t * data = (int32_t *) s_copy->data;
+ 
+         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
++        GGML_ASSERT(ggml_backend_buffer_is_host(s_copy_bank->buffer));
++        int32_t * bank = (int32_t *) s_copy_bank->data;
++        // ONE traversal: s_copy() CONSUMES the rollback index (rs_idx[seq] = 0), so a second pass
++        // would read 0 and silently resolve every rolled-back read to slot 0.
+         for (uint32_t i = 0; i < n_rs; ++i) {
+-            data[i] = mctx->s_copy(i);
++            data[i] = mctx->s_copy2(i, &bank[i]);
+         }
++        set_input_rs_wrow(s_wrow, mctx);
+         // ring-repair 2026-08-25: leak hunt - see whether the fresh-seq read row matches the
+         // in-graph zeroed row (rs_z). A mismatch = indexing bug; a match = graph-exec gap.
+         static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
+@@ -400,8 +419,15 @@ bool llm_graph_input_rs::can_reuse(const llm_graph_params & params) {
+     res &= s_copy_main->ne[0]  == params.ubatch.n_seqs;
+     res &= s_copy_extra->ne[0] == mctx->get_n_rs() - params.ubatch.n_seqs;
+ 
++    // R1 (lane-176): SHAPE ONLY, never contents. The rows these carry change every token and the
++    // graph stays valid, exactly as for the KV cache self_k_idxs. Comparing their CONTENTS here
++    // would be C4 mistake with extra steps - it would force a rebuild on every ubatch.
++    res &= s_copy_bank->ne[0] == mctx->get_n_rs();
++    res &= s_wrow->ne[0]      == (int64_t) (mctx->get_rs_r1() ? mctx->get_n_rs_planes() : 1);
++
+     res &= head == mctx->get_head();
+     res &= rs_z == mctx->get_rs_z();
++    res &= rs_z_bank == mctx->get_rs_z_bank();
+     res &= rs_shift == mctx->get_rs_shift();
+ 
+     return res;
+@@ -1153,9 +1179,13 @@ void llm_graph_input_mem_hybrid::set_input(const llama_ubatch * ubatch) {
+         int32_t * data = (int32_t *) inp_rs->s_copy->data;
+ 
+         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
++        GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
++        int32_t * bank = (int32_t *) inp_rs->s_copy_bank->data;
++        // ONE traversal - see the note on the non-hybrid path above.
+         for (uint32_t i = 0; i < n_rs; ++i) {
+-            data[i] = mctx->get_recr()->s_copy(i);
++            data[i] = mctx->get_recr()->s_copy2(i, &bank[i]);
+         }
++        set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
+         // ring-repair 2026-08-25: leak hunt (hybrid path) - fresh-seq read row vs zeroed row.
+         static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
+         if (dbg) {
+@@ -1183,8 +1213,14 @@ bool llm_graph_input_mem_hybrid::can_reuse(const llm_graph_params & params) {
+     res &= inp_rs->s_copy_main->ne[0]  == params.ubatch.n_seqs;
+     res &= inp_rs->s_copy_extra->ne[0] == mctx->get_recr()->get_n_rs() - params.ubatch.n_seqs;
+ 
++    // R1 (lane-176): shape only - see the note on the non-hybrid path.
++    res &= inp_rs->s_copy_bank->ne[0] == mctx->get_recr()->get_n_rs();
++    res &= inp_rs->s_wrow->ne[0]      ==
++        (int64_t) (mctx->get_recr()->get_rs_r1() ? mctx->get_recr()->get_n_rs_planes() : 1);
++
+     res &= inp_rs->head == mctx->get_recr()->get_head();
+     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
++    res &= inp_rs->rs_z_bank == mctx->get_recr()->get_rs_z_bank();
+     res &= inp_rs->rs_shift == mctx->get_recr()->get_rs_shift();
+ 
+     return res;
+@@ -1205,9 +1241,13 @@ void llm_graph_input_mem_hybrid_k::set_input(const llama_ubatch * ubatch) {
+         int32_t * data = (int32_t *) inp_rs->s_copy->data;
+ 
+         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
++        GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
++        int32_t * bank = (int32_t *) inp_rs->s_copy_bank->data;
++        // ONE traversal - see the note on the non-hybrid path above.
+         for (uint32_t i = 0; i < n_rs; ++i) {
+-            data[i] = mctx->get_recr()->s_copy(i);
++            data[i] = mctx->get_recr()->s_copy2(i, &bank[i]);
+         }
++        set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
+     }
+ }
+ 
+@@ -1227,8 +1267,14 @@ bool llm_graph_input_mem_hybrid_k::can_reuse(const llm_graph_params & params) {
+     res &= inp_rs->s_copy_main->ne[0]  == params.ubatch.n_seqs;
+     res &= inp_rs->s_copy_extra->ne[0] == mctx->get_recr()->get_n_rs() - params.ubatch.n_seqs;
+ 
++    // R1 (lane-176): shape only - see the note on the non-hybrid path.
++    res &= inp_rs->s_copy_bank->ne[0] == mctx->get_recr()->get_n_rs();
++    res &= inp_rs->s_wrow->ne[0]      ==
++        (int64_t) (mctx->get_recr()->get_rs_r1() ? mctx->get_recr()->get_n_rs_planes() : 1);
++
+     res &= inp_rs->head == mctx->get_recr()->get_head();
+     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
++    res &= inp_rs->rs_z_bank == mctx->get_recr()->get_rs_z_bank();
+     res &= inp_rs->rs_shift == mctx->get_recr()->get_rs_shift();
+ 
+     return res;
+@@ -1280,9 +1326,13 @@ void llm_graph_input_mem_hybrid_iswa::set_input(const llama_ubatch * ubatch) {
+         int32_t * data = (int32_t *) inp_rs->s_copy->data;
+ 
+         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
++        GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
++        int32_t * bank = (int32_t *) inp_rs->s_copy_bank->data;
++        // ONE traversal - see the note on the non-hybrid path above.
+         for (uint32_t i = 0; i < n_rs; ++i) {
+-            data[i] = mctx->get_recr()->s_copy(i);
++            data[i] = mctx->get_recr()->s_copy2(i, &bank[i]);
+         }
++        set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
+     }
+ }
+ 
+@@ -1316,8 +1366,14 @@ bool llm_graph_input_mem_hybrid_iswa::can_reuse(const llm_graph_params & params)
+     res &= inp_rs->s_copy_main->ne[0]  == params.ubatch.n_seqs;
+     res &= inp_rs->s_copy_extra->ne[0] == mctx->get_recr()->get_n_rs() - params.ubatch.n_seqs;
+ 
++    // R1 (lane-176): shape only - see the note on the non-hybrid path.
++    res &= inp_rs->s_copy_bank->ne[0] == mctx->get_recr()->get_n_rs();
++    res &= inp_rs->s_wrow->ne[0]      ==
++        (int64_t) (mctx->get_recr()->get_rs_r1() ? mctx->get_recr()->get_n_rs_planes() : 1);
++
+     res &= inp_rs->head == mctx->get_recr()->get_head();
+     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
++    res &= inp_rs->rs_z_bank == mctx->get_recr()->get_rs_z_bank();
+     res &= inp_rs->rs_shift == mctx->get_recr()->get_rs_shift();
+ 
+     return res;
+@@ -3730,6 +3786,8 @@ static std::unique_ptr<llm_graph_input_rs> build_rs_inp_impl(
+ 
+     const int64_t n_rs   = mctx_cur->get_n_rs();
+     const int64_t n_seqs = ubatch.n_seqs;
++    // K bank planes; the write-row tensor is sized 1 when R1 is off so it costs nothing there.
++    const int64_t n_planes = (int64_t) mctx_cur->get_n_rs_planes();
+ 
+     inp->s_copy = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_rs);
+     ggml_set_input(inp->s_copy);
+@@ -3737,8 +3795,21 @@ static std::unique_ptr<llm_graph_input_rs> build_rs_inp_impl(
+     inp->s_copy_main  = ggml_view_1d(ctx0, inp->s_copy, n_seqs, 0);
+     inp->s_copy_extra = ggml_view_1d(ctx0, inp->s_copy, n_rs - n_seqs, n_seqs * inp->s_copy->nb[0]);
+ 
++    // R1 (lane-176): the ssm bank rotated read rows, and its per-snapshot write rows. Both are
++    // plain input tensors - refilled by set_input every ubatch, shape-checked (never
++    // content-checked) by can_reuse - which is what carries the position dependence WITHOUT baking
++    // it into the graph. Modelled on the KV cache self_k_idxs, whose row also moves every token.
++    inp->s_copy_bank       = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_rs);
++    ggml_set_input(inp->s_copy_bank);
++    inp->s_copy_bank_main  = ggml_view_1d(ctx0, inp->s_copy_bank, n_seqs, 0);
++    inp->s_copy_bank_extra = ggml_view_1d(ctx0, inp->s_copy_bank, n_rs - n_seqs, n_seqs * inp->s_copy_bank->nb[0]);
++
++    inp->s_wrow = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, mctx_cur->get_rs_r1() ? n_planes : 1);
++    ggml_set_input(inp->s_wrow);
++
+     inp->head = mctx_cur->get_head();
+     inp->rs_z = mctx_cur->get_rs_z();
++    inp->rs_z_bank = mctx_cur->get_rs_z_bank();
+     inp->rs_shift = mctx_cur->get_rs_shift();
+ 
+     return inp;
+@@ -3757,11 +3828,21 @@ ggml_tensor * llm_graph_context::build_rs(
+         ggml_tensor * s,
+             int32_t   state_size,
+             int32_t   n_seqs,
+-        const llm_graph_get_rows_fn & get_state_rows) const {
++        const llm_graph_get_rows_fn & get_state_rows,
++               bool   bank) const {
+     const auto * kv_state = inp->mctx;
+ 
+-    return build_rs(s, inp->s_copy_main, inp->s_copy_extra, state_size, n_seqs,
+-                    kv_state->get_n_rs(), kv_state->get_head(), kv_state->get_size(), kv_state->get_rs_z(),
++    // R1 (lane-176): the ssm bank is position-labelled, the conv bank is not, so they are gathered
++    // through different index tensors and zeroed at different rows. `bank` selects which, and it is
++    // set explicitly by the five callers whose model also WRITES through the R1 path.
++    const bool r1 = bank && kv_state->get_rs_r1();
++
++    return build_rs(s,
++                    r1 ? inp->s_copy_bank_main  : inp->s_copy_main,
++                    r1 ? inp->s_copy_bank_extra : inp->s_copy_extra,
++                    state_size, n_seqs,
++                    kv_state->get_n_rs(), kv_state->get_head(), kv_state->get_size(),
++                    r1 ? kv_state->get_rs_z_bank() : kv_state->get_rs_z(),
+                     get_state_rows);
+ }
+ 
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+index 5c024a92c..2c9118dad 100644
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -276,14 +276,37 @@ public:
+     ggml_tensor * s_copy_main;   // I32 [n_seqs]
+     ggml_tensor * s_copy_extra;  // I32 [n_rs - n_seqs]
+ 
++    // R1 BANK PLANE AS RUNTIME INDEX (lane-176).
++    //
++    // The SSM bank is position-labelled, so its rows differ from the conv bank's LOGICAL rows.
++    // These carry the ssm rows. Being INPUT TENSORS is the entire point: their CONTENTS change
++    // every ubatch and are refilled by set_input, while the graph topology never moves - so
++    // can_reuse compares only their SHAPE, exactly as it does for the KV cache's self_k_idxs.
++    // That is what lets the age-shift copies disappear while graph reuse stays true.
++    ggml_tensor * s_copy_bank;        // I32 [n_rs]     - rotated read rows for the ssm bank
++    ggml_tensor * s_copy_bank_main;   // I32 [n_seqs]
++    ggml_tensor * s_copy_bank_extra;  // I32 [n_rs - n_seqs]
++    ggml_tensor * s_wrow;             // I32 [K]        - rotated WRITE rows for the ssm bank
++
+     const llama_memory_recurrent_context * mctx;
+ 
+     // used in view offsets, need to match for valid graph reuse
+     uint32_t head;
+     int32_t rs_z;
++    // R1: the rotated twin of rs_z. It is a BAKED view offset (build_rs zeroes a row by offset),
++    // so it must be compared - F-146's rule applied to the one position-dependent offset R1 keeps.
++    // It is -1 on every steady-decode ubatch, so it costs no reuse; see get_rs_z_bank().
++    int32_t rs_z_bank = -1;
+     // DEEP-SLOT AGE FIX: bank-shift distance is baked into the graph's cpy topology; a graph
+     // built for one consumed-rollback value must not be reused for another.
+     uint32_t rs_shift = 0;
++    //
++    // NOTE, and it is the lane's whole result: there is deliberately NO `rs_pos` here.
++    // lane-175's C4 had to add one, because it expressed the bank plane as a constant view offset
++    // that changed every token - which forced can_reuse false on every ubatch (receipt: 1 graph
++    // reused vs 379-631) and cancelled the copy saving it had just won. R1 passes the plane as a
++    // runtime index instead, so NO graph offset depends on position and there is nothing to
++    // compare. Adding rs_pos back here would silently re-forfeit reuse and reproduce C4's TIE.
+ };
+ 
+ class llm_graph_input_cross_embd : public llm_graph_input_i {
+@@ -1325,12 +1348,18 @@ struct llm_graph_context {
+ 
+     llm_graph_input_rs * build_rs_inp() const;
+ 
++    // `bank`: read through the R1 ROTATED index instead of the logical one. Pass true if and only
++    // if this tensor is also written by build_recurrent_attn's R1 path - the read and the write must
++    // agree on the layout. Five call sites qualify (the models that call build_recurrent_attn);
++    // every other s_l reader (mamba, rwkv6/7, plamo2, lfm2, kimi-*, minimax) leaves it false and is
++    // therefore physically unable to pick up a rotation it does not write. No arch list to drift.
+     ggml_tensor * build_rs(
+             llm_graph_input_rs * inp,
+             ggml_tensor * s,
+                 int32_t   state_size,
+                 int32_t   n_seqs,
+-            const llm_graph_get_rows_fn & get_state_rows = ggml_get_rows) const;
++            const llm_graph_get_rows_fn & get_state_rows = ggml_get_rows,
++                   bool   bank = false) const;
+ 
+     ggml_tensor * build_rwkv_token_shift_load(
+         llm_graph_input_rs * inp,
+diff --git a/src/llama-memory-recurrent.cpp b/src/llama-memory-recurrent.cpp
+index 9f5845d46..1f87895a0 100644
+--- a/src/llama-memory-recurrent.cpp
++++ b/src/llama-memory-recurrent.cpp
+@@ -36,6 +36,22 @@ llama_memory_recurrent::llama_memory_recurrent(
+     rs_idx.assign(n_seq_max, 0);
+     rs_pending.assign(n_seq_max, 0);
+ 
++    // R1 BANK PLANE AS RUNTIME INDEX (lane-176) - see the long note on `rs_r1` in the header.
++    // The 2026-08-24 ring diagnostics all assume the LOGICAL plane layout, so any of them being set
++    // forces the shipped path rather than producing a hybrid that is worse than either.
++    rs_r1 = (n_rs_seq > 0)
++         && (n_seq_max == 1)
++         && (getenv("LLAMA_RS_R1_OFF")          == nullptr)
++         && (getenv("LLAMA_RS_CONV_MULTIWRITE") == nullptr)
++         && (getenv("LLAMA_RS_CONV_NOSHIFT")    == nullptr)
++         && (getenv("LLAMA_RS_CONV_FRESH1")     == nullptr)
++         && (getenv("LLAMA_RS_BANK_OFF_SSM")    == nullptr)
++         && (getenv("LLAMA_GDN_SEQ_VERIFY")     == nullptr);
++    if (rs_r1) {
++        LLAMA_LOG_INFO("%s: R1 runtime-index ring ACTIVE (K = %u planes, no ssm age-shift copies)\n",
++                       __func__, n_rs_seq + 1);
++    }
++
+     cells.clear();
+     cells.resize(mem_size);
+ 
+@@ -142,6 +158,10 @@ llama_memory_recurrent::llama_memory_recurrent(
+ void llama_memory_recurrent::clear(bool data) {
+     for (int32_t i = 0; i < (int32_t) size; ++i) {
+         cells[i].pos = -1;
++        // R1 ring (lane-176): the anchors follow pos's lifecycle exactly. A stale anchor on a
++        // reused cell would resolve the first ubatch's reads against the previous occupant.
++        cells[i].pos_bank      = -1;
++        cells[i].pos_bank_prev = -1;
+         cells[i].seq_id.clear();
+         cells[i].src = -1;
+         cells[i].tail = -1;
+@@ -384,6 +404,10 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
+                     used--;
+                 }
+                 cells[i].pos = -1;
++                // R1 ring (lane-176): the anchors follow pos's lifecycle exactly. A stale anchor on a
++                // reused cell would resolve the first ubatch's reads against the previous occupant.
++                cells[i].pos_bank      = -1;
++                cells[i].pos_bank_prev = -1;
+                 cells[i].src = -1;
+                 if (new_head == size) {
+                     new_head = i;
+@@ -424,6 +448,10 @@ void llama_memory_recurrent::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id
+             tail_dst.tail = -1;
+             if (cell_dst.seq_id.empty()) {
+                 cell_dst.pos = -1;
++                // R1 ring (lane-176): the anchors follow pos's lifecycle exactly. A stale anchor on a
++                // reused cell would resolve the first ubatch's reads against the previous occupant.
++                cell_dst.pos_bank      = -1;
++                cell_dst.pos_bank_prev = -1;
+                 cell_dst.src = -1;
+                 used -= 1;
+             }
+@@ -451,6 +479,10 @@ void llama_memory_recurrent::seq_keep(llama_seq_id seq_id) {
+             }
+ 
+             cells[i].pos = -1;
++            // R1 ring (lane-176): the anchors follow pos's lifecycle exactly. A stale anchor on a
++            // reused cell would resolve the first ubatch's reads against the previous occupant.
++            cells[i].pos_bank      = -1;
++            cells[i].pos_bank_prev = -1;
+             cells[i].src = -1;
+             cells[i].seq_id.clear();
+ 
+@@ -722,6 +754,10 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
+                     seq.tail = -1;
+                     if (cell.seq_id.empty()) {
+                         cell.pos = -1;
++                        // R1 ring (lane-176): the anchors follow pos's lifecycle exactly. A stale anchor on a
++                        // reused cell would resolve the first ubatch's reads against the previous occupant.
++                        cell.pos_bank      = -1;
++                        cell.pos_bank_prev = -1;
+                         cell.src = -1;
+                         used -= 1;
+                     }
+@@ -780,6 +816,9 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
+             if (seq_meta.tail >= 0) {
+                 auto & orig_cell = cells[seq_meta.tail];
+                 empty_cell.pos = orig_cell.pos;
++                // R1 ring (lane-176): the anchors belong to the SEQUENCE, so they move with it.
++                empty_cell.pos_bank      = orig_cell.pos_bank;
++                empty_cell.pos_bank_prev = orig_cell.pos_bank_prev;
+                 empty_cell.src = orig_cell.src;
+                 orig_cell.seq_id.erase(seq_id);
+                 empty_cell.seq_id.insert(seq_id); // will be overwritten
+@@ -810,6 +849,12 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
+             auto & src_cell = cells[src_id];
+ 
+             std::swap(dst_cell.pos, src_cell.pos);
++            // R1 ring (lane-176): the anchor must follow the sequence, exactly like pos. It is NOT
++            // re-derived from pos in the update loop below, so omitting this desynchronises the ring
++            // on any reordered ubatch - 206 of 243 exhaustive reorder scripts diverge without it
++            // (lane-175 ring_anchor_sim.py, carried over as this lane's cell-layer gate).
++            std::swap(dst_cell.pos_bank,      src_cell.pos_bank);
++            std::swap(dst_cell.pos_bank_prev, src_cell.pos_bank_prev);
+             std::swap(dst_cell.src, src_cell.src);
+             std::swap(dst_cell.seq_id, src_cell.seq_id);
+ 
+@@ -838,6 +883,11 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
+             LLAMA_LOG_WARN("%s: non-consecutive token position %d after %d for sequence %d with %u new tokens\n",
+                 __func__, last_pos, cell.pos, ubatch.seq_id[i][0], n_seq_tokens);
+         }
++        // R1 ring (lane-176): advance the anchor. ASSIGNMENT, never accumulation - that is what
++        // makes prepare()'s dry run idempotent (cells are saved and restored wholesale around it).
++        // Neither field is derived from `pos`, so seq_rm's rewind of pos cannot poison them.
++        cell.pos_bank_prev = cell.pos_bank;
++        cell.pos_bank      = last_pos;
+         cell.pos = last_pos;
+         cell.seq_id.clear();
+         for (int32_t j = 0; j < ubatch.n_seq_id[i]; ++j) {
+@@ -1233,6 +1283,13 @@ bool llama_memory_recurrent::state_read_meta(llama_io_read_i & io, uint32_t cell
+             io.read(&n_seq_id, sizeof(n_seq_id));
+ 
+             cell.pos = pos;
++            // R1 ring (lane-176): the bank planes are restored byte-for-byte in PHYSICAL order and
++            // `pos` is restored verbatim, so the position-derived labelling is self-consistent with
++            // no rotation at either end. Bound: a state saved between a seq_rm rollback and the next
++            // decode restores with pos_bank == the rewound pos, so that blob's deep planes are not
++            // addressable. State files are NOT portable between an R1 and a non-R1 build.
++            cell.pos_bank      = pos;
++            cell.pos_bank_prev = pos;
+ 
+             for (uint32_t j = 0; j < n_seq_id; ++j) {
+                 llama_seq_id seq_id;
+@@ -1469,6 +1526,51 @@ int32_t llama_memory_recurrent_context::get_rs_z() const {
+     return is_full ? 0 : mem->rs_z;
+ }
+ 
++bool llama_memory_recurrent_context::get_rs_r1() const {
++    return mem && mem->rs_r1;
++}
++
++uint32_t llama_memory_recurrent_context::get_n_rs_planes() const {
++    return mem ? mem->rs_planes() : 1;
++}
++
++// R1 write anchor. With the n_seq_max == 1 bound, head is the one cell in the ubatch.
++llama_pos llama_memory_recurrent_context::get_rs_pos() const {
++    // MUST return a constant when R1 is inactive (F-146's binding_fix): a live pos on the shipped
++    // path would break every can_reuse comparison it participates in and silently poison any A/B.
++    if (!mem || !mem->rs_r1 || mem->head >= mem->cells.size()) {
++        return -1;
++    }
++    return mem->cells[mem->head].pos_bank;
++}
++
++int32_t llama_memory_recurrent_context::get_rs_z_bank() const {
++    const int32_t z = get_rs_z();
++    // -1 means "no row to zero", and it is the steady-decode value: rs_z is recomputed every ubatch
++    // in find_slot and stays -1 while every used cell is its own source. So this rotation fires only
++    // on a fresh-sequence ubatch, costs one graph rebuild, and is already covered by can_reuse.
++    if (!mem || !mem->rs_r1 || z < 0) {
++        return z;
++    }
++    // The in-graph zero must land on the plane the ssm gather will READ, not on plane 0. This is
++    // the F-136-LEAK-ROOT-CLOSE defect class re-entered through a new door, so it is the site
++    // ring_content_probe repeat mode exists to guard.
++    const llama_pos anchor = (mem->head < mem->cells.size())
++                           ? mem->cells[mem->head].pos_bank_prev : -1;
++    return z + (int32_t) (mem->rs_plane(anchor, 0) * mem->size);
++}
++
++// Physical row for the ssm bank's snapshot of the given age, or -1 when R1 is inactive.
++int32_t llama_memory_recurrent_context::s_wrow(int64_t age) const {
++    if (!mem || !mem->rs_r1 || mem->head >= mem->cells.size()) {
++        return -1;
++    }
++    // Snapshot `age` is state@(pos_bank - age). Reads anchor on pos_bank_prev; writes anchor on
++    // pos_bank, which find_slot has already advanced for this ubatch.
++    const llama_pos anchor = mem->cells[mem->head].pos_bank;
++    return (int32_t) (mem->rs_plane(anchor, age) * mem->size + mem->head);
++}
++
+ uint32_t llama_memory_recurrent_context::get_size() const {
+     return mem->size;
+ }
+@@ -1490,10 +1592,15 @@ uint32_t llama_memory_recurrent_context::get_rs_shift() const {
+ }
+ 
+ int32_t llama_memory_recurrent_context::s_copy(int i) const {
++    return s_copy2(i, nullptr);
++}
++
++int32_t llama_memory_recurrent_context::s_copy2(int i, int32_t * bank_row) const {
+     const uint32_t cell_idx = i + mem->head;
+     const int32_t  src0     = mem->cells[cell_idx].src0;
+ 
+     if (mem->n_rs_seq == 0) {
++        if (bank_row) { *bank_row = src0; }
+         return src0;
+     }
+ 
+@@ -1506,6 +1613,17 @@ int32_t llama_memory_recurrent_context::s_copy(int i) const {
+             mem->rs_idx[seq] = 0;
+         }
+     }
++
++    // R1 ring (lane-176): the CONV bank keeps the shipped LOGICAL layout, so its row is the plain
++    // `idx`. The SSM bank is position-labelled, so logical slot `idx` - which is state@(anchor-idx)
++    // - lives at plane (idx - pos_bank_prev) mod K. The two banks are read through separate index
++    // tensors for exactly this reason; they are never the same row under R1.
++    if (bank_row) {
++        const uint32_t plane = mem->rs_r1
++            ? mem->rs_plane(mem->cells[cell_idx].pos_bank_prev, (int64_t) idx)
++            : idx;
++        *bank_row = (int32_t) (plane * mem->size) + src0;
++    }
+     static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
+     if (dbg && idx > 0) {
+         LLAMA_LOG_INFO("rs-trace s_copy READ-BANK idx=%u src0=%d -> row %d\n",
+diff --git a/src/llama-memory-recurrent.h b/src/llama-memory-recurrent.h
+index 7dcf1fd2c..ea87fd4f0 100644
+--- a/src/llama-memory-recurrent.h
++++ b/src/llama-memory-recurrent.h
+@@ -91,6 +91,41 @@ public:
+     std::vector<uint32_t> rs_pending;
+     uint32_t rs_shift_cur = 0;
+ 
++    // R1 BANK PLANE AS RUNTIME INDEX (lane-176). The SSM bank stops being age-shifted every
++    // ubatch and becomes position-labelled: state@g lives at physical plane (-g) mod K. That
++    // deletes the K-1 shift copies per layer per ubatch (the lane-168 prize, 2.097 MB/layer/token).
++    //
++    // The difference from lane-175's C4, and the whole point of this lane: C4 expressed the plane
++    // as a CONSTANT ggml view offset baked at graph-build time, which cannot survive graph reuse
++    // (F-146). R1 passes it as a RUNTIME INDEX TENSOR instead - exactly how the KV cache writes its
++    // per-token row (llama-kv-cache.cpp ggml_set_rows(k, k_cur, k_idxs)), whose can_reuse compares
++    // only the index tensor's SHAPE. So the copies disappear AND the graph stays reusable.
++    //
++    // Session-level, never per-ubatch: the physical bank layout differs between R1 and the shipped
++    // COPY scheme, so it must not flip mid-run. LLAMA_RS_R1_OFF=1 returns the SAME binary to the
++    // shipped path, which is what makes the A/B interleavable on one build (F-145).
++    //
++    // SCOPE BOUND, deliberate: n_seq_max == 1. With more sequences find_slot's gather-and-reorder
++    // moves cell METADATA between indices while the deep bank planes stay put, so a cell's planes
++    // > 0 can hold the previous occupant's states; and rs_z is one scalar that cannot name a
++    // per-cell read plane. --parallel 1 is the seated configuration and carries 100% of the prize.
++    // ponytail: single-seq gate; lift it with a per-cell rs_z and owner-aware deep-plane
++    // invalidation if multi-seq recurrent serving ever matters.
++    //
++    // SCOPE BOUND 2: only the SSM bank rotates. The conv bank keeps the shipped LOGICAL layout,
++    // because its F-136 root fix already lands all K planes in one contiguous write - it has no
++    // per-plane shift copies to delete, so rotating it would buy nothing and cost an indirection.
++    bool rs_r1 = false;
++
++    // K = number of bank planes.
++    uint32_t rs_planes() const { return n_rs_seq + 1; }
++
++    // physical plane holding the state that is `age` tokens older than `anchor`.
++    uint32_t rs_plane(llama_pos anchor, int64_t age) const {
++        const int64_t K = (int64_t) rs_planes();
++        return (uint32_t) (((age - (int64_t) anchor) % K + K) % K);
++    }
++
+     // computed before each graph build
+     uint32_t n = 0;
+ 
+@@ -104,6 +139,19 @@ public:
+         int32_t   src0 = -1; // like src, but only used when setting the inputs (allowing to copy once)
+         int32_t   tail = -1;
+ 
++        // R1 ring anchors (lane-176, carried over VERBATIM from lane-175's C4 - the cell-layer
++        // bookkeeping is unchanged and ring_anchor_sim.py already gates it).
++        //
++        //   pos_bank      = absolute pos of the NEWEST state currently in this cell's bank
++        //   pos_bank_prev = its value on entry to the current find_slot (what reads resolve against)
++        //
++        // NEITHER is derived from `pos`. A single `pos_prev = cell.pos` anchor is DEFECTIVE:
++        // seq_rm rewinds cell.pos to p0-1 on a partial rollback while rs_idx already carries the
++        // same distance, so a pos-derived anchor reads plane (2r - P) mod K instead of
++        // (r - P) mod K - off by exactly the rollback distance.
++        llama_pos pos_bank      = -1;
++        llama_pos pos_bank_prev = -1;
++
+         std::set<llama_seq_id> seq_id;
+ 
+         bool has_seq_id(const llama_seq_id & id) const {
+@@ -195,6 +243,38 @@ public:
+ 
+     int32_t s_copy(int i) const;
+ 
++    // R1 ring (lane-176).
++    //
++    // s_copy2() is s_copy() plus the SSM bank's rotated read row, computed in the SAME call.
++    // It must be one call: s_copy() CONSUMES the rollback index (mem->rs_idx[seq] = 0), so asking
++    // for the two rows in two calls would read idx once and 0 the second time.
++    // *bank_row receives the row the ROTATED ssm bank must be gathered from; it equals the logical
++    // return value whenever R1 is inactive.
++    int32_t s_copy2(int i, int32_t * bank_row) const;
++
++    // Physical row the ssm bank's snapshot `age` must be WRITTEN to this ubatch, or -1 when R1 is
++    // inactive. Anchored on pos_bank (the anchor AFTER find_slot advanced it), where the reads are
++    // anchored on pos_bank_prev.
++    int32_t s_wrow(int64_t age) const;
++
++    // Is the R1 rotated SSM bank active for this session?
++    bool get_rs_r1() const;
++
++    // K = number of bank planes (n_rs_seq + 1).
++    uint32_t get_n_rs_planes() const;
++
++    // The rotated twin of get_rs_z(): the in-graph zero for a fresh sequence must land on the plane
++    // the ssm gather will READ, not on plane 0. Equals get_rs_z() when R1 is inactive, and -1
++    // whenever get_rs_z() is -1 - which is every steady-decode ubatch (rs_z is recomputed per
++    // ubatch in find_slot and is -1 while every used cell is its own source).
++    int32_t get_rs_z_bank() const;
++
++    // R1 write anchor (the absolute pos of the newest state this ubatch produces).
++    // MUST return a constant when R1 is inactive - it is a can_reuse input elsewhere in the tree's
++    // history, and a live pos on the shipped path would disable graph reuse there and silently
++    // poison every A/B (F-146's binding_fix, learned the hard way in lane-175).
++    llama_pos get_rs_pos() const;
++
+     // consumed rollback distance for the current ubatch (see rs_pending in llama_memory_recurrent)
+     uint32_t get_rs_shift() const;
+ 
+diff --git a/src/models/bailingmoe3.cpp b/src/models/bailingmoe3.cpp
+index 1f2592cfa..7910bbaea 100644
+--- a/src/models/bailingmoe3.cpp
++++ b/src/models/bailingmoe3.cpp
+@@ -284,7 +284,10 @@ llama_model_bailingmoe3::graph::graph(const llama_model & model, const llm_graph
+             k = ggml_l2_norm(ctx0, k, hparams.f_norm_rms_eps);
+ 
+             ggml_tensor * states_all = mctx_cur->get_s_l(il);
+-            ggml_tensor * state = build_rs(inp_rs, states_all, hparams.n_embd_s(), n_seqs);
++            // R1 (lane-176): read the ssm bank through the ROTATED index. Paired with
++            // build_recurrent_attn's R1 write - read and write must agree on the layout.
++            ggml_tensor * state = build_rs(inp_rs, states_all, hparams.n_embd_s(), n_seqs,
++                                           ggml_get_rows, /*bank=*/true);
+             state = ggml_reshape_4d(ctx0, state, head_dim, head_dim, n_head, n_seqs);
+ 
+             ggml_tensor * out = ggml_cont(ctx0, build_recurrent_attn(
+diff --git a/src/models/delta-net-base.cpp b/src/models/delta-net-base.cpp
+index 97efa2120..91fef9c29 100644
+--- a/src/models/delta-net-base.cpp
++++ b/src/models/delta-net-base.cpp
+@@ -807,6 +807,50 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
+     // for slot s >= n_written is the previous ubatch's slot (s - n_seq_tokens): shift the
+     // surviving banks down before the op's fresh writes land (descending order, and these copies
+     // are expanded BEFORE the op's dst copy, so no source row is read after being overwritten).
++    //
++    // R1 BANK PLANE AS RUNTIME INDEX (lane-176) — THIS IS THE ENTIRE PRIZE.
++    //
++    // state@g lives at physical plane (-g) mod K, so aging is not an operation: it is what already
++    // happened when the position advanced. The K-1 shift copies per ubatch per layer below
++    // disappear (2.097 MB/layer/token x 31 layers on the seated model, lane-168), and the surviving
++    // planes are age-correct by construction.
++    //
++    // The plane reaches the GPU as a RUNTIME ROW INDEX (inp->s_wrow), never as a baked view offset.
++    // That is the whole difference from lane-175's C4, which expressed the same relabel as a
++    // constant ggml view offset: the offset changed every token, so the cached graph had to be
++    // rebuilt every token (1 graph reused vs 379-631), and the rebuild cost exactly cancelled the
++    // ~12% the copy elimination won (A/B 0.9568, CI95 [0.8988, 1.0429], TIED). Here the graph
++    // topology is fixed and only the index tensor's CONTENTS move - the same mechanism by which the
++    // KV cache writes a different row every token and still reuses its graph
++    // (llama-kv-cache.cpp, ggml_set_rows(k, k_cur, k_idxs); can_reuse compares only k_idxs->ne[0]).
++    //
++    if (mctx_cur->get_rs_r1()) {
++        // ggml_set_rows: dst 2D [n_embd_s, mem_size*K], src 2D [D, n_written], idx I32 [n_written].
++        // n_seqs == 1 under the R1 scope bound, so the op's n_written snapshots are contiguous.
++        //
++        // Neither assert introduces a new requirement. D == n_embd_s is already assumed by the
++        // shipped write below, whose view_3d uses D as the row length against a `row_size` stride
++        // computed from n_embd_s; they would disagree if these differed. Asserting is loud where
++        // the shipped code would have been silent.
++        GGML_ASSERT(n_seqs == 1);
++        GGML_ASSERT(D == (int64_t) hparams.n_embd_s());
++
++        ggml_tensor * src2 = ggml_view_2d(ctx0, gdn_out,
++            D, n_written,
++            ggml_row_size(gdn_out->type, D),
++            ggml_row_size(gdn_out->type, attn_score_elems));
++
++        ggml_tensor * dst2 = ggml_reshape_2d(ctx0, ssm_states_all,
++            hparams.n_embd_s(), ssm_states_all->ne[1]);
++
++        // rows 0..n_written-1 of s_wrow; the tensor holds all K so the view is a prefix.
++        ggml_tensor * wrow = ggml_view_1d(ctx0, inp->s_wrow, n_written, 0);
++
++        ggml_build_forward_expand(gf, ggml_set_rows(ctx0, dst2, src2, wrow));
++
++        return output;
++    }
++
+     const int64_t eff_shift_ssm = n_seq_tokens - (int64_t) mctx_cur->get_rs_shift();
+     for (int64_t s_slot = rs_bank_off_ssm ? -1 : K - 1; s_slot >= n_written; --s_slot) {
+         const int64_t s_from = s_slot - eff_shift_ssm;
+diff --git a/src/models/qwen35.cpp b/src/models/qwen35.cpp
+index c0f12c3d2..2ce04912b 100644
+--- a/src/models/qwen35.cpp
++++ b/src/models/qwen35.cpp
+@@ -387,7 +387,10 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn_linear(
+ 
+     ggml_tensor * conv_input = build_conv_state(inp, conv_states_all, qkv_mixed, conv_kernel_size, conv_channels, il);
+ 
+-    ggml_tensor * state = build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs);
++    // R1 (lane-176): read the ssm bank through the ROTATED index. Paired with
++    // build_recurrent_attn's R1 write - read and write must agree on the layout.
++    ggml_tensor * state = build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs,
++                                   ggml_get_rows, /*bank=*/true);
+     state = ggml_reshape_4d(ctx0, state, head_v_dim, head_v_dim, num_v_heads, n_seqs);
+     cb(state, "state_predelta", il);
+ 
+diff --git a/src/models/qwen35moe.cpp b/src/models/qwen35moe.cpp
+index 0024b9e58..d17a8ec52 100644
+--- a/src/models/qwen35moe.cpp
++++ b/src/models/qwen35moe.cpp
+@@ -410,7 +410,10 @@ ggml_tensor * llama_model_qwen35moe::graph::build_layer_attn_linear(
+ 
+     ggml_tensor * conv_input = build_conv_state(inp, conv_states_all, qkv_mixed, conv_kernel_size, conv_channels, il);
+ 
+-    ggml_tensor * state = build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs);
++    // R1 (lane-176): read the ssm bank through the ROTATED index. Paired with
++    // build_recurrent_attn's R1 write - read and write must agree on the layout.
++    ggml_tensor * state = build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs,
++                                   ggml_get_rows, /*bank=*/true);
+     state = ggml_reshape_4d(ctx0, state, head_v_dim, head_v_dim, num_v_heads, n_seqs);
+     cb(state, "state_predelta", il);
+ 
+diff --git a/src/models/qwen3next.cpp b/src/models/qwen3next.cpp
+index eb823b8ea..d44d2376c 100644
+--- a/src/models/qwen3next.cpp
++++ b/src/models/qwen3next.cpp
+@@ -464,7 +464,10 @@ ggml_tensor * llama_model_qwen3next::graph::build_layer_attn_linear(
+ 
+     ggml_tensor * conv_input = build_conv_state(inp, conv_states_all, qkv_mixed, conv_kernel_size, conv_channels, il);
+ 
+-    ggml_tensor * state = build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs);
++    // R1 (lane-176): read the ssm bank through the ROTATED index. Paired with
++    // build_recurrent_attn's R1 write - read and write must agree on the layout.
++    ggml_tensor * state = build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs,
++                                   ggml_get_rows, /*bank=*/true);
+     state = ggml_reshape_4d(ctx0, state, head_v_dim, head_v_dim, num_v_heads, n_seqs);
+     cb(state, "state_predelta", il);
+ 
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+index 1484c9b07..908dac5f0 100644
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -899,7 +899,10 @@ ggml_tensor * llama_model_qwen4exp::graph::build_layer_attn_linear(
+     ggml_tensor * conv_input = build_conv_state_at(inp, conv_states_all, qkv_mixed,
+             conv_kernel_size - 1, conv_channels, il);
+ 
+-    ggml_tensor * state = build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs);
++    // R1 (lane-176): read the ssm bank through the ROTATED index. Paired with
++    // build_recurrent_attn's R1 write - read and write must agree on the layout.
++    ggml_tensor * state = build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs,
++                                   ggml_get_rows, /*bank=*/true);
+     state = ggml_reshape_4d(ctx0, state, head_v_dim, head_v_dim, num_v_heads, n_seqs);
+     cb(state, "state_predelta", il);
+ 

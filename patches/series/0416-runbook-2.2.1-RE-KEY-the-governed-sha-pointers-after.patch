@@ -1,0 +1,58 @@
+From 9fa4df29955692da65fbcb9559443a8ac261e1eb Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 29 Aug 2026 18:26:17 -0400
+Subject: [PATCH] runbook 2.2.1: RE-KEY the governed sha pointers after every
+ base move - mechanize G1 so the class cannot silently return
+
+The second clause of gap G1's owner-sized fix (registers/2026-08-29-release-attribution-audit.md). Re-keying native-grandfather.json fixed the record; this fixes the mechanism. Without it the next base move re-breaks all 289 keys silently and the next seat re-derives the same pass from scratch.
+
+Four numbered steps, because the sha-death class is not one file: native-grandfather.json (289 keys), licenses/README.md (two citations, both DANGLING - on no branch at all), sources.json _base_moved_* (one resolution receipt), and registers/failure-ledger.jsonl (four F-136 binding_fix pointers, and stamp amended_utc or the ledger gate refuses the commit).
+
+Method is fixed, not left to judgment: exact-subject match, assert one unique hit per row before writing, keep the old key as sha_pre_rebase (append, never overwrite), then VERIFY with arifi_sync provenance rather than assuming. git branch -a --contains is named as the check that proves a pointer dead.
+
+Carries the G12 caveat forward: a re-key restores the KEY only, never the CLASSIFICATION, and a green grandfathered-NATIVE count is not evidence attribution is complete.
+
+Origin: ArifiLabs (native)
+---
+ UPDATE-RUNBOOK.md | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/UPDATE-RUNBOOK.md b/UPDATE-RUNBOOK.md
+index aad57d003..fa38e08ee 100644
+--- a/UPDATE-RUNBOOK.md
++++ b/UPDATE-RUNBOOK.md
+@@ -129,6 +129,34 @@ hand: an equal-count whole-file diff on a generated artifact is never a real con
+ If the replay is **not** clean, resolve one patch at a time in the scratch worktree, and record why
+ in the commit body. A resolution that is not explained is a resolution that will be re-broken.
+ 
++#### 2.2.1 RE-KEY THE GOVERNED SHA POINTERS — the step whose absence cost a whole audit
++
++**A rebase rewrites every sha on `arifi/main`. Every governed record that names a fork commit by sha
++is dead the moment step 2 above completes, and nothing warns you.** On 2026-08-29 two base moves
++(b10524 → b10636 → b10680) killed 289 of 289 grandfather keys, four failure-ledger fix pointers, two
++license-audit citations and one conflict-marker receipt in one night. `arifi_sync provenance` went
++to `FAIL: 315`. Nobody noticed until an audit went looking. These are numbered steps, not advice:
++
++1. **Re-key `tools/arifi-sync/native-grandfather.json`** by exact-subject match against `arifi/main`
++   over the new base range. Assert **one unique hit per row** before writing — ambiguous or
++   unmatched subjects mean a commit was reworded and need a human. Keep the old key per row as
++   `sha_pre_rebase`; append, never overwrite. Move `range_base` and keep the old as
++   `range_base_pre_rebase`.
++2. **Re-key the other three pointer homes the same way** — the sha-death class is not one file:
++   `licenses/README.md` (take and retention citations), `sources.json` `base._base_moved_*` blocks
++   (resolution receipts), and `C:/ArifiLabs/registers/failure-ledger.jsonl` (the `binding_fix`
++   pointers). Stamp `amended_utc` on any ledger row you touch or the ledger gate refuses the commit.
++3. **Verify, do not assume:** `python tools/arifi-sync/arifi_sync.py provenance` must show
++   `grandfathered NATIVE` back at the full ledger count. Anything else means the re-key is wrong,
++   and you want to know that before the commit, not in the next audit.
++4. **`git branch -a --contains <sha>` is the check that proves a pointer is dead.** Two of the
++   2026-08-29 casualties were *dangling* — on no branch at all, reachable only until gc runs. A
++   reader who clones the published fork cannot verify a citation like that.
++
++**A re-key restores the KEY only. It does not re-validate the CLASSIFICATION** the ledger asserts
++about those commits. Do not let a green `grandfathered NATIVE` count be read as evidence that
++attribution is complete.
++
+ Two rules that are not negotiable at this step:
+ 
+ - **Never `git rebase -i` and never squash.** The 1:1 correspondence between a commit and a patch

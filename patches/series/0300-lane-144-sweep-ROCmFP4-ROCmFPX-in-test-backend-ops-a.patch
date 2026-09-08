@@ -1,0 +1,29 @@
+From 06e52de4297a121798ef33c06cc8863b83bbfcca Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 17:27:33 -0400
+Subject: [PATCH] lane-144: sweep ROCmFP4/ROCmFPX in test-backend-ops all_types
+ (six identifiers, never listed before)
+
+Exposes Q6_0_ROCMFPX (id 102) failing all ten MUL_MAT cases at ERR ~1.0, mat-vec path included. Nothing had ever checked these six types against the CPU reference.
+---
+ tests/test-backend-ops.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index d96aba276..efde1609b 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -8919,6 +8919,13 @@ static const ggml_type all_types[] = {
+     // tq3 family (ids 48..51, TYPE-ID-ALLOCATION 3.1.1). Listing them here is the
+     // whole backend sweep: get_rows, mul_mat and cpy on every built backend.
+     GGML_TYPE_TQ3_4S, GGML_TYPE_TQ3_0, GGML_TYPE_TQ3_4SE, GGML_TYPE_TQ3_1S_SHIFT,
++    // ROCmFP4 / ROCmFPX (ids 100-104, 107). Absent until lane-144: these types had
++    // Vulkan dequant, get_rows and mat-vec pipelines but were never swept here, so
++    // nothing checked them against the CPU reference. Listing them is what proves
++    // the fused mul_mm rows this lane wired.
++    GGML_TYPE_Q4_0_ROCMFP4, GGML_TYPE_Q4_0_ROCMFP4_FAST,
++    GGML_TYPE_Q2_0_ROCMFPX, GGML_TYPE_Q3_0_ROCMFPX,
++    GGML_TYPE_Q6_0_ROCMFPX, GGML_TYPE_Q8_0_ROCMFPX,
+ };
+ 
+ static const ggml_type base_types[] = {

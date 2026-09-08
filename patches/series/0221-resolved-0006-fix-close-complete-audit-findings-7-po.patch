@@ -1,0 +1,26 @@
+From a9b7a2c68cac610ede8df0d839d01fde0dbc82a8 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:15:54 -0400
+Subject: [PATCH] 
+ resolved/0006-fix-close-complete-audit-findings-7-port-regressions.patch
+
+Assisted-by: Codex
+---
+ common/chat-auto-parser-generator.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/common/chat-auto-parser-generator.cpp b/common/chat-auto-parser-generator.cpp
+index d7e117e4d..717561491 100644
+--- a/common/chat-auto-parser-generator.cpp
++++ b/common/chat-auto-parser-generator.cpp
+@@ -164,7 +164,9 @@ common_peg_parser analyze_reasoning::build_parser(parser_build_context & ctx) co
+         if (!end.empty()) {
+             if (!start.empty()) {
+                 // Standard tag-based: optional(<think>reasoning</think>)
+-                return p.optional(p.optspace(start) + p.reasoning(p.until(trim_whitespace(end))) + p.optspace(end));
++                // Allow optional whitespace before the start tag — some models
++                // emit a newline before reasoning begins.
++                return p.optional(p.space() + p.optspace(start) + p.reasoning(p.until(trim_whitespace(end))) + p.optspace(end));
+             }
+             // Delimiter-style (empty start)
+             return p.optional(p.reasoning(p.until(trim_whitespace(end))) + p.optspace(end));

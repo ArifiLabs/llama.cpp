@@ -1,0 +1,65 @@
+From c07ed9c7cf041ddb2662c9247829f58aba380bdb Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 4 Sep 2026 16:19:44 -0400
+Subject: [PATCH] runbook 4.1: warn that `series regen` is
+ destructive-then-abort, and require a pre-landing baseline
+
+Measured during the lane-209 rank-3 canonical integration, 2026-09-04. `series regen` deletes
+every file under patches/series/ BEFORE it runs the linearity pre-flight, so on a branch that
+fails that pre-flight - which arifi/main does today, with 10 merge commits - it exits rc=2 having
+left the repository with no series at all. 415 tracked .patch files were deleted by what was
+intended as a read-only baseline probe; 'git restore -- patches/series/' recovered all of them and
+nothing was staged or committed, but an operator who does not know this will read the empty
+directory as damage.
+
+Also records the two consequences that cost real time in that lane: nothing new can enter the
+public series while merges != 0 (so a fully gated, landed commit can still be absent from
+patches/series/, and must then be verified with format-patch + apply --check against the replay
+result rather than by hand-editing the series), and the series/provenance/replay baseline must be
+taken BEFORE landing, because afterwards a pre-existing failure and a self-caused one are
+indistinguishable.
+
+Docs only; no code, no behaviour change.
+
+Origin: ArifiLabs (native)
+Measured-effect: none (documentation)
+Lane: lane-209
+---
+ UPDATE-RUNBOOK.md | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/UPDATE-RUNBOOK.md b/UPDATE-RUNBOOK.md
+index 4fa864f2f..2ab392126 100644
+--- a/UPDATE-RUNBOOK.md
++++ b/UPDATE-RUNBOOK.md
+@@ -215,6 +215,30 @@ python tools/arifi-sync/arifi_sync.py provenance        # trailer coverage over
+ git rev-list --merges --count <base-sha>..arifi/main    # MUST be 0
+ ```
+ 
++**`series regen` is DESTRUCTIVE-THEN-ABORT. Read this before you run it as a "probe".** It DELETES
++everything under `patches/series/` *first* and only then runs the linearity pre-flight. So on a
++branch that fails that pre-flight — which `arifi/main` does today, with 10 merge commits — it exits
++rc=2 **having left the repository with no series at all**. Measured 2026-09-04 (lane-209 rank 3):
++415 tracked `.patch` files deleted, nothing staged, nothing committed.
++
++Recovery is one command, and the files are tracked so nothing is lost:
++
++```bash
++git restore -- patches/series/          # then confirm: git status --porcelain is EMPTY
++```
++
++Two consequences worth carrying:
++
++- **Nothing new can enter the public series while `merges != 0`.** A commit can be fully gated,
++  landed on `arifi/main`, and still absent from `patches/series/`, because the only lawful way in is
++  a regen that refuses to finish. When that happens, verify the commit at the right scope instead of
++  hand-editing the series (never hand-edit it): `git format-patch -1 <sha>` and `git apply --check`
++  against the result of `series replay --onto <base-sha>`.
++- **Take the baseline BEFORE you land anything.** Run `series check` / `provenance` / `replay` on
++  `arifi/main` first and bank the output. Without that, a pre-existing failure and one your change
++  caused are indistinguishable afterwards, and the honest answer becomes unavailable rather than
++  merely inconvenient.
++
+ ### 4.1b COLLISION MAP — compare only where upstream crossed OUR changes (President law 2026-08-29)
+ 
+ Two duties on EVERY bump/ingest, and the second is scoped tightly on his order:

@@ -1,0 +1,39 @@
+From 5020dfb1eb0c5714048513fe99cc9020275d4995 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 29 Aug 2026 17:46:15 -0400
+Subject: [PATCH] runbook 4.1b: COLLISION MAP law (President 2026-08-29) -
+ never lose our patches; A/B only where upstream delta intersects our changes;
+ collision list = required bump-report line
+
+---
+ UPDATE-RUNBOOK.md | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/UPDATE-RUNBOOK.md b/UPDATE-RUNBOOK.md
+index 70486daa7..aad57d003 100644
+--- a/UPDATE-RUNBOOK.md
++++ b/UPDATE-RUNBOOK.md
+@@ -187,6 +187,23 @@ python tools/arifi-sync/arifi_sync.py provenance        # trailer coverage over
+ git rev-list --merges --count <base-sha>..arifi/main    # MUST be 0
+ ```
+ 
++### 4.1b COLLISION MAP — compare only where upstream crossed OUR changes (President law 2026-08-29)
++
++Two duties on EVERY bump/ingest, and the second is scoped tightly on his order:
++
++1. **Nothing of OURS is lost.** The series replay (4.1) proves each patch still applies; a patch
++   dropped, skipped, or emptied by the rebase is a STOP, never a footnote.
++2. **A/B only at INTERSECTIONS.** Compute the collision map:
++   `git diff --name-only <old-base>..<new-base>` ∩ the files the series touches
++   (`git diff --name-only <new-base>..arifi/main`). For every intersecting file, look at whether the
++   upstream delta touches the SAME functions/hunks as our patches:
++   - Upstream unchanged at our change-points → **no comparison owed** (identical-to-pre-our-change
++     is not a signal; do not burn a bench on it).
++   - Upstream moved code we also changed → **named collision**: record it in the bump report and run
++     the targeted before/after (perf and/or quality, from OUR baseline) for that surface only.
++   The collision list, empty or not, is a REQUIRED line in the bump report — "no intersections" is
++   a checked claim, not an assumption.
++
+ ### 4.2 It builds — the THREE-flag configure
+ 
+ Windows / MinGW / Vulkan, the only configuration any number in this repository was measured on:
