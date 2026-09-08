@@ -9,6 +9,8 @@
 #include "llama-context.h"
 
 #include <algorithm>
+#include <array>
+#include <bitset>
 #include <cassert>
 #ifdef GGML_ARIFI_KV_MEANCENTER
 #include <cinttypes>
@@ -3006,6 +3008,14 @@ bool llama_kv_cache::has_cell_ext() const {
     return hparams.n_pos_per_embd() > 1 || hparams.ple_n_heads > 0;
 }
 
+// LLAMA_KV_NGRAM_INDEX: unset or 1 = the n-gram history comes from the seq_pos index (upstream b356fa262, default);
+//                       0 = the pre-b356fa262 window scan over the used cells (62acc89c2 form). Same answers, one binary.
+// The path only runs for models with PLE n-gram heads (ple_n_heads > 0, qwen4exp); everywhere else this is never read.
+static bool llama_kv_ngram_index_enabled() {
+    const char * s = getenv("LLAMA_KV_NGRAM_INDEX");
+    return s == nullptr || s[0] != '0';
+}
+
 void llama_kv_cache::get_prev_tokens(const llama_ubatch & ubatch, uint32_t n, std::vector<llama_token> & res) const {
     const uint32_t n_tokens = ubatch.n_tokens;
 
@@ -3016,10 +3026,74 @@ void llama_kv_cache::get_prev_tokens(const llama_ubatch & ubatch, uint32_t n, st
         return;
     }
 
+    static const bool use_index = llama_kv_ngram_index_enabled();
+    static bool announced = false;
+    if (!announced) {
+        // WARN, not INFO: llama-server drops INFO at its default verbosity (cfefa1847), and an A/B log must prove its arm
+        LLAMA_LOG_WARN("%s: PLE n-gram history: %s\n", __func__,
+                use_index ? "indexed (seq_pos upper_bound, default)" : "legacy (cell scan, LLAMA_KV_NGRAM_INDEX=0)");
+        announced = true;
+    }
+
     // note: apply_ubatch() has already stored the current ubatch, so the cells cover the tokens
     //       of this very ubatch as well, which is what we want
     // the nearest cell at or before a position also resolves M-RoPE gaps, where multiple tokens
     // share the same temporal pos
+
+    // legacy arm: (seq_id, pos) -> token for every cell that could be a predecessor of a ubatch token,
+    // rebuilt per ubatch by scanning the used cells; the M-RoPE gap fallback keeps the nearest cell below the window
+    llama_pos p_min = std::numeric_limits<llama_pos>::max();
+    llama_pos p_max = std::numeric_limits<llama_pos>::min();
+
+    std::bitset<LLAMA_MAX_SEQ> seqs;
+
+    std::unordered_map<uint64_t, llama_token> hist;
+
+    std::array<std::pair<llama_pos, llama_token>, LLAMA_MAX_SEQ> below;
+
+    const auto key = [](llama_seq_id seq_id, llama_pos pos) {
+        return ((uint64_t) seq_id << 32) | (uint32_t) pos;
+    };
+
+    llama_pos w0 = 0;
+
+    if (!use_index) {
+        for (uint32_t i = 0; i < n_tokens; ++i) {
+            p_min = std::min(p_min, ubatch.pos[i]);
+            p_max = std::max(p_max, ubatch.pos[i]);
+        }
+
+        for (uint32_t s = 0; s < ubatch.n_seqs_unq; ++s) {
+            seqs.set(ubatch.seq_id_unq[s]);
+        }
+
+        w0 = p_min - (llama_pos) n;
+
+        below.fill({ -1, LLAMA_TOKEN_NULL });
+
+        for (uint32_t s = 0; s < n_stream; ++s) {
+            // p_max inclusive: an embd token looks up cells at its own (shared) position
+            v_cells[s].for_each_token_in(seqs, 0, p_max + 1,
+                [&](llama_seq_id seq_id, llama_pos pos, llama_token tok) {
+                    if (pos >= w0) {
+                        hist[key(seq_id, pos)] = tok;
+                    } else if (pos > below[seq_id].first) {
+                        below[seq_id] = { pos, tok };
+                    }
+                });
+        }
+    }
+
+    // legacy arm: the token at pos p, or the nearest earlier one when p falls in an M-RoPE gap
+    const auto lookup = [&](llama_seq_id seq_id, llama_pos p) -> llama_token {
+        for (llama_pos q = p; q >= w0; --q) {
+            const auto it = hist.find(key(seq_id, q));
+            if (it != hist.end()) {
+                return it->second;
+            }
+        }
+        return below[seq_id].second;
+    };
 
     // an embd (multimodal) ubatch can repeat one position for a whole image, so positions
     // do not encode the token order; resolve its predecessors by ubatch order instead
@@ -3057,7 +3131,7 @@ void llama_kv_cache::get_prev_tokens(const llama_ubatch & ubatch, uint32_t n, st
                 continue;
             }
 
-            res[i*n + j] = v_cells[seq_to_stream[seq_id]].seq_pos_tok_le(seq_id, p);
+            res[i*n + j] = use_index ? v_cells[seq_to_stream[seq_id]].seq_pos_tok_le(seq_id, p) : lookup(seq_id, p);
         }
     }
 }
