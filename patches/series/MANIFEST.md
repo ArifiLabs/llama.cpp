@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **496**, all non-merge, applied in filename order.
+- Patches: **505**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 496 commit messages, same provenance trailers. Verified, not
+same file contents, same 505 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -575,6 +575,15 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 494 | `0494-arifi-sync-base-move-b10819-6a1a922d2-b10825-9e0e220.patch` | arifi-fork-base | `568d60751` | - | - | arifi-sync: base move b10819/6a1a922d2 -> b10825/9e0e22059 (R22 read, R27 execution); 552/552 replayed clean, 0 merges, 0 hunk collisions, marker scan 0, protected wins PASS; R20 slot fix + R19 gate (default ON per R19D) carried Lane: lane-220 |
 | 495 | `0495-arifi-sync-rekey-3-protected-win-manifests-to-the-b1.patch` | arifi-fork-base | `44897b55e` | - | - | arifi-sync: rekey 3 protected-win manifests to the b10825 line (R27 check 05:1x: validate PASS only with this rekey; committed so the built line validates) Lane: lane-220 |
 | 496 | `0496-arifi-sync-scope-subcommand-F-161-the-ingest-A-B-sco.patch` | arifi-fork-base | `b7c2d98ba` | - | - | arifi-sync: scope subcommand (F-161) - the ingest A/B scope derived from the collision map (upstream files x our files x hunk overlap x speed paths) = sanity\|named\|full; UPDATE-RUNBOOK 4.1b.4 scope law; selfcheck Lane: lane-220 |
+| 497 | `0497-provenance-route-B-G7-append-only-R24-s-58-classific.patch` | arifi-fork-base | `7e2e3782c` | - | `EXPERT_BUNDLE_PATH`, `LANE110_PREFETCH_CAP`, `LANE110_PROF`, `MAX_N_CACHED`, `GENERATE_EXPERT_BUNDLE`, `LLAMA_USE_PREBUILT_UI`, `GGML_RECURRENT_STATE_F16`, `POWERINFER_IOCP`, `GGML_ARIFI_VNNI_REPACK`, `GGML_ARIFI_TURBO_KV`, `ARIFI_TOOL_NVFP4_REMAP` | provenance route B (G7 append-only): R24's 58 classifications recorded in native-grandfather (55 ARIFI, remapped to the b10825 shas) + pending-trailers (2 FORK, 1 UPSTREAM); 46 fork-authored tooling/manifest commits grandfathered; provenance PASS; series regen 496 patches |
+| 498 | `0498-spec-runtime-switch-for-the-DFlash-encoder-fusion-LL.patch` | arifi-fork-base | `f9746db7b` | - | - | spec: runtime switch for the DFlash encoder fusion (LLAMA_DFLASH_FUSED_INJECT), both injection paths kept, default LEGACY on this fork |
+| 499 | `0499-vulkan-RDNA3-mul_mat_vec_id-rows-runtime-selectable-.patch` | ternary-g128 | `0c4b9444d` | - | - | vulkan: RDNA3 mul_mat_vec_id rows runtime-selectable (GGML_ARIFI_MMV_ID_ROWS) + Ornith expert-shape perf rows |
+| 500 | `0500-kv-cache-the-PLE-n-gram-history-lookup-becomes-a-run.patch` | arifi-fork-base | `0fe8c7f49` | - | - | kv-cache: the PLE n-gram history lookup becomes a runtime switch - seq_pos index by default, the cell scan behind LLAMA_KV_NGRAM_INDEX=0 |
+| 501 | `0501-vulkan-MUL_MAT_ID-B-staging-receipt-and-a-loud-asser.patch` | ternary-g128 | `abdb77478` | - | - | vulkan: MUL_MAT_ID B-staging receipt, and a loud assert on the tq_rotate x K-padding hazard |
+| 502 | `0502-vulkan-UMA-read-back-takes-the-direct-memcpy-only-wh.patch` | ternary-g128 | `2f241c57d` | - | - | vulkan: UMA read-back takes the direct memcpy only when the mapping is HOST_CACHED (WI-1693 fix A) |
+| 503 | `0503-ggml-add-GGML_TYPE_SX8-57-the-S-X8-v4.3-CPU-decoder-.patch` | arifi-fork-base | `174ead5ca` | MarlaLabs llama-cpp-sx8.patch (github.com/MarlaLabs, Apache-2.0), cloned at cache/r16-sx8 | - | ggml: add GGML_TYPE_SX8 (57), the S-X8 v4.3 CPU decoder, retagged from the author's 41, plus its retag/cross-check tooling |
+| 504 | `0504-ggml-port-jtrefon-TBQ3_0-TBQ4_0-at-ids-58-59-with-th.patch` | arifi-fork-base | `3e3eb64d0` | jtrefon/llama.cpp-turboq-mtp@6a02d0494 (ggml/src/ggml-turboq.c, ggml-turboq-tables.h, ggml-common.h, ggml.c, ggml-cpu, src/llama-kv-cache.cpp, src/llama-graph.cpp, src/llama-context.cpp, common/arg.cpp, tests) | - | ggml: port jtrefon TBQ3_0/TBQ4_0 at ids 58/59 with the type-id arbitration, plus the SET_ROWS device guard (WI-1694 half A) |
+| 505 | `0505-docs-protected-wins-the-R18-switch-table-eight-DOCUM.patch` | arifi-fork-base | `4a8c1536e` | - | - | docs + protected-wins: the R18 switch table - eight DOCUMENTED-TAKE runtime switches registered with their measured effect |
 
 ## Measured effect, per patch
 
@@ -1150,6 +1159,15 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0494-arifi-sync-base-move-b10819-6a1a922d2-b10825-9e0e220.patch` | *(no Measured-effect trailer)* |
 | `0495-arifi-sync-rekey-3-protected-win-manifests-to-the-b1.patch` | *(no Measured-effect trailer)* |
 | `0496-arifi-sync-scope-subcommand-F-161-the-ingest-A-B-sco.patch` | *(no Measured-effect trailer)* |
+| `0497-provenance-route-B-G7-append-only-R24-s-58-classific.patch` | *(no Measured-effect trailer)* |
+| `0498-spec-runtime-switch-for-the-DFlash-encoder-fusion-LL.patch` | DOCUMENTED-TAKE. Seat DFlash2 decode -0.98% CI95 [-1.16%, -0.80%] fused vs legacy; U-IQ4XS +0.05% [-0.56%, +0.67%]; U-Q3KXL -0.87% [-2.50%, +0.77%]. The wave's INERT control on the same pair moved +3.71% [+0.80%, +6.61%] on decode, so none of these clears the build floor. |
+| `0499-vulkan-RDNA3-mul_mat_vec_id-rows-runtime-selectable-.patch` | DOCUMENTED-TAKE. 20 op rows, 3 rounds each: x0.979 to x1.031 against the upstream default of 4 - no setting separates from the ladder's own spread. Correctness 80/80 per setting, TBOID GREEN. No serve cell ran (no MoE file that fits this box was staged). |
+| `0500-kv-cache-the-PLE-n-gram-history-lookup-becomes-a-run.patch` | DOCUMENTED-TAKE, mechanism UNMEASURED. Receipt grep: 0 hits in 10 server logs - the mechanism never ran. The same engine pair still moved DFlash2 prefill +8.03% [+5.56%, +10.49%] and plain decode -2.20% [-2.79%, -1.60%], which is therefore pure build floor, not this switch. Witness owed: test-llama-archs -a qwen4exp under both envs (PREREG-r15c4-kv-ngram-index.md). |
+| `0501-vulkan-MUL_MAT_ID-B-staging-receipt-and-a-loud-asser.patch` | DOCUMENTED-TAKE. Receipt proved the path cannot engage on this GPU: 0 K-padded rows in 7 logs (no coopmat2 on gfx1103). Op ladder 48 MUL_MAT_ID ops, 3 rounds per arm, x0.976 to x1.032, no CI claimed at n=3. No default changed, so there is nothing to lose here. |
+| `0502-vulkan-UMA-read-back-takes-the-direct-memcpy-only-wh.patch` | DOCUMENTED-TAKE. Mechanism cell (ONE binary, direct vs auto) read decode +0.21% CI95 [-0.26%, +0.69%] - flat, and one of the two quietest cells in the whole wave. The four c3 files land within -1.88% and -0.03% on DFlash2 decode. Cell c1 NOT BANKED (resumed across the 21:30 job). Still owed: a host-cached unified-memory device, where the probe would actually select direct. |
+| `0503-ggml-add-GGML_TYPE_SX8-57-the-S-X8-v4.3-CPU-decoder-.patch` | DOCUMENTED-TAKE. The harmless cell (the port present but unreachable) read DFlash2 decode +0.43% CI95 [-0.47%, +1.33%] and plain decode -5.33% [-12.26%, +1.60%]; the same pair moved plain PREFILL -8.28% [-11.00%, -5.56%], the wave's largest inert move, which is the build floor and not this port. TBO ladder x0.991 to x1.033. The S-X8 file cell never ran: no S-X8 file exists and the decoder is CPU-only. |
+| `0504-ggml-port-jtrefon-TBQ3_0-TBQ4_0-at-ids-58-59-with-th.patch` | DOCUMENTED-TAKE. The harmless cell (types present, no launch names them) read DFlash2 decode +0.60% CI95 [-1.28%, +2.47%] and DFlash2 prefill +8.15% [+5.38%, +10.92%], the latter pure build floor. The KV MECHANISM WAS NEVER MEASURED: the baseline arm refused the type ("Unsupported cache type: tbq4_0") and the candidate arm was aborted by the schedule horizon. What ran is engine-vs-engine at KV-on-host, +1.60% [+1.30%, +1.90%] on a 0.515 t/s crawl. Owed: candidate-engine tbq4_0 vs candidate-engine q8_0; the baseline-engine design is impossible because the base engine does not know the type. |
+| `0505-docs-protected-wins-the-R18-switch-table-eight-DOCUM.patch` | none - registry and manifest only, no code path touched |
 
 ## Unclassified
 
@@ -1551,4 +1569,10 @@ rather than silently bucketed - add a rule when a new source appears.
 - `568d60751` arifi-sync: base move b10819/6a1a922d2 -> b10825/9e0e22059 (R22 read, R27 execution); 552/552 replayed clean, 0 merges, 0 hunk collisions, marker scan 0, protected wins PASS; R20 slot fix + R19 gate (default ON per R19D) carried Lane: lane-220
 - `44897b55e` arifi-sync: rekey 3 protected-win manifests to the b10825 line (R27 check 05:1x: validate PASS only with this rekey; committed so the built line validates) Lane: lane-220
 - `b7c2d98ba` arifi-sync: scope subcommand (F-161) - the ingest A/B scope derived from the collision map (upstream files x our files x hunk overlap x speed paths) = sanity|named|full; UPDATE-RUNBOOK 4.1b.4 scope law; selfcheck Lane: lane-220
+- `7e2e3782c` provenance route B (G7 append-only): R24's 58 classifications recorded in native-grandfather (55 ARIFI, remapped to the b10825 shas) + pending-trailers (2 FORK, 1 UPSTREAM); 46 fork-authored tooling/manifest commits grandfathered; provenance PASS; series regen 496 patches
+- `f9746db7b` spec: runtime switch for the DFlash encoder fusion (LLAMA_DFLASH_FUSED_INJECT), both injection paths kept, default LEGACY on this fork
+- `0fe8c7f49` kv-cache: the PLE n-gram history lookup becomes a runtime switch - seq_pos index by default, the cell scan behind LLAMA_KV_NGRAM_INDEX=0
+- `174ead5ca` ggml: add GGML_TYPE_SX8 (57), the S-X8 v4.3 CPU decoder, retagged from the author's 41, plus its retag/cross-check tooling
+- `3e3eb64d0` ggml: port jtrefon TBQ3_0/TBQ4_0 at ids 58/59 with the type-id arbitration, plus the SET_ROWS device guard (WI-1694 half A)
+- `4a8c1536e` docs + protected-wins: the R18 switch table - eight DOCUMENTED-TAKE runtime switches registered with their measured effect
 
