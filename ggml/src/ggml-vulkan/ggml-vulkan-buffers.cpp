@@ -615,13 +615,57 @@ static bool ggml_vk_buffer_read_async(vk_context subctx, vk_buffer& src, size_t 
     return ggml_vk_buffer_read_2d_async(subctx, src, offset, dst, size, size, size, 1, sync_staging);
 }
 
+// arifi lane-212 (WI-1693 fix A, flashnext-hybrid fix 3 ported to Vulkan UMA): the direct host memcpy
+// below is only the FAST read path when the mapping is HOST_CACHED. ggml_vk_create_buffer_device's UMA
+// branch asks for DeviceLocal|HostVisible|HostCoherent and never for HostCached, and on a Radeon 780M no
+// memory type carries DEVICE_LOCAL together with HOST_CACHED at all (vulkaninfo, 16 types: cached only on
+// heap 1), so every UMA tensor buffer is mapped write-combined and a CPU read out of it is the classic
+// uncached-read penalty. The staging branch (device copy into sync_staging, which IS allocated HostCached
+// first, then a cached memcpy) already pays the same one submit + one fence, so it costs no extra round trip.
+//
+// RUNTIME SWITCH, never compile-time: probe = the buffer's OWN matched memory-type flags (stored at
+// allocation from the device's table), per call. A UMA device whose host-visible type is cached (Intel
+// iGPUs commonly are) keeps the upstream direct memcpy untouched. Override for A/B and for anyone whose
+// driver measures differently: GGML_ARIFI_UMA_READ_PATH=auto (default, probe) | direct (upstream
+// behaviour) | staging (always staging). Writes are not touched: write-combined is the right mode for
+// CPU writes, and ggml_vk_buffer_write_2d keeps its memcpy branch.
+static bool ggml_vk_uma_direct_read_ok(const vk_buffer & src) {
+    if (!(src->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible) || !src->device->uma) {
+        return false;
+    }
+    static const int mode = [] {
+        const char * e = getenv("GGML_ARIFI_UMA_READ_PATH");
+        if (e == nullptr || strcmp(e, "auto") == 0) return 0;
+        if (strcmp(e, "direct") == 0)  return 1;
+        if (strcmp(e, "staging") == 0) return 2;
+        fprintf(stderr, "ggml_vulkan: GGML_ARIFI_UMA_READ_PATH=%s not understood (auto|direct|staging), using auto\n", e);
+        return 0;
+    }();
+    const bool cached = bool(src->memory_property_flags & vk::MemoryPropertyFlagBits::eHostCached);
+    const bool direct = mode == 1 || (mode == 0 && cached);
+    static bool once = false;
+    if (!once) {
+        once = true;
+        // stderr, not GGML_LOG_INFO: llama-server drops ggml INFO records (see the q6_k receipt above).
+        // This receipt is how an A/B log proves which path the arm actually took.
+        fprintf(stderr, "ggml_vulkan: ARIFI UMA read path = %s [GGML_ARIFI_UMA_READ_PATH=%s]\n",
+                direct ? (mode == 1 ? "direct (forced)" : "direct (mapping is HOST_CACHED)")
+                       : (mode == 2 ? "staging (forced)" : "staging (mapping lacks HOST_CACHED)"),
+                mode == 1 ? "direct" : mode == 2 ? "staging" : "auto");
+    }
+    return direct;
+}
+
 void ggml_vk_buffer_read_2d(vk_buffer& src, size_t offset, void * dst, size_t spitch, size_t dpitch, size_t width, size_t height) {
     VK_LOG_DEBUG("ggml_vk_buffer_read_2d(" << src->buffer << ", " << offset << ", " << width << ", " << height << ")");
 
     // If the device is not an UMA device the memory is host-accessible through rebar. While writing
     // through PCIe is sufficient fast reading back data from PCIe is slower than going through
     // the HW device to host copy path.
-    if(src->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible && src->device->uma) {
+    // arifi lane-212: on UMA the direct memcpy is taken only through ggml_vk_uma_direct_read_ok
+    // (HOST_CACHED probe + GGML_ARIFI_UMA_READ_PATH override); an uncached mapping falls through to
+    // the staging branch below, which every non-UMA host-visible (rebar) buffer already uses.
+    if (ggml_vk_uma_direct_read_ok(src)) {
         GGML_ASSERT(src->memory_property_flags & vk::MemoryPropertyFlagBits::eHostCoherent);
 
         std::lock_guard<std::recursive_mutex> guard(src->device->mutex);
