@@ -53,6 +53,18 @@ struct block_a_cache {
     int32_t qs[32/4];
     FLOAT_TYPE dm;
 };
+#elif defined(DATA_A_SX8)
+#define QUANT_R_MMQ 1
+// S-X8 v4.3 (type-id 57) -- WI-1722. 32 six-bit levels unpacked to one signed byte
+// each (0..63 fits int8, so the plain signed dotPacked4x8 is bit-exact and the
+// mixed-signedness variant is never needed), plus the four per-sub-block affine
+// pairs decoded once at shmem-fill time. 48 B/block with fp16 FLOAT_TYPE against
+// q8_0's 36 B; ggml_vk_matmul_int_shmem_support() carries the matching entry.
+struct block_a_cache {
+    int32_t qs[32/4];
+    FLOAT_TYPE rlo[4];
+    FLOAT_TYPE step[4];
+};
 #elif defined(DATA_A_IQ4_NL)
 #define QUANT_R_MMQ 2
 struct block_a_cache {
