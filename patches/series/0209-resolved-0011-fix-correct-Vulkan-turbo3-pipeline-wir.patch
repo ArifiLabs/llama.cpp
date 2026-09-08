@@ -1,0 +1,23 @@
+From 9cac10cf7f226a9935db577e8a0531d8dc0da62b Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:06:39 -0400
+Subject: [PATCH] 
+ resolved/0011-fix-correct-Vulkan-turbo3-pipeline-wiring-after-ff8b.patch
+
+Assisted-by: Codex
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index dac3e167c..ea7edd6da 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -9330,6 +9330,7 @@ static vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const
+         case GGML_TYPE_Q5_0:
+         case GGML_TYPE_Q5_1:
+         case GGML_TYPE_Q8_0:
++        case GGML_TYPE_TURBO3_0:
+         case GGML_TYPE_IQ4_NL:
+             return ctx->device->pipeline_cpy_quant_f32[src->type];
+         default:

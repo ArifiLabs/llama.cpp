@@ -1,0 +1,59 @@
+From 725a5ff97be0831532052889fa2bf4734da7ae51 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 5 Sep 2026 12:54:40 -0400
+Subject: [PATCH] arifi-sync: recognize `correctness only` as no-effect
+ vocabulary
+
+`correctness fix` was already in NO_EFFECT_PREFIXES; `correctness only` states the same
+absence and was not. Added additively, one entry. The classifier stays quantity-FIRST, so a
+trailer that carries a number with a throughput unit is still REAL whatever prose precedes
+it - `correctness only, improved 12%` remains a measured claim.
+
+Tests: the new regression asserts both halves plus the unchanged neighbouring vocabulary.
+Suite 38 -> 39, runbook count updated, and the classifier contract stated in one line.
+
+Measured-effect: tooling and documentation only; no engine behaviour changed and no shipped
+  default moved.
+---
+ UPDATE-RUNBOOK.md                   |  6 +++++-
+ tools/arifi-sync/arifi_sync.py      |  3 ++-
+ tools/arifi-sync/test_arifi_sync.py | 12 ++++++++++++
+ 3 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
+index 221ae61e3..76b263781 100644
+--- a/tools/arifi-sync/arifi_sync.py
++++ b/tools/arifi-sync/arifi_sync.py
+@@ -1091,7 +1091,8 @@ NO_EFFECT_PREFIXES = ("unmeasured", "none", "n/a", "documentation only", "docs o
+                       "tooling only", "build fix only", "build-system only", "build variant",
+                       "ci contract only", "process guardrail", "file relocation only",
+                       "structure and tooling", "default-only change", "enables the",
+-                      "kernel dispatch only", "correctness fix", "documents placement",
++                      "kernel dispatch only", "correctness fix", "correctness only",
++                      "documents placement",
+                       "build-variant documentation", "source census", "clean fixture",
+                       "harness selftest", "series check pass", "provenance audit",
+                       "'currency' subcommand")
+diff --git a/tools/arifi-sync/test_arifi_sync.py b/tools/arifi-sync/test_arifi_sync.py
+index ab73c7e10..0bf0bc84f 100644
+--- a/tools/arifi-sync/test_arifi_sync.py
++++ b/tools/arifi-sync/test_arifi_sync.py
+@@ -587,6 +587,18 @@ class StrictRegistrationTest(unittest.TestCase):
+         self.assertFalse(A._measured_effect_is_real("documentation only; the 4x tile is unchanged"))
+         self.assertTrue(A._measured_effect_is_real("comment only, but the path is 3.3x faster"))
+ 
++    def test_correctness_only_is_no_effect_vocabulary_but_quantity_still_wins(self):
++        """R6C: `correctness only` states the same absence as the already-recognised
++        `correctness fix`, so it joins the vocabulary. The classifier stays quantity-FIRST, so a
++        trailer that carries a number with a throughput unit remains REAL whatever words precede
++        it, and the neighbouring vocabulary entries are unchanged."""
++        self.assertFalse(A._measured_effect_is_real("correctness only, no throughput claim"))
++        self.assertFalse(A._measured_effect_is_real("correctness only"))
++        self.assertTrue(A._measured_effect_is_real("correctness only, improved 12%"))
++        self.assertFalse(A._measured_effect_is_real("correctness fix"))
++        self.assertTrue(A._measured_effect_is_real("correctness fix, and -12.79% per dispatch"))
++        self.assertFalse(A._measured_effect_is_real("kernel dispatch only"))
++
+     def test_the_discover_command_sees_the_laundered_win(self):
+         """`discover` and `validate` must agree about the set, which is only true because they
+         share one predicate. Asserted rather than assumed."""

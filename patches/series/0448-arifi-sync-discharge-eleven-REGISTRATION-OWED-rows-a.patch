@@ -1,0 +1,562 @@
+From 57795cc38f275dfef4be666c1c6ff2127f8ebd0d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 5 Sep 2026 09:19:11 -0400
+Subject: [PATCH] arifi-sync: discharge eleven REGISTRATION OWED rows, and
+ close two live holes in the guard itself
+
+The protected-win baseline carried fourteen rows marked REGISTRATION OWED - real, landed wins
+whose manifest entry could not yet be written without inventing a field. Eleven of them are now
+written. Three are not, and they stay owed with the exact missing measurement named.
+
+REGISTERED (eleven baseline rows, ten entries):
+  4672638cf                powerinfer-windows-port-avx-cure      (subtree `powerinfer` + the flag)
+  655f2f9a3                powerinfer-expert-bundle-generator
+  11c9a7702                powerinfer-streamed-repack-carveout
+  bca0f5b9a                powerinfer-gpu-safe-staging
+  bf0abf0be + 39a585bd5    rocmfpx-weight-formats                (one guard, one capability)
+  e44c0bb0d                cpu-vnni-repack-default-off
+  e20a8df7f -> e96d7484a   cpu-vnni-repack-g128-kernels          (the kernel, per e20a8df7f's row)
+  a38d6c409                moe-cache-heat-protected-eviction
+  8561db379                cuda-tq3-4s-kernels
+  24f43e45c                metal-tq3-4s-kernels
+
+STILL OWED, deliberately: d0112ab49, f81c6dfdf, 159c3a21d. Alone among the fourteen they carry no
+number from ANY source - not ours, not a third party's - so measured_effect could not be filled
+without inventing it. The gap is now exact rather than "more evidence": a decode tok/s A/B on a
+DISCRETE-GPU host running the streamed-expert path, n>=9 interleaved, one binary, env flip only.
+They are one upload-pipeline mechanism in three commits and should register together.
+
+655f2f9a3's row asked whether powerinfer-moe-streaming-hook already covers it. CHECKED: it does
+not. That entry is src/llama-graph.cpp on EXPERT_BUNDLE_PATH (the read side); this commit is
+src/llama-model.cpp on GENERATE_EXPERT_BUNDLE (the write side). Separate entry, not an also_commit.
+
+Not one baseline row was deleted, downgraded, relabelled or squashed. Each registered row keeps its
+original disposition text verbatim and gains a `_now_registered` note; a sha in both files is
+harmless because unregistered_measured_wins skips it either way.
+
+TWO LIVE HOLES IN THE GUARD, both found while writing the entries, both planted-red first:
+
+1. A DIRECTORY protected_path validated and guarded NOTHING. `git cat-file -e <ref>:<dir>` succeeds
+   on a tree, so validate called the entry healthy, while protected_collisions intersected the path
+   set against `git diff --name-only`, which emits files only. A registered subtree could never
+   produce a hit. Now matched on the `<dir>/` boundary. The cost is deliberate and named: any touch
+   under a protected subtree refuses until a comparison is recorded, which is why a subtree is
+   registered only where the tree is ours.
+
+2. An anchor surviving ONLY in patches/series/ kept validate GREEN after an ingest deleted the
+   mechanism from source. This fork bakes every mechanism into a generated patch by design, so the
+   whole-tree grep found our own anchor in our own patch. The series is a RECORD of a mechanism,
+   never the mechanism; it is excluded from the anchor search now. All twelve pre-existing anchors
+   still resolve under the exclusion - CHECKED, the change is lossless.
+
+Both failures reproduce RED on the unfixed code and PASS after, with a must-not-fire case beside
+each (a sibling path sharing a prefix; every pre-existing anchor). 34 -> 37 tests, all green.
+
+Gate state: validate PASS over 17 entries / 33 protected paths / 35 anchors; discover's strict set
+stays 0; check --incoming upstream/master REFUSES 10 of 17 (6 pre-existing, 4 new, all on shared
+upstream files). The three subtree registrations correctly do NOT fire - upstream carries none of
+that code - so the new coverage cost no signal.
+
+Evidence: research/local-inference/lane-evidence/2026-09-02-lane-209/rank3-r10/70..76-R6-*.log
+
+Origin: ArifiLabs lane-209 rank-3 R6
+Measured-effect: tooling and documentation only; no engine behaviour changed and no shipped default moved
+Assisted-by: Claude Opus 5
+---
+ UPDATE-RUNBOOK.md                            |  13 +-
+ tools/arifi-sync/arifi_sync.py               |  27 ++-
+ tools/arifi-sync/protected-win-baseline.json |  67 ++++--
+ tools/arifi-sync/protected-wins.json         | 219 ++++++++++++++++++-
+ tools/arifi-sync/test_arifi_sync.py          |  39 ++++
+ 5 files changed, 344 insertions(+), 21 deletions(-)
+
+diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
+index 96a427c42..d76f22deb 100644
+--- a/tools/arifi-sync/arifi_sync.py
++++ b/tools/arifi-sync/arifi_sync.py
+@@ -1119,7 +1119,15 @@ def load_protected_wins(repo: str) -> list:
+ 
+ 
+ def _anchor_present(repo: str, ref: str, anchor: str) -> bool:
+-    rc, _, _ = git(repo, "grep", "-q", "-F", anchor, ref, check=False)
++    """The generated series is EXCLUDED, and that exclusion is load-bearing (R6 finding 2).
++
++    This fork bakes every mechanism into `patches/series/*.patch` by design, so a whole-tree grep
++    finds our own anchor inside our own generated patch long after a fork ingest deleted the branch
++    from the source file. `validate` then reported the manifest healthy over a win that no longer
++    existed in live code - a green gate on a silent overwrite, which is the one failure this
++    function is here to catch. The series is a RECORD of the mechanism, never the mechanism."""
++    rc, _, _ = git(repo, "grep", "-q", "-F", anchor, ref,
++                   "--", ".", ":(exclude)patches/series", check=False)
+     return rc == 0
+ 
+ 
+@@ -1421,7 +1429,18 @@ def _resolution_problems(r: dict) -> list:
+ def protected_collisions(repo: str, wins: list, changed: set, diff_text: str) -> list:
+     """A collision is a protected PATH the incoming change touches, or a protected ANCHOR whose
+     line the incoming diff removes. The anchor half matters: upstream can delete our dispatch
+-    branch while leaving the file name intact, and a path-only check would pass that."""
++    branch while leaving the file name intact, and a path-only check would pass that.
++
++    A protected path may name a DIRECTORY, and that case is matched on the directory boundary
++    (R6 finding 1). `git cat-file -e <ref>:<dir>` succeeds on a tree, so `validate` called such an
++    entry healthy, while this function's set-intersection could never hit it - `git diff
++    --name-only` emits files only. A whole vendored subtree could therefore be registered and
++    guarded by nothing at all. Matching on `<dir>/` rather than the raw string keeps a sibling
++    like `kernel.c.bak` out of `kernel.c`'s guard.
++
++    The cost is deliberate: any touch anywhere under a protected subtree now REFUSES until a
++    comparison resolution is recorded. Under a fail-closed mandate that is the designed price of
++    protecting a whole tree, and it is why a subtree is registered only where the tree is ours."""
+     removed = set()
+     for line in diff_text.splitlines():
+         if line.startswith("-") and not line.startswith("---"):
+@@ -1430,7 +1449,9 @@ def protected_collisions(repo: str, wins: list, changed: set, diff_text: str) ->
+     for w in wins:
+         if w.get("status") != "active":
+             continue
+-        paths = sorted(set(w["protected_paths"]) & changed)
++        paths = sorted(p for p in set(w["protected_paths"])
++                       if p in changed
++                       or any(c.startswith(p.rstrip("/") + "/") for c in changed))
+         anchors = sorted(a for a in w["anchors"] if any(a in l for l in removed))
+         if paths or anchors:
+             out.append({"win": w, "paths": paths, "anchors": anchors})
+diff --git a/tools/arifi-sync/protected-win-baseline.json b/tools/arifi-sync/protected-win-baseline.json
+index df76de615..8758c0c2c 100644
+--- a/tools/arifi-sync/protected-win-baseline.json
++++ b/tools/arifi-sync/protected-win-baseline.json
+@@ -42,12 +42,33 @@
+     "COUNTS, in both scopes, because a single blended number would misread:",
+     "  original 24 rows, D4 applied :  9 REGISTRATION OWED / 15 terminal",
+     "  + 6 surfaced by the D2 fix   :  5 REGISTRATION OWED /  1 terminal",
+-    "  this ledger as a whole       : 14 REGISTRATION OWED / 16 terminal / 30 rows"
++    "  this ledger as a whole       : 14 REGISTRATION OWED / 16 terminal / 30 rows",
++    "",
++    "AMENDED AGAIN 2026-09-05 by the lane-209 rank-3 R6 registration pass, which is what the 14",
++    "owed rows were waiting for. ELEVEN of them are now DISCHARGED - each is covered by a real",
++    "entry in protected-wins.json and carries a `_now_registered` note naming that entry. THREE",
++    "stay owed (d0112ab49, f81c6dfdf, 159c3a21d) and now carry a `_still_owed` note stating the",
++    "exact missing measurement and the action, not 'more evidence'. Those three are the only rows",
++    "in this ledger with NO number from any source, so the register's required `measured_effect`",
++    "could not be filled without inventing one. Leaving them visible is the mandate; filling them",
++    "softly to reach zero would be the discard.",
++    "",
++    "NOT ONE ROW WAS DELETED, DOWNGRADED, RELABELLED OR SQUASHED. Every disposition above is the",
++    "text it was written with; the R6 notes are APPENDED beside them. A registered sha appearing",
++    "in both files is harmless by construction - `unregistered_measured_wins` skips it either way.",
++    "",
++    "COUNTS AFTER R6:",
++    "  30 rows, unchanged           : 16 terminal (unchanged)",
++    "  of the 14 REGISTRATION OWED  : 11 DISCHARGED (registered) / 3 still owed, with exact gaps"
+   ],
+   "_amended": {
+     "utc": "2026-09-04T23:58:45Z (19:58:45 EDT), read from the machine clock when this block was written; the pass's close boundary is commit-derived and lives in R3-FIX-REPORT.md",
+     "by": "CHECKER-R3 defect-closure pass (fresh maker, guarded Claude Max subscription wrapper)",
+-    "closes": ["D4 re-disposition", "the D2 classifier widening", "baseline tampering residual"]
++    "closes": [
++      "D4 re-disposition",
++      "the D2 classifier widening",
++      "baseline tampering residual"
++    ]
+   },
+   "_disposition_vocabulary": {
+     "REGISTRATION OWED": "a real, landed win; its manifest entry is owed and cannot yet be written without inventing a field",
+@@ -65,37 +86,44 @@
+     {
+       "sha": "4672638cf8eb0bdedb30b264ede342c4ad82803a",
+       "subject": "powerinfer: vendor streaming library incl. lane-110 Windows port [series 0003]",
+-      "disposition": "REGISTRATION OWED - real: io_uring->Win32 read path plus the -mprefer-vector-width=128 AVX-spill cure (a novel MinGW codegen finding, RESULTS lane-110). Its protected paths and anchors span a vendored tree and must be enumerated before an entry is honest."
++      "disposition": "REGISTRATION OWED - real: io_uring->Win32 read path plus the -mprefer-vector-width=128 AVX-spill cure (a novel MinGW codegen finding, RESULTS lane-110). Its protected paths and anchors span a vendored tree and must be enumerated before an entry is honest.",
++      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `powerinfer-windows-port-avx-cure`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
+     },
+     {
+       "sha": "655f2f9a33f9c78fe4b375404476bb58a33d75ff",
+       "subject": "powerinfer: expert-bundle loader + GENERATE_EXPERT_BUNDLE [series 0005]",
+-      "disposition": "REGISTRATION OWED - real: first disk-streamed sparse inference on Windows proven on this path (RESULTS M2a). The registered `powerinfer-moe-streaming-hook` entry may or may not be the same mechanism; folding it in as also_commits without checking would be an invented claim."
++      "disposition": "REGISTRATION OWED - real: first disk-streamed sparse inference on Windows proven on this path (RESULTS M2a). The registered `powerinfer-moe-streaming-hook` entry may or may not be the same mechanism; folding it in as also_commits without checking would be an invented claim.",
++      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `powerinfer-expert-bundle-generator`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
+     },
+     {
+       "sha": "11c9a7702b75135496880546e0660c4f5e1c897a",
+       "subject": "powerinfer: repack carve-out for streamed tensors [series 0008a]",
+-      "disposition": "REGISTRATION OWED - a correctness mechanism of the same class as the registered `escha-w2-decode-correctness` win (it fixes garbage output from AARCH64 repack of streamed experts, RESULTS rung2). Correctness mechanisms ARE protectable; its quality gate must be stated before the entry is written."
++      "disposition": "REGISTRATION OWED - a correctness mechanism of the same class as the registered `escha-w2-decode-correctness` win (it fixes garbage output from AARCH64 repack of streamed experts, RESULTS rung2). Correctness mechanisms ARE protectable; its quality gate must be stated before the entry is written.",
++      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `powerinfer-streamed-repack-carveout`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
+     },
+     {
+       "sha": "bca0f5b9aada62a95639e407fa4fe1de3e6ec585",
+       "subject": "powerinfer: GPU-safe staging, CPU zero-copy, LANE110_PROF [series 0011]",
+-      "disposition": "REGISTRATION OWED - real and measured: GPU -ngl99 -cmoe clean 4.9 t/s with CPU zero-copy kept (RESULTS lane-110B/C)."
++      "disposition": "REGISTRATION OWED - real and measured: GPU -ngl99 -cmoe clean 4.9 t/s with CPU zero-copy kept (RESULTS lane-110B/C).",
++      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `powerinfer-gpu-safe-staging`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
+     },
+     {
+       "sha": "d0112ab49c1d8f90f22efbb89e3bbf157b5f5766",
+       "subject": "community: llama : pin mmap-backed CPU weights for faster H2D uploads",
+-      "disposition": "REGISTRATION OWED - a CARRIED community mechanism, inert on this seat's GPU-resident unified memory (ki-prefetch-experts-conditionality) and retained for a discrete-GPU + streamed-path trial that is owed. Zero on our seat is not zero: it must not be lost on a bump. No measured effect exists on this hardware to register yet."
++      "disposition": "REGISTRATION OWED - a CARRIED community mechanism, inert on this seat's GPU-resident unified memory (ki-prefetch-experts-conditionality) and retained for a discrete-GPU + streamed-path trial that is owed. Zero on our seat is not zero: it must not be lost on a bump. No measured effect exists on this hardware to register yet.",
++      "_still_owed": "2026-09-05, lane-209 rank-3 R6: STAYS `REGISTRATION OWED`, and the gap is now EXACT rather than 'more evidence'. Unlike every other owed row, this one carries NO number at all - not ours and not a third party's; its own trailer states only 'inert on GPU-resident unified memory; carried for discrete-GPU + streamed-path trial owed'. So a `measured_effect` field could not be filled without inventing one, and the register requires it. MISSING EVIDENCE, precisely: a decode tok/s A/B (arm ON vs arm OFF, one binary, env or build flip only, n>=9 interleaved, ranges reported) on a DISCRETE-GPU host running the streamed-expert path - the H2D upload is the thing this mechanism changes, and it does nothing on this seat's unified memory. ACTION: run that A/B on the first discrete-GPU host the estate gets, then register all three together (they are one upload-pipeline mechanism in three commits). Until then the row is the guard: it is visible in `discover --all`, it is not dismissed, and it is not closed."
+     },
+     {
+       "sha": "f81c6dfdf07ffa0267cf99a27a4cad276ed70325",
+       "subject": "community: ggml : overlap offloaded expert weight uploads with compute",
+-      "disposition": "REGISTRATION OWED - as d0112ab49: carried community mechanism, inert on this seat, trial owed."
++      "disposition": "REGISTRATION OWED - as d0112ab49: carried community mechanism, inert on this seat, trial owed.",
++      "_still_owed": "2026-09-05, lane-209 rank-3 R6: STAYS `REGISTRATION OWED`, and the gap is now EXACT rather than 'more evidence'. Unlike every other owed row, this one carries NO number at all - not ours and not a third party's; its own trailer states only 'inert on GPU-resident unified memory; carried for discrete-GPU + streamed-path trial owed'. So a `measured_effect` field could not be filled without inventing one, and the register requires it. MISSING EVIDENCE, precisely: a decode tok/s A/B (arm ON vs arm OFF, one binary, env or build flip only, n>=9 interleaved, ranges reported) on a DISCRETE-GPU host running the streamed-expert path - the H2D upload is the thing this mechanism changes, and it does nothing on this seat's unified memory. ACTION: run that A/B on the first discrete-GPU host the estate gets, then register all three together (they are one upload-pipeline mechanism in three commits). Until then the row is the guard: it is visible in `discover --all`, it is not dismissed, and it is not closed."
+     },
+     {
+       "sha": "159c3a21d91a1b19053c09592cf08184c48e69f2",
+       "subject": "community: ggml : size prefetch slots per layer and fix fallback use-after-free",
+-      "disposition": "REGISTRATION OWED - as d0112ab49: carried community mechanism, inert on this seat, trial owed."
++      "disposition": "REGISTRATION OWED - as d0112ab49: carried community mechanism, inert on this seat, trial owed.",
++      "_still_owed": "2026-09-05, lane-209 rank-3 R6: STAYS `REGISTRATION OWED`, and the gap is now EXACT rather than 'more evidence'. Unlike every other owed row, this one carries NO number at all - not ours and not a third party's; its own trailer states only 'inert on GPU-resident unified memory; carried for discrete-GPU + streamed-path trial owed'. So a `measured_effect` field could not be filled without inventing one, and the register requires it. MISSING EVIDENCE, precisely: a decode tok/s A/B (arm ON vs arm OFF, one binary, env or build flip only, n>=9 interleaved, ranges reported) on a DISCRETE-GPU host running the streamed-expert path - the H2D upload is the thing this mechanism changes, and it does nothing on this seat's unified memory. ACTION: run that A/B on the first discrete-GPU host the estate gets, then register all three together (they are one upload-pipeline mechanism in three commits). Until then the row is the guard: it is visible in `discover --all`, it is not dismissed, and it is not closed."
+     },
+     {
+       "sha": "550b87da9cb57c6b5592cfdc223b6eeabb7875e4",
+@@ -110,12 +138,14 @@
+     {
+       "sha": "bf0abf0be6ed1ce4f9c9cefb28fc4adb7ec4bb18",
+       "subject": "ggml: ROCmFP4/ROCmFPX weight formats behind GGML_ARIFI_ROCMFPX_FORMATS",
+-      "disposition": "REGISTRATION OWED - RE-DISPOSITIONED 2026-09-04 by the CHECKER-R3 fix pass (D4). It was 'NO RUNTIME EFFECT - OFF by default is a no-op on every existing path by the trailer's own statement; no throughput number was produced.' That reasoning is the SAME reasoning d0112ab49/f81c6dfdf/159c3a21d are marked REGISTRATION OWED under, with the opposite verdict in one ledger. CHECKED against this commit's own trailer: a native ROCmFP4 artifact LOADED in llama-server and completed at 3.24 tok/s, both ROCmFPX conformance suites pass, and `Origin: ArifiLabs/rocmfp-weight-formats` makes the mechanism ours. That is a WORKING capability, not an absence. Under the President's capability law a capability is droppable only when BROKEN, never when merely inert here, so an upstream bump removing the ROCMFP* type ids would silently drop a capability this ledger previously called 'no runtime effect'. Terminal treatment is withdrawn for want of checked evidence, not because the mechanism changed."
++      "disposition": "REGISTRATION OWED - RE-DISPOSITIONED 2026-09-04 by the CHECKER-R3 fix pass (D4). It was 'NO RUNTIME EFFECT - OFF by default is a no-op on every existing path by the trailer's own statement; no throughput number was produced.' That reasoning is the SAME reasoning d0112ab49/f81c6dfdf/159c3a21d are marked REGISTRATION OWED under, with the opposite verdict in one ledger. CHECKED against this commit's own trailer: a native ROCmFP4 artifact LOADED in llama-server and completed at 3.24 tok/s, both ROCmFPX conformance suites pass, and `Origin: ArifiLabs/rocmfp-weight-formats` makes the mechanism ours. That is a WORKING capability, not an absence. Under the President's capability law a capability is droppable only when BROKEN, never when merely inert here, so an upstream bump removing the ROCMFP* type ids would silently drop a capability this ledger previously called 'no runtime effect'. Terminal treatment is withdrawn for want of checked evidence, not because the mechanism changed.",
++      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `rocmfpx-weight-formats`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
+     },
+     {
+       "sha": "39a585bd51901738f3fd9221f2b430270bfd42b9",
+       "subject": "llama: ROCmFPX file types, quantizer wiring and the gguf-py registry",
+-      "disposition": "REGISTRATION OWED - RE-DISPOSITIONED 2026-09-04 by the CHECKER-R3 fix pass (D4), for the same reason as bf0abf0be, whose guard this shares. It was 'NO RUNTIME EFFECT - the wiring is inside the same OFF-by-default guard as bf0abf0be; no behaviour change on any existing file type.' The file types, quantizer wiring and gguf-py registry ARE the mechanism that makes bf0abf0be's working artifact loadable; dropping them drops the capability whether or not the default is OFF. Default-OFF describes the SHIPPED DEFAULT, not the existence of the mechanism, and only the second is what this ledger protects."
++      "disposition": "REGISTRATION OWED - RE-DISPOSITIONED 2026-09-04 by the CHECKER-R3 fix pass (D4), for the same reason as bf0abf0be, whose guard this shares. It was 'NO RUNTIME EFFECT - the wiring is inside the same OFF-by-default guard as bf0abf0be; no behaviour change on any existing file type.' The file types, quantizer wiring and gguf-py registry ARE the mechanism that makes bf0abf0be's working artifact loadable; dropping them drops the capability whether or not the default is OFF. Default-OFF describes the SHIPPED DEFAULT, not the existence of the mechanism, and only the second is what this ledger protects.",
++      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `rocmfpx-weight-formats`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
+     },
+     {
+       "sha": "7d6f8d16386306e6ce310a48b6484f498d771d12",
+@@ -187,31 +217,36 @@
+       "sha": "e44c0bb0d39808d40ec06649dabfb58a93595a7d",
+       "_surfaced_by": "the D2 classifier fix, 2026-09-04",
+       "subject": "ggml-cpu: GGML_ARIFI_VNNI_REPACK defaults to OFF (diverging from upstream, on measurement)",
+-      "disposition": "REGISTRATION OWED - the registered `cpu-vnni-repack-dual-residency` entry protects the KERNEL; this commit is the measured DEFAULT decision on top of it, and the two are not the same object. Its own trailer records the pair the default was chosen on: it avoids a -77.1%/-88.1% prompt regression and forgoes a +20.1%/+28.4% decode gain. An upstream bump that flipped the default back would silently forfeit a measured decision while every registered anchor still resolved, so the manifest as it stands would not see it. Not describable as an entry yet: the protected paths and quality gate for a DEFAULT (as distinct from a kernel) are not settled."
++      "disposition": "REGISTRATION OWED - the registered `cpu-vnni-repack-dual-residency` entry protects the KERNEL; this commit is the measured DEFAULT decision on top of it, and the two are not the same object. Its own trailer records the pair the default was chosen on: it avoids a -77.1%/-88.1% prompt regression and forgoes a +20.1%/+28.4% decode gain. An upstream bump that flipped the default back would silently forfeit a measured decision while every registered anchor still resolved, so the manifest as it stands would not see it. Not describable as an entry yet: the protected paths and quality gate for a DEFAULT (as distinct from a kernel) are not settled.",
++      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `cpu-vnni-repack-default-off`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
+     },
+     {
+       "sha": "e20a8df7f5dc1b0761e56019f5eecdbcd1bc707f",
+       "_surfaced_by": "the D2 classifier fix, 2026-09-04",
+       "subject": "docs: the g128 repack SPEED numbers, measured",
+-      "disposition": "REGISTRATION OWED - CHECKED docs-only in its own diff (CHANGELOG.md, docs/FINDINGS.md, docs/OPTIONS-REGISTRY.md), but the numbers it banks are a 3.3x g128 decode win (2.01 -> 6.67/6.69 tok/s, n=12 per cell, ranges disjoint) and the g128 CPU repack KERNEL SET behind them is not demonstrably covered: the one registered repack entry names GGML_ARIFI_VNNI_REPACK and the dual-residency mode, not the g128 kernels of lane-110F mission #1. Terminal treatment is refused for want of checked coverage rather than granted on 'docs-only', because the burden under the capability law sits on terminal. What is owed is the KERNEL commit's registration, which this row names so it cannot be lost."
++      "disposition": "REGISTRATION OWED - CHECKED docs-only in its own diff (CHANGELOG.md, docs/FINDINGS.md, docs/OPTIONS-REGISTRY.md), but the numbers it banks are a 3.3x g128 decode win (2.01 -> 6.67/6.69 tok/s, n=12 per cell, ranges disjoint) and the g128 CPU repack KERNEL SET behind them is not demonstrably covered: the one registered repack entry names GGML_ARIFI_VNNI_REPACK and the dual-residency mode, not the g128 kernels of lane-110F mission #1. Terminal treatment is refused for want of checked coverage rather than granted on 'docs-only', because the burden under the capability law sits on terminal. What is owed is the KERNEL commit's registration, which this row names so it cannot be lost.",
++      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `cpu-vnni-repack-g128-kernels`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
+     },
+     {
+       "sha": "a38d6c409f856be1aaeb5003a91045af65ca9aec",
+       "_surfaced_by": "the D2 classifier fix, 2026-09-04",
+       "subject": "moe-cache: heat-protected eviction keeps hot experts resident (turboquant tail)",
+-      "disposition": "REGISTRATION OWED - a CARRIED mechanism whose only numbers are third-party (+12% TG soft / +7.5% auto on an RTX 5090, quoted and explicitly NOT adopted as ours). Exactly the d0112ab49 class: zero on our seat is not zero, and no measured effect exists on this hardware to register yet. It must not be lost on a bump."
++      "disposition": "REGISTRATION OWED - a CARRIED mechanism whose only numbers are third-party (+12% TG soft / +7.5% auto on an RTX 5090, quoted and explicitly NOT adopted as ours). Exactly the d0112ab49 class: zero on our seat is not zero, and no measured effect exists on this hardware to register yet. It must not be lost on a bump.",
++      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `moe-cache-heat-protected-eviction`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
+     },
+     {
+       "sha": "8561db37993c9b326549aed2c996b0dcb24ecfc7",
+       "_surfaced_by": "the D2 classifier fix, 2026-09-04",
+       "subject": "cuda: lift TQ3_4S kernel set from tq3/master (14 files)",
+-      "disposition": "REGISTRATION OWED - a lifted CUDA kernel set, UNMEASURABLE on this seat (no CUDA silicon) with tq3-side references RTX 3090 tg128 43.1 -> 47.4 t/s and Ampere decode +35%. Carried capability, inert here, not broken. The d0112ab49 reasoning applies unchanged."
++      "disposition": "REGISTRATION OWED - a lifted CUDA kernel set, UNMEASURABLE on this seat (no CUDA silicon) with tq3-side references RTX 3090 tg128 43.1 -> 47.4 t/s and Ampere decode +35%. Carried capability, inert here, not broken. The d0112ab49 reasoning applies unchanged.",
++      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `cuda-tq3-4s-kernels`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
+     },
+     {
+       "sha": "24f43e45cdf65dc539e62c55c6dd65e6be71c6d5",
+       "_surfaced_by": "the D2 classifier fix, 2026-09-04",
+       "subject": "metal: lift TQ3_4S kernel set from tq3/master (5 files + alloc hook)",
+-      "disposition": "REGISTRATION OWED - as 8561db379, on Metal: UNMEASURABLE on this seat (no Metal silicon), tq3-side reference M3 Pro 27B decode ~4 t/s. Carried capability, inert here, not broken."
++      "disposition": "REGISTRATION OWED - as 8561db379, on Metal: UNMEASURABLE on this seat (no Metal silicon), tq3-side reference M3 Pro 27B decode ~4 t/s. Carried capability, inert here, not broken.",
++      "_now_registered": "2026-09-05, lane-209 rank-3 R6: REGISTRATION OWED is DISCHARGED - this commit is now covered by protected-wins.json entry `metal-tq3-4s-kernels`. The disposition text above is left exactly as written; it was the truthful record of what was and was not known on the day it was written, and the register, not this ledger, is now what an incoming change must get past."
+     }
+   ]
+ }
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index 1a5dd7fd1..466ce4ec8 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -23,7 +23,8 @@
+     "required_when_superseded": ["superseded_by", "comparison_evidence", "valid_conditions"],
+     "status": "active | superseded",
+     "evidence": "a repo- or studio-relative path, or `commit:<sha>` when the measurement table lives in the commit message",
+-    "anchors": "distinctive symbols/env gates whose REMOVAL by an incoming diff is itself a collision, even when the file survives",
++    "anchors": "distinctive symbols/env gates whose REMOVAL by an incoming diff is itself a collision, even when the file survives. Searched in SOURCE only - patches/series/ is excluded, because this fork bakes every mechanism into a generated patch and a whole-tree grep would find our own anchor there long after an ingest deleted it from the code (R6 finding 2)",
++    "protected_paths": "a file, or a DIRECTORY. A directory is matched on the `<dir>/` boundary against the incoming change, so a whole subtree is genuinely guarded (R6 finding 1). The price is real - ANY touch under a protected subtree refuses until a comparison is recorded - so a subtree is registered only where the tree is ours",
+     "supersession_law": "A superseded win is NEVER deleted. It keeps its entry, its evidence and the valid_conditions it still wins under, per the mandate's condition of validity."
+   },
+   "wins": [
+@@ -156,6 +157,222 @@
+       "workload": "llama-server, streamed-MoE, lane-110C round 2 on RIG-A.",
+       "measured_effect": "9 of 263 rebuilds; pipeline init 2472 us -> 0-2 us, about 2.5 ms per token, output coherent.",
+       "valid_conditions": "Streamed-MoE path with the per-ubatch pipeline in play."
++    },
++    {
++      "id": "powerinfer-windows-port-avx-cure",
++      "status": "active",
++      "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` in protected-win-baseline.json (4672638cf). Its own row said the protected paths span a vendored tree and had to be enumerated first; the R6 subtree fix makes `powerinfer/` a guardable path, so the enumeration is no longer owed.",
++      "mechanism": "The ArifiLabs Windows port of the vendored PowerInfer streaming library: the io_uring read path rewritten onto Win32, plus the `-mprefer-vector-width=128` MinGW codegen cure carried on ggml-cpu. The flag is not a tuning preference - the hand-written AVX in this tree spills and crashes under the MinGW/winlibs toolchain without it.",
++      "commit": "4672638cf8eb0bdedb30b264ede342c4ad82803a",
++      "protected_paths": [
++        "powerinfer",
++        "ggml/src/ggml-cpu/CMakeLists.txt"
++      ],
++      "anchors": ["mprefer-vector-width=128"],
++      "evidence": [
++        "board/programs/local-inference/lanes/2026-07-19-lane-110-REPORT.md",
++        "commit:4672638cf8eb0bdedb30b264ede342c4ad82803a"
++      ],
++      "quality_gate": "The streamed path builds and runs to coherent output on Windows (lane-110 RESULTS). Dropping `-mprefer-vector-width=128` reproduces the MinGW hand-AVX crash - docs/CATALOG.md records it as the failure this flag exists to prevent - so a build that is faster without the flag has not passed this gate, it has only stopped crashing later.",
++      "workload": "RIG-A, Windows, MinGW/winlibs build of ggml-cpu plus the vendored powerinfer tree; lane-110 streamed-MoE rounds.",
++      "measured_effect": "ENABLEMENT AND CRASH CURE, no throughput number claimed by this commit. It is what makes the whole streamed-sparse path exist on Windows at all; the throughput that path then reaches is measured by 655f2f9a3 and bca0f5b9a, and belongs to those entries.",
++      "valid_conditions": "Windows / MinGW toolchain. On a Linux or MSVC build the io_uring path and the vector-width cure are not the winning formula and must not be forced there.",
++      "notes": "`powerinfer` is registered as a SUBTREE deliberately: it is a vendored tree carrying our port, new files land inside it, and a file-by-file list would go stale silently. The cost is that any incoming touch under it refuses until a comparison is recorded."
++    },
++    {
++      "id": "powerinfer-expert-bundle-generator",
++      "status": "active",
++      "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (655f2f9a3). Its row asked whether the already-registered `powerinfer-moe-streaming-hook` is the same mechanism. CHECKED, and it is not: that entry protects src/llama-graph.cpp on the anchor EXPERT_BUNDLE_PATH (the READ side); this commit is src/llama-model.cpp on GENERATE_EXPERT_BUNDLE (the WRITE side). Different file, different gate, so it is registered separately rather than folded in as an also_commit.",
++      "mechanism": "Expert-bundle WRITER inside the model loader: with GENERATE_EXPERT_BUNDLE set, the up/gate/down expert matrices of every layer are streamed out through ExpertBundleBuilder in the layout the streaming reader expects, then the process exits. Without it there is no bundle for the streaming hook to consume.",
++      "commit": "655f2f9a33f9c78fe4b375404476bb58a33d75ff",
++      "protected_paths": ["src/llama-model.cpp"],
++      "anchors": ["GENERATE_EXPERT_BUNDLE", "ExpertBundleBuilder"],
++      "opt_out": "GENERATE_EXPERT_BUNDLE unset (the generator never runs)",
++      "evidence": [
++        "board/programs/local-inference/lanes/2026-07-19-lane-110-REPORT.md",
++        "commit:655f2f9a33f9c78fe4b375404476bb58a33d75ff"
++      ],
++      "quality_gate": "The bundle it writes must feed the streaming path to COHERENT output, not merely load - lane-110 RESULTS M2a. Bundle bytes must stay PLAIN Q4_0: the carve-out at 11c9a7702 exists because a runtime repack of those same tensors produced garbage, so a generator change that lets repacked bytes into the bundle fails this gate however fast it writes.",
++      "workload": "RIG-A, Windows, llama-server with GENERATE_EXPERT_BUNDLE, lane-110 M2a round.",
++      "measured_effect": "ENABLEMENT: first disk-streamed sparse inference on Windows proven on this path (RESULTS M2a). No throughput number is claimed by this commit itself.",
++      "valid_conditions": "MoE models with per-expert ffn_up/gate/down tensors. Inert with the env unset."
++    },
++    {
++      "id": "powerinfer-streamed-repack-carveout",
++      "status": "active",
++      "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (11c9a7702); its row asked only that the quality gate be stated before an entry was written, and it is stated below.",
++      "mechanism": "Carve-out in ggml_repack_get_optimal_repack_type: while either expert-bundle env is set, the ffn_up/gate/down expert tensors are refused a repack traits object and fall through to the plain path. The bundle holds plain Q4_0 bytes and the streaming kernels read plain Q4_0, so an AARCH64 repack of those tensors silently reinterprets them.",
++      "commit": "11c9a7702b75135496880546e0660c4f5e1c897a",
++      "protected_paths": ["ggml/src/ggml-cpu/repack.cpp"],
++      "anchors": ["tag:repack-carveout"],
++      "evidence": [
++        "board/programs/local-inference/lanes/2026-07-19-lane-110-REPORT.md",
++        "commit:11c9a7702b75135496880546e0660c4f5e1c897a"
++      ],
++      "quality_gate": "Generated text on the streamed path must be COHERENT, checked end to end (RESULTS rung2 - the defect this fixes was garbage output, not a crash or a slowdown). A test that only asserts the repack traits object is absent does NOT satisfy this gate: the defect was in what the kernels then read.",
++      "workload": "RIG-A, llama-server on the streamed expert-bundle path, lane-110 rung 2, AARCH64 repack reachable.",
++      "measured_effect": "CORRECTNESS: streamed-expert output goes from garbage to coherent (RESULTS rung2). No speed claim.",
++      "valid_conditions": "Any build where the repack traits path can claim expert tensors while an expert bundle is in play.",
++      "notes": "Correctness class, same as escha-w2-decode-correctness: an incoming change that is faster but lets the repack claim streamed experts loses outright. Speed cannot buy this one back."
++    },
++    {
++      "id": "powerinfer-gpu-safe-staging",
++      "status": "active",
++      "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (bca0f5b9a), noted as real and measured; the entry below is that row written out.",
++      "mechanism": "GPU-safe staging edge for the streamed-MoE pipeline: ggml_moe_pipeline_build_tasks builds its output with ggml_dup, not ggml_view_tensor. A view keeps sharing the source buffer, so with -ngl the CPU-side pipeline op would dereference a device pointer; the dup gives the op its own tensor and lets the scheduler insert the device-to-host copy. Carries the CPU zero-copy path and the LANE110_PROF per-op timing gate alongside it.",
++      "commit": "bca0f5b9aada62a95639e407fa4fe1de3e6ec585",
++      "protected_paths": ["ggml/src/ggml.c", "ggml/src/ggml-cpu/ops.cpp"],
++      "anchors": ["tag:gpu-copy", "GGML_OP_MOE_PIPELINE_BUILD_TASKS"],
++      "evidence": [
++        "board/programs/local-inference/lanes/2026-07-19-lane-110-REPORT.md",
++        "commit:bca0f5b9aada62a95639e407fa4fe1de3e6ec585"
++      ],
++      "quality_gate": "The GPU arm must RUN clean, not merely start - the failure this fixes is a segfault on a device pointer, so 'it launched' is not the gate. Coherent output with -ngl 99 -cmoe on the streamed path, lane-110B/C, with the CPU zero-copy arm still coherent in the same round.",
++      "workload": "RIG-A, llama-server, streamed-MoE expert bundle, -ngl 99 -cmoe; lane-110B/C rounds.",
++      "measured_effect": "GPU -ngl 99 -cmoe clean at 4.9 t/s with CPU zero-copy retained (RESULTS lane-110B/C).",
++      "valid_conditions": "Streamed-MoE with any GPU offload in play. With -ngl 0 the dup is redundant but harmless; it must survive anyway, because the defect only appears on the offloaded arm."
++    },
++    {
++      "id": "rocmfpx-weight-formats",
++      "status": "active",
++      "_registered": "2026-09-05, lane-209 rank-3 R6. Was TWO `REGISTRATION OWED` rows (bf0abf0be and 39a585bd5), re-dispositioned there on 2026-09-04 under the President's capability law. They share one guard and one capability, so they are one entry with an also_commit rather than two entries that could drift apart.",
++      "mechanism": "ROCmFP4 / ROCmFPX serialized weight formats: the format sources and their CPU quant, dequant, validate and vec_dot paths, plus the type ids, ftype ids, quantizer wiring and gguf-py registry that make a ROCmFPX artifact loadable. Adopted verbatim from charlie12345/ROCmFPX so its GGUFs and its convert/quantize tooling interoperate byte-for-byte.",
++      "commit": "bf0abf0be6ed1ce4f9c9cefb28fc4adb7ec4bb18",
++      "also_commits": ["39a585bd51901738f3fd9221f2b430270bfd42b9"],
++      "protected_paths": ["ggml/rocmfp4", "ggml/rocmfpx"],
++      "anchors": [
++        "GGML_ARIFI_ROCMFPX_FORMATS",
++        "GGML_TYPE_Q4_0_ROCMFP4",
++        "GGML_FTYPE_MOSTLY_Q4_0_ROCMFP4",
++        "LLAMA_FTYPE_MOSTLY_Q2_0_ROCMFPX",
++        "rocmfpx_quantize"
++      ],
++      "opt_out": "GGML_ARIFI_ROCMFPX_FORMATS OFF (the default build)",
++      "evidence": [
++        "research/local-inference/trial-evidence/110/",
++        "commit:bf0abf0be6ed1ce4f9c9cefb28fc4adb7ec4bb18",
++        "commit:39a585bd51901738f3fd9221f2b430270bfd42b9"
++      ],
++      "quality_gate": "Both ROCmFPX conformance suites pass on our compiler against the ported sources - test_rocmfpx (fp3/fp6/fp8 mse and imatrix weighting) and test_rocmfp2_reference (32520 checks, fingerprint 78389c1c8a0a57a2). Plus the fail-closed half: with the formats compiled OUT, the same artifact must still be REFUSED loudly (`type 100 ((null)) ... not a multiple of block size (0)`), never silently mis-decoded. Round-trip quantizer output for these types is UNMEASURED and is not covered by this gate.",
++      "workload": "RIG-A, llama-server per F-085, -ngl 0, native artifact models/rocmfpx-trial/ornith-9b-mtp-kl-Q4_0_ROCMFP4_COHERENT.gguf (257 tensors at type-id 100).",
++      "measured_effect": "CAPABILITY, measured as loadable and correct, not as fast: the native ROCmFP4 artifact loads in llama-server and completes \"The capital of France is\" with \" Paris.\" at 3.24 tok/s on -ngl 0. No ON-path performance claim is made - throughput is UNMEASURED.",
++      "valid_conditions": "Builds with GGML_ARIFI_ROCMFPX_FORMATS ON, and any build at all for the ids: the enum values are unconditional ABI on purpose, because a file may carry them regardless of what this build can decode. An upstream change that renumbers or removes the ROCMFP* ids breaks interoperation with charlie12345/ROCmFPX artifacts even on a build that cannot decode them.",
++      "notes": "protected_paths names only the two subtrees that are wholly this mechanism. The shared core files it also touches (ggml.h, ggml.c, ggml-quants.c, ggml-cpu.c, ops.cpp, llama.h, llama-model-loader.cpp, llama-quant.cpp, quantize.cpp, gguf-py/gguf/constants.py) are guarded by the ANCHOR half instead, deliberately: those files change on nearly every bump, and pinning them as paths would refuse every sync for a reason that is almost never the real one. The anchors catch what actually threatens this win - a renumbering or removal of the type/ftype ids. That is a signal-to-noise choice and it is named here so it can be revisited, not discovered."
++    },
++    {
++      "id": "cpu-vnni-repack-default-off",
++      "status": "active",
++      "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (e44c0bb0d), which said the protected paths and quality gate for a DEFAULT, as distinct from a kernel, were not settled. They are settled below: the path is the predicate's own file and the gate is engagement in both arms.",
++      "mechanism": "The measured DEFAULT decision on top of the VNNI repack slot: ggml_arifi_vnni_repack_enabled() returns true only for an exact \"1\", so unset takes the no-repack branch. This DIVERGES DELIBERATELY from PrismML's upstream default of ON. It is a different object from the kernel it gates - `cpu-vnni-repack-dual-residency` protects the kernel, and every anchor of that entry would still resolve after this default was flipped back.",
++      "commit": "e44c0bb0d39808d40ec06649dabfb58a93595a7d",
++      "protected_paths": ["ggml/src/ggml-cpu/repack.cpp"],
++      "anchors": [
++        "ggml_arifi_vnni_repack_enabled",
++        "DEFAULT OFF. Only an exact \"1\" enables the slot"
++      ],
++      "opt_out": "GGML_ARIFI_VNNI_REPACK=1 restores the upstream default behaviour exactly",
++      "evidence": [
++        "docs/OPTIONS-REGISTRY.md",
++        "research/local-inference/trial-evidence/110/vnni-default-flip/",
++        "commit:e44c0bb0d39808d40ec06649dabfb58a93595a7d"
++      ],
++      "quality_gate": "ENGAGEMENT re-verified in BOTH arms on one binary with only the env flip: unset produces no `load_tensors: CPU_REPACK model buffer size` line at all, `=1` produces it (4.68 MiB on the g64 fixture), and both arms return coherent text with no NaN. A default that reads as OFF but still allocates the repack buffer has not passed this gate.",
++      "workload": "RIG-A, llama-server per F-085, `-ngl 0 --no-host -c 1024 -t 8 -v`, temp 0, top_k 1, seed 42, cache_prompt false, fresh server per arm, env flip only; the numbers below come from the earlier full protocol in docs/OPTIONS-REGISTRY.md (two g64 models, three interleaved replicates x 5 rolls, roll 1 dropped, n=9 per arm).",
++      "measured_effect": "The DECISION is what is measured, and it is a two-sided trade taken on numbers: on the default Vulkan-enabled build, OFF avoids a -77.1% / -88.1% prompt regression and forgoes a +20.1% / +28.4% decode gain, ranges disjoint in all four. The flip itself changes branch selection and not either kernel, so no kernel was re-timed for it.",
++      "valid_conditions": "The default is right for a Vulkan-enabled build, where a repacked weight loses large-batch GPU-offload eligibility. On a CPU-only path (-dev none) the same slot is +326.7% / +441.8% prompt and +19.9% / +23.6% decode, which is exactly why it stays compiled in and one env var away. An upstream bump that restored ON-when-unset would forfeit a measured decision while every anchor of the kernel entry still resolved.",
++      "notes": "NOT a pre-slot restore switch on x86: c7645a0df also replaced the x86 ggml_vec_dot_q2_0_q8_0, which is selected at compile time and sits outside this toggle. OFF selects the new vec_dot kernel, not the one that predated the slot."
++    },
++    {
++      "id": "cpu-vnni-repack-g128-kernels",
++      "status": "active",
++      "_registered": "2026-09-05, lane-209 rank-3 R6. Closes the `REGISTRATION OWED` row on e20a8df7f, whose own disposition said: 'What is owed is the KERNEL commit's registration, which this row names so it cannot be lost.' So the entry is keyed on the kernel commit e96d7484a, with the docs commit that banks its speed as an also_commit. e96d7484a's own baseline row is terminal ('CORRECTNESS ONLY, SPEED UNMEASURED') and stays exactly as written - it was true when written; the speed arrived later, in e20a8df7f.",
++      "mechanism": "CPU repack kernel set for the 128-group ternary format: its own block type (block_q2_0_g128x4), its own gemv/gemm instantiations and its own dispatch arm for GGML_TYPE_Q2_0_G128. It deliberately does NOT share the g64 kernels - a g128 row driven through a g64 kernel is mis-strided silent wrong math rather than a crash.",
++      "commit": "e96d7484aeae539637d4be1f52669f91f9c3f4db",
++      "also_commits": ["e20a8df7f5dc1b0761e56019f5eecdbcd1bc707f"],
++      "protected_paths": [
++        "ggml/src/ggml-cpu/repack.cpp",
++        "ggml/src/ggml-cpu/repack.h",
++        "ggml/src/ggml-cpu/arch/x86/repack.cpp",
++        "ggml/src/ggml-cpu/arch-fallback.h"
++      ],
++      "anchors": [
++        "ggml_gemv_q2_0_g128_4x8_q8_0",
++        "ggml_gemm_q2_0_g128_4x8_q8_0",
++        "block_q2_0_g128x4",
++        "GGML_TYPE_Q2_0_G128"
++      ],
++      "opt_out": "GGML_ARIFI_VNNI_REPACK unset (the g128 arm is inside the same slot)",
++      "evidence": [
++        "docs/FINDINGS.md",
++        "docs/OPTIONS-REGISTRY.md",
++        "commit:e96d7484aeae539637d4be1f52669f91f9c3f4db",
++        "commit:e20a8df7f5dc1b0761e56019f5eecdbcd1bc707f"
++      ],
++      "quality_gate": "Token-identical to the scalar path with max |delta logprob| 0.021-0.040, inside the F-05 band, and the repack buffer actually claimed (1759.50 MiB = 252 of 254 ternary tensors on Ternary-Bonsai-8B-Q2_0.g128). The negative half is part of the gate and was run: g128-packed weights pushed through the g64 kernel are required to come out WRONG, which is what proves the two arms are really separate.",
++      "workload": "RIG-A, llama-server, Ternary-Bonsai-8B-Q2_0.g128.gguf, `-ngl 0 --no-host -c 2048 -t 8`, 519-token prefill, n_predict 128, modes interleaved across three replicates x 5 rolls, roll 1 dropped, n=12 per cell, one binary with only the env flip.",
++      "measured_effect": "Against the g128 scalar path (mode 0), mode 2 (dual residency): decode 2.01 -> 6.69 tok/s (+232.6%, a 3.3x decode win) and prompt 59.09 -> 85.84 tok/s (+45.3%). Mode 1 wins decode (6.67, +231.6%) but pays prompt (17.44, -70.5%). Every figure has non-overlapping ranges. The prompt gain's MECHANISM is assumed, not measured: graph splits are 467 in both mode 0 and mode 2.",
++      "valid_conditions": "CPU tier, Q2_0_G128 models, -ngl 0. The g128 win is far larger than g64's +22-24% for a stated reason - g64 already had a fast scalar vec_dot and g128 never did - so a g64 number must never be read onto this row, nor this one onto g64.",
++      "notes": "Registered separately from cpu-vnni-repack-dual-residency because the objects are separate: that entry's measured effect is g64 and its anchor is the env var, and neither would notice the g128 block type, kernels or dispatch arm going away."
++    },
++    {
++      "id": "moe-cache-heat-protected-eviction",
++      "status": "active",
++      "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (a38d6c409) as a carried mechanism with third-party numbers only. It is registered rather than left owed because every required field IS honestly describable - including the measured effect, which is describable precisely as somebody else's.",
++      "mechanism": "Heat-aware MoE cache eviction: each slot counts resident uses, and the victim picker prefers the least-recently-used slot at or below the hot threshold, falling back to the LRU head only when every eligible slot is hot. A hot-sacrifice counter (heat_evictions) makes the policy observable rather than assumed.",
++      "commit": "a38d6c409f856be1aaeb5003a91045af65ca9aec",
++      "protected_paths": [
++        "ggml/src/ggml-moe-cache-common.h",
++        "ggml/src/ggml-cuda/moe-cache.cu",
++        "ggml/src/ggml-metal/ggml-metal-moe-cache.mm",
++        "ggml/src/ggml-vulkan/ggml-vulkan-moe-cache.cpp"
++      ],
++      "anchors": ["moe_cache_pick_victim", "GGML_CUDA_MOE_CACHE_HOT_USES", "heat_evictions"],
++      "opt_out": "GGML_CUDA_MOE_CACHE_HOT_USES=0 (every slot is cold, i.e. plain LRU)",
++      "evidence": [
++        "docs/backend/MOE-CACHE.md",
++        "commit:a38d6c409f856be1aaeb5003a91045af65ca9aec"
++      ],
++      "quality_gate": "The policy must not change what is computed, only what stays resident: identical output against the plain-LRU arm, with heat_evictions readable and a steady zero meaning hot experts stayed resident. NOT YET RUN ON THIS ESTATE - see valid_conditions; the gate is stated so that whoever first has the hardware runs the right thing rather than inventing one.",
++      "workload": "MoE decode with a cache pool smaller than the working set, so eviction is actually reached. The source's own workload is Laguna S-2.1 on an RTX 5090.",
++      "measured_effect": "THIRD-PARTY, NOT OURS AND NOT ADOPTED AS OURS: llama-cpp-turboquant reports +12% TG (soft) / +7.5% (auto) on an RTX 5090. UNMEASURED on this estate - a CUDA measurement on hardware we do not have.",
++      "valid_conditions": "Any backend whose MoE cache pool fills. Carried and inert here rather than broken: the Vulkan arm is wired, but this seat has never run a model whose expert working set overflows the pool, so the policy is not reached. Inert is not the same as absent, and under the President's capability law only BROKEN is droppable.",
++      "notes": "Registered with a third-party number stated AS third-party, first, so the truncated `measured :` line the preflight prints on a refusal still carries the label. An estate measurement is owed the day this seat runs a model that overflows the pool; until then the entry protects the mechanism, not a number of ours."
++    },
++    {
++      "id": "cuda-tq3-4s-kernels",
++      "status": "active",
++      "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (8561db379). Registered on describability, not on an on-seat number, exactly as vulkan-tq-matvec-subgroup is registered with valid_conditions naming the hardware it wins on.",
++      "mechanism": "TQ3_4S CUDA kernel set lifted from tq3/master: native TQ3_4S convert, getrows, mmq, mmvq and quantize paths including the PRMT vec_dot, trimmed to TQ3_4S only and adapted to upstream b10488. A hunk port, not a cherry-pick - the trees diverge by whole subsystems.",
++      "commit": "8561db37993c9b326549aed2c996b0dcb24ecfc7",
++      "protected_paths": [
++        "ggml/src/ggml-cuda/tq3-native.cu",
++        "ggml/src/ggml-cuda/tq3-native.cuh",
++        "ggml/src/ggml-cuda/template-instances/mmq-instance-tq3_4s.cu"
++      ],
++      "anchors": ["tq3_4s_native", "tq3-native.cuh"],
++      "evidence": ["commit:8561db37993c9b326549aed2c996b0dcb24ecfc7"],
++      "quality_gate": "NOT YET RUN ON THIS ESTATE (no CUDA silicon). The gate when it can be run: test-backend-ops TQ3_4S coverage green on a CUDA device, and decode output checked against the CPU TQ3_4S path - the failure class for a lifted quant kernel is silent wrong math, so a speed number without an output check does not satisfy it.",
++      "workload": "CUDA device, llama-bench decode on a TQ3_4S model. The tq3-side workload is RTX 3090 tg128.",
++      "measured_effect": "UNMEASURED ON THIS SEAT (no CUDA silicon). THIRD-PARTY reference from tq3/master, quoted and not adopted as ours: RTX 3090 tg128 43.1 -> 47.4 t/s (PRMT vec_dot), Ampere decode +35% (3d3888c9f).",
++      "valid_conditions": "NVIDIA CUDA devices running TQ3_4S. Carried capability, inert here, not broken. The anchor `tq3_4s_native` is CUDA-unique on purpose: the bare string TQ3_4S also lives in the CPU and Metal paths, so it would keep validating after the CUDA set alone was deleted."
++    },
++    {
++      "id": "metal-tq3-4s-kernels",
++      "status": "active",
++      "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (24f43e45c), on the same reasoning as the CUDA row above.",
++      "mechanism": "TQ3_4S Metal kernel set lifted from tq3/master: the TQ3_4S mat-vec kernels and their device/ops wiring plus the alloc hook, trimmed to TQ3_4S only, with the dispatch-hook placement restored to the 02d51f048 original because the tip had regressed it.",
++      "commit": "24f43e45cdf65dc539e62c55c6dd65e6be71c6d5",
++      "protected_paths": [
++        "ggml/src/ggml-metal/ggml-metal.metal",
++        "ggml/src/ggml-metal/ggml-metal-ops.cpp"
++      ],
++      "anchors": ["kernel_mul_mv_tq3_4s"],
++      "evidence": ["commit:24f43e45cdf65dc539e62c55c6dd65e6be71c6d5"],
++      "quality_gate": "NOT YET RUN ON THIS ESTATE (no Metal silicon). The gate when it can be run: test-backend-ops TQ3_4S coverage green on a Metal device, and decode output checked against the CPU TQ3_4S path. Same reasoning as the CUDA entry - a lifted quant kernel fails silently, so speed alone is not the gate.",
++      "workload": "Apple Metal device, decode on a TQ3_4S model. The tq3-side workload is an M3 Pro at 27B.",
++      "measured_effect": "UNMEASURED ON THIS SEAT (no Metal silicon). THIRD-PARTY reference from tq3/master, quoted and not adopted as ours: M3 Pro 27B decode ~4 t/s, about 27x over CPU (02d51f048).",
++      "valid_conditions": "Apple Metal devices running TQ3_4S. Carried capability, inert here, not broken.",
++      "notes": "protected_paths are shared upstream Metal files, so an upstream Metal bump will refuse this entry until a comparison is recorded. Accepted deliberately: there is no Metal file that is wholly ours, and the alternative is a capability nobody on this estate can test disappearing without anyone noticing. The dispatch-hook placement is part of the win - the tip regression it restores is the failure mode to compare against."
+     }
+   ]
+ }
+diff --git a/tools/arifi-sync/test_arifi_sync.py b/tools/arifi-sync/test_arifi_sync.py
+index 9326d8f5d..f3d58c11c 100644
+--- a/tools/arifi-sync/test_arifi_sync.py
++++ b/tools/arifi-sync/test_arifi_sync.py
+@@ -290,6 +290,45 @@ class ProtectedWinTest(unittest.TestCase):
+         problems = A.validate_protected_wins(self.r.path, "main")
+         self.assertTrue(any("anchor" in p for p in problems), problems)
+ 
++    def test_a_protected_SUBTREE_is_actually_guarded(self):
++        """R6 finding 1, 2026-09-05. A directory `protected_path` validated but guarded NOTHING.
++
++        `git cat-file -e <ref>:<dir>` succeeds on a tree, so `validate` reported the entry healthy.
++        `protected_collisions` then intersected the path SET against `git diff --name-only`, which
++        only ever emits FILES, so a registered subtree could never produce a hit. Registered path,
++        zero guard, green gate - the exact silent overwrite the mandate is about. This test fails
++        on the old code."""
++        self._write_manifest(self._entry(protected_paths=["ggml"]))
++        self.assertEqual([], A.validate_protected_wins(self.r.path, "main"))
++        inc = self._incoming({"ggml/other.c": "int upstream(void) { return 1; }\n"},
++                             "upstream: land a file inside our protected subtree")
++        self.assertEqual(1, self._check(inc))
++
++    def test_a_path_that_merely_SHARES_A_PREFIX_still_passes(self):
++        """The must-not-fire half of the subtree fix: prefix matching is on the DIRECTORY boundary,
++        not on the raw string, so a sibling that happens to start with a protected file's name is
++        not a collision. Without this, `ggml/kernel.c` would swallow `ggml/kernel.c.bak`."""
++        inc = self._incoming({"ggml/kernel.c.bak": "backup\n"}, "upstream: an unrelated sibling")
++        self.assertEqual(0, self._check(inc))
++
++    def test_an_anchor_that_survives_only_in_patches_series_is_STALE(self):
++        """R6 finding 2, 2026-09-05. `_anchor_present` grepped the WHOLE tree, and this fork bakes
++        every mechanism into `patches/series/*.patch` by design. So after a fork ingest deleted our
++        branch from the source file, the anchor was still found - in our own generated patch - and
++        `validate` stayed GREEN over a manifest that no longer guarded live code.
++
++        The series is a RECORD of the mechanism, never the mechanism itself, so it is excluded from
++        the anchor search. This test fails on the old code."""
++        self.r.commit("regen: bank the series",
++                      {"patches/series/0001-our-win.patch":
++                       "+int win(void) { return ARIFI_FAST_PATH; }\n"},
++                      effect="generated artifacts only")
++        self.r.commit("fork: drop the fast path",
++                      {"ggml/kernel.c": "int win(void) { return 0; }\n"},
++                      effect="correctness only")
++        problems = A.validate_protected_wins(self.r.path, "main")
++        self.assertTrue(any("anchor" in p for p in problems), problems)
++
+     def test_evidence_backed_resolution_unblocks_the_collision(self):
+         inc = self._incoming({"ggml/kernel.c": "int win(void) { return 0; }\n"},
+                              "upstream: rewrite the kernel")

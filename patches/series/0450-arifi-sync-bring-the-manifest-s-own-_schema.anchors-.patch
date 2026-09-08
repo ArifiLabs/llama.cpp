@@ -1,0 +1,36 @@
+From 4511d79f77f74e316e8adc5cb24a9a14cae3fba4 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 5 Sep 2026 12:42:06 -0400
+Subject: [PATCH] arifi-sync: bring the manifest's own `_schema.anchors` fact
+ up to the source-only rule
+
+The R6B commit 1bc59e690 widened `_anchor_present` from one excluded home to four, but left
+`protected-wins.json`'s `_schema.anchors` describing only the `patches/series` exclusion. That is
+superseded canon sitting in the register a registrar reads FIRST while writing an entry - the
+F-087/F-106 drift class, and it would have taught the next author the rule that just failed.
+
+The fact now names all four homes and their reasons, states the consequence for a prose-only
+anchor, and points at the two full contracts (UPDATE-RUNBOOK 4.3, the `_anchor_present`
+docstring) rather than paraphrasing them a third time. No entry, no measured claim and no
+count is touched: validate still reads 17 entries / 33 protected paths / 35 anchors.
+
+Origin: ArifiLabs (native)
+Measured-effect: tooling and documentation only; a stale schema fact corrected, no code path changed
+Lane: lane-209
+---
+ tools/arifi-sync/protected-wins.json | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index 314c6d494..ffc0013cf 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -23,7 +23,7 @@
+     "required_when_superseded": ["superseded_by", "comparison_evidence", "valid_conditions"],
+     "status": "active | superseded",
+     "evidence": "a repo- or studio-relative path, or `commit:<sha>` when the measurement table lives in the commit message",
+-    "anchors": "distinctive symbols/env gates whose REMOVAL by an incoming diff is itself a collision, even when the file survives. Searched in SOURCE only - patches/series/ is excluded, because this fork bakes every mechanism into a generated patch and a whole-tree grep would find our own anchor there long after an ingest deleted it from the code (R6 finding 2)",
++    "anchors": "distinctive symbols/env gates whose REMOVAL by an incoming diff is itself a collision, even when the file survives. Searched in SOURCE only: an anchor names a mechanism in LIVE CODE, so every home that merely RECORDS the name is excluded - `patches/series/` because this fork bakes every mechanism into a generated patch (R6 finding 2); `tools/arifi-sync/` because THIS FILE is tracked and lists every anchor literal by construction, which made the rule structurally unable to report any anchor absent (R6B, the blocking finding); and `*.md` plus root `docs/` because prose is not a mechanism (R6B note N2). Write an anchor that only prose says, and validation will correctly call it absent. Full contract: UPDATE-RUNBOOK 4.3 and the `_anchor_present` docstring",
+     "protected_paths": "a file, or a DIRECTORY. A directory is matched on the `<dir>/` boundary against the incoming change, so a whole subtree is genuinely guarded (R6 finding 1). The price is real - ANY touch under a protected subtree refuses until a comparison is recorded - so a subtree is registered only where the tree is ours",
+     "supersession_law": "A superseded win is NEVER deleted. It keeps its entry, its evidence and the valid_conditions it still wins under, per the mandate's condition of validity."
+   },

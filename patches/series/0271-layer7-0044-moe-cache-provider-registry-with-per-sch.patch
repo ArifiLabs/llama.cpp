@@ -1,0 +1,32 @@
+From 03955dd69dd52f48cb39be502c148fcd6301f414 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 20:53:10 -0400
+Subject: [PATCH] 
+ layer7/0044-moe-cache-provider-registry-with-per-scheduler-selec.patch
+
+---
+ ggml/src/ggml-backend-moe-cache.h | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-backend-moe-cache.h b/ggml/src/ggml-backend-moe-cache.h
+index cf37588d9..8186bebd9 100644
+--- a/ggml/src/ggml-backend-moe-cache.h
++++ b/ggml/src/ggml-backend-moe-cache.h
+@@ -99,8 +99,16 @@ struct ggml_moe_cache_api {
+     void (*invalidate)(const void * base, size_t size);
+ };
+ 
+-GGML_API struct ggml_moe_cache_api ggml_moe_cache;
++GGML_API void ggml_moe_cache_register(const struct ggml_moe_cache_api * api);
+ GGML_API void ggml_moe_cache_unregister(const void * owner);
++// Returns a copy of the provider table registered for owner, zeroed if absent.
++// The scheduler keeps this copy with its session so later registration changes
++// cannot alter the session's callbacks.
++GGML_API struct ggml_moe_cache_api ggml_moe_cache_get(const void * owner);
++// Active provider table for the current thread: set by the scheduler while it
++// executes a graph with a cache session; falls back to the first registered
++// provider for direct CPU users.
++GGML_API struct ggml_moe_cache_api ggml_moe_cache_active(void);
+ GGML_API void ggml_backend_sched_set_moe_cache(
+         ggml_backend_sched_t sched, enum ggml_moe_cache_mode mode, size_t budget_mib);
+ 
