@@ -344,6 +344,59 @@ void ggml_vec_dot_q4_1_q8_1_generic(int n, float * GGML_RESTRICT s, size_t bs, c
     *s = sumf;
 }
 
+// S-X8 v4.3 x Q8_1. Taken-from: MarlaLabs llama-cpp-sx8.patch (ggml-cpu/quants.c), with one
+// correction: the author added block_q8_1.s / 32 to every activation. In this tree s = d * sum(qs)
+// (the block sum, kept for the Q4_1-style min term), so that added mean(y) * sum(w) per block.
+// The author's own CUDA MMQ path uses y = d * qs; this port does the same everywhere.
+void ggml_vec_dot_sx8_q8_1_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    assert(nrc == 1);
+    UNUSED(nrc);
+    UNUSED(bx);
+    UNUSED(by);
+    UNUSED(bs);
+    assert(n % QKSX8 == 0);
+    static_assert(QKSX8 == QK8_1, "QKSX8 and QK8_1 must be the same");
+
+    const block_sx8  * GGML_RESTRICT x = vx;
+    const block_q8_1 * GGML_RESTRICT y = vy;
+
+    const int nb = n / QKSX8;
+
+    float sumf = 0;
+
+    for (int ib = 0; ib < nb; ++ib) {
+        const float lo_f = GGML_CPU_FP16_TO_FP32(x[ib].dmin);
+        const float hi_f = GGML_CPU_FP16_TO_FP32(x[ib].dmax);
+        const float q    = (hi_f - lo_f) * 0.25f;
+        const uint8_t cfg = x[ib].config;
+        const float yd = GGML_CPU_FP16_TO_FP32(y[ib].d);
+
+        float sumb = 0;
+        for (int sb = 0; sb < 4; ++sb) {
+            const int s_ = (cfg >> (sb * 2)) & 3;
+            const float rlo = lo_f + q * (float)(3 * (s_ == 2) + (s_ == 3));
+            const float rhi = hi_f - q * (float)(3 * (s_ == 1) + (s_ == 3));
+            float step = (rhi - rlo) * 0.015873f;
+            if (step < 1e-10f) step = 1e-10f;
+
+            int   sumi = 0;
+            int   sumq = 0;
+            for (int j = sb * 8; j < sb * 8 + 8; ++j) {
+                const int hi = (x[ib].qh[j >> 1] >> ((j & 1) * 4)) & 0xF;
+                const int lo = (x[ib].ql[j >> 2] >> ((3 - (j & 3)) * 2)) & 0x3;
+                const int lv = (hi << 2) | lo;
+                sumi += lv * y[ib].qs[j];
+                sumq += y[ib].qs[j];
+            }
+            // sum_j (rlo + step*lv_j) * qs_j = rlo * sum(qs) + step * sum(lv*qs)
+            sumb += rlo * (float) sumq + step * (float) sumi;
+        }
+        sumf += yd * sumb;
+    }
+
+    *s = sumf;
+}
+
 void ggml_vec_dot_mxfp4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
     assert(nrc == 1);
     UNUSED(nrc);

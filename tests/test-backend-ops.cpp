@@ -9573,6 +9573,8 @@ static const ggml_type all_types[] = {
     GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ1_S, GGML_TYPE_IQ1_M,
     GGML_TYPE_IQ4_NL, GGML_TYPE_IQ3_S, GGML_TYPE_IQ4_XS,
     GGML_TYPE_TQ3_1S, GGML_TYPE_TQ4_1S,
+    // S-X8 v4.3 (id 57). CPU-only kernels today; backends without it report not supported.
+    GGML_TYPE_SX8,
     // tq3 family (ids 48..51, TYPE-ID-ALLOCATION 3.1.1). Listing them here is the
     // whole backend sweep: get_rows, mul_mat and cpy on every built backend.
     GGML_TYPE_TQ3_4S, GGML_TYPE_TQ3_0, GGML_TYPE_TQ3_4SE, GGML_TYPE_TQ3_1S_SHIFT,

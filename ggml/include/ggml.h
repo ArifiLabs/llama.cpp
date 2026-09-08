@@ -474,6 +474,12 @@ extern "C" {
         GGML_TYPE_ESCHA2 = 55, // Escha cbA K=2: 64 B / 256-weight tile, 2 bpw
         GGML_TYPE_ESCHA3 = 56, // Escha cbA K=3: 96 B / 256-weight tile, 3 bpw
 
+        // Block W, 57 - S-X8 v4.3 (MarlaLabs, Apache-2.0), RETAGGED like tq3: the
+        // author serializes it at 41, which is upstream Q1_0 in files that exist.
+        // Files carrying 41 must go through tools/gguf-retag-sx8 (30 B / 32 geometry
+        // check) before they load here. Taken-from: MarlaLabs llama-cpp-sx8.patch.
+        GGML_TYPE_SX8 = 57, // dmin/dmax f16 + 4 x 2-bit range strategy + 6-bit levels, 30 B / 32, 7.50 bpw
+
         // Block W, 100..107 - ROCmFPX weight formats, adopted VERBATIM from
         // charlie12345/ROCmFPX so its GGUFs and its convert/quantize tooling
         // interoperate byte-for-byte. The implementations are compiled only when

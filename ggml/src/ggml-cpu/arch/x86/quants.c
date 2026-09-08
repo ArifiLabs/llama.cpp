@@ -4190,3 +4190,104 @@ void ggml_vec_dot_iq4_xs_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const v
     ggml_vec_dot_iq4_xs_q8_K_generic(n, s, bs, vx, bx, vy, by, nrc);
 #endif
 }
+
+// S-X8 v4.3 x Q8_1, AVX2 body. Taken-from: MarlaLabs llama-cpp-sx8.patch (arch/x86/quants.c).
+// Same algebra as the generic: per 8-weight sub-block w = rlo + step * lv, so
+// sum(w * y) = yd * (rlo * sum(qs) + step * sum(lv * qs)). The 6-bit levels are unpacked to
+// int8 lanes with shifts and masks; the two sub-block sums come out of one madd chain.
+// The author's "+ s/32" activation term is dropped here as in the generic (see quants.c).
+void ggml_vec_dot_sx8_q8_1(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    assert(nrc == 1);
+    UNUSED(nrc);
+    UNUSED(bx);
+    UNUSED(by);
+    UNUSED(bs);
+    assert(n % QKSX8 == 0);
+
+    const block_sx8  * GGML_RESTRICT x = vx;
+    const block_q8_1 * GGML_RESTRICT y = vy;
+
+    const int nb = n / QKSX8;
+
+#if defined(__AVX2__)
+    const __m128i m4  = _mm_set1_epi8(0x0F);
+    const __m128i m3  = _mm_set1_epi8(0x03);
+    const __m256i one = _mm256_set1_epi16(1);
+    // ql[j>>2] holds 4 quads, weight (j&3)==0 in the TOP two bits: byte order within a quad is 3-j.
+    const __m128i ql_shuf = _mm_setr_epi8(0,0,0,0, 1,1,1,1, 2,2,2,2, 3,3,3,3);
+    const __m128i qh_shuf = _mm_setr_epi8(0,0, 1,1, 2,2, 3,3, 4,4, 5,5, 6,6, 7,7);
+
+    __m256 acc = _mm256_setzero_ps();
+
+    for (int ib = 0; ib < nb; ++ib) {
+        const float lo_f = GGML_CPU_FP16_TO_FP32(x[ib].dmin);
+        const float hi_f = GGML_CPU_FP16_TO_FP32(x[ib].dmax);
+        const float q    = (hi_f - lo_f) * 0.25f;
+        const uint8_t cfg = x[ib].config;
+        const float yd = GGML_CPU_FP16_TO_FP32(y[ib].d);
+
+        // 32 levels lv[j] = (hi << 2) | lo as int8 lanes, in two 128-bit halves of 16 weights each.
+        const __m128i qh = _mm_loadu_si128((const __m128i *) x[ib].qh); // 16 B = 32 nibbles
+        const __m128i ql = _mm_loadl_epi64((const __m128i *) x[ib].ql); //  8 B = 32 quads
+
+        __m128i lv[2];
+        for (int h = 0; h < 2; ++h) {
+            // hi: bytes 8h..8h+7 of qh, each expanded to two lanes (even lane = low nibble)
+            const __m128i hb = _mm_shuffle_epi8(_mm_srli_si128(qh, 8 * h), qh_shuf);
+            const __m128i hi_even = _mm_and_si128(hb, m4);
+            const __m128i hi_odd  = _mm_and_si128(_mm_srli_epi16(hb, 4), m4);
+            const __m128i lane_odd = _mm_set1_epi16((short) 0xFF00);
+            const __m128i hi = _mm_blendv_epi8(hi_even, hi_odd, lane_odd);
+            // lo: bytes 4h..4h+3 of ql, each expanded to four lanes, quad k at shift (3-k)*2
+            const __m128i lb = _mm_shuffle_epi8(_mm_srli_si128(ql, 4 * h), ql_shuf);
+            const __m128i lo0 = _mm_and_si128(_mm_srli_epi16(lb, 6), m3);
+            const __m128i lo1 = _mm_and_si128(_mm_srli_epi16(lb, 4), m3);
+            const __m128i lo2 = _mm_and_si128(_mm_srli_epi16(lb, 2), m3);
+            const __m128i lo3 = _mm_and_si128(lb, m3);
+            const __m128i sel1 = _mm_setr_epi8(0,-1,0,0, 0,-1,0,0, 0,-1,0,0, 0,-1,0,0);
+            const __m128i sel2 = _mm_setr_epi8(0,0,-1,0, 0,0,-1,0, 0,0,-1,0, 0,0,-1,0);
+            const __m128i sel3 = _mm_setr_epi8(0,0,0,-1, 0,0,0,-1, 0,0,0,-1, 0,0,0,-1);
+            __m128i lo = _mm_blendv_epi8(lo0, lo1, sel1);
+            lo = _mm_blendv_epi8(lo, lo2, sel2);
+            lo = _mm_blendv_epi8(lo, lo3, sel3);
+            lv[h] = _mm_or_si128(_mm_slli_epi16(hi, 2), lo); // hi <= 15 so the shift stays in-lane
+        }
+
+        const __m256i q8  = _mm256_loadu_si256((const __m256i *) y[ib].qs);
+        const __m256i lv8 = MM256_SET_M128I(lv[1], lv[0]);
+        // per 16-bit pair: lv*qs summed over 2 lanes, then per 32-bit: summed over 4 lanes
+        const __m256i p16 = _mm256_maddubs_epi16(lv8, q8);           // lv is unsigned 0..63, qs signed
+        const __m256i p32 = _mm256_madd_epi16(p16, one);             // 8 x i32, one per 4 weights
+        const __m256i s16 = _mm256_maddubs_epi16(_mm256_set1_epi8(1), q8);
+        const __m256i s32 = _mm256_madd_epi16(s16, one);             // 8 x i32 sum(qs) per 4 weights
+        // fold pairs of 4-weight sums into 8-weight sub-block sums (lanes 0..3 = sub-blocks 0..3)
+        const __m256i pi = _mm256_hadd_epi32(p32, s32);              // [p01 p23 s01 s23 | p45 p67 s45 s67]
+        float tmp[8];
+        _mm256_storeu_ps(tmp, _mm256_cvtepi32_ps(pi));
+        const float sumi[4] = { tmp[0], tmp[1], tmp[4], tmp[5] };
+        const float sumq[4] = { tmp[2], tmp[3], tmp[6], tmp[7] };
+
+        float rlo[4], step[4];
+        for (int sb = 0; sb < 4; ++sb) {
+            const int s_ = (cfg >> (sb * 2)) & 3;
+            rlo[sb] = lo_f + q * (float)(3 * (s_ == 2) + (s_ == 3));
+            const float rhi = hi_f - q * (float)(3 * (s_ == 1) + (s_ == 3));
+            step[sb] = (rhi - rlo[sb]) * 0.015873f;
+            if (step[sb] < 1e-10f) step[sb] = 1e-10f;
+        }
+        const __m256 v_rlo  = _mm256_setr_ps(rlo[0],  rlo[1],  rlo[2],  rlo[3],  0, 0, 0, 0);
+        const __m256 v_step = _mm256_setr_ps(step[0], step[1], step[2], step[3], 0, 0, 0, 0);
+        const __m256 v_sumq = _mm256_setr_ps(sumq[0], sumq[1], sumq[2], sumq[3], 0, 0, 0, 0);
+        const __m256 v_sumi = _mm256_setr_ps(sumi[0], sumi[1], sumi[2], sumi[3], 0, 0, 0, 0);
+        const __m256 blk = _mm256_fmadd_ps(v_step, v_sumi, _mm256_mul_ps(v_rlo, v_sumq));
+        acc = _mm256_fmadd_ps(_mm256_set1_ps(yd), blk, acc);
+    }
+
+    *s = hsum_float_8(acc);
+#else
+    UNUSED(x);
+    UNUSED(y);
+    UNUSED(nb);
+    ggml_vec_dot_sx8_q8_1_generic(n, s, bs, vx, bx, vy, by, nrc);
+#endif
+}

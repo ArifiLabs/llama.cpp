@@ -660,6 +660,12 @@ static const struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {
         .vec_dot_type             = GGML_TYPE_Q8_0,
         .nrows                    = 1,
     },
+    [GGML_TYPE_SX8] = {
+        .from_float               = (ggml_from_float_t) quantize_row_sx8_ref,
+        .vec_dot                  = ggml_vec_dot_sx8_q8_1,
+        .vec_dot_type             = GGML_TYPE_Q8_1,
+        .nrows                    = 1,
+    },
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
     [GGML_TYPE_TQ3_1S] = {
         .from_float               = (ggml_from_float_t) quantize_row_tq3_1s_ref,

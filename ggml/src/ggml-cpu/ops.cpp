@@ -699,6 +699,7 @@ void ggml_compute_forward_add(
         case GGML_TYPE_Q1_0:
         case GGML_TYPE_Q2_0:
         case GGML_TYPE_Q2_0_G128:
+        case GGML_TYPE_SX8:
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
@@ -1167,6 +1168,7 @@ void ggml_compute_forward_add1(
         case GGML_TYPE_Q1_0:
         case GGML_TYPE_Q2_0:
         case GGML_TYPE_Q2_0_G128:
+        case GGML_TYPE_SX8:
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
@@ -1315,6 +1317,7 @@ void ggml_compute_forward_acc(
         case GGML_TYPE_Q1_0:
         case GGML_TYPE_Q2_0:
         case GGML_TYPE_Q2_0_G128:
+        case GGML_TYPE_SX8:
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
@@ -4735,6 +4738,7 @@ void ggml_compute_forward_out_prod(
         case GGML_TYPE_Q1_0:
         case GGML_TYPE_Q2_0:
         case GGML_TYPE_Q2_0_G128:
+        case GGML_TYPE_SX8:
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
@@ -5028,6 +5032,7 @@ void ggml_compute_forward_set(
         case GGML_TYPE_Q1_0:
         case GGML_TYPE_Q2_0:
         case GGML_TYPE_Q2_0_G128:
+        case GGML_TYPE_SX8:
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
@@ -5270,6 +5275,7 @@ void ggml_compute_forward_get_rows(
         case GGML_TYPE_Q1_0:
         case GGML_TYPE_Q2_0:
         case GGML_TYPE_Q2_0_G128:
+        case GGML_TYPE_SX8:
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
         case GGML_TYPE_TQ3_1S:
         case GGML_TYPE_TQ4_1S:
@@ -6046,6 +6052,7 @@ void ggml_compute_forward_clamp(
         case GGML_TYPE_Q1_0:
         case GGML_TYPE_Q2_0:
         case GGML_TYPE_Q2_0_G128:
+        case GGML_TYPE_SX8:
         // Unconditional (TQ3_1S/TQ4_1S included): this switch is exhaustive over ggml_type
         // and carries no default:, so gating these two would emit -Wswitch on the OFF build.
         case GGML_TYPE_TQ3_1S:
