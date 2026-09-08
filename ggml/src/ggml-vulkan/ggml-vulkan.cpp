@@ -8191,6 +8191,31 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context& 
     // Not implemented
     GGML_ASSERT(y_needs_reformat || !qy_needs_dequant);  // NOLINT
 
+    // R15-C6 (ArifiLabs lane-212): runtime receipt of the B-staging mode, once per distinct mode per
+    // process, so any A/B log proves which path MUL_MAT_ID took. The K-padded staging (upstream
+    // 77f132cb1) is a coopmat2 requirement: its B decode callback does not bounds-check K. On a
+    // coopmat1/scalar device y_needs_k_padding is false on every dispatch, and this line is the
+    // runtime witness of that. It is not a device-specific tuning and deliberately has no override:
+    // forcing the padded staging elsewhere would also swap the f32-B kernel for the f16-B kernel,
+    // and disabling it on coopmat2 re-opens the out-of-bounds read the upstream commit fixed.
+    {
+        const int mode = quantize_y ? 2 : (y_needs_k_padding ? 1 : 0);
+        static bool printed[3] = { false, false, false };
+        if (!printed[mode]) {
+            printed[mode] = true;
+            static const char * names[3] = { "contiguous", "K-padded", "q8_1" };
+            GGML_LOG_INFO("ggml_vulkan: MUL_MAT_ID B staging: %s (coopmat2=%d, src0=%s, src1=%s, ne10=%llu, stride_b=%u, ne11=%llu)\n",
+                          names[mode], ctx->device->coopmat2 ? 1 : 0, ggml_type_name(src0->type), ggml_type_name(src1->type),
+                          (unsigned long long) ne10, (unsigned) y_staged_row_stride, (unsigned long long) ne11);
+        }
+    }
+    // The fork's tq_rotate staging wins the `if (tq_rotate) ... else if (y_needs_reformat)` ladder below
+    // and copies B CONTIGUOUS f32, while stride_b_y still follows y_needs_k_padding. Reachable only on a
+    // coopmat2 device with a TQ3_1S/TQ4_1S expert whose ne10 % 64 != 0 (no real model; the odd-K tests
+    // are F16). Abort loudly rather than read B with a padded stride over an unpadded copy; the padded
+    // f32 rotate staging is owed to the off-rig union lane.
+    GGML_ASSERT(!(tq_rotate && y_needs_k_padding));
+
     GGML_ASSERT(mmp_map != nullptr);
 
     const uint32_t kpad = quantize_y ? 0 : ggml_vk_align_size(ne10, ggml_vk_guess_matmul_pipeline_align_map(ctx, *mmp_map, ne01, nei1, true));
