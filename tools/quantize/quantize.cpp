@@ -34,6 +34,7 @@ struct quant_option {
 static const std::vector<quant_option> QUANT_OPTIONS = {
     { "Q1_0",     LLAMA_FTYPE_MOSTLY_Q1_0,     " 1.125 bpw quantization",           },
     { "Q2_0",     LLAMA_FTYPE_MOSTLY_Q2_0,     " 2.25 bpw quantization (group 64)",  },
+    { "SX8",      LLAMA_FTYPE_MOSTLY_SX8,      " 7.50 bpw S-X8 v4.3 (MarlaLabs)",   },
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
     { "TQ3_1S",   LLAMA_FTYPE_MOSTLY_TQ3_1S,   " 4.0 bpw TurboQuant RHT + Lloyd-Max",  },
     { "TQ4_1S",   LLAMA_FTYPE_MOSTLY_TQ4_1S,   " 5.0 bpw TurboQuant RHT + Lloyd-Max",  },

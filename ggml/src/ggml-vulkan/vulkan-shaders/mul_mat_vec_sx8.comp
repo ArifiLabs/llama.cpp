@@ -1,0 +1,97 @@
+#version 450
+
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+
+#include "mul_mat_vec_base.glsl"
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+// S-X8 v4.3 (MarlaLabs, type-id 57) mat-vec -- the decode path, and the reason
+// this lane exists: WI-1692 landed a CPU-only decoder, which is worthless on a
+// box whose only compute device is the 780M.
+//
+// S-X8 is far simpler than the TQ family this file's shape is borrowed from.
+// There is no rotation, so no butterfly, no shared memory and no barrier: the
+// stored block already holds the weights, and decode is 32 independent
+// per-weight expressions. One thread therefore owns one weight POSITION, and
+// the workgroup covers gl_WorkGroupSize.x / 32 blocks at a time. That keeps a
+// wave64 device (the 780M reports warp size 64) fully occupied instead of
+// running the 32-thread half-wave the legacy TQ kernels use.
+//
+// reduce_result() sums across the whole workgroup, so partials from different
+// blocks land in the same accumulator -- which is exactly what a dot product
+// over the row wants.
+//
+// Decode reference: dequantize_row_sx8() in ggml/src/ggml-quants.c. The scalars
+// live in sx8_range() (types.glsl) so this shader and dequant_sx8.comp cannot
+// drift apart from each other; both still mirror the C by hand, which is the
+// F-110 hazard the lane PREREG's planted-RED recipe checks.
+
+void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+    const uint tid = gl_LocalInvocationID.x;
+
+    uint a_offset, b_offset, d_offset;
+    get_offsets(a_offset, b_offset, d_offset);
+
+    FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
+            temp[j][n] = FLOAT_TYPE(0);
+        }
+    }
+
+    const uint num_blocks_per_row = p.ncols / 32u;
+
+    const uint elem     = tid & 31u;          // weight position inside a block
+    const uint blk_base = tid >> 5u;          // which block this thread starts on
+    const uint blk_step = BLOCK_SIZE >> 5u;   // blocks covered per iteration
+
+    // Constant for this thread: which sub-block of 8 it sits in, and where its
+    // 4 high bits and 2 low bits live. The low bits are stored BIG-endian within
+    // their byte -- (3 - (j & 3)) -- which is the one packing detail worth
+    // re-reading against the C before trusting a number out of this kernel.
+    const uint sb       = elem >> 3u;
+    const uint qh_byte  = elem >> 1u;
+    const uint qh_shift = (elem & 1u) * 4u;
+    const uint ql_byte  = elem >> 2u;
+    const uint ql_shift = (3u - (elem & 3u)) * 2u;
+
+    for (uint blk = blk_base; blk < num_blocks_per_row; blk += blk_step) {
+        // Activation for this thread's weight position, one per column.
+        float bv[NUM_COLS];
+        [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
+            bv[c] = float(data_b[c * p.batch_stride_b + b_offset + blk * 32u + elem]);
+        }
+
+        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+            const uint ib = a_offset + (first_row + n) * num_blocks_per_row + blk;
+
+            float rlo, step;
+            sx8_range(float(data_a[ib].dmin), float(data_a[ib].dmax),
+                      (uint(data_a[ib].config) >> (sb * 2u)) & 3u, rlo, step);
+
+            const uint hi = (uint(data_a[ib].qh[qh_byte]) >> qh_shift) & 0xFu;
+            const uint lo = (uint(data_a[ib].ql[ql_byte]) >> ql_shift) & 0x3u;
+            const float w = rlo + step * float((hi << 2u) | lo);
+
+            [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
+                temp[c][n] += FLOAT_TYPE(w * bv[c]);
+            }
+        }
+    }
+
+    reduce_result(temp, d_offset, first_row, num_rows, tid);
+}
+
+void main() {
+    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+
+    if (first_row + NUM_ROWS <= p.stride_d) {
+        compute_outputs(first_row, NUM_ROWS);
+    } else {
+        if (first_row >= p.stride_d) {
+            return;
+        }
+        compute_outputs(first_row, p.stride_d - first_row);
+    }
+}

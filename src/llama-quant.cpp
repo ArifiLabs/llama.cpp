@@ -900,6 +900,10 @@ ggml_type llama_ftype_get_default_type(llama_ftype ftype) {
         case LLAMA_FTYPE_MOSTLY_Q2_0_ROCMFPX:      return GGML_TYPE_Q2_0_ROCMFPX;
 #endif
 
+        // S-X8 v4.3 (lane-224). Unconditional: the CPU codec landed by WI-1692 is not behind a
+        // build flag, so neither is the ability to write the format.
+        case LLAMA_FTYPE_MOSTLY_SX8: return GGML_TYPE_SX8;
+
         case LLAMA_FTYPE_MOSTLY_MXFP4_MOE: return GGML_TYPE_MXFP4;
 
         // K-quants
