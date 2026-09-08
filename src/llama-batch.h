@@ -75,7 +75,9 @@ struct llama_hparams;
 // MTP hook batches carry the target model's hidden state (n_embd_out size).
 // DFlash batches carry the fused target features at the encoder input width (n_embd_inp_enc size).
 // Normal batches carry token embeddings (n_embd_inp size).
-size_t llama_batch_ext_select_n_embd_inp(llama_context_type ctx_type, llm_arch arch, const llama_hparams & hparams);
+// arifi: with the DFlash fused injection off (LLAMA_DFLASH_FUSED_INJECT=0, the fork default) DFlash embd
+// batches carry pre-encoded rows at the draft width, so the encoder width applies only when fused.
+size_t llama_batch_ext_select_n_embd_inp(llama_context_type ctx_type, llm_arch arch, const llama_hparams & hparams, bool dflash_fused_inject = true);
 
 struct llama_batch_ext {
     const size_t n_tokens_max;     // max number of tokens that can be stored in the batch

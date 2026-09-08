@@ -1024,11 +1024,11 @@ void llama_batch_free(struct llama_batch batch) {
 
 // llama_batch_ext
 
-size_t llama_batch_ext_select_n_embd_inp(llama_context_type ctx_type, llm_arch arch, const llama_hparams & hparams) {
+size_t llama_batch_ext_select_n_embd_inp(llama_context_type ctx_type, llm_arch arch, const llama_hparams & hparams, bool dflash_fused_inject) {
     if (ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
         return hparams.n_embd_out();
     }
-    if (arch == LLM_ARCH_DFLASH) {
+    if (arch == LLM_ARCH_DFLASH && dflash_fused_inject) {
         return hparams.n_embd_inp_enc();
     }
     return hparams.n_embd_inp();
@@ -1036,7 +1036,7 @@ size_t llama_batch_ext_select_n_embd_inp(llama_context_type ctx_type, llm_arch a
 
 llama_batch_ext::llama_batch_ext(llama_context * ctx) :
         n_tokens_max(llama_n_batch(ctx)),
-        n_embd_inp(llama_batch_ext_select_n_embd_inp(ctx->get_cparams().ctx_type, llama_get_model(ctx)->arch, llama_get_model(ctx)->hparams)),
+        n_embd_inp(llama_batch_ext_select_n_embd_inp(ctx->get_cparams().ctx_type, llama_get_model(ctx)->arch, llama_get_model(ctx)->hparams, ctx->get_cparams().dflash_fused_inject)),
         n_embd_inp_enc(llama_get_model(ctx)->hparams.n_embd_inp_enc()),
         n_seq_max(llama_n_seq_max(ctx)),
         mem(llama_get_memory(ctx)),
