@@ -32,6 +32,11 @@ constexpr float MAX_DOT_PRODUCT_ERROR_LOWBIT = 0.04f;
 constexpr float MAX_QUANTIZATION_TOTAL_ERROR_TQ3_0 = 0.0060f;
 constexpr float MAX_DOT_PRODUCT_ERROR_TQ3_0        = 0.1200f;
 constexpr float MAX_DOT_PRODUCT_ERROR_FP4 = 0.03f;
+// jtrefon TBQ family (ids 58/59): their own harness bounds (tests/test-quantize-fns.cpp@6a02d0494),
+// same 0.1 + 2*cos(i) generator. TBQ3 is a 3-bit rotated-domain roundtrip on full-range data.
+constexpr float MAX_QUANTIZATION_TOTAL_ERROR_TBQ3 = 0.0060f;
+constexpr float MAX_QUANTIZATION_TOTAL_ERROR_TBQ4 = 0.0025f;
+constexpr float MAX_DOT_PRODUCT_ERROR_TBQ3        = 0.05f;
 constexpr float MAX_DOT_PRODUCT_ERROR_BINARY = 0.40f;
 constexpr float MAX_DOT_PRODUCT_ERROR_TERNARY = 0.15f;
 
@@ -293,6 +298,8 @@ static int test_vec_dot_q(bool verbose) {
                 // tq3 family (48..51). 4S/4SE are skipped above (E3M5 scale range).
                 type == GGML_TYPE_TQ3_0   ? MAX_QUANTIZATION_TOTAL_ERROR_TQ3_0 :
                 type == GGML_TYPE_TQ3_1S_SHIFT ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
+                type == GGML_TYPE_TBQ3_0  ? MAX_QUANTIZATION_TOTAL_ERROR_TBQ3 :
+                type == GGML_TYPE_TBQ4_0  ? MAX_QUANTIZATION_TOTAL_ERROR_TBQ4 :
                 type == GGML_TYPE_NVFP4   ? MAX_QUANTIZATION_TOTAL_ERROR_FP4 : MAX_QUANTIZATION_TOTAL_ERROR;
             bool failed = !(total_error < max_quantization_error);
             num_failed += failed;
@@ -318,6 +325,8 @@ static int test_vec_dot_q(bool verbose) {
                 ? MAX_DOT_PRODUCT_ERROR_BINARY
                 : type == GGML_TYPE_TQ1_0 || type == GGML_TYPE_TQ2_0 || type == GGML_TYPE_Q2_0
                 ? MAX_DOT_PRODUCT_ERROR_TERNARY
+                : type == GGML_TYPE_TBQ3_0
+                ? MAX_DOT_PRODUCT_ERROR_TBQ3
                 : type == GGML_TYPE_NVFP4
                 ? MAX_DOT_PRODUCT_ERROR_FP4
                 : MAX_DOT_PRODUCT_ERROR;

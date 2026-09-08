@@ -9257,6 +9257,9 @@ static const ggml_type all_types[] = {
     GGML_TYPE_TQ3_1S, GGML_TYPE_TQ4_1S,
     // S-X8 v4.3 (id 57). CPU-only kernels today; backends without it report not supported.
     GGML_TYPE_SX8,
+    // jtrefon TBQ family (ids 58..59, TYPE-ID-ALLOCATION 3.1.3). CPU reference only in this
+    // lane: every backend without a kernel must report these as not supported, never a wrong value.
+    GGML_TYPE_TBQ3_0, GGML_TYPE_TBQ4_0,
     // tq3 family (ids 48..51, TYPE-ID-ALLOCATION 3.1.1). Listing them here is the
     // whole backend sweep: get_rows, mul_mat and cpy on every built backend.
     GGML_TYPE_TQ3_4S, GGML_TYPE_TQ3_0, GGML_TYPE_TQ3_4SE, GGML_TYPE_TQ3_1S_SHIFT,

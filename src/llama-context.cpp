@@ -4198,20 +4198,26 @@ llama_context * llama_init_from_model(
         }
     }
 
+    // TBQ types quantize one row per token across all heads: the block must divide n_embd_k_gqa
+    // (n_embd_v_gqa), not the head dim. Taken-from: jtrefon/llama.cpp-turboq-mtp@6a02d0494.
+    const bool k_is_tbq = params.type_k == GGML_TYPE_TBQ3_0 || params.type_k == GGML_TYPE_TBQ4_0;
+    const bool v_is_tbq = params.type_v == GGML_TYPE_TBQ3_0 || params.type_v == GGML_TYPE_TBQ4_0;
+
     if (params.flash_attn_type != LLAMA_FLASH_ATTN_TYPE_DISABLED && ggml_is_quantized(params.type_k)) {
         const uint32_t blck_size = ggml_blck_size(params.type_k);
         const bool k_is_turbo = (params.type_k == GGML_TYPE_TURBO2_0 ||
                                  params.type_k == GGML_TYPE_TURBO3_0 ||
                                  params.type_k == GGML_TYPE_TURBO4_0);
         for (uint32_t il = 0; il < model->hparams.n_layer(); ++il) {
-            uint32_t head_k = model->hparams.n_embd_head_k(il);
+            uint32_t head_k = k_is_tbq ? model->hparams.n_embd_k_gqa(il) : model->hparams.n_embd_head_k(il);
             // Turbo types zero-pad heads to next multiple of 128 in llama-kv-cache.cpp
             if (k_is_turbo && head_k % 128 != 0) {
                 head_k = ((head_k + 127) / 128) * 128;
             }
             if (head_k % blck_size != 0) {
-                LLAMA_LOG_ERROR("%s: K cache type %s with block size %u does not divide n_embd_head_k=%u\n",
-                    __func__, ggml_type_name(params.type_k), blck_size, model->hparams.n_embd_head_k(il));
+                LLAMA_LOG_ERROR("%s: K cache type %s with block size %u does not divide %s=%u\n",
+                    __func__, ggml_type_name(params.type_k), blck_size,
+                    k_is_tbq ? "n_embd_k_gqa" : "n_embd_head_k", head_k);
                 return nullptr;
             }
         }
@@ -4224,15 +4230,64 @@ llama_context * llama_init_from_model(
                                  params.type_v == GGML_TYPE_TURBO4_0);
         const bool is_mla = model->hparams.is_mla();
         for (uint32_t il = 0; il < model->hparams.n_layer(); ++il) {
-            uint32_t head_v = model->hparams.n_embd_head_v(il);
+            uint32_t head_v = v_is_tbq ? model->hparams.n_embd_v_gqa(il) : model->hparams.n_embd_head_v(il);
             // Turbo types zero-pad; MLA has no separate V cache (V = view of K)
             if (v_is_turbo && !is_mla && head_v % 128 != 0) {
                 head_v = ((head_v + 127) / 128) * 128;
             }
             if (head_v % blck_size != 0) {
-                LLAMA_LOG_ERROR("%s: V cache type %s with block size %u does not divide n_embd_head_v=%u\n",
-                    __func__, ggml_type_name(params.type_v), blck_size, model->hparams.n_embd_head_v(il));
+                LLAMA_LOG_ERROR("%s: V cache type %s with block size %u does not divide %s=%u\n",
+                    __func__, ggml_type_name(params.type_v), blck_size,
+                    v_is_tbq ? "n_embd_v_gqa" : "n_embd_head_v", head_v);
                 return nullptr;
+            }
+        }
+    }
+
+    if ((k_is_tbq || v_is_tbq) && (model->hparams.is_mla() || model->arch == LLM_ARCH_DEEPSEEK4)) {
+        LLAMA_LOG_ERROR("%s: TBQ cache types are not supported with MLA (V is a view of K)\n", __func__);
+        return nullptr;
+    }
+
+    // Quality guard carried from the source fork (measured there 2026-08-11, Qwen3.5-4B, CPU path):
+    // q4_0 K + tbq3_0 V collapses into token repetition; tbq4_0 is the supported TBQ path.
+    if (!getenv("LLAMA_ALLOW_TBQ3_KV")) {
+        if (params.type_v == GGML_TYPE_TBQ3_0) {
+            LLAMA_LOG_ERROR("%s: tbq3_0 V cache is not quality-safe (token repetition); use tbq4_0, or set LLAMA_ALLOW_TBQ3_KV=1 to force\n", __func__);
+            return nullptr;
+        }
+        if (params.type_k == GGML_TYPE_TBQ3_0) {
+            LLAMA_LOG_WARN("%s: tbq3_0 K cache is experimental; set LLAMA_ALLOW_TBQ3_KV=1 to silence\n", __func__);
+        }
+    }
+
+    // Device guard (runtime probe, ArifiLabs lane-212 WI-1694A): a KV cache offloaded to a device that cannot run
+    // SET_ROWS into its type is allocated there anyway, and the scheduler then aborts at graph time
+    // ("pre-allocated tensor (cache_k_l3 (view)) in a buffer (Vulkan0) that cannot run the operation (SET_ROWS)",
+    // measured 2026-09-07 on the 780M). Refuse at init instead, naming the switches: -nkvo keeps the cache in host
+    // memory (the generic CPU path), -dev none, or a type the device supports. Only TBQ is probed: every other type
+    // keeps its existing behaviour byte-for-byte.
+    if ((k_is_tbq || v_is_tbq) && params.offload_kqv) {
+        for (const llama_device & ldev : model->devices) {
+            ggml_backend_dev_t dev = ldev.dev;
+            for (ggml_type type : { params.type_k, params.type_v }) {
+                if (type != GGML_TYPE_TBQ3_0 && type != GGML_TYPE_TBQ4_0) {
+                    continue;
+                }
+                ggml_init_params ip = { 8*ggml_tensor_overhead(), nullptr, true };
+                ggml_context * pctx = ggml_init(ip);
+                ggml_tensor * dst = ggml_new_tensor_2d(pctx, type, 256, 4);
+                ggml_tensor * src = ggml_new_tensor_2d(pctx, GGML_TYPE_F32, 256, 4);
+                ggml_tensor * idx = ggml_new_tensor_1d(pctx, GGML_TYPE_I64, 4);
+                ggml_tensor * op  = ggml_set_rows(pctx, dst, src, idx);
+                const bool ok = ggml_backend_dev_supports_op(dev, op);
+                ggml_free(pctx);
+                if (!ok) {
+                    LLAMA_LOG_ERROR("%s: KV cache type %s: device %s cannot run SET_ROWS into it, and the cache would be allocated there "
+                                    "(the graph would abort). Use -nkvo (host-resident KV, CPU path), -dev none, or a KV type this device supports\n",
+                            __func__, ggml_type_name(type), ggml_backend_dev_name(dev));
+                    return nullptr;
+                }
             }
         }
     }

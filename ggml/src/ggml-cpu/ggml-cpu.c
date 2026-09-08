@@ -395,6 +395,54 @@ static void ggml_vec_dot_rocmfpx_fp8_q8_0(int n, float * GGML_RESTRICT s, size_t
 }
 #endif // GGML_ARIFI_ROCMFPX_FORMATS
 
+// jtrefon TBQ family (ids 58/59): reference codec in ggml-tbq-quant.c, dequant-then-dot against q8_K.
+// One q8_K block is two 128-value TBQ blocks, so the scratch is a fixed 256 floats on the stack.
+static void ggml_vec_dot_tbq_q8_K_impl(enum ggml_type type, int n, float * GGML_RESTRICT s,
+                                       const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy) {
+    GGML_ASSERT(n % QK_K == 0);
+    const block_q8_K * GGML_RESTRICT y = (const block_q8_K *) vy;
+    const int nb = n / QK_K;
+
+    float tmp[QK_K];
+    float sumf = 0.0f;
+    for (int i = 0; i < nb; i++) {
+        if (type == GGML_TYPE_TBQ4_0) {
+            dequantize_row_tbq4_0((const block_tbq4_0 *) vx + i * (QK_K / QK_TBQ4), tmp, QK_K);
+        } else {
+            dequantize_row_tbq3_0((const block_tbq3_0 *) vx + i * (QK_K / QK_TBQ3), tmp, QK_K);
+        }
+        float sumi = 0.0f;
+        for (int j = 0; j < QK_K; j++) {
+            sumi += tmp[j] * (float) y[i].qs[j];
+        }
+        sumf += sumi * y[i].d;
+    }
+    *s = sumf;
+}
+
+static void ggml_vec_dot_tbq3_0_q8_K(int n, float * GGML_RESTRICT s, size_t bs,
+                                     const void * GGML_RESTRICT vx, size_t bx,
+                                     const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    GGML_ASSERT(nrc == 1);
+    GGML_UNUSED(bs); GGML_UNUSED(bx); GGML_UNUSED(by); GGML_UNUSED(nrc);
+    ggml_vec_dot_tbq_q8_K_impl(GGML_TYPE_TBQ3_0, n, s, vx, vy);
+}
+
+static void ggml_vec_dot_tbq4_0_q8_K(int n, float * GGML_RESTRICT s, size_t bs,
+                                     const void * GGML_RESTRICT vx, size_t bx,
+                                     const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    GGML_ASSERT(nrc == 1);
+    GGML_UNUSED(bs); GGML_UNUSED(bx); GGML_UNUSED(by); GGML_UNUSED(nrc);
+    ggml_vec_dot_tbq_q8_K_impl(GGML_TYPE_TBQ4_0, n, s, vx, vy);
+}
+
+static void quantize_row_tbq3_0(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k) {
+    quantize_row_tbq3_0_ref(x, (block_tbq3_0 *) y, k);
+}
+
+static void quantize_row_tbq4_0(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k) {
+    quantize_row_tbq4_0_ref(x, (block_tbq4_0 *) y, k);
+}
 
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
 const float * arifi_tq_signs(void);
@@ -664,6 +712,18 @@ static const struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {
         .from_float               = (ggml_from_float_t) quantize_row_sx8_ref,
         .vec_dot                  = ggml_vec_dot_sx8_q8_1,
         .vec_dot_type             = GGML_TYPE_Q8_1,
+        .nrows                    = 1,
+    },
+    [GGML_TYPE_TBQ3_0] = {
+        .from_float               = quantize_row_tbq3_0,
+        .vec_dot                  = ggml_vec_dot_tbq3_0_q8_K,
+        .vec_dot_type             = GGML_TYPE_Q8_K,
+        .nrows                    = 1,
+    },
+    [GGML_TYPE_TBQ4_0] = {
+        .from_float               = quantize_row_tbq4_0,
+        .vec_dot                  = ggml_vec_dot_tbq4_0_q8_K,
+        .vec_dot_type             = GGML_TYPE_Q8_K,
         .nrows                    = 1,
     },
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
