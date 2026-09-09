@@ -448,6 +448,45 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
                     centroids[(byt >> 4u) & 0xFu] * d));
             }
             }
+#elif defined(DATA_A_SX8)
+            // S-X8 v4.3 (type-id 57), lane-224 / WI-1722b. LOAD_VEC_A is pinned to 8
+            // host-side so one invocation owns exactly one sub-block: the rlo/step
+            // affine is constant across 8 consecutive weights, so the range algebra
+            // runs once here instead of once per weight. idx/4 is the 32-weight block,
+            // idx&3 the sub-block -- the same mapping dequant_sx8.comp calls `sb`.
+            //
+            // sx8_range() is CALLED, not mirrored: 0.25, 0.015873 and the 1e-10 clamp
+            // exist once in types.glsl, so this branch cannot drift from the CPU
+            // decoder the F-110 way.
+            //
+            // K order is natural -- weight j sits at K offset iqs*8 + i with no
+            // interleave -- because qh indexes j>>1 and ql indexes j>>2 over the same
+            // ascending j. Hence four CONTIGUOUS pairs, unlike the nibble-split types
+            // above that store at k_pair, +1, +8, +9.
+            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+
+            const uint ib  = idx / 4;
+            const uint iqs = idx & 0x03;
+
+            float rlo, step;
+            sx8_range(float(data_a[ib].dmin), float(data_a[ib].dmax),
+                      (uint(data_a[ib].config) >> (iqs * 2u)) & 3u, rlo, step);
+
+            const uint k_pair = row * LOAD_VEC_A / 2;
+
+            [[unroll]] for (uint i = 0u; i < 8u; i += 2u) {
+                const uint j0 = iqs * 8u + i;
+                const uint j1 = j0 + 1u;
+
+                const uint hi0 = (uint(data_a[ib].qh[j0 >> 1u]) >> ((j0 & 1u) * 4u)) & 0xFu;
+                const uint lo0 = (uint(data_a[ib].ql[j0 >> 2u]) >> ((3u - (j0 & 3u)) * 2u)) & 0x3u;
+                const uint hi1 = (uint(data_a[ib].qh[j1 >> 1u]) >> ((j1 & 1u) * 4u)) & 0xFu;
+                const uint lo1 = (uint(data_a[ib].ql[j1 >> 2u]) >> ((3u - (j1 & 3u)) * 2u)) & 0x3u;
+
+                store_a(col, k_pair + i / 2u,
+                        FLOAT_TYPEV2(rlo + step * float((hi0 << 2u) | lo0),
+                                     rlo + step * float((hi1 << 2u) | lo1)));
+            }
 #else
     if (MmTypeA == GGML_TYPE_Q4_0) {
         const uint idx = pos_a + col * p.stride_a / mm_load_vec_a() + row;

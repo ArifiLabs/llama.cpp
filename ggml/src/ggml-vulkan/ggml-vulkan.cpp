@@ -2255,6 +2255,10 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
 // them takes the dequant + f16 path, as it always did
 #define FOR_EACH_ARIFI_MM_NOID_TYPE(X) \
     X(GGML_TYPE_Q4_0_ROCMFP4_FAST, rocmfp4_fast)
+// arifi: S-X8 (lane-224 / WI-1722b) mul_mm - non-id, f32 B, NOT on coopmat2 (no sx8 cm2 decode); the 780M
+// takes the coopmat1 branch, so that registration is the one that matters
+#define FOR_EACH_ARIFI_MM_NOID_NOCM2_TYPE(X) \
+    X(GGML_TYPE_SX8, sx8)
 #define FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X) \
     X(GGML_TYPE_TQ3_1S, tq3_1s) \
     X(GGML_TYPE_TQ4_1S, tq4_1s)
@@ -2536,6 +2540,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         }
         FOR_EACH_ARIFI_MM_TYPE(X_CM1_F32B)
         FOR_EACH_ARIFI_MM_NOID_TYPE(X_CM1_F32B)
+        FOR_EACH_ARIFI_MM_NOID_NOCM2_TYPE(X_CM1_F32B)
 #undef X_CM1_F32B
 #if defined(GGML_VULKAN_FLOAT_E2M1_GLSLC_SUPPORT) && defined(GGML_VULKAN_FLOAT_E4M3_GLSLC_SUPPORT)
         if (device->ocp_fp4) {
@@ -2715,6 +2720,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             FOR_EACH_LUT_TYPE(X_SG)
             FOR_EACH_ARIFI_MM_TYPE(X_SG)
             FOR_EACH_ARIFI_MM_NOID_TYPE(X_SG)
+            FOR_EACH_ARIFI_MM_NOID_NOCM2_TYPE(X_SG)
 #undef X_SG
 
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
@@ -2844,6 +2850,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             FOR_EACH_LUT_TYPE(X_SG_FP32)
             FOR_EACH_ARIFI_MM_TYPE(X_SG_FP32)
             FOR_EACH_ARIFI_MM_NOID_TYPE(X_SG_FP32)
+            FOR_EACH_ARIFI_MM_NOID_NOCM2_TYPE(X_SG_FP32)
 #undef X_SG_FP32
 
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
@@ -5878,8 +5885,10 @@ vk_pipeline ggml_vk_get_to_fp16(ggml_backend_vk_context * ctx, ggml_type type) {
         case GGML_TYPE_NVFP4:
         case GGML_TYPE_TQ1_0:
         case GGML_TYPE_TQ2_0:
-        // S-X8 (lane-224) has no mul_mm, so f16 staging is its ONLY prompt-processing
-        // route -- the same position TQ3_4S is in, one line above.
+        // S-X8 (lane-224). AMENDED WI-1722b: it now HAS a mul_mm, so f16 staging is no
+        // longer its MUL_MAT route. It stays in this list because MUL_MAT_ID still has
+        // no sx8 mul_mm_id -- removing the arm would break MoE prompt processing and
+        // re-open the GGML_ABORT the :20002 size guard exists to prevent.
         case GGML_TYPE_SX8:
             break;
         default:

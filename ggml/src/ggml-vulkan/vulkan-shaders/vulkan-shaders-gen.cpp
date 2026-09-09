@@ -705,10 +705,14 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
     // S-X8 v4.3 (type-id 57) integer MMQ -- lane-224 / WI-1722. Generated here rather
     // than from type_names for the same reason the mat-vec block near the bottom of
-    // process_shaders() is: a type_names row would also demand a mul_mm_funcs.glsl
-    // unpack branch and the whole matmul/coopmat family, and S-X8 has neither. It has
-    // a mul_mmq_funcs.glsl branch, so it gets the mul_mmq pipeline and nothing else.
-    // Same gate as the q8_0 line above: f32 accumulators, no coopmat, no dot2.
+    // process_shaders() is: a type_names row would emit BOTH this mul_mmq variant and
+    // the sx8 mul_mm below, i.e. this line twice.
+    // AMENDED WI-1722b: S-X8 now HAS a mul_mm_funcs.glsl unpack branch and a mul_mm
+    // family (see the sx8 mul_mm block at the end of this function). The original
+    // "S-X8 has neither, so it gets mul_mmq and nothing else" is no longer true.
+    // Same gate as the q8_0 line above: f32 accumulators, no coopmat, no dot2 --
+    // which is also why this pipeline never reaches a coopmat device; see
+    // R-WI1722B-SX8-MULMM-CODE.md §7.
     if (!f16acc && !coopmat && !coopmat2 && !dot2) {
         const std::map<std::string, std::string> sx8_float_type_dict = {
             {"FLOAT_TYPE",   FLOAT_TYPE(1, "sx8")},
@@ -753,6 +757,43 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
             string_to_spv(shader_name + "_" + tname + "_f16" + dot2_sfx, "mul_mm.comp",
                 merge_maps(merge_maps(base_dict, float_type_dict), {{data_a_key, "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f16}, {"B_TYPE_SCALAR", "float16_t"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
         }
+    }
+
+    // S-X8 v4.3 (MarlaLabs, type-id 57) mul_mm -- lane-224 / WI-1722b.
+    //
+    // Generated explicitly rather than by adding "sx8" to type_names, for the same
+    // reason the tq block above is: a type_names row would ALSO emit the q8_1 mmq
+    // variant from the is_legacy_quant/is_k_quant gate (S-X8 has its own explicit
+    // mul_mmq line further down and must not get a second one) and would pull sx8
+    // into the coopmat2 family, which has no dequant_funcs_cm2.glsl entry for it.
+    //
+    // This SUPERSEDES the "S-X8 has no mul_mm" premise in the comment at the top of
+    // the mul_mmq block below and in process_shaders(). The device probe that forced
+    // it (lane-evidence 2026-09-08 36-probe-pipeline-stats-sx8.txt): S-X8 prompt
+    // processing was running dequant_sx8 + the generic f16 matmul, 98.7 ms against
+    // q8_0's 46.6 ms at m=4096 n=512 k=14336. 36-probe-no-intdot.txt showed q8_0
+    // holds 45.9 ms with integer dot DISABLED, so q8_0's speed comes from its own
+    // mul_mm, not from MMQ -- the missing mul_mm is the gap, not the missing MMQ.
+    //
+    // LOAD_VEC_A is pinned to 8 for the same reason tq pins it: the A-side block
+    // indexes idx/4 and idx&3 to map one invocation onto exactly one 8-weight
+    // sub-block, which is the granularity S-X8's rlo/step affine is constant over.
+    //
+    // coopmat2 excluded (no cm2 decode entry). MUL_MAT_ID is NOT generated: the named
+    // scope is MUL_MAT, and mul_mat_id stays on the f16-staging route it already has,
+    // so ggml_vk_get_to_fp16 keeps its SX8 arm and the MUL_MAT_ID size guard stands.
+    if (!coopmat2 && matmul_id_type == MatMulIdType::NONE) {
+        const std::map<std::string, std::string> sx8_mm_float_type_dict = {
+            {"FLOAT_TYPE",   FLOAT_TYPE(1, "sx8")},
+            {"FLOAT_TYPEV2", FLOAT_TYPE(2, "sx8")},
+            {"FLOAT_TYPEV4", FLOAT_TYPE(4, "sx8")},
+            {"FLOAT_TYPEV8", FLOAT_TYPE(8, "sx8")},
+        };
+
+        string_to_spv(shader_name + "_sx8_f32" + dot2_sfx, "mul_mm.comp",
+            merge_maps(merge_maps(base_dict, sx8_mm_float_type_dict), {{"DATA_A_SX8", "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f32}, {"B_TYPE_SCALAR", "float"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
+        string_to_spv(shader_name + "_sx8_f16" + dot2_sfx, "mul_mm.comp",
+            merge_maps(merge_maps(base_dict, sx8_mm_float_type_dict), {{"DATA_A_SX8", "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f16}, {"B_TYPE_SCALAR", "float16_t"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
     }
 }
 
@@ -1120,9 +1161,15 @@ void process_shaders() {
 
     // S-X8 v4.3 (MarlaLabs, type-id 57) -- lane-224 / WI-1717. Generated explicitly
     // rather than by adding "sx8" to type_names, for the same reason the tq entries
-    // above are: a type_names row demands a mul_mm_funcs.glsl unpack branch and the
-    // whole matmul/coopmat family. S-X8 has no mul_mm and reaches prompt processing
-    // through f16 staging (dequant_sx8), exactly as TQ3_4S does. GET_ROWS, CPY and
+    // above are: a type_names row would also fire the q8_1 mmq gate and emit a second
+    // matmul_sx8_q8_1, and would pull sx8 into the coopmat2 family it has no decode
+    // entry for.
+    // AMENDED WI-1722b: the original reason given here -- "S-X8 has no mul_mm and
+    // reaches prompt processing through f16 staging (dequant_sx8), exactly as TQ3_4S
+    // does" -- was TRUE until WI-1722b and is now FALSE for MUL_MAT. S-X8 has a
+    // mul_mm (matmul_sx8_f32/_f16, emitted in matmul_shaders()). f16 staging remains
+    // the route for MUL_MAT_ID only, which is why dequant_sx8 below still matters and
+    // why ggml_vk_get_to_fp16 keeps its SX8 arm. GET_ROWS, CPY and
     // SET_ROWS are deliberately not generated: nothing quantizes TO S-X8 on the GPU,
     // and supports_op declines them rather than aborting (the honest-supports_op law).
     // Unlike the tq shaders, mul_mat_vec_sx8.comp needs no 32-thread pin -- it derives
