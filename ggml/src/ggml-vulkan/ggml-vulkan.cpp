@@ -8319,11 +8319,11 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_conte
         return nullptr;
     }
 
-    // ARIFI-SYNC-SOLO: types with a mul_mm (matrix-matrix) pipeline. Narrower than the mat-vec list on purpose: tq3_1s/tq4_1s/tq3_4s reach mul_mat through f16 staging.
     // S-X8 JOINED this list in WI-1722b and is NO LONGER an f16-staging type for MUL_MAT.
     // It is still one for MUL_MAT_ID, which is why ggml_vk_get_to_fp16 keeps its SX8 arm.
     // Safe on a coopmat2 device, which gets no sx8 mul_mm: the is_empty() guard at the
     // bottom of this function returns nullptr and the caller falls back to f16 staging.
+    // ARIFI-SYNC-SOLO: types with a mul_mm (matrix-matrix) pipeline. Narrower than the mat-vec list on purpose: tq3_1s/tq4_1s/tq3_4s reach mul_mat through f16 staging.
     switch (src0_type) {
         case GGML_TYPE_SX8:
         case GGML_TYPE_Q1_0:
