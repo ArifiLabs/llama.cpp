@@ -380,10 +380,6 @@ static bool test_seq_storage_ring(struct llama_model * model, const struct commo
     }
 
     int n_past = (int) n_token_count_out - 1;
-    if (!common_replay_last_token(ctx.get(), tokens.back(), n_past)) {
-        return false;
-    }
-    n_past++;
 
     const uint32_t fl1 = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(1);
     const uint32_t fl2 = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(2);
@@ -401,10 +397,17 @@ static bool test_seq_storage_ring(struct llama_model * model, const struct commo
     std::vector<uint8_t> store1;
     std::vector<uint8_t> store2;
 
-    // snapshot 1: the state at n_past
+    // snapshot 1: the state at n_past, BEFORE the last prompt token is replayed. A seq state carries no logits,
+    // so the restored sequence must re-decode the last token itself to sample from (R31 serial fix: the first
+    // draft of this test snapshotted after the replay and then sampled from the ADVANCED seq 0's stale logits).
     if (!get_state(fl1, store1)) {
         return false;
     }
+
+    if (!common_replay_last_token(ctx.get(), tokens.back(), n_past)) {
+        return false;
+    }
+    n_past++;
 
     // advance seq 0, then snapshot 2 into a different storage slot
     {
@@ -426,6 +429,17 @@ static bool test_seq_storage_ring(struct llama_model * model, const struct commo
         const size_t nset = llama_state_seq_set_data_ext(ctx.get(), store1.data(), store1.size(), 1, fl1);
         if (nset != store1.size()) {
             LOG_ERR("\n%s: storage 1 restore returned %zd, expected %zd\n", __func__, nset, store1.size());
+            return false;
+        }
+    }
+
+    // replay the last prompt token on seq 1 (position n_past - 1) so the logits belong to the restored state
+    {
+        llama_batch_ptr batch(1, 0, 1);
+        common_batch_clear(batch.get());
+        common_batch_add(batch.get(), tokens.back(), n_past - 1, {1}, true);
+        if (llama_decode(ctx.get(), batch.get())) {
+            LOG_ERR("\n%s: failed to replay last token on seq 1\n", __func__);
             return false;
         }
     }
