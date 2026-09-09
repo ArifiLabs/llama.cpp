@@ -150,6 +150,12 @@ endif ()
 
 llama_build(test-recurrent-state-rollback.cpp)
 llama_build(test-save-load-state.cpp)
+target_include_directories(test-save-load-state PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
+
+# R45 (lane-229): server context-checkpoint device storage-ID ownership. Pure allocator test -
+# no model, no context, so it runs in CI without the generate-models fixture.
+llama_build_and_test(test-ctx-checkpoint-storage.cpp)
+target_include_directories(test-ctx-checkpoint-storage PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
 
 if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
     # these tests are disabled on Windows because they use internal functions not exported with LLAMA_API (when building with shared libraries)
