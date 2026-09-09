@@ -1,5 +1,6 @@
 #include "server-context.h"
 #include "server-chat.h"
+#include "server-ckpt-storage.h"
 #include "server-common.h"
 #include "server-http.h"
 #include "server-task.h"
@@ -2797,10 +2798,22 @@ private:
     llama_state_seq_flags ctx_ckpt_flags(server_slot & slot) {
         llama_state_seq_flags flags = LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY;
         if (ctx_ckpt_on_device()) {
-            // ring of n_ctx_checkpoints + 1 storage ids: the live list never exceeds
-            // n_ctx_checkpoints entries, all among the last n created, so a reused id is dead
+            // R45 (lane-229): the ring of n_ctx_checkpoints + 1 ids is only safe if a reused id is
+            // DEAD. Thinning keeps the first entry, anchors are exempt and prefix invalidation
+            // erases newer entries, so the bare modulo counter could wrap onto a LIVE owner and
+            // overwrite its device buffers. Allocate ownership-aware instead; 0 = no free id, in
+            // which case the checkpoint falls back to an independent host image.
             const uint32_t n_ring  = (uint32_t) params_base.n_ctx_checkpoints + 1;
-            const uint32_t storage = 1 + (slot.ckpt_storage_next++ % n_ring);
+            const uint32_t storage = server_ckpt_storage_alloc(slot.prompt.checkpoints, slot.ckpt_storage_next, n_ring);
+            if (storage == 0) {
+                static bool warned = false;
+                if (!warned) {
+                    warned = true;
+                    SRV_WRN("no free device checkpoint storage id (n_ctx_checkpoints = %d, ring = %u, max 255) - "
+                            "context checkpoints fall back to host images\n", params_base.n_ctx_checkpoints, n_ring);
+                }
+                return flags;
+            }
             flags |= LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(storage);
         }
         return flags;
