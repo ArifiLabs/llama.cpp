@@ -3279,6 +3279,21 @@ private:
     std::vector<uint8_t> temp_buffer;
 };
 
+// R45 (lane-229): ggml_view_1d and ggml_new_tensor_1d take an ELEMENT count, but a quantized
+// tensor's "element size" is its BLOCK size, so bytes/ggml_element_size() yields BLOCKS. With a
+// q8_0 KV cache (32 elements per 34-byte block) every device-checkpoint view was 1/32 of the
+// intended extent, so the image carried a fraction of the cells and a restore silently returned
+// mostly stale KV. f16/f32 have block size 1 and were unaffected - which is why every existing
+// device test, all of them f16, passed. Found by Test 10's q8_0 leg against its host control.
+static int64_t llama_io_device_n_elements(const ggml_tensor * t, size_t size) {
+    const size_t ts = ggml_type_size(t->type);
+    GGML_ASSERT(size % ts == 0);
+    if (getenv("LLAMA_R45_RED_QUANT_VIEW")) {
+        return (int64_t) (size / ts); // the R44 math, for the RED receipt only
+    }
+    return (int64_t) (size / ts) * ggml_blck_size(t->type);
+}
+
 class llama_io_write_device : public llama_io_write_i {
 public:
     llama_io_write_device(uint8_t * p, size_t len, llama_memory_buffers & mbufs) : ptr(p), buf_size(len), mbufs(mbufs)  {
@@ -3310,7 +3325,7 @@ public:
         for (const auto & winfo : winfos) {
             auto * buft = ggml_backend_buffer_get_type(winfo.tensor->buffer);
 
-            const int64_t n = winfo.size/ggml_element_size(winfo.tensor);
+            const int64_t n = llama_io_device_n_elements(winfo.tensor, winfo.size);
 
             auto & mbuf = mbufs_new[buft];
 
@@ -3416,7 +3431,12 @@ public:
     llama_io_read_device(const uint8_t * p, size_t len, const llama_memory_buffers & mbufs) : ptr(p), buf_size(len), mbufs(mbufs) {
     }
 
-    ~llama_io_read_device() {
+    // R45 (lane-229): validation + copy is an explicit SUCCESS-ONLY step, not destructor work.
+    // As a destructor body it ran even when state_seq_read_data threw, so a half-built request
+    // set could be validated and copied, and the size guard could abort the process during
+    // cleanup (including while another exception was propagating). state_seq_set_data now calls
+    // commit() only after the deserialization returned cleanly.
+    void commit() {
         llama_memory_buffers mbufs_new;
 
         for (const auto & rinfo : rinfos) {
@@ -3441,7 +3461,7 @@ public:
         for (const auto & rinfo : rinfos) {
             auto * buft = ggml_backend_buffer_get_type(rinfo.tensor->buffer);
 
-            const int64_t n = rinfo.size/ggml_element_size(rinfo.tensor);
+            const int64_t n = llama_io_device_n_elements(rinfo.tensor, rinfo.size);
 
             auto & mbuf = mbufs_new[buft];
 
@@ -3454,7 +3474,10 @@ public:
             const auto & mbuf_cur = mbufs.at(buft);
 
             if (!mbuf_cur.buf || mbuf_cur.total_size != mbuf.total_size) {
-                GGML_ABORT("%s: memory buffer mismatch\n", __func__);
+                // R45: name the branch and the two totals - the R44 crash logs had neither
+                GGML_ABORT("llama_io_read_device::commit: memory buffer mismatch (%s, saved %zu bytes / %d tensors, requested %zu bytes / %d tensors)\n",
+                        mbuf_cur.buf ? "size" : "no saved buffer",
+                        mbuf_cur.total_size, mbuf_cur.n_tensors, mbuf.total_size, mbuf.n_tensors);
             }
 
             if (mbuf_cur.n_tensors == mbuf.n_tensors) {
@@ -3508,12 +3531,12 @@ public:
 
                 const size_t n_copy = std::min(src_size - src_off, dst_size - dst_off);
 
-                const size_t   el   = ggml_element_size(src_t);
-                const int64_t n_el = (int64_t) (n_copy / el);
+                const int64_t n_el_src = llama_io_device_n_elements(src_t, n_copy);
+                const int64_t n_el_dst = llama_io_device_n_elements(dst_t, n_copy);
 
-                auto * src_v = ggml_view_1d(ctx_scratch, src_t, n_el, src_off);
+                auto * src_v = ggml_view_1d(ctx_scratch, src_t, n_el_src, src_off);
                 ggml_backend_view_init(src_v);
-                auto * dst_v = ggml_view_1d(ctx_scratch, dst_t, n_el, dst_off);
+                auto * dst_v = ggml_view_1d(ctx_scratch, dst_t, n_el_dst, dst_off);
                 ggml_backend_view_init(dst_v);
 
                 ggml_backend_tensor_copy(src_v, dst_v);
@@ -3647,6 +3670,7 @@ size_t llama_context::state_seq_get_data(llama_seq_id seq_id, uint8_t * dst, siz
 
 size_t llama_context::state_seq_set_data(llama_seq_id seq_id, const uint8_t * src, size_t size, llama_state_seq_flags flags) {
     std::unique_ptr<llama_io_read_i> io;
+    llama_io_read_device * io_dev = nullptr; // R45: non-owning, for the success-only commit()
     if (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) {
         // create a temporary io to read the magic and the src seq_id
         io = std::make_unique<llama_io_read_host>(src, size);
@@ -3664,7 +3688,9 @@ size_t llama_context::state_seq_set_data(llama_seq_id seq_id, const uint8_t * sr
 
         GGML_ASSERT(mem_storage.find(key) != mem_storage.end());
 
-        io = std::make_unique<llama_io_read_device>(src, size, mem_storage[key]);
+        auto io_d = std::make_unique<llama_io_read_device>(src, size, mem_storage[key]);
+        io_dev = io_d.get();
+        io = std::move(io_d);
     } else {
         io = std::make_unique<llama_io_read_host>(src, size);
     }
@@ -3679,7 +3705,14 @@ size_t llama_context::state_seq_set_data(llama_seq_id seq_id, const uint8_t * sr
         llama_seq_id seq_id_read;
         io->read(&seq_id_read, sizeof(seq_id_read));
 
-        return state_seq_read_data(*io, seq_id, flags);
+        const size_t n_read = state_seq_read_data(*io, seq_id, flags);
+
+        if (io_dev) {
+            // only a clean deserialization may validate and copy the device buffers
+            io_dev->commit();
+        }
+
+        return n_read;
     } catch (const std::exception & err) {
         LLAMA_LOG_ERROR("%s: error loading state: %s\n", __func__, err.what());
         return 0;

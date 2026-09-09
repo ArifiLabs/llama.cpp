@@ -2,11 +2,13 @@
 #include "common.h"
 #include "log.h"
 #include "llama-cpp.h"
+#include "server-ckpt-storage.h" // R45: Test 10 allocates ids through the production allocator
 
 #include <algorithm>
 #include <clocale>
 #include <cstring>
 #include <filesystem>
+#include <list>
 #include <random>
 #include <string>
 #include <vector>
@@ -554,6 +556,182 @@ static bool test_seq_storage_ring(struct llama_model * model, const struct commo
     return true;
 }
 
+// Test 10: device storage-ID OWNERSHIP across a full ring rotation (R45, lane-229)
+// - snapshot A on seq 0 at N cells under an ALLOCATOR-ISSUED id, plus a host control of the same state
+// - advance seq 0 so the cell count differs, then rotate past a full ring of saves while A stays LIVE
+// - restore A into seq 1 and host-save it: the bytes must equal the host control
+// RED on the R44 modulo allocator: the rotation wraps onto A's id and overwrites A's device buffers,
+// so the restore aborts on the size guard (different cell counts) or silently returns the newer state.
+static bool test_seq_storage_ownership(struct llama_model * model, const struct common_params & params,
+                                       const llama_tokens & tokens, int test_num,
+                                       ggml_type kv_type, const char * kv_name, bool on_device) {
+    auto params_ctx = common_context_params_to_llama(params);
+    params_ctx.n_ctx      = 256;
+    params_ctx.n_seq_max  = 2;
+    params_ctx.kv_unified = true;
+    params_ctx.type_k     = kv_type;
+    params_ctx.type_v     = kv_type;
+    if (kv_type != GGML_TYPE_F16) {
+        // a quantized V cache needs flash attention; archs that cannot do FA skip this leg below
+        params_ctx.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+    }
+
+    LOG("\n=== Test %d: storage-id ownership (%s KV, %s) ===\n", test_num, kv_name,
+        on_device ? "device" : "host control");
+
+    auto ctx = llama_context_ptr{llama_init_from_model(model, params_ctx)};
+    if (ctx == nullptr) {
+        // e.g. quantized KV on an arch that forces flash attention off - not a defect of this fix
+        LOG("\nSKIP (%s KV context unsupported for this arch)\n", kv_name);
+        return true;
+    }
+
+    if (tokens.size() < 60) {
+        LOG_ERR("\n%s: need at least 60 tokens, got %zu\n", __func__, tokens.size());
+        return false;
+    }
+
+    const auto decode_range = [&](int i0, int i1, llama_seq_id seq) {
+        llama_batch_ptr batch(i1 - i0, 0, 1);
+        common_batch_clear(batch.get());
+        for (int i = i0; i < i1; ++i) {
+            common_batch_add(batch.get(), tokens[i], i, { seq }, i == i1 - 1);
+        }
+        return llama_decode(ctx.get(), batch.get()) == 0;
+    };
+
+    const auto get_seq_state = [&](llama_seq_id seq_id, uint32_t fl, std::vector<uint8_t> & state) {
+        const size_t state_size = llama_state_seq_get_size_ext(ctx.get(), seq_id, fl);
+        if (state_size == 0) {
+            LOG_ERR("\n%s: sequence state is empty\n", __func__);
+            return false;
+        }
+        state.resize(state_size);
+        const size_t ncopy = llama_state_seq_get_data_ext(ctx.get(), state.data(), state.size(), seq_id, fl);
+        if (ncopy != state.size()) {
+            LOG_ERR("\n%s: saved %zu bytes, expected %zu\n", __func__, ncopy, state.size());
+            return false;
+        }
+        return true;
+    };
+
+    // the live checkpoint list the server would hold; A stays in it for the whole rotation
+    std::list<common_prompt_checkpoint> live;
+    uint32_t storage_next = 0;
+    const uint32_t n_ring = 33;
+
+    // the host control runs the same schedule through independent host images (no storage ids)
+    const auto alloc_flags = [&](std::list<common_prompt_checkpoint> & lst) -> uint32_t {
+        if (!on_device) {
+            return LLAMA_STATE_SEQ_FLAGS_NONE;
+        }
+        const uint32_t storage = server_ckpt_storage_alloc(lst, storage_next, n_ring);
+        if (storage == 0) {
+            return 0;
+        }
+        return (uint32_t) (LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(storage));
+    };
+
+    // Everything happens on seq 1: a host state blob carries the sequence's own cell metadata, so a
+    // byte comparison is only meaningful between saves of the SAME sequence id (see Tests 6/7).
+    const llama_seq_id seq = 1;
+
+    // --- state A: 40 cells ---
+    if (!decode_range(0, 40, seq)) {
+        LOG_ERR("\n%s: failed to build state A\n", __func__);
+        return false;
+    }
+
+    std::vector<uint8_t> host_control;
+    if (!get_seq_state(seq, LLAMA_STATE_SEQ_FLAGS_NONE, host_control)) {
+        return false;
+    }
+
+    const uint32_t flags_a = alloc_flags(live);
+    if (on_device) {
+        if (flags_a == 0) {
+            LOG_ERR("\n%s: allocator returned no storage id for A\n", __func__);
+            return false;
+        }
+        auto & ckpt_a = live.emplace_back();
+        ckpt_a.flags_tgt = flags_a;
+        ckpt_a.flags_dft = flags_a;
+    }
+
+    std::vector<uint8_t> store_a;
+    if (!get_seq_state(seq, flags_a, store_a)) {
+        return false;
+    }
+
+    // --- advance to 60 cells: state B has a DIFFERENT byte total than A ---
+    if (!decode_range(40, 60, seq)) {
+        LOG_ERR("\n%s: failed to advance to state B\n", __func__);
+        return false;
+    }
+
+    // --- rotate past a full ring while A stays live ---
+    std::vector<uint8_t> store_rot;
+    for (uint32_t r = 0; r < n_ring + 2; ++r) {
+        // the rotating entry is transient: only A is retained, exactly the shape thinning produces
+        std::list<common_prompt_checkpoint> live_now = live;
+        const uint32_t flags_r = alloc_flags(live_now);
+        if (on_device) {
+            if (flags_r == 0) {
+                LOG_ERR("\n%s: allocator returned no storage id at rotation %u\n", __func__, r);
+                return false;
+            }
+            if ((flags_r & LLAMA_STATE_SEQ_FLAGS_STORAGE_MASK) == (flags_a & LLAMA_STATE_SEQ_FLAGS_STORAGE_MASK)) {
+                LOG_ERR("\n%s: rotation %u was handed A's live storage id\n", __func__, r);
+                return false;
+            }
+        }
+        if (!get_seq_state(seq, flags_r, store_rot)) {
+            return false;
+        }
+    }
+
+    // --- restore A and compare with the host control ---
+    llama_memory_clear(llama_get_memory(ctx.get()), true);
+    {
+        const size_t nset = llama_state_seq_set_data_ext(ctx.get(), store_a.data(), store_a.size(), seq, flags_a);
+        if (nset != store_a.size()) {
+            LOG_ERR("\n%s: storage A restore returned %zu, expected %zu\n", __func__, nset, store_a.size());
+            return false;
+        }
+    }
+
+    std::vector<uint8_t> host_after;
+    if (!get_seq_state(seq, LLAMA_STATE_SEQ_FLAGS_NONE, host_after)) {
+        return false;
+    }
+
+    if (host_control.size() != host_after.size()) {
+        LOG_ERR("\n%s: error: restored state is %zu bytes, host control is %zu\n",
+                __func__, host_after.size(), host_control.size());
+        return false;
+    }
+
+    size_t n_diff = 0;
+    size_t i_diff = 0;
+    for (size_t i = 0; i < host_control.size(); ++i) {
+        if (host_control[i] != host_after[i]) {
+            if (n_diff == 0) {
+                i_diff = i;
+            }
+            n_diff++;
+        }
+    }
+
+    if (n_diff > 0) {
+        LOG_ERR("\n%s: error: state A was clobbered by the ring rotation: %zu of %zu bytes differ, first at offset %zu\n",
+                __func__, n_diff, host_control.size(), i_diff);
+        return false;
+    }
+
+    LOG("\nPASS\n");
+    return true;
+}
+
 // Test 6/7: seq copy (scatter)
 // - decode the same prefix on two sequences, interleaving seq 0 cells between the seq 1 cells
 // - save the seq 1 state, free the interleaved seq 0 cells, and restore via the given io path
@@ -717,7 +895,7 @@ struct test_suite {
 
 // column headers for the --models table, one per test, in the order they are run
 static const std::vector<const char *> test_names = {
-    "baseline", "seq_rm", "state_load", "cp_h", "cp_d", "cp_h_s", "cp_d_s", "rt", "ring",
+    "baseline", "seq_rm", "state_load", "cp_h", "cp_d", "cp_h_s", "cp_d_s", "rt", "ring", "own",
 };
 
 // Run the full save/load test suite (tests 1-8) for a single model.
@@ -801,6 +979,18 @@ static test_suite run_save_load_tests_for_model(const std::string & model_path, 
         suite.results.push_back(test_seq_storage_ring(model, params, tokens, result_baseline) ? test_status::PASS : test_status::FAIL);
     } else {
         suite.results.push_back(test_status::SKIP);
+    }
+
+    // Test 10: storage-id ownership across a ring rotation (R45, lane-229). The host-image legs are
+    // the control: they run the same schedule with no storage ids, so a failure there is a harness
+    // problem, not a device-ownership defect. One suite column: all four legs must pass.
+    {
+        const bool own_ok =
+            test_seq_storage_ownership(model, params, tokens, 10, GGML_TYPE_F16,  "f16",  false) &&
+            test_seq_storage_ownership(model, params, tokens, 10, GGML_TYPE_F16,  "f16",  true)  &&
+            test_seq_storage_ownership(model, params, tokens, 10, GGML_TYPE_Q8_0, "q8_0", false) &&
+            test_seq_storage_ownership(model, params, tokens, 10, GGML_TYPE_Q8_0, "q8_0", true);
+        suite.results.push_back(own_ok ? test_status::PASS : test_status::FAIL);
     }
 
     return suite;
