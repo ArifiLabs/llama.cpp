@@ -2795,6 +2795,20 @@ private:
                ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
     }
 
+    // R45: the checkpoint trace (env LLAMA_CKPT_STORAGE_TRACE=1) - one INFO line per save and per
+    // restore naming the storage id, the role sizes and the cell count. Off by default.
+    static bool ckpt_storage_trace() {
+        static const bool on = getenv("LLAMA_CKPT_STORAGE_TRACE") != nullptr;
+        return on;
+    }
+
+    static uint32_t ckpt_storage_id(llama_state_seq_flags flags) {
+        if ((flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) == 0) {
+            return 0; // host image - no storage id
+        }
+        return (flags & LLAMA_STATE_SEQ_FLAGS_STORAGE_MASK) >> LLAMA_STATE_SEQ_FLAGS_STORAGE_SHIFT;
+    }
+
     llama_state_seq_flags ctx_ckpt_flags(server_slot & slot) {
         llama_state_seq_flags flags = LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY;
         if (ctx_ckpt_on_device()) {
@@ -2883,6 +2897,13 @@ private:
         cur.update_dft(ctx_dft, slot.id, flags);
         // stash the draft's speculative state with the checkpoint
         common_speculative_get_state(spec.get(), slot.id, cur.data_spec);
+
+        if (ckpt_storage_trace()) {
+            SLT_INF(slot, "ckpt-trace SAVE    seq=%d storage_tgt=%u storage_dft=%u n_tokens=%" PRId64 " pos=[%d,%d] anchor=%d tgt=%zu B dft=%zu B live=%d\n",
+                    slot.id, ckpt_storage_id(cur.flags_tgt), ckpt_storage_id(cur.flags_dft),
+                    cur.n_tokens, cur.pos_min, cur.pos_max, (int) anchor,
+                    cur.data_tgt.size(), cur.data_dft.size(), (int) slot.prompt.checkpoints.size());
+        }
 
         SLT_TRC(slot,
                 "created context checkpoint %d of %d (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", size = %.3f MiB, %s, anchor = %d, %.3f ms)\n",
@@ -3928,6 +3949,15 @@ private:
                                     bool do_reset = it == slot.prompt.checkpoints.rend();
 
                                     if (!do_reset) {
+                                        // R45: env LLAMA_CKPT_STORAGE_TRACE prints the id/role/size of every
+                                        // restore at INFO. The R44 crash logs named none of them, so the abort
+                                        // could not be attributed to target vs draft or to a storage id.
+                                        if (ckpt_storage_trace()) {
+                                            SLT_INF(slot, "ckpt-trace RESTORE seq=%d storage_tgt=%u storage_dft=%u n_tokens=%" PRId64 " pos=[%d,%d] anchor=%d tgt=%zu B dft=%zu B\n",
+                                                    slot.id, ckpt_storage_id(it->flags_tgt), ckpt_storage_id(it->flags_dft),
+                                                    it->n_tokens, it->pos_min, it->pos_max, (int) it->anchor,
+                                                    it->data_tgt.size(), it->data_dft.size());
+                                        }
                                         // restore the context checkpoint (with the flags it was captured under:
                                         // the device storage id lives in them - R31/M14)
                                         it->load_tgt(ctx_tgt, slot.id, it->flags_tgt);
