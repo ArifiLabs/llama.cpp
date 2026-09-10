@@ -5717,6 +5717,12 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q8_0][i], "mul_mat_vec_q8_0_q8_1_f32", arr_dmmv_q8_0_q8_1_f32_len[reduc], arr_dmmv_q8_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
 
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_MXFP4][i], "mul_mat_vec_mxfp4_q8_1_f32", arr_dmmv_mxfp4_q8_1_f32_len[reduc], arr_dmmv_mxfp4_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+
+                // arifi lane-230 / R46: S-X8 integer-dot mat-vec. Same rows and workgroup as the
+                // S-X8 float mat-vec above, and the same no-subgroup-pin treatment -- only the
+                // plain reduction variant is generated, so this must not ask for subgroups.
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_SX8][i], "mul_mat_vec_sx8_q8_1_f32", mul_mat_vec_sx8_q8_1_f32_len, mul_mat_vec_sx8_q8_1_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {sx8_num_rows, 1, 1}, {sx8_wg_size, sx8_num_rows, i+1}, 1, true, false, 0);
+
                 // arifi lane-209: the q8_1 selector (ggml_vk_get_dequantize_mul_mat_vec) already listed ROCMFP4_FAST, but no pipeline was ever
                 // created for it, so quantize_y fell back to the f32 shader at every width. Taken-from rocmfpx/main :4867.
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_0_ROCMFP4_FAST][i], "mul_mat_vec_rocmfp4_fast_q8_1_f32", arr_dmmv_rocmfp4_fast_q8_1_f32_len[reduc], arr_dmmv_rocmfp4_fast_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
@@ -8390,7 +8396,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context * 
     GGML_ASSERT(num_cols >= 1 && num_cols <= mul_mat_vec_max_cols);
 
     if (b_type == GGML_TYPE_Q8_1) {
-        // ARIFI-SYNC-SET: mul_mat.mmq_int_dot
+        // ARIFI-SYNC-SET: mul_mat.mmq_int_dot EXCEPT SX8=plain mat-vec only; no id q8_1 pipeline is generated for S-X8 (see the mul_mat.src0_types switch in ggml_vk_get_dequantize_mul_mat_vec_id), so admitting it in the _id mirror would select a null pipeline
         switch (a_type) {
             case GGML_TYPE_Q2_0:
             case GGML_TYPE_Q2_0_G128:
@@ -8413,6 +8419,10 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context * 
             case GGML_TYPE_Q6_K:
             case GGML_TYPE_IQ1_S:
             case GGML_TYPE_IQ1_M:
+            // arifi lane-230 / R46: S-X8 has a q8_1 mat-vec (mul_mat_vec_sx8_q8_1_f32).
+            // This switch alone does not route it -- ggml_vk_should_use_mmvq() must admit
+            // the type too, or quantize_y stays false and the pipeline is never selected.
+            case GGML_TYPE_SX8:
                 break;
             default:
                 return nullptr;
@@ -10228,6 +10238,16 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
     bool mmvq_q6 = device->vendor_id == VK_VENDOR_ID_INTEL;
     if (src0_type == GGML_TYPE_Q6_K && !mmvq_q6) {
         return false;
+    }
+
+    // arifi lane-230 / R46: S-X8. Its q8_1 mat-vec decodes a whole 32-weight block per
+    // thread, so unlike q6_k the 2-byte block alignment costs it nothing. The width
+    // decision here is DELIBERATELY a single admit: the per-width table this lane
+    // measures (n=1..8 at 17408x5120, 5120x17408, 248320x5120) is what narrows it, and
+    // narrowing it before the measurement would hide the widths that lose. Any width
+    // that loses at op level must be excluded HERE before this ships.
+    if (src0_type == GGML_TYPE_SX8) {
+        return true;
     }
 
     // arifi lane-198 (AMD 780M, proprietary driver, measured on the live speculative-verify graph):

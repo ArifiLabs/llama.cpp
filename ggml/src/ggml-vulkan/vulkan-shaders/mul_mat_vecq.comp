@@ -17,6 +17,11 @@ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 #define K_PER_ITER 8
 #elif defined(DATA_A_IQ1_S) || defined(DATA_A_IQ1_M)
 #define K_PER_ITER 32
+#elif defined(DATA_A_SX8)
+// lane-230 / R46. S-X8 blocks are 32 weights, the same width as a Q8_1 activation
+// block, so one thread owning 32 columns owns exactly one weight block: the header,
+// the four range strategies and the two planes are each read once per block.
+#define K_PER_ITER 32
 #else
 #error unimplemented
 #endif
