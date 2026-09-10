@@ -11881,6 +11881,23 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
         }
     }
 
+    // ArifiLabs lane-230 / R46: the REAL 27B S-X8 decode shapes. The 27B .sx8v43 file carries 128
+    // gate/up matrices at 17408x5120 and 64 down matrices at 5120x17408 in S-X8, plus the
+    // 248320x5120 embedding/output pair; every other projection is Q8_0. Q8_0 and Q4_K ride along
+    // as the two controls the R46 analysis pairs S-X8 against. n=6 and n=7 fill the two widths the
+    // lane-224 receipts left empty, so the mat-vec width sweep has no hole.
+    for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
+        for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, bs,  5120, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, bs, 17408, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, bs,  5120, {1, 1}, {1, 1}));
+            // 4096x14336 already exists for all_types at bs 1..5 and 8; add only the two holes.
+            if (bs == 6 || bs == 7) {
+                test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 4096, bs, 14336, {1, 1}, {1, 1}));
+            }
+        }
+    }
+
     // qwen3-30b-a3b
     for (int bs : {1, 4, 8, 32, 64, 128, 256, 512}) {
         for (ggml_type type_a : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ2_XS}) {
