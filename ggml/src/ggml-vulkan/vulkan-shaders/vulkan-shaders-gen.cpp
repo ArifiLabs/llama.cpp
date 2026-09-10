@@ -1102,15 +1102,28 @@ void process_shaders() {
     // why ggml_vk_get_to_fp16 keeps its SX8 arm. GET_ROWS, CPY and
     // SET_ROWS are deliberately not generated: nothing quantizes TO S-X8 on the GPU,
     // and supports_op declines them rather than aborting (the honest-supports_op law).
-    // Unlike the tq shaders, mul_mat_vec_sx8.comp needs no 32-thread pin -- it derives
-    // its weight position from tid & 31 and strides whole blocks by BLOCK_SIZE/32, so
-    // any workgroup size that is a multiple of 32 is correct.
+    // Unlike the tq shaders, mul_mat_vec_sx8.comp needs no 32-thread pin. AMENDED
+    // lane-230 / R46: the reason given here -- "it derives its weight position from
+    // tid & 31 and strides whole blocks by BLOCK_SIZE/32, so any workgroup size that
+    // is a multiple of 32 is correct" -- was TRUE until R46 and is now FALSE. One
+    // thread owns one whole 32-weight BLOCK and strides blocks by BLOCK_SIZE, so the
+    // multiple-of-32 condition is gone with it: ANY workgroup size is correct.
     string_to_spv("mul_mat_vec_sx8_f32_f32", "mul_mat_vec_sx8.comp",
         merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
     string_to_spv("mul_mat_vec_sx8_f16_f32", "mul_mat_vec_sx8.comp",
         merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"B_TYPE", "float16_t"}, {"B_TYPEV2", "f16vec2"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}));
     string_to_spv("mul_mat_vec_id_sx8_f32_f32", "mul_mat_vec_sx8.comp",
         merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {"DATA_A_SX8", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
+    // lane-230 / R46: S-X8 integer-dot mat-vec against Q8_1 activations. MUL_MAT only,
+    // and only the plain reduction: the S-X8 mat-vec pipelines take no subgroup pin
+    // (see the amended note above), so the subgroup and no-shmem variants would be
+    // generated and never selected. MUL_MAT_ID keeps the float path -- its Q8_1
+    // selector is a separate switch and the dense 27B FFN this lane targets never
+    // reaches it.
+#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+    string_to_spv("mul_mat_vec_sx8_q8_1_f32", "mul_mat_vecq.comp",
+        merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}}));
+#endif
     string_to_spv("dequant_sx8", "dequant_sx8.comp",
         merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"D_TYPE", "float16_t"}}));
 
