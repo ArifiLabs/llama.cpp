@@ -13,10 +13,21 @@ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 // S-X8 is far simpler than the TQ family this file's shape is borrowed from.
 // There is no rotation, so no butterfly, no shared memory and no barrier: the
 // stored block already holds the weights, and decode is 32 independent
-// per-weight expressions. One thread therefore owns one weight POSITION, and
-// the workgroup covers gl_WorkGroupSize.x / 32 blocks at a time. That keeps a
-// wave64 device (the 780M reports warp size 64) fully occupied instead of
-// running the 32-thread half-wave the legacy TQ kernels use.
+// per-weight expressions.
+//
+// lane-230 / R46: one thread now owns one 32-weight BLOCK, not one weight
+// POSITION. The old mapping gave each of 32 threads its own weight and made
+// every one of them re-read the block header and re-evaluate sx8_range(), so a
+// single block cost 96 header reads, 64 plane bytes and 32 range evaluations
+// for 32 weights. Owning the whole block costs 3 header reads, 24 plane bytes
+// and 4 range evaluations -- the same weight bytes, a fraction of the
+// instructions. Threads stride whole blocks by BLOCK_SIZE, so any workgroup
+// size is correct and a wave64 device stays fully occupied.
+//
+// A 16-bit view of qh/ql was evaluated and REJECTED: qh starts at byte 5 of the
+// 30-byte block (2 + 2 + 1 header), an ODD offset, so a uint16 array over it
+// cannot align to the 4-element groups the packing is built from. Byte reads
+// move the same cache lines anyway; only the instruction count mattered here.
 //
 // reduce_result() sums across the whole workgroup, so partials from different
 // blocks land in the same accumulator -- which is exactly what a dot product
@@ -25,7 +36,8 @@ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 // Decode reference: dequantize_row_sx8() in ggml/src/ggml-quants.c. The scalars
 // live in sx8_range() (types.glsl) so this shader and dequant_sx8.comp cannot
 // drift apart from each other; both still mirror the C by hand, which is the
-// F-110 hazard the lane PREREG's planted-RED recipe checks.
+// F-110 hazard the lane PREREG's planted-RED recipe checks. sx8_levels4() lives
+// beside it for the same reason.
 
 void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
     const uint tid = gl_LocalInvocationID.x;
@@ -42,40 +54,48 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
 
     const uint num_blocks_per_row = p.ncols / 32u;
 
-    const uint elem     = tid & 31u;          // weight position inside a block
-    const uint blk_base = tid >> 5u;          // which block this thread starts on
-    const uint blk_step = BLOCK_SIZE >> 5u;   // blocks covered per iteration
-
-    // Constant for this thread: which sub-block of 8 it sits in, and where its
-    // 4 high bits and 2 low bits live. The low bits are stored BIG-endian within
-    // their byte -- (3 - (j & 3)) -- which is the one packing detail worth
-    // re-reading against the C before trusting a number out of this kernel.
-    const uint sb       = elem >> 3u;
-    const uint qh_byte  = elem >> 1u;
-    const uint qh_shift = (elem & 1u) * 4u;
-    const uint ql_byte  = elem >> 2u;
-    const uint ql_shift = (3u - (elem & 3u)) * 2u;
-
-    for (uint blk = blk_base; blk < num_blocks_per_row; blk += blk_step) {
-        // Activation for this thread's weight position, one per column.
-        float bv[NUM_COLS];
-        [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
-            bv[c] = float(data_b[c * p.batch_stride_b + b_offset + blk * 32u + elem]);
-        }
-
+    for (uint blk = tid; blk < num_blocks_per_row; blk += BLOCK_SIZE) {
+        // Block header, read ONCE per row for the whole block.
+        float dlo[NUM_ROWS];
+        float dhi[NUM_ROWS];
+        uint  cfg[NUM_ROWS];
         [[unroll]] for (uint n = 0; n < num_rows; ++n) {
             const uint ib = a_offset + (first_row + n) * num_blocks_per_row + blk;
+            dlo[n] = float(data_a[ib].dmin);
+            dhi[n] = float(data_a[ib].dmax);
+            cfg[n] = uint(data_a[ib].config);
+        }
 
-            float rlo, step;
-            sx8_range(float(data_a[ib].dmin), float(data_a[ib].dmax),
-                      (uint(data_a[ib].config) >> (sb * 2u)) & 3u, rlo, step);
+        const uint b_base = b_offset + blk * 32u;
 
-            const uint hi = (uint(data_a[ib].qh[qh_byte]) >> qh_shift) & 0xFu;
-            const uint lo = (uint(data_a[ib].ql[ql_byte]) >> ql_shift) & 0x3u;
-            const float w = rlo + step * float((hi << 2u) | lo);
-
+        // One sub-block of 8 weights at a time: one range strategy, one pair of
+        // 4-element groups.
+        [[unroll]] for (uint sb = 0; sb < 4u; ++sb) {
+            float bv[NUM_COLS][8];
             [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
-                temp[c][n] += FLOAT_TYPE(w * bv[c]);
+                [[unroll]] for (uint e = 0; e < 8u; ++e) {
+                    bv[c][e] = float(data_b[c * p.batch_stride_b + b_base + sb * 8u + e]);
+                }
+            }
+
+            [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+                const uint ib = a_offset + (first_row + n) * num_blocks_per_row + blk;
+
+                float rlo, step;
+                sx8_range(dlo[n], dhi[n], (cfg[n] >> (sb * 2u)) & 3u, rlo, step);
+
+                [[unroll]] for (uint g = 0; g < 2u; ++g) {
+                    const uint qh_pair = uint(data_a[ib].qh[sb * 4u + g * 2u])
+                                       | (uint(data_a[ib].qh[sb * 4u + g * 2u + 1u]) << 8u);
+                    const uint levels  = sx8_levels4(qh_pair, uint(data_a[ib].ql[sb * 2u + g]));
+
+                    [[unroll]] for (uint e = 0; e < 4u; ++e) {
+                        const float w = rlo + step * float((levels >> (e * 8u)) & 0xFFu);
+                        [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
+                            temp[c][n] += FLOAT_TYPE(w * bv[c][g * 4u + e]);
+                        }
+                    }
+                }
             }
         }
     }
