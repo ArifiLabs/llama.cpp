@@ -639,3 +639,56 @@ FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
     return sum;
 }
 #endif
+
+#if defined(DATA_A_SX8)
+// S-X8 v4.3 (type-id 57) integer-dot mat-vec. lane-230 / R46.
+//
+// One call consumes a WHOLE 32-weight block against a whole Q8_1 activation block,
+// so the header, the four range strategies and the two planes are read once each.
+//
+// The affine decode is w = rlo_s + step_s * L, with (rlo_s, step_s) fixed per 8-weight
+// sub-block. Over one sub-block that gives
+//
+//     sum(w * a) = d_b * ( step_s * sum(L * q) + rlo_s * sum(q) )
+//
+// so TWO integer sums per sub-block, not one. The Q8_1 ds.y term (d_b * sum of all 32
+// quants) cannot stand in for sum(q) here: rlo changes every 8 weights, so the four
+// partial sums are needed separately. sum(q) is a dot against 0x01010101 -- the same
+// instruction, no extra loads.
+//
+// Levels are in [0,63] and quants in [-127,127], so a signed 8-bit packed dot cannot
+// overflow its 32-bit accumulator (worst case 63*127*4 = 32004 per call).
+//
+// Decode constants stay in sx8_range() / sx8_levels4() (types.glsl), shared with the
+// float mat-vec and dequant_sx8 -- the F-110 single-home rule. A planted error there
+// must turn every S-X8 path red at once, which is the only way the oracle proves it ran.
+FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+    const float dlo = float(data_a[ib_a].dmin);
+    const float dhi = float(data_a[ib_a].dmax);
+    const uint  cfg = uint(data_a[ib_a].config);
+
+    float acc = 0.0;
+
+    [[unroll]] for (uint sb = 0; sb < 4u; ++sb) {
+        float rlo, step;
+        sx8_range(dlo, dhi, (cfg >> (sb * 2u)) & 3u, rlo, step);
+
+        int32_t lq = 0;   // sum of level * quant over the 8 weights
+        int32_t sq = 0;   // sum of quant          over the 8 weights
+
+        [[unroll]] for (uint g = 0; g < 2u; ++g) {
+            const uint qh_pair = uint(data_a[ib_a].qh[sb * 4u + g * 2u])
+                               | (uint(data_a[ib_a].qh[sb * 4u + g * 2u + 1u]) << 8u);
+            const int32_t lv = int32_t(sx8_levels4(qh_pair, uint(data_a[ib_a].ql[sb * 2u + g])));
+            const int32_t bq = cache_b_qs[sb * 2u + g];
+
+            lq += dotPacked4x8EXT(lv, bq);
+            sq += dotPacked4x8EXT(0x01010101, bq);
+        }
+
+        acc += step * float(lq) + rlo * float(sq);
+    }
+
+    return FLOAT_TYPE(float(cache_b_ds.x) * acc);
+}
+#endif
