@@ -2108,6 +2108,33 @@ void sx8_range(float lo_f, float hi_f, uint s, out float rlo, out float step) {
     const float rhi = hi_f - q * float(3u * uint(s == 1u) + uint(s == 3u));
     step = max((rhi - rlo) * 0.015873, 1e-10);
 }
+
+// Four consecutive six-bit levels, packed one per byte of the returned uint.
+// lane-230 / R46: the mat-vec used to give one weight POSITION to one thread, which
+// cost five buffer reads and one sx8_range() per weight. These two helpers let ONE
+// thread decode four weights from three byte reads, so a whole 32-weight block costs
+// 3 header + 24 plane reads instead of 96 + 64.
+//
+// qh_pair packs the two qh bytes that cover elements 4g..4g+3: byte 2g in bits 0-7
+// (elements 4g low nibble, 4g+1 high nibble) and byte 2g+1 in bits 8-15 (elements
+// 4g+2, 4g+3). Spreading them 16 bits apart puts each nibble in its own byte lane.
+uint sx8_nib4(uint qh_pair) {
+    const uint x = (qh_pair & 0xFFu) | ((qh_pair & 0xFF00u) << 8u);
+    return (x & 0x000F000Fu) | (((x >> 4u) & 0x000F000Fu) << 8u);
+}
+
+// ql byte g carries the 2 low bits of elements 4g..4g+3 at shifts 6,4,2,0 -- BIG-endian
+// within the byte, the one packing detail worth re-reading against the C. The four
+// shifts below are that order written out; the mask kills the cross-byte spill.
+uint sx8_low4(uint ql_byte) {
+    return ((ql_byte >> 6u) | (ql_byte << 4u) | (ql_byte << 14u) | (ql_byte << 24u)) & 0x03030303u;
+}
+
+// Each byte of the result is one level in [0,63]. The <<2 cannot spill into the next
+// byte lane: sx8_nib4 leaves the high nibble of every byte zero.
+uint sx8_levels4(uint qh_pair, uint ql_byte) {
+    return (sx8_nib4(qh_pair) << 2u) | sx8_low4(ql_byte);
+}
 #endif
 
 #if defined(DATA_A_IQ4_NL) || defined(DATA_A_IQ4_XS)
