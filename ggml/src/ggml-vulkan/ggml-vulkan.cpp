@@ -7045,14 +7045,29 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
         return false;
     }
 
-    // arifi lane-230 / R46: S-X8. Its q8_1 mat-vec decodes a whole 32-weight block per
-    // thread, so unlike q6_k the 2-byte block alignment costs it nothing. The width
-    // decision here is DELIBERATELY a single admit: the per-width table this lane
-    // measures (n=1..8 at 17408x5120, 5120x17408, 248320x5120) is what narrows it, and
-    // narrowing it before the measurement would hide the widths that lose. Any width
-    // that loses at op level must be excluded HERE before this ships.
+    // arifi lane-230 / R46: S-X8 q8_1 integer-dot mat-vec is OPT-IN, GGML_ARIFI_SX8_MMVQ=1.
+    //
+    // The per-width table this lane measured (32-paired-c.txt, 3 interleaved rounds against the
+    // unchanged kernel, same hold) refuses a blanket admit. Against the SHIPPED kernel the q8_1
+    // path loses at n=7 on three of the four primary 27B shapes -- -28.37% (4096x14336),
+    // -26.13% (17408x5120), -13.29% (5120x17408) -- with non-overlapping raw rounds, so it is
+    // repeatable, not noise. The PREREG bar (>5% median gain at n=1..4, no >3% repeatable
+    // regression on any primary shape) is also missed at n=4, 4096x14336: -6.85% against the
+    // gated whole-block decode of commit B2.
+    //
+    // Where it wins it wins large -- +38 to +97% on the 248320x5120 embed/output shape, which is
+    // exactly where B2's n<=3 gate hands the wide batches back to the per-position kernel -- so
+    // the path is KEPT and reachable, not deleted. It is not made default by a per-width admit
+    // either: the winning region is one shape at two widths, and a threshold fitted to that is
+    // overfitting, not routing.
+    //
+    // The n=7 cliff is non-monotonic (+13.69 / -13.88 / +17.68% at n=6/7/8 on 5120x17408 against
+    // B2), which points at a NUM_COLS==7 tail defect in the mmvq framework rather than a tuning
+    // loss. Commit D or a narrowed admit starts there. Precedent for shipping a measured win OFF
+    // until it is cleared: GGML_ARIFI_ROCMFP4_MMVQ below.
     if (src0_type == GGML_TYPE_SX8) {
-        return true;
+        static const char * sx8_mmvq_env = getenv("GGML_ARIFI_SX8_MMVQ");
+        return sx8_mmvq_env && sx8_mmvq_env[0] == '1';
     }
 
     // arifi lane-198 (AMD 780M, proprietary driver, measured on the live speculative-verify graph):
