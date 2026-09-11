@@ -1107,7 +1107,12 @@ void process_shaders() {
     // tid & 31 and strides whole blocks by BLOCK_SIZE/32, so any workgroup size that
     // is a multiple of 32 is correct" -- was TRUE until R46 and is now FALSE. One
     // thread owns one whole 32-weight BLOCK and strides blocks by BLOCK_SIZE, so the
-    // multiple-of-32 condition is gone with it: ANY workgroup size is correct.
+    // multiple-of-32 condition is gone with it -- but ONLY at NUM_COLS <= 3, where that
+    // block path runs. CORRECTED lane-230 / R46b (checker F6): at NUM_COLS >= 4 the
+    // per-position kernel is kept verbatim and still derives its weight position from
+    // tid & 31, so the workgroup must STILL be a multiple of 32. The host enforces that
+    // invariant for every S-X8 mat-vec pipeline (ggml_vk_apply_sx8_mmv_override), and the
+    // R46b shape-tuned variants only ever pick workgroups of 64/128/256.
     string_to_spv("mul_mat_vec_sx8_f32_f32", "mul_mat_vec_sx8.comp",
         merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
     string_to_spv("mul_mat_vec_sx8_f16_f32", "mul_mat_vec_sx8.comp",
