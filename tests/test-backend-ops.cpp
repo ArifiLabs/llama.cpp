@@ -11886,6 +11886,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     // 248320x5120 embedding/output pair; every other projection is Q8_0. Q8_0 and Q4_K ride along
     // as the two controls the R46 analysis pairs S-X8 against. n=6 and n=7 fill the two widths the
     // lane-224 receipts left empty, so the mat-vec width sweep has no hole.
+    //
+    // lane-232 / R47a kept ONE copy of this block at the R46b rebase: R47a had copied it verbatim
+    // off R46 because R46 was not then an ancestor, and here it is. It is also the sweep's target:
+    // with GGML_VK_SX8_MMV_ROWS / GGML_VK_SX8_MMV_WG set, one binary runs rows 1/2/4/8 x
+    // workgroups 64/128/256 over these rows with no rebuild.
     for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
         for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K}) {
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, bs,  5120, {1, 1}, {1, 1}));
