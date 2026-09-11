@@ -14353,7 +14353,9 @@ ggml_backend_buffer_t ggml_backend_vk_buffer_type_alloc_buffer(ggml_backend_buff
 
     vk_buffer dev_buffer = nullptr;
     try {
-        dev_buffer = ggml_vk_create_buffer_device(ctx->device, size);
+        // R46b commit E: this is the BULK path - the grouped weight/tensor blocks the loader
+        // suballocates from. The prealloc scratch buffers deliberately do not carry the flag.
+        dev_buffer = ggml_vk_create_buffer_device(ctx->device, size, /* bulk */ true);
     } catch (const vk::SystemError& e) {
         return nullptr;
     }
