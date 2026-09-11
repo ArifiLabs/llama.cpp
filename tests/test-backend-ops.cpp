@@ -11086,6 +11086,38 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
 
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 6, 4096, 5120, {1, 1}, {1, 1}));
 
+    // ArifiLabs lane-230 / R46b (checker F2): S-X8 mat-vec EDGE coverage. The R46 sweep ran f32
+    // activations at m=16 with k=256 only, which exercises neither a ragged row count nor the f16
+    // activation pipeline - and R46's own n <= 3 whole-block decode, plus the R46b shape-tuned
+    // rows/workgroup variants, both change exactly how rows and K tails are walked.
+    //   - ragged m: 1, 7, 63, 4095, 17407 are not multiples of the 1/2/4/8 rows a workgroup can
+    //     own, so every first_row/num_rows tail is hit;
+    //   - k: 5120 is the real 27B row length, 1056 is a 33-block tail (QKSX8 = 32) that is not a
+    //     multiple of 256 or of any workgroup width;
+    //   - n runs 1..8 across the n <= 3 gate boundary, and n=1..3 also on f16 activations, which
+    //     is the pipeline the shape lookup deliberately does NOT tune.
+    for (int64_t m : {1, 7, 63, 4095, 17407}) {
+        for (int64_t k : {1056, 5120}) {
+            for (int n : {1, 2, 3, 4, 8}) {
+                test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, m, n, k, {1, 1}, {1, 1}));
+            }
+        }
+    }
+    for (int64_t m : {7, 4095, 17408}) {
+        for (int n : {1, 2, 3, 8}) {
+            test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F16, m, n, 5120, {1, 1}, {1, 1}));
+        }
+    }
+    // The four real 27B decode shapes at the widths the R46b lookup selects a tuned pipeline for,
+    // as CORRECTNESS cases: a tuned variant that is never executed by the eval sweep is a variant
+    // no receipt covers.
+    for (int n : {1, 2, 3, 4, 5, 6, 7, 8}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32,  17408, n,  5120, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32,   5120, n, 17408, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32,   4096, n, 14336, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 248320, n,  5120, {1, 1}, {1, 1}));
+    }
+
     // K not a multiple of 32
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F16, 64, 32,  65, {1, 1}, {1, 1}));
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F16, 64, 32,  80, {1, 1}, {1, 1}));
