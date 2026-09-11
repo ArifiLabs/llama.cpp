@@ -1746,7 +1746,10 @@ static bool ggml_vk_fa_scalar_uses_mmq(const vk_device& device, ggml_type k_type
 // workgroup-size class, applied or refused, on stderr - llama-server drops ggml INFO records at
 // the default verbosity, so the sweep's effective values have to reach the same channel the perf
 // logger uses.
-static void ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size, uint32_t & num_rows) {
+// Returns true when either environment variable was SET, applied or refused. The R46b tuned
+// lookup is bypassed WHOLE in that case: a sweep arm that kept the measured table on the cells the
+// arm does not name would be a mixed arm, and every receipt read off it would lie.
+static bool ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size, uint32_t & num_rows) {
     static const uint32_t wg_req = [] {
         const char * s = getenv("GGML_VK_SX8_MMV_WG");
         return s != nullptr ? (uint32_t) strtoul(s, nullptr, 10) : 0u;
@@ -1757,7 +1760,7 @@ static void ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size
     }();
 
     if (wg_req == 0 && rows_req == 0) {
-        return;
+        return false;
     }
 
     const uint32_t wg   = (wg_req   != 0) ? wg_req   : wg_size;
@@ -1796,7 +1799,7 @@ static void ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size
                             "keeping probed wg=%u rows=%u\n",
                     wg, rows, (unsigned long long) shmem, refusal, wg_size, num_rows);
         }
-        return;
+        return true;
     }
 
     if (first) {
@@ -1806,6 +1809,7 @@ static void ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size
 
     wg_size  = wg;
     num_rows = rows;
+    return true;
 }
 
 void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
@@ -3220,7 +3224,29 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         //   - it must fit maxComputeWorkGroupInvocations (local_size_x IS the workgroup), and
         //   - the shared reduction array tmpsh[NUM_COLS][NUM_ROWS][BLOCK_SIZE] must fit
         //     maxComputeSharedMemorySize at the WIDEST NUM_COLS this loop creates, not at n=1.
-        ggml_vk_apply_sx8_mmv_override(device, sx8_wg_size, sx8_num_rows);
+        const bool sx8_override_set = ggml_vk_apply_sx8_mmv_override(device, sx8_wg_size, sx8_num_rows);
+
+        // lane-230 / R46b commit D: the R47d lookup ships as the DEFAULT on the device class it was
+        // measured on - subgroup width 64 with 32 KiB of compute shared memory, which is what the
+        // 780M reports - and only in the SUBGROUP workgroup class, the only class this device ever
+        // dispatches S-X8 through. Any environment override switches the whole lookup off.
+        const bool sx8_tuned_here = !sx8_override_set &&
+                                    w == DMMV_WG_SIZE_SUBGROUP &&
+                                    device->subgroup_size == 64 &&
+                                    device->properties.limits.maxComputeSharedMemorySize == 32768;
+        if (w == DMMV_WG_SIZE_SUBGROUP) {
+            device->sx8_mmv_tuned = sx8_tuned_here;
+            static bool tune_receipt = false;
+            if (!tune_receipt) {
+                tune_receipt = true;
+                fprintf(stderr, "ggml_vulkan: S-X8 mat-vec shape tuning: %s (R47d 780M lookup, %zu measured m/k/n cells; "
+                                "probed default wg=%u rows=%u; subgroup=%u shared=%u B)\n",
+                        sx8_tuned_here ? "ON" : "OFF",
+                        sizeof(vk_sx8_mmv_tune_table) / sizeof(vk_sx8_mmv_tune_table[0]),
+                        sx8_wg_size, sx8_num_rows,
+                        device->subgroup_size, device->properties.limits.maxComputeSharedMemorySize);
+            }
+        }
 
         // arifi lane-209 R7: q6_k mat-vec DIRECT SCALES (specialization constant 3 of
         // mul_mat_vec_q6_k.comp). 1 = read the four scales this thread needs straight out of the
@@ -3287,6 +3313,31 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_TQ3_4S][i],  "mul_mat_vec_tq3_4s_f32_f32",  tq_subgroup_fast ? mul_mat_vec_tq3_4s_sg_f32_f32_len : mul_mat_vec_tq3_4s_f32_f32_len, tq_subgroup_fast ? mul_mat_vec_tq3_4s_sg_f32_f32_data : mul_mat_vec_tq3_4s_f32_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {tq_num_rows, 1, 1}, {tq_wg_size, tq_num_rows, i+1}, 1, true, tq_use_subgroups, tq_force_subgroup_size);
             // S-X8 v4.3, type-id 57 (lane-224). One shader, no subgroup fast/legacy split.
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_SX8][i],      "mul_mat_vec_sx8_f32_f32",     mul_mat_vec_sx8_f32_f32_len, mul_mat_vec_sx8_f32_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {sx8_num_rows, 1, 1}, {sx8_wg_size, sx8_num_rows, i+1}, 1, true, false, 0);
+
+            // lane-230 / R46b commit D: the shape-tuned S-X8 variants for THIS NUM_COLS. A variant
+            // is built only if some cell in the table asks for it at this n, and only if its own
+            // reduction array fits at this n - the guard is per-n here, not at the widest NUM_COLS,
+            // because each pipeline is fixed to one NUM_COLS.
+            if (sx8_tuned_here) {
+                for (uint32_t v = 0; v < SX8_TUNE_VARIANT_COUNT; ++v) {
+                    bool wanted = false;
+                    for (const auto & cell : vk_sx8_mmv_tune_table) {
+                        if (cell.variant == v && cell.n == i + 1) {
+                            wanted = true;
+                            break;
+                        }
+                    }
+                    const uint32_t v_rows = vk_sx8_mmv_tune_rows[v];
+                    const uint32_t v_wg   = vk_sx8_mmv_tune_wg[v];
+                    const uint64_t v_shmem = (uint64_t) (i + 1) * v_rows * v_wg * 4;
+                    if (!wanted ||
+                        v_wg > device->properties.limits.maxComputeWorkGroupInvocations ||
+                        v_shmem > device->properties.limits.maxComputeSharedMemorySize) {
+                        continue;
+                    }
+                    ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_sx8_tuned[v][i], "mul_mat_vec_sx8_f32_f32", mul_mat_vec_sx8_f32_f32_len, mul_mat_vec_sx8_f32_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {v_rows, 1, 1}, {v_wg, v_rows, i+1}, 1, true, false, 0);
+                }
+            }
 
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_F32 ][i], "mul_mat_vec_f32_f16_f32",  arr_dmmv_f32_f16_f32_len[reduc],  arr_dmmv_f32_f16_f32_data[reduc],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1, 1, 1}, {wg_size_subgroup, 1, i+1}, 1, false, use_subgroups, force_subgroup_size);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_F16 ][i], "mul_mat_vec_f16_f16_f32",  arr_dmmv_f16_f16_f32_len[reduc],  arr_dmmv_f16_f16_f32_data[reduc],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2, 1, 1}, {wg_size_subgroup, 2, i+1}, 1, false, use_subgroups, force_subgroup_size);
@@ -6117,6 +6168,21 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context * 
             dmmv_wg = DMMV_WG_SIZE_SUBGROUP;
         }
         return ctx->device->pipeline_dequant_mul_mat_vec_q8_1_f32[dmmv_wg][a_type][num_cols-1];
+    }
+
+    // lane-230 / R46b commit D: the R47d shape lookup. f32 activations only - the sweep measured
+    // the f32 kernel, and the report is explicit that f16, q8_1 and the mat-vec-id path do not
+    // inherit an f32 timing result without their own receipts. A cell with no table entry, or a
+    // variant whose pipeline was not built on this device, falls through to the probed default.
+    if (a_type == GGML_TYPE_SX8 && b_type == GGML_TYPE_F32 &&
+        ctx->device->sx8_mmv_tuned && dmmv_wg == DMMV_WG_SIZE_SUBGROUP) {
+        const int variant = ggml_vk_sx8_mmv_tune_lookup(m, k, num_cols);
+        if (variant >= 0) {
+            vk_pipeline tuned = ctx->device->pipeline_dequant_mul_mat_vec_sx8_tuned[variant][num_cols-1];
+            if (tuned) {
+                return tuned;
+            }
+        }
     }
 
     return b_type == GGML_TYPE_F32 ? ctx->device->pipeline_dequant_mul_mat_vec_f32_f32[dmmv_wg][a_type][num_cols-1] : ctx->device->pipeline_dequant_mul_mat_vec_f16_f32[dmmv_wg][a_type][num_cols-1];

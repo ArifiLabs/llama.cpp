@@ -385,6 +385,89 @@ static constexpr uint32_t mul_mat_vec_max_cols = 8;
 
 static constexpr uint32_t p021_max_gqa_ratio = 8;
 
+// lane-230 / R46b commit D: the R47d S-X8 mat-vec sweep (lane-232) as a DEVICE-PROBED DEFAULT.
+//
+// R47d paired rows 1/2/4/8 against workgroups 64/128/256 over the four real 27B S-X8 decode
+// shapes at n=1..8, two rounds each, and the optimum is NOT one global pair: the n=1 FFN
+// orientations want rows=4/wg=256 while the 248320x5120 output wants rows=8/wg=64. So the rule is
+// an exact (m, k, n) lookup with its own pipeline per cell, selected at dispatch. Every selected
+// cell measured >= 0.97 of the probed default in BOTH rounds; rows=8/wg=256 was REFUSED by shared
+// memory and never enters the table. Unmeasured shapes, n > 8 and every other device keep the
+// probed default. Evidence: research/local-inference/lane-evidence/2026-09-11-lane-232-r47a-alloc-
+// instrument/R47D-TRACES-SWEEP.md, section "Sweep selection".
+//
+// The sweep ran on lane-232's base (arifi/main 766cb9528), which does NOT carry R46's n <= 3
+// whole-block decode. R46 replaces the decode math and the row-blocking loop below n <= 3 and
+// leaves the reduction shape (tmpsh[NUM_COLS][NUM_ROWS][BLOCK_SIZE]) untouched, so the shared
+// memory arithmetic still holds, but the n=1/2/3 OPTIMA are UNVERIFIED on this kernel until they
+// are re-measured on the rebased stage.
+enum vk_sx8_mmv_tune_variant {
+    SX8_TUNE_ROWS1_WG256 = 0,
+    SX8_TUNE_ROWS4_WG64,
+    SX8_TUNE_ROWS4_WG128,
+    SX8_TUNE_ROWS4_WG256,
+    SX8_TUNE_ROWS8_WG64,
+    SX8_TUNE_ROWS8_WG128,
+    SX8_TUNE_VARIANT_COUNT,
+};
+
+static constexpr uint32_t vk_sx8_mmv_tune_rows[SX8_TUNE_VARIANT_COUNT] = { 1,   4,  4,   4,   8,  8   };
+static constexpr uint32_t vk_sx8_mmv_tune_wg  [SX8_TUNE_VARIANT_COUNT] = { 256, 64, 128, 256, 64, 128 };
+
+struct vk_sx8_mmv_tune_cell {
+    uint32_t m;
+    uint32_t k;
+    uint32_t n;
+    uint32_t variant;
+};
+
+// m is the output row count (ne20), k the row length (ne00) - the same orientation the R47d table
+// prints as "m x k". 17408x5120 at n=7 is absent on purpose: the sweep's own winner there IS the
+// probed default, so no variant pipeline is built for it.
+static constexpr vk_sx8_mmv_tune_cell vk_sx8_mmv_tune_table[] = {
+    {   4096, 14336, 1, SX8_TUNE_ROWS1_WG256 },
+    {   4096, 14336, 2, SX8_TUNE_ROWS4_WG256 },
+    {   4096, 14336, 3, SX8_TUNE_ROWS4_WG256 },
+    {   4096, 14336, 4, SX8_TUNE_ROWS4_WG256 },
+    {   4096, 14336, 5, SX8_TUNE_ROWS4_WG128 },
+    {   4096, 14336, 6, SX8_TUNE_ROWS4_WG128 },
+    {   4096, 14336, 7, SX8_TUNE_ROWS4_WG64  },
+    {   4096, 14336, 8, SX8_TUNE_ROWS4_WG128 },
+    {   5120, 17408, 1, SX8_TUNE_ROWS4_WG256 },
+    {   5120, 17408, 2, SX8_TUNE_ROWS4_WG256 },
+    {   5120, 17408, 3, SX8_TUNE_ROWS4_WG256 },
+    {   5120, 17408, 4, SX8_TUNE_ROWS4_WG128 },
+    {   5120, 17408, 5, SX8_TUNE_ROWS4_WG256 },
+    {   5120, 17408, 6, SX8_TUNE_ROWS4_WG128 },
+    {   5120, 17408, 7, SX8_TUNE_ROWS4_WG64  },
+    {   5120, 17408, 8, SX8_TUNE_ROWS4_WG256 },
+    {  17408,  5120, 1, SX8_TUNE_ROWS4_WG256 },
+    {  17408,  5120, 2, SX8_TUNE_ROWS4_WG256 },
+    {  17408,  5120, 3, SX8_TUNE_ROWS4_WG256 },
+    {  17408,  5120, 4, SX8_TUNE_ROWS8_WG128 },
+    {  17408,  5120, 5, SX8_TUNE_ROWS4_WG128 },
+    {  17408,  5120, 6, SX8_TUNE_ROWS4_WG64  },
+    {  17408,  5120, 8, SX8_TUNE_ROWS4_WG64  },
+    { 248320,  5120, 1, SX8_TUNE_ROWS8_WG64  },
+    { 248320,  5120, 2, SX8_TUNE_ROWS4_WG64  },
+    { 248320,  5120, 3, SX8_TUNE_ROWS4_WG64  },
+    { 248320,  5120, 4, SX8_TUNE_ROWS8_WG64  },
+    { 248320,  5120, 5, SX8_TUNE_ROWS4_WG64  },
+    { 248320,  5120, 6, SX8_TUNE_ROWS4_WG64  },
+    { 248320,  5120, 7, SX8_TUNE_ROWS4_WG64  },
+    { 248320,  5120, 8, SX8_TUNE_ROWS4_WG64  },
+};
+
+// -1 = no measured cell, keep the probed default.
+static int ggml_vk_sx8_mmv_tune_lookup(uint32_t m, uint32_t k, uint32_t n) {
+    for (const auto & cell : vk_sx8_mmv_tune_table) {
+        if (cell.m == m && cell.k == k && cell.n == n) {
+            return (int) cell.variant;
+        }
+    }
+    return -1;
+}
+
 enum vk_device_architecture {
     OTHER,
     AMD_GCN,
@@ -804,6 +887,12 @@ struct vk_device_struct {
 
     vk_pipeline pipeline_dequant[GGML_TYPE_COUNT];
     vk_pipeline pipeline_dequant_transpose[GGML_TYPE_COUNT]; // fused dequant+transpose for FA quant-KV
+    // lane-230 / R46b commit D: one S-X8 f32 mat-vec pipeline per measured (rows, workgroup)
+    // variant per NUM_COLS, built only on a device the R47d sweep speaks for and only for the
+    // (variant, n) pairs the lookup table names. Everything else stays null and is never selected.
+    bool sx8_mmv_tuned = false;
+    vk_pipeline pipeline_dequant_mul_mat_vec_sx8_tuned[SX8_TUNE_VARIANT_COUNT][mul_mat_vec_max_cols];
+
     vk_pipeline pipeline_dequant_mul_mat_vec_f32_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
     vk_pipeline pipeline_dequant_mul_mat_vec_f16_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
     vk_pipeline pipeline_dequant_mul_mat_vec_id_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
