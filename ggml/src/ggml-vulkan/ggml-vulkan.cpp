@@ -3739,7 +3739,10 @@ static std::string vk_alloc_trace_budget_str(vk_device& device) {
     return ss.str();
 }
 
+// Takes the lock: allocation can run from more than one thread, and an unguarded read of the map
+// while another thread inserts would crash inside the instrument during the one run it exists for.
 static std::string vk_alloc_trace_heap_live_str() {
+    std::lock_guard<std::mutex> guard(vk_alloc_trace().mutex);
     std::stringstream ss;
     ss << "heap_live=[";
     bool first = true;
