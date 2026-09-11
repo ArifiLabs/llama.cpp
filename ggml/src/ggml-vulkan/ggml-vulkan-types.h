@@ -82,6 +82,7 @@ typedef struct VkPhysicalDeviceCooperativeMatrixDecodeVectorFeaturesNV {
 #include <shared_mutex>
 
 #include <mutex>
+#include <atomic>
 
 #include <future>
 
@@ -1155,6 +1156,10 @@ struct vk_context_struct {
     std::vector<vk_staging_memset> memsets;
 
     std::vector<std::string> debug_labels;
+
+    // lane-232 / R47a: one entry per recorded transfer, populated only under GGML_VK_ALLOC_TRACE
+    // and flushed (then cleared) by ggml_vk_submit right before the queue call.
+    std::vector<std::string> trace_ops;
 
     vk_command_pool * p {};
 };

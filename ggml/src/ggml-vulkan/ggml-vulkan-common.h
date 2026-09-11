@@ -282,3 +282,10 @@ inline void ggml_vk_dispatch_pipeline(ggml_backend_vk_context* ctx, vk_context& 
     }
 }
 
+// lane-232 / R47a: GGML_VK_ALLOC_TRACE helpers shared across the split (defined in ggml-vulkan-buffers.cpp)
+bool ggml_vk_alloc_trace_enabled();
+void vk_alloc_trace_line(const std::string & body);
+uint64_t vk_alloc_trace_begin_submit();
+uint64_t vk_alloc_trace_take_submit();
+void vk_alloc_trace_record_copy(vk_context & subctx, const char * tag, const ggml_tensor * tensor,
+                                VkBuffer src, VkBuffer dst, const vk::BufferCopy * slices, size_t n);

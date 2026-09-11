@@ -23,6 +23,241 @@ static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDe
     return indices;
 }
 
+// lane-232 / R47a: opt-in allocation + submit trace, GGML_VK_ALLOC_TRACE=1.
+//
+// R47c could not name why two placement configs die at the first queue submit after every
+// allocation reported success, because GGML_VK_MEMORY_LOGGER records requested bytes and a
+// device/host category and nothing else. This trace adds the missing fields: requirement bytes,
+// memoryTypeBits, the chosen memory type and heap, per-heap live bytes, the driver's budget and
+// usage where VK_EXT_memory_budget is supported, and one line per queue submit carrying its
+// recorded copy batch and the VkResult. Off unless the variable is set; the enable is read once.
+bool ggml_vk_alloc_trace_enabled() {
+    static const bool enabled = [] {
+        const char * s = getenv("GGML_VK_ALLOC_TRACE");
+        return s != nullptr && s[0] == '1';
+    }();
+    return enabled;
+}
+
+void vk_alloc_trace_line(const std::string & body) {
+    static std::mutex line_mutex;
+    std::lock_guard<std::mutex> guard(line_mutex);
+    // endl, not "\n": every line must survive an abort mid-submit.
+    std::cerr << "ggml_vulkan alloc-trace: " << body << std::endl;
+}
+
+static uint64_t vk_alloc_trace_new_seq() {
+    static std::atomic<uint64_t> counter{0};
+    return counter.fetch_add(1);
+}
+
+// The batch detail (buffers, offsets, lengths) is only known at the recording site in
+// ggml_vk_submit; the VkResult is only known inside the queue wrapper. One sequence number
+// handed from the first to the second ties the two lines together.
+static thread_local uint64_t vk_alloc_trace_pending_submit_seq = UINT64_MAX;
+
+uint64_t vk_alloc_trace_begin_submit() {
+    const uint64_t seq = vk_alloc_trace_new_seq();
+    vk_alloc_trace_pending_submit_seq = seq;
+    return seq;
+}
+
+uint64_t vk_alloc_trace_take_submit() {
+    uint64_t seq = vk_alloc_trace_pending_submit_seq;
+    if (seq == UINT64_MAX) {
+        // a submit that never passed through ggml_vk_submit's recording path (e.g. fence-only)
+        seq = vk_alloc_trace_new_seq();
+    }
+    vk_alloc_trace_pending_submit_seq = UINT64_MAX;
+    return seq;
+}
+
+// lane-232 / R47a: live per-heap accounting for the allocation trace. The memory logger keeps
+// requested bytes by device/host category; this keeps the allocated requirement bytes by HEAP,
+// which is the number a placement failure is actually about.
+struct vk_alloc_trace_state {
+    std::mutex mutex;
+    std::map<uint32_t, uint64_t> heap_live;                            // heapIndex -> live requirement bytes
+    std::map<VkBuffer, std::pair<uint32_t, uint64_t>> by_buffer;       // buffer -> (heapIndex, requirement bytes)
+    uint64_t next_alloc_id = 0;
+};
+
+static vk_alloc_trace_state & vk_alloc_trace() {
+    static vk_alloc_trace_state state;
+    return state;
+}
+
+static uint64_t vk_alloc_trace_next_id() {
+    std::lock_guard<std::mutex> guard(vk_alloc_trace().mutex);
+    return vk_alloc_trace().next_alloc_id++;
+}
+
+// "budget=unavailable" when VK_EXT_memory_budget is not supported on this device. Printing zeros
+// there would be a fabricated measurement, which is exactly what R47c indicted the old logger for.
+static std::string vk_alloc_trace_budget_str(vk_device& device) {
+    if (device->idx >= vk_instance.device_supports_membudget.size() ||
+        !vk_instance.device_supports_membudget[device->idx]) {
+        return "budget=unavailable";
+    }
+
+    vk::PhysicalDeviceMemoryBudgetPropertiesEXT budgetprops;
+    vk::PhysicalDeviceMemoryProperties2 memprops = {};
+    memprops.pNext = &budgetprops;
+    device->physical_device.getMemoryProperties2(&memprops);
+
+    std::stringstream ss;
+    ss << "budget=[";
+    for (uint32_t i = 0; i < memprops.memoryProperties.memoryHeapCount; ++i) {
+        if (i > 0) {
+            ss << ",";
+        }
+        ss << i << ":" << budgetprops.heapBudget[i] << "/" << budgetprops.heapUsage[i];
+    }
+    ss << "]";
+    return ss.str();
+}
+
+static std::string vk_alloc_trace_heap_live_str() {
+    std::stringstream ss;
+    ss << "heap_live=[";
+    bool first = true;
+    for (const auto & kv : vk_alloc_trace().heap_live) {
+        if (!first) {
+            ss << ",";
+        }
+        first = false;
+        ss << kv.first << ":" << kv.second;
+    }
+    ss << "]";
+    return ss.str();
+}
+
+#ifndef _WIN32
+extern char ** environ;
+#endif
+
+// Same-run device topology and the effective GGML_/LLAMA_/VK_ environment, printed once so a
+// trace can be read without guessing which box and which flags produced it. The binary's identity
+// is NOT hashed here: the build receipt carries its sha256.
+static void vk_alloc_trace_preamble(vk_device& device) {
+    static std::once_flag once;
+    std::call_once(once, [&device] {
+        const vk::PhysicalDeviceMemoryProperties mp = device->physical_device.getMemoryProperties();
+
+        std::stringstream ss;
+        ss << "device name=\"" << device->name << "\" idx=" << device->idx
+           << " uma=" << (device->uma ? 1 : 0)
+           << " prefer_host=" << (device->prefer_host_memory ? 1 : 0)
+           << " max_buffer_size=" << device->max_buffer_size;
+        vk_alloc_trace_line(ss.str());
+
+        for (uint32_t i = 0; i < mp.memoryHeapCount; ++i) {
+            vk_alloc_trace_line("heap " + std::to_string(i) +
+                                " size=" + std::to_string(mp.memoryHeaps[i].size) +
+                                " flags=" + to_string(mp.memoryHeaps[i].flags));
+        }
+        for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
+            vk_alloc_trace_line("memtype " + std::to_string(i) +
+                                " heap=" + std::to_string(mp.memoryTypes[i].heapIndex) +
+                                " flags=" + to_string(mp.memoryTypes[i].propertyFlags));
+        }
+        vk_alloc_trace_line(vk_alloc_trace_budget_str(device));
+
+#ifdef _WIN32
+        char ** envp = _environ;
+#else
+        char ** envp = environ;
+#endif
+        for (char ** e = envp; e != nullptr && *e != nullptr; ++e) {
+            const std::string entry(*e);
+            if (entry.rfind("GGML_", 0) == 0 || entry.rfind("LLAMA_", 0) == 0 || entry.rfind("VK_", 0) == 0) {
+                vk_alloc_trace_line("env " + entry);
+            }
+        }
+    });
+}
+
+static void vk_alloc_trace_record_alloc(vk_device& device, VkBuffer buffer, uint64_t alloc_id,
+                                        size_t request_size, const vk::MemoryRequirements & mem_req,
+                                        uint32_t mtype, uint32_t heap) {
+    uint64_t live_after = 0;
+    {
+        std::lock_guard<std::mutex> guard(vk_alloc_trace().mutex);
+        vk_alloc_trace().heap_live[heap] += mem_req.size;
+        vk_alloc_trace().by_buffer[buffer] = { heap, (uint64_t) mem_req.size };
+        live_after = vk_alloc_trace().heap_live[heap];
+    }
+
+    std::stringstream ss;
+    ss << "alloc id=" << alloc_id << " state=ok"
+       << " request=" << request_size
+       << " requirement=" << mem_req.size
+       << " alignment=" << mem_req.alignment
+       << " memoryTypeBits=0x" << std::hex << mem_req.memoryTypeBits << std::dec
+       << " type=" << mtype << " heap=" << heap
+       << " heap_live_after=" << live_after
+       << " buffer=0x" << std::hex << (uint64_t) buffer << std::dec
+       << " " << vk_alloc_trace_heap_live_str()
+       << " " << vk_alloc_trace_budget_str(device);
+    vk_alloc_trace_line(ss.str());
+}
+
+static void vk_alloc_trace_record_free(VkBuffer buffer) {
+    if (!ggml_vk_alloc_trace_enabled()) {
+        return;
+    }
+
+    uint32_t heap = 0;
+    uint64_t bytes = 0;
+    uint64_t live_after = 0;
+    {
+        std::lock_guard<std::mutex> guard(vk_alloc_trace().mutex);
+        auto it = vk_alloc_trace().by_buffer.find(buffer);
+        if (it == vk_alloc_trace().by_buffer.end()) {
+            return;
+        }
+        heap  = it->second.first;
+        bytes = it->second.second;
+        uint64_t & live = vk_alloc_trace().heap_live[heap];
+        live = (live >= bytes) ? (live - bytes) : 0;
+        live_after = live;
+        vk_alloc_trace().by_buffer.erase(it);
+    }
+
+    std::stringstream ss;
+    ss << "free buffer=0x" << std::hex << (uint64_t) buffer << std::dec
+       << " requirement=" << bytes << " heap=" << heap
+       << " heap_live_after=" << live_after;
+    vk_alloc_trace_line(ss.str());
+}
+
+// lane-232 / R47a: one entry per recorded transfer. A single upload can carry thousands of
+// per-row regions, so the entry is a summary - count, total bytes, first and last region - not a
+// line per region; that keeps the trace readable while still naming the buffers and extents that
+// were in flight when a submit died.
+void vk_alloc_trace_record_copy(vk_context & subctx, const char * tag, const ggml_tensor * tensor,
+                                       VkBuffer src, VkBuffer dst, const vk::BufferCopy * slices, size_t n) {
+    if (!ggml_vk_alloc_trace_enabled() || subctx == nullptr) {
+        return;
+    }
+
+    uint64_t total = 0;
+    for (size_t i = 0; i < n; i++) {
+        total += slices[i].size;
+    }
+
+    std::stringstream ss;
+    ss << tag
+       << " tensor=" << (tensor && tensor->name[0] ? tensor->name : "-")
+       << " src=0x" << std::hex << (uint64_t) src << " dst=0x" << (uint64_t) dst << std::dec
+       << " regions=" << n << " bytes=" << total;
+    if (n > 0) {
+        ss << " first=[" << slices[0].srcOffset << "->" << slices[0].dstOffset << "," << slices[0].size << "]"
+           << " last=["  << slices[n-1].srcOffset << "->" << slices[n-1].dstOffset << "," << slices[n-1].size << "]";
+    }
+    subctx->trace_ops.push_back(ss.str());
+}
+
 static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::initializer_list<vk::MemoryPropertyFlags> & req_flags_list,
                                        void *import_ptr = nullptr) {
     VK_LOG_DEBUG("ggml_vk_create_buffer(" << device->name << ", " << size << ", " << to_string(req_flags_list.begin()[0]) << ", " << to_string(req_flags_list.begin()[req_flags_list.size()-1]) << ")");
@@ -69,6 +304,24 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
 
     vk::MemoryAllocateFlagsInfo mem_flags_info { mem_flags };
 
+    // lane-232 / R47a
+    const bool     alloc_trace = ggml_vk_alloc_trace_enabled();
+    const uint64_t alloc_id    = alloc_trace ? vk_alloc_trace_next_id() : 0;
+    if (alloc_trace) {
+        vk_alloc_trace_preamble(device);
+        std::stringstream ss;
+        ss << "alloc id=" << alloc_id << " state=attempt"
+           << " request=" << size
+           << " requirement=" << mem_req.size
+           << " alignment=" << mem_req.alignment
+           << " memoryTypeBits=0x" << std::hex << mem_req.memoryTypeBits << std::dec
+           << " import=" << (import_ptr ? 1 : 0)
+           << " flags_first=" << to_string(*req_flags_list.begin())
+           << " " << vk_alloc_trace_heap_live_str()
+           << " " << vk_alloc_trace_budget_str(device);
+        vk_alloc_trace_line(ss.str());
+    }
+
     if (device->memory_priority) {
         mem_flags_info.setPNext(&mem_priority_info);
     }
@@ -114,7 +367,15 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
             import_info.pHostPointer = import_ptr;
             import_info.setPNext(&mem_flags_info);
             buf->device_memory = device->device.allocateMemory({ size, memory_type_idx, &import_info });
+            if (alloc_trace) {
+                vk_alloc_trace_record_alloc(device, buf->buffer, alloc_id, size, mem_req, memory_type_idx,
+                                            mem_props.memoryTypes[memory_type_idx].heapIndex);
+            }
         } catch (const vk::SystemError& e) {
+            if (alloc_trace) {
+                vk_alloc_trace_line("alloc id=" + std::to_string(alloc_id) + " state=fail import=1 type=" +
+                                    std::to_string(memory_type_idx) + " result=" + e.code().message() + " what=" + e.what());
+            }
         }
     } else {
         for (auto it = req_flags_list.begin(); it != req_flags_list.end(); it++) {
@@ -123,18 +384,42 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
             const std::vector<uint32_t> memory_type_indices = ggml_vk_find_memory_properties(&mem_props, &mem_req, req_flags);
 
             if (memory_type_indices.empty()) {
+                if (alloc_trace) {
+                    vk_alloc_trace_line("alloc id=" + std::to_string(alloc_id) +
+                                        " state=no_candidate_type req_flags=" + to_string(req_flags));
+                }
                 continue;
             }
 
             bool done = false;
 
             for (auto mtype_it = memory_type_indices.begin(); mtype_it != memory_type_indices.end(); mtype_it++) {
+                const uint32_t cand_heap = mem_props.memoryTypes[*mtype_it].heapIndex;
+                if (alloc_trace) {
+                    std::stringstream ss;
+                    ss << "alloc id=" << alloc_id << " state=try"
+                       << " type=" << *mtype_it << " heap=" << cand_heap
+                       << " heap_size=" << mem_props.memoryHeaps[cand_heap].size
+                       << " type_flags=" << to_string(mem_props.memoryTypes[*mtype_it].propertyFlags)
+                       << " req_flags=" << to_string(req_flags);
+                    vk_alloc_trace_line(ss.str());
+                }
                 try {
                     buf->device_memory = device->device.allocateMemory({ mem_req.size, *mtype_it, &mem_flags_info });
                     buf->memory_property_flags = mem_props.memoryTypes[*mtype_it].propertyFlags;
+                    if (alloc_trace) {
+                        vk_alloc_trace_record_alloc(device, buf->buffer, alloc_id, size, mem_req, *mtype_it, cand_heap);
+                    }
                     done = true;
                     break;
                 } catch (const vk::SystemError& e) {
+                    if (alloc_trace) {
+                        std::stringstream ss;
+                        ss << "alloc id=" << alloc_id << " state=fail"
+                           << " type=" << *mtype_it << " heap=" << cand_heap
+                           << " result=" << e.code().message() << " what=" << e.what();
+                        vk_alloc_trace_line(ss.str());
+                    }
                     // loop and retry
                     // during last attempt throw the exception
                     if (it + 1 == req_flags_list.end() && mtype_it + 1 == memory_type_indices.end()) {
@@ -237,6 +522,7 @@ void ggml_vk_destroy_buffer(vk_buffer& buf) {
     if (buf->device != nullptr) {
         buf->device->memory_logger->log_deallocation(buf);
     }
+    vk_alloc_trace_record_free(buf->buffer);  // lane-232 / R47a
 
     buf.reset();
 }
@@ -382,6 +668,7 @@ static void ggml_vk_buffer_write_nc_async(ggml_backend_vk_context * ctx, vk_cont
         }
 
         ggml_vk_sync_buffers(ctx, subctx);
+        vk_alloc_trace_record_copy(subctx, "write_nc_async/pinned", tensor, buf->buffer, dst->buffer, slices.data(), slices.size());
         subctx->s->buffer->buf.copyBuffer(buf->buffer, dst->buffer, slices);
         return;
     }
@@ -397,6 +684,10 @@ static void ggml_vk_buffer_write_nc_async(ggml_backend_vk_context * ctx, vk_cont
     VkBufferCopy buf_copy{ 0, offset, copy_size };
 
     ggml_vk_sync_buffers(ctx, subctx);
+    {
+        const vk::BufferCopy trace_slice { buf_copy.srcOffset, buf_copy.dstOffset, buf_copy.size };
+        vk_alloc_trace_record_copy(subctx, "write_nc_async/staging", tensor, (VkBuffer)staging->buffer, (VkBuffer)dst->buffer, &trace_slice, 1);
+    }
     vkCmdCopyBuffer(subctx->s->buffer->buf, (VkBuffer)staging->buffer, (VkBuffer)dst->buffer, 1, &buf_copy);
 
     for (uint64_t i3 = 0; i3 < ne3; i3++) {
@@ -446,6 +737,7 @@ bool ggml_vk_buffer_write_2d_async(vk_context subctx, vk_buffer& dst, size_t off
         }
 
         ggml_vk_sync_buffers(nullptr, subctx);
+        vk_alloc_trace_record_copy(subctx, "write_2d_async/pinned", nullptr, buf->buffer, dst->buffer, slices.data(), slices.size());
         subctx->s->buffer->buf.copyBuffer(buf->buffer, dst->buffer, slices);
         return true;
     }
@@ -477,6 +769,7 @@ bool ggml_vk_buffer_write_2d_async(vk_context subctx, vk_buffer& dst, size_t off
     }
 
     ggml_vk_sync_buffers(nullptr, subctx);
+    vk_alloc_trace_record_copy(subctx, "write_2d_async/staging", nullptr, (VkBuffer)staging_buffer->buffer, (VkBuffer)dst->buffer, slices.data(), slices.size());
     subctx->s->buffer->buf.copyBuffer(staging_buffer->buffer, dst->buffer, slices);
 
     if (width == spitch) {
@@ -567,6 +860,7 @@ bool ggml_vk_buffer_read_2d_async(vk_context subctx, vk_buffer& src, size_t offs
     if (buf != nullptr) {
         // Memory is pinned, use as staging buffer
         ggml_vk_sync_buffers(nullptr, subctx);
+        vk_alloc_trace_record_copy(subctx, "read_2d_async/pinned", nullptr, src->buffer, buf->buffer, slices.data(), slices.size());
         subctx->s->buffer->buf.copyBuffer(src->buffer, buf->buffer, slices);
 
         return true;
@@ -599,6 +893,7 @@ bool ggml_vk_buffer_read_2d_async(vk_context subctx, vk_buffer& src, size_t offs
     }
 
     ggml_vk_sync_buffers(nullptr, subctx);
+    vk_alloc_trace_record_copy(subctx, "read_2d_async/staging", nullptr, src->buffer, staging_buffer->buffer, staging_slices.data(), staging_slices.size());
     subctx->s->buffer->buf.copyBuffer(src->buffer, staging_buffer->buffer, staging_slices);
 
     if (width == dpitch) {

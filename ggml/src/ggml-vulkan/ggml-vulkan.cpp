@@ -1008,6 +1008,23 @@ void ggml_vk_submit(vk_context& ctx, vk::Fence fence) {
         }
     }
 
+    // lane-232 / R47a: flush the recorded batch BEFORE the call, under the sequence number the
+    // queue wrapper will print its VkResult against. If the submit aborts the process, the batch
+    // that died is already on stderr.
+    if (ggml_vk_alloc_trace_enabled()) {
+        const uint64_t seq = vk_alloc_trace_begin_submit();
+        std::stringstream ss;
+        ss << "batch seq=" << seq
+           << " queue_family=" << ctx->p->q->queue_family_index
+           << " submissions=" << submit_infos.size()
+           << " ops=" << ctx->trace_ops.size();
+        vk_alloc_trace_line(ss.str());
+        for (const auto & op : ctx->trace_ops) {
+            vk_alloc_trace_line("batch seq=" + std::to_string(seq) + " op " + op);
+        }
+    }
+    ctx->trace_ops.clear();
+
     ctx->p->q->handle->submit(submit_infos, fence);
 
     ctx->seqs.clear();
@@ -1722,6 +1739,73 @@ static bool ggml_vk_fa_scalar_uses_mmq(const vk_device& device, ggml_type k_type
     GGML_UNUSED(v_type);
     return false;
 #endif
+}
+
+// lane-232 / R47a: GGML_VK_SX8_MMV_ROWS / GGML_VK_SX8_MMV_WG. Read once, validated against this
+// device's real limits, applied to every S-X8 mat-vec pipeline or to none. A receipt line per
+// workgroup-size class, applied or refused, on stderr - llama-server drops ggml INFO records at
+// the default verbosity, so the sweep's effective values have to reach the same channel the perf
+// logger uses.
+static void ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size, uint32_t & num_rows) {
+    static const uint32_t wg_req = [] {
+        const char * s = getenv("GGML_VK_SX8_MMV_WG");
+        return s != nullptr ? (uint32_t) strtoul(s, nullptr, 10) : 0u;
+    }();
+    static const uint32_t rows_req = [] {
+        const char * s = getenv("GGML_VK_SX8_MMV_ROWS");
+        return s != nullptr ? (uint32_t) strtoul(s, nullptr, 10) : 0u;
+    }();
+
+    if (wg_req == 0 && rows_req == 0) {
+        return;
+    }
+
+    const uint32_t wg   = (wg_req   != 0) ? wg_req   : wg_size;
+    const uint32_t rows = (rows_req != 0) ? rows_req : num_rows;
+
+    // FLOAT_TYPE is 4 bytes in the worst case (the f16 builds need less), so this bound is
+    // conservative in the safe direction.
+    const uint64_t shmem = (uint64_t) mul_mat_vec_max_cols * rows * wg * 4;
+
+    const char * refusal = nullptr;
+    if (wg == 0 || (wg % 32) != 0) {
+        refusal = "workgroup is not a positive multiple of 32";
+    } else if (rows == 0) {
+        refusal = "rows is zero";
+    } else if (wg > device->properties.limits.maxComputeWorkGroupInvocations) {
+        refusal = "workgroup exceeds maxComputeWorkGroupInvocations";
+    } else if (shmem > device->properties.limits.maxComputeSharedMemorySize) {
+        refusal = "reduction shared memory exceeds maxComputeSharedMemorySize at the widest NUM_COLS";
+    }
+
+    // ggml_vk_load_shaders runs per workgroup-size class and again for each lazily requested
+    // pipeline, so the receipt is printed once per distinct (probed, requested) pair - enough to
+    // read the sweep's effective values out of a log without flooding it.
+    static std::mutex receipt_mutex;
+    static std::set<uint64_t> receipted;
+    const uint64_t receipt_key = ((uint64_t) wg_size << 48) | ((uint64_t) num_rows << 32) | ((uint64_t) wg << 16) | rows;
+    bool first = false;
+    {
+        std::lock_guard<std::mutex> guard(receipt_mutex);
+        first = receipted.insert(receipt_key).second;
+    }
+
+    if (refusal != nullptr) {
+        if (first) {
+            fprintf(stderr, "ggml_vulkan: S-X8 mat-vec override REFUSED (wg=%u rows=%u, shmem=%llu B): %s; "
+                            "keeping probed wg=%u rows=%u\n",
+                    wg, rows, (unsigned long long) shmem, refusal, wg_size, num_rows);
+        }
+        return;
+    }
+
+    if (first) {
+        fprintf(stderr, "ggml_vulkan: S-X8 mat-vec override APPLIED: wg=%u rows=%u (probed wg=%u rows=%u), shmem=%llu B\n",
+                wg, rows, wg_size, num_rows, (unsigned long long) shmem);
+    }
+
+    wg_size  = wg;
+    num_rows = rows;
 }
 
 void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
@@ -3121,8 +3205,22 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         // NOT multiples of 32 and would silently drop weights if used as the workgroup.
         // Reduction stays the shared-memory path: only the plain shader variant is
         // generated, so no USE_SUBGROUP_ADD build exists to pair a subgroup claim with.
-        const uint32_t sx8_wg_size  = (wg_size_subgroup >= 32 && (wg_size_subgroup % 32) == 0) ? wg_size_subgroup : 32;
-        const uint32_t sx8_num_rows = 2;
+        uint32_t sx8_wg_size  = (wg_size_subgroup >= 32 && (wg_size_subgroup % 32) == 0) ? wg_size_subgroup : 32;
+        uint32_t sx8_num_rows = 2;
+
+        // lane-232 / R47a: the NUM_ROWS / workgroup sweep is a DEVICE-PROBE SWITCH plus an
+        // override, not a compile constant, so HQ can pair rows 1/2/4/8 against workgroups
+        // 64/128/256 out of ONE binary. Unset = the probed values above, unchanged.
+        //
+        // An override is taken whole or refused whole. A partial apply would leave some of the
+        // mul_mat_vec_max_cols pipelines on the override and some on the default, which is not a
+        // measurable arm. Three conditions gate it:
+        //   - the workgroup must be a positive multiple of 32 (the correctness condition stated
+        //     above: a thread derives its weight position from tid & 31),
+        //   - it must fit maxComputeWorkGroupInvocations (local_size_x IS the workgroup), and
+        //   - the shared reduction array tmpsh[NUM_COLS][NUM_ROWS][BLOCK_SIZE] must fit
+        //     maxComputeSharedMemorySize at the WIDEST NUM_COLS this loop creates, not at n=1.
+        ggml_vk_apply_sx8_mmv_override(device, sx8_wg_size, sx8_num_rows);
 
         // arifi lane-209 R7: q6_k mat-vec DIRECT SCALES (specialization constant 3 of
         // mul_mat_vec_q6_k.comp). 1 = read the four scales this thread needs straight out of the
@@ -14358,6 +14456,7 @@ static void ggml_backend_vk_set_tensor_2d_async(ggml_backend_t backend, ggml_ten
             }
         }
 
+        vk_alloc_trace_record_copy(cpy_ctx, "set_tensor_2d/staging", tensor, ctx->sync_staging->buffer, buf->buffer, slices.data(), slices.size());
         cpy_ctx->s->buffer->buf.copyBuffer(ctx->sync_staging->buffer, buf->buffer, slices);
 
         if (size == stride_data) {
@@ -14414,6 +14513,7 @@ static void ggml_backend_vk_get_tensor_2d_async(ggml_backend_t backend, const gg
             }
         }
 
+        vk_alloc_trace_record_copy(compute_ctx, "get_tensor_2d/staging", tensor, buf->buffer, ctx->sync_staging->buffer, slices.data(), slices.size());
         compute_ctx->s->buffer->buf.copyBuffer(buf->buffer, ctx->sync_staging->buffer, slices);
 
         if (size == stride_data) {
@@ -17685,6 +17785,46 @@ bool ggml_vk_intel_windows_driver_in_range(uint32_t driver_version, uint32_t low
 GGML_BACKEND_DL_IMPL(ggml_backend_vk_reg)
 
 
+// lane-232 / R47a: the ONE place every queue submission passes through, so the trace cannot miss
+// the failing submit the way a guard at a single caller would. Both handles call it; behaviour is
+// unchanged when the trace is off, and every exception is rethrown.
+static void vk_queue_submit_inner(vk::Queue & queue, vk_device_ref & device,
+                                  vk::ArrayProxy<const vk::SubmitInfo> submits, vk::Fence fence) {
+    const bool trace = ggml_vk_alloc_trace_enabled();
+    const uint64_t seq = trace ? vk_alloc_trace_take_submit() : 0;
+
+    if (trace) {
+        std::stringstream ss;
+        ss << "submit seq=" << seq
+           << " queue=0x" << std::hex << (uint64_t)(VkQueue)queue << std::dec
+           << " submit_infos=" << submits.size()
+           << " fence=" << (fence ? "yes" : "no")
+           << " state=begin";
+        vk_alloc_trace_line(ss.str());
+    }
+
+    try {
+        queue.submit(submits, fence);
+    } catch (vk::DeviceLostError & e) {
+        if (trace) {
+            vk_alloc_trace_line("submit seq=" + std::to_string(seq) + " state=throw result=DeviceLost what=" + e.what());
+        }
+        if (auto dev = device.lock()) {
+            ggml_vk_print_device_lost_info(dev);
+        }
+        throw;
+    } catch (const vk::SystemError & e) {
+        if (trace) {
+            vk_alloc_trace_line("submit seq=" + std::to_string(seq) + " state=throw result=" + e.code().message() + " what=" + e.what());
+        }
+        throw;
+    }
+
+    if (trace) {
+        vk_alloc_trace_line("submit seq=" + std::to_string(seq) + " state=ok result=Success");
+    }
+}
+
 // out-of-lined header method definitions
 
 void vk_queue_handle_synchronized::submit(vk::ArrayProxy<const vk::SubmitInfo> submits, vk::Fence fence) {
@@ -17694,14 +17834,7 @@ void vk_queue_handle_synchronized::submit(vk::ArrayProxy<const vk::SubmitInfo> s
         device_guard = std::unique_lock<std::mutex>(*device_submit_mutex);
     }
     std::lock_guard<std::mutex> guard(mutex);
-    try {
-        queue.submit(submits, fence);
-    } catch (vk::DeviceLostError &) {
-        if (auto dev = device.lock()) {
-            ggml_vk_print_device_lost_info(dev);
-        }
-        throw;
-    }
+    vk_queue_submit_inner(queue, device, submits, fence);
 }
 
 void vk_queue_handle_unsynchronized::submit(vk::ArrayProxy<const vk::SubmitInfo> submits, vk::Fence fence) {
@@ -17710,14 +17843,7 @@ void vk_queue_handle_unsynchronized::submit(vk::ArrayProxy<const vk::SubmitInfo>
     if (device_submit_mutex) {
         device_guard = std::unique_lock<std::mutex>(*device_submit_mutex);
     }
-    try {
-        queue.submit(submits, fence);
-    } catch (vk::DeviceLostError &) {
-        if (auto dev = device.lock()) {
-            ggml_vk_print_device_lost_info(dev);
-        }
-        throw;
-    }
+    vk_queue_submit_inner(queue, device, submits, fence);
 }
 
 vk_device_struct::~vk_device_struct() {
