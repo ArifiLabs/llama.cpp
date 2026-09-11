@@ -3769,11 +3769,48 @@ static void ggml_vk_queue_command_pools_cleanup(vk_device& device) {
     }
 }
 
-static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDeviceMemoryProperties* mem_props, vk::MemoryRequirements* mem_req, vk::MemoryPropertyFlags flags) {
+// lane-230 / R46b commit E: GGML_VK_PLACEMENT=bulk-large-heap, an OPT-IN explicit placement
+// policy. Unset keeps every existing selection byte-for-byte.
+//
+// R47d traced both load failures to the same shape: the placement chain accepts a memory type
+// whenever the WHOLE heap is at least as large as this one allocation (no cumulative accounting),
+// so GGML_VK_PREFER_HOST_MEMORY=1 puts the bulk weights on the host-visible heap 1 and a 256 MiB
+// grouping puts them in the small combined-property heap 2, and the FIRST pinned upload then dies
+// at submit seq=0 with ErrorUnknown. The policy routes bulk weight buffers to a DEVICE_LOCAL type
+// on the LARGEST heap and excludes every other heap for them; grouping is untouched, and staging
+// and scratch keep the paths they already use. Receipt:
+// research/local-inference/lane-evidence/2026-09-11-lane-232-r47a-alloc-instrument/
+// R47D-TRACES-SWEEP.md, "Placement levers and loader commission".
+//
+// NOT implemented here and OWED: the thread-safe cumulative requirement reservation with rollback
+// that the same commission asks for. This policy is heap SELECTION only.
+static bool ggml_vk_placement_bulk_large_heap() {
+    static const bool on = [] {
+        const char * s = getenv("GGML_VK_PLACEMENT");
+        return s != nullptr && strcmp(s, "bulk-large-heap") == 0;
+    }();
+    return on;
+}
+
+static uint32_t ggml_vk_largest_heap(const vk::PhysicalDeviceMemoryProperties & mem_props) {
+    uint32_t best = 0;
+    for (uint32_t h = 1; h < mem_props.memoryHeapCount; ++h) {
+        if (mem_props.memoryHeaps[h].size > mem_props.memoryHeaps[best].size) {
+            best = h;
+        }
+    }
+    return best;
+}
+
+// only_heap != UINT32_MAX restricts the candidate list to that one heap (R46b commit E).
+static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDeviceMemoryProperties* mem_props, vk::MemoryRequirements* mem_req, vk::MemoryPropertyFlags flags, uint32_t only_heap = UINT32_MAX) {
     std::vector<uint32_t> indices;
 
     for (uint32_t i = 0; i < mem_props->memoryTypeCount; ++i) {
         vk::MemoryType memory_type = mem_props->memoryTypes[i];
+        if (only_heap != UINT32_MAX && memory_type.heapIndex != only_heap) {
+            continue;
+        }
         if ((mem_req->memoryTypeBits & ((uint64_t)1 << i)) &&
             (flags & memory_type.propertyFlags) == flags &&
             mem_props->memoryHeaps[memory_type.heapIndex].size >= mem_req->size) {
@@ -3973,7 +4010,7 @@ static void vk_alloc_trace_record_copy(vk_context & subctx, const char * tag, co
 }
 
 static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::initializer_list<vk::MemoryPropertyFlags> & req_flags_list,
-                                       void *import_ptr = nullptr) {
+                                       void *import_ptr = nullptr, uint32_t only_heap = UINT32_MAX) {
     VK_LOG_DEBUG("ggml_vk_create_buffer(" << device->name << ", " << size << ", " << to_string(req_flags_list.begin()[0]) << ", " << to_string(req_flags_list.begin()[req_flags_list.size()-1]) << ")");
     if (size > device->max_buffer_size) {
         throw vk::OutOfDeviceMemoryError("Requested buffer size exceeds device buffer size limit");
@@ -4095,7 +4132,7 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
         for (auto it = req_flags_list.begin(); it != req_flags_list.end(); it++) {
             const auto & req_flags = *it;
 
-            const std::vector<uint32_t> memory_type_indices = ggml_vk_find_memory_properties(&mem_props, &mem_req, req_flags);
+            const std::vector<uint32_t> memory_type_indices = ggml_vk_find_memory_properties(&mem_props, &mem_req, req_flags, only_heap);
 
             if (memory_type_indices.empty()) {
                 if (alloc_trace) {
@@ -4189,9 +4226,40 @@ static vk_buffer ggml_vk_create_buffer_check(vk_device& device, size_t size, vk:
     }
 }
 
-static vk_buffer ggml_vk_create_buffer_device(vk_device& device, size_t size) {
+static vk_buffer ggml_vk_create_buffer_device(vk_device& device, size_t size, bool bulk = false) {
     vk_buffer buf;
     try {
+        // lane-230 / R46b commit E: bulk weight buffers, policy ON. DEVICE_LOCAL on the largest
+        // heap and nothing else. A failure here is NOT fatal: fall through to the stock chain
+        // below, because a policy that turns a working load into a hard failure is worse than the
+        // placement it is trying to fix.
+        if (bulk && ggml_vk_placement_bulk_large_heap()) {
+            const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
+            const uint32_t heap = ggml_vk_largest_heap(mem_props);
+            // stderr, not GGML_LOG_INFO, and NOT gated on GGML_VK_ALLOC_TRACE: the paired
+            // performance cells for this policy run with tracing off and still have to prove which
+            // heap the run used.
+            static std::mutex receipt_mutex;
+            static std::set<uint32_t> receipted;
+            bool first = false;
+            {
+                std::lock_guard<std::mutex> guard(receipt_mutex);
+                first = receipted.insert(heap).second;
+            }
+            if (first) {
+                fprintf(stderr, "ggml_vulkan: placement policy bulk-large-heap: bulk weights -> heap %u "
+                                "(size=%llu B, DEVICE_LOCAL only, every other heap excluded)\n",
+                        heap, (unsigned long long) mem_props.memoryHeaps[heap].size);
+            }
+            try {
+                return ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal}, nullptr, heap);
+            } catch (const vk::SystemError& e) {
+                fprintf(stderr, "ggml_vulkan: placement policy bulk-large-heap: heap %u refused %llu B (%s); "
+                                "falling back to the default placement chain for this buffer\n",
+                        heap, (unsigned long long) size, e.what());
+            }
+        }
+
         if (device->prefer_host_memory) {
             buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
                                                        vk::MemoryPropertyFlagBits::eDeviceLocal});
@@ -18475,7 +18543,9 @@ static ggml_backend_buffer_t ggml_backend_vk_buffer_type_alloc_buffer(ggml_backe
 
     vk_buffer dev_buffer = nullptr;
     try {
-        dev_buffer = ggml_vk_create_buffer_device(ctx->device, size);
+        // R46b commit E: this is the BULK path - the grouped weight/tensor blocks the loader
+        // suballocates from. The prealloc scratch buffers deliberately do not carry the flag.
+        dev_buffer = ggml_vk_create_buffer_device(ctx->device, size, /* bulk */ true);
     } catch (const vk::SystemError& e) {
         return nullptr;
     }
