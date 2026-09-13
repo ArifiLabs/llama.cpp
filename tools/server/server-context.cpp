@@ -2909,8 +2909,18 @@ private:
         // same flags address the matching draft copy
         const llama_state_seq_flags flags = ctx_ckpt_flags(slot);
 
-        cur.update_tgt(ctx_tgt, slot.id, flags);
-        cur.update_dft(ctx_dft, slot.id, flags);
+        // R46b: a failed device save publishes nothing, so the entry we just emplaced would be an
+        // incomplete checkpoint. Drop it rather than keep an entry that cannot be restored. The
+        // device image the target save may already have published stays resident until that
+        // storage id is reused by the next successful checkpoint.
+        if (!cur.update_tgt(ctx_tgt, slot.id, flags) ||
+            !cur.update_dft(ctx_dft, slot.id, flags)) {
+            SLT_WRN(slot, "%s", "failed to save the context checkpoint - dropping it\n");
+
+            slot.prompt.checkpoints.pop_back();
+            return;
+        }
+
         // stash the draft's speculative state with the checkpoint
         common_speculative_get_state(spec.get(), slot.id, cur.data_spec);
 
@@ -3584,8 +3594,12 @@ private:
                                 llama_memory_seq_pos_min(llama_get_memory(ctx_tgt), slot.id),
                                 llama_memory_seq_pos_max(llama_get_memory(ctx_tgt), slot.id));
 
-                        if (use_ckpt_dft) {
-                            slot.spec_ckpt.update_dft(ctx_dft, slot.id, spec_ckpt_flags());
+                        if (use_ckpt_dft && !slot.spec_ckpt.update_dft(ctx_dft, slot.id, spec_ckpt_flags())) {
+                            // R46b: no drafter image to roll back to. Clear the drafter sequence so
+                            // the next draft re-prefills it instead of running on stale state.
+                            SLT_WRN(slot, "%s", "failed to save the draft checkpoint - clearing drafter sequence\n");
+
+                            llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, -1, -1);
                         }
 
                         slot.spec_prompt = slot.prompt.tokens.get_text_tokens();
@@ -3649,7 +3663,22 @@ private:
                 if (use_ckpt_tgt) {
                     const int64_t t_start = ggml_time_us();
 
-                    ckpt.update_tgt(ctx_tgt, slot.id, spec_ckpt_flags());
+                    if (!ckpt.update_tgt(ctx_tgt, slot.id, spec_ckpt_flags())) {
+                        // R46b: without this image a partial draft acceptance could not roll the
+                        // target context back, and load_tgt would silently no-op on the empty
+                        // data and leave the sequence holding rejected tokens. Drop the draft
+                        // instead: this turn decodes the sampled token normally and the next one
+                        // takes the "no previous draft" branch and builds a fresh checkpoint.
+                        SLT_WRN(slot, "%s", "failed to save the speculative checkpoint - dropping the draft\n");
+
+                        ckpt.clear();
+                        draft.clear();
+                        slot.spec_dists.clear();
+
+                        slot.spec_t_save_us += ggml_time_us() - t_start;
+                        slot.spec_n_saves   += 1;
+                        return;
+                    }
 
                     slot.spec_t_save_us += ggml_time_us() - t_start;
                     slot.spec_n_saves   += 1;
@@ -3670,8 +3699,11 @@ private:
                             (float) ckpt.data_dft.size() / 1024 / 1024);
                 }
 
-                if (use_ckpt_dft) {
-                    ckpt.update_dft(ctx_dft, slot.id, spec_ckpt_flags());
+                if (use_ckpt_dft && !ckpt.update_dft(ctx_dft, slot.id, spec_ckpt_flags())) {
+                    // R46b: same fallback as above - no drafter image, so rebuild the sequence
+                    SLT_WRN(slot, "%s", "failed to save the draft checkpoint - clearing drafter sequence\n");
+
+                    llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, -1, -1);
                 }
             }
         });

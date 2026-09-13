@@ -1259,12 +1259,15 @@ struct common_prompt_checkpoint {
             llama_pos pos_min,
             llama_pos pos_max);
 
-    void update_tgt(
+    // R46b: a device checkpoint save can fail (allocation or copy). These report that instead of
+    // aborting the process, and leave the corresponding data empty so no invalid image can be
+    // restored later. A null ctx is not a failure - it keeps its pre-existing no-op meaning.
+    [[nodiscard]] bool update_tgt(
             llama_context * ctx,
             llama_seq_id seq_id,
             llama_state_seq_flags flags);
 
-    void update_dft(
+    [[nodiscard]] bool update_dft(
             llama_context * ctx,
             llama_seq_id seq_id,
             llama_state_seq_flags flags);

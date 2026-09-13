@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <clocale>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <list>
@@ -885,6 +886,469 @@ static bool test_state_roundtrip(struct llama_model * model, const struct common
 }
 
 
+// Test 11: device checkpoint finalization failure (R46/R46b, lane-233)
+//
+// The device image used to be allocated and copied in llama_io_write_device's DESTRUCTOR, with no
+// check on the allocator result, after state_seq_get_data had already returned a byte count. A
+// failed device allocation therefore reported a successful save and then copied into null-backed
+// tensors (GGML_ASSERT in ggml_backend_buffer_get_type, ggml-backend.cpp:330).
+//
+// The legs below inject a deterministic allocation or copy failure through the R46 seam and assert
+// the repaired contract: the save returns 0, the image previously stored UNDER THE SAME STORAGE ID
+// is still restorable byte-for-byte, other storage ids are untouched, and a plain retry recovers.
+//
+// Architecture independence (R46b): every save now allocates a fresh buffer off the live map, so
+// attempt 1 of the injected allocation exists on every save, on every architecture. No leg depends
+// on a state transition changing the checkpoint byte total - that assumption held for attention
+// caches and not for recurrent ones.
+//
+// RED evidence: these legs cannot be run against the pre-R46 code, which has no injection seam at
+// all. What they pin is the current contract; see the paired clean controls below, each of which
+// runs the identical save with no variable set.
+#ifdef LLAMA_TEST_FAULT_INJECTION
+static void ckpt_fail_env(const char * name, const char * value) {
+#ifdef _WIN32
+    _putenv_s(name, value ? value : ""); // an empty value removes the variable on win32
+#else
+    if (value) {
+        setenv(name, value, 1);
+    } else {
+        unsetenv(name);
+    }
+#endif
+}
+#endif // LLAMA_TEST_FAULT_INJECTION
+
+static bool test_ckpt_finalize_failure(struct llama_model * model, const struct common_params & params,
+                                       const llama_tokens & tokens, int test_num) {
+    auto params_ctx = common_context_params_to_llama(params);
+    params_ctx.n_ctx      = 256;
+    params_ctx.n_seq_max  = 2;
+    params_ctx.kv_unified = true;
+
+    LOG("\n=== Test %d: device checkpoint finalization failure ===\n", test_num);
+
+#ifndef LLAMA_TEST_FAULT_INJECTION
+    GGML_UNUSED(params_ctx);
+    GGML_UNUSED(model);
+    GGML_UNUSED(tokens);
+    LOG("\nSKIPPED: built without LLAMA_TEST_FAULT_INJECTION, the checkpoint failure seam is not "
+        "compiled in. This is the default in every build. This test claims NO coverage here; to "
+        "run it, reconfigure with -DLLAMA_TEST_CHECKPOINT_FAULT_INJECTION=ON (a test-only build, "
+        "never serve a binary built that way)\n");
+    return true;
+#else
+
+    LOG("\nbuilt with LLAMA_TEST_FAULT_INJECTION (-DLLAMA_TEST_CHECKPOINT_FAULT_INJECTION=ON): the "
+        "checkpoint failure seam is compiled in and this test drives it\n");
+
+    auto ctx = llama_context_ptr{llama_init_from_model(model, params_ctx)};
+    if (ctx == nullptr) {
+        LOG_ERR("\n%s: failed to create the context\n", __func__);
+        return false;
+    }
+
+    if (tokens.size() < 60) {
+        LOG_ERR("\n%s: need at least 60 tokens, got %zu\n", __func__, tokens.size());
+        return false;
+    }
+
+    const llama_seq_id seq = 1;
+
+    const uint32_t fl1 = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(1);
+    const uint32_t fl2 = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(2);
+    const uint32_t fl3 = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY | LLAMA_STATE_SEQ_FLAGS_STORAGE(3);
+    const uint32_t fl4 = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(4);
+
+    const auto decode_range = [&](int i0, int i1) {
+        llama_batch_ptr batch(i1 - i0, 0, 1);
+        common_batch_clear(batch.get());
+        for (int i = i0; i < i1; ++i) {
+            common_batch_add(batch.get(), tokens[i], i, { seq }, i == i1 - 1);
+        }
+        return llama_decode(ctx.get(), batch.get()) == 0;
+    };
+
+    // a save that must succeed in full
+    const auto save_ok = [&](uint32_t fl, std::vector<uint8_t> & state, const char * what) {
+        const size_t state_size = llama_state_seq_get_size_ext(ctx.get(), seq, fl);
+        if (state_size == 0) {
+            LOG_ERR("\n%s: %s: sequence state is empty\n", __func__, what);
+            return false;
+        }
+        state.resize(state_size);
+        const size_t n = llama_state_seq_get_data_ext(ctx.get(), state.data(), state.size(), seq, fl);
+        if (n != state.size()) {
+            LOG_ERR("\n%s: %s: saved %zu bytes, expected %zu\n", __func__, what, n, state.size());
+            return false;
+        }
+        return true;
+    };
+
+    // a save whose outcome is under test: returns the raw byte count. scratch keeps the serialized
+    // header even when the device finalization failed, which is exactly the blob a caller that
+    // ignored the 0 would later try to restore.
+    std::vector<uint8_t> scratch;
+    const auto save_raw = [&](uint32_t fl) {
+        scratch.assign(llama_state_seq_get_size_ext(ctx.get(), seq, fl), 0);
+        return llama_state_seq_get_data_ext(ctx.get(), scratch.data(), scratch.size(), seq, fl);
+    };
+
+    const auto device_restore = [&](const std::vector<uint8_t> & store, uint32_t fl) {
+        llama_memory_clear(llama_get_memory(ctx.get()), true);
+        return llama_state_seq_set_data_ext(ctx.get(), store.data(), store.size(), seq, fl);
+    };
+
+    // restore a stored image and compare the resulting sequence with a host control taken from an
+    // earlier CLEAN restore of the same storage id. Using each storage id's own control is what
+    // makes this valid for PARTIAL_ONLY images, which do not reproduce the full host state.
+    const auto restore_matches = [&](const std::vector<uint8_t> & store, uint32_t fl,
+                                     const std::vector<uint8_t> & control, const char * what) {
+        const size_t nset = device_restore(store, fl);
+        if (nset != store.size()) {
+            LOG_ERR("\n%s: %s: restore returned %zu, expected %zu\n", __func__, what, nset, store.size());
+            return false;
+        }
+
+        std::vector<uint8_t> host_after;
+        if (!save_ok(LLAMA_STATE_SEQ_FLAGS_NONE, host_after, what)) {
+            return false;
+        }
+
+        if (host_after.size() != control.size() ||
+            memcmp(host_after.data(), control.data(), control.size()) != 0) {
+            LOG_ERR("\n%s: %s: restored state differs from its control (%zu vs %zu bytes)\n",
+                    __func__, what, host_after.size(), control.size());
+            return false;
+        }
+
+        return true;
+    };
+
+    // --- state A: 40 cells, plus its host control ---
+    if (!decode_range(0, 40)) {
+        LOG_ERR("\n%s: failed to build state A\n", __func__);
+        return false;
+    }
+
+    std::vector<uint8_t> host_control_a;
+    if (!save_ok(LLAMA_STATE_SEQ_FLAGS_NONE, host_control_a, "host control A")) {
+        return false;
+    }
+
+    // put the sequence back at state A from the host image - a deterministic reset that does not
+    // depend on decoding the same tokens again
+    const auto reset_to_a = [&]() {
+        llama_memory_clear(llama_get_memory(ctx.get()), true);
+        if (llama_state_seq_set_data_ext(ctx.get(), host_control_a.data(), host_control_a.size(),
+                                         seq, LLAMA_STATE_SEQ_FLAGS_NONE) != host_control_a.size()) {
+            LOG_ERR("\n%s: failed to reset the sequence to state A\n", __func__);
+            return false;
+        }
+        return true;
+    };
+
+    // ---------------------------------------------------------------------------------------
+    // A: the FIRST allocation for a storage id fails -> 0, and nothing is published, so a later
+    // restore of that storage id fails cleanly instead of aborting or returning stale data
+    // ---------------------------------------------------------------------------------------
+    ckpt_fail_env("LLAMA_R46_CKPT_FAIL_ALLOC", "1");
+    const size_t n_first = save_raw(fl1);
+    ckpt_fail_env("LLAMA_R46_CKPT_FAIL_ALLOC", nullptr);
+
+    if (n_first != 0) {
+        LOG_ERR("\n%s: a failed first allocation reported %zu bytes saved\n", __func__, n_first);
+        return false;
+    }
+
+    // the caller's output buffer after a failed save: no device image was published and the save
+    // scrubbed the serialized header, so restoring it must fail rather than abort or return stale data
+    const size_t n_orphan = device_restore(scratch, fl1);
+    if (n_orphan != 0) {
+        LOG_ERR("\n%s: restoring a storage id whose first save failed returned %zu, expected 0\n", __func__, n_orphan);
+        return false;
+    }
+    LOG_TRC("%s: first-allocation failure returned 0 and published nothing\n", __func__);
+
+    // clean control for the identical save with no injection
+    if (!reset_to_a()) {
+        return false;
+    }
+
+    std::vector<uint8_t> store_1a;
+    if (!save_ok(fl1, store_1a, "clean control: first save into storage 1")) {
+        return false;
+    }
+
+    std::vector<uint8_t> control_1a;
+    if (device_restore(store_1a, fl1) != store_1a.size() ||
+        !save_ok(LLAMA_STATE_SEQ_FLAGS_NONE, control_1a, "control for storage 1 at state A")) {
+        LOG_ERR("\n%s: failed to establish the storage 1 control at state A\n", __func__);
+        return false;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // B: a REPLACEMENT allocation fails -> the previous image of THAT storage id survives.
+    // State B is a different sequence state; no leg depends on it changing the byte total.
+    // ---------------------------------------------------------------------------------------
+    if (!decode_range(40, 60)) {
+        LOG_ERR("\n%s: failed to advance to state B\n", __func__);
+        return false;
+    }
+
+    ckpt_fail_env("LLAMA_R46_CKPT_FAIL_ALLOC", "1");
+    const size_t n_repl = save_raw(fl1);
+    ckpt_fail_env("LLAMA_R46_CKPT_FAIL_ALLOC", nullptr);
+
+    if (n_repl != 0) {
+        LOG_ERR("\n%s: a failed replacement allocation reported %zu bytes saved\n", __func__, n_repl);
+        return false;
+    }
+
+    // A caller that ignored the 0 still holds whatever is in its output buffer. Restoring that must
+    // fail. Without the scrub in the save's error path this leg restores a MIXED image on a
+    // recurrent cache: the failed save's host-side cell metadata paired with the previous save's
+    // device data, because the byte total did not change and the header was still well formed.
+    if (device_restore(scratch, fl1) != 0) {
+        LOG_ERR("\n%s: restoring the output buffer of a failed replacement save did not fail\n", __func__);
+        return false;
+    }
+
+    if (!restore_matches(store_1a, fl1, control_1a, "storage 1 after a failed replacement allocation")) {
+        return false;
+    }
+    LOG_TRC("%s: storage 1 survived the failed replacement allocation\n", __func__);
+
+    // ---------------------------------------------------------------------------------------
+    // C: a COPY fails during a replacement -> the previous image of that storage id survives
+    // ---------------------------------------------------------------------------------------
+    if (!reset_to_a() || !decode_range(40, 60)) {
+        LOG_ERR("\n%s: failed to rebuild state B\n", __func__);
+        return false;
+    }
+
+    ckpt_fail_env("LLAMA_R46_CKPT_FAIL_COPY", "1");
+    const size_t n_copy = save_raw(fl1);
+    ckpt_fail_env("LLAMA_R46_CKPT_FAIL_COPY", nullptr);
+
+    if (n_copy != 0) {
+        LOG_ERR("\n%s: a failed replacement copy reported %zu bytes saved\n", __func__, n_copy);
+        return false;
+    }
+
+    if (device_restore(scratch, fl1) != 0) {
+        LOG_ERR("\n%s: restoring the output buffer of a failed replacement copy did not fail\n", __func__);
+        return false;
+    }
+
+    if (!restore_matches(store_1a, fl1, control_1a, "storage 1 after a failed replacement copy")) {
+        return false;
+    }
+    LOG_TRC("%s: storage 1 survived the failed replacement copy\n", __func__);
+
+    // clean control for the replacement itself: it must actually succeed and change the image
+    if (!reset_to_a() || !decode_range(40, 60)) {
+        LOG_ERR("\n%s: failed to rebuild state B for the clean replacement control\n", __func__);
+        return false;
+    }
+
+    std::vector<uint8_t> host_control_b;
+    if (!save_ok(LLAMA_STATE_SEQ_FLAGS_NONE, host_control_b, "host control B")) {
+        return false;
+    }
+
+    std::vector<uint8_t> store_1b;
+    if (!save_ok(fl1, store_1b, "clean control: replacement save into storage 1")) {
+        return false;
+    }
+
+    std::vector<uint8_t> control_1b;
+    if (device_restore(store_1b, fl1) != store_1b.size() ||
+        !save_ok(LLAMA_STATE_SEQ_FLAGS_NONE, control_1b, "control for storage 1 at state B")) {
+        LOG_ERR("\n%s: failed to establish the storage 1 control at state B\n", __func__);
+        return false;
+    }
+
+    if (control_1b.size() != host_control_b.size() ||
+        memcmp(control_1b.data(), host_control_b.data(), host_control_b.size()) != 0) {
+        LOG_ERR("\n%s: the clean replacement did not reproduce state B\n", __func__);
+        return false;
+    }
+    LOG_TRC("%s: the clean replacement published state B\n", __func__);
+
+    // ---------------------------------------------------------------------------------------
+    // D: a copy fails on a FIRST save into an unused storage id -> 0, nothing published, retry works
+    // ---------------------------------------------------------------------------------------
+    if (!reset_to_a()) {
+        return false;
+    }
+
+    ckpt_fail_env("LLAMA_R46_CKPT_FAIL_COPY", "1");
+    const size_t n_new = save_raw(fl2);
+    ckpt_fail_env("LLAMA_R46_CKPT_FAIL_COPY", nullptr);
+
+    if (n_new != 0) {
+        LOG_ERR("\n%s: a failed first copy reported %zu bytes saved\n", __func__, n_new);
+        return false;
+    }
+
+    if (device_restore(scratch, fl2) != 0) {
+        LOG_ERR("\n%s: restoring storage 2 after a failed first copy did not fail\n", __func__);
+        return false;
+    }
+
+    if (!reset_to_a()) {
+        return false;
+    }
+
+    std::vector<uint8_t> store_2a;
+    if (!save_ok(fl2, store_2a, "retry after first-copy failure")) {
+        return false;
+    }
+
+    std::vector<uint8_t> control_2a;
+    if (device_restore(store_2a, fl2) != store_2a.size() ||
+        !save_ok(LLAMA_STATE_SEQ_FLAGS_NONE, control_2a, "control for storage 2")) {
+        LOG_ERR("\n%s: failed to establish the storage 2 control\n", __func__);
+        return false;
+    }
+
+    if (control_2a.size() != host_control_a.size() ||
+        memcmp(control_2a.data(), host_control_a.data(), host_control_a.size()) != 0) {
+        LOG_ERR("\n%s: the recovered storage 2 save did not reproduce state A\n", __func__);
+        return false;
+    }
+
+    // storage 1 must still hold its own state-B image, untouched by everything storage 2 did
+    if (!restore_matches(store_1b, fl1, control_1b, "storage 1 after the storage 2 failures")) {
+        return false;
+    }
+    LOG_TRC("%s: the storage ids stayed independent across the failures\n", __func__);
+
+    // ---------------------------------------------------------------------------------------
+    // E: storage 3 (PARTIAL_ONLY) - seeded, controlled and verified as the SAME storage id that
+    // gets failed. A partial image does not reproduce the full host state, so its control is one
+    // clean restore of its own image rather than the host control.
+    // ---------------------------------------------------------------------------------------
+    if (!reset_to_a()) {
+        return false;
+    }
+
+    std::vector<uint8_t> store_3a;
+    if (!save_ok(fl3, store_3a, "clean seed of storage 3")) {
+        return false;
+    }
+
+    std::vector<uint8_t> control_3a;
+    if (device_restore(store_3a, fl3) != store_3a.size() ||
+        !save_ok(LLAMA_STATE_SEQ_FLAGS_NONE, control_3a, "control for storage 3")) {
+        LOG_ERR("\n%s: failed to establish the storage 3 control\n", __func__);
+        return false;
+    }
+
+    // a replacement into storage 3 fails -> the seeded storage 3 image survives byte-for-byte
+    if (!reset_to_a() || !decode_range(40, 60)) {
+        LOG_ERR("\n%s: failed to rebuild state B for the storage 3 failure\n", __func__);
+        return false;
+    }
+
+    ckpt_fail_env("LLAMA_R46_CKPT_FAIL_ALLOC", "1");
+    const size_t n_p3 = save_raw(fl3);
+    ckpt_fail_env("LLAMA_R46_CKPT_FAIL_ALLOC", nullptr);
+
+    if (n_p3 != 0) {
+        LOG_ERR("\n%s: a failed storage 3 replacement reported %zu bytes saved\n", __func__, n_p3);
+        return false;
+    }
+
+    if (!restore_matches(store_3a, fl3, control_3a, "storage 3 after a failed replacement")) {
+        return false;
+    }
+    LOG_TRC("%s: storage 3 survived the failed replacement\n", __func__);
+
+    // ---------------------------------------------------------------------------------------
+    // F: two buffer types in ONE finalization. Attempt 2 only exists on a device that exposes a
+    // second checkpoint buffer type. On a single-buffer-type device this leg is NOT coverage -
+    // it is reported as not exercised rather than counted as a pass.
+    // ---------------------------------------------------------------------------------------
+    if (!reset_to_a() || !decode_range(40, 60)) {
+        LOG_ERR("\n%s: failed to rebuild state B for the multi-buffer leg\n", __func__);
+        return false;
+    }
+
+    ckpt_fail_env("LLAMA_R46_CKPT_FAIL_ALLOC", "2");
+    const size_t n_multi = save_raw(fl3);
+    ckpt_fail_env("LLAMA_R46_CKPT_FAIL_ALLOC", nullptr);
+
+    if (n_multi == 0) {
+        LOG("%s: multi-buffer leg EXERCISED - the second buffer type's allocation failure returned 0\n", __func__);
+
+        if (!restore_matches(store_3a, fl3, control_3a, "storage 3 after a second-buffer-type failure")) {
+            return false;
+        }
+    } else {
+        if (n_multi != scratch.size()) {
+            LOG_ERR("\n%s: partial save of %zu bytes, expected %zu\n", __func__, n_multi, scratch.size());
+            return false;
+        }
+        LOG("%s: multi-buffer leg NOT EXERCISED - this device exposes a single checkpoint buffer "
+            "type, so attempt 2 never happens. It needs a backend with two checkpoint buffer types "
+            "(e.g. a partly offloaded cache) to cover.\n", __func__);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // G: zero-byte device image. A sequence with no cells produces no device tensor at all, so
+    // nothing is allocated and no backend copy runs on a null buffer. The defined representation
+    // is "no entry for that buffer type", and the round trip must still succeed.
+    // ---------------------------------------------------------------------------------------
+    llama_memory_clear(llama_get_memory(ctx.get()), true);
+
+    const size_t n_empty = save_raw(fl4);
+    const std::vector<uint8_t> store_4 = scratch;
+
+    // without this the two assertions below are satisfied by 0 == 0 and prove nothing
+    if (store_4.empty()) {
+        LOG_ERR("\n%s: the empty-sequence device save produced no blob at all\n", __func__);
+        return false;
+    }
+
+    if (n_empty != store_4.size()) {
+        LOG_ERR("\n%s: an empty-sequence device save returned %zu, expected %zu\n", __func__, n_empty, store_4.size());
+        return false;
+    }
+
+    llama_memory_clear(llama_get_memory(ctx.get()), true);
+
+    const size_t n_empty_set = llama_state_seq_set_data_ext(ctx.get(), store_4.data(), store_4.size(), seq, fl4);
+    if (n_empty_set != store_4.size()) {
+        LOG_ERR("\n%s: an empty-sequence device restore returned %zu, expected %zu\n", __func__, n_empty_set, store_4.size());
+        return false;
+    }
+    LOG_TRC("%s: the zero-byte device image round-tripped (%zu header bytes, no device buffer)\n", __func__, store_4.size());
+
+    // ---------------------------------------------------------------------------------------
+    // the storage ids still work normally once no failure is injected
+    // ---------------------------------------------------------------------------------------
+    if (!reset_to_a()) {
+        return false;
+    }
+
+    std::vector<uint8_t> store_final;
+    if (!save_ok(fl3, store_final, "clean save after all injected failures")) {
+        return false;
+    }
+
+    if (device_restore(store_final, fl3) != store_final.size()) {
+        LOG_ERR("\n%s: the final clean storage 3 restore failed\n", __func__);
+        return false;
+    }
+
+    LOG("\nPASS\n");
+    return true;
+#endif // LLAMA_TEST_FAULT_INJECTION
+}
+
+
 struct test_suite {
     std::vector<test_status> results;
 
@@ -895,7 +1359,7 @@ struct test_suite {
 
 // column headers for the --models table, one per test, in the order they are run
 static const std::vector<const char *> test_names = {
-    "baseline", "seq_rm", "state_load", "cp_h", "cp_d", "cp_h_s", "cp_d_s", "rt", "ring", "own",
+    "baseline", "seq_rm", "state_load", "cp_h", "cp_d", "cp_h_s", "cp_d_s", "rt", "ring", "own", "fin",
 };
 
 // Run the full save/load test suite (tests 1-8) for a single model.
@@ -992,6 +1456,10 @@ static test_suite run_save_load_tests_for_model(const std::string & model_path, 
             test_seq_storage_ownership(model, params, tokens, 10, GGML_TYPE_Q8_0, "q8_0", true);
         suite.results.push_back(own_ok ? test_status::PASS : test_status::FAIL);
     }
+
+    // Test 11: checkpoint finalization failure (R46, lane-233); passes as a documented no-op unless
+    // built with -DLLAMA_TEST_CHECKPOINT_FAULT_INJECTION=ON
+    suite.results.push_back(test_ckpt_finalize_failure(model, params, tokens, 11) ? test_status::PASS : test_status::FAIL);
 
     return suite;
 }

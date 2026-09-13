@@ -67,6 +67,19 @@ configure_file(llama-version.h.in ${CMAKE_CURRENT_BINARY_DIR}/llama-version.h @O
 if (GGML_ARIFI_KV_MEANCENTER)
     target_compile_definitions(llama PUBLIC GGML_ARIFI_KV_MEANCENTER)
 endif()
+
+# R46b: the deterministic checkpoint fault-injection seam (LLAMA_R46_CKPT_FAIL_ALLOC / _COPY) is
+# compiled in only when the dedicated option is explicitly turned ON. The option defaults to OFF and
+# is independent of LLAMA_BUILD_IS_DEV and LLAMA_BUILD_TESTS, so an ordinary source build - dev or
+# release, tests on or off - compiles no environment read and no injected failure branch. PUBLIC so
+# the tests that drive the seam see the same definition and can never disagree with the library
+# about whether it exists.
+if (LLAMA_TEST_CHECKPOINT_FAULT_INJECTION)
+    target_compile_definitions(llama PUBLIC LLAMA_TEST_FAULT_INJECTION)
+    message(STATUS "checkpoint fault-injection seam: ON (LLAMA_TEST_CHECKPOINT_FAULT_INJECTION=ON, test builds only)")
+else()
+    message(STATUS "checkpoint fault-injection seam: OFF")
+endif()
 target_include_directories(llama PRIVATE . ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(llama PUBLIC ../include)
 target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
