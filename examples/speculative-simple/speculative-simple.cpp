@@ -175,8 +175,11 @@ int main(int argc, char ** argv) {
                     llama_memory_seq_pos_min(llama_get_memory(ctx_tgt), seq_id),
                     llama_memory_seq_pos_max(llama_get_memory(ctx_tgt), seq_id));
 
-            if (use_ckpt_dft) {
-                ckpt.update_dft(ctx_dft, seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+            if (use_ckpt_dft && !ckpt.update_dft(ctx_dft, seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY)) {
+                // R46b: no drafter image to roll back to - rebuild the drafter sequence
+                LOG_WRN("%s: failed to save the draft checkpoint - clearing drafter sequence\n", __func__);
+
+                llama_memory_seq_rm(llama_get_memory(ctx_dft), seq_id, -1, -1);
             }
 
             // determine the max draft that fits the remaining context and generation budget
@@ -203,8 +206,14 @@ int main(int argc, char ** argv) {
             // save a checkpoint of the target context before evaluating the draft
             // this allows us to restore the state if partial draft acceptance occurs
             if (!draft.empty()) {
-                if (use_ckpt_tgt) {
-                    ckpt.update_tgt(ctx_tgt, seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                if (use_ckpt_tgt && !ckpt.update_tgt(ctx_tgt, seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY)) {
+                    // R46b: without this image a partial acceptance could not roll the target back,
+                    // and load_tgt would silently no-op on the empty data. Drop the draft instead.
+                    LOG_WRN("%s: failed to save the speculative checkpoint - dropping the draft\n", __func__);
+
+                    ckpt.clear();
+                    draft.clear();
+                    dists.clear();
                 }
             }
 
