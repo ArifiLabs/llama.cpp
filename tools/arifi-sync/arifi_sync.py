@@ -16,11 +16,16 @@ Subcommands
     currency      fetch every source and report drift against the reviewed pins
     recipe diff   recover the build recipe by DIFFING CMakeCache against the committed snapshot
     recipe export write a CMake -C initial-cache file that replays the recorded configuration
+    set-base-pin  move base.upstream_sha + base.upstream_tag in sources.json as one checked,
+                  atomic write; refuses unless the pin on disk is the one --expect-sha names
     bump          replay + build + judge onto a new upstream ref; refuses unless ALL THREE pass
     protected-win validate   check the protected-win manifest is complete and still true of the tree
     protected-win check      FAIL-CLOSED ingest preflight: refuse an incoming change that touches a
                              protected win without a recorded, evidence-backed comparison verdict
     protected-win discover   list commits with a real Measured-effect that no manifest entry covers
+    protected-win replay-map map REBASED commits back to their registered originals, one-to-one,
+                             on retained replay evidence and an equivalent patch. Carries an
+                             existing registration across a rewrite; never creates one.
 
 Exit code is 0 only when the subcommand fully passed.
 """
@@ -29,6 +34,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import filecmp
+import getpass
 import json
 import os
 import re
@@ -55,9 +61,9 @@ def step(msg: str) -> None:
     print("\n==> %s" % msg, flush=True)
 
 
-def git(repo: str, *args: str, check: bool = True, binary: bool = False):
+def git(repo: str, *args: str, check: bool = True, binary: bool = False, env=None):
     p = subprocess.run(["git", "-C", repo, *args],
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     if check and p.returncode != 0:
         raise Loud("git %s failed in %s\n%s" %
                    (" ".join(args), repo, p.stderr.decode("utf-8", "replace")))
@@ -70,8 +76,16 @@ def gout(repo: str, *args: str) -> str:
 
 
 def load_config(path: str) -> dict:
+    # A broken config used to reach the operator as a raw JSONDecodeError traceback from inside
+    # `main`, before any subcommand ran. It is a Loud stop now: same information, in this tool's
+    # own voice, and every subcommand - not just the one that writes this file - stops rather than
+    # crashes on it.
     with open(path, encoding="utf-8") as fh:
-        return json.load(fh)
+        try:
+            return json.load(fh)
+        except ValueError as e:
+            raise Loud("%s is not parseable JSON (%s). Repair it by hand; nothing else here can\n"
+                       "act on a config it cannot read." % (path, e))
 
 
 def repo_root(start: str) -> str:
@@ -553,79 +567,103 @@ def cmd_series_regen(repo: str, cfg: dict, args) -> int:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def cmd_series_check(repo: str, cfg: dict, args) -> int:
+def series_pathspec(cfg: dict) -> str:
+    """One normalized spelling of the generated directory, for every `:(exclude)` pathspec.
+    Interpolating the raw config string put a backslash or a trailing slash into a pathspec that
+    then silently matched nothing - and an exclusion that excludes nothing is a comparison that
+    quietly changed its meaning."""
+    return cfg["series_dir"].replace("\\", "/").rstrip("/")
+
+
+def series_integrity_problems(repo: str, cfg: dict, ref: str) -> list:
+    """The committed series IS what git generates for `ref`, and every patch is committed there.
+
+    This is what makes a series-EXCLUDED tree comparison honest (CHECK-UPDATE-ROOT finding 4). A
+    candidate and its replay legitimately differ inside `series_dir`, because the generator
+    excludes that directory from itself; so a comparison that did not exclude it could never match,
+    and one that does exclude it would be blind to a hand-edited patch. It is not blind, because
+    the excluded directory is proved separately - here - to be exactly the artifact git produces.
+
+    No replay is run: this is the byte-and-tracking half only, so `bump` can call it without
+    paying for a second `git am` of the whole series.
+    """
     base = cfg["base"]["upstream_sha"]
     committed = os.path.join(repo, cfg["series_dir"])
-    step("Integrity check: regenerating the series and byte-comparing against %s" % cfg["series_dir"])
-    tmp = tempfile.mkdtemp(prefix="arifi-series-")
+    tmp = tempfile.mkdtemp(prefix="arifi-integrity-")
     try:
-        format_patch(repo, cfg, base, args.ref, tmp)
-        have = series_files(committed)
-        want = series_files(tmp)
-        rc = 0
-        only_committed = [f for f in have if f not in want]
-        only_regen = [f for f in want if f not in have]
-        if only_committed:
-            say("FAIL: committed but not regenerated (stale):")
-            for f in only_committed:
-                say("  %s" % f)
-            rc = 1
-        if only_regen:
-            say("FAIL: regenerated but not committed (missing):")
-            for f in only_regen:
-                say("  %s" % f)
-            rc = 1
-        differing = [f for f in want if f in have
-                     and not filecmp.cmp(os.path.join(tmp, f), os.path.join(committed, f),
-                                         shallow=False)]
-        if differing:
-            say("FAIL: content differs from git for %d patch(es):" % len(differing))
-            for f in differing:
-                say("  %s" % f)
-            rc = 1
-        if rc:
-            say("\nThe committed series has DRIFTED from git. Fix with:")
-            say("  python tools/arifi-sync/arifi_sync.py series regen")
-            return 1
-        say("PASS: %d patches byte-identical to a fresh generation from git." % len(want))
-
-        # The comparison above is against the WORKING DIRECTORY, which is not the same thing as
-        # "committed" no matter what the help text used to say. An untracked patch file satisfies
-        # every check above and then does not exist in a fresh clone, so `git am` dies on it.
-        # That defect shipped twice (lane-147, then again inside lane-151's own regen), so the
-        # committed-ness is now asserted separately and by name. Added lane-151, 2026-08-18.
-        step("Tracked check: every patch in the series is a committed blob at %s" % args.ref)
+        format_patch(repo, cfg, base, ref, tmp)
+        have, want = series_files(committed), series_files(tmp)
+        out = []
+        out += ["series: %s is committed but no longer regenerates from git (stale)" % f
+                for f in have if f not in want]
+        out += ["series: %s regenerates from git but is not in %s (missing)" % (f, cfg["series_dir"])
+                for f in want if f not in have]
+        out += ["series: %s DIFFERS from a fresh generation from git (hand-edited patch?)" % f
+                for f in want if f in have
+                and not filecmp.cmp(os.path.join(tmp, f), os.path.join(committed, f),
+                                    shallow=False)]
+        prefix = series_pathspec(cfg) + "/"
         tracked = set()
-        out = gout(repo, "ls-tree", "-r", "--name-only", args.ref, "--", cfg["series_dir"]).splitlines()
-        prefix = cfg["series_dir"].replace("\\", "/").rstrip("/") + "/"
-        for line in out:
+        for line in gout(repo, "ls-tree", "-r", "--name-only", ref, "--",
+                         cfg["series_dir"]).splitlines():
             line = line.strip().replace("\\", "/")
             if line.startswith(prefix):
                 tracked.add(line[len(prefix):])
-        untracked = [f for f in want if f not in tracked]
-        if untracked:
-            say("FAIL: %d patch(es) exist on disk but are NOT COMMITTED at %s:" % (len(untracked), args.ref))
-            for f in untracked:
-                say("  %s" % f)
-            say("\nA fresh clone would die at the first of these. Fix with:")
-            say("  git add %s && git commit" % cfg["series_dir"])
-            return 1
-        say("PASS: all %d patches are committed blobs, not just files on disk." % len(want))
-
-        step("Replay check: git am the committed series onto %s" % base[:9])
-        return _replay(repo, cfg, base, committed, expect_ref=args.ref)
+        out += ["series: %s exists on disk but is NOT COMMITTED at %s - a fresh clone dies on it"
+                % (f, ref) for f in want if f not in tracked]
+        return out
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _replay(repo: str, cfg: dict, onto: str, series_path: str, expect_ref: str = "") -> int:
-    """Replay the series onto `onto` in a throwaway worktree. Loud, per-patch, never auto-resolves."""
+def cmd_series_check(repo: str, cfg: dict, args) -> int:
+    base = cfg["base"]["upstream_sha"]
+    committed = os.path.join(repo, cfg["series_dir"])
+    step("Integrity check: regenerating the series and byte-comparing against %s" % cfg["series_dir"])
+    # The byte compare is against the WORKING DIRECTORY, which is not the same thing as
+    # "committed" no matter what the help text used to say. An untracked patch file satisfies the
+    # compare and then does not exist in a fresh clone, so `git am` dies on it. That defect shipped
+    # twice (lane-147, then again inside lane-151's own regen), so committed-ness is asserted
+    # separately and by name, inside the shared predicate.
+    problems = series_integrity_problems(repo, cfg, args.ref)
+    if problems:
+        say("FAIL: the committed series has DRIFTED from git (%d finding(s)):" % len(problems))
+        for p in problems:
+            say("  %s" % p)
+        say("\nFix with:")
+        say("  python tools/arifi-sync/arifi_sync.py series regen --ref %s" % args.ref)
+        # `add` first, and by pathspec. regen writes NEW patch files; `git commit -- <path>` only
+        # commits paths git already tracks, so without the `add` the new patch stays untracked -
+        # it passes the byte compare here and is then missing from a fresh clone.
+        say("  git add -- %s" % cfg["series_dir"])
+        say("  git commit -- %s" % cfg["series_dir"])
+        return 1
+    say("PASS: every patch is byte-identical to a fresh generation from git AND a committed blob.")
+
+    step("Replay check: git am the committed series onto %s" % base[:9])
+    return _replay(repo, cfg, base, committed, expect_ref=args.ref)
+
+
+REPLAY_BRANCH = "arifi-sync/replay"
+
+
+def _replay(repo: str, cfg: dict, onto: str, series_path: str, expect_ref: str = "",
+            record=None, keep_branch: bool = False) -> int:
+    """Replay the series onto `onto` in a throwaway worktree. Loud, per-patch, never auto-resolves.
+
+    `keep_branch` RETAINS the replayed candidate on `arifi-sync/replay` after the worktree is
+    removed, and only on success. The worktree was always destroyed, which meant the candidate -
+    the one tree a bump is actually about - existed for the length of one function call and then
+    could not be diffed, inspected or built (CHECK-UPDATE-ROOT finding 4). This is a lifetime
+    change to a scratch branch this function already created and deleted on every run; no
+    canonical branch is created or moved."""
     files = [os.path.join(series_path, f) for f in series_files(series_path)]
     if not files:
         raise Loud("no patches found in %s" % series_path)
     parent = os.path.dirname(repo.rstrip("/\\"))
     wt = os.path.join(parent, ".arifi-replay")
-    branch = "arifi-sync/replay"
+    branch = REPLAY_BRANCH
+    kept = False
     if os.path.exists(wt):
         git(repo, "worktree", "remove", "--force", wt, check=False)
         shutil.rmtree(wt, ignore_errors=True)
@@ -664,6 +702,12 @@ def _replay(repo: str, cfg: dict, onto: str, series_path: str, expect_ref: str =
             say("  [%2d/%d] ok  %s" % (i, len(files), name))
         tip = gout(wt, "rev-parse", "HEAD")
         tree = gout(wt, "rev-parse", "HEAD^{tree}")
+        # The replay worktree is destroyed in `finally`. Hand the caller the identity of what was
+        # replayed, because that - not the checkout the caller is standing in - is the candidate.
+        if record is not None:
+            record["tip"], record["tree"], record["onto"] = tip, tree, onto
+            record["branch"] = branch if keep_branch else ""
+        kept = keep_branch
         say("\nreplayed %d patches cleanly -> %s (tree %s)" % (len(files), tip[:9], tree[:9]))
         if expect_ref:
             # The series excludes its own directory (see format_patch), so the replayed tree
@@ -671,7 +715,7 @@ def _replay(repo: str, cfg: dict, onto: str, series_path: str, expect_ref: str =
             # that is asserted by a real diff rather than by trusting the patch count.
             expect = gout(repo, "rev-parse", expect_ref)
             rc, out, _ = git(wt, "diff", "--stat", expect, "HEAD",
-                             "--", ".", ":(exclude)%s" % cfg["series_dir"], check=False)
+                             "--", ".", ":(exclude)%s" % series_pathspec(cfg), check=False)
             if rc == 0 and not out.strip():
                 say("PASS: replayed tree is IDENTICAL to %s outside %s"
                     % (expect_ref, cfg["series_dir"]))
@@ -687,7 +731,8 @@ def _replay(repo: str, cfg: dict, onto: str, series_path: str, expect_ref: str =
         if os.path.exists(wt):
             git(repo, "worktree", "remove", "--force", wt, check=False)
             shutil.rmtree(wt, ignore_errors=True)
-        git(repo, "branch", "-D", branch, check=False)
+        if not kept:
+            git(repo, "branch", "-D", branch, check=False)
 
 
 def cmd_series_replay(repo: str, cfg: dict, args) -> int:
@@ -930,27 +975,109 @@ def cmd_recipe_export(repo: str, cfg: dict, args) -> int:
 
 # ---------------------------------------------------------------- build + judge + bump
 
+BUILD_CONFIG = "Release"
+
+
 def cmd_build(repo: str, cfg: dict, args) -> int:
+    """Order is the whole guard, and every step below happens BEFORE the compiler is invoked:
+
+      1. the configured CMake source root and the build directory are canonicalized and bound to
+         this checkout (finding 2);
+      2. any existing receipt is DESTROYED - from here the build dir is being mutated, so a
+         receipt in it describes a state that is about to stop being true. A failed, refused or
+         interrupted build must leave no certification behind (findings 3 and 6);
+      3. the recipe diff's return code is PROPAGATED. It used to be discarded, so a lost or
+         changed build flag reached the compiler and then received a fresh receipt (finding 6).
+
+    After the compiler: the source identity is re-sampled and must match the pre-compile sample,
+    the produced artifacts are hashed, and only then is the receipt published atomically.
+    """
     bdir = os.path.join(repo, cfg["build"]["build_dir"])
-    if not os.path.exists(os.path.join(bdir, "CMakeCache.txt")):
-        raise Loud("no configured build at %s.\n"
+    rpath = os.path.join(bdir, BUILD_RECEIPT)
+
+    # ORDER, and it is load-bearing: the build-directory SHAPE is judged before anything is
+    # deleted. `_drop_receipt` removes a file inside `build_dir`, so a `build_dir` misconfigured
+    # onto a source path would have this function delete from the source tree on its way to
+    # refusing that very configuration. Shape first, then the drop.
+    step("build root: the configured CMake source root must BE this checkout")
+    roots = build_root_problems(repo, cfg)
+    if roots:
+        if _strict_descendant(bdir, repo):
+            _drop_receipt(rpath)
+        say("\nBUILD REFUSED - nothing was compiled and any previous receipt was removed:")
+        for r in roots:
+            say("  %s" % r)
+        return 1
+    say("cmake source root: %s  (== checkout)" % _canon(repo))
+    say("build directory  : %s  (strictly inside the checkout)" % _canon(bdir))
+
+    # CHECK-UPDATE-ROOT-R2 finding 3: EVERY refusal drops an earlier receipt, including the missing
+    # -cache refusal below, which used to raise before reaching this line. A receipt that outlives
+    # the configuration it describes is a certification of nothing.
+    _drop_receipt(rpath)
+    if not os.path.exists(canonical_cache(repo, cfg)):
+        raise Loud("no configured build at %s - any previous receipt there was removed.\n"
                    "Configure it from the recorded recipe first:\n"
                    "  python tools/arifi-sync/arifi_sync.py recipe export\n"
                    "  cmake -S . -B %s -C arifi-recipe.cmake"
                    % (bdir, cfg["build"]["build_dir"]))
+
     step("recipe diff before building (a silently changed flag is a failed build later)")
-    cmd_recipe_diff(repo, cfg, argparse.Namespace(snapshot=None, live=None))
+    # The cache is named EXPLICITLY, as the one under the build directory the compiler is handed.
+    # Resolving it from `build.live_cache` let a decoy cache be compared while another was built.
+    if cmd_recipe_diff(repo, cfg, argparse.Namespace(
+            snapshot=None, live=canonical_cache(repo, cfg))) != 0:
+        say("\nBUILD REFUSED: the live configuration has LOST or CHANGED a recorded recipe entry.")
+        say("The compiler was NOT invoked. Any previous receipt in %s was removed, because it"
+            % cfg["build"]["build_dir"])
+        say("described a build of a recipe this directory no longer holds. Restore the flag, or")
+        say("record the new recipe deliberately:")
+        say("  python tools/arifi-sync/arifi_sync.py recipe export --snapshot")
+        return 1
+
     targets = cfg["build"]["targets"]
     step("cmake --build %s --target %s" % (cfg["build"]["build_dir"], " ".join(targets)))
-    cmd = ["cmake", "--build", bdir, "--config", "Release"]
+    cmd = ["cmake", "--build", bdir, "--config", BUILD_CONFIG]
     for t in targets:
         cmd += ["--target", t]
+    before = _tree_identity(repo, bdir)
     p = subprocess.run(cmd)
     if p.returncode != 0:
         say("\nBUILD FAILED (exit %d). Stopping - a bump is never accepted on a failed build."
             % p.returncode)
+        say("No receipt exists in %s: the previous one was removed before this attempt, so a"
+            % cfg["build"]["build_dir"])
+        say("half-updated binary cannot keep an old certification.")
         return 1
-    say("build ok")
+
+    after = _tree_identity(repo, bdir)
+    if not _identity_matches(before, after):
+        say("\nBUILD NOT CERTIFIED: the source tree CHANGED while the compiler was running, so")
+        say("the binaries are of no single state. Nothing was written; re-run on a settled tree.")
+        say("  before: tree %s content %s" % (before["tree"][:9], before["content_sha256"][:12]))
+        say("  after : tree %s content %s" % (after["tree"][:9], after["content_sha256"][:12]))
+        return 1
+    binary = _judge_binary(bdir)
+    if binary is None:
+        say("\nBUILD NOT CERTIFIED: cmake reported success but no llama-server was produced in")
+        say("%s. That is a partial build; it gets no receipt." % bdir)
+        return 1
+
+    ident = dict(after)
+    ident["built_utc"] = now_iso()
+    ident["build_dir"] = cfg["build"]["build_dir"]
+    ident["build_dir_abs"] = _canon(bdir)
+    ident["cmake_home"] = _canon(repo)
+    ident["config"] = BUILD_CONFIG
+    # WHICH candidate was selected, recorded by name. `_judge_binary` walks a fixed candidate list,
+    # so a build that selected `bin/llama-server` and a later judge that resolves a newly appeared
+    # `bin/llama-server.exe` would each be internally consistent and be about different files.
+    ident["judge_binary"] = artifact_key(bdir, binary)
+    ident["artifacts"] = artifact_digest(bdir, binary)
+    _write_receipt(rpath, ident)
+    say("build ok  (identity receipt: %s tree %s content %s%s, %d artifact(s) hashed)"
+        % (BUILD_RECEIPT, ident["tree"][:9], ident["content_sha256"][:12],
+           ", DIRTY tree" if ident["dirty"] else "", len(ident["artifacts"])))
     return 0
 
 
@@ -965,12 +1092,64 @@ def cmd_judge(repo: str, cfg: dict, args) -> int:
     if j["binary"] != "llama-server":
         raise Loud("F-085 violation: the judge must be llama-server, found %r" % j["binary"])
     bdir = os.path.join(repo, cfg["build"]["build_dir"])
-    cands = [os.path.join(bdir, "bin", "llama-server.exe"),
-             os.path.join(bdir, "bin", "llama-server"),
-             os.path.join(bdir, "bin", "Release", "llama-server.exe")]
-    binary = next((c for c in cands if os.path.exists(c)), None)
+    binary = _judge_binary(bdir)
     if not binary:
-        raise Loud("llama-server not found. Looked in:\n  %s" % "\n  ".join(cands))
+        raise Loud("llama-server not found. Looked in:\n  %s"
+                   % "\n  ".join(os.path.join(bdir, c.replace("/", os.sep))
+                                 for c in JUDGE_BINARY_CANDIDATES))
+    # WHAT did this binary come from? Before the receipt existed the answer was "whatever was
+    # checked out whenever somebody last built", and a judge run said PASS about it either way.
+    rpath = os.path.join(bdir, BUILD_RECEIPT)
+    if not os.path.exists(rpath):
+        raise Loud("no build-identity receipt at %s.\n"
+                   "  The binary in this build dir was produced by an unknown source tree, so a\n"
+                   "  PASS here would certify nothing. Build it through this tool, which records\n"
+                   "  the identity it built:\n"
+                   "    python tools/arifi-sync/arifi_sync.py build" % rpath)
+    with open(rpath, "r", encoding="utf-8-sig") as fh:
+        receipt = json.load(fh)
+    now = _tree_identity(repo, bdir)
+    if not _identity_matches(receipt, now):
+        raise Loud("WRONG-TREE REFUSAL: the binaries in %s were built from a different source\n"
+                   "  state than the one checked out now. The judge would report a verdict about\n"
+                   "  code that is not in front of you.\n\n"
+                   "    built   : HEAD %s tree %s%s\n"
+                   "    current : HEAD %s tree %s%s\n\n"
+                   "  Rebuild the tree you actually want judged, then judge it:\n"
+                   "    python tools/arifi-sync/arifi_sync.py build\n"
+                   "    python tools/arifi-sync/arifi_sync.py judge --i-have-read-bench-purity"
+                   % (bdir, str(receipt.get("head"))[:9], str(receipt.get("tree"))[:9],
+                      " +local edits" if receipt.get("dirty") else "",
+                      now["head"][:9], now["tree"][:9],
+                      " +local edits" if now["dirty"] else ""))
+    # The source identity above says WHICH TREE was compiled. It says nothing about the bytes in
+    # the build directory, and a judge verdict is a statement about those bytes. Everything below
+    # re-checks the OUTPUT: the same configured roots, and the exact artifacts the build recorded.
+    binp = build_root_problems(repo, cfg)
+    for key, want in (("build_dir_abs", _canon(bdir)), ("cmake_home", _canon(repo)),
+                      ("config", BUILD_CONFIG),
+                      ("judge_binary", artifact_key(bdir, binary))):
+        if receipt.get(key) != want:
+            binp.append("the receipt was written for %s=%r, this run resolves %r"
+                        % (key, receipt.get(key), want))
+    recorded = receipt.get("artifacts")
+    if not isinstance(recorded, dict) or not recorded:
+        binp.append("the receipt carries NO artifact hashes, so it certifies no executable bytes. "
+                    "Rebuild through this tool: arifi_sync.py build")
+    else:
+        binp.extend(artifact_problems(bdir, binary, recorded))
+    if binp:
+        raise Loud("BINARY REFUSAL: the build directory does not hold the artifacts this receipt\n"
+                   "  certifies, so a verdict would be about something else.\n\n  %s\n\n"
+                   "  Rebuild the tree you want judged, then judge it:\n"
+                   "    python tools/arifi-sync/arifi_sync.py build\n"
+                   "    python tools/arifi-sync/arifi_sync.py judge --i-have-read-bench-purity"
+                   % "\n  ".join(binp))
+    say("build identity: HEAD %s tree %s content %s (receipt %s)"
+        % (now["head"][:9], now["tree"][:9], now["content_sha256"][:12],
+           receipt.get("built_utc", "?")))
+    say("artifacts     : %d hash(es) verified, judge binary %s"
+        % (len(recorded), os.path.relpath(binary, bdir).replace("\\", "/")))
     model = j["model"]
     if model.startswith("SET-ME"):
         raise Loud("judge.model is not configured in sources.json. Set it to the absolute path\n"
@@ -1108,6 +1287,546 @@ def _load_json(repo: str, name: str, default=None):
         return default
     with open(p, "r", encoding="utf-8-sig") as fh:
         return json.load(fh)
+
+
+# ------------------------------------------------- candidate identity (lane-229 / HQ-57)
+#
+# THE WRONG-TREE TRAP, reproduced by HQ 2026-09-11: every manifest and the config itself are read
+# from the WORKING TREE of whatever checkout the script file lives in - `main()` derives `repo` from
+# the directory of `--config`, and `_load_json` joins `repo`. `--ref` names a git ref, whose tree is
+# a different thing entirely. So `protected-win validate --ref arifi/main` run from the lane-206
+# checkout validated lane-206's 21-entry manifest against arifi/main's tree, while arifi/main's own
+# manifest carries 30 entries. It printed a PASS-shaped report about a ref it had never read.
+#
+# A stale checkout's manifest may not certify another ref. The guard below is a REFUSAL, not a
+# warning row: once the identity is in doubt every count below it is about the wrong tree, so
+# nothing is printed that could be mistaken for a verdict.
+#
+# Compared as PARSED JSON, deliberately, not as bytes. These files are read `utf-8-sig` and a
+# Windows checkout may hold a BOM or CRLF that the blob does not; a byte compare would refuse a
+# legitimate invocation over a line ending. Content is the thing under test.
+
+# `replay-provenance.json` is in this set for the same reason the manifests are: it decides whether
+# a commit counts as registered, so a copy that exists only on disk could carry a registration that
+# the ref itself does not have. It is a TRACKED file of the tree it describes, or it is not evidence.
+CANDIDATE_FILES = ("sources.json", PROTECTED_WINS, PROTECTED_BASELINE, PROTECTED_RESOLUTIONS,
+                   "native-grandfather.json", "replay-provenance.json")
+
+
+def _canon_json(obj) -> str:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _worktree_json(repo: str, name: str):
+    p = os.path.join(repo, "tools", "arifi-sync", name)
+    if not os.path.exists(p):
+        return None
+    with open(p, "r", encoding="utf-8-sig") as fh:
+        return json.load(fh)
+
+
+def _ref_json(repo: str, ref: str, name: str):
+    rc, out, _ = git(repo, "show", "%s:tools/arifi-sync/%s" % (ref, name), check=False)
+    if rc != 0:
+        return None
+    return json.loads(out.lstrip("﻿"))
+
+
+def candidate_identity_problems(repo: str, ref: str) -> list:
+    """Divergences between the config/manifests ON DISK and the same files AT `ref`."""
+    problems = []
+    for name in CANDIDATE_FILES:
+        live = _worktree_json(repo, name)
+        at_ref = _ref_json(repo, ref, name)
+        if live is None and at_ref is None:
+            continue
+        if live is None:
+            problems.append("%s exists at %s but NOT in the checkout at %s" % (name, ref, repo))
+            continue
+        if at_ref is None:
+            problems.append("%s exists in the checkout at %s but NOT at %s" % (name, repo, ref))
+            continue
+        if _canon_json(live) != _canon_json(at_ref):
+            extra = ""
+            if name == PROTECTED_WINS:
+                extra = " (checkout: %d entr(ies); %s: %d)" % (
+                    len(live.get("wins") or []), ref, len(at_ref.get("wins") or []))
+            problems.append("%s in the checkout DIFFERS from %s:tools/arifi-sync/%s%s"
+                            % (name, ref, name, extra))
+    return problems
+
+
+DRAFT_SNAPSHOT_MSG = "arifi-sync draft snapshot (not committed to any branch)"
+
+
+DRAFT_MAX_NEW_BYTES = 1 << 20
+
+
+def _untracked_nonignored(repo: str) -> list:
+    """Every untracked path git would NOT ignore, `-z` parsed. Ignored files are already absent
+    from this list (`--exclude-standard`), which is why a build directory or a model file does not
+    have to be authorised."""
+    _, raw, _ = git(repo, "ls-files", "--others", "--exclude-standard", "-z")
+    return sorted(p for p in raw.split("\0") if p)
+
+
+def draft_snapshot(repo: str, allow_new=()) -> str:
+    """A real, nameable commit object for the CURRENT WORKING TREE.
+
+    The registration workflow this restores (CHECK-UPDATE-ROOT finding 5): author a manifest entry,
+    validate it, THEN commit. `require_candidate_identity` correctly refuses to certify a ref with
+    manifests that are not that ref's - but that also refused the uncommitted draft against every
+    ref including HEAD, so the only way to validate a new entry was to commit it first and find out
+    afterwards. The printed `--ref HEAD` repair could not work for the same reason.
+
+    Nothing is relaxed here and no other ref is certified. The worktree is written into a THROWAWAY
+    INDEX (`GIT_INDEX_FILE`, so the real index is untouched) and committed with `commit-tree` onto
+    HEAD. The result is a dangling commit - no branch, no ref, nothing published - that IS the
+    draft, so root binding and content identity both hold against it exactly as they would against
+    a branch, and the whole validator runs unmodified.
+
+    WHAT IT WILL NOT DO (CHECK-UPDATE-ROOT-R2 finding 7). This used to run `git add -A -- .`, which
+    swept every untracked non-ignored file in the checkout into a real Git object. A dangling
+    commit is unreachable, not absent: the blobs are written into `.git/objects` and survive until
+    a gc that may never come, so an unrelated private file left in the tree was silently and
+    durably stored by a command whose whole promise is that it publishes nothing. The default is
+    now a REFUSAL, taken BEFORE any object is written. Tracked modifications and deletions are
+    staged with `git add -u`, which cannot pick up a new path at all.
+
+    A genuinely new candidate file - a first-ever manifest, say - is supported, but only by
+    EXPLICIT bounded authorisation: each path is named on the command line, must exist, must be
+    untracked, and must be under `DRAFT_MAX_NEW_BYTES`. Nothing is included by pattern, by
+    directory sweep, or by size alone.
+    """
+    allowed, missing, oversize, not_new = [], [], [], []
+    untracked_now = set(_untracked_nonignored(repo))
+    for raw in allow_new:
+        rel = str(raw).replace("\\", "/").strip()
+        while rel.startswith("./"):
+            rel = rel[2:]
+        if not rel:
+            continue
+        full = os.path.join(repo, rel.replace("/", os.sep))
+        if not os.path.isfile(full):
+            missing.append(rel)
+            continue
+        if rel not in untracked_now:
+            not_new.append(rel)
+            continue
+        if os.path.getsize(full) > DRAFT_MAX_NEW_BYTES:
+            oversize.append("%s (%d bytes > %d)" % (rel, os.path.getsize(full), DRAFT_MAX_NEW_BYTES))
+            continue
+        allowed.append(rel)
+    if missing or oversize or not_new:
+        raise Loud(
+            "--allow-new was given path(s) it cannot honour, so nothing was snapshotted:\n"
+            "%s%s%s"
+            "  An authorisation names one existing, untracked, bounded file. It is not a pattern."
+            % ("".join("    does not exist: %s\n" % p for p in missing),
+               "".join("    not untracked (already tracked, or ignored): %s\n" % p for p in not_new),
+               "".join("    too large: %s\n" % p for p in oversize)))
+
+    extra = [p for p in _untracked_nonignored(repo) if p not in set(allowed)]
+    if extra:
+        raise Loud(
+            "DRAFT REFUSED: %d untracked, non-ignored file(s) are in the checkout. Nothing was\n"
+            "  written to the object store - this refusal happens before any object is created.\n\n"
+            "  A draft snapshot writes a real commit, and a commit contains the bytes of every\n"
+            "  file in it. Sweeping in whatever else happens to be in the tree would durably store\n"
+            "  unrelated content in .git/objects, so the untracked set has to be named, not\n"
+            "  guessed:\n%s%s\n"
+            "  Either remove or ignore these, or authorise the ones that are genuinely part of the\n"
+            "  candidate, by name (each must be under %d bytes):\n"
+            "    python tools/arifi-sync/arifi_sync.py protected-win validate --draft%s"
+            % (len(extra),
+               "".join("    %s\n" % p for p in extra[:20]),
+               "    ... and %d more\n" % (len(extra) - 20) if len(extra) > 20 else "",
+               DRAFT_MAX_NEW_BYTES,
+               "".join(" --allow-new %s" % p for p in extra[:3])))
+
+    fd, idx = tempfile.mkstemp(prefix="arifi-draft-index-")
+    os.close(fd)
+    os.remove(idx)  # git insists on creating the index file itself
+    env = dict(os.environ, GIT_INDEX_FILE=idx)
+    try:
+        git(repo, "read-tree", "HEAD", env=env)
+        # `-u` updates TRACKED paths only, including deletions. It cannot add a new path, which is
+        # what makes the authorisation below the only route by which a new file can enter.
+        git(repo, "add", "-u", "--", ".", env=env)
+        for rel in allowed:
+            git(repo, "add", "--", rel, env=env)
+        tree = git(repo, "write-tree", env=env)[1].strip()
+        return git(repo, "commit-tree", tree, "-p", "HEAD", "-m", DRAFT_SNAPSHOT_MSG,
+                   env=env)[1].strip()
+    finally:
+        # The exact paths mkstemp gave us, never a reconstructed one.
+        for p in (idx, idx + ".lock"):
+            if os.path.exists(p):
+                os.remove(p)
+
+
+def require_candidate_identity(repo: str, ref: str) -> None:
+    """Refuse to certify `ref` with another checkout's config/manifests. Fail-closed."""
+    if _resolve_ref(repo, ref) == "":
+        raise Loud("--ref %s does not resolve in %s. The candidate has to be nameable in the\n"
+                   "  repository whose manifests are being read, or the two are not the same thing."
+                   % (ref, repo))
+    problems = candidate_identity_problems(repo, ref)
+    if not problems:
+        return
+    # Never print a repair that cannot work. `--ref HEAD` only helps when the manifests on disk ARE
+    # HEAD's; when they are an uncommitted draft, HEAD refuses for exactly the same reason and the
+    # operator is sent in a circle. Ask which case this is, and name the one that applies.
+    if candidate_identity_problems(repo, "HEAD"):
+        repair_b = ("  (b) the manifests on disk are an UNCOMMITTED DRAFT - they differ from HEAD\n"
+                    "      too, so NO ref can certify them and --ref HEAD would refuse identically.\n"
+                    "      Validate the draft ITSELF. This snapshots the working tree into a\n"
+                    "      throwaway commit and validates that, committing and publishing nothing:\n"
+                    "        python tools/arifi-sync/arifi_sync.py protected-win validate --draft\n")
+    else:
+        repair_b = ("  (b) you meant to certify this checkout, not that ref:\n"
+                    "        python tools/arifi-sync/arifi_sync.py protected-win validate --ref HEAD\n")
+    raise Loud(
+        "WRONG-TREE REFUSAL: the config/manifests on disk are not the ones at %s, so they cannot\n"
+        "certify it. Every count this command would print would be about a tree it never read.\n\n"
+        "  checkout : %s\n"
+        "  candidate: %s (%s)\n\n"
+        "  %s\n\n"
+        "Repair - run the command from a checkout OF the candidate, whichever is true:\n"
+        "  (a) the checkout IS the candidate and is merely behind:\n"
+        "        git -C %s switch %s && git -C %s pull --ff-only\n"
+        "%s"
+        "  (c) the candidate lives in another checkout - run ITS copy of this script:\n"
+        "        python <candidate-checkout>/tools/arifi-sync/arifi_sync.py ... --ref %s\n"
+        % (ref, repo, ref, _resolve_ref(repo, ref)[:9], "\n  ".join(problems), repo, ref, repo,
+           repair_b, ref))
+
+
+# ------------------------------------------------- build/judge tree identity (lane-229 / HQ-57)
+#
+# `cmd_build` and `cmd_judge` act on `repo`'s own build dir. Nothing recorded WHICH source tree the
+# binaries in it came from, so a build of the old base and a judge run minutes later against a
+# freshly switched tree were indistinguishable from a build and judge of the same thing. The
+# receipt below closes that: `build` writes the identity it built, `judge` refuses any binary whose
+# receipt is missing or describes a different tree. The status hash is part of the identity because
+# a dirty tree is not described by its HEAD tree sha.
+
+BUILD_RECEIPT = "arifi-build-identity.json"
+
+
+def _sha256_file(path: str) -> str:
+    import hashlib as _hl
+    h = _hl.sha256()
+    with open(path, "rb") as fh:
+        for blk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(blk)
+    return h.hexdigest()
+
+
+def _canon(path: str) -> str:
+    """One canonical spelling: symlinks resolved, `..` collapsed, case folded on Windows.
+    Two spellings of one directory must never read as two directories, and vice versa."""
+    return os.path.normcase(os.path.normpath(os.path.realpath(path)))
+
+
+def _under(child: str, parent: str) -> bool:
+    c, p = _canon(child), _canon(parent)
+    return c == p or c.startswith(p + os.sep)
+
+
+def _strict_descendant(child: str, parent: str) -> bool:
+    """`child` is INSIDE `parent` and is not `parent` itself.
+
+    `_under` accepts equality, and that acceptance was a hole (CHECK-UPDATE-ROOT-R2 finding 1):
+    `build_dir: "."` satisfied every root check, and `_status_entries` then skipped the whole
+    checkout - so an in-source build excluded every dirty source path from the identity that
+    certifies it. The identity said `dirty: False` over a tree with edited sources. A build
+    directory has to be a STRICT descendant, so that skipping it can never skip a source input.
+    """
+    c, p = _canon(child), _canon(parent)
+    return c != p and c.startswith(p + os.sep)
+
+
+def _status_entries(repo: str, skip_dir: str = None) -> list:
+    """`[(xy, path, origin)]` from `status --porcelain -z -uall`, parsed, never split on newlines.
+
+    `-z` is mandatory: a path with a space or a quote is mangled by the default format, and a
+    rename entry carries its ORIGIN path as a second NUL-separated field. Miss that second field
+    and every entry after a rename is read as a status line, which desynchronizes the whole parse
+    into a stable-but-wrong digest.
+
+    `skip_dir` drops the build directory. The receipt, the object files and the linker's scratch
+    live there; without this the build's own output would be an input to the identity that
+    certifies it, and no build could ever match its own receipt.
+
+    A `skip_dir` that is not a STRICT descendant of the checkout is REFUSED here rather than
+    honoured. The exclusion exists to drop generated output; pointed at the checkout itself (or at
+    an ancestor of it) it drops the source instead, and the identity then certifies a tree it never
+    looked at. `build_root_problems` refuses the same configuration before the compiler, but
+    `cmd_judge` samples the identity before it reaches that check, so the refusal lives at the
+    point of use as well as at the point of configuration.
+    """
+    if skip_dir and not _strict_descendant(skip_dir, repo):
+        raise Loud(
+            "the build directory %s is not a strict descendant of the checkout %s, so excluding it\n"
+            "  from the source identity would exclude source inputs. An in-source build (build_dir\n"
+            "  '.', or any directory containing the checkout) is refused: its exclusion would make\n"
+            "  every dirty source file invisible to the identity that certifies the binaries.\n"
+            "  Configure a build directory INSIDE the checkout, e.g. build.build_dir = \"build-vulkan\"."
+            % (_canon(skip_dir), _canon(repo)))
+    _, raw, _ = git(repo, "status", "--porcelain", "-z", "--untracked-files=all")
+    fields = raw.split("\0")
+    out, i = [], 0
+    while i < len(fields):
+        entry = fields[i]
+        i += 1
+        if not entry:
+            continue
+        xy, path = entry[:2], entry[3:] if len(entry) > 3 else entry[2:].lstrip()
+        origin = ""
+        if "R" in xy or "C" in xy:
+            origin = fields[i] if i < len(fields) else ""
+            i += 1
+        if skip_dir and _under(os.path.join(repo, path.replace("/", os.sep)), skip_dir):
+            continue
+        out.append((xy, path, origin))
+    return out
+
+
+def _content_sha256(repo: str, entries: list) -> str:
+    """Hash of the ACTUAL BYTES the compiler will read, for every path that is not at HEAD.
+
+    THE DIRTY-BYTES TRAP (CHECK-UPDATE-ROOT finding 1, reproduced 2026-09-11): the identity used
+    to be HEAD + HEAD's tree + a hash of the `status` LISTING. A listing names which files
+    changed; it never says what they now contain. Editing an already-modified `source.c` from v1
+    to v2 left all three values identical, so a receipt written before the edit certified the
+    binary built after it, and the comment claiming a mid-build edit could not be certified was
+    false. The build input is the bytes, so the bytes are what is hashed.
+    """
+    import hashlib as _hl
+    h = _hl.sha256()
+    for xy, path, origin in entries:
+        h.update(("%s\0%s\0%s\0" % (xy, path, origin)).encode("utf-8"))
+        full = os.path.join(repo, path.replace("/", os.sep))
+        if os.path.isfile(full):
+            h.update(b"F" + _sha256_file(full).encode("ascii"))
+        else:
+            # deleted, or a submodule/directory git collapsed: recorded as an absence, which is
+            # itself a state the next run has to match.
+            h.update(b"ABSENT")
+    return h.hexdigest()
+
+
+def _tree_identity(repo: str, build_dir: str = None) -> dict:
+    import hashlib as _hl
+    entries = _status_entries(repo, build_dir)
+    listing = "".join("%s %s %s\n" % e for e in entries)
+    return {"head": gout(repo, "rev-parse", "HEAD"),
+            "tree": gout(repo, "rev-parse", "HEAD^{tree}"),
+            "status_sha256": _hl.sha256(listing.encode("utf-8")).hexdigest(),
+            "content_sha256": _content_sha256(repo, entries),
+            "dirty": bool(entries)}
+
+
+def _identity_matches(a: dict, b: dict) -> bool:
+    return all(a.get(k) == b.get(k)
+               for k in ("head", "tree", "status_sha256", "content_sha256"))
+
+
+# ------------------------------------------------- what the compiler is actually pointed at
+#
+# A CMakeCache in the right directory does not mean it configures THIS checkout. `parse_cache`
+# drops INTERNAL entries, and `CMAKE_HOME_DIRECTORY` - the source root cmake will build - is an
+# INTERNAL entry, so nothing ever read it. A build directory holding a cache that names another
+# checkout compiled that other checkout's sources and then wrote THIS repository's receipt
+# (CHECK-UPDATE-ROOT finding 2). The build directory itself can also be absolute or traverse out
+# of the tree. Both are canonicalized and bound here, before the compiler is invoked.
+
+def _cache_internal(path: str, key: str):
+    """One raw cache entry INCLUDING the INTERNAL class that `parse_cache` deliberately drops."""
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if line.startswith(key + ":") and "=" in line:
+                return line.split("=", 1)[1].strip()
+    return None
+
+
+def canonical_cache(repo: str, cfg: dict) -> str:
+    """THE cache: the `CMakeCache.txt` inside the build directory the compiler is handed.
+
+    `cmd_build` invokes `cmake --build <build_dir>`, so that directory's cache is the configuration
+    that will actually be compiled. Everything that reasons about the recipe has to read THAT file
+    and no other."""
+    return os.path.join(os.path.join(repo, cfg["build"]["build_dir"]), "CMakeCache.txt")
+
+
+def build_root_problems(repo: str, cfg: dict) -> list:
+    bdir = os.path.join(repo, cfg["build"]["build_dir"])
+    out = []
+    if not _under(bdir, repo):
+        out.append("build directory %s is OUTSIDE the checkout %s. A build dir that is not in the "
+                   "tree cannot be certified as this tree's build." % (_canon(bdir), _canon(repo)))
+    elif not _strict_descendant(bdir, repo):
+        # CHECK-UPDATE-ROOT-R2 finding 1. `build_dir: "."` passed every previous check: it is
+        # `_under` the checkout, its CMakeCache names the right source root, and the identity then
+        # excluded the entire tree as "the build directory". The dirty-source guard was switched
+        # off by configuration alone, silently, with `dirty: False` printed over edited sources.
+        out.append(
+            "build directory %s IS the checkout %s (or contains it). A build directory is excluded "
+            "from the source identity, so an in-source build would exclude every source file from "
+            "the identity that certifies its own binaries. Use a strict subdirectory, e.g. "
+            "\"build-vulkan\"." % (_canon(bdir), _canon(repo)))
+    else:
+        # The exclusion may only drop GENERATED output. A build directory that holds tracked files
+        # at HEAD is a source directory wearing a build directory's name, and excluding it hides
+        # real source edits exactly as an in-source build would.
+        rel = os.path.relpath(_canon(bdir), _canon(repo)).replace("\\", "/")
+        rc, tracked, _ = git(repo, "ls-tree", "-r", "--name-only", "HEAD", "--", rel, check=False)
+        names = [l for l in tracked.splitlines() if l.strip()] if rc == 0 else []
+        if names:
+            out.append(
+                "build directory %s holds %d TRACKED file(s) at HEAD (e.g. %s). The build directory "
+                "is excluded from the source identity, so a directory carrying source would remove "
+                "that source from the identity. Build into a generated, untracked directory."
+                % (_canon(bdir), len(names), ", ".join(names[:3])))
+    # CHECK-UPDATE-ROOT-R2 finding 2: the recipe was compared against `build.live_cache`, which is
+    # a SEPARATE config key from `build.build_dir`. A decoy cache at `live_cache` could match the
+    # recorded recipe while the cache cmake would actually build lacked a required flag - the diff
+    # passed, the compiler ran, and a receipt was published over a configuration nobody compared.
+    # The recipe is bound to the canonical cache here, before the compiler and again in `judge`.
+    declared = cfg["build"].get("live_cache")
+    if declared:
+        live = os.path.join(repo, declared)
+        if _canon(live) != _canon(canonical_cache(repo, cfg)):
+            out.append(
+                "build.live_cache resolves to %s, but the cache cmake will build from is %s. The "
+                "recipe comparison would certify a cache the compiler never reads. Point "
+                "build.live_cache at the CMakeCache.txt inside build.build_dir."
+                % (_canon(live), _canon(canonical_cache(repo, cfg))))
+    home = _cache_internal(os.path.join(bdir, "CMakeCache.txt"), "CMAKE_HOME_DIRECTORY")
+    if not home:
+        out.append("CMakeCache.txt in %s states no CMAKE_HOME_DIRECTORY, so the source root cmake "
+                   "would compile is unknown. Reconfigure the build dir from the recorded recipe."
+                   % bdir)
+    elif _canon(home) != _canon(repo):
+        out.append("the configured CMake source root is %s, but this checkout is %s. The compiler "
+                   "would build another tree and the receipt would name this one."
+                   % (_canon(home), _canon(repo)))
+    return out
+
+
+# ------------------------------------------------- the artifacts a verdict is actually about
+#
+# The receipt used to carry source metadata only, so a manually replaced or partially rebuilt
+# llama-server.exe kept its certification (CHECK-UPDATE-ROOT finding 3). `build` now records the
+# bytes of the judge binary and of the shared libraries beside it; `judge` re-hashes them.
+
+JUDGE_BINARY_CANDIDATES = ("bin/llama-server.exe", "bin/llama-server",
+                           "bin/Release/llama-server.exe")
+_RUNTIME_SUFFIXES = (".exe", ".dll", ".so", ".dylib")
+
+
+def _judge_binary(bdir: str):
+    for rel in JUDGE_BINARY_CANDIDATES:
+        p = os.path.join(bdir, rel.replace("/", os.sep))
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _is_runtime_artifact(name: str) -> bool:
+    low = name.lower()
+    return low.endswith(_RUNTIME_SUFFIXES) or ".so." in low
+
+
+_RUNTIME_LIBRARY_SUFFIXES = (".dll", ".so", ".dylib")
+
+
+def _is_runtime_library(name: str) -> bool:
+    """A shared library the loader may resolve beside the judge binary.
+
+    Separated from `_is_runtime_artifact` because the two classes get different rules
+    (CHECK-UPDATE-ROOT-R2 finding 4). An extra EXECUTABLE beside the server is ordinary - building
+    `llama-cli` later must not brick the judge - but an extra LIBRARY is not: on Windows the
+    directory of the executable is searched first, so dropping a new `ggml-vulkan.dll` beside
+    llama-server changes what the process loads without changing one recorded byte."""
+    low = name.lower()
+    return low.endswith(_RUNTIME_LIBRARY_SUFFIXES) or ".so." in low
+
+
+def artifact_key(bdir: str, binary: str) -> str:
+    return os.path.relpath(binary, bdir).replace("\\", "/")
+
+
+def artifact_digest(bdir: str, binary: str) -> dict:
+    """sha256 per artifact, keyed by path relative to the build dir.
+
+    Scoped to the directory of the RESOLVED binary, because the candidate list spans `bin/` and
+    `bin/Release/` and a build that scanned one while judge resolved the other would refuse every
+    real run. `.pdb`/`.ilk`/`.exp` are out on purpose: relink churn, never what executes.
+
+    The EXPLICITLY SELECTED binary is hashed unconditionally, whatever its name. `bin/llama-server`
+    is a supported candidate and carries no suffix, so the suffix filter silently dropped it: a
+    build that selected it produced a receipt with no hash for its own judge binary, and `judge`
+    then refused that build forever (CHECK-UPDATE-ROOT-R2 finding 4). Selection is the authority
+    here; the suffix filter only decides what ELSE in the directory comes along."""
+    out = {}
+    d = os.path.dirname(binary)
+    for name in sorted(os.listdir(d)):
+        p = os.path.join(d, name)
+        if os.path.isfile(p) and _is_runtime_artifact(name):
+            out[artifact_key(bdir, p)] = _sha256_file(p)
+    if os.path.isfile(binary):
+        out[artifact_key(bdir, binary)] = _sha256_file(binary)
+    return out
+
+
+def artifact_problems(bdir: str, binary: str, recorded: dict) -> list:
+    """The recorded artifacts must still be present and byte-identical, AND the adjacent runtime
+    LIBRARY set must be the one the build recorded.
+
+    Three mutations invalidate a receipt: a recorded artifact whose bytes changed, a recorded
+    artifact that is gone, and a library that has APPEARED. The third was permitted until
+    CHECK-UPDATE-ROOT-R2 finding 4: only recorded paths were checked, so a new DLL dropped beside
+    the server passed every gate while being first in the loader's search order. An added
+    EXECUTABLE is still permitted - that is an ordinary second target, and it is not on any
+    loader path."""
+    key = artifact_key(bdir, binary)
+    now = artifact_digest(bdir, binary)
+    out = []
+    if key not in recorded:
+        out.append("the receipt records no hash for the judge binary %s - it was not the binary "
+                   "this build produced." % key)
+    for k in sorted(recorded):
+        if k not in now:
+            out.append("%s is recorded in the receipt but is MISSING from the build directory - "
+                       "a failed or partial rebuild." % k)
+        elif now[k] != recorded[k]:
+            out.append("%s has DIFFERENT BYTES than the build recorded - the binary was replaced "
+                       "or rebuilt outside this tool." % k)
+    for k in sorted(now):
+        if k not in recorded and _is_runtime_library(os.path.basename(k)):
+            out.append("%s is an ADDED runtime library that this build never produced. It sits in "
+                       "the judge binary's own directory, which the loader searches first, so it "
+                       "can change what the process loads without changing a recorded byte." % k)
+    return out
+
+
+def _drop_receipt(rpath: str) -> None:
+    if os.path.exists(rpath):
+        os.remove(rpath)
+
+
+def _write_receipt(rpath: str, ident: dict) -> None:
+    """Atomic publish: a half-written receipt must never be readable as a certification."""
+    tmp = rpath + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(ident, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, rpath)
 
 
 def load_protected_wins(repo: str) -> list:
@@ -1325,6 +2044,10 @@ def validate_protected_wins(repo: str, ref: str, cfg=None) -> list:
     still true while a win landed beside it completely unguarded. Because `cmd_protected_win_check`
     runs this function first and `cmd_bump` leg 1b runs `check`, wiring it HERE is what makes an
     unregistered win refuse the normal update path, with no parallel updater invented."""
+    # Before a single entry is read: the manifest on disk has to BE the manifest at `ref`.
+    # Everything below reads the working tree and compares it against `ref`; if those are two
+    # different trees the whole report is about neither of them. See `require_candidate_identity`.
+    require_candidate_identity(repo, ref)
     problems = []
     wins = load_protected_wins(repo)
     seen = set()
@@ -1363,6 +2086,7 @@ def validate_protected_wins(repo: str, ref: str, cfg=None) -> list:
                 problems.append("%s: evidence locator %r does not resolve" % (wid, e))
     if cfg is not None:
         problems.extend(baseline_boundary_problems(repo))
+        problems.extend(replay_provenance(repo, cfg)[0])
         for sha, subject, eff in unregistered_measured_wins(repo, cfg, ref):
             problems.append(
                 "UNREGISTERED measured win %s %r - it landed with `Measured-effect: %s` and is "
@@ -1376,6 +2100,24 @@ def validate_protected_wins(repo: str, ref: str, cfg=None) -> list:
 
 def cmd_protected_win_validate(repo: str, cfg: dict, args) -> int:
     ref = args.ref
+    if getattr(args, "draft", False):
+        # A draft validates THIS working tree. Certifying some other ref with it is the wrong-tree
+        # trap wearing a new flag, so an explicitly named ref that is not HEAD is refused outright.
+        if getattr(args, "ref_explicit", False) and \
+                _resolve_ref(repo, args.ref) != _resolve_ref(repo, "HEAD"):
+            raise Loud("--draft validates the UNCOMMITTED WORKING TREE, so it cannot also certify\n"
+                       "  --ref %s. Drop one of the two: --draft for the tree in front of you,\n"
+                       "  --ref %s for that committed candidate." % (args.ref, args.ref))
+        allow_new = list(getattr(args, "allow_new", None) or [])
+        ref = draft_snapshot(repo, allow_new)
+        say("DRAFT snapshot   : %s  (working tree of %s, parent %s)"
+            % (ref[:9], repo, gout(repo, "rev-parse", "--short", "HEAD")))
+        say("                   Nothing was committed and no ref was created. The snapshot IS a")
+        say("                   Git commit object, so its blobs are written into .git/objects and")
+        say("                   stay there until a gc; that is why untracked files are refused")
+        say("                   rather than swept in. Every gate below runs against it unmodified.")
+        if allow_new:
+            say("                   explicitly authorised new file(s): %s" % ", ".join(allow_new))
     step("Validating %s against %s" % (PROTECTED_WINS, ref))
     problems = validate_protected_wins(repo, ref, cfg)
     wins = load_protected_wins(repo)
@@ -1504,6 +2246,267 @@ def baseline_boundary_problems(repo: str) -> list:
     return problems
 
 
+# ------------------------------------------------- replay provenance (CHECK-UPDATE-ROOT-R2 6)
+#
+# THE REWRITTEN-COMMIT TRAP. An upstream bump is a REBASE: `git rebase --onto <upstream> <base>
+# <ours>` replays every fork commit onto the new base, and every replayed commit gets a NEW SHA.
+# `protected-wins.json` names the OLD sha. So the moment the documented repair sequence runs, the
+# registered win becomes, to `unregistered_measured_wins`, a landed measured effect that no entry
+# covers - and the fail-closed preflight refuses the very update it is there to protect. R2
+# reproduced exactly that (`REAL_PREFLIGHT_REPAIRED_RC 1 UNREGISTERED_REFUSAL True`), and the R2
+# test hid it by stubbing `cmd_protected_win_check` away.
+#
+# What is NOT the answer: matching on the subject line, fuzzy-matching, or relaxing registration.
+# A message is not evidence - it is the one part of a commit an author types freely, and two
+# commits can share it. The answer below is an EXPLICIT, MACHINE-READABLE, ONE-TO-ONE ledger, in
+# which every row must survive re-derivation at use time:
+#
+#   * the ORIGINAL must still be registered in the manifest, or dispositioned in the baseline.
+#     Nothing here can register anything; it can only carry an EXISTING registration across a
+#     rewrite.
+#   * the original must still be REACHABLE from a retained ref named in the row. A rebase leaves
+#     the originals unreferenced, and "it was in the reflog" is not evidence anybody else can
+#     check, so the operator retains a real ref and the row names it.
+#   * the patch must be EQUIVALENT, by `git patch-id --stable` computed live on both sides. A
+#     conflict-edited replay produces a different patch id and is refused - correctly, because a
+#     patch somebody edited during a rebase is a new change that nobody measured.
+#   * the trailers and the subject must correspond EXACTLY, both to each other and to the bytes
+#     recorded in the row when it was written.
+#   * the mapping must be ONE-TO-ONE. Two rows naming one original, or one rebased commit mapped
+#     twice, is ambiguity, and ambiguity refuses.
+#
+# Every other gate keeps biting unchanged: protected paths, anchors, symbol definitions and the
+# baseline ancestry boundary are all still evaluated against the CURRENT ref.
+
+REPLAY_PROVENANCE = "replay-provenance.json"
+REPLAY_ROW_REQUIRED = ("rebased", "original", "patch_id", "subject", "trailers",
+                       "retained_ref", "recorded_utc", "recorded_by")
+
+
+def _patch_id(repo: str, sha: str) -> str:
+    """`git patch-id --stable` for one commit, or "" when it has no patch id.
+
+    patch-id is the right equivalence here precisely because it is NOT a sha: it canonicalises
+    away line numbers, whitespace and the blob hashes in the `index` lines, all of which change
+    legitimately when a commit is replayed onto a different base. What it does NOT canonicalise
+    away is the content of the change, which is the thing that has to be the same.
+
+    It DOES hash context lines. A replay whose context shifted - upstream edited the lines next to
+    ours, the rebase applied cleanly anyway - therefore yields a different id and is refused. That
+    is a real limitation and it is deliberately left fail-closed: such a commit must be registered
+    by hand, because its patch genuinely is not the patch that was measured."""
+    p1 = subprocess.run(["git", "-C", repo, "diff-tree", "-p", "--no-commit-id", "--binary", sha],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if p1.returncode != 0 or not p1.stdout.strip():
+        return ""
+    p2 = subprocess.run(["git", "-C", repo, "patch-id", "--stable"],
+                        input=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out = p2.stdout.decode("utf-8", "replace").split()
+    return out[0] if out else ""
+
+
+def _is_commit(repo: str, sha: str) -> bool:
+    rc, _, _ = git(repo, "cat-file", "-e", "%s^{commit}" % sha, check=False)
+    return rc == 0
+
+
+def _dupes(values) -> set:
+    seen, dup = set(), set()
+    for v in values:
+        (dup if v in seen else seen).add(v)
+    return dup
+
+
+def _replay_rows(repo: str) -> list:
+    data = _load_json(repo, REPLAY_PROVENANCE, {"mappings": []})
+    return [r for r in data.get("mappings", []) if isinstance(r, dict)]
+
+
+def replay_provenance(repo: str, cfg: dict):
+    """`(problems, {rebased_sha: original_sha})` for every row that survives re-derivation.
+
+    A row that fails ANY check contributes a problem and maps nothing, so the rebased commit it
+    names goes on to be reported as UNREGISTERED as well. Both messages are correct and both name
+    the same manual action; nothing is accepted on the strength of the ledger alone."""
+    rows = _replay_rows(repo)
+    if not rows:
+        return [], {}
+    covered = covered_win_commits(repo)
+    baseline = load_discovery_baseline(repo)
+    problems, mapped = [], {}
+    # ONE-TO-ONE is decided over the WHOLE ledger before any row is accepted. Detecting a duplicate
+    # while walking would let the FIRST of two conflicting rows through and only refuse the second,
+    # which is the opposite of what ambiguity means: when two rows disagree about which registered
+    # win a commit is, neither is evidence. Both sides of every duplicate are dropped.
+    dup_new = {s for s in _dupes(str(r.get("rebased")) for r in rows if r.get("rebased"))}
+    dup_old = {s for s in _dupes(str(r.get("original")) for r in rows if r.get("original"))}
+    for i, r in enumerate(rows):
+        tag = "%s row %d" % (REPLAY_PROVENANCE, i + 1)
+        bad = [f for f in REPLAY_ROW_REQUIRED if not r.get(f)]
+        if bad:
+            problems.append("%s: INCOMPLETE - missing/empty %s" % (tag, ", ".join(bad)))
+            continue
+        why = recorded_by_problem(str(r.get("recorded_by") or ""))
+        if why:
+            problems.append("%s: recorded_by is %s. The row states WHO carried this registration "
+                            "across the rewrite, so it must be a concrete operator. Re-run "
+                            "`replay-map --recorded-by <a real identity> --write`." % (tag, why))
+            continue
+        new_sha, old_sha = str(r["rebased"]), str(r["original"])
+        tag = "%s (%s <- %s)" % (REPLAY_PROVENANCE, new_sha[:9], old_sha[:9])
+        if new_sha in dup_new or old_sha in dup_old:
+            problems.append(
+                "%s: AMBIGUOUS - this rebased commit or this original appears in more than one "
+                "row. Replay provenance must be one-to-one; a many-to-one map cannot say which "
+                "registered win a commit is, so NEITHER side is accepted. Remove the wrong row, or "
+                "register the commit directly in %s." % (tag, PROTECTED_WINS))
+            continue
+        if not _is_commit(repo, new_sha) or not _is_commit(repo, old_sha):
+            problems.append("%s: one of the two shas is not a commit in this repository, so the "
+                            "mapping cannot be checked." % tag)
+            continue
+        retained = str(r["retained_ref"])
+        if _resolve_ref(repo, retained) == "" or not _is_commit(repo, retained):
+            problems.append(
+                "%s: retained_ref %r does not resolve. A rebase leaves the original commit "
+                "unreferenced, so the evidence for this mapping is a REF that still contains it. "
+                "Retain one (git tag/branch on the pre-rebase tip) and name it here."
+                % (tag, retained))
+            continue
+        rc, _, _ = git(repo, "merge-base", "--is-ancestor", old_sha, retained, check=False)
+        if rc != 0:
+            problems.append("%s: the original is NOT contained in retained_ref %r, so that ref is "
+                            "not evidence of it." % (tag, retained))
+            continue
+        pid_new, pid_old = _patch_id(repo, new_sha), _patch_id(repo, old_sha)
+        if not pid_new or not pid_old:
+            problems.append("%s: one side has no patch id (an empty or unreadable diff), so patch "
+                            "equivalence cannot be established." % tag)
+            continue
+        if pid_new != pid_old:
+            problems.append(
+                "%s: the replayed patch is NOT EQUIVALENT to the original (patch-id %s vs %s). A "
+                "commit whose diff changed during the replay - a conflict resolved by hand, or a "
+                "context shift - is a different change from the one that was measured. Register it "
+                "in %s on its own evidence." % (tag, pid_new[:12], pid_old[:12], PROTECTED_WINS))
+            continue
+        if pid_new != str(r["patch_id"]):
+            problems.append("%s: the recorded patch_id %s is not the patch id these commits have "
+                            "now (%s). The ledger is stale or was hand-edited."
+                            % (tag, str(r["patch_id"])[:12], pid_new[:12]))
+            continue
+        tr_new, tr_old = commit_trailers(repo, new_sha), commit_trailers(repo, old_sha)
+        if tr_new != tr_old:
+            problems.append("%s: the trailers differ between the original and the replay, so the "
+                            "provenance and the measured effect are not the same statement." % tag)
+            continue
+        if _canon_json(tr_new) != _canon_json(r["trailers"]):
+            problems.append("%s: the recorded trailers are not the trailers these commits carry "
+                            "now." % tag)
+            continue
+        sub_new = gout(repo, "log", "-1", "--format=%s", new_sha)
+        sub_old = gout(repo, "log", "-1", "--format=%s", old_sha)
+        if sub_new != sub_old or sub_new != str(r["subject"]):
+            problems.append("%s: the subjects do not correspond to each other and to the recorded "
+                            "one." % tag)
+            continue
+        if old_sha not in covered and old_sha not in baseline:
+            problems.append(
+                "%s: the ORIGINAL is itself unregistered - it is in no %s entry and no %s row. "
+                "Replay provenance carries an existing registration across a rewrite; it can never "
+                "create one. Register the win, then map it."
+                % (tag, PROTECTED_WINS, PROTECTED_BASELINE))
+            continue
+        mapped[new_sha] = old_sha
+    return problems, mapped
+
+
+def cmd_protected_win_replay_map(repo: str, cfg: dict, args) -> int:
+    """Derive the rebased -> original mapping for a replayed line, and optionally WRITE the ledger.
+
+    Candidates for the original side are drawn ONLY from commits that are already registered in the
+    manifest or dispositioned in the baseline, and only where they are contained in `--retained-ref`.
+    So this command cannot register anything: it can only find the already-registered commit that a
+    replayed commit IS, and it refuses to guess when it cannot tell."""
+    # The same rule the strict read applies, applied BEFORE anything is written: a placeholder or
+    # unsafe identity that reaches disk is a ledger row that every later read refuses anyway.
+    why = recorded_by_problem(getattr(args, "recorded_by", "") or "")
+    if why:
+        raise Loud("--recorded-by is %s. It names the person making the registration statement; "
+                   "pass the identity you sign commits with." % why)
+    base = cfg["base"]["upstream_sha"]
+    ref = args.ref
+    retained = args.retained_ref
+    if _resolve_ref(repo, retained) == "" or not _is_commit(repo, retained):
+        raise Loud("--retained-ref %s does not resolve. Retain the PRE-REBASE tip as a real ref "
+                   "before rewriting:\n    git tag pre-rebase-<date> <old tip>" % retained)
+    step("Replay provenance: %s..%s against retained %s" % (base[:9], ref, retained))
+
+    originals = []
+    for sha in set(covered_win_commits(repo)) | set(load_discovery_baseline(repo)):
+        if not _is_commit(repo, sha):
+            continue
+        rc, _, _ = git(repo, "merge-base", "--is-ancestor", sha, retained, check=False)
+        if rc == 0:
+            originals.append(sha)
+
+    rows, unmatched, ambiguous = [], [], []
+    for sha, subject, eff in unregistered_measured_wins(repo, cfg, ref):
+        pid = _patch_id(repo, sha)
+        tr = commit_trailers(repo, sha)
+        hits = [o for o in originals
+                if pid and _patch_id(repo, o) == pid
+                and commit_trailers(repo, o) == tr
+                and gout(repo, "log", "-1", "--format=%s", o) == subject]
+        if len(hits) == 1:
+            rows.append({"rebased": _resolve_ref(repo, sha), "original": _resolve_ref(repo, hits[0]),
+                         "patch_id": pid, "subject": subject, "trailers": tr,
+                         "retained_ref": retained, "recorded_utc": now_iso(),
+                         "recorded_by": args.recorded_by})
+            say("  MAPPED     %s <- %s  %s" % (sha[:9], hits[0][:9], subject[:60]))
+        elif hits:
+            ambiguous.append((sha, subject, hits))
+            say("  AMBIGUOUS  %s  %s" % (sha[:9], subject[:60]))
+        else:
+            unmatched.append((sha, subject, eff))
+            say("  UNMATCHED  %s  %s" % (sha[:9], subject[:60]))
+
+    say("\nmapped: %d   ambiguous: %d   unmatched: %d" % (len(rows), len(ambiguous), len(unmatched)))
+    for sha, subject, hits in ambiguous:
+        say("\n  AMBIGUOUS %s %r matches %d registered originals: %s"
+            % (sha[:9], subject[:60], len(hits), ", ".join(h[:9] for h in hits)))
+        say("  A one-to-one map cannot be written. Register this commit directly in %s."
+            % PROTECTED_WINS)
+    for sha, subject, eff in unmatched:
+        say("\n  UNMATCHED %s %r (Measured-effect: %s)"
+            % (sha[:9], subject[:60], " ".join(eff.split())[:80]))
+        say("  No registered original in %s has the same patch, trailers and subject. This is a new"
+            % retained)
+        say("  measured win, or a replay whose patch changed. Register it by hand in %s."
+            % PROTECTED_WINS)
+
+    if not getattr(args, "write", False):
+        say("\nNothing written. Re-run with --write to create tools/arifi-sync/%s, then COMMIT it:"
+            % REPLAY_PROVENANCE)
+        say("  git add -- tools/arifi-sync/%s" % REPLAY_PROVENANCE)
+        say("  git commit -- tools/arifi-sync/%s     # needs an Origin: trailer" % REPLAY_PROVENANCE)
+        return 1 if (ambiguous or unmatched) else 0
+
+    dest = os.path.join(repo, "tools", "arifi-sync", REPLAY_PROVENANCE)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    with open(dest, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump({"version": 1, "mappings": rows}, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    say("\nwrote %s (%d mapping(s)). It is NOT committed - commit it by pathspec:" % (dest, len(rows)))
+    say("  git add -- tools/arifi-sync/%s" % REPLAY_PROVENANCE)
+    say("  git commit -- tools/arifi-sync/%s" % REPLAY_PROVENANCE)
+    if ambiguous or unmatched:
+        say("\nFAIL: %d commit(s) could not be mapped one-to-one. They are named above and must be "
+            "registered by hand." % (len(ambiguous) + len(unmatched)))
+        return 1
+    return 0
+
+
 def covered_win_commits(repo: str) -> set:
     covered = set()
     for w in _load_json(repo, PROTECTED_WINS, {"wins": []}).get("wins", []):
@@ -1522,9 +2525,14 @@ def unregistered_measured_wins(repo: str, cfg: dict, ref: str) -> list:
     base = cfg["base"]["upstream_sha"]
     covered = covered_win_commits(repo)
     baseline = load_discovery_baseline(repo)
+    # A REPLAYED registration counts, and only on the terms `replay_provenance` re-derives live:
+    # a retained original that is itself registered, an equivalent patch, corresponding trailers
+    # and a one-to-one map. Rows that fail those checks map nothing and their commits stay in the
+    # set below, so a broken ledger cannot quiet the gate.
+    _, replayed = replay_provenance(repo, cfg)
     rows = []
     for sha in gout(repo, "rev-list", "--reverse", "%s..%s" % (base, ref)).split():
-        if sha in covered or sha in baseline:
+        if sha in covered or sha in baseline or sha in replayed:
             continue
         eff = commit_trailers(repo, sha)["Measured-effect"]
         if _measured_effect_is_real(eff):
@@ -1724,6 +2732,334 @@ def cmd_protected_win_check(repo: str, cfg: dict, args) -> int:
     return 1
 
 
+def _exact_tag(repo: str, sha: str) -> str:
+    rc, out, _ = git(repo, "describe", "--tags", "--exact-match", sha, check=False)
+    return out.strip() if rc == 0 else ""
+
+
+def cmd_set_base_pin(repo: str, cfg: dict, args) -> int:
+    """Move base.upstream_sha AND base.upstream_tag in sources.json, as ONE checked operation.
+
+    This command exists because step 3 of the printed bump repair used to be the line
+    `edit tools/arifi-sync/sources.json: ...`, which is prose in a block that calls itself a
+    command sequence (CHECK-UPDATE-ROOT-R3 finding 5). An operator cannot run prose and a test
+    cannot execute it, so the test reached that state through a private helper of its own and the
+    printed sequence was never the sequence under test. It is a real subcommand now.
+
+    The pin is a PAIR (sources.json's own _comment, lane-139): moving the sha and leaving the tag
+    behind produces a base nobody can name. So both move here, in one write, and the tag is
+    DERIVED from the ref by `git describe --tags --exact-match` rather than typed - the same
+    verification the base-move notes in sources.json already record by hand.
+
+    Every check runs before a single byte is written, and the write is a temp file plus
+    os.replace, so a refusal leaves the file exactly as it was and an interrupted write cannot
+    leave a half-written config behind.
+    """
+    path = os.path.abspath(args.config)
+    with open(path, encoding="utf-8", newline="") as fh:
+        raw = fh.read()
+    # The rewrite keeps the file's OWN line endings. This tree is checked out CRLF; a write that
+    # normalised to LF would turn a two-value edit into a whole-file diff on the day of an update.
+    eol = "\r\n" if "\r\n" in raw else "\n"
+    try:
+        doc = json.loads(raw)
+    except ValueError as e:
+        raise Loud("%s is not parseable JSON (%s). Repair it by hand; this command refuses to\n"
+                   "overwrite a file it could not read first." % (path, e))
+    base = doc.get("base")
+    if not isinstance(base, dict):
+        raise Loud("%s has no `base` object, so there is no pin to move. This is not the config\n"
+                   "this command is for." % path)
+    for k in ("upstream_sha", "upstream_tag"):
+        if not isinstance(base.get(k), str) or not base[k].strip():
+            raise Loud("base.%s is missing or not a string in %s. The pin is a (sha, tag) PAIR;\n"
+                       "half of one is not a state this command will move from." % (k, path))
+
+    old, old_tag = base["upstream_sha"].strip(), base["upstream_tag"].strip()
+    expect = (args.expect_sha or "").strip()
+    if len(expect) < 7 or not re.fullmatch(r"[0-9a-fA-F]+", expect):
+        raise Loud("--expect-sha %r is not a sha prefix of at least 7 hex characters." % expect)
+    if not old.lower().startswith(expect.lower()):
+        raise Loud("REFUSED: the pin on disk is not the one you expected.\n"
+                   "  on disk   : base.upstream_sha = %s\n"
+                   "  --expect-sha: %s\n"
+                   "Somebody else moved this pin, or you are in a different checkout than you\n"
+                   "think. Re-read %s before moving it." % (old, expect, path))
+
+    new = _resolve_ref(repo, args.onto)
+    if new == "":
+        raise Loud("cannot resolve %s in %s - fetch first: arifi_sync.py currency"
+                   % (args.onto, repo))
+    if new == old:
+        raise Loud("REFUSED: base.upstream_sha is already %s, so this would move nothing. A pin\n"
+                   "move that changes nothing is a sign the ref is not the one you meant." % new)
+
+    tag = (args.upstream_tag or "").strip() or _exact_tag(repo, new)
+    if not tag:
+        raise Loud("REFUSED: %s (%s) carries no exact tag, so the pin's tag cannot be DERIVED.\n"
+                   "The pin is a (sha, tag) pair and the tag is the name a stranger reads. Either\n"
+                   "bump onto a tagged commit, or name the tag yourself:\n"
+                   "  --upstream-tag <tag>" % (args.onto, new[:9]))
+    if args.upstream_tag:
+        named = _resolve_ref(repo, tag)
+        if named != new:
+            raise Loud("REFUSED: --upstream-tag %s resolves to %s, not to %s (%s). The tag must\n"
+                       "name the commit being pinned." % (tag, named[:9] or "nothing", new[:9],
+                                                          args.onto))
+
+    base["upstream_sha"], base["upstream_tag"] = new, tag
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline=eol) as fh:
+        fh.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
+    step("base pin MOVED in %s" % path)
+    say("  upstream_sha : %s -> %s" % (old[:9], new[:9]))
+    say("  upstream_tag : %s -> %s" % (old_tag, tag))
+    say("Nothing was staged and nothing was committed - that is yours, by pathspec:")
+    say("  git -C %s add -- tools/arifi-sync/sources.json" % repo)
+    say("  git -C %s commit -- tools/arifi-sync/sources.json" % repo)
+    return 0
+
+
+BUMP_STEP_PREFIX = "    "
+
+# No `<`, `>`, `"`, `'`, `\`, `$` or `%`: a value carrying any of those is metasyntax in some shell
+# the printed block may be pasted into, or is eaten by `shlex.split(posix=True)`. A space is allowed
+# because `user.name` is usually two words; `_shell_word` quotes it.
+_RECORDED_BY_SAFE = re.compile(r"^[A-Za-z0-9._@+ -]+$")
+
+# CHECK-UPDATE-ROOT-R6 finding 2: `unknown-operator` used to be printed as the identity when nothing
+# resolved. It is shell-safe and nonempty, so strict provenance accepted it - and a row recording it
+# is a formally valid registration statement made by NOBODY. These values name nobody by
+# construction, so they are refused on the way in AND on every read.
+# UPDATE-RUNBOOK.md's pasted bash ladder MIRRORS this pattern (and `_RECORDED_BY_SAFE`) as a
+# `grep -Ei`, so a placeholder never even reaches argv; `test_the_runbook_identity_rule_IS_the_python_one`
+# pins both pattern strings and the grep flags, so editing either one alone is a RED test. Keep this
+# pattern POSIX-ERE-compatible and keep case-insensitivity in the flag, not in an inline `(?i)`.
+_RECORDED_BY_PLACEHOLDER = re.compile(
+    r"^(unknown([ ._-]?operator)?|operator|someone|somebody|anonymous|nobody|none|n/?a|tbd|you|"
+    r"your[ ._-]?(name|address)|changeme|[^@]*@example\.(com|org|net|invalid))$", re.IGNORECASE)
+
+
+def _shell_word(value: str) -> str:
+    """One shell word for `value`, quoted only when it has to be.
+
+    DOUBLE quotes, never `shlex.quote`'s single quotes: single quotes do not group in cmd.exe, and
+    the printed block is copy-pasted on this (Windows) box as often as in bash. Double quotes group
+    in bash, PowerShell and cmd, and `shlex.split(posix=True)` - which is how the convergence test
+    executes the printed line - strips them.
+    """
+    return value if re.match(r"^[A-Za-z0-9._@+-]+$", value) else '"%s"' % value
+
+
+def recorded_by_identity(repo: str) -> str:
+    """The operator identity for the printed `replay-map --recorded-by`, RESOLVED at print time.
+
+    CHECK-UPDATE-ROOT-R4 finding 3: the line used to print `--recorded-by <you>`, which a shell
+    reads as input redirection - so the one line of the sequence that was not runnable as printed
+    was in a block whose banner said every line was. A shell EXPANSION (`$(git config user.email)`)
+    would not fix it either: the convergence test runs the printed line through `shlex.split` and
+    `main`, with no shell, so the expansion would be recorded verbatim as the identity. A concrete
+    value resolved here is the only form that is both executable as printed and executed as printed.
+
+    `git config user.email`, then `user.name`, then the OS user - each candidate validated before
+    the next is considered, so an unsafe email falls through to a safe name instead of winning by
+    being merely nonempty. Returns "" when NOTHING resolves: there is no constant to fall back on
+    (CHECK-UPDATE-ROOT-R6 finding 2), because a registration statement is about a person and no
+    default names one. `--recorded-by` stays REQUIRED in the parser; this only supplies the operator
+    the checkout already names.
+    """
+    candidates = []
+    for key in ("user.email", "user.name"):
+        rc, out, _ = git(repo, "config", "--get", key, check=False)
+        candidates.append(out.strip() if rc == 0 else "")
+    try:
+        candidates.append((getpass.getuser() or "").strip())
+    except Exception:
+        candidates.append("")
+    for value in candidates:
+        if not recorded_by_problem(value):
+            return value
+    return ""
+
+
+def recorded_by_problem(value: str) -> str:
+    """Why `value` is not an operator identity, or "" when it is one.
+
+    ONE rule, used by the resolver, by `replay-map --write` and by every strict provenance read, so
+    a value the printer would not print is also a value the ledger will not keep."""
+    v = (value or "").strip()
+    if not v:
+        return "empty"
+    if not _RECORDED_BY_SAFE.match(v):
+        return ("not shell-safe (%r carries characters that are metasyntax in a shell, or that "
+                "`shlex.split` eats)" % v)
+    if _RECORDED_BY_PLACEHOLDER.match(v):
+        return "a placeholder: %r names nobody, so it cannot make a registration statement" % v
+    return ""
+
+
+RETAINED_REF_PREFIX = "arifi-pre-rebase"
+
+
+def _commit_sha(repo: str, ref: str) -> str:
+    """The exact commit `ref` names right now, or "" if it names no commit."""
+    rc, out, _ = git(repo, "rev-parse", "--verify", "--quiet", "%s^{commit}" % ref, check=False)
+    return out.strip() if rc == 0 else ""
+
+
+def retained_ref_name(tip: str) -> str:
+    """The retained ref NAMES the object it retains.
+
+    CHECK-UPDATE-ROOT-R9 finding 1: with one fixed name, a stale `arifi-pre-rebase` left by an
+    EARLIER cycle satisfies a gate that only asks "does the name resolve?". `git tag` then fails
+    because the name is taken, `rev-parse` succeeds on the stale object, and the rebase rewrites
+    this cycle's tip with nothing retaining it - the one failure that cannot be repaired afterwards.
+
+    Deriving the name from the tip closes that without deleting anything: another cycle's retained
+    ref is a DIFFERENT name, so it can neither satisfy this gate nor be overwritten to make room.
+    Deleting a stale fixed-name tag would have been the only other repair, and it breaks the
+    reachability check on every prior cycle's ledger rows, which name that ref.
+    """
+    return "%s-%s" % (RETAINED_REF_PREFIX, tip)
+
+
+def retention_gate_lines(repo: str, ref: str, tip: str) -> list:
+    """The retention gate: capture, create-if-absent, verify-exact, all before any rewrite.
+
+    ONE source for the sequence `bump` prints and for the block UPDATE-RUNBOOK.md publishes -
+    `test_the_runbook_retention_block_IS_the_generated_one` asserts the runbook's block is these
+    lines with the operator placeholders in it, so the two cannot drift (CHECK-UPDATE-ROOT-R9
+    finding 2: the runbook grew a fence the printed repair never had).
+
+    Every line propagates its own failure with `|| exit $?` or an explicit `exit 1`, so none of
+    the stops needs the caller to have run `set -e`. `git tag` is allowed to fail ONLY when the
+    name already exists, and the line after it is what makes that safe: the ref must resolve to
+    the tip captured BEFORE the switch, or the sequence stops with nothing rewritten and nothing
+    overwritten.
+    """
+    name = retained_ref_name(tip)
+    return [
+        "git -C %s switch %s || exit $?" % (repo, ref),
+        'test "$(git -C %s rev-parse --verify --quiet "%s^{commit}")" = %s || '
+        '{ echo "REFUSE: %s is no longer %s - re-run the bump for the tip you have" >&2; exit 1; }'
+        % (repo, ref, tip, ref, tip),
+        'git -C %s rev-parse --verify --quiet "%s^{commit}" >/dev/null || '
+        "git -C %s tag %s %s || exit $?" % (repo, name, repo, name, tip),
+        'test "$(git -C %s rev-parse --verify --quiet "%s^{commit}")" = %s || '
+        '{ echo "REFUSE: %s exists at another object - nothing rewritten, nothing overwritten" '
+        '>&2; exit 1; }' % (repo, name, tip, name),
+    ]
+
+
+def bump_repair_sequence(repo: str, cfg: dict, args, base: str) -> list:
+    """The literal, complete command sequence that materialises the candidate.
+
+    ONE source for the printed repair and for the convergence test, because CHECK-UPDATE-ROOT-R2
+    finding 6 was precisely a divergence between them: the printed sequence omitted
+    `git add -- patches/series`, the test's own helper performed that step privately, and the test
+    therefore proved the convergence of a workflow no operator was ever shown. The test now reads
+    these lines back out of the refusal it captured and runs them; a step that is not printed here
+    is a step that does not run there.
+
+    Every INDENTED line is a command; the `#` lines are comments and the block is copy-pasteable
+    as a whole. R3 found the one line that was neither - `edit tools/arifi-sync/sources.json: ...`,
+    prose that no operator can run and no test can execute - and it is `set-base-pin` now.
+
+    Why `add` is needed for the series and not for sources.json: `series regen` writes NEW files
+    into the generated directory, and `git commit -- <pathspec>` only commits paths git already
+    tracks. sources.json is tracked and merely modified, so committing it by pathspec is enough.
+    """
+    series = cfg["series_dir"]
+    purity = (" --i-have-read-bench-purity"
+              if getattr(args, "i_have_read_bench_purity", False) else "")
+    L = []
+    p = BUMP_STEP_PREFIX
+    L.append("  # 0. RETAIN the pre-rebase tip as a real ref BEFORE rewriting anything. The rebase")
+    L.append("  #    gives every replayed commit a new sha, and a registered win's manifest entry")
+    L.append("  #    names the OLD one. `replay-map` can only carry that registration across the")
+    L.append("  #    rewrite while the originals are still reachable from a ref somebody can name.")
+    tip = _commit_sha(repo, args.ref)
+    if not tip:
+        # The retained ref is named after the object it retains, so an unresolvable ref would emit
+        # a tag name with nothing on the end of it and a gate comparing against the empty string:
+        # executable-looking lines that retain nothing. Same shape as the no-identity branch below,
+        # and the same stop - the one step that IS runnable now.
+        L.append("  #    STOP HERE. %s names no commit in this checkout, so there is no tip to"
+                 % args.ref)
+        L.append("  #    retain and nothing below may run. Fetch, or name the ref you actually")
+        L.append("  #    have, then re-run the bump: the sequence prints resolved against a real")
+        L.append("  #    tip, or it does not print the rewrite at all.")
+        L.append(p + "python tools/arifi-sync/arifi_sync.py bump --onto %s --ref %s%s || exit $?"
+                 % (args.onto, args.ref, purity))
+        return L
+    retained = retained_ref_name(tip)
+    L.append("  #    The ref is named after the tip it retains (%s), so a stale retained ref from" % tip[:9])
+    L.append("  #    an EARLIER cycle is a different name: it cannot satisfy this gate, and it is")
+    L.append("  #    never overwritten to make room. The line after `tag` is the fence - the ref")
+    L.append("  #    MUST resolve to exactly that tip, or nothing is rewritten.")
+    for line in retention_gate_lines(repo, args.ref, tip):
+        L.append(p + line)
+    L.append("  # 1. rebase our line onto the new upstream.")
+    L.append(p + "git -C %s rebase --onto %s %s %s || exit $?"
+             % (repo, args.onto, base, args.ref))
+    L.append("  # 2. map the replayed commits back to their registered originals, and COMMIT the")
+    L.append("  #    ledger. Refuses on anything it cannot map one-to-one; those must be")
+    L.append("  #    registered by hand in %s." % PROTECTED_WINS)
+    recorded_by = recorded_by_identity(repo)
+    if not recorded_by:
+        # CHECK-UPDATE-ROOT-R6 finding 2. There used to be a constant here so that a line always
+        # printed; the line was then executable, concrete-looking and made a registration statement
+        # on behalf of nobody. `--recorded-by` names the PERSON making that statement and cannot be
+        # derived, defaulted or invented - so the sequence stops at the one step that IS runnable
+        # as printed, and resumes, fully resolved, on the next bump.
+        L.append("  #    STOP HERE. This checkout names no shell-safe operator identity, and")
+        L.append("  #    `--recorded-by` is a statement about a PERSON: it has no default. Set the")
+        L.append("  #    identity you sign commits with - `git config user.email` (or user.name) -")
+        L.append("  #    with your REAL address, then re-run the bump below: the complete sequence")
+        L.append("  #    then prints with the identity resolved into it, and a placeholder value")
+        L.append("  #    would be refused by replay-map and by every provenance read anyway.")
+        L.append(p + "python tools/arifi-sync/arifi_sync.py bump --onto %s --ref %s%s || exit $?"
+                 % (args.onto, args.ref, purity))
+        return L
+    L.append("  #    `--recorded-by` is filled in below from THIS checkout's `git config"
+             " user.email`")
+    L.append("  #    (then user.name, then the OS user); change it if you are recording for"
+             " somebody else.")
+    L.append(p + "python tools/arifi-sync/arifi_sync.py protected-win replay-map --ref %s "
+             "--retained-ref %s --recorded-by %s --write || exit $?"
+             % (args.ref, retained, _shell_word(recorded_by)))
+    L.append(p + "git -C %s add -- tools/arifi-sync/%s || exit $?" % (repo, REPLAY_PROVENANCE))
+    L.append(p + "git -C %s commit -- tools/arifi-sync/%s || exit $?   # needs an Origin: trailer"
+             % (repo, REPLAY_PROVENANCE))
+    L.append("  # 3. move the base pin BEFORE regenerating. `series regen` generates base..%s, so"
+             % args.ref)
+    L.append("  #    regenerating against the OLD pin re-emits the whole upstream delta as patches.")
+    L.append("  #    The pin is a (sha, tag) PAIR, so `set-base-pin` moves both in one write; it")
+    L.append("  #    derives the tag with `git describe --tags --exact-match` and refuses if the")
+    L.append("  #    pin on disk is not the one named by --expect-sha.")
+    L.append(p + "python tools/arifi-sync/arifi_sync.py set-base-pin --onto %s --expect-sha %s"
+             " || exit $?"
+             % (args.onto, base))
+    L.append(p + "git -C %s add -- tools/arifi-sync/sources.json || exit $?" % repo)
+    L.append(p + "git -C %s commit -- tools/arifi-sync/sources.json || exit $?"
+             "   # needs an Origin: trailer"
+             % repo)
+    L.append("  # 4. regenerate the series against the NEW pin, STAGE it, and COMMIT it. The `add`")
+    L.append("  #    is not optional: regen writes NEW patch files, and `git commit -- <path>`")
+    L.append("  #    commits only what git already tracks, so without it the new patch stays")
+    L.append("  #    untracked - it passes the byte compare and is then absent from a fresh clone.")
+    L.append(p + "python tools/arifi-sync/arifi_sync.py series regen --ref %s || exit $?"
+             % args.ref)
+    L.append(p + "git -C %s add -- %s || exit $?" % (repo, series))
+    L.append(p + "git -C %s commit -- %s || exit $?   # needs an Origin: trailer"
+             % (repo, series))
+    L.append("  # 5. re-run the bump. Every gate is re-evaluated; none is skipped on the second try.")
+    L.append(p + "python tools/arifi-sync/arifi_sync.py bump --onto %s --ref %s%s || exit $?"
+             % (args.onto, args.ref, purity))
+    return L
+
+
 def cmd_bump(repo: str, cfg: dict, args) -> int:
     step("BUMP to %s - replay, then build, then judge. All three must pass." % args.onto)
     if _resolve_ref(repo, args.onto) == "":
@@ -1762,9 +3098,82 @@ def cmd_bump(repo: str, cfg: dict, args) -> int:
         return 1
 
     step("2/4  replay the series onto %s" % args.onto)
-    if _replay(repo, cfg, args.onto, os.path.join(repo, cfg["series_dir"])) != 0:
+    replayed = {}
+    if _replay(repo, cfg, args.onto, os.path.join(repo, cfg["series_dir"]),
+               record=replayed, keep_branch=True) != 0:
         say("\nBUMP REFUSED: replay failed.")
         return 1
+    say("candidate RETAINED on branch %s -> %s (tree %s). The replay worktree is gone; the"
+        % (replayed.get("branch") or REPLAY_BRANCH, str(replayed.get("tip"))[:9],
+           str(replayed.get("tree"))[:9]))
+    say("candidate itself is not, so it can be diffed, inspected and checked out.")
+
+    # THE OLD-TREE TRAP (UPDATE-RUNBOOK 2.1, lane-152; closed lane-229, corrected here). Legs 3
+    # and 4 act on `repo`'s own build dir - the checkout you are standing in, which is still on the
+    # OLD base. A green bump used to mean "the series replays AND my old checkout still builds".
+    #
+    # The first correction compared RAW TREE SHAS, which no real candidate can ever satisfy
+    # (CHECK-UPDATE-ROOT finding 4): the generator excludes `series_dir` from itself, so the
+    # replayed tree carries no series at all while the checkout carries the committed one. A
+    # correctly materialised candidate was refused forever, and the printed repair could not
+    # reach a passing state. The identity is NORMALISED instead - equal everywhere outside the
+    # generated directory - and the excluded directory is proved separately, by
+    # `series_integrity_problems`, to be exactly what git generates and to be committed. Together
+    # those two are the whole tree, with no gate dropped.
+    step("2b/4 candidate identity: this checkout must BE the replayed candidate")
+    here = _tree_identity(repo, os.path.join(repo, cfg["build"]["build_dir"]))
+    problems, outside = [], ""
+    if here["dirty"]:
+        problems.append("the checkout has uncommitted edits, so it has no identity a receipt can "
+                        "name. Commit them (they are part of the candidate) or remove them.")
+    else:
+        _, outside, _ = git(repo, "diff", "--name-only", str(replayed.get("tip")), "HEAD",
+                            "--", ".", ":(exclude)%s" % series_pathspec(cfg), check=False)
+        if outside.strip():
+            problems.append("the checkout differs from the replayed candidate OUTSIDE %s, so legs "
+                            "3-4 would build a tree the replay never produced."
+                            % cfg["series_dir"])
+        problems.extend(series_integrity_problems(repo, cfg, "HEAD"))
+    if problems:
+        say("\n" + "=" * 78)
+        say("BUMP REFUSED: the checkout is not the candidate, so legs 3-4 would build and judge")
+        say("the wrong tree. Nothing was built and no verdict was produced.")
+        say("=" * 78)
+        say("  replayed candidate : %s (tree %s) onto %s, kept on %s"
+            % (str(replayed.get("tip"))[:9], str(replayed.get("tree"))[:9], args.onto,
+               replayed.get("branch") or REPLAY_BRANCH))
+        say("  this checkout      : %s (tree %s)%s"
+            % (here["head"][:9], here["tree"][:9], "  UNCOMMITTED EDITS" if here["dirty"] else ""))
+        for p in problems:
+            say("  BLOCKER            : %s" % p)
+        for f in [l for l in outside.splitlines() if l.strip()][:20]:
+            say("      differs outside the series: %s" % f)
+        say("\nLeg 2 PASSED - the series replays cleanly onto %s. To finish the bump, MATERIALISE"
+            % args.onto)
+        say("the candidate in this checkout and re-run. Order matters, and every step is yours to")
+        say("run - this tool never moves your branches and never fetches or pulls for you.")
+        say("")
+        say("THIS IS THE COMPLETE SEQUENCE, in this order; nothing is elided and no step is folded")
+        say("into another. Every INDENTED line is a command to run as printed, with no placeholder")
+        say("left to fill in - the `#` lines are comments.")
+        say("`test_the_documented_repair_sequence_CONVERGES_to_a_green_bump` asserts EVERY one of")
+        say("these lines verbatim and drives this sequence, so a step missing here is a RED test and")
+        say("not a surprise on the day of an update. What it also EXECUTES as printed is the two")
+        say("`arifi_sync.py replay-map` / `set-base-pin` lines: their printed argv is split and run")
+        say("through the public CLI. The commit lines carry no `-m`, because they expect your editor")
+        say("and an Origin: trailer, so the test asserts them and then supplies those messages")
+        say("non-interactively; `series regen` is likewise asserted and then run via the fixture.")
+        for line in bump_repair_sequence(repo, cfg, args, base):
+            say(line)
+        say("\nOr drive legs 3-4 by hand on the rebased branch (UPDATE-RUNBOOK 4.2/4.3):")
+        say("    python tools/arifi-sync/arifi_sync.py build")
+        say("    python tools/arifi-sync/arifi_sync.py judge --i-have-read-bench-purity")
+        return 1
+    say("candidate identity : the checkout is IDENTICAL to the replayed candidate outside %s,"
+        % cfg["series_dir"])
+    say("                     and %s regenerates byte-identically from git and is committed."
+        % cfg["series_dir"])
+
     step("3/4  build")
     if cmd_build(repo, cfg, args) != 0:
         say("\nBUMP REFUSED: build failed.")
@@ -1773,8 +3182,11 @@ def cmd_bump(repo: str, cfg: dict, args) -> int:
     if cmd_judge(repo, cfg, args) != 0:
         say("\nBUMP REFUSED: judge did not pass.")
         return 1
-    say("\nAll three gates passed. Update base.upstream_sha/upstream_tag in sources.json,")
-    say("then: python tools/arifi-sync/arifi_sync.py series regen")
+    say("\nAll three gates passed, on the candidate itself: the tree that was built and judged is")
+    say("the tree the series replays onto %s. If you reached this by materialising the candidate,"
+        % args.onto)
+    say("the base pin and the series are already updated and committed - verify with:")
+    say("  python tools/arifi-sync/arifi_sync.py series check --ref %s" % args.ref)
     return 0
 
 
@@ -1871,11 +3283,16 @@ def cmd_scope(repo: str, cfg: dict, args) -> int:
     }[verdict]
     say("SCOPE: %s -- %s" % (verdict, owed))
     if getattr(args, "json", None):
+        # `Path` was never imported - `scope --json` raised NameError on the one line that writes
+        # its output. Disclosed by the R2 maker and re-disclosed by the R2 checker; fixed here with
+        # the stdlib call the rest of this file already uses.
         import json as _json
-        Path(args.json).write_text(_json.dumps({
-            "old": old, "new": new, "ours": ours, "upstream_files": their_paths, "our_files": sorted(our_paths),
-            "intersection": inter, "speed_paths": speed, "collisions": collisions, "scope": verdict, "owed": owed,
-        }, indent=2), encoding="utf-8")
+        with open(args.json, "w", encoding="utf-8", newline="\n") as _fh:
+            _fh.write(_json.dumps({
+                "old": old, "new": new, "ours": ours, "upstream_files": their_paths,
+                "our_files": sorted(our_paths), "intersection": inter, "speed_paths": speed, "collisions": collisions,
+                "scope": verdict, "owed": owed,
+            }, indent=2))
         say("map written: %s" % args.json)
     return 0
 
@@ -1952,7 +3369,25 @@ def main(argv=None) -> int:
 
     pw = sub.add_parser("protected-win")
     pws = pw.add_subparsers(dest="sub", required=True)
-    a = pws.add_parser("validate"); a.add_argument("--ref", default=None)
+    a = pws.add_parser("validate")
+    a.add_argument("--ref", default=None)
+    a.add_argument("--draft", action="store_true",
+                   help="validate the UNCOMMITTED working tree by snapshotting it into a "
+                        "throwaway commit; commits nothing and certifies no other ref")
+    a.add_argument("--allow-new", action="append", default=[], metavar="PATH",
+                   help="with --draft: authorise ONE untracked file to be included in the "
+                        "snapshot. Repeatable. Without it, any untracked non-ignored file "
+                        "REFUSES the draft before a Git object is written.")
+    a = pws.add_parser("replay-map",
+                       help="derive the rebased->original mapping for a replayed line")
+    a.add_argument("--ref", default=None, help="our line AFTER the rebase")
+    a.add_argument("--retained-ref", required=True,
+                   help="a real ref that still contains the PRE-REBASE commits, e.g. a tag made "
+                        "before rewriting. The reflog is not evidence anybody else can check.")
+    a.add_argument("--recorded-by", required=True,
+                   help="who is recording this mapping (it is a registration statement)")
+    a.add_argument("--write", action="store_true",
+                   help="write tools/arifi-sync/replay-provenance.json (still uncommitted)")
     a = pws.add_parser("check")
     a.add_argument("--ref", default=None)
     a.add_argument("--incoming", required=True,
@@ -1964,19 +3399,58 @@ def main(argv=None) -> int:
     a.add_argument("--all", action="store_true",
                    help="informational: also list the dated baseline rows and their dispositions")
 
+    p = sub.add_parser("set-base-pin",
+                       help="move base.upstream_sha + base.upstream_tag in sources.json")
+    p.add_argument("--onto", required=True,
+                   help="the ref being pinned, e.g. b10825 - resolved here, never typed as a sha")
+    p.add_argument("--expect-sha", required=True,
+                   help="the pin you believe is on disk right now. A mismatch REFUSES: somebody "
+                        "else moved it, or this is not the checkout you think it is.")
+    p.add_argument("--upstream-tag", default=None,
+                   help="override the tag, which is otherwise DERIVED with "
+                        "`git describe --tags --exact-match`. It must name the same commit.")
+
     sub.add_parser("build")
     p = sub.add_parser("judge")
     p.add_argument("--i-have-read-bench-purity", action="store_true")
     p = sub.add_parser("bump")
     p.add_argument("--onto", required=True)
-    p.add_argument("--ref", default=None)   # lane-152: without this, cmd_bump fell back to "master"
+    # lane-152 added --ref because cmd_bump fell back to "master", a dead branch, and printed a
+    # plausible rebase surface computed against it. lane-229 makes it REQUIRED: the default read
+    # `base.ref` out of the very sources.json whose staleness is the thing under suspicion, so the
+    # candidate was named by the config instead of by the operator. It is explicit now.
+    p.add_argument("--ref", required=True,
+                   help="our line, e.g. arifi/main - explicit, never defaulted from sources.json")
     p.add_argument("--i-have-read-bench-purity", action="store_true")
 
     args = ap.parse_args(argv)
-    cfg = load_config(args.config)
-    repo = args.repo or repo_root(os.path.dirname(os.path.abspath(args.config)))
+    try:
+        cfg = load_config(args.config)
+        repo = args.repo or repo_root(os.path.dirname(os.path.abspath(args.config)))
+    except Loud as e:
+        say("\n" + "=" * 78)
+        say("STOP: %s" % e)
+        say("=" * 78)
+        return 2
 
-    # base sha and the branch it describes are one pair; --ref only overrides it explicitly
+    # `repo` is DERIVED from the config's directory, so a --repo that points somewhere else means
+    # one checkout's configuration is driving another checkout's tree - the wrong-tree trap at its
+    # source, before any subcommand gets a chance to be careful about it.
+    cfg_path = os.path.abspath(args.config)
+    expected_cfg = os.path.join(os.path.abspath(repo), "tools", "arifi-sync")
+    if os.path.dirname(cfg_path) != expected_cfg:
+        say("STOP: the config and the repository are two different checkouts.\n"
+            "  --config : %s\n"
+            "  --repo   : %s\n"
+            "Configuration is part of the tree it configures. Run the copy of this script that\n"
+            "lives in the repository you mean:\n"
+            "  python %s\\tools\\arifi-sync\\arifi_sync.py ..." % (cfg_path, repo, repo))
+        return 2
+
+    # base sha and the branch it describes are one pair; --ref only overrides it explicitly.
+    # Whether the operator NAMED a ref is recorded before the default is applied - `--draft` has to
+    # be able to tell "no ref given" from "the config's ref", and after this line it cannot.
+    args.ref_explicit = getattr(args, "ref", None) is not None
     if getattr(args, "ref", "") is None:
         args.ref = cfg["base"].get("ref", "master")
 
@@ -1992,10 +3466,12 @@ def main(argv=None) -> int:
         ("build", None): cmd_build,
         ("judge", None): cmd_judge,
         ("bump", None): cmd_bump,
+        ("set-base-pin", None): cmd_set_base_pin,
         ("scope", None): cmd_scope,
         ("protected-win", "validate"): cmd_protected_win_validate,
         ("protected-win", "check"): cmd_protected_win_check,
         ("protected-win", "discover"): cmd_protected_win_discover,
+        ("protected-win", "replay-map"): cmd_protected_win_replay_map,
     }
     fn = table[(args.cmd, getattr(args, "sub", None))]
     try:
