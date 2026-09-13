@@ -22,6 +22,13 @@ endif()
 
 message(STATUS "llama.cpp version: ${LLAMA_VERSION}")
 
+# R46b: the deterministic checkpoint fault-injection seam (LLAMA_R46_CKPT_FAIL_ALLOC / _COPY).
+# OFF in every build, including dev builds and builds with LLAMA_BUILD_TESTS=ON, so no ordinary
+# source-built binary reads those environment variables. Only a build that explicitly passes
+# -DLLAMA_TEST_CHECKPOINT_FAULT_INJECTION=ON compiles the seam, and that build is for running the
+# injected-failure checkpoint tests, never for serving.
+option(LLAMA_TEST_CHECKPOINT_FAULT_INJECTION "llama: compile the checkpoint fault-injection test seam (tests only, never serve with this ON)" OFF)
+
 #set(CMAKE_WARN_DEPRECATED YES)
 set(CMAKE_WARN_UNUSED_CLI YES)
 

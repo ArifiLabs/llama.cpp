@@ -3222,15 +3222,68 @@ static int64_t llama_io_device_n_elements(const ggml_tensor * t, size_t size) {
     return (int64_t) (size / ts) * ggml_blck_size(t->type);
 }
 
+// R46: deterministic failure injection for the checkpoint-finalization tests. The value names the
+// 1-based Nth attempt WITHIN one finalization that must fail, so the counters are per commit() call
+// and need no reset between test cases.
+//
+// R46b: the seam exists only when LLAMA_TEST_FAULT_INJECTION is defined, which src/CMakeLists.txt
+// ties to the dedicated LLAMA_TEST_CHECKPOINT_FAULT_INJECTION option. That option is OFF by default
+// in every build, so an ordinary build - dev or release, tests on or off - compiles the constant-false
+// body below and no environment variable can inject a checkpoint failure into it.
+#ifdef LLAMA_TEST_FAULT_INJECTION
+static bool llama_io_ckpt_fail_at(const char * var, size_t & n_attempt) {
+    const char * s = getenv(var);
+
+    ++n_attempt;
+
+    return s && (size_t) atoi(s) == n_attempt;
+}
+#else
+static bool llama_io_ckpt_fail_at(const char * /*var*/, size_t & n_attempt) {
+    ++n_attempt;
+
+    return false;
+}
+#endif
+
 class llama_io_write_device : public llama_io_write_i {
 public:
     llama_io_write_device(uint8_t * p, size_t len, llama_memory_buffers & mbufs) : ptr(p), buf_size(len), mbufs(mbufs)  {
     }
 
-    ~llama_io_write_device() {
+    // R46: cleanup only. Finalization is commit().
+    ~llama_io_write_device() = default;
+
+    // R46 (lane-233): fallible finalization, explicitly called by state_seq_get_data before it
+    // reports a byte count. This was the destructor body: it stored the result of
+    // ggml_backend_alloc_ctx_tensors_from_buft without checking it and then copied tensors into
+    // the buffer, so a failed device allocation asserted in ggml_backend_buffer_get_type
+    // (ggml-backend.cpp:330) AFTER the caller had already been told the save succeeded.
+    //
+    // Contract (R46b, lane-233): the whole replacement is built OFF the live map. Every context,
+    // buffer and tensor is created in a local mbufs_new; every allocation and every copy happens
+    // there; only when all of them have succeeded is the live map replaced in one move. Nothing
+    // ever writes into a live checkpoint buffer, so any failure - allocation, placement or copy,
+    // first save or replacement - leaves the previous image byte-identical and restorable, and the
+    // caller sees a 0 byte count.
+    //
+    // Cost of that guarantee: a replacement holds the old and the new device image at the same
+    // time, so the peak is old + new for the buffer types being replaced, and every save allocates
+    // a fresh buffer even when the shape is unchanged. The earlier in-place refresh/reuse paths
+    // avoided both, but could not preserve the previous image and could not fail without either
+    // aborting (ggml_tallocr_alloc, ggml-alloc.c:80-84) or destroying the live image.
+    void commit() {
         llama_memory_buffers mbufs_new;
 
+        // zero-byte writes get no view, no tensor, no buffer and no copy. Counting them would
+        // desynchronize n_tensors from org.size() and would schedule a copy into a tensor with no
+        // buffer, which asserts in ggml_backend_tensor_copy (ggml-backend.cpp:476) before the
+        // size-zero early return is reached. The read side skips them identically.
         for (const auto & winfo : winfos) {
+            if (winfo.size == 0) {
+                continue;
+            }
+
             auto * buft = ggml_backend_buffer_get_type(winfo.tensor->buffer);
 
             mbufs_new[buft].n_tensors++;
@@ -3251,6 +3304,10 @@ public:
         }
 
         for (const auto & winfo : winfos) {
+            if (winfo.size == 0) {
+                continue;
+            }
+
             auto * buft = ggml_backend_buffer_get_type(winfo.tensor->buffer);
 
             const int64_t n = llama_io_device_n_elements(winfo.tensor, winfo.size);
@@ -3261,62 +3318,44 @@ public:
             mbuf.cpy.push_back(ggml_new_tensor_1d(mbuf.ctx.get(), winfo.tensor->type, n));
         }
 
+        size_t n_alloc = 0;
+        size_t n_copy  = 0;
+
+        // pass 1: allocate a new buffer per buffer type, into the off-map mbufs_new. This is the
+        // only allocating call, and it reports failure by returning NULL - it never aborts. Every
+        // group here has total_size > 0, so NULL is unambiguously a failure.
         for (auto & [buft, mbuf] : mbufs_new) {
-            auto & mbuf_cur = mbufs[buft];
-
-            bool need_alloc = false;
-
-            need_alloc = need_alloc || (!mbuf_cur.buf);
-            need_alloc = need_alloc || (mbuf_cur.org.size() != mbuf.org.size());
-            need_alloc = need_alloc || (mbuf_cur.total_size != mbuf.total_size);
-
-            if (!need_alloc) {
-                for (size_t i = 0; i < mbuf_cur.org.size(); ++i) {
-                    auto * org0 = mbuf_cur.org[i];
-                    auto * org1 = mbuf.org[i];
-
-                    if (!ggml_are_same_shape(org0, org1)) {
-                        need_alloc = true;
-                        break;
-                    }
-
-                    if (org0->view_src != org1->view_src || org0->view_offs != org1->view_offs) {
-                        need_alloc = true;
-                        break;
-                    }
-                }
+            if (!llama_io_ckpt_fail_at("LLAMA_R46_CKPT_FAIL_ALLOC", n_alloc)) {
+                mbuf.buf.reset(ggml_backend_alloc_ctx_tensors_from_buft(mbuf.ctx.get(), buft));
             }
 
-            if (need_alloc) {
-                if (!mbuf_cur.buf || mbuf_cur.total_size != mbuf.total_size) {
-                    mbuf_cur = std::move(mbuf);
+            if (!mbuf.buf) {
+                LLAMA_LOG_ERROR("%s: failed to allocate '%s' checkpoint buffer (%zu bytes, %d tensors)\n",
+                        __func__, ggml_backend_buft_name(buft), mbuf.total_size, mbuf.n_tensors);
 
-                    mbuf_cur.buf.reset(ggml_backend_alloc_ctx_tensors_from_buft(mbuf_cur.ctx.get(), buft));
-
-                    LLAMA_LOG_INFO("%s: allocated '%s' buffer %.3f MiB\n", __func__, ggml_backend_buft_name(buft), mbuf.total_size/1024.0/1024.0);
-                } else {
-                    //LLAMA_LOG_INFO("%s: reallocating tensors in '%s' buffer %.3f MiB\n", __func__, ggml_backend_buft_name(buft), mbuf.total_size/1024.0/1024.0);
-
-                    // save the old buffer and allocate the new tensors in it
-                    auto buf = std::move(mbuf_cur.buf);
-
-                    mbuf_cur = std::move(mbuf);
-
-                    ggml_tallocr talloc = ggml_tallocr_new(buf.get());
-
-                    for (size_t i = 0; i < mbuf_cur.org.size(); ++i) {
-                        ggml_backend_view_init(mbuf_cur.org[i]);
-                        ggml_tallocr_alloc(&talloc, mbuf_cur.cpy[i]);
-                    }
-
-                    mbuf_cur.buf = std::move(buf);
-                }
+                throw std::runtime_error("failed to allocate device checkpoint buffer");
             }
 
-            for (size_t i = 0; i < mbuf_cur.org.size(); ++i) {
-                ggml_backend_tensor_copy(mbuf_cur.org[i], mbuf_cur.cpy[i]);
+            LLAMA_LOG_INFO("%s: allocated '%s' buffer %.3f MiB\n", __func__, ggml_backend_buft_name(buft), mbuf.total_size/1024.0/1024.0);
+        }
+
+        // pass 2: copy into the new buffers. The live map is still untouched.
+        for (auto & [buft, mbuf] : mbufs_new) {
+            for (size_t i = 0; i < mbuf.org.size(); ++i) {
+                if (llama_io_ckpt_fail_at("LLAMA_R46_CKPT_FAIL_COPY", n_copy)) {
+                    LLAMA_LOG_ERROR("%s: failed to copy checkpoint tensor %zu of %zu into the '%s' buffer\n",
+                            __func__, i, mbuf.org.size(), ggml_backend_buft_name(buft));
+
+                    throw std::runtime_error("failed to copy device checkpoint tensors");
+                }
+
+                ggml_backend_tensor_copy(mbuf.org[i], mbuf.cpy[i]);
             }
         }
+
+        // pass 3: publish everything at once. This also drops buffer types the new image no longer
+        // uses, so no stale generation can survive a replacement.
+        mbufs = std::move(mbufs_new);
     }
 
     void write(const void * src, size_t size) override {
@@ -3367,7 +3406,12 @@ public:
     void commit() {
         llama_memory_buffers mbufs_new;
 
+        // R46b: skipped identically to the write side, so n_tensors == org.size() on both sides
         for (const auto & rinfo : rinfos) {
+            if (rinfo.size == 0) {
+                continue;
+            }
+
             auto * buft = ggml_backend_buffer_get_type(rinfo.tensor->buffer);
 
             mbufs_new[buft].n_tensors++;
@@ -3387,6 +3431,10 @@ public:
         }
 
         for (const auto & rinfo : rinfos) {
+            if (rinfo.size == 0) {
+                continue;
+            }
+
             auto * buft = ggml_backend_buffer_get_type(rinfo.tensor->buffer);
 
             const int64_t n = llama_io_device_n_elements(rinfo.tensor, rinfo.size);
@@ -3399,13 +3447,26 @@ public:
         }
 
         for (auto & [buft, mbuf] : mbufs_new) {
-            const auto & mbuf_cur = mbufs.at(buft);
+            const auto it = mbufs.find(buft);
+
+            if (it == mbufs.end()) {
+                // R46b: a save that failed its finalization published nothing, so there is no image
+                // for this buffer type. Report it as a failed restore, not as a process abort.
+                throw std::runtime_error("no saved device checkpoint for this buffer type");
+            }
+
+            const auto & mbuf_cur = it->second;
 
             if (!mbuf_cur.buf || mbuf_cur.total_size != mbuf.total_size) {
-                // R45: name the branch and the two totals - the R44 crash logs had neither
-                GGML_ABORT("llama_io_read_device::commit: memory buffer mismatch (%s, saved %zu bytes / %d tensors, requested %zu bytes / %d tensors)\n",
-                        mbuf_cur.buf ? "size" : "no saved buffer",
+                // R45: name the branch and the two totals - the R44 crash logs had neither.
+                // R46b: this is reachable from the failure flow - a caller that ignored the 0 from a
+                // failed REPLACEMENT save still holds that save's header, whose size no longer
+                // matches the surviving previous image. Report it, do not terminate the process.
+                LLAMA_LOG_ERROR("%s: memory buffer mismatch (%s, saved %zu bytes / %d tensors, requested %zu bytes / %d tensors)\n",
+                        __func__, mbuf_cur.buf ? "size" : "no saved buffer",
                         mbuf_cur.total_size, mbuf_cur.n_tensors, mbuf.total_size, mbuf.n_tensors);
+
+                throw std::runtime_error("device checkpoint memory buffer mismatch");
             }
 
             if (mbuf_cur.n_tensors == mbuf.n_tensors) {
@@ -3579,8 +3640,18 @@ size_t llama_context::state_seq_get_size(llama_seq_id seq_id, llama_state_seq_fl
 
 size_t llama_context::state_seq_get_data(llama_seq_id seq_id, uint8_t * dst, size_t size, llama_state_seq_flags flags) {
     std::unique_ptr<llama_io_write_i> io;
+    llama_io_write_device * io_dev = nullptr; // R46: non-owning, for the checked finalization
+
+    // R46b: a first save into an unused storage id must publish nothing when it fails. operator[]
+    // on mem_storage is what creates the top-level entry, so remember whether this call created it
+    // and erase it again on failure - otherwise a later restore finds an empty live entry.
+    const int64_t key    = mem_storage_key(seq_id, flags);
+    const bool    key_is_new = (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) && mem_storage.find(key) == mem_storage.end();
+
     if (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) {
-        io = std::make_unique<llama_io_write_device>(dst, size, mem_storage[mem_storage_key(seq_id, flags)]);
+        auto io_d = std::make_unique<llama_io_write_device>(dst, size, mem_storage[key]);
+        io_dev = io_d.get();
+        io = std::move(io_d);
     } else {
         io = std::make_unique<llama_io_write_host>(dst, size);
     }
@@ -3589,9 +3660,31 @@ size_t llama_context::state_seq_get_data(llama_seq_id seq_id, uint8_t * dst, siz
         io->write(&io_magic, sizeof(io_magic));
         io->write(&seq_id, sizeof(seq_id));
 
-        return state_seq_write_data(*io, seq_id, flags);
+        const size_t n_written = state_seq_write_data(*io, seq_id, flags);
+
+        if (io_dev) {
+            // R46: the device buffers are allocated and copied HERE, inside the error boundary -
+            // never after this function has already reported a byte count to the caller
+            io_dev->commit();
+        }
+
+        return n_written;
     } catch (const std::exception & err) {
         LLAMA_LOG_ERROR("%s: error saving state: %s\n", __func__, err.what());
+
+        if (key_is_new) {
+            mem_storage.erase(key);
+        }
+
+        // R46b: the serialized header was already written into dst before the failure. Left in
+        // place it is a well-formed blob whose device image was never published - restoring it can
+        // pair this save's host-side cell metadata with the PREVIOUS save's device data whenever
+        // the byte total did not change (measured on a recurrent cache, where it does not). Scrub
+        // it so the only thing a caller that ignores this 0 can do is fail the magic check.
+        if (dst && size > 0) {
+            memset(dst, 0, size);
+        }
+
         return 0;
     }
 }
@@ -3599,31 +3692,38 @@ size_t llama_context::state_seq_get_data(llama_seq_id seq_id, uint8_t * dst, siz
 size_t llama_context::state_seq_set_data(llama_seq_id seq_id, const uint8_t * src, size_t size, llama_state_seq_flags flags) {
     std::unique_ptr<llama_io_read_i> io;
     llama_io_read_device * io_dev = nullptr; // R45: non-owning, for the success-only commit()
-    if (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) {
-        // create a temporary io to read the magic and the src seq_id
-        io = std::make_unique<llama_io_read_host>(src, size);
 
-        uint32_t magic_read;
-        io->read(&magic_read, sizeof(magic_read));
-        if (io_magic != magic_read) {
-            throw std::runtime_error("wrong sequence state magic");
+    // R46b: the device setup below reads the header and looks up the storage id, and both of those
+    // can legitimately fail - a wrong magic, or a storage id whose save never finalized. It sits
+    // INSIDE the error boundary so those failures return 0 instead of aborting or escaping
+    // uncaught; the GGML_ASSERT on the storage lookup used to terminate the process.
+    try {
+        if (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) {
+            // create a temporary io to read the magic and the src seq_id
+            io = std::make_unique<llama_io_read_host>(src, size);
+
+            uint32_t magic_read;
+            io->read(&magic_read, sizeof(magic_read));
+            if (io_magic != magic_read) {
+                throw std::runtime_error("wrong sequence state magic");
+            }
+
+            llama_seq_id seq_id_read;
+            io->read(&seq_id_read, sizeof(seq_id_read));
+
+            const int64_t key = mem_storage_key(seq_id_read, flags);
+
+            if (mem_storage.find(key) == mem_storage.end()) {
+                throw std::runtime_error("no device checkpoint stored for this sequence and storage id");
+            }
+
+            auto io_d = std::make_unique<llama_io_read_device>(src, size, mem_storage[key]);
+            io_dev = io_d.get();
+            io = std::move(io_d);
+        } else {
+            io = std::make_unique<llama_io_read_host>(src, size);
         }
 
-        llama_seq_id seq_id_read;
-        io->read(&seq_id_read, sizeof(seq_id_read));
-
-        const int64_t key = mem_storage_key(seq_id_read, flags);
-
-        GGML_ASSERT(mem_storage.find(key) != mem_storage.end());
-
-        auto io_d = std::make_unique<llama_io_read_device>(src, size, mem_storage[key]);
-        io_dev = io_d.get();
-        io = std::move(io_d);
-    } else {
-        io = std::make_unique<llama_io_read_host>(src, size);
-    }
-
-    try {
         uint32_t magic_read;
         io->read(&magic_read, sizeof(magic_read));
         if (io_magic != magic_read) {

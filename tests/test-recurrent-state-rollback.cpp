@@ -288,7 +288,10 @@ int main(int argc, char ** argv) {
 
     // Save the rolled-back state and restore it into a fresh context.
     common_prompt_checkpoint ckpt;
-    ckpt.update_tgt(ctx_src, 0, 0);
+    if (!ckpt.update_tgt(ctx_src, 0, 0)) {
+        fprintf(stderr, "%s : failed to save the checkpoint\n", __func__);
+        return 1;
+    }
     ckpt.load_tgt(ctx_dst, 0, 0);
 
     constexpr float eps = 1e-5f;
@@ -332,7 +335,10 @@ int main(int argc, char ** argv) {
 
     constexpr llama_state_seq_flags partial_flags = LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY;
     common_prompt_checkpoint ckpt_partial;
-    ckpt_partial.update_tgt(ctx_src, 0, partial_flags);
+    if (!ckpt_partial.update_tgt(ctx_src, 0, partial_flags)) {
+        fprintf(stderr, "%s : failed to save the partial checkpoint\n", __func__);
+        return 1;
+    }
     ckpt_partial.load_tgt(ctx_dst, 0, partial_flags);
 
     if (!replay_and_compare("partial")) {

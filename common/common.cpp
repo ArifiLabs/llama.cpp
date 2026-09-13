@@ -2365,6 +2365,9 @@ void common_prompt_checkpoint::clear() {
     pos_min = 0;
     pos_max = 0;
 
+    flags_tgt = 0;
+    flags_dft = 0;
+
     data_tgt.clear();
     data_dft.clear();
     data_spec.clear();
@@ -2379,42 +2382,61 @@ void common_prompt_checkpoint::update_pos(
     this->pos_max  = pos_max;
 }
 
-void common_prompt_checkpoint::update_tgt(
+// R46b: shared body for update_tgt/update_dft. A failed device finalization returns 0 bytes, and a
+// sequence with nothing to save sizes to 0; both are failures here. On either one the destination
+// is cleared, so empty() stays truthful and no later load can restore a half or stale image.
+static bool common_prompt_checkpoint_update(
         llama_context * ctx,
         llama_seq_id seq_id,
-        llama_state_seq_flags flags) {
-    if (ctx == nullptr) {
-        return;
-    }
-
+        llama_state_seq_flags flags,
+        std::vector<uint8_t> & data,
+        llama_state_seq_flags & flags_out) {
     const size_t ckpt_size = llama_state_seq_get_size_ext(ctx, seq_id, flags);
 
-    data_tgt.resize(ckpt_size);
-    flags_tgt = flags;
-
-    const size_t n = llama_state_seq_get_data_ext(ctx, data_tgt.data(), ckpt_size, seq_id, flags);
-    if (n != ckpt_size) {
-        GGML_ABORT("checkpoint size mismatch: expected %zu, got %zu\n", ckpt_size, n);
+    if (ckpt_size == 0) {
+        COM_ERR("%s", "checkpoint save reported an empty sequence state\n");
+        data.clear();
+        flags_out = 0;
+        return false;
     }
+
+    data.resize(ckpt_size);
+    flags_out = flags;
+
+    const size_t n = llama_state_seq_get_data_ext(ctx, data.data(), ckpt_size, seq_id, flags);
+    if (n != ckpt_size) {
+        COM_ERR("checkpoint save returned %zu bytes, expected %zu - dropping the image\n", n, ckpt_size);
+        // the flags go too: on_device() and the storage-ring scan read them without checking
+        // empty(), so a stale ON_DEVICE bit would keep a storage id reserved for an image that
+        // does not exist
+        data.clear();
+        flags_out = 0;
+        return false;
+    }
+
+    return true;
 }
 
-void common_prompt_checkpoint::update_dft(
+bool common_prompt_checkpoint::update_tgt(
         llama_context * ctx,
         llama_seq_id seq_id,
         llama_state_seq_flags flags) {
     if (ctx == nullptr) {
-        return;
+        return true;
     }
 
-    const size_t ckpt_size = llama_state_seq_get_size_ext(ctx, seq_id, flags);
+    return common_prompt_checkpoint_update(ctx, seq_id, flags, data_tgt, flags_tgt);
+}
 
-    data_dft.resize(ckpt_size);
-    flags_dft = flags;
-
-    const size_t n = llama_state_seq_get_data_ext(ctx, data_dft.data(), ckpt_size, seq_id, flags);
-    if (n != ckpt_size) {
-        GGML_ABORT("checkpoint size mismatch: expected %zu, got %zu\n", ckpt_size, n);
+bool common_prompt_checkpoint::update_dft(
+        llama_context * ctx,
+        llama_seq_id seq_id,
+        llama_state_seq_flags flags) {
+    if (ctx == nullptr) {
+        return true;
     }
+
+    return common_prompt_checkpoint_update(ctx, seq_id, flags, data_dft, flags_dft);
 }
 
 void common_prompt_checkpoint::load_tgt(
