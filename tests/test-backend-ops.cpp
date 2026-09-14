@@ -11166,8 +11166,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     // MUL_MAT NMSE gate on the shapes it actually runs on, at every width, in both arms of
     // GGML_ARIFI_Q6K_XFOLD and both arms of GGML_VK_Q6K_DIRECT_SCALES.
     //
-    // F16 src1 is included because mul_mat_vec_q6_k_f16_f32 takes the same constant (:7166) and
-    // an f32-only sweep would leave that pipeline uncovered.
+    // F16 src1 rows are present but DO NOT RUN, so mul_mat_vec_q6_k_f16_f32 (:7166, which takes
+    // the same constant) is UNCOVERED. The CPU reference backend declines type_a=q6_K with
+    // type_b=f16 - every such case reports "not supported [CPU]", 0 OK (r48c-evidence/
+    // 10-mulmat-xfold-on.txt, 12-mulmat-q6k-mmvq-route.txt) - so the comparison never happens on
+    // either backend. The rows are kept, not deleted: they cost one declined line each and begin
+    // working the day the reference supports the combination. Do not read them as coverage.
     for (int n : {1, 2, 3, 4, 5, 6, 7, 8}) {
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32,  17408, n,  5120, {1, 1}, {1, 1}));
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32,   5120, n, 17408, {1, 1}, {1, 1}));
