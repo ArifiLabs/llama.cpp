@@ -10816,6 +10816,34 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         }
     }
 
+    // ArifiLabs lane-235 / R48b: the A-side hoist restructures the Vulkan MMVQ mat-vec nest for
+    // EVERY type that has a q8_1 integer-dot pipeline, so every one of them needs the real 27B
+    // mat-vec shapes at every served width, not just the two types the block above covers.
+    //
+    // The type list is exactly the set with a mul_mat_vec_<t>_q8_1_f32 pipeline
+    // (ggml-vulkan.cpp, the GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT block). n = 1..8 covers the
+    // NUM_COLS spec-constant range (mul_mat_vec_max_cols = 8) including the NUM_COLS == 7 tail.
+    //
+    // These rows only REACH the changed shader with GGML_VK_FORCE_MMVQ=1: ggml_vk_should_use_mmvq()
+    // refuses Q6_K on non-Intel, needs GGML_ARIFI_SX8_MMVQ=1 for S-X8, gates ROCMFP4_FAST to
+    // n = 3 and 5, and drops Q4_K at n >= 5 and Q5_K at every n > 1 on AMD. Without the force most
+    // of this sweep silently measures the f32 dequant shader instead.
+    for (ggml_type type_a : {
+            GGML_TYPE_Q2_0, GGML_TYPE_Q2_0_G128,
+            GGML_TYPE_Q4_0, GGML_TYPE_Q4_1, GGML_TYPE_Q5_0, GGML_TYPE_Q5_1, GGML_TYPE_Q8_0,
+            GGML_TYPE_MXFP4, GGML_TYPE_Q4_0_ROCMFP4_FAST,
+            GGML_TYPE_Q2_K, GGML_TYPE_Q3_K, GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K,
+            GGML_TYPE_IQ1_S, GGML_TYPE_IQ1_M,
+            GGML_TYPE_SX8 }) {
+        for (int n = 1; n <= 8; ++n) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, n,  5120, { 1, 1 }, { 1, 1 }));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, n, 17408, { 1, 1 }, { 1, 1 }));
+            // The embed/output shape. 17 types x 8 widths at 248320x5120 is the expensive third of
+            // this sweep on a one-pool box; narrow it with -p "m=248320" when that matters.
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, n,  5120, { 1, 1 }, { 1, 1 }));
+        }
+    }
+
     // The SYCL backend picks between one and two output rows per subgroup by row count when there
     // are two destination columns (Q4_K_MMVQ_ROW_PAIR_MIN_NROWS in ggml-sycl/mmvq.cpp). Cover both
     // sides of that boundary, including an odd row count above it for the row-pair tail.
