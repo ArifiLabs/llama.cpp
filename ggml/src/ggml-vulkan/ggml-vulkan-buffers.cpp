@@ -43,7 +43,10 @@ static uint32_t ggml_vk_largest_heap(const vk::PhysicalDeviceMemoryProperties & 
 }
 
 // only_heap != UINT32_MAX restricts the candidate list to that one heap (R46b commit E).
-static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDeviceMemoryProperties* mem_props, vk::MemoryRequirements* mem_req, vk::MemoryPropertyFlags flags, uint32_t only_heap = UINT32_MAX) {
+// R46b B7a-R2 (finding 3): `ledger` is the ledger of the device these memory properties came from.
+// Heap indices are only meaningful together with their device, so the ledger is passed in rather
+// than looked up from a process-wide table keyed by heap index alone.
+static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDeviceMemoryProperties* mem_props, vk::MemoryRequirements* mem_req, vk::MemoryPropertyFlags flags, const vk_heap_ledger & ledger, uint32_t only_heap = UINT32_MAX) {
     std::vector<uint32_t> indices;
 
     for (uint32_t i = 0; i < mem_props->memoryTypeCount; ++i) {
@@ -51,9 +54,13 @@ static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDe
         if (only_heap != UINT32_MAX && memory_type.heapIndex != only_heap) {
             continue;
         }
+        // R46b B7a: reserved + requirement, not requirement alone. With an empty ledger this is
+        // byte-for-byte the old `heap.size >= mem_req->size` test, so stock placement and the R46b
+        // bulk-large-heap policy keep their exact behavior while capacity remains.
         if ((mem_req->memoryTypeBits & ((uint64_t)1 << i)) &&
             (flags & memory_type.propertyFlags) == flags &&
-            mem_props->memoryHeaps[memory_type.heapIndex].size >= mem_req->size) {
+            ledger.would_fit(memory_type.heapIndex, mem_req->size,
+                             mem_props->memoryHeaps[memory_type.heapIndex].size)) {
             indices.push_back(i);
         }
     }
@@ -312,6 +319,15 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
         return buf;
     }
 
+    // R46b B7a. Function scope on purpose: it covers the candidate walk AND the bind/map/address
+    // setup below, so any throw in that window rolls the reservation back. It is handed to the
+    // buffer only once every step that can fail has succeeded.
+    //
+    // R46b B7a-R2: declared BEFORE the driver-object guard below, so on unwind the guard runs FIRST
+    // (driver memory is actually freed) and the ledger is only told the bytes are free afterwards.
+    // The ledger must never report free bytes the driver still holds.
+    vk_heap_reservation reservation;
+
     vk::BufferUsageFlags usage_flags = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst;
     vk::MemoryAllocateFlags mem_flags {};
     if (device->buffer_device_address) {
@@ -335,6 +351,12 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
     }
 
     buf->buffer = device->device.createBuffer(buffer_create_info);
+
+    // R46b B7a-R2 (finding 1): from this line until commit() the guard is the only owner of
+    // buf->buffer and buf->device_memory. Every `return {}` / `throw` below therefore frees them
+    // exactly once, without the hand-written destroyBuffer() calls that used to be scattered here
+    // (and which never covered the map/bind/BDA window at all).
+    vk_buffer_setup_guard setup_guard(device, buf);
 
     vk::MemoryRequirements mem_req = device->device.getBufferMemoryRequirements(buf->buffer);
 
@@ -372,8 +394,7 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
             host_pointer_props = device->device.getMemoryHostPointerPropertiesEXT(vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT, import_ptr);
         } catch (vk::SystemError& e) {
             GGML_LOG_WARN("ggml_vulkan: Failed getMemoryHostPointerPropertiesEXT (%s)\n", e.what());
-            device->device.destroyBuffer(buf->buffer);
-            return {};
+            return {};  // setup_guard destroys buf->buffer
         }
         vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
 
@@ -396,10 +417,13 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
         }
         if (memory_type_idx == 32) {
             GGML_LOG_WARN("ggml_vulkan: Memory type for host allocation not found\n");
-            device->device.destroyBuffer(buf->buffer);
-            return {};
+            return {};  // setup_guard destroys buf->buffer
         }
 
+        // R46b B7a classification: an IMPORTED host pointer is memory the caller already owns and
+        // the driver only wraps, so it is deliberately NOT charged against the heap budget and the
+        // buffer carries no reservation (held=false, nothing to release). Charging it would refuse
+        // imports that consume no new heap bytes.
         buf->memory_property_flags = mem_props.memoryTypes[memory_type_idx].propertyFlags;
         try {
             vk::ImportMemoryHostPointerInfoEXT import_info;
@@ -421,7 +445,7 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
         for (auto it = req_flags_list.begin(); it != req_flags_list.end(); it++) {
             const auto & req_flags = *it;
 
-            const std::vector<uint32_t> memory_type_indices = ggml_vk_find_memory_properties(&mem_props, &mem_req, req_flags, only_heap);
+            const std::vector<uint32_t> memory_type_indices = ggml_vk_find_memory_properties(&mem_props, &mem_req, req_flags, device->heap_ledger, only_heap);
 
             if (memory_type_indices.empty()) {
                 if (alloc_trace) {
@@ -434,15 +458,32 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
             bool done = false;
 
             for (auto mtype_it = memory_type_indices.begin(); mtype_it != memory_type_indices.end(); mtype_it++) {
-                const uint32_t cand_heap = mem_props.memoryTypes[*mtype_it].heapIndex;
+                const uint32_t cand_heap   = mem_props.memoryTypes[*mtype_it].heapIndex;
+                const uint64_t cand_budget = mem_props.memoryHeaps[cand_heap].size;
                 if (alloc_trace) {
                     std::stringstream ss;
                     ss << "alloc id=" << alloc_id << " state=try"
                        << " type=" << *mtype_it << " heap=" << cand_heap
-                       << " heap_size=" << mem_props.memoryHeaps[cand_heap].size
+                       << " heap_size=" << cand_budget
+                       << " reserved=" << device->heap_ledger.reserved(cand_heap)
+                       << " budget=" << cand_budget
                        << " type_flags=" << to_string(mem_props.memoryTypes[*mtype_it].propertyFlags)
                        << " req_flags=" << to_string(req_flags);
                     vk_alloc_trace_line(ss.str());
+                }
+                // R46b B7a: reserve BEFORE the driver is asked, so concurrent callers cannot each be
+                // admitted against the same bytes.
+                if (!reservation.try_reserve(&device->heap_ledger, cand_heap, mem_req.size, cand_budget)) {
+                    if (alloc_trace) {
+                        std::stringstream ss;
+                        ss << "alloc id=" << alloc_id << " state=refuse_budget"
+                           << " type=" << *mtype_it << " heap=" << cand_heap
+                           << " requirement=" << mem_req.size
+                           << " reserved=" << device->heap_ledger.reserved(cand_heap)
+                           << " budget=" << cand_budget;
+                        vk_alloc_trace_line(ss.str());
+                    }
+                    continue;
                 }
                 try {
                     buf->device_memory = device->device.allocateMemory({ mem_req.size, *mtype_it, &mem_flags_info });
@@ -453,6 +494,9 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
                     done = true;
                     break;
                 } catch (const vk::SystemError& e) {
+                    // R46b B7a: roll back this candidate's reservation before the next candidate is
+                    // tried or the exception leaves the function.
+                    reservation.release();
                     if (alloc_trace) {
                         std::stringstream ss;
                         ss << "alloc id=" << alloc_id << " state=fail"
@@ -463,8 +507,7 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
                     // loop and retry
                     // during last attempt throw the exception
                     if (it + 1 == req_flags_list.end() && mtype_it + 1 == memory_type_indices.end()) {
-                        device->device.destroyBuffer(buf->buffer);
-                        throw e;
+                        throw e;  // setup_guard destroys buf->buffer
                     }
                 }
             }
@@ -476,9 +519,12 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
     }
 
     if (!buf->device_memory) {
-        device->device.destroyBuffer(buf->buffer);
+        // setup_guard destroys buf->buffer
         throw vk::OutOfDeviceMemoryError("No suitable memory type found");
     }
+
+    // R46b B7a-R2 fault point 1: the VkDeviceMemory exists and nothing else is set up yet.
+    VK_TEST_FAULT(VK_TEST_FAULT_AFTER_ALLOC);
 
     buf->ptr = nullptr;
 
@@ -487,10 +533,16 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
     } else {
         if (buf->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible) {
             buf->ptr = device->device.mapMemory(buf->device_memory, 0, VK_WHOLE_SIZE);
+            VK_TEST_NOTE_MAPPED();
+            // R46b B7a-R2 fault point 2: allocated AND mapped.
+            VK_TEST_FAULT(VK_TEST_FAULT_AFTER_MAP);
         }
     }
 
     device->device.bindBufferMemory(buf->buffer, buf->device_memory, 0);
+
+    // R46b B7a-R2 fault point 3: allocated, mapped and bound.
+    VK_TEST_FAULT(VK_TEST_FAULT_AFTER_BIND);
 
     buf->device = device;
     buf->size = size;
@@ -498,9 +550,24 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
     if (device->buffer_device_address) {
         const vk::BufferDeviceAddressInfo addressInfo(buf->buffer);
         buf->bda_addr = device->device.getBufferAddress(addressInfo);
+        // R46b B7a-R3 fault point 4 fires below whether or not this block ran, so record that it
+        // really did. The test asserts this witness before it claims BDA coverage.
+        VK_TEST_NOTE_BDA();
     }
 
+    // R46b B7a-R2 fault point 4: fully set up, including buf->size - so this one also proves the
+    // guard cannot double-free against ~vk_buffer_struct.
+    VK_TEST_FAULT(VK_TEST_FAULT_AFTER_BDA);
+
     device->memory_logger->log_allocation(buf, size);
+
+    // R46b B7a: every step that can throw has succeeded, so the buffer takes ownership of the one
+    // reservation. From here it is released exactly once, by ~vk_buffer_struct.
+    buf->reservation = std::move(reservation);
+
+    // R46b B7a-R2: explicit ownership transfer of the driver objects, last statement before the
+    // return. Nothing below can throw, so the buffer is now the single owner of everything.
+    setup_guard.commit();
 
     return buf;
 }
@@ -607,8 +674,9 @@ void * ggml_vk_host_malloc(vk_device& device, size_t size) {
     if(!(buf->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible)) {
         fprintf(stderr, "WARNING: failed to allocate %.2f MB of pinned memory\n",
             size/1024.0/1024.0);
-        device->device.freeMemory(buf->device_memory);
-        device->device.destroyBuffer(buf->buffer);
+        // R46b B7a-R2: the manual freeMemory/destroyBuffer that used to be here was a double free -
+        // `buf` still holds both handles and size != 0, so ~vk_buffer_struct() frees them again when
+        // `buf` dies on the next line. Dropping the last reference is the whole cleanup, once.
         return nullptr;
     }
 

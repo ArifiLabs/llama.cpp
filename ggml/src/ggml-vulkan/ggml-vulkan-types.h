@@ -752,10 +752,167 @@ static constexpr std::array<ggml_type, 9> lightning_indexer_k_types = {
 
 class vk_memory_logger;
 
+// lane-230 / R46b B7a: cumulative per-memory-heap reservation ledger.
+//
+// Before this, ggml_vk_find_memory_properties() accepted a memory type whenever the WHOLE heap was
+// at least as large as the ONE allocation being made, so N concurrent allocations could each be
+// admitted against the same bytes and the (N+1)-th allocation or the first pinned upload died in the
+// driver. The ledger keeps the requirement bytes this process has already reserved per heap and
+// admits a candidate only if reserved + requirement still fits the heap budget.
+//
+// Keying is by Vulkan heapIndex. That is the Vulkan abstraction and NOT a claim about a physical
+// memory channel, bank or link; two memory types that report the same heapIndex share one counter
+// because Vulkan says they draw on the same pool, and nothing here infers hardware topology.
+//
+// Budget in B7a == the heap's reported size. No env knob, no headroom factor, no whole-model plan:
+// those are B7b/B7c and are NOT implemented here.
+//
+// ponytail: this counts the same bytes the R47a trace's heap_live already counts, deliberately.
+// They are not the same number (heap_live drops at ggml_vk_destroy_buffer and never sees a buffer
+// freed by plain shared_ptr death; this ledger drops at ~vk_buffer_struct and never counts an
+// imported host pointer), and the difference is what proves the ledger is wired to real buffer
+// lifetime. Collapse the two only when the trace counter is fixed to follow buffer destruction.
+#ifndef VK_MAX_MEMORY_HEAPS
+#define VK_MAX_MEMORY_HEAPS 16
+#endif
+
+class vk_heap_ledger {
+public:
+    // Admit `bytes` against `heap` if reserved + bytes <= budget. The subtraction form is
+    // overflow-proof by construction: no sum is ever formed, so a huge `bytes` refuses instead of
+    // wrapping. Fails closed on an out-of-range heap.
+    bool reserve(uint32_t heap, uint64_t bytes, uint64_t budget) {
+        if (heap >= VK_MAX_MEMORY_HEAPS) {
+            return false;
+        }
+        std::lock_guard<std::mutex> guard(mutex);
+        if (reserved_bytes[heap] > budget || bytes > budget - reserved_bytes[heap]) {
+            return false;
+        }
+        reserved_bytes[heap] += bytes;
+        return true;
+    }
+
+    // Returns false and leaves the counter UNTOUCHED on underflow (a double release or a release of
+    // bytes never reserved). Silently clamping would hide the bug and corrupt every later decision.
+    bool release(uint32_t heap, uint64_t bytes) {
+        if (heap >= VK_MAX_MEMORY_HEAPS) {
+            return false;
+        }
+        std::lock_guard<std::mutex> guard(mutex);
+        if (bytes > reserved_bytes[heap]) {
+            return false;
+        }
+        reserved_bytes[heap] -= bytes;
+        return true;
+    }
+
+    // Advisory: used by candidate SELECTION. reserve() is the authority, so a racing reservation
+    // between would_fit() and reserve() just means the candidate is refused at reserve() time.
+    bool would_fit(uint32_t heap, uint64_t bytes, uint64_t budget) const {
+        if (heap >= VK_MAX_MEMORY_HEAPS) {
+            return false;
+        }
+        std::lock_guard<std::mutex> guard(mutex);
+        return reserved_bytes[heap] <= budget && bytes <= budget - reserved_bytes[heap];
+    }
+
+    uint64_t reserved(uint32_t heap) const {
+        if (heap >= VK_MAX_MEMORY_HEAPS) {
+            return 0;
+        }
+        std::lock_guard<std::mutex> guard(mutex);
+        return reserved_bytes[heap];
+    }
+
+#ifdef GGML_VK_INTERNAL_TESTS
+    // R46b B7a-R2 (finding 2): reset() and total_reserved() exist ONLY in an internal-test build.
+    // A production-linked build has no way to zero a live ledger, and the internal-test build only
+    // ever resets the test's OWN ledger instance (vk_heapres_test_ledger()), never a device's.
+    void reset() {
+        std::lock_guard<std::mutex> guard(mutex);
+        for (uint32_t h = 0; h < VK_MAX_MEMORY_HEAPS; ++h) {
+            reserved_bytes[h] = 0;
+        }
+    }
+
+    uint64_t total_reserved() const {
+        std::lock_guard<std::mutex> guard(mutex);
+        uint64_t total = 0;
+        for (uint32_t h = 0; h < VK_MAX_MEMORY_HEAPS; ++h) {
+            total += reserved_bytes[h];
+        }
+        return total;
+    }
+#endif // GGML_VK_INTERNAL_TESTS
+
+private:
+    mutable std::mutex mutex;
+    uint64_t reserved_bytes[VK_MAX_MEMORY_HEAPS] = {};
+};
+
+// R46b B7a-R2 (finding 4): test-only fault injection into ggml_vk_create_buffer(), so the
+// post-allocation cleanup paths (map / bind / buffer-device-address) are exercised through the
+// PRODUCTION allocator instead of a helper. In a normal build the macro expands to nothing and
+// neither the stage variable nor the enum exists.
+#ifdef GGML_VK_INTERNAL_TESTS
+enum vk_test_fault_stage {
+    VK_TEST_FAULT_NONE        = 0,
+    VK_TEST_FAULT_AFTER_ALLOC = 1,
+    VK_TEST_FAULT_AFTER_MAP   = 2,
+    VK_TEST_FAULT_AFTER_BIND  = 3,
+    VK_TEST_FAULT_AFTER_BDA   = 4,
+};
+
+static std::atomic<int> vk_test_fault_stage_active { VK_TEST_FAULT_NONE };
+static std::atomic<int> vk_test_fault_mapped       { 0 };
+
+// R46b B7a-R3 (finding 2): witness that device->device.getBufferAddress() REALLY ran. The stage-4
+// fault fires after the `if (device->buffer_device_address)` block whether or not that block was
+// entered, so without this witness a device with no BDA support reports "after getBufferAddress"
+// green while never touching BDA.
+static std::atomic<int> vk_test_fault_bda { 0 };
+
+// R46b B7a-R3 (finding 1): ordering witness for ~vk_buffer_struct(). Sampled at the instant the
+// DRIVER memory is freed; the ledger must still be counting the buffer's bytes at that point.
+// Armed only around the one destruction the probe is measuring, because device/instance teardown
+// destroys buffers of its own that would otherwise clobber the sample.
+static std::atomic<int>      vk_test_destroy_witness_armed { 0 };
+static std::atomic<uint64_t> vk_test_reserved_at_driver_free { 0 };
+
+#define VK_TEST_FAULT(stage)                                                              \
+    do {                                                                                  \
+        if (vk_test_fault_stage_active.load(std::memory_order_relaxed) == (int) (stage)) { \
+            throw vk::DeviceLostError("R46b B7a-R2 injected fault");                       \
+        }                                                                                 \
+    } while (0)
+#define VK_TEST_NOTE_MAPPED() vk_test_fault_mapped.store(1, std::memory_order_relaxed)
+#define VK_TEST_NOTE_BDA()    vk_test_fault_bda.store(1, std::memory_order_relaxed)
+#define VK_TEST_NOTE_DRIVER_FREE(dev)                                                     \
+    do {                                                                                  \
+        if (vk_test_destroy_witness_armed.load(std::memory_order_acquire)) {              \
+            vk_test_reserved_at_driver_free.store((dev)->heap_ledger.total_reserved(),    \
+                                                  std::memory_order_release);             \
+        }                                                                                 \
+    } while (0)
+#else
+#define VK_TEST_FAULT(stage)          do { } while (0)
+#define VK_TEST_NOTE_MAPPED()         do { } while (0)
+#define VK_TEST_NOTE_BDA()            do { } while (0)
+#define VK_TEST_NOTE_DRIVER_FREE(dev) do { } while (0)
+#endif // GGML_VK_INTERNAL_TESTS
+
 struct vk_device_struct {
     std::recursive_mutex mutex;
     std::mutex queue_submit_mutex;
     mutable std::shared_mutex pinned_memory_mutex;
+
+    // R46b B7a-R2 (finding 3): the reservation ledger is a MEMBER of the device, not a process
+    // singleton keyed by heap index. Vulkan heap indices are scoped to a physical device, so two
+    // GPUs in one process both have heap 0/1; a singleton would collide their independent budgets
+    // and release across devices. Making it a member also ties the ledger's lifetime exactly to
+    // the device's, so no stale identity (a recycled VkDevice handle or pointer) can alias it.
+    vk_heap_ledger heap_ledger;
 
     // Guards compile_pending, all_pipelines, and the dynamic pipeline maps
     // (flash_attn, fa_mask_opt, solve_tri, conv2d, etc). The actual compile
@@ -1155,6 +1312,61 @@ inline void vk_command_pool::destroy(vk::Device& device) {
     cmd_buffers.clear();
 }
 
+
+// RAII ownership of ONE reservation. A buffer that owns memory owns exactly one of these; anything
+// that fails before ownership is accepted (a refused candidate, a throwing allocateMemory, a
+// throwing bind/map/address setup) rolls back through the destructor. release() is idempotent, so
+// destruction releases exactly once and a second destruction is a no-op instead of an underflow.
+//
+// R46b B7a-R2 (finding 3): the guard names the LEDGER it reserved from, so a reservation taken on
+// device A can only ever be released back to device A's ledger.
+struct vk_heap_reservation {
+    vk_heap_ledger * ledger = nullptr;
+    uint32_t         heap   = UINT32_MAX;
+    uint64_t         bytes  = 0;
+    bool             held   = false;
+
+    vk_heap_reservation() = default;
+    vk_heap_reservation(const vk_heap_reservation &)             = delete;
+    vk_heap_reservation & operator=(const vk_heap_reservation &) = delete;
+
+    vk_heap_reservation(vk_heap_reservation && other) noexcept { *this = std::move(other); }
+
+    vk_heap_reservation & operator=(vk_heap_reservation && other) noexcept {
+        if (this != &other) {
+            release();
+            ledger = other.ledger;
+            heap   = other.heap;
+            bytes  = other.bytes;
+            held   = other.held;
+            other.held = false;
+        }
+        return *this;
+    }
+
+    bool try_reserve(vk_heap_ledger * l, uint32_t h, uint64_t b, uint64_t budget) {
+        GGML_ASSERT(!held);
+        if (l == nullptr || !l->reserve(h, b, budget)) {
+            return false;
+        }
+        ledger = l;
+        heap   = h;
+        bytes  = b;
+        held   = true;
+        return true;
+    }
+
+    bool release() {
+        if (!held) {
+            return false;
+        }
+        held = false;
+        return ledger->release(heap, bytes);
+    }
+
+    ~vk_heap_reservation() { release(); }
+};
+
 struct vk_buffer_struct {
     vk::Buffer buffer = VK_NULL_HANDLE;
     vk::DeviceMemory device_memory = VK_NULL_HANDLE;
@@ -1165,14 +1377,92 @@ struct vk_buffer_struct {
 
     vk_device device;
 
+    // R46b B7a: the heap reservation this buffer owns, released exactly once by its destructor.
+    // It lives here and not in ggml_vk_destroy_buffer() on purpose: that function does buf.reset()
+    // on a reference, so other shared_ptr copies can keep the allocation alive. Releasing there
+    // would drop the reservation while the driver still holds the bytes, which under-counts the
+    // ledger and re-admits the over-allocation this is meant to stop.
+    //
+    // R46b B7a-R2 (finding 3): declared AFTER `device` on purpose. The ledger it points into is a
+    // member of vk_device_struct, so `device` must still be alive when the reservation releases;
+    // members are destroyed in reverse declaration order, so this one goes first, while `device` is
+    // still alive. The real guarantee is the destructor body below: it frees the DRIVER memory first
+    // and only then calls release() as its LAST statement (R3 finding 1 moved that release down from
+    // the top, where it was the R2 concurrency defect). This declaration order is the backstop that
+    // keeps the ledger reachable if the reservation member is destroyed without that explicit call.
+    vk_heap_reservation reservation;
+
     ~vk_buffer_struct() {
-        if (size == 0) {
+        // R46b B7a-R3 (finding 1): the DRIVER memory goes back first, the ledger is told only
+        // afterwards. The reverse order (R2) advertised the bytes as free while the driver still
+        // owned them, so a concurrent allocator could be admitted against bytes that were still in
+        // use - the same ledger/driver divergence the setup guard avoids on the failure path.
+        //
+        // No lock is needed for this: releasing last makes the ledger transiently OVER-count, which
+        // is the conservative direction. It can refuse an allocation a hair early; it can never
+        // admit an overcommit. The release itself is mutex-protected inside vk_heap_ledger.
+        if (size != 0) {
+            VK_LOG_DEBUG("~vk_buffer_struct(" << buffer << ", " << size << ")");
+
+            VK_TEST_NOTE_DRIVER_FREE(device);
+            device->device.freeMemory(device_memory);
+            device->device.destroyBuffer(buffer);
+        }
+
+        // Unconditional and last: it does not depend on `size` being initialized, it runs on every
+        // path including the size == 0 one, and release() is idempotent.
+        reservation.release();
+    }
+};
+
+// R46b B7a-R2 (finding 1): exception-safe ownership of the raw driver objects during buffer setup.
+//
+// ggml_vk_create_buffer() creates the VkBuffer and then allocates VkDeviceMemory, but map, bind,
+// buffer-device-address and the memory logger can all still throw. Until `buf->size` is set,
+// ~vk_buffer_struct() returns early and frees nothing, so before this guard a throw in that window
+// leaked the VkDeviceMemory while the reservation ledger rolled back and reported the bytes free -
+// the ledger and the driver diverged and a later allocation was admitted against bytes the driver
+// still held.
+//
+// This guard is the SOLE owner of those handles until commit(). It clears the handles (and `size`)
+// as it destroys them, so ~vk_buffer_struct() can never free them a second time; exactly-once is
+// therefore by construction and not by an invariant on `size`.
+static void vk_alloc_trace_record_free(VkBuffer buffer);  // defined with the R47a trace facility
+
+struct vk_buffer_setup_guard {
+    vk_device & device;
+    vk_buffer & buf;
+    bool        armed = true;
+
+    vk_buffer_setup_guard(vk_device & d, vk_buffer & b) : device(d), buf(b) {}
+    vk_buffer_setup_guard(const vk_buffer_setup_guard &)             = delete;
+    vk_buffer_setup_guard & operator=(const vk_buffer_setup_guard &) = delete;
+
+    // Ownership transfer: from here the buffer owns the handles and its destructor frees them.
+    void commit() { armed = false; }
+
+    ~vk_buffer_setup_guard() {
+        if (!armed || !buf) {
             return;
         }
-        VK_LOG_DEBUG("~vk_buffer_struct(" << buffer << ", " << size << ")");
+        // Retire the R47a trace record first. vk_alloc_trace_record_alloc() runs as soon as
+        // allocateMemory() succeeds, i.e. before every fallible step below it, so without this the
+        // new cleanup path would free the driver objects while heap_live still counted the bytes
+        // and by_buffer still held a key on a destroyed VkBuffer handle. No-op when trace is off.
+        vk_alloc_trace_record_free(buf->buffer);
 
-        device->device.freeMemory(device_memory);
-        device->device.destroyBuffer(buffer);
+        // vkFreeMemory implicitly unmaps a mapped allocation, and both calls accept VK_NULL_HANDLE,
+        // so this is correct whether the failure happened before or after map/bind.
+        buf->size = 0;
+        buf->ptr  = nullptr;
+        if (buf->device_memory) {
+            device->device.freeMemory(buf->device_memory);
+            buf->device_memory = VK_NULL_HANDLE;
+        }
+        if (buf->buffer) {
+            device->device.destroyBuffer(buf->buffer);
+            buf->buffer = VK_NULL_HANDLE;
+        }
     }
 };
 

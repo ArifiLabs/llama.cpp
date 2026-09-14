@@ -13863,6 +13863,310 @@ static void show_test_coverage() {
     printf("  Coverage: %.1f%%\n", (double)covered_ops.size() / all_ops.size() * 100.0);
 }
 
+#ifdef GGML_USE_VULKAN
+// lane-230 / R46b B7a: correctness of the Vulkan cumulative per-heap reservation ledger.
+// Device-free, model-free, timing-free: it drives the same ledger and the same RAII guard that
+// ggml_vk_create_buffer() uses. Declared here rather than in a public header because this is an
+// internal test seam, not backend API.
+extern "C" {
+    bool     ggml_vk_heapres_reserve(uint32_t heap, uint64_t bytes, uint64_t budget);
+    bool     ggml_vk_heapres_release(uint32_t heap, uint64_t bytes);
+    bool     ggml_vk_heapres_would_fit(uint32_t heap, uint64_t bytes, uint64_t budget);
+    uint64_t ggml_vk_heapres_reserved(uint32_t heap);
+    void     ggml_vk_heapres_reset(void);
+    int      ggml_vk_heapres_first_fit(const uint32_t * heaps, const uint64_t * budgets, int n,
+                                       uint64_t bytes, uint32_t fail_mask);
+    void     ggml_vk_heapres_destroy_held(void);
+    int      ggml_vk_heapres_held_count(void);
+    bool     ggml_vk_heapres_two_ledgers_isolated(uint32_t heap, uint64_t bytes, uint64_t budget);
+    int      ggml_vk_heapres_fault_probe(int stage, uint64_t size, int host_visible,
+                                         uint64_t * reserved_before, uint64_t * reserved_after,
+                                         int * mapped, int * threw, uint64_t * driver_usage_after,
+                                         int * bda_supported, int * bda_executed);
+    int      ggml_vk_heapres_destroy_order_probe(uint64_t size,
+                                                 uint64_t * reserved_before, uint64_t * reserved_alive,
+                                                 uint64_t * reserved_at_driver_free,
+                                                 uint64_t * reserved_after);
+}
+
+static int heapres_failures = 0;
+
+static void heapres_check(bool ok, const char * what) {
+    printf("  %s %s\n", ok ? "OK  " : "FAIL", what);
+    if (!ok) {
+        heapres_failures++;
+    }
+}
+
+static int heapres_ledger_tests() {
+    const uint64_t MiB = 1024ull * 1024ull;
+
+    printf("Vulkan heap reservation ledger (R46b B7a)\n");
+
+    // 1. exact fit succeeds, one byte over refuses.
+    ggml_vk_heapres_reset();
+    heapres_check(ggml_vk_heapres_reserve(0, 100 * MiB, 100 * MiB), "exact fit reserved");
+    heapres_check(ggml_vk_heapres_reserved(0) == 100 * MiB, "exact fit accounted");
+    ggml_vk_heapres_reset();
+    heapres_check(!ggml_vk_heapres_reserve(0, 100 * MiB + 1, 100 * MiB), "one byte over refused");
+    heapres_check(ggml_vk_heapres_reserved(0) == 0, "refused reservation left no bytes");
+
+    // cumulative: the second allocation sees the first. This is the whole point of B7a - the old
+    // per-allocation test admitted both.
+    ggml_vk_heapres_reset();
+    heapres_check(ggml_vk_heapres_reserve(0, 60 * MiB, 100 * MiB), "first 60MiB of 100MiB reserved");
+    heapres_check(!ggml_vk_heapres_reserve(0, 60 * MiB, 100 * MiB), "second 60MiB refused (cumulative)");
+    heapres_check(ggml_vk_heapres_reserved(0) == 60 * MiB, "ledger unchanged by the refusal");
+
+    // stock behavior preserved: an empty ledger admits exactly what heap.size >= requirement admits.
+    ggml_vk_heapres_reset();
+    heapres_check(ggml_vk_heapres_would_fit(0, 100 * MiB, 100 * MiB), "empty ledger: fit == stock accept");
+    heapres_check(!ggml_vk_heapres_would_fit(0, 100 * MiB + 1, 100 * MiB), "empty ledger: over == stock reject");
+
+    // 2. cumulative reservations across threads cannot exceed the budget.
+    {
+        ggml_vk_heapres_reset();
+        const uint64_t block   = 8 * MiB;
+        const int      allowed = 5;
+        const int      threads = 16;
+        std::atomic<int> granted(0);
+        std::vector<std::thread> workers;
+        for (int t = 0; t < threads; t++) {
+            workers.emplace_back([&]() {
+                if (ggml_vk_heapres_reserve(0, block, block * allowed)) {
+                    granted++;
+                }
+            });
+        }
+        for (auto & w : workers) {
+            w.join();
+        }
+        heapres_check(granted.load() == allowed, "exactly budget/block threads were granted");
+        heapres_check(ggml_vk_heapres_reserved(0) == block * allowed, "threaded total == budget, not over");
+    }
+
+    // 3. a failed allocation attempt rolls back before the next candidate is tried.
+    {
+        ggml_vk_heapres_reset();
+        const uint32_t heaps[3]   = { 0, 0, 1 };
+        const uint64_t budgets[3] = { 10 * MiB, 10 * MiB, 10 * MiB };
+        // candidates 0 and 1 (same heap) throw; without rollback heap 0 would still hold 20MiB and
+        // candidate 1 could not even have been reserved.
+        const int idx = ggml_vk_heapres_first_fit(heaps, budgets, 3, 10 * MiB, 0x3);
+        heapres_check(idx == 2, "walk fell through to the third candidate");
+        heapres_check(ggml_vk_heapres_reserved(0) == 0, "failed candidates left heap 0 at zero");
+        heapres_check(ggml_vk_heapres_reserved(1) == 10 * MiB, "winning candidate holds exactly one reservation");
+        heapres_check(ggml_vk_heapres_held_count() == 1, "exactly one reservation is owned");
+
+        // 4. destruction releases exactly once, and a second destruction is a no-op.
+        ggml_vk_heapres_destroy_held();
+        heapres_check(ggml_vk_heapres_reserved(1) == 0, "destruction released the reservation");
+        ggml_vk_heapres_destroy_held();
+        heapres_check(ggml_vk_heapres_reserved(1) == 0, "second destruction released nothing more");
+
+        // every candidate refused: nothing held, nothing reserved.
+        ggml_vk_heapres_reset();
+        const int none = ggml_vk_heapres_first_fit(heaps, budgets, 3, 10 * MiB, 0x7);
+        heapres_check(none == -1, "all candidates failing yields no winner");
+        heapres_check(ggml_vk_heapres_reserved(0) == 0 && ggml_vk_heapres_reserved(1) == 0,
+                      "all candidates failing left the ledger empty");
+        heapres_check(ggml_vk_heapres_held_count() == 0, "all candidates failing held nothing");
+    }
+
+    // 5. double release / underflow is refused and leaves the ledger intact.
+    ggml_vk_heapres_reset();
+    heapres_check(ggml_vk_heapres_reserve(2, 32 * MiB, 64 * MiB), "reserved 32MiB on heap 2");
+    heapres_check(ggml_vk_heapres_release(2, 32 * MiB), "first release accepted");
+    heapres_check(!ggml_vk_heapres_release(2, 32 * MiB), "second release refused");
+    heapres_check(ggml_vk_heapres_reserved(2) == 0, "double release did not corrupt the counter");
+    heapres_check(ggml_vk_heapres_reserve(2, 16 * MiB, 64 * MiB), "reserved 16MiB on heap 2");
+    heapres_check(!ggml_vk_heapres_release(2, 17 * MiB), "over-release refused");
+    heapres_check(ggml_vk_heapres_reserved(2) == 16 * MiB, "over-release left the counter untouched");
+
+    // 6. two memory types on one heap share one counter.
+    // (the ledger is keyed by heapIndex; types 3 and 7 reporting heap 3 is the case this models)
+    ggml_vk_heapres_reset();
+    heapres_check(ggml_vk_heapres_reserve(3, 40 * MiB, 64 * MiB), "type A on heap 3 reserved");
+    heapres_check(!ggml_vk_heapres_reserve(3, 40 * MiB, 64 * MiB), "type B on heap 3 sees type A's bytes");
+    heapres_check(ggml_vk_heapres_reserved(3) == 40 * MiB, "one counter for both types");
+
+    // 7. separate heaps are independent.
+    ggml_vk_heapres_reset();
+    heapres_check(ggml_vk_heapres_reserve(4, 64 * MiB, 64 * MiB), "heap 4 filled");
+    heapres_check(ggml_vk_heapres_reserve(5, 64 * MiB, 64 * MiB), "heap 5 unaffected by heap 4");
+    heapres_check(ggml_vk_heapres_reserved(4) == 64 * MiB && ggml_vk_heapres_reserved(5) == 64 * MiB,
+                  "per-heap counters are independent");
+
+    // 8. arithmetic overflow fails closed.
+    ggml_vk_heapres_reset();
+    heapres_check(ggml_vk_heapres_reserve(6, UINT64_MAX - 1, UINT64_MAX), "UINT64_MAX-1 reserved");
+    heapres_check(!ggml_vk_heapres_reserve(6, 2, UINT64_MAX), "2 more refused instead of wrapping");
+    heapres_check(ggml_vk_heapres_reserved(6) == UINT64_MAX - 1, "overflow attempt left the counter intact");
+    ggml_vk_heapres_reset();
+    heapres_check(!ggml_vk_heapres_reserve(7, UINT64_MAX, 1 * MiB), "UINT64_MAX against a small budget refused");
+
+    // out-of-range heap fails closed.
+    heapres_check(!ggml_vk_heapres_reserve(4096, 1, UINT64_MAX), "out-of-range heap refused");
+
+    // 9. R46b B7a-R2 (finding 3): two ledgers with the SAME numeric heap index are isolated.
+    // This models two Vulkan devices that both report heap 0/1; the production ledgers are
+    // vk_device_struct members, one per device, which is exactly what this exercises.
+    ggml_vk_heapres_reset();
+    heapres_check(ggml_vk_heapres_two_ledgers_isolated(0, 64 * MiB, 64 * MiB),
+                  "same heap index on two ledgers: no cross-talk, no cross-release");
+    heapres_check(ggml_vk_heapres_two_ledgers_isolated(1, 4 * MiB, 4 * MiB),
+                  "same heap index on two ledgers: holds for heap 1 too");
+
+    ggml_vk_heapres_reset();
+    return 0;
+}
+
+// R46b B7a-R2 (finding 4): post-allocation cleanup, through the PRODUCTION allocator.
+//
+// A fault is injected inside ggml_vk_create_buffer() after allocateMemory / mapMemory /
+// bindBufferMemory / getBufferAddress. Each must leave the device ledger exactly where it started
+// AND must actually free the VkDeviceMemory. The ledger equality is the direct assertion; the leak
+// probe at the end is a black-box check of the driver-side free that the ledger cannot see.
+static void heapres_fault_tests() {
+    printf("Vulkan post-allocation cleanup, production path (R46b B7a-R2)\n");
+
+    const uint64_t MiB  = 1024ull * 1024ull;
+    const uint64_t size = 64 * MiB;
+
+    uint64_t before = 0, after = 0, usage = 0;
+    int mapped = 0, threw = 0, bda_supported = 0, bda_executed = 0;
+
+    // stage 0: no fault. Establishes that the probe works, that the allocation really is
+    // host-visible and really gets mapped (otherwise the after-map injection below would be a
+    // vacuous pass), and that ordinary destruction releases the reservation.
+    const int rc = ggml_vk_heapres_fault_probe(0, size, 1, &before, &after, &mapped, &threw, &usage,
+                                               &bda_supported, &bda_executed);
+    if (rc != 0) {
+        printf("  SKIPPED: no Vulkan device, post-allocation cleanup NOT covered by this run\n");
+        return;
+    }
+    heapres_check(threw == 0, "no fault: buffer created");
+    heapres_check(mapped == 1, "no fault: allocation was host-visible and really mapped");
+    heapres_check(after == before, "no fault: destruction released the reservation");
+
+    // R46b B7a-R3 (finding 2): BDA coverage is claimed only against a runtime witness that
+    // device.getBufferAddress() really executed. On a device that reports no bufferDeviceAddress
+    // the stage-4 assertions below still run - they cover post-`buf->size` cleanup, which is what
+    // proves the guard and ~vk_buffer_struct cannot both free - but the BDA-named claim is
+    // reported UNAVAILABLE instead of being silently counted as green.
+    const bool bda_covered = (bda_supported == 1);
+    if (bda_covered) {
+        heapres_check(bda_executed == 1,
+                      "no fault: device reports bufferDeviceAddress AND getBufferAddress really executed");
+    } else {
+        printf("  UNAVAILABLE: device reports no bufferDeviceAddress; getBufferAddress never runs here,\n");
+        printf("               so stage 4 below covers post-size cleanup ONLY, not the BDA path\n");
+    }
+
+    // R46b B7a-R3 (finding 1): ordering. The ledger must still count this buffer's bytes at the
+    // instant vkFreeMemory is called, i.e. capacity is released only after the driver has the
+    // memory back. An "after == before" check cannot see this; the witness can.
+    {
+        uint64_t ob = 0, alive = 0, at_free = 0, oa = 0;
+        heapres_check(ggml_vk_heapres_destroy_order_probe(size, &ob, &alive, &at_free, &oa) == 0,
+                      "destroy order: probe ran");
+        heapres_check(alive > ob, "destroy order: a live buffer holds its bytes in the ledger");
+        heapres_check(at_free == alive,
+                      "destroy order: ledger still counted the bytes when vkFreeMemory was called");
+        heapres_check(at_free != oa,
+                      "destroy order: capacity was NOT released before the driver memory was freed");
+        heapres_check(oa == ob, "destroy order: released exactly once afterwards");
+    }
+
+    const bool have_driver_usage = (usage != UINT64_MAX);
+    if (!have_driver_usage) {
+        printf("  NOTE: VK_EXT_memory_budget unavailable - the driver-side leak assertion below is skipped\n");
+    }
+
+    struct { int stage; const char * name; } stages[] = {
+        { 1, "after allocateMemory"   },
+        { 2, "after mapMemory"        },
+        { 3, "after bindBufferMemory" },
+        { 4, "after getBufferAddress" },
+    };
+
+    for (const auto & s : stages) {
+        before = after = 0;
+        mapped = threw = bda_executed = 0;
+        heapres_check(ggml_vk_heapres_fault_probe(s.stage, size, 1, &before, &after, &mapped, &threw, &usage,
+                                                  &bda_supported, &bda_executed) == 0,
+                      (std::string("fault ") + s.name + ": probe ran").c_str());
+        heapres_check(threw == 1, (std::string("fault ") + s.name + ": create_buffer threw").c_str());
+        heapres_check(after == before,
+                      (std::string("fault ") + s.name + ": ledger rolled back exactly").c_str());
+        if (s.stage >= 2) {
+            heapres_check(mapped == 1,
+                          (std::string("fault ") + s.name + ": the map really happened first").c_str());
+        }
+        if (s.stage == 4) {
+            if (bda_covered) {
+                heapres_check(bda_executed == 1,
+                              "fault after getBufferAddress: getBufferAddress really executed before the fault");
+            } else {
+                printf("  UNAVAILABLE: fault after getBufferAddress ran, but BDA is unsupported here -\n");
+                printf("               this stage proves post-size cleanup only\n");
+            }
+        }
+    }
+
+    // Leak probe. The ledger cannot detect a leaked VkDeviceMemory - it rolls back correctly
+    // either way - so the instrument is the DRIVER's own accounting (VK_EXT_memory_budget
+    // heapUsage), read outside the allocator. Repeatedly failing right after allocateMemory must
+    // leave the driver's in-use bytes where they started; without the cleanup they climb by the
+    // full cumulative size.
+    //
+    // (Driver refusal is deliberately NOT the instrument: this driver happily hands out many GB of
+    // never-touched allocations, so an out-of-memory check here would pass while leaking.)
+    {
+        const uint64_t leak_size  = 256 * MiB;
+        const int      iterations = 48;   // 12 GiB cumulative if leaked
+        bool           all_ran    = true;
+        uint64_t       usage_before = 0, usage_after = 0;
+        {
+            uint64_t b = 0, a = 0;
+            int m = 0, t = 0, bs = 0, be = 0;
+            ggml_vk_heapres_fault_probe(1, leak_size, 1, &b, &a, &m, &t, &usage_before, &bs, &be);
+        }
+        for (int i = 0; i < iterations; i++) {
+            uint64_t b = 0, a = 0;
+            int m = 0, t = 0, bs = 0, be = 0;
+            if (ggml_vk_heapres_fault_probe(1, leak_size, 1, &b, &a, &m, &t, &usage_after, &bs, &be) != 0 || t != 1 || a != b) {
+                all_ran = false;
+                break;
+            }
+        }
+        heapres_check(all_ran, "leak probe: 48 injected post-allocation failures all rolled back");
+
+        if (have_driver_usage) {
+            const uint64_t grew = usage_after > usage_before ? usage_after - usage_before : 0;
+            heapres_check(grew < leak_size,
+                          "leak probe: driver in-use bytes did not grow (the memory was really freed)");
+            printf("    driver heapUsage %llu -> %llu (leak would be ~%llu)\n",
+                   (unsigned long long) usage_before, (unsigned long long) usage_after,
+                   (unsigned long long) (leak_size * iterations));
+        }
+
+        uint64_t b = 0, a = 0, u = 0;
+        int m = 0, t = 0, bs = 0, be = 0;
+        heapres_check(ggml_vk_heapres_fault_probe(0, leak_size, 1, &b, &a, &m, &t, &u, &bs, &be) == 0 && t == 0,
+                      "leak probe: a clean allocation still succeeds afterwards");
+        heapres_check(a == b, "leak probe: ledger back to its starting value");
+    }
+}
+
+static int heapres_main() {
+    heapres_ledger_tests();
+    heapres_fault_tests();
+    printf("%s: %s\n", "heapres", heapres_failures == 0 ? "all tests passed" : "FAILURES");
+    return heapres_failures == 0 ? 0 : 1;
+}
+#endif // GGML_USE_VULKAN
+
 static void usage(char ** argv) {
     printf("Usage: %s [mode] [options]\n\n", argv[0]);
     printf("Valid modes:\n");
@@ -13870,7 +14174,11 @@ static void usage(char ** argv) {
     printf("  grad     compare gradients from backpropagation with method of finite differences\n");
     printf("  perf     performance evaluation\n");
     printf("  support  probe backend operation support\n");
-    printf("  sx8ref   S-X8 mat-vec against an independent double-precision reference\n\n");
+    printf("  sx8ref   S-X8 mat-vec against an independent double-precision reference\n");
+#ifdef GGML_USE_VULKAN
+    printf("  heapres  Vulkan per-heap reservation ledger + post-allocation cleanup\n");
+#endif
+    printf("\n");
     printf("Options:\n");
     printf("  -o <op|regex,..>            comma separated list of exact op names (as given by ggml_op_desc()),\n");
     printf("                              full test case strings, and/or regexes matched against the op name\n");
@@ -13941,6 +14249,12 @@ int main(int argc, char ** argv) {
                 usage(argv);
                 return 1;
             }
+#ifdef GGML_USE_VULKAN
+        } else if (strcmp(argv[i], "heapres") == 0) {
+            // R46b B7a: returns before any backend/device enumeration. The ledger half needs no
+            // device; the fault half acquires a Vulkan device itself and skips loudly without one.
+            return heapres_main();
+#endif
         } else if (strcmp(argv[i], "--list-ops") == 0) {
             list_all_ops();
             return 0;

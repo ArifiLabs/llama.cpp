@@ -18124,3 +18124,225 @@ void ggml_vk_debug_label::begin(vk_context & ctx, const std::string & name) {
     ggml_vk_cmd_label_begin(subctx->s->buffer->buf, subctx->debug_labels.back().c_str());
 }
 
+
+#ifdef GGML_VK_INTERNAL_TESTS
+// ---------------------------------------------------------------------------------------------
+// R46b B7a-R2 internal test seam, driven by `test-backend-ops heapres`.
+//
+// Compiled ONLY when GGML_VK_INTERNAL_TESTS is defined, which tests/CMakeLists.txt does for the
+// ggml-vulkan target and only when LLAMA_BUILD_TESTS is on. A normal production build contains
+// none of these symbols (finding 2).
+//
+// Two halves:
+//   * the arithmetic half operates on a ledger instance OWNED BY THE TEST. It can never touch a
+//     device's ledger, so there is no reachable way to zero a live accounting state (finding 2).
+//   * the fault half drives the REAL ggml_vk_create_buffer() on a real device with a fault injected
+//     after allocate / map / bind / BDA, which is the only way to exercise the production cleanup
+//     paths (finding 4).
+// ---------------------------------------------------------------------------------------------
+
+static vk_heap_ledger & vk_heapres_test_ledger() {
+    static vk_heap_ledger ledger;
+    return ledger;
+}
+
+static std::vector<std::unique_ptr<vk_heap_reservation>> & vk_heapres_test_held() {
+    static std::vector<std::unique_ptr<vk_heap_reservation>> held;
+    return held;
+}
+
+extern "C" {
+
+GGML_BACKEND_API bool ggml_vk_heapres_reserve(uint32_t heap, uint64_t bytes, uint64_t budget) {
+    return vk_heapres_test_ledger().reserve(heap, bytes, budget);
+}
+
+GGML_BACKEND_API bool ggml_vk_heapres_release(uint32_t heap, uint64_t bytes) {
+    return vk_heapres_test_ledger().release(heap, bytes);
+}
+
+GGML_BACKEND_API bool ggml_vk_heapres_would_fit(uint32_t heap, uint64_t bytes, uint64_t budget) {
+    return vk_heapres_test_ledger().would_fit(heap, bytes, budget);
+}
+
+GGML_BACKEND_API uint64_t ggml_vk_heapres_reserved(uint32_t heap) {
+    return vk_heapres_test_ledger().reserved(heap);
+}
+
+// Resets the TEST's ledger only. There is deliberately no entry point that resets a device ledger.
+GGML_BACKEND_API void ggml_vk_heapres_reset(void) {
+    vk_heapres_test_held().clear();
+    vk_heapres_test_ledger().reset();
+}
+
+// The candidate walk of ggml_vk_create_buffer() with the driver replaced by `fail_mask`: bit i set
+// means candidate i's allocation throws. A candidate that cannot be reserved, or whose allocation
+// fails, must leave nothing behind before the next candidate is tried. Returns the index of the
+// candidate that succeeded (its reservation is then held, as a buffer would hold it), or -1.
+GGML_BACKEND_API int ggml_vk_heapres_first_fit(const uint32_t * heaps, const uint64_t * budgets, int n,
+                                               uint64_t bytes, uint32_t fail_mask) {
+    vk_heap_reservation reservation;
+    for (int i = 0; i < n; i++) {
+        if (!reservation.try_reserve(&vk_heapres_test_ledger(), heaps[i], bytes, budgets[i])) {
+            continue;
+        }
+        if (fail_mask & (1u << i)) {
+            reservation.release();
+            continue;
+        }
+        vk_heapres_test_held().push_back(std::make_unique<vk_heap_reservation>(std::move(reservation)));
+        return i;
+    }
+    return -1;
+}
+
+// Stands in for ~vk_buffer_struct: drops every held reservation exactly once.
+GGML_BACKEND_API void ggml_vk_heapres_destroy_held(void) {
+    vk_heapres_test_held().clear();
+}
+
+GGML_BACKEND_API int ggml_vk_heapres_held_count(void) {
+    return (int) vk_heapres_test_held().size();
+}
+
+// Two ledger instances with the SAME numeric heap index must not see each other. This models two
+// Vulkan devices that both report heap 0/1, which is the aliasing finding 3 describes; the
+// production instances are vk_device_struct members, which this mirrors exactly.
+GGML_BACKEND_API bool ggml_vk_heapres_two_ledgers_isolated(uint32_t heap, uint64_t bytes, uint64_t budget) {
+    vk_heap_ledger a;
+    vk_heap_ledger b;
+    vk_heap_reservation ra;
+    vk_heap_reservation rb;
+
+    // fill ledger A completely on `heap`
+    if (!ra.try_reserve(&a, heap, bytes, budget)) {
+        return false;
+    }
+    // the SAME heap index on ledger B must still be entirely free
+    if (a.reserved(heap) != bytes || b.reserved(heap) != 0) {
+        return false;
+    }
+    if (!rb.try_reserve(&b, heap, bytes, budget)) {
+        return false;
+    }
+    // releasing B's reservation must not touch A
+    rb.release();
+    if (b.reserved(heap) != 0 || a.reserved(heap) != bytes) {
+        return false;
+    }
+    ra.release();
+    return a.reserved(heap) == 0 && b.reserved(heap) == 0;
+}
+
+// The DRIVER's own view of how many bytes are in use, summed over heaps (VK_EXT_memory_budget).
+// This is the instrument for the driver-side free: the ledger cannot see a leaked VkDeviceMemory
+// because the reservation rolls back either way. Returns UINT64_MAX when the extension is absent.
+static uint64_t vk_test_driver_heap_usage(vk_device & device) {
+    if (device->idx >= vk_instance.device_supports_membudget.size() ||
+        !vk_instance.device_supports_membudget[device->idx]) {
+        return UINT64_MAX;
+    }
+    vk::PhysicalDeviceMemoryBudgetPropertiesEXT budgetprops;
+    vk::PhysicalDeviceMemoryProperties2 memprops = {};
+    memprops.pNext = &budgetprops;
+    device->physical_device.getMemoryProperties2(&memprops);
+
+    uint64_t total = 0;
+    for (uint32_t i = 0; i < memprops.memoryProperties.memoryHeapCount; ++i) {
+        total += budgetprops.heapUsage[i];
+    }
+    return total;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Production fault probe.
+//
+// Injects a failure at `stage` inside the REAL ggml_vk_create_buffer() and reports what the
+// production cleanup left behind. Return: 0 = probe ran, -1 = no Vulkan device (caller skips).
+// ---------------------------------------------------------------------------------------------
+GGML_BACKEND_API int ggml_vk_heapres_fault_probe(int      stage,
+                                                 uint64_t size,
+                                                 int      host_visible,
+                                                 uint64_t * reserved_before,
+                                                 uint64_t * reserved_after,
+                                                 int      * mapped,
+                                                 int      * threw,
+                                                 uint64_t * driver_usage_after,
+                                                 int      * bda_supported,
+                                                 int      * bda_executed) {
+    ggml_vk_instance_init();
+    if (vk_instance.device_indices.empty()) {
+        return -1;
+    }
+
+    vk_device device = ggml_vk_get_device(0);
+
+    *reserved_before = device->heap_ledger.total_reserved();
+    *threw           = 0;
+    *bda_supported   = device->buffer_device_address ? 1 : 0;
+    vk_test_fault_bda.store(0, std::memory_order_relaxed);
+    vk_test_fault_mapped.store(0, std::memory_order_relaxed);
+    vk_test_fault_stage_active.store(stage, std::memory_order_relaxed);
+
+    try {
+        vk_buffer buf;
+        if (host_visible) {
+            buf = ggml_vk_create_buffer(device, (size_t) size,
+                                        { vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent });
+        } else {
+            buf = ggml_vk_create_buffer(device, (size_t) size,
+                                        { vk::MemoryPropertyFlagBits::eDeviceLocal });
+        }
+        buf.reset();  // stage 0 (no fault): normal destruction, must release exactly once
+    } catch (const std::exception &) {
+        *threw = 1;
+    }
+
+    vk_test_fault_stage_active.store(VK_TEST_FAULT_NONE, std::memory_order_relaxed);
+    *mapped             = vk_test_fault_mapped.load(std::memory_order_relaxed);
+    *bda_executed       = vk_test_fault_bda.load(std::memory_order_relaxed);
+    *reserved_after     = device->heap_ledger.total_reserved();
+    *driver_usage_after = vk_test_driver_heap_usage(device);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// R46b B7a-R3 (finding 1): destruction ORDER probe.
+//
+// "after == before" cannot see the difference between releasing the ledger before and after
+// vkFreeMemory. This samples the ledger at the exact instant the driver memory is handed back:
+//   correct order -> the sample still includes this buffer's bytes (== reserved while alive)
+//   wrong order   -> the sample already excludes them (== reserved after destruction)
+// The witness is armed only across the single buf.reset() below.
+// Return: 0 = probe ran, -1 = no Vulkan device.
+// ---------------------------------------------------------------------------------------------
+GGML_BACKEND_API int ggml_vk_heapres_destroy_order_probe(uint64_t   size,
+                                                         uint64_t * reserved_before,
+                                                         uint64_t * reserved_alive,
+                                                         uint64_t * reserved_at_driver_free,
+                                                         uint64_t * reserved_after) {
+    ggml_vk_instance_init();
+    if (vk_instance.device_indices.empty()) {
+        return -1;
+    }
+
+    vk_device device = ggml_vk_get_device(0);
+
+    *reserved_before = device->heap_ledger.total_reserved();
+
+    vk_buffer buf = ggml_vk_create_buffer(device, (size_t) size,
+                                          { vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent });
+    *reserved_alive = device->heap_ledger.total_reserved();
+
+    vk_test_reserved_at_driver_free.store(UINT64_MAX, std::memory_order_relaxed);
+    vk_test_destroy_witness_armed.store(1, std::memory_order_release);
+    buf.reset();
+    vk_test_destroy_witness_armed.store(0, std::memory_order_release);
+
+    *reserved_at_driver_free = vk_test_reserved_at_driver_free.load(std::memory_order_acquire);
+    *reserved_after          = device->heap_ledger.total_reserved();
+    return 0;
+}
+
+}  // extern "C"
+#endif // GGML_VK_INTERNAL_TESTS
