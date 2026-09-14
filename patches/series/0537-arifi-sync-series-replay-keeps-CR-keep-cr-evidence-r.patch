@@ -1,0 +1,117 @@
+From 3dba3a9c7b97020a80dc7a9b735a0fce72137da5 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 06:10:36 -0400
+Subject: [PATCH] arifi-sync: series replay keeps CR (--keep-cr); evidence
+ receipts restored to their original LF bytes
+
+The -text renormalize took the CRLF checkout bytes as the blob, turning LF receipts into CRLF
+blobs that git am (which strips CR by default) could never reproduce. Receipts are back to the
+LF bytes their tools wrote; replay now applies with --keep-cr and core.autocrlf=false so any
+future byte-exact receipt survives the round trip.
+
+Origin: ArifiLabs (native) - HQ seat-58 root fix for replay parity
+Measured-effect: UNMEASURED - tooling and evidence bytes
+Lane: lane-233
+---
+ r46b-b7b-loader-evidence/01-build-llama.rc    |    2 +-
+ r46b-b7b-loader-evidence/01-build-llama.txt   | 1422 ++++++++---------
+ .../02-test-alloc-baseline.rc                 |    2 +-
+ .../02-test-alloc-baseline.txt                |   34 +-
+ .../03-heapres-baseline.rc                    |    2 +-
+ .../03-heapres-baseline.txt                   |  264 +--
+ r46b-b7b-loader-evidence/04-build-tests.txt   |   18 +-
+ r46b-b7b-loader-evidence/10-build-final.rc    |    2 +-
+ r46b-b7b-loader-evidence/10-build-final.txt   |   14 +-
+ r46b-b7b-loader-evidence/11-test-alloc.rc     |    2 +-
+ r46b-b7b-loader-evidence/11-test-alloc.txt    |   54 +-
+ r46b-b7b-loader-evidence/12-heapres.rc        |    2 +-
+ r46b-b7b-loader-evidence/12-heapres.txt       |  264 +--
+ r46b-b7b-loader-evidence/13-backendops-add.rc |    2 +-
+ .../13-backendops-add.txt                     |  250 +--
+ r46b-b7b-loader-evidence/14-ctest.rc          |    2 +-
+ r46b-b7b-loader-evidence/14-ctest.txt         |   24 +-
+ .../29-red-revert-identity.txt                |   12 +-
+ r46b-b7b-loader-evidence/2a-red-a.rc          |    2 +-
+ r46b-b7b-loader-evidence/2a-red-a.txt         |   48 +-
+ r46b-b7b-loader-evidence/2b-red-b.rc          |    2 +-
+ r46b-b7b-loader-evidence/2b-red-b.txt         |   54 +-
+ r46b-b7b-loader-evidence/2c-red-c.rc          |    2 +-
+ r46b-b7b-loader-evidence/2c-red-c.txt         |   52 +-
+ r46b-b7b-loader-evidence/2d-red-d.rc          |    2 +-
+ r46b-b7b-loader-evidence/2d-red-d.txt         |   48 +-
+ r46b-b7b-loader-evidence/2e-red-e.rc          |    2 +-
+ r46b-b7b-loader-evidence/2e-red-e.txt         |   64 +-
+ r46b-b7b-loader-evidence/30-build-final.rc    |    2 +-
+ r46b-b7b-loader-evidence/30-build-final.txt   | 1422 ++++++++---------
+ .../31-test-alloc-final.rc                    |    2 +-
+ .../31-test-alloc-final.txt                   |   54 +-
+ r46b-b7b-loader-evidence/32-heapres-final.rc  |    2 +-
+ r46b-b7b-loader-evidence/32-heapres-final.txt |  264 +--
+ .../33-backendops-add-final.rc                |    2 +-
+ .../33-backendops-add-final.txt               |  250 +--
+ r46b-b7b-loader-evidence/34-diff-check.rc     |    2 +-
+ .../35-hashes-and-diffstat.txt                |   20 +-
+ .../50-build-llama-cli.rc                     |    2 +-
+ .../50-build-llama-cli.txt                    |  208 +--
+ .../51-load-only-27b-q4kxl.done               |    2 +-
+ .../51-load-only-27b-q4kxl.rc                 |    2 +-
+ .../52-load-only-27b-q4kxl-verbose.rc         |    2 +-
+ .../53-load-negative-84g-flashnext.rc         |    2 +-
+ .../54-load-cells-summary.txt                 |   24 +-
+ r46b-b7c-evidence/01-build.rc                 |    2 +-
+ r46b-b7c-evidence/01-build.txt                |   36 +-
+ r46b-b7c-evidence/02-test-alloc.rc            |    2 +-
+ r46b-b7c-evidence/02-test-alloc.txt           |   66 +-
+ r46b-b7c-evidence/03-heapres.rc               |    2 +-
+ r46b-b7c-evidence/03-heapres.txt              |  332 ++--
+ r46b-b7c-evidence/04-backendops-add.rc        |    2 +-
+ r46b-b7c-evidence/04-backendops-add.txt       |  250 +--
+ r46b-b7c-evidence/05-ctest.rc                 |    2 +-
+ r46b-b7c-evidence/05-ctest.txt                |   24 +-
+ r46b-b7c-evidence/06-diff-check.rc            |    2 +-
+ r46b-b7c-evidence/06-diff-check.txt           |    2 +-
+ r46b-b7c-evidence/10-build-final.rc           |    2 +-
+ r46b-b7c-evidence/10-build-final.txt          |   26 +-
+ r46b-b7c-evidence/11-test-alloc.rc            |    2 +-
+ r46b-b7c-evidence/11-test-alloc.txt           |   66 +-
+ r46b-b7c-evidence/12-heapres.rc               |    2 +-
+ r46b-b7c-evidence/12-heapres.txt              |  332 ++--
+ r46b-b7c-evidence/13-add.rc                   |    2 +-
+ r46b-b7c-evidence/13-add.txt                  |  250 +--
+ r46b-b7c-evidence/14-ctest.rc                 |    2 +-
+ r46b-b7c-evidence/14-ctest.txt                |   24 +-
+ r46b-b7c-evidence/15-diff-check.rc            |    2 +-
+ r46b-b7c-evidence/15-diff-check.txt           |    2 +-
+ r46b-b7c-evidence/16-hashes-census.txt        |   30 +-
+ r46b-b7c-evidence/50-build-llama-cli-hq.rc    |    2 +-
+ r46b-b7c-evidence/50-build-llama-cli-hq.txt   |   22 +-
+ r46b-b7c-evidence/51-cell-A-q4kxl-nosplit.rc  |    2 +-
+ r46b-b7c-evidence/52-cell-B-sx8-27b.rc        |    2 +-
+ .../53-cell-B-sx8-27b-splitmax0.rc            |    2 +-
+ r46b-b7c-evidence/54-cell-C-84g-negative.rc   |    2 +-
+ r46b-b7c-evidence/55-load-cells-summary.txt   |   30 +-
+ r46b-b7c-evidence/red-a-reserve-skipped.rc    |    2 +-
+ r46b-b7c-evidence/red-a-reserve-skipped.txt   |  354 ++--
+ r46b-b7c-evidence/red-b-bound-off-by-one.rc   |    2 +-
+ r46b-b7c-evidence/red-b-bound-off-by-one.txt  |  354 ++--
+ r46b-b7c-evidence/red-c-double-release.rc     |    2 +-
+ r46b-b7c-evidence/red-c-double-release.txt    |  354 ++--
+ r46b-b7c-evidence/red-restore-identity.txt    |    2 +-
+ r46b-b7c-evidence/red-restored-green.rc       |    2 +-
+ r46b-b7c-evidence/red-restored-green.txt      |  354 ++--
+ tools/arifi-sync/arifi_sync.py                |    2 +-
+ 87 files changed, 3932 insertions(+), 3932 deletions(-)
+
+diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
+index e9f6fc912..d6762054d 100644
+--- a/tools/arifi-sync/arifi_sync.py
++++ b/tools/arifi-sync/arifi_sync.py
+@@ -679,7 +679,7 @@ def _replay(repo: str, cfg: dict, onto: str, series_path: str, expect_ref: str =
+             # Git-for-Windows default (true) `git am` eol-converts any file the base's .gitattributes
+             # does not yet mark -text, and the replayed tree differs from arifi/main by line endings
+             # alone (HQ seat-58, 2026-09-14: eight evidence receipts, 1584 lines swapped).
+-            rc, out, err = git(wt, "-c", "core.autocrlf=false", "am", "--keep-non-patch", patch, check=False)
++            rc, out, err = git(wt, "-c", "core.autocrlf=false", "am", "--keep-cr", "--keep-non-patch", patch, check=False)
+             if rc != 0:
+                 say("\n" + "=" * 78)
+                 say("REPLAY FAILED - STOPPING. Nothing was auto-resolved.")
