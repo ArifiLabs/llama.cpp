@@ -81,6 +81,53 @@ GGML_API size_t                       ggml_backend_alloc_ctx_tensors_from_buft_s
 GGML_API struct ggml_backend_buffer * ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft);
 GGML_API struct ggml_backend_buffer * ggml_backend_alloc_ctx_tensors(struct ggml_context * ctx, ggml_backend_t backend);
 
+// R46b B7b — loader-wide allocation transaction across several (context, buffer type) groups.
+//
+// ggml_backend_alloc_ctx_tensors_from_buft() is a transaction over ONE group: it decides the whole
+// set of buffers for one (ctx, buft) pair before allocating any of them. A model load issues many
+// such calls, and each completed call has already allocated before the next group's sizes are even
+// known. This object is the owner that spans them:
+//
+//   init()   -> add(ctx, buft) for every group the load intends to allocate   (census, no allocation)
+//   commit()                                                                  (reserve, no allocation)
+//   alloc(ctx, buft) per group                                                (consume reservations)
+//   free()                                                                    (release what was not consumed)
+//
+// commit() opens one backend batch plan per buffer type, covering every group of that buffer type
+// concatenated in add() order. If ANY buffer type cannot place its whole share, commit() releases
+// every plan it opened and returns false, so the load fails before the first plan-owned driver
+// allocation - no earlier group has been placed. Buffer types that do not implement planning answer
+// UNSUPPORTED and keep their current unplanned behaviour exactly, which is what leaves CPU and every
+// non-planning backend in a mixed-backend load semantically unchanged.
+//
+// free() must be called on every path, including exceptions in the caller's pass 2; it releases the
+// reservations of every group that was never consumed, exactly once. Buffers already returned by
+// alloc() are owned by the caller and are not touched.
+//
+// Group ownership states: censused (after add), reserved (after commit), consumed (after a
+// successful alloc), released (after free). A group's reservation is charged exactly once by
+// commit() and discharged exactly once - either by alloc() adopting it into a buffer, or by free().
+//
+// SCOPE: this is the model TENSOR load boundary. KV cache and compute buffers are allocated later,
+// during context construction, and are not part of this transaction.
+struct ggml_backend_alloc_plan;
+typedef struct ggml_backend_alloc_plan * ggml_backend_alloc_plan_t;
+
+// returns NULL on allocation failure
+GGML_API ggml_backend_alloc_plan_t ggml_backend_alloc_plan_init(void);
+// census one group. Returns true if the group joined the transaction. False means it did not (a
+// buffer type that cannot be planned by this path, or a context with nothing left to allocate) or
+// that the transaction failed; either way ggml_backend_alloc_plan_alloc() still handles the group.
+GGML_API bool                         ggml_backend_alloc_plan_add(ggml_backend_alloc_plan_t plan, struct ggml_context * ctx, ggml_backend_buffer_type_t buft);
+// decide and reserve every censused group atomically. False = the load must not start.
+GGML_API bool                         ggml_backend_alloc_plan_commit(ggml_backend_alloc_plan_t plan);
+// allocate one group, consuming its reservation. Groups that never joined the transaction fall
+// through to ggml_backend_alloc_ctx_tensors_from_buft(). NULL on failure, exactly as that function.
+GGML_API struct ggml_backend_buffer * ggml_backend_alloc_plan_alloc(ggml_backend_alloc_plan_t plan, struct ggml_context * ctx, ggml_backend_buffer_type_t buft);
+// release every unconsumed reservation and destroy the transaction. Safe on NULL and on a
+// transaction that was never committed.
+GGML_API void                         ggml_backend_alloc_plan_free(ggml_backend_alloc_plan_t plan);
+
 #ifdef  __cplusplus
 }
 #endif
