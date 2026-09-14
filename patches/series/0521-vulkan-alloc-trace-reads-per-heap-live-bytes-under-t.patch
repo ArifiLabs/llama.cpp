@@ -1,0 +1,30 @@
+From ef70171b3dfef0f05f49d74a0df084bfb8b2cc3f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 11 Sep 2026 04:09:33 -0400
+Subject: [PATCH] vulkan : alloc-trace reads per-heap live bytes under the lock
+ (R47a, lane-232)
+
+vk_alloc_trace_heap_live_str() walked the heap map with no lock while allocation paths can insert
+from another thread - a crash inside the instrument during the one run it exists for. The helper
+now takes the same mutex; no call site holds it, so there is no recursion.
+
+Origin: ArifiLabs (native)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 0d7ee7798..7be4e9c91 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -3739,7 +3739,10 @@ static std::string vk_alloc_trace_budget_str(vk_device& device) {
+     return ss.str();
+ }
+ 
++// Takes the lock: allocation can run from more than one thread, and an unguarded read of the map
++// while another thread inserts would crash inside the instrument during the one run it exists for.
+ static std::string vk_alloc_trace_heap_live_str() {
++    std::lock_guard<std::mutex> guard(vk_alloc_trace().mutex);
+     std::stringstream ss;
+     ss << "heap_live=[";
+     bool first = true;
