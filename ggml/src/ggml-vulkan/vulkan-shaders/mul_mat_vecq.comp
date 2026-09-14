@@ -31,10 +31,18 @@ uint a_offset, b_offset, d_offset;
 int32_t cache_b_qs[K_PER_ITER / 4];
 vec2 cache_b_ds;
 
+// arifi lane-235 / R48b: MMVQ A-side hoist. 0 = the inherited nest, which re-runs the whole
+// weight decode inside the column loop; 1 = decode each row once per (row, k-slice) into
+// registers, then loop the columns doing only the B load and the integer dot. Both arms call
+// the same mmvq_load_a() / mmvq_dot_a() pair in the same order, so results are bit-identical.
+// Default 0 on purpose: a create site that omits the constant keeps the inherited nest rather
+// than silently opting in. The host (ggml-vulkan.cpp) supplies the value per pipeline.
+layout (constant_id = 3) const uint ARIFI_MMVQ_A_HOIST = 0;
+
 #include "mul_mat_vecq_funcs.glsl"
 
-void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const uint num_rows, const uint col, const uint b_qs_idx) {
-    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+// The B-side load, factored out verbatim so both nests call it at the identical point.
+void cache_b_block(const uint j, const uint col, const uint b_qs_idx) {
         // Preload data_b block
         const uint b_block_idx = (j*p.batch_stride_b + col) / QUANT_K_Q8_1 + b_offset;
         const uint b_block_idx_outer = b_block_idx / 4;
@@ -67,13 +75,47 @@ void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const
 #error unimplemented
 #endif
 #endif
+}
+
+void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const uint num_rows, const uint col, const uint b_qs_idx) {
+    // NUM_COLS == 1 has no redundancy to remove, so it folds to the inherited nest at
+    // pipeline-compile time -- both of these are specialization constants.
+    if (ARIFI_MMVQ_A_HOIST != 0 && NUM_COLS > 1) {
+        // Static trip over NUM_ROWS with an `n < num_rows` guard, not a runtime trip over
+        // num_rows: a_dec then has a compile-time extent and every index is constant after
+        // unrolling, which is what lets the array live in registers instead of scratch.
+        mmvq_a_t a_dec[NUM_ROWS];
 
         uint ibi = first_row*p.ncols;
-        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+        [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
             const uint a_block_idx = (ibi + col)/QUANT_K_Q8_1 + a_offset;
             ibi += p.ncols;
 
-            temp[j][n] += mmvq_dot_product(a_block_idx, b_qs_idx);
+            if (n < num_rows) {
+                a_dec[n] = mmvq_load_a(a_block_idx, b_qs_idx);
+            }
+        }
+
+        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+            cache_b_block(j, col, b_qs_idx);
+
+            [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
+                if (n < num_rows) {
+                    temp[j][n] += mmvq_dot_a(a_dec[n]);
+                }
+            }
+        }
+    } else {
+        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+            cache_b_block(j, col, b_qs_idx);
+
+            uint ibi = first_row*p.ncols;
+            [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+                const uint a_block_idx = (ibi + col)/QUANT_K_Q8_1 + a_offset;
+                ibi += p.ncols;
+
+                temp[j][n] += mmvq_dot_product(a_block_idx, b_qs_idx);
+            }
         }
     }
 }
