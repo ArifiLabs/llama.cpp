@@ -11158,6 +11158,30 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 248320, n,  5120, {1, 1}, {1, 1}));
     }
 
+    // ArifiLabs lane-236 / R48c: Q6_K mat-vec at the three real 27B decode shapes, n = 1..8, as
+    // CORRECTNESS cases. Q6_K is 19.7% of the interactive Q4_K_XL 27B bytes (3.19 GiB, 56 tensors)
+    // and mul_mat_vec_q6_k.comp gained a second specialization constant (activation hoist +
+    // (-32) fold, GGML_ARIFI_Q6K_XFOLD). That arm is NOT bit-identical to the shipped one - the
+    // -32 moves out of the fma chain into one fma per sub-block - so it must be held to the
+    // MUL_MAT NMSE gate on the shapes it actually runs on, at every width, in both arms of
+    // GGML_ARIFI_Q6K_XFOLD and both arms of GGML_VK_Q6K_DIRECT_SCALES.
+    //
+    // F16 src1 is included because mul_mat_vec_q6_k_f16_f32 takes the same constant (:7166) and
+    // an f32-only sweep would leave that pipeline uncovered.
+    for (int n : {1, 2, 3, 4, 5, 6, 7, 8}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32,  17408, n,  5120, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32,   5120, n, 17408, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 248320, n,  5120, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F16,  17408, n,  5120, {1, 1}, {1, 1}));
+    }
+    // Row tail: stride_d not a multiple of NUM_ROWS (rm_kq = 2 on the 780M) exercises the
+    // `num_rows = p.stride_d - first_row` path in main(), where the hoisted activation tile is
+    // reused across FEWER rows than the pipeline was specialized for.
+    for (int n : {1, 2, 8}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 17407, n, 5120, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32,     7, n, 5120, {1, 1}, {1, 1}));
+    }
+
     // K not a multiple of 32
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F16, 64, 32,  65, {1, 1}, {1, 1}));
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F16, 64, 32,  80, {1, 1}, {1, 1}));
@@ -12418,6 +12442,27 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
             if (bs == 6 || bs == 7) {
                 test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 4096, bs, 14336, {1, 1}, {1, 1}));
             }
+        }
+    }
+
+    // ArifiLabs lane-236 / R48c: Q6_K (the subject) and Q5_K (the mark the phase is measured
+    // toward) on the same three 27B shapes and the same widths as the block above.
+    //
+    // Deliberately a SEPARATE loop rather than two more entries in that block's type list: that
+    // block is the S-X8 rows/workgroup sweep's own target (see its comment), the sweep runs it 9
+    // times over GGML_VK_SX8_MMV_ROWS x GGML_VK_SX8_MMV_WG, and widening its type list would have
+    // made every one of those 9 runs ~67% longer for rows those env vars do not touch. Q4_K sits
+    // in the block above and serves as the shared control across both.
+    //
+    // Read the four quant rows together, but as ROUTES, not as kernels: at n=1 on AMD with
+    // k >= 2048, ggml_vk_should_use_mmvq() returns true for Q4_K and Q5_K and false for Q6_K
+    // (ggml-vulkan.cpp:11724 vs :11841-11850), so the Q4_K/Q5_K numbers are q8_1 integer-dot and
+    // the Q6_K number is f32-dequant. GGML_ARIFI_Q6K_MMVQ=1 makes the comparison like-for-like.
+    for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
+        for (ggml_type type_a : {GGML_TYPE_Q5_K, GGML_TYPE_Q6_K}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, bs,  5120, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, bs, 17408, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, bs,  5120, {1, 1}, {1, 1}));
         }
     }
 

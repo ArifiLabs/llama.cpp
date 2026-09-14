@@ -27,6 +27,40 @@ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 // The host reads GGML_VK_Q6K_DIRECT_SCALES=0 to build the pipelines with 0.
 layout (constant_id = 3) const uint ARIFI_Q6K_DIRECT_SCALES = 1;
 
+// ArifiLabs lane-236 R48c - ACTIVATION HOIST + (-32) FOLD.
+//
+// Two per-byte costs this shader pays and its q4_k / q5_k siblings do not:
+//
+//   1. The four data_b vec4 loads of a superblock sit inside the `for n < num_rows` row loop,
+//      so they are issued num_rows times for bytes that do not depend on the row at all.
+//      (rm_kq = 2 on this box, so exactly twice as often as needed.)
+//   2. q6_K weights are biased: every weight needs a `- 32`. That is 16 v_sub_f32 per thread
+//      per superblock PER ROW. q4_k / q5_k are unsigned and pay none of it.
+//
+// Arm 1 fixes both with one restructure, because the fix for (2) needs what the fix for (1)
+// produces: sum_l b[l]*(u[l] - 32) == sum_l b[l]*u[l] - 32 * sum_l b[l], and sum_l b[l] is
+// activation-only, so it is computed once per superblock alongside the hoisted loads and reused
+// across every row. 16 subtractions per row become one fma per sub-block per column.
+//
+// This is NOT bit-identical to arm 0: the -32 moves from inside the fma chain to a single fma
+// after it, which reorders float sums. It is applied identically in BOTH ARIFI_Q6K_DIRECT_SCALES
+// arms, so the direct-scales win's gate - that its two arms are bit-identical TO EACH OTHER -
+// is untouched. FLOAT_TYPE is `float` for every mat-vec pipeline (vulkan-shaders-gen.cpp:846
+// base_dict), never float16_t, so the cancellation in `rawsum - 32*xsum` happens in fp32.
+//
+// The fold carries its own n-GATE at NUM_COLS <= 3 (see the count at the gate itself): it
+// removes 16 subtractions per row but adds 4 fma per row PER COLUMN, so it inverts at width 5+.
+// The hoist has no such crossover and applies at every width in arm 1.
+//
+// Gated by specialization constant 4 so ONE binary serves both arms:
+//   1 (default) = hoist + (n<=3) fold   0 = shipped order, byte for byte.
+// The host reads GGML_ARIFI_Q6K_XFOLD=0 to build the pipelines with 0. Separate constant from
+// DIRECT_SCALES on purpose: this one changes live register state (NUM_COLS x 4 vec4 held across
+// the row loop), which is the shape that spilled in lane-230 - see mul_mat_vec_sx8.comp:60-71,
+// where whole-block ownership lost -45% at n=5 and -77% at n=8. A kernel written without a
+// compiler must keep a one-binary way to back that out.
+layout (constant_id = 4) const uint ARIFI_Q6K_XFOLD = 1;
+
 shared FLOAT_TYPE sccache[2][BLOCK_SIZE/16][16];
 
 FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
@@ -39,6 +73,43 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
     }
 
     const uint y_idx = i * QUANT_K + y_offset;
+
+    // Hoisted activation tile + its per-sub-block sum. Row-independent, so loaded once per
+    // superblock and reused across all num_rows rows. When ARIFI_Q6K_XFOLD == 0 the whole block
+    // is folded away by the specialization pass and these are dead.
+    //
+    // The `i < num_blocks_per_row` guard matters only in the ARIFI_Q6K_DIRECT_SCALES == 0 arm:
+    // there a thread with no block still enters calc_superblock (it has to reach the barrier) and
+    // y_idx would index past data_b. In the DIRECT_SCALES != 0 arm the early return above already
+    // makes the guard true. No barrier is inside it, so it is safe to be non-uniform.
+    vec4 bc0[NUM_COLS], bc32[NUM_COLS], bc64[NUM_COLS], bc96[NUM_COLS];
+    FLOAT_TYPE xs0[NUM_COLS], xs32[NUM_COLS], xs64[NUM_COLS], xs96[NUM_COLS];
+    if (ARIFI_Q6K_XFOLD != 0 && i < num_blocks_per_row) {
+        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+            bc0[j]  = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4     ]);
+            bc32[j] = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 +  8]);
+            bc64[j] = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 16]);
+            bc96[j] = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 24]);
+
+            // n-GATE on the FOLD only (the hoist above is unconditional within arm 1).
+            //
+            // Counted per thread per superblock per row: dropping the `- 32` removes 16 v_sub;
+            // paying the offset once per sub-block costs 4 fma PER COLUMN. Net = NUM_COLS*4 - 16,
+            // so the fold is a win at NUM_COLS <= 3, exactly break-even at 4, and a LOSS at 5..8.
+            // Gated at <= 3 for the same reason and in the same shape as the S-X8 n-GATE
+            // (mul_mat_vec_sx8.comp:72). NUM_COLS is specialization constant 2, fixed per pipeline
+            // at creation, so only one side is ever register-allocated.
+            //
+            // Stated summation order: (x + y) + (z + w). Pairwise, so the order is pinned by the
+            // parentheses rather than left to the compiler (dot() would not pin it).
+            if (NUM_COLS <= 3) {
+                xs0[j]  = (FLOAT_TYPE(bc0[j].x)  + FLOAT_TYPE(bc0[j].y))  + (FLOAT_TYPE(bc0[j].z)  + FLOAT_TYPE(bc0[j].w));
+                xs32[j] = (FLOAT_TYPE(bc32[j].x) + FLOAT_TYPE(bc32[j].y)) + (FLOAT_TYPE(bc32[j].z) + FLOAT_TYPE(bc32[j].w));
+                xs64[j] = (FLOAT_TYPE(bc64[j].x) + FLOAT_TYPE(bc64[j].y)) + (FLOAT_TYPE(bc64[j].z) + FLOAT_TYPE(bc64[j].w));
+                xs96[j] = (FLOAT_TYPE(bc96[j].x) + FLOAT_TYPE(bc96[j].y)) + (FLOAT_TYPE(bc96[j].z) + FLOAT_TYPE(bc96[j].w));
+            }
+        }
+    }
 
     [[unroll]] for (uint n = 0; n < num_rows; ++n) {
         const uint ib0 = a_offset + (first_row+n)*num_blocks_per_row;
@@ -75,10 +146,16 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
         const uint32_t q2_u32 = ql0_u32_hi4  | qh4_u32;
         const uint32_t q3_u32 = ql32_u32_hi4 | qh6_u32;
 
-        const vec4 q0 = vec4(unpack8(q0_u32)) - 32;
-        const vec4 q1 = vec4(unpack8(q1_u32)) - 32;
-        const vec4 q2 = vec4(unpack8(q2_u32)) - 32;
-        const vec4 q3 = vec4(unpack8(q3_u32)) - 32;
+        // Arm 1 keeps the raw 0..63 codes; the -32 is applied once per sub-block per column below.
+        const vec4 u0 = vec4(unpack8(q0_u32));
+        const vec4 u1 = vec4(unpack8(q1_u32));
+        const vec4 u2 = vec4(unpack8(q2_u32));
+        const vec4 u3 = vec4(unpack8(q3_u32));
+
+        const vec4 q0 = (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) ? u0 : (u0 - 32);
+        const vec4 q1 = (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) ? u1 : (u1 - 32);
+        const vec4 q2 = (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) ? u2 : (u2 - 32);
+        const vec4 q3 = (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) ? u3 : (u3 - 32);
 
         FLOAT_TYPE sc0, sc2, sc4, sc6;
         if (ARIFI_Q6K_DIRECT_SCALES == 0) {
@@ -102,10 +179,15 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
         const FLOAT_TYPE d = FLOAT_TYPE(data_a[ib0 + i].d);
 
         [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
-            vec4 by0  = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4     ]);
-            vec4 by32 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 +  8]);
-            vec4 by64 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 16]);
-            vec4 by96 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 24]);
+            vec4 by0, by32, by64, by96;
+            if (ARIFI_Q6K_XFOLD != 0) {
+                by0 = bc0[j]; by32 = bc32[j]; by64 = bc64[j]; by96 = bc96[j];
+            } else {
+                by0  = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4     ]);
+                by32 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 +  8]);
+                by64 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 16]);
+                by96 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 24]);
+            }
 
             FLOAT_TYPE sum[4] = {0, 0, 0, 0};
             [[unroll]] for (uint l = 0; l < 4; ++l) {
@@ -113,6 +195,12 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
                 sum[1] = fma(FLOAT_TYPE(by32[l]), q1[l], sum[1]);
                 sum[2] = fma(FLOAT_TYPE(by64[l]), q2[l], sum[2]);
                 sum[3] = fma(FLOAT_TYPE(by96[l]), q3[l], sum[3]);
+            }
+            if (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) {
+                sum[0] = fma(FLOAT_TYPE(-32.0), xs0[j],  sum[0]);
+                sum[1] = fma(FLOAT_TYPE(-32.0), xs32[j], sum[1]);
+                sum[2] = fma(FLOAT_TYPE(-32.0), xs64[j], sum[2]);
+                sum[3] = fma(FLOAT_TYPE(-32.0), xs96[j], sum[3]);
             }
             temp[j][n] = fma(fma(sum[0], sc0, fma(sum[1], sc2, fma(sum[2], sc4, sum[3] * sc6))), d, temp[j][n]);
         }
