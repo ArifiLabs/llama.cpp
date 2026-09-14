@@ -133,6 +133,37 @@ ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t 
     return buft->iface.alloc_buffer(buft, size);
 }
 
+// R46b B7b — per-buffer-type batch allocation planning (scope: see ggml-backend-impl.h). A buffer
+// type that does not implement plan_begin is UNSUPPORTED and every caller falls back to the
+// per-buffer path, unchanged.
+ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status) {
+    GGML_ASSERT(buft);
+    GGML_ASSERT(status);
+    if (buft->iface.plan_begin == NULL) {
+        *status = GGML_BACKEND_PLAN_UNSUPPORTED;
+        return NULL;
+    }
+    // plan_alloc_buffer and plan_free are not optional once plan_begin exists.
+    GGML_ASSERT(buft->iface.plan_alloc_buffer && buft->iface.plan_free);
+    *status = GGML_BACKEND_PLAN_INDETERMINATE;
+    ggml_backend_buffer_type_plan_t plan = buft->iface.plan_begin(buft, sizes, n, status);
+    GGML_ASSERT((plan != NULL) == (*status == GGML_BACKEND_PLAN_FEASIBLE));
+    return plan;
+}
+
+ggml_backend_buffer_t ggml_backend_buft_plan_alloc_buffer(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i) {
+    GGML_ASSERT(buft && plan);
+    return buft->iface.plan_alloc_buffer(buft, plan, i);
+}
+
+void ggml_backend_buft_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan) {
+    if (plan == NULL) {
+        return;
+    }
+    GGML_ASSERT(buft);
+    buft->iface.plan_free(buft, plan);
+}
+
 size_t ggml_backend_buft_get_alignment(ggml_backend_buffer_type_t buft) {
     GGML_ASSERT(buft);
     return buft->iface.get_alignment(buft);

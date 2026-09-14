@@ -8,11 +8,40 @@
 extern "C" {
 #endif
 
-    #define GGML_BACKEND_API_VERSION 2
+    // R46b B7b-R2: bumped 2 -> 3 because ggml_backend_buffer_type_i grew three trailing hooks below.
+    // A dynamically loaded backend built against the old (smaller) layout must not be interpreted
+    // with the new one: ggml-backend-reg.cpp compares this value for strict equality, so an old DSO
+    // is now refused at load instead of having plan_begin read off the end of its smaller object.
+    #define GGML_BACKEND_API_VERSION 3
 
     //
     // Backend buffer type
     //
+
+    // R46b B7b — per-buffer-type batch allocation planning.
+    //
+    // A multi-buffer placement (ggml_backend_alloc_ctx_tensors_from_buft) knows the complete set of
+    // buffers it intends to allocate before it allocates the first one. A backend that implements
+    // these three optional hooks is handed that whole batch up front, so it can decide feasibility
+    // and reserve capacity for ALL of it atomically instead of discovering halfway through the
+    // batch that the remainder does not fit. The plan object is backend-defined and opaque.
+    //
+    // SCOPE — read this before calling it whole-load or whole-model planning. The unit is ONE
+    // (buffer type, context) batch, which is one call of ggml_backend_alloc_ctx_tensors_from_buft().
+    // Loader-wide, cross-buffer-type planning REMAINS OPEN: llama_model::load_tensors() calls that
+    // function once per ml.ctx_map entry and each completed call has already allocated before the
+    // next group's sizes are known, so no transaction spans the groups. Closing that needs a loader
+    // owner that collects every group's sizes first; this interface is the prerequisite substrate
+    // for it, not its completion.
+    struct ggml_backend_buffer_type_plan;
+    typedef struct ggml_backend_buffer_type_plan * ggml_backend_buffer_type_plan_t;
+
+    enum ggml_backend_plan_status {
+        GGML_BACKEND_PLAN_FEASIBLE      = 0, // a complete assignment exists and is now reserved
+        GGML_BACKEND_PLAN_INFEASIBLE    = 1, // no complete assignment exists; the load must not start
+        GGML_BACKEND_PLAN_INDETERMINATE = 2, // the backend did not finish deciding; caller policy
+        GGML_BACKEND_PLAN_UNSUPPORTED   = 3, // this buffer type does not implement planning
+    };
 
     struct ggml_backend_buffer_type_i {
         const char *          (*get_name)      (ggml_backend_buffer_type_t buft);
@@ -26,6 +55,20 @@ extern "C" {
         size_t                (*get_alloc_size)(ggml_backend_buffer_type_t buft, const struct ggml_tensor * tensor);
         // (optional) check if tensor data is in host memory and uses standard ggml tensor layout (defaults to false)
         bool                  (*is_host)       (ggml_backend_buffer_type_t buft);
+
+        // (optional) R46b B7b. Reserve capacity for the complete batch `sizes[0..n)` atomically.
+        // Returns a plan on FEASIBLE and NULL otherwise; *status always says which case it was.
+        // INDETERMINATE reports only that this backend did not finish deciding; what happens next
+        // is the CALLER's policy, and ggml_backend_alloc_ctx_tensors_from_buft() in ggml-alloc.c is
+        // the one that defines it (see the comment at its plan_begin call site).
+        // Appended at the end of the struct on purpose: every existing backend leaves these NULL
+        // and keeps its current unplanned behaviour.
+        ggml_backend_buffer_type_plan_t (*plan_begin)(ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status);
+        // (optional, required with plan_begin) allocate entry `i`, consuming its reservation.
+        ggml_backend_buffer_t           (*plan_alloc_buffer)(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i);
+        // (optional, required with plan_begin) release every UNCONSUMED reservation and free the
+        // plan. Buffers already built keep exactly their own charges.
+        void                            (*plan_free)(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan);
     };
 
     struct ggml_backend_buffer_type {
@@ -33,6 +76,11 @@ extern "C" {
         ggml_backend_dev_t device;
         void * context;
     };
+
+    // R46b B7b plan wrappers (internal: the plan type is backend-private, not public API).
+    GGML_API ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin       (ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status);
+    GGML_API ggml_backend_buffer_t           ggml_backend_buft_plan_alloc_buffer(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i);
+    GGML_API void                            ggml_backend_buft_plan_free        (ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan);
 
     // [TAG_ALLOC_SIZE_EXPAND]
     // returns true for ops that may require additional memory for fleeting data on some backends,

@@ -1124,12 +1124,25 @@ static void free_buffers(ggml_backend_buffer_t ** buffers, const size_t * n_buff
     free(*buffers);
 }
 
+// R46b B7b: one buffer this call's batch intends to allocate, decided in the counting pass before
+// any allocation happens.
+struct alloc_range {
+    struct ggml_tensor * first;
+    struct ggml_tensor * last;
+    size_t               size;
+};
+
 static bool alloc_tensor_range(struct ggml_context * ctx,
         struct ggml_tensor * first, struct ggml_tensor * last,
         ggml_backend_buffer_type_t buft, size_t size,
+        ggml_backend_buffer_type_plan_t plan, size_t plan_index,
         ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
 
-    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, size);
+    // R46b B7b: with a plan, this consumes the reservation the plan already made for entry
+    // plan_index instead of making a fresh one. Without a plan the call is exactly as before.
+    ggml_backend_buffer_t buffer = plan != NULL
+        ? ggml_backend_buft_plan_alloc_buffer(buft, plan, plan_index)
+        : ggml_backend_buft_alloc_buffer(buft, size);
     if (buffer == NULL) {
         GGML_LOG_ERROR("%s: failed to allocate %s buffer of size %zu\n", __func__, ggml_backend_buft_name(buft), size);
         free_buffers(buffers, n_buffers);
@@ -1176,6 +1189,12 @@ static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
     size_t n_buffers = 0;
     *nbytes_total = 0;
 
+    // R46b B7b pass 1: decide the COMPLETE set of buffers before allocating any of them. The split
+    // arithmetic and the *nbytes_total accumulation are byte-identical to the previous single-pass
+    // version; only the allocation moved out of the loop.
+    struct alloc_range * ranges = NULL;
+    size_t n_ranges = 0;
+
     size_t cur_buf_size = 0;
     struct ggml_tensor * first = ggml_get_first_tensor(ctx);
     for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
@@ -1185,10 +1204,16 @@ static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
         }
 
         if (cur_buf_size > 0 && (cur_buf_size + this_size) > max_size) {
-            // allocate tensors in the current buffer
-            if (!no_alloc && !alloc_tensor_range(ctx, first, t, buft, cur_buf_size, &buffers, &n_buffers)) {
+            struct alloc_range * grown = realloc(ranges, sizeof(struct alloc_range) * (n_ranges + 1));
+            if (grown == NULL) {
+                free(ranges);
                 return NULL;
             }
+            ranges = grown;
+            ranges[n_ranges].first = first;
+            ranges[n_ranges].last  = t;
+            ranges[n_ranges].size  = cur_buf_size;
+            n_ranges++;
             first = t;
             *nbytes_total += cur_buf_size;
             cur_buf_size = this_size;
@@ -1197,17 +1222,80 @@ static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
         }
     }
 
-    // allocate remaining tensors
+    // remaining tensors
     if (cur_buf_size > 0) {
+        struct alloc_range * grown = realloc(ranges, sizeof(struct alloc_range) * (n_ranges + 1));
+        if (grown == NULL) {
+            free(ranges);
+            return NULL;
+        }
+        ranges = grown;
+        ranges[n_ranges].first = first;
+        ranges[n_ranges].last  = NULL;
+        ranges[n_ranges].size  = cur_buf_size;
+        n_ranges++;
         *nbytes_total += cur_buf_size;
-        if (!no_alloc && !alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
+    }
+
+    if (no_alloc) {
+        free(ranges);
+        return NULL;
+    }
+
+    // R46b B7b pass 2: hand this call's whole batch of buffers to the backend first. A backend that
+    // can decide feasibility refuses the batch here, BEFORE the first driver allocation, instead of
+    // leaving a partially placed batch behind. The unit is exactly this one (buft, ctx) call;
+    // planning ACROSS the buffer-type groups of a model load is still open (ggml-backend-impl.h).
+    //
+    // R46b B7b-R2 (check finding 5): a MULTI-buffer set is never allowed to fall through into the
+    // unplanned path on an undecided answer. INDETERMINATE means the backend did not finish
+    // deciding, so allocating anyway would start placing part of a set whose completion is unknown.
+    // For n_ranges > 1 that is refused before the first driver allocation. A single-buffer
+    // allocation (n_ranges == 1) has no partial state to leave behind and keeps its previous
+    // behaviour exactly, as does a buffer type that does not implement planning (UNSUPPORTED).
+    ggml_backend_buffer_type_plan_t plan = NULL;
+    if (n_ranges > 0) {
+        size_t * sizes = malloc(sizeof(size_t) * n_ranges);
+        if (sizes == NULL) {
+            free(ranges);
+            return NULL;
+        }
+        for (size_t i = 0; i < n_ranges; i++) {
+            sizes[i] = ranges[i].size;
+        }
+        enum ggml_backend_plan_status status = GGML_BACKEND_PLAN_UNSUPPORTED;
+        plan = ggml_backend_buft_plan_begin(buft, sizes, n_ranges, &status);
+        free(sizes);
+        if (status == GGML_BACKEND_PLAN_INFEASIBLE) {
+            GGML_LOG_ERROR("%s: %s cannot place all %zu buffers of this allocation (%zu bytes total); "
+                           "failing before any allocation\n",
+                           __func__, ggml_backend_buft_name(buft), n_ranges, *nbytes_total);
+            free(ranges);
+            return NULL;
+        }
+        if (status == GGML_BACKEND_PLAN_INDETERMINATE && n_ranges > 1) {
+            GGML_LOG_ERROR("%s: %s could not decide placement for all %zu buffers of this allocation "
+                           "(%zu bytes total); refusing before any allocation rather than placing "
+                           "part of the set\n",
+                           __func__, ggml_backend_buft_name(buft), n_ranges, *nbytes_total);
+            free(ranges);
             return NULL;
         }
     }
 
-    if (no_alloc) {
-        return NULL;
+    for (size_t i = 0; i < n_ranges; i++) {
+        // alloc_tensor_range frees the buffers it already built on failure; plan_free then returns
+        // every reservation this plan still owns and never charged to a live buffer.
+        if (!alloc_tensor_range(ctx, ranges[i].first, ranges[i].last, buft, ranges[i].size,
+                                plan, i, &buffers, &n_buffers)) {
+            ggml_backend_buft_plan_free(buft, plan);
+            free(ranges);
+            return NULL;
+        }
     }
+    free(ranges);
+    // Every entry was consumed on this path, so this releases nothing and only frees the plan.
+    ggml_backend_buft_plan_free(buft, plan);
 
     if (n_buffers == 0) {
 #ifndef NDEBUG
