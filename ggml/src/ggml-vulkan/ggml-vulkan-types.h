@@ -1242,6 +1242,16 @@ struct vk_device_struct {
     // 0: default, 1: force mmvq, -1: disable mmvq
     int32_t mmvq_mode;
 
+    // arifi lane-235 / R48b: MMVQ A-side hoist state, probed ONCE at device creation because both
+    // the pipelines (specialization constant 3) and the routing (ggml_vk_should_use_mmvq) read it,
+    // and ggml_vk_load_shaders() is also called lazily for a single requested pipeline.
+    // mmvq_a_hoist is the device-level gate; the per-(type, NUM_COLS) narrowing is applied where
+    // the pipelines are created. mmvq_route_legacy=1 keeps the hoisted nest but restores the
+    // pre-R48b routing rules.
+    uint32_t mmvq_a_hoist;
+    uint32_t mmvq_a_hoist_iq1;
+    bool     mmvq_route_legacy;
+
     bool subgroup_size_control;
     uint32_t subgroup_min_size;
     uint32_t subgroup_max_size;

@@ -10825,9 +10825,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     // NUM_COLS spec-constant range (mul_mat_vec_max_cols = 8) including the NUM_COLS == 7 tail.
     //
     // These rows only REACH the changed shader with GGML_VK_FORCE_MMVQ=1: ggml_vk_should_use_mmvq()
-    // refuses Q6_K on non-Intel, needs GGML_ARIFI_SX8_MMVQ=1 for S-X8, gates ROCMFP4_FAST to
-    // n = 3 and 5, and drops Q4_K at n >= 5 and Q5_K at every n > 1 on AMD. Without the force most
-    // of this sweep silently measures the f32 dequant shader instead.
+    // refuses Q6_K on non-Intel, gates ROCMFP4_FAST to n = 3 and 5, and drops Q5_K at every n > 1
+    // on AMD. Without the force most of this sweep silently measures the f32 dequant shader
+    // instead. Two of these went by default in lane-235 / R48b phase 2, where the A-side hoist is
+    // live: S-X8 takes MMVQ at every width (GGML_ARIFI_SX8_MMVQ=0 hands it back) and Q4_K takes it
+    // at n >= 5 when k <= 8192, so the 17408x5120 and 248320x5120 q4_K rows are on the real route
+    // without the force and the 5120x17408 rows (k = 17408) still need it.
     for (ggml_type type_a : {
             GGML_TYPE_Q2_0, GGML_TYPE_Q2_0_G128,
             GGML_TYPE_Q4_0, GGML_TYPE_Q4_1, GGML_TYPE_Q5_0, GGML_TYPE_Q5_1, GGML_TYPE_Q8_0,
@@ -13040,6 +13043,7 @@ static sx8_ref_metrics sx8_ref_measure(const std::vector<float>  & got,
 enum sx8_ref_route {
     SX8_ROUTE_DEQUANT = 0,   // f32 dequant mat-vec shader
     SX8_ROUTE_Q8_1    = 1,   // q8_1 integer-dot mat-vec shader
+    SX8_ROUTE_UNKNOWN = 2,   // ArifiLabs lane-235 / R48b: decided by the device, see below
 };
 
 // mul_mat_vec_max_cols in ggml-vulkan.cpp: above it, ggml_vk_mul_mat() takes the
@@ -13050,23 +13054,51 @@ static const int64_t sx8_ref_mmv_max_cols = 8;
 // ggml-vulkan.cpp:10914 (sx8_mmvq_env[0] == '1', NOT atoi() != 0 - they disagree
 // on "2" and "01") and the GGML_VK_DISABLE_MMVQ / GGML_VK_FORCE_MMVQ overrides
 // evaluated before it at 8297-8302.
-static bool sx8_ref_mmvq_requested() {
+// ArifiLabs lane-235 / R48b phase 2 changed the DEFAULT: with the MMVQ A-side hoist live
+// (device-probed ON for AMD), S-X8 takes the q8_1 route at every width and GGML_ARIFI_SX8_MMVQ=0
+// is what hands it back to the whole-block f32 path. GGML_ARIFI_MMVQ_ROUTE=legacy restores the old
+// opt-in rule, and GGML_ARIFI_MMVQ_A_HOIST=0 removes the hoist and with it the new route.
+//
+// The hoist default is a VENDOR probe, and this test has no vendor. Sniffing the backend
+// description for "AMD"/"Radeon" was refused: it is brittle across driver naming and re-derives a
+// vendor_id check the backend already did. So every PINNED cell is mirrored exactly and the one
+// genuinely unknown cell -- new routing, hoist state not pinned by an env var -- is reported as
+// UNKNOWN and settled after measurement by the route witness. That costs no gate strength: the
+// witness gap is eight orders wide (worst dequant 1.5e-13, smallest q8_1 1.3e-5), so a reading
+// cannot sit in it by accident, and each route is still scored under its own bound.
+static sx8_ref_route sx8_ref_requested_route() {
     if (getenv("GGML_VK_DISABLE_MMVQ")) {
-        return false;
+        return SX8_ROUTE_DEQUANT;
     }
     if (getenv("GGML_VK_FORCE_MMVQ")) {
-        return true;
+        return SX8_ROUTE_Q8_1;
     }
     const char * env = getenv("GGML_ARIFI_SX8_MMVQ");
-    return env && env[0] == '1';
+
+    const char * hoist = getenv("GGML_ARIFI_MMVQ_A_HOIST");
+    const char * route = getenv("GGML_ARIFI_MMVQ_ROUTE");
+    const bool   legacy_rules = (hoist != nullptr && hoist[0] == '0') ||
+                                (route != nullptr && strcmp(route, "legacy") == 0);
+    if (legacy_rules) {
+        // Pre-R48b: only an exact '1' admits the type. The character test, not atoi() != 0 --
+        // they disagree on "2" and "01", and the backend uses the character test.
+        return (env != nullptr && env[0] == '1') ? SX8_ROUTE_Q8_1 : SX8_ROUTE_DEQUANT;
+    }
+    if (env != nullptr && env[0] == '0') {
+        // R48b routing, type handed back explicitly.
+        return SX8_ROUTE_DEQUANT;
+    }
+    // R48b routing on a device whose hoist default this test cannot see: q8_1 on AMD, dequant
+    // elsewhere. Settled per case by the witness.
+    return SX8_ROUTE_UNKNOWN;
 }
 
-static sx8_ref_route sx8_ref_route_of(const sx8_ref_case & c, bool mmvq_requested) {
-    if (!mmvq_requested)                      return SX8_ROUTE_DEQUANT;
+static sx8_ref_route sx8_ref_route_of(const sx8_ref_case & c, sx8_ref_route requested) {
+    if (requested == SX8_ROUTE_DEQUANT)       return SX8_ROUTE_DEQUANT;
     if (c.type_b != GGML_TYPE_F32)            return SX8_ROUTE_DEQUANT;  // 11087: src1 must be f32
     if ((c.n * c.k) % 4 != 0)                 return SX8_ROUTE_DEQUANT;  // 11087: (ne11*ne10) % 4
     if (c.n > sx8_ref_mmv_max_cols)           return SX8_ROUTE_DEQUANT;  // 11851: matmul path
-    return SX8_ROUTE_Q8_1;
+    return requested;                                                    // Q8_1 or UNKNOWN
 }
 
 // The bound. NOT the sweep's 5e-4 on the dequant route: that number exists to
@@ -13224,12 +13256,16 @@ static void sx8_ref_plant_red(std::vector<uint8_t> & a_dev) {
 }
 
 static bool run_sx8_reference_slice(ggml_backend_t backend, ggml_backend_t backend_cpu) {
-    const bool mmvq = sx8_ref_mmvq_requested();
+    const sx8_ref_route requested = sx8_ref_requested_route();
 
     printf("S-X8 independent-reference slice on %s\n", ggml_backend_name(backend));
     printf("  reference: dequantize_row_sx8() + double-precision dot, exact activations\n");
     printf("  inputs:    fixed, deterministic by (row, index); no RNG, no thread slicing\n");
-    printf("  request:   q8_1 activation quantization %s\n", mmvq ? "REQUESTED" : "not requested");
+    printf("  request:   q8_1 activation quantization %s\n",
+           requested == SX8_ROUTE_Q8_1    ? "REQUESTED (pinned by the environment)" :
+           requested == SX8_ROUTE_DEQUANT ? "not requested" :
+           "DEVICE DEFAULT (R48b routing: q8_1 where the A-side hoist is on, dequant elsewhere) - "
+           "route inferred per case from the witness");
     printf("  routing:   q8_1 requires an f32 activation (ggml-vulkan.cpp:11087); f16 activations stay on\n");
     printf("             the dequant route and are scored at %.3g even when q8_1 is requested. q8_1 cases\n",
            sx8_ref_bound(SX8_ROUTE_DEQUANT));
@@ -13245,8 +13281,11 @@ static bool run_sx8_reference_slice(ggml_backend_t backend, ggml_backend_t backe
     std::vector<sx8_ref_case> cases;
     // The ten m=1 reproducers, restored with fixed inputs. These are the ones
     // commit G removed from `test` mode; this is now their only home.
+    // ArifiLabs lane-235 / R48b phase 2: widened from {1,2,3,4,8} to every mat-vec width. S-X8 now
+    // takes the q8_1 route at EVERY width by default, so n=5,6,7 -- previously unreachable on this
+    // path and therefore never checked against an independent reference -- are now served widths.
     for (int64_t k : {1056, 5120}) {
-        for (int64_t n : {1, 2, 3, 4, 8}) {
+        for (int64_t n : {1, 2, 3, 4, 5, 6, 7, 8}) {
             cases.push_back({GGML_TYPE_F32, 1, n, k, "m1"});
         }
     }
@@ -13255,7 +13294,7 @@ static bool run_sx8_reference_slice(ggml_backend_t backend, ggml_backend_t backe
         // each next to its f32 twin. The twin is the same shape on the same data
         // over a path the CPU backend CAN run: it is the control that separates
         // "f16 activation handling is wrong" from "the reference is wrong".
-        for (int64_t n : {1, 2, 3, 8}) {
+        for (int64_t n : {1, 2, 3, 4, 5, 6, 7, 8}) {
             cases.push_back({GGML_TYPE_F32, m, n, 5120, "f32-twin"});
             cases.push_back({GGML_TYPE_F16, m, n, 5120, "f16"});
         }
@@ -13328,13 +13367,12 @@ static bool run_sx8_reference_slice(ggml_backend_t backend, ggml_backend_t backe
         std::string why;
         const bool ok = sx8_ref_run(backend, c, a_dev, b_raw, got, why);
 
-        const sx8_ref_route route = sx8_ref_route_of(c, mmvq);
-        const double        bound = sx8_ref_bound(route);
-        const double        floor_ = plant ? 0.0 : sx8_ref_route_floor(route);
+        const sx8_ref_route predicted = sx8_ref_route_of(c, requested);
 
-        printf("  MUL_MAT(type_a=sx8,type_b=%s,m=%" PRId64 ",n=%" PRId64 ",k=%" PRId64 ",grp=%s,route=%s,bound=%.3g): ",
+        printf("  MUL_MAT(type_a=sx8,type_b=%s,m=%" PRId64 ",n=%" PRId64 ",k=%" PRId64 ",grp=%s,route=%s): ",
                ggml_type_name(c.type_b), c.m, c.n, c.k, c.group,
-               route == SX8_ROUTE_Q8_1 ? "q8_1" : "dequant", bound);
+               predicted == SX8_ROUTE_Q8_1 ? "q8_1" :
+               predicted == SX8_ROUTE_DEQUANT ? "dequant" : "device");
 
         if (!ok) {
             // A decline is a FAILURE of coverage in this mode: the whole point is
@@ -13347,6 +13385,22 @@ static bool run_sx8_reference_slice(ggml_backend_t backend, ggml_backend_t backe
 
         const sx8_ref_metrics mt = sx8_ref_measure(got, ref, ref_abs);
         n_run++;
+
+        // ArifiLabs lane-235 / R48b: settle the one cell the environment does not pin. The witness
+        // gap is eight orders wide, so this reads which shader ran rather than guessing: a reading
+        // at or above the floor is q8_1-grade activation error, below it is f32-exact. Both routes
+        // keep their own bound, and the case is labelled INFERRED so no receipt can mistake it for
+        // a pinned route. Under PLANT_RED the corruption lifts every case above the floor, so an
+        // unpinned red run is scored under the q8_1 bound -- the weaker of the two, which is the
+        // safe direction for a mode whose planted cases must ALL fail.
+        const bool          inferred = (predicted == SX8_ROUTE_UNKNOWN);
+        const sx8_ref_route route    = inferred
+                                       ? (mt.nmse >= sx8_ref_route_floor(SX8_ROUTE_Q8_1)
+                                          ? SX8_ROUTE_Q8_1 : SX8_ROUTE_DEQUANT)
+                                       : predicted;
+        const double        bound    = sx8_ref_bound(route);
+        // The witness cannot judge a route it just derived from the same number.
+        const double        floor_   = (plant || inferred) ? 0.0 : sx8_ref_route_floor(route);
 
         // The CPU backend arm, where it exists: the calibration column. It is
         // NOT a pass/fail gate - it is the number that shows how much of the
@@ -13368,7 +13422,8 @@ static bool run_sx8_reference_slice(ggml_backend_t backend, ggml_backend_t backe
         // One classification, the same function the self-check above exercised.
         const sx8_ref_verdict v    = sx8_ref_classify(mt.nmse, mt.nonfinite, bound, floor_);
         const bool            pass = v.pass;
-        printf("nmse=%.3e absmax=%.3e relmax=%.3e rms=%.3e nz=%zu/%zu nz_absmax=%.3e %s %s%s\n",
+        printf("route=%s%s bound=%.3g nmse=%.3e absmax=%.3e relmax=%.3e rms=%.3e nz=%zu/%zu nz_absmax=%.3e %s %s%s\n",
+               route == SX8_ROUTE_Q8_1 ? "q8_1" : "dequant", inferred ? "(INFERRED)" : "", bound,
                mt.nmse, mt.max_abs, mt.max_rel, mt.rms_ref,
                mt.n_nearzero, ref.size(), mt.nearzero_abs, cpu_col.c_str(),
                pass ? "\033[1;32mOK\033[0m" : "\033[1;31mFAIL\033[0m",
@@ -13401,7 +13456,7 @@ static bool run_sx8_reference_slice(ggml_backend_t backend, ggml_backend_t backe
            n_q8_1, sx8_ref_bound(SX8_ROUTE_Q8_1), plant ? 0.0 : sx8_ref_route_floor(SX8_ROUTE_Q8_1),
            n_dequant, sx8_ref_bound(SX8_ROUTE_DEQUANT), n_route_mismatch, n_nonfinite,
            plant ? " (witness disabled under plant)" : "");
-    if (mmvq && n_q8_1 == 0) {
+    if (requested == SX8_ROUTE_Q8_1 && n_q8_1 == 0) {
         printf("  \033[1;31mNOTE\033[0m: q8_1 was requested but no selected case can take it - f16 activations are dequant-only\n");
     }
     if (plant) {

@@ -3278,44 +3278,29 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         // mmvq_load_a() / mmvq_dot_a() pair, so the result is bit-identical and this is a scheduling
         // change only -- the same standing the q6_k direct-scales row above has.
         //
-        // Device-probed default: ON for AMD (where the per-width step at NUM_COLS 4->5 was measured,
-        // lane-198) and OFF elsewhere, because no other vendor has been measured here.
-        // GGML_ARIFI_MMVQ_A_HOIST=0|1 overrides in either direction, so ONE binary serves both arms
-        // of an A/B (runtime-switch law).
-        const char * mmvq_a_hoist_src = "device-probe";
-        const uint32_t mmvq_a_hoist = [&device, &mmvq_a_hoist_src] {
-            const char * s = getenv("GGML_ARIFI_MMVQ_A_HOIST");
-            if (s != nullptr && (s[0] == '0' || s[0] == '1')) {
-                mmvq_a_hoist_src = "GGML_ARIFI_MMVQ_A_HOIST";
-                return (uint32_t) (s[0] == '1');
-            }
-            return (uint32_t) (device->vendor_id == VK_VENDOR_ID_AMD);
-        }();
-        // IQ1_S and IQ1_M carry the largest A state of any MMVQ type -- 10 and 12 registers per row
-        // against 5-6 for the K-quants -- and they run the most rows per workgroup (rm_iq_int = 4 or
-        // 8). Their default is OFF for that reason alone; the arithmetic is identical either way and
-        // GGML_ARIFI_MMVQ_A_HOIST_IQ1=1 turns them on for a pairing. Gated in the HOST, not by an
-        // #ifdef: the shader keeps both paths so no rebuild is needed to move this.
-        const uint32_t mmvq_a_hoist_iq1 = [&mmvq_a_hoist] {
-            const char * s = getenv("GGML_ARIFI_MMVQ_A_HOIST_IQ1");
-            if (s != nullptr && (s[0] == '0' || s[0] == '1')) {
-                // Never above the global switch: GGML_ARIFI_MMVQ_A_HOIST=0 turns everything off.
-                return (s[0] == '1' && mmvq_a_hoist != 0) ? 1u : 0u;
-            }
-            return 0u;
-        }();
-        {
-            static bool once_hoist = false;
-            if (!once_hoist) {
-                once_hoist = true;
-                // stderr for the same reason as the q6_k line above: llama-server drops ggml INFO.
-                // Names the SOURCE as well as the state, the standard the RDNA3 mmv-id rows
-                // receipt sets: a pairing log must prove probe vs override, not just ON vs OFF.
-                fprintf(stderr, "ggml_vulkan: mmvq A-side hoist: %s (%s) (iq1: %s)\n",
-                        mmvq_a_hoist ? "ON" : "OFF", mmvq_a_hoist_src,
-                        mmvq_a_hoist_iq1 ? "ON" : "OFF");
-            }
-        }
+        // The device-level gate and its overrides are probed once at device creation (see
+        // ggml_vk_get_device); this is only where it is applied per pipeline.
+        const uint32_t mmvq_a_hoist     = device->mmvq_a_hoist;
+        const uint32_t mmvq_a_hoist_iq1 = device->mmvq_a_hoist_iq1;
+
+        // Per-(type, NUM_COLS) narrowing, phase 2. The legacy-block family -- Q4_0, Q4_1, Q5_0,
+        // Q5_1, Q8_0, MXFP4 -- goes back to the inherited nest at NUM_COLS >= 6.
+        //
+        // MEASURED on Q8_0 only (HQ forced-MMVQ pairing 32-paired-r48bforce.txt): hoist ON loses
+        // -25 / -17 / -24% at n=6/7/8 on 4096x14336, -17% at n=8 on 5120x17408 and -10% at n=6 on
+        // 248320x5120, tight triples. The other five types are NOT separately measured; they are
+        // gated with Q8_0 because the register table (report section 3) does not separate them --
+        // Q8_0/Q4_0/Q5_0/MXFP4 all carry 3 registers per row and Q4_1/Q5_1 carry 4, against 6 for
+        // the K-quants and 16 for S-X8, and all six take rm_int_n() = 4 rows at i >= 4. A gate
+        // narrowed to Q8_0 alone would be narrower than the evidence, not better supported: the
+        // measurement names a shared-footprint family at the widths where rows quadruple.
+        //
+        // Q4_K, Q5_K and S-X8 stay ON at every NUM_COLS -- they are exactly where the hoist was
+        // measured to WIN, including the n=6/7 q4_K tail cliff it removes (5.1 -> 52 GB/s). Every
+        // other type keeps the device-level gate unchanged; none of them has been measured here.
+        auto mmvq_a_hoist_legacy = [mmvq_a_hoist](uint32_t i) {
+            return (i + 1 >= 6) ? 0u : mmvq_a_hoist;
+        };
 
         for (uint32_t i = 0; i < mul_mat_vec_max_cols; ++i) {
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_F32 ][i], "mul_mat_vec_f32_f32_f32",  arr_dmmv_f32_f32_f32_len[reduc],  arr_dmmv_f32_f32_f32_data[reduc],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1, 1, 1}, {wg_size_subgroup, 1, i+1}, 1, false, use_subgroups, force_subgroup_size);
@@ -3432,13 +3417,13 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
 
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_0][i], "mul_mat_vec_q2_0_q8_1_f32", arr_dmmv_q2_0_q8_1_f32_len[reduc], arr_dmmv_q2_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_0_G128][i], "mul_mat_vec_q2_0_g128_q8_1_f32", arr_dmmv_q2_0_g128_q8_1_f32_len[reduc], arr_dmmv_q2_0_g128_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(rm_g128_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(rm_g128_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_0][i], "mul_mat_vec_q4_0_q8_1_f32", arr_dmmv_q4_0_q8_1_f32_len[reduc], arr_dmmv_q4_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_1][i], "mul_mat_vec_q4_1_q8_1_f32", arr_dmmv_q4_1_q8_1_f32_len[reduc], arr_dmmv_q4_1_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_0][i], "mul_mat_vec_q5_0_q8_1_f32", arr_dmmv_q5_0_q8_1_f32_len[reduc], arr_dmmv_q5_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_1][i], "mul_mat_vec_q5_1_q8_1_f32", arr_dmmv_q5_1_q8_1_f32_len[reduc], arr_dmmv_q5_1_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q8_0][i], "mul_mat_vec_q8_0_q8_1_f32", arr_dmmv_q8_0_q8_1_f32_len[reduc], arr_dmmv_q8_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_0][i], "mul_mat_vec_q4_0_q8_1_f32", arr_dmmv_q4_0_q8_1_f32_len[reduc], arr_dmmv_q4_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_1][i], "mul_mat_vec_q4_1_q8_1_f32", arr_dmmv_q4_1_q8_1_f32_len[reduc], arr_dmmv_q4_1_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_0][i], "mul_mat_vec_q5_0_q8_1_f32", arr_dmmv_q5_0_q8_1_f32_len[reduc], arr_dmmv_q5_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_1][i], "mul_mat_vec_q5_1_q8_1_f32", arr_dmmv_q5_1_q8_1_f32_len[reduc], arr_dmmv_q5_1_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q8_0][i], "mul_mat_vec_q8_0_q8_1_f32", arr_dmmv_q8_0_q8_1_f32_len[reduc], arr_dmmv_q8_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
 
-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_MXFP4][i], "mul_mat_vec_mxfp4_q8_1_f32", arr_dmmv_mxfp4_q8_1_f32_len[reduc], arr_dmmv_mxfp4_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_MXFP4][i], "mul_mat_vec_mxfp4_q8_1_f32", arr_dmmv_mxfp4_q8_1_f32_len[reduc], arr_dmmv_mxfp4_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
 
                 // arifi lane-230 / R46: S-X8 integer-dot mat-vec. Same rows and workgroup as the
                 // S-X8 float mat-vec above, and the same no-subgroup-pin treatment -- only the
@@ -5450,6 +5435,56 @@ vk_device ggml_vk_get_device(size_t idx) {
         descriptor_set_layout_create_info.setPNext(&dslbfci);
         device->dsl = device->device.createDescriptorSetLayout(descriptor_set_layout_create_info);
 
+        // arifi lane-235 / R48b: MMVQ A-side HOIST + the routing that depends on it.
+        //
+        // The hoist (specialization constant 3 of mul_mat_vecq.comp) decodes each row's weight
+        // block once per (row, k-slice) into registers instead of re-running the whole A decode
+        // inside the column loop. Both nests call the same mmvq_load_a() / mmvq_dot_a() pair, so
+        // the result is bit-identical; this is a scheduling change only.
+        //
+        // Probed HERE, not in ggml_vk_load_shaders(), because two consumers need one answer:
+        // pipeline creation (which is also entered lazily for a single requested pipeline) and
+        // ggml_vk_should_use_mmvq(). A per-call probe could route MMVQ while the pipeline in hand
+        // was compiled with the inherited nest -- still bit-correct, so no test would catch it.
+        //
+        // Device-probed default: ON for AMD (the only vendor measured, lane-198 / R48b) and OFF
+        // elsewhere. GGML_ARIFI_MMVQ_A_HOIST=0|1 overrides in either direction so ONE binary
+        // serves both arms of an A/B (runtime-switch law).
+        {
+            const char * hoist_src = "device-probe";
+            const char * s = getenv("GGML_ARIFI_MMVQ_A_HOIST");
+            if (s != nullptr && (s[0] == '0' || s[0] == '1')) {
+                hoist_src = "GGML_ARIFI_MMVQ_A_HOIST";
+                device->mmvq_a_hoist = (uint32_t) (s[0] == '1');
+            } else {
+                device->mmvq_a_hoist = (uint32_t) (device->vendor_id == VK_VENDOR_ID_AMD);
+            }
+
+            // IQ1_S and IQ1_M carry the largest A state of any MMVQ type -- 10 and 12 registers per
+            // row against 5-6 for the K-quants -- and they run the most rows per workgroup
+            // (rm_iq_int = 4 or 8). Their default is OFF for that reason alone; the arithmetic is
+            // identical either way and GGML_ARIFI_MMVQ_A_HOIST_IQ1=1 turns them on for a pairing.
+            device->mmvq_a_hoist_iq1 = 0;
+            if (const char * s_iq1 = getenv("GGML_ARIFI_MMVQ_A_HOIST_IQ1")) {
+                // Never above the global switch: GGML_ARIFI_MMVQ_A_HOIST=0 turns everything off.
+                device->mmvq_a_hoist_iq1 = (s_iq1[0] == '1' && device->mmvq_a_hoist != 0) ? 1u : 0u;
+            }
+
+            // The R48b routing (S-X8 -> MMVQ at every width, Q4_K n>=5 at k <= 8192) exists only
+            // because the hoist removed the A re-decode. GGML_ARIFI_MMVQ_ROUTE=legacy restores the
+            // pre-R48b rules while KEEPING the hoisted nest -- that is what separates it from
+            // GGML_ARIFI_MMVQ_A_HOIST=0, which turns off the nest AND, with it, the new routing.
+            const char * route_env = getenv("GGML_ARIFI_MMVQ_ROUTE");
+            device->mmvq_route_legacy = route_env != nullptr && strcmp(route_env, "legacy") == 0;
+
+            // stderr, for the same reason as the q6_k line: llama-server drops ggml INFO. Names the
+            // SOURCE as well as the state -- a pairing log must prove probe vs override.
+            fprintf(stderr, "ggml_vulkan: mmvq A-side hoist: %s (%s) (iq1: %s) (route: %s)\n",
+                    device->mmvq_a_hoist ? "ON" : "OFF", hoist_src,
+                    device->mmvq_a_hoist_iq1 ? "ON" : "OFF",
+                    device->mmvq_route_legacy ? "legacy" : "r48b");
+        }
+
         ggml_vk_load_shaders(device);
 
         // Prefer a dedicated transfer queue on AMD dGPUs (non-GCN) when graphics queue use is disabled.
@@ -7283,9 +7318,30 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
     // B2), which points at a NUM_COLS==7 tail defect in the mmvq framework rather than a tuning
     // loss. Commit D or a narrowed admit starts there. Precedent for shipping a measured win OFF
     // until it is cleared: GGML_ARIFI_ROCMFP4_MMVQ below.
+    // arifi lane-235 / R48b phase 2: the paragraph above is SUPERSEDED as the DEFAULT, and its own
+    // closing sentence is why. It predicted "a NUM_COLS == 7 tail defect in the mmvq framework
+    // rather than a tuning loss" and said "commit D or a narrowed admit starts there". R48b found
+    // that defect -- the mat-vec nest re-ran the whole A-side decode once per column -- and the
+    // hoist removes it. Under forced MMVQ with the hoist ON, S-X8 is FLAT at the bus across
+    // n=1..8 (248320x5120: 74.8/75.2/72.1/73.6/74.2/74.7/73.7/72.8 GB/s; FFN shapes 36-37 at every
+    // width), against 62/70/33.5/45.5 at n=5..8 with the hoist OFF. The n=7 cliff the opt-in was
+    // written around does not exist on this path any more, so the reason for the opt-in is gone.
+    //
+    // Against the SHIPPED S-X8 route (whole-block f32 at n<=3, f32 above) MMVQ+hoist is +40..+110%
+    // at n>=4 on 248320x5120 and +15/+34% at n=2/3 on 17408x5120 -- the exact B1 loss that route
+    // was leaving open. HQ receipts: 32-paired-r48bforce.txt vs 32-paired-r46iq.txt.
+    //
+    // Both paths stay reachable. GGML_ARIFI_SX8_MMVQ=0 restores the whole-block decode path,
+    // GGML_ARIFI_MMVQ_ROUTE=legacy restores the whole pre-R48b rule set (opt-in MMVQ), and
+    // GGML_ARIFI_MMVQ_A_HOIST=0 removes the hoisted nest and with it this route -- the three are
+    // NOT the same switch and a pairing must say which one it used.
     if (src0_type == GGML_TYPE_SX8) {
         static const char * sx8_mmvq_env = getenv("GGML_ARIFI_SX8_MMVQ");
-        return sx8_mmvq_env && sx8_mmvq_env[0] == '1';
+        if (device->mmvq_a_hoist != 0 && !device->mmvq_route_legacy) {
+            // Default ON; only an exact 0 hands the type back to the whole-block f32 route.
+            return !(sx8_mmvq_env != nullptr && sx8_mmvq_env[0] == '0');
+        }
+        return sx8_mmvq_env != nullptr && sx8_mmvq_env[0] == '1';
     }
 
     // arifi lane-198 (AMD 780M, proprietary driver, measured on the live speculative-verify graph):
@@ -7334,11 +7390,33 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
     }
 
     if (device->vendor_id == VK_VENDOR_ID_AMD && n > 1) {
+        // arifi lane-235 / R48b phase 2: NOT superseded. The only Q5_K width the hoist pairing
+        // covers is n=1 -- its only MMVQ width today -- and there it is a wash. The n>1 f32 arm was
+        // not measured against MMVQ+hoist at all, so widening it would be a guess, not a routing
+        // change. The hoist itself is still ON for Q5_K pipelines; this is about the route only.
         if (src0_type == GGML_TYPE_Q5_K) {
             return false;
         }
+        // arifi lane-235 / R48b phase 2: the Q4_K n>=5 exile is superseded CONDITIONALLY -- on the
+        // hoist being live, and only at k <= 8192. The lane-198 reading above ("Q4_K 2.0-2.3x per
+        // dispatch at width 4->5") was real, and R48b names its mechanism: the A-side re-decode,
+        // which cost 10-15x at NUM_COLS 6..7 (5.1 / 3.3 GB/s on 248320x5120, hoist OFF, forced
+        // MMVQ) and is gone with the hoist (52 / 48 GB/s, same binary, same rounds).
+        //
+        // The win is k-dependent, so the rule is too. MMVQ+hoist vs this f32 default at n=5..8:
+        //   248320x5120  (k= 5120): 55.7/52.1/48.0/45.6 vs 46.0/36.1/35.0/29.0 GB/s  WIN
+        //   17408x5120   (k= 5120): 35.7/34.8/33.5/31.3 vs 33.2/27.9/29.9/24.4      WIN
+        //   5120x17408   (k=17408): 32.4/26.8/24.3/22.7 vs 37.0/30.8/31.6/27.2      LOSS
+        // k=8192 is the midpoint between the two measured k values, named as an untested boundary:
+        // every measured cell is at k=5120 or k=17408 and nothing was run in between.
+        //
+        // No lower k guard: n>1 already takes MMVQ at every k (the "MMVQ is generally good for
+        // batches" return below short-circuits the k<2048 check), so adding one only at n>=5 would
+        // be inconsistent with the widths beneath it, not safer.
         if (src0_type == GGML_TYPE_Q4_K && n >= 5) {
-            return false;
+            if (device->mmvq_a_hoist == 0 || device->mmvq_route_legacy || k > 8192) {
+                return false;
+            }
         }
         // arifi lane-209 (same box, test-backend-ops 17408x5120, r4c/TBO-17408.txt): the rocmfp4_fast q8_1 MMVQ
         // port beats the f32 shader at n=2..5 (x1.18 / x1.34 / x1.02 / x1.32) and loses above it; n=1 is a TIE
