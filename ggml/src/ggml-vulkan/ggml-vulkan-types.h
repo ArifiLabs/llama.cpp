@@ -784,6 +784,11 @@ struct vk_plan_candidate {
     uint32_t type  = 0;
     uint32_t heap  = 0;
     uint64_t bytes = 0;   // real VkMemoryRequirements::size for this buffer, not the requested size
+    // R46b B7c: this placement spills the buffer onto memory that is NOT DEVICE_LOCAL. The property
+    // belongs to the memory TYPE, not to the heap: a heap can carry both a DEVICE_LOCAL and a
+    // host-only type (R47d's small combined-property heap 2 is exactly that), so classifying by heap
+    // would mislabel one of them.
+    bool     host_split = false;
 };
 
 // Bound on the backtracking search. Hitting it means "did not finish deciding", which is reported
@@ -866,11 +871,21 @@ public:
     //
     // Returns VK_PLAN_FEASIBLE (out_choice[i] = index into cands[i]), VK_PLAN_INFEASIBLE (no
     // complete assignment exists) or VK_PLAN_INDETERMINATE (search bound hit; decide nothing).
+    //
+    // R46b B7c: `host_split_max` caps the TOTAL bytes this one batch may place on candidates marked
+    // host_split (not DEVICE_LOCAL). UINT64_MAX means "no cap of my own"; the per-heap budget check
+    // below still applies and is unchanged. 0 forbids any host placement. `out_host_bytes` reports
+    // how many bytes the committed assignment actually put on host memory (0 when nothing spilled).
     vk_plan_result reserve_plan(const std::vector<std::vector<vk_plan_candidate>> & cands,
                                 const uint64_t * budgets, size_t n_budgets,
-                                std::vector<size_t> & out_choice) {
+                                std::vector<size_t> & out_choice,
+                                uint64_t host_split_max = UINT64_MAX,
+                                uint64_t * out_host_bytes = nullptr) {
         const size_t n = cands.size();
         out_choice.assign(n, 0);
+        if (out_host_bytes != nullptr) {
+            *out_host_bytes = 0;
+        }
         if (n == 0) {
             return VK_PLAN_FEASIBLE;
         }
@@ -888,7 +903,14 @@ public:
             }
             bool same = true;
             for (size_t c = 0; c < cands[k].size() && same; ++c) {
-                same = cands[k][c].heap == cands[k - 1][c].heap && cands[k][c].bytes == cands[k - 1][c].bytes;
+                // R46b B7c: host_split is part of what makes two candidates interchangeable. Two
+                // types on ONE heap can differ in DEVICE_LOCAL, so comparing heap+bytes alone would
+                // call them identical and the non-decreasing-choice restriction could then prune the
+                // only assignment that fits under host_split_max - a refusal the planner did not
+                // prove.
+                same = cands[k][c].heap       == cands[k - 1][c].heap  &&
+                       cands[k][c].bytes      == cands[k - 1][c].bytes &&
+                       cands[k][c].host_split == cands[k - 1][c].host_split;
             }
             same_as_prev[k] = same;
         }
@@ -938,8 +960,9 @@ public:
 
         uint64_t delta[VK_MAX_MEMORY_HEAPS] = {};
         std::vector<size_t> next(n, 0);
-        uint64_t nodes = 0;
-        size_t   i     = 0;
+        uint64_t nodes      = 0;
+        uint64_t host_used  = 0;   // R46b B7c: bytes this walk has placed on host_split candidates
+        size_t   i          = 0;
 
         while (i < n) {
             if (++nodes > VK_PLAN_MAX_SEARCH_NODES) {
@@ -965,7 +988,17 @@ public:
                 if (cand.bytes > after_live - delta[cand.heap]) {
                     continue;
                 }
+                // R46b B7c: the declared bound on host placement, in the same subtraction form so
+                // nothing can wrap. A candidate that would take the batch past the bound is skipped
+                // exactly like one that does not fit its heap, so the walk keeps looking (and
+                // backtracks) instead of refusing.
+                if (cand.host_split && (host_used > host_split_max || cand.bytes > host_split_max - host_used)) {
+                    continue;
+                }
                 delta[cand.heap] += cand.bytes;
+                if (cand.host_split) {
+                    host_used += cand.bytes;
+                }
                 out_choice[i] = c;
                 next[i]       = c + 1;   // resume after this choice if we ever backtrack into it
                 placed        = true;
@@ -986,11 +1019,17 @@ public:
             i--;
             const vk_plan_candidate & undo = cands[i][out_choice[i]];
             delta[undo.heap] -= undo.bytes;
+            if (undo.host_split) {
+                host_used -= undo.bytes;
+            }
         }
 
         // Every delta was validated against its budget above, so this cannot overflow.
         for (uint32_t h = 0; h < VK_MAX_MEMORY_HEAPS; ++h) {
             reserved_bytes[h] += delta[h];
+        }
+        if (out_host_bytes != nullptr) {
+            *out_host_bytes = host_used;
         }
         return VK_PLAN_FEASIBLE;
     }
@@ -1019,6 +1058,45 @@ public:
 private:
     mutable std::mutex mutex;
     uint64_t reserved_bytes[VK_MAX_MEMORY_HEAPS] = {};
+};
+
+// R46b B7c: the per-device STAGING RESERVE. Bytes carved out of the host-visible heap in the B7a
+// ledger BEFORE any bulk weight buffer can be admitted, so a bounded host split cannot starve upload
+// staging (sync_staging), prealloc scratch or the compute buffers that come after the load.
+//
+// It is a plain charge against the ledger, not a Vulkan allocation: nothing is allocated until the
+// staging buffer is really needed, and when it is, its own reservation is taken on top. The reserve
+// is therefore a floor the weights cannot eat, and it is deliberately NOT consumed by the real
+// staging allocation - releasing it early would give the floor back to whatever allocates next.
+//
+// release() is exact-once by construction: it zeroes `bytes` before returning, so a second call
+// releases nothing. That matters because the ledger refuses (rather than clamps) an over-release,
+// and a double release that happened to be covered by someone else's live bytes would silently steal
+// them.
+struct vk_staging_reserve {
+    vk_heap_ledger * ledger = nullptr;
+    uint32_t         heap   = UINT32_MAX;
+    uint64_t         bytes  = 0;
+
+    bool try_reserve(vk_heap_ledger * l, uint32_t h, uint64_t b, uint64_t budget) {
+        GGML_ASSERT(bytes == 0);
+        if (l == nullptr || b == 0 || !l->reserve(h, b, budget)) {
+            return false;
+        }
+        ledger = l;
+        heap   = h;
+        bytes  = b;
+        return true;
+    }
+
+    bool release() {
+        if (bytes == 0) {
+            return false;
+        }
+        const uint64_t b = bytes;
+        bytes = 0;
+        return ledger->release(heap, b);
+    }
 };
 
 // R46b B7a-R2 (finding 4): test-only fault injection into ggml_vk_create_buffer(), so the
@@ -1096,6 +1174,9 @@ struct vk_device_struct {
     // and release across devices. Making it a member also ties the ledger's lifetime exactly to
     // the device's, so no stale identity (a recycled VkDevice handle or pointer) can alias it.
     vk_heap_ledger heap_ledger;
+
+    // R46b B7c: charged once during device creation, released once in ~vk_device_struct.
+    vk_staging_reserve staging_reserve;
 
     // Guards compile_pending, all_pipelines, and the dynamic pipeline maps
     // (flash_attn, fa_mask_opt, solve_tri, conv2d, etc). The actual compile

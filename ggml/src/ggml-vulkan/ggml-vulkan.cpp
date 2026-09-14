@@ -5432,6 +5432,11 @@ vk_device ggml_vk_get_device(size_t idx) {
 
         device->fence = device->device.createFence({});
 
+        // R46b B7c: BEFORE the first bulk admission. The buffer type above is only a descriptor;
+        // nothing has planned or allocated on this device yet, so the reserve is necessarily ahead
+        // of every weight buffer that will ever compete with staging for the host heap.
+        ggml_vk_reserve_staging(device);
+
         device->idx = idx;
 
         device->serialize_submissions = getenv("GGML_VK_SERIALIZE_SUBMISSIONS") != nullptr;
@@ -17923,6 +17928,10 @@ vk_device_struct::~vk_device_struct() {
     device.destroyFence(fence);
 
     ggml_vk_destroy_buffer(sync_staging);
+    // R46b B7c: the staging reserve outlives every buffer on this device on purpose - it is
+    // released here, after sync_staging is gone, and exactly once (release() zeroes itself).
+    staging_reserve.release();
+
 
     if (compute_queue) compute_queue->cmd_pool.destroy(device);
     if (transfer_queue) transfer_queue->cmd_pool.destroy(device);
@@ -18390,6 +18399,82 @@ GGML_BACKEND_API int ggml_vk_heapres_plan_search(const uint32_t * cand_heaps, co
         }
     }
     return (int) res;
+}
+
+// R46b B7c: same seam, with per-candidate host-split flags and the bound. `cand_host[k] != 0` marks
+// candidate k as a host (non DEVICE_LOCAL) placement.
+GGML_BACKEND_API int ggml_vk_heapres_plan_search_split(const uint32_t * cand_heaps, const uint64_t * cand_bytes,
+                                                       const int * cand_host, const int * cand_counts, int n_items,
+                                                       const uint64_t * budgets, int n_heaps,
+                                                       uint64_t host_split_max,
+                                                       int * out_choice, uint64_t * out_host_bytes) {
+    std::vector<std::vector<vk_plan_candidate>> cands((size_t) n_items);
+    size_t off = 0;
+    for (int i = 0; i < n_items; i++) {
+        for (int c = 0; c < cand_counts[i]; c++, off++) {
+            vk_plan_candidate cand;
+            cand.type       = (uint32_t) off;
+            cand.heap       = cand_heaps[off];
+            cand.bytes      = cand_bytes[off];
+            cand.host_split = cand_host[off] != 0;
+            cands[(size_t) i].push_back(cand);
+        }
+    }
+
+    std::vector<size_t> choice;
+    uint64_t host_bytes = 0;
+    const vk_plan_result res = vk_heapres_test_ledger().reserve_plan(cands, budgets, (size_t) n_heaps, choice,
+                                                                     host_split_max, &host_bytes);
+    if (res == VK_PLAN_FEASIBLE && out_choice) {
+        for (int i = 0; i < n_items; i++) {
+            out_choice[i] = (int) choice[(size_t) i];
+        }
+    }
+    if (out_host_bytes) {
+        *out_host_bytes = host_bytes;
+    }
+    return (int) res;
+}
+
+// R46b B7c: the staging reserve's own ownership contract, on the TEST ledger. `other_bytes` is a
+// second live reservation on the same heap, so a release that ran twice would visibly steal it
+// instead of being masked by the ledger's underflow refusal.
+GGML_BACKEND_API void ggml_vk_heapres_staging_exact_once(uint32_t heap, uint64_t bytes, uint64_t other_bytes,
+                                                         uint64_t budget, int * first_ok, int * second_ok,
+                                                         uint64_t * reserved_after_first,
+                                                         uint64_t * reserved_after_second) {
+    vk_staging_reserve reserve;
+    reserve.try_reserve(&vk_heapres_test_ledger(), heap, bytes, budget);
+    vk_heapres_test_ledger().reserve(heap, other_bytes, budget);
+
+    *first_ok             = reserve.release() ? 1 : 0;
+    *reserved_after_first = vk_heapres_test_ledger().reserved(heap);
+    *second_ok            = reserve.release() ? 1 : 0;
+    *reserved_after_second = vk_heapres_test_ledger().reserved(heap);
+}
+
+// R46b B7c: the REAL device's staging reserve, sampled right after device creation and before any
+// buffer type has planned or allocated. Returns -1 when no Vulkan device is present.
+GGML_BACKEND_API int ggml_vk_staging_reserve_probe(uint64_t * bytes, uint32_t * heap, uint64_t * reserved_on_heap,
+                                                   uint64_t * heap_size) {
+    ggml_vk_instance_init();
+    if (vk_instance.device_indices.empty()) {
+        return -1;
+    }
+    vk_device device = ggml_vk_get_device(0);
+
+    *bytes            = device->staging_reserve.bytes;
+    *heap             = device->staging_reserve.heap;
+    *reserved_on_heap = device->staging_reserve.heap == UINT32_MAX ? 0
+                                                                   : device->heap_ledger.reserved(device->staging_reserve.heap);
+    *heap_size = 0;
+    if (device->staging_reserve.heap != UINT32_MAX) {
+        const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
+        if (device->staging_reserve.heap < mem_props.memoryHeapCount) {
+            *heap_size = mem_props.memoryHeaps[device->staging_reserve.heap].size;
+        }
+    }
+    return 0;
 }
 
 // Live plans held open by the probe, so two plans can compete for one device's capacity.

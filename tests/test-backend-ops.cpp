@@ -13893,6 +13893,18 @@ extern "C" {
     int      ggml_vk_heapres_plan_search(const uint32_t * cand_heaps, const uint64_t * cand_bytes,
                                          const int * cand_counts, int n_items,
                                          const uint64_t * budgets, int n_heaps, int * out_choice);
+    // R46b B7c — bounded host split and the staging reserve.
+    int      ggml_vk_heapres_plan_search_split(const uint32_t * cand_heaps, const uint64_t * cand_bytes,
+                                               const int * cand_host, const int * cand_counts, int n_items,
+                                               const uint64_t * budgets, int n_heaps,
+                                               uint64_t host_split_max,
+                                               int * out_choice, uint64_t * out_host_bytes);
+    void     ggml_vk_heapres_staging_exact_once(uint32_t heap, uint64_t bytes, uint64_t other_bytes,
+                                                uint64_t budget, int * first_ok, int * second_ok,
+                                                uint64_t * reserved_after_first,
+                                                uint64_t * reserved_after_second);
+    int      ggml_vk_staging_reserve_probe(uint64_t * bytes, uint32_t * heap, uint64_t * reserved_on_heap,
+                                           uint64_t * heap_size);
     int      ggml_vk_plan_probe_limits(uint64_t * max_chunk, uint64_t * total_heap,
                                        uint64_t * reserved_now, int * used_maintenance4);
     int      ggml_vk_plan_probe_begin(const uint64_t * sizes, int n, int * status);
@@ -14386,6 +14398,196 @@ static void heapres_plan_ledger_tests() {
     ggml_vk_heapres_reset();
 }
 
+// ---------------------------------------------------------------------------------------------
+// R46b B7c - bounded host split and the staging reserve.
+//
+// Synthetic ledger exercise: no device, no model, no allocation. A candidate here is
+// (heap, bytes, host), where host marks a placement on memory that is NOT DEVICE_LOCAL.
+// ---------------------------------------------------------------------------------------------
+
+struct heapres_split_cand {
+    uint32_t heap;
+    uint64_t bytes;
+    bool     host;
+};
+
+static int heapres_split_search(const std::vector<std::vector<heapres_split_cand>> & items,
+                                const std::vector<uint64_t> & budgets,
+                                uint64_t host_split_max,
+                                std::vector<int> & choice,
+                                uint64_t & host_bytes) {
+    std::vector<uint32_t> heaps;
+    std::vector<uint64_t> bytes;
+    std::vector<int>      host;
+    std::vector<int>      counts;
+    for (const auto & item : items) {
+        counts.push_back((int) item.size());
+        for (const auto & c : item) {
+            heaps.push_back(c.heap);
+            bytes.push_back(c.bytes);
+            host.push_back(c.host ? 1 : 0);
+        }
+    }
+    choice.assign(items.size(), -1);
+    host_bytes = 0;
+    return ggml_vk_heapres_plan_search_split(heaps.data(), bytes.data(), host.data(), counts.data(),
+                                             (int) items.size(), budgets.data(), (int) budgets.size(),
+                                             host_split_max, choice.data(), &host_bytes);
+}
+
+static void heapres_host_split_tests() {
+    const uint64_t MiB = 1024ull * 1024ull;
+    printf("Vulkan bounded host split + staging reserve (R46b B7c)\n");
+
+    std::vector<int> choice;
+    uint64_t host_bytes = 0;
+
+    // Three 8 MiB buffers; heap 0 is DEVICE_LOCAL and holds exactly one of them, heap 1 is
+    // host-visible and could hold all three. What stops it is the bound, and only the bound.
+    const std::vector<std::vector<heapres_split_cand>> three_buffers = {
+        { {0, 8 * MiB, false}, {1, 8 * MiB, true} },
+        { {0, 8 * MiB, false}, {1, 8 * MiB, true} },
+        { {0, 8 * MiB, false}, {1, 8 * MiB, true} },
+    };
+    const std::vector<uint64_t> budgets = { 8 * MiB, 100 * MiB };
+
+    // 1. Exactly at the bound: 16 MiB of split admitted when the bound is 16 MiB.
+    ggml_vk_heapres_reset();
+    {
+        const int res = heapres_split_search(three_buffers, budgets, 16 * MiB, choice, host_bytes);
+        heapres_check(res == HEAPRES_PLAN_FEASIBLE, "split exactly at the bound is admitted");
+        heapres_check(host_bytes == 16 * MiB, "split reports exactly the bytes it spilled");
+        heapres_check(ggml_vk_heapres_reserved(0) == 8 * MiB && ggml_vk_heapres_reserved(1) == 16 * MiB,
+                      "split charged 8MiB device + 16MiB host, once each");
+        // Deterministic spill selection: plan-order first-fit. Device candidates come first for
+        // every buffer, so the buffers that spill are the SUFFIX of plan order.
+        heapres_check(choice[0] == 0 && choice[1] == 1 && choice[2] == 1,
+                      "spill selection is plan-order first-fit: the suffix spills");
+    }
+
+    // 2. One byte over the bound: refused, and nothing is charged anywhere.
+    ggml_vk_heapres_reset();
+    {
+        const int res = heapres_split_search(three_buffers, budgets, 16 * MiB - 1, choice, host_bytes);
+        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "one byte past the bound is refused");
+        heapres_check(ggml_vk_heapres_reserved(0) == 0 && ggml_vk_heapres_reserved(1) == 0,
+                      "a refused split charged nothing");
+        heapres_check(host_bytes == 0, "a refused split reports no host bytes");
+    }
+
+    // 3. Bound 0 forbids host placement outright: the set that needed a split is refused even
+    //    though the host heap has room.
+    ggml_vk_heapres_reset();
+    {
+        const int res = heapres_split_search(three_buffers, budgets, 0, choice, host_bytes);
+        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "bound 0 forbids any host placement");
+        heapres_check(ggml_vk_heapres_reserved(1) == 0, "bound 0 left the host heap untouched");
+    }
+
+    // 4. The staging reserve precedes admission. The same batch and the same DEFAULT bound shape
+    //    (free bytes on the host heap), with the reserve already charged: the weights can no longer
+    //    reach into it, and the reserve survives the refusal intact.
+    ggml_vk_heapres_reset();
+    {
+        heapres_check(ggml_vk_heapres_reserve(1, 90 * MiB, 100 * MiB), "staging reserve charged first");
+        const uint64_t free_after_reserve = 100 * MiB - 90 * MiB;
+        const int res = heapres_split_search(three_buffers, budgets, free_after_reserve, choice, host_bytes);
+        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "weights cannot be admitted into the staging reserve");
+        heapres_check(ggml_vk_heapres_reserved(1) == 90 * MiB, "the reserve is intact after the refusal");
+    }
+    //    ... and with the reserve small enough, the same batch is admitted and stays clear of it.
+    ggml_vk_heapres_reset();
+    {
+        heapres_check(ggml_vk_heapres_reserve(1, 20 * MiB, 100 * MiB), "smaller staging reserve charged first");
+        const int res = heapres_split_search(three_buffers, budgets, 100 * MiB - 20 * MiB, choice, host_bytes);
+        heapres_check(res == HEAPRES_PLAN_FEASIBLE, "a split that fits beside the reserve is admitted");
+        heapres_check(ggml_vk_heapres_reserved(1) == 20 * MiB + 16 * MiB,
+                      "reserve plus split, both charged, neither consuming the other");
+    }
+
+    // 5. A batch whose candidates are all DEVICE_LOCAL is decided exactly as B7b decided it: no
+    //    candidate is a host split, so the bound - even 0 - cannot alter the assignment or the
+    //    charges. This is the candidate SHAPE the bulk-large-heap policy contributes; it is NOT that
+    //    policy's production path, which prepends its attempt and then falls through to the stock
+    //    chain (host-visible flag sets included). That path cannot be driven from a test at all:
+    //    ggml_vk_placement_bulk_large_heap() caches its answer in a function-local static, so the
+    //    environment cannot flip it after the first call in this process.
+    ggml_vk_heapres_reset();
+    {
+        std::vector<std::vector<std::pair<uint32_t, uint64_t>>> plain;
+        std::vector<std::vector<heapres_split_cand>>           split;
+        for (int i = 0; i < 6; i++) {
+            const uint64_t bytes = (uint64_t) (i + 1) * MiB;
+            plain.push_back({ {0, bytes}, {1, bytes} });
+            split.push_back({ {0, bytes, false}, {1, bytes, false} });
+        }
+        std::vector<int> plain_choice;
+        const int res_plain = heapres_plan_search(plain, { 12 * MiB, 12 * MiB }, plain_choice);
+        const uint64_t plain_0 = ggml_vk_heapres_reserved(0);
+        const uint64_t plain_1 = ggml_vk_heapres_reserved(1);
+
+        ggml_vk_heapres_reset();
+        const int res_split = heapres_split_search(split, { 12 * MiB, 12 * MiB }, 0, choice, host_bytes);
+        heapres_check(res_plain == res_split, "device-only candidates: same verdict with the bound on");
+        heapres_check(plain_choice == choice, "device-only candidates: identical assignment");
+        heapres_check(plain_0 == ggml_vk_heapres_reserved(0) && plain_1 == ggml_vk_heapres_reserved(1),
+                      "device-only candidates: identical charges");
+        heapres_check(host_bytes == 0, "device-only candidates: no host bytes reported");
+    }
+
+    // 6. Host-ness is part of what makes two buffers interchangeable. Both items here have the same
+    //    heaps and the same sizes in the same positions, but opposite host flags, and the ONLY
+    //    assignment inside the bound needs item 1 to choose position 0 while item 0 chose position 1.
+    //    A symmetry break that ignored the host flag would call them interchangeable, forbid that,
+    //    and report a refusal it never proved.
+    ggml_vk_heapres_reset();
+    {
+        const std::vector<std::vector<heapres_split_cand>> mixed = {
+            { {0, 4 * MiB, true},  {1, 4 * MiB, false} },
+            { {0, 4 * MiB, false}, {1, 4 * MiB, true}  },
+        };
+        const int res = heapres_split_search(mixed, { 4 * MiB, 4 * MiB }, 4 * MiB, choice, host_bytes);
+        heapres_check(res == HEAPRES_PLAN_FEASIBLE, "differing host-ness is not interchangeable");
+        heapres_check(choice[0] == 1 && choice[1] == 0, "both buffers took the device-local option");
+        heapres_check(host_bytes == 0, "the assignment inside the bound spilled nothing");
+    }
+
+    // 7. The staging reserve releases exactly once. `other` is a second live reservation on the same
+    //    heap: a second release would be large enough to succeed against it and would steal it, so
+    //    this cannot be satisfied by the ledger's underflow refusal alone.
+    ggml_vk_heapres_reset();
+    {
+        int first_ok = 0, second_ok = 0;
+        uint64_t after_first = 0, after_second = 0;
+        ggml_vk_heapres_staging_exact_once(5, 256 * MiB, 512 * MiB, 1024 * MiB,
+                                           &first_ok, &second_ok, &after_first, &after_second);
+        heapres_check(first_ok == 1, "staging reserve released once");
+        heapres_check(after_first == 512 * MiB, "release gave back exactly the reserve");
+        heapres_check(second_ok == 0, "a second release is refused");
+        heapres_check(after_second == 512 * MiB, "a second release stole nothing");
+    }
+
+    ggml_vk_heapres_reset();
+
+    // 8. The REAL device: the reserve is charged during device creation, before any buffer type has
+    //    planned or allocated. This is the first probe in the suite that touches a device.
+    {
+        uint64_t bytes = 0, reserved_on_heap = 0, heap_size = 0;
+        uint32_t heap = UINT32_MAX;
+        if (ggml_vk_staging_reserve_probe(&bytes, &heap, &reserved_on_heap, &heap_size) == 0) {
+            heapres_check(bytes > 0, "device staging reserve is non-zero by default");
+            heapres_check(heap != UINT32_MAX, "device staging reserve names a host-visible heap");
+            heapres_check(bytes <= heap_size, "device staging reserve fits its heap");
+            heapres_check(reserved_on_heap >= bytes,
+                          "the reserve is already charged before any bulk admission");
+            printf("  note staging reserve = %llu B on heap %u (heap size %llu B)\n",
+                   (unsigned long long) bytes, heap, (unsigned long long) heap_size);
+        } else {
+            printf("  note no Vulkan device: device staging reserve probe skipped\n");
+        }
+    }
+}
+
 // Builds `n` meta tensors and lets the loader's own split arithmetic turn them into buffers.
 //
 // `vary` controls the SHAPE of the resulting buffer set, and the distinction matters:
@@ -14579,6 +14781,7 @@ static void heapres_plan_production_tests() {
 static int heapres_main() {
     heapres_ledger_tests();
     heapres_plan_ledger_tests();
+    heapres_host_split_tests();
     heapres_fault_tests();
     heapres_plan_production_tests();
     printf("%s: %s\n", "heapres", heapres_failures == 0 ? "all tests passed" : "FAILURES");
