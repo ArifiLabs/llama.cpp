@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **536**, all non-merge, applied in filename order.
+- Patches: **537**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 536 commit messages, same provenance trailers. Verified, not
+same file contents, same 537 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -615,6 +615,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 534 | `0534-gitattributes-evidence-receipt-files-are-byte-exact-.patch` | arifi-fork-base | `6e99e345c` | - | - | gitattributes: evidence receipt files are byte-exact (-text) |
 | 535 | `0535-arifi-sync-grandfather-the-untrailered-series-regen-.patch` | arifi-fork-base | `fdd544467` | - | - | arifi-sync: grandfather the untrailered series-regen commit 833881db4 |
 | 536 | `0536-arifi-sync-series-replay-applies-with-core.autocrlf-.patch` | arifi-fork-base | `638692d9b` | - | - | arifi-sync: series replay applies with core.autocrlf=false so replayed bytes equal the committed blobs |
+| 537 | `0537-arifi-sync-series-replay-keeps-CR-keep-cr-evidence-r.patch` | arifi-fork-base | `3dba3a9c7` | - | - | arifi-sync: series replay keeps CR (--keep-cr); evidence receipts restored to their original LF bytes |
 
 ## Measured effect, per patch
 
@@ -1230,6 +1231,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0534-gitattributes-evidence-receipt-files-are-byte-exact-.patch` | UNMEASURED - repository hygiene |
 | `0535-arifi-sync-grandfather-the-untrailered-series-regen-.patch` | UNMEASURED - manifest only |
 | `0536-arifi-sync-series-replay-applies-with-core.autocrlf-.patch` | UNMEASURED - tooling |
+| `0537-arifi-sync-series-replay-keeps-CR-keep-cr-evidence-r.patch` | UNMEASURED - tooling and evidence bytes |
 
 ## Unclassified
 
@@ -1662,4 +1664,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `6e99e345c` gitattributes: evidence receipt files are byte-exact (-text)
 - `fdd544467` arifi-sync: grandfather the untrailered series-regen commit 833881db4
 - `638692d9b` arifi-sync: series replay applies with core.autocrlf=false so replayed bytes equal the committed blobs
+- `3dba3a9c7` arifi-sync: series replay keeps CR (--keep-cr); evidence receipts restored to their original LF bytes
 
