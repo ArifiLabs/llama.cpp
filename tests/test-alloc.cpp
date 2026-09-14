@@ -25,6 +25,17 @@ struct dummy_backend_context {
     size_t                   plan_free_calls  = 0;
     size_t                   plan_n           = 0;   // buffers in the last plan_begin
 
+    // R46b B7b loader: a capacity ledger, so a transaction that spans several groups of this buffer
+    // type can be observed admitting or refusing. `budget` is what this "device" can hold; `reserved`
+    // is what OPEN plans hold and have not yet handed to a buffer. Live buffer bytes come from
+    // allocated_total(), so a freed buffer returns capacity without any bookkeeping here.
+    size_t              budget          = SIZE_MAX;   // default: unlimited, every older test unchanged
+    size_t              reserved        = 0;
+    size_t              released        = 0;          // bytes plan_free gave back (never consumed)
+    size_t              fail_alloc_at   = SIZE_MAX;   // plan_alloc_buffer call index that returns NULL
+    size_t              plan_alloc_call = 0;
+    std::vector<size_t> plan_alloc_order;             // plan entry index of each plan_alloc_buffer call
+
     ggml_backend_buffer_i              buffer_interface;
     ggml_backend_device                device;
     ggml_backend                       backend;
@@ -72,6 +83,8 @@ static bool dummy_backend_buffer_type_is_host(ggml_backend_buffer_type_t) {
 // CALLER's contract in ggml_backend_alloc_ctx_tensors_from_buft() can be tested.
 struct ggml_backend_buffer_type_plan {
     std::vector<size_t> sizes;
+    std::vector<bool>   consumed;   // R46b B7b loader: exactly-once adoption is asserted, not assumed
+    size_t              reserved = 0;
 };
 
 static ggml_backend_buffer_type_plan_t dummy_backend_buffer_type_plan_begin(
@@ -83,20 +96,59 @@ static ggml_backend_buffer_type_plan_t dummy_backend_buffer_type_plan_begin(
     if (ctx->plan_status != GGML_BACKEND_PLAN_FEASIBLE) {
         return nullptr;
     }
+
+    // R46b B7b loader: decide the WHOLE batch against this buffer type's remaining capacity, which
+    // already counts every open plan's reservation. Overflow is refused, never wrapped.
+    size_t need = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (sizes[i] > SIZE_MAX - need) {
+            *status = GGML_BACKEND_PLAN_INFEASIBLE;
+            return nullptr;
+        }
+        need += sizes[i];
+    }
+    const size_t in_use = ctx->reserved + ctx->allocated_total();
+    if (need > ctx->budget || in_use > ctx->budget - need) {
+        *status = GGML_BACKEND_PLAN_INFEASIBLE;
+        return nullptr;
+    }
+    ctx->reserved += need;
+
     ggml_backend_buffer_type_plan_t plan = new ggml_backend_buffer_type_plan;
     plan->sizes.assign(sizes, sizes + n);
+    plan->consumed.assign(n, false);
+    plan->reserved = need;
     return plan;
 }
 
 static ggml_backend_buffer_t dummy_backend_buffer_type_plan_alloc_buffer(
         ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i) {
+    dummy_backend_context * ctx = (dummy_backend_context *) buft->context;
     GGML_ASSERT(i < plan->sizes.size());
+    GGML_ASSERT(!plan->consumed[i]);   // an entry must never be adopted twice
+    ctx->plan_alloc_order.push_back(i);
+    if (ctx->plan_alloc_call++ == ctx->fail_alloc_at) {
+        return nullptr;   // the entry stays unconsumed and must be released by plan_free
+    }
+    // hand the reservation to the buffer: reserved drops, allocated_total() rises by the same bytes
+    plan->consumed[i] = true;
+    ctx->reserved    -= plan->sizes[i];
+    plan->reserved   -= plan->sizes[i];
     return dummy_backend_buffer_type_alloc_buffer(buft, plan->sizes[i]);
 }
 
 static void dummy_backend_buffer_type_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan) {
     dummy_backend_context * ctx = (dummy_backend_context *) buft->context;
     ctx->plan_free_calls++;
+    // release exactly what was never consumed
+    for (size_t i = 0; i < plan->sizes.size(); i++) {
+        if (!plan->consumed[i]) {
+            ctx->reserved -= plan->sizes[i];
+            ctx->released += plan->sizes[i];
+            plan->reserved -= plan->sizes[i];
+        }
+    }
+    GGML_ASSERT(plan->reserved == 0);
     delete plan;
 }
 
@@ -751,6 +803,238 @@ static void test_plan_indeterminate_never_partially_allocates() {
     }
 }
 
+//
+// R46b B7b — the LOADER-WIDE transaction at its production boundary, the ggml-alloc API that
+// llama_model::load_tensors() calls: init / add per group / commit / alloc per group / free.
+//
+// The unit under test is a whole model load's worth of groups, not one group. Every case below asks
+// the same question in a different shape: can any driver memory be allocated for one group of a load
+// whose LATER groups cannot be placed, and is every reservation discharged exactly once.
+
+struct loader_plan_deleter {
+    void operator()(ggml_backend_alloc_plan_t p) const { ggml_backend_alloc_plan_free(p); }
+};
+using loader_plan_ptr = std::unique_ptr<ggml_backend_alloc_plan, loader_plan_deleter>;
+
+static void test_loader_transaction_refuses_before_any_allocation() {
+    const size_t chunk = 64;
+
+    // two buffer types in one load. A fits; B cannot place its three buffers. The whole load must be
+    // refused, and A - censused and planned FIRST - must not have allocated one byte.
+    dummy_backend a = dummy_backend_init(chunk);
+    dummy_backend b = dummy_backend_init(chunk);
+    plan_wire(a);
+    plan_wire(b);
+    a.context->budget = 10 * chunk;
+    b.context->budget = 2 * chunk;   // three buffers will not fit
+
+    ggml_context_ptr ctx_a = plan_make_ctx(3, chunk);
+    ggml_context_ptr ctx_b = plan_make_ctx(3, chunk);
+
+    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
+    GGML_ASSERT(plan);
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_a.get(), &a.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_b.get(), &b.buffer_type));
+
+    GGML_ASSERT(!ggml_backend_alloc_plan_commit(plan.get()));
+
+    GGML_ASSERT(a.context->alloc_calls == 0);          // the earlier group never touched the driver
+    GGML_ASSERT(b.context->alloc_calls == 0);
+    GGML_ASSERT(a.context->buffers.empty());
+    plan.reset();
+    GGML_ASSERT(a.context->reserved == 0);             // A's plan was opened and released
+    GGML_ASSERT(a.context->plan_free_calls == 1);
+    GGML_ASSERT(a.context->released == 3 * chunk);
+}
+
+static void test_loader_transaction_competing_and_isolated() {
+    const size_t chunk = 64;
+
+    // 1. two concurrent transactions against ONE buffer type must not over-admit
+    {
+        dummy_backend a = dummy_backend_init(chunk);
+        plan_wire(a);
+        a.context->budget = 5 * chunk;
+
+        ggml_context_ptr ctx1 = plan_make_ctx(3, chunk);
+        ggml_context_ptr ctx2 = plan_make_ctx(3, chunk);
+
+        loader_plan_ptr first(ggml_backend_alloc_plan_init());
+        GGML_ASSERT(ggml_backend_alloc_plan_add(first.get(), ctx1.get(), &a.buffer_type));
+        GGML_ASSERT(ggml_backend_alloc_plan_commit(first.get()));
+        GGML_ASSERT(a.context->reserved == 3 * chunk);
+
+        // 3 + 3 buffers do not fit in 5: the second load is refused against the first's reservation
+        loader_plan_ptr second(ggml_backend_alloc_plan_init());
+        GGML_ASSERT(ggml_backend_alloc_plan_add(second.get(), ctx2.get(), &a.buffer_type));
+        GGML_ASSERT(!ggml_backend_alloc_plan_commit(second.get()));
+        second.reset();
+
+        // the first transaction going away frees the capacity, and the same load now fits
+        first.reset();
+        GGML_ASSERT(a.context->reserved == 0);
+        loader_plan_ptr third(ggml_backend_alloc_plan_init());
+        GGML_ASSERT(ggml_backend_alloc_plan_add(third.get(), ctx2.get(), &a.buffer_type));
+        GGML_ASSERT(ggml_backend_alloc_plan_commit(third.get()));
+    }
+
+    // 2. two devices: a transaction spanning both keeps their capacity separate
+    {
+        dummy_backend a = dummy_backend_init(chunk);
+        dummy_backend b = dummy_backend_init(chunk);
+        plan_wire(a);
+        plan_wire(b);
+        a.context->budget = 2 * chunk;   // exactly its own share, nothing spare
+        b.context->budget = 2 * chunk;
+
+        ggml_context_ptr ctx_a = plan_make_ctx(2, chunk);
+        ggml_context_ptr ctx_b = plan_make_ctx(2, chunk);
+
+        loader_plan_ptr plan(ggml_backend_alloc_plan_init());
+        GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_a.get(), &a.buffer_type));
+        GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_b.get(), &b.buffer_type));
+        GGML_ASSERT(ggml_backend_alloc_plan_commit(plan.get()));
+
+        // neither device was charged the other's bytes
+        GGML_ASSERT(a.context->reserved == 2 * chunk);
+        GGML_ASSERT(b.context->reserved == 2 * chunk);
+        GGML_ASSERT(a.context->plan_begin_calls == 1 && a.context->plan_n == 2);
+        GGML_ASSERT(b.context->plan_begin_calls == 1 && b.context->plan_n == 2);
+    }
+}
+
+static void test_loader_transaction_two_contexts_one_buffer_type() {
+    const size_t chunk = 64;
+
+    // two contexts share one buffer type: ONE plan covers both, and the second context consumes its
+    // OWN entries (3,4,5) rather than re-consuming the first context's (0,1,2)
+    dummy_backend a = dummy_backend_init(chunk);
+    plan_wire(a);
+    a.context->budget = 6 * chunk;
+
+    ggml_context_ptr ctx1 = plan_make_ctx(3, chunk);
+    ggml_context_ptr ctx2 = plan_make_ctx(3, chunk);
+
+    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx1.get(), &a.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx2.get(), &a.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_commit(plan.get()));
+    GGML_ASSERT(a.context->plan_begin_calls == 1);   // one plan, not one per context
+    GGML_ASSERT(a.context->plan_n == 6);
+
+    ggml_backend_buffer_t b1 = ggml_backend_alloc_plan_alloc(plan.get(), ctx1.get(), &a.buffer_type);
+    ggml_backend_buffer_t b2 = ggml_backend_alloc_plan_alloc(plan.get(), ctx2.get(), &a.buffer_type);
+    GGML_ASSERT(b1 != nullptr && b2 != nullptr);
+    GGML_ASSERT(a.context->alloc_calls == 6);
+    GGML_ASSERT(a.context->reserved == 0);           // every entry adopted, nothing left reserved
+
+    const std::vector<size_t> expected = { 0, 1, 2, 3, 4, 5 };
+    GGML_ASSERT(a.context->plan_alloc_order == expected);
+
+    plan.reset();
+    GGML_ASSERT(a.context->plan_free_calls == 1);    // one plan freed once, not once per group
+    GGML_ASSERT(a.context->released == 0);           // nothing to release: all consumed
+
+    ggml_backend_buffer_free(b1);
+    ggml_backend_buffer_free(b2);
+    GGML_ASSERT(a.context->allocated_total() == 0);
+}
+
+static void test_loader_transaction_mid_load_failure_rolls_back() {
+    const size_t chunk = 64;
+
+    dummy_backend a = dummy_backend_init(chunk);
+    plan_wire(a);
+    a.context->budget        = 6 * chunk;
+    a.context->fail_alloc_at = 4;   // the 5th planned allocation fails: the second group, mid-group
+
+    ggml_context_ptr ctx1 = plan_make_ctx(3, chunk);
+    ggml_context_ptr ctx2 = plan_make_ctx(3, chunk);
+
+    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx1.get(), &a.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx2.get(), &a.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_commit(plan.get()));
+
+    ggml_backend_buffer_t b1 = ggml_backend_alloc_plan_alloc(plan.get(), ctx1.get(), &a.buffer_type);
+    GGML_ASSERT(b1 != nullptr);
+    ggml_backend_buffer_t b2 = ggml_backend_alloc_plan_alloc(plan.get(), ctx2.get(), &a.buffer_type);
+    GGML_ASSERT(b2 == nullptr);   // the failing group builds nothing
+
+    plan.reset();
+    // entry 3 was adopted then freed with its group's buffers; entries 4 and 5 were never consumed
+    // and came back through plan_free. Either way each is discharged exactly once.
+    GGML_ASSERT(a.context->reserved == 0);
+    GGML_ASSERT(a.context->released == 2 * chunk);
+    GGML_ASSERT(a.context->plan_free_calls == 1);
+
+    ggml_backend_buffer_free(b1);
+    GGML_ASSERT(a.context->allocated_total() == 0);
+}
+
+static void test_loader_transaction_mixed_backends() {
+    const size_t chunk = 64;
+
+    // one planning buffer type and one that does not implement planning, in the same load
+    dummy_backend planned   = dummy_backend_init(chunk);
+    dummy_backend unplanned = dummy_backend_init(chunk);
+    plan_wire(planned);
+    planned.context->budget = 3 * chunk;
+
+    ggml_context_ptr ctx_p = plan_make_ctx(3, chunk);
+    ggml_context_ptr ctx_u = plan_make_ctx(3, chunk);
+
+    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_p.get(), &planned.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_u.get(), &unplanned.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_commit(plan.get()));
+
+    GGML_ASSERT(unplanned.context->plan_begin_calls == 0);   // never asked to plan
+    GGML_ASSERT(unplanned.context->alloc_calls == 0);        // and nothing allocated by commit
+
+    ggml_backend_buffer_t bp = ggml_backend_alloc_plan_alloc(plan.get(), ctx_p.get(), &planned.buffer_type);
+    ggml_backend_buffer_t bu = ggml_backend_alloc_plan_alloc(plan.get(), ctx_u.get(), &unplanned.buffer_type);
+    GGML_ASSERT(bp != nullptr && bu != nullptr);
+    GGML_ASSERT(planned.context->alloc_calls == 3);
+    GGML_ASSERT(unplanned.context->alloc_calls == 3);        // allocates exactly as it always did
+    GGML_ASSERT(unplanned.context->plan_free_calls == 0);
+
+    // a group that never joined the transaction still allocates through the ordinary path
+    dummy_backend outside = dummy_backend_init(chunk);
+    ggml_context_ptr ctx_o = plan_make_ctx(2, chunk);
+    ggml_backend_buffer_t bo = ggml_backend_alloc_plan_alloc(plan.get(), ctx_o.get(), &outside.buffer_type);
+    GGML_ASSERT(bo != nullptr);
+    GGML_ASSERT(outside.context->alloc_calls == 2);
+
+    plan.reset();
+    ggml_backend_buffer_free(bp);
+    ggml_backend_buffer_free(bu);
+    ggml_backend_buffer_free(bo);
+}
+
+static void test_loader_transaction_overflow_is_refused() {
+    // three groups whose byte totals sum past SIZE_MAX. The transaction must refuse while counting,
+    // before any backend is asked to plan - a wrapped total would be a small number a backend would
+    // cheerfully admit.
+    const size_t huge = (size_t) 0x6000000000000000ULL;
+
+    dummy_backend a = dummy_backend_init(SIZE_MAX);
+    plan_wire(a);
+
+    ggml_context_ptr ctx1 = plan_make_ctx(1, huge);
+    ggml_context_ptr ctx2 = plan_make_ctx(1, huge);
+    ggml_context_ptr ctx3 = plan_make_ctx(1, huge);
+
+    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx1.get(), &a.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx2.get(), &a.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx3.get(), &a.buffer_type));
+
+    GGML_ASSERT(!ggml_backend_alloc_plan_commit(plan.get()));
+    GGML_ASSERT(a.context->plan_begin_calls == 0);
+    GGML_ASSERT(a.context->alloc_calls == 0);
+}
+
 static void test_backend_graph_optimize(ggml_backend_t, ggml_cgraph * graph, ggml_backend_graph_optimize_params * params) {
     GGML_ASSERT(graph->n_nodes == 3);
     params->add_alloc_dep(params->user_data, graph->nodes[0], graph->nodes[2]);
@@ -809,5 +1093,11 @@ int main() {
     run("test_reallocation", test_reallocation);
     run("test_graph_optimize_alloc_dep", test_graph_optimize_alloc_dep);
     run("test_plan_indeterminate_never_partially_allocates", test_plan_indeterminate_never_partially_allocates);
+    run("test_loader_transaction_refuses_before_any_allocation", test_loader_transaction_refuses_before_any_allocation);
+    run("test_loader_transaction_competing_and_isolated", test_loader_transaction_competing_and_isolated);
+    run("test_loader_transaction_two_contexts_one_buffer_type", test_loader_transaction_two_contexts_one_buffer_type);
+    run("test_loader_transaction_mid_load_failure_rolls_back", test_loader_transaction_mid_load_failure_rolls_back);
+    run("test_loader_transaction_mixed_backends", test_loader_transaction_mixed_backends);
+    run("test_loader_transaction_overflow_is_refused", test_loader_transaction_overflow_is_refused);
     return 0;
 }

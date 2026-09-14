@@ -1745,6 +1745,63 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
     const size_t n_max_backend_buffer = ml.ctx_map.size() * ml.files.size();
     pimpl->ctxs_bufs.reserve(n_max_backend_buffer);
 
+    // R46b B7b — loader-wide allocation transaction.
+    //
+    // Without it this loop allocates one (buffer type, context) group at a time, so a load that runs
+    // out of device memory on the third group has already placed the first two. The transaction
+    // censuses every group that takes the real-allocation path below, reserves all of them
+    // atomically per buffer type, and only then lets the loop consume those reservations. If any
+    // group cannot be placed, commit() fails before the first plan-owned driver allocation.
+    //
+    // Held by unique_ptr on purpose: this loop throws on several paths, and an escape between
+    // commit() and the last consume must still release every unconsumed reservation - otherwise the
+    // device ledger would stay charged for bytes nothing holds and refuse the NEXT load.
+    struct llama_alloc_plan_deleter {
+        void operator()(ggml_backend_alloc_plan_t p) const { ggml_backend_alloc_plan_free(p); }
+    };
+    std::unique_ptr<ggml_backend_alloc_plan, llama_alloc_plan_deleter> load_plan(ggml_backend_alloc_plan_init());
+    if (!load_plan) {
+        throw std::runtime_error(format("%s: failed to create the model allocation plan", __func__));
+    }
+
+    // the two predicates the loop below decides each group with, shared so the census pass and the
+    // allocation pass can never disagree about which groups are in the transaction
+    auto resolve_dev = [&](ggml_backend_buffer_type_t buft) {
+        ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
+        if (!dev) {
+            // FIXME: workaround for CPU backend buft having a NULL device
+            dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+            if (!dev) {
+                throw std::runtime_error(format("%s: no CPU backend found", __func__));
+            }
+        }
+        return dev;
+    };
+    auto uses_host_ptr_path = [&](ggml_backend_buffer_type_t buft, bool lazy, ggml_backend_dev_t dev) {
+        ggml_backend_dev_props props;
+        ggml_backend_dev_get_props(dev, &props);
+        const bool is_default_buft = buft == ggml_backend_dev_buffer_type(dev);
+        // a lazy context is mapped whatever the load mode, but the memory-fit pass maps nothing
+        const bool is_lazy_mapped = lazy && !ml.no_alloc;
+        return (ml.use_mmap || is_lazy_mapped) && use_mmap_buffer && props.caps.buffer_from_host_ptr && is_default_buft;
+    };
+
+    // census pass: no allocation happens here
+    for (auto & [ctx_key, ctx_ptr] : ml.ctx_map) {
+        ggml_context * ctx = ctx_ptr.get();
+        if (ggml_get_first_tensor(ctx) == nullptr || ml.no_alloc) {
+            continue;
+        }
+        if (uses_host_ptr_path(ctx_key.buft, ctx_key.lazy, resolve_dev(ctx_key.buft))) {
+            continue;  // mapped from a host pointer, never allocated by the backend
+        }
+        ggml_backend_alloc_plan_add(load_plan.get(), ctx, ctx_key.buft);
+    }
+    if (!ggml_backend_alloc_plan_commit(load_plan.get())) {
+        throw std::runtime_error(format("%s: this model's weights cannot all be placed; "
+                                        "failing before any buffer is allocated", __func__));
+    }
+
     for (auto & [ctx_key, ctx_ptr] : ml.ctx_map) {
         ggml_backend_buffer_type_t buft = ctx_key.buft;
         ggml_context * ctx = ctx_ptr.get();
@@ -1758,25 +1815,11 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         buf_map.reserve(n_max_backend_buffer);
 
         // check if it is possible to use buffer_from_host_ptr with this buffer type
-        ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
-        if (!dev) {
-            // FIXME: workaround for CPU backend buft having a NULL device
-            dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
-            if (!dev) {
-                throw std::runtime_error(format("%s: no CPU backend found", __func__));
-            }
-        }
-        ggml_backend_dev_props props;
-        ggml_backend_dev_get_props(dev, &props);
-        bool buffer_from_host_ptr_supported = props.caps.buffer_from_host_ptr;
-        bool is_default_buft = buft == ggml_backend_dev_buffer_type(dev);
+        ggml_backend_dev_t dev = resolve_dev(buft);
 
         std::vector<ggml_backend_buffer_ptr> bufs;
 
-        // a lazy context is mapped whatever the load mode, but the memory-fit pass maps nothing
-        const bool is_lazy_mapped = ctx_key.lazy && !ml.no_alloc;
-
-        if ((ml.use_mmap || is_lazy_mapped) && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
+        if (uses_host_ptr_path(buft, ctx_key.lazy, dev)) {
             GGML_ASSERT(!ml.no_alloc);
             for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
                 // only the mmap region containing the tensors in the model is mapped to the backend buffer
@@ -1805,7 +1848,8 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                     t->buffer = buf; // set dummy buffer for weights so that the backend scheduler won't try to allocate them
                 }
             } else {
-                buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
+                // real buffer: consumes this group's slice of the reservation commit() already made
+                buf = ggml_backend_alloc_plan_alloc(load_plan.get(), ctx, buft);
             }
             if (buf == nullptr) {
                 throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));
