@@ -675,7 +675,11 @@ def _replay(repo: str, cfg: dict, onto: str, series_path: str, expect_ref: str =
         git(wt, "checkout", "-B", branch, onto)
         for i, patch in enumerate(files, 1):
             name = os.path.basename(patch)
-            rc, out, err = git(wt, "am", "--keep-non-patch", patch, check=False)
+            # core.autocrlf=false for the replay: the committed blobs are the artifact. With the
+            # Git-for-Windows default (true) `git am` eol-converts any file the base's .gitattributes
+            # does not yet mark -text, and the replayed tree differs from arifi/main by line endings
+            # alone (HQ seat-58, 2026-09-14: eight evidence receipts, 1584 lines swapped).
+            rc, out, err = git(wt, "-c", "core.autocrlf=false", "am", "--keep-non-patch", patch, check=False)
             if rc != 0:
                 say("\n" + "=" * 78)
                 say("REPLAY FAILED - STOPPING. Nothing was auto-resolved.")
