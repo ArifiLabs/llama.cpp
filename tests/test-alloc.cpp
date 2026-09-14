@@ -17,6 +17,13 @@ uint8_t * const alloc_base = (uint8_t *) 16;
 struct dummy_backend_context {
     size_t max_buffer_size = 64;
     size_t alignment       = 8;
+    // R46b B7b-R2: batch planning seam. `plan_status` is what plan_begin answers; the counters
+    // record what the caller in ggml-alloc.c did with that answer.
+    ggml_backend_plan_status plan_status      = GGML_BACKEND_PLAN_FEASIBLE;
+    size_t                   alloc_calls      = 0;   // every buffer allocation, planned or not
+    size_t                   plan_begin_calls = 0;
+    size_t                   plan_free_calls  = 0;
+    size_t                   plan_n           = 0;   // buffers in the last plan_begin
 
     ggml_backend_buffer_i              buffer_interface;
     ggml_backend_device                device;
@@ -40,6 +47,7 @@ static const char * dummy_backend_buffer_type_get_name(ggml_backend_buffer_type_
 
 static ggml_backend_buffer_t dummy_backend_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     dummy_backend_context * ctx    = (dummy_backend_context *) buft->context;
+    ctx->alloc_calls++;
     ggml_backend_buffer_t & buffer = ctx->buffers.emplace_back();
     buffer                         = ggml_backend_buffer_init(buft, ctx->buffer_interface, ctx, size);
     return buffer;
@@ -57,6 +65,39 @@ static size_t dummy_backend_buffer_type_get_max_size(ggml_backend_buffer_type_t 
 
 static bool dummy_backend_buffer_type_is_host(ggml_backend_buffer_type_t) {
     return true;
+}
+
+// R46b B7b-R2 batch planning hooks. The plan holds nothing but the sizes it was handed; this
+// backend has no capacity to reserve. Its only job is to answer with a configured status so the
+// CALLER's contract in ggml_backend_alloc_ctx_tensors_from_buft() can be tested.
+struct ggml_backend_buffer_type_plan {
+    std::vector<size_t> sizes;
+};
+
+static ggml_backend_buffer_type_plan_t dummy_backend_buffer_type_plan_begin(
+        ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, ggml_backend_plan_status * status) {
+    dummy_backend_context * ctx = (dummy_backend_context *) buft->context;
+    ctx->plan_begin_calls++;
+    ctx->plan_n = n;
+    *status     = ctx->plan_status;
+    if (ctx->plan_status != GGML_BACKEND_PLAN_FEASIBLE) {
+        return nullptr;
+    }
+    ggml_backend_buffer_type_plan_t plan = new ggml_backend_buffer_type_plan;
+    plan->sizes.assign(sizes, sizes + n);
+    return plan;
+}
+
+static ggml_backend_buffer_t dummy_backend_buffer_type_plan_alloc_buffer(
+        ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i) {
+    GGML_ASSERT(i < plan->sizes.size());
+    return dummy_backend_buffer_type_alloc_buffer(buft, plan->sizes[i]);
+}
+
+static void dummy_backend_buffer_type_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan) {
+    dummy_backend_context * ctx = (dummy_backend_context *) buft->context;
+    ctx->plan_free_calls++;
+    delete plan;
 }
 
 // ggml_backend_buffer interface
@@ -615,6 +656,101 @@ static void test_reallocation() {
     }
 }
 
+//
+// R46b B7b-R2 (check finding 5): the batch plan contract at the production caller,
+// ggml_backend_alloc_ctx_tensors_from_buft(). One call = one (buffer type, context) batch.
+//
+// A MULTI-buffer set must never start allocating on an undecided answer, because that places part
+// of a set whose completion is unknown. A SINGLE-buffer allocation has no partial state to leave
+// behind and must keep its previous behaviour exactly, undecided answer or not.
+
+static void plan_wire(dummy_backend & b) {
+    b.buffer_type.iface.plan_begin        = dummy_backend_buffer_type_plan_begin;
+    b.buffer_type.iface.plan_alloc_buffer = dummy_backend_buffer_type_plan_alloc_buffer;
+    b.buffer_type.iface.plan_free         = dummy_backend_buffer_type_plan_free;
+}
+
+// `n` tensors of `size_bytes` with max_buffer_size == size_bytes, so the loader's own split
+// arithmetic produces exactly `n` buffers.
+static ggml_context_ptr plan_make_ctx(int n, size_t size_bytes) {
+    ggml_init_params params{};
+    params.mem_size = ggml_tensor_overhead() * (size_t) (n + 2);
+    params.no_alloc = true;
+    ggml_context_ptr ctx = ggml_context_ptr(ggml_init(params));
+    for (int i = 0; i < n; i++) {
+        make_input_with_size(ctx.get(), size_bytes);
+    }
+    return ctx;
+}
+
+static void test_plan_indeterminate_never_partially_allocates() {
+    const size_t chunk = 64;
+
+    // 1. multi-buffer + INDETERMINATE: refused, and NOT ONE buffer was allocated
+    {
+        dummy_backend backend = dummy_backend_init(chunk);
+        plan_wire(backend);
+        backend.context->plan_status = GGML_BACKEND_PLAN_INDETERMINATE;
+
+        ggml_context_ptr ctx = plan_make_ctx(3, chunk);
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), &backend.buffer_type);
+        GGML_ASSERT(buf == nullptr);
+        GGML_ASSERT(backend.context->plan_begin_calls == 1);
+        GGML_ASSERT(backend.context->plan_n == 3);
+        GGML_ASSERT(backend.context->alloc_calls == 0);
+        GGML_ASSERT(backend.context->buffers.empty());
+    }
+
+    // 2. single buffer + INDETERMINATE: unchanged behaviour, it allocates
+    {
+        dummy_backend backend = dummy_backend_init(chunk);
+        plan_wire(backend);
+        backend.context->plan_status = GGML_BACKEND_PLAN_INDETERMINATE;
+
+        ggml_context_ptr ctx = plan_make_ctx(1, chunk);
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), &backend.buffer_type);
+        GGML_ASSERT(buf != nullptr);
+        GGML_ASSERT(backend.context->plan_n == 1);
+        GGML_ASSERT(backend.context->alloc_calls == 1);
+        ggml_backend_buffer_free(buf);
+    }
+
+    // 3. multi-buffer + INFEASIBLE: refused before the first allocation
+    {
+        dummy_backend backend = dummy_backend_init(chunk);
+        plan_wire(backend);
+        backend.context->plan_status = GGML_BACKEND_PLAN_INFEASIBLE;
+
+        ggml_context_ptr ctx = plan_make_ctx(3, chunk);
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), &backend.buffer_type);
+        GGML_ASSERT(buf == nullptr);
+        GGML_ASSERT(backend.context->alloc_calls == 0);
+    }
+
+    // 4. multi-buffer + FEASIBLE: every buffer comes from the plan, and the plan is freed once
+    {
+        dummy_backend backend = dummy_backend_init(chunk);
+        plan_wire(backend);
+        backend.context->plan_status = GGML_BACKEND_PLAN_FEASIBLE;
+
+        ggml_context_ptr ctx = plan_make_ctx(3, chunk);
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), &backend.buffer_type);
+        GGML_ASSERT(buf != nullptr);
+        GGML_ASSERT(backend.context->alloc_calls == 3);
+        GGML_ASSERT(backend.context->plan_free_calls == 1);
+    }
+
+    // 5. a buffer type WITHOUT the hooks is UNSUPPORTED and allocates exactly as before
+    {
+        dummy_backend backend = dummy_backend_init(chunk);
+        ggml_context_ptr ctx = plan_make_ctx(3, chunk);
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), &backend.buffer_type);
+        GGML_ASSERT(buf != nullptr);
+        GGML_ASSERT(backend.context->plan_begin_calls == 0);
+        GGML_ASSERT(backend.context->alloc_calls == 3);
+    }
+}
+
 static void test_backend_graph_optimize(ggml_backend_t, ggml_cgraph * graph, ggml_backend_graph_optimize_params * params) {
     GGML_ASSERT(graph->n_nodes == 3);
     params->add_alloc_dep(params->user_data, graph->nodes[0], graph->nodes[2]);
@@ -672,5 +808,6 @@ int main() {
     run("test_buffer_size_zero", test_buffer_size_zero);
     run("test_reallocation", test_reallocation);
     run("test_graph_optimize_alloc_dep", test_graph_optimize_alloc_dep);
+    run("test_plan_indeterminate_never_partially_allocates", test_plan_indeterminate_never_partially_allocates);
     return 0;
 }
