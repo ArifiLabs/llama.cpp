@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **532**, all non-merge, applied in filename order.
+- Patches: **533**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 532 commit messages, same provenance trailers. Verified, not
+same file contents, same 533 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -611,6 +611,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 530 | `0530-feat-vulkan-bounded-host-split-with-explicit-staging.patch` | arifi-fork-base | `e1d9b3919` | - | - | feat(vulkan): bounded host split with explicit staging reserve (R46b B7c) |
 | 531 | `0531-fix-checkpoint-make-device-finalization-fallible.patch` | arifi-fork-base | `4e8114ead` | - | - | fix(checkpoint): make device finalization fallible |
 | 532 | `0532-feat-updater-preserve-fork-work-across-rebases.patch` | arifi-fork-base | `9ff4644b1` | - | - | feat(updater): preserve fork work across rebases |
+| 533 | `0533-arifi-sync-regenerate-the-patch-series-at-the-R46i-t.patch` | arifi-fork-base | `ab741fd55` | - | `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE` | arifi-sync: regenerate the patch series at the R46i tip; grandfather the nine untrailered R46i-line commits |
 
 ## Measured effect, per patch
 
@@ -1222,6 +1223,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0530-feat-vulkan-bounded-host-split-with-explicit-staging.patch` | *(no Measured-effect trailer)* |
 | `0531-fix-checkpoint-make-device-finalization-fallible.patch` | *(no Measured-effect trailer)* |
 | `0532-feat-updater-preserve-fork-work-across-rebases.patch` | *(no Measured-effect trailer)* |
+| `0533-arifi-sync-regenerate-the-patch-series-at-the-R46i-t.patch` | UNMEASURED - manifests only |
 
 ## Unclassified
 
@@ -1650,4 +1652,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `e1d9b3919` feat(vulkan): bounded host split with explicit staging reserve (R46b B7c)
 - `4e8114ead` fix(checkpoint): make device finalization fallible
 - `9ff4644b1` feat(updater): preserve fork work across rebases
+- `ab741fd55` arifi-sync: regenerate the patch series at the R46i tip; grandfather the nine untrailered R46i-line commits
 
