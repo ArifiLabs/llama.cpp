@@ -6,112 +6,175 @@
 
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
+// ArifiLabs lane-234 R48 - ACTIVATION HOIST.
+//
+// The weight decode of this shader was already shared across NUM_COLS columns upstream. The
+// ACTIVATION side was not: with the row loop outermost, the eight vec2 loads of data_b were
+// issued num_rows times per superblock per column, for bytes that do not depend on the row.
+// Arm 1 loads each activation vector once per superblock and reuses it across all rows, so the
+// term that grows with the batch width is divided by NUM_ROWS while the weight term is untouched.
+//
+// Both arms call the same decode_superblock() and the same accumulate_column(): the fma chains,
+// their operand order and the accumulation order into temp[j][n] are one piece of code, so the
+// two arms are bit-identical by construction and this is a scheduling change only.
+//
+// Gated by specialization constant 3 so ONE binary serves both arms:
+//   1 (default) = activation hoisted        0 = the shipped loop order, byte for byte.
+// The host reads GGML_ARIFI_Q5K_B_HOIST=0 to build the pipelines with 0. The opt-out is
+// load-bearing: the hoisted arm holds NUM_ROWS rows of decoded weights live across the column
+// loop, and lane-230 measured that shape spilling on this device class.
+layout (constant_id = 3) const uint ARIFI_Q5K_B_HOIST = 1;
+
 FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+
+// Verbatim lift of the shipped per-row decode. No expression below was rewritten; the only change
+// is that the eight sc* and sixteen q4_* locals are written into caller-supplied arrays.
+void decode_superblock(const uint a_offset, const uint v_im, const uint l0, const uint q_offset, const uint i, const uint num_blocks_per_row, const uint row, out FLOAT_TYPEV2 dm, out FLOAT_TYPE sc[8], out FLOAT_TYPE q4[16]) {
+    const uint ib = a_offset + row*num_blocks_per_row + i;
+
+    dm = FLOAT_TYPEV2(data_a[ib].dm);
+
+    const uint32_t scale0_u32 = data_a_packed16[ib].scales[v_im    ];
+    const uint32_t scale4_u32 = data_a_packed16[ib].scales[v_im + 2];
+    const uint32_t scale8_u32 = data_a_packed16[ib].scales[v_im + 4];
+
+    const uint32_t scale_0_4_l = (scale4_u32 << 16) | scale0_u32;
+    const uint32_t scale_0_4_h = (scale_0_4_l & 0xC0C0C0C0) >> 2;
+    const vec4 scale_0_4_l_f = vec4(unpack8(scale_0_4_l & 0x3F3F3F3F));
+    const vec4 scale8_f = vec4(unpack8((((scale8_u32 << 12) | scale8_u32) & 0x0F0F0F0F) | scale_0_4_h));
+
+    sc[0] = scale_0_4_l_f.x;
+    sc[1] = scale_0_4_l_f.y;
+    sc[2] = scale_0_4_l_f.z;
+    sc[3] = scale_0_4_l_f.w;
+    sc[4] = scale8_f.x;
+    sc[5] = scale8_f.y;
+    sc[6] = scale8_f.z;
+    sc[7] = scale8_f.w;
+
+    const uint32_t qs0_16_u32 = uint32_t(data_a_packed16[ib].qs[q_offset / 2]) | (uint32_t(data_a_packed16[ib].qs[q_offset / 2 + 8]) << 16);
+    const uint32_t qs64_80_u32 = uint32_t(data_a_packed16[ib].qs[q_offset / 2 + 32]) | (uint32_t(data_a_packed16[ib].qs[q_offset / 2 + 40]) << 16);
+
+    uint32_t qs0_16_u32_lo4 = qs0_16_u32 & 0x0F0F0F0F;
+    uint32_t qs0_16_u32_hi4 = (qs0_16_u32 >> 4) & 0x0F0F0F0F;
+    uint32_t qs64_80_u32_lo4 = qs64_80_u32 & 0x0F0F0F0F;
+    uint32_t qs64_80_u32_hi4 = (qs64_80_u32 >> 4) & 0x0F0F0F0F;
+
+    const uint32_t qh = pack32(u16vec2(data_a_packed16[ib].qh[l0 / 2], data_a_packed16[ib].qh[l0 / 2 + 8]));
+
+    const uint32_t qs0_16_lo4_offset16 = ((qh >> (2*v_im)) & 0x01010101) << 4;
+    const uint32_t qs0_16_hi4_offset16 = ((qh >> (2*v_im)) & 0x02020202) << 3;
+    const uint32_t qs64_80_lo4_offset16 = ((qh >> (2*v_im)) & 0x10101010);
+    const uint32_t qs64_80_hi4_offset16 = ((qh >> (2*v_im)) & 0x20202020) >> 1;
+
+    qs0_16_u32_lo4 += qs0_16_lo4_offset16;
+    qs0_16_u32_hi4 += qs0_16_hi4_offset16;
+    qs64_80_u32_lo4 += qs64_80_lo4_offset16;
+    qs64_80_u32_hi4 += qs64_80_hi4_offset16;
+
+    const vec4 qs0_16_lo4 = vec4(unpack8(qs0_16_u32_lo4));
+    const vec4 qs64_80_lo4 = vec4(unpack8(qs64_80_u32_lo4));
+    const vec4 qs0_16_hi4 = vec4(unpack8(qs0_16_u32_hi4));
+    const vec4 qs64_80_hi4 = vec4(unpack8(qs64_80_u32_hi4));
+
+    q4[0]  = qs0_16_lo4.x;
+    q4[1]  = qs0_16_lo4.y;
+    q4[2]  = qs0_16_lo4.z;
+    q4[3]  = qs0_16_lo4.w;
+    q4[4]  = qs0_16_hi4.x;
+    q4[5]  = qs0_16_hi4.y;
+    q4[6]  = qs0_16_hi4.z;
+    q4[7]  = qs0_16_hi4.w;
+    q4[8]  = qs64_80_lo4.x;
+    q4[9]  = qs64_80_lo4.y;
+    q4[10] = qs64_80_lo4.z;
+    q4[11] = qs64_80_lo4.w;
+    q4[12] = qs64_80_hi4.x;
+    q4[13] = qs64_80_hi4.y;
+    q4[14] = qs64_80_hi4.z;
+    q4[15] = qs64_80_hi4.w;
+}
+
+// by[0..7] = the shipped by10, by116, by132, by148, by20, by216, by232, by248, in that order.
+void load_activations(const uint b_offset, const uint y1_idx, const uint y2_idx, const uint j, out vec2 by[8]) {
+    by[0] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2     ]);
+    by[1] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2 +  8]);
+    by[2] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2 + 16]);
+    by[3] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2 + 24]);
+    by[4] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2     ]);
+    by[5] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2 +  8]);
+    by[6] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2 + 16]);
+    by[7] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2 + 24]);
+}
+
+// Verbatim lift of the shipped inner body. Both arms call this, so the fma nesting, the operand
+// order and the -dm.y sign are one piece of code rather than two that must be compared by eye.
+void accumulate_column(const FLOAT_TYPEV2 dm, const FLOAT_TYPE sc[8], const FLOAT_TYPE q4[16], const vec2 by[8], inout FLOAT_TYPE t) {
+    const FLOAT_TYPE sx =
+      fma(FLOAT_TYPE(by[0].x), q4[0],
+      fma(FLOAT_TYPE(by[0].y), q4[1],
+      fma(FLOAT_TYPE(by[1].x), q4[2],
+         FLOAT_TYPE(by[1].y) * q4[3])));
+    const FLOAT_TYPE sy =
+      fma(FLOAT_TYPE(by[2].x), q4[4],
+      fma(FLOAT_TYPE(by[2].y), q4[5],
+      fma(FLOAT_TYPE(by[3].x), q4[6],
+         FLOAT_TYPE(by[3].y) * q4[7])));
+    const FLOAT_TYPE sz =
+      fma(FLOAT_TYPE(by[4].x), q4[8],
+      fma(FLOAT_TYPE(by[4].y), q4[9],
+      fma(FLOAT_TYPE(by[5].x), q4[10],
+         FLOAT_TYPE(by[5].y) * q4[11])));
+    const FLOAT_TYPE sw =
+      fma(FLOAT_TYPE(by[6].x), q4[12],
+      fma(FLOAT_TYPE(by[6].y), q4[13],
+      fma(FLOAT_TYPE(by[7].x), q4[14],
+         FLOAT_TYPE(by[7].y) * q4[15])));
+    const FLOAT_TYPE smin =
+      fma(FLOAT_TYPE(by[0].x) + FLOAT_TYPE(by[0].y) + FLOAT_TYPE(by[1].x) + FLOAT_TYPE(by[1].y), sc[2],
+      fma(FLOAT_TYPE(by[2].x) + FLOAT_TYPE(by[2].y) + FLOAT_TYPE(by[3].x) + FLOAT_TYPE(by[3].y), sc[3],
+      fma(FLOAT_TYPE(by[4].x) + FLOAT_TYPE(by[4].y) + FLOAT_TYPE(by[5].x) + FLOAT_TYPE(by[5].y), sc[6],
+          (FLOAT_TYPE(by[6].x) + FLOAT_TYPE(by[6].y) + FLOAT_TYPE(by[7].x) + FLOAT_TYPE(by[7].y)) * sc[7])));
+    t = fma(dm.x, fma(sx, sc[0], fma(sy, sc[1], fma(sz, sc[4], sw * sc[5]))), fma(-dm.y, smin, t));
+}
 
 void calc_superblock(const uint a_offset, const uint b_offset, const uint v_im, const uint l0, const uint q_offset, const uint y_offset, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows) {
     const uint y1_idx = i * QUANT_K + y_offset;
     const uint y2_idx = y1_idx + 128;
 
-    [[unroll]] for (uint n = 0; n < num_rows; ++n) {
-        const uint ib0 = a_offset + (first_row+n)*num_blocks_per_row;
-        const FLOAT_TYPEV2 dm = FLOAT_TYPEV2(data_a[ib0 + i].dm);
+    if (ARIFI_Q5K_B_HOIST != 0) {
+        // Decode every row's weights first, then walk the columns once. Each activation vector is
+        // loaded a single time and reused across all num_rows rows.
+        FLOAT_TYPEV2 dmv[NUM_ROWS];
+        FLOAT_TYPE scv[NUM_ROWS][8];
+        FLOAT_TYPE q4v[NUM_ROWS][16];
 
-        const uint32_t scale0_u32 = data_a_packed16[ib0 + i].scales[v_im    ];
-        const uint32_t scale4_u32 = data_a_packed16[ib0 + i].scales[v_im + 2];
-        const uint32_t scale8_u32 = data_a_packed16[ib0 + i].scales[v_im + 4];
-
-        const uint32_t scale_0_4_l = (scale4_u32 << 16) | scale0_u32;
-        const uint32_t scale_0_4_h = (scale_0_4_l & 0xC0C0C0C0) >> 2;
-        const vec4 scale_0_4_l_f = vec4(unpack8(scale_0_4_l & 0x3F3F3F3F));
-        const vec4 scale8_f = vec4(unpack8((((scale8_u32 << 12) | scale8_u32) & 0x0F0F0F0F) | scale_0_4_h));
-
-        const FLOAT_TYPE sc0 = scale_0_4_l_f.x;
-        const FLOAT_TYPE sc1 = scale_0_4_l_f.y;
-        const FLOAT_TYPE sc2 = scale_0_4_l_f.z;
-        const FLOAT_TYPE sc3 = scale_0_4_l_f.w;
-        const FLOAT_TYPE sc4 = scale8_f.x;
-        const FLOAT_TYPE sc5 = scale8_f.y;
-        const FLOAT_TYPE sc6 = scale8_f.z;
-        const FLOAT_TYPE sc7 = scale8_f.w;
-
-        const uint32_t qs0_16_u32 = uint32_t(data_a_packed16[ib0 + i].qs[q_offset / 2]) | (uint32_t(data_a_packed16[ib0 + i].qs[q_offset / 2 + 8]) << 16);
-        const uint32_t qs64_80_u32 = uint32_t(data_a_packed16[ib0 + i].qs[q_offset / 2 + 32]) | (uint32_t(data_a_packed16[ib0 + i].qs[q_offset / 2 + 40]) << 16);
-
-        uint32_t qs0_16_u32_lo4 = qs0_16_u32 & 0x0F0F0F0F;
-        uint32_t qs0_16_u32_hi4 = (qs0_16_u32 >> 4) & 0x0F0F0F0F;
-        uint32_t qs64_80_u32_lo4 = qs64_80_u32 & 0x0F0F0F0F;
-        uint32_t qs64_80_u32_hi4 = (qs64_80_u32 >> 4) & 0x0F0F0F0F;
-
-        const uint32_t qh = pack32(u16vec2(data_a_packed16[ib0 + i].qh[l0 / 2], data_a_packed16[ib0 + i].qh[l0 / 2 + 8]));
-
-        const uint32_t qs0_16_lo4_offset16 = ((qh >> (2*v_im)) & 0x01010101) << 4;
-        const uint32_t qs0_16_hi4_offset16 = ((qh >> (2*v_im)) & 0x02020202) << 3;
-        const uint32_t qs64_80_lo4_offset16 = ((qh >> (2*v_im)) & 0x10101010);
-        const uint32_t qs64_80_hi4_offset16 = ((qh >> (2*v_im)) & 0x20202020) >> 1;
-
-        qs0_16_u32_lo4 += qs0_16_lo4_offset16;
-        qs0_16_u32_hi4 += qs0_16_hi4_offset16;
-        qs64_80_u32_lo4 += qs64_80_lo4_offset16;
-        qs64_80_u32_hi4 += qs64_80_hi4_offset16;
-
-        const vec4 qs0_16_lo4 = vec4(unpack8(qs0_16_u32_lo4));
-        const vec4 qs64_80_lo4 = vec4(unpack8(qs64_80_u32_lo4));
-        const vec4 qs0_16_hi4 = vec4(unpack8(qs0_16_u32_hi4));
-        const vec4 qs64_80_hi4 = vec4(unpack8(qs64_80_u32_hi4));
-
-        const FLOAT_TYPE q4_0  = qs0_16_lo4.x;
-        const FLOAT_TYPE q4_1  = qs0_16_lo4.y;
-        const FLOAT_TYPE q4_2  = qs0_16_lo4.z;
-        const FLOAT_TYPE q4_3  = qs0_16_lo4.w;
-        const FLOAT_TYPE q4_4  = qs0_16_hi4.x;
-        const FLOAT_TYPE q4_5  = qs0_16_hi4.y;
-        const FLOAT_TYPE q4_6  = qs0_16_hi4.z;
-        const FLOAT_TYPE q4_7  = qs0_16_hi4.w;
-        const FLOAT_TYPE q4_8  = qs64_80_lo4.x;
-        const FLOAT_TYPE q4_9  = qs64_80_lo4.y;
-        const FLOAT_TYPE q4_10 = qs64_80_lo4.z;
-        const FLOAT_TYPE q4_11 = qs64_80_lo4.w;
-        const FLOAT_TYPE q4_12 = qs64_80_hi4.x;
-        const FLOAT_TYPE q4_13 = qs64_80_hi4.y;
-        const FLOAT_TYPE q4_14 = qs64_80_hi4.z;
-        const FLOAT_TYPE q4_15 = qs64_80_hi4.w;
+        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+            decode_superblock(a_offset, v_im, l0, q_offset, i, num_blocks_per_row, first_row + n, dmv[n], scv[n], q4v[n]);
+        }
 
         [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
-            vec2 by10 =  vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2     ]);
-            vec2 by116 = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2 +  8]);
-            vec2 by132 = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2 + 16]);
-            vec2 by148 = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2 + 24]);
-            vec2 by20 =  vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2     ]);
-            vec2 by216 = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2 +  8]);
-            vec2 by232 = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2 + 16]);
-            vec2 by248 = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2 + 24]);
+            vec2 by[8];
+            load_activations(b_offset, y1_idx, y2_idx, j, by);
 
-            const FLOAT_TYPE sx =
-              fma(FLOAT_TYPE(by10.x), q4_0,
-              fma(FLOAT_TYPE(by10.y), q4_1,
-              fma(FLOAT_TYPE(by116.x), q4_2,
-                 FLOAT_TYPE(by116.y) * q4_3)));
-            const FLOAT_TYPE sy =
-              fma(FLOAT_TYPE(by132.x), q4_4,
-              fma(FLOAT_TYPE(by132.y), q4_5,
-              fma(FLOAT_TYPE(by148.x), q4_6,
-                 FLOAT_TYPE(by148.y) * q4_7)));
-            const FLOAT_TYPE sz =
-              fma(FLOAT_TYPE(by20.x), q4_8,
-              fma(FLOAT_TYPE(by20.y), q4_9,
-              fma(FLOAT_TYPE(by216.x), q4_10,
-                 FLOAT_TYPE(by216.y) * q4_11)));
-            const FLOAT_TYPE sw =
-              fma(FLOAT_TYPE(by232.x), q4_12,
-              fma(FLOAT_TYPE(by232.y), q4_13,
-              fma(FLOAT_TYPE(by248.x), q4_14,
-                 FLOAT_TYPE(by248.y) * q4_15)));
-            const FLOAT_TYPE smin =
-              fma(FLOAT_TYPE(by10.x) + FLOAT_TYPE(by10.y) + FLOAT_TYPE(by116.x) + FLOAT_TYPE(by116.y), sc2,
-              fma(FLOAT_TYPE(by132.x) + FLOAT_TYPE(by132.y) + FLOAT_TYPE(by148.x) + FLOAT_TYPE(by148.y), sc3,
-              fma(FLOAT_TYPE(by20.x) + FLOAT_TYPE(by20.y) + FLOAT_TYPE(by216.x) + FLOAT_TYPE(by216.y), sc6,
-                  (FLOAT_TYPE(by232.x) + FLOAT_TYPE(by232.y) + FLOAT_TYPE(by248.x) + FLOAT_TYPE(by248.y)) * sc7)));
-            temp[j][n] = fma(dm.x, fma(sx, sc0, fma(sy, sc1, fma(sz, sc4, sw * sc5))), fma(-dm.y, smin, temp[j][n]));
+            [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+                accumulate_column(dmv[n], scv[n], q4v[n], by, temp[j][n]);
+            }
+        }
+    } else {
+        // The shipped order: one row's weights live at a time, activations reloaded per row.
+        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+            FLOAT_TYPEV2 dm;
+            FLOAT_TYPE sc[8];
+            FLOAT_TYPE q4[16];
+            decode_superblock(a_offset, v_im, l0, q_offset, i, num_blocks_per_row, first_row + n, dm, sc, q4);
+
+            [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+                vec2 by[8];
+                load_activations(b_offset, y1_idx, y2_idx, j, by);
+
+                accumulate_column(dm, sc, q4, by, temp[j][n]);
+            }
         }
     }
 }

@@ -10793,6 +10793,32 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32,     7, n, 5120, {1, 1}, {1, 1}));
     }
 
+    // ArifiLabs lane-234 / R48: the real 27B Q5_K decode shapes as CORRECTNESS cases.
+    //
+    // Q5_K is 33.5% of the interactive Q4_K_XL 27B file by bytes - 5.41 GiB over 141 tensors, the
+    // largest single quant share - and lane-198 measured it at 31% of the decode graph. It had no
+    // shape-accurate correctness coverage at these widths before this block.
+    //
+    // n=1..8 is not padding: the Q5_K route SPLITS at n=1 on AMD. n=1 takes the q8_1 MMVQ shader
+    // (mul_mat_vecq.comp + the Q5_K arm of mul_mat_vecq_funcs.glsl) and n=2..8 take the f32 dequant
+    // shader (mul_mat_vec_q5_k.comp), so a sweep that stops short of both sides of that boundary
+    // leaves one of the two kernels untested. Widths 2..8 also cross the NUM_COLS values where the
+    // R48 activation hoist changes how many times data_b is read, and 5120x17408 gives the second
+    // k (17408) so the hoist is exercised at both block counts.
+    for (int n : {1, 2, 3, 4, 5, 6, 7, 8}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q5_K, GGML_TYPE_F32,  17408, n,  5120, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q5_K, GGML_TYPE_F32,   5120, n, 17408, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q5_K, GGML_TYPE_F32, 248320, n,  5120, {1, 1}, {1, 1}));
+    }
+    // Row-tail coverage for the same kernel: first_row + NUM_ROWS > stride_d takes the second arm
+    // of main(), where num_rows is dynamic and smaller than the NUM_ROWS the local weight arrays
+    // are sized by. That arm is what a spec-constant-sized array indexed by a dynamic bound can get
+    // wrong, and no 27B shape above reaches it (all three m values are even).
+    for (int n : {1, 2, 5, 8}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q5_K, GGML_TYPE_F32, 17407, n, 5120, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q5_K, GGML_TYPE_F32,     7, n, 5120, {1, 1}, {1, 1}));
+    }
+
     // K not a multiple of 32
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F16, 64, 32,  65, {1, 1}, {1, 1}));
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F16, 64, 32,  80, {1, 1}, {1, 1}));
@@ -12003,21 +12029,25 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
         }
     }
 
-    // ArifiLabs lane-236 / R48c: Q6_K (the subject) and Q5_K (the mark the phase is measured
-    // toward) on the same three 27B shapes and the same widths as the block above.
+    // ArifiLabs lane-234 / R48: the real 27B Q5_K decode shapes as PERF rows, the target of the
+    // R48 activation-hoist pairing. Q5_K carries 33.5% of the interactive Q4_K_XL 27B file by
+    // bytes (5.41 GiB, 141 tensors) and 31% of the measured decode graph, at only 84% of this
+    // box's best line - the fattest single lever in the graph.
     //
-    // Deliberately a SEPARATE loop rather than two more entries in that block's type list: that
-    // block is the S-X8 rows/workgroup sweep's own target (see its comment), the sweep runs it 9
-    // times over GGML_VK_SX8_MMV_ROWS x GGML_VK_SX8_MMV_WG, and widening its type list would have
-    // made every one of those 9 runs ~67% longer for rows those env vars do not touch. Q4_K sits
-    // in the block above and serves as the shared control across both.
+    // Q4_K rides along as the control, for the reason the lane-209 block above states: it is the
+    // yardstick shader at 96-100% of best on the 780M, it shares mul_mat_vec_base.glsl and the
+    // tmpsh reduction with Q5_K, and NOTHING in R48 touches its shader. A round in which Q4_K
+    // moves is a round that measured the box, not the kernel, and must be thrown out rather than
+    // interpreted. Q6_K rides along for the opposite reason: it is a protected win
+    // (vulkan-q6k-matvec-direct-scales) that must not regress, and it never enters the MMVQ
+    // framework at all (ggml_vk_should_use_mmvq returns false for it off Intel), so it also
+    // witnesses that the R48 routing switch did not leak outside Q5_K.
     //
-    // Read the four quant rows together, but as ROUTES, not as kernels: at n=1 on AMD with
-    // k >= 2048, ggml_vk_should_use_mmvq() returns true for Q4_K and Q5_K and false for Q6_K
-    // (ggml-vulkan.cpp:11724 vs :11841-11850), so the Q4_K/Q5_K numbers are q8_1 integer-dot and
-    // the Q6_K number is f32-dequant. GGML_ARIFI_Q6K_MMVQ=1 makes the comparison like-for-like.
+    // Filter: -p "type_a=q5_K,type_b=f32,m=17408" and the two sibling shapes. n=1..8 spans the
+    // route split - MMVQ at n=1, f32 dequant at n=2..8 - so the two arms of the pairing are read
+    // off different rows of the same table, not the same row.
     for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
-        for (ggml_type type_a : {GGML_TYPE_Q5_K, GGML_TYPE_Q6_K}) {
+        for (ggml_type type_a : {GGML_TYPE_Q5_K, GGML_TYPE_Q4_K, GGML_TYPE_Q6_K}) {
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, bs,  5120, {1, 1}, {1, 1}));
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, bs, 17408, {1, 1}, {1, 1}));
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, bs,  5120, {1, 1}, {1, 1}));
