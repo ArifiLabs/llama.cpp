@@ -1,5 +1,9 @@
 #include "ggml-vulkan-common.h"
 
+// R46b B7b: per-buffer-type batch allocation planning (defined at the end of this file).
+static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status);
+static ggml_backend_buffer_t ggml_backend_vk_buffer_type_plan_alloc_buffer(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i);
+static void ggml_backend_vk_buffer_type_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan);
 ggml_backend_buffer_type_i ggml_backend_vk_buffer_type_interface = {
     /* .get_name         = */ ggml_backend_vk_buffer_type_name,
     /* .alloc_buffer     = */ ggml_backend_vk_buffer_type_alloc_buffer,
@@ -7,6 +11,9 @@ ggml_backend_buffer_type_i ggml_backend_vk_buffer_type_interface = {
     /* .get_max_size     = */ ggml_backend_vk_buffer_type_get_max_size,
     /* .get_alloc_size   = */ ggml_backend_vk_buffer_type_get_alloc_size,
     /* .is_host          = */ NULL,
+    /* .plan_begin       = */ ggml_backend_vk_buffer_type_plan_begin,
+    /* .plan_alloc_buffer= */ ggml_backend_vk_buffer_type_plan_alloc_buffer,
+    /* .plan_free        = */ ggml_backend_vk_buffer_type_plan_free,
 };
 
 // lane-230 / R46b commit E: GGML_VK_PLACEMENT=bulk-large-heap, an OPT-IN explicit placement
@@ -46,7 +53,11 @@ static uint32_t ggml_vk_largest_heap(const vk::PhysicalDeviceMemoryProperties & 
 // R46b B7a-R2 (finding 3): `ledger` is the ledger of the device these memory properties came from.
 // Heap indices are only meaningful together with their device, so the ledger is passed in rather
 // than looked up from a process-wide table keyed by heap index alone.
-static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDeviceMemoryProperties* mem_props, vk::MemoryRequirements* mem_req, vk::MemoryPropertyFlags flags, const vk_heap_ledger & ledger, uint32_t only_heap = UINT32_MAX) {
+// R46b B7b: `ledger` is nullable. The batch planner passes nullptr because it decides capacity
+// itself, atomically for the whole batch, inside vk_heap_ledger::reserve_plan(); it still needs the
+// memoryTypeBits / required-flags / only_heap predicate to be the SAME one the allocator uses, and
+// sharing this function is what keeps the plan describing the path that actually allocates.
+static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDeviceMemoryProperties* mem_props, vk::MemoryRequirements* mem_req, vk::MemoryPropertyFlags flags, const vk_heap_ledger * ledger, uint32_t only_heap = UINT32_MAX) {
     std::vector<uint32_t> indices;
 
     for (uint32_t i = 0; i < mem_props->memoryTypeCount; ++i) {
@@ -59,8 +70,9 @@ static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDe
         // bulk-large-heap policy keep their exact behavior while capacity remains.
         if ((mem_req->memoryTypeBits & ((uint64_t)1 << i)) &&
             (flags & memory_type.propertyFlags) == flags &&
-            ledger.would_fit(memory_type.heapIndex, mem_req->size,
-                             mem_props->memoryHeaps[memory_type.heapIndex].size)) {
+            (ledger == nullptr ||
+             ledger->would_fit(memory_type.heapIndex, mem_req->size,
+                               mem_props->memoryHeaps[memory_type.heapIndex].size))) {
             indices.push_back(i);
         }
     }
@@ -305,8 +317,66 @@ void vk_alloc_trace_record_copy(vk_context & subctx, const char * tag, const ggm
     subctx->trace_ops.push_back(ss.str());
 }
 
-static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::initializer_list<vk::MemoryPropertyFlags> & req_flags_list,
-                                       void *import_ptr = nullptr, uint32_t only_heap = UINT32_MAX) {
+// R46b B7b: the buffer usage flags every device buffer of this backend is created with. Shared by
+// the allocator and by the planner's requirement query, so the planner measures the same buffer
+// shape the allocator will build.
+static vk::BufferUsageFlags ggml_vk_buffer_usage_flags(vk_device & device) {
+    vk::BufferUsageFlags usage_flags = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst;
+    if (device->buffer_device_address) {
+        usage_flags |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
+    }
+    return usage_flags;
+}
+
+// R46b B7b: the REAL Vulkan requirements (size, alignment, memoryTypeBits) for a buffer this
+// backend would create at `size`. This is what the plan reserves against - the requested tensor
+// byte count is not the number the driver charges.
+//
+// No device memory is allocated here on either path. With VK_KHR_maintenance4 no VkBuffer object
+// is created at all; otherwise one is created and destroyed immediately, and a VkBuffer is not
+// memory. The driver-allocation witness proves no vkAllocateMemory happens in this function.
+static bool ggml_vk_buffer_memory_requirements(vk_device & device, size_t size,
+                                               vk::MemoryRequirements & out, bool & used_maintenance4) {
+    vk::BufferCreateInfo bci{
+        vk::BufferCreateFlags(),
+        size,
+        ggml_vk_buffer_usage_flags(device),
+        vk::SharingMode::eExclusive,
+        0,
+        nullptr,
+    };
+
+    used_maintenance4 = device->maintenance4;
+    try {
+        if (device->maintenance4) {
+            const vk::DeviceBufferMemoryRequirements info { &bci };
+            out = device->device.getBufferMemoryRequirementsKHR(info).memoryRequirements;
+            return true;
+        }
+        vk::Buffer probe = device->device.createBuffer(bci);
+        out = device->device.getBufferMemoryRequirements(probe);
+        device->device.destroyBuffer(probe);
+        return true;
+    } catch (const vk::SystemError &) {
+        return false;   // could not measure: decide nothing
+    }
+}
+
+// R46b B7b: a placement decided ahead of time by the batch planner. `reservation` already
+// holds `bytes` charged against the device ledger, so this path must not search and must not
+// charge again - it adopts the existing reservation and allocates the type the plan chose.
+struct vk_planned_placement {
+    uint32_t              type        = 0;
+    uint64_t              bytes       = 0;
+    vk_heap_reservation * reservation = nullptr;
+};
+
+// The req_flags_list parameter is a std::vector rather than an initializer_list so the placement
+// policy chain can be built once and consumed by both the allocator and the planner (R46b B7b).
+// Every existing `{a, b}` call site converts unchanged.
+static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vector<vk::MemoryPropertyFlags> & req_flags_list,
+                                       void *import_ptr = nullptr, uint32_t only_heap = UINT32_MAX,
+                                       const vk_planned_placement * planned = nullptr) {
     VK_LOG_DEBUG("ggml_vk_create_buffer(" << device->name << ", " << size << ", " << to_string(req_flags_list.begin()[0]) << ", " << to_string(req_flags_list.begin()[req_flags_list.size()-1]) << ")");
     if (size > device->max_buffer_size) {
         throw vk::OutOfDeviceMemoryError("Requested buffer size exceeds device buffer size limit");
@@ -328,10 +398,9 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
     // The ledger must never report free bytes the driver still holds.
     vk_heap_reservation reservation;
 
-    vk::BufferUsageFlags usage_flags = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst;
+    vk::BufferUsageFlags usage_flags = ggml_vk_buffer_usage_flags(device);
     vk::MemoryAllocateFlags mem_flags {};
     if (device->buffer_device_address) {
-        usage_flags |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
         mem_flags |= vk::MemoryAllocateFlagBits::eDeviceAddress;
     }
 
@@ -430,6 +499,7 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
             import_info.handleType = vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT;
             import_info.pHostPointer = import_ptr;
             import_info.setPNext(&mem_flags_info);
+            VK_TEST_NOTE_DRIVER_ALLOC();
             buf->device_memory = device->device.allocateMemory({ size, memory_type_idx, &import_info });
             if (alloc_trace) {
                 vk_alloc_trace_record_alloc(device, buf->buffer, alloc_id, size, mem_req, memory_type_idx,
@@ -441,11 +511,35 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
                                     std::to_string(memory_type_idx) + " result=" + e.code().message() + " what=" + e.what());
             }
         }
+    } else if (planned) {
+        // R46b B7b: the batch plan already chose this memory type and already charged its
+        // bytes to the device ledger. Adopt that charge (no second charge, no second search) and
+        // ask the driver for exactly the planned type.
+        if (mem_req.size > planned->bytes) {
+            // Fail closed: the driver now wants more than the plan reserved, so the plan's
+            // feasibility answer no longer covers this buffer.
+            throw vk::OutOfDeviceMemoryError("planned reservation is smaller than the actual memory requirement");
+        }
+        reservation = std::move(*planned->reservation);
+        const uint32_t cand_heap = mem_props.memoryTypes[planned->type].heapIndex;
+        if (alloc_trace) {
+            std::stringstream ss;
+            ss << "alloc id=" << alloc_id << " state=planned"
+               << " type=" << planned->type << " heap=" << cand_heap
+               << " requirement=" << mem_req.size << " reserved_by_plan=" << planned->bytes;
+            vk_alloc_trace_line(ss.str());
+        }
+        VK_TEST_NOTE_DRIVER_ALLOC();
+        buf->device_memory = device->device.allocateMemory({ mem_req.size, planned->type, &mem_flags_info });
+        buf->memory_property_flags = mem_props.memoryTypes[planned->type].propertyFlags;
+        if (alloc_trace) {
+            vk_alloc_trace_record_alloc(device, buf->buffer, alloc_id, size, mem_req, planned->type, cand_heap);
+        }
     } else {
         for (auto it = req_flags_list.begin(); it != req_flags_list.end(); it++) {
             const auto & req_flags = *it;
 
-            const std::vector<uint32_t> memory_type_indices = ggml_vk_find_memory_properties(&mem_props, &mem_req, req_flags, device->heap_ledger, only_heap);
+            const std::vector<uint32_t> memory_type_indices = ggml_vk_find_memory_properties(&mem_props, &mem_req, req_flags, &device->heap_ledger, only_heap);
 
             if (memory_type_indices.empty()) {
                 if (alloc_trace) {
@@ -486,6 +580,7 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
                     continue;
                 }
                 try {
+                    VK_TEST_NOTE_DRIVER_ALLOC();
                     buf->device_memory = device->device.allocateMemory({ mem_req.size, *mtype_it, &mem_flags_info });
                     buf->memory_property_flags = mem_props.memoryTypes[*mtype_it].propertyFlags;
                     if (alloc_trace) {
@@ -582,74 +677,100 @@ vk_buffer ggml_vk_create_buffer_check(vk_device& device, size_t size, vk::Memory
     }
 }
 
-static vk_buffer ggml_vk_create_buffer_device(vk_device& device, size_t size, bool bulk = false) {
-    vk_buffer buf;
-    try {
-        // lane-230 / R46b commit E: bulk weight buffers, policy ON. DEVICE_LOCAL on the largest
-        // heap and nothing else. A failure here is NOT fatal: fall through to the stock chain
-        // below, because a policy that turns a working load into a hard failure is worse than the
-        // placement it is trying to fix.
-        if (bulk && ggml_vk_placement_bulk_large_heap()) {
-            const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
-            const uint32_t heap = ggml_vk_largest_heap(mem_props);
-            // stderr, not GGML_LOG_INFO, and NOT gated on GGML_VK_ALLOC_TRACE: the paired
-            // performance cells for this policy run with tracing off and still have to prove which
-            // heap the run used.
-            static std::mutex receipt_mutex;
-            static std::set<uint32_t> receipted;
-            bool first = false;
-            {
-                std::lock_guard<std::mutex> guard(receipt_mutex);
-                first = receipted.insert(heap).second;
-            }
-            if (first) {
-                fprintf(stderr, "ggml_vulkan: placement policy bulk-large-heap: bulk weights -> heap %u "
-                                "(size=%llu B, DEVICE_LOCAL only, every other heap excluded)\n",
-                        heap, (unsigned long long) mem_props.memoryHeaps[heap].size);
-            }
-            try {
-                return ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal}, nullptr, heap);
-            } catch (const vk::SystemError& e) {
-                fprintf(stderr, "ggml_vulkan: placement policy bulk-large-heap: heap %u refused %llu B (%s); "
-                                "falling back to the default placement chain for this buffer\n",
-                        heap, (unsigned long long) size, e.what());
-            }
-        }
+// R46b B7b: ONE attempt of the device placement policy. `only_heap != UINT32_MAX` restricts the
+// attempt to that heap (the bulk-large-heap policy).
+struct vk_alloc_attempt {
+    std::vector<vk::MemoryPropertyFlags> req_flags_list;
+    uint32_t                             only_heap = UINT32_MAX;
+};
 
-        if (device->prefer_host_memory) {
-            buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-                                                       vk::MemoryPropertyFlagBits::eDeviceLocal});
-        } else if (device->uma) {
-            // On UMA, prefer host-visible memory so direct tensor borrowing works.
-            // If unavailable, fall back to device-local memory.
-            buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal | vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-                                                       vk::MemoryPropertyFlagBits::eDeviceLocal,
-                                                       vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent});
-        } else if (device->disable_host_visible_vidmem) {
-            if (device->allow_sysmem_fallback) {
-                buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal,
-                                                           vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent});
-            } else {
-                buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal});
-            }
-        } else {
-            // use rebar if available, otherwise fallback to device only visible memory
-            if (device->allow_sysmem_fallback) {
-                buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal | vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-                                                           vk::MemoryPropertyFlagBits::eDeviceLocal,
-                                                           vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent});
-            } else {
-                buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal | vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-                                                           vk::MemoryPropertyFlagBits::eDeviceLocal});
-            }
-        }
-    } catch (const vk::SystemError& e) {
-        std::cerr << "ggml_vulkan: Device memory allocation of size " << size << " failed." << std::endl;
-        std::cerr << "ggml_vulkan: " << e.what() << std::endl;
-        throw e;
+// R46b B7b: the ONE definition of the device placement policy chain, in attempt order.
+// ggml_vk_create_buffer_device() walks it, and the batch planner walks the same list, so the
+// plan's feasibility answer necessarily describes the path that actually allocates. Two hand-kept
+// copies of this chain would drift and the plan would start describing a placement nobody performs.
+static std::vector<vk_alloc_attempt> ggml_vk_placement_attempts(vk_device & device, bool bulk) {
+    const auto DL = vk::MemoryPropertyFlagBits::eDeviceLocal;
+    const auto HV = vk::MemoryPropertyFlagBits::eHostVisible;
+    const auto HC = vk::MemoryPropertyFlagBits::eHostCoherent;
+
+    std::vector<vk_alloc_attempt> attempts;
+
+    // lane-230 / R46b commit E: bulk weight buffers, policy ON. DEVICE_LOCAL on the largest heap
+    // and nothing else. A failure here is NOT fatal: the stock chain below is tried next, because
+    // a policy that turns a working load into a hard failure is worse than the placement it is
+    // trying to fix.
+    if (bulk && ggml_vk_placement_bulk_large_heap()) {
+        const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
+        attempts.push_back({ { DL }, ggml_vk_largest_heap(mem_props) });
     }
 
-    return buf;
+    if (device->prefer_host_memory) {
+        attempts.push_back({ { HV | HC, DL }, UINT32_MAX });
+    } else if (device->uma) {
+        // On UMA, prefer host-visible memory so direct tensor borrowing works.
+        // If unavailable, fall back to device-local memory.
+        attempts.push_back({ { DL | HV | HC, DL, HV | HC }, UINT32_MAX });
+    } else if (device->disable_host_visible_vidmem) {
+        if (device->allow_sysmem_fallback) {
+            attempts.push_back({ { DL, HV | HC }, UINT32_MAX });
+        } else {
+            attempts.push_back({ { DL }, UINT32_MAX });
+        }
+    } else {
+        // use rebar if available, otherwise fallback to device only visible memory
+        if (device->allow_sysmem_fallback) {
+            attempts.push_back({ { DL | HV | HC, DL, HV | HC }, UINT32_MAX });
+        } else {
+            attempts.push_back({ { DL | HV | HC, DL }, UINT32_MAX });
+        }
+    }
+
+    return attempts;
+}
+
+// stderr, not GGML_LOG_INFO, and NOT gated on GGML_VK_ALLOC_TRACE: the paired performance cells for
+// this policy run with tracing off and still have to prove which heap the run used.
+static void ggml_vk_placement_bulk_receipt(vk_device & device, uint32_t heap) {
+    static std::mutex receipt_mutex;
+    static std::set<uint32_t> receipted;
+    bool first = false;
+    {
+        std::lock_guard<std::mutex> guard(receipt_mutex);
+        first = receipted.insert(heap).second;
+    }
+    if (first) {
+        const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
+        fprintf(stderr, "ggml_vulkan: placement policy bulk-large-heap: bulk weights -> heap %u "
+                        "(size=%llu B, DEVICE_LOCAL only, every other heap excluded)\n",
+                heap, (unsigned long long) mem_props.memoryHeaps[heap].size);
+    }
+}
+
+static vk_buffer ggml_vk_create_buffer_device(vk_device& device, size_t size, bool bulk = false) {
+    const std::vector<vk_alloc_attempt> attempts = ggml_vk_placement_attempts(device, bulk);
+    GGML_ASSERT(!attempts.empty());
+
+    if (attempts[0].only_heap != UINT32_MAX) {
+        ggml_vk_placement_bulk_receipt(device, attempts[0].only_heap);
+    }
+
+    for (size_t a = 0; a < attempts.size(); ++a) {
+        try {
+            return ggml_vk_create_buffer(device, size, attempts[a].req_flags_list, nullptr, attempts[a].only_heap);
+        } catch (const vk::SystemError& e) {
+            if (a + 1 < attempts.size()) {
+                fprintf(stderr, "ggml_vulkan: placement policy bulk-large-heap: heap %u refused %llu B (%s); "
+                                "falling back to the default placement chain for this buffer\n",
+                        attempts[a].only_heap, (unsigned long long) size, e.what());
+                continue;
+            }
+            std::cerr << "ggml_vulkan: Device memory allocation of size " << size << " failed." << std::endl;
+            std::cerr << "ggml_vulkan: " << e.what() << std::endl;
+            throw;
+        }
+    }
+
+    GGML_ABORT("ggml_vulkan: placement policy produced no attempts");
 }
 
 void ggml_vk_destroy_buffer(vk_buffer& buf) {
@@ -1259,3 +1380,196 @@ vk_buffer ggml_vk_buffer_from_host_ptr(vk_device & device, void * ptr, size_t si
     return buf;
 }
 
+// ---------------------------------------------------------------------------------------------
+// R46b B7b — PER-BUFFER-TYPE BATCH allocation planning for the Vulkan buffer type.
+//
+// ggml_backend_alloc_ctx_tensors_from_buft() knows the complete set of buffers ONE placement call
+// intends to allocate before it allocates any of them. plan_begin() is handed that batch, measures
+// each buffer's REAL Vulkan memory requirement, builds each buffer's candidate memory types in the
+// placement policy's own order, and asks the device ledger for a COMPLETE assignment - reserved
+// atomically or not at all. A batch that cannot fit fails here, before the first driver allocation,
+// instead of stopping halfway with tensors already on the device.
+//
+// The unit is that one (buffer type, context) batch. A model load is several such batches and
+// nothing here spans them - loader-wide planning remains open (scope: see ggml-backend-impl.h).
+// ---------------------------------------------------------------------------------------------
+
+struct vk_buffer_plan_entry {
+    size_t                  size     = 0;   // requested bytes for this buffer
+    uint32_t                type     = 0;   // memory TYPE index the plan chose
+    uint32_t                heap     = 0;   // the heap that type lives on; the budget is the heap's
+    uint64_t                bytes    = 0;   // real VkMemoryRequirements::size reserved for it
+    vk::MemoryPropertyFlags flags;          // that type's property flags
+    bool                    consumed = false;
+};
+
+struct vk_buffer_plan {
+    vk_device                         device;
+    std::vector<vk_buffer_plan_entry> entries;
+    bool                              used_maintenance4 = false;
+};
+
+static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
+        ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status) {
+    ggml_backend_vk_buffer_type_context * ctx = (ggml_backend_vk_buffer_type_context *) buft->context;
+    vk_device & device = ctx->device;
+
+    // Default is INDETERMINATE: anything this function cannot decide is reported as undecided
+    // rather than as a refusal it did not prove. What follows from that is the caller's policy,
+    // not this backend's (ggml-alloc.c defines it).
+    *status = GGML_BACKEND_PLAN_INDETERMINATE;
+    if (n == 0) {
+        return NULL;
+    }
+
+    std::unique_ptr<vk_buffer_plan> plan;
+    std::vector<std::vector<vk_plan_candidate>> cands;
+    std::vector<vk::MemoryPropertyFlags> type_flags;
+    uint64_t budgets[VK_MAX_MEMORY_HEAPS] = {};
+    uint32_t n_heaps = 0;
+
+    try {
+        const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
+        n_heaps = std::min<uint32_t>(mem_props.memoryHeapCount, VK_MAX_MEMORY_HEAPS);
+        if (n_heaps == 0) {
+            return NULL;
+        }
+        for (uint32_t h = 0; h < n_heaps; ++h) {
+            budgets[h] = mem_props.memoryHeaps[h].size;
+        }
+
+        // The SAME policy chain the bulk allocation path walks, with the same bulk flag that
+        // ggml_backend_vk_buffer_type_alloc_buffer() passes.
+        const std::vector<vk_alloc_attempt> attempts = ggml_vk_placement_attempts(device, /* bulk */ true);
+
+        // The planned path calls ggml_vk_create_buffer() directly, so the bulk-large-heap policy
+        // receipt would never be printed for a planned load. That stderr line has to appear for the
+        // policy's paired cells, which run with tracing off.
+        if (!attempts.empty() && attempts[0].only_heap != UINT32_MAX) {
+            ggml_vk_placement_bulk_receipt(device, attempts[0].only_heap);
+        }
+
+        plan = std::unique_ptr<vk_buffer_plan>(new vk_buffer_plan());
+        plan->device = device;
+        plan->entries.resize(n);
+        cands.resize(n);
+        type_flags.resize(mem_props.memoryTypeCount);
+        for (uint32_t t = 0; t < mem_props.memoryTypeCount; ++t) {
+            type_flags[t] = mem_props.memoryTypes[t].propertyFlags;
+        }
+
+        for (size_t i = 0; i < n; ++i) {
+            if (sizes[i] == 0) {
+                return NULL;   // nothing to place; INDETERMINATE, the caller decides what follows
+            }
+            if (sizes[i] > device->max_buffer_size) {
+                // ggml_vk_create_buffer() throws on this, so no assignment of the whole set exists.
+                *status = GGML_BACKEND_PLAN_INFEASIBLE;
+                return NULL;
+            }
+
+            vk::MemoryRequirements mem_req;
+            bool used_m4 = false;
+            if (!ggml_vk_buffer_memory_requirements(device, sizes[i], mem_req, used_m4)) {
+                return NULL;
+            }
+            plan->used_maintenance4 = used_m4;
+
+            // Candidates in policy order: attempt by attempt, required-flag set by required-flag
+            // set, deduplicated so a type that satisfies two attempts keeps its FIRST (preferred)
+            // position. Capacity is deliberately not tested here - reserve_plan() decides it for
+            // the whole set at once, under the ledger lock.
+            std::set<uint32_t> seen;
+            for (const auto & att : attempts) {
+                for (const auto & flags : att.req_flags_list) {
+                    for (uint32_t t : ggml_vk_find_memory_properties(&mem_props, &mem_req, flags, nullptr, att.only_heap)) {
+                        if (seen.insert(t).second) {
+                            vk_plan_candidate cand;
+                            cand.type  = t;
+                            cand.heap  = mem_props.memoryTypes[t].heapIndex;
+                            cand.bytes = mem_req.size;
+                            cands[i].push_back(cand);
+                        }
+                    }
+                }
+            }
+
+            plan->entries[i].size  = sizes[i];
+            plan->entries[i].bytes = mem_req.size;
+        }
+    } catch (const std::exception &) {
+        return NULL;   // measurement failed; decide nothing
+    }
+
+    // From here on nothing can throw, so a committed reservation always reaches the plan object.
+    std::vector<size_t> choice;
+    const vk_plan_result res = device->heap_ledger.reserve_plan(cands, budgets, n_heaps, choice);
+    if (res == VK_PLAN_INFEASIBLE) {
+        *status = GGML_BACKEND_PLAN_INFEASIBLE;
+        return NULL;
+    }
+    if (res != VK_PLAN_FEASIBLE) {
+        return NULL;   // search bound hit: INDETERMINATE, decided nothing; caller policy follows
+    }
+
+    for (size_t i = 0; i < n; ++i) {
+        const vk_plan_candidate & c = cands[i][choice[i]];
+        plan->entries[i].type  = c.type;
+        plan->entries[i].heap  = c.heap;
+        plan->entries[i].bytes = c.bytes;
+        plan->entries[i].flags = type_flags[c.type];
+    }
+
+    *status = GGML_BACKEND_PLAN_FEASIBLE;
+    return reinterpret_cast<ggml_backend_buffer_type_plan_t>(plan.release());
+}
+
+static ggml_backend_buffer_t ggml_backend_vk_buffer_type_plan_alloc_buffer(
+        ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan_handle, size_t i) {
+    ggml_backend_vk_buffer_type_context * ctx = (ggml_backend_vk_buffer_type_context *) buft->context;
+    vk_buffer_plan * plan = reinterpret_cast<vk_buffer_plan *>(plan_handle);
+
+    GGML_ASSERT(i < plan->entries.size());
+    vk_buffer_plan_entry & e = plan->entries[i];
+    GGML_ASSERT(!e.consumed);
+
+    // Adopt the plan's charge FIRST (noexcept, ledger untouched) and mark the entry consumed
+    // immediately. The bytes are therefore owned by exactly one thing at every instant: the plan
+    // before this line, the reservation after it. No window, no double charge.
+    vk_heap_reservation reservation;
+    reservation.adopt(&plan->device->heap_ledger, e.heap, e.bytes);
+    e.consumed = true;
+
+    vk_planned_placement placement;
+    placement.type        = e.type;
+    placement.bytes       = e.bytes;
+    placement.reservation = &reservation;
+
+    vk_buffer dev_buffer = nullptr;
+    try {
+        dev_buffer = ggml_vk_create_buffer(plan->device, e.size, { e.flags }, nullptr, UINT32_MAX, &placement);
+    } catch (const vk::SystemError &) {
+        // The reservation (whether still here or moved into the failed create) releases the
+        // adopted bytes exactly once as the stack unwinds.
+        return nullptr;
+    }
+
+    ggml_backend_vk_buffer_context * bufctx = new ggml_backend_vk_buffer_context(ctx->device, std::move(dev_buffer), ctx->name);
+
+    return ggml_backend_buffer_init(buft, ggml_backend_vk_buffer_interface, bufctx, e.size);
+}
+
+static void ggml_backend_vk_buffer_type_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan_handle) {
+    UNUSED(buft);
+    vk_buffer_plan * plan = reinterpret_cast<vk_buffer_plan *>(plan_handle);
+
+    // Only UNCONSUMED entries are released here. A buffer that was built owns its own charge and
+    // releases it from ~vk_buffer_struct; releasing it here as well would underflow the ledger.
+    for (auto & e : plan->entries) {
+        if (!e.consumed) {
+            plan->device->heap_ledger.release(e.heap, e.bytes);
+            e.consumed = true;
+        }
+    }
+    delete plan;
+}

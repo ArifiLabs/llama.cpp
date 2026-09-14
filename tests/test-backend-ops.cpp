@@ -13887,7 +13887,28 @@ extern "C" {
                                                  uint64_t * reserved_before, uint64_t * reserved_alive,
                                                  uint64_t * reserved_at_driver_free,
                                                  uint64_t * reserved_after);
+    // R46b B7b — per-buffer-type batch planning.
+    uint64_t ggml_vk_plan_driver_alloc_calls(void);
+    void     ggml_vk_plan_set_fault(int stage, int skip);
+    int      ggml_vk_heapres_plan_search(const uint32_t * cand_heaps, const uint64_t * cand_bytes,
+                                         const int * cand_counts, int n_items,
+                                         const uint64_t * budgets, int n_heaps, int * out_choice);
+    int      ggml_vk_plan_probe_limits(uint64_t * max_chunk, uint64_t * total_heap,
+                                       uint64_t * reserved_now, int * used_maintenance4);
+    int      ggml_vk_plan_probe_begin(const uint64_t * sizes, int n, int * status);
+    void     ggml_vk_plan_probe_free_all(void);
+    void     ggml_vk_plan_probe_free_one(int handle);
+    uint64_t ggml_vk_plan_device_reserved(void);
+    // production buffer type, the one a model load allocates weights from
+    ggml_backend_buffer_type_t ggml_backend_vk_buffer_type(size_t dev_num);
 }
+
+// mirrors enum ggml_backend_plan_status (ggml-backend-impl.h), which is not a public header
+enum {
+    HEAPRES_PLAN_FEASIBLE      = 0,
+    HEAPRES_PLAN_INFEASIBLE    = 1,
+    HEAPRES_PLAN_INDETERMINATE = 2,
+};
 
 static int heapres_failures = 0;
 
@@ -14159,9 +14180,407 @@ static void heapres_fault_tests() {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// R46b B7b — per-buffer-type batch allocation planning.
+//
+// Half 1 drives vk_heap_ledger::reserve_plan() on the TEST's ledger: candidate backtracking,
+// shared heap types, separate heaps, overflow, atomicity, the search bound.
+// Half 2 drives the PRODUCTION caller, ggml_backend_alloc_ctx_tensors_from_buft(), the same
+// function a model load allocates its weight buffers through - once per (buffer type, context)
+// group. The unit under test is therefore ONE such batch, never a whole model load.
+//
+// R46b B7b-R4: the five printed labels and check strings below (half 1's banner, and half 2's
+// banner, skip line and two checks) previously read "whole-load"/"whole load" and were inaccurate.
+// R4 corrected them and updated the matching quotations in OPUS-R46-B7B-R2-REPORT.md. Read them as
+// follows: half 1's banner names a SYNTHETIC ledger exercise that allocates nothing at all, and
+// half 2's strings name the one batch that case allocates - never a whole model load.
+// OPUS-R46-B7B-R3-TEXT-REPORT.md §5 is historical on this point.
+// ---------------------------------------------------------------------------------------------
+
+static int heapres_plan_search(const std::vector<std::vector<std::pair<uint32_t, uint64_t>>> & items,
+                               const std::vector<uint64_t> & budgets,
+                               std::vector<int> & choice) {
+    std::vector<uint32_t> heaps;
+    std::vector<uint64_t> bytes;
+    std::vector<int>      counts;
+    for (const auto & item : items) {
+        counts.push_back((int) item.size());
+        for (const auto & c : item) {
+            heaps.push_back(c.first);
+            bytes.push_back(c.second);
+        }
+    }
+    choice.assign(items.size(), -1);
+    return ggml_vk_heapres_plan_search(heaps.data(), bytes.data(), counts.data(), (int) items.size(),
+                                       budgets.data(), (int) budgets.size(), choice.data());
+}
+
+static void heapres_plan_ledger_tests() {
+    const uint64_t MiB = 1024ull * 1024ull;
+    printf("Vulkan per-buffer-type batch plan reservation (R46b B7b prerequisite)\n");
+
+    std::vector<int> choice;
+
+    // 1. Backtracking. Greedy would put item 0 on heap 0 (its first choice) and then item 1, whose
+    //    ONLY option is heap 0, would have nowhere to go - even though a complete assignment
+    //    exists. The search must undo item 0 and move it to heap 1.
+    ggml_vk_heapres_reset();
+    {
+        const int res = heapres_plan_search({ { {0, 100 * MiB}, {1, 100 * MiB} },
+                                              { {0, 100 * MiB} } },
+                                            { 100 * MiB, 100 * MiB }, choice);
+        heapres_check(res == HEAPRES_PLAN_FEASIBLE, "backtracking: a complete assignment was found");
+        heapres_check(choice[0] == 1, "backtracking: item 0 gave up its first choice");
+        heapres_check(choice[1] == 0, "backtracking: item 1 got the heap it needed");
+        heapres_check(ggml_vk_heapres_reserved(0) == 100 * MiB && ggml_vk_heapres_reserved(1) == 100 * MiB,
+                      "backtracking: both heaps charged exactly once");
+    }
+
+    // 2. Impossible plan: nothing is charged, so the load can be refused with the ledger intact.
+    ggml_vk_heapres_reset();
+    {
+        const int res = heapres_plan_search({ { {0, 100 * MiB} }, { {0, 100 * MiB} } },
+                                            { 150 * MiB }, choice);
+        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "impossible plan refused");
+        heapres_check(ggml_vk_heapres_reserved(0) == 0, "impossible plan charged nothing (all or nothing)");
+    }
+
+    // 3. Shared heap types: two DIFFERENT memory types that live on ONE heap share that heap's
+    //    budget. The plan must not treat a type index as if it had its own capacity.
+    ggml_vk_heapres_reset();
+    {
+        // heapres_plan_search gives every candidate a distinct type index; both point at heap 3.
+        const int res = heapres_plan_search({ { {3, 40 * MiB} }, { {3, 40 * MiB} } },
+                                            { 0, 0, 0, 64 * MiB }, choice);
+        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "shared heap: two types cannot each spend the heap");
+        heapres_check(ggml_vk_heapres_reserved(3) == 0, "shared heap: refusal charged nothing");
+    }
+
+    // 4. Separate heaps stay independent.
+    ggml_vk_heapres_reset();
+    {
+        const int res = heapres_plan_search({ { {0, 40 * MiB} }, { {1, 40 * MiB} } },
+                                            { 64 * MiB, 64 * MiB }, choice);
+        heapres_check(res == HEAPRES_PLAN_FEASIBLE, "separate heaps: both placed");
+        heapres_check(ggml_vk_heapres_reserved(0) == 40 * MiB && ggml_vk_heapres_reserved(1) == 40 * MiB,
+                      "separate heaps: each heap charged its own item only");
+    }
+
+    // 5. Already-live reservations are respected: a plan cannot spend bytes another buffer holds.
+    ggml_vk_heapres_reset();
+    heapres_check(ggml_vk_heapres_reserve(0, 60 * MiB, 100 * MiB), "live reservation taken first");
+    {
+        const int res = heapres_plan_search({ { {0, 60 * MiB} } }, { 100 * MiB }, choice);
+        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "plan refused against a live reservation");
+        heapres_check(ggml_vk_heapres_reserved(0) == 60 * MiB, "refusal left the live reservation alone");
+    }
+
+    // 6. Overflow fails closed, both directions.
+    ggml_vk_heapres_reset();
+    {
+        const int res = heapres_plan_search({ { {0, UINT64_MAX} } }, { 1 * MiB }, choice);
+        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "UINT64_MAX item against a small budget refused");
+        heapres_check(ggml_vk_heapres_reserved(0) == 0, "overflow attempt charged nothing");
+    }
+    ggml_vk_heapres_reset();
+    heapres_check(ggml_vk_heapres_reserve(0, UINT64_MAX - 1, UINT64_MAX), "heap 0 filled to UINT64_MAX-1");
+    {
+        const int res = heapres_plan_search({ { {0, 2} } }, { UINT64_MAX }, choice);
+        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "2 more refused instead of wrapping");
+        heapres_check(ggml_vk_heapres_reserved(0) == UINT64_MAX - 1, "wrap attempt left the counter intact");
+    }
+
+    // 7. Out-of-range heap fails closed rather than indexing past the ledger.
+    ggml_vk_heapres_reset();
+    {
+        const int res = heapres_plan_search({ { {4096, 1} } }, { 1 * MiB }, choice);
+        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "out-of-range heap candidate refused");
+    }
+
+    // 8. Search bound: 30 free items followed by one that can never be placed makes the exhaustive
+    //    walk enormous. The PLANNER must answer INDETERMINATE (decide nothing, charge nothing), not
+    //    a refusal: "I did not finish deciding" and "no assignment exists" are different facts and
+    //    the ledger must not conflate them.
+    //
+    //    R46b B7b-R2 (check finding 5): what the CALLER does with INDETERMINATE is a separate
+    //    policy and is not "allocate unplanned" for a multi-buffer set - ggml-alloc.c refuses
+    //    that case before the first allocation rather than placing part of a set it cannot complete
+    //    (see test-alloc.cpp: test_plan_indeterminate_never_partially_allocates). A single-buffer
+    //    allocation still falls through unchanged.
+    ggml_vk_heapres_reset();
+    {
+        std::vector<std::vector<std::pair<uint32_t, uint64_t>>> items;
+        for (int i = 0; i < 30; i++) {
+            // distinct sizes, so these items are NOT interchangeable and the symmetry break below
+            // cannot collapse them - this is the genuine worst case
+            items.push_back({ {0, (uint64_t) (i + 1)}, {1, (uint64_t) (i + 1)} });
+        }
+        items.push_back({ {2, 1} });   // heap 2 has zero budget: unplaceable
+        const int res = heapres_plan_search(items, { 1 * MiB, 1 * MiB, 0 }, choice);
+        heapres_check(res == HEAPRES_PLAN_INDETERMINATE, "search bound reported INDETERMINATE, not a refusal");
+        heapres_check(ggml_vk_heapres_reserved(0) == 0 && ggml_vk_heapres_reserved(1) == 0,
+                      "abandoned search charged nothing");
+    }
+
+    // 9. The same shape with INTERCHANGEABLE items must still be DECIDED. A real load hands the
+    //    planner dozens of identical weight buffers; without symmetry breaking that is the same
+    //    combinatorial explosion as case 8 and the feature would never decide anything on a real
+    //    model. (Found by the production test below, not by inspection.)
+    ggml_vk_heapres_reset();
+    {
+        std::vector<std::vector<std::pair<uint32_t, uint64_t>>> items;
+        for (int i = 0; i < 40; i++) {
+            items.push_back({ {0, 1 * MiB}, {1, 1 * MiB} });
+        }
+        const int res = heapres_plan_search(items, { 8 * MiB, 8 * MiB }, choice);
+        heapres_check(res == HEAPRES_PLAN_INFEASIBLE,
+                      "40 interchangeable items over 2 heaps: decided, not abandoned");
+        heapres_check(ggml_vk_heapres_reserved(0) == 0 && ggml_vk_heapres_reserved(1) == 0,
+                      "interchangeable refusal charged nothing");
+    }
+    ggml_vk_heapres_reset();
+    {
+        std::vector<std::vector<std::pair<uint32_t, uint64_t>>> items;
+        for (int i = 0; i < 12; i++) {
+            items.push_back({ {0, 1 * MiB}, {1, 1 * MiB} });
+        }
+        const int res = heapres_plan_search(items, { 8 * MiB, 8 * MiB }, choice);
+        heapres_check(res == HEAPRES_PLAN_FEASIBLE,
+                      "12 interchangeable items spill onto the second heap");
+        heapres_check(ggml_vk_heapres_reserved(0) == 8 * MiB && ggml_vk_heapres_reserved(1) == 4 * MiB,
+                      "interchangeable spill charged 8MiB + 4MiB, exactly once each");
+    }
+
+    // 10. The real model-load shape: many buffers of DIFFERENT sizes that together do not fit.
+    //     Symmetry breaking cannot help here (nothing is interchangeable), so without the
+    //     total-capacity precheck this walk hits its bound and answers INDETERMINATE - which now
+    //     turns the commonest real case (model bigger than memory) into a refusal with no
+    //     explanation instead of a decided, reported infeasibility. It must be DECIDED.
+    ggml_vk_heapres_reset();
+    {
+        std::vector<std::vector<std::pair<uint32_t, uint64_t>>> items;
+        for (int i = 0; i < 30; i++) {
+            const uint64_t bytes = (uint64_t) (i + 1) * MiB;   // 1..30 MiB, all distinct
+            items.push_back({ {0, bytes}, {1, bytes} });
+        }
+        const int res = heapres_plan_search(items, { 64 * MiB, 64 * MiB }, choice);   // 128 < 465
+        heapres_check(res == HEAPRES_PLAN_INFEASIBLE,
+                      "unequal buffers past total capacity: DECIDED, not abandoned");
+        heapres_check(ggml_vk_heapres_reserved(0) == 0 && ggml_vk_heapres_reserved(1) == 0,
+                      "capacity refusal charged nothing");
+    }
+    // ... and the same unequal shape that DOES fit must still be planned, not refused.
+    ggml_vk_heapres_reset();
+    {
+        std::vector<std::vector<std::pair<uint32_t, uint64_t>>> items;
+        for (int i = 0; i < 8; i++) {
+            const uint64_t bytes = (uint64_t) (i + 1) * MiB;   // 36 MiB total
+            items.push_back({ {0, bytes}, {1, bytes} });
+        }
+        const int res = heapres_plan_search(items, { 24 * MiB, 24 * MiB }, choice);
+        heapres_check(res == HEAPRES_PLAN_FEASIBLE, "unequal buffers that fit are planned");
+        heapres_check(ggml_vk_heapres_reserved(0) + ggml_vk_heapres_reserved(1) == 36 * MiB,
+                      "unequal plan charged its total exactly once");
+    }
+
+    ggml_vk_heapres_reset();
+}
+
+// Builds `n` meta tensors and lets the loader's own split arithmetic turn them into buffers.
+//
+// `vary` controls the SHAPE of the resulting buffer set, and the distinction matters:
+//   vary == false - every tensor is exactly `chunk`, so every buffer is identical. Interchangeable,
+//                   which is the easy case for the planner.
+//   vary == true  - the sizes cycle, so the buffers come out UNEQUAL. That is what a real model
+//                   load looks like (tensors are packed until the next one would overflow the
+//                   buffer), and unequal buffers are exactly the case a symmetry break cannot help
+//                   with. A corpus of same-size buffers would hide that.
+static ggml_context * heapres_plan_make_ctx(uint64_t chunk, int n, bool vary) {
+    struct ggml_init_params params = {
+        /* .mem_size   = */ ggml_tensor_overhead() * (size_t) (n + 2),
+        /* .mem_buffer = */ NULL,
+        /* .no_alloc   = */ true,
+    };
+    ggml_context * ctx = ggml_init(params);
+    if (ctx == NULL) {
+        return NULL;
+    }
+    for (int i = 0; i < n; i++) {
+        uint64_t bytes = chunk;
+        if (vary) {
+            switch (i % 3) {
+                case 1:  bytes = chunk * 3 / 4; break;
+                case 2:  bytes = chunk / 2;     break;
+                default: bytes = chunk;         break;
+            }
+        }
+        ggml_new_tensor_1d(ctx, GGML_TYPE_F32, (int64_t) (bytes / sizeof(float)));
+    }
+    return ctx;
+}
+
+static void heapres_plan_production_tests() {
+    printf("Vulkan per-buffer-type batch planning, production path (R46b B7b prerequisite)\n");
+
+    const uint64_t MiB = 1024ull * 1024ull;
+
+    uint64_t max_chunk = 0, total_heap = 0, reserved_now = 0;
+    int      used_m4 = 0;
+    if (ggml_vk_plan_probe_limits(&max_chunk, &total_heap, &reserved_now, &used_m4) != 0) {
+        printf("  SKIPPED: no Vulkan device, per-buffer-type batch planning NOT covered by this run\n");
+        return;
+    }
+    printf("    buffer chunk=%llu B, all heaps=%llu B, requirements via %s\n",
+           (unsigned long long) max_chunk, (unsigned long long) total_heap,
+           used_m4 ? "VK_KHR_maintenance4 (no VkBuffer created)" : "a temporary VkBuffer");
+
+    ggml_backend_buffer_type_t buft = ggml_backend_vk_buffer_type(0);
+    heapres_check(buft != NULL, "production Vulkan buffer type available");
+    if (buft == NULL || max_chunk == 0) {
+        return;
+    }
+
+    // 1. An impossible COMPLETE plan must fail before the FIRST driver allocation. A NULL return
+    //    does not prove that; the vkAllocateMemory counter does.
+    //
+    //    The buffers here are deliberately UNEQUAL (vary = true), which is the real model-load
+    //    shape and the one the backtracking walk is worst at. An equal-size corpus would pass this
+    //    test through the symmetry break and never exercise the path a real model takes.
+    {
+        uint64_t n64 = (total_heap / max_chunk) * 2 + 8;
+        if (n64 > 2048) {
+            n64 = 2048;   // still far past capacity on any heap layout this rig reports
+        }
+        const int n = (int) n64;
+        ggml_context * ctx = heapres_plan_make_ctx(max_chunk, n, /* vary */ true);
+        heapres_check(ctx != NULL, "impossible load: context built");
+        if (ctx != NULL) {
+            const uint64_t allocs_before   = ggml_vk_plan_driver_alloc_calls();
+            const uint64_t reserved_before = ggml_vk_plan_device_reserved();
+            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+            heapres_check(buf == NULL, "impossible load: refused");
+            heapres_check(ggml_vk_plan_driver_alloc_calls() == allocs_before,
+                          "impossible load: NOT ONE vkAllocateMemory was issued");
+            heapres_check(ggml_vk_plan_device_reserved() == reserved_before,
+                          "impossible load: the device ledger is untouched");
+            ggml_backend_buffer_free(buf);
+            ggml_free(ctx);
+
+            // R46b B7b-R2: refusing is not enough - the planner must have DECIDED that this set is
+            // infeasible, not merely run out of search budget. The two answers refuse the same load
+            // today but they are different facts: "no complete assignment exists" is reportable and
+            // stable, "I gave up" is neither, and the O(n) total-capacity precheck is what turns the
+            // commonest real shape (model bigger than memory, all buffers unequal) into the former.
+            std::vector<uint64_t> unequal((size_t) n, max_chunk);
+            for (size_t i = 0; i < unequal.size(); i++) {
+                switch (i % 3) {
+                    case 1:  unequal[i] = max_chunk * 3 / 4; break;
+                    case 2:  unequal[i] = max_chunk / 2;     break;
+                    default: unequal[i] = max_chunk;         break;
+                }
+            }
+            int status_impossible = -1;
+            ggml_vk_plan_probe_begin(unequal.data(), (int) unequal.size(), &status_impossible);
+            heapres_check(status_impossible == HEAPRES_PLAN_INFEASIBLE,
+                          "impossible load: DECIDED infeasible, not abandoned at the search bound");
+            ggml_vk_plan_probe_free_all();
+        }
+    }
+
+    // 2. A load that fits is charged exactly once per buffer and gives all of it back.
+    {
+        const int n = 2;
+        // equal sizes here on purpose: this is the one assertion that checks exact byte arithmetic
+        ggml_context * ctx = heapres_plan_make_ctx(max_chunk, n, /* vary */ false);
+        heapres_check(ctx != NULL, "feasible load: context built");
+        if (ctx != NULL) {
+            const uint64_t reserved_before = ggml_vk_plan_device_reserved();
+            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+            heapres_check(buf != NULL, "feasible load: allocated");
+            if (buf != NULL) {
+                const uint64_t live = ggml_vk_plan_device_reserved() - reserved_before;
+                // exactly n buffers' worth: a double charge would be ~2n, a lost charge ~0
+                heapres_check(live >= (uint64_t) n * max_chunk && live < (uint64_t) n * max_chunk + 16 * MiB,
+                              "feasible load: charged exactly once per buffer, no double charge");
+                ggml_backend_buffer_free(buf);
+            }
+            heapres_check(ggml_vk_plan_device_reserved() == reserved_before,
+                          "feasible load: destruction released every byte exactly once");
+            ggml_free(ctx);
+        }
+    }
+
+    // 3. Mid-plan failure. Buffer 0 is built, buffer 1 fails inside the production allocator. The
+    //    load must leave NOTHING behind: the built buffer's own charge, the failed buffer's
+    //    adopted charge and the untouched entries' reservations must all be back.
+    {
+        const int n = 5;
+        // unequal buffers again: the rollback has to work on the real load shape, not just on a
+        // set the planner finds easy
+        ggml_context * ctx = heapres_plan_make_ctx(max_chunk, n, /* vary */ true);
+        heapres_check(ctx != NULL, "mid-plan failure: context built");
+        if (ctx != NULL) {
+            const uint64_t reserved_before = ggml_vk_plan_device_reserved();
+            const uint64_t allocs_before   = ggml_vk_plan_driver_alloc_calls();
+            ggml_vk_plan_set_fault(1 /* after allocateMemory */, 1 /* let buffer 0 through */);
+            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+            ggml_vk_plan_set_fault(0, 0);
+            heapres_check(buf == NULL, "mid-batch failure: the whole batch failed, not just one buffer");
+            heapres_check(ggml_vk_plan_driver_alloc_calls() >= allocs_before + 2,
+                          "mid-plan failure: the failure really happened part way through");
+            heapres_check(ggml_vk_plan_device_reserved() == reserved_before,
+                          "mid-plan failure: every reservation rolled back, consumed and unconsumed");
+            ggml_backend_buffer_free(buf);
+            ggml_free(ctx);
+        }
+    }
+
+    // 4. Competing plans on ONE device cannot both pass against the same capacity. plan_begin
+    //    allocates no driver memory at all, so this is a pure capacity test.
+    {
+        uint64_t n64 = (total_heap / max_chunk) * 3 / 4;
+        if (n64 < 2) {
+            n64 = 2;
+        }
+        if (n64 > 2048) {
+            n64 = 2048;
+        }
+        const int n = (int) n64;
+        std::vector<uint64_t> sizes((size_t) n, max_chunk);
+
+        const uint64_t allocs_before = ggml_vk_plan_driver_alloc_calls();
+        int status_a = -1, status_b = -1, status_b2 = -1;
+
+        const int a = ggml_vk_plan_probe_begin(sizes.data(), n, &status_a);
+        heapres_check(status_a == HEAPRES_PLAN_FEASIBLE, "competing plans: plan A took three quarters of capacity");
+        ggml_vk_plan_probe_begin(sizes.data(), n, &status_b);
+        heapres_check(status_b == HEAPRES_PLAN_INFEASIBLE,
+                      "competing plans: plan B refused against plan A's reservations");
+        ggml_vk_plan_probe_free_one(a);
+        ggml_vk_plan_probe_begin(sizes.data(), n, &status_b2);
+        heapres_check(status_b2 == HEAPRES_PLAN_FEASIBLE,
+                      "competing plans: plan B fits once plan A is released");
+        heapres_check(ggml_vk_plan_driver_alloc_calls() == allocs_before,
+                      "competing plans: planning allocated no driver memory");
+
+        const uint64_t reserved_with_b = ggml_vk_plan_device_reserved();
+        ggml_vk_plan_probe_free_all();
+        heapres_check(reserved_with_b > ggml_vk_plan_device_reserved(),
+                      "competing plans: an open plan really held capacity");
+    }
+
+    // 5. Everything above must leave the device ledger exactly where a fresh device starts.
+    uint64_t after_chunk = 0, after_total = 0, after_reserved = 0;
+    int      after_m4 = 0;
+    ggml_vk_plan_probe_limits(&after_chunk, &after_total, &after_reserved, &after_m4);
+    heapres_check(after_reserved == reserved_now, "batch planning left no bytes reserved");
+}
+
 static int heapres_main() {
     heapres_ledger_tests();
+    heapres_plan_ledger_tests();
     heapres_fault_tests();
+    heapres_plan_production_tests();
     printf("%s: %s\n", "heapres", heapres_failures == 0 ? "all tests passed" : "FAILURES");
     return heapres_failures == 0 ? 0 : 1;
 }

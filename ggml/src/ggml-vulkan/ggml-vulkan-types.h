@@ -764,8 +764,9 @@ class vk_memory_logger;
 // memory channel, bank or link; two memory types that report the same heapIndex share one counter
 // because Vulkan says they draw on the same pool, and nothing here infers hardware topology.
 //
-// Budget in B7a == the heap's reported size. No env knob, no headroom factor, no whole-model plan:
-// those are B7b/B7c and are NOT implemented here.
+// Budget in B7a == the heap's reported size. No env knob, no headroom factor, and no planning at
+// all: B7b adds per-buffer-type batch planning on top of this ledger, and loader-wide planning is
+// still open. Neither is implemented here.
 //
 // ponytail: this counts the same bytes the R47a trace's heap_live already counts, deliberately.
 // They are not the same number (heap_live drops at ggml_vk_destroy_buffer and never sees a buffer
@@ -775,6 +776,30 @@ class vk_memory_logger;
 #ifndef VK_MAX_MEMORY_HEAPS
 #define VK_MAX_MEMORY_HEAPS 16
 #endif
+
+// R46b B7b: one placement option for one planned buffer. `type` is a Vulkan memory TYPE index and
+// `heap` is the heap that type lives on - they are deliberately separate fields, because several
+// types share one heap and the budget belongs to the heap, never to the type.
+struct vk_plan_candidate {
+    uint32_t type  = 0;
+    uint32_t heap  = 0;
+    uint64_t bytes = 0;   // real VkMemoryRequirements::size for this buffer, not the requested size
+};
+
+// Bound on the backtracking search. Hitting it means "did not finish deciding", which is reported
+// as INDETERMINATE and never as a refusal: "I did not finish" and "no assignment exists" are
+// different facts and the planner must not conflate them. What the CALLER then does is caller
+// policy, not this backend's to assert (ggml-alloc.c refuses a multi-buffer batch on INDETERMINATE
+// and lets a single-buffer one fall through). Same reasoning as the bulk-large-heap policy
+// fallback: a planner that reports a refusal it did not actually prove is worse than one that
+// admits it stopped searching.
+#define VK_PLAN_MAX_SEARCH_NODES 1000000
+
+enum vk_plan_result {
+    VK_PLAN_FEASIBLE      = 0,
+    VK_PLAN_INFEASIBLE    = 1,
+    VK_PLAN_INDETERMINATE = 2,
+};
 
 class vk_heap_ledger {
 public:
@@ -823,6 +848,151 @@ public:
         }
         std::lock_guard<std::mutex> guard(mutex);
         return reserved_bytes[heap];
+    }
+
+    // R46b B7b — BATCH reservation: the complete set of buffers handed to THIS call, all or nothing.
+    //
+    // `cands[i]` is the ordered candidate list for planned buffer i, in the placement policy's own
+    // preference order. Searches for a COMPLETE assignment (every buffer in the batch placed) and
+    // commits all of it, or commits nothing. Search and commit both happen under the one ledger
+    // mutex, so two concurrent plans on the same device can never both be admitted against the same
+    // bytes, and a single-buffer reserve() cannot slip in between deciding and charging.
+    //
+    // The atomicity is over the batch, NOT over a whole model load: the caller hands one
+    // (buffer type, context) group per call (scope: see ggml-backend-impl.h).
+    //
+    // Greedy first-choice is not enough: a buffer whose only option is heap H must be able to push
+    // an earlier buffer off H onto its second choice. The walk therefore backtracks.
+    //
+    // Returns VK_PLAN_FEASIBLE (out_choice[i] = index into cands[i]), VK_PLAN_INFEASIBLE (no
+    // complete assignment exists) or VK_PLAN_INDETERMINATE (search bound hit; decide nothing).
+    vk_plan_result reserve_plan(const std::vector<std::vector<vk_plan_candidate>> & cands,
+                                const uint64_t * budgets, size_t n_budgets,
+                                std::vector<size_t> & out_choice) {
+        const size_t n = cands.size();
+        out_choice.assign(n, 0);
+        if (n == 0) {
+            return VK_PLAN_FEASIBLE;
+        }
+
+        // Symmetry breaking. A real load hands us dozens of buffers with identical requirements and
+        // identical candidate lists; those are interchangeable, so any feasible assignment can be
+        // permuted into one where their choices never decrease. Restricting the walk to that
+        // canonical order collapses what is otherwise a combinatorial explosion (35 identical
+        // buffers over 2 heaps is 2^35 arrangements of the same few real outcomes) without
+        // discarding any distinct outcome.
+        std::vector<bool> same_as_prev(n, false);
+        for (size_t k = 1; k < n; ++k) {
+            if (cands[k].size() != cands[k - 1].size()) {
+                continue;
+            }
+            bool same = true;
+            for (size_t c = 0; c < cands[k].size() && same; ++c) {
+                same = cands[k][c].heap == cands[k - 1][c].heap && cands[k][c].bytes == cands[k - 1][c].bytes;
+            }
+            same_as_prev[k] = same;
+        }
+
+        std::lock_guard<std::mutex> guard(mutex);
+
+        // Necessary condition, decided in O(n) with no search at all: every item must land on SOME
+        // heap, so if the total requirement exceeds the total FREE capacity across all heaps, no
+        // complete assignment can exist. This is genuine infeasibility, not a guess.
+        //
+        // It matters because it covers the overwhelmingly common case - the model is simply bigger
+        // than memory - which is exactly the shape the exhaustive walk is worst at: dozens of
+        // differently sized buffers are not interchangeable, so the symmetry break above cannot
+        // collapse them and the walk would hit its bound and answer INDETERMINATE - an undecided
+        // answer on exactly the case that is in fact decidable in O(n). Answering it here keeps the
+        // common "model is bigger than memory" shape a proven refusal instead of an admission that
+        // the planner gave up.
+        {
+            uint64_t free_total = 0;
+            for (uint32_t h = 0; h < VK_MAX_MEMORY_HEAPS && h < n_budgets; ++h) {
+                if (reserved_bytes[h] >= budgets[h]) {
+                    continue;
+                }
+                const uint64_t heap_free = budgets[h] - reserved_bytes[h];
+                free_total = heap_free > UINT64_MAX - free_total ? UINT64_MAX : free_total + heap_free;
+            }
+
+            uint64_t need = 0;
+            for (const auto & item : cands) {
+                // the smallest this item can possibly consume anywhere
+                uint64_t least = 0;
+                for (size_t c = 0; c < item.size(); ++c) {
+                    if (c == 0 || item[c].bytes < least) {
+                        least = item[c].bytes;
+                    }
+                }
+                if (least > UINT64_MAX - need) {
+                    return VK_PLAN_INFEASIBLE;   // the total wraps: far past any real budget
+                }
+                need += least;
+            }
+
+            if (need > free_total) {
+                return VK_PLAN_INFEASIBLE;
+            }
+        }
+
+        uint64_t delta[VK_MAX_MEMORY_HEAPS] = {};
+        std::vector<size_t> next(n, 0);
+        uint64_t nodes = 0;
+        size_t   i     = 0;
+
+        while (i < n) {
+            if (++nodes > VK_PLAN_MAX_SEARCH_NODES) {
+                return VK_PLAN_INDETERMINATE;
+            }
+
+            bool placed = false;
+            for (size_t c = next[i]; c < cands[i].size(); ++c) {
+                const vk_plan_candidate & cand = cands[i][c];
+                if (cand.heap >= VK_MAX_MEMORY_HEAPS || cand.heap >= n_budgets) {
+                    continue;   // fail closed on an out-of-range heap, exactly like reserve()
+                }
+                const uint64_t budget = budgets[cand.heap];
+                // Subtraction form only: no sum is ever formed, so nothing can wrap. Already-live
+                // reservations from other buffers are charged first, then this plan's own delta.
+                if (reserved_bytes[cand.heap] > budget) {
+                    continue;
+                }
+                const uint64_t after_live = budget - reserved_bytes[cand.heap];
+                if (delta[cand.heap] > after_live) {
+                    continue;
+                }
+                if (cand.bytes > after_live - delta[cand.heap]) {
+                    continue;
+                }
+                delta[cand.heap] += cand.bytes;
+                out_choice[i] = c;
+                next[i]       = c + 1;   // resume after this choice if we ever backtrack into it
+                placed        = true;
+                break;
+            }
+
+            if (placed) {
+                i++;
+                if (i < n) {
+                    // Interchangeable with its predecessor: start where the predecessor landed.
+                    next[i] = same_as_prev[i] ? out_choice[i - 1] : 0;
+                }
+                continue;
+            }
+            if (i == 0) {
+                return VK_PLAN_INFEASIBLE;
+            }
+            i--;
+            const vk_plan_candidate & undo = cands[i][out_choice[i]];
+            delta[undo.heap] -= undo.bytes;
+        }
+
+        // Every delta was validated against its budget above, so this cannot overflow.
+        for (uint32_t h = 0; h < VK_MAX_MEMORY_HEAPS; ++h) {
+            reserved_bytes[h] += delta[h];
+        }
+        return VK_PLAN_FEASIBLE;
     }
 
 #ifdef GGML_VK_INTERNAL_TESTS
@@ -880,12 +1050,24 @@ static std::atomic<int> vk_test_fault_bda { 0 };
 static std::atomic<int>      vk_test_destroy_witness_armed { 0 };
 static std::atomic<uint64_t> vk_test_reserved_at_driver_free { 0 };
 
+// R46b B7b: counts every vkAllocateMemory THIS process asked for, incremented immediately before
+// the call at all three call sites. A NULL return from a refused load proves nothing about "failed
+// before the first driver allocation"; this counter does.
+static std::atomic<uint64_t> vk_test_driver_alloc_calls { 0 };
+
+// R46b B7b: let the first `vk_test_fault_skip` buffers through before the fault fires. A batch
+// transaction can only be tested by failing PART WAY through it.
+static std::atomic<int> vk_test_fault_skip { 0 };
+
 #define VK_TEST_FAULT(stage)                                                              \
     do {                                                                                  \
         if (vk_test_fault_stage_active.load(std::memory_order_relaxed) == (int) (stage)) { \
-            throw vk::DeviceLostError("R46b B7a-R2 injected fault");                       \
+            if (vk_test_fault_skip.fetch_sub(1, std::memory_order_relaxed) <= 0) {         \
+                throw vk::DeviceLostError("R46b B7a-R2 injected fault");                   \
+            }                                                                              \
         }                                                                                 \
     } while (0)
+#define VK_TEST_NOTE_DRIVER_ALLOC() vk_test_driver_alloc_calls.fetch_add(1, std::memory_order_relaxed)
 #define VK_TEST_NOTE_MAPPED() vk_test_fault_mapped.store(1, std::memory_order_relaxed)
 #define VK_TEST_NOTE_BDA()    vk_test_fault_bda.store(1, std::memory_order_relaxed)
 #define VK_TEST_NOTE_DRIVER_FREE(dev)                                                     \
@@ -897,6 +1079,7 @@ static std::atomic<uint64_t> vk_test_reserved_at_driver_free { 0 };
     } while (0)
 #else
 #define VK_TEST_FAULT(stage)          do { } while (0)
+#define VK_TEST_NOTE_DRIVER_ALLOC()   do { } while (0)
 #define VK_TEST_NOTE_MAPPED()         do { } while (0)
 #define VK_TEST_NOTE_BDA()            do { } while (0)
 #define VK_TEST_NOTE_DRIVER_FREE(dev) do { } while (0)
@@ -961,6 +1144,11 @@ struct vk_device_struct {
     bool multi_add;
     bool shader_int64;
     bool buffer_device_address;
+
+    // R46b B7b: VK_KHR_maintenance4 is enabled for this device. It provides
+    // getBufferMemoryRequirementsKHR(VkDeviceBufferMemoryRequirements), which answers the batch
+    // planner's "what would this buffer actually require" question with no VkBuffer object at all.
+    bool maintenance4 = false;
     bool vulkan_memory_model;
 
     bool add_rms_fusion;
@@ -1354,6 +1542,19 @@ struct vk_heap_reservation {
         bytes  = b;
         held   = true;
         return true;
+    }
+
+    // R46b B7b: take ownership of bytes a batch plan ALREADY charged to this ledger. It does
+    // not touch the ledger - the plan made the charge - so there is no double charge; it only moves
+    // who is responsible for the single matching release. noexcept, and the first thing the planned
+    // allocation path does, so no window exists where the plan has stopped owning the bytes and no
+    // reservation owns them yet.
+    void adopt(vk_heap_ledger * l, uint32_t h, uint64_t b) noexcept {
+        release();
+        ledger = l;
+        heap   = h;
+        bytes  = b;
+        held   = true;
     }
 
     bool release() {

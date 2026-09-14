@@ -4961,6 +4961,9 @@ vk_device ggml_vk_get_device(size_t idx) {
             last_struct = (VkBaseOutStructure *)&maint4_features;
             device_extensions.push_back("VK_KHR_maintenance4");
         }
+        // R46b B7b: record it, the batch planner asks for buffer memory requirements without
+        // creating a VkBuffer when this is available.
+        device->maintenance4 = maintenance4_support;
 
         VkPhysicalDeviceShaderIntegerDotProductFeaturesKHR shader_integer_dot_product_features {};
         shader_integer_dot_product_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES_KHR;
@@ -18282,6 +18285,7 @@ GGML_BACKEND_API int ggml_vk_heapres_fault_probe(int      stage,
     *bda_supported   = device->buffer_device_address ? 1 : 0;
     vk_test_fault_bda.store(0, std::memory_order_relaxed);
     vk_test_fault_mapped.store(0, std::memory_order_relaxed);
+    vk_test_fault_skip.store(0, std::memory_order_relaxed);   // R46b B7b: fault on the FIRST buffer
     vk_test_fault_stage_active.store(stage, std::memory_order_relaxed);
 
     try {
@@ -18342,6 +18346,128 @@ GGML_BACKEND_API int ggml_vk_heapres_destroy_order_probe(uint64_t   size,
     *reserved_at_driver_free = vk_test_reserved_at_driver_free.load(std::memory_order_acquire);
     *reserved_after          = device->heap_ledger.total_reserved();
     return 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// R46b B7b — per-buffer-type batch planning seam.
+// ---------------------------------------------------------------------------------------------
+
+// Every vkAllocateMemory this process has asked for. The production-path negative test asserts this
+// is UNCHANGED across a refused load: "returned NULL" is not the same claim as "did not allocate".
+GGML_BACKEND_API uint64_t ggml_vk_plan_driver_alloc_calls(void) {
+    return vk_test_driver_alloc_calls.load(std::memory_order_relaxed);
+}
+
+// Fault on the (skip+1)-th buffer of a load instead of the first.
+GGML_BACKEND_API void ggml_vk_plan_set_fault(int stage, int skip) {
+    vk_test_fault_skip.store(skip, std::memory_order_relaxed);
+    vk_test_fault_stage_active.store(stage, std::memory_order_relaxed);
+}
+
+// reserve_plan() driven against the TEST's own ledger. Candidates are flattened: item i owns
+// cand_heaps[off .. off+cand_counts[i]) with the matching cand_bytes. Returns vk_plan_result.
+GGML_BACKEND_API int ggml_vk_heapres_plan_search(const uint32_t * cand_heaps, const uint64_t * cand_bytes,
+                                                 const int * cand_counts, int n_items,
+                                                 const uint64_t * budgets, int n_heaps,
+                                                 int * out_choice) {
+    std::vector<std::vector<vk_plan_candidate>> cands((size_t) n_items);
+    size_t off = 0;
+    for (int i = 0; i < n_items; i++) {
+        for (int c = 0; c < cand_counts[i]; c++, off++) {
+            vk_plan_candidate cand;
+            cand.type  = (uint32_t) off;   // distinct type per candidate; the heap is what matters
+            cand.heap  = cand_heaps[off];
+            cand.bytes = cand_bytes[off];
+            cands[(size_t) i].push_back(cand);
+        }
+    }
+
+    std::vector<size_t> choice;
+    const vk_plan_result res = vk_heapres_test_ledger().reserve_plan(cands, budgets, (size_t) n_heaps, choice);
+    if (res == VK_PLAN_FEASIBLE && out_choice) {
+        for (int i = 0; i < n_items; i++) {
+            out_choice[i] = (int) choice[(size_t) i];
+        }
+    }
+    return (int) res;
+}
+
+// Live plans held open by the probe, so two plans can compete for one device's capacity.
+static std::vector<ggml_backend_buffer_type_plan_t> & vk_plan_probe_held() {
+    static std::vector<ggml_backend_buffer_type_plan_t> held;
+    return held;
+}
+
+GGML_BACKEND_API int ggml_vk_plan_probe_limits(uint64_t * max_chunk, uint64_t * total_heap,
+                                               uint64_t * reserved_now, int * used_maintenance4) {
+    ggml_vk_instance_init();
+    if (vk_instance.device_indices.empty()) {
+        return -1;
+    }
+    vk_device device = ggml_vk_get_device(0);
+
+    const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
+    uint64_t total = 0;
+    for (uint32_t h = 0; h < mem_props.memoryHeapCount && h < VK_MAX_MEMORY_HEAPS; ++h) {
+        total += mem_props.memoryHeaps[h].size;
+    }
+
+    *max_chunk         = std::min<uint64_t>(device->suballocation_block_size, device->max_buffer_size);
+    *total_heap        = total;
+    *reserved_now      = device->heap_ledger.total_reserved();
+    *used_maintenance4 = device->maintenance4 ? 1 : 0;
+    return 0;
+}
+
+// Opens a plan through the REAL buffer-type interface and keeps it open. Returns a handle or -1.
+GGML_BACKEND_API int ggml_vk_plan_probe_begin(const uint64_t * sizes, int n, int * status) {
+    ggml_vk_instance_init();
+    if (vk_instance.device_indices.empty()) {
+        return -1;
+    }
+    ggml_backend_buffer_type_t buft = ggml_backend_vk_buffer_type(0);
+
+    std::vector<size_t> s((size_t) n);
+    for (int i = 0; i < n; i++) {
+        s[(size_t) i] = (size_t) sizes[i];
+    }
+
+    enum ggml_backend_plan_status st = GGML_BACKEND_PLAN_UNSUPPORTED;
+    ggml_backend_buffer_type_plan_t plan = ggml_backend_buft_plan_begin(buft, s.data(), (size_t) n, &st);
+    *status = (int) st;
+    if (plan == NULL) {
+        return -1;
+    }
+    vk_plan_probe_held().push_back(plan);
+    return (int) vk_plan_probe_held().size() - 1;
+}
+
+GGML_BACKEND_API void ggml_vk_plan_probe_free_all(void) {
+    ggml_backend_buffer_type_t buft = ggml_backend_vk_buffer_type(0);
+    for (auto & plan : vk_plan_probe_held()) {
+        if (plan != NULL) {
+            ggml_backend_buft_plan_free(buft, plan);
+        }
+    }
+    vk_plan_probe_held().clear();
+}
+
+GGML_BACKEND_API void ggml_vk_plan_probe_free_one(int handle) {
+    ggml_backend_buffer_type_t buft = ggml_backend_vk_buffer_type(0);
+    auto & held = vk_plan_probe_held();
+    if (handle < 0 || (size_t) handle >= held.size() || held[(size_t) handle] == NULL) {
+        return;
+    }
+    ggml_backend_buft_plan_free(buft, held[(size_t) handle]);
+    held[(size_t) handle] = NULL;
+}
+
+GGML_BACKEND_API uint64_t ggml_vk_plan_device_reserved(void) {
+    ggml_vk_instance_init();
+    if (vk_instance.device_indices.empty()) {
+        return 0;
+    }
+    return ggml_vk_get_device(0)->heap_ledger.total_reserved();
 }
 
 }  // extern "C"
