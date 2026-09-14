@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **505**, all non-merge, applied in filename order.
+- Patches: **532**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 505 commit messages, same provenance trailers. Verified, not
+same file contents, same 532 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -584,6 +584,33 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 503 | `0503-ggml-add-GGML_TYPE_SX8-57-the-S-X8-v4.3-CPU-decoder-.patch` | arifi-fork-base | `174ead5ca` | MarlaLabs llama-cpp-sx8.patch (github.com/MarlaLabs, Apache-2.0), cloned at cache/r16-sx8 | - | ggml: add GGML_TYPE_SX8 (57), the S-X8 v4.3 CPU decoder, retagged from the author's 41, plus its retag/cross-check tooling |
 | 504 | `0504-ggml-port-jtrefon-TBQ3_0-TBQ4_0-at-ids-58-59-with-th.patch` | arifi-fork-base | `3e3eb64d0` | jtrefon/llama.cpp-turboq-mtp@6a02d0494 (ggml/src/ggml-turboq.c, ggml-turboq-tables.h, ggml-common.h, ggml.c, ggml-cpu, src/llama-kv-cache.cpp, src/llama-graph.cpp, src/llama-context.cpp, common/arg.cpp, tests) | - | ggml: port jtrefon TBQ3_0/TBQ4_0 at ids 58/59 with the type-id arbitration, plus the SET_ROWS device guard (WI-1694 half A) |
 | 505 | `0505-docs-protected-wins-the-R18-switch-table-eight-DOCUM.patch` | arifi-fork-base | `4a8c1536e` | - | - | docs + protected-wins: the R18 switch table - eight DOCUMENTED-TAKE runtime switches registered with their measured effect |
+| 506 | `0506-vulkan-add-the-S-X8-v4.3-kernel-for-GGML_TYPE_SX8-57.patch` | arifi-fork-base | `ce7f532e3` | MarlaLabs S-X8 v4.3 decode arithmetic (carried into the fork by WI-1692, repeated here in GLSL) | - | vulkan : add the S-X8 v4.3 kernel for GGML_TYPE_SX8 (57) |
+| 507 | `0507-vulkan-integer-MMQ-Q8_1-activations-for-GGML_TYPE_SX.patch` | arifi-fork-base | `948aab9c6` | MarlaLabsAI/sx8-quantization docs/S-X-METHODOLOGY.md section 2 (per-8 affine sub-block decomposition), Apache-2.0 | - | vulkan : integer MMQ (Q8_1 activations) for GGML_TYPE_SX8 (57) - matmul_sx8_q8_1, CREATE_MMQ, per-8 activation sums hoisted into block_b_to_registers (8 dots + 8 FMAs per 32 weights) |
+| 508 | `0508-vulkan-mul_mm-prompt-processing-for-GGML_TYPE_SX8-57.patch` | arifi-fork-base | `6810d3a9e` | MarlaLabsAI/sx8-quantization docs/S-X-METHODOLOGY.md section 2 (Apache-2.0) - the S-X8 affine decomposition (per-block fp16 endpoints, four 2-bit sub-block range strategies, 6-bit levels split across qh nibbles and ql quads). | - | vulkan : mul_mm (prompt processing) for GGML_TYPE_SX8 (57) - the device said the gap is the missing mul_mm, not the missing MMQ |
+| 509 | `0509-vulkan-WI-1722b-sync-check-marker-adjacent-to-the-mu.patch` | arifi-fork-base | `cadc7e5d0` | - | - | vulkan : WI-1722b sync-check marker adjacent to the mul_mm type switch (the fork's arifi-sync-check gate reads the line before the switch) |
+| 510 | `0510-server-device-resident-context-checkpoint-ring-tool-.patch` | arifi-fork-base | `ea100547f` | - | - | server : device-resident context checkpoint ring + tool-call anchor (R31 P1/P2, FreeToken M14/M15) |
+| 511 | `0511-llama-Windows-unbuffered-model-reads-load-mode-direc.patch` | arifi-fork-base | `dae71cbbe` | - | - | llama : Windows unbuffered model reads (--load-mode direct_io) + PR #28223 host bufts under mmap (R31 M17 / M07) |
+| 512 | `0512-tests-test-save-load-state-Test-9-device-storage-rin.patch` | arifi-fork-base | `c365b4029` | - | - | tests: test-save-load-state Test 9 (device storage ring) - the first draft read logits the ring never stores and went RED on the ring code itself; the repaired test checks the restored state, GREEN on cdff32828 (R31 checker F1) |
+| 513 | `0513-server-llama-device-checkpoint-storage-ID-ownership-.patch` | arifi-fork-base | `36969c55c` | - | - | server/llama : device checkpoint storage-ID ownership + quantized device-view extent (R45, lane-229) |
+| 514 | `0514-server-LLAMA_CKPT_STORAGE_TRACE-one-INFO-line-per-ch.patch` | arifi-fork-base | `766cb9528` | - | - | server : LLAMA_CKPT_STORAGE_TRACE - one INFO line per checkpoint save and restore (R45, lane-229) |
+| 515 | `0515-test-backend-ops-R46-real-27B-S-X8-decode-shapes-174.patch` | arifi-fork-base | `8c03b8601` | - | - | test-backend-ops: R46 real 27B S-X8 decode shapes (17408x5120, 5120x17408, 248320x5120) for sx8/q8_0/q4_K at n=1..8 |
+| 516 | `0516-vulkan-S-X8-mat-vec-decodes-a-whole-32-weight-block-.patch` | ternary-g128 | `dacc8d0ea` | - | - | vulkan: S-X8 mat-vec decodes a whole 32-weight block per thread (R46 ranks 2+4) |
+| 517 | `0517-vulkan-gate-the-S-X8-whole-block-mat-vec-decode-at-n.patch` | ternary-g128 | `e03afe555` | - | - | vulkan: gate the S-X8 whole-block mat-vec decode at n <= 3 (R46 commit B2) |
+| 518 | `0518-vulkan-S-X8-integer-dot-mat-vec-against-Q8_1-activat.patch` | ternary-g128 | `beff6fcd6` | - | - | vulkan: S-X8 integer-dot mat-vec against Q8_1 activations (R46 commit C) |
+| 519 | `0519-vulkan-S-X8-q8_1-mat-vec-ships-OPT-IN-GGML_ARIFI_SX8.patch` | ternary-g128 | `0cf6d4528` | - | - | vulkan: S-X8 q8_1 mat-vec ships OPT-IN, GGML_ARIFI_SX8_MMVQ=1 (R46 commit C decision) |
+| 520 | `0520-vulkan-GGML_VK_ALLOC_TRACE-allocation-submit-instrum.patch` | arifi-fork-base | `60b79510c` | - | - | vulkan : GGML_VK_ALLOC_TRACE allocation/submit instrument + S-X8 mat-vec rows/workgroup switch (R47a, lane-232) |
+| 521 | `0521-vulkan-alloc-trace-reads-per-heap-live-bytes-under-t.patch` | arifi-fork-base | `ef70171b3` | - | - | vulkan : alloc-trace reads per-heap live bytes under the lock (R47a, lane-232) |
+| 522 | `0522-vulkan-the-R47d-780M-S-X8-mat-vec-shape-lookup-as-a-.patch` | ternary-g128 | `55ff364d5` | - | - | vulkan: the R47d 780M S-X8 mat-vec shape lookup as a device-probed default (R46b commit D) |
+| 523 | `0523-vulkan-opt-in-explicit-placement-policy-GGML_VK_PLAC.patch` | ternary-g128 | `afb4abc52` | - | - | vulkan: opt-in explicit placement policy GGML_VK_PLACEMENT=bulk-large-heap (R46b commit E) |
+| 524 | `0524-test-backend-ops-S-X8-ragged-m-K-tail-f16-activation.patch` | arifi-fork-base | `fd74c89e5` | - | - | test-backend-ops: S-X8 ragged-m, K-tail, f16-activation and real-27B-shape mat-vec correctness (R46b, checker F2) |
+| 525 | `0525-test-backend-ops-drop-the-S-X8-m-1-correctness-cases.patch` | arifi-fork-base | `06acb7f4f` | - | - | test-backend-ops: drop the S-X8 m=1 correctness cases, they are not comparable (R46b commit G) |
+| 526 | `0526-test-vulkan-add-independent-S-X8-route-checks.patch` | arifi-fork-base | `ae831efde` | - | - | test(vulkan): add independent S-X8 route checks |
+| 527 | `0527-feat-vulkan-account-heap-reservations-transactionall.patch` | arifi-fork-base | `a031ffef4` | - | - | feat(vulkan): account heap reservations transactionally |
+| 528 | `0528-feat-backend-preflight-Vulkan-buffer-type-batches.patch` | arifi-fork-base | `6d8ed4c6f` | - | - | feat(backend): preflight Vulkan buffer-type batches |
+| 529 | `0529-feat-alloc-loader-wide-Vulkan-allocation-transaction.patch` | arifi-fork-base | `e11337c90` | - | `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE` | feat(alloc): loader-wide Vulkan allocation transaction (R46b B7b) |
+| 530 | `0530-feat-vulkan-bounded-host-split-with-explicit-staging.patch` | arifi-fork-base | `e1d9b3919` | - | - | feat(vulkan): bounded host split with explicit staging reserve (R46b B7c) |
+| 531 | `0531-fix-checkpoint-make-device-finalization-fallible.patch` | arifi-fork-base | `4e8114ead` | - | - | fix(checkpoint): make device finalization fallible |
+| 532 | `0532-feat-updater-preserve-fork-work-across-rebases.patch` | arifi-fork-base | `9ff4644b1` | - | - | feat(updater): preserve fork work across rebases |
 
 ## Measured effect, per patch
 
@@ -1168,6 +1195,33 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0503-ggml-add-GGML_TYPE_SX8-57-the-S-X8-v4.3-CPU-decoder-.patch` | DOCUMENTED-TAKE. The harmless cell (the port present but unreachable) read DFlash2 decode +0.43% CI95 [-0.47%, +1.33%] and plain decode -5.33% [-12.26%, +1.60%]; the same pair moved plain PREFILL -8.28% [-11.00%, -5.56%], the wave's largest inert move, which is the build floor and not this port. TBO ladder x0.991 to x1.033. The S-X8 file cell never ran: no S-X8 file exists and the decoder is CPU-only. |
 | `0504-ggml-port-jtrefon-TBQ3_0-TBQ4_0-at-ids-58-59-with-th.patch` | DOCUMENTED-TAKE. The harmless cell (types present, no launch names them) read DFlash2 decode +0.60% CI95 [-1.28%, +2.47%] and DFlash2 prefill +8.15% [+5.38%, +10.92%], the latter pure build floor. The KV MECHANISM WAS NEVER MEASURED: the baseline arm refused the type ("Unsupported cache type: tbq4_0") and the candidate arm was aborted by the schedule horizon. What ran is engine-vs-engine at KV-on-host, +1.60% [+1.30%, +1.90%] on a 0.515 t/s crawl. Owed: candidate-engine tbq4_0 vs candidate-engine q8_0; the baseline-engine design is impossible because the base engine does not know the type. |
 | `0505-docs-protected-wins-the-R18-switch-table-eight-DOCUM.patch` | none - registry and manifest only, no code path touched |
+| `0506-vulkan-add-the-S-X8-v4.3-kernel-for-GGML_TYPE_SX8-57.patch` | *(no Measured-effect trailer)* |
+| `0507-vulkan-integer-MMQ-Q8_1-activations-for-GGML_TYPE_SX.patch` | *(no Measured-effect trailer)* |
+| `0508-vulkan-mul_mm-prompt-processing-for-GGML_TYPE_SX8-57.patch` | *(no Measured-effect trailer)* |
+| `0509-vulkan-WI-1722b-sync-check-marker-adjacent-to-the-mu.patch` | *(no Measured-effect trailer)* |
+| `0510-server-device-resident-context-checkpoint-ring-tool-.patch` | UNMEASURED - correctness test staged (test-save-load-state Test 9); served A/B owed to the serial lane |
+| `0511-llama-Windows-unbuffered-model-reads-load-mode-direc.patch` | *(no Measured-effect trailer)* |
+| `0512-tests-test-save-load-state-Test-9-device-storage-rin.patch` | *(no Measured-effect trailer)* |
+| `0513-server-llama-device-checkpoint-storage-ID-ownership-.patch` | UNMEASURED for speed - correctness only. Fixes the reproducible R44 abort at task 594 of the c1 drafted sanity run (FIX-df2-L2/L5); served A/B in the lane-229 report |
+| `0514-server-LLAMA_CKPT_STORAGE_TRACE-one-INFO-line-per-ch.patch` | UNMEASURED - diagnostic only, off by default |
+| `0515-test-backend-ops-R46-real-27B-S-X8-decode-shapes-174.patch` | *(no Measured-effect trailer)* |
+| `0516-vulkan-S-X8-mat-vec-decodes-a-whole-32-weight-block-.patch` | *(no Measured-effect trailer)* |
+| `0517-vulkan-gate-the-S-X8-whole-block-mat-vec-decode-at-n.patch` | *(no Measured-effect trailer)* |
+| `0518-vulkan-S-X8-integer-dot-mat-vec-against-Q8_1-activat.patch` | *(no Measured-effect trailer)* |
+| `0519-vulkan-S-X8-q8_1-mat-vec-ships-OPT-IN-GGML_ARIFI_SX8.patch` | *(no Measured-effect trailer)* |
+| `0520-vulkan-GGML_VK_ALLOC_TRACE-allocation-submit-instrum.patch` | *(no Measured-effect trailer)* |
+| `0521-vulkan-alloc-trace-reads-per-heap-live-bytes-under-t.patch` | *(no Measured-effect trailer)* |
+| `0522-vulkan-the-R47d-780M-S-X8-mat-vec-shape-lookup-as-a-.patch` | *(no Measured-effect trailer)* |
+| `0523-vulkan-opt-in-explicit-placement-policy-GGML_VK_PLAC.patch` | *(no Measured-effect trailer)* |
+| `0524-test-backend-ops-S-X8-ragged-m-K-tail-f16-activation.patch` | *(no Measured-effect trailer)* |
+| `0525-test-backend-ops-drop-the-S-X8-m-1-correctness-cases.patch` | *(no Measured-effect trailer)* |
+| `0526-test-vulkan-add-independent-S-X8-route-checks.patch` | *(no Measured-effect trailer)* |
+| `0527-feat-vulkan-account-heap-reservations-transactionall.patch` | *(no Measured-effect trailer)* |
+| `0528-feat-backend-preflight-Vulkan-buffer-type-batches.patch` | *(no Measured-effect trailer)* |
+| `0529-feat-alloc-loader-wide-Vulkan-allocation-transaction.patch` | *(no Measured-effect trailer)* |
+| `0530-feat-vulkan-bounded-host-split-with-explicit-staging.patch` | *(no Measured-effect trailer)* |
+| `0531-fix-checkpoint-make-device-finalization-fallible.patch` | *(no Measured-effect trailer)* |
+| `0532-feat-updater-preserve-fork-work-across-rebases.patch` | *(no Measured-effect trailer)* |
 
 ## Unclassified
 
@@ -1575,4 +1629,25 @@ rather than silently bucketed - add a rule when a new source appears.
 - `174ead5ca` ggml: add GGML_TYPE_SX8 (57), the S-X8 v4.3 CPU decoder, retagged from the author's 41, plus its retag/cross-check tooling
 - `3e3eb64d0` ggml: port jtrefon TBQ3_0/TBQ4_0 at ids 58/59 with the type-id arbitration, plus the SET_ROWS device guard (WI-1694 half A)
 - `4a8c1536e` docs + protected-wins: the R18 switch table - eight DOCUMENTED-TAKE runtime switches registered with their measured effect
+- `ce7f532e3` vulkan : add the S-X8 v4.3 kernel for GGML_TYPE_SX8 (57)
+- `948aab9c6` vulkan : integer MMQ (Q8_1 activations) for GGML_TYPE_SX8 (57) - matmul_sx8_q8_1, CREATE_MMQ, per-8 activation sums hoisted into block_b_to_registers (8 dots + 8 FMAs per 32 weights)
+- `6810d3a9e` vulkan : mul_mm (prompt processing) for GGML_TYPE_SX8 (57) - the device said the gap is the missing mul_mm, not the missing MMQ
+- `cadc7e5d0` vulkan : WI-1722b sync-check marker adjacent to the mul_mm type switch (the fork's arifi-sync-check gate reads the line before the switch)
+- `ea100547f` server : device-resident context checkpoint ring + tool-call anchor (R31 P1/P2, FreeToken M14/M15)
+- `dae71cbbe` llama : Windows unbuffered model reads (--load-mode direct_io) + PR #28223 host bufts under mmap (R31 M17 / M07)
+- `c365b4029` tests: test-save-load-state Test 9 (device storage ring) - the first draft read logits the ring never stores and went RED on the ring code itself; the repaired test checks the restored state, GREEN on cdff32828 (R31 checker F1)
+- `36969c55c` server/llama : device checkpoint storage-ID ownership + quantized device-view extent (R45, lane-229)
+- `766cb9528` server : LLAMA_CKPT_STORAGE_TRACE - one INFO line per checkpoint save and restore (R45, lane-229)
+- `8c03b8601` test-backend-ops: R46 real 27B S-X8 decode shapes (17408x5120, 5120x17408, 248320x5120) for sx8/q8_0/q4_K at n=1..8
+- `60b79510c` vulkan : GGML_VK_ALLOC_TRACE allocation/submit instrument + S-X8 mat-vec rows/workgroup switch (R47a, lane-232)
+- `ef70171b3` vulkan : alloc-trace reads per-heap live bytes under the lock (R47a, lane-232)
+- `fd74c89e5` test-backend-ops: S-X8 ragged-m, K-tail, f16-activation and real-27B-shape mat-vec correctness (R46b, checker F2)
+- `06acb7f4f` test-backend-ops: drop the S-X8 m=1 correctness cases, they are not comparable (R46b commit G)
+- `ae831efde` test(vulkan): add independent S-X8 route checks
+- `a031ffef4` feat(vulkan): account heap reservations transactionally
+- `6d8ed4c6f` feat(backend): preflight Vulkan buffer-type batches
+- `e11337c90` feat(alloc): loader-wide Vulkan allocation transaction (R46b B7b)
+- `e1d9b3919` feat(vulkan): bounded host split with explicit staging reserve (R46b B7c)
+- `4e8114ead` fix(checkpoint): make device finalization fallible
+- `9ff4644b1` feat(updater): preserve fork work across rebases
 
