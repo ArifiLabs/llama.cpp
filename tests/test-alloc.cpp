@@ -36,17 +36,30 @@ struct dummy_backend_context {
     size_t              plan_alloc_call = 0;
     std::vector<size_t> plan_alloc_order;             // plan entry index of each plan_alloc_buffer call
 
+    // R46b B7c: a SECOND pool this buffer type may spill into when the first is full, and the two
+    // things that keep that spill bounded. Defaults leave the backend exactly as B7b left it:
+    // host_budget 0 means there is nowhere to spill, so every older test takes the same decisions.
+    size_t host_budget     = 0;          // capacity of the spill pool
+    size_t staging_reserve = 0;          // carved out of host_budget before any weight is admitted
+    size_t host_split_max  = SIZE_MAX;   // bound on what ONE plan may spill
+    size_t host_reserved   = 0;          // open plans' spill bytes
+    size_t host_consumed   = 0;          // spill bytes now owned by live buffers
+    size_t host_released   = 0;          // spill bytes plan_free gave back
+    std::vector<ggml_backend_buffer_t> host_buffers;   // which live buffers are on the spill pool
+
     ggml_backend_buffer_i              buffer_interface;
     ggml_backend_device                device;
     ggml_backend                       backend;
     std::vector<ggml_backend_buffer_t> buffers;
 
+    // Live bytes in the FIRST pool only: spill buffers are counted by host_consumed instead, so one
+    // buffer is never charged to both pools.
     size_t allocated_total() const {
         size_t n = 0;
         for (ggml_backend_buffer_t buf : buffers) {
             n += ggml_backend_buffer_get_size(buf);
         }
-        return n;
+        return n - host_consumed;
     }
 };
 
@@ -84,6 +97,7 @@ static bool dummy_backend_buffer_type_is_host(ggml_backend_buffer_type_t) {
 struct ggml_backend_buffer_type_plan {
     std::vector<size_t> sizes;
     std::vector<bool>   consumed;   // R46b B7b loader: exactly-once adoption is asserted, not assumed
+    std::vector<bool>   host;       // R46b B7c: this entry was placed on the spill pool
     size_t              reserved = 0;
 };
 
@@ -107,16 +121,39 @@ static ggml_backend_buffer_type_plan_t dummy_backend_buffer_type_plan_begin(
         }
         need += sizes[i];
     }
+    // R46b B7c: place the batch, first pool first, in plan order. What does not fit the first pool
+    // spills onto the second - but only within BOTH the free bytes left after the staging reserve
+    // and the declared split bound. With host_budget 0 (the default) the spill capacity is 0, so
+    // this is the B7b decision unchanged: the batch fits the first pool or it is refused.
     const size_t in_use = ctx->reserved + ctx->allocated_total();
-    if (need > ctx->budget || in_use > ctx->budget - need) {
-        *status = GGML_BACKEND_PLAN_INFEASIBLE;
-        return nullptr;
+    size_t dev_free = ctx->budget > in_use ? ctx->budget - in_use : 0;
+
+    const size_t host_in_use = ctx->staging_reserve + ctx->host_reserved + ctx->host_consumed;
+    const size_t host_free   = ctx->host_budget > host_in_use ? ctx->host_budget - host_in_use : 0;
+    size_t host_left = std::min(ctx->host_split_max, host_free);
+
+    std::vector<bool> host(n, false);
+    size_t dev_need = 0, host_need = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (sizes[i] <= dev_free) {
+            dev_free  -= sizes[i];
+            dev_need  += sizes[i];
+        } else if (sizes[i] <= host_left) {
+            host_left -= sizes[i];
+            host_need += sizes[i];
+            host[i]    = true;
+        } else {
+            *status = GGML_BACKEND_PLAN_INFEASIBLE;
+            return nullptr;
+        }
     }
-    ctx->reserved += need;
+    ctx->reserved      += dev_need;
+    ctx->host_reserved += host_need;
 
     ggml_backend_buffer_type_plan_t plan = new ggml_backend_buffer_type_plan;
     plan->sizes.assign(sizes, sizes + n);
     plan->consumed.assign(n, false);
+    plan->host     = host;
     plan->reserved = need;
     return plan;
 }
@@ -132,9 +169,18 @@ static ggml_backend_buffer_t dummy_backend_buffer_type_plan_alloc_buffer(
     }
     // hand the reservation to the buffer: reserved drops, allocated_total() rises by the same bytes
     plan->consumed[i] = true;
-    ctx->reserved    -= plan->sizes[i];
     plan->reserved   -= plan->sizes[i];
-    return dummy_backend_buffer_type_alloc_buffer(buft, plan->sizes[i]);
+    if (plan->host[i]) {
+        ctx->host_reserved -= plan->sizes[i];
+        ctx->host_consumed += plan->sizes[i];
+    } else {
+        ctx->reserved -= plan->sizes[i];
+    }
+    ggml_backend_buffer_t buf = dummy_backend_buffer_type_alloc_buffer(buft, plan->sizes[i]);
+    if (plan->host[i]) {
+        ctx->host_buffers.push_back(buf);   // so freeing it returns spill capacity, not first-pool
+    }
+    return buf;
 }
 
 static void dummy_backend_buffer_type_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan) {
@@ -143,8 +189,13 @@ static void dummy_backend_buffer_type_plan_free(ggml_backend_buffer_type_t buft,
     // release exactly what was never consumed
     for (size_t i = 0; i < plan->sizes.size(); i++) {
         if (!plan->consumed[i]) {
-            ctx->reserved -= plan->sizes[i];
-            ctx->released += plan->sizes[i];
+            if (plan->host[i]) {
+                ctx->host_reserved -= plan->sizes[i];
+                ctx->host_released += plan->sizes[i];
+            } else {
+                ctx->reserved -= plan->sizes[i];
+                ctx->released += plan->sizes[i];
+            }
             plan->reserved -= plan->sizes[i];
         }
     }
@@ -156,6 +207,12 @@ static void dummy_backend_buffer_type_plan_free(ggml_backend_buffer_type_t buft,
 
 static void dummy_backend_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     dummy_backend_context * ctx = (dummy_backend_context *) buffer->context;
+
+    auto h = std::find(ctx->host_buffers.begin(), ctx->host_buffers.end(), buffer);
+    if (h != ctx->host_buffers.end()) {
+        ctx->host_consumed -= ggml_backend_buffer_get_size(buffer);
+        ctx->host_buffers.erase(h);
+    }
 
     auto i = std::find(ctx->buffers.begin(), ctx->buffers.end(), buffer);
     GGML_ASSERT(i != ctx->buffers.end());
@@ -1035,6 +1092,118 @@ static void test_loader_transaction_overflow_is_refused() {
     GGML_ASSERT(a.context->alloc_calls == 0);
 }
 
+//
+// R46b B7c — the bounded host split, at the same loader-wide transaction boundary. These cases are
+// about OWNERSHIP: who holds the spilled bytes at each instant, and that a split in flight is
+// discharged exactly once. Which memory a real Vulkan device picks is decided by the planner and is
+// covered in the heapres suite, not here.
+
+static void test_loader_split_refusal_allocates_nothing() {
+    const size_t chunk = 64;
+
+    // A fits. B needs three buffers, holds two, and could spill the third - except the bound says
+    // no. The whole load must be refused with A untouched: a bounded split that cannot be made
+    // large enough is still a refusal, not a partial load.
+    dummy_backend a = dummy_backend_init(chunk);
+    dummy_backend b = dummy_backend_init(chunk);
+    plan_wire(a);
+    plan_wire(b);
+    a.context->budget = 10 * chunk;
+    b.context->budget = 2 * chunk;
+    b.context->host_budget    = 8 * chunk;   // room to spill...
+    b.context->host_split_max = chunk - 1;   // ...but not this load's room
+
+    ggml_context_ptr ctx_a = plan_make_ctx(3, chunk);
+    ggml_context_ptr ctx_b = plan_make_ctx(3, chunk);
+
+    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_a.get(), &a.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_b.get(), &b.buffer_type));
+
+    GGML_ASSERT(!ggml_backend_alloc_plan_commit(plan.get()));
+    GGML_ASSERT(a.context->alloc_calls == 0 && b.context->alloc_calls == 0);
+    GGML_ASSERT(b.context->host_reserved == 0);
+
+    plan.reset();
+    GGML_ASSERT(a.context->reserved == 0 && b.context->reserved == 0);
+    GGML_ASSERT(b.context->host_reserved == 0);
+
+    // the same load with the bound one byte wider is admitted, and reports the split it took
+    b.context->host_split_max = chunk;
+    loader_plan_ptr wider(ggml_backend_alloc_plan_init());
+    GGML_ASSERT(ggml_backend_alloc_plan_add(wider.get(), ctx_a.get(), &a.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_add(wider.get(), ctx_b.get(), &b.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_commit(wider.get()));
+    GGML_ASSERT(b.context->reserved == 2 * chunk && b.context->host_reserved == chunk);
+}
+
+static void test_loader_split_staging_reserve_precedes_admission() {
+    const size_t chunk = 64;
+
+    // The spill pool is big enough for the load - until the staging reserve is charged first. The
+    // reserve is not capacity the weights may borrow, so the load is refused rather than admitted
+    // into it.
+    dummy_backend a = dummy_backend_init(chunk);
+    plan_wire(a);
+    a.context->budget       = chunk;       // one buffer on the device
+    a.context->host_budget  = 4 * chunk;   // two more would fit the spill pool...
+
+    ggml_context_ptr ctx = plan_make_ctx(3, chunk);
+
+    {
+        a.context->staging_reserve = 2 * chunk + 1;   // ...but this is not theirs to take
+        loader_plan_ptr plan(ggml_backend_alloc_plan_init());
+        GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx.get(), &a.buffer_type));
+        GGML_ASSERT(!ggml_backend_alloc_plan_commit(plan.get()));
+        GGML_ASSERT(a.context->alloc_calls == 0);
+    }
+
+    // exactly at the boundary the same load is admitted, and the reserve is still untouched
+    a.context->staging_reserve = 2 * chunk;
+    {
+        loader_plan_ptr plan(ggml_backend_alloc_plan_init());
+        GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx.get(), &a.buffer_type));
+        GGML_ASSERT(ggml_backend_alloc_plan_commit(plan.get()));
+        GGML_ASSERT(a.context->reserved == chunk && a.context->host_reserved == 2 * chunk);
+
+        ggml_backend_buffer_t buf = ggml_backend_alloc_plan_alloc(plan.get(), ctx.get(), &a.buffer_type);
+        GGML_ASSERT(buf != nullptr);
+        GGML_ASSERT(a.context->host_consumed == 2 * chunk);
+        GGML_ASSERT(a.context->host_reserved == 0);
+        GGML_ASSERT(a.context->staging_reserve == 2 * chunk);   // never consumed by weights
+        ggml_backend_buffer_free(buf);
+    }
+    GGML_ASSERT(a.context->host_consumed == 0);
+    GGML_ASSERT(a.context->host_reserved == 0);
+}
+
+static void test_loader_split_mid_load_failure_rolls_back() {
+    const size_t chunk = 64;
+
+    // A split is in flight when an allocation fails part way through the group. Every byte - device
+    // and spilled - must come back, each released exactly once.
+    dummy_backend a = dummy_backend_init(chunk);
+    plan_wire(a);
+    a.context->budget          = 2 * chunk;
+    a.context->host_budget     = 2 * chunk;
+    a.context->fail_alloc_at   = 2;   // third buffer of the group, so a spilled entry is live
+
+    ggml_context_ptr ctx = plan_make_ctx(4, chunk);
+
+    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
+    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx.get(), &a.buffer_type));
+    GGML_ASSERT(ggml_backend_alloc_plan_commit(plan.get()));
+    GGML_ASSERT(a.context->reserved == 2 * chunk && a.context->host_reserved == 2 * chunk);
+
+    GGML_ASSERT(ggml_backend_alloc_plan_alloc(plan.get(), ctx.get(), &a.buffer_type) == nullptr);
+
+    plan.reset();
+    GGML_ASSERT(a.context->reserved == 0 && a.context->host_reserved == 0);
+    GGML_ASSERT(a.context->host_consumed == 0);
+    GGML_ASSERT(a.context->released + a.context->host_released == 2 * chunk);   // the two never built
+    GGML_ASSERT(a.context->plan_free_calls == 1);
+}
+
 static void test_backend_graph_optimize(ggml_backend_t, ggml_cgraph * graph, ggml_backend_graph_optimize_params * params) {
     GGML_ASSERT(graph->n_nodes == 3);
     params->add_alloc_dep(params->user_data, graph->nodes[0], graph->nodes[2]);
@@ -1097,6 +1266,9 @@ int main() {
     run("test_loader_transaction_competing_and_isolated", test_loader_transaction_competing_and_isolated);
     run("test_loader_transaction_two_contexts_one_buffer_type", test_loader_transaction_two_contexts_one_buffer_type);
     run("test_loader_transaction_mid_load_failure_rolls_back", test_loader_transaction_mid_load_failure_rolls_back);
+    run("test_loader_split_refusal_allocates_nothing", test_loader_split_refusal_allocates_nothing);
+    run("test_loader_split_staging_reserve_precedes_admission", test_loader_split_staging_reserve_precedes_admission);
+    run("test_loader_split_mid_load_failure_rolls_back", test_loader_split_mid_load_failure_rolls_back);
     run("test_loader_transaction_mixed_backends", test_loader_transaction_mixed_backends);
     run("test_loader_transaction_overflow_is_refused", test_loader_transaction_overflow_is_refused);
     return 0;
