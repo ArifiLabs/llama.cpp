@@ -11158,12 +11158,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 248320, n,  5120, {1, 1}, {1, 1}));
     }
 
-    // ArifiLabs lane-243 / R52b: the PREFILL width. Every S-X8 row above is n <= 8, which is
+    // ArifiLabs lane-243 / R52b: the PREFILL width. Every S-X8 row in THIS block is n <= 8, which is
     // mat-vec territory -- ggml_vk_mul_mat_q_f16 only reaches the mul_mm (matrix-matrix) path at
-    // wide n, so before this block NOTHING in the sweep measured, or checked, the S-X8 mul_mm tile
-    // decode at a width prompt processing actually uses. n = 512 with m = 17408, k = 5120 is the
-    // 27B FFN row at one prefill chunk. q8_0 is the paired control: it is the type S-X8 is being
-    // compared against on this shape, and it had no wide-n row here either.
+    // wide n (n > mul_mat_vec_max_cols = 8, ggml-vulkan.cpp:479).
+    // NOT a claim that nothing reached mul_mm before: the eval list already had SX8 at
+    // m=1,n=64,k=256 (the all_types loop above) and m=16,n=9,k=256, and perf mode already timed SX8
+    // at 4096x14336 n=512. What was missing is a REALISTIC-SHAPE row -- large m with k = 5120 --
+    // so the S-X8 mul_mm tile decode had never been checked at a shape prompt processing actually
+    // uses. n = 512 with m = 17408, k = 5120 is the 27B FFN row at one prefill chunk. q8_0 is the
+    // paired control: it is the type S-X8 is being compared against on this shape, and it had no
+    // row at this shape in this block either.
     for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0}) {
         test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, 512, 5120, {1, 1}, {1, 1}));
     }
@@ -12485,10 +12489,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
         }
     }
 
-    // ArifiLabs lane-243 / R52b: the PREFILL width. Every S-X8 row above is n <= 8, which never
-    // reaches the mul_mm (matrix-matrix) path — so nothing in perf mode timed the S-X8 mul_mm tile
-    // decode at a width prompt processing actually uses. n = 512 on the 27B FFN row, with q8_0 as
-    // the paired control. The eval list carries the same two rows as CORRECTNESS cases.
+    // ArifiLabs lane-243 / R52b: the PREFILL width on the 27B FFN SHAPE, which perf mode did not
+    // have. Perf mode DID already time S-X8 mul_mm: the bs loop above runs {1,2,3,4,5,8,512} over
+    // all_types, and all_types contains GGML_TYPE_SX8, so 4096x14336 at n=512 was already a timed
+    // mul_mm row. What was missing is this shape -- m = 17408, k = 5120 -- the row the R52b pairing
+    // is quoted on. q8_0 is the paired control. The eval list carries the same two rows as
+    // CORRECTNESS cases.
     for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0}) {
         test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, 512, 5120, {1, 1}, {1, 1}));
     }
