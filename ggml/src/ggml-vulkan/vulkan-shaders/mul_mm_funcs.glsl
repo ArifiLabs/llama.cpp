@@ -178,6 +178,33 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
 
             const uint k_pair = row * LOAD_VEC_A / 2;
 
+#if defined(SX8_PACKED_DECODE)
+            // R52b / lane-243: PACKED tile decode. The scalar arm below re-reads the
+            // planes once per WEIGHT -- 8 qh bytes + 8 ql bytes for the 8 weights this
+            // invocation owns, 2 VMEM ops per weight, against q8_0's 0.5 (two 16-bit
+            // loads for 4 weights, the branch above). On a 128x32 A-tile that is 8192
+            // byte loads per BK step feeding 524,288 MACs: the decode is 1/128 of the
+            // arithmetic and still costs ~20% of S-X8 prefill, because VMEM issue rate
+            // is the ceiling on this part, not FLOPs.
+            //
+            // sx8_levels4() (types.glsl:2135, minted by lane-230 / R46 for the mat-vec)
+            // decodes FOUR weights from THREE byte reads into one uint, one level per
+            // byte lane. Two calls cover the sub-block: 6 byte reads instead of 16.
+            //
+            // BIT-IDENTICAL to the scalar arm by construction -- same sx8_range(), same
+            // level values (30-packed-decode-proof.py checks all 2^24 byte triples
+            // against sx8_level() in ggml-quants.c:2404), same `rlo + step * level`
+            // expression, same k_pair slots. The switch is a scheduling change only.
+            const uint qh0 = uint(data_a[ib].qh[4u * iqs])      | (uint(data_a[ib].qh[4u * iqs + 1u]) << 8u);
+            const uint qh1 = uint(data_a[ib].qh[4u * iqs + 2u]) | (uint(data_a[ib].qh[4u * iqs + 3u]) << 8u);
+            const uvec4 lv0 = uvec4(unpack8(sx8_levels4(qh0, uint(data_a[ib].ql[2u * iqs]))));
+            const uvec4 lv1 = uvec4(unpack8(sx8_levels4(qh1, uint(data_a[ib].ql[2u * iqs + 1u]))));
+
+            store_a(col, k_pair,      FLOAT_TYPEV2(rlo + step * float(lv0.x), rlo + step * float(lv0.y)));
+            store_a(col, k_pair + 1u, FLOAT_TYPEV2(rlo + step * float(lv0.z), rlo + step * float(lv0.w)));
+            store_a(col, k_pair + 2u, FLOAT_TYPEV2(rlo + step * float(lv1.x), rlo + step * float(lv1.y)));
+            store_a(col, k_pair + 3u, FLOAT_TYPEV2(rlo + step * float(lv1.z), rlo + step * float(lv1.w)));
+#else
             [[unroll]] for (uint i = 0u; i < 8u; i += 2u) {
                 const uint j0 = iqs * 8u + i;
                 const uint j1 = j0 + 1u;
@@ -191,6 +218,7 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
                         FLOAT_TYPEV2(rlo + step * float((hi0 << 2u) | lo0),
                                      rlo + step * float((hi1 << 2u) | lo1)));
             }
+#endif
 #elif defined(DATA_A_Q1_0)
             const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
 

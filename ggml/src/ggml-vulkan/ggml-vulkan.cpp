@@ -6209,6 +6209,56 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         return spec;
     };
 
+    // arifi lane-243 / R52b: S-X8 mul_mm PACKED TILE DECODE.
+    // The shipped tile load re-reads the qh/ql planes once per weight (16 byte loads
+    // for the 8 weights one invocation owns); the packed arm uses sx8_levels4() to
+    // decode 4 weights from 3 byte reads, 6 loads for the same 8. Both arms are
+    // compiled into the binary as separate SPIR-V (matmul_sx8_f32 / matmul_sx8p_f32)
+    // and one is chosen here -- the dot2_f16 shape, not a spec constant, because the
+    // mul_mm spec vector is POSITIONAL and a 13th entry would land on constantID 12
+    // (SHMEM_STRIDE_PAD) for every type on non-Intel devices.
+    //
+    // Bit-identical between arms by construction: same sx8_range(), same level values,
+    // same `rlo + step * level`, same shmem slots. Device-probe default ON for RDNA3
+    // (the class this was measured on); GGML_ARIFI_SX8_MM_PACKED=0|1 overrides either
+    // way, so one binary serves both arms of the A/B.
+    const bool sx8_mm_packed = [&device] {
+        const char * s = getenv("GGML_ARIFI_SX8_MM_PACKED");
+        if (s != nullptr && (s[0] == '0' || s[0] == '1')) {
+            return s[0] == '1';
+        }
+        return device->architecture == vk_device_architecture::AMD_RDNA3;
+    }();
+
+    // arifi lane-243 / R52b, HQ scope addition: MMQ UNDER COOPMAT, opt-in.
+    // R52 proved the coopmat arm of this function registers ZERO integer-MMQ
+    // pipelines, for every type, so no quantised type takes the q8_1 integer path on
+    // a coopmat device. The mul_mmq SPIR-V is NOT coopmat-specific -- it is a scalar
+    // integer-dot shader and is compiled and linked on every build regardless -- so
+    // the coopmat arm can register the very same modules the fp16 arm does. Nothing
+    // else has to change: ggml_vk_get_mul_mat_mat_pipeline() routes on
+    // pipeline_dequant_mul_mat_mat_q8_1[...]->is_empty() alone.
+    // GGML_ARIFI_MMQ_UNDER_COOPMAT=1 turns it on; default OFF leaves shipped
+    // behaviour byte-identical. Scoped to S-X8 and q8_0, the pair under measurement.
+    const bool mmq_under_coopmat = [] {
+        const char * s = getenv("GGML_ARIFI_MMQ_UNDER_COOPMAT");
+        return s != nullptr && s[0] == '1';
+    }();
+
+    // stderr for the same reason the q5_k/q6_k receipts use it: llama-server drops ggml
+    // INFO records at the default verbosity and these two lines have to be readable in
+    // the A/B's own log.
+    {
+        static bool once = false;
+        if (!once) {
+            once = true;
+            fprintf(stderr, "ggml_vulkan: S-X8 mul_mm packed tile decode: %s [GGML_ARIFI_SX8_MM_PACKED]\n",
+                    sx8_mm_packed ? "ON" : "OFF");
+            fprintf(stderr, "ggml_vulkan: integer MMQ under coopmat (sx8, q8_0): %s [GGML_ARIFI_MMQ_UNDER_COOPMAT]\n",
+                    mmq_under_coopmat ? "ON" : "OFF");
+        }
+    }
+
     const int mul_mat_id_param_count = 5;
 
 #if defined(VK_NV_cooperative_matrix2) && defined(GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT)
@@ -6373,7 +6423,34 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         // reports "matrix cores: KHR_coopmat", so coopmat_support is true and the fp16
         // branch below never runs on it. Registering only there would have repeated
         // WI-1722's failure in a new place: a pipeline that exists and is never selected.
-        CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
+        // R52b: packed vs scalar tile decode, one binary, chosen by sx8_mm_packed above.
+        if (sx8_mm_packed) {
+            CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8p_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
+        } else {
+            CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
+        }
+
+#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+        // R52b / HQ scope addition: the integer-MMQ arm on a coopmat device, opt-in.
+        // Same modules the fp16 arm registers (mul_mmq.comp is scalar, not coopmat), and
+        // the same _int tile gates, which already reject the l tile at 32 KiB shmem.
+#define CREATE_MMQ(TYPE, PIPELINE_NAME, NAMELC, WG_DENOMS, WARPTILE, PUSHCONST, PARAMCOUNT, ID) \
+        if (device->mul_mat ## ID ## _l_int[TYPE]) { \
+            ggml_vk_create_pipeline(device, device-> PIPELINE_NAME .f32acc->l, #NAMELC "_l", NAMELC ## _len, NAMELC ## _data, "main", PARAMCOUNT, sizeof(PUSHCONST), l_ ## WG_DENOMS, l_ ## WARPTILE, 1, false, false);   \
+        } \
+        if (device->mul_mat ## ID ## _m_int[TYPE]) { \
+            ggml_vk_create_pipeline(device, device-> PIPELINE_NAME .f32acc->m, #NAMELC "_m", NAMELC ## _len, NAMELC ## _data, "main", PARAMCOUNT, sizeof(PUSHCONST), m_ ## WG_DENOMS, m_ ## WARPTILE, 1, false, false);   \
+        } \
+        if (device->mul_mat ## ID ## _s_int[TYPE]) { \
+            ggml_vk_create_pipeline(device, device-> PIPELINE_NAME .f32acc->s, #NAMELC "_s", NAMELC ## _len, NAMELC ## _data, "main", PARAMCOUNT, sizeof(PUSHCONST), s_ ## WG_DENOMS, s_ ## WARPTILE, 1, false, false);   \
+        } \
+
+        if (mmq_under_coopmat && device->integer_dot_product) {
+            CREATE_MMQ(GGML_TYPE_Q8_0, pipeline_dequant_mul_mat_mat_q8_1[GGML_TYPE_Q8_0], matmul_q8_0_q8_1, mmq_wg_denoms, warptile_mmq_int, vk_mat_mat_push_constants, 3, );
+            CREATE_MMQ(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat_q8_1[GGML_TYPE_SX8], matmul_sx8_q8_1, mmq_wg_denoms, warptile_mmq_int, vk_mat_mat_push_constants, 3, );
+        }
+#undef CREATE_MMQ
+#endif
 
         CREATE_MM2(GGML_TYPE_Q2_K, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q2_K], matmul_q2_k_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
         CREATE_MM2(GGML_TYPE_TQ2_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_TQ2_0], matmul_tq2_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
@@ -6519,7 +6596,11 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         CREATE_MM2(GGML_TYPE_Q5_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_0], matmul_q5_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
         CREATE_MM2(GGML_TYPE_Q5_1, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_1], matmul_q5_1_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
         CREATE_MM2(GGML_TYPE_Q8_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q8_0], matmul_q8_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
-        CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);  // lane-224 / WI-1722b
+        if (sx8_mm_packed) {  // R52b packed tile decode
+            CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8p_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+        } else {
+            CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);  // lane-224 / WI-1722b
+        }
         CREATE_MM2(GGML_TYPE_Q2_K, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q2_K], matmul_q2_k_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
         CREATE_MM2(GGML_TYPE_TQ2_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_TQ2_0], matmul_tq2_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
         CREATE_MM2(GGML_TYPE_Q3_K, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q3_K], matmul_q3_k_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
@@ -6725,7 +6806,11 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         CREATE_MM(GGML_TYPE_Q5_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_0].f32acc, matmul_q5_0_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
         CREATE_MM(GGML_TYPE_Q5_1, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_1].f32acc, matmul_q5_1_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
         CREATE_MM(GGML_TYPE_Q8_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q8_0].f32acc, matmul_q8_0_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
-        CREATE_MM(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8].f32acc, matmul_sx8_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);  // lane-224 / WI-1722b
+        if (sx8_mm_packed) {  // R52b packed tile decode
+            CREATE_MM(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8].f32acc, matmul_sx8p_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+        } else {
+            CREATE_MM(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8].f32acc, matmul_sx8_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);  // lane-224 / WI-1722b
+        }
 
         CREATE_MM(GGML_TYPE_Q2_K, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q2_K].f32acc, matmul_q2_k_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
         CREATE_MM(GGML_TYPE_TQ2_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_TQ2_0].f32acc, matmul_tq2_0_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
