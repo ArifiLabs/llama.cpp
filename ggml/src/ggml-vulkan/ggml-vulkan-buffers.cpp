@@ -96,6 +96,135 @@ static const char * ggml_vk_plan_entry_name(const char * const * names, size_t i
 // now receives each buffer's first tensor name, the host-placement receipt says WHICH buffers went
 // to the host mapping instead of only how many bytes, and GGML_VK_ALLOC_TRACE dumps the whole plan.
 //
+// R58 lane-244 ---------------------------------------------------------------------------------
+// WHICH MEMORY TYPE the beyond-reservation (host-split) weight bytes come from.
+//
+// Enumeration on this box (r58-evidence/10-memtypes.txt, and the R51 alloc trace
+// r51-evidence/30-planorder.txt): every storage buffer we create reports memoryTypeBits=0xf, so
+// only memory types 0-3 are eligible at all. Two of those four live on the non-DEVICE_LOCAL heap
+// 1: type 1 (HOST_VISIBLE|HOST_COHERENT) and type 3 (the same plus HOST_CACHED). The UMA placement
+// chain reaches heap 1 only in its third required-flag pass ({HV|HC}), and
+// ggml_vk_find_memory_properties() returns candidates in ASCENDING TYPE INDEX, so type 1 wins by
+// enumeration order alone - it has never been chosen by a measurement. These switches let a
+// measured choice replace that accident.
+//
+// GGML_VK_HOST_SPLIT_MEMTYPE = legacy (default, nothing changes) | <index> | auto
+// GGML_VK_HOST_SPLIT_CACHED  = 0 | 1   (prefer a host-split type without / with HOST_CACHED)
+// GGML_VK_MEMTYPE_PROBE_FILE = receipt file `auto` reads (written by `test-backend-ops memtype`)
+//
+// Both only ever REORDER the host-split candidates of a plan. Device-local candidates keep their
+// exact position, so a load that fits device memory picks precisely what it picked before, and a
+// preference that cannot be satisfied falls through to the legacy order instead of failing the
+// load (same principle as the bulk-large-heap fallback below).
+#define VK_HOST_SPLIT_LEGACY (-1)
+#define VK_HOST_SPLIT_AUTO   (-2)
+
+// The ONE definition of the probe receipt line: ggml_vk_memtype_probe_line() writes it and
+// ggml_vk_host_split_auto_type() parses it. Two hand-kept copies in different translation units
+// would drift and `auto` would silently stop finding the winner.
+#define VK_MEMTYPE_PROBE_LINE_PREFIX "ggml_vulkan memtype-probe v1:"
+#define VK_MEMTYPE_PROBE_LINE_FMT \
+    VK_MEMTYPE_PROBE_LINE_PREFIX " type=%u heap=%u flags=0x%x bytes=%llu gpu_read_gbs=%.3f cpu_memcpy_gbs=%.3f\n"
+#define VK_MEMTYPE_PROBE_LINE_SCAN \
+    VK_MEMTYPE_PROBE_LINE_PREFIX " type=%u heap=%u flags=0x%x bytes=%llu gpu_read_gbs=%lf cpu_memcpy_gbs=%lf"
+
+// Reads the probe receipt and returns the FASTEST non-DEVICE_LOCAL memory type in it, or
+// VK_HOST_SPLIT_LEGACY when the file is absent, unreadable or carries no such row. Refusing the
+// load instead would turn a missing receipt into a broken engine.
+static int ggml_vk_host_split_auto_type() {
+    const char * path = getenv("GGML_VK_MEMTYPE_PROBE_FILE");
+    if (path == nullptr || *path == '\0') {
+        fprintf(stderr, "ggml_vulkan: GGML_VK_HOST_SPLIT_MEMTYPE=auto but GGML_VK_MEMTYPE_PROBE_FILE "
+                        "is unset; falling back to the legacy placement order\n");
+        return VK_HOST_SPLIT_LEGACY;
+    }
+    FILE * f = fopen(path, "r");
+    if (f == nullptr) {
+        fprintf(stderr, "ggml_vulkan: GGML_VK_MEMTYPE_PROBE_FILE '%s' cannot be read; falling back to "
+                        "the legacy placement order\n", path);
+        return VK_HOST_SPLIT_LEGACY;
+    }
+    int    best_type = VK_HOST_SPLIT_LEGACY;
+    double best_gbs  = -1.0;
+    char   line[512];
+    while (fgets(line, sizeof(line), f) != nullptr) {
+        unsigned int       type = 0, heap = 0, flags = 0;
+        unsigned long long bytes = 0;
+        double             gpu_gbs = 0.0, cpu_gbs = 0.0;
+        if (sscanf(line, VK_MEMTYPE_PROBE_LINE_SCAN, &type, &heap, &flags, &bytes, &gpu_gbs, &cpu_gbs) != 6) {
+            continue;
+        }
+        // Only the beyond-reservation types are candidates: a DEVICE_LOCAL row in the receipt is
+        // the reference number, not something the host split may be pointed at.
+        if (flags & (unsigned int) VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
+            continue;
+        }
+        if (gpu_gbs > best_gbs) {
+            best_gbs  = gpu_gbs;
+            best_type = (int) type;
+        }
+    }
+    fclose(f);
+    if (best_type == VK_HOST_SPLIT_LEGACY) {
+        fprintf(stderr, "ggml_vulkan: GGML_VK_MEMTYPE_PROBE_FILE '%s' has no host-visible probe row; "
+                        "falling back to the legacy placement order\n", path);
+    } else {
+        fprintf(stderr, "ggml_vulkan: host-split memory type auto -> %d (%.3f GB/s in %s)\n",
+                best_type, best_gbs, path);
+    }
+    return best_type;
+}
+
+// Parsed ONCE per process. getenv() on a per-buffer path would be called thousands of times in a
+// load, and `auto` would re-read and re-print the receipt file for every buffer.
+static int ggml_vk_host_split_memtype() {
+    static const int pref = [] {
+        const char * s = getenv("GGML_VK_HOST_SPLIT_MEMTYPE");
+        if (s == nullptr || *s == '\0' || strcmp(s, "legacy") == 0) {
+            return (int) VK_HOST_SPLIT_LEGACY;
+        }
+        if (strcmp(s, "auto") == 0) {
+            return ggml_vk_host_split_auto_type();
+        }
+        char * end = nullptr;
+        errno = 0;
+        const long v = strtol(s, &end, 10);
+        if (errno != 0 || end == s || *end != '\0' || v < 0 || v >= (long) VK_MAX_MEMORY_TYPES) {
+            fprintf(stderr, "ggml_vulkan: GGML_VK_HOST_SPLIT_MEMTYPE='%s' is not legacy|auto|<index>; "
+                            "keeping the legacy placement order\n", s);
+            return (int) VK_HOST_SPLIT_LEGACY;
+        }
+        return (int) v;
+    }();
+    return pref;
+}
+
+// -1 = unset (no opinion), 0 = prefer a host-split type WITHOUT HOST_CACHED, 1 = prefer one WITH
+// it. Only consulted when GGML_VK_HOST_SPLIT_MEMTYPE names no explicit index.
+static int ggml_vk_host_split_cached() {
+    static const int want = [] {
+        const char * s = getenv("GGML_VK_HOST_SPLIT_CACHED");
+        if (s == nullptr || *s == '\0') {
+            return -1;
+        }
+        if (strcmp(s, "0") == 0) {
+            return 0;
+        }
+        if (strcmp(s, "1") == 0) {
+            return 1;
+        }
+        fprintf(stderr, "ggml_vulkan: GGML_VK_HOST_SPLIT_CACHED='%s' is not 0|1; ignored\n", s);
+        return -1;
+    }();
+    return want;
+}
+
+// R58 lane-244: PROBE-ONLY memory type pin, written solely by ggml_vk_memtype_force() (the
+// bandwidth probe in test-backend-ops). While set, ggml_vk_find_memory_properties() admits exactly
+// one memory type index, so a probe allocation comes from that type or does not happen at all.
+// Nothing in a model load ever writes this; it is -1 for the whole life of a served process.
+static std::atomic<int> vk_memtype_forced{-1};
+
 // The reserve is sized from a real requirement, not a guess: a bulk weight buffer is capped at
 // suballocation_block_size (ggml_backend_vk_buffer_type_get_max_size), one tensor lives inside one
 // such buffer, and sync_staging is sized to one copy - so the block size is the largest single
@@ -154,8 +283,16 @@ static void ggml_vk_reserve_staging(vk_device & device) {
 static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDeviceMemoryProperties* mem_props, vk::MemoryRequirements* mem_req, vk::MemoryPropertyFlags flags, const vk_heap_ledger * ledger, uint32_t only_heap = UINT32_MAX) {
     std::vector<uint32_t> indices;
 
+    // R58 lane-244: the probe pin. Production leaves it at -1 and this loop is byte-for-byte the
+    // one that shipped. It lives HERE because this predicate is the single seam both the direct
+    // candidate walk in ggml_vk_create_buffer() and the batch planner's candidate build call.
+    const int forced = vk_memtype_forced.load(std::memory_order_relaxed);
+
     for (uint32_t i = 0; i < mem_props->memoryTypeCount; ++i) {
         vk::MemoryType memory_type = mem_props->memoryTypes[i];
+        if (forced >= 0 && (int) i != forced) {
+            continue;
+        }
         if (only_heap != UINT32_MAX && memory_type.heapIndex != only_heap) {
             continue;
         }
@@ -1503,6 +1640,62 @@ struct vk_buffer_plan {
     bool                              used_maintenance4 = false;
 };
 
+// R58 lane-244: move the PREFERRED host-split candidate ahead of every other host-split candidate,
+// leaving every device-local candidate exactly where the placement policy put it. A load that fits
+// device memory therefore still chooses precisely what it chose before.
+//
+// The host-split candidates are NOT assumed contiguous. They are contiguous under the UMA chain
+// only because that chain reaches the host heap in its last pass; under GGML_VK_PREFER_HOST_MEMORY
+// the policy puts them FIRST, and a rotate over the raw range would then shift device-local
+// candidates. So the reorder happens inside the list of host-split POSITIONS: the same positions
+// keep holding host-split candidates, only which one sits in which.
+static void ggml_vk_host_split_prefer(std::vector<vk_plan_candidate> & cand,
+                                      const std::vector<vk::MemoryPropertyFlags> & type_flags,
+                                      int pref_type, int want_cached) {
+    std::vector<size_t> pos;
+    for (size_t k = 0; k < cand.size(); ++k) {
+        if (cand[k].host_split) {
+            pos.push_back(k);
+        }
+    }
+    if (pos.size() < 2) {
+        return;   // nothing to prefer between; legacy order stands
+    }
+
+    size_t winner = pos.size();
+    for (size_t p = 0; p < pos.size(); ++p) {
+        const vk_plan_candidate & c = cand[pos[p]];
+        if (pref_type >= 0) {
+            if ((int) c.type == pref_type) {
+                winner = p;
+                break;
+            }
+        } else if (want_cached >= 0) {
+            const bool cached = (type_flags[c.type] & vk::MemoryPropertyFlagBits::eHostCached) ==
+                                vk::MemoryPropertyFlagBits::eHostCached;
+            if (cached == (want_cached == 1)) {
+                winner = p;
+                break;
+            }
+        }
+    }
+    if (winner == pos.size() || winner == 0) {
+        return;   // the preference is unavailable, or already first: legacy order stands
+    }
+
+    std::vector<vk_plan_candidate> host;
+    host.reserve(pos.size());
+    host.push_back(cand[pos[winner]]);
+    for (size_t p = 0; p < pos.size(); ++p) {
+        if (p != winner) {
+            host.push_back(cand[pos[p]]);
+        }
+    }
+    for (size_t p = 0; p < pos.size(); ++p) {
+        cand[pos[p]] = host[p];
+    }
+}
+
 static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
         ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status) {
     ggml_backend_vk_buffer_type_context * ctx = (ggml_backend_vk_buffer_type_context *) buft->context;
@@ -1515,6 +1708,10 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
     if (n == 0) {
         return NULL;
     }
+
+    // R58 lane-244: read once per plan, not per candidate.
+    const int host_split_pref         = ggml_vk_host_split_memtype();
+    const int host_split_want_cached  = host_split_pref >= 0 ? -1 : ggml_vk_host_split_cached();
 
     std::unique_ptr<vk_buffer_plan> plan;
     std::vector<std::vector<vk_plan_candidate>> cands;
@@ -1591,6 +1788,13 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
                         }
                     }
                 }
+            }
+
+            // R58 lane-244: the ONLY thing either switch does. Host-split candidates are reordered
+            // among themselves; device-local candidates, and therefore every placement of a load
+            // that fits device memory, are untouched.
+            if (host_split_pref != VK_HOST_SPLIT_LEGACY || host_split_want_cached >= 0) {
+                ggml_vk_host_split_prefer(cands[i], type_flags, host_split_pref, host_split_want_cached);
             }
 
             plan->entries[i].size  = sizes[i];
@@ -1692,6 +1896,24 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
         }
         fprintf(stderr, "ggml_vulkan: host split placed %zu buffer(s) on host-visible memory: %s\n",
                 n_moved, moved.c_str());
+        // R58 lane-244: one line per host-split buffer naming the memory TYPE it was placed in.
+        // The split bytes are the ones this lane is about, so which type carries them has to be
+        // on stderr of every served run, not only of a traced one.
+        std::string pref_label = "legacy";
+        if (host_split_pref != VK_HOST_SPLIT_LEGACY) {
+            pref_label = "memtype=" + std::to_string(host_split_pref);
+        } else if (host_split_want_cached >= 0) {
+            pref_label = host_split_want_cached == 1 ? "cached=1" : "cached=0";
+        }
+        for (size_t i = 0; i < plan->entries.size(); ++i) {
+            const vk_buffer_plan_entry & e = plan->entries[i];
+            if (e.flags & vk::MemoryPropertyFlagBits::eDeviceLocal) {
+                continue;
+            }
+            fprintf(stderr, "ggml_vulkan: host-split buffer %zu: %llu B -> memtype %u heap %u flags=%s (pref=%s)\n",
+                    i, (unsigned long long) e.bytes, e.type, e.heap,
+                    to_string(e.flags).c_str(), pref_label.c_str());
+        }
     }
 
     *status = GGML_BACKEND_PLAN_FEASIBLE;

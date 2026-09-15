@@ -18771,6 +18771,76 @@ static std::vector<ggml_backend_buffer_type_plan_t> & vk_plan_probe_held() {
     return held;
 }
 
+// ---------------------------------------------------------------------------------------------
+// R58 lane-244 — memory-type bandwidth probe support.
+//
+// The probe itself lives in tests/test-backend-ops.cpp (`memtype` mode) and drives ordinary ggml
+// graphs through the ordinary backend, so what it times is the SAME shader path a served decode
+// uses. Only three things cannot be reached from there, and they are these hooks: what memory
+// types exist, which of them a storage buffer of a given size may even be placed in, and the pin
+// that makes a placement land in one chosen type.
+// ---------------------------------------------------------------------------------------------
+
+// -1 restores production behaviour. Set only by the probe.
+GGML_BACKEND_API void ggml_vk_memtype_force(int type_index) {
+    vk_memtype_forced.store(type_index, std::memory_order_relaxed);
+}
+
+// Fills the caller's arrays with this device's memory types. Returns the count, or -1 with no
+// Vulkan device. `heap_sizes` is indexed by TYPE (the size of that type's heap), so the probe
+// never has to join two tables.
+GGML_BACKEND_API int ggml_vk_memtype_enumerate(uint32_t * types, uint32_t * heaps, uint32_t * flags,
+                                               uint64_t * heap_sizes, int max_types) {
+    ggml_vk_instance_init();
+    if (vk_instance.device_indices.empty()) {
+        return -1;
+    }
+    vk_device device = ggml_vk_get_device(0);
+    const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
+
+    int n = 0;
+    for (uint32_t t = 0; t < mem_props.memoryTypeCount && n < max_types; ++t, ++n) {
+        const uint32_t h = mem_props.memoryTypes[t].heapIndex;
+        types[n]      = t;
+        heaps[n]      = h;
+        flags[n]      = (uint32_t) (VkMemoryPropertyFlags) mem_props.memoryTypes[t].propertyFlags;
+        heap_sizes[n] = mem_props.memoryHeaps[h].size;
+    }
+    return n;
+}
+
+// The eligibility answer, measured rather than assumed: `type_bits` is VkMemoryRequirements::
+// memoryTypeBits for a REAL storage buffer of `size` created with our usage flags. On this box it
+// reads 0xf, i.e. only memory types 0-3 can ever hold our weights - so a probe that iterated all
+// 16 enumerated types would be probing 12 placements that cannot happen.
+GGML_BACKEND_API int ggml_vk_memtype_buffer_info(uint64_t size, uint32_t * type_bits,
+                                                 uint64_t * max_buffer_size, uint64_t * max_chunk) {
+    ggml_vk_instance_init();
+    if (vk_instance.device_indices.empty()) {
+        return -1;
+    }
+    vk_device device = ggml_vk_get_device(0);
+
+    vk::MemoryRequirements mem_req;
+    bool used_m4 = false;
+    if (!ggml_vk_buffer_memory_requirements(device, (size_t) size, mem_req, used_m4)) {
+        return -1;
+    }
+    *type_bits       = mem_req.memoryTypeBits;
+    *max_buffer_size = device->max_buffer_size;
+    *max_chunk       = std::min<uint64_t>(device->suballocation_block_size, device->max_buffer_size);
+    return 0;
+}
+
+// The canonical probe receipt line. Written here and parsed here (ggml_vk_host_split_auto_type()),
+// so the writer and the `auto` reader cannot drift apart across translation units.
+GGML_BACKEND_API void ggml_vk_memtype_probe_line(uint32_t type, uint32_t heap, uint32_t flags,
+                                                 uint64_t bytes, double gpu_read_gbs, double cpu_memcpy_gbs) {
+    printf(VK_MEMTYPE_PROBE_LINE_FMT, type, heap, flags, (unsigned long long) bytes,
+           gpu_read_gbs, cpu_memcpy_gbs);
+    fflush(stdout);
+}
+
 GGML_BACKEND_API int ggml_vk_plan_probe_limits(uint64_t * max_chunk, uint64_t * total_heap,
                                                uint64_t * reserved_now, int * used_maintenance4) {
     ggml_vk_instance_init();
