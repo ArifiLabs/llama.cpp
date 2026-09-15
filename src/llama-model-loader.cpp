@@ -956,6 +956,78 @@ llama_model_loader::llama_model_loader(
         }
     }
 
+    // ArifiLabs lane-242 / R53: S-X8 PCA companion identity guard (CHECK-R53-FABLE finding 2).
+    // create_tensor matches the companion's tensors by NAME and SHAPE only, so a companion built
+    // from a DIFFERENT quantization of the same-shaped model -- or one left beside a re-quantized
+    // model -- attaches silently and pairs foreign b0/b1 with these c0/c1, corrupting every S-X8
+    // matmul. add_sx8_pca_to_gguf.py stamps the source model's identity into the companion; this
+    // compares it against the bytes actually on disk here (weights_map is filled, so file index
+    // and payload offset are resolved).
+    //
+    // Deviation from the check's sketch: raw head bytes + comparison, not a sha256 KV. libllama
+    // does not link vendor/hash/sha256 and a CMake change cannot be validated in this pass;
+    // comparing the bytes themselves is strictly stronger than comparing a hash of them.
+    //
+    // Companions written before this guard carry no identity KVs: warn, do not refuse.
+    for (size_t pca_i = 0; pca_i < gguf_contexts.size(); ++pca_i) {
+        const struct gguf_context * pca_meta = gguf_contexts[pca_i];
+
+        const int kid_arch = gguf_find_key(pca_meta, "general.architecture");
+        if (kid_arch < 0 || strcmp(gguf_get_val_str(pca_meta, kid_arch), "sx8pca") != 0) {
+            continue;   // not an S-X8 PCA companion
+        }
+
+        const int kid_name = gguf_find_key(pca_meta, "sx8pca.source.name");
+        const int kid_tn   = gguf_find_key(pca_meta, "sx8pca.source.tensor");
+        const int kid_head = gguf_find_key(pca_meta, "sx8pca.source.head");
+        if (kid_tn < 0 || kid_head < 0) {
+            LLAMA_LOG_WARN("%s: S-X8 PCA companion carries no identity keys (written before the "
+                    "R53 guard): NOT verified against this model\n", __func__);
+            continue;
+        }
+
+        const std::string src_name = kid_name < 0 ? "(unnamed)" : gguf_get_val_str(pca_meta, kid_name);
+        const std::string src_tn   = gguf_get_val_str(pca_meta, kid_tn);
+        const std::string src_head = gguf_get_val_str(pca_meta, kid_head);   // lowercase hex
+
+        const auto it = weights_map.find(src_tn);
+        if (it == weights_map.end()) {
+            throw std::runtime_error(format("%s: S-X8 PCA companion was built from '%s', whose tensor "
+                        "'%s' is not in this model", __func__, src_name.c_str(), src_tn.c_str()));
+        }
+
+        const size_t n_head = src_head.size() / 2;
+        if (n_head == 0 || n_head > ggml_nbytes(it->second.tensor)) {
+            throw std::runtime_error(format("%s: S-X8 PCA companion's identity stamp for '%s' is %zu "
+                        "bytes, which does not fit this model's tensor (%zu bytes)",
+                        __func__, src_tn.c_str(), n_head, ggml_nbytes(it->second.tensor)));
+        }
+
+        std::vector<uint8_t> got(n_head);
+        llama_file * src_file = files[it->second.idx].get();
+        src_file->seek(it->second.offs, SEEK_SET);
+        src_file->read_raw(got.data(), n_head);
+
+        static const char hexd[] = "0123456789abcdef";
+        std::string got_hex;
+        got_hex.reserve(n_head * 2);
+        for (size_t b = 0; b < n_head; ++b) {
+            got_hex += hexd[got[b] >> 4];
+            got_hex += hexd[got[b] & 0x0F];
+        }
+
+        if (got_hex != src_head) {
+            throw std::runtime_error(format("%s: S-X8 PCA companion does not belong to this model. It "
+                        "was built from '%s', and the first %zu bytes of '%s' differ, so its PCA bases "
+                        "would be paired with foreign coefficients. Rebuild the companion with "
+                        "tools/sx8/add_sx8_pca_to_gguf.py against this GGUF, or set GGML_ARIFI_SX8_PCA=0.",
+                        __func__, src_name.c_str(), n_head, src_tn.c_str()));
+        }
+
+        LLAMA_LOG_INFO("%s: S-X8 PCA companion identity OK (source '%s', %zu bytes of '%s')\n",
+                __func__, src_name.c_str(), n_head, src_tn.c_str());
+    }
+
     if (n_tensors != 0 && n_tensors != (int) weights_map.size()) {
         throw std::runtime_error(format(
             "corrupted model: %d tensors expected but %zu found",

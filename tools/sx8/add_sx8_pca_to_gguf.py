@@ -20,6 +20,12 @@ downloads it. Nibble order and sign follow sx8_decode1_v3.cu:120-121
 
 GGUF block layout for S-X8: row-major (N, n_cb) blocks of 30 bytes, coeff at byte 29.
 
+`companion` mode also stamps the source model's identity into the companion --
+`sx8pca.source.name`, `sx8pca.source.tensor`, `sx8pca.source.head` (hex of the first 1024 raw
+bytes of that tensor) -- which llama_model_loader compares against the model it is attaching to,
+and refuses on mismatch. Without it a companion from a different quantization of the same
+architecture loads silently and corrupts every S-X8 matmul.
+
 Apache-2.0. Format: MarlaLabs S-X8 v4.3.
 """
 
@@ -101,6 +107,24 @@ def main():
     if os.path.exists(a.out):
         os.remove(a.out)
     w = GGUFWriter(a.out, "qwen35" if a.mode == "inplace" else "sx8pca")
+
+    if a.mode == "companion":
+        # Identity stamp (CHECK-R53-FABLE finding 2). The loader matches the companion's tensors
+        # by name and shape alone, so a companion built from a DIFFERENT quantization of the same
+        # architecture would attach silently and pair these b0/b1 with foreign c0/c1. Stamp the
+        # source model's identity so llama_model_loader can refuse that companion.
+        #
+        # `head` is the RAW first bytes of the first S-X8 tensor's block payload, hex-encoded:
+        # the loader compares the bytes themselves (libllama does not link a sha256), which is
+        # strictly stronger than comparing a hash of the same bytes.
+        gn = r.fields.get("general.name")
+        src_name = bytes(gn.parts[-1]).decode() if gn is not None else os.path.basename(a.gguf)
+        head = np.asarray(sx8[0].data).view(np.uint8).reshape(-1)[:1024].tobytes()
+        w.add_string("sx8pca.source.name", src_name)
+        w.add_string("sx8pca.source.tensor", sx8[0].name)
+        w.add_string("sx8pca.source.head", head.hex())
+        print("identity: source=%r tensor=%s head=%d bytes (%s...)"
+              % (src_name, sx8[0].name, len(head), head.hex()[:32]), flush=True)
 
     if a.mode == "inplace":
         # Copy every KV of the source verbatim (same method as the author's converter:
