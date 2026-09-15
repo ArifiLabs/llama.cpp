@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <exception>
 #include <memory>
+#include <string>
 #include <vector>
 
 //
@@ -24,6 +25,7 @@ struct dummy_backend_context {
     size_t                   plan_begin_calls = 0;
     size_t                   plan_free_calls  = 0;
     size_t                   plan_n           = 0;   // buffers in the last plan_begin
+    std::vector<std::string> plan_names;             // R51: `names` of the last plan_begin
 
     // R46b B7b loader: a capacity ledger, so a transaction that spans several groups of this buffer
     // type can be observed admitting or refusing. `budget` is what this "device" can hold; `reserved`
@@ -102,10 +104,16 @@ struct ggml_backend_buffer_type_plan {
 };
 
 static ggml_backend_buffer_type_plan_t dummy_backend_buffer_type_plan_begin(
-        ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, ggml_backend_plan_status * status) {
+        ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, ggml_backend_plan_status * status) {
     dummy_backend_context * ctx = (dummy_backend_context *) buft->context;
     ctx->plan_begin_calls++;
     ctx->plan_n = n;
+    // R51: this backend ignores the advisory names and must decide exactly what it decided before.
+    // Recording them is what lets a test assert the loader really passes them through.
+    ctx->plan_names.clear();
+    for (size_t i = 0; i < n; i++) {
+        ctx->plan_names.push_back(names != nullptr && names[i] != nullptr ? names[i] : "");
+    }
     *status     = ctx->plan_status;
     if (ctx->plan_status != GGML_BACKEND_PLAN_FEASIBLE) {
         return nullptr;
@@ -792,6 +800,41 @@ static ggml_context_ptr plan_make_ctx(int n, size_t size_bytes) {
     return ctx;
 }
 
+// R51: the planner can only choose WHICH buffers go to slower memory if it can tell them apart, so
+// the identity must actually reach it - and it must name the first tensor that CONTRIBUTES BYTES,
+// not merely the first tensor in the range. A range can open on a view, which contributes nothing
+// and would misname the whole buffer.
+static void test_plan_names_reach_the_backend() {
+    const size_t chunk = 64;
+
+    dummy_backend backend = dummy_backend_init(chunk);
+    plan_wire(backend);
+
+    ggml_init_params params = {};
+    params.mem_size = ggml_tensor_overhead() * 8;
+    params.no_alloc = true;
+    ggml_context_ptr ctx = ggml_context_ptr(ggml_init(params));
+
+    ggml_tensor * a = make_input_with_size(ctx.get(), chunk);
+    ggml_set_name(a, "first.weight");
+    // a view is created after `a` but contributes no bytes of its own: it must never be able to
+    // name a buffer
+    ggml_tensor * v = ggml_view_1d(ctx.get(), a, 1, 0);
+    ggml_set_name(v, "a.view");
+    ggml_tensor * b = make_input_with_size(ctx.get(), chunk);
+    ggml_set_name(b, "second.weight");
+
+    ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), &backend.buffer_type);
+    GGML_ASSERT(buf != nullptr);
+    GGML_ASSERT(backend.context->plan_begin_calls == 1);
+    GGML_ASSERT(backend.context->plan_names.size() == 2);
+    GGML_ASSERT(backend.context->plan_names[0] == "first.weight");
+    // the second buffer opens on the view; "second.weight" is the first tensor in it that allocates
+    GGML_ASSERT(backend.context->plan_names[1] == "second.weight");
+
+    ggml_backend_buffer_free(buf);
+}
+
 static void test_plan_indeterminate_never_partially_allocates() {
     const size_t chunk = 64;
 
@@ -1261,6 +1304,7 @@ int main() {
     run("test_buffer_size_zero", test_buffer_size_zero);
     run("test_reallocation", test_reallocation);
     run("test_graph_optimize_alloc_dep", test_graph_optimize_alloc_dep);
+    run("test_plan_names_reach_the_backend", test_plan_names_reach_the_backend);
     run("test_plan_indeterminate_never_partially_allocates", test_plan_indeterminate_never_partially_allocates);
     run("test_loader_transaction_refuses_before_any_allocation", test_loader_transaction_refuses_before_any_allocation);
     run("test_loader_transaction_competing_and_isolated", test_loader_transaction_competing_and_isolated);

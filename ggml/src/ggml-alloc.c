@@ -1130,6 +1130,11 @@ static void free_buffers(ggml_backend_buffer_t ** buffers, const size_t * n_buff
 struct alloc_range {
     struct ggml_tensor * first;
     struct ggml_tensor * last;
+    // R51: the first tensor in [first, last) that actually contributes bytes to this buffer. It is
+    // NOT `first`: a range can open on a view or an already-placed tensor, which contributes
+    // nothing and would misname the buffer. Advisory identity for the backend's placement policy;
+    // it never takes part in the size arithmetic.
+    struct ggml_tensor * first_alloc;
     size_t               size;
 };
 
@@ -1201,10 +1206,14 @@ static bool ggml_backend_alloc_ctx_ranges(
 
     size_t cur_buf_size = 0;
     struct ggml_tensor * first = ggml_get_first_tensor(ctx);
+    struct ggml_tensor * first_alloc = NULL;
     for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
         size_t this_size = 0;
         if (t->data == NULL && t->view_src == NULL) {
             this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
+        }
+        if (this_size > 0 && first_alloc == NULL) {
+            first_alloc = t;
         }
 
         if (cur_buf_size > 0 && (cur_buf_size + this_size) > max_size) {
@@ -1214,11 +1223,15 @@ static bool ggml_backend_alloc_ctx_ranges(
                 return false;
             }
             ranges = grown;
-            ranges[n_ranges].first = first;
-            ranges[n_ranges].last  = t;
-            ranges[n_ranges].size  = cur_buf_size;
+            ranges[n_ranges].first       = first;
+            ranges[n_ranges].last        = t;
+            // cur_buf_size > 0 is the condition for closing here, so a contributing tensor was
+            // already seen and first_alloc belongs to the range being closed, not to `t`.
+            ranges[n_ranges].first_alloc = first_alloc;
+            ranges[n_ranges].size        = cur_buf_size;
             n_ranges++;
-            first = t;
+            first        = t;
+            first_alloc  = this_size > 0 ? t : NULL;
             *nbytes_total += cur_buf_size;
             cur_buf_size = this_size;
         } else {
@@ -1234,9 +1247,10 @@ static bool ggml_backend_alloc_ctx_ranges(
             return NULL;
         }
         ranges = grown;
-        ranges[n_ranges].first = first;
-        ranges[n_ranges].last  = NULL;
-        ranges[n_ranges].size  = cur_buf_size;
+        ranges[n_ranges].first       = first;
+        ranges[n_ranges].last        = NULL;
+        ranges[n_ranges].first_alloc = first_alloc;
+        ranges[n_ranges].size        = cur_buf_size;
         n_ranges++;
         *nbytes_total += cur_buf_size;
     }
@@ -1315,16 +1329,25 @@ static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
     ggml_backend_buffer_type_plan_t plan = NULL;
     if (n_ranges > 0) {
         size_t * sizes = malloc(sizeof(size_t) * n_ranges);
+        // R51: the first tensor's name identifies each buffer for a backend that must choose WHICH
+        // buffers spill. Advisory only, and NULL-tolerant: a failed allocation just means the
+        // backend plans by size alone, exactly as before.
+        const char ** names = malloc(sizeof(const char *) * n_ranges);
         if (sizes == NULL) {
+            free(names);
             free(ranges);
             return NULL;
         }
         for (size_t i = 0; i < n_ranges; i++) {
             sizes[i] = ranges[i].size;
+            if (names != NULL) {
+                names[i] = ranges[i].first_alloc != NULL ? ranges[i].first_alloc->name : NULL;
+            }
         }
         enum ggml_backend_plan_status status = GGML_BACKEND_PLAN_UNSUPPORTED;
-        plan = ggml_backend_buft_plan_begin(buft, sizes, n_ranges, &status);
+        plan = ggml_backend_buft_plan_begin(buft, sizes, names, n_ranges, &status);
         free(sizes);
+        free(names);
         if (status == GGML_BACKEND_PLAN_INFEASIBLE) {
             GGML_LOG_ERROR("%s: %s cannot place all %zu buffers of this allocation (%zu bytes total); "
                            "failing before any allocation\n",
@@ -1528,7 +1551,10 @@ bool ggml_backend_alloc_plan_commit(ggml_backend_alloc_plan_t plan) {
         }
 
         size_t * sizes = malloc(sizeof(size_t) * b->n_entries);
+        // R51: advisory per-buffer identity, NULL-tolerant (see the impl call site).
+        const char ** names = malloc(sizeof(const char *) * b->n_entries);
         if (sizes == NULL) {
+            free(names);
             ggml_backend_alloc_plan_release_plans(plan);
             return false;
         }
@@ -1540,14 +1566,18 @@ bool ggml_backend_alloc_plan_commit(ggml_backend_alloc_plan_t plan) {
             }
             GGML_ASSERT(g->plan_base == n);
             for (size_t k = 0; k < g->n_ranges; k++) {
+                if (names != NULL) {
+                    names[n] = g->ranges[k].first_alloc != NULL ? g->ranges[k].first_alloc->name : NULL;
+                }
                 sizes[n++] = g->ranges[k].size;
             }
         }
         GGML_ASSERT(n == b->n_entries);
 
         enum ggml_backend_plan_status status = GGML_BACKEND_PLAN_UNSUPPORTED;
-        b->plan = ggml_backend_buft_plan_begin(b->buft, sizes, b->n_entries, &status);
+        b->plan = ggml_backend_buft_plan_begin(b->buft, sizes, names, b->n_entries, &status);
         free(sizes);
+        free(names);
 
         if (status == GGML_BACKEND_PLAN_INFEASIBLE) {
             GGML_LOG_ERROR("%s: %s cannot place all %zu buffers this load needs (%zu bytes total); "

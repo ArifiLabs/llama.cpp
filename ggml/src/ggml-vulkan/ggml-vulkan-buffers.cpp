@@ -1,7 +1,7 @@
 #include "ggml-vulkan-common.h"
 
 // R46b B7b: per-buffer-type batch allocation planning (defined at the end of this file).
-static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status);
+static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status);
 static ggml_backend_buffer_t ggml_backend_vk_buffer_type_plan_alloc_buffer(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i);
 static void ggml_backend_vk_buffer_type_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan);
 ggml_backend_buffer_type_i ggml_backend_vk_buffer_type_interface = {
@@ -64,6 +64,61 @@ static uint64_t ggml_vk_env_bytes(const char * name, uint64_t fallback) {
         return fallback;
     }
     return (uint64_t) v;
+}
+
+// R51 — SPILL ORDER for the B7c bounded host split.
+//
+// B7c decides HOW MANY bytes may spill onto host-visible memory. It never decided WHICH bytes: the
+// first-fit walk in reserve_plan() visits buffers in plan order, so device memory goes to the
+// prefix and the suffix spills. Plan order is GGUF tensor order, which has nothing to do with how
+// often a buffer is read.
+//
+// Per token, a decode reads every per-layer weight in full, and reads exactly ONE ROW of
+// token_embd.weight (a get_rows gather). Placing token_embd on the slow mapping therefore costs a
+// few KiB of slow traffic per token; placing an equally sized block of layer weights there costs
+// the whole block, every token. token_embd is the cheapest buffer in the model to spill and, being
+// early in GGUF order, is currently one of the last ever chosen.
+//
+// This is a placement policy only. It cannot change any arithmetic: a buffer is the same bytes on
+// either memory type, so outputs stay bit-identical. It also cannot change how much spills - the
+// bound, the staging reserve and the refusal semantics are untouched.
+//
+// Only token_embd is singled out, and deliberately: the unit here is a BUFFER (a <= 1 GiB run of
+// consecutive tensors, ggml_backend_vk_buffer_type_get_max_size), not a tensor. token_embd is the
+// only weight big enough to occupy a buffer alone AND cheap to read; norms and biases are a few MiB
+// scattered inside mixed buffers, so no finer read-cost class exists to sort by at this granularity.
+// output.weight is read in full for the logits of every token and is NOT cheap - it stays in the
+// ordinary class.
+enum vk_spill_order {
+    VK_SPILL_ORDER_PLAN     = 0,  // R46b B7c behaviour: spill the suffix of plan order
+    VK_SPILL_ORDER_READCOST = 1,  // spill ascending per-token read volume: token_embd first
+};
+
+// UMA is the shape this exists for: there the "host-visible" side is the same physical RAM reached
+// through a slower mapping, so a split is a bandwidth problem rather than a PCIe transfer. On a
+// discrete device the env var still selects it explicitly.
+// true only when the environment names a policy this build recognises; an unrecognised value keeps
+// the default rather than silently picking a policy, and the receipt must not then claim "env".
+static bool ggml_vk_spill_order_from_env() {
+    const char * s = getenv("GGML_VK_HOST_SPLIT_ORDER");
+    return s != nullptr && (strcmp(s, "plan") == 0 || strcmp(s, "readcost") == 0);
+}
+
+static vk_spill_order ggml_vk_spill_order(const vk_device & device) {
+    if (ggml_vk_spill_order_from_env()) {
+        return strcmp(getenv("GGML_VK_HOST_SPLIT_ORDER"), "plan") == 0
+            ? VK_SPILL_ORDER_PLAN : VK_SPILL_ORDER_READCOST;
+    }
+    return device->uma ? VK_SPILL_ORDER_READCOST : VK_SPILL_ORDER_PLAN;
+}
+
+// Higher = read more per token = keep it on device memory. Buffers are visited in DESCENDING rank,
+// so rank 0 is visited last and is what spills first.
+static int ggml_vk_spill_keep_rank(const char * name) {
+    if (name != nullptr && strcmp(name, "token_embd.weight") == 0) {
+        return 0;   // one row per token
+    }
+    return 1;       // read in full every token, or unknown - never demote what we cannot classify
 }
 
 // The reserve is sized from a real requirement, not a guess: a bulk weight buffer is capped at
@@ -1474,7 +1529,7 @@ struct vk_buffer_plan {
 };
 
 static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
-        ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status) {
+        ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status) {
     ggml_backend_vk_buffer_type_context * ctx = (ggml_backend_vk_buffer_type_context *) buft->context;
     vk_device & device = ctx->device;
 
@@ -1595,11 +1650,53 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
         host_split_max = ggml_vk_env_bytes("GGML_VK_HOST_SPLIT_MAX", host_split_max);
     }
 
+    // R51: the host-split ORDER. reserve_plan() is handed the candidate lists ALREADY PERMUTED and
+    // is itself untouched - permuting inside it would mean recomputing its same_as_prev symmetry
+    // break under the permutation, and getting that wrong manufactures an INFEASIBLE it never
+    // proved. Permuting the input instead keeps every one of its invariants exactly as written: it
+    // sees a batch, in some order, and decides it. `order[k]` is the ORIGINAL index visited k-th.
+    const vk_spill_order spill_order = ggml_vk_spill_order(device);
+    std::vector<size_t> order(n);
+    for (size_t i = 0; i < n; ++i) {
+        order[i] = i;
+    }
+    if (spill_order == VK_SPILL_ORDER_READCOST) {
+        // stable, so everything outside the cheap class keeps plan order exactly - the only change
+        // to the walk is that token_embd's buffer moves to the end and is the first to be placed on
+        // host-visible memory.
+        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+            return ggml_vk_spill_keep_rank(names != nullptr ? names[a] : nullptr) >
+                   ggml_vk_spill_keep_rank(names != nullptr ? names[b] : nullptr);
+        });
+    }
+
+    // R51: the whole plan, in walk order, under the existing allocation trace. The receipt below
+    // names only what landed on host memory; this names everything that was CONSIDERED, which is
+    // what tells you whether a buffer you expected to see was even in this batch.
+    if (getenv("GGML_VK_ALLOC_TRACE") != nullptr) {
+        for (size_t k = 0; k < n; ++k) {
+            fprintf(stderr, "ggml_vulkan: plan order %zu/%zu: entry %zu %s %llu B\n", k, n, order[k],
+                    (names != nullptr && names[order[k]] != nullptr) ? names[order[k]] : "(unnamed)",
+                    (unsigned long long) plan->entries[order[k]].bytes);
+        }
+    }
+
+    std::vector<std::vector<vk_plan_candidate>> ordered_cands(n);
+    for (size_t k = 0; k < n; ++k) {
+        ordered_cands[k] = cands[order[k]];
+    }
+
     // From here on nothing can throw, so a committed reservation always reaches the plan object.
-    std::vector<size_t> choice;
+    std::vector<size_t> ordered_choice;
+    std::vector<size_t> choice(n, 0);
     uint64_t host_bytes = 0;
-    const vk_plan_result res = device->heap_ledger.reserve_plan(cands, budgets, n_heaps, choice,
+    const vk_plan_result res = device->heap_ledger.reserve_plan(ordered_cands, budgets, n_heaps, ordered_choice,
                                                                 host_split_max, &host_bytes);
+    if (res == VK_PLAN_FEASIBLE) {
+        for (size_t k = 0; k < n; ++k) {
+            choice[order[k]] = ordered_choice[k];   // back to the caller's indexing
+        }
+    }
     if (res == VK_PLAN_INFEASIBLE) {
         *status = GGML_BACKEND_PLAN_INFEASIBLE;
         return NULL;
@@ -1629,6 +1726,29 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
                 (unsigned long long) host_split_max,
                 (unsigned long long) device->staging_reserve.bytes,
                 device->staging_reserve.heap);
+
+        // R51: WHICH buffers went there, and under which order policy. Without this the receipt
+        // above says how much moved but never what, which is exactly the fact the policy changes.
+        std::string spilled;
+        size_t n_spilled = 0;
+        for (size_t i = 0; i < n; ++i) {
+            if (!cands[i][choice[i]].host_split) {
+                continue;
+            }
+            n_spilled++;
+            if (spilled.size() < 512) {   // a pathological batch must not print a page of names
+                if (!spilled.empty()) {
+                    spilled += ", ";
+                }
+                spilled += (names != nullptr && names[i] != nullptr) ? names[i] : "(unnamed)";
+                spilled += " " + std::to_string((unsigned long long) plan->entries[i].bytes) + " B";
+            }
+        }
+        fprintf(stderr, "ggml_vulkan: host split order: %s (%s) - %zu buffer(s) on host-visible "
+                        "memory: %s\n",
+                spill_order == VK_SPILL_ORDER_READCOST ? "readcost" : "plan",
+                ggml_vk_spill_order_from_env() ? "env" : "device-probe",
+                n_spilled, spilled.c_str());
     }
 
     *status = GGML_BACKEND_PLAN_FEASIBLE;
