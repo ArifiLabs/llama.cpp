@@ -12485,6 +12485,14 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
         }
     }
 
+    // ArifiLabs lane-243 / R52b: the PREFILL width. Every S-X8 row above is n <= 8, which never
+    // reaches the mul_mm (matrix-matrix) path — so nothing in perf mode timed the S-X8 mul_mm tile
+    // decode at a width prompt processing actually uses. n = 512 on the 27B FFN row, with q8_0 as
+    // the paired control. The eval list carries the same two rows as CORRECTNESS cases.
+    for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0}) {
+        test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, 512, 5120, {1, 1}, {1, 1}));
+    }
+
     // ArifiLabs lane-234 / R48: the real 27B Q5_K decode shapes as PERF rows, the target of the
     // R48 activation-hoist pairing. Q5_K carries 33.5% of the interactive Q4_K_XL 27B file by
     // bytes (5.41 GiB, 141 tensors) and 31% of the measured decode graph, at only 84% of this
