@@ -670,9 +670,12 @@ def _replay(repo: str, cfg: dict, onto: str, series_path: str, expect_ref: str =
     git(repo, "branch", "-D", branch, check=False)
     say("worktree: %s   (short path on purpose - llama.cpp's tools/ui tree blows past" % wt)
     say("           Windows MAX_PATH from a deep temp directory)")
-    git(repo, "worktree", "add", "--detach", wt, onto)
+    # The replay worktree must be CHECKED OUT with autocrlf=false as well: with the Git-for-Windows default
+    # (core.autocrlf=true) the checkout writes CRLF while the index holds LF, and the very first patch that
+    # touches an existing text file dies with "does not match index" (HQ seat-59, 2026-09-15, 283/550).
+    git(repo, "-c", "core.autocrlf=false", "worktree", "add", "--detach", wt, onto)
     try:
-        git(wt, "checkout", "-B", branch, onto)
+        git(wt, "-c", "core.autocrlf=false", "checkout", "-B", branch, onto)
         for i, patch in enumerate(files, 1):
             name = os.path.basename(patch)
             # core.autocrlf=false for the replay: the committed blobs are the artifact. With the
