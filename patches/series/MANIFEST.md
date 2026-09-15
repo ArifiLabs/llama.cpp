@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **537**, all non-merge, applied in filename order.
+- Patches: **550**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 537 commit messages, same provenance trailers. Verified, not
+same file contents, same 550 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -616,6 +616,19 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 535 | `0535-arifi-sync-grandfather-the-untrailered-series-regen-.patch` | arifi-fork-base | `fdd544467` | - | - | arifi-sync: grandfather the untrailered series-regen commit 833881db4 |
 | 536 | `0536-arifi-sync-series-replay-applies-with-core.autocrlf-.patch` | arifi-fork-base | `638692d9b` | - | - | arifi-sync: series replay applies with core.autocrlf=false so replayed bytes equal the committed blobs |
 | 537 | `0537-arifi-sync-series-replay-keeps-CR-keep-cr-evidence-r.patch` | arifi-fork-base | `3dba3a9c7` | - | - | arifi-sync: series replay keeps CR (--keep-cr); evidence receipts restored to their original LF bytes |
+| 538 | `0538-feat-vulkan-MMVQ-A-side-decode-hoist-behind-spec-con.patch` | arifi-fork-base | `5130407ff` | - | - | feat(vulkan): MMVQ A-side decode hoist behind spec constant (R48b) |
+| 539 | `0539-docs-r48b-report-section-10-reconstruction-rc-receip.patch` | arifi-fork-base | `f92d65be8` | - | - | docs(r48b): report section 10 (reconstruction) + rc receipts |
+| 540 | `0540-docs-r48b-HQ-planted-red-receipts-on-the-committed-h.patch` | arifi-fork-base | `f0cd78dbb` | - | - | docs(r48b): HQ planted-red receipts on the committed hoist (RED-1 both arms n=1..4, RED-2 ON-only n=2..4) |
+| 541 | `0541-WIP-r48b-phase-2-hoist-type-width-gate-MMVQ-routing-.patch` | arifi-fork-base | `2644adb51` | - | - | WIP(r48b phase 2): hoist type/width gate + MMVQ routing draft (maker output, unreviewed, unmeasured) |
+| 542 | `0542-docs-r48b-phase-2-gate-routing-verified-correctness-.patch` | arifi-fork-base | `6f7be0350` | - | `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE` | docs(r48b): phase 2 gate + routing verified, correctness receipts, report section 11 |
+| 543 | `0543-WIP-r48c-Q6_K-mat-vec-x-fold-activation-hoist-draft-.patch` | arifi-fork-base | `106bcb74b` | - | - | WIP(r48c): Q6_K mat-vec x-fold + activation hoist draft (maker output, unreviewed, unmeasured) |
+| 544 | `0544-docs-r48c-clear-the-Q6_K-shader-of-HQ-finding-1-loca.patch` | arifi-fork-base | `85124f6ea` | - | `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE` | docs(r48c): clear the Q6_K shader of HQ finding 1; localise a pre-existing defect |
+| 545 | `0545-docs-r48c-independent-Fable-LOW-check-PASS-GATED-its.patch` | arifi-fork-base | `6341bad98` | - | - | docs(r48c): independent Fable LOW check PASS-GATED + its three receipts (upstream-path 3/60, S-X8 0/60, direct-scales arms 43/43) |
+| 546 | `0546-docs-r48c-close-the-Fable-LOW-gates-measured-registr.patch` | arifi-fork-base | `4ed54fe5a` | - | - | docs(r48c): close the Fable LOW gates - measured registry rows, corrected coverage and failure-signature claims |
+| 547 | `0547-feat-vulkan-Q5_K-mat-vec-activation-hoist-behind-spe.patch` | arifi-fork-base | `7a5a224cc` | - | - | feat(vulkan): Q5_K mat-vec activation hoist behind spec constant (R48 phase 1) |
+| 548 | `0548-docs-r48-Q5_K-report-section-10-reconstruction-HQ-pl.patch` | arifi-fork-base | `a5e8fca04` | - | - | docs(r48): Q5_K report section 10 (reconstruction) + HQ planted-red summary and rc receipts |
+| 549 | `0549-feat-vulkan-gate-Q5_K-mat-vec-activation-hoist-to-NU.patch` | arifi-fork-base | `283503f09` | - | - | feat(vulkan): gate Q5_K mat-vec activation hoist to NUM_COLS<=3 (R48 phase 1b) |
+| 550 | `0550-docs-r48-name-the-phase-1b-commit-SHA-and-downgrade-.patch` | arifi-fork-base | `55485b98c` | - | - | docs(r48): name the phase-1b commit SHA and downgrade the f16 gate claim |
 
 ## Measured effect, per patch
 
@@ -1232,6 +1245,19 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0535-arifi-sync-grandfather-the-untrailered-series-regen-.patch` | UNMEASURED - manifest only |
 | `0536-arifi-sync-series-replay-applies-with-core.autocrlf-.patch` | UNMEASURED - tooling |
 | `0537-arifi-sync-series-replay-keeps-CR-keep-cr-evidence-r.patch` | UNMEASURED - tooling and evidence bytes |
+| `0538-feat-vulkan-MMVQ-A-side-decode-hoist-behind-spec-con.patch` | UNMEASURED - correctness only; pairing owed to HQ chain134 |
+| `0539-docs-r48b-report-section-10-reconstruction-rc-receip.patch` | UNMEASURED - receipts only |
+| `0540-docs-r48b-HQ-planted-red-receipts-on-the-committed-h.patch` | UNMEASURED - routing proof only |
+| `0541-WIP-r48b-phase-2-hoist-type-width-gate-MMVQ-routing-.patch` | UNMEASURED - draft |
+| `0542-docs-r48b-phase-2-gate-routing-verified-correctness-.patch` | UNMEASURED at default routing - forced-route pairing: S-X8 flat at the bus n=1..8 (+40..+110% at n>=4 on 248320x5120), q4_K n=6/7 tail cliff removed (5->52 GB/s), q4_K k=5120 n>=5 +21..+57%; default-route re-pair owed to HQ |
+| `0543-WIP-r48c-Q6_K-mat-vec-x-fold-activation-hoist-draft-.patch` | UNMEASURED - correctness arms running, pairing owed |
+| `0544-docs-r48c-clear-the-Q6_K-shader-of-HQ-finding-1-loca.patch` | UNMEASURED - correctness only; pairing owed to HQ chain134 |
+| `0545-docs-r48c-independent-Fable-LOW-check-PASS-GATED-its.patch` | UNMEASURED - check receipts |
+| `0546-docs-r48c-close-the-Fable-LOW-gates-measured-registr.patch` | UNMEASURED - documentation and coverage-claim corrections after independent check |
+| `0547-feat-vulkan-Q5_K-mat-vec-activation-hoist-behind-spe.patch` | UNMEASURED - correctness only; pairing owed to HQ chain134 |
+| `0548-docs-r48-Q5_K-report-section-10-reconstruction-HQ-pl.patch` | UNMEASURED - receipts only |
+| `0549-feat-vulkan-gate-Q5_K-mat-vec-activation-hoist-to-NU.patch` | UNMEASURED - hoist gated to NUM_COLS<=3 after HQ pairing showed n>=4 spill (-30..-180%); re-pair owed |
+| `0550-docs-r48-name-the-phase-1b-commit-SHA-and-downgrade-.patch` | UNMEASURED - report-only, names the phase-1b commit SHA and adds the 63-* receipt |
 
 ## Unclassified
 
@@ -1665,4 +1691,17 @@ rather than silently bucketed - add a rule when a new source appears.
 - `fdd544467` arifi-sync: grandfather the untrailered series-regen commit 833881db4
 - `638692d9b` arifi-sync: series replay applies with core.autocrlf=false so replayed bytes equal the committed blobs
 - `3dba3a9c7` arifi-sync: series replay keeps CR (--keep-cr); evidence receipts restored to their original LF bytes
+- `5130407ff` feat(vulkan): MMVQ A-side decode hoist behind spec constant (R48b)
+- `f92d65be8` docs(r48b): report section 10 (reconstruction) + rc receipts
+- `f0cd78dbb` docs(r48b): HQ planted-red receipts on the committed hoist (RED-1 both arms n=1..4, RED-2 ON-only n=2..4)
+- `2644adb51` WIP(r48b phase 2): hoist type/width gate + MMVQ routing draft (maker output, unreviewed, unmeasured)
+- `6f7be0350` docs(r48b): phase 2 gate + routing verified, correctness receipts, report section 11
+- `106bcb74b` WIP(r48c): Q6_K mat-vec x-fold + activation hoist draft (maker output, unreviewed, unmeasured)
+- `85124f6ea` docs(r48c): clear the Q6_K shader of HQ finding 1; localise a pre-existing defect
+- `6341bad98` docs(r48c): independent Fable LOW check PASS-GATED + its three receipts (upstream-path 3/60, S-X8 0/60, direct-scales arms 43/43)
+- `4ed54fe5a` docs(r48c): close the Fable LOW gates - measured registry rows, corrected coverage and failure-signature claims
+- `7a5a224cc` feat(vulkan): Q5_K mat-vec activation hoist behind spec constant (R48 phase 1)
+- `a5e8fca04` docs(r48): Q5_K report section 10 (reconstruction) + HQ planted-red summary and rc receipts
+- `283503f09` feat(vulkan): gate Q5_K mat-vec activation hoist to NUM_COLS<=3 (R48 phase 1b)
+- `55485b98c` docs(r48): name the phase-1b commit SHA and downgrade the f16 gate claim
 
