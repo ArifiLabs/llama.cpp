@@ -1779,6 +1779,13 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
     }
     ml.done_getting_tensors();
 
+    // ArifiLabs lane-242 / R53: take custody of the S-X8 PCA companions the loader attached.
+    sx8_pca = ml.sx8_pca;
+    if (!sx8_pca.empty()) {
+        LLAMA_LOG_INFO("%s: S-X8 v4.3 PCA correction ACTIVE on %zu tensors "
+                "(GGML_ARIFI_SX8_PCA=0 to disable)\n", __func__, sx8_pca.size());
+    }
+
     // Tied NVFP4 output is valid when no separate LM-head scale tensors are present.
     // If sidecar scales exist, the output weight must be an actual output tensor.
     GGML_ASSERT(!(output && tok_embd &&

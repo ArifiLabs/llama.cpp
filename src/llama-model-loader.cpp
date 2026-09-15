@@ -846,6 +846,56 @@ llama_model_loader::llama_model_loader(
 
             LLAMA_LOG_INFO("%s: additional %d GGUFs metadata loaded.\n",  __func__, n_split - 1);
         }
+
+        // ArifiLabs lane-242 / R53: optional S-X8 v4.3 PCA companion GGUF.
+        //
+        // The .sx8v43 container carries per-tensor PCA bases and scales that the author's GGUF
+        // converter drops, so a GGUF-only engine cannot apply the correction and pays his
+        // Table 4 gap (PPL 10.5043 instead of 10.2267). They are ~0.4% of the weights, so they
+        // ride in a companion file rather than forcing a rewrite of a 26 GB GGUF. Discovered as
+        // "<model>.sx8pca.gguf" beside the model, or named by GGML_ARIFI_SX8_PCA_FILE.
+        // GGML_ARIFI_SX8_PCA=0 skips the companion entirely -- the no-companion path is the
+        // pre-R53 path, bit for bit.
+        //
+        // Its tensors join weights_map exactly like a split's, so loading, mmap, backend
+        // placement and upload all take the ordinary route.
+        const char * pca_env = getenv("GGML_ARIFI_SX8_PCA");
+        if (!(pca_env && pca_env[0] == '0' && pca_env[1] == '\0')) {
+            std::string pca_fname;
+            if (const char * e = getenv("GGML_ARIFI_SX8_PCA_FILE")) {
+                pca_fname = e;
+            } else {
+                std::string base = fname;
+                if (base.size() > 5 && base.compare(base.size() - 5, 5, ".gguf") == 0) {
+                    base.resize(base.size() - 5);
+                }
+                const std::string cand = base + ".sx8pca.gguf";
+                if (FILE * probe = ggml_fopen(cand.c_str(), "rb")) {
+                    fclose(probe);
+                    pca_fname = cand;
+                }
+            }
+
+            if (!pca_fname.empty()) {
+                struct ggml_context * pca_ctx = NULL;
+                struct gguf_init_params pca_params = {
+                    /*.no_alloc = */ true,
+                    /*.ctx      = */ &pca_ctx,
+                };
+                gguf_context_ptr pca_gguf { gguf_init_from_file(pca_fname.c_str(), pca_params) };
+                if (!pca_gguf) {
+                    throw std::runtime_error(format("%s: failed to load S-X8 PCA companion from %s",
+                                __func__, pca_fname.c_str()));
+                }
+
+                split_metadata.emplace_back(std::move(pca_gguf));
+                gguf_contexts.push_back(split_metadata.back().get());
+                files.emplace_back(new llama_file(pca_fname.c_str(), "rb", use_direct_io));
+                contexts.emplace_back(pca_ctx);
+
+                LLAMA_LOG_INFO("%s: S-X8 PCA companion: %s\n", __func__, pca_fname.c_str());
+            }
+        }
     } else if (file != nullptr) {
         struct ggml_context * ctx = NULL;
         struct gguf_init_params params = {
@@ -1614,6 +1664,46 @@ struct ggml_tensor * llama_model_loader::create_tensor(
         size_data += ggml_nbytes(&t_meta);
     } else {
         n_created++;
+    }
+
+    // ArifiLabs lane-242 / R53: an S-X8 weight pulls in its PCA correction companions, when a
+    // companion GGUF supplied them. Doing it HERE rather than per-architecture (the escha_aux
+    // pattern in llama-model.cpp) means every architecture that can hold an S-X8 weight is
+    // covered by one block, and the companions inherit this weight's buffer type for free.
+    //
+    // A TENSOR_DUPLICATED weight (token_embd reused as the tied output) re-enters under the same
+    // NAME, but lands in a second buffer-type context as a different ggml_tensor. So the guard is
+    // by name: the second arrival shares the companions the first created instead of loading them
+    // twice, which would overshoot done_getting_tensors' count.
+    if (tensor->type == GGML_TYPE_SX8 && sx8_pca.find(tensor) == sx8_pca.end()) {
+        const auto seen = sx8_pca_by_name.find(tn.str());
+        if (seen != sx8_pca_by_name.end()) {
+            sx8_pca.emplace(tensor, seen->second);
+            return tensor;
+        }
+
+        const int64_t n_cb = tensor->ne[0] / 32;   // blocks-of-K per row
+        const int64_t n_r  = tensor->ne[1];        // output rows
+
+        // c0 decides: absent means this build has no PCA companion and the correction is off.
+        ggml_tensor * c0 = create_tensor(hparams, buft_list_cpu, buft_list_input, buft_list_output,
+                buft_list_layer, LLM_TN_IMPL(tn.arch, tn.tensor, "sx8_pca_c0", tn.bid, tn.xid),
+                { n_cb, n_r }, TENSOR_NOT_REQUIRED);
+        if (c0 != nullptr) {
+            sx8_pca_weights w;
+            w.c0 = c0;
+            w.c1 = create_tensor(hparams, buft_list_cpu, buft_list_input, buft_list_output,
+                    buft_list_layer, LLM_TN_IMPL(tn.arch, tn.tensor, "sx8_pca_c1", tn.bid, tn.xid),
+                    { n_cb, n_r }, 0);
+            w.b0 = create_tensor(hparams, buft_list_cpu, buft_list_input, buft_list_output,
+                    buft_list_layer, LLM_TN_IMPL(tn.arch, tn.tensor, "sx8_pca_b0", tn.bid, tn.xid),
+                    { 32, n_cb }, 0);
+            w.b1 = create_tensor(hparams, buft_list_cpu, buft_list_input, buft_list_output,
+                    buft_list_layer, LLM_TN_IMPL(tn.arch, tn.tensor, "sx8_pca_b1", tn.bid, tn.xid),
+                    { 32, n_cb }, 0);
+            sx8_pca.emplace(tensor, w);
+            sx8_pca_by_name.emplace(tn.str(), w);
+        }
     }
 
     return tensor;
