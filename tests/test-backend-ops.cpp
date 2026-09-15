@@ -13549,7 +13549,20 @@ static void show_test_coverage() {
 // Device-free, model-free, timing-free: it drives the same ledger and the same RAII guard that
 // ggml_vk_create_buffer() uses. Declared here rather than in a public header because this is an
 // internal test seam, not backend API.
+// R58 lane-244: Vulkan's own ceiling on memory types (VK_MAX_MEMORY_TYPES). Spelled locally so
+// this test needs no Vulkan headers of its own.
+#define VK_MAX_MEMORY_TYPES_LOCAL 32
+
 extern "C" {
+    // R58 lane-244: memory-type bandwidth probe seam (see ggml-vulkan.cpp).
+    void     ggml_vk_memtype_force(int type_index);
+    int      ggml_vk_memtype_enumerate(uint32_t * types, uint32_t * heaps, uint32_t * flags,
+                                       uint64_t * heap_sizes, int max_types);
+    int      ggml_vk_memtype_buffer_info(uint64_t size, uint32_t * type_bits,
+                                         uint64_t * max_buffer_size, uint64_t * max_chunk);
+    void     ggml_vk_memtype_probe_line(uint32_t type, uint32_t heap, uint32_t flags,
+                                        uint64_t bytes, double gpu_read_gbs, double cpu_memcpy_gbs);
+
     bool     ggml_vk_heapres_reserve(uint32_t heap, uint64_t bytes, uint64_t budget);
     bool     ggml_vk_heapres_release(uint32_t heap, uint64_t bytes);
     bool     ggml_vk_heapres_would_fit(uint32_t heap, uint64_t bytes, uint64_t budget);
@@ -14459,6 +14472,194 @@ static void heapres_plan_production_tests() {
     heapres_check(after_reserved == reserved_now, "batch planning left no bytes reserved");
 }
 
+// ---------------------------------------------------------------------------------------------
+// R58 lane-244 — MEMORY TYPE BANDWIDTH PROBE (`test-backend-ops memtype`).
+//
+// One number in GB/s per Vulkan memory type: how fast the GPU READS weights placed in that type.
+// This is the bandwidth-envelope program's row-1 "attainable bus" probe and its row-2 per-region
+// probe in one tool, and it is the measurement the host-split placement question turns on - on
+// this box the beyond-reservation bytes can live in memory type 1 (HOST_VISIBLE|HOST_COHERENT) or
+// type 3 (the same plus HOST_CACHED), and today's choice between them is made by enumeration
+// order, never by a measurement.
+//
+// What is timed: an f16 mat-vec (MUL_MAT with n=1) over `bytes` of weights, i.e. exactly the
+// shader path a plain decode token runs, built as an ordinary ggml graph on the ordinary Vulkan
+// backend. Placement is pinned with ggml_vk_memtype_force() so every buffer of that graph lands
+// in the type under test. Weights are split into chunks of at most the backend's own maximum
+// buffer size - a single multi-GiB tensor would be refused by the driver, so the receipt prints
+// the chunking it used.
+//
+// The maker never runs this: HQ runs it in a quiet window, one type at a time.
+// ---------------------------------------------------------------------------------------------
+static int memtype_probe_run(uint32_t type, uint32_t heap, uint32_t flags,
+                             uint64_t want_bytes, uint64_t max_chunk, int rounds) {
+    ggml_backend_dev_t dev = nullptr;
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        ggml_backend_dev_t d = ggml_backend_dev_get(i);
+        if (strncmp(ggml_backend_dev_name(d), "Vulkan", 6) == 0) {
+            dev = d;
+            break;
+        }
+    }
+    if (dev == nullptr) {
+        printf("memtype: no Vulkan device, skipping\n");
+        return 1;
+    }
+
+    // One row of the mat-vec. 4096 is a real hidden size and keeps every chunk a whole number of
+    // rows, so no chunk is a ragged shape the shader would treat differently from the others.
+    const int64_t K = 4096;
+    const uint64_t row_bytes   = (uint64_t) K * sizeof(ggml_fp16_t);
+    uint64_t       chunk_bytes = (max_chunk / row_bytes) * row_bytes;
+    if (chunk_bytes == 0) {
+        printf("memtype %u: max chunk %llu B is smaller than one %lld-wide f16 row, skipping\n",
+               type, (unsigned long long) max_chunk, (long long) K);
+        return 1;
+    }
+    if (chunk_bytes > want_bytes) {
+        chunk_bytes = (want_bytes / row_bytes) * row_bytes;
+    }
+    if (chunk_bytes == 0) {
+        printf("memtype %u: requested %llu B is smaller than one row, skipping\n",
+               type, (unsigned long long) want_bytes);
+        return 1;
+    }
+    const int64_t  rows_per_chunk = (int64_t) (chunk_bytes / row_bytes);
+    const int      n_chunks       = (int) std::max<uint64_t>(1, want_bytes / chunk_bytes);
+    const uint64_t total_bytes    = (uint64_t) n_chunks * chunk_bytes;
+
+    printf("memtype %u: heap %u flags 0x%x, %d chunk(s) x %llu B = %llu B, %lld rows/chunk, %d rounds\n",
+           type, heap, flags, n_chunks, (unsigned long long) chunk_bytes,
+           (unsigned long long) total_bytes, (long long) rows_per_chunk, rounds);
+    fflush(stdout);
+
+    // The pin covers every allocation made between here and the restore below.
+    ggml_vk_memtype_force((int) type);
+
+    ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
+    if (backend == nullptr) {
+        ggml_vk_memtype_force(-1);
+        printf("memtype %u: backend init failed\n", type);
+        return 1;
+    }
+
+    struct ggml_init_params ip = {
+        /* .mem_size   = */ ggml_tensor_overhead() * (size_t) (2 * n_chunks + 8) + ggml_graph_overhead(),
+        /* .mem_buffer = */ NULL,
+        /* .no_alloc   = */ true,
+    };
+    ggml_context * ctx = ggml_init(ip);
+    ggml_tensor * v = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, K, 1);
+    ggml_cgraph * gf = ggml_new_graph(ctx);
+    std::vector<ggml_tensor *> W((size_t) n_chunks);
+    for (int c = 0; c < n_chunks; c++) {
+        W[(size_t) c] = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, K, rows_per_chunk);
+        ggml_build_forward_expand(gf, ggml_mul_mat(ctx, W[(size_t) c], v));
+    }
+
+    ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_dev_buffer_type(dev));
+    if (buf == nullptr) {
+        ggml_free(ctx);
+        ggml_backend_free(backend);
+        ggml_vk_memtype_force(-1);
+        // REFUSED is a result, not a failure: a type whose heap cannot hold the span is exactly
+        // what the enumeration verdict is about.
+        printf("memtype %u: REFUSED - no room for %llu B in this type\n",
+               type, (unsigned long long) total_bytes);
+        return 0;
+    }
+
+    // Host-side fill pattern, reused for every chunk. It doubles as the CPU memcpy source, so the
+    // CPU number is the memcpy of the SAME span the GPU then reads.
+    std::vector<uint8_t> host_a((size_t) chunk_bytes, 0x3c);   // 0x3c3c = 1.0585938 in f16
+    std::vector<uint8_t> host_b((size_t) chunk_bytes);
+    for (int c = 0; c < n_chunks; c++) {
+        ggml_backend_tensor_set(W[(size_t) c], host_a.data(), 0, (size_t) chunk_bytes);
+    }
+    std::vector<float> ones((size_t) K, 1.0f);
+    ggml_backend_tensor_set(v, ones.data(), 0, (size_t) K * sizeof(float));
+
+    double cpu_best = 0.0;
+    for (int r = 0; r < rounds; r++) {
+        const int64_t t0 = ggml_time_us();
+        for (int c = 0; c < n_chunks; c++) {
+            memcpy(host_b.data(), host_a.data(), (size_t) chunk_bytes);
+        }
+        const int64_t t1 = ggml_time_us();
+        const double gbs = (double) total_bytes / ((double) (t1 - t0) * 1e-6) / 1e9;
+        cpu_best = std::max(cpu_best, gbs);
+    }
+
+    // One discarded warm-up: the first compute compiles pipelines and fills descriptor pools, and
+    // timing that would report the compile, not the bus.
+    ggml_backend_graph_compute(backend, gf);
+
+    double gpu_best = 0.0;
+    for (int r = 0; r < rounds; r++) {
+        const int64_t t0 = ggml_time_us();
+        ggml_backend_graph_compute(backend, gf);
+        const int64_t t1 = ggml_time_us();
+        const double gbs = (double) total_bytes / ((double) (t1 - t0) * 1e-6) / 1e9;
+        gpu_best = std::max(gpu_best, gbs);
+    }
+
+    ggml_backend_buffer_free(buf);
+    ggml_free(ctx);
+    ggml_backend_free(backend);
+    ggml_vk_memtype_force(-1);
+
+    ggml_vk_memtype_probe_line(type, heap, flags, total_bytes, gpu_best, cpu_best);
+    return 0;
+}
+
+static int memtype_main(uint64_t want_bytes, int rounds, const char * types_csv) {
+    ggml_time_init();
+
+    uint32_t types[VK_MAX_MEMORY_TYPES_LOCAL];
+    uint32_t heaps[VK_MAX_MEMORY_TYPES_LOCAL];
+    uint32_t flags[VK_MAX_MEMORY_TYPES_LOCAL];
+    uint64_t heap_sizes[VK_MAX_MEMORY_TYPES_LOCAL];
+
+    const int n = ggml_vk_memtype_enumerate(types, heaps, flags, heap_sizes, VK_MAX_MEMORY_TYPES_LOCAL);
+    if (n < 0) {
+        printf("memtype: no Vulkan device\n");
+        return 1;
+    }
+
+    uint32_t type_bits = 0;
+    uint64_t max_buffer_size = 0, max_chunk = 0;
+    if (ggml_vk_memtype_buffer_info(1024 * 1024, &type_bits, &max_buffer_size, &max_chunk) != 0) {
+        printf("memtype: buffer requirements unavailable\n");
+        return 1;
+    }
+    printf("memtype: %d types, storage-buffer memoryTypeBits=0x%x, max_buffer_size=%llu B, max_chunk=%llu B\n",
+           n, type_bits, (unsigned long long) max_buffer_size, (unsigned long long) max_chunk);
+
+    for (int i = 0; i < n; i++) {
+        // Eligibility is measured, not assumed: a type outside memoryTypeBits can never hold one
+        // of our storage buffers, so probing it would time a placement that cannot happen.
+        if (!(type_bits & (1u << types[i]))) {
+            printf("memtype %u: ineligible for storage buffers (outside memoryTypeBits), skipped\n", types[i]);
+            continue;
+        }
+        if (types_csv != nullptr) {
+            char want[32];
+            snprintf(want, sizeof(want), "%u", types[i]);
+            bool listed = false;
+            for (const char * p = strstr(types_csv, want); p != nullptr; p = strstr(p + 1, want)) {
+                const bool lb = (p == types_csv) || (p[-1] == ',');
+                const bool rb = (p[strlen(want)] == '\0') || (p[strlen(want)] == ',');
+                if (lb && rb) { listed = true; break; }
+            }
+            if (!listed) {
+                continue;
+            }
+        }
+        memtype_probe_run(types[i], heaps[i], flags[i], want_bytes, max_chunk, rounds);
+    }
+    return 0;
+}
+
 static int heapres_main() {
     heapres_ledger_tests();
     heapres_plan_ledger_tests();
@@ -14481,6 +14682,7 @@ static void usage(char ** argv) {
     printf("      - sx8ref (S-X8 mat-vec against an independent double-precision reference)\n");
 #ifdef GGML_USE_VULKAN
     printf("      - heapres (Vulkan per-heap reservation ledger + post-allocation cleanup)\n");
+    printf("      - memtype [--bytes N] [--rounds R] [--types 1,3] (GPU read GB/s per Vulkan memory type)\n");
 #endif
     printf("    op names for -o are as given by ggml_op_desc() (e.g. ADD, MUL_MAT, etc),\n");
     printf("        optionally including the full test case string (e.g. \"ADD(type=f16,ne=[1,1,8,1],nr=[1,1,1,1],nf=1)\")\n");
@@ -14547,6 +14749,29 @@ int main(int argc, char ** argv) {
             // R46b B7a: returns before any backend/device enumeration. The ledger half needs no
             // device; the fault half acquires a Vulkan device itself and skips loudly without one.
             return heapres_main();
+        } else if (strcmp(argv[i], "memtype") == 0) {
+            // R58 lane-244. Optional: --bytes <N> (default 4 GiB), --rounds <R> (default 3),
+            // --types <csv of memory type indices> (default: every eligible type).
+            uint64_t     bytes     = 4ull * 1024 * 1024 * 1024;
+            int          rounds    = 3;
+            const char * types_csv = nullptr;
+            for (int j = i + 1; j < argc; j++) {
+                if (strcmp(argv[j], "--bytes") == 0 && j + 1 < argc) {
+                    bytes = strtoull(argv[++j], nullptr, 10);
+                } else if (strcmp(argv[j], "--rounds") == 0 && j + 1 < argc) {
+                    rounds = atoi(argv[++j]);
+                } else if (strcmp(argv[j], "--types") == 0 && j + 1 < argc) {
+                    types_csv = argv[++j];
+                } else {
+                    usage(argv);
+                    return 1;
+                }
+            }
+            if (bytes == 0 || rounds <= 0) {
+                usage(argv);
+                return 1;
+            }
+            return memtype_main(bytes, rounds, types_csv);
 #endif
         } else if (strcmp(argv[i], "--list-ops") == 0) {
             list_all_ops();
