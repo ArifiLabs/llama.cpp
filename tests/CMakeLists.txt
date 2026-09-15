@@ -425,6 +425,9 @@ llama_build_and_test(test-turbo-quant.c LABEL "turbo")
 # ArifiLabs Escha-W2 (lane-164): CPU kernel vs Python goldens (fixtures dir passed manually)
 llama_build_and_test(test-escha-mm.cpp)
 
+# ArifiLabs lane-242 / R53: S-X8 v4.3 PCA correction vs NumPy goldens (fixtures dir passed manually)
+llama_build_and_test(test-sx8-pca.cpp)
+
 if (NOT LLAMA_USE_SYSTEM_GGML)
     # Needs non-public ggml-impl.h
     llama_build_and_test(test-gguf.cpp)

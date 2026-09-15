@@ -1651,6 +1651,44 @@ ggml_tensor * llm_graph_context::build_lora_mm(
 
     ggml_tensor * res = ggml_mul_mat(ctx0, w, cur);
 
+    // ArifiLabs lane-242 / R53: the S-X8 v4.3 PCA correction.
+    //
+    // Every 30-byte S-X8 block carries two signed-4-bit PCA coefficients (c0, c1) that the
+    // llama.cpp decoders throw away, costing his Table 4 gap: PPL 10.5043 without them against
+    // 10.2267 with. The correction rides on the linearity of the dot product
+    // (SX8_FLASH_V4_3_SPEC.md section 5, sx8_decode1_v3.cu:8-13):
+    //
+    //     Z0[kb] = s0[kb] * sum_t X[kb*32+t] * b0[kb][t]         (once per token, per matmul)
+    //     Y[n]  += sum_kb c0(kb,n)*Z0[kb] + c1(kb,n)*Z1[kb]
+    //
+    // so the per-weight PCA cost collapses to two FMAs per 32-weight block. Expressed here in
+    // stock ggml ops, which is what makes it backend-agnostic: no CPU kernel and no shader has
+    // to learn about PCA, and CPU, Vulkan and any future backend all get it from one place.
+    // s0/s1 are pre-folded into b0/b1 by tools/sx8/add_sx8_pca_to_gguf.py, so the scale multiply
+    // is already paid at build time.
+    //
+    // Without a PCA companion GGUF the map is empty and this is not reached at all.
+    if (w->type == GGML_TYPE_SX8 && mdl != nullptr) {
+        if (const auto * pca = mdl->get_sx8_pca(w)) {
+            const int64_t n_cb = pca->b0->ne[1];
+            const int64_t n_tk = ggml_nelements(cur) / cur->ne[0];
+
+            // [K, n_tk] -> [32, n_cb, n_tk]; b0 is [32, n_cb, 1] and broadcasts over the tokens.
+            ggml_tensor * xc = ggml_is_contiguous(cur) ? cur : ggml_cont(ctx0, cur);
+            ggml_tensor * xr = ggml_reshape_3d(ctx0, xc, 32, n_cb, n_tk);
+
+            ggml_tensor * z0 = ggml_sum_rows(ctx0, ggml_mul(ctx0, xr, pca->b0)); // [1, n_cb, n_tk]
+            ggml_tensor * z1 = ggml_sum_rows(ctx0, ggml_mul(ctx0, xr, pca->b1));
+
+            z0 = ggml_reshape_2d(ctx0, z0, n_cb, n_tk);
+            z1 = ggml_reshape_2d(ctx0, z1, n_cb, n_tk);
+
+            // c is [n_cb, N], so each mat-vec contributes one of the two rank-1 terms.
+            res = ggml_add(ctx0, res, ggml_mul_mat(ctx0, pca->c0, z0));
+            res = ggml_add(ctx0, res, ggml_mul_mat(ctx0, pca->c1, z1));
+        }
+    }
+
     if (w_s) {
         res = ggml_mul(ctx0, res, w_s);
     }
