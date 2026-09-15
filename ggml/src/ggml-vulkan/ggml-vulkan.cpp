@@ -18806,8 +18806,8 @@ GGML_BACKEND_API int ggml_vk_plan_probe_begin(const uint64_t * sizes, int n, int
     }
 
     enum ggml_backend_plan_status st = GGML_BACKEND_PLAN_UNSUPPORTED;
-    // R51: the probe plans by size alone, so it exercises the PLAN order regardless of the device
-    // default - names are what select the readcost order, and it has none to give.
+    // R51: the probe has no tensors and so no names; the planner treats them as advisory and
+    // decides exactly what it decides for a named batch.
     ggml_backend_buffer_type_plan_t plan = ggml_backend_buft_plan_begin(buft, s.data(), nullptr, (size_t) n, &st);
     *status = (int) st;
     if (plan == NULL) {
