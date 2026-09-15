@@ -1,0 +1,245 @@
+From a5e8fca041c40a3231e79d1267535e8e4d44c016 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 08:00:15 -0400
+Subject: [PATCH] docs(r48): Q5_K report section 10 (reconstruction) + HQ
+ planted-red summary and rc receipts
+
+Origin: ArifiLabs (native) - HQ seat-58 evidence banking for lane-234
+Measured-effect: UNMEASURED - receipts only
+Lane: lane-234
+---
+ OPUS-R48-Q5K-MATVEC-REPORT.md                | 85 ++++++++++++++++++++
+ r48-evidence/01-configure.rc                 |  1 +
+ r48-evidence/02-build.rc                     |  1 +
+ r48-evidence/10-mulmat-hoist-on.rc           |  1 +
+ r48-evidence/11-mulmat-hoist-off.rc          |  1 +
+ r48-evidence/20-red1-build.rc                |  1 +
+ r48-evidence/21-red1-hoist-on.rc             |  1 +
+ r48-evidence/22-red1-hoist-off.rc            |  1 +
+ r48-evidence/23-red2-build.rc                |  1 +
+ r48-evidence/24-red2.rc                      |  1 +
+ r48-evidence/25-restore-build.rc             |  1 +
+ r48-evidence/26-planted-red-summary.txt      |  5 ++
+ r48-evidence/39-build.rc                     |  1 +
+ r48-evidence/40-mulmat-q5k-hoist-on.rc       |  1 +
+ r48-evidence/41-mulmat-q5k-hoist-off.rc      |  1 +
+ r48-evidence/42-mulmat-q5k-hoist-on-n1f32.rc |  1 +
+ 16 files changed, 104 insertions(+)
+ create mode 100644 r48-evidence/01-configure.rc
+ create mode 100644 r48-evidence/02-build.rc
+ create mode 100644 r48-evidence/10-mulmat-hoist-on.rc
+ create mode 100644 r48-evidence/11-mulmat-hoist-off.rc
+ create mode 100644 r48-evidence/20-red1-build.rc
+ create mode 100644 r48-evidence/21-red1-hoist-on.rc
+ create mode 100644 r48-evidence/22-red1-hoist-off.rc
+ create mode 100644 r48-evidence/23-red2-build.rc
+ create mode 100644 r48-evidence/24-red2.rc
+ create mode 100644 r48-evidence/25-restore-build.rc
+ create mode 100644 r48-evidence/26-planted-red-summary.txt
+ create mode 100644 r48-evidence/39-build.rc
+ create mode 100644 r48-evidence/40-mulmat-q5k-hoist-on.rc
+ create mode 100644 r48-evidence/41-mulmat-q5k-hoist-off.rc
+ create mode 100644 r48-evidence/42-mulmat-q5k-hoist-on-n1f32.rc
+
+diff --git a/OPUS-R48-Q5K-MATVEC-REPORT.md b/OPUS-R48-Q5K-MATVEC-REPORT.md
+index 5225426c5..5129f75e3 100644
+--- a/OPUS-R48-Q5K-MATVEC-REPORT.md
++++ b/OPUS-R48-Q5K-MATVEC-REPORT.md
+@@ -357,3 +357,88 @@ On the proprietary AMD driver, skip it and report that it was not obtainable.)
+ | Q5_K `f16_f32` and `_id` variants, unmeasured here | `ggml-vulkan.cpp:7170`, `:7246` |
+ 
+ PHASE-R48-Q5K-DRAFT-DONE
++
++---
++
++## 10. Reconstruction 2026-09-14
++
++`mul_mat_vec_q5_k.comp` was lost to an HQ `git checkout --` during the planted-red cycle. The C++
++and test changes survived uncommitted. This section records the rebuild.
++
++### What was rebuilt
++
++Only `mul_mat_vec_q5_k.comp`, reconstructed to §2 / §4 / §6 with no change of design:
++
++| Piece | Form |
++|---|---|
++| `layout (constant_id = 3) const uint ARIFI_Q5K_B_HOIST = 1;` | Declared default 1, matching the Q6_K precedent. All three surviving registrations pass an explicit 4th element, so the declared default only binds a caller that passes three. |
++| `decode_superblock(...)` | Verbatim lift of the shipped per-row decode. No expression rewritten; the eight `sc*` and sixteen `q4_*` locals became `out FLOAT_TYPE sc[8]` / `out FLOAT_TYPE q4[16]`. |
++| `load_activations(...)` | `out vec2 by[8]` = the shipped `by10, by116, by132, by148, by20, by216, by232, by248`, in that order. |
++| `accumulate_column(...)` | Verbatim lift of the shipped inner body, `inout FLOAT_TYPE t`. `sc[0],sc[1],sc[4],sc[5]` carry the main term and `sc[2],sc[3],sc[6],sc[7]` the `smin` term, as shipped. |
++| `calc_superblock()` arm 1 | `dmv[NUM_ROWS]`, `scv[NUM_ROWS][8]`, `q4v[NUM_ROWS][16]`; decode all rows, then `for j { load_activations once; for n { accumulate_column } }`. |
++| `calc_superblock()` arm 0 | Single-row `dm` / `sc[8]` / `q4[16]` scoped inside the `n` loop, activations reloaded per row — the shipped order. Deliberately NOT sharing arm 1's `[NUM_ROWS]` storage, so arm 0 does not carry the hoist's register pressure and the pairing measures the real difference. |
++
++§6 coverage limit 1 (whether glslang accepts a row of a spec-constant-sized 2-D array as an array
++argument) is now **CLOSED by compilation** — `scv[n]` and `q4v[n]` were accepted as-is; the fallback
++of passing whole arrays plus an index was not needed. Limits 2 (spill), 3 (unroll/scratch), 4
++(`f16_f32` and `_id`) and 5 (no model) remain open. **Register and scratch figures were NOT obtained**:
++`RADV_DEBUG=shaderstats` runs through `perf`, and perf was out of scope for this session.
++
++### Build
++
++`ninja -C build-vulkan test-backend-ops`, `rc=0`, receipt `r48-evidence/39-build.txt` + `.rc`. The
++step list is the independent proof the new shader is in the binary rather than a stale SPIR-V blob —
++the arms are bit-identical, so a green/green correctness pair on its own would not have
++distinguished the two:
++
++```
++[5/9] Generate vulkan shaders for mul_mat_vec_q5_k.comp
++[6/9] Building CXX object ggml/src/ggml-vulkan/CMakeFiles/ggml-vulkan.dir/mul_mat_vec_q5_k.comp.cpp.obj
++```
++
++### sha256 of the three changed files, as committed
++
++```
++5d2457bbc5a07c3d2414852864ad3c88100b5b062a9b3ca1e3f02082646b0992  ggml/src/ggml-vulkan/ggml-vulkan.cpp
++e578ba23c3b0b3fe2e9322116a87425adeac9206d22dbecb3e762e026da41946  ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q5_k.comp
++4f097859d525b0d443adfd4249ecdcca383a278122d6f48a081cd3d35354df3e  tests/test-backend-ops.cpp
++```
++
++### Correctness receipts
++
++Command in both arms: `build-vulkan/bin/test-backend-ops.exe test -o MUL_MAT -b Vulkan0 -p "type_a=q5_K"`.
++
++| Arm | Env | Receipt | rc | Q5_K cases | FAIL |
++|---|---|---|---|---|---|
++| Hoisted (default) | unset | `r48-evidence/40-mulmat-q5k-hoist-on.txt` + `.rc` | 0 | 61 | 0 |
++| Shipped order | `GGML_ARIFI_Q5K_B_HOIST=0` | `r48-evidence/41-mulmat-q5k-hoist-off.txt` + `.rc` | 0 | 61 | 0 |
++| Hoisted, `n=1` forced onto f32 | `GGML_ARIFI_Q5K_MMVQ_N1=0` | `r48-evidence/42-mulmat-q5k-hoist-on-n1f32.txt` + `.rc` | 0 | 61 | 0 |
++
++Each run carries its own device-init receipt line — `q5_k mat-vec activation-hoist: ON` in 40, `OFF`
++in 41 — so the two files are proof the env override reached the pipeline, not just that the binary
++ran twice. All three ended `2/2 backends passed`.
++
++**§6 limit 6 is CLOSED.** The 61 rows are not the pre-existing set: the receipt contains
++`m = {7, 16, 1023, 4096, 5120, 17407, 17408, 248320}`, so the new 27B shapes and both row-tail rows
++(`m = 17407`, `m = 7`) actually executed rather than being silently skipped.
++
++**Receipt 42 exists because 40 and 41 do not exercise `NUM_COLS = 1` of this shader.** Under default
++routing Q5_K `n = 1` goes to MMVQ, so those two arms only test the reconstruction at `n = 2..8`.
++`GGML_ARIFI_Q5K_MMVQ_N1=0` puts `n = 1` on the f32 shader, which is the only numerical check of the
++hoisted arm at `NUM_COLS = 1` — the width the `_id` registration at `:7246` hard-codes. The `_id`
++pipeline itself is still only proven to *create* (its device-init receipt prints), not to compute;
++§6 limit 4 stands.
++
++**No perf run, no `llama-*` run, no model was loaded.** The §7 pairing is still owed to HQ.
++
++### Commit
++
++`8728c86d6dd1c9809ae27663778d124a15b690e9` on `lane-234/r48-matvec-kernels-2026-09-14`, parent
++`9ff4644b1`. It carries `ggml-vulkan.cpp`, `mul_mat_vec_q5_k.comp`, `test-backend-ops.cpp` and the
++three markdown files. `r48-evidence/` is deliberately **not** in it.
++
++This section was written after that commit — a commit cannot contain its own SHA — so the report is
++dirty in the working tree against `8728c86`. HQ owns whether §10 lands as a follow-up commit.
++
++PHASE-R48-Q5K-RECONSTRUCTED
++
+diff --git a/r48-evidence/01-configure.rc b/r48-evidence/01-configure.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48-evidence/01-configure.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48-evidence/02-build.rc b/r48-evidence/02-build.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48-evidence/02-build.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48-evidence/10-mulmat-hoist-on.rc b/r48-evidence/10-mulmat-hoist-on.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48-evidence/10-mulmat-hoist-on.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48-evidence/11-mulmat-hoist-off.rc b/r48-evidence/11-mulmat-hoist-off.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48-evidence/11-mulmat-hoist-off.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48-evidence/20-red1-build.rc b/r48-evidence/20-red1-build.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48-evidence/20-red1-build.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48-evidence/21-red1-hoist-on.rc b/r48-evidence/21-red1-hoist-on.rc
+new file mode 100644
+index 000000000..321433716
+--- /dev/null
++++ b/r48-evidence/21-red1-hoist-on.rc
+@@ -0,0 +1 @@
++rc=1
+diff --git a/r48-evidence/22-red1-hoist-off.rc b/r48-evidence/22-red1-hoist-off.rc
+new file mode 100644
+index 000000000..321433716
+--- /dev/null
++++ b/r48-evidence/22-red1-hoist-off.rc
+@@ -0,0 +1 @@
++rc=1
+diff --git a/r48-evidence/23-red2-build.rc b/r48-evidence/23-red2-build.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48-evidence/23-red2-build.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48-evidence/24-red2.rc b/r48-evidence/24-red2.rc
+new file mode 100644
+index 000000000..321433716
+--- /dev/null
++++ b/r48-evidence/24-red2.rc
+@@ -0,0 +1 @@
++rc=1
+diff --git a/r48-evidence/25-restore-build.rc b/r48-evidence/25-restore-build.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48-evidence/25-restore-build.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48-evidence/26-planted-red-summary.txt b/r48-evidence/26-planted-red-summary.txt
+new file mode 100644
+index 000000000..fd46a0dd2
+--- /dev/null
++++ b/r48-evidence/26-planted-red-summary.txt
+@@ -0,0 +1,5 @@
++# R48 Q5_K planted-red receipts (HQ seat-58, 2026-09-14)
++plant 1 (f32 dequant shader, mul_mat_vec_q5_k.comp:82 qh<<4 -> <<3): hoist ON  1/8 tests passed, failing n = n=2 n=3 n=4 n=5 n=6 n=7 n=8 
++plant 1: hoist OFF 1/8 tests passed, failing n = n=2 n=3 n=4 n=5 n=6 n=7 n=8 
++plant 2 (MMVQ Q5_K arm, mul_mat_vecq_funcs.glsl:389): 7/8 tests passed, failing n = n=1
++reading: complementary as report section 7 predicts (n=1 on MMVQ, n=2..8 on the f32 shader; both hoist arms share decode_superblock). Files restored byte-identically (git status clean on the two shaders); restore build rc=rc=0
+diff --git a/r48-evidence/39-build.rc b/r48-evidence/39-build.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48-evidence/39-build.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48-evidence/40-mulmat-q5k-hoist-on.rc b/r48-evidence/40-mulmat-q5k-hoist-on.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48-evidence/40-mulmat-q5k-hoist-on.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48-evidence/41-mulmat-q5k-hoist-off.rc b/r48-evidence/41-mulmat-q5k-hoist-off.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48-evidence/41-mulmat-q5k-hoist-off.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48-evidence/42-mulmat-q5k-hoist-on-n1f32.rc b/r48-evidence/42-mulmat-q5k-hoist-on-n1f32.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48-evidence/42-mulmat-q5k-hoist-on-n1f32.rc
+@@ -0,0 +1 @@
++rc=0

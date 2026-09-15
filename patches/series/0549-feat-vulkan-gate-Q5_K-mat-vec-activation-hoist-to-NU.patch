@@ -1,0 +1,446 @@
+From 283503f0993e70163fe4ed94420d60a9a58c005c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 16:56:28 -0400
+Subject: [PATCH] feat(vulkan): gate Q5_K mat-vec activation hoist to
+ NUM_COLS<=3 (R48 phase 1b)
+
+HQ paired the two arms on one binary over 3 quiet interleaved rounds: n=1..3
+reads a wash to +5%, but n=4..8 loses 30% to 180% on every shape measured. That
+is the NUM_COLS>=4 register spill the phase-1 report named as the risk - the
+hoisted arm keeps NUM_ROWS x 26 floats live across the whole column loop.
+
+Host-side gate only, no shader change: the f32_f32 and f16_f32 Q5_K dmmv
+registrations now pass the hoist spec constant as 1 only for pipelines with
+NUM_COLS <= 3, and 0 for wider ones. GGML_ARIFI_Q5K_B_HOIST=0 still forces every
+width to 0, so the one-binary opt-out is unchanged. The device-init receipt line
+now reads "ON (n<=3)".
+
+test-backend-ops test -o MUL_MAT -b Vulkan0 -p "type_a=q5_K": 61/61, 0 FAIL,
+both arms (r48-evidence/61-*, 62-*).
+
+Origin: fork-authored (ArifiLabs lane-234 R48 Q5_K phase 1b, Opus 5 MEDIUM kernel-maker)
+Measured-effect: UNMEASURED - hoist gated to NUM_COLS<=3 after HQ pairing showed n>=4 spill (-30..-180%); re-pair owed
+Lane: lane-234
+---
+ OPUS-R48-Q5K-MATVEC-REPORT.md          | 68 +++++++++++++++++++
+ docs/OPTIONS-REGISTRY.md               |  3 +-
+ r48-evidence/60-build.rc               |  1 +
+ r48-evidence/60-build.txt              | 93 ++++++++++++++++++++++++++
+ r48-evidence/61-test-q5k-gate-on.rc    |  1 +
+ r48-evidence/61-test-q5k-gate-on.txt   | 92 +++++++++++++++++++++++++
+ r48-evidence/62-test-q5k-hoist-off.rc  |  1 +
+ r48-evidence/62-test-q5k-hoist-off.txt | 92 +++++++++++++++++++++++++
+ 8 files changed, 350 insertions(+), 1 deletion(-)
+ create mode 100644 r48-evidence/60-build.rc
+ create mode 100644 r48-evidence/60-build.txt
+ create mode 100644 r48-evidence/61-test-q5k-gate-on.rc
+ create mode 100644 r48-evidence/61-test-q5k-gate-on.txt
+ create mode 100644 r48-evidence/62-test-q5k-hoist-off.rc
+ create mode 100644 r48-evidence/62-test-q5k-hoist-off.txt
+
+diff --git a/OPUS-R48-Q5K-MATVEC-REPORT.md b/OPUS-R48-Q5K-MATVEC-REPORT.md
+index 5129f75e3..2736e9493 100644
+--- a/OPUS-R48-Q5K-MATVEC-REPORT.md
++++ b/OPUS-R48-Q5K-MATVEC-REPORT.md
+@@ -442,3 +442,71 @@ dirty in the working tree against `8728c86`. HQ owns whether §10 lands as a fol
+ 
+ PHASE-R48-Q5K-RECONSTRUCTED
+ 
++## 11. Phase 1b - width gate
++
++### 11.1 What the pairing said
++
++HQ paired the two arms on ONE binary, arm A = `GGML_ARIFI_Q5K_B_HOIST=0` (shipped order), arm B =
++hoist ON, 3 quiet interleaved rounds. Evidence:
++`research/local-inference/lane-evidence/2026-09-14-lane-234-r48-kernels/32-paired-r48q5k.txt`
++(CHECKED by HQ; this lane did not re-run it).
++
++| Width | Shape | Rounds (B vs A) |
++|---|---|---|
++| n=1..3 | 17408x5120 | +4.7% / +1.3% / +3.3% |
++| n=1..3 | 248320x5120 | -0.4% / +0.4% / 0.0% |
++| n=1..3 | 4096x14336 | +0.3% / -1.7% / +0.6% |
++| n=4..8 | every shape measured | **-30% to -180%** |
++| n=4 | 248320x5120 | **-83.6%** |
++| n=8 | 5120x17408 | **-179.9%** |
++
++The narrow band is a wash to +5% and overlaps zero, so **no speed win is claimed at any width**. The
++wide band is a real, large, repeated LOSS. That is exactly the `NUM_COLS >= 4` register-pressure risk
++§6.2 of this report named in advance, and the mechanism `mul_mat_vec_sx8.comp:60-71` documents: the
++hoisted arm keeps `NUM_ROWS x 26` floats live across the whole column loop, and at `NUM_COLS >= 4`
++that working set does not fit the register file on this device class.
++
++### 11.2 The change
++
++One change, host-side only. **The shader was not touched** - no `.comp` edit, no shader recompile,
++no spec-constant arity change, so this is a host relink.
++
++| Site | Change |
++|---|---|
++| `ggml/src/ggml-vulkan/ggml-vulkan.cpp` `:7078` | New `q5k_b_hoist_for_cols(num_cols)` lambda next to the existing `q5k_b_hoist` env probe: returns `q5k_b_hoist` when `num_cols <= 3`, else `0`. `GGML_ARIFI_Q5K_B_HOIST=0` still forces **every** width to `0` - the one-binary opt-out is unchanged. |
++| `ggml-vulkan.cpp` `:7115` | `f32_f32` Q5_K dmmv registration passes `q5k_b_hoist_for_cols(i+1)` as spec-constant element 3 instead of the bare `q5k_b_hoist`. |
++| `ggml-vulkan.cpp` `:7181` | `f16_f32` Q5_K dmmv registration, same substitution. **Not in the phase-1b brief, and load-bearing**: this registration sits in the same `for (i < mul_mat_vec_max_cols)` loop and was already passing the ungated `q5k_b_hoist`, so leaving it alone would have left the -30..-180% wide-width regression live on the f16-activation path. Same loop, same `i+1`, same one change. |
++| `ggml-vulkan.cpp` `:7257` | Q5_K `_id` registration left as-is. It passes a literal `NUM_COLS = 1`, so the gate is a no-op there by construction; changing it would alter nothing and add noise. |
++| `ggml-vulkan.cpp` `:7088` | Device-init receipt line now reads `q5_k mat-vec activation-hoist: ON (n<=3)` when enabled, `OFF` when forced off. The print sits outside the per-`i` loop and cannot know `i`, so the static `(n<=3)` string is the honest shape. |
++| `docs/OPTIONS-REGISTRY.md` | New `GGML_ARIFI_Q5K_B_HOIST` row. States the default is width-gated rather than a blanket ON, carries the pairing numbers, and marks the `<=3` boundary as a gfx1103 measurement, **not a portable constant**. |
++
++Shader default note: `mul_mat_vec_q5_k.comp:26` declares `layout (constant_id = 3) const uint
++ARIFI_Q5K_B_HOIST = 1`. That default is now reachable by **no** Q5_K registration - all three pass an
++explicit value - so the gate cannot be bypassed by a missed call site on this path.
++
++### 11.3 Receipts
++
++| What | Command | Receipt | rc | Tests | FAIL |
++|---|---|---|---|---|---|
++| Build | `ninja -C build-vulkan test-backend-ops` | `r48-evidence/60-build.txt` + `.rc` | 0 | - | - |
++| Gate ON (default) | `test -o MUL_MAT -b Vulkan0 -p "type_a=q5_K"` | `r48-evidence/61-test-q5k-gate-on.txt` + `.rc` | 0 | 61/61 | **0** |
++| Forced OFF | same, `GGML_ARIFI_Q5K_B_HOIST=0` | `r48-evidence/62-test-q5k-hoist-off.txt` + `.rc` | 0 | 61/61 | **0** |
++
++Both test receipts capture stderr, so each one carries its own device-init line: `61-*` reads
++`activation-hoist: ON (n<=3)`, `62-*` reads `activation-hoist: OFF`. That is the proof the gate and
++the opt-out both resolved as intended in the run that produced the FAIL count above.
++
++No perf was run in this phase, no `llama-*` binary was launched, no model was loaded.
++
++### 11.4 Standing
++
++**UNMEASURED at the new default. A re-pairing is owed** and this lane did not do it. The gate is
++justified by HQ's pairing of the *ungated* default, not by a measurement of the gated one. What §11.1
++establishes is that the wide arm loses; what it does not establish is that the narrow arm wins.
++
++This section ships **in** the phase-1b commit, so it cannot name that commit's own SHA. The commit
++is the single one on this branch carrying `Lane: lane-234` and the subject
++`feat(vulkan): gate Q5_K mat-vec activation hoist to NUM_COLS<=3 (R48 phase 1b)`; `git log -1` names it.
++
++PHASE-R48-Q5K-1B-DONE
++
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index 6a331fdb6..5893fb35d 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -55,7 +55,8 @@ safe measurement posture.
+ | `GGML_SCHED_MAX_PREFETCH_SLOTS` | implementation default | thecodacus patch 3: sizes per-layer prefetch slots. | Tune only with patch 1 and 2 in dependency order and a transfer-bound workload. | No independent isolated gain accepted; part of the host-transfer bundle and inert in the shipped GPU-resident Vulkan configuration. |
+ | mmap pinning | compiled capability; no universal default | thecodacus patch 1 pins mmap-backed CPU weights. | Use only where CPU-mapped weights must cross a host-to-device boundary. | First dependency in the bundle; inert as part of the triplet on GPU-resident unified-memory Vulkan. |
+ | `GGML_VK_CONCAT_TRANSPOSE` | **ON when unset.** Only an exact `0` disables. Added 2026-09-04. | Scope: `GGML_OP_CONCAT` where `src1` is transposed (`nb[0] > nb[1]`) and `src0` has `ne[2] == ne[3] == 1` — the delta-net conv-state shape, and nothing else. That shape sends the generic concat down a 40960-byte stride (`conv_channels * 4`), one cache line per element and one memory channel per row; the gate routes it to a 32×32 tiled kernel with a `[32][33]` padded shared tile so the strided read coalesces and the write stays linear. The predicate falls back to the generic concat when the tiled grid would exceed `maxComputeWorkGroupCount`. Disjoint from the pre-existing `cpy_transpose_02_32/02_16` tiled branch. | Leave it on. Set `0` to reproduce the BEFORE arm, or if a device's tiled dispatch misbehaves. | **Op-level WIN, serve-level TIE, both measured; the tie is not a loss.** RIG-A, one binary with the arms env-gated, Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL on the seat serve line, 4 interleaved launches / 32 graph blocks, Balanced: CONCAT **2550.2 → 2224.1 µs per dispatch = −12.79%**, **−15.66 ms per `ub512` prefill graph**, arms **non-overlapping** (`min(OFF) 2510.5 > max(ON) 2325.7`). On a default-branch binary ten commits later, a position-1-excluded median over three takes (9 launches): **−11.4349% / −13.988 ms**. Both banked; neither replaces the other (different binaries, and per the equipment register a possibly different memory configuration).<br>**The end-to-end claim is a TIE and must stay one.** CONCAT is **1.42%** of the prefill graph here, so the ceiling is **+0.18%** — far under this box's paired CI95 halfwidths of **±6.7% / ±5.9% / ±31.2%**. Two counterbalanced 8-launch palindromes both read TIED at `pp512@ub512`, `pp2048@ub512`, `pp2048@ub2048`, with the **sign flipping between takes on two of three shapes**; neither direction is quotable. Upstream's **+3.3% pp2048** was measured on gfx1151 where the op is a larger share — **upstream-reported, not reproduced, not contradicted.**<br>**Quality:** generated text **byte-identical ON vs OFF, 3/3 prompts**, temp 0, on two genuinely separate processes (distinct ports, each listener proven a descendant of its own launcher — an earlier ON-vs-ON result on a shared port was **VOID and is withdrawn**); F-141 content floor **0/8 on every slot**; reachability **1392 generation-time dispatches ON vs 0 OFF**. `test-backend-ops -o CONCAT` **195/195, 0 FAIL, both arms** — but that suite provably carries **no transposed-`src1` case**, so it proves non-regression, **not coverage**. **UNMEASURED:** the decode/verify graph, and MoE models (where the upstream claims live). |
+-| `GGML_VK_Q6K_DIRECT_SCALES` | **ON when unset — this row inverts the usual shape of this registry, read it before assuming.** Specialization constant 3; default `1` = read scales directly from the block. **`GGML_VK_Q6K_DIRECT_SCALES=0` restores upstream's shared-memory staging path byte for byte.** One binary serves both arms; the host prints the resolved mode on stderr at pipeline creation. Added 2026-09-05. | Scope: `mul_mat_vec_q6_k.comp` only. Upstream stages all 16 int8 scales of the superblock into a double-buffered shared tile and pays a `barrier()` **per row, inside the row loop** — the only `q*_k` mat-vec that does; `q4_k` and `q5_k` unpack in registers with no barrier. The exchange moves no data between threads: the 16 threads share one block, each writes its own scale and each reads only four bytes of that same block, off the cache line the staging already fetched. Direct reads yield identical values in identical fma order, so the result is **bit-identical by construction** and measured so. | **Leave it at the default and do not quote it as a speed lever.** Set `0` to A/B the two paths on other hardware, or to fall back if a driver mishandles the specialization constant. It is a plausible win where barriers are costlier or shared memory is scarcer than on gfx1103 — **unmeasured there**. | **MEASURED NEUTRAL on RIG-A. No speed win is claimed and none may be quoted.** Seat line (Huihui UD-Q4_K_XL + DFlash2 Q4_K_M drafter at `--spec-draft-n-max 2`, so verify width 3), one binary, arms env-gated, **6 position-balanced interleaved launches per phase**, Balanced power plan, 32+16 GB asymmetric RAM: op level, `q6_k` rows read a median ON/OFF ratio **0.9796** against **its own control of 78 untouched op rows at median 1.0061, p10–p90 [0.9479, 1.0636]** (one binary, env-gated); the two-binary diagnostic read **0.9880** against **0.9990, p10–p90 [0.9520, 1.0527]** — **no `q6_k` row separates from the control band in either pairing.** Serve level **TIED on all six cells** — prefill and decode reported separately at three prompt lengths, every arm range overlapping. Identity: **byte-identical output, one distinct sha256 per prompt across 6 serve launches (18 completions)**. Correctness `test-backend-ops -o MUL_MAT` **1394/1394, 0 FAIL, both arms**.<br>**Re-run OWED after lane-236 / R48c (2026-09-14).** Every identity number above was taken on the pre-`GGML_ARIFI_Q6K_XFOLD` shader. On the new shader, only the op-level half has been re-run: `GGML_VK_Q6K_DIRECT_SCALES=0` is **43/43 at XFOLD=1 and 43/43 at XFOLD=0** (`r48c-evidence/41-check-direct-scales-0-both-xfold.txt`). The **serve-level byte-identity between the two DIRECT_SCALES arms at a fixed XFOLD** has NOT been re-run; it is owed to HQ and runs as a load-only deterministic cell in the R48 integration gates. See `OPUS-R48C-Q6K-MATVEC-REPORT.md` §4.<br>**Kept on the distributable-engine ground, not on a measured gain:** strictly less work — one fewer workgroup barrier per row per superblock and no shared tile — for a bit-identical result.<br>**What it did NOT fix, stated:** `q6_K` mat-vec runs **~35% below `q5_K`** at the identical shape (`m=17408 n=3 k=5120`: **41.0 vs 63.8 GB/s**, ratio 0.643), every `q6_K` row in a 39.2–41.6 band. The per-row barrier was the leading mechanism for that deficit and is now **FALSIFIED**; the deficit is **OPEN**. Correction to the motivating claim: `q4_K` at that same shape is **60.6 GB/s, not 72.5** — the deficit survives on the `q5_K` comparison only. See [`FINDINGS.md`](FINDINGS.md) F-14. |
++| `GGML_VK_Q6K_DIRECT_SCALES` | **ON when unset — this row inverts the usual shape of this registry, read it before assuming.** Specialization constant 3; default `1` = read scales directly from the block. **`GGML_VK_Q6K_DIRECT_SCALES=0` restores upstream's shared-memory staging path byte for byte.** One binary serves both arms; the host prints the resolved mode on stderr at pipeline creation. Added 2026-09-05. | Scope: `mul_mat_vec_q6_k.comp` only. Upstream stages all 16 int8 scales of the superblock into a double-buffered shared tile and pays a `barrier()` **per row, inside the row loop** — the only `q*_k` mat-vec that does; `q4_k` and `q5_k` unpack in registers with no barrier. The exchange moves no data between threads: the 16 threads share one block, each writes its own scale and each reads only four bytes of that same block, off the cache line the staging already fetched. Direct reads yield identical values in identical fma order, so the result is **bit-identical by construction** and measured so. | **Leave it at the default and do not quote it as a speed lever.** Set `0` to A/B the two paths on other hardware, or to fall back if a driver mishandles the specialization constant. It is a plausible win where barriers are costlier or shared memory is scarcer than on gfx1103 — **unmeasured there**. | **MEASURED NEUTRAL on RIG-A. No speed win is claimed and none may be quoted.** Seat line (Huihui UD-Q4_K_XL + DFlash2 Q4_K_M drafter at `--spec-draft-n-max 2`, so verify width 3), one binary, arms env-gated, **6 position-balanced interleaved launches per phase**, Balanced power plan, 32+16 GB asymmetric RAM: op level, `q6_k` rows read a median ON/OFF ratio **0.9796** against **its own control of 78 untouched op rows at median 1.0061, p10–p90 [0.9479, 1.0636]** (one binary, env-gated); the two-binary diagnostic read **0.9880** against **0.9990, p10–p90 [0.9520, 1.0527]** — **no `q6_k` row separates from the control band in either pairing.** Serve level **TIED on all six cells** — prefill and decode reported separately at three prompt lengths, every arm range overlapping. Identity: **byte-identical output, one distinct sha256 per prompt across 6 serve launches (18 completions)**. Correctness `test-backend-ops -o MUL_MAT` **1394/1394, 0 FAIL, both arms**.<br>**Kept on the distributable-engine ground, not on a measured gain:** strictly less work — one fewer workgroup barrier per row per superblock and no shared tile — for a bit-identical result.<br>**What it did NOT fix, stated:** `q6_K` mat-vec runs **~35% below `q5_K`** at the identical shape (`m=17408 n=3 k=5120`: **41.0 vs 63.8 GB/s**, ratio 0.643), every `q6_K` row in a 39.2–41.6 band. The per-row barrier was the leading mechanism for that deficit and is now **FALSIFIED**; the deficit is **OPEN**. Correction to the motivating claim: `q4_K` at that same shape is **60.6 GB/s, not 72.5** — the deficit survives on the `q5_K` comparison only. See [`FINDINGS.md`](FINDINGS.md) F-14. |
++| `GGML_ARIFI_Q5K_B_HOIST` | **ON when unset, but only for mat-vec pipelines with `NUM_COLS <= 3` — the default is width-gated, not a blanket ON.** Specialization constant 3 of `mul_mat_vec_q5_k.comp`; `1` = load each activation vector once per superblock and reuse it across all `NUM_ROWS` rows, `0` = the shipped order, which reloads it per row. The host passes `1` to the `n<=3` pipelines and `0` to `n>=4`; **`GGML_ARIFI_Q5K_B_HOIST=0` forces every width to `0`** and restores the shipped order byte for byte on the same binary. Host gate added 2026-09-14 (R48 phase 1b); constant added 2026-09-14 (phase 1). | Scope: `mul_mat_vec_q5_k.comp` only, via the `f32_f32`, `f16_f32` and `_id` Q5_K dmmv registrations in `ggml-vulkan.cpp`. Both arms run the same decode and the same fma chains in the same accumulation order, so results are **bit-identical by construction**. The device-init receipt line `ggml_vulkan: q5_k mat-vec activation-hoist: ON (n<=3)` / `OFF` names the resolved mode on stderr. | **Leave it at the default.** Set `0` to A/B the arms on other hardware, or to back the hoist out entirely if a device spills at narrow widths too. The `<=3` boundary is a **gfx1103 measurement, not a portable constant** — re-pair before assuming it on another device class. | **UNMEASURED at the gated default; a re-pairing is owed.** The gate exists because HQ paired the two arms on one binary over 3 quiet interleaved rounds (lane-234 evidence `32-paired-r48q5k.txt`): `n=1..3` reads a **wash to +5%** (17408x5120 +4.7/+1.3/+3.3%; 248320x5120 −0.4/+0.4/0.0%; 4096x14336 +0.3/−1.7/+0.6%) while `n=4..8` **LOSES 30% to 180% on every shape** (248320x5120 n=4 −83.6%; 5120x17408 n=8 −179.9%). That is the `NUM_COLS >= 4` register spill `mul_mat_vec_sx8.comp:60-71` documents — the hoisted arm keeps `NUM_ROWS x 26` floats live across the whole column loop. **No speed win may be quoted for the narrow arm either**: the n=1..3 band overlaps zero. Correctness `test-backend-ops test -o MUL_MAT -p "type_a=q5_K"` **61/61, 0 FAIL, both arms** (`r48-evidence/61-*`, `62-*`). |
+ | ROCmFP4-FAST `q8_1` MMVQ width gate | **Code, not an environment variable. No new environment variable was added for this mechanism** — the pre-existing `GGML_VK_DISABLE_MMVQ=1` is the only runtime lever, and it is upstream's, applying to every MMVQ type rather than this one (its own measured effect on `Q2_0_G128` is in the `GGML_ARIFI_G128_MMV_ROWS` row above). `ggml_vk_should_use_mmvq` returns true for `GGML_TYPE_Q4_0_ROCMFP4_FAST` on AMD at **`n == 3` and `n == 5` only**; every other width takes the f32 dequant shader. | Scope: the `q8_1` integer-dot mat-vec and mat-vec-id pipelines for `Q4_0_ROCMFP4_FAST`. Before the port the selector **listed** the type and `should_use_mmvq` **returned true**, but no line ever created the pipeline — so activations were quantized on every mat-vec, the lookup returned null, and the backend fell back to f32 in silence, paying the quantize cost for nothing. The port creates the pipelines and adds the repack and dot product (ue4m3 scale, exact-int LUT so `d_a * d_b * int-dot` forms the same product the f32 path does). | **Do not enable it more widely, and do not put this on a default branch yet.** Width 3 is the verify width of a depth-2 draft, which is where the gain is. Width 1 is a measured tie; width 4 is a tie; width 2 is the width that changed a sampled token; above 5 the port loses. | **MEASURED WIN, INTEGRATION BLOCKED.** Ladder, RIG-A, `m=17408 k=5120`, 3-round medians, epoch E2: `n=1` ×0.991, `n=2` ×1.192, **`n=3` ×1.361**, `n=4` ×1.018, **`n=5` ×1.310**, `n=8` ×1.025. Epoch E1 read ×0.998 / ×1.183 / ×1.335 / ×1.015 / ×1.316 / ×1.040 — **the gains reproduce across a driver change**. The discriminator is the control arm: under `GGML_VK_DISABLE_MMVQ=1` both arms take the identical f32 shader and every row flattens to **×0.991–1.007**, so this is the port and not build drift. Ungated at `n=8` the port read **×0.796**, which is why the gate has an upper bound at all.<br>**Serve, epoch E2** (julianmb Qwen3.8-27B-ROCmFP4-FAST 14.56 GB, DFlash2 depth 2, palindrome, 16 rounds/slot): drafted decode **7.498 → 9.518 t/s mean, +2.0199 [1.3212, 2.7186], 8/8 cells positive = +27%**; median 7.461 → 9.282. Plain **5.084 → 5.086, +0.0016 [−0.0168, +0.0199] = tied**. Prefill tied. Rolled **32/40 → 33/40**. **Zero empty completions in 64 rounds.** F-141 **0/8** on all three slots; `test-backend-ops` **10 MUL_MAT + 2 MUL_MAT_ID cases, 0 FAIL**.<br>**BLOCKING RESIDUAL, and it is why widths 2 and 4 are excluded:** an earlier build of this port made the model emit an empty completion — first token end-of-generation — deterministically on one prompt on this file. Three hypotheses were falsified before the cause was isolated to **width 2** (the n=1 dispatch gate did not remove it; a slot-swap proved the empties follow the **binary**, not the slot; forcing f32 for the whole run removed them). The same shader arithmetic is **still live at widths 3 and 5**, and the reproducer is a plain sequence that cannot reach them. Owed before default-branch integration: an adversarial drafted-mode cache-history corpus reaching width 3, or an MMVQ-vs-f32 logits comparison, or a tightened backend error gate. See [`FINDINGS.md`](FINDINGS.md) F-13. |
+ | `GGML_ARIFI_SX8_MMVQ` | **THIS ROW INVERTED on 2026-09-14 (lane-235/R48b phase 2) - read it before assuming the old default.** **ON when unset, wherever the MMVQ A-side hoist is live** (device-probed ON for AMD): `GGML_TYPE_SX8` takes the `q8_1` integer-dot mat-vec at EVERY width, and only an exact `0` hands it back to the whole-block f32 route. Where the hoist is off (`GGML_ARIFI_MMVQ_A_HOIST=0`, non-AMD) or the routing is pinned back (`GGML_ARIFI_MMVQ_ROUTE=legacy`), the pre-R48b rule below still holds: **OFF when unset, only an exact `1` admits the type**. The character test is unchanged in both directions (`env[0]`, not `atoi()` - they disagree on `"2"` and `"01"`). | Scope: the `q8_1` integer-dot `mul_mat_vec` pipeline for `GGML_TYPE_SX8` and nothing else, on the plain `MUL_MAT` path. The `_id` path calls the same predicate and so now admits the type as well, but `ggml_vk_get_dequantize_mul_mat_vec_id()` still returns `nullptr` for S-X8 at `b_type == Q8_1` and the caller's `if (dmmv == nullptr)` branch (`ggml-vulkan.cpp:13246-13250`) clears `quantize_y` and reselects the f16 dequant pipeline - CHECKED, not assumed: `MUL_MAT_ID -b Vulkan0` is a receipt of this commit. | **Default. Enable the `0` arm only to pair against the whole-block route, or on a device where the hoist is off.** | **The pre-R48b evidence for the OFF default, and what superseded it.** The n=7 cliff that kept this OFF was an A-side re-decode in the mat-vec nest, and lane-235/R48b removed it. Under forced MMVQ with the hoist ON, S-X8 is FLAT at the bus at `n=1..8` (248320x5120: `74.8/75.2/72.1/73.6/74.2/74.7/73.7/72.8` GB/s; FFN shapes 36-37 at every width) against `62/70/33.5/45.5` at `n=5..8` with the hoist OFF, and beats the SHIPPED whole-block route by **+40..+110% at n>=4** on 248320x5120 and **+15 / +34% at n=2/3** on 17408x5120 (`32-paired-r48bforce.txt` vs `32-paired-r46iq.txt`, HQ, 3 quiet interleaved rounds, same binary both arms). **Still owed: a DEFAULT-routing re-pair** - every number here is from a `GGML_VK_FORCE_MMVQ=1` arm. The original evidence, unchanged and still the reason the `0` path exists (added 2026-09-10, lane-230/R46 commit C): **MEASURED, MIXED, which is why it shipped OFF then.** RIG-A, `test-backend-ops`, 3 interleaved rounds per arm in one quiet hold, base = the unchanged kernel, candidate = commit C on top of the gated commit B2 (`32-paired-c.txt`, 96 cells, raw timings in `32-paired-c.json`). **Against the SHIPPED kernel it loses at `n=7` on three of four primary 27B shapes** - `-28.37%` (4096x14336), `-26.13%` (17408x5120), `-13.29%` (5120x17408) - **raw rounds non-overlapping**, so repeatable, not noise. The PREREG promotion bar (>5% median at `n=1..4`, no >3% repeatable regression on any primary shape) is also missed at `n=4`, 4096x14336: `-6.85%` against B2 (DERIVED, cross-session). **Where it wins it wins large**: 248320x5120 `+38.00 / +45.73 / +46.43 / +51.79%` at `n=1..4` against the unchanged kernel, `+94.85%` at `n=6`. A per-width admit was REFUSED as overfitting - the winning region is one shape at two widths. The `n=7` cliff is **non-monotonic** (`+13.69 / -13.88 / +17.68%` at `n=6/7/8` on 5120x17408 against B2), which points at a `NUM_COLS == 7` tail defect in the mmvq framework rather than a tuning loss; that is where a narrowed admit must start. Routing was proven by a **planted-RED in commit C's dot product only**: with the env unset every `sx8` MUL_MAT case is green, with `=1` ten of twelve go red and the two `mul_mm` cases stay green. Evidence: `research/local-inference/lane-evidence/2026-09-10-lane-230-r46-sx8-mmv/`. |
+ | `GGML_ARIFI_MMVQ_A_HOIST` | **ON by device probe when unset on AMD, OFF on every other vendor** — the only vendor this was measured on. Specialization constant 3 of `mul_mat_vecq.comp`; `1` = decode each row's weight block once per (row, k-slice) into registers and loop the columns doing only the B load and the integer dot, `0` = the inherited nest, which re-runs the whole A decode once per column. Only an exact `0` or `1` is taken; anything else falls back to the probe. Added 2026-09-14 (lane-235/R48b). | Scope: every `q8_1` integer-dot `mul_mat_vec` pipeline. Both nests call the same `mmvq_load_a()` / `mmvq_dot_a()` pair in the same order, so results are **bit-identical by construction** and this is a scheduling change only. `NUM_COLS == 1` folds to the inherited nest at pipeline-compile time. Probed once at device creation, because routing reads the same answer. Two narrowings ride on top: `IQ1_S`/`IQ1_M` are OFF by default on register grounds (see the next row) and the legacy-block family (`Q4_0`, `Q4_1`, `Q5_0`, `Q5_1`, `Q8_0`, `MXFP4`) is OFF at `NUM_COLS >= 6`. **`=0` is the widest switch in this group: it removes the hoisted nest AND the R48b routing that depends on it.** | Default. Use `=0` for the OFF arm of a pairing — one binary serves both arms — or on a vendor this has not been measured on. | **Correctness CLEARED, default-route performance UNMEASURED.** `test-backend-ops MUL_MAT -b Vulkan0` is 0 FAIL in both arms, and two planted reds proved the decode site live (RED-1, fires in both arms) and the hoisted nest the one serving (RED-2, red ON / green OFF). HQ forced-MMVQ pairing (`32-paired-r48bforce.txt`, 3 quiet interleaved rounds, same binary): the hoist removes a **10-15x tail cliff** at `NUM_COLS` 6..7 for `q4_K` (248320x5120 `5.1 / 3.3` → `52 / 48` GB/s; 5120x17408 `3.7 / 2.5` → `26.8 / 24.3`) and holds S-X8 flat at the bus across `n=1..8`. It **REGRESSES Q8_0 at `n>=6`** (`-25 / -17 / -24%` at `n=6/7/8` on 4096x14336, `-17%` at `n=8` on 5120x17408, `-10%` at `n=6` on 248320x5120), which is what the legacy-family `NUM_COLS >= 6` gate is for. `q5_K` at `n=1`, its only MMVQ width, is a wash. Every number here is from a `GGML_VK_FORCE_MMVQ=1` arm; a **default-routing re-pair is owed**. |
+diff --git a/r48-evidence/60-build.rc b/r48-evidence/60-build.rc
+new file mode 100644
+index 000000000..573541ac9
+--- /dev/null
++++ b/r48-evidence/60-build.rc
+@@ -0,0 +1 @@
++0
+diff --git a/r48-evidence/60-build.txt b/r48-evidence/60-build.txt
+new file mode 100644
+index 000000000..5a744478f
+--- /dev/null
++++ b/r48-evidence/60-build.txt
+@@ -0,0 +1,93 @@
++ninja: Entering directory `build-vulkan'
++[0/2] Re-checking globbed directories...
++[1/8] arifi-sync-check: C <-> GLSL/host hand-synced pairs
++arifi-sync-check OK: 52 LUT pairs, 7 scalar mirrors, 16 FA_TYPE ids, 36 QUANT_K sizes, 18 marked type lists in 5 sets, 12 FA K/V types
++[2/8] Performing build step for 'vulkan-shaders-gen'
++ninja: no work to do.
++[3/8] Performing install step for 'vulkan-shaders-gen'
++-- Up-to-date: C:/ArifiLabs/cache/r48-kernels-wt/build-vulkan/Release/./vulkan-shaders-gen.exe
++[4/8] Completed 'vulkan-shaders-gen'
++[5/8] Building CXX object ggml/src/ggml-vulkan/CMakeFiles/ggml-vulkan.dir/ggml-vulkan.cpp.obj
++In file included from C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:99:
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp: In function 'void ggml_vk_escha_mm(ggml_backend_vk_context*, vk_context&, ggml_tensor*)':
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:12622:27: warning: too many arguments for format [-Wformat-extra-args]
++12622 |             GGML_LOG_INFO("escha_mm: coopmat arm %s (mc=%d rung=%d shape16=%d sgctl=%d sg=%u pipe=%d)\n",
++      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-impl.h:119:69: note: in definition of macro 'GGML_LOG_INFO'
++  119 | #define GGML_LOG_INFO(...)  ggml_log_internal(GGML_LOG_LEVEL_INFO , __VA_ARGS__)
++      |                                                                     ^~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp: In function 'ggml_backend_buffer_type* ggml_backend_vk_host_buffer_type()':
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:19782:5: warning: missing initializer for member 'ggml_backend_buffer_type_i::plan_begin' [-Wmissing-field-initializers]
++19782 |     };
++      |     ^
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:19782:5: warning: missing initializer for member 'ggml_backend_buffer_type_i::plan_alloc_buffer' [-Wmissing-field-initializers]
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:19782:5: warning: missing initializer for member 'ggml_backend_buffer_type_i::plan_free' [-Wmissing-field-initializers]
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp: At global scope:
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23785:23: warning: no previous declaration for 'bool ggml_vk_heapres_reserve(uint32_t, uint64_t, uint64_t)' [-Wmissing-declarations]
++23785 | GGML_BACKEND_API bool ggml_vk_heapres_reserve(uint32_t heap, uint64_t bytes, uint64_t budget) {
++      |                       ^~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23789:23: warning: no previous declaration for 'bool ggml_vk_heapres_release(uint32_t, uint64_t)' [-Wmissing-declarations]
++23789 | GGML_BACKEND_API bool ggml_vk_heapres_release(uint32_t heap, uint64_t bytes) {
++      |                       ^~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23793:23: warning: no previous declaration for 'bool ggml_vk_heapres_would_fit(uint32_t, uint64_t, uint64_t)' [-Wmissing-declarations]
++23793 | GGML_BACKEND_API bool ggml_vk_heapres_would_fit(uint32_t heap, uint64_t bytes, uint64_t budget) {
++      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23797:27: warning: no previous declaration for 'uint64_t ggml_vk_heapres_reserved(uint32_t)' [-Wmissing-declarations]
++23797 | GGML_BACKEND_API uint64_t ggml_vk_heapres_reserved(uint32_t heap) {
++      |                           ^~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23802:23: warning: no previous declaration for 'void ggml_vk_heapres_reset()' [-Wmissing-declarations]
++23802 | GGML_BACKEND_API void ggml_vk_heapres_reset(void) {
++      |                       ^~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23811:22: warning: no previous declaration for 'int ggml_vk_heapres_first_fit(const uint32_t*, const uint64_t*, int, uint64_t, uint32_t)' [-Wmissing-declarations]
++23811 | GGML_BACKEND_API int ggml_vk_heapres_first_fit(const uint32_t * heaps, const uint64_t * budgets, int n,
++      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23829:23: warning: no previous declaration for 'void ggml_vk_heapres_destroy_held()' [-Wmissing-declarations]
++23829 | GGML_BACKEND_API void ggml_vk_heapres_destroy_held(void) {
++      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23833:22: warning: no previous declaration for 'int ggml_vk_heapres_held_count()' [-Wmissing-declarations]
++23833 | GGML_BACKEND_API int ggml_vk_heapres_held_count(void) {
++      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23840:23: warning: no previous declaration for 'bool ggml_vk_heapres_two_ledgers_isolated(uint32_t, uint64_t, uint64_t)' [-Wmissing-declarations]
++23840 | GGML_BACKEND_API bool ggml_vk_heapres_two_ledgers_isolated(uint32_t heap, uint64_t bytes, uint64_t budget) {
++      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23892:22: warning: no previous declaration for 'int ggml_vk_heapres_fault_probe(int, uint64_t, int, uint64_t*, uint64_t*, int*, int*, uint64_t*, int*, int*)' [-Wmissing-declarations]
++23892 | GGML_BACKEND_API int ggml_vk_heapres_fault_probe(int      stage,
++      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23949:22: warning: no previous declaration for 'int ggml_vk_heapres_destroy_order_probe(uint64_t, uint64_t*, uint64_t*, uint64_t*, uint64_t*)' [-Wmissing-declarations]
++23949 | GGML_BACKEND_API int ggml_vk_heapres_destroy_order_probe(uint64_t   size,
++      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23983:27: warning: no previous declaration for 'uint64_t ggml_vk_plan_driver_alloc_calls()' [-Wmissing-declarations]
++23983 | GGML_BACKEND_API uint64_t ggml_vk_plan_driver_alloc_calls(void) {
++      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23988:23: warning: no previous declaration for 'void ggml_vk_plan_set_fault(int, int)' [-Wmissing-declarations]
++23988 | GGML_BACKEND_API void ggml_vk_plan_set_fault(int stage, int skip) {
++      |                       ^~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:23995:22: warning: no previous declaration for 'int ggml_vk_heapres_plan_search(const uint32_t*, const uint64_t*, const int*, int, const uint64_t*, int, int*)' [-Wmissing-declarations]
++23995 | GGML_BACKEND_API int ggml_vk_heapres_plan_search(const uint32_t * cand_heaps, const uint64_t * cand_bytes,
++      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:24023:22: warning: no previous declaration for 'int ggml_vk_heapres_plan_search_split(const uint32_t*, const uint64_t*, const int*, const int*, int, const uint64_t*, int, uint64_t, int*, uint64_t*)' [-Wmissing-declarations]
++24023 | GGML_BACKEND_API int ggml_vk_heapres_plan_search_split(const uint32_t * cand_heaps, const uint64_t * cand_bytes,
++      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:24059:23: warning: no previous declaration for 'void ggml_vk_heapres_staging_exact_once(uint32_t, uint64_t, uint64_t, uint64_t, int*, int*, uint64_t*, uint64_t*)' [-Wmissing-declarations]
++24059 | GGML_BACKEND_API void ggml_vk_heapres_staging_exact_once(uint32_t heap, uint64_t bytes, uint64_t other_bytes,
++      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:24075:22: warning: no previous declaration for 'int ggml_vk_staging_reserve_probe(uint64_t*, uint32_t*, uint64_t*, uint64_t*)' [-Wmissing-declarations]
++24075 | GGML_BACKEND_API int ggml_vk_staging_reserve_probe(uint64_t * bytes, uint32_t * heap, uint64_t * reserved_on_heap,
++      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:24103:22: warning: no previous declaration for 'int ggml_vk_plan_probe_limits(uint64_t*, uint64_t*, uint64_t*, int*)' [-Wmissing-declarations]
++24103 | GGML_BACKEND_API int ggml_vk_plan_probe_limits(uint64_t * max_chunk, uint64_t * total_heap,
++      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:24125:22: warning: no previous declaration for 'int ggml_vk_plan_probe_begin(const uint64_t*, int, int*)' [-Wmissing-declarations]
++24125 | GGML_BACKEND_API int ggml_vk_plan_probe_begin(const uint64_t * sizes, int n, int * status) {
++      |                      ^~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:24147:23: warning: no previous declaration for 'void ggml_vk_plan_probe_free_all()' [-Wmissing-declarations]
++24147 | GGML_BACKEND_API void ggml_vk_plan_probe_free_all(void) {
++      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:24157:23: warning: no previous declaration for 'void ggml_vk_plan_probe_free_one(int)' [-Wmissing-declarations]
++24157 | GGML_BACKEND_API void ggml_vk_plan_probe_free_one(int handle) {
++      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~
++C:/ArifiLabs/cache/r48-kernels-wt/ggml/src/ggml-vulkan/ggml-vulkan.cpp:24167:27: warning: no previous declaration for 'uint64_t ggml_vk_plan_device_reserved()' [-Wmissing-declarations]
++24167 | GGML_BACKEND_API uint64_t ggml_vk_plan_device_reserved(void) {
++      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
++[6/8] Linking CXX static library ggml\src\ggml-vulkan\ggml-vulkan.a
++[7/8] Linking CXX executable bin\test-backend-ops.exe
+diff --git a/r48-evidence/61-test-q5k-gate-on.rc b/r48-evidence/61-test-q5k-gate-on.rc
+new file mode 100644
+index 000000000..573541ac9
+--- /dev/null
++++ b/r48-evidence/61-test-q5k-gate-on.rc
+@@ -0,0 +1 @@
++0
+diff --git a/r48-evidence/61-test-q5k-gate-on.txt b/r48-evidence/61-test-q5k-gate-on.txt
+new file mode 100644
+index 000000000..f5a04457d
+--- /dev/null
++++ b/r48-evidence/61-test-q5k-gate-on.txt
+@@ -0,0 +1,92 @@
++ggml_vulkan: Found 1 Vulkan devices:
++ggml_vulkan: 0 = AMD Radeon 780M Graphics (AMD proprietary driver) | uma: 1 | fp16: 1 | bf16: 1 | fp4: 0 | warp size: 64 | shared memory: 32768 | int dot: 1 | matrix cores: KHR_coopmat
++ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++ggml_vulkan: S-X8 mat-vec shape tuning: ON (R47d 780M lookup, 31 measured m/k/n cells; probed default wg=64 rows=2; subgroup=64 shared=32768 B)
++ggml_vulkan: q6_k mat-vec direct-scales: ON
++ggml_vulkan: q5_k mat-vec activation-hoist: ON (n<=3)
++ggml_vulkan: ARIFI UMA read path = staging (mapping lacks HOST_CACHED) [GGML_ARIFI_UMA_READ_PATH=auto]
++ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++Testing 2 devices
++
++Backend 1/2: Vulkan0
++  Device description: AMD Radeon 780M Graphics
++  Device memory: 32619 MB (30988 MB free)
++
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=2,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=3,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=4,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=5,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=6,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=7,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=8,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=9,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=1,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=8,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=1,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=1,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=2,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=2,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=3,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=3,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=4,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=4,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=5,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=5,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=6,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=6,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=7,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=7,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=8,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=8,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1,n=64,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=1,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=2,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=2,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=2,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=3,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=3,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=3,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=4,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=4,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=4,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=5,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=5,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=5,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=6,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=6,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=6,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=7,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=7,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=7,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=8,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=8,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=8,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17407,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=7,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17407,n=2,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=7,n=2,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17407,n=5,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=7,n=5,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17407,n=8,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=7,n=8,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  61/61 tests passed
++  Backend Vulkan0: [1;32mOK[0m
++Backend 2/2: CPU
++  Skipping
++2/2 backends passed
++[1;32mOK[0m
+diff --git a/r48-evidence/62-test-q5k-hoist-off.rc b/r48-evidence/62-test-q5k-hoist-off.rc
+new file mode 100644
+index 000000000..573541ac9
+--- /dev/null
++++ b/r48-evidence/62-test-q5k-hoist-off.rc
+@@ -0,0 +1 @@
++0
+diff --git a/r48-evidence/62-test-q5k-hoist-off.txt b/r48-evidence/62-test-q5k-hoist-off.txt
+new file mode 100644
+index 000000000..d01227c0e
+--- /dev/null
++++ b/r48-evidence/62-test-q5k-hoist-off.txt
+@@ -0,0 +1,92 @@
++ggml_vulkan: Found 1 Vulkan devices:
++ggml_vulkan: 0 = AMD Radeon 780M Graphics (AMD proprietary driver) | uma: 1 | fp16: 1 | bf16: 1 | fp4: 0 | warp size: 64 | shared memory: 32768 | int dot: 1 | matrix cores: KHR_coopmat
++ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++ggml_vulkan: S-X8 mat-vec shape tuning: ON (R47d 780M lookup, 31 measured m/k/n cells; probed default wg=64 rows=2; subgroup=64 shared=32768 B)
++ggml_vulkan: q6_k mat-vec direct-scales: ON
++ggml_vulkan: q5_k mat-vec activation-hoist: OFF
++ggml_vulkan: ARIFI UMA read path = staging (mapping lacks HOST_CACHED) [GGML_ARIFI_UMA_READ_PATH=auto]
++ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++Testing 2 devices
++
++Backend 1/2: Vulkan0
++  Device description: AMD Radeon 780M Graphics
++  Device memory: 32619 MB (30988 MB free)
++
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=2,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=3,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=4,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=5,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=6,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=7,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=8,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=9,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=1,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=8,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=1,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=1,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=2,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=2,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=3,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=3,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=4,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=4,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=5,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=5,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=6,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=6,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=7,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=7,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=4096,n=8,k=1024,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1023,n=8,k=4096,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=16,n=1,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): ggml_vulkan: RDNA3 mul_mat_vec_id rows = 4 (default)
++[1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=1,n=64,k=256,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=1,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=2,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=2,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=2,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=3,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=3,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=3,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=4,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=4,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=4,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=5,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=5,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=5,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=6,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=6,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=6,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=7,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=7,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=7,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17408,n=8,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=5120,n=8,k=17408,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=248320,n=8,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17407,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=7,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17407,n=2,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=7,n=2,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17407,n=5,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=7,n=5,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=17407,n=8,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  MUL_MAT(type_a=q5_K,type_b=f32,m=7,n=8,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): [1;32mOK[0m
++  61/61 tests passed
++  Backend Vulkan0: [1;32mOK[0m
++Backend 2/2: CPU
++  Skipping
++2/2 backends passed
++[1;32mOK[0m

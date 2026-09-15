@@ -1,0 +1,319 @@
+From 6341bad9881f8ef550154c524b106d25c6bd1a2c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 14:37:10 -0400
+Subject: [PATCH] docs(r48c): independent Fable LOW check PASS-GATED + its
+ three receipts (upstream-path 3/60, S-X8 0/60, direct-scales arms 43/43)
+
+Origin: ArifiLabs (native) - HQ seat-58 evidence banking for lane-236
+Measured-effect: UNMEASURED - check receipts
+Lane: lane-236
+---
+ CHECK-R48C-FABLE-LOW.md                       | 119 ++++++++++++++++++
+ CHECK-R48C-PROMPT.md                          |  15 +++
+ r48c-evidence/40-check-sx8-zsplit-60.txt      |  61 +++++++++
+ .../41-check-direct-scales-0-both-xfold.txt   |   8 ++
+ ...42-check-upstream-shader-q6k-248320-60.txt |  64 ++++++++++
+ 5 files changed, 267 insertions(+)
+ create mode 100644 CHECK-R48C-FABLE-LOW.md
+ create mode 100644 CHECK-R48C-PROMPT.md
+ create mode 100644 r48c-evidence/40-check-sx8-zsplit-60.txt
+ create mode 100644 r48c-evidence/41-check-direct-scales-0-both-xfold.txt
+ create mode 100644 r48c-evidence/42-check-upstream-shader-q6k-248320-60.txt
+
+diff --git a/CHECK-R48C-FABLE-LOW.md b/CHECK-R48C-FABLE-LOW.md
+new file mode 100644
+index 000000000..040f4b7e1
+--- /dev/null
++++ b/CHECK-R48C-FABLE-LOW.md
+@@ -0,0 +1,119 @@
++# CHECK-R48C — Q6_K mat-vec x-fold + activation hoist (Fable 5.1 LOW, independent checker)
++
++Worktree `C:/ArifiLabs/cache/r48c-q6k-wt`, branch `lane-236/r48c-q6k-matvec-2026-09-14`, HEAD `0e1660a39`
++(= maker draft `647eb6ac9` + report/localisation commit), base `9ff4644b1`. Tree clean apart from the
++checker prompt and three new checker receipts (`r48c-evidence/40-*`, `41-*`, `42-*`, untracked).
++
++## LENS
++
++Is the Q6_K change correct, honest, and worth keeping at default ON. Six sub-questions from the brief:
++(1) correctness and the localisation of the intermittent all-zero at 248320x5120 n=1; (2) planted red;
++(3) pairing rows, controls, protected-win survival; (4) MMVQ route diagnostic; (5) the -32 fold's
++float-reordering tolerance; (6) report honesty, registry, trailers.
++
++## FINDINGS
++
++1. **The "pre-existing" claim is now SETTLED, not just argued — by a receipt the maker did not take.**
++   `r48c-evidence/42-check-upstream-shader-q6k-248320-60.txt`: with BOTH ArifiLabs constants off
++   (`GGML_VK_Q6K_DIRECT_SCALES=0 GGML_ARIFI_Q6K_XFOLD=0`, i.e. upstream's LDS-staging shader path byte
++   for byte), the 248320x5120 n=1 filter fails **3/60** (ERR 1.000000000, 0.997189778, 1.000000000).
++   That is the same ~5% rate and the same all-zero signature as the maker's 7/140. The defect therefore
++   predates lane-236 AND lane-209 in the shader. Report §10.2 (the "shader cannot cause it" table) is
++   correct as code reading, and this receipt is the empirical proof it lacked. Fix: cite this receipt in
++   §10.1 / §10.7 and in the HQ re-open against the Vulkan sync lane.
++   Counter-receipt in the same session, `40-check-sx8-zsplit-60.txt`: SX8 at the identical shape and
++   identical z-split dispatch (the only other 248320 eval row) is **0/60**. At 5% that is p≈0.046, so
++   the trigger is not the z-split geometry alone — something on the Q6_K dmmv path (host side: pipeline
++   selection, the ~1 GiB src0 upload/placement, or the `ggml_vk_synchronize` bookkeeping the maker names)
++   is involved. This narrows the maker's lead but does not contradict it; it must be stated so HQ does
++   not re-open against "the z-split" generically.
++
++2. **§10.3 over-claims "ERR exactly 1.0 on every failure" and "rules out arithmetic for good".**
++   The lane's own receipts hold two non-1.0 failures: HQ's 0.996978715 (`11-mulmat-xfold-off.txt:2573`),
++   the first attempt's 0.055269269 (`30-failrate-both-arms.txt`), and this check's 0.997189778. An NMSE of
++   0.997 or 0.055 is a partially-written or partially-stale destination, not all-zero. That is still a
++   synchronisation/readback signature, not arithmetic, and it still appears on the pure-upstream path
++   (finding 1), so the verdict stands. Fix: reword §10.3 to "all-zero or partially-stale destination
++   (ERR 1.0, 0.997, 0.055 observed)", drop "every one of the six failures".
++
++3. **The f16-src1 correctness rows are declined, never executed — the `f16_f32` Q6_K pipeline is
++   uncovered while §4 and the test comment claim coverage.** `10-mulmat-xfold-on.txt` and
++   `12-mulmat-q6k-mmvq-route.txt`: all 8 `type_a=q6_K,type_b=f16` rows read `not supported [CPU]`
++   (0 OK). The registration at `ggml-vulkan.cpp:7166` takes the new constant and has no test. Fix: either
++   state the gap in §8 and in the test comment (`tests/test-backend-ops.cpp` ~:10745, "F16 src1 is
++   included because…"), or drop the rows. Risk is low: at every `NUM_COLS` the f16 pipeline shares the
++   GLSL body and `B_TYPE` is converted through `FLOAT_TYPE` before arithmetic, but "covered" is false.
++
++4. **The protected win's own quality gate was not re-run on the new shader before this check.**
++   `protected-wins.json` entry `vulkan-q6k-matvec-direct-scales` gates on "0 FAIL on BOTH arms; plus
++   byte-identical llama-server output between the arms". HQ's receipts 10/11 both ran DIRECT_SCALES=1
++   only. This check ran the missing half: `41-check-direct-scales-0-both-xfold.txt` —
++   `GGML_VK_Q6K_DIRECT_SCALES=0` at XFOLD=1 **43/43** and XFOLD=0 **43/43** (stderr receipts
++   "direct-scales: OFF" / "activation-hoist+xfold: ON|OFF" both present). The `i < num_blocks_per_row`
++   guard that exists only for that arm is therefore exercised and green. NOT run here (needs a model):
++   the serve-level bit-identity between the two DIRECT_SCALES arms at fixed XFOLD=1, which the report §4
++   argues by construction (the fold sits strictly after `sc0..sc6`/`d` are in registers, identical in
++   both arms). Sound argument; the entry's gate text still requires the measurement. Named as the gate.
++
++5. **Report acceptance rule 1 (§6, "ship if ≥ +5% at n=1 on both FFN shapes") is NOT met and the
++   report must say so rather than let "keep" rest on it.** `32-paired-r48cq6k.txt`: n=1 ffn-down
++   +5.61%, ffn-gate-up +3.69%, embd-out −0.21%, legacy4096 +1.20%. The keep verdict is legitimately
++   carried by rule 2 (veto: no q6_K row below −3%, worst −2.97% legacy4096 n=4 and −2.91% n=8) plus the
++   n=6 result (+38.0% embd-out, +27.5% ffn-down, +26.3% ffn-gate-up, 3/3 rounds — an arm-A dip at
++   `NUM_COLS==6`, A = 31.1 GB/s at n=6 against 67.2 at n=5 and 53.5 at n=7, which arm B removes).
++   Fix: registry row and §6 must record "rule 1 not met on gate-up; kept on no-harm + n=6".
++
++6. **`docs/OPTIONS-REGISTRY.md:42-43` still read "UNMEASURED at registration. No speed figure exists and
++   none may be quoted"** after the pairing exists (`32-paired-r48cq6k.txt`, `32-paired-r48cq6kroute.txt`).
++   §8.7 of the report itself says the rows must be re-written before the lane is called done. Fix: replace
++   with the measured row: n=1..5,7,8 wash (−3.0..+5.6%), n=6 +26..+38%, no row below −3%, 3 quiet
++   interleaved rounds, same binary env-flipped; and for `GGML_ARIFI_Q6K_MMVQ`: n≤4 wash/+5%, n≥5
++   −46..−143% (collapse), correctness 43/43 — DIAGNOSTIC, default stays f32.
++
++7. **Fold tolerance argument is sound; sweep coverage of it is adequate with one caveat.**
++   The fold is live only at `NUM_COLS<=3` and `XFOLD=1`. Reordering: `Σ b·(u−32)` becomes `Σ b·u − 32·Σb`
++   in fp32 with |u|≤63, 4-term sums, activation |b|≤1 in the test; worst-case cancellation error
++   ~1e-6 relative on a per-sub-block partial, then scaled by `sc`·`d` exactly as before. Against the
++   MUL_MAT NMSE gate 5e-4 that is 2-3 orders of margin. Covered by receipts at k=5120 and k=17408, n=1..3,
++   plus tails m=17407/7 (10-mulmat-xfold-on: 1688/1688). Caveat: `FLOAT_TYPE=float` for all dmmv
++   pipelines is CHECKED by the maker at `vulkan-shaders-gen.cpp:846`; I did not re-derive it. No fix needed.
++
++## CHECKED
++
++| item | result | receipt |
++|---|---|---|
++| xfold-on full sweep | 1688/1688 | `10-mulmat-xfold-on.txt`, rc 0 |
++| xfold-off full sweep | 1687/1688, only 248320x5120 n=1, ERR 0.996978715 | `11-*.txt:2573`, rc 1 |
++| MMVQ route correctness | 43/43 (8 f16 rows declined) | `12-*.txt`, rc 0 |
++| planted red | applies (`20-red-build` rc 0), 0/8 in BOTH arms with ERR 0.19-0.21, restored build rc 0, `git diff HEAD` clean | `20..23-*` |
++| maker 20-run arms | XFOLD=0 1/20, XFOLD=1 1/20, both ERR 1.0 | `32-repro-20.txt` |
++| pure-upstream shader path 60-run | **3/60** (this check) | `42-check-upstream-shader-q6k-248320-60.txt` |
++| SX8 same shape/z-split 60-run | **0/60** (this check) | `40-check-sx8-zsplit-60.txt` |
++| DIRECT_SCALES=0 arm, both XFOLD | 43/43 and 43/43 (this check) | `41-check-direct-scales-0-both-xfold.txt` |
++| shader diff | arm 0 is shipped order byte for byte; hoist+fold only under const 4; guard `i < num_blocks_per_row` barrier-free; `sum[k]`↔`xs*` pairing matches shipped `by*` order | `git diff 9ff4644b1 HEAD -- mul_mat_vec_q6_k.comp` |
++| host diff | const 4 passed at both Q6_K dmmv registrations (`:7100`, `:7166`); no `_id` Q6_K dmmv registration exists; MMVQ hatch default `-1` = shipped route | `git diff … ggml-vulkan.cpp` |
++| pairing controls | q4_K / q5_K untouched shaders; their 3 rows below −3% have overlapping triples (q4_K n=2 embd-out B=[10730,9591,10202]; q5_K n=1 gate-up A=[1835,1673,1716] B=[1668,1812,1825]) = noise, correctly reported "NOT filtered" | `32-paired-r48cq6k.txt:101-104` |
++| q6_K rows below −3% | none (16 in route arm, all n≥5 or the n=4 embd-out −12%, as expected for a diagnostic) | `32-paired-r48cq6k*.txt` |
++| route verdict | n≤4 wash/+5% at ffn-down/legacy, n≥5 collapse; default stays f32; R48b hoist may change this later | `32-paired-r48cq6kroute.txt` |
++| registry | `GGML_ARIFI_Q6K_XFOLD`, `GGML_ARIFI_Q6K_MMVQ` rows present (:42-43); `GGML_VK_Q6K_DIRECT_SCALES` :58 | `docs/OPTIONS-REGISTRY.md` |
++| trailers | Origin / Measured-effect / Lane on both `647eb6ac9` and `0e1660a39` | `git log` |
++| stderr receipts | both "direct-scales" and "activation-hoist+xfold" lines present once per run | all receipts |
++
++## NOT CHECKABLE
++
++- Serve-level bit-identity between DIRECT_SCALES arms at XFOLD=1 (needs a model; forbidden here).
++- Report rule 4 (XFOLD=1 vs =0 byte-identical at n≥4, differ at n≤3) — needs a dump harness, not test-backend-ops.
++- The `ggml_vk_synchronize` lead (`ggml-vulkan.cpp:19978-20047`) — read but not tested; belongs to the sync lane.
++- Whether the perf triples for the positive n=6 rows are tight (only rows below −3% print triples).
++
++## VERDICT
++
++Kernel correct in all four constant arms; the intermittent all-zero is proven pre-existing on the
++pure-upstream shader path (3/60) and is Q6_K-path-specific (SX8 0/60 at the same dispatch), so it is not
++this lane's to fix. Pairing: no harm at n=1..5,7,8, +26..+38% at n=6, controls clean. Route hatch
++correctly stays off. Keep, default ON, with two named gates before the lane is called done: (a) rewrite
++the two registry rows with the measured numbers and the "rule 1 not met" statement (findings 5, 6);
++(b) HQ re-runs the protected win's serve-level bit-identity between DIRECT_SCALES arms on the new shader
++(finding 4), and fixes the f16-coverage claim (finding 3).
++
++PASS-GATED (keep, default ON; gates: registry rows rewritten with measured numbers + protected-win serve bit-identity re-run + f16 coverage claim corrected)
+diff --git a/CHECK-R48C-PROMPT.md b/CHECK-R48C-PROMPT.md
+new file mode 100644
+index 000000000..8e79a9fe0
+--- /dev/null
++++ b/CHECK-R48C-PROMPT.md
+@@ -0,0 +1,15 @@
++You are Fable 5.1 LOW, independent checker (maker != checker) for R48c: Q6_K mat-vec x-fold + activation hoist.
++Worktree C:/ArifiLabs/cache/r48c-q6k-wt, branch lane-236/r48c-q6k-matvec-2026-09-14, HEAD 0e1660a39 = maker draft 647eb6ac9 + maker report/localisation commit. Base 9ff4644b1 (arifi/main R46i).
++
++Read: OPUS-R48C-Q6K-MATVEC-PROMPT.md and OPUS-R48C-RESUME*-PROMPT.md (mandates), OPUS-R48C-Q6K-MATVEC-REPORT.md (claims incl. section 10), R48C-Q6K-PLANTED-RED.patch, receipts r48c-evidence/ (HQ: 10/11/12 correctness arms, 20-23 planted red, 30-33 the intermittent localisation), and the HQ pairings research/local-inference/lane-evidence/2026-09-14-lane-234-r48-kernels/32-paired-r48cq6k.txt (arm A GGML_ARIFI_Q6K_XFOLD=0, arm B ON, same binary, 3 quiet interleaved rounds; gain = B faster positive) and 32-paired-r48cq6kroute.txt (A f32 default, B GGML_ARIFI_Q6K_MMVQ=1), plus tools/arifi-sync/protected-wins.json entry vulkan-q6k-matvec-direct-scales.
++
++LENS: is the Q6_K change correct, honest, and worth keeping at default ON.
++1. Correctness: xfold-on 1688/1688; xfold-off 1687/1688 with the one failure being the intermittent all-zero at 248320x5120 n=1 that the maker localised as PRE-EXISTING outside the shader (section 10: ERR exactly 1.0 = zero output; both arms 1/20; only shape with rows > 65535 = z-split dispatch; lead in ggml_vk_synchronize). Judge that localisation: is the shader genuinely cleared (their §10.2 table), and is the claim "pre-existing" supported (HQ's 0/20 on the shipped stage and 0/20 on R45 are inconclusive at 5%)? Name what would settle it.
++2. Planted red: reddens 0/8 both arms and the tree restored byte-identically (git diff HEAD clean) — confirm from receipts.
++3. Pairing: n=1..5,7,8 wash (−2..+6%), n=6 +27..+38% (a NUM_COLS==6 dip in the inherited kernel removed). Any row below −3% with tight triples? Controls (q4_K/q5_K) untouched? Is "keep, default ON" the right verdict, and does the direct-scales protected win survive (report section 4 / "How the direct-scales protected win survives")?
++4. Route diagnostic: Q6_K on MMVQ (no A-hoist in this tree) = wash/+5% at n<=4, collapse at n>=5 → default stays f32; note that R48b's hoist may change this later.
++5. The -32 fold reorders float sums: is the tolerance argument in the report sound, and did the sweep cover the shapes/widths where it matters?
++6. Report honesty: coverage limits, switches documented in OPTIONS-REGISTRY (GGML_ARIFI_Q6K_XFOLD, GGML_ARIFI_Q6K_MMVQ, GGML_VK_Q6K_DIRECT_SCALES), trailers on commits.
++You MAY read files and run git; you MAY run test-backend-ops correctness filters; do NOT run perf, llama-*, bench, or any model.
++
++Output C:/ArifiLabs/cache/r48c-q6k-wt/CHECK-R48C-FABLE-LOW.md: LENS; FINDINGS (numbered, file:line or receipt, exact fix); CHECKED; NOT CHECKABLE; last line PASS (keep, default ON), PASS-GATED (keep with a named gate), or BLOCKED + one reason. Last line of stdout: CHECK-R48C-DONE. Exit with no child alive.
+diff --git a/r48c-evidence/40-check-sx8-zsplit-60.txt b/r48c-evidence/40-check-sx8-zsplit-60.txt
+new file mode 100644
+index 000000000..a1088d7d5
+--- /dev/null
++++ b/r48c-evidence/40-check-sx8-zsplit-60.txt
+@@ -0,0 +1,61 @@
++run 1:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 2:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 3:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 4:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 5:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 6:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 7:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 8:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 9:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 10:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 11:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 12:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 13:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 14:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 15:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 16:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 17:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 18:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 19:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 20:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 21:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 22:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 23:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 24:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 25:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 26:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 27:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 28:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 29:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 30:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 31:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 32:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 33:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 34:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 35:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 36:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 37:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 38:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 39:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 40:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 41:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 42:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 43:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 44:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 45:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 46:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 47:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 48:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 49:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 50:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 51:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 52:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 53:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 54:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 55:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 56:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 57:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 58:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 59:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 60:   MUL_MAT(type_a=sx8,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++SX8 m=248320 n=1 (untouched shader, same z-split dispatch) FAILS=0/60
+diff --git a/r48c-evidence/41-check-direct-scales-0-both-xfold.txt b/r48c-evidence/41-check-direct-scales-0-both-xfold.txt
+new file mode 100644
+index 000000000..a4afb4759
+--- /dev/null
++++ b/r48c-evidence/41-check-direct-scales-0-both-xfold.txt
+@@ -0,0 +1,8 @@
++== DIRECT_SCALES=0 XFOLD=1
++ggml_vulkan: q6_k mat-vec direct-scales: OFF
++ggml_vulkan: q6_k mat-vec activation-hoist+xfold: ON
++  43/43 tests passed
++== DIRECT_SCALES=0 XFOLD=0
++ggml_vulkan: q6_k mat-vec direct-scales: OFF
++ggml_vulkan: q6_k mat-vec activation-hoist+xfold: OFF
++  43/43 tests passed
+diff --git a/r48c-evidence/42-check-upstream-shader-q6k-248320-60.txt b/r48c-evidence/42-check-upstream-shader-q6k-248320-60.txt
+new file mode 100644
+index 000000000..95292439f
+--- /dev/null
++++ b/r48c-evidence/42-check-upstream-shader-q6k-248320-60.txt
+@@ -0,0 +1,64 @@
++run 1:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 2:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 3:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 4:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 5: [MUL_MAT] ERR = 1.000000000 > 0.000500000   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): FAIL
++  MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0)
++run 6:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 7:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 8:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 9:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 10:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 11:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 12:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 13:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 14:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 15:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 16:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 17:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 18:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 19:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 20:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 21: [MUL_MAT] ERR = 0.997189778 > 0.000500000   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): FAIL
++  MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0)
++run 22:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 23:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 24:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 25:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 26:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 27:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 28:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 29:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 30:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 31:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 32:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 33:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 34:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 35:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 36:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 37:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 38:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 39:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 40:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 41:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 42:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 43:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 44:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 45:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 46:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 47: [MUL_MAT] ERR = 1.000000000 > 0.000500000   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): FAIL
++  MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0)
++run 48:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 49:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 50:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 51:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 52:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 53:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 54:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 55:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 56:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 57:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 58:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 59:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++run 60:   MUL_MAT(type_a=q6_K,type_b=f32,m=248320,n=1,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0): OK
++q6_K m=248320 n=1 DIRECT_SCALES=0 XFOLD=0 (pure upstream shader path) FAILS=3/60

@@ -1,0 +1,260 @@
+From f92d65be8bd9b090b6d713d5832f5dcec8357c39 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 08:20:30 -0400
+Subject: [PATCH] docs(r48b): report section 10 (reconstruction) + rc receipts
+
+Origin: ArifiLabs (native) - HQ seat-58 evidence banking for lane-235
+Measured-effect: UNMEASURED - receipts only
+Lane: lane-235
+---
+ OPUS-R48B-MMVQ-A-HOIST-REPORT.md         | 19 ++++++++++++++-----
+ r48b-evidence/01-configure.rc            |  1 +
+ r48b-evidence/02-build.rc                |  1 +
+ r48b-evidence/10-mulmat-hoist-on.rc      |  1 +
+ r48b-evidence/11-mulmat-hoist-off.rc     |  1 +
+ r48b-evidence/20-red1-build.rc           |  1 +
+ r48b-evidence/21-red1-hoist-on.rc        |  1 +
+ r48b-evidence/22-red1-hoist-off.rc       |  1 +
+ r48b-evidence/23-red2-build.rc           |  1 +
+ r48b-evidence/24-red2-hoist-on.rc        |  1 +
+ r48b-evidence/25-red2-hoist-off.rc       |  1 +
+ r48b-evidence/26-restore-build.rc        |  1 +
+ r48b-evidence/30-red1-build.rc           |  1 +
+ r48b-evidence/31-red1-hoist-on.rc        |  1 +
+ r48b-evidence/32-red1-hoist-off.rc       |  1 +
+ r48b-evidence/33-red2-build.rc           |  1 +
+ r48b-evidence/34-red2-hoist-on.rc        |  1 +
+ r48b-evidence/35-red2-hoist-off.rc       |  1 +
+ r48b-evidence/36-restore-build.rc        |  1 +
+ r48b-evidence/39-build.rc                |  1 +
+ r48b-evidence/40-mulmat-q4k-hoist-on.rc  |  1 +
+ r48b-evidence/41-mulmat-q4k-hoist-off.rc |  1 +
+ r48b-evidence/42-mulmat-sx8-hoist-on.rc  |  1 +
+ r48b-evidence/43-mulmat-sx8-hoist-off.rc |  1 +
+ 24 files changed, 37 insertions(+), 5 deletions(-)
+ create mode 100644 r48b-evidence/01-configure.rc
+ create mode 100644 r48b-evidence/02-build.rc
+ create mode 100644 r48b-evidence/10-mulmat-hoist-on.rc
+ create mode 100644 r48b-evidence/11-mulmat-hoist-off.rc
+ create mode 100644 r48b-evidence/20-red1-build.rc
+ create mode 100644 r48b-evidence/21-red1-hoist-on.rc
+ create mode 100644 r48b-evidence/22-red1-hoist-off.rc
+ create mode 100644 r48b-evidence/23-red2-build.rc
+ create mode 100644 r48b-evidence/24-red2-hoist-on.rc
+ create mode 100644 r48b-evidence/25-red2-hoist-off.rc
+ create mode 100644 r48b-evidence/26-restore-build.rc
+ create mode 100644 r48b-evidence/30-red1-build.rc
+ create mode 100644 r48b-evidence/31-red1-hoist-on.rc
+ create mode 100644 r48b-evidence/32-red1-hoist-off.rc
+ create mode 100644 r48b-evidence/33-red2-build.rc
+ create mode 100644 r48b-evidence/34-red2-hoist-on.rc
+ create mode 100644 r48b-evidence/35-red2-hoist-off.rc
+ create mode 100644 r48b-evidence/36-restore-build.rc
+ create mode 100644 r48b-evidence/39-build.rc
+ create mode 100644 r48b-evidence/40-mulmat-q4k-hoist-on.rc
+ create mode 100644 r48b-evidence/41-mulmat-q4k-hoist-off.rc
+ create mode 100644 r48b-evidence/42-mulmat-sx8-hoist-on.rc
+ create mode 100644 r48b-evidence/43-mulmat-sx8-hoist-off.rc
+
+diff --git a/OPUS-R48B-MMVQ-A-HOIST-REPORT.md b/OPUS-R48B-MMVQ-A-HOIST-REPORT.md
+index 2882d0105..cab83bf8e 100644
+--- a/OPUS-R48B-MMVQ-A-HOIST-REPORT.md
++++ b/OPUS-R48B-MMVQ-A-HOIST-REPORT.md
+@@ -480,7 +480,8 @@ Two items from §8 resolved by the compiler rather than by inspection:
+ - The `uint8_t scale` struct member in the Q2_K arm **is accepted** by glslang. The `uint scale`
+   fallback §8 names is not needed.
+ - `sx8_range()`'s `out float` parameters are **not** bound directly to `a.rlo[sb]` / `a.step[sb]`.
+-  Locals are used and then assigned, which is the §8 repair taken pre-emptively; same values.
++  Locals are used and then assigned. That is a precaution against glslang rejecting an indexed
++  struct member as an `out` argument, not a §8 item — §8 names no such repair. Same values either way.
+ 
+ ### sha256 of the four changed files, after reconstruction
+ 
+@@ -491,14 +492,22 @@ b672d85e9a4f5006de73e403f75c7fd316ed60c76dd451048021494e9767d479  ggml/src/ggml-
+ 523197d78399e4b1e470c0c3e3f7248bd9bb15bf38c23857738ef69c102932b6  tests/test-backend-ops.cpp
+ ```
+ 
+-Diffstat against the inherited SHA: 4 files, +352 / -119.
++Diffstat against the inherited SHA: 4 source files, +352 / -119. The commit totals 7 files,
+++928 / -119, the difference being this report and the two prompt files.
+ 
+ ### Build
+ 
+ `ninja -C build-vulkan test-backend-ops`, WinLibs mingw64 first on PATH. Receipt
+-`r48b-evidence/39-build.txt`, rc 0 in `39-build.rc`. Every shader variant generated from
+-`mul_mat_vecq.comp` compiled — glslang compiles all ten arms in that one step, so the build alone
+-proves all ten reconstructed arms are syntactically and type-wise sound.
++`r48b-evidence/39-build.txt`, rc 0 in `39-build.rc`, zero occurrences of "error" in the log.
++
++**All ten arms really were compiled — counted, not assumed.** The one
++`Generate vulkan shaders for mul_mat_vecq.comp` step emits one SPIR-V per `DATA_A_*` type per
++reduction variant. Under `build-vulkan/ggml/src/ggml-vulkan/vulkan-shaders.spv/`, every one of the
++17 MMVQ types has its `mul_mat_vec_<t>_q8_1_f32*` blobs present: 3 reduction variants each for
++q2_0, q2_0_g128, q4_0, q4_1, q5_0, q5_1, q8_0, mxfp4, rocmfp4_fast, q2_k, q3_k, q4_k, q5_k, q6_k,
++iq1_s and iq1_m, and 1 for sx8 (only the plain-reduction variant is generated for S-X8, by design).
++So the build alone proves all ten reconstructed arms are syntactically and type-wise sound —
++including the Q2_K `uint8_t scale` struct member and the IQ1_M and S-X8 array structs.
+ 
+ No perf run, no `llama-*`, no model was touched. UNMEASURED remains UNMEASURED.
+ 
+diff --git a/r48b-evidence/01-configure.rc b/r48b-evidence/01-configure.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/01-configure.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/02-build.rc b/r48b-evidence/02-build.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/02-build.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/10-mulmat-hoist-on.rc b/r48b-evidence/10-mulmat-hoist-on.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/10-mulmat-hoist-on.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/11-mulmat-hoist-off.rc b/r48b-evidence/11-mulmat-hoist-off.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/11-mulmat-hoist-off.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/20-red1-build.rc b/r48b-evidence/20-red1-build.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/20-red1-build.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/21-red1-hoist-on.rc b/r48b-evidence/21-red1-hoist-on.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/21-red1-hoist-on.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/22-red1-hoist-off.rc b/r48b-evidence/22-red1-hoist-off.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/22-red1-hoist-off.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/23-red2-build.rc b/r48b-evidence/23-red2-build.rc
+new file mode 100644
+index 000000000..321433716
+--- /dev/null
++++ b/r48b-evidence/23-red2-build.rc
+@@ -0,0 +1 @@
++rc=1
+diff --git a/r48b-evidence/24-red2-hoist-on.rc b/r48b-evidence/24-red2-hoist-on.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/24-red2-hoist-on.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/25-red2-hoist-off.rc b/r48b-evidence/25-red2-hoist-off.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/25-red2-hoist-off.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/26-restore-build.rc b/r48b-evidence/26-restore-build.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/26-restore-build.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/30-red1-build.rc b/r48b-evidence/30-red1-build.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/30-red1-build.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/31-red1-hoist-on.rc b/r48b-evidence/31-red1-hoist-on.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/31-red1-hoist-on.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/32-red1-hoist-off.rc b/r48b-evidence/32-red1-hoist-off.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/32-red1-hoist-off.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/33-red2-build.rc b/r48b-evidence/33-red2-build.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/33-red2-build.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/34-red2-hoist-on.rc b/r48b-evidence/34-red2-hoist-on.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/34-red2-hoist-on.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/35-red2-hoist-off.rc b/r48b-evidence/35-red2-hoist-off.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/35-red2-hoist-off.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/36-restore-build.rc b/r48b-evidence/36-restore-build.rc
+new file mode 100644
+index 000000000..ab3f8d190
+--- /dev/null
++++ b/r48b-evidence/36-restore-build.rc
+@@ -0,0 +1 @@
++rc=0
+diff --git a/r48b-evidence/39-build.rc b/r48b-evidence/39-build.rc
+new file mode 100644
+index 000000000..573541ac9
+--- /dev/null
++++ b/r48b-evidence/39-build.rc
+@@ -0,0 +1 @@
++0
+diff --git a/r48b-evidence/40-mulmat-q4k-hoist-on.rc b/r48b-evidence/40-mulmat-q4k-hoist-on.rc
+new file mode 100644
+index 000000000..573541ac9
+--- /dev/null
++++ b/r48b-evidence/40-mulmat-q4k-hoist-on.rc
+@@ -0,0 +1 @@
++0
+diff --git a/r48b-evidence/41-mulmat-q4k-hoist-off.rc b/r48b-evidence/41-mulmat-q4k-hoist-off.rc
+new file mode 100644
+index 000000000..573541ac9
+--- /dev/null
++++ b/r48b-evidence/41-mulmat-q4k-hoist-off.rc
+@@ -0,0 +1 @@
++0
+diff --git a/r48b-evidence/42-mulmat-sx8-hoist-on.rc b/r48b-evidence/42-mulmat-sx8-hoist-on.rc
+new file mode 100644
+index 000000000..573541ac9
+--- /dev/null
++++ b/r48b-evidence/42-mulmat-sx8-hoist-on.rc
+@@ -0,0 +1 @@
++0
+diff --git a/r48b-evidence/43-mulmat-sx8-hoist-off.rc b/r48b-evidence/43-mulmat-sx8-hoist-off.rc
+new file mode 100644
+index 000000000..573541ac9
+--- /dev/null
++++ b/r48b-evidence/43-mulmat-sx8-hoist-off.rc
+@@ -0,0 +1 @@
++0
