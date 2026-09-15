@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **550**, all non-merge, applied in filename order.
+- Patches: **551**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 550 commit messages, same provenance trailers. Verified, not
+same file contents, same 551 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -629,6 +629,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 548 | `0548-docs-r48-Q5_K-report-section-10-reconstruction-HQ-pl.patch` | arifi-fork-base | `a5e8fca04` | - | - | docs(r48): Q5_K report section 10 (reconstruction) + HQ planted-red summary and rc receipts |
 | 549 | `0549-feat-vulkan-gate-Q5_K-mat-vec-activation-hoist-to-NU.patch` | arifi-fork-base | `283503f09` | - | - | feat(vulkan): gate Q5_K mat-vec activation hoist to NUM_COLS<=3 (R48 phase 1b) |
 | 550 | `0550-docs-r48-name-the-phase-1b-commit-SHA-and-downgrade-.patch` | arifi-fork-base | `55485b98c` | - | - | docs(r48): name the phase-1b commit SHA and downgrade the f16 gate claim |
+| 551 | `0551-arifi-sync-series-replay-checks-out-its-worktree-wit.patch` | arifi-fork-base | `80f7734c2` | - | - | arifi-sync: series replay checks out its worktree with autocrlf=false (index LF vs worktree CRLF killed patch 283/550) |
 
 ## Measured effect, per patch
 
@@ -1258,6 +1259,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0548-docs-r48-Q5_K-report-section-10-reconstruction-HQ-pl.patch` | UNMEASURED - receipts only |
 | `0549-feat-vulkan-gate-Q5_K-mat-vec-activation-hoist-to-NU.patch` | UNMEASURED - hoist gated to NUM_COLS<=3 after HQ pairing showed n>=4 spill (-30..-180%); re-pair owed |
 | `0550-docs-r48-name-the-phase-1b-commit-SHA-and-downgrade-.patch` | UNMEASURED - report-only, names the phase-1b commit SHA and adds the 63-* receipt |
+| `0551-arifi-sync-series-replay-checks-out-its-worktree-wit.patch` | UNMEASURED - tooling; replay of 550 patches now PASSES on a Git-for-Windows default config (receipt cache/r48i-evidence/35-series-check-autocrlf-fix.txt) |
 
 ## Unclassified
 
@@ -1704,4 +1706,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `a5e8fca04` docs(r48): Q5_K report section 10 (reconstruction) + HQ planted-red summary and rc receipts
 - `283503f09` feat(vulkan): gate Q5_K mat-vec activation hoist to NUM_COLS<=3 (R48 phase 1b)
 - `55485b98c` docs(r48): name the phase-1b commit SHA and downgrade the f16 gate claim
+- `80f7734c2` arifi-sync: series replay checks out its worktree with autocrlf=false (index LF vs worktree CRLF killed patch 283/550)
 
