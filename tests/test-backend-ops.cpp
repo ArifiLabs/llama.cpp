@@ -12044,11 +12044,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     }
 
     // ArifiLabs lane-243 / R52b: the PREFILL width on the 27B FFN SHAPE, which perf mode did not
-    // have. Perf mode DID already time S-X8 mul_mm: the bs loop above runs {1,2,3,4,5,8,512} over
-    // all_types, and all_types contains GGML_TYPE_SX8, so 4096x14336 at n=512 was already a timed
-    // mul_mm row. What was missing is this shape -- m = 17408, k = 5120 -- the row the R52b pairing
-    // is quoted on. q8_0 is the paired control. The eval list carries the same two rows as
-    // CORRECTNESS cases.
+    // have. Perf mode DID already time S-X8 mul_mm: an EARLIER bs loop (not the block immediately
+    // above) runs {1,2,3,4,5,8,512} over all_types, which contains GGML_TYPE_SX8, so 4096x14336 at
+    // n=512 was already a timed mul_mm row. What was missing is THIS shape -- m = 17408, k = 5120,
+    // the row the R52b pairing is quoted on. q8_0 is the paired control. The eval list carries the
+    // same two rows as CORRECTNESS cases.
     for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0}) {
         test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, 512, 5120, {1, 1}, {1, 1}));
     }
