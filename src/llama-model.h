@@ -5,6 +5,7 @@
 #include "llama-graph.h"
 #include "llama-hparams.h"
 #include "llama-memory.h"
+#include "llama-model-loader.h" // ArifiLabs lane-242 / R53: sx8_pca_weights
 #include "llama-vocab.h"
 
 #include <map>
@@ -712,6 +713,15 @@ struct llama_model {
     ggml_tensor * get_escha_aux(const ggml_tensor * w) const {
         const auto it = escha_aux.find(w);
         return it == escha_aux.end() ? nullptr : it->second;
+    }
+
+    // ArifiLabs lane-242 / R53: S-X8 v4.3 PCA correction companions, keyed by the S-X8 weight.
+    // Empty unless a PCA companion GGUF was loaded, which is what keeps the old path bit-identical.
+    std::map<const ggml_tensor *, llama_model_loader::sx8_pca_weights> sx8_pca;
+
+    const llama_model_loader::sx8_pca_weights * get_sx8_pca(const ggml_tensor * w) const {
+        const auto it = sx8_pca.find(w);
+        return it == sx8_pca.end() ? nullptr : &it->second;
     }
 
     //Dense linear projections for SentenceTransformers models like embeddinggemma

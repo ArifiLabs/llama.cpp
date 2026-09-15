@@ -124,6 +124,24 @@ struct llama_model_loader {
     llama_mmaps mappings;
 
     std::map<std::string, llama_tensor_weight, weight_name_comparer> weights_map;
+
+    // ArifiLabs lane-242 / R53: the S-X8 v4.3 PCA correction companions of one S-X8 weight.
+    // b0/b1 are the two PCA basis vectors per block-of-K with their scale folded in
+    // (SX8_FLASH_V4_3_SPEC.md section 5); c0/c1 are the two signed-4-bit coefficient planes
+    // unpacked from byte 29 of every block. Populated by create_tensor() whenever a PCA
+    // companion GGUF supplied them; empty otherwise, and the engine then behaves exactly as before.
+    struct sx8_pca_weights {
+        ggml_tensor * b0 = nullptr;   // f32 [32, n_cb]   s0[kb] * b0[kb][0:32]
+        ggml_tensor * b1 = nullptr;   // f32 [32, n_cb]   s1[kb] * b1[kb][32:64]
+        ggml_tensor * c0 = nullptr;   // f16 [n_cb, N]    signed4(coeff & 0xF)
+        ggml_tensor * c1 = nullptr;   // f16 [n_cb, N]    signed4(coeff >> 4)
+    };
+    std::map<const ggml_tensor *, sx8_pca_weights> sx8_pca;
+    // keyed by tensor NAME as well: a TENSOR_DUPLICATED weight (token_embd reused as the tied
+    // output) can land in a second buffer-type context as a DIFFERENT ggml_tensor under the same
+    // name, and must share the one set of companions rather than create a second.
+    std::map<std::string, sx8_pca_weights> sx8_pca_by_name;
+
     std::unordered_map<std::string, llama_model_kv_override> kv_overrides;
     const llama_model_tensor_buft_override * tensor_buft_overrides;
 
