@@ -11158,6 +11158,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 248320, n,  5120, {1, 1}, {1, 1}));
     }
 
+    // ArifiLabs lane-243 / R52b: the PREFILL width. Every S-X8 row above is n <= 8, which is
+    // mat-vec territory -- ggml_vk_mul_mat_q_f16 only reaches the mul_mm (matrix-matrix) path at
+    // wide n, so before this block NOTHING in the sweep measured, or checked, the S-X8 mul_mm tile
+    // decode at a width prompt processing actually uses. n = 512 with m = 17408, k = 5120 is the
+    // 27B FFN row at one prefill chunk. q8_0 is the paired control: it is the type S-X8 is being
+    // compared against on this shape, and it had no wide-n row here either.
+    for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0}) {
+        test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, 512, 5120, {1, 1}, {1, 1}));
+    }
+
     // ArifiLabs lane-236 / R48c: Q6_K mat-vec at the three real 27B decode shapes, n = 1..8, as
     // CORRECTNESS cases. Q6_K is 19.7% of the interactive Q4_K_XL 27B bytes (3.19 GiB, 56 tensors)
     // and mul_mat_vec_q6_k.comp gained a second specialization constant (activation hoist +

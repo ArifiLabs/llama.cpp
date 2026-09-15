@@ -2345,14 +2345,65 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     X(GGML_TYPE_Q4_0_ROCMFP4_FAST, rocmfp4_fast)
 // arifi: S-X8 (lane-224 / WI-1722b) mul_mm - non-id, f32 B, NOT on coopmat2 (no sx8 cm2 decode); the 780M
 // takes the coopmat1 branch, so that registration is the one that matters
+// R52b: packed (sx8p) vs scalar (sx8) tile-decode SPIR-V, one binary, chosen by sx8_mm_packed at every site
 #define FOR_EACH_ARIFI_MM_NOID_NOCM2_TYPE(X) \
-    X(GGML_TYPE_SX8, sx8)
+    if (sx8_mm_packed) { X(GGML_TYPE_SX8, sx8p) } else { X(GGML_TYPE_SX8, sx8) }
 #define FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X) \
     X(GGML_TYPE_TQ3_1S, tq3_1s) \
     X(GGML_TYPE_TQ4_1S, tq4_1s)
 #define FOR_EACH_LUT_TYPE(X) \
     FOR_EACH_LUT_TYPE_NONFP4(X)  \
     FOR_EACH_LUT_FP4_TYPE(X)
+
+    // arifi lane-243 / R52b: S-X8 mul_mm PACKED TILE DECODE.
+    // The shipped tile load re-reads the qh/ql planes once per weight (16 byte loads
+    // for the 8 weights one invocation owns); the packed arm uses sx8_levels4() to
+    // decode 4 weights from 3 byte reads, 6 loads for the same 8. Both arms are
+    // compiled into the binary as separate SPIR-V (matmul_sx8_f32 / matmul_sx8p_f32)
+    // and one is chosen here -- the dot2_f16 shape, not a spec constant, because the
+    // mul_mm spec vector is POSITIONAL and a 13th entry would land on constantID 12
+    // (SHMEM_STRIDE_PAD) for every type on non-Intel devices.
+    //
+    // Bit-identical between arms by construction: same sx8_range(), same level values,
+    // same `rlo + step * level`, same shmem slots. Device-probe default ON for RDNA3
+    // (the class this was measured on); GGML_ARIFI_SX8_MM_PACKED=0|1 overrides either
+    // way, so one binary serves both arms of the A/B.
+    const bool sx8_mm_packed = [&device] {
+        const char * s = getenv("GGML_ARIFI_SX8_MM_PACKED");
+        if (s != nullptr && (s[0] == '0' || s[0] == '1')) {
+            return s[0] == '1';
+        }
+        return device->architecture == vk_device_architecture::AMD_RDNA3;
+    }();
+
+    // arifi lane-243 / R52b, HQ scope addition: MMQ UNDER COOPMAT, opt-in.
+    // R52 proved the coopmat arm of this function registers ZERO integer-MMQ
+    // pipelines, for every type, so no quantised type takes the q8_1 integer path on
+    // a coopmat device. The mul_mmq SPIR-V is NOT coopmat-specific -- it is a scalar
+    // integer-dot shader and is compiled and linked on every build regardless -- so
+    // the coopmat arm can register the very same modules the fp16 arm does. Nothing
+    // else has to change: ggml_vk_get_mul_mat_mat_pipeline_map() finds the (type, Q8_1) key
+    // or returns nullptr.
+    // GGML_ARIFI_MMQ_UNDER_COOPMAT=1 turns it on; default OFF leaves shipped
+    // behaviour byte-identical. Scoped to S-X8 and q8_0, the pair under measurement.
+    const bool mmq_under_coopmat = [] {
+        const char * s = getenv("GGML_ARIFI_MMQ_UNDER_COOPMAT");
+        return s != nullptr && s[0] == '1';
+    }();
+
+    // stderr for the same reason the q5_k/q6_k receipts use it: llama-server drops ggml
+    // INFO records at the default verbosity and these two lines have to be readable in
+    // the A/B's own log.
+    {
+        static bool once = false;
+        if (!once) {
+            once = true;
+            fprintf(stderr, "ggml_vulkan: S-X8 mul_mm packed tile decode: %s [GGML_ARIFI_SX8_MM_PACKED]\n",
+                    sx8_mm_packed ? "ON" : "OFF");
+            fprintf(stderr, "ggml_vulkan: integer MMQ under coopmat (sx8, q8_0): %s [GGML_ARIFI_MMQ_UNDER_COOPMAT]\n",
+                    mmq_under_coopmat ? "ON" : "OFF");
+        }
+    }
 
     const int mul_mat_id_param_count = 5;
 
@@ -2630,6 +2681,23 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         FOR_EACH_ARIFI_MM_NOID_TYPE(X_CM1_F32B)
         FOR_EACH_ARIFI_MM_NOID_NOCM2_TYPE(X_CM1_F32B)
 #undef X_CM1_F32B
+
+#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+        // R52b / HQ scope addition: the integer-MMQ arm on a coopmat device, opt-in.
+        // Same modules the fp16 arm registers (mul_mmq.comp is scalar, not coopmat), and
+        // the same _int tile gates (filter_tc(..., is_int=true)), which already reject the
+        // l tile at 32 KiB shmem. f32acc only, as the pre-map CREATE_MMQ was.
+        if (mmq_under_coopmat && device->integer_dot_product) {
+            const std::vector<vk_tile_config> tc_mmq_int_cm = {{s_warptile_mmq_int, s_mmq_wg_denoms, s_align}, {m_warptile_mmq_int, m_mmq_wg_denoms, m_align}, {l_warptile_mmq_int, l_mmq_wg_denoms, l_align}};
+            spec_fn_t identity = [](const std::vector<uint32_t>& wt, bool) { return wt; };
+            for (const auto & [type, name, len, data] : std::initializer_list<std::tuple<ggml_type, const char *, size_t, const void *>>{
+                    {GGML_TYPE_Q8_0, "matmul_q8_0_q8_1", matmul_q8_0_q8_1_len, matmul_q8_0_q8_1_data},
+                    {GGML_TYPE_SX8,  "matmul_sx8_q8_1",  matmul_sx8_q8_1_len,  matmul_sx8_q8_1_data}}) {
+                auto tc = filter_tc(tc_mmq_int_cm, type, false, true);
+                if (!tc.empty()) create_mm_pipelines({type, GGML_TYPE_Q8_1, false, false}, tc, name, len, data, sizeof(vk_mat_mat_push_constants), 3, identity, false, false, 0, false);
+            }
+        }
+#endif
 #if defined(GGML_VULKAN_FLOAT_E2M1_GLSLC_SUPPORT) && defined(GGML_VULKAN_FLOAT_E4M3_GLSLC_SUPPORT)
         if (device->ocp_fp4) {
 #define X_CM1_OCP(TYPE, tstr) \

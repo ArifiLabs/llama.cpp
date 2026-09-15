@@ -794,6 +794,14 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
             merge_maps(merge_maps(base_dict, sx8_mm_float_type_dict), {{"DATA_A_SX8", "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f32}, {"B_TYPE_SCALAR", "float"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
         string_to_spv(shader_name + "_sx8_f16" + dot2_sfx, "mul_mm.comp",
             merge_maps(merge_maps(base_dict, sx8_mm_float_type_dict), {{"DATA_A_SX8", "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f16}, {"B_TYPE_SCALAR", "float16_t"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
+
+        // R52b / lane-243: the PACKED tile-decode twin of _sx8_f32 (SX8_PACKED_DECODE
+        // in mul_mm_funcs.glsl). Two SPIR-V variants, one binary, selected at pipeline
+        // creation -- the same shape as the dot2_f16 pair in ggml_vk_load_shaders.
+        // Only the f32-B variant is twinned because only matmul_sx8_f32 is registered
+        // host-side; _sx8_f16 has no CREATE_MM of its own.
+        string_to_spv(shader_name + "_sx8p_f32" + dot2_sfx, "mul_mm.comp",
+            merge_maps(merge_maps(base_dict, sx8_mm_float_type_dict), {{"DATA_A_SX8", "1"}, {"SX8_PACKED_DECODE", "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f32}, {"B_TYPE_SCALAR", "float"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
     }
 }
 
