@@ -12,7 +12,10 @@ extern "C" {
     // A dynamically loaded backend built against the old (smaller) layout must not be interpreted
     // with the new one: ggml-backend-reg.cpp compares this value for strict equality, so an old DSO
     // is now refused at load instead of having plan_begin read off the end of its smaller object.
-    #define GGML_BACKEND_API_VERSION 3
+    // R51: 3 -> 4. plan_begin gained a parameter. The layout is unchanged, so an old DSO would load
+    // and then be called through the NEW signature - a silently wrong call rather than a refusal.
+    // The strict-equality gate turns that into a refusal at load, which is the whole point of it.
+    #define GGML_BACKEND_API_VERSION 4
 
     //
     // Backend buffer type
@@ -57,13 +60,18 @@ extern "C" {
         bool                  (*is_host)       (ggml_backend_buffer_type_t buft);
 
         // (optional) R46b B7b. Reserve capacity for the complete batch `sizes[0..n)` atomically.
+        // R51: `names[i]` is the name of the FIRST tensor of buffer `i`, or NULL when the caller has
+        // no names to give (`names` itself may be NULL). It is advisory identity only - a backend
+        // that ignores it decides exactly what it decided before. It exists because a backend that
+        // must spill part of a batch onto slower memory can only choose WHICH bytes spill if it can
+        // tell the buffers apart, and a raw size cannot.
         // Returns a plan on FEASIBLE and NULL otherwise; *status always says which case it was.
         // INDETERMINATE reports only that this backend did not finish deciding; what happens next
         // is the CALLER's policy, and ggml_backend_alloc_ctx_tensors_from_buft() in ggml-alloc.c is
         // the one that defines it (see the comment at its plan_begin call site).
         // Appended at the end of the struct on purpose: every existing backend leaves these NULL
         // and keeps its current unplanned behaviour.
-        ggml_backend_buffer_type_plan_t (*plan_begin)(ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status);
+        ggml_backend_buffer_type_plan_t (*plan_begin)(ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status);
         // (optional, required with plan_begin) allocate entry `i`, consuming its reservation.
         ggml_backend_buffer_t           (*plan_alloc_buffer)(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i);
         // (optional, required with plan_begin) release every UNCONSUMED reservation and free the
@@ -78,7 +86,7 @@ extern "C" {
     };
 
     // R46b B7b plan wrappers (internal: the plan type is backend-private, not public API).
-    GGML_API ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin       (ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status);
+    GGML_API ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin       (ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status);
     GGML_API ggml_backend_buffer_t           ggml_backend_buft_plan_alloc_buffer(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i);
     GGML_API void                            ggml_backend_buft_plan_free        (ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan);
 

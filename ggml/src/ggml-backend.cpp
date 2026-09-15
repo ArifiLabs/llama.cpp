@@ -136,7 +136,7 @@ ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t 
 // R46b B7b — per-buffer-type batch allocation planning (scope: see ggml-backend-impl.h). A buffer
 // type that does not implement plan_begin is UNSUPPORTED and every caller falls back to the
 // per-buffer path, unchanged.
-ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status) {
+ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status) {
     GGML_ASSERT(buft);
     GGML_ASSERT(status);
     if (buft->iface.plan_begin == NULL) {
@@ -146,7 +146,7 @@ ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin(ggml_backend_buffer
     // plan_alloc_buffer and plan_free are not optional once plan_begin exists.
     GGML_ASSERT(buft->iface.plan_alloc_buffer && buft->iface.plan_free);
     *status = GGML_BACKEND_PLAN_INDETERMINATE;
-    ggml_backend_buffer_type_plan_t plan = buft->iface.plan_begin(buft, sizes, n, status);
+    ggml_backend_buffer_type_plan_t plan = buft->iface.plan_begin(buft, sizes, names, n, status);
     GGML_ASSERT((plan != NULL) == (*status == GGML_BACKEND_PLAN_FEASIBLE));
     return plan;
 }
