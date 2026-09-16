@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **551**, all non-merge, applied in filename order.
+- Patches: **565**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 551 commit messages, same provenance trailers. Verified, not
+same file contents, same 565 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -630,6 +630,20 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 549 | `0549-feat-vulkan-gate-Q5_K-mat-vec-activation-hoist-to-NU.patch` | arifi-fork-base | `283503f09` | - | - | feat(vulkan): gate Q5_K mat-vec activation hoist to NUM_COLS<=3 (R48 phase 1b) |
 | 550 | `0550-docs-r48-name-the-phase-1b-commit-SHA-and-downgrade-.patch` | arifi-fork-base | `55485b98c` | - | - | docs(r48): name the phase-1b commit SHA and downgrade the f16 gate claim |
 | 551 | `0551-arifi-sync-series-replay-checks-out-its-worktree-wit.patch` | arifi-fork-base | `80f7734c2` | - | - | arifi-sync: series replay checks out its worktree with autocrlf=false (index LF vs worktree CRLF killed patch 283/550) |
+| 552 | `0552-vulkan-R52b-S-X8-mul_mm-PACKED-tile-decode-and-integ.patch` | arifi-fork-base | `9a3566ca6` | - | - | vulkan : R52b — S-X8 mul_mm PACKED tile decode, and integer MMQ reachable under coopmat (opt-in) |
+| 553 | `0553-docs-r52b-the-three-arm-diagnostic-MMQ-under-coopmat.patch` | arifi-fork-base | `834dc682b` | - | - | docs(r52b): the three-arm diagnostic — MMQ under coopmat LOSES, the packed decode wins 2.2%, and S-X8 mul_mm already beats q8_0 at this shape |
+| 554 | `0554-fix-r52b-perf-mode-supersedes-the-single-dispatch-nu.patch` | arifi-fork-base | `ff4b7cfe2` | - | - | fix(r52b): perf-mode supersedes the single-dispatch numbers — MMQ under coopmat WINS for q8_0 and loses for S-X8, and the packed decode is a TIE |
+| 555 | `0555-docs-r52b-correct-the-perf-case-list-line-citation-1.patch` | arifi-fork-base | `4204b70b0` | - | - | docs(r52b): correct the perf case-list line citation (12042-12049) |
+| 556 | `0556-docs-r52b-close-the-PASS-GATED-docs-gate-the-coverag.patch` | arifi-fork-base | `3f17ec128` | - | - | docs(r52b): close the PASS-GATED docs gate — the coverage claim was overstated and the build log was never captured |
+| 557 | `0557-docs-r52b-re-point-the-two-test-case-list-citations-.patch` | arifi-fork-base | `d200c7f09` | - | - | docs(r52b): re-point the two test-case-list citations that this lane's own comment growth shifted |
+| 558 | `0558-feat-sx8-recover-the-S-X8-v4.3-PCA-correction-that-G.patch` | arifi-fork-base | `325074d2c` | - | `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE` | feat(sx8): recover the S-X8 v4.3 PCA correction that GGUF conversion drops (lane-242/R53) |
+| 559 | `0559-fix-sx8-close-the-R53-check-gate-same-run-verifier-r.patch` | arifi-fork-base | `89df579aa` | - | - | fix(sx8): close the R53 check gate -- same-run verifier receipt + companion identity guard (lane-242) |
+| 560 | `0560-WIP-r51-host-split-order-mechanism-plan-order-trace-.patch` | arifi-fork-base | `0ab750b2d` | - | - | WIP r51: host-split order mechanism + plan-order trace; token_embd proven absent from the Vulkan plan |
+| 561 | `0561-vulkan-name-the-buffers-a-bounded-host-split-places-.patch` | ternary-g128 | `2d92a893e` | - | - | vulkan: name the buffers a bounded host split places, and refute the read-cost order |
+| 562 | `0562-docs-lane-240-R51-check-gate-cache_r_l0-relabelled-a.patch` | prismml-recurrent | `86eff83ad` | - | - | docs(lane-240 R51): check gate — cache_r_l0 relabelled as the target recurrent state (device-local, hot), withdrawn prediction figure removed |
+| 563 | `0563-feat-vulkan-choose-the-host-split-memory-type-by-mea.patch` | arifi-fork-base | `8c3aaa3d8` | - | `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE` | feat(vulkan): choose the host-split memory type by measurement, not by index order |
+| 564 | `0564-docs-r58-name-the-regime-and-the-receipt-line-assert.patch` | arifi-fork-base | `68b996a27` | - | - | docs(r58): name the regime and the receipt-line assertion the reorder needs |
+| 565 | `0565-test-r58-phase-B-proof-cells-the-reorder-runs-the-ou.patch` | arifi-fork-base | `280b1553f` | - | - | test(r58): phase B proof cells - the reorder runs, the output does not move |
 
 ## Measured effect, per patch
 
@@ -1260,6 +1274,20 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0549-feat-vulkan-gate-Q5_K-mat-vec-activation-hoist-to-NU.patch` | UNMEASURED - hoist gated to NUM_COLS<=3 after HQ pairing showed n>=4 spill (-30..-180%); re-pair owed |
 | `0550-docs-r48-name-the-phase-1b-commit-SHA-and-downgrade-.patch` | UNMEASURED - report-only, names the phase-1b commit SHA and adds the 63-* receipt |
 | `0551-arifi-sync-series-replay-checks-out-its-worktree-wit.patch` | UNMEASURED - tooling; replay of 550 patches now PASSES on a Git-for-Windows default config (receipt cache/r48i-evidence/35-series-check-autocrlf-fix.txt) |
+| `0552-vulkan-R52b-S-X8-mul_mm-PACKED-tile-decode-and-integ.patch` | diagnostic only (one shape, receipts); HQ benches quiet (target: 4B S-X8 pp128 from ~380 toward q8_0's ~495 t/s) |
+| `0553-docs-r52b-the-three-arm-diagnostic-MMQ-under-coopmat.patch` | diagnostic only (one shape, 3 interleaved rounds, receipts); HQ benches quiet |
+| `0554-fix-r52b-perf-mode-supersedes-the-single-dispatch-nu.patch` | diagnostic only (one shape, perf mode, 6 interleaved rounds, receipts); HQ benches quiet |
+| `0555-docs-r52b-correct-the-perf-case-list-line-citation-1.patch` | *(no Measured-effect trailer)* |
+| `0556-docs-r52b-close-the-PASS-GATED-docs-gate-the-coverag.patch` | none - documentation only |
+| `0557-docs-r52b-re-point-the-two-test-case-list-citations-.patch` | none - documentation only |
+| `0558-feat-sx8-recover-the-S-X8-v4.3-PCA-correction-that-G.patch` | QUALITY - PPL wikitext-2 4B S-X8 9.9989 -> 9.9955 (-0.034%) with PCA ON (Q8_0 9.9742); llama-perplexity -c 512, 580 chunks, one cell at a time; speed UNMEASURED |
+| `0559-fix-sx8-close-the-R53-check-gate-same-run-verifier-r.patch` | none - verifier receipt, identity guard (UNBUILT), docs |
+| `0560-WIP-r51-host-split-order-mechanism-plan-order-trace-.patch` | *(no Measured-effect trailer)* |
+| `0561-vulkan-name-the-buffers-a-bounded-host-split-places-.patch` | UNMEASURED by the maker - identity and receipts only, no placement change, bit-identical (27B S-X8 generated text sha 04312f94162fc4d31633 across all arms); no t/s predicted, the ordering lever was refuted |
+| `0562-docs-lane-240-R51-check-gate-cache_r_l0-relabelled-a.patch` | none - documentation only |
+| `0563-feat-vulkan-choose-the-host-split-memory-type-by-mea.patch` | UNMEASURED by the maker - placement only, bit-identical (every eligible heap-1 type is HOST_COHERENT, so no flush/invalidate obligation changes); HQ probes every memory type quiet and serves the winner (target: S-X8 27B plain 56 -> ~73 GB/s effective) |
+| `0564-docs-r58-name-the-regime-and-the-receipt-line-assert.patch` | NONE - documentation only, no code touched |
+| `0565-test-r58-phase-B-proof-cells-the-reorder-runs-the-ou.patch` | NONE measured by the maker - correctness and placement receipts only; bit-identical output across memory types 1 and 3; HQ chain139 owns every throughput number |
 
 ## Unclassified
 
@@ -1707,4 +1735,16 @@ rather than silently bucketed - add a rule when a new source appears.
 - `283503f09` feat(vulkan): gate Q5_K mat-vec activation hoist to NUM_COLS<=3 (R48 phase 1b)
 - `55485b98c` docs(r48): name the phase-1b commit SHA and downgrade the f16 gate claim
 - `80f7734c2` arifi-sync: series replay checks out its worktree with autocrlf=false (index LF vs worktree CRLF killed patch 283/550)
+- `9a3566ca6` vulkan : R52b — S-X8 mul_mm PACKED tile decode, and integer MMQ reachable under coopmat (opt-in)
+- `834dc682b` docs(r52b): the three-arm diagnostic — MMQ under coopmat LOSES, the packed decode wins 2.2%, and S-X8 mul_mm already beats q8_0 at this shape
+- `ff4b7cfe2` fix(r52b): perf-mode supersedes the single-dispatch numbers — MMQ under coopmat WINS for q8_0 and loses for S-X8, and the packed decode is a TIE
+- `4204b70b0` docs(r52b): correct the perf case-list line citation (12042-12049)
+- `3f17ec128` docs(r52b): close the PASS-GATED docs gate — the coverage claim was overstated and the build log was never captured
+- `d200c7f09` docs(r52b): re-point the two test-case-list citations that this lane's own comment growth shifted
+- `325074d2c` feat(sx8): recover the S-X8 v4.3 PCA correction that GGUF conversion drops (lane-242/R53)
+- `89df579aa` fix(sx8): close the R53 check gate -- same-run verifier receipt + companion identity guard (lane-242)
+- `0ab750b2d` WIP r51: host-split order mechanism + plan-order trace; token_embd proven absent from the Vulkan plan
+- `8c3aaa3d8` feat(vulkan): choose the host-split memory type by measurement, not by index order
+- `68b996a27` docs(r58): name the regime and the receipt-line assertion the reorder needs
+- `280b1553f` test(r58): phase B proof cells - the reorder runs, the output does not move
 
