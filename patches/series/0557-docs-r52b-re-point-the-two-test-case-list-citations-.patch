@@ -1,0 +1,94 @@
+From d200c7f093ccd78ccf57f5e505dd73410ba46491 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 15 Sep 2026 14:37:00 -0400
+Subject: [PATCH] docs(r52b): re-point the two test-case-list citations that
+ this lane's own comment growth shifted
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Follow-up to 41b808eab, which closed the PASS-GATED docs gate. Correcting F1's
+overstatement expanded both lane-243 comment blocks in tests/test-backend-ops.cpp
+(eval 6 -> 10 lines, perf 4 -> 6), which pushed the rows below them down. The report
+still cited the pre-expansion ranges :10768-10777 and :12042-12049 — the same species
+of stale citation the parent commit fixed for :9923-9929, introduced by the fix itself.
+
+Report §1 and §4.1 now cite :10768-10780 (eval) and :12046-12054 (perf), stated as
+"as of this commit", with the instruction to find the blocks by their `lane-243 / R52b`
+marker rather than by line number, since any further edit moves them again.
+
+Also in the perf comment: "the bs loop above" was imprecise — the {1,2,3,4,5,8,512} x
+all_types loop that already timed SX8 at 4096x14336 n=512 is an earlier loop, not the
+block immediately above the new rows. Reworded, same line count.
+
+Also closes the last clause of check F1: report §1 now states that the commit messages
+of a63edc326, e67997dc8 and 4f794ab3f carry the same overstatement and that §1 is the
+correction of record for all three — history is not rewritten for a wording defect.
+
+The .cpp edit is comment text only; the diff is zero-behaviour.
+
+Origin: fork-authored (ArifiLabs lane-243 R52b docs gate, Opus 5 MEDIUM docs-maker)
+Measured-effect: none - documentation only
+Lane: lane-243
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ OPUS-R52B-SX8-COOPMAT-MULMM-REPORT.md | 17 ++++++++++++-----
+ tests/test-backend-ops.cpp            | 10 +++++-----
+ 2 files changed, 17 insertions(+), 10 deletions(-)
+
+diff --git a/OPUS-R52B-SX8-COOPMAT-MULMM-REPORT.md b/OPUS-R52B-SX8-COOPMAT-MULMM-REPORT.md
+index 86a0c8057..92188e30c 100644
+--- a/OPUS-R52B-SX8-COOPMAT-MULMM-REPORT.md
++++ b/OPUS-R52B-SX8-COOPMAT-MULMM-REPORT.md
+@@ -43,9 +43,15 @@ timed an S-X8 `mul_mm` row at `4096x14336 n=512`.
+ realistic prefill shape** — no eval row with a large `m` and `k=5120`, and no perf row on the 27B FFN
+ shape `17408x5120` at all. The three pre-existing rows are `k=256` toys or a different FFN shape.
+ 
+-Added — in two commits, not one: eval `tests/test-backend-ops.cpp:10768-10777` (`a63edc326`), perf
+-`:12042-12049` (`4f794ab3f`): `m=17408, n=512, k=5120` for `SX8` **and** `Q8_0`, the 27B FFN row at
+-one prefill chunk, with q8_0 as the paired control. Every number below is that row.
++Added — in two commits, not one: the eval block (added in `a63edc326`) and the perf block (added in
++`4f794ab3f`), `tests/test-backend-ops.cpp:10768-10780` and `:12046-12054` **as of this commit** — both
++blocks moved a few lines when this correction expanded their comments, so read them by their
++`lane-243 / R52b` marker, not by a line number. The row is `m=17408, n=512, k=5120` for `SX8` **and**
++`Q8_0`, the 27B FFN row at one prefill chunk, with q8_0 as the paired control. Every number below is
++that row.
++
++**The commit messages of `a63edc326`, `e67997dc8` and `4f794ab3f` carry the same overstatement.**
++History is not rewritten for a wording defect; this section is the correction of record for all three.
+ 
+ With the plant live and packed decode ON, the `m=17408` S-X8 filter goes **16/17** — the ONE failing
+ case is the new `n=512` row; all sixteen `n<=8` rows stay green because they never touch `mul_mm`.
+@@ -103,8 +109,9 @@ after the 50-line insert above it — corrected 2026-09-15, check F9, re-verifie
+ 
+ ### 4.1 Two instruments, and why only one of them counts
+ 
+-The shape had to be added to **both** case lists: `tests/test-backend-ops.cpp:10768-10777` (eval /
+-correctness) and `:12042-12049` (**perf**). `perf` mode keeps its own list, which is why the brief's
++The shape had to be added to **both** case lists: `tests/test-backend-ops.cpp:10768-10780` (eval /
++correctness) and `:12046-12054` (**perf**), both line ranges as of this commit — see §1. `perf` mode
++keeps its own list, which is why the brief's
+ shape returned nothing until the second row existed — *this* shape, not S-X8 `mul_mm` in general:
+ perf mode already timed `SX8` at `4096x14336 n=512` (§1).
+ 
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 7cfcb2b78..afb80a1f0 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -12044,11 +12044,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+     }
+ 
+     // ArifiLabs lane-243 / R52b: the PREFILL width on the 27B FFN SHAPE, which perf mode did not
+-    // have. Perf mode DID already time S-X8 mul_mm: the bs loop above runs {1,2,3,4,5,8,512} over
+-    // all_types, and all_types contains GGML_TYPE_SX8, so 4096x14336 at n=512 was already a timed
+-    // mul_mm row. What was missing is this shape -- m = 17408, k = 5120 -- the row the R52b pairing
+-    // is quoted on. q8_0 is the paired control. The eval list carries the same two rows as
+-    // CORRECTNESS cases.
++    // have. Perf mode DID already time S-X8 mul_mm: an EARLIER bs loop (not the block immediately
++    // above) runs {1,2,3,4,5,8,512} over all_types, which contains GGML_TYPE_SX8, so 4096x14336 at
++    // n=512 was already a timed mul_mm row. What was missing is THIS shape -- m = 17408, k = 5120,
++    // the row the R52b pairing is quoted on. q8_0 is the paired control. The eval list carries the
++    // same two rows as CORRECTNESS cases.
+     for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0}) {
+         test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, 512, 5120, {1, 1}, {1, 1}));
+     }

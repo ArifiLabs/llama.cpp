@@ -1,0 +1,40 @@
+From 86eff83adc9fa20e6f98042a6e3330d0a68ea2c5 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 15 Sep 2026 16:42:33 -0400
+Subject: [PATCH] =?UTF-8?q?docs(lane-240=20R51):=20check=20gate=20?=
+ =?UTF-8?q?=E2=80=94=20cache=5Fr=5Fl0=20relabelled=20as=20the=20target=20r?=
+ =?UTF-8?q?ecurrent=20state=20(device-local,=20hot),=20withdrawn=20predict?=
+ =?UTF-8?q?ion=20figure=20removed?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Origin: fork-authored (ArifiLabs lane-240 R51 check gate, HQ seat-60)
+Measured-effect: none - documentation only
+Lane: lane-240
+---
+ OPUS-R51-SX8-SPILL-ORDER-REPORT.md | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/OPUS-R51-SX8-SPILL-ORDER-REPORT.md b/OPUS-R51-SX8-SPILL-ORDER-REPORT.md
+index fdb15a1c3..99f3e12b2 100644
+--- a/OPUS-R51-SX8-SPILL-ORDER-REPORT.md
++++ b/OPUS-R51-SX8-SPILL-ORDER-REPORT.md
+@@ -21,7 +21,7 @@ The brief was written by seat-59 against this same tree. Re-checked file:line by
+ | "token_embd is identified by name" at the planner | `plan_begin(buft, sizes, n, status)` takes **sizes only** — no tensor identity reaches the ledger at all | `ggml-backend-impl.h:66` (before this commit) |
+ | token_embd.weight ≈ 1.19 GB is in the spilling set | **`token_embd.weight` is not in the Vulkan plan at any index, at any `-ngl`.** `llama-model.cpp:1519` pins `dev_input` to the CPU unconditionally: *"there is very little benefit to offloading the input layer, so always keep it on the CPU"* | `r51-evidence/30-planorder.txt` — the complete 25-entry plan |
+ | the 1.19 GB tensor is token_embd | it is **`output.weight`, 1191936000 B, entry 1 of 25**. It is read in FULL for every token's logits, so it is **not** a cheap candidate | same file, `plan order 1/25` |
+-| "the 4B draft / second buffer, 627572736 B" | that buffer is **`cache_r_l0`** — the DFlash2 recurrent cache — not a draft-model weight buffer | same file, `plan order 0/1: cache_r_l0 627572736 B` |
++| "the 4B draft / second buffer, 627572736 B" | that buffer is **`cache_r_l0`** — the TARGET model's recurrent state (`src/llama-memory-recurrent.cpp:121`; no draft model in this cell), hot every token, and device-local in this cell — not a draft-model weight buffer (label corrected by the Fable check, CHECK-R51-FABLE.md finding 1) | same file, `plan order 0/1: cache_r_l0 627572736 B` |
+ | spill order can sort by "bias/norm vectors, then late-layer FFN" | the planner's unit is a **buffer** (a ≤ 1 GiB run of consecutive tensors, `suballocation_block_size`), not a tensor. Norms and biases are a few MiB scattered inside mixed buffers; **no finer read-cost class exists to sort by at this granularity** | `30-planorder.txt`: 25 buffers, 24 of them ~1 GiB of layer weights |
+ 
+ **HQ's two mid-flight hypotheses, both checked.** (i) *Sizes not names* — confirmed, and it is the
+@@ -52,7 +52,7 @@ this commit, and all three are read in full every token. **There is no cheaper b
+ to swap in.** `output.weight` is the only non-layer candidate and costs the same per token.
+ 
+ Per-token bytes on the host mapping are therefore unchanged at ~2.97 GB. **The brief's predicted
+-1.86 → ~2.2 t/s is WITHDRAWN, not adjusted** — no placement moved, so there is nothing to predict.
++the brief's throughput prediction is WITHDRAWN, not adjusted** — no placement moved, so there is nothing to predict (the quiet plain line measured 2.145/2.162 t/s R46i/R48i in chain138 c0, 2026-09-15; no conclusion here depends on any plain figure).
+ 
+ ## 3. What shipped
+ 

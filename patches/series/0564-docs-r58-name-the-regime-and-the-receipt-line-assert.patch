@@ -1,0 +1,61 @@
+From 68b996a27cc4ccf99a750ec3c1a48c875bf27750 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 15 Sep 2026 17:02:39 -0400
+Subject: [PATCH] docs(r58): name the regime and the receipt-line assertion the
+ reorder needs
+
+Two gaps the gate and a review found in the R58 report, both doc-only:
+
+- bench_method_lint (F-085 family, third repeat) fired because the report
+  stated 56 -> 73 GB/s with no regime beside it. Both figures are plain
+  DECODE, prefill is not claimed and is not placement-bound, and no number in
+  the document was produced by the maker. Stated once, up front, binding.
+- ggml_vk_host_split_prefer() returns silently on every no-op path, so
+  identical output text alone cannot distinguish "the reorder ran and placed
+  the bytes in type 3" from "the reorder returned early". The PENDING proof
+  now names the per-buffer receipt lines HQ must assert, which is the only
+  check that proves the function ran. It ships without a runnable self-check
+  because every path exercising it allocates and chain138 owned the box.
+
+Origin: fork-authored (ArifiLabs lane-244 R58 UMA memory-type placement, Opus 5 MEDIUM maker)
+Measured-effect: NONE - documentation only, no code touched
+Lane: lane-244
+---
+ OPUS-R58-UMA-MEMTYPE-BANDWIDTH-REPORT.md | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/OPUS-R58-UMA-MEMTYPE-BANDWIDTH-REPORT.md b/OPUS-R58-UMA-MEMTYPE-BANDWIDTH-REPORT.md
+index 7974c7929..504e7a9ef 100644
+--- a/OPUS-R58-UMA-MEMTYPE-BANDWIDTH-REPORT.md
++++ b/OPUS-R58-UMA-MEMTYPE-BANDWIDTH-REPORT.md
+@@ -5,6 +5,14 @@
+ (= `arifi/main`, "series: regen at the R48i tip + replay fix (553 entries)"), clean tree.
+ Maker: Opus 5 at MEDIUM. **No measurement of any kind was taken by the maker.**
+ 
++**REGIME, stated once and binding on every number in this document (bench_method_lint / F-085
++family):** the `56` and `73` GB/s effective figures are **plain DECODE** — 56 on the 27B S-X8 line,
++73 on the device-local Q4_K_XL line. **PREFILL is not claimed and is not affected**: this lane
++changes where bytes live, and prefill on this rig is compute-bound, not placement-bound. Both
++numbers are **inherited HQ measurements**, not results of this lane. **No number in this document
++was produced by the maker**, and no perf verdict is offered here — HQ's probe, run under
++`llama-server`/`test-backend-ops` in a quiet window, is what will produce one.
++
+ ---
+ 
+ ## 0. Brief corrections (premise-check, 2026-09-15)
+@@ -139,7 +147,14 @@ Builds were legal in that window and that is the window this build used. Load ce
+ 
+ * `test-backend-ops test -o MUL_MAT -b Vulkan0` and `-o GET_ROWS` → 0 FAIL — **PENDING**
+ * 27B S-X8 load-only cell under `legacy` vs one explicit non-default type, identical text —
+-  **PENDING**
++  **PENDING**. **Assert the receipt lines, not only the text.** Under
++  `GGML_VK_HOST_SPLIT_MEMTYPE=3` all five `host-split buffer i: ... -> memtype T heap H` lines must
++  read `memtype 3 heap 1` (and `pref=memtype=3`), while the `legacy` arm reads `memtype 1 heap 1`.
++  That is the **only** check that proves `ggml_vk_host_split_prefer()` actually ran: its early
++  return (`pos.size() < 2`, preference absent, or already first) is silent by design, so identical
++  output text alone is equally consistent with the reorder never having happened. This function has
++  no runnable self-check in this commit because every path that would exercise it allocates, and
++  the box was owned by chain138 for the whole turn.
+ * `GGML_VK_HOST_SPLIT_MAX=0` still refuses; Q4_K_XL still loads with no split — **PENDING**
+ * Every probe number — **PENDING**, and by design: HQ runs the probe quiet, never the maker.
+ 
