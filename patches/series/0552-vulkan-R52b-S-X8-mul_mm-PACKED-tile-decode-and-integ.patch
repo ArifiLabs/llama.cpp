@@ -1,0 +1,277 @@
+From 9a3566ca64bedfedeff20b3f36f77e85c3b8d8b3 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 15 Sep 2026 08:46:28 -0400
+Subject: [PATCH] =?UTF-8?q?vulkan=20:=20R52b=20=E2=80=94=20S-X8=20mul=5Fmm?=
+ =?UTF-8?q?=20PACKED=20tile=20decode,=20and=20integer=20MMQ=20reachable=20?=
+ =?UTF-8?q?under=20coopmat=20(opt-in)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+R52 proved the S-X8 prefill deficit on a KHR_coopmat device is not a missing integer kernel:
+both S-X8 and q8_0 run the coopmat mul_mm f16 path, so the gap is in the S-X8 tile decode.
+This lane fixes that decode at the root and, per HQ, makes the integer-MMQ alternative
+measurable on the same binary instead of assumed dead.
+
+1. PACKED TILE DECODE (mul_mm_funcs.glsl, load_a_to_shmem, DATA_A_SX8 branch).
+   The shipped arm re-reads the qh/ql planes once per WEIGHT — 8 qh + 8 ql byte loads for the
+   8 weights one invocation owns (LOAD_VEC_A = 8), 2 VMEM ops per weight, against q8_0's 0.5.
+   On a 128x32 A-tile that is 8192 byte loads per BK step feeding 524,288 MACs: the decode is
+   1/128 of the arithmetic and still gates the shape, because VMEM issue rate is the ceiling.
+   The packed arm calls sx8_levels4() — already in types.glsl since lane-230/R46, four weights
+   from three byte reads, one level per byte lane — for 6 byte reads instead of 16. Same
+   sx8_range(), same level values, same rlo + step * level, same shmem slots: bit-identical
+   by construction. r52b-evidence/30-packed-decode-proof.py checks the helper against
+   sx8_level() (ggml-quants.c:2404) over all 2^24 byte triples, 0 mismatches.
+
+   Two SPIR-V variants, one binary, chosen at pipeline creation in all THREE arms of
+   ggml_vk_load_shaders (coopmat, fp16, else) — the dot2_f16 shape. A specialization constant
+   was refused: the mul_mm spec vector is positional and a 13th entry would land on
+   constantID 12 (SHMEM_STRIDE_PAD) for every type on non-Intel devices.
+   GGML_ARIFI_SX8_MM_PACKED=0|1 overrides the RDNA3 device probe either way.
+
+2. MMQ UNDER COOPMAT, OPT-IN (GGML_ARIFI_MMQ_UNDER_COOPMAT=1, default OFF).
+   mul_mmq.comp is a scalar integer-dot shader, not a coopmat one, and its SPIR-V is compiled
+   and linked on every build regardless of device class — so the coopmat arm can register the
+   very same modules the fp16 arm does. No routing code changed:
+   ggml_vk_get_mul_mat_mat_pipeline() already routes on is_empty() alone. Scoped to q8_0 and
+   S-X8, the pair under measurement.
+
+3. TEST COVERAGE (tests/test-backend-ops.cpp). Every S-X8 MUL_MAT row in the sweep was n <= 8,
+   which is mat-vec territory: nothing checked the S-X8 mul_mm tile decode at a prefill width.
+   Adds m=17408, n=512, k=5120 for SX8 and Q8_0.
+
+Origin: fork-authored (ArifiLabs lane-243 R52b S-X8 coopmat mul_mm decode, Opus 5 MEDIUM kernel-maker)
+Measured-effect: diagnostic only (one shape, receipts); HQ benches quiet (target: 4B S-X8 pp128 from ~380 toward q8_0's ~495 t/s)
+Lane: lane-243
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ docs/OPTIONS-REGISTRY.md                      |  2 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 91 ++++++++++++++++++-
+ .../vulkan-shaders/mul_mm_funcs.glsl          | 28 ++++++
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     |  8 ++
+ tests/test-backend-ops.cpp                    | 10 ++
+ 5 files changed, 136 insertions(+), 3 deletions(-)
+
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index 5893fb35d..2d2e4490f 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -59,6 +59,8 @@ safe measurement posture.
+ | `GGML_ARIFI_Q5K_B_HOIST` | **ON when unset, but only for mat-vec pipelines with `NUM_COLS <= 3` — the default is width-gated, not a blanket ON.** Specialization constant 3 of `mul_mat_vec_q5_k.comp`; `1` = load each activation vector once per superblock and reuse it across all `NUM_ROWS` rows, `0` = the shipped order, which reloads it per row. The host passes `1` to the `n<=3` pipelines and `0` to `n>=4`; **`GGML_ARIFI_Q5K_B_HOIST=0` forces every width to `0`** and restores the shipped order byte for byte on the same binary. Host gate added 2026-09-14 (R48 phase 1b); constant added 2026-09-14 (phase 1). | Scope: `mul_mat_vec_q5_k.comp` only, via the `f32_f32`, `f16_f32` and `_id` Q5_K dmmv registrations in `ggml-vulkan.cpp`. Both arms run the same decode and the same fma chains in the same accumulation order, so results are **bit-identical by construction**. The device-init receipt line `ggml_vulkan: q5_k mat-vec activation-hoist: ON (n<=3)` / `OFF` names the resolved mode on stderr. | **Leave it at the default.** Set `0` to A/B the arms on other hardware, or to back the hoist out entirely if a device spills at narrow widths too. The `<=3` boundary is a **gfx1103 measurement, not a portable constant** — re-pair before assuming it on another device class. | **UNMEASURED at the gated default; a re-pairing is owed.** The gate exists because HQ paired the two arms on one binary over 3 quiet interleaved rounds (lane-234 evidence `32-paired-r48q5k.txt`): `n=1..3` reads a **wash to +5%** (17408x5120 +4.7/+1.3/+3.3%; 248320x5120 −0.4/+0.4/0.0%; 4096x14336 +0.3/−1.7/+0.6%) while `n=4..8` **LOSES 30% to 180% on every shape** (248320x5120 n=4 −83.6%; 5120x17408 n=8 −179.9%). That is the `NUM_COLS >= 4` register spill `mul_mat_vec_sx8.comp:60-71` documents — the hoisted arm keeps `NUM_ROWS x 26` floats live across the whole column loop. **No speed win may be quoted for the narrow arm either**: the n=1..3 band overlaps zero. Correctness `test-backend-ops test -o MUL_MAT -p "type_a=q5_K"` **61/61, 0 FAIL, both arms** (`r48-evidence/61-*`, `62-*`). |
+ | ROCmFP4-FAST `q8_1` MMVQ width gate | **Code, not an environment variable. No new environment variable was added for this mechanism** — the pre-existing `GGML_VK_DISABLE_MMVQ=1` is the only runtime lever, and it is upstream's, applying to every MMVQ type rather than this one (its own measured effect on `Q2_0_G128` is in the `GGML_ARIFI_G128_MMV_ROWS` row above). `ggml_vk_should_use_mmvq` returns true for `GGML_TYPE_Q4_0_ROCMFP4_FAST` on AMD at **`n == 3` and `n == 5` only**; every other width takes the f32 dequant shader. | Scope: the `q8_1` integer-dot mat-vec and mat-vec-id pipelines for `Q4_0_ROCMFP4_FAST`. Before the port the selector **listed** the type and `should_use_mmvq` **returned true**, but no line ever created the pipeline — so activations were quantized on every mat-vec, the lookup returned null, and the backend fell back to f32 in silence, paying the quantize cost for nothing. The port creates the pipelines and adds the repack and dot product (ue4m3 scale, exact-int LUT so `d_a * d_b * int-dot` forms the same product the f32 path does). | **Do not enable it more widely, and do not put this on a default branch yet.** Width 3 is the verify width of a depth-2 draft, which is where the gain is. Width 1 is a measured tie; width 4 is a tie; width 2 is the width that changed a sampled token; above 5 the port loses. | **MEASURED WIN, INTEGRATION BLOCKED.** Ladder, RIG-A, `m=17408 k=5120`, 3-round medians, epoch E2: `n=1` ×0.991, `n=2` ×1.192, **`n=3` ×1.361**, `n=4` ×1.018, **`n=5` ×1.310**, `n=8` ×1.025. Epoch E1 read ×0.998 / ×1.183 / ×1.335 / ×1.015 / ×1.316 / ×1.040 — **the gains reproduce across a driver change**. The discriminator is the control arm: under `GGML_VK_DISABLE_MMVQ=1` both arms take the identical f32 shader and every row flattens to **×0.991–1.007**, so this is the port and not build drift. Ungated at `n=8` the port read **×0.796**, which is why the gate has an upper bound at all.<br>**Serve, epoch E2** (julianmb Qwen3.8-27B-ROCmFP4-FAST 14.56 GB, DFlash2 depth 2, palindrome, 16 rounds/slot): drafted decode **7.498 → 9.518 t/s mean, +2.0199 [1.3212, 2.7186], 8/8 cells positive = +27%**; median 7.461 → 9.282. Plain **5.084 → 5.086, +0.0016 [−0.0168, +0.0199] = tied**. Prefill tied. Rolled **32/40 → 33/40**. **Zero empty completions in 64 rounds.** F-141 **0/8** on all three slots; `test-backend-ops` **10 MUL_MAT + 2 MUL_MAT_ID cases, 0 FAIL**.<br>**BLOCKING RESIDUAL, and it is why widths 2 and 4 are excluded:** an earlier build of this port made the model emit an empty completion — first token end-of-generation — deterministically on one prompt on this file. Three hypotheses were falsified before the cause was isolated to **width 2** (the n=1 dispatch gate did not remove it; a slot-swap proved the empties follow the **binary**, not the slot; forcing f32 for the whole run removed them). The same shader arithmetic is **still live at widths 3 and 5**, and the reproducer is a plain sequence that cannot reach them. Owed before default-branch integration: an adversarial drafted-mode cache-history corpus reaching width 3, or an MMVQ-vs-f32 logits comparison, or a tightened backend error gate. See [`FINDINGS.md`](FINDINGS.md) F-13. |
+ | `GGML_ARIFI_SX8_MMVQ` | **THIS ROW INVERTED on 2026-09-14 (lane-235/R48b phase 2) - read it before assuming the old default.** **ON when unset, wherever the MMVQ A-side hoist is live** (device-probed ON for AMD): `GGML_TYPE_SX8` takes the `q8_1` integer-dot mat-vec at EVERY width, and only an exact `0` hands it back to the whole-block f32 route. Where the hoist is off (`GGML_ARIFI_MMVQ_A_HOIST=0`, non-AMD) or the routing is pinned back (`GGML_ARIFI_MMVQ_ROUTE=legacy`), the pre-R48b rule below still holds: **OFF when unset, only an exact `1` admits the type**. The character test is unchanged in both directions (`env[0]`, not `atoi()` - they disagree on `"2"` and `"01"`). | Scope: the `q8_1` integer-dot `mul_mat_vec` pipeline for `GGML_TYPE_SX8` and nothing else, on the plain `MUL_MAT` path. The `_id` path calls the same predicate and so now admits the type as well, but `ggml_vk_get_dequantize_mul_mat_vec_id()` still returns `nullptr` for S-X8 at `b_type == Q8_1` and the caller's `if (dmmv == nullptr)` branch (`ggml-vulkan.cpp:13246-13250`) clears `quantize_y` and reselects the f16 dequant pipeline - CHECKED, not assumed: `MUL_MAT_ID -b Vulkan0` is a receipt of this commit. | **Default. Enable the `0` arm only to pair against the whole-block route, or on a device where the hoist is off.** | **The pre-R48b evidence for the OFF default, and what superseded it.** The n=7 cliff that kept this OFF was an A-side re-decode in the mat-vec nest, and lane-235/R48b removed it. Under forced MMVQ with the hoist ON, S-X8 is FLAT at the bus at `n=1..8` (248320x5120: `74.8/75.2/72.1/73.6/74.2/74.7/73.7/72.8` GB/s; FFN shapes 36-37 at every width) against `62/70/33.5/45.5` at `n=5..8` with the hoist OFF, and beats the SHIPPED whole-block route by **+40..+110% at n>=4** on 248320x5120 and **+15 / +34% at n=2/3** on 17408x5120 (`32-paired-r48bforce.txt` vs `32-paired-r46iq.txt`, HQ, 3 quiet interleaved rounds, same binary both arms). **Still owed: a DEFAULT-routing re-pair** - every number here is from a `GGML_VK_FORCE_MMVQ=1` arm. The original evidence, unchanged and still the reason the `0` path exists (added 2026-09-10, lane-230/R46 commit C): **MEASURED, MIXED, which is why it shipped OFF then.** RIG-A, `test-backend-ops`, 3 interleaved rounds per arm in one quiet hold, base = the unchanged kernel, candidate = commit C on top of the gated commit B2 (`32-paired-c.txt`, 96 cells, raw timings in `32-paired-c.json`). **Against the SHIPPED kernel it loses at `n=7` on three of four primary 27B shapes** - `-28.37%` (4096x14336), `-26.13%` (17408x5120), `-13.29%` (5120x17408) - **raw rounds non-overlapping**, so repeatable, not noise. The PREREG promotion bar (>5% median at `n=1..4`, no >3% repeatable regression on any primary shape) is also missed at `n=4`, 4096x14336: `-6.85%` against B2 (DERIVED, cross-session). **Where it wins it wins large**: 248320x5120 `+38.00 / +45.73 / +46.43 / +51.79%` at `n=1..4` against the unchanged kernel, `+94.85%` at `n=6`. A per-width admit was REFUSED as overfitting - the winning region is one shape at two widths. The `n=7` cliff is **non-monotonic** (`+13.69 / -13.88 / +17.68%` at `n=6/7/8` on 5120x17408 against B2), which points at a `NUM_COLS == 7` tail defect in the mmvq framework rather than a tuning loss; that is where a narrowed admit must start. Routing was proven by a **planted-RED in commit C's dot product only**: with the env unset every `sx8` MUL_MAT case is green, with `=1` ten of twelve go red and the two `mul_mm` cases stay green. Evidence: `research/local-inference/lane-evidence/2026-09-10-lane-230-r46-sx8-mmv/`. |
++| `GGML_ARIFI_SX8_MM_PACKED` | **ON by device probe when unset on AMD RDNA3, OFF on every other device class** — the only class this was measured on. `0` forces the shipped scalar tile decode, `1` forces the packed one, anywhere; anything else falls back to the probe. Not a specialization constant: **two SPIR-V variants** (`matmul_sx8_f32` / `matmul_sx8p_f32`) are compiled into every binary and one is chosen at pipeline creation, the same shape as the `dot2_f16` pair. A spec constant was REFUSED — the mul_mm specialization vector is POSITIONAL and a 13th entry lands on constantID 12 (`SHMEM_STRIDE_PAD`) for every type on non-Intel devices. Added 2026-09-15 (lane-243/R52b). | Scope: the A-side tile load of the S-X8 `mul_mm` (matrix-matrix) shader, `mul_mm_funcs.glsl` `load_a_to_shmem()`, and nothing else. The shipped arm re-reads the `qh`/`ql` planes once per WEIGHT: 8 + 8 byte loads for the 8 weights one invocation owns, 2 VMEM ops per weight, against `q8_0`'s 0.5 (two 16-bit loads per 4 weights). The packed arm calls `sx8_levels4()` (`types.glsl:2135`, minted by lane-230/R46 for the mat-vec), which decodes FOUR weights from THREE byte reads into one uint, one level per byte lane: **6 byte reads per sub-block instead of 16**. Same `sx8_range()`, same level values, same `rlo + step * level` expression, same shmem slots, so **bit-identical by construction** — a scheduling change only. A stderr receipt names the resolved mode once per process. | Leave it at the default. Set `0` for the OFF arm of a pairing (one binary serves both) or on a device class this has not been measured on. | __PERF__ |
++| `GGML_ARIFI_MMQ_UNDER_COOPMAT` | **OFF when unset — shipped behaviour is byte-identical without it.** Only an exact `1` turns it on. Added 2026-09-15 (lane-243/R52b, HQ scope addition). | Scope: registers the `q8_1` integer-MMQ pipelines for `GGML_TYPE_Q8_0` and `GGML_TYPE_SX8` inside the **coopmat** arm of `ggml_vk_load_shaders()`, which R52 proved registers **zero** `CREATE_MMQ` pipelines for every quantised type — so on a `KHR_coopmat` device no type takes the integer path today. `mul_mmq.comp` is a SCALAR integer-dot shader, not a coopmat one, and its SPIR-V is compiled and linked on every build regardless of device class, so the coopmat arm registers the very same modules the fp16 arm does. **No routing code changed**: `ggml_vk_get_mul_mat_mat_pipeline()` already routes on `pipeline_dequant_mul_mat_mat_q8_1[...]->is_empty()` alone. The `_int` tile gates are unchanged and still reject the `l` tile at 32 KiB shared memory for both types, so MMQ runs at `m`/`s` tiles here. | **Diagnostic instrument, not a serve setting.** Use it to pair integer MMQ against the coopmat `mul_mm` on a coopmat device. Scoped to two types on purpose; widening it is WI-1724's job, with its own measurements. | __PERFB__ |
+ | `GGML_ARIFI_MMVQ_A_HOIST` | **ON by device probe when unset on AMD, OFF on every other vendor** — the only vendor this was measured on. Specialization constant 3 of `mul_mat_vecq.comp`; `1` = decode each row's weight block once per (row, k-slice) into registers and loop the columns doing only the B load and the integer dot, `0` = the inherited nest, which re-runs the whole A decode once per column. Only an exact `0` or `1` is taken; anything else falls back to the probe. Added 2026-09-14 (lane-235/R48b). | Scope: every `q8_1` integer-dot `mul_mat_vec` pipeline. Both nests call the same `mmvq_load_a()` / `mmvq_dot_a()` pair in the same order, so results are **bit-identical by construction** and this is a scheduling change only. `NUM_COLS == 1` folds to the inherited nest at pipeline-compile time. Probed once at device creation, because routing reads the same answer. Two narrowings ride on top: `IQ1_S`/`IQ1_M` are OFF by default on register grounds (see the next row) and the legacy-block family (`Q4_0`, `Q4_1`, `Q5_0`, `Q5_1`, `Q8_0`, `MXFP4`) is OFF at `NUM_COLS >= 6`. **`=0` is the widest switch in this group: it removes the hoisted nest AND the R48b routing that depends on it.** | Default. Use `=0` for the OFF arm of a pairing — one binary serves both arms — or on a vendor this has not been measured on. | **Correctness CLEARED, default-route performance UNMEASURED.** `test-backend-ops MUL_MAT -b Vulkan0` is 0 FAIL in both arms, and two planted reds proved the decode site live (RED-1, fires in both arms) and the hoisted nest the one serving (RED-2, red ON / green OFF). HQ forced-MMVQ pairing (`32-paired-r48bforce.txt`, 3 quiet interleaved rounds, same binary): the hoist removes a **10-15x tail cliff** at `NUM_COLS` 6..7 for `q4_K` (248320x5120 `5.1 / 3.3` → `52 / 48` GB/s; 5120x17408 `3.7 / 2.5` → `26.8 / 24.3`) and holds S-X8 flat at the bus across `n=1..8`. It **REGRESSES Q8_0 at `n>=6`** (`-25 / -17 / -24%` at `n=6/7/8` on 4096x14336, `-17%` at `n=8` on 5120x17408, `-10%` at `n=6` on 248320x5120), which is what the legacy-family `NUM_COLS >= 6` gate is for. `q5_K` at `n=1`, its only MMVQ width, is a wash. Every number here is from a `GGML_VK_FORCE_MMVQ=1` arm; a **default-routing re-pair is owed**. |
+ | `GGML_ARIFI_MMVQ_A_HOIST_IQ1` | **OFF when unset.** Only an exact `1` turns the A-side hoist on for the `IQ1_S` and `IQ1_M` `q8_1` pipelines, and never above the global switch — `GGML_ARIFI_MMVQ_A_HOIST=0` forces it off regardless. Added 2026-09-14 (lane-235/R48b). | Scope: the `IQ1_S` and `IQ1_M` `q8_1` `mul_mat_vec` pipelines only. They carry the largest A state of any MMVQ type (10 and 12 registers per row against 5-6 for the K-quants) and run the most rows per workgroup (`rm_iq_int` = 4 or 8), the highest product in the register table. Gated in the HOST, not by an `#ifdef`: the shader keeps both paths, so no rebuild moves it. | Only to pair the IQ1 types specifically. | **UNMEASURED on these two types — that is exactly why they ship OFF.** The default is a register-pressure judgement (report section 3 of `OPUS-R48B-MMVQ-A-HOIST-REPORT.md`), not a measurement. Arithmetic is identical either way; correctness is covered by the same `MUL_MAT` sweep. |
+ | `GGML_ARIFI_MMVQ_ROUTE` | **unset = R48b routing.** Only the exact string `legacy` pins `ggml_vk_should_use_mmvq()` back to the pre-R48b rules while KEEPING the hoisted nest. Added 2026-09-14 (lane-235/R48b phase 2). | Scope: two AMD routing rules, and nothing else. (i) `GGML_TYPE_SX8` → MMVQ at every width (`legacy`: opt-in via `GGML_ARIFI_SX8_MMVQ=1`). (ii) `GGML_TYPE_Q4_K` at `n >= 5` → MMVQ when `k <= 8192`, f32 above (`legacy`: f32 at every `n >= 5`). `Q5_K`, `Q8_0` and the legacy-block family are untouched in both modes. Both rules are additionally gated on the hoist being live, so on a non-AMD device or under `GGML_ARIFI_MMVQ_A_HOIST=0` they are already the legacy rules. **`legacy` is NOT the same arm as `GGML_ARIFI_MMVQ_A_HOIST=0`**: this one keeps the hoisted nest and changes only where traffic is sent, the other removes the nest as well. A pairing log must say which was used. | Use `legacy` to pair the ROUTING change alone, holding the kernel constant. | **Routing derived from the HQ forced-MMVQ pairing, not yet re-measured at default routing.** `q4_K` MMVQ+hoist vs the f32 default at `n=5..8`: 248320x5120 (k=5120) `55.7/52.1/48.0/45.6` vs `46.0/36.1/35.0/29.0` GB/s (**+21/+44/+37/+57%**), 17408x5120 (k=5120) `35.7/34.8/33.5/31.3` vs `33.2/27.9/29.9/24.4` (win), 5120x17408 (**k=17408**) `32.4/26.8/24.3/22.7` vs `37.0/30.8/31.6/27.2` (**LOSS**) — hence the `k` split. `k = 8192` is the midpoint of the two measured `k` values and is an **untested boundary**: nothing was run between 5120 and 17408. S-X8 evidence is in the `GGML_ARIFI_SX8_MMVQ` row above. |
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 29b8aa14b..518aeb8c2 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -6209,6 +6209,56 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         return spec;
+     };
+ 
++    // arifi lane-243 / R52b: S-X8 mul_mm PACKED TILE DECODE.
++    // The shipped tile load re-reads the qh/ql planes once per weight (16 byte loads
++    // for the 8 weights one invocation owns); the packed arm uses sx8_levels4() to
++    // decode 4 weights from 3 byte reads, 6 loads for the same 8. Both arms are
++    // compiled into the binary as separate SPIR-V (matmul_sx8_f32 / matmul_sx8p_f32)
++    // and one is chosen here -- the dot2_f16 shape, not a spec constant, because the
++    // mul_mm spec vector is POSITIONAL and a 13th entry would land on constantID 12
++    // (SHMEM_STRIDE_PAD) for every type on non-Intel devices.
++    //
++    // Bit-identical between arms by construction: same sx8_range(), same level values,
++    // same `rlo + step * level`, same shmem slots. Device-probe default ON for RDNA3
++    // (the class this was measured on); GGML_ARIFI_SX8_MM_PACKED=0|1 overrides either
++    // way, so one binary serves both arms of the A/B.
++    const bool sx8_mm_packed = [&device] {
++        const char * s = getenv("GGML_ARIFI_SX8_MM_PACKED");
++        if (s != nullptr && (s[0] == '0' || s[0] == '1')) {
++            return s[0] == '1';
++        }
++        return device->architecture == vk_device_architecture::AMD_RDNA3;
++    }();
++
++    // arifi lane-243 / R52b, HQ scope addition: MMQ UNDER COOPMAT, opt-in.
++    // R52 proved the coopmat arm of this function registers ZERO integer-MMQ
++    // pipelines, for every type, so no quantised type takes the q8_1 integer path on
++    // a coopmat device. The mul_mmq SPIR-V is NOT coopmat-specific -- it is a scalar
++    // integer-dot shader and is compiled and linked on every build regardless -- so
++    // the coopmat arm can register the very same modules the fp16 arm does. Nothing
++    // else has to change: ggml_vk_get_mul_mat_mat_pipeline() routes on
++    // pipeline_dequant_mul_mat_mat_q8_1[...]->is_empty() alone.
++    // GGML_ARIFI_MMQ_UNDER_COOPMAT=1 turns it on; default OFF leaves shipped
++    // behaviour byte-identical. Scoped to S-X8 and q8_0, the pair under measurement.
++    const bool mmq_under_coopmat = [] {
++        const char * s = getenv("GGML_ARIFI_MMQ_UNDER_COOPMAT");
++        return s != nullptr && s[0] == '1';
++    }();
++
++    // stderr for the same reason the q5_k/q6_k receipts use it: llama-server drops ggml
++    // INFO records at the default verbosity and these two lines have to be readable in
++    // the A/B's own log.
++    {
++        static bool once = false;
++        if (!once) {
++            once = true;
++            fprintf(stderr, "ggml_vulkan: S-X8 mul_mm packed tile decode: %s [GGML_ARIFI_SX8_MM_PACKED]\n",
++                    sx8_mm_packed ? "ON" : "OFF");
++            fprintf(stderr, "ggml_vulkan: integer MMQ under coopmat (sx8, q8_0): %s [GGML_ARIFI_MMQ_UNDER_COOPMAT]\n",
++                    mmq_under_coopmat ? "ON" : "OFF");
++        }
++    }
++
+     const int mul_mat_id_param_count = 5;
+ 
+ #if defined(VK_NV_cooperative_matrix2) && defined(GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT)
+@@ -6373,7 +6423,34 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         // reports "matrix cores: KHR_coopmat", so coopmat_support is true and the fp16
+         // branch below never runs on it. Registering only there would have repeated
+         // WI-1722's failure in a new place: a pipeline that exists and is never selected.
+-        CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
++        // R52b: packed vs scalar tile decode, one binary, chosen by sx8_mm_packed above.
++        if (sx8_mm_packed) {
++            CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8p_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
++        } else {
++            CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
++        }
++
++#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
++        // R52b / HQ scope addition: the integer-MMQ arm on a coopmat device, opt-in.
++        // Same modules the fp16 arm registers (mul_mmq.comp is scalar, not coopmat), and
++        // the same _int tile gates, which already reject the l tile at 32 KiB shmem.
++#define CREATE_MMQ(TYPE, PIPELINE_NAME, NAMELC, WG_DENOMS, WARPTILE, PUSHCONST, PARAMCOUNT, ID) \
++        if (device->mul_mat ## ID ## _l_int[TYPE]) { \
++            ggml_vk_create_pipeline(device, device-> PIPELINE_NAME .f32acc->l, #NAMELC "_l", NAMELC ## _len, NAMELC ## _data, "main", PARAMCOUNT, sizeof(PUSHCONST), l_ ## WG_DENOMS, l_ ## WARPTILE, 1, false, false);   \
++        } \
++        if (device->mul_mat ## ID ## _m_int[TYPE]) { \
++            ggml_vk_create_pipeline(device, device-> PIPELINE_NAME .f32acc->m, #NAMELC "_m", NAMELC ## _len, NAMELC ## _data, "main", PARAMCOUNT, sizeof(PUSHCONST), m_ ## WG_DENOMS, m_ ## WARPTILE, 1, false, false);   \
++        } \
++        if (device->mul_mat ## ID ## _s_int[TYPE]) { \
++            ggml_vk_create_pipeline(device, device-> PIPELINE_NAME .f32acc->s, #NAMELC "_s", NAMELC ## _len, NAMELC ## _data, "main", PARAMCOUNT, sizeof(PUSHCONST), s_ ## WG_DENOMS, s_ ## WARPTILE, 1, false, false);   \
++        } \
++
++        if (mmq_under_coopmat && device->integer_dot_product) {
++            CREATE_MMQ(GGML_TYPE_Q8_0, pipeline_dequant_mul_mat_mat_q8_1[GGML_TYPE_Q8_0], matmul_q8_0_q8_1, mmq_wg_denoms, warptile_mmq_int, vk_mat_mat_push_constants, 3, );
++            CREATE_MMQ(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat_q8_1[GGML_TYPE_SX8], matmul_sx8_q8_1, mmq_wg_denoms, warptile_mmq_int, vk_mat_mat_push_constants, 3, );
++        }
++#undef CREATE_MMQ
++#endif
+ 
+         CREATE_MM2(GGML_TYPE_Q2_K, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q2_K], matmul_q2_k_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
+         CREATE_MM2(GGML_TYPE_TQ2_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_TQ2_0], matmul_tq2_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
+@@ -6519,7 +6596,11 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         CREATE_MM2(GGML_TYPE_Q5_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_0], matmul_q5_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM2(GGML_TYPE_Q5_1, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_1], matmul_q5_1_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM2(GGML_TYPE_Q8_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q8_0], matmul_q8_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+-        CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);  // lane-224 / WI-1722b
++        if (sx8_mm_packed) {  // R52b packed tile decode
++            CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8p_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
++        } else {
++            CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);  // lane-224 / WI-1722b
++        }
+         CREATE_MM2(GGML_TYPE_Q2_K, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q2_K], matmul_q2_k_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM2(GGML_TYPE_TQ2_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_TQ2_0], matmul_tq2_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM2(GGML_TYPE_Q3_K, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q3_K], matmul_q3_k_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+@@ -6725,7 +6806,11 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         CREATE_MM(GGML_TYPE_Q5_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_0].f32acc, matmul_q5_0_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM(GGML_TYPE_Q5_1, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_1].f32acc, matmul_q5_1_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM(GGML_TYPE_Q8_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q8_0].f32acc, matmul_q8_0_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+-        CREATE_MM(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8].f32acc, matmul_sx8_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);  // lane-224 / WI-1722b
++        if (sx8_mm_packed) {  // R52b packed tile decode
++            CREATE_MM(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8].f32acc, matmul_sx8p_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
++        } else {
++            CREATE_MM(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8].f32acc, matmul_sx8_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);  // lane-224 / WI-1722b
++        }
+ 
+         CREATE_MM(GGML_TYPE_Q2_K, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q2_K].f32acc, matmul_q2_k_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM(GGML_TYPE_TQ2_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_TQ2_0].f32acc, matmul_tq2_0_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl
+index febff8ac2..34cc084a1 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl
+@@ -178,6 +178,33 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
+ 
+             const uint k_pair = row * LOAD_VEC_A / 2;
+ 
++#if defined(SX8_PACKED_DECODE)
++            // R52b / lane-243: PACKED tile decode. The scalar arm below re-reads the
++            // planes once per WEIGHT -- 8 qh bytes + 8 ql bytes for the 8 weights this
++            // invocation owns, 2 VMEM ops per weight, against q8_0's 0.5 (two 16-bit
++            // loads for 4 weights, the branch above). On a 128x32 A-tile that is 8192
++            // byte loads per BK step feeding 524,288 MACs: the decode is 1/128 of the
++            // arithmetic and still costs ~20% of S-X8 prefill, because VMEM issue rate
++            // is the ceiling on this part, not FLOPs.
++            //
++            // sx8_levels4() (types.glsl:2135, minted by lane-230 / R46 for the mat-vec)
++            // decodes FOUR weights from THREE byte reads into one uint, one level per
++            // byte lane. Two calls cover the sub-block: 6 byte reads instead of 16.
++            //
++            // BIT-IDENTICAL to the scalar arm by construction -- same sx8_range(), same
++            // level values (30-packed-decode-proof.py checks all 2^24 byte triples
++            // against sx8_level() in ggml-quants.c:2404), same `rlo + step * level`
++            // expression, same k_pair slots. The switch is a scheduling change only.
++            const uint qh0 = uint(data_a[ib].qh[4u * iqs])      | (uint(data_a[ib].qh[4u * iqs + 1u]) << 8u);
++            const uint qh1 = uint(data_a[ib].qh[4u * iqs + 2u]) | (uint(data_a[ib].qh[4u * iqs + 3u]) << 8u);
++            const uvec4 lv0 = uvec4(unpack8(sx8_levels4(qh0, uint(data_a[ib].ql[2u * iqs]))));
++            const uvec4 lv1 = uvec4(unpack8(sx8_levels4(qh1, uint(data_a[ib].ql[2u * iqs + 1u]))));
++
++            store_a(col, k_pair,      FLOAT_TYPEV2(rlo + step * float(lv0.x), rlo + step * float(lv0.y)));
++            store_a(col, k_pair + 1u, FLOAT_TYPEV2(rlo + step * float(lv0.z), rlo + step * float(lv0.w)));
++            store_a(col, k_pair + 2u, FLOAT_TYPEV2(rlo + step * float(lv1.x), rlo + step * float(lv1.y)));
++            store_a(col, k_pair + 3u, FLOAT_TYPEV2(rlo + step * float(lv1.z), rlo + step * float(lv1.w)));
++#else
+             [[unroll]] for (uint i = 0u; i < 8u; i += 2u) {
+                 const uint j0 = iqs * 8u + i;
+                 const uint j1 = j0 + 1u;
+@@ -191,6 +218,7 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
+                         FLOAT_TYPEV2(rlo + step * float((hi0 << 2u) | lo0),
+                                      rlo + step * float((hi1 << 2u) | lo1)));
+             }
++#endif
+ #elif defined(DATA_A_Q1_0)
+             const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+ 
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index db2aea49b..c70a9d5d4 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -728,6 +728,14 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
+             merge_maps(merge_maps(base_dict, sx8_mm_float_type_dict), {{"DATA_A_SX8", "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f32}, {"B_TYPE_SCALAR", "float"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
+         string_to_spv(shader_name + "_sx8_f16" + dot2_sfx, "mul_mm.comp",
+             merge_maps(merge_maps(base_dict, sx8_mm_float_type_dict), {{"DATA_A_SX8", "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f16}, {"B_TYPE_SCALAR", "float16_t"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
++
++        // R52b / lane-243: the PACKED tile-decode twin of _sx8_f32 (SX8_PACKED_DECODE
++        // in mul_mm_funcs.glsl). Two SPIR-V variants, one binary, selected at pipeline
++        // creation -- the same shape as the dot2_f16 pair in ggml_vk_load_shaders.
++        // Only the f32-B variant is twinned because only matmul_sx8_f32 is registered
++        // host-side; _sx8_f16 has no CREATE_MM of its own.
++        string_to_spv(shader_name + "_sx8p_f32" + dot2_sfx, "mul_mm.comp",
++            merge_maps(merge_maps(base_dict, sx8_mm_float_type_dict), {{"DATA_A_SX8", "1"}, {"SX8_PACKED_DECODE", "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f32}, {"B_TYPE_SCALAR", "float"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
+     }
+ }
+ 
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 981da8a3c..af98e4042 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -10765,6 +10765,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 248320, n,  5120, {1, 1}, {1, 1}));
+     }
+ 
++    // ArifiLabs lane-243 / R52b: the PREFILL width. Every S-X8 row above is n <= 8, which is
++    // mat-vec territory -- ggml_vk_mul_mat_q_f16 only reaches the mul_mm (matrix-matrix) path at
++    // wide n, so before this block NOTHING in the sweep measured, or checked, the S-X8 mul_mm tile
++    // decode at a width prompt processing actually uses. n = 512 with m = 17408, k = 5120 is the
++    // 27B FFN row at one prefill chunk. q8_0 is the paired control: it is the type S-X8 is being
++    // compared against on this shape, and it had no wide-n row here either.
++    for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0}) {
++        test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, 512, 5120, {1, 1}, {1, 1}));
++    }
++
+     // ArifiLabs lane-236 / R48c: Q6_K mat-vec at the three real 27B decode shapes, n = 1..8, as
+     // CORRECTNESS cases. Q6_K is 19.7% of the interactive Q4_K_XL 27B bytes (3.19 GiB, 56 tensors)
+     // and mul_mat_vec_q6_k.comp gained a second specialization constant (activation hoist +

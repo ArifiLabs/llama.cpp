@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **565**, all non-merge, applied in filename order.
+- Patches: **566**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 565 commit messages, same provenance trailers. Verified, not
+same file contents, same 566 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -644,6 +644,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 563 | `0563-feat-vulkan-choose-the-host-split-memory-type-by-mea.patch` | arifi-fork-base | `8c3aaa3d8` | - | `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE` | feat(vulkan): choose the host-split memory type by measurement, not by index order |
 | 564 | `0564-docs-r58-name-the-regime-and-the-receipt-line-assert.patch` | arifi-fork-base | `68b996a27` | - | - | docs(r58): name the regime and the receipt-line assertion the reorder needs |
 | 565 | `0565-test-r58-phase-B-proof-cells-the-reorder-runs-the-ou.patch` | arifi-fork-base | `280b1553f` | - | - | test(r58): phase B proof cells - the reorder runs, the output does not move |
+| 566 | `0566-series-regen-at-the-R56-tip-565-entries-G7-rows-for-.patch` | arifi-fork-base | `9657c60b7` | - | `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE` | series: regen at the R56 tip (565 entries) + G7 rows for two untrailered lane commits |
 
 ## Measured effect, per patch
 
@@ -1288,6 +1289,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0563-feat-vulkan-choose-the-host-split-memory-type-by-mea.patch` | UNMEASURED by the maker - placement only, bit-identical (every eligible heap-1 type is HOST_COHERENT, so no flush/invalidate obligation changes); HQ probes every memory type quiet and serves the winner (target: S-X8 27B plain 56 -> ~73 GB/s effective) |
 | `0564-docs-r58-name-the-regime-and-the-receipt-line-assert.patch` | NONE - documentation only, no code touched |
 | `0565-test-r58-phase-B-proof-cells-the-reorder-runs-the-ou.patch` | NONE measured by the maker - correctness and placement receipts only; bit-identical output across memory types 1 and 3; HQ chain139 owns every throughput number |
+| `0566-series-regen-at-the-R56-tip-565-entries-G7-rows-for-.patch` | none - patch series regeneration and provenance ledgers |
 
 ## Unclassified
 
@@ -1747,4 +1749,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `8c3aaa3d8` feat(vulkan): choose the host-split memory type by measurement, not by index order
 - `68b996a27` docs(r58): name the regime and the receipt-line assertion the reorder needs
 - `280b1553f` test(r58): phase B proof cells - the reorder runs, the output does not move
+- `9657c60b7` series: regen at the R56 tip (565 entries) + G7 rows for two untrailered lane commits
 

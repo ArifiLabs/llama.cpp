@@ -1,0 +1,518 @@
+From 0ab750b2de96b2cd4169b5fe16f9769831ff8c79 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 15 Sep 2026 15:31:45 -0400
+Subject: [PATCH] WIP r51: host-split order mechanism + plan-order trace;
+ token_embd proven absent from the Vulkan plan
+
+---
+ ggml/src/ggml-alloc.c                |    48 +-
+ ggml/src/ggml-backend-impl.h         |    14 +-
+ ggml/src/ggml-backend.cpp            |     4 +-
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp |   132 +-
+ r51-build.cmd                        |     6 +
+ r51-cells.cmd                        |    26 +
+ r51-evidence/00-build.log.done       |     1 +
+ r51-evidence/00-build.pid            |     1 +
+ r51-evidence/00-build2.log.done      |     1 +
+ r51-evidence/00-build2.pid           |     1 +
+ r51-evidence/10-getrows.txt          |   246 +
+ r51-evidence/10-mulmat.txt           |  3436 +
+ r51-evidence/10-sweep.log.done       |     1 +
+ r51-evidence/10-sweep.pid            |     1 +
+ r51-evidence/10-test-alloc.txt       |    35 +
+ r51-evidence/15-planorder-raw.txt    | 99035 +++++++++++++++++++++++++
+ r51-evidence/15-trace.log.done       |     1 +
+ r51-evidence/15-trace.pid            |     1 +
+ r51-evidence/20-cells.log.done       |     1 +
+ r51-evidence/20-cells.pid            |     1 +
+ r51-evidence/20-q4kxl-default.txt    |    45 +
+ r51-evidence/20-sx8-plan.txt         |    51 +
+ r51-evidence/20-sx8-readcost.txt     |    51 +
+ r51-evidence/20-sx8-splitmax0.txt    |    16 +
+ r51-sweep.cmd                        |    10 +
+ r51-trace.cmd                        |    10 +
+ tests/test-alloc.cpp                 |    46 +-
+ 27 files changed, 103201 insertions(+), 20 deletions(-)
+ create mode 100644 r51-build.cmd
+ create mode 100644 r51-cells.cmd
+ create mode 100644 r51-evidence/00-build.log.done
+ create mode 100644 r51-evidence/00-build.pid
+ create mode 100644 r51-evidence/00-build2.log.done
+ create mode 100644 r51-evidence/00-build2.pid
+ create mode 100644 r51-evidence/10-getrows.txt
+ create mode 100644 r51-evidence/10-mulmat.txt
+ create mode 100644 r51-evidence/10-sweep.log.done
+ create mode 100644 r51-evidence/10-sweep.pid
+ create mode 100644 r51-evidence/10-test-alloc.txt
+ create mode 100644 r51-evidence/15-planorder-raw.txt
+ create mode 100644 r51-evidence/15-trace.log.done
+ create mode 100644 r51-evidence/15-trace.pid
+ create mode 100644 r51-evidence/20-cells.log.done
+ create mode 100644 r51-evidence/20-cells.pid
+ create mode 100644 r51-evidence/20-q4kxl-default.txt
+ create mode 100644 r51-evidence/20-sx8-plan.txt
+ create mode 100644 r51-evidence/20-sx8-readcost.txt
+ create mode 100644 r51-evidence/20-sx8-splitmax0.txt
+ create mode 100644 r51-sweep.cmd
+ create mode 100644 r51-trace.cmd
+
+diff --git a/ggml/src/ggml-alloc.c b/ggml/src/ggml-alloc.c
+index 4aacb84fe..631b7bb0f 100644
+--- a/ggml/src/ggml-alloc.c
++++ b/ggml/src/ggml-alloc.c
+@@ -1130,6 +1130,11 @@ static void free_buffers(ggml_backend_buffer_t ** buffers, const size_t * n_buff
+ struct alloc_range {
+     struct ggml_tensor * first;
+     struct ggml_tensor * last;
++    // R51: the first tensor in [first, last) that actually contributes bytes to this buffer. It is
++    // NOT `first`: a range can open on a view or an already-placed tensor, which contributes
++    // nothing and would misname the buffer. Advisory identity for the backend's placement policy;
++    // it never takes part in the size arithmetic.
++    struct ggml_tensor * first_alloc;
+     size_t               size;
+ };
+ 
+@@ -1201,11 +1206,15 @@ static bool ggml_backend_alloc_ctx_ranges(
+ 
+     size_t cur_buf_size = 0;
+     struct ggml_tensor * first = ggml_get_first_tensor(ctx);
++    struct ggml_tensor * first_alloc = NULL;
+     for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+         size_t this_size = 0;
+         if (t->data == NULL && t->view_src == NULL) {
+             this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
+         }
++        if (this_size > 0 && first_alloc == NULL) {
++            first_alloc = t;
++        }
+ 
+         if (cur_buf_size > 0 && (cur_buf_size + this_size) > max_size) {
+             struct alloc_range * grown = realloc(ranges, sizeof(struct alloc_range) * (n_ranges + 1));
+@@ -1214,11 +1223,15 @@ static bool ggml_backend_alloc_ctx_ranges(
+                 return false;
+             }
+             ranges = grown;
+-            ranges[n_ranges].first = first;
+-            ranges[n_ranges].last  = t;
+-            ranges[n_ranges].size  = cur_buf_size;
++            ranges[n_ranges].first       = first;
++            ranges[n_ranges].last        = t;
++            // cur_buf_size > 0 is the condition for closing here, so a contributing tensor was
++            // already seen and first_alloc belongs to the range being closed, not to `t`.
++            ranges[n_ranges].first_alloc = first_alloc;
++            ranges[n_ranges].size        = cur_buf_size;
+             n_ranges++;
+-            first = t;
++            first        = t;
++            first_alloc  = this_size > 0 ? t : NULL;
+             *nbytes_total += cur_buf_size;
+             cur_buf_size = this_size;
+         } else {
+@@ -1234,9 +1247,10 @@ static bool ggml_backend_alloc_ctx_ranges(
+             return NULL;
+         }
+         ranges = grown;
+-        ranges[n_ranges].first = first;
+-        ranges[n_ranges].last  = NULL;
+-        ranges[n_ranges].size  = cur_buf_size;
++        ranges[n_ranges].first       = first;
++        ranges[n_ranges].last        = NULL;
++        ranges[n_ranges].first_alloc = first_alloc;
++        ranges[n_ranges].size        = cur_buf_size;
+         n_ranges++;
+         *nbytes_total += cur_buf_size;
+     }
+@@ -1315,16 +1329,25 @@ static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
+     ggml_backend_buffer_type_plan_t plan = NULL;
+     if (n_ranges > 0) {
+         size_t * sizes = malloc(sizeof(size_t) * n_ranges);
++        // R51: the first tensor's name identifies each buffer for a backend that must choose WHICH
++        // buffers spill. Advisory only, and NULL-tolerant: a failed allocation just means the
++        // backend plans by size alone, exactly as before.
++        const char ** names = malloc(sizeof(const char *) * n_ranges);
+         if (sizes == NULL) {
++            free(names);
+             free(ranges);
+             return NULL;
+         }
+         for (size_t i = 0; i < n_ranges; i++) {
+             sizes[i] = ranges[i].size;
++            if (names != NULL) {
++                names[i] = ranges[i].first_alloc != NULL ? ranges[i].first_alloc->name : NULL;
++            }
+         }
+         enum ggml_backend_plan_status status = GGML_BACKEND_PLAN_UNSUPPORTED;
+-        plan = ggml_backend_buft_plan_begin(buft, sizes, n_ranges, &status);
++        plan = ggml_backend_buft_plan_begin(buft, sizes, names, n_ranges, &status);
+         free(sizes);
++        free(names);
+         if (status == GGML_BACKEND_PLAN_INFEASIBLE) {
+             GGML_LOG_ERROR("%s: %s cannot place all %zu buffers of this allocation (%zu bytes total); "
+                            "failing before any allocation\n",
+@@ -1528,7 +1551,10 @@ bool ggml_backend_alloc_plan_commit(ggml_backend_alloc_plan_t plan) {
+         }
+ 
+         size_t * sizes = malloc(sizeof(size_t) * b->n_entries);
++        // R51: advisory per-buffer identity, NULL-tolerant (see the impl call site).
++        const char ** names = malloc(sizeof(const char *) * b->n_entries);
+         if (sizes == NULL) {
++            free(names);
+             ggml_backend_alloc_plan_release_plans(plan);
+             return false;
+         }
+@@ -1540,14 +1566,18 @@ bool ggml_backend_alloc_plan_commit(ggml_backend_alloc_plan_t plan) {
+             }
+             GGML_ASSERT(g->plan_base == n);
+             for (size_t k = 0; k < g->n_ranges; k++) {
++                if (names != NULL) {
++                    names[n] = g->ranges[k].first_alloc != NULL ? g->ranges[k].first_alloc->name : NULL;
++                }
+                 sizes[n++] = g->ranges[k].size;
+             }
+         }
+         GGML_ASSERT(n == b->n_entries);
+ 
+         enum ggml_backend_plan_status status = GGML_BACKEND_PLAN_UNSUPPORTED;
+-        b->plan = ggml_backend_buft_plan_begin(b->buft, sizes, b->n_entries, &status);
++        b->plan = ggml_backend_buft_plan_begin(b->buft, sizes, names, b->n_entries, &status);
+         free(sizes);
++        free(names);
+ 
+         if (status == GGML_BACKEND_PLAN_INFEASIBLE) {
+             GGML_LOG_ERROR("%s: %s cannot place all %zu buffers this load needs (%zu bytes total); "
+diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
+index 3a6d57114..a831c28d8 100644
+--- a/ggml/src/ggml-backend-impl.h
++++ b/ggml/src/ggml-backend-impl.h
+@@ -12,7 +12,10 @@ extern "C" {
+     // A dynamically loaded backend built against the old (smaller) layout must not be interpreted
+     // with the new one: ggml-backend-reg.cpp compares this value for strict equality, so an old DSO
+     // is now refused at load instead of having plan_begin read off the end of its smaller object.
+-    #define GGML_BACKEND_API_VERSION 3
++    // R51: 3 -> 4. plan_begin gained a parameter. The layout is unchanged, so an old DSO would load
++    // and then be called through the NEW signature - a silently wrong call rather than a refusal.
++    // The strict-equality gate turns that into a refusal at load, which is the whole point of it.
++    #define GGML_BACKEND_API_VERSION 4
+ 
+     //
+     // Backend buffer type
+@@ -57,13 +60,18 @@ extern "C" {
+         bool                  (*is_host)       (ggml_backend_buffer_type_t buft);
+ 
+         // (optional) R46b B7b. Reserve capacity for the complete batch `sizes[0..n)` atomically.
++        // R51: `names[i]` is the name of the FIRST tensor of buffer `i`, or NULL when the caller has
++        // no names to give (`names` itself may be NULL). It is advisory identity only - a backend
++        // that ignores it decides exactly what it decided before. It exists because a backend that
++        // must spill part of a batch onto slower memory can only choose WHICH bytes spill if it can
++        // tell the buffers apart, and a raw size cannot.
+         // Returns a plan on FEASIBLE and NULL otherwise; *status always says which case it was.
+         // INDETERMINATE reports only that this backend did not finish deciding; what happens next
+         // is the CALLER's policy, and ggml_backend_alloc_ctx_tensors_from_buft() in ggml-alloc.c is
+         // the one that defines it (see the comment at its plan_begin call site).
+         // Appended at the end of the struct on purpose: every existing backend leaves these NULL
+         // and keeps its current unplanned behaviour.
+-        ggml_backend_buffer_type_plan_t (*plan_begin)(ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status);
++        ggml_backend_buffer_type_plan_t (*plan_begin)(ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status);
+         // (optional, required with plan_begin) allocate entry `i`, consuming its reservation.
+         ggml_backend_buffer_t           (*plan_alloc_buffer)(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i);
+         // (optional, required with plan_begin) release every UNCONSUMED reservation and free the
+@@ -78,7 +86,7 @@ extern "C" {
+     };
+ 
+     // R46b B7b plan wrappers (internal: the plan type is backend-private, not public API).
+-    GGML_API ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin       (ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status);
++    GGML_API ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin       (ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status);
+     GGML_API ggml_backend_buffer_t           ggml_backend_buft_plan_alloc_buffer(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i);
+     GGML_API void                            ggml_backend_buft_plan_free        (ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan);
+ 
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index d40880fe9..cdea2a940 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -136,7 +136,7 @@ ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t
+ // R46b B7b — per-buffer-type batch allocation planning (scope: see ggml-backend-impl.h). A buffer
+ // type that does not implement plan_begin is UNSUPPORTED and every caller falls back to the
+ // per-buffer path, unchanged.
+-ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status) {
++ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status) {
+     GGML_ASSERT(buft);
+     GGML_ASSERT(status);
+     if (buft->iface.plan_begin == NULL) {
+@@ -146,7 +146,7 @@ ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin(ggml_backend_buffer
+     // plan_alloc_buffer and plan_free are not optional once plan_begin exists.
+     GGML_ASSERT(buft->iface.plan_alloc_buffer && buft->iface.plan_free);
+     *status = GGML_BACKEND_PLAN_INDETERMINATE;
+-    ggml_backend_buffer_type_plan_t plan = buft->iface.plan_begin(buft, sizes, n, status);
++    ggml_backend_buffer_type_plan_t plan = buft->iface.plan_begin(buft, sizes, names, n, status);
+     GGML_ASSERT((plan != NULL) == (*status == GGML_BACKEND_PLAN_FEASIBLE));
+     return plan;
+ }
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 518aeb8c2..ee9d5bbfa 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -456,7 +456,7 @@ static size_t ggml_backend_vk_buffer_type_get_alignment(ggml_backend_buffer_type
+ static size_t ggml_backend_vk_buffer_type_get_max_size(ggml_backend_buffer_type_t buft);
+ static size_t ggml_backend_vk_buffer_type_get_alloc_size(ggml_backend_buffer_type_t buft, const ggml_tensor * tensor);
+ // R46b B7b: per-buffer-type batch allocation planning (scope: see ggml-backend-impl.h).
+-static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status);
++static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status);
+ static ggml_backend_buffer_t ggml_backend_vk_buffer_type_plan_alloc_buffer(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i);
+ static void ggml_backend_vk_buffer_type_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan);
+ static ggml_backend_buffer_type_i ggml_backend_vk_buffer_type_interface = {
+@@ -4412,6 +4412,61 @@ static uint64_t ggml_vk_env_bytes(const char * name, uint64_t fallback) {
+     return (uint64_t) v;
+ }
+ 
++// R51 — SPILL ORDER for the B7c bounded host split.
++//
++// B7c decides HOW MANY bytes may spill onto host-visible memory. It never decided WHICH bytes: the
++// first-fit walk in reserve_plan() visits buffers in plan order, so device memory goes to the
++// prefix and the suffix spills. Plan order is GGUF tensor order, which has nothing to do with how
++// often a buffer is read.
++//
++// Per token, a decode reads every per-layer weight in full, and reads exactly ONE ROW of
++// token_embd.weight (a get_rows gather). Placing token_embd on the slow mapping therefore costs a
++// few KiB of slow traffic per token; placing an equally sized block of layer weights there costs
++// the whole block, every token. token_embd is the cheapest buffer in the model to spill and, being
++// early in GGUF order, is currently one of the last ever chosen.
++//
++// This is a placement policy only. It cannot change any arithmetic: a buffer is the same bytes on
++// either memory type, so outputs stay bit-identical. It also cannot change how much spills - the
++// bound, the staging reserve and the refusal semantics are untouched.
++//
++// Only token_embd is singled out, and deliberately: the unit here is a BUFFER (a <= 1 GiB run of
++// consecutive tensors, ggml_backend_vk_buffer_type_get_max_size), not a tensor. token_embd is the
++// only weight big enough to occupy a buffer alone AND cheap to read; norms and biases are a few MiB
++// scattered inside mixed buffers, so no finer read-cost class exists to sort by at this granularity.
++// output.weight is read in full for the logits of every token and is NOT cheap - it stays in the
++// ordinary class.
++enum vk_spill_order {
++    VK_SPILL_ORDER_PLAN     = 0,  // R46b B7c behaviour: spill the suffix of plan order
++    VK_SPILL_ORDER_READCOST = 1,  // spill ascending per-token read volume: token_embd first
++};
++
++// UMA is the shape this exists for: there the "host-visible" side is the same physical RAM reached
++// through a slower mapping, so a split is a bandwidth problem rather than a PCIe transfer. On a
++// discrete device the env var still selects it explicitly.
++// true only when the environment names a policy this build recognises; an unrecognised value keeps
++// the default rather than silently picking a policy, and the receipt must not then claim "env".
++static bool ggml_vk_spill_order_from_env() {
++    const char * s = getenv("GGML_VK_HOST_SPLIT_ORDER");
++    return s != nullptr && (strcmp(s, "plan") == 0 || strcmp(s, "readcost") == 0);
++}
++
++static vk_spill_order ggml_vk_spill_order(const vk_device & device) {
++    if (ggml_vk_spill_order_from_env()) {
++        return strcmp(getenv("GGML_VK_HOST_SPLIT_ORDER"), "plan") == 0
++            ? VK_SPILL_ORDER_PLAN : VK_SPILL_ORDER_READCOST;
++    }
++    return device->uma ? VK_SPILL_ORDER_READCOST : VK_SPILL_ORDER_PLAN;
++}
++
++// Higher = read more per token = keep it on device memory. Buffers are visited in DESCENDING rank,
++// so rank 0 is visited last and is what spills first.
++static int ggml_vk_spill_keep_rank(const char * name) {
++    if (name != nullptr && strcmp(name, "token_embd.weight") == 0) {
++        return 0;   // one row per token
++    }
++    return 1;       // read in full every token, or unknown - never demote what we cannot classify
++}
++
+ // The reserve is sized from a real requirement, not a guess: a bulk weight buffer is capped at
+ // suballocation_block_size (ggml_backend_vk_buffer_type_get_max_size), one tensor lives inside one
+ // such buffer, and sync_staging is sized to one copy - so the block size is the largest single
+@@ -19737,7 +19792,7 @@ struct vk_buffer_plan {
+ };
+ 
+ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
+-        ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status) {
++        ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status) {
+     ggml_backend_vk_buffer_type_context * ctx = (ggml_backend_vk_buffer_type_context *) buft->context;
+     vk_device & device = ctx->device;
+ 
+@@ -19858,11 +19913,53 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
+         host_split_max = ggml_vk_env_bytes("GGML_VK_HOST_SPLIT_MAX", host_split_max);
+     }
+ 
++    // R51: the host-split ORDER. reserve_plan() is handed the candidate lists ALREADY PERMUTED and
++    // is itself untouched - permuting inside it would mean recomputing its same_as_prev symmetry
++    // break under the permutation, and getting that wrong manufactures an INFEASIBLE it never
++    // proved. Permuting the input instead keeps every one of its invariants exactly as written: it
++    // sees a batch, in some order, and decides it. `order[k]` is the ORIGINAL index visited k-th.
++    const vk_spill_order spill_order = ggml_vk_spill_order(device);
++    std::vector<size_t> order(n);
++    for (size_t i = 0; i < n; ++i) {
++        order[i] = i;
++    }
++    if (spill_order == VK_SPILL_ORDER_READCOST) {
++        // stable, so everything outside the cheap class keeps plan order exactly - the only change
++        // to the walk is that token_embd's buffer moves to the end and is the first to be placed on
++        // host-visible memory.
++        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
++            return ggml_vk_spill_keep_rank(names != nullptr ? names[a] : nullptr) >
++                   ggml_vk_spill_keep_rank(names != nullptr ? names[b] : nullptr);
++        });
++    }
++
++    // R51: the whole plan, in walk order, under the existing allocation trace. The receipt below
++    // names only what landed on host memory; this names everything that was CONSIDERED, which is
++    // what tells you whether a buffer you expected to see was even in this batch.
++    if (getenv("GGML_VK_ALLOC_TRACE") != nullptr) {
++        for (size_t k = 0; k < n; ++k) {
++            fprintf(stderr, "ggml_vulkan: plan order %zu/%zu: entry %zu %s %llu B\n", k, n, order[k],
++                    (names != nullptr && names[order[k]] != nullptr) ? names[order[k]] : "(unnamed)",
++                    (unsigned long long) plan->entries[order[k]].bytes);
++        }
++    }
++
++    std::vector<std::vector<vk_plan_candidate>> ordered_cands(n);
++    for (size_t k = 0; k < n; ++k) {
++        ordered_cands[k] = cands[order[k]];
++    }
++
+     // From here on nothing can throw, so a committed reservation always reaches the plan object.
+-    std::vector<size_t> choice;
++    std::vector<size_t> ordered_choice;
++    std::vector<size_t> choice(n, 0);
+     uint64_t host_bytes = 0;
+-    const vk_plan_result res = device->heap_ledger.reserve_plan(cands, budgets, n_heaps, choice,
++    const vk_plan_result res = device->heap_ledger.reserve_plan(ordered_cands, budgets, n_heaps, ordered_choice,
+                                                                 host_split_max, &host_bytes);
++    if (res == VK_PLAN_FEASIBLE) {
++        for (size_t k = 0; k < n; ++k) {
++            choice[order[k]] = ordered_choice[k];   // back to the caller's indexing
++        }
++    }
+     if (res == VK_PLAN_INFEASIBLE) {
+         *status = GGML_BACKEND_PLAN_INFEASIBLE;
+         return NULL;
+@@ -19892,6 +19989,29 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
+                 (unsigned long long) host_split_max,
+                 (unsigned long long) device->staging_reserve.bytes,
+                 device->staging_reserve.heap);
++
++        // R51: WHICH buffers went there, and under which order policy. Without this the receipt
++        // above says how much moved but never what, which is exactly the fact the policy changes.
++        std::string spilled;
++        size_t n_spilled = 0;
++        for (size_t i = 0; i < n; ++i) {
++            if (!cands[i][choice[i]].host_split) {
++                continue;
++            }
++            n_spilled++;
++            if (spilled.size() < 512) {   // a pathological batch must not print a page of names
++                if (!spilled.empty()) {
++                    spilled += ", ";
++                }
++                spilled += (names != nullptr && names[i] != nullptr) ? names[i] : "(unnamed)";
++                spilled += " " + std::to_string((unsigned long long) plan->entries[i].bytes) + " B";
++            }
++        }
++        fprintf(stderr, "ggml_vulkan: host split order: %s (%s) - %zu buffer(s) on host-visible "
++                        "memory: %s\n",
++                spill_order == VK_SPILL_ORDER_READCOST ? "readcost" : "plan",
++                ggml_vk_spill_order_from_env() ? "env" : "device-probe",
++                n_spilled, spilled.c_str());
+     }
+ 
+     *status = GGML_BACKEND_PLAN_FEASIBLE;
+@@ -24391,7 +24511,9 @@ GGML_BACKEND_API int ggml_vk_plan_probe_begin(const uint64_t * sizes, int n, int
+     }
+ 
+     enum ggml_backend_plan_status st = GGML_BACKEND_PLAN_UNSUPPORTED;
+-    ggml_backend_buffer_type_plan_t plan = ggml_backend_buft_plan_begin(buft, s.data(), (size_t) n, &st);
++    // R51: the probe plans by size alone, so it exercises the PLAN order regardless of the device
++    // default - names are what select the readcost order, and it has none to give.
++    ggml_backend_buffer_type_plan_t plan = ggml_backend_buft_plan_begin(buft, s.data(), nullptr, (size_t) n, &st);
+     *status = (int) st;
+     if (plan == NULL) {
+         return -1;
+diff --git a/tests/test-alloc.cpp b/tests/test-alloc.cpp
+index a3bab0c97..ae8f38f14 100644
+--- a/tests/test-alloc.cpp
++++ b/tests/test-alloc.cpp
+@@ -7,6 +7,7 @@
+ #include <algorithm>
+ #include <exception>
+ #include <memory>
++#include <string>
+ #include <vector>
+ 
+ //
+@@ -24,6 +25,7 @@ struct dummy_backend_context {
+     size_t                   plan_begin_calls = 0;
+     size_t                   plan_free_calls  = 0;
+     size_t                   plan_n           = 0;   // buffers in the last plan_begin
++    std::vector<std::string> plan_names;             // R51: `names` of the last plan_begin
+ 
+     // R46b B7b loader: a capacity ledger, so a transaction that spans several groups of this buffer
+     // type can be observed admitting or refusing. `budget` is what this "device" can hold; `reserved`
+@@ -102,10 +104,16 @@ struct ggml_backend_buffer_type_plan {
+ };
+ 
+ static ggml_backend_buffer_type_plan_t dummy_backend_buffer_type_plan_begin(
+-        ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, ggml_backend_plan_status * status) {
++        ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, ggml_backend_plan_status * status) {
+     dummy_backend_context * ctx = (dummy_backend_context *) buft->context;
+     ctx->plan_begin_calls++;
+     ctx->plan_n = n;
++    // R51: this backend ignores the advisory names and must decide exactly what it decided before.
++    // Recording them is what lets a test assert the loader really passes them through.
++    ctx->plan_names.clear();
++    for (size_t i = 0; i < n; i++) {
++        ctx->plan_names.push_back(names != nullptr && names[i] != nullptr ? names[i] : "");
++    }
+     *status     = ctx->plan_status;
+     if (ctx->plan_status != GGML_BACKEND_PLAN_FEASIBLE) {
+         return nullptr;
+@@ -792,6 +800,41 @@ static ggml_context_ptr plan_make_ctx(int n, size_t size_bytes) {
+     return ctx;
+ }
+ 
++// R51: the planner can only choose WHICH buffers go to slower memory if it can tell them apart, so
++// the identity must actually reach it - and it must name the first tensor that CONTRIBUTES BYTES,
++// not merely the first tensor in the range. A range can open on a view, which contributes nothing
++// and would misname the whole buffer.
++static void test_plan_names_reach_the_backend() {
++    const size_t chunk = 64;
++
++    dummy_backend backend = dummy_backend_init(chunk);
++    plan_wire(backend);
++
++    ggml_init_params params = {};
++    params.mem_size = ggml_tensor_overhead() * 8;
++    params.no_alloc = true;
++    ggml_context_ptr ctx = ggml_context_ptr(ggml_init(params));
++
++    ggml_tensor * a = make_input_with_size(ctx.get(), chunk);
++    ggml_set_name(a, "first.weight");
++    // a view is created after `a` but contributes no bytes of its own: it must never be able to
++    // name a buffer
++    ggml_tensor * v = ggml_view_1d(ctx.get(), a, 1, 0);
++    ggml_set_name(v, "a.view");
++    ggml_tensor * b = make_input_with_size(ctx.get(), chunk);
++    ggml_set_name(b, "second.weight");
++
++    ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), &backend.buffer_type);
++    GGML_ASSERT(buf != nullptr);
++    GGML_ASSERT(backend.context->plan_begin_calls == 1);
++    GGML_ASSERT(backend.context->plan_names.size() == 2);
++    GGML_ASSERT(backend.context->plan_names[0] == "first.weight");
++    // the second buffer opens on the view; "second.weight" is the first tensor in it that allocates
++    GGML_ASSERT(backend.context->plan_names[1] == "second.weight");
++
++    ggml_backend_buffer_free(buf);
++}
++
+ static void test_plan_indeterminate_never_partially_allocates() {
+     const size_t chunk = 64;
+ 
+@@ -1261,6 +1304,7 @@ int main() {
+     run("test_buffer_size_zero", test_buffer_size_zero);
+     run("test_reallocation", test_reallocation);
+     run("test_graph_optimize_alloc_dep", test_graph_optimize_alloc_dep);
++    run("test_plan_names_reach_the_backend", test_plan_names_reach_the_backend);
+     run("test_plan_indeterminate_never_partially_allocates", test_plan_indeterminate_never_partially_allocates);
+     run("test_loader_transaction_refuses_before_any_allocation", test_loader_transaction_refuses_before_any_allocation);
+     run("test_loader_transaction_competing_and_isolated", test_loader_transaction_competing_and_isolated);
