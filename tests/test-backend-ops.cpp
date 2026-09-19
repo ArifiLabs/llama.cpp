@@ -12643,9 +12643,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     // allowed near the discriminator.
     //
     // Filter: -p "type_a=q4_K,type_b=f32,m=17408".
+    // m = 248320 is NOT a convenience here, it is the only m that measures anything: R65's first
+    // 0b round ran the same six k at m=17408 and came back at 34-36 GB/s-of-A flat, against 79.5 at
+    // n=1 on the embd/out shape. At 50 MB of A the dispatch is launch-bound, the bus is never the
+    // limiter, and the width-4 knee is simply not present to be moved - the k=5120 column showed
+    // 6.3% where the published table shows 16.4%. Receipt: r65-evidence/22-ksweep-table.txt.
+    // The 17408 rows are kept beside it as the negative control that says so.
     for (int k : { 4096, 5120, 6144, 8192, 10240, 12288 }) {
         for (int bs : {1, 2, 3, 4, 5}) {
-            test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 17408, bs, k, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32,  17408, bs, k, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 248320, bs, k, {1, 1}, {1, 1}));
         }
     }
 
