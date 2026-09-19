@@ -10847,6 +10847,31 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         }
     }
 
+    // ArifiLabs lane-249 / R61: the iquant types at the EMBED/OUTPUT shape (248320x5120), which had
+    // no eval row at all. The loop above is the q8_1-MMVQ type set, and iq3_s / iq3_xxs / iq4_xs
+    // have NO q8_1 mat-vec pipeline (the b_type == GGML_TYPE_Q8_1 switch in
+    // ggml_vk_get_dequantize_mul_mat_vec falls to `default: return nullptr`), so they were never
+    // covered there. These three carry 318 tensors of the 27B GSQ-RCO file between them
+    // (IQ3_S 144, IQ4_XS 96, IQ3_XXS 78), so the CORRECTNESS coverage is owed.
+    //
+    // SYNTHETIC SHAPE, NOT A SERVED ONE (Sol MEDIUM review 2026-09-16 §A): the GSQ-RCO file's
+    // output.weight is Q4_K, so an iq3/iq4 row at 248320x5120 does not represent that file's
+    // lm_head and carries NO performance verdict. It is coverage of a shape the shader must still
+    // be correct on, nothing more.
+    //
+    // The matching PERF rows are added in the same commit (green-but-blind: an eval row with no
+    // perf row measures nothing, a perf row with no eval row proves nothing).
+    for (ggml_type type_a : {GGML_TYPE_IQ3_S, GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ4_XS}) {
+        for (int n = 1; n <= 8; ++n) {
+            // The two FFN orientations the GSQ-RCO file really carries these types at, and the
+            // synthetic lm_head shape. Every perf row added for these types in the perf list has
+            // its correctness twin here.
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, n,  5120, { 1, 1 }, { 1, 1 }));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, n, 17408, { 1, 1 }, { 1, 1 }));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, n,  5120, { 1, 1 }, { 1, 1 }));
+        }
+    }
+
     // The SYCL backend picks between one and two output rows per subgroup by row count when there
     // are two destination columns (Q4_K_MMVQ_ROW_PAIR_MIN_NROWS in ggml-sycl/mmvq.cpp). Cover both
     // sides of that boundary, including an odd row count above it for the row-pair tail.
@@ -12479,6 +12504,37 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     for (int bs : {1, 2, 3, 4, 5, 8}) {
         for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_IQ4_XS, GGML_TYPE_IQ3_S, GGML_TYPE_Q4_0_ROCMFP4_FAST}) {
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, bs, 5120, {1,  1}, {1, 1}));
+        }
+    }
+
+    // ArifiLabs lane-249 / R61: the 27B GSQ-RCO iquant types on the shapes that file ACTUALLY
+    // serves them at, at every NUM_COLS the spec constant reaches.
+    //
+    // The two FFN orientations are where IQ3_S (144 tensors), IQ4_XS (96) and IQ3_XXS (78) live in
+    // that file; its output.weight is Q4_K (Sol MEDIUM review 2026-09-16 §A), so the lm_head shape
+    // is NOT an iquant shape on this file. The block above covered 17408x5120 for iq3_s / iq4_xs at
+    // bs {1,2,3,4,5,8} only -- no iq3_xxs at all, no 5120x17408, and no n=6/n=7. This closes those
+    // holes so the width sweep of the three types has no gap and a sibling control at every cell.
+    //
+    // READ THESE AS DIAGNOSTICS, NOT AS A VERDICT. The R50 brief names both FFN shapes
+    // launch/issue-bound in this microbench ("33-39 GB/s at every width -- do not chase those
+    // rows"), a cost the served graph pipelines away. What they can honestly answer is the
+    // RELATIVE width question: three types on the same framework, same shape, same rounds.
+    //
+    // NO ENV IS NEEDED for the three iquant rows: GGML_VK_FORCE_MMVQ=1 sets quantize_y, the q8_1
+    // pipeline getter returns nullptr for these types, and the caller falls straight back to the
+    // f32 dequant shader with quantize_y=false. They measure mul_mat_vec_iq3_s.comp /
+    // mul_mat_vec_iq3_xxs.comp / mul_mat_vec_iq4_xs.comp unconditionally. The q4_K control DOES
+    // move with the env, and at n>=5, k<=8192 it is on MMVQ+hoist by default (lane-235 / R48b).
+    //
+    // Filters: -p "m=17408" / -p "m=5120" / -p "m=248320".
+    for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
+        for (ggml_type type_a : {GGML_TYPE_IQ3_S, GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ4_XS, GGML_TYPE_Q4_K}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, bs,  5120, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, bs, 17408, {1, 1}, {1, 1}));
+            // Synthetic lm_head shape: correctness coverage and a width reference on a shape the
+            // microbench reads cleanly. It is NOT this file's served lm_head (that one is Q4_K).
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, bs,  5120, {1, 1}, {1, 1}));
         }
     }
 

@@ -7837,6 +7837,34 @@ static void ggml_vk_mul_mat_vec_q_f16(ggml_backend_vk_context * ctx, vk_context&
         to_q8_1 = ggml_vk_get_quantize_pipeline(ctx, GGML_TYPE_Q8_1);
     }
 
+    // arifi lane-249 / R61 step 0(a): DIAGNOSTIC ONLY. GGML_ARIFI_MMV_PIPELINE_TRACE=1 names the
+    // mat-vec pipeline this dispatch actually selected, once per distinct
+    // (pipeline, type, m, n, k) tuple, on stderr. It changes no route and no default -- it exists
+    // because GGML_VK_PERF_LOGGER names ops by type and shape only (get_node_fusion_name), so a
+    // timing row cannot tell the q8_1 integer-dot shader apart from the f32 dequant one, and the
+    // whole R61 question is which of the two serves iq3_s / iq3_xxs at each width.
+    //
+    // What it is expected to show, and what the source already says: no
+    // pipeline_dequant_mul_mat_vec_q8_1_f32[..][GGML_TYPE_IQ3_S | IQ3_XXS | IQ4_XS] is ever
+    // created, and the b_type == GGML_TYPE_Q8_1 switch in ggml_vk_get_dequantize_mul_mat_vec falls
+    // to `default: return nullptr` for them -- so the `dmmv == nullptr` fallback above runs at
+    // EVERY width and GGML_VK_FORCE_MMVQ cannot move them.
+    {
+        static const bool trace = getenv("GGML_ARIFI_MMV_PIPELINE_TRACE") != nullptr;
+        if (trace && dmmv != nullptr) {
+            static std::mutex                   trace_mutex;
+            static std::set<std::string>        seen;
+            char buf[256];
+            snprintf(buf, sizeof(buf), "%s type_a=%s m=%u n=%u k=%u quantize_y=%d",
+                     dmmv->name.c_str(), ggml_type_name(src0->type),
+                     (uint32_t) ne20, (uint32_t) ne11, (uint32_t) ne00, (int) quantize_y);
+            std::lock_guard<std::mutex> guard(trace_mutex);
+            if (seen.insert(buf).second) {
+                fprintf(stderr, "ggml_vulkan: mmv pipeline: %s\n", buf);
+            }
+        }
+    }
+
     if (ggml_nbytes(src0) > ctx->device->properties.limits.maxStorageBufferRange) {
         dmmv = ggml_vk_get_64b_indexing_pipeline(ctx, dmmv);
     }
