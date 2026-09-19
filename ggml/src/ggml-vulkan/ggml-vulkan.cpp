@@ -1498,6 +1498,11 @@ struct vk_device_struct {
     uint32_t mmvq_a_hoist_iq1;
     bool     mmvq_route_legacy;
 
+    // arifi lane-252 / R64: Q5_K n>1 route arm. 0 = legacy (the shipped f32 dequant route, the
+    // default), 1 = route (admit Q5_K to the A-hoisted q8_1 MMVQ path at n=2..8, k <= 8192).
+    // Probed once at device creation next to mmvq_a_hoist, for the same reason.
+    uint32_t q5k_mmvq_route;
+
     bool subgroup_size_control;
     uint32_t subgroup_min_size;
     uint32_t subgroup_max_size;
@@ -9505,12 +9510,26 @@ static vk_device ggml_vk_get_device(size_t idx) {
             const char * route_env = getenv("GGML_ARIFI_MMVQ_ROUTE");
             device->mmvq_route_legacy = route_env != nullptr && strcmp(route_env, "legacy") == 0;
 
+            // arifi lane-252 / R64: GGML_ARIFI_Q5K_MMVQ=<legacy|route>. DEFAULTS TO legacy, so no
+            // default moves (F-08): unset leaves Q5_K n>1 on the f32 dequant shader exactly as
+            // today. `route` admits Q5_K to the A-hoisted q8_1 MMVQ path at n=2..8, k <= 8192 --
+            // the same rule shape the Q4_K n>=5 admit already carries, and for the same mechanism.
+            // `v2` is accepted as a NAME only and behaves as legacy: it is reserved for a shader
+            // change (R48c-class direct scales) that this lane did not need, and saying so here is
+            // cheaper than a caller discovering it silently routed.
+            const char * q5k_env = getenv("GGML_ARIFI_Q5K_MMVQ");
+            device->q5k_mmvq_route = (q5k_env != nullptr && strcmp(q5k_env, "route") == 0) ? 1u : 0u;
+            const bool q5k_v2_asked = q5k_env != nullptr && strcmp(q5k_env, "v2") == 0;
+
             // stderr, for the same reason as the q6_k line: llama-server drops ggml INFO. Names the
             // SOURCE as well as the state -- a pairing log must prove probe vs override.
             fprintf(stderr, "ggml_vulkan: mmvq A-side hoist: %s (%s) (iq1: %s) (route: %s)\n",
                     device->mmvq_a_hoist ? "ON" : "OFF", hoist_src,
                     device->mmvq_a_hoist_iq1 ? "ON" : "OFF",
                     device->mmvq_route_legacy ? "legacy" : "r48b");
+            fprintf(stderr, "ggml_vulkan: q5_k mmvq route: %s%s\n",
+                    device->q5k_mmvq_route ? "route (n=2..8, k<=8192)" : "legacy",
+                    q5k_v2_asked ? " (GGML_ARIFI_Q5K_MMVQ=v2 is UNIMPLEMENTED - running legacy)" : "");
         }
 
         ggml_vk_load_shaders(device);
@@ -12141,7 +12160,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
 }
 
 // Device tuning
-static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type) {
+static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type) {
     if (device->mmvq_mode == 1) {
         return true;
     } else if (device->mmvq_mode == -1) {
@@ -12292,8 +12311,24 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
         // covers is n=1 -- its only MMVQ width today -- and there it is a wash. The n>1 f32 arm was
         // not measured against MMVQ+hoist at all, so widening it would be a guess, not a routing
         // change. The hoist itself is still ON for Q5_K pipelines; this is about the route only.
+        //
+        // arifi lane-252 / R64: that pairing is now taken, and the switch below is its lever.
+        // GGML_ARIFI_Q5K_MMVQ=route admits Q5_K at n=2..8 when k <= 8192, mirroring the Q4_K n>=5
+        // rule two blocks down -- same gate, same mechanism, same k boundary, because the thing
+        // that makes the admit safe is the same A-side hoist.
+        //
+        // WHY THE TWO HOISTS ARE NOT THE SAME HOIST (the fact this lane turns on): the receipt line
+        // `q5_k mat-vec activation-hoist: ON (n<=3)` is q5k_b_hoist_for_cols() -- the B-side hoist
+        // of the f32 dequant shader mul_mat_vec_q5_k.comp, gated to NUM_COLS <= 3 because it spills
+        // above that. The MMVQ pipeline Q5_K would move to carries mmvq_a_hoist at EVERY NUM_COLS
+        // (pipeline_dequant_mul_mat_vec_q8_1_f32[..][GGML_TYPE_Q5_K], and the narrowing comment
+        // there names Q4_K/Q5_K/S-X8 as the types that stay ON). So at n=4..8 today Q5_K runs the
+        // f32 shader UNHOISTED, which is the cost this route escapes -- not a shader defect.
         if (src0_type == GGML_TYPE_Q5_K) {
-            return false;
+            if (device->q5k_mmvq_route == 0 || device->mmvq_a_hoist == 0 || device->mmvq_route_legacy) {
+                return false;
+            }
+            return k <= 8192 && n <= 8;
         }
         // arifi lane-235 / R48b phase 2: the Q4_K n>=5 exile is superseded CONDITIONALLY -- on the
         // hoist being live, and only at k <= 8192. The lane-198 reading above ("Q4_K 2.0-2.3x per
@@ -12392,6 +12427,31 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
     }
 
     GGML_UNUSED(m);
+}
+
+// arifi lane-252 / R64 step 0(a): the ROUTE TRACE. GGML_ARIFI_MMVQ_TRACE=1 prints one line per
+// distinct (type, m, n, k) decision -- MMVQ vs the f32 dequant shader -- so "which route does q5_K
+// take at n=4" is answered by the built binary rather than by reading the rule set. Dedup, because
+// a perf run calls this thousands of times for the same cell. Off by default and no behavioural
+// effect either way: the wrapper returns exactly what the rule set returned.
+static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type) {
+    const bool r = ggml_vk_should_use_mmvq_impl(device, m, n, k, src0_type);
+    static const bool trace = [] {
+        const char * s = getenv("GGML_ARIFI_MMVQ_TRACE");
+        return s != nullptr && s[0] == '1';
+    }();
+    if (trace) {
+        static std::mutex           mtx;
+        static std::set<std::string> seen;
+        char buf[256];
+        snprintf(buf, sizeof(buf), "ggml_vulkan: mmvq route: type=%s m=%u n=%u k=%u -> %s",
+                 ggml_type_name(src0_type), m, n, k, r ? "MMVQ(q8_1)" : "f32-dequant");
+        std::lock_guard<std::mutex> lock(mtx);
+        if (seen.insert(buf).second) {
+            fprintf(stderr, "%s\n", buf);
+        }
+    }
+    return r;
 }
 
 static void ggml_vk_mul_mat_vec_q_f16(ggml_backend_vk_context * ctx, vk_context& subctx, const struct ggml_cgraph * cgraph, int node_idx) {
