@@ -12142,6 +12142,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     for (int bs : {6, 7, 8}) {
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 248320, bs, 2048, {1, 1}, {1, 1}));
     }
+    // It DID move: largest step-down at n=7 for k=2048 against n=4 for k=5120
+    // (r57-evidence/13-knee-table.txt). k=3072 is the third point, for two reasons. (a) A single
+    // working-set threshold does not fit the two points exactly -- k=5120 is still healthy at
+    // n=3 = 17.3 KB while k=2048 has already collapsed at n=7 = 15.8 KB -- so the threshold, if
+    // there is one, needs locating rather than asserting. (b) n=7 is the width R46 blamed for a
+    // "NUM_COLS == 7 tail defect in the mmvq framework"; a cliff that appears at n=7 for one k and
+    // not another cannot be that defect, and a third k says so or refutes it.
+    for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 248320, bs, 3072, {1, 1}, {1, 1}));
+    }
 
     // ArifiLabs lane-248 / R57 decider: the MARGINAL VERIFY ROW, both regimes, one binary.
     //
