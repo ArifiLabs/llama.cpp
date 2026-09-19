@@ -499,6 +499,11 @@ static uint32_t ggml_vk_mmv_max_cols() {
         }
         int x = atoi(s);
         x = std::max(0, std::min(x, (int) mul_mat_vec_max_cols));
+        // Receipt line, emitted ONLY when the variable is set: its presence identifies a forced
+        // arm in a paired sweep and its absence the inherited one, which is what lets a receipt
+        // prove which route a cell took. Unconditional logging would be a behavioural change at
+        // the default, which this switch must not have.
+        GGML_LOG_INFO("ggml_vulkan: mat-vec admit width: %d (GGML_ARIFI_MMV_MAX_COLS)\n", x);
         return (uint32_t) x;
     }();
     return v;
