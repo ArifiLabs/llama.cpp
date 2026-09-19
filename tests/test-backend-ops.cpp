@@ -1546,6 +1546,21 @@ struct test_case {
             std::vector<float> f1 = tensor_to_float(t1);
             std::vector<float> f2 = tensor_to_float(t2);
 
+            // arifi lane-249 / R61 step 2: BYTE-IDENTITY DUMP, diagnostic only, default off.
+            // GGML_ARIFI_OP_DUMP=<path> appends the TEST backend's output for every evaluated
+            // tensor, in evaluation order, to one file. Two runs of the same filtered sweep that
+            // differ only in a kernel arm must produce the same file, so sha256 of the file is a
+            // bit-identity proof of the whole sweep rather than a per-row tolerance check.
+            // Inert with the variable unset (one getenv on first call).
+            static FILE * arifi_dump = [] {
+                const char * s = getenv("GGML_ARIFI_OP_DUMP");
+                return s != nullptr ? fopen(s, "ab") : (FILE *) nullptr;
+            }();
+            if (arifi_dump != nullptr && !f1.empty()) {
+                fwrite(f1.data(), sizeof(float), f1.size(), arifi_dump);
+                fflush(arifi_dump);
+            }
+
             for (size_t i = 0; i < f1.size(); i++) {
                 // check for nans
                 if (std::isnan(f1[i]) || std::isnan(f2[i])) {

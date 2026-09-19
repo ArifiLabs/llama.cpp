@@ -7,6 +7,45 @@ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
 FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
 
+// arifi lane-249 / R61 step 2: SIGN-APPLICATION HOIST (specialization constant 3).
+// 0 = legacy, the shipped body VERBATIM: the sign select sits inside an fma argument and is
+//     re-evaluated once per weight PER COLUMN, although `sign`, `sign7` and `grid*` are A-side only.
+// 1 = v2: apply the sign to the eight grid values ONCE per (l, row), outside the NUM_COLS loop.
+// R61 step 0(b) measured the residual select at 88 marginal OpSelect and ~1226 marginal
+// instructions per extra column against iq4_xs's 8 / 333 (r61-evidence/20-spirv-counts.txt).
+//
+// BIT-IDENTICAL BETWEEN ARMS BY CONSTRUCTION: same products, same fma nesting, same accumulation
+// order; the negation is an exact IEEE sign-bit flip applied in float32 before the FLOAT_TYPE
+// conversion in both arms. Only WHEN it is evaluated moves.
+// Default 0. GGML_ARIFI_IQ3_MMVQ=v2 selects arm 1; ONE binary serves both.
+layout (constant_id = 3) const uint ARIFI_IQ3_SIGN_HOIST = 0;
+
+vec4 iq3xxs_sign_lo(const vec4 g, const uint sign) {
+    return vec4((sign &  1) != 0 ? -g.x : g.x,
+                (sign &  2) != 0 ? -g.y : g.y,
+                (sign &  4) != 0 ? -g.z : g.z,
+                (sign &  8) != 0 ? -g.w : g.w);
+}
+// NOTE the last element: upstream uses the PARITY bit (sign7 = bitCount(sign)), not (sign & 128) --
+// `sign` is a 7-bit field and the eighth sign is its parity. Reproduced exactly.
+vec4 iq3xxs_sign_hi(const vec4 g, const uint sign, const uint sign7) {
+    return vec4((sign  & 16) != 0 ? -g.x : g.x,
+                (sign  & 32) != 0 ? -g.y : g.y,
+                (sign  & 64) != 0 ? -g.z : g.z,
+                (sign7 &  1) != 0 ? -g.w : g.w);
+}
+FLOAT_TYPE iq3xxs_col_dot(const vec4 b0, const vec4 b4, const vec4 s0, const vec4 s1) {
+    return fma(FLOAT_TYPE(b0.x), FLOAT_TYPE(s0.x),
+           fma(FLOAT_TYPE(b0.y), FLOAT_TYPE(s0.y),
+           fma(FLOAT_TYPE(b0.z), FLOAT_TYPE(s0.z),
+           fma(FLOAT_TYPE(b0.w), FLOAT_TYPE(s0.w),
+           fma(FLOAT_TYPE(b4.x), FLOAT_TYPE(s1.x),
+           fma(FLOAT_TYPE(b4.y), FLOAT_TYPE(s1.y),
+           fma(FLOAT_TYPE(b4.z), FLOAT_TYPE(s1.z),
+           fma(FLOAT_TYPE(b4.w), FLOAT_TYPE(s1.w),
+           FLOAT_TYPE(0.0)))))))));
+}
+
 void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows) {
     const uint y_idx = i * QUANT_K + 16 * itid;
     const uint ib32 = itid / 2; // 0..7
@@ -26,6 +65,21 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
             const vec4 grid0 = vec4(unpack8(iq3xxs_grid[qs0]));
             const vec4 grid1 = vec4(unpack8(iq3xxs_grid[qs1]));
 
+            if (ARIFI_IQ3_SIGN_HOIST != 0) {
+                // v2: the sign is A-side only, so apply it once here and let the column body be
+                // eight unguarded fmas -- mul_mat_vec_iq4_xs.comp's shape.
+                const vec4 s0 = iq3xxs_sign_lo(grid0, sign);
+                const vec4 s1 = iq3xxs_sign_hi(grid1, sign, sign7);
+
+                [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+                    const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+                    const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
+
+                    temp[j][n] = fma(db, iq3xxs_col_dot(b0, b4, s0, s1), temp[j][n]);
+                }
+            } else {
+            // legacy: the shipped body, VERBATIM. Kept as text rather than routed through
+            // iq3xxs_col_dot so the default arm's codegen is provably the pre-R61 one.
             [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
                 const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
                 const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
@@ -41,6 +95,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
                       fma(FLOAT_TYPE(b4.w), FLOAT_TYPE((sign7 &  1) != 0 ? -grid1.w : grid1.w),
                       FLOAT_TYPE(0.0)))))))));
                 temp[j][n] = fma(db, sum, temp[j][n]);
+            }
             }
         }
         ibi += num_blocks_per_row;
