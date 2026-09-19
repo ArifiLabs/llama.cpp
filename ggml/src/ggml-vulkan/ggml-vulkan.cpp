@@ -1502,6 +1502,10 @@ struct vk_device_struct {
     // default), 1 = route (admit Q5_K to the A-hoisted q8_1 MMVQ path at n=5..8, k <= 8192).
     // Probed once at device creation next to mmvq_a_hoist, for the same reason.
     uint32_t q5k_mmvq_route;
+    // arifi lane-253 / R65: the NUM_COLS index (i = NUM_COLS-1) at and above which rm_int_n() hands
+    // the q8_1 MMVQ pipelines the static 4-row shape. 4 = the inherited RDNA3 rule, untouched.
+    // Probed once here for the same reason as mmvq_a_hoist: pipeline creation is entered lazily.
+    uint32_t mmvq_wide_rows_from;
 
     bool subgroup_size_control;
     uint32_t subgroup_min_size;
@@ -7170,7 +7174,13 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     }
     // RDNA3: above four columns, static 4 rows for all types bench faster than the default
     const bool is_rdna3 = device->vendor_id == VK_VENDOR_ID_AMD && device->architecture == AMD_RDNA3;
-    auto const &rm_int_n = [&](uint32_t rows, uint32_t i) { return (is_rdna3 && i >= 4) ? 4u : rows; };
+    // arifi lane-253 / R65: the `4` below is upstream's width gate; the threshold it compares
+    // against is now device->mmvq_wide_rows_from, probed in ggml_vk_get_device and defaulting to 4,
+    // so the shipped shape is bit-for-bit the inherited one. GGML_ARIFI_MMVQ_WIDE=v2 lowers it to 3
+    // (the static 4-row shape from NUM_COLS 4 instead of 5); GGML_ARIFI_MMVQ_WIDE_ROWS_FROM=<i>
+    // sets it outright, which is what lets one binary measure NUM_ROWS at a FIXED NUM_COLS.
+    const uint32_t mmvq_rows_from = device->mmvq_wide_rows_from;
+    auto const &rm_int_n = [&](uint32_t rows, uint32_t i) { return (is_rdna3 && i >= mmvq_rows_from) ? 4u : rows; };
     // RDNA3: Static 4 rows for all types bench faster than the default
     //
     // arifi R18 / R15-C3 (upstream 2cdae802e, benched on a Strix Halo): the 4 above is applied to every
@@ -9520,6 +9530,43 @@ static vk_device ggml_vk_get_device(size_t idx) {
             const char * q5k_env = getenv("GGML_ARIFI_Q5K_MMVQ");
             device->q5k_mmvq_route = (q5k_env != nullptr && strcmp(q5k_env, "route") == 0) ? 1u : 0u;
             const bool q5k_v2_asked = q5k_env != nullptr && strcmp(q5k_env, "v2") == 0;
+            // arifi lane-253 / R65: rows-per-workgroup on the PLAIN q8_1 MMVQ path. Upstream's
+            // RDNA3 rule hands every type the static 4-row shape at NUM_COLS >= 5 (i >= 4) and 1-4
+            // rows below it; the tree's own note at rm_int_n records that the 4 "has never been
+            // measured on gfx1103". Rows-per-workgroup is the ONLY lever that touches this path's
+            // real B redundancy: cache_b_block() is called once per (column, k-slice) OUTSIDE the
+            // row loop (mul_mat_vecq.comp:99-119), so B is read exactly once per workgroup and the
+            // duplication is across the ceil(m/NUM_ROWS) row-groups, each of which streams the whole
+            // of B. NUM_ROWS divides that traffic; nothing else on this path does.
+            //
+            // Bit-identity: NUM_ROWS changes only WHICH output rows a workgroup owns. The per-row
+            // k-order, the accumulation order into temp[j][n] and the reduce_result tree over
+            // BLOCK_SIZE are untouched, so every output element is the same sum of the same terms
+            // in the same order.
+            //
+            // Two switches, one binary (runtime-switch law):
+            //   GGML_ARIFI_MMVQ_WIDE=legacy|v2      ships legacy; v2 lowers the gate to i >= 3.
+            //   GGML_ARIFI_MMVQ_WIDE_ROWS_FROM=<i>  diagnostic, 0..8, overrides both. It is what
+            //       makes the fixed-n row cell possible at all: n=4 with 1 row and with 4 rows, and
+            //       n=5 with 4 rows and with 1 row, are four values of this one knob.
+            // Unset or invalid = 4, so no default moves (F-08).
+            device->mmvq_wide_rows_from = 4;
+            const char * wide_env = getenv("GGML_ARIFI_MMVQ_WIDE");
+            const char * wide_src = "default";
+            if (wide_env != nullptr && strcmp(wide_env, "v2") == 0) {
+                device->mmvq_wide_rows_from = 3;
+                wide_src = "GGML_ARIFI_MMVQ_WIDE=v2";
+            }
+            if (const char * rf = getenv("GGML_ARIFI_MMVQ_WIDE_ROWS_FROM")) {
+                char * end = nullptr;
+                const long v = strtol(rf, &end, 10);
+                if (end != rf && v >= 0 && v <= 8) {
+                    device->mmvq_wide_rows_from = (uint32_t) v;
+                    wide_src = "GGML_ARIFI_MMVQ_WIDE_ROWS_FROM";
+                }
+            }
+            fprintf(stderr, "ggml_vulkan: mmvq wide rows_from: %u (%s)\n",
+                    device->mmvq_wide_rows_from, wide_src);
 
             // stderr, for the same reason as the q6_k line: llama-server drops ggml INFO. Names the
             // SOURCE as well as the state -- a pairing log must prove probe vs override.

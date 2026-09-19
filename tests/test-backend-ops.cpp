@@ -12174,6 +12174,41 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
         }
     }
 
+    // ArifiLabs lane-253 / R65: the MMVQ width-knee DISCRIMINATOR rows.
+    //
+    // The q4_K mat-vec knees at NUM_COLS 4 on the 248320x5120 row (79.5/77.1/73.1/61.4 GB/s-of-A at
+    // n=1..4, R61 30-perf-table.txt, 6 rounds; 16.4% reproduced by R57). Two models fit that single
+    // column equally well and are indistinguishable at k=5120:
+    //
+    //   H-CAP   - the per-workgroup B working set, NUM_COLS * k * 1.125 B of q8_1, crosses a fixed
+    //             per-CU capacity C. The knee at n=4 and not n=3 brackets C in [17.28, 23.04) KB.
+    //   H-ISSUE - a k-independent ceiling at four columns.
+    //
+    // They separate under k, and ONLY upward. H-CAP puts the knee at floor(C/(k*1.125))+1, which is
+    // n=2 uniquely across the whole bracket at k=10240 and k=12288; H-ISSUE keeps it at n=4 at every
+    // k. R57 swept k DOWNWARD (1024/2048/3072) where H-CAP predicts only a null, and every one of
+    // those k gives num_iters < 4 so the mul_mat_vecq.comp:146 unroll body is never entered - the
+    // confound R57's own n=7 cliff lives in. BLOCK_SIZE is 64 on this device (the DMMV_WG_SIZE_LARGE
+    // branch is NVIDIA/Intel-only), so col_stride is 1024 and every k here gives num_iters >= 4.
+    //
+    // m = 17408 keeps the sweep affordable enough to interleave rounds; the k=5120 column is the
+    // anchor that ties it back to the published 248320x5120 table. n is capped at 5: n=6..8 change
+    // NUM_ROWS 1 -> 4 (rm_int_n) and n=7 carries R57's separate width-locked cliff, and neither is
+    // allowed near the discriminator.
+    //
+    // Filter: -p "type_a=q4_K,type_b=f32,m=17408".
+    for (int k : { 4096, 5120, 6144, 8192, 10240, 12288 }) {
+        for (int bs : {1, 2, 3, 4, 5}) {
+            test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 17408, bs, k, {1, 1}, {1, 1}));
+        }
+    }
+
+    // The FIXED-n row-regime cell needs no rows of its own: the lane-234 block above already emits
+    // q4_K at 17408x5120 and 248320x5120 for n=1..8, and GGML_ARIFI_MMVQ_WIDE_ROWS_FROM moves
+    // NUM_ROWS under those same rows. Filter it with
+    //   -p "type_a=q4_K,type_b=f32,m=(17408|248320),n=[45],k=5120"
+    // (-p is a std::regex over vars(), so alternation works).
+
     // qwen3-30b-a3b
     for (int bs : {1, 4, 8, 32, 64, 128, 256, 512}) {
         for (ggml_type type_a : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ2_XS}) {
