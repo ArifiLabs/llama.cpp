@@ -1282,6 +1282,11 @@ struct vk_device_struct {
     uint32_t mmvq_a_hoist_iq1;
     bool     mmvq_route_legacy;
 
+    // arifi lane-252 / R64: Q5_K n>1 route arm. 0 = legacy (the shipped f32 dequant route, the
+    // default), 1 = route (admit Q5_K to the A-hoisted q8_1 MMVQ path at n=2..8, k <= 8192).
+    // Probed once at device creation next to mmvq_a_hoist, for the same reason.
+    uint32_t q5k_mmvq_route;
+
     bool subgroup_size_control;
     uint32_t subgroup_min_size;
     uint32_t subgroup_max_size;
