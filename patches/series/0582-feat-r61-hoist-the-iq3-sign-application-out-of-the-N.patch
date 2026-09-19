@@ -1,0 +1,364 @@
+From 471b1c18c615390ccf63184b5a532e88cb26c7fd Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 12:06:57 -0400
+Subject: [PATCH] feat(r61): hoist the iq3 sign application out of the NUM_COLS
+ loop, behind GGML_ARIFI_IQ3_MMVQ
+
+R61 step 0(b) measured the residual per-column select in mul_mat_vec_iq3_s.comp and
+mul_mat_vec_iq3_xxs.comp at 88 marginal OpSelect and 1303 / 1226 marginal instructions per
+extra column, against mul_mat_vec_iq4_xs.comp's 8 / 333 on a structurally identical shader.
+The sign byte and the grid values are A-side only; the lookups were already hoisted, the
+APPLICATION was not.
+
+Specialization constant 3 (ARIFI_IQ3_SIGN_HOIST) now selects between the shipped body, kept
+verbatim as text so the default arm's codegen is provably the pre-R61 one, and a v2 arm that
+applies the sign once per (l, row) and leaves the column body as eight unguarded fmas. Both
+arms form the same products and accumulate them through the same fma nest in the same order,
+so they are bit-identical; only when the negation is evaluated moves. Default legacy, ONE
+binary serves both, and the _id mirror carries the constant too.
+
+Also: GGML_ARIFI_IQ3_N7_ROWS=1|2|4 reshapes the n=7 pipeline's NUM_ROWS alone, to discriminate
+the step-0 NUM_COLS==7 runtime cliff (21-26x its neighbours with the instruction count exactly
+on the linear trend) from every non-spill hypothesis; unset it is inert. And
+GGML_ARIFI_OP_DUMP=<path> appends the test backend's raw outputs for a filtered sweep, so two
+arms can be compared by sha256 of the file rather than by tolerance.
+
+No default moved. No route changed. With the three variables unset the engine diff is three
+getenv calls at first pipeline creation and nothing else.
+
+Origin: fork-authored (ArifiLabs lane-249 R61 iq3 MMVQ wide-width step 2, Opus 5 MEDIUM kernel-maker)
+Measured-effect: op-level perf-mode only (rows in receipts); served t/s UNMEASURED by the maker - HQ pairs quiet
+Lane: lane-249
+Cherry-picked-from: b32d24006 (SOURCE PATHS ONLY, ArifiLabs lane-254 R66 integration)
+Recut-onto: 1b6185951 (ArifiLabs lane-254 R66c, from 201d0b386)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 70 +++++++++++++++++--
+ .../vulkan-shaders/mul_mat_vec_iq3_s.comp     | 70 +++++++++++++++++++
+ .../vulkan-shaders/mul_mat_vec_iq3_xxs.comp   | 55 +++++++++++++++
+ tests/test-backend-ops.cpp                    | 15 ++++
+ 4 files changed, 204 insertions(+), 6 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index d77504b16..46ea71175 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -7430,6 +7430,62 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         const auto q5k_b_hoist_for_cols = [q5k_b_hoist](uint32_t num_cols) {
+             return num_cols <= 3 ? q5k_b_hoist : 0u;
+         };
++        // arifi lane-249 / R61 step 2: iq3_s / iq3_xxs mat-vec SIGN-APPLICATION HOIST
++        // (specialization constant 3 of mul_mat_vec_iq3_s.comp and mul_mat_vec_iq3_xxs.comp).
++        // 1 = apply the sign to the eight A-side grid values once per (l, row), outside the
++        // NUM_COLS loop; 0 = the shipped order, which re-evaluates the select once per weight per
++        // column although nothing in it depends on the column.
++        //
++        // Both arms multiply the same b by the same signed grid value and accumulate through the
++        // same fma nest in the same order, so the two arms are BIT-IDENTICAL - this is a
++        // scheduling change only, the property q5k_b_hoist and q6k_direct_scales above rely on.
++        // DEFAULT legacy (0) until HQ pairs it; GGML_ARIFI_IQ3_MMVQ=v2 selects the hoist, and ONE
++        // binary serves both arms. (The env name is the brief's; the mechanism is NOT the MMVQ
++        // route - the iq3 types have no q8_1 pipeline at all, see R61 step 0(a) - but the name is
++        // kept so HQ's pairing scripts do not have to change.)
++        const uint32_t iq3_sign_hoist = [] {
++            const char * s = getenv("GGML_ARIFI_IQ3_MMVQ");
++            if (s == nullptr) {
++                return 0u;
++            }
++            if (strcmp(s, "v2") == 0) {
++                return 1u;
++            }
++            if (strcmp(s, "legacy") != 0) {
++                fprintf(stderr, "ggml_vulkan: GGML_ARIFI_IQ3_MMVQ=%s not understood (legacy|v2), using legacy\n", s);
++            }
++            return 0u;
++        }();
++        // arifi lane-249 / R61 step 2(b): the iq3_s NUM_COLS == 7 CLIFF probe. Step 0 measured n=7
++        // at 21-26x its n=6 / n=8 neighbours, 6/6 rounds, 3/3 shapes, with the compiled instruction
++        // count sitting EXACTLY on the linear trend (10759, marginals 1303 and 1303) - so the extra
++        // time is not extra work and the suspect is register pressure / scratch spill at that one
++        // specialization (temp[7][NUM_ROWS] is 7x4 = 28 live floats, a non-power-of-two first
++        // dimension). This knob changes ONE thing about the n=7 pipeline only: how many rows one
++        // workgroup accumulates (NUM_ROWS, and the matching workgroup denominator). Fewer rows =
++        // proportionally fewer live temp[] floats and nothing else, so it discriminates spill from
++        // every other hypothesis, and if it lands it is itself the fix the brief allows ("a
++        // different workgroup shape for 7").
++        //
++        // BIT-IDENTICAL: NUM_ROWS partitions rows across workgroups; it does not touch the order in
++        // which any single output's partial products are formed or summed.
++        // Unset = shipped rm_iq at every width, i.e. inert. GGML_ARIFI_IQ3_N7_ROWS=1|2|4.
++        const uint32_t iq3_n7_rows = [rm_iq] {
++            const char * s = getenv("GGML_ARIFI_IQ3_N7_ROWS");
++            if (s == nullptr) {
++                return rm_iq;
++            }
++            const uint32_t v = (uint32_t) atoi(s);
++            if (v != 1 && v != 2 && v != 4) {
++                fprintf(stderr, "ggml_vulkan: GGML_ARIFI_IQ3_N7_ROWS=%s not understood (1|2|4), using the default %u\n", s, rm_iq);
++                return rm_iq;
++            }
++            return v;
++        }();
++        // i is the NUM_COLS-1 loop index; only the n=7 pipeline is ever given a different shape.
++        const auto iq3_rows = [rm_iq, iq3_n7_rows](uint32_t i) {
++            return (i + 1 == 7) ? iq3_n7_rows : rm_iq;
++        };
+         {
+             static bool once = false;
+             if (!once) {
+@@ -7441,6 +7497,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+                 // the A/B's own server log.
+                 fprintf(stderr, "ggml_vulkan: q5_k mat-vec activation-hoist: %s\n",
+                         q5k_b_hoist ? "ON (n<=3)" : "OFF");
++                fprintf(stderr, "ggml_vulkan: iq3 mat-vec sign-hoist: %s [GGML_ARIFI_IQ3_MMVQ]\n",
++                        iq3_sign_hoist ? "v2" : "legacy");
+             }
+         }
+ 
+@@ -7473,8 +7531,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ2_XXS][i], "mul_mat_vec_iq2_xxs_f32_f32", arr_dmmv_iq2_xxs_f32_f32_len[reduc16], arr_dmmv_iq2_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ2_XS][i],  "mul_mat_vec_iq2_xs_f32_f32",  arr_dmmv_iq2_xs_f32_f32_len[reduc16],  arr_dmmv_iq2_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ2_S][i],   "mul_mat_vec_iq2_s_f32_f32",   arr_dmmv_iq2_s_f32_f32_len[reduc16],   arr_dmmv_iq2_s_f32_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ3_XXS][i], "mul_mat_vec_iq3_xxs_f32_f32", arr_dmmv_iq3_xxs_f32_f32_len[reduc16], arr_dmmv_iq3_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ3_S][i],   "mul_mat_vec_iq3_s_f32_f32",   arr_dmmv_iq3_s_f32_f32_len[reduc16],   arr_dmmv_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ3_XXS][i], "mul_mat_vec_iq3_xxs_f32_f32", arr_dmmv_iq3_xxs_f32_f32_len[reduc16], arr_dmmv_iq3_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {iq3_rows(i), 1, 1}, {wg_size_subgroup16, iq3_rows(i), i+1, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ3_S][i],   "mul_mat_vec_iq3_s_f32_f32",   arr_dmmv_iq3_s_f32_f32_len[reduc16],   arr_dmmv_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {iq3_rows(i), 1, 1}, {wg_size_subgroup16, iq3_rows(i), i+1, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ4_XS][i],  "mul_mat_vec_iq4_xs_f32_f32",  arr_dmmv_iq4_xs_f32_f32_len[reduc16],  arr_dmmv_iq4_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ4_NL][i],  "mul_mat_vec_iq4_nl_f32_f32",  arr_dmmv_iq4_nl_f32_f32_len[reduc16],  arr_dmmv_iq4_nl_f32_f32_data[reduc16],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_MXFP4][i],   "mul_mat_vec_mxfp4_f32_f32",   OCP_DMMV_LEN(arr_dmmv_mxfp4_f32_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_mxfp4_f32_f32, reduc16), "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+@@ -7539,8 +7597,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ2_XXS][i], "mul_mat_vec_iq2_xxs_f16_f32", arr_dmmv_iq2_xxs_f16_f32_len[reduc16], arr_dmmv_iq2_xxs_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ2_XS][i],  "mul_mat_vec_iq2_xs_f16_f32",  arr_dmmv_iq2_xs_f16_f32_len[reduc16],  arr_dmmv_iq2_xs_f16_f32_data[reduc16],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ2_S][i],   "mul_mat_vec_iq2_s_f16_f32",   arr_dmmv_iq2_s_f16_f32_len[reduc16],   arr_dmmv_iq2_s_f16_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ3_XXS][i], "mul_mat_vec_iq3_xxs_f16_f32", arr_dmmv_iq3_xxs_f16_f32_len[reduc16], arr_dmmv_iq3_xxs_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ3_S][i],   "mul_mat_vec_iq3_s_f16_f32",   arr_dmmv_iq3_s_f16_f32_len[reduc16],   arr_dmmv_iq3_s_f16_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ3_XXS][i], "mul_mat_vec_iq3_xxs_f16_f32", arr_dmmv_iq3_xxs_f16_f32_len[reduc16], arr_dmmv_iq3_xxs_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {iq3_rows(i), 1, 1}, {wg_size_subgroup16, iq3_rows(i), i+1, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ3_S][i],   "mul_mat_vec_iq3_s_f16_f32",   arr_dmmv_iq3_s_f16_f32_len[reduc16],   arr_dmmv_iq3_s_f16_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {iq3_rows(i), 1, 1}, {wg_size_subgroup16, iq3_rows(i), i+1, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ4_XS][i],  "mul_mat_vec_iq4_xs_f16_f32",  arr_dmmv_iq4_xs_f16_f32_len[reduc16],  arr_dmmv_iq4_xs_f16_f32_data[reduc16],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ4_NL][i],  "mul_mat_vec_iq4_nl_f16_f32",  arr_dmmv_iq4_nl_f16_f32_len[reduc16],  arr_dmmv_iq4_nl_f16_f32_data[reduc16],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_MXFP4][i],   "mul_mat_vec_mxfp4_f16_f32",   OCP_DMMV_LEN(arr_dmmv_mxfp4_f16_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_mxfp4_f16_f32, reduc16), "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+@@ -7615,8 +7673,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_IQ2_XXS], "mul_mat_vec_id_iq2_xxs_f32", arr_dmmv_id_iq2_xxs_f32_f32_len[reduc16], arr_dmmv_id_iq2_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_IQ2_XS],  "mul_mat_vec_id_iq2_xs_f32",  arr_dmmv_id_iq2_xs_f32_f32_len[reduc16],  arr_dmmv_id_iq2_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_IQ2_S],   "mul_mat_vec_id_iq2_s_f32",   arr_dmmv_id_iq2_s_f32_f32_len[reduc16],   arr_dmmv_id_iq2_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+-        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_IQ3_XXS], "mul_mat_vec_id_iq3_xxs_f32", arr_dmmv_id_iq3_xxs_f32_f32_len[reduc16], arr_dmmv_id_iq3_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+-        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_id_iq3_s_f32",   arr_dmmv_id_iq3_s_f32_f32_len[reduc16],   arr_dmmv_id_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
++        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_IQ3_XXS], "mul_mat_vec_id_iq3_xxs_f32", arr_dmmv_id_iq3_xxs_f32_f32_len[reduc16], arr_dmmv_id_iq3_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, 1, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
++        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_id_iq3_s_f32",   arr_dmmv_id_iq3_s_f32_f32_len[reduc16],   arr_dmmv_id_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, 1, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_IQ4_XS],  "mul_mat_vec_id_iq4_xs_f32",  arr_dmmv_id_iq4_xs_f32_f32_len[reduc16],  arr_dmmv_id_iq4_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_IQ4_NL],  "mul_mat_vec_id_iq4_nl_f32",  arr_dmmv_id_iq4_nl_f32_f32_len[reduc16],  arr_dmmv_id_iq4_nl_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_MXFP4],   "mul_mat_vec_id_mxfp4_f32",   OCP_DMMV_LEN(arr_dmmv_id_mxfp4_f32_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_id_mxfp4_f32_f32, reduc16), "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+index e8f6eb69a..35c1f451c 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+@@ -25,6 +25,47 @@ const uint TPB         = ARIFI_TPB16 ? 16u : 8u;
+ const uint NL          = ARIFI_TPB16 ?  2u : 4u;   // == 32 / TPB
+ const uint TPB_OVER_8  = ARIFI_TPB16 ?  2u : 1u;   // == TPB / 8
+ 
++// arifi lane-249 / R61 step 2: SIGN-APPLICATION HOIST (specialization constant 3).
++// 0 = legacy, the shipped body VERBATIM: the sign select sits inside an fma argument and is
++//     re-evaluated once per weight PER COLUMN, although `sign` and `grid*` are A-side only.
++// 1 = v2: apply the sign to the eight grid values ONCE per (l, row), outside the NUM_COLS loop,
++//     and leave the column body as eight unguarded fmas -- mul_mat_vec_iq4_xs.comp's shape.
++// R61 step 0(b) measured the residual select at 88 marginal OpSelect and ~1303 marginal
++// instructions per extra column against iq4_xs's 8 / 333 (r61-evidence/20-spirv-counts.txt).
++//
++// BIT-IDENTICAL BETWEEN ARMS BY CONSTRUCTION: both arms multiply the same b value by the same
++// signed grid value and accumulate in the same order through the same fma chain. The negation is
++// exact (IEEE sign-bit flip) and happens in float32 before the FLOAT_TYPE conversion in both arms,
++// so no rounding difference can arise -- only WHEN the negation is evaluated moves.
++// Default 0. GGML_ARIFI_IQ3_MMVQ=v2 selects arm 1; ONE binary serves both.
++layout (constant_id = 3) const uint ARIFI_IQ3_SIGN_HOIST = 0;
++
++// The eight signed grid values, as the legacy chain would have computed them element by element.
++vec4 iq3s_sign_lo(const vec4 g, const uint sign) {
++    return vec4((sign &  1) != 0 ? -g.x : g.x,
++                (sign &  2) != 0 ? -g.y : g.y,
++                (sign &  4) != 0 ? -g.z : g.z,
++                (sign &  8) != 0 ? -g.w : g.w);
++}
++vec4 iq3s_sign_hi(const vec4 g, const uint sign) {
++    return vec4((sign &  16) != 0 ? -g.x : g.x,
++                (sign &  32) != 0 ? -g.y : g.y,
++                (sign &  64) != 0 ? -g.z : g.z,
++                (sign & 128) != 0 ? -g.w : g.w);
++}
++// The column body with the signs already applied: same operands, same fma nesting, same order.
++FLOAT_TYPE iq3s_col_dot(const vec4 b0, const vec4 b4, const vec4 s0, const vec4 s1, const FLOAT_TYPE acc) {
++    return fma(FLOAT_TYPE(b0.x), FLOAT_TYPE(s0.x),
++           fma(FLOAT_TYPE(b0.y), FLOAT_TYPE(s0.y),
++           fma(FLOAT_TYPE(b0.z), FLOAT_TYPE(s0.z),
++           fma(FLOAT_TYPE(b0.w), FLOAT_TYPE(s0.w),
++           fma(FLOAT_TYPE(b4.x), FLOAT_TYPE(s1.x),
++           fma(FLOAT_TYPE(b4.y), FLOAT_TYPE(s1.y),
++           fma(FLOAT_TYPE(b4.z), FLOAT_TYPE(s1.z),
++           fma(FLOAT_TYPE(b4.w), FLOAT_TYPE(s1.w),
++           acc))))))));
++}
++
+ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows) {
+     const uint ib32 = itid / TPB_OVER_8;
+     const uint l0   = (itid % TPB_OVER_8) * NL;
+@@ -45,6 +86,21 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+                 const vec4 grid0 = vec4(unpack8(iq3s_grid[qs.x | ((qh << (8 - 2*l)) & 0x100)]));
+                 const vec4 grid1 = vec4(unpack8(iq3s_grid[qs.y | ((qh << (7 - 2*l)) & 0x100)]));
+ 
++                if (ARIFI_IQ3_SIGN_HOIST != 0) {
++                    // v2: the sign is A-side only, so apply it once here and let the column body
++                    // be eight unguarded fmas.
++                    const vec4 s0 = iq3s_sign_lo(grid0, sign);
++                    const vec4 s1 = iq3s_sign_hi(grid1, sign);
++
++                    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++                        const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
++                        const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
++
++                        temp[j][n] = fma(dscale, iq3s_col_dot(b0, b4, s0, s1, FLOAT_TYPE(0.0)), temp[j][n]);
++                    }
++                } else {
++                // legacy: the shipped body, VERBATIM. Kept as text rather than routed through
++                // iq3s_col_dot so the default arm's codegen is provably the pre-R61 one.
+                 [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+                     const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+                     const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
+@@ -62,6 +118,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+ 
+                     temp[j][n] = fma(dscale, sum, temp[j][n]);
+                 }
++                }
+             }
+         } else {
+             // the stock widths: the upstream body VERBATIM (sum[NUM_COLS] array, l = 0..3). The union-gate build
+@@ -77,6 +134,18 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+                 const vec4 grid0 = vec4(unpack8(iq3s_grid[qs.x | ((qh << (8 - 2*l)) & 0x100)]));
+                 const vec4 grid1 = vec4(unpack8(iq3s_grid[qs.y | ((qh << (7 - 2*l)) & 0x100)]));
+ 
++                if (ARIFI_IQ3_SIGN_HOIST != 0) {
++                    // v2, stock-width branch: same hoist, same sum[] accumulation order.
++                    const vec4 s0 = iq3s_sign_lo(grid0, sign);
++                    const vec4 s1 = iq3s_sign_hi(grid1, sign);
++
++                    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++                        const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
++                        const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
++
++                        sum[j] = iq3s_col_dot(b0, b4, s0, s1, sum[j]);
++                    }
++                } else {
+                 [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+                     const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+                     const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
+@@ -92,6 +161,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+                           fma(FLOAT_TYPE(b4.w), FLOAT_TYPE((sign & 128) != 0 ? -grid1.w : grid1.w),
+                           sum[j]))))))));
+                 }
++                }
+             }
+             [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+                 temp[j][n] = fma(dscale, sum[j], temp[j][n]);
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp
+index a88898109..732eb0531 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp
+@@ -7,6 +7,45 @@ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+ 
+ FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+ 
++// arifi lane-249 / R61 step 2: SIGN-APPLICATION HOIST (specialization constant 3).
++// 0 = legacy, the shipped body VERBATIM: the sign select sits inside an fma argument and is
++//     re-evaluated once per weight PER COLUMN, although `sign`, `sign7` and `grid*` are A-side only.
++// 1 = v2: apply the sign to the eight grid values ONCE per (l, row), outside the NUM_COLS loop.
++// R61 step 0(b) measured the residual select at 88 marginal OpSelect and ~1226 marginal
++// instructions per extra column against iq4_xs's 8 / 333 (r61-evidence/20-spirv-counts.txt).
++//
++// BIT-IDENTICAL BETWEEN ARMS BY CONSTRUCTION: same products, same fma nesting, same accumulation
++// order; the negation is an exact IEEE sign-bit flip applied in float32 before the FLOAT_TYPE
++// conversion in both arms. Only WHEN it is evaluated moves.
++// Default 0. GGML_ARIFI_IQ3_MMVQ=v2 selects arm 1; ONE binary serves both.
++layout (constant_id = 3) const uint ARIFI_IQ3_SIGN_HOIST = 0;
++
++vec4 iq3xxs_sign_lo(const vec4 g, const uint sign) {
++    return vec4((sign &  1) != 0 ? -g.x : g.x,
++                (sign &  2) != 0 ? -g.y : g.y,
++                (sign &  4) != 0 ? -g.z : g.z,
++                (sign &  8) != 0 ? -g.w : g.w);
++}
++// NOTE the last element: upstream uses the PARITY bit (sign7 = bitCount(sign)), not (sign & 128) --
++// `sign` is a 7-bit field and the eighth sign is its parity. Reproduced exactly.
++vec4 iq3xxs_sign_hi(const vec4 g, const uint sign, const uint sign7) {
++    return vec4((sign  & 16) != 0 ? -g.x : g.x,
++                (sign  & 32) != 0 ? -g.y : g.y,
++                (sign  & 64) != 0 ? -g.z : g.z,
++                (sign7 &  1) != 0 ? -g.w : g.w);
++}
++FLOAT_TYPE iq3xxs_col_dot(const vec4 b0, const vec4 b4, const vec4 s0, const vec4 s1) {
++    return fma(FLOAT_TYPE(b0.x), FLOAT_TYPE(s0.x),
++           fma(FLOAT_TYPE(b0.y), FLOAT_TYPE(s0.y),
++           fma(FLOAT_TYPE(b0.z), FLOAT_TYPE(s0.z),
++           fma(FLOAT_TYPE(b0.w), FLOAT_TYPE(s0.w),
++           fma(FLOAT_TYPE(b4.x), FLOAT_TYPE(s1.x),
++           fma(FLOAT_TYPE(b4.y), FLOAT_TYPE(s1.y),
++           fma(FLOAT_TYPE(b4.z), FLOAT_TYPE(s1.z),
++           fma(FLOAT_TYPE(b4.w), FLOAT_TYPE(s1.w),
++           FLOAT_TYPE(0.0)))))))));
++}
++
+ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows) {
+     const uint y_idx = i * QUANT_K + 16 * itid;
+     const uint ib32 = itid / 2; // 0..7
+@@ -26,6 +65,21 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+             const vec4 grid0 = vec4(unpack8(iq3xxs_grid[qs0]));
+             const vec4 grid1 = vec4(unpack8(iq3xxs_grid[qs1]));
+ 
++            if (ARIFI_IQ3_SIGN_HOIST != 0) {
++                // v2: the sign is A-side only, so apply it once here and let the column body be
++                // eight unguarded fmas -- mul_mat_vec_iq4_xs.comp's shape.
++                const vec4 s0 = iq3xxs_sign_lo(grid0, sign);
++                const vec4 s1 = iq3xxs_sign_hi(grid1, sign, sign7);
++
++                [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++                    const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
++                    const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
++
++                    temp[j][n] = fma(db, iq3xxs_col_dot(b0, b4, s0, s1), temp[j][n]);
++                }
++            } else {
++            // legacy: the shipped body, VERBATIM. Kept as text rather than routed through
++            // iq3xxs_col_dot so the default arm's codegen is provably the pre-R61 one.
+             [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+                 const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+                 const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
+@@ -42,6 +96,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+                       FLOAT_TYPE(0.0)))))))));
+                 temp[j][n] = fma(db, sum, temp[j][n]);
+             }
++            }
+         }
+         ibi += num_blocks_per_row;
+     }
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index b41a1efc9..3bee0d8fe 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -1510,6 +1510,21 @@ struct test_case {
+             std::vector<float> f1 = tensor_to_float(t1);
+             std::vector<float> f2 = tensor_to_float(t2);
+ 
++            // arifi lane-249 / R61 step 2: BYTE-IDENTITY DUMP, diagnostic only, default off.
++            // GGML_ARIFI_OP_DUMP=<path> appends the TEST backend's output for every evaluated
++            // tensor, in evaluation order, to one file. Two runs of the same filtered sweep that
++            // differ only in a kernel arm must produce the same file, so sha256 of the file is a
++            // bit-identity proof of the whole sweep rather than a per-row tolerance check.
++            // Inert with the variable unset (one getenv on first call).
++            static FILE * arifi_dump = [] {
++                const char * s = getenv("GGML_ARIFI_OP_DUMP");
++                return s != nullptr ? fopen(s, "ab") : (FILE *) nullptr;
++            }();
++            if (arifi_dump != nullptr && !f1.empty()) {
++                fwrite(f1.data(), sizeof(float), f1.size(), arifi_dump);
++                fflush(arifi_dump);
++            }
++
+             for (size_t i = 0; i < f1.size(); i++) {
+                 // check for nans
+                 if (std::isnan(f1[i]) || std::isnan(f2[i])) {
