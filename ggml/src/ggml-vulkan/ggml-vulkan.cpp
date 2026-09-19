@@ -7439,22 +7439,31 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         // Both arms multiply the same b by the same signed grid value and accumulate through the
         // same fma nest in the same order, so the two arms are BIT-IDENTICAL - this is a
         // scheduling change only, the property q5k_b_hoist and q6k_direct_scales above rely on.
-        // DEFAULT legacy (0) until HQ pairs it; GGML_ARIFI_IQ3_MMVQ=v2 selects the hoist, and ONE
-        // binary serves both arms. (The env name is the brief's; the mechanism is NOT the MMVQ
-        // route - the iq3 types have no q8_1 pipeline at all, see R61 step 0(a) - but the name is
-        // kept so HQ's pairing scripts do not have to change.)
+        // (The env name is the brief's; the mechanism is NOT the MMVQ route - the iq3 types have no
+        // q8_1 pipeline at all, see R61 step 0(a) - but the name is kept so HQ's pairing scripts do
+        // not have to change.)
+        //
+        // arifi lane-254 / R66 step 2(b), President ruling 2026-09-18 (a proven-safe gain ships ON,
+        // including a gain that shows nothing on our GPU): DEFAULT is now `v2` on ALL devices.
+        // Basis: R61 claim 3, CHECKED by CHECK-R61-FABLE - one deterministic dump sha over 76
+        // executed cases per arm (both iq3 types, n=1..10 and 64) is equal legacy == control == v2,
+        // i.e. bit-identical sha-for-sha; and the hoisted arm compiles to 349 SPIR-V instructions
+        // per column against 1229. There is NO wall-clock change on gfx1103 (6 rounds, ratios
+        // 0.991-1.013) because this driver's compiled stats are identical between the arms -- the
+        // AMD compiler already hoists the loop-invariant select (CHECK-R61 F3). It ships for the
+        // drivers that do not. GGML_ARIFI_IQ3_MMVQ=legacy restores the inherited nest.
         const uint32_t iq3_sign_hoist = [] {
             const char * s = getenv("GGML_ARIFI_IQ3_MMVQ");
             if (s == nullptr) {
-                return 0u;
-            }
-            if (strcmp(s, "v2") == 0) {
                 return 1u;
             }
-            if (strcmp(s, "legacy") != 0) {
-                fprintf(stderr, "ggml_vulkan: GGML_ARIFI_IQ3_MMVQ=%s not understood (legacy|v2), using legacy\n", s);
+            if (strcmp(s, "legacy") == 0) {
+                return 0u;
             }
-            return 0u;
+            if (strcmp(s, "v2") != 0) {
+                fprintf(stderr, "ggml_vulkan: GGML_ARIFI_IQ3_MMVQ=%s not understood (legacy|v2), using v2\n", s);
+            }
+            return 1u;
         }();
         // arifi lane-249 / R61 step 2(b): the iq3_s NUM_COLS == 7 CLIFF probe. Step 0 measured n=7
         // at 21-26x its n=6 / n=8 neighbours, 6/6 rounds, 3/3 shapes, with the compiled instruction
@@ -7469,17 +7478,31 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         //
         // BIT-IDENTICAL: NUM_ROWS partitions rows across workgroups; it does not touch the order in
         // which any single output's partial products are formed or summed.
-        // Unset = shipped rm_iq at every width, i.e. inert. GGML_ARIFI_IQ3_N7_ROWS=1|2|4.
-        const uint32_t iq3_n7_rows = [rm_iq] {
+        // GGML_ARIFI_IQ3_N7_ROWS=1|2|4.
+        //
+        // arifi lane-254 / R66 step 2(c), President ruling 2026-09-18: DEFAULT is now 2 on AMD
+        // RDNA3 (gfx110x, the is_rdna3 probe already used by rm_int_n/rm_id) and the inherited
+        // rm_iq everywhere else. Basis: R61 claim 2, CHECKED by CHECK-R61-FABLE -- at NUM_COLS == 7
+        // the inherited shape spills (raw scratchMemUsageInBytes 768 B, 8 lines per file) and the
+        // n=7 pipeline costs ~462,000 us/run against ~20,900 with 2 rows; scratch is 0 under 1 and
+        // 2 rows and 768 again at 4, and the rows=4 arm reproduces the cliff, which is the control.
+        // The spill is a driver-ALLOCATOR effect measured on this device class only, which is why
+        // the default is device-scoped rather than global (CHECK-R61 §(b) gate 4).
+        // It touches the iq3_s AND iq3_xxs f32 and f16 mat-vec pipelines (CHECK-R61 F5); the
+        // MUL_MAT_ID pipelines take rm_iq with NUM_COLS fixed at 1 and can never see this value.
+        const uint32_t iq3_n7_rows_default = is_rdna3 ? 2u : rm_iq;
+        const char * iq3_n7_src = is_rdna3 ? "device-probe (RDNA3)" : "device-probe (upstream shape)";
+        const uint32_t iq3_n7_rows = [iq3_n7_rows_default, &iq3_n7_src] {
             const char * s = getenv("GGML_ARIFI_IQ3_N7_ROWS");
             if (s == nullptr) {
-                return rm_iq;
+                return iq3_n7_rows_default;
             }
             const uint32_t v = (uint32_t) atoi(s);
             if (v != 1 && v != 2 && v != 4) {
-                fprintf(stderr, "ggml_vulkan: GGML_ARIFI_IQ3_N7_ROWS=%s not understood (1|2|4), using the default %u\n", s, rm_iq);
-                return rm_iq;
+                fprintf(stderr, "ggml_vulkan: GGML_ARIFI_IQ3_N7_ROWS=%s not understood (1|2|4), using the default %u\n", s, iq3_n7_rows_default);
+                return iq3_n7_rows_default;
             }
+            iq3_n7_src = "GGML_ARIFI_IQ3_N7_ROWS";
             return v;
         }();
         // i is the NUM_COLS-1 loop index; only the n=7 pipeline is ever given a different shape.
@@ -7499,6 +7522,10 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                         q5k_b_hoist ? "ON (n<=3)" : "OFF");
                 fprintf(stderr, "ggml_vulkan: iq3 mat-vec sign-hoist: %s [GGML_ARIFI_IQ3_MMVQ]\n",
                         iq3_sign_hoist ? "v2" : "legacy");
+                // arifi lane-254 / R66 step 2(c): CHECK-R61 F6 - the N7_ROWS value had no startup
+                // line, so its liveness could only be proven by effect. A default-flip must print.
+                fprintf(stderr, "ggml_vulkan: iq3 mat-vec n=7 rows: %u (%s) [GGML_ARIFI_IQ3_N7_ROWS]\n",
+                        iq3_n7_rows, iq3_n7_src);
             }
         }
 
@@ -9578,15 +9605,33 @@ static vk_device ggml_vk_get_device(size_t idx) {
             const char * route_env = getenv("GGML_ARIFI_MMVQ_ROUTE");
             device->mmvq_route_legacy = route_env != nullptr && strcmp(route_env, "legacy") == 0;
 
-            // arifi lane-252 / R64: GGML_ARIFI_Q5K_MMVQ=<legacy|route>. DEFAULTS TO legacy, so no
-            // default moves (F-08): unset leaves Q5_K n>1 on the f32 dequant shader exactly as
-            // today. `route` admits Q5_K to the A-hoisted q8_1 MMVQ path at n=5..8, k <= 8192 --
-            // the same rule the Q4_K admit already carries, and for the same mechanism.
+            // arifi lane-252 / R64: GGML_ARIFI_Q5K_MMVQ=<legacy|route>. `route` admits Q5_K to the
+            // A-hoisted q8_1 MMVQ path at n=5..8, k <= 8192 -- the same rule the Q4_K admit already
+            // carries, and for the same mechanism.
             // `v2` is accepted as a NAME only and behaves as legacy: it is reserved for a shader
             // change (R48c-class direct scales) that this lane did not need, and saying so here is
             // cheaper than a caller discovering it silently routed.
+            //
+            // arifi lane-254 / R66 step 2(a), President ruling 2026-09-18 (a proven-safe gain ships
+            // ON): the DEFAULT is now device-probed -- `route` on AMD, `legacy` everywhere else.
+            // Basis: R64's 6-round paired table on 17408x5120 (r64-evidence/13-paired-ffn.txt) --
+            // the marginal q5_K column over n=4..8 falls 113.8 -> 5.4 us, 6/6 rounds at n=5..8,
+            // ranges clear of 1.0 -- and CHECK-R64-FABLE §2/§3, which recomputed it and kept the
+            // k <= 8192 gate exactly as measured (at k=17408 the same route is a 0/6 LOSS).
+            // The enclosing route test is `vendor_id == VK_VENDOR_ID_AMD && n > 1`, so the device
+            // scope is the one ggml_vk_should_use_mmvq already applies; non-AMD (Intel-class and
+            // NVIDIA) was never measured and keeps `legacy`. GGML_ARIFI_Q5K_MMVQ=legacy restores
+            // the pre-R66 route on one binary.
             const char * q5k_env = getenv("GGML_ARIFI_Q5K_MMVQ");
-            device->q5k_mmvq_route = (q5k_env != nullptr && strcmp(q5k_env, "route") == 0) ? 1u : 0u;
+            const char * q5k_src = "device-probe";
+            device->q5k_mmvq_route = (uint32_t) (device->vendor_id == VK_VENDOR_ID_AMD);
+            if (q5k_env != nullptr && strcmp(q5k_env, "route") == 0) {
+                device->q5k_mmvq_route = 1u;
+                q5k_src = "GGML_ARIFI_Q5K_MMVQ=route";
+            } else if (q5k_env != nullptr && strcmp(q5k_env, "legacy") == 0) {
+                device->q5k_mmvq_route = 0u;
+                q5k_src = "GGML_ARIFI_Q5K_MMVQ=legacy";
+            }
             const bool q5k_v2_asked = q5k_env != nullptr && strcmp(q5k_env, "v2") == 0;
             // arifi lane-253 / R65: rows-per-workgroup on the PLAIN q8_1 MMVQ path. Upstream's
             // RDNA3 rule hands every type the static 4-row shape at NUM_COLS >= 5 (i >= 4) and 1-4
@@ -9632,8 +9677,8 @@ static vk_device ggml_vk_get_device(size_t idx) {
                     device->mmvq_a_hoist ? "ON" : "OFF", hoist_src,
                     device->mmvq_a_hoist_iq1 ? "ON" : "OFF",
                     device->mmvq_route_legacy ? "legacy" : "r48b");
-            fprintf(stderr, "ggml_vulkan: q5_k mmvq route: %s%s\n",
-                    device->q5k_mmvq_route ? "route (n=5..8, k<=8192)" : "legacy",
+            fprintf(stderr, "ggml_vulkan: q5_k mmvq route: %s (%s)%s\n",
+                    device->q5k_mmvq_route ? "route (n=5..8, k<=8192)" : "legacy", q5k_src,
                     q5k_v2_asked ? " (GGML_ARIFI_Q5K_MMVQ=v2 is UNIMPLEMENTED - running legacy)" : "");
         }
 
