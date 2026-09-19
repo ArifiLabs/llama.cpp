@@ -385,6 +385,31 @@ static constexpr uint32_t mul_mat_vec_max_cols = 8;
 
 static constexpr uint32_t p021_max_gqa_ratio = 8;
 
+// ArifiLabs lane-248 / R57: the mat-vec ADMIT width, made runtime-selectable (runtime-switch law,
+// F-08: default = the inherited constant, no default moves).
+//
+// The decode multiplier on the drafted line is the cost of one extra VERIFY ROW, not the n=1 rate
+// (R63 §3a: the marginal row is 43.0 ms = 0.177 plain-token-equivalents, and that number alone caps
+// the line at 10.9 t/s with a perfect drafter at n-max 4). Deciding where that marginal cost is
+// cheapest needs the SAME (shape, type, width) timed on BOTH paths, and n <= 8 could only ever take
+// mat-vec: the GEMM path was unreachable below 9 columns, so the two regimes could never be
+// compared at a width the served line actually uses. Lowering this value hands widths above it to
+// ggml_vk_mul_mat_q_f16() out of one binary. GGML_ARIFI_MMV_MAX_COLS=0 puts EVERY width including
+// n=1 on the GEMM path (the n=1 clause is gated by the same value, so the two regimes can be
+// compared at the same anchor); 8 (the default) is byte-for-byte the inherited routing.
+static uint32_t ggml_vk_mmv_max_cols() {
+    static const uint32_t v = [] {
+        const char * s = getenv("GGML_ARIFI_MMV_MAX_COLS");
+        if (s == nullptr) {
+            return mul_mat_vec_max_cols;
+        }
+        int x = atoi(s);
+        x = std::max(0, std::min(x, (int) mul_mat_vec_max_cols));
+        return (uint32_t) x;
+    }();
+    return v;
+}
+
 // lane-230 / R46b commit D: the R47d S-X8 mat-vec sweep (lane-232) as a DEVICE-PROBED DEFAULT.
 //
 // R47d paired rows 1/2/4/8 against workgroups 64/128/256 over the four real 27B S-X8 decode

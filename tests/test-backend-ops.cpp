@@ -12554,6 +12554,62 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
         }
     }
 
+    // ArifiLabs lane-248 / R57 step 0: the k-sweep FALSIFIER for the q4_K wide-width knee.
+    //
+    // R50 (lane-239) left the n=3 -> n=4 drop on q4_K MMVQ (~16% at 248320x5120) attributed to a
+    // capacity crossing: the per-workgroup q8_1 B tile is ~5.4 KB per column at k=5120, so n=4
+    // crosses a 16 KB L0/L1. CHECK-R50-FABLE finding 8 named the one measurement that kills that
+    // premise without touching a shader -- the SAME shape at SMALL k. At k=1024 the B tile is
+    // ~1.1 KB per column (4.4 KB at n=4), far under any per-CU cache on gfx1103, so a capacity
+    // mechanism MUST move the knee. If the drop is still there at k=1024, capacity is dead and the
+    // q4_K cheaper-dot lane proceeds as instruction cuts only.
+    //
+    // k=5120 at this m is already covered by the two blocks above; only 1024 and 2048 are new.
+    // n=1..5 spans both sides of the knee AND gives the two low widths that show whether the knee
+    // MOVES with k (a capacity threshold would move it; an issue ceiling would not).
+    // These rows only reach the MMVQ shader with GGML_VK_FORCE_MMVQ=1 (ggml_vk_should_use_mmvq
+    // returns true unconditionally at mmvq_mode == 1, ggml-vulkan.cpp:9531-9536); without the
+    // force they measure the f32 dequant shader, which is the sweep's paired control arm.
+    for (int64_t k : {1024, 2048}) {
+        for (int bs : {1, 2, 3, 4, 5}) {
+            test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 248320, bs, k, {1, 1}, {1, 1}));
+        }
+    }
+    // The step-0 table (r57-evidence/10-ksweep.txt) came back with the drop SHRINKING as k falls:
+    // the n=3->4 step costs 2.68 us per MB of A at k=5120 and 0.88 at k=2048, while n=2->3 costs
+    // 0.69 / 0.78 at the two k -- i.e. the knee is k-DEPENDENT, which is what a capacity threshold
+    // looks like and what an issue ceiling does not. The decisive follow-up is whether the knee
+    // MOVES to the width where the k=2048 B tile reaches the same size: q8_1 is ~1.125 bytes per
+    // weight, so the per-column tile is 5.76 KB at k=5120 (n=4 -> 23 KB) and 2.30 KB at k=2048,
+    // which reaches 23 KB only at n=10. n=6..8 extends the k=2048 row far enough to see it move.
+    // (k=1024 is excluded on purpose: at K_PER_ITER*BLOCK_SIZE = 1024 each workgroup runs ONE
+    // iteration, and the fixed-cost fit over k=2048/5120 predicts 2111 us against 4101 measured --
+    // that cell is launch-bound and cannot resolve a loop-behaviour question.)
+    for (int bs : {6, 7, 8}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 248320, bs, 2048, {1, 1}, {1, 1}));
+    }
+
+    // ArifiLabs lane-248 / R57 decider: the MARGINAL VERIFY ROW, both regimes, one binary.
+    //
+    // R63 §3a measures the served Q4_K_XL DFlash2 line's marginal verify row at 43.0 ms = 0.177
+    // plain-token-equivalents, which caps the line at 10.9 t/s even with a drafter that is never
+    // wrong; 15-20 t/s needs that row near ~15 ms. So the quantity a kernel lane must move is the
+    // per-COLUMN cost, not the n=1 rate. This block gives it a table: the Q4_K_XL type mix
+    // (q4_K / q5_K / q6_K / iq4_xs) on the three dominant decode shapes, at n = 1..16 -- across
+    // the mat-vec / GEMM boundary (mul_mat_vec_max_cols = 8), so the marginal us per extra column
+    // can be read in BOTH regimes and the crossing found. With GGML_ARIFI_MMV_MAX_COLS the low
+    // widths can be re-timed on the GEMM path out of the same binary.
+    //
+    // n = 1..8 for q4_K/q5_K/q6_K on these shapes already exists in the blocks above; the rows
+    // that were missing are every n >= 9 and iq4_xs outside 17408x5120.
+    for (int bs : {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
+        for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ4_XS}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, bs,  5120, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, bs, 17408, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, bs,  5120, {1, 1}, {1, 1}));
+        }
+    }
+
     // qwen3-30b-a3b
     for (int bs : {1, 4, 8, 32, 64, 128, 256, 512}) {
         for (ggml_type type_a : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ2_XS, GGML_TYPE_IQ4_XS}) {
