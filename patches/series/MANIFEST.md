@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **566**, all non-merge, applied in filename order.
+- Patches: **586**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 566 commit messages, same provenance trailers. Verified, not
+same file contents, same 586 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -645,6 +645,26 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 564 | `0564-docs-r58-name-the-regime-and-the-receipt-line-assert.patch` | arifi-fork-base | `68b996a27` | - | - | docs(r58): name the regime and the receipt-line assertion the reorder needs |
 | 565 | `0565-test-r58-phase-B-proof-cells-the-reorder-runs-the-ou.patch` | arifi-fork-base | `280b1553f` | - | - | test(r58): phase B proof cells - the reorder runs, the output does not move |
 | 566 | `0566-series-regen-at-the-R56-tip-565-entries-G7-rows-for-.patch` | arifi-fork-base | `9657c60b7` | - | `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE` | series: regen at the R56 tip (565 entries) + G7 rows for two untrailered lane commits |
+| 567 | `0567-test-lane-246-R60-paired-S-X8-q8_0-mul_mm-coverage-a.patch` | arifi-fork-base | `3a4341ba4` | - | - | test(lane-246 R60): paired S-X8/q8_0 mul_mm coverage across the small-n band, and the two refutations it produced |
+| 568 | `0568-feat-vulkan-make-the-mat-vec-admit-width-runtime-sel.patch` | arifi-fork-base | `124416a70` | - | - | feat(vulkan): make the mat-vec admit width runtime-selectable, default inert |
+| 569 | `0569-test-r57-three-k-two-effects-the-width-4-knee-moves-.patch` | arifi-fork-base | `b0fdaf4db` | - | - | test(r57): three k, two effects - the width-4 knee moves, the width-7 cliff does not |
+| 570 | `0570-docs-r57-registry-rows-for-the-admit-switch-and-for-.patch` | arifi-fork-base | `ffbdb6539` | - | - | docs(r57): registry rows for the admit switch and for the n=7 cliff it uncovered |
+| 571 | `0571-test-r57-the-decider-answers-past-the-mat-vec-bounda.patch` | arifi-fork-base | `1dec47d91` | - | - | test(r57): the decider answers - past the mat-vec boundary a verify column is ~46x cheaper |
+| 572 | `0572-fix-vulkan-restore-the-admit-width-receipt-line-the-.patch` | arifi-fork-base | `0d3f24284` | - | - | fix(vulkan): restore the admit-width receipt line the base check discarded |
+| 573 | `0573-docs-r57-fold-the-Fable-check-s-corrections-into-the.patch` | arifi-fork-base | `f2fc0ec6f` | - | - | docs(r57): fold the Fable check's corrections into the report and the registry |
+| 574 | `0574-feat-r64-GGML_ARIFI_Q5K_MMVQ-lever-the-two-hoists-fi.patch` | arifi-fork-base | `a9683cc26` | - | - | feat(r64): GGML_ARIFI_Q5K_MMVQ lever + the two-hoists find + step-0(c) counts |
+| 575 | `0575-fix-r64-the-q5_K-admit-is-n-5-not-n-2.8-the-measurem.patch` | arifi-fork-base | `c40cdbe44` | - | - | fix(r64): the q5_K admit is n>=5, not n=2..8 - the measurement narrowed it |
+| 576 | `0576-feat-r64-the-q5_K-MMVQ-route-lands-proof-null-contro.patch` | arifi-fork-base | `2776d29f9` | - | - | feat(r64): the q5_K MMVQ route lands - proof, null control, registry rows |
+| 577 | `0577-fix-r64-withdraw-the-repeatable-at-every-width-claim.patch` | arifi-fork-base | `ce4c96c21` | - | - | fix(r64): withdraw the "repeatable at every width" claim on the k=17408 arm |
+| 578 | `0578-docs-r64-Fable-check-gates-corrected-counts-paired-c.patch` | arifi-fork-base | `914f9660b` | - | - | docs(r64): Fable-check gates - corrected counts, paired cites, generators, served pairing |
+| 579 | `0579-feat-vulkan-r65-a-rows-per-workgroup-knob-on-the-pla.patch` | arifi-fork-base | `132d4b573` | - | - | feat(vulkan,r65): a rows-per-workgroup knob on the plain MMVQ path, and the rows the knee test is read off |
+| 580 | `0580-test-r65-the-width-4-knee-is-width-locked-not-a-capa.patch` | arifi-fork-base | `199f98129` | - | - | test(r65): the width-4 knee is width-locked, not a capacity - REFUTATION |
+| 581 | `0581-test-r61-iq3_s-iq3_xxs-iq4_xs-rows-on-the-shapes-the.patch` | arifi-fork-base | `465f2cd3b` | - | - | test(r61): iq3_s/iq3_xxs/iq4_xs rows on the shapes the GSQ file serves, plus a mat-vec pipeline-identity trace |
+| 582 | `0582-feat-r61-hoist-the-iq3-sign-application-out-of-the-N.patch` | arifi-fork-base | `471b1c18c` | - | - | feat(r61): hoist the iq3 sign application out of the NUM_COLS loop, behind GGML_ARIFI_IQ3_MMVQ |
+| 583 | `0583-fix-r61-the-dump-s-same-arm-control-FAILED-and-it-ca.patch` | arifi-fork-base | `0eeec86ee` | - | - | fix(r61): the dump's same-arm control FAILED, and it caught a real defect in the method |
+| 584 | `0584-docs-r61-three-registry-rows-for-the-R61-step-2-vari.patch` | arifi-fork-base | `fe54fa4fc` | - | - | docs(r61): three registry rows for the R61 step-2 variables |
+| 585 | `0585-chore-r61-commit-every-raw-receipt-and-the-wrappers-.patch` | arifi-fork-base | `b93af00d6` | - | - | chore(r61): commit every raw receipt and the wrappers that actually produced them |
+| 586 | `0586-feat-vulkan-lane-254-R66-three-default-flips-q5_K-ro.patch` | arifi-fork-base | `f6f5ab0cf` | - | - | feat(vulkan,lane-254 R66): three default flips - q5_K route on AMD, iq3 sign-hoist everywhere, iq3 n=7 rows on RDNA3 |
 
 ## Measured effect, per patch
 
@@ -1290,6 +1310,26 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0564-docs-r58-name-the-regime-and-the-receipt-line-assert.patch` | NONE - documentation only, no code touched |
 | `0565-test-r58-phase-B-proof-cells-the-reorder-runs-the-ou.patch` | NONE measured by the maker - correctness and placement receipts only; bit-identical output across memory types 1 and 3; HQ chain139 owns every throughput number |
 | `0566-series-regen-at-the-R56-tip-565-entries-G7-rows-for-.patch` | none - patch series regeneration and provenance ledgers |
+| `0567-test-lane-246-R60-paired-S-X8-q8_0-mul_mm-coverage-a.patch` | op-level perf-mode only (rows in receipts); served pp128 UNMEASURED in this lane - HQ pairs quiet |
+| `0568-feat-vulkan-make-the-mat-vec-admit-width-runtime-sel.patch` | op-level perf-mode only (rows in receipts); 71/71 OK at default and at =0, no default moves on any device; served t/s UNMEASURED by the maker - HQ pairs quiet |
+| `0569-test-r57-three-k-two-effects-the-width-4-knee-moves-.patch` | op-level perf-mode only (rows in receipts); no default moves, no shipped path touched; served t/s UNMEASURED by the maker - HQ pairs quiet |
+| `0570-docs-r57-registry-rows-for-the-admit-switch-and-for-.patch` | documentation only - no code path touched, no default moves |
+| `0571-test-r57-the-decider-answers-past-the-mat-vec-bounda.patch` | op-level perf-mode only (rows in receipts); no default moves, no shipped path touched; served t/s UNMEASURED by the maker - HQ pairs quiet |
+| `0572-fix-vulkan-restore-the-admit-width-receipt-line-the-.patch` | one stderr line, emitted only when the switch is set; no default moves, no route change |
+| `0573-docs-r57-fold-the-Fable-check-s-corrections-into-the.patch` | documentation only - no code path touched, no default moves; all numbers re-derived from the committed receipts |
+| `0574-feat-r64-GGML_ARIFI_Q5K_MMVQ-lever-the-two-hoists-fi.patch` | op-level perf-mode only (rows in receipts); served t/s UNMEASURED by the maker - HQ pairs quiet |
+| `0575-fix-r64-the-q5_K-admit-is-n-5-not-n-2.8-the-measurem.patch` | op-level perf-mode only (rows in receipts); served t/s UNMEASURED by the maker - HQ pairs quiet |
+| `0576-feat-r64-the-q5_K-MMVQ-route-lands-proof-null-contro.patch` | op-level perf-mode only (rows in receipts); served t/s UNMEASURED by the maker - HQ pairs quiet |
+| `0577-fix-r64-withdraw-the-repeatable-at-every-width-claim.patch` | op-level perf-mode only (rows in receipts); served t/s UNMEASURED by the maker - HQ pairs quiet |
+| `0578-docs-r64-Fable-check-gates-corrected-counts-paired-c.patch` | op-level perf-mode only (rows in receipts); served t/s UNMEASURED by the maker - the section 6b numbers are HQ's chain149 cells |
+| `0579-feat-vulkan-r65-a-rows-per-workgroup-knob-on-the-pla.patch` | none yet - default unchanged (rows_from 4 = the inherited rule); no run behind this commit |
+| `0580-test-r65-the-width-4-knee-is-width-locked-not-a-capa.patch` | op-level perf-mode only (rows in r65-evidence/22-ksweep-table.txt); served t/s UNMEASURED by the maker - HQ pairs quiet |
+| `0581-test-r61-iq3_s-iq3_xxs-iq4_xs-rows-on-the-shapes-the.patch` | op-level perf-mode only (rows in receipts); served t/s UNMEASURED by the maker - HQ pairs quiet |
+| `0582-feat-r61-hoist-the-iq3-sign-application-out-of-the-N.patch` | op-level perf-mode only (rows in receipts); served t/s UNMEASURED by the maker - HQ pairs quiet |
+| `0583-fix-r61-the-dump-s-same-arm-control-FAILED-and-it-ca.patch` | none - test-harness determinism only, gated behind GGML_ARIFI_OP_DUMP and inert unset |
+| `0584-docs-r61-three-registry-rows-for-the-R61-step-2-vari.patch` | documentation of already-measured rows; no new measurement in this commit |
+| `0585-chore-r61-commit-every-raw-receipt-and-the-wrappers-.patch` | op-level perf-mode only (rows in receipts); served t/s UNMEASURED by the maker - HQ pairs quiet |
+| `0586-feat-vulkan-lane-254-R66-three-default-flips-q5_K-ro.patch` | UNMEASURED by the maker - integration; HQ measures the served chain |
 
 ## Unclassified
 
@@ -1750,4 +1790,24 @@ rather than silently bucketed - add a rule when a new source appears.
 - `68b996a27` docs(r58): name the regime and the receipt-line assertion the reorder needs
 - `280b1553f` test(r58): phase B proof cells - the reorder runs, the output does not move
 - `9657c60b7` series: regen at the R56 tip (565 entries) + G7 rows for two untrailered lane commits
+- `3a4341ba4` test(lane-246 R60): paired S-X8/q8_0 mul_mm coverage across the small-n band, and the two refutations it produced
+- `124416a70` feat(vulkan): make the mat-vec admit width runtime-selectable, default inert
+- `b0fdaf4db` test(r57): three k, two effects - the width-4 knee moves, the width-7 cliff does not
+- `ffbdb6539` docs(r57): registry rows for the admit switch and for the n=7 cliff it uncovered
+- `1dec47d91` test(r57): the decider answers - past the mat-vec boundary a verify column is ~46x cheaper
+- `0d3f24284` fix(vulkan): restore the admit-width receipt line the base check discarded
+- `f2fc0ec6f` docs(r57): fold the Fable check's corrections into the report and the registry
+- `a9683cc26` feat(r64): GGML_ARIFI_Q5K_MMVQ lever + the two-hoists find + step-0(c) counts
+- `c40cdbe44` fix(r64): the q5_K admit is n>=5, not n=2..8 - the measurement narrowed it
+- `2776d29f9` feat(r64): the q5_K MMVQ route lands - proof, null control, registry rows
+- `ce4c96c21` fix(r64): withdraw the "repeatable at every width" claim on the k=17408 arm
+- `914f9660b` docs(r64): Fable-check gates - corrected counts, paired cites, generators, served pairing
+- `132d4b573` feat(vulkan,r65): a rows-per-workgroup knob on the plain MMVQ path, and the rows the knee test is read off
+- `199f98129` test(r65): the width-4 knee is width-locked, not a capacity - REFUTATION
+- `465f2cd3b` test(r61): iq3_s/iq3_xxs/iq4_xs rows on the shapes the GSQ file serves, plus a mat-vec pipeline-identity trace
+- `471b1c18c` feat(r61): hoist the iq3 sign application out of the NUM_COLS loop, behind GGML_ARIFI_IQ3_MMVQ
+- `0eeec86ee` fix(r61): the dump's same-arm control FAILED, and it caught a real defect in the method
+- `fe54fa4fc` docs(r61): three registry rows for the R61 step-2 variables
+- `b93af00d6` chore(r61): commit every raw receipt and the wrappers that actually produced them
+- `f6f5ab0cf` feat(vulkan,lane-254 R66): three default flips - q5_K route on AMD, iq3 sign-hoist everywhere, iq3 n=7 rows on RDNA3
 
