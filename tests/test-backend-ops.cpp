@@ -11172,6 +11172,21 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, 512, 5120, {1, 1}, {1, 1}));
     }
 
+    // ArifiLabs lane-246 / R60: the 4B prefill FFN shapes across the SMALL-n band, as CORRECTNESS
+    // cases. R52b's row is n = 512 on the 27B shape only, so every n between the mat-vec cutoff
+    // (n > mul_mat_vec_max_cols = 8) and 512 was uncovered for S-X8 on a shape any model actually
+    // runs. m = 9216, k = 2560 is Qwen3.5-4B ffn_gate/ffn_up; m = 2560, k = 9216 is ffn_down --
+    // the two rows that dominate the 4B pp128 profile. q8_0 is the paired control at the same
+    // shapes because it is the type S-X8 is compared against. The n sweep is the point: a decode
+    // cost that fails to amortise would show as an n-dependent gap, and without these rows no
+    // receipt could tell an n-dependent kernel effect from a run-level one.
+    for (int n : {32, 64, 128, 256, 512}) {
+        for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 9216, n, 2560, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 2560, n, 9216, {1, 1}, {1, 1}));
+        }
+    }
+
     // ArifiLabs lane-236 / R48c: Q6_K mat-vec at the three real 27B decode shapes, n = 1..8, as
     // CORRECTNESS cases. Q6_K is 19.7% of the interactive Q4_K_XL 27B bytes (3.19 GiB, 56 tensors)
     // and mul_mat_vec_q6_k.comp gained a second specialization constant (activation hoist +
@@ -12497,6 +12512,21 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     // same two rows as CORRECTNESS cases.
     for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0}) {
         test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, 512, 5120, {1, 1}, {1, 1}));
+    }
+
+    // ArifiLabs lane-246 / R60: the 4B prefill FFN shapes across the SMALL-n band, as PERF rows.
+    // These are the discriminator the lane was opened on. The chain139 cooled ABBA profile read
+    // S-X8 mul_mm at m=9216 n=128 k=2560 as 15-27% slower than the q8_0 row -- but that pairing is
+    // ACROSS TWO PROCESSES, and the byte-identical q8_0 attention rows are themselves 13-15%
+    // slower in the S-X8 process, so the cross-run pairing cannot separate a kernel effect from a
+    // run-level one. Timing both types at both shapes at n = 32..512 inside ONE binary and ONE
+    // process removes that confound: any residual n-dependent gap here is the tile decode, and a
+    // flat gap is not. The eval list carries the same rows as CORRECTNESS cases.
+    for (int n : {32, 64, 128, 256, 512}) {
+        for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 9216, n, 2560, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 2560, n, 9216, {1, 1}, {1, 1}));
+        }
     }
 
     // ArifiLabs lane-234 / R48: the real 27B Q5_K decode shapes as PERF rows, the target of the
