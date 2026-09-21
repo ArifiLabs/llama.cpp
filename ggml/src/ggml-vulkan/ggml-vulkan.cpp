@@ -5719,6 +5719,27 @@ vk_device ggml_vk_get_device(size_t idx) {
                 q5k_src = "GGML_ARIFI_Q5K_MMVQ=legacy";
             }
             const bool q5k_v2_asked = q5k_env != nullptr && strcmp(q5k_env, "v2") == 0;
+
+            // arifi lane-256 / R71: GGML_ARIFI_Q6K_MMVQ gains two NAMED values on top of the R48c
+            // diagnostic 0/1 it already had, and the old values keep their old meaning exactly:
+            //   unset / "legacy" -> q6_K stays on mul_mat_vec_q6_k_f32_f32 at every width (DEFAULT)
+            //   "route"          -> the measured admit in ggml_vk_should_use_mmvq_impl
+            //   "1"              -> R48c diagnostic: MMVQ at EVERY width, ignores the admit
+            //   "0"              -> R48c diagnostic: off even on Intel
+            // The default is NOT device-probed and does NOT move on AMD, which is the difference
+            // from the Q5_K row above. R71's own 6-round paired table qualifies cells, but they do
+            // not form a region the row geometry explains (n=5 is the WORST cell at both measured
+            // k while n=7/8 are the best), so this ships like GGML_ARIFI_ROCMFP4_MMVQ: measured,
+            // kept, reachable, default OFF until an independent check clears it.
+            const char * q6k_env = getenv("GGML_ARIFI_Q6K_MMVQ");
+            const char * q6k_src = "default";
+            device->q6k_mmvq_route = 0u;
+            if (q6k_env != nullptr && strcmp(q6k_env, "route") == 0) {
+                device->q6k_mmvq_route = 1u;
+                q6k_src = "GGML_ARIFI_Q6K_MMVQ=route";
+            } else if (q6k_env != nullptr && strcmp(q6k_env, "legacy") == 0) {
+                q6k_src = "GGML_ARIFI_Q6K_MMVQ=legacy";
+            }
             // arifi lane-253 / R65: rows-per-workgroup on the PLAIN q8_1 MMVQ path. Upstream's
             // RDNA3 rule hands every type the static 4-row shape at NUM_COLS >= 5 (i >= 4) and 1-4
             // rows below it; the tree's own note at rm_int_n records that the 4 "has never been
@@ -5766,6 +5787,9 @@ vk_device ggml_vk_get_device(size_t idx) {
             fprintf(stderr, "ggml_vulkan: q5_k mmvq route: %s (%s)%s\n",
                     device->q5k_mmvq_route ? "route (n=5..8, k<=8192)" : "legacy", q5k_src,
                     q5k_v2_asked ? " (GGML_ARIFI_Q5K_MMVQ=v2 is UNIMPLEMENTED - running legacy)" : "");
+            fprintf(stderr, "ggml_vulkan: q6_k mmvq route: %s (%s)\n",
+                    device->q6k_mmvq_route ? "route (MUL_MAT only: n=7,8 any k; n=2,3 at k>8192)"
+                                           : "legacy", q6k_src);
         }
 
         ggml_vk_load_shaders(device);
@@ -7567,7 +7591,15 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     }
 }
 
-static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type) {
+// arifi lane-256 / R71: `is_id` distinguishes the two call sites. MUL_MAT passes false (:12656),
+// MUL_MAT_ID passes true (:13944) -- they share this predicate, which nothing before R71 needed to
+// tell apart. The Q6_K admit below needs it because the `_id` q8_1 pipeline is a DIFFERENT pipeline
+// with a different row rule (pipeline_dequant_mul_mat_vec_id_q8_1_f32 is [wg][type], :1606, with
+// rm_id() rows and NO NUM_COLS dimension, against the plain [wg][type][cols] at :1605), so a
+// width rule measured on the plain path says nothing about it -- and R71 measured the `_id` path
+// separately and found a WASH. Every other rule in this function ignores the flag, so no existing
+// route moves.
+static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type, bool is_id = false) {
     if (device->mmvq_mode == 1) {
         return true;
     } else if (device->mmvq_mode == -1) {
@@ -7590,15 +7622,62 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
     // block alignment; that is a real property (block_q6_K is 210 bytes, types.glsl:452) and
     // this flag does not claim it is wrong - it makes it measurable on this box.
     {
+        // arifi lane-256 / R71 ROOT FIX: this parser used to read "anything that is not '0' means
+        // 1", which was safe while 0 and 1 were the only values but is a TRAP the moment the
+        // variable gains names. R71 adds `route`/`legacy`, and under the old rule BOTH of them
+        // parsed as 1 and force-routed q6_K at every width -- `legacy` would have silently been
+        // the opposite of legacy. Caught by the shipped-switch trace, which showed both arms
+        // identical. Only the EXACT strings "0" and "1" are the diagnostic now; every other value
+        // leaves mmvq_q6 alone and is handled by the named switch at device init (:9636).
         static const int q6k_mmvq_env = [] {
             const char * s = getenv("GGML_ARIFI_Q6K_MMVQ");
-            return s != nullptr ? (s[0] == '0' ? 0 : 1) : -1;
+            if (s == nullptr)            { return -1; }
+            if (strcmp(s, "0") == 0)     { return 0; }
+            if (strcmp(s, "1") == 0)     { return 1; }
+            return -1;
         }();
         if (q6k_mmvq_env >= 0) {
             mmvq_q6 = q6k_mmvq_env != 0;
         }
     }
+    // arifi lane-256 / R71: the Q6_K ADMIT. This has to live HERE, inside the turn-back, and not
+    // beside the Q5_K/Q4_K admits in the `vendor_id == AMD && n > 1` block below -- q6_K exits at
+    // this line and never reaches that block, which is why the R64 pattern could not be copied.
+    //
+    // MEASURED (r71-evidence/13-paired.txt, one binary, 6 interleaved + counterbalanced rounds,
+    // paired default/mmvq per round, bar pre-registered at 08907df1b before the first round:
+    // admit needs >=5/6 rounds won AND median >= 1.03, and a LOSS is never admitted):
+    //   k=5120,  m=17408 : n=7 1.122 6/6   n=8 1.085 6/6   | n=2..5 LOSE (0.965 at n=4)
+    //   k=5120,  m=248320: n=7 1.400 6/6   n=8 1.131 6/6   | n=4 0.909, n=5 0.735  LOSE
+    //   k=17408, m=5120  : n=7 1.163 6/6   n=8 1.050 6/6   n=2 1.054 5/6  n=3 1.046 5/6
+    //                                                      | n=5 0.914, n=6 0.958  LOSE
+    // n=1 is OUT although it wins on two shapes: it LOSES on the lm_head shape (248320x5120,
+    // 0.982, 1/6), and the shipped f32 pipeline carries two q6_K-specific optimisations the MMVQ
+    // one does not (q6k_direct_scales + q6k_xfold, :7555). n=2,3 are admitted only at k > 8192
+    // because at k=5120 they are losses on both measured m.
+    //
+    // WHY THIS SHIPS DEFAULT OFF. The qualifying widths are a NON-CONTIGUOUS ISLAND with a hard
+    // loss two widths below it, and the row geometry does NOT explain that shape. Geometry alone
+    // predicts a clean sign flip at n=5 -- the f32 shader runs rm_kq = 2 rows at every width
+    // (:7555) while the MMVQ one runs rm_int_n(rm_kq_int=1, i) = 1 row at NUM_COLS <= 4 and 4 at
+    // >= 5 (:7666), exactly the pair that made the Q5_K n>=5 admit a rule -- and n=5 is instead
+    // the WORST cell on all three shapes. What the raw us/run actually show is two different
+    // shaders with two different width cliffs: the f32 route jumps at n=6,7 (13882 -> 20967 ->
+    // 20046 us on 248320x5120) and the MMVQ route jumps at n=5,6 (15245 -> 20971 -> 21121). The
+    // n=7,8 "win" is the gap between two defects, not a property that makes MMVQ the right route,
+    // and a rule fitted to it is overfitting. Both cliffs are the brief for a real q6_K shader
+    // lane. Precedent for keeping a measured win reachable while its default stays put:
+    // GGML_ARIFI_ROCMFP4_MMVQ below.
+    //
+    // MUL_MAT_ID is EXCLUDED, and that is measured too, not caution: 26 executed `_id` cells over
+    // the same 6 rounds gave 1 admit, 9 losses and a median ratio of 1.00 on the rest
+    // (r71-evidence/16-paired-id.txt) -- a wash. Admitting it would move the arithmetic for 88% of
+    // Ornith-1.5's q6_K bytes (21.3% of that whole file, r71-evidence/11-q6k-shapes.txt) for
+    // nothing. GGML_ARIFI_Q6K_MMVQ=1 still reaches `_id`; only `route` is fenced.
     if (src0_type == GGML_TYPE_Q6_K && !mmvq_q6) {
+        if (device->q6k_mmvq_route != 0 && !is_id && device->vendor_id == VK_VENDOR_ID_AMD) {
+            return n == 7 || n == 8 || (k > 8192 && (n == 2 || n == 3));
+        }
         return false;
     }
 
@@ -7854,8 +7933,8 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
 // take at n=4" is answered by the built binary rather than by reading the rule set. Dedup, because
 // a perf run calls this thousands of times for the same cell. Off by default and no behavioural
 // effect either way: the wrapper returns exactly what the rule set returned.
-static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type) {
-    const bool r = ggml_vk_should_use_mmvq_impl(device, m, n, k, src0_type);
+static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type, bool is_id = false) {
+    const bool r = ggml_vk_should_use_mmvq_impl(device, m, n, k, src0_type, is_id);
     static const bool trace = [] {
         const char * s = getenv("GGML_ARIFI_MMVQ_TRACE");
         return s != nullptr && s[0] == '1';
@@ -7864,7 +7943,11 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
         static std::mutex           mtx;
         static std::set<std::string> seen;
         char buf[256];
-        snprintf(buf, sizeof(buf), "ggml_vulkan: mmvq route: type=%s m=%u n=%u k=%u -> %s",
+        // arifi lane-256 / R71: `op` is part of the dedup KEY, not decoration. MUL_MAT and
+        // MUL_MAT_ID can now answer differently for the same (type, m, n, k), so a key without it
+        // would print whichever ran first and silently hide the other.
+        snprintf(buf, sizeof(buf), "ggml_vulkan: mmvq route: op=%s type=%s m=%u n=%u k=%u -> %s",
+                 is_id ? "MUL_MAT_ID" : "MUL_MAT",
                  ggml_type_name(src0_type), m, n, k, r ? "MMVQ(q8_1)" : "f32-dequant");
         std::lock_guard<std::mutex> lock(mtx);
         if (seen.insert(buf).second) {
@@ -9312,7 +9395,7 @@ static void ggml_vk_mul_mat_vec_id_q_f16(ggml_backend_vk_context * ctx, vk_conte
     const bool y_non_contig = !ggml_vk_dim01_contiguous(src1);
 
     const bool f16_f32_kernel = src1->type == GGML_TYPE_F32;
-    bool quantize_y = ctx->device->integer_dot_product && src1->type == GGML_TYPE_F32 && ggml_is_contiguous(src1) && !y_non_contig && (ne11 * ne10) % 4 == 0 && ggml_vk_should_use_mmvq(ctx->device, ne01, ne12, ne10, src0->type);
+    bool quantize_y = ctx->device->integer_dot_product && src1->type == GGML_TYPE_F32 && ggml_is_contiguous(src1) && !y_non_contig && (ne11 * ne10) % 4 == 0 && ggml_vk_should_use_mmvq(ctx->device, ne01, ne12, ne10, src0->type, /* is_id = */ true);
 
     vk_pipeline to_fp16_vk_0 = nullptr;
     vk_pipeline to_fp16_vk_1 = nullptr;

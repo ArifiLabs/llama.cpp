@@ -1286,6 +1286,10 @@ struct vk_device_struct {
     // default), 1 = route (admit Q5_K to the A-hoisted q8_1 MMVQ path at n=5..8, k <= 8192).
     // Probed once at device creation next to mmvq_a_hoist, for the same reason.
     uint32_t q5k_mmvq_route;
+    // arifi lane-256 / R71: the Q6_K q8_1 MMVQ admit. 0 = legacy (the shipped f32 dequant route
+    // at every width), 1 = the measured admit. DEFAULT 0 ON EVERY DEVICE -- the win is real but
+    // UNCLEARED, see ggml_vk_should_use_mmvq_impl.
+    uint32_t q6k_mmvq_route;
     // arifi lane-253 / R65: the NUM_COLS index (i = NUM_COLS-1) at and above which rm_int_n() hands
     // the q8_1 MMVQ pipelines the static 4-row shape. 4 = the inherited RDNA3 rule, untouched.
     // Probed once here for the same reason as mmvq_a_hoist: pipeline creation is entered lazily.
