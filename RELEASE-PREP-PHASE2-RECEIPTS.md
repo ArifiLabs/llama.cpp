@@ -156,7 +156,29 @@ of `export`, so the audit **does not fail — it silently widens** from 675 comm
   3 without Measured-effect)`.
 - `series regen --ref export` → **602 patches** (the 588 the engine carries + the 14 release-prep
   commits this branch adds), generated from git, never hand-edited. rc=0.
-- `series check --ref export` → see §7.
+- `series check --ref export` → **rc=0, PASS on both halves**:
+
+```
+==> Integrity check: regenerating the series and byte-comparing against patches/series
+PASS: every patch is byte-identical to a fresh generation from git AND a committed blob.
+
+==> Replay check: git am the committed series onto 4627f376f
+replayed 602 patches cleanly -> 12c75e3aa (tree 6b1b3805b)
+PASS: replayed tree is IDENTICAL to export outside patches/series
+```
+
+**It did not pass on the first attempt, and the reason is worth recording.** The first run reported
+14 patches *"exists on disk but is NOT COMMITTED at export — a fresh clone dies on it"*. Two causes,
+both mine, neither a defect in the rewrite:
+
+1. Committing `patches/series` creates a commit the series it just generated cannot contain — the
+   fork's own convergence rule. `arifi/main` takes exactly the same two steps every regen
+   (`82f17cd1c` then `037b433a9`).
+2. A **directory** pathspec stages tracked changes and deletions but **not newly generated files**,
+   so 20 regenerated patches were silently left untracked. Committed by explicit pathspec.
+
+Export tip after convergence: **`cb4df7a48`**. A further `series regen` is a no-op — the working
+tree is clean, which is what convergence means.
 
 ### Tree identity, cross-repo without a remote
 
