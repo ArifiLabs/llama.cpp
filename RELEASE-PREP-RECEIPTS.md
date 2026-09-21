@@ -1,4 +1,4 @@
-# RELEASE-PREP RECEIPTS — `release/r66i-public-prep-2026-09-21`
+# RELEASE-PREP RECEIPTS — `release/r73i-public-prep-2026-09-21`
 
 Every count below carries the command that produced it. Base `94461e770`.
 **Nothing was pushed; no remote was added, used or removed; no network call was made.**
@@ -98,7 +98,7 @@ network fetch, which this lane is barred from making. No licence was guessed.
 
 | Added | |
 |---|---|
-| `docs/release/RELEASE-STORY-r66i.md`, `docs/release/RELEASE-NOTES-r66i.md` | the release documents |
+| `docs/release/RELEASE-STORY-r73i.md`, `docs/release/RELEASE-NOTES-r73i.md` | the release documents |
 | `README.md` | the README section merged under its own heading, existing content preserved; SF-1's stale base (`b10453` / `4df29be4f`) corrected to `b10825` / `9e0e22059` |
 | `evidence/` | **2 files** — the one cited receipt that is tracked, plus a README stating what is not here and why |
 
@@ -183,7 +183,7 @@ branch deletes, so the check will report that difference. **The series claim bel
 
 ## 7. Dangling receipt citations, annotated rather than deleted
 
-`README.md`, `docs/release/RELEASE-STORY-r66i.md` and `docs/release/RELEASE-NOTES-r66i.md` cite
+`README.md`, `docs/release/RELEASE-STORY-r73i.md` and `docs/release/RELEASE-NOTES-r73i.md` cite
 receipt paths of the form `r66-evidence/74-series-check.txt`. Those paths are **true statements
 about where the receipt lives** — a lane worktree — and **false as paths in a clone**, which is
 exactly the failure an attribution-first fork must not ship. Each document now carries a note at

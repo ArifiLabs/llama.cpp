@@ -307,7 +307,7 @@ not justify inventing license text: no PrismML or thecodacus license file is
 manufactured where Phase 0 did not observe one. Their credit and provenance
 remain explicit in this README, the series manifest, and each eventual commit.
 
-## The R66i release — what shipped, how to build it, how to reproduce a number
+## The R73i release — what shipped, how to build it, how to reproduce a number
 
 > **Where the receipts live.** Receipt paths of the form `r66-evidence/…`, `r65-evidence/…` and other `r*-evidence/…` names in this document are **lane-local**: they name files in the lane worktree that produced them, not paths in this repository. A clone does not contain them. `evidence/README.md` lists what is tracked here and says plainly what is not.
 
@@ -319,12 +319,14 @@ verbatim from `docs/OPTIONS-REGISTRY.md`.*
 An attribution-first, rebaseable llama.cpp fork for local inference on **Vulkan**.
 
 - Upstream base: `ggml-org/llama.cpp` **b10825**, `9e0e220594af405a62835dc3a27495729fd8506b`.
-- On top of it: **586 patches**, linear, non-merge, individually toggleable, each carrying its
+- On top of it: **588 patches**, linear, non-merge, individually toggleable, each carrying its
   provenance in the commit message.
-- Release tag: **`r66i-integration-2026-09-19`** → `94461e770`.
+- Release tag: **`r73i-release-engine-2026-09-21`** → `037b433a9` (source tip `5a7434218`,
+  engine `arifi-b10825-r73i-5a7434218`).
 - The series is generated from git, never hand-edited, and verified on every run: every patch is
-  byte-identical to a fresh generation *and* to a committed blob, and replaying all 586 with `git am`
-  reproduces the tree exactly. Receipt: `r66-evidence/74-series-check.txt`.
+  byte-identical to a fresh generation *and* to a committed blob, and replaying all 588 with `git am`
+  reproduces the tree exactly. Receipt: `r73-evidence/74-series-check.txt` (lane-local; see
+  `evidence/MANIFEST.md`).
 
 **It is for anyone on Vulkan.** A proven-safe improvement ships enabled even where our own GPU shows
 no gain — other drivers may not already do what AMD's does. One of the three defaults turned on in
@@ -420,6 +422,21 @@ Two warnings from that page, quoted because they change results:
 
 #### Changed in this release
 
+**`GGML_ARIFI_Q6K_MMVQ` — q6_K takes the q8_1 MMVQ route. NEW IN R73, default ON (AMD, n=7,8,
+`MUL_MAT` only).** `GGML_ARIFI_Q6K_MMVQ=legacy` restores the old path.
+
+Upstream keeps q6_K off MMVQ on an unmeasured source comment. Measured at the widths a speculative
+decoder verifies at: **+5% to +40% per q6_K verify column**, **58 of 60 paired rounds won** across
+five shapes, worst single round **0.9894**. Best cell 248320×5120 at n=7: **20,046 → 14,313 us**,
+6/6. `MUL_MAT_ID` is excluded — measured wash.
+
+**Its reach, before its percentages.** A speculative decoder verifies at **width = 1 + draft
+depth**, so n=7,8 is reached by a **draft depth of 6 or 7** — the DFlash2 publisher recipe's depth.
+At our own served draft depth of 4 (verify width 5) it is **latent: zero served tokens change on
+this box**, and no throughput claim is made for it. Correctness 83/83; perplexity at `-b 7` and
+`-b 8` within one stderr.
+
+
 | Switch | Registry default (quoted) | Restores the old behaviour |
 |---|---|---|
 | `GGML_ARIFI_Q5K_MMVQ` | *"**DEFAULT `route` on AMD, `legacy` on every other vendor**"* — scope: *"the `Q5_K` arm of `ggml_vk_should_use_mmvq()` on AMD at `n > 1`, and nothing else"* | `GGML_ARIFI_Q5K_MMVQ=0` |
@@ -512,7 +529,7 @@ ours. Please include, in the issue:
 | Memory layout | one shared pool: 48 GB physical, 16 GB BIOS reservation, 31.73 GiB system-visible — **say if yours is a discrete GPU with its own memory, because our defaults assume it is not** |
 | OS + build | Windows 11, build 29648 |
 | Power / performance plan | Balanced (it moved our decode from 29.0 to 11.2 tok/s when changed) |
-| Fork tip | `git rev-parse HEAD` — e.g. `94461e770`, tag `r66i-integration-2026-09-19` |
+| Fork tip | `git rev-parse HEAD` — e.g. `037b433a9`, tag `r73i-release-engine-2026-09-21` |
 | Build line | the exact `cmake` invocation you used |
 | The startup lines | which of the three default lines printed on your device |
 | Method | how many launches per arm, whether arms were interleaved, and whether anything else ran on the box |

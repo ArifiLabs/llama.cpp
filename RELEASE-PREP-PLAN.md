@@ -1,7 +1,15 @@
-# RELEASE-PREP PLAN — branch `release/r66i-public-prep-2026-09-21`
+# RELEASE-PREP PLAN — branch `release/r73i-public-prep-2026-09-21`
 
-Base: `94461e770` (`arifi/main` tip, tag `r66i-integration-2026-09-19`), read live
+Base: **`037b433a9`** (`arifi/main` tip, tag `r73i-release-engine-2026-09-21`, source tip
+`5a7434218`, engine `arifi-b10825-r73i-5a7434218`), read live
 (`git -C <repo>/cache/main-wt rev-parse HEAD`).
+
+**Phase 2, 2026-09-21.** This branch is the seven phase-1 prep commits, cut originally from
+`94461e770`, cherry-picked onto the promoted R73 release engine. The cherry-pick was clean: no
+conflict, and `patches/series` is untouched by the prep commits, so main's own generated series
+(now **588** entries, gaining `0587`/`0588`) is the one that ships. Source equivalence was re-proved
+against `037b433a9`. Where a paragraph below says `94461e770`, it is describing the phase-1 read and
+is left as written; the phase-2 figures are in `RELEASE-PREP-RECEIPTS.md`.
 
 **Nothing is published by this lane.** No `git push`, no remote added, used or removed, no network
 call. Publication is the President's word alone.
@@ -143,7 +151,7 @@ this tree. The one cited receipt that *is* tracked is `r58-evidence/10-memtypes.
 produced.
 
 Also added to the branch, from `board/programs/local-inference/releases/`: the R66 release story,
-`RELEASE-NOTES-r66i.md`, and the README section merged into the fork `README.md` under a clear
+`RELEASE-NOTES-r73i.md`, and the README section merged into the fork `README.md` under a clear
 heading with the upstream README content preserved.
 
 `patches/series/` is **NOT** dropped. It is the fork's reproducibility claim (item 8) and dropping it
@@ -208,7 +216,7 @@ changes and the `arifi_sync.py` ledger support may appear.
 
 ## The export branch — PROPOSAL ONLY, built after 2–7 pass
 
-`release/r66i-public-export`, built **from** this prep branch, is the only place a history rewrite
+`release/r73i-public-export`, built **from** this prep branch, is the only place a history rewrite
 would happen. It is proposed, not created, and HQ and the President decide whether it is the branch
 that gets published.
 
