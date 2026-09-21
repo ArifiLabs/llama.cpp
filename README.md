@@ -3,7 +3,7 @@
 An attribution-first, rebaseable llama.cpp fork for local inference across current and future ArifiLabs hardware.
 
 This repository starts from upstream llama.cpp master
-(`4df29be4f`, 2026-08-16) and carries an ordered,
+(`9e0e220594af405a62835dc3a27495729fd8506b`, tag `b10825`) and carries an ordered,
 feature-toggled patch series. Its scope is deliberately broad: one engine for
 the current Beelink SER7, future 64/96 GB RAM configurations, an AMD Strix Halo
 128 GB system, and an NVIDIA DGX Spark 128 GB system.
@@ -16,7 +16,7 @@ currency review.
 
 ## Scope — what this is, and what it is not
 
-**It is** upstream llama.cpp `b10453` plus a linear, individually-toggleable, fully-attributed
+**It is** upstream llama.cpp `b10825` plus a linear, individually-toggleable, fully-attributed
 patch series, carrying real mechanisms from PowerInfer, PrismML, ROCmFPX, TurboQuant, tq3 and
 thecodacus that are not in upstream, each one gated and each one documented with its measured effect
 or an explicit `UNMEASURED`. The series replays byte-identically onto its base, and that is verified by a command
@@ -295,6 +295,8 @@ unmeasured status with `Measured-effect:`.
 
 ## License notices
 
+**`NOTICE` at the repository root** names every third-party component carried here with its licence, its source, and the file in `licenses/` holding its licence text verbatim. Apache-2.0 components (S-X8 v4.3, turboquant_plus) are listed there with their required attribution notices.
+
 `LICENSE` is the verbatim upstream llama.cpp MIT license. Retained third-party
 notices and the exact source from which each was copied are enumerated in
 [`licenses/README.md`](licenses/README.md).
@@ -304,6 +306,219 @@ PrismML, thecodacus, PowerInfer, and Charlie/ROCmFPX. This authorization does
 not justify inventing license text: no PrismML or thecodacus license file is
 manufactured where Phase 0 did not observe one. Their credit and provenance
 remain explicit in this README, the series manifest, and each eventual commit.
+
+## The R66i release — what shipped, how to build it, how to reproduce a number
+
+*Applied from the release-prep branch, 2026-09-21. Switch meanings below are quoted
+verbatim from `docs/OPTIONS-REGISTRY.md`.*
+
+### What this is
+
+An attribution-first, rebaseable llama.cpp fork for local inference on **Vulkan**.
+
+- Upstream base: `ggml-org/llama.cpp` **b10825**, `9e0e220594af405a62835dc3a27495729fd8506b`.
+- On top of it: **586 patches**, linear, non-merge, individually toggleable, each carrying its
+  provenance in the commit message.
+- Release tag: **`r66i-integration-2026-09-19`** → `94461e770`.
+- The series is generated from git, never hand-edited, and verified on every run: every patch is
+  byte-identical to a fresh generation *and* to a committed blob, and replaying all 586 with `git am`
+  reproduces the tree exactly. Receipt: `r66-evidence/74-series-check.txt`.
+
+**It is for anyone on Vulkan.** A proven-safe improvement ships enabled even where our own GPU shows
+no gain — other drivers may not already do what AMD's does. One of the three defaults turned on in
+this release is exactly that case.
+
+**Every number in this repository was measured on one machine**: a Beelink SER7 Pro — Ryzen 7 7840HS,
+**Radeon 780M (RDNA3, gfx1103)**, driver 32.0.31041.1004, Windows 11 build 29648, Balanced power plan,
+one pool of system RAM (48 GB physical, 16 GB reserved in BIOS), Vulkan with `KHR_coopmat`. Kernels
+transfer; numbers do not. If you are on other hardware, read
+[`docs/HARDWARE-PROFILES.md`](docs/HARDWARE-PROFILES.md) first — several defaults are wrong for you.
+
+---
+
+### Build
+
+Windows / MinGW-w64 / Vulkan. **This is the only configuration any number in this repository was
+measured on** (source: `UPDATE-RUNBOOK.md:849-884`):
+
+```powershell
+cmake -S . -B build-vulkan -G Ninja `
+  -DCMAKE_BUILD_TYPE=Release `
+  -DGGML_VULKAN=ON `
+  -DGGML_ARIFI_ROCMFPX_FORMATS=ON `
+  -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON `
+  -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00" `
+  -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00"
+
+cmake --build build-vulkan -j2 --target llama-cli llama-server llama-quantize `
+                                        test-backend-ops test-quantize-fns
+```
+
+All three extra flags are load-bearing:
+
+- `GGML_ARIFI_ROCMFPX_FORMATS` — without it the six ROCmFPX types do not compile and a ROCmFP4 GGUF is
+  refused at load.
+- `GGML_ARIFI_TURBO_WEIGHT_QUANTS` — without it `TQ3_1S`/`TQ4_1S` and the tq3 family (type ids 48–51)
+  do not compile.
+- `-D_WIN32_WINNT=0x0A00` in **both** `C` and `CXX` flags — without it the Windows IOCP path fails to
+  compile. One of the two is not enough; the failure lands in whichever language you left out.
+
+**Rig-specific, not requirements:**
+
+- `-j2` is a property of *our* box, not of the fork: Vulkan shader generation is memory-hungry and a
+  wider build dies on a machine with one shared pool of RAM. Use what your machine can feed.
+- `-D_WIN32_WINNT=0x0A00` is Windows-only.
+- The two `GGML_ARIFI_*` CMake flags are optional unless you intend to load those formats.
+- Nothing here has ever been built or run on Linux, macOS, MSVC, clang-cl, CUDA, ROCm/HIP, Arm/NEON,
+  or any GPU other than gfx1103.
+
+**Verify the binaries by mtime, never by the wrapper's exit code** — a build tool can exit 0 having
+relinked nothing:
+
+```powershell
+Get-ChildItem build-vulkan\bin\llama-*.exe | Select-Object Name, LastWriteTime, Length
+```
+
+---
+
+### Quick start
+
+```powershell
+build-vulkan\bin\llama-server.exe -m <model>.gguf -ngl 999 -c 8192 -fa on
+```
+
+At startup the Vulkan backend prints one line per non-inherited default it applied. In this release
+you should see all three of:
+
+```
+q5_k mmvq route: route (n=5..8, k<=8192) (device-probe)
+iq3 mat-vec sign-hoist: v2 [GGML_ARIFI_IQ3_MMVQ]
+iq3 mat-vec n=7 rows: 2 (device-probe (RDNA3))
+```
+
+If a line is missing, the default did not apply on your device — that is information, not a fault.
+Lines 1 and 3 are device-gated (AMD; RDNA3 respectively).
+
+---
+
+### Switches
+
+Full contract: [`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.md) — *"the public contract for
+runtime-toggled capabilities … An option is never silently enabled because it exists. Every option
+records its default, placement boundary, evidence, and safe measurement posture."*
+
+Two warnings from that page, quoted because they change results:
+
+> *"Every default below was chosen under the Windows Balanced power plan."* On this APU the CPU and the
+> integrated GPU share one package power budget, and a "performance" plan measured **11.2 tok/s against
+> Balanced's 29.0** on GPU-resident decode while *speeding up* CPU-bound work (`FINDINGS.md` F-12).
+
+> *"If you are not on one of the four machines below, read `HARDWARE-PROFILES.md` first."* At least one
+> default (`GGML_ARIFI_VNNI_REPACK`) is measurably the wrong choice on a CPU-only path.
+
+#### Changed in this release
+
+| Switch | Registry default (quoted) | Restores the old behaviour |
+|---|---|---|
+| `GGML_ARIFI_Q5K_MMVQ` | *"**DEFAULT `route` on AMD, `legacy` on every other vendor**"* — scope: *"the `Q5_K` arm of `ggml_vk_should_use_mmvq()` on AMD at `n > 1`, and nothing else"* | `GGML_ARIFI_Q5K_MMVQ=0` |
+| `GGML_ARIFI_IQ3_MMVQ` | *"**DEFAULT `v2` on ALL devices — flipped 2026-09-18 (lane-254)**"* — scope: *"the application of the iq3 sign bits, and nothing else"* | `GGML_ARIFI_IQ3_MMVQ=1` (v1) |
+| `GGML_ARIFI_IQ3_N7_ROWS` | *"**DEFAULT `2` on AMD RDNA3 (gfx110x)**"* — scope: *"`NUM_ROWS` … of the **`NUM_COLS == 7` iq3 mat-vec pipelines**, `iq3_s` AND `iq3_xxs`, f32 and f16"* | `GGML_ARIFI_IQ3_N7_ROWS=4` |
+
+#### The rest, by area (meanings quoted from the registry)
+
+| Switch | Default (quoted) |
+|---|---|
+| `GGML_ARIFI_MMVQ_A_HOIST` | *"ON by device probe when unset on AMD, OFF on every other vendor"* |
+| `GGML_ARIFI_MMVQ_ROUTE` | *"unset = R48b routing"*; only the exact string `legacy` pins the old rules |
+| `GGML_ARIFI_MMVQ_WIDE` / `_WIDE_ROWS_FROM` | *"`legacy` when unset — default-inert"* / *"unset = `4` — default-inert"* |
+| `GGML_ARIFI_MMV_MAX_COLS` | *"unset = the inherited routing"* — *"Scope: which of two EXISTING code paths a MUL_MAT takes"* |
+| `GGML_ARIFI_Q6K_XFOLD` | *"ON when unset"* (`=0` opts out) |
+| `GGML_VK_Q6K_DIRECT_SCALES` | *"ON when unset — this row inverts the usual shape of this registry"* |
+| `GGML_ARIFI_Q5K_B_HOIST` | *"ON when unset, but only for mat-vec pipelines with `NUM_COLS` …"* |
+| `GGML_ARIFI_Q6K_MMVQ` | *"unset = the shipped route (MMVQ for Q6_K on Intel only)"* |
+| `GGML_ARIFI_SX8_MMVQ` | inverted 2026-09-14 (lane-235/R48b phase 2) |
+| `GGML_ARIFI_SX8_MM_PACKED` | *"ON by device probe when unset on AMD RDNA3, OFF on every other"* |
+| `GGML_ARIFI_MMQ_UNDER_COOPMAT` | *"OFF when unset — shipped behaviour is byte-identical without it"* |
+| `GGML_ARIFI_SX8_PCA` / `_PCA_FILE` | *"ON when a PCA companion GGUF is present"* |
+| `GGML_VK_SX8_MMV_ROWS` / `_WG` | *"unset = the probed default"* (an override is taken WHOLE or refused WHOLE) |
+| `GGML_ARIFI_FA_DEQUANT_KV` | *"Device default when unset, which is ON on every device"* |
+| `GGML_ARIFI_MMV_ID_ROWS` | *"unset = upstream's 4"* (RDNA3) |
+| `GGML_VK_HOST_SPLIT_MAX` | *"unset = the derived bound"* — caps bytes one load may place off `DEVICE_LOCAL` |
+| `GGML_VK_HOST_SPLIT_MEMTYPE` / `_CACHED` | *"unset = `legacy`, which changes no byte of today's placement"* |
+| `GGML_VK_PLACEMENT=bulk-large-heap` | *"OFF when unset; unset changes no byte of the existing placement"* |
+| `GGML_VK_ALLOC_TRACE=1` | *"OFF when unset, zero cost"* — diagnostic only |
+| `GGML_ARIFI_MMVQ_TRACE` | *"OFF when unset"* — *"no behavioural effect in either arm"* |
+| `GGML_ARIFI_OP_DUMP` | *"Unset = off"*, test-only |
+| `GGML_ARIFI_VNNI_REPACK` | *"OFF when unset"* — **but set it to `1` on a CPU-only path**; the registry measures `+327%` to `+442%` prompt there |
+| `GGML_RECURRENT_STATE_F16=1` | *"unset (`f32`)"* — opt in only after a quality gate |
+| `GGML_ARIFI_UMA_READ_PATH` | *"`auto` when unset"* — read-back only |
+
+Build-time: `GGML_ARIFI_ROCMFPX_FORMATS` — *"**OFF.** Build-time option in `ggml/CMakeLists.txt`"*.
+
+---
+
+### Reproduce a headline number
+
+The clearest single result in this release is the **iq3 `n=7` register-spill fix** (21–25x on the
+affected pipeline). It needs no model file — it is a kernel micro-benchmark.
+
+```powershell
+# AFTER (the shipped default on RDNA3)
+build-vulkan\bin\test-backend-ops.exe perf -o MUL_MAT -b Vulkan0 > after.txt
+
+# BEFORE (the pre-R66 behaviour)
+$env:GGML_ARIFI_IQ3_N7_ROWS="4"
+build-vulkan\bin\test-backend-ops.exe perf -o MUL_MAT -b Vulkan0 > before.txt
+Remove-Item Env:\GGML_ARIFI_IQ3_N7_ROWS
+```
+
+Compare the `iq3_s` rows at `n=7`. On gfx1103 we measured **465,400 → 20,890 us/run** at m=248320,
+**34,674 → 1,636** and **39,284 → 1,573** at the other two shapes, 6/6 rounds each. iq3_xxs moves
+1.20–1.42x; n=6 and n=8 are flat. Receipt: `2026-09-18-hq-seat-62-state.md` §4p.
+
+Three honest caveats. Dispatch width is `1 + draft`, so only a draft depth of 6 reaches n=7 in
+serving — this is a **latent cliff removal**, not a change at draft depth 4. Run it on an otherwise
+idle machine: our own measurement law is that any A/B not interleaved on a quiet box is not
+trustworthy. And this is a `test-backend-ops` **op-level** number, not throughput — under
+**llama-server**, which is our method of record and prints its own perf receipt, this release changes
+nothing we could measure: decode ties on all three 27B lines (S-X8 5.433 → 5.530, GSQ IQ3_S
+7.771 → 7.681, Q4_K_XL plain 4.095 → 4.108) and the served prefill column beside them sits inside a
+launch-to-launch band of 4–26% that our harness could not see past. Full account: the release story
+§6.
+
+Correctness for the same paths:
+
+```powershell
+build-vulkan\bin\test-backend-ops.exe test -o MUL_MAT -b Vulkan0
+```
+
+We report **2222 executed / 0 FAIL / 876 not-supported** on the promoted tip
+(`r66-evidence/17-correct-MUL_MAT.txt`, `19-executed-counts.txt`).
+
+---
+
+### Reporting a result from another GPU
+
+We cannot test any GPU but one. A result from yours is worth more to this project than another run on
+ours. Please include, in the issue:
+
+| Field | Example from our rig |
+|---|---|
+| GPU + architecture ID | `AMD Radeon 780M Graphics`, RDNA3 / gfx1103 |
+| Driver version | `32.0.31041.1004` |
+| CPU | `AMD Ryzen 7 7840HS w/ Radeon 780M Graphics` |
+| Memory layout | one shared pool: 48 GB physical, 16 GB BIOS reservation, 31.73 GiB system-visible — **say if yours is a discrete GPU with its own memory, because our defaults assume it is not** |
+| OS + build | Windows 11, build 29648 |
+| Power / performance plan | Balanced (it moved our decode from 29.0 to 11.2 tok/s when changed) |
+| Fork tip | `git rev-parse HEAD` — e.g. `94461e770`, tag `r66i-integration-2026-09-19` |
+| Build line | the exact `cmake` invocation you used |
+| The startup lines | which of the three default lines printed on your device |
+| Method | how many launches per arm, whether arms were interleaved, and whether anything else ran on the box |
+
+Those fields are our own rig-stamp schema (`python -m arifi_core.rig_stamp`; history in
+`registers/rig-history.jsonl`): rig id, RAM epoch, CPU, GPU + driver, DIMMs, system-visible memory, OS
+build, BIOS, power plan. Every number we publish carries it, because a number without its rig and its
+method is not a result.
 
 ## Status
 
