@@ -1,0 +1,81 @@
+ArifiLabs llama.cpp fork
+Copyright 2026 ArifiLabs
+
+This product is a derivative work of llama.cpp (https://github.com/ggml-org/llama.cpp),
+Copyright (c) 2023-2026 The ggml authors, licensed under the MIT License. The MIT text is
+retained verbatim at ./LICENSE and at licenses/llama.cpp-MIT.txt, and upstream's own
+contributor list is retained at ./AUTHORS.
+
+This file exists because the repository carries code and formats from third parties, one of
+them under the Apache License 2.0, whose section 4 requires the licence text and the
+attribution notices to travel with a redistributed derivative work. Every component below is
+named with its licence, its source, and the file in licenses/ that holds its licence text
+verbatim. The audit behind those retentions, including its corrections, is licenses/README.md;
+the machine-readable source pins are tools/arifi-sync/sources.json.
+
+No model weights are distributed with this repository. Model files named in the documents are
+measurement subjects, not redistributed artefacts, and naming one implies no licence to it.
+
+--------------------------------------------------------------------------------
+Apache License 2.0 components
+--------------------------------------------------------------------------------
+
+S-X8 v4.3 (the quantization format and its reference implementation)
+  Author:   Martí Vidal Leandro (MarlaLabs)
+  Licence:  Apache License 2.0 - licenses/Apache-2.0.txt
+  Source:   DOI 10.5281/zenodo.21922640, v1.0 2026-08-13
+            https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8 @ 808043e0a3f0dea1080e8859d6bccad23fc684d7
+  Carried:  The S-X8 container format, its per-8 affine sub-block decomposition, the reference
+            CUDA kernels and the author's own llama.cpp patch are the author's work. This
+            repository implements GGML_TYPE_SX8 (57) against that format.
+            THE VULKAN KERNELS IN THIS TREE ARE OURS, not the author's - the format, the
+            reference CUDA kernels and the reference patch are his. That distinction is
+            stated here, in the release story, and in the commit trailers.
+  Notice:   Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+            these files except in compliance with the License. You may obtain a copy of the
+            License at http://www.apache.org/licenses/LICENSE-2.0. Unless required by
+            applicable law or agreed to in writing, software distributed under the License is
+            distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+            either express or implied.
+
+turboquant_plus
+  Author:   Tom Turney
+  Licence:  Apache License 2.0 - licenses/turboquant-plus-Apache-2.0.txt
+  Source:   https://github.com/TheTom/turboquant_plus
+  Notice:   The licensor's own NOTICE is retained verbatim at
+            licenses/turboquant-plus-NOTICE.txt:
+              turboquant_plus
+              Copyright 2026 Tom Turney
+              This product includes software developed by Tom Turney
+              (https://github.com/TheTom/turboquant_plus).
+
+--------------------------------------------------------------------------------
+MIT components
+--------------------------------------------------------------------------------
+
+Each MIT licence below is retained verbatim in licenses/. MIT requires the copyright notice
+and permission notice to be retained in redistributions; retaining the licence file is how
+that is done here.
+
+  ggml-org/llama.cpp (upstream)        LICENSE, licenses/llama.cpp-MIT.txt
+  Tiiny-AI/PowerInfer                  licenses/powerinfer-MIT.txt
+  PowerInfer / smallthinker            licenses/smallthinker-MIT.txt
+  charlie12345/ROCmFPX                 licenses/rocmfpx-MIT.txt
+  ciru-ai/ROCmFPX                      licenses/ciru-MIT.txt
+  PrismML-Eng/llama.cpp                licenses/prisml-MIT.txt
+  turbo-tan/llama.cpp-tq3              licenses/tq3-MIT.txt
+  llama-cpp-turboquant                 licenses/llama-cpp-turboquant-MIT.txt
+  jtrefon/llama.cpp-turboq-mtp         licenses/turboq-mtp-MIT.txt
+  spiritbuun/buun-llama-cpp            licenses/buun-MIT.txt
+  LaurentZuijdwijk/llama.cpp           licenses/zuijdwijk-MIT.txt
+  thecodacus/llama.cpp                 licenses/thecodacus-MIT.txt
+
+ciru-ai/ROCmFPX is a registered source with its notice retained ahead of any ingest; no code
+from it is carried at this revision.
+
+--------------------------------------------------------------------------------
+Inherited from upstream, not retained by this fork
+--------------------------------------------------------------------------------
+
+nlohmann/json (Niels Lohmann), MIT - licenses/LICENSE-jsonhpp. Upstream llama.cpp's own file,
+covering its vendored vendor/nlohmann/json.hpp and json_fwd.hpp. It arrived with the tree.
