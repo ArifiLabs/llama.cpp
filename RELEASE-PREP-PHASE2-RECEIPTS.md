@@ -1,0 +1,226 @@
+# RELEASE-PREP PHASE 2 RECEIPTS — `release/r73i-public-prep-2026-09-21`
+
+Every count carries the command that produced it. **Nothing pushed; no remote added, used or
+removed.** The one network access was the licence fetch in §4, and everything fetched was treated
+as data.
+
+State verified live, not taken on trust:
+`git -C <repo>/cache/main-wt rev-parse HEAD` → `037b433a911e45f88ea7616b67d737efa22b8d29`;
+`git tag --points-at HEAD` → `r73i-release-engine-2026-09-21`;
+`git merge-base --is-ancestor 94461e770 HEAD` → rc=0.
+
+---
+
+## 1. Rebase onto the release engine
+
+`git worktree add -b release/r73i-public-prep-2026-09-21 … 037b433a9` then
+`git cherry-pick` of the 8 phase-1 commits. **No conflict.** The prep commits never touch
+`patches/series`, so main's own generated series — now **588** entries, gaining `0587`/`0588` — is
+the one that ships, unedited.
+
+`git diff --stat 037b433a9 HEAD -- patches/series` → **empty**.
+
+**Source equivalence** — `git diff --name-status 037b433a9 HEAD -- ggml src common tools tests
+include cmake CMakeLists.txt`:
+
+| File | Change | Why |
+|---|---|---|
+| `tools/arifi-sync/arifi_sync.py` | M | `load_trailer_exemptions()` + the exempt counters in `cmd_provenance`. Audit tooling. |
+| `tools/arifi-sync/test_arifi_sync.py` | M | One test case and two imports. |
+| `tools/arifi-sync/trailer-exemptions.json` | A | The sha-pinned ledger. Data. |
+| `tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt` | M | Path placeholders in a record of a past build. |
+
+**`ggml`, `src`, `common`, `tests`, `include`, `cmake` and `CMakeLists.txt` are byte-identical to the
+release engine.** No inference, kernel or build code is touched by this branch.
+
+`provenance --strict` on the prep branch: **rc=0**, `PASS (15 EXEMPT, not repaired — 12 loose-only,
+3 without Measured-effect)`. The four new R73 commits carry their trailers.
+
+## 2. Documents carried to R73
+
+Identity moved in all three: series 586 → **588**, tip `94461e770` → **`037b433a9`** (source
+`5a7434218`), tag → **`r73i-release-engine-2026-09-21`**, engine →
+**`arifi-b10825-r73i-5a7434218`**. `RELEASE-NOTES-r66i.md` → `RELEASE-NOTES-r73i.md`;
+`RELEASE-STORY-r66i.md` → `RELEASE-STORY-r73i.md`. **Zero** stale `586` / `r66i-integration` /
+`94461e770` strings remain in `README.md`.
+
+**The R56 and R66 narrative in the story is left as written.** It is the history of how the fork got
+here; re-writing it would destroy the record. New sections carry R73.
+
+**The q6_K win, with its reach stated before its percentages** — in all three documents:
+
+- Default ON, AMD, **n=7,8 only**, **`MUL_MAT` only**; `GGML_ARIFI_Q6K_MMVQ=legacy` reverts.
+- **+5% to +40% per q6_K verify column**, **58/60 paired rounds won**, worst round **0.9894**.
+- Per shape (legacy/route, 6 counterbalanced rounds): 248320×5120 **1.400** / 1.131;
+  5120×17408 **1.163** / 1.050; 5120×6144 **1.125** / 1.058; 17408×5120 **1.122** / 1.085;
+  1024×5120 **1.088** / 1.009 — **the last is a tie, disclosed not banked.**
+- `MUL_MAT_ID` excluded on a measured wash.
+- **Reach:** verify width = 1 + draft depth, so n=7,8 needs **draft depth 6–7** — the DFlash2
+  publisher recipe's depth — and is **latent at our served depth 4** (verify width 5).
+  **Zero served tokens change on this box; no throughput claim is made.**
+- Gates: 47 rc files all rc=0; q6_K correctness **83/83**; RED fails 21, all at n=7,8; PPL `-b 7`
+  and `-b 8` within one stderr (5.9897 ± 0.143 → 5.9947 ± 0.143, `batch_size` asserted per arm);
+  bit-identity 6/6 with its scope stated; smoke rc=0 with all four startup lines.
+
+**chain151, in the documents as the honest end-to-end statement:** unit = launch, **8 launches per
+arm** × 4 rounds, counterbalanced, **0 invalid launches**, Welch CIs. df2 decode R56 → R66:
+Q4_K_XL 7.34 → 7.46 ([−0.23, +0.47]); S-X8 5.90 → 5.94 ([−0.11, +0.20]); GSQ IQ3_S 8.08 → 8.02
+([−0.18, +0.06]). **Every CI contains zero — no regression on any line in any mode, quality
+identical.** No served change at draft depth 4; the gains are per-column at verify widths 5–8.
+
+## 3. Evidence
+
+**61 files** (`git ls-files evidence | wc -l`): 13 named receipts + **47** R73 gate cells +
+`README.md` + `MANIFEST.md`.
+
+The citation list is **extracted from the documents** (`cache/relprep-tmp/evidence.py`), not
+hand-written, so it cannot drift from what the release claims. **MISSING: none** — every receipt
+cited by name in `README.md`, `RELEASE-STORY-r73i.md` and `RELEASE-NOTES-r73i.md` was located.
+
+`MANIFEST.md` carries, per row: the claim it supports, the original lane path, and the **sha256 of
+the original** — plus the shipped file's own sha256 wherever the path scrub changed it, so a
+verifier hashing the shipped copy cannot mistake a scrub for tampering. Scrub on evidence: user-home
+→ `<home>`, studio → `<repo>`, e-mail → `<email>`. Nothing measured was altered.
+
+This closes the phase-1 gap, where the story's headline receipts were tracked at no revision and the
+curated folder honestly held a single file.
+
+## 4. S-X8 licence — the phase-1 UNRESOLVED is CLOSED
+
+Fetched with `crwl`, downloaded with `aria2c` (tool law). Everything on the fetched pages was
+treated as **data**; no instruction found there was followed.
+
+| File | Source | Bytes | sha256 |
+|---|---|---|---|
+| `licenses/S-X8-MarlaLabs-LICENSE.txt` | `https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8/resolve/main/LICENSE` | 11,350 | `ad4aa936adb43842a3f34d16797acdd39ba4f523e5b02b9ea4fe48b1962d3c74` |
+| `licenses/S-X8-MarlaLabs-NOTICE.txt` | `https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8/resolve/main/NOTICE` | 1,278 | `20ea964a519ef0b04ce51beb2ae0cf601a82775cd7e4022c15ec0434a94ca13a` |
+
+Fetched 2026-09-21. The LICENSE carries the author's own line — *"Copyright 2026 Martí Vidal
+Leandro"* — which is exactly what the phase-1 stand-in could not supply. **Retaining the NOTICE is
+not optional**: Apache-2.0 §4(d) requires it to travel, and it also carries the base model's
+attribution (Qwen3.8-27B, Copyright (C) 2026 Qwen Team, Alibaba Group, Apache-2.0).
+
+Independently confirmed at the DOI: the Zenodo record for 10.5281/zenodo.21922640 carries
+`"license": {"id": "apache2.0"}` in its own metadata and names Vidal Leandro, Martí (MarlaLabs) as
+rights holder.
+
+`licenses/Apache-2.0.txt`, the licensor-neutral stand-in, is **removed** — the author's own file
+does that job, and two copies of the same terms invite the reader to ask which governs.
+
+The author's NOTICE contains his contact address and is **deliberately excluded from the scrub**: a
+NOTICE that Apache-2.0 requires to travel verbatim is not ours to edit.
+
+## 5. Export branch — BUILT, in a separate clone
+
+`git clone --no-local <fork> <repo>/cache/release-export`; `git checkout -b export
+origin/release/r73i-public-prep-2026-09-21` → tip `e2e0f219c`, matching the prep tip.
+**filter-repo was never run inside the real repository or any of its worktrees.**
+
+`git-filter-repo==2.47.0` installed with `uv pip install --python <repo>/shared/.venv/…`.
+Rewrite: `git_filter_repo.py --mailmap … --refs export --force`.
+
+Mailmap — **our identities only**. Third-party authors (`Codex`, `Marshall`, `Jian Chen`) are
+attribution and are untouched:
+
+```
+Angelo Arifi <arifilabs@users.noreply.github.com> Angelo Arifi <arifilabs@users.noreply.github.com>
+m <arifilabs@users.noreply.github.com> m <m@l>
+hq <arifilabs@users.noreply.github.com> hq <hq@arifilabs>
+```
+
+### The sha-pinning breakage, measured and then repaired
+
+Set intersection of each ledger's keys against `git rev-list base..export`:
+
+| Ledger | Rows | In range BEFORE | In range AFTER |
+|---|---|---|---|
+| `native-grandfather.json` | 400 | **0** | **400** |
+| `trailer-exemptions.json` | 15 | **0** | **15** |
+
+**415 of 415 rows were dead.** Re-keyed from **filter-repo's own `commit-map`** — not a guess —
+with prior keys preserved in `sha_pre_rebase` / `sha_pre_rebase_chain`, the same shape
+`UPDATE-RUNBOOK` 2.2.1 uses for a base move. **0 unmapped.** Also re-keyed:
+`protected-win-baseline.json` (34), `protected-wins.json` (29 of 30; 1 unmapped),
+`pending-trailers.json` (5; 3 unmapped — they pin commits on unmerged lane branches this branch
+does not carry).
+
+**The base pin was the dangerous one, and it was not on anyone's list.** `cmd_provenance` computes
+its range as `cfg['base']['upstream_sha']..ref`. After the rewrite that sha is no longer an ancestor
+of `export`, so the audit **does not fail — it silently widens** from 675 commits to the whole
+**11,500**-commit history. Re-keying `sources.json` `9e0e22059 → 4627f376f` restores
+`git rev-list --count 4627f376f..export` = **675**.
+
+### Verification in the clone
+
+- `provenance --strict --ref export` → **rc=0**, `PASS (15 EXEMPT, not repaired — 12 loose-only,
+  3 without Measured-effect)`.
+- `series regen --ref export` → **602 patches** (the 588 the engine carries + the 14 release-prep
+  commits this branch adds), generated from git, never hand-edited. rc=0.
+- `series check --ref export` → see §7.
+
+### Tree identity, cross-repo without a remote
+
+`git ls-tree -r` in each repository, listings compared (`cache/relprep-tmp/treeid.py`) — two repos
+cannot be `git diff`ed and no remote was opened to make them one.
+
+| | Count |
+|---|---|
+| prep tracked | 5,228 |
+| export tracked | 5,221 |
+| only in prep | 7 — **all under `patches/`** |
+| only in export | **0** |
+| content differs | 589 — **583 under `patches/`, 6 elsewhere** |
+
+**The 6 outside `patches/` are exactly the re-keyed ledgers** — `native-grandfather.json`,
+`trailer-exemptions.json`, `pending-trailers.json`, `protected-wins.json`,
+`protected-win-baseline.json`, `sources.json`. **Nothing else differs**: no source file, no
+document, no licence, no evidence file.
+
+HQ's stated criterion was "`patches/` and nothing else". **It is not met, by 6 files, and that is
+the re-key.** It is reported as the proposed fix with its receipt — the commit-map, the row counts,
+and the preserved prior keys — rather than presented as a silently completed step. Without it,
+nothing in the clone passes at all.
+
+### What the rewrite did and did not reach
+
+| Class | Prep | Export |
+|---|---|---|
+| `arifilabs@users.noreply.github.com` | **403** lines / 403 files | **0** |
+| `hq@arifilabs` | 1 | **0** |
+| `<m@l>` | 156 | **4** (3 files — inside patch *content*, not a `From:` header, so a mailmap cannot reach them) |
+| `arifilabs@users.noreply.github.com` | 0 | 549 |
+
+**The author e-mail residue is zero.** The **path** residue is not, and a mailmap was never going to
+move it: those 112 user-home and ~1,596 studio-path lines live in **commit messages and in blobs
+historical commits added**, not in `From:` headers. Reaching them needs `--replace-text` (rewriting
+blob content) or `--invert-paths` (dropping the evidence blobs from all history) — both change
+content well beyond `patches/`, and neither was run without HQ's word.
+
+## 6. Sweep, prep branch and export branch
+
+| class | prep (lines / files) | export (lines / files) |
+|---|---|---|
+| user-home | 114 / 15 | 114 / 15 |
+| studio-path | 1,615 / 54 | 1,614 / 53 |
+| e-mail (all addresses) | 2,892 / 493 | 3,038 / 637 |
+| qnap | 19 / 7 | 19 / 7 |
+| **credential / token shapes** | **0** | **0** |
+| rig hostname | 38 / 22 | 38 / 22 |
+
+**Every remaining hit, explained:**
+
+- **user-home 114** = 112 in `patches/series/*.patch` (generated from commit messages and historical
+  blobs) + 2 in `docs/backend/snapdragon/windows.md`, which is upstream content.
+- **studio-path 1,614** = 1,596 in `patches/series` + 18 under `tools/`: `arifi_sync.py`'s
+  `STUDIO_ROOT` and `sources.json`'s `turbomerge` url, both read at **run time**. Replacing either
+  would make the code and the config describe a path that does not exist — a behaviour change
+  dressed as a scrub (SF-P4).
+- **e-mail** *rises* on the export branch, and that is the rewrite working: 2,036 are upstream's own
+  `AUTHORS`, 861 are `From:` headers in a series that now has **602** patches instead of 588, and
+  **every one of those now reads the no-reply address**. The author address itself is **0**. The
+  rest is vendored third-party code, a `@arifilabs.invalid` test fixture, and the S-X8 author's
+  contact line inside a NOTICE Apache-2.0 requires verbatim.
+- **qnap 19** = 14 in `patches/series` (a base64 token and an npm integrity hash, reviewed and
+  cleared), plus this lane's own prose describing that review. No NAS path of ours appears anywhere.
+- **hostname 38** = the intentional rig disclosure.
+- **credentials / API tokens: 0** on both branches.
