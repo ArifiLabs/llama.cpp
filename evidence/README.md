@@ -1,37 +1,23 @@
 # Curated evidence
 
-This folder holds the receipts behind the headline numbers **that are tracked in this
-repository**. It is deliberately small, and the gap is stated rather than hidden.
+**`MANIFEST.md` is the index.** It maps every file here to the claim it supports, its original path
+in the lane worktree that produced it, and the sha256 of the original — plus the shipped file's own
+sha256 wherever the release-prep path scrub changed it.
 
-## What is here
+These receipts were produced in lane worktrees, which are not part of this repository. They are
+copied here so that a clone actually contains the receipts its documents cite. Earlier drafts of
+this branch shipped only the one receipt that happened to be tracked in the fork; that gap is
+closed.
 
-| File | What it backs |
-|---|---|
-| `10-memtypes.txt` | The host-split memory-type read, cited by the release story §"the memory types the device actually offers". Originally tracked at `r58-evidence/10-memtypes.txt`. |
+**The citation list is extracted from the documents, not hand-written** — see `MANIFEST.md` for the
+method — so it cannot drift from what `README.md`, `docs/release/RELEASE-STORY-r73i.md` and
+`docs/release/RELEASE-NOTES-r73i.md` actually claim. A cited receipt that could not be found is
+listed in the manifest's **MISSING** section rather than dropped, and no receipt was invented.
 
-**This copy is not byte-identical to the original.** One line of it named an absolute studio path
-(`…/cache/r51-spill-wt/r51-evidence/30-planorder.txt`) and was rewritten to a `<repo>` placeholder by
-the release-prep path scrub. Nothing measured was altered — the change is one path string in a prose
-line — but an edited receipt must say it was edited. The unedited original is in the fork history at
-`94461e770:r58-evidence/10-memtypes.txt`.
+## What is deliberately not here
 
-## What is NOT here, and why
-
-The release story cites most of its gate receipts from `r66-evidence/*` — `71-promote-ff.txt`,
-`73-regen.txt`, `74-series-check.txt` (the series-integrity PASS), `75-tag.txt`, `76-flip.txt`,
-`17-correct-MUL_MAT.txt`, `19-executed-counts.txt`, the `18-*`..`24-*` legacy arms and the `*.rc`
-gate cells — and `r65-evidence/22-ksweep-table.txt`.
-
-**None of those is tracked in this repository at any revision.** They live in the lane worktrees
-that produced them, which are not part of the published tree. The cited set and the tracked set are
-two different sets, and this folder reports them as two sets rather than quietly presenting the
-tracked leftovers as though they were the cited receipts.
-
-The 436 evidence files that *were* tracked at `94461e770` were lane working files — build logs,
-configure logs, sweep dumps — from thirteen `r4*`/`r5*` lane directories. They were dropped from the
-release branch under the publish-scope decision, together with 133 internal maker and checker
-documents. They remain in the fork's history and in the studio's own worktrees; nothing was
-destroyed.
-
-Publishing a folder that actually backs the headline numbers means committing those lane receipts as
-new content, which is a scope decision this branch does not take on its own.
+The 436 lane evidence files tracked at the R66 tip — build logs, configure logs and sweep dumps from
+thirteen `r4*`/`r5*` directories — were dropped from the release branch under the publish-scope
+decision, with 136 internal maker and checker documents. They remain in the fork's history and in
+the studio's own worktrees; nothing was destroyed. This folder holds the receipts the published
+documents cite, not every file a lane ever wrote.
