@@ -309,6 +309,8 @@ remain explicit in this README, the series manifest, and each eventual commit.
 
 ## The R66i release — what shipped, how to build it, how to reproduce a number
 
+> **Where the receipts live.** Receipt paths of the form `r66-evidence/…`, `r65-evidence/…` and other `r*-evidence/…` names in this document are **lane-local**: they name files in the lane worktree that produced them, not paths in this repository. A clone does not contain them. `evidence/README.md` lists what is tracked here and says plainly what is not.
+
 *Applied from the release-prep branch, 2026-09-21. Switch meanings below are quoted
 verbatim from `docs/OPTIONS-REGISTRY.md`.*
 

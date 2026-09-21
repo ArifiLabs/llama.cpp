@@ -214,9 +214,14 @@ that gets published.
 
 - **Why.** One rewrite closes two items at once: the author e-mail on 396 commits, and the 1,709
   absolute-path lines inside `patches/series/*.patch`, which cannot be scrubbed any other way.
-- **Tool.** `git filter-repo --email-callback` (rewrite `<author-email>` to the GitHub
-  no-reply form, per seat-62 §4aa) plus a `--replace-text` file for the path placeholders, then
-  regenerate the series with `arifi_sync` and re-run `series check` on the export branch's own base.
+- **Tool — and it is NOT installed on this box.** `git filter-repo --version` returns
+  *"git: 'filter-repo' is not a git command"*. The proposal names it because it is the right tool
+  (`--email-callback` to rewrite the author address to the GitHub no-reply form per seat-62 §4aa,
+  plus a `--replace-text` file for the path placeholders), then regenerate the series with
+  `arifi_sync` and re-run `series check` on the export branch's own base. **Installing it is a
+  prerequisite nobody has paid**, and no part of this command has been run here. The fallback,
+  `git filter-branch`, is slower and is deprecated by git itself; it is named only so the choice is
+  not silently made later.
 - **What breaks.** Every sha in the range changes. Therefore: the `r66i-integration-2026-09-19` tag
   and every other tag no longer point into the published history; every sha-pinned ledger
   (`native-grandfather.json`, the new `trailer-exemptions.json`, `protected-wins.json`) needs

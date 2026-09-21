@@ -9,6 +9,12 @@ repository**. It is deliberately small, and the gap is stated rather than hidden
 |---|---|
 | `10-memtypes.txt` | The host-split memory-type read, cited by the release story §"the memory types the device actually offers". Originally tracked at `r58-evidence/10-memtypes.txt`. |
 
+**This copy is not byte-identical to the original.** One line of it named an absolute studio path
+(`…/cache/r51-spill-wt/r51-evidence/30-planorder.txt`) and was rewritten to a `<repo>` placeholder by
+the release-prep path scrub. Nothing measured was altered — the change is one path string in a prose
+line — but an edited receipt must say it was edited. The unedited original is in the fork history at
+`94461e770:r58-evidence/10-memtypes.txt`.
+
 ## What is NOT here, and why
 
 The release story cites most of its gate receipts from `r66-evidence/*` — `71-promote-ff.txt`,

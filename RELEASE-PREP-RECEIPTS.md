@@ -181,9 +181,39 @@ advance and honestly: the prep commits are not in the series, and a replay recre
 branch deletes, so the check will report that difference. **The series claim belongs to
 `arifi/main`'s 658-commit history and is untouched there** — this branch only adds commits on top.
 
-## 7. Known defect in this branch's own record
+## 7. Dangling receipt citations, annotated rather than deleted
 
-The commit message of `405315f0c` lost the words "series check" to a shell backtick substitution:
-it reads *"editing those files in place breaks , whose whole claim is byte-identity"*. The commit
-content is unaffected and the full statement is in `RELEASE-PREP-PLAN.md` blocker 4. Recorded rather
-than amended, because amending to tidy a receipt is the habit this branch exists to avoid.
+`README.md`, `docs/release/RELEASE-STORY-r66i.md` and `docs/release/RELEASE-NOTES-r66i.md` cite
+receipt paths of the form `r66-evidence/74-series-check.txt`. Those paths are **true statements
+about where the receipt lives** — a lane worktree — and **false as paths in a clone**, which is
+exactly the failure an attribution-first fork must not ship. Each document now carries a note at
+its head saying so and pointing at `evidence/README.md`. The citations are kept: deleting them
+would remove a true fact to make a link stop dangling.
+
+`docs/OPTIONS-REGISTRY.md` is tracked (`git ls-files docs/OPTIONS-REGISTRY.md`), so the merged
+README section's reference to it resolves inside the clone.
+
+`evidence/10-memtypes.txt` is **not** byte-identical to the lane receipt: one prose line naming an
+absolute studio path was placeholder-scrubbed. `evidence/README.md` now states that and points at
+the unedited original in the fork history.
+
+## 8. Known defects in this branch's own record
+
+Two, both in commit messages, both recorded rather than amended — amending to tidy a receipt is the
+habit this branch exists to avoid.
+
+- `405315f0c` lost the words "series check" to a shell backtick substitution: it reads *"editing
+  those files in place breaks , whose whole claim is byte-identity"*. The full statement is in
+  `RELEASE-PREP-PLAN.md` blocker 4.
+- `5c8d176b7` says tracked files went `5727 -> 5161`. The true figure is **5,164**: three further
+  `.cmd` files with hyphenated stems were missed by that pass's pattern and were removed in
+  `405315f0c` instead. The table in §3 above is correct.
+
+## 9. Test name, for the record
+
+```
+python tools/arifi-sync/test_arifi_sync.py SeriesRegenTest -v
+test_a_sha_pinned_trailer_exemption_clears_strict_but_is_never_reported_as_repaired ... ok
+Ran 5 tests in 16.531s
+OK
+```

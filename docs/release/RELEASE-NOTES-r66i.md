@@ -1,5 +1,8 @@
 # ArifiLabs llama.cpp — `r66i-integration-2026-09-19`
 
+> **Where the receipts live.** Receipt paths of the form `r66-evidence/…`, `r65-evidence/…` and other `r*-evidence/…` names in this document are **lane-local**: they name files in the lane worktree that produced them, not paths in this repository. A clone does not contain them. `evidence/README.md` lists what is tracked here and says plainly what is not.
+
+
 *(DRAFT release body. Not published. Publication is the President's call.)*
 
 Base: upstream `ggml-org/llama.cpp` **b10825** (`9e0e22059`) + **586 patches**. Tip `94461e770`.

@@ -1,5 +1,8 @@
 # The Arifi Labs llama.cpp fork — R66 release story (DRAFT)
 
+> **Where the receipts live.** Receipt paths of the form `r66-evidence/…`, `r65-evidence/…` and other `r*-evidence/…` names in this document are **lane-local**: they name files in the lane worktree that produced them, not paths in this repository. A clone does not contain them. `evidence/README.md` lists what is tracked here and says plainly what is not.
+
+
 > **DRAFT for the President's read. Nothing here has been published. No GitHub push has happened,
 > no remote has been touched.**
 > Written 2026-09-19 by a docs maker. It **carries forward** the R56 draft
