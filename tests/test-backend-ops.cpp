@@ -10904,6 +10904,19 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 248320, n,  5120, {1, 1}, {1, 1}));
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F16,  17408, n,  5120, {1, 1}, {1, 1}));
     }
+    // arifi lane-256 / R71b: the two SERVED q6_K shapes that had no case at all until now, so
+    // neither `test` nor `perf` could reach them and R71's decider recorded them as absent rather
+    // than as a tie (R71 SIDE-FINDINGS §4, CHECK-R71 finding 6). Both carry real bytes in the
+    // files this box serves (r71-evidence/11-q6k-shapes.txt):
+    //   5120 x 6144  -- x10 tensors, 1.49% of the Huihui Q4_K_XL file, 3.24% of the stock unsloth
+    //                   one. It is also the only k between 5120 and 17408 anything is measured at,
+    //                   which is exactly where the q6_K admit had to interpolate blind.
+    //   1024 x 5120  -- x15 tensors. Small m: 1024 rows against the 17408/248320 shapes already
+    //                   covered, so it probes the row-geometry end of the admit rather than k.
+    for (int n : {1, 2, 3, 4, 5, 6, 7, 8}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32,   5120, n,  6144, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32,   1024, n,  5120, {1, 1}, {1, 1}));
+    }
     // Row tail: stride_d not a multiple of NUM_ROWS (rm_kq = 2 on the 780M) exercises the
     // `num_rows = p.stride_d - first_row` path in main(), where the hoisted activation tile is
     // reused across FEWER rows than the pipeline was specialized for.
@@ -12154,6 +12167,25 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
             // Synthetic lm_head shape: correctness coverage and a width reference on a shape the
             // microbench reads cleanly. It is NOT this file's served lm_head (that one is Q4_K).
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, bs,  5120, {1, 1}, {1, 1}));
+        }
+    }
+
+    // ArifiLabs lane-256 / R71b: the two SERVED q6_K shapes the R71 decider could not reach.
+    // R71 asked for m=5120 k=6144 and got 0 cells in all 12 runs, because `-p` is a FILTER over
+    // this list and no such case existed -- and, separately, because the q6_K rows added in
+    // lane-236 went into make_test_cases_eval() only, so `perf` never had them either. Both gaps
+    // are closed here (the eval half is next to the lane-236 q6_K block).
+    //   5120 x 6144  x10 tensors, 1.49% of the served Huihui Q4_K_XL file (3.24% of the stock
+    //                unsloth one). It is the ONLY k strictly between 5120 and 17408 that anything
+    //                is measured at, which is exactly where the q6_K admit had to interpolate.
+    //   1024 x 5120  x15 tensors. Small m, so it probes the ROW-geometry end of the admit rather
+    //                than k -- 1024 rows against the 17408/248320 shapes already covered.
+    // q4_K rides along as the sibling control, the same role it plays in the block above.
+    // Filters: -p "m=5120,n=...,k=6144" / -p "m=1024".
+    for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
+        for (ggml_type type_a : {GGML_TYPE_Q6_K, GGML_TYPE_Q4_K}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 5120, bs, 6144, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 1024, bs, 5120, {1, 1}, {1, 1}));
         }
     }
 
