@@ -19,7 +19,9 @@ What is asserted, and why each one exists:
            where it must REFUSE: a collision with no resolution, and a manifest that is itself
            incomplete. A guard that only ever passes is a guard nobody has tested.
 """
+import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -202,6 +204,49 @@ class SeriesRegenTest(unittest.TestCase):
         self.assertNotEqual(0, self.r.regen())
         self.assertEqual(before, series_fingerprint(self.r.series_dir),
                          "regen refused on provenance but mutated patches/series/")
+
+    def _provenance(self, strict=True, ref="main"):
+        """Run cmd_provenance and return (rc, printed output)."""
+        args = type("A", (), {"ref": ref, "strict": strict})()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = A.cmd_provenance(self.r.path, self.r.cfg, args)
+        return rc, buf.getvalue()
+
+    def test_a_sha_pinned_trailer_exemption_clears_strict_but_is_never_reported_as_repaired(self):
+        """The exemption ledger is the ONLY way a loose-only commit can pass --strict without
+        amending it, and passing must never look like a repair. `native-grandfather.json` does
+        not reach the loose-only class at all (cmd_provenance consults it for the missing
+        Measured-effect case only), which is why this second ledger exists."""
+        # A LOOSE-ONLY commit: the tokens are in the message, but a column-0 continuation line
+        # ends git's trailer block, so nothing parses. The real defect, reproduced.
+        self.r.write("e.txt", "5\n")
+        git(self.r.path, "add", "--", "e.txt")
+        git(self.r.path, "commit", "-q", "-m",
+            "feat: wrapped\n\nOrigin: ArifiLabs (native) because the value wraps\nonto column zero, which ends the block.\n")
+        sha = git(self.r.path, "rev-parse", "HEAD")
+
+        rc, out = self._provenance()
+        self.assertNotEqual(0, rc, "a loose-only commit must fail --strict before exemption")
+        self.assertIn("FAIL (--strict)", out)
+
+        # Grandfathering it is NOT the remedy - the closed ledger does not cover this class.
+        commit_json(self.r.path, "tools/arifi-sync/native-grandfather.json",
+                    {"commits": [{"sha": sha}]}, trailers=True)
+        rc, _ = self._provenance()
+        self.assertNotEqual(0, rc, "native-grandfather.json must not clear a loose-only commit")
+
+        commit_json(self.r.path, "tools/arifi-sync/trailer-exemptions.json",
+                    {"commits": [{"sha": sha, "subject": "feat: wrapped",
+                                  "classification": ["loose-only"],
+                                  "reason": "test fixture"}]}, trailers=True)
+        rc, out = self._provenance()
+        self.assertEqual(0, rc, out)
+        self.assertIn("EXEMPT, NOT REPAIRED      : ", out)
+        self.assertIn(sha[:9], out)
+        self.assertIn("EXEMPT, not repaired", out)
+        self.assertNotIn("PASS: every commit carries provenance.", out,
+                         "an exempted commit must never produce the unqualified PASS line")
 
     def test_preflight_runs_before_any_deletion_even_on_a_fresh_directory(self):
         """The series directory is empty, so a count-based assertion cannot distinguish the
