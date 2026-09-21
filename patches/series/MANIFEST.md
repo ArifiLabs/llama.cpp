@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **586**, all non-merge, applied in filename order.
+- Patches: **588**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 586 commit messages, same provenance trailers. Verified, not
+same file contents, same 588 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -665,6 +665,8 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 584 | `0584-docs-r61-three-registry-rows-for-the-R61-step-2-vari.patch` | arifi-fork-base | `fe54fa4fc` | - | - | docs(r61): three registry rows for the R61 step-2 variables |
 | 585 | `0585-chore-r61-commit-every-raw-receipt-and-the-wrappers-.patch` | arifi-fork-base | `b93af00d6` | - | - | chore(r61): commit every raw receipt and the wrappers that actually produced them |
 | 586 | `0586-feat-vulkan-lane-254-R66-three-default-flips-q5_K-ro.patch` | arifi-fork-base | `f6f5ab0cf` | - | - | feat(vulkan,lane-254 R66): three default flips - q5_K route on AMD, iq3 sign-hoist everywhere, iq3 n=7 rows on RDNA3 |
+| 587 | `0587-vulkan-measure-the-q6_K-q8_1-MMVQ-route-at-verify-wi.patch` | ternary-g128 | `104b531da` | - | - | vulkan: measure the q6_K q8_1 MMVQ route at verify widths, ship it as a switch, keep the default |
+| 588 | `0588-vulkan-q6_K-MMVQ-route-DEFAULT-ON-for-n-7-8-on-AMD-s.patch` | ternary-g128 | `5a7434218` | - | - | vulkan: q6_K MMVQ route DEFAULT ON for n=7,8 on AMD; strike the n=2,3 clause the duplicate-case parser manufactured |
 
 ## Measured effect, per patch
 
@@ -1330,6 +1332,8 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0584-docs-r61-three-registry-rows-for-the-R61-step-2-vari.patch` | documentation of already-measured rows; no new measurement in this commit |
 | `0585-chore-r61-commit-every-raw-receipt-and-the-wrappers-.patch` | op-level perf-mode only (rows in receipts); served t/s UNMEASURED by the maker - HQ pairs quiet |
 | `0586-feat-vulkan-lane-254-R66-three-default-flips-q5_K-ro.patch` | UNMEASURED by the maker - integration; HQ measures the served chain |
+| `0587-vulkan-measure-the-q6_K-q8_1-MMVQ-route-at-verify-wi.patch` | op-level on gfx1103, 6 interleaved counterbalanced rounds, paired; with GGML_ARIFI_Q6K_MMVQ=route n=7 is 1.400x on 248320x5120, 1.163x on 5120x17408, 1.122x on 17408x5120 and n=8 is 1.131x/1.050x/1.085x, all 6/6 rounds; the DEFAULT is unchanged so the shipped serve path is byte-identical and its served effect is zero by construction. |
+| `0588-vulkan-q6_K-MMVQ-route-DEFAULT-ON-for-n-7-8-on-AMD-s.patch` | n=7,8 win 36/36 paired rounds on the three R71 shapes and all three occurrence picks (medians 1.400/1.122/1.163 at n=7, 1.131/1.085/1.050 at n=8, worst single round 1.003), plus G2 on the two previously untestable served shapes 5120x6144 (1.1254 6/6, 1.0576 5/6) and 1024x5120 (1.0876 6/6, 1.0087 5/6) with no measured loss anywhere; PPL inside one stderr at -b 8 (5.9932 vs 5.9945) and -b 7 (5.9897 vs 5.9947) |
 
 ## Unclassified
 
