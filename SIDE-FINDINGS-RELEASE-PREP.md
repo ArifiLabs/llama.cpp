@@ -11,7 +11,7 @@ what I would do.
   file. Verified by directory listing and `git ls-files` at `94461e770`."* The directory exists and
   is tracked, with 16 files and an audited retention table.
 - **Where.** `licenses/` at `94461e770`; `licenses/README.md`.
-- **Proof.** `git -C C:/ArifiLabs/cache/release-wt ls-files licenses NOTICE` returns
+- **Proof.** `git -C <repo>/cache/release-wt ls-files licenses NOTICE` returns
   `licenses/LICENSE-jsonhpp`, `licenses/README.md`, `buun-MIT.txt`, `ciru-MIT.txt`,
   `llama-cpp-turboquant-MIT.txt`, `llama.cpp-MIT.txt`, `powerinfer-MIT.txt`, `prisml-MIT.txt`,
   `rocmfpx-MIT.txt`, `smallthinker-MIT.txt`, `thecodacus-MIT.txt`, `tq3-MIT.txt`,
@@ -52,15 +52,22 @@ what I would do.
 
 ### SF-P4 — `arifi_sync.py` carries a studio absolute path in its own source
 
-- **What.** 19 studio-path lines live under `tools/`, the first at `tools/arifi-sync/arifi_sync.py:2036`,
-  plus `tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt` (25 user-home lines) and
-  `sources.json`'s `other_remotes.turbomerge.url` = `C:/ArifiLabs/research/local-inference/src/_turbo-merge`.
+- **What.** 19 studio-path lines live under `tools/` at `94461e770`: the module-level constant
+  `STUDIO_ROOT` in `arifi_sync.py` (line 2036 at that revision), `sources.json`'s
+  `other_remotes.turbomerge.url`, and 25 user-home lines in
+  `tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt`. Each names the studio's own drive
+  layout, and two of the three are values the code reads at run time.
 - **Where.** As above.
-- **Proof.** `cache/relprep-tmp/sweep.py … --bucket`, `tools/` row.
-- **Would do.** The `sources.json` one is a **runtime value**, not prose — it is the configured
-  location of a local remote, and blind-replacing it with `<repo>` would make the config describe a
-  path that does not exist. It is left alone and belongs with the `other_remotes` disposition the
-  President owes (item 6). The prose and recipe-snapshot occurrences are scrubbed.
+- **Proof.** `cache/relprep-tmp/sweep.py … --bucket`, `tools/` row. `STUDIO_ROOT` is consumed by
+  `_evidence_resolves()` as a third search root in an `os.path.exists()` fallback; the
+  `turbomerge` url is the configured location of a local git remote.
+- **Would do.** Nothing here, by the lane's own rule: a path inside a string literal that is read at
+  run time is a side-finding, not a blind replace. Substituting `<repo>` into either would leave the
+  code and the config describing a path that does not exist — a silent behaviour change dressed up
+  as a scrub. The `turbomerge` url additionally belongs with the `other_remotes` disposition the
+  President owes (item 6). **Both remain in the published source and are reported as residual, not
+  as closed.** Only the recipe snapshot, which is a record of a build rather than an input to one,
+  was scrubbed.
 
 ### SF-P5 — `cmd_provenance` exempts one failure class and not the other
 

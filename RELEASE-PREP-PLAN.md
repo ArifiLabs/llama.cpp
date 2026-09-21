@@ -1,7 +1,7 @@
 # RELEASE-PREP PLAN — branch `release/r66i-public-prep-2026-09-21`
 
 Base: `94461e770` (`arifi/main` tip, tag `r66i-integration-2026-09-19`), read live
-(`git -C C:/ArifiLabs/cache/main-wt rev-parse HEAD`).
+(`git -C <repo>/cache/main-wt rev-parse HEAD`).
 
 **Nothing is published by this lane.** No `git push`, no remote added, used or removed, no network
 call. Publication is the President's word alone.
@@ -52,9 +52,13 @@ Amending is a history rewrite of published, tagged, series-pinned commits. Barre
 is qualified, so that a reader of the receipt cannot mistake an exempted commit for a fixed one:
 
 ```
-format-exempt             : 15 / 658  (sha-pinned in tools/arifi-sync/trailer-exemptions.json)
-PASS (15 exempt - 12 loose-only, 3 without Measured-effect; see the ledger for each reason).
+EXEMPT, NOT REPAIRED      : 15 / 658  (12 loose-only + 3 without Measured-effect; sha-pinned
+                                       with a reason each in tools/arifi-sync/trailer-exemptions.json)
+PASS (15 EXEMPT, not repaired - 12 loose-only, 3 without Measured-effect)
 ```
+
+(As shipped. Every exempted sha is also listed individually under an `EXEMPT` heading in the
+report, so the count can be checked against the names.)
 
 A bare `PASS` here would be a manufactured receipt. Verified on the after-run output, not asserted.
 
@@ -121,7 +125,7 @@ MarlaLabs)"*, over ten files each banked with a sha256 and a source URL, DOI
 
 ## Blocker 3 — publish scope
 
-**Approach.** Delete from this branch (the files stay untouched in `C:/ArifiLabs/cache/main-wt`,
+**Approach.** Delete from this branch (the files stay untouched in `<repo>/cache/main-wt`,
 a separate worktree of the same repository):
 
 - the root internal documents — `AGENTS.md`, `CLAUDE.md`, `UPDATE-RUNBOOK.md`,
@@ -156,7 +160,7 @@ to improve a sweep number would be cosmetic.
 ## Blocker 4 — path and identity scrub
 
 Baseline on this branch, tracked text files only (5,645 of 5,727 scanned;
-`python cache/relprep-tmp/sweep.py C:/ArifiLabs/cache/release-wt --bucket`):
+`python cache/relprep-tmp/sweep.py <repo>/cache/release-wt --bucket`):
 
 | class | lines | files |
 |---|---|---|
@@ -210,7 +214,7 @@ that gets published.
 
 - **Why.** One rewrite closes two items at once: the author e-mail on 396 commits, and the 1,709
   absolute-path lines inside `patches/series/*.patch`, which cannot be scrubbed any other way.
-- **Tool.** `git filter-repo --email-callback` (rewrite `arifilabs@users.noreply.github.com` to the GitHub
+- **Tool.** `git filter-repo --email-callback` (rewrite `<author-email>` to the GitHub
   no-reply form, per seat-62 §4aa) plus a `--replace-text` file for the path placeholders, then
   regenerate the series with `arifi_sync` and re-run `series check` on the export branch's own base.
 - **What breaks.** Every sha in the range changes. Therefore: the `r66i-integration-2026-09-19` tag
