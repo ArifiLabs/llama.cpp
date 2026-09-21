@@ -1,0 +1,206 @@
+From 104b531da74c33acb4f3da7004221b5ca4507dd6 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 11:30:02 -0400
+Subject: [PATCH] vulkan: measure the q6_K q8_1 MMVQ route at verify widths,
+ ship it as a switch, keep the default
+
+DECIDER (r71-evidence/13-paired.txt, one binary, 6 interleaved and counterbalanced rounds, paired per round, arms by env only). default/mmvq median, wins/6: 248320x5120 n=7 1.400 6/6, n=8 1.131 6/6, but n=4 0.909 0/6 and n=5 0.735 0/6. 17408x5120 n=7 1.122 6/6, n=8 1.085 6/6, n=1 1.043 6/6, n=2..5 all lose. 5120x17408 n=7 1.163 6/6, n=8 1.050 6/6, n=2 1.054 5/6, n=3 1.046 5/6, n=5 0.914 0/6, n=6 0.958 1/6. 24 plain cells EXECUTED: 11 admit, 12 loss, 1 short of the bar. m=5120 k=6144 executed 0 cells (test-backend-ops carries no such MUL_MAT case) and is reported absent, not as a tie.
+
+WHY THE DEFAULT DOES NOT MOVE. The qualifying widths are a non-contiguous island and the row geometry does not explain them. Geometry alone predicts a clean sign flip at n=5 (f32 rm_kq=2 rows at every width :7555 against MMVQ rm_int_n(rm_kq_int=1,i) 1 row at NUM_COLS<=4 and 4 at >=5 :7666, the exact pair that made the Q5_K n>=5 admit a rule), and n=5 is instead the WORST cell on all three shapes. The raw us/run show two shaders with two different width cliffs: f32 jumps at n=6,7 (13882 -> 20967 -> 20046 us on 248320x5120) and MMVQ jumps at n=5,6 (15245 -> 20971 -> 21121). The n=7,8 win is the gap between two defects, not evidence that MMVQ is the right route, so a rule fitted to it is overfitting. Both cliffs are the brief for a q6_K shader lane. This is the third outcome pre-registered at 08907df1b section 3c, and the standing GGML_ARIFI_ROCMFP4_MMVQ is already held to: measured, kept, reachable, default OFF until an independent checker clears it.
+
+MUL_MAT_ID is EXCLUDED on evidence. 26 executed _id cells over the same 6 rounds gave 1 admit, 9 losses and ~1.00 medians on the rest (16-paired-id.txt) -- a wash. Admitting it would move the arithmetic for 88 percent of Ornith-1.5's q6_K bytes, 21.3 percent of that whole file, for nothing. That needed a new is_id flag because MUL_MAT (:12656) and MUL_MAT_ID (:13944) share this predicate; every other rule ignores the flag, so no existing route moves. The trace dedup key gains op= for the same reason.
+
+ROOT FIX carried here, not a patch. The R48c 0/1 parser read "anything that is not 0 means 1". That was safe while 0 and 1 were the only values and is a trap the moment the variable gains names: under it BOTH new names parsed as 1 and force-routed q6_K at every width, so GGML_ARIFI_Q6K_MMVQ=legacy would silently have been the opposite of legacy. Caught by the shipped-switch trace showing both arms identical. Only the exact strings 0 and 1 are the diagnostic now.
+
+Shipped-switch trace, three arms, one binary (12-trace-ship-*.txt): legacy routes 0 MUL_MAT and 0 MUL_MAT_ID cells to MMVQ; route routes exactly n=7,8 at k=5120 and n=2,3,7,8 at k=17408 and 0 MUL_MAT_ID; the =1 diagnostic still reaches all 16 MUL_MAT widths and 15 MUL_MAT_ID cells.
+
+DEFAULT IS UNCHANGED, so the shipped serve path is byte-identical to before this commit and the served effect of the default is zero by construction. Served t/s of the route arm: UNMEASURED.
+
+Origin: lane-256 R71, q6_K mat-vec at verify widths n=2..8 on AMD
+Measured-effect: op-level on gfx1103, 6 interleaved counterbalanced rounds, paired; with GGML_ARIFI_Q6K_MMVQ=route n=7 is 1.400x on 248320x5120, 1.163x on 5120x17408, 1.122x on 17408x5120 and n=8 is 1.131x/1.050x/1.085x, all 6/6 rounds; the DEFAULT is unchanged so the shipped serve path is byte-identical and its served effect is zero by construction.
+Lane: lane-256
+Cherry-picked-from: 088cf4e0f (ArifiLabs lane-256 R71, onto arifi/main 94461e770)
+---
+ docs/OPTIONS-REGISTRY.md             |  1 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 99 ++++++++++++++++++++++++++--
+ 2 files changed, 94 insertions(+), 6 deletions(-)
+
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index 3265df53b..36db77a71 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -68,6 +68,7 @@ safe measurement posture.
+ | `GGML_ARIFI_MMVQ_A_HOIST_IQ1` | **OFF when unset.** Only an exact `1` turns the A-side hoist on for the `IQ1_S` and `IQ1_M` `q8_1` pipelines, and never above the global switch — `GGML_ARIFI_MMVQ_A_HOIST=0` forces it off regardless. Added 2026-09-14 (lane-235/R48b). | Scope: the `IQ1_S` and `IQ1_M` `q8_1` `mul_mat_vec` pipelines only. They carry the largest A state of any MMVQ type (10 and 12 registers per row against 5-6 for the K-quants) and run the most rows per workgroup (`rm_iq_int` = 4 or 8), the highest product in the register table. Gated in the HOST, not by an `#ifdef`: the shader keeps both paths, so no rebuild moves it. | Only to pair the IQ1 types specifically. | **UNMEASURED on these two types — that is exactly why they ship OFF.** The default is a register-pressure judgement (report section 3 of `OPUS-R48B-MMVQ-A-HOIST-REPORT.md`), not a measurement. Arithmetic is identical either way; correctness is covered by the same `MUL_MAT` sweep. |
+ | `GGML_ARIFI_MMVQ_ROUTE` | **unset = R48b routing.** Only the exact string `legacy` pins `ggml_vk_should_use_mmvq()` back to the pre-R48b rules while KEEPING the hoisted nest. Added 2026-09-14 (lane-235/R48b phase 2). | Scope: two AMD routing rules, and nothing else. (i) `GGML_TYPE_SX8` → MMVQ at every width (`legacy`: opt-in via `GGML_ARIFI_SX8_MMVQ=1`). (ii) `GGML_TYPE_Q4_K` at `n >= 5` → MMVQ when `k <= 8192`, f32 above (`legacy`: f32 at every `n >= 5`). `Q5_K`, `Q8_0` and the legacy-block family are untouched in both modes. Both rules are additionally gated on the hoist being live, so on a non-AMD device or under `GGML_ARIFI_MMVQ_A_HOIST=0` they are already the legacy rules. **`legacy` is NOT the same arm as `GGML_ARIFI_MMVQ_A_HOIST=0`**: this one keeps the hoisted nest and changes only where traffic is sent, the other removes the nest as well. A pairing log must say which was used. | Use `legacy` to pair the ROUTING change alone, holding the kernel constant. | **Routing derived from the HQ forced-MMVQ pairing, not yet re-measured at default routing.** `q4_K` MMVQ+hoist vs the f32 default at `n=5..8`: 248320x5120 (k=5120) `55.7/52.1/48.0/45.6` vs `46.0/36.1/35.0/29.0` GB/s (**+21/+44/+37/+57%**), 17408x5120 (k=5120) `35.7/34.8/33.5/31.3` vs `33.2/27.9/29.9/24.4` (win), 5120x17408 (**k=17408**) `32.4/26.8/24.3/22.7` vs `37.0/30.8/31.6/27.2` (**LOSS**) — hence the `k` split. `k = 8192` is the midpoint of the two measured `k` values and is an **untested boundary**: nothing was run between 5120 and 17408. S-X8 evidence is in the `GGML_ARIFI_SX8_MMVQ` row above. |
+ | `GGML_ARIFI_Q5K_MMVQ` | **DEFAULT `route` on AMD, `legacy` on every other vendor — flipped 2026-09-18 (lane-254/R66 step 2a, President ruling: a proven-safe gain ships ON).** The device probe is the one `ggml_vk_should_use_mmvq()` already applies (the whole Q5_K arm sits inside `vendor_id == VK_VENDOR_ID_AMD && n > 1`), so Intel-class and NVIDIA devices — where this was never measured — keep `legacy` and say so on the startup line. `GGML_ARIFI_Q5K_MMVQ=legacy` restores the pre-R66 route on one binary; the exact string `route` admits `GGML_TYPE_Q5_K` to the A-hoisted `q8_1` MMVQ mat-vec at **`n=5..8` and `k <= 8192`**; every other `n` and every larger `k` still take the f32 dequant shader, exactly as today. The string `v2` is accepted as a NAME only and behaves as `legacy`: it is reserved for a shader change this lane did not need, and the device-init line says so out loud rather than letting a caller think it routed. Added 2026-09-17 (lane-252/R64). | Scope: the `Q5_K` arm of `ggml_vk_should_use_mmvq()` on AMD at `n > 1`, and nothing else. Additionally gated on `mmvq_a_hoist` being live and on `GGML_ARIFI_MMVQ_ROUTE != legacy`, so on a non-AMD device or with the hoist off it is already the legacy rule. **NOT bit-identical to `legacy` by construction** — the MMVQ path quantises B to `q8_1` and does an integer dot, where the f32 route does float madds; this is a different arithmetic, not a scheduling change, and no pairing may describe it as one. Device-init receipt on stderr: `ggml_vulkan: q5_k mmvq route: route (n=5..8, k<=8192)` / `legacy`. | **Leave it at the default until HQ has paired it served.** Set `route` to A/B the arms on one binary. The `n>=5` and `k<=8192` boundaries are **gfx1103 measurements, not portable constants** — both are re-derivable and both must be re-paired on another device class. | **MEASURED op-level, 6 interleaved rounds, one quiet hold, paired per round; served t/s UNMEASURED by the maker.** 17408x5120 (`r64-evidence/13-paired-ffn.txt`, `13-paired-ffn2.txt`), `default/route` median [min..max] wins/6: `n=5` **1.067** [1.032..1.104] 6/6, `n=6` **1.109** 6/6, `n=7` **1.095** 6/6, `n=8` **1.204** [1.185..1.266] 6/6; `n=1` 0.999 (untouched). `marg(4..8)` falls **113.8 → 5.4 us/col** against q4_K's 27 — the lane's ship criterion. Re-taken on the shipped `n>=5` binary: `n=5..8` = 1.056/1.120/1.075/1.152, 5-6/6. **The `k` gate is measured, not copied**: at 5120x17408 (`k=17408`) forced MMVQ **LOSES**, unanimously at `n=5` (0.962 [0.921..0.997], **0/6** rounds won) and near-unanimously at `n=6` (0.968, 1/6); at `n=7`/`n=8` the medians are 0.988/0.976 but the rounds split 3/6 and 2/6 and the ranges straddle 1.0, so those two are **not** established against the null band and are not claimed (`13-paired-down-head.txt`). The gate ships on the firm end, and its error direction is to NARROW the admit. On the served Q4_K_XL file **90.5% of Q5_K bytes sit at `k<=8192`** (`11-typemix.txt`), so the gate keeps nearly all of the type. **The `n<5` end is NOT established as a loss**: the shipped binary makes `route` at `n=1..4` the identical code path to `default`, and it still read 0.942 at `n=4` — a three-arm null control (`14-null-table.txt`, all legacy, same slots) bounds the slot artifact at only 1-3%, so `n=4` on this shape is **noise-dominated and the lane's least-resolved cell**. `n>=5` is the conservative bound, not a fitted one: it is where `rm_int_n()` gives the MMVQ pipeline 4 rows per workgroup instead of 1. Correctness `test -o MUL_MAT -p type_a=q5_K/q6_K` **152 cases (q5_K 85/85 + q6_K 67/67), 0 FAIL, all three arms** (`20-correct-*`), full `MUL_MAT` sweep **2130/2130, 0 FAIL both arms** (`21-mulmat-full-*`), planted RED in `mul_mat_vecq.comp` under `DATA_A_Q5_K && NUM_COLS>1` gives **52/85 = 33 FAIL cases with `route`, every one at `n=5..8`, and 85/85 with `legacy`**, restored byte-identical (`40-restore-proof.txt`). 27B text: **6/6 token-identical**, 3 greedy prompts x 2 Q4_K_XL files — but that is an `n=1` decode, where this rule is **inert by construction**, so it is a no-regression receipt and NOT evidence about the routed arithmetic. **The ship rule is now discharged, by HQ and not by the maker (chain149):** PPL **at batch 8, where the route is actually exercised** (a default-batch cell runs at n=512 through `mul_mm` and would have been inert) reads **5.9918 legacy vs 5.9932 route against +/-0.143** - identical inside one stderr; served Q4_K_XL DFlash2 **tie**, plain arm **noise**, rolled40 **37/37**. Receipts under `2026-09-14-lane-234-r48-kernels/100-r64-q5k-route/` and `2026-09-02-lane-209/r64-lane-252/c24-q4kxl-27b/SEAT/AB.json`. **Expected served effect is small by construction and a large one would be a red flag:** ~**+0.7% at n=5**, ceiling ~**+1.8% at n=8**, **0% at n=4** (inert) - so a tie IS the predicted result, and a gain above ~2% means the attribution is wrong, not the lever better. **Moving the default remains an independent checker's call.** |
++| `GGML_ARIFI_Q6K_MMVQ` | **DEFAULT `legacy` on EVERY vendor, including AMD — the default does NOT move (F-08), and that is the deliberate outcome of lane-256/R71, not an omission.** Four accepted values, and the two numeric ones keep their original R48c meaning exactly: unset or `legacy` = `GGML_TYPE_Q6_K` stays on the f32 dequant mat-vec `mul_mat_vec_q6_k_f32_f32` (`ggml-vulkan.cpp:7555`) at every width; `route` = the measured R71 admit, **MUL_MAT only, `n=7` or `n=8` at any `k`, plus `n=2` or `n=3` at `k > 8192`**; `1` = the R48c *diagnostic* that forces MMVQ at **every** width and ignores the admit (this is the arm R71's own decider table used, and it reaches `MUL_MAT_ID` as well); `0` = the R48c diagnostic that forces it off even on Intel. Added `route`/`legacy` 2026-09-19 (lane-256/R71); the `0`/`1` lever is from 2026-09-13 (lane-236/R48c). | Scope: the `GGML_TYPE_Q6_K` arm of `ggml_vk_should_use_mmvq_impl()`, which sits at `ggml-vulkan.cpp:12344` **above** the `vendor_id == AMD && n > 1` block that holds the Q5_K and Q4_K admits — q6_K exits there and never reaches that block, so this admit could not be written in the same place or the same shape as the Q5_K one. Additionally gated on `vendor_id == VK_VENDOR_ID_AMD` (the only vendor measured) and on `!is_id`. **`MUL_MAT_ID` is fenced out of `route` on evidence, not on caution** — R71 added an `is_id` flag to this predicate because `MUL_MAT` (`:12656`) and `MUL_MAT_ID` (`:13944`) share it, and the `_id` `q8_1` pipeline is a different pipeline with no `NUM_COLS` dimension (`pipeline_dequant_mul_mat_vec_id_q8_1_f32`, `:1606`/`:7743`) so a plain-path width rule says nothing about it. **NOT bit-identical to `legacy` by construction** — MMVQ quantises the activation to `q8_1` and does an integer dot where the f32 route does float madds; that is different arithmetic, not a scheduling change. Device-init receipt on stderr: `ggml_vulkan: q6_k mmvq route: route (MUL_MAT only: n=7,8 any k; n=2,3 at k>8192)` / `legacy`. | **Leave it at `legacy`.** Set `route` to A/B the arms on one binary, `1` to reproduce R71's decider arm. The widths and the `k > 8192` boundary are gfx1103 measurements, not portable constants. | **MEASURED op-level, one binary, 6 interleaved and counterbalanced rounds, paired per round, bar pre-registered at `08907df1b` BEFORE the first round (admit = ≥5/6 rounds won AND median ≥ 1.03; a LOSS is never admitted). Served t/s UNMEASURED by the maker.** `default/mmvq` median [min..max] wins/6, `r71-evidence/13-paired.txt`: **248320x5120** `n=7` **1.400** [1.337..1.409] 6/6, `n=8` **1.131** 6/6 — but `n=4` 0.909 0/6 and `n=5` **0.735** 0/6; **17408x5120** `n=7` **1.122** 6/6, `n=8` **1.085** 6/6, `n=1` 1.043 6/6 — `n=2..5` all lose; **5120x17408** `n=7` **1.163** 6/6, `n=8` **1.050** 6/6, `n=2` 1.054 5/6, `n=3` 1.046 5/6 — `n=5` **0.914** 0/6, `n=6` 0.958 1/6. 24 plain cells executed: 11 admit, 12 loss. **WHY IT SHIPS OFF:** the qualifying widths are a non-contiguous island and the row geometry does not explain them. Geometry alone predicts a clean flip at `n=5` — the f32 shader runs `rm_kq` = 2 rows at every width (`:7555`) against the MMVQ `rm_int_n(rm_kq_int=1, i)` = 1 row at `NUM_COLS <= 4` and 4 at `>= 5` (`:7666`), the same pair that made the Q5_K `n>=5` admit a rule — and `n=5` is instead the **worst** cell on all three shapes. The raw us/run show two shaders with two different width cliffs (f32 jumps at `n=6,7`: 13882 → 20967 → 20046 us on 248320x5120; MMVQ jumps at `n=5,6`: 15245 → 20971 → 21121), so the `n=7,8` win is the gap between two defects, not evidence MMVQ is the right route. That makes both cliffs the brief for a q6_K **shader** lane, and makes flipping this default an independent checker's call — the same standing `GGML_ARIFI_ROCMFP4_MMVQ` is held to. **`MUL_MAT_ID` is a WASH, measured: 26 executed `_id` cells over the same 6 rounds gave 1 admit, 9 losses, and ~1.00 medians on the rest (`r71-evidence/16-paired-id.txt`)** — which matters because **88% of Ornith-1.5-35B-A3B's q6_K bytes, 21.3% of that whole file, are expert tensors on that path** (`r71-evidence/11-q6k-shapes.txt`). **UNMEASURED:** every non-AMD vendor, the served token level, `m=5120 k=6144` (test-backend-ops carries no such `MUL_MAT` case, so that cell executed **0** rows and is reported as absent, not as a tie), and any `k` between 5120 and 17408. |
+ | `GGML_ARIFI_MMVQ_TRACE` | **OFF when unset.** `1` makes `ggml_vk_should_use_mmvq()` print one deduplicated stderr line per distinct `(type, m, n, k)` decision. Added 2026-09-17 (lane-252/R64). | Scope: a wrapper around the predicate; the value returned is exactly the rule set's, so there is **no behavioural effect in either arm**. It reports the DECISION, not the dispatched pipeline — the caller clears `quantize_y` if the `q8_1` pipeline is null (`ggml-vulkan.cpp`, the `if (dmmv == nullptr)` branch). For `Q5_K`/`Q6_K` at `n<=8` that cannot fire, because those pipelines are registered unconditionally for every `NUM_COLS < mul_mat_vec_max_cols = 8`. | Diagnostic. Use it to prove which route a width takes on a given device instead of reading the rule set. | Receipts `r64-evidence/10-trace-{legacy,route,force}.txt`: on gfx1103, `legacy` gives `q5_K n=1 -> MMVQ(q8_1)` and `n=2..8 -> f32-dequant`, `q6_K -> f32-dequant` at every `n`. |
+ | `GGML_ARIFI_MMVQ_WIDE` | **`legacy` when unset — default-inert, no default moves (F-08).** Only the exact string `v2` lowers the rows-per-workgroup gate on the plain `q8_1` MMVQ path from `i >= 4` to `i >= 3` (i.e. the static 4-row shape starts at `NUM_COLS == 4` instead of 5). Added 2026-09-17 (lane-253/R65), registered 2026-09-18 (lane-254/R66 — CHECK-R65-FABLE gate G1: the switch shipped UNREGISTERED). | Scope: `rm_int_n()` on RDNA3 and nothing else — `device->mmvq_wide_rows_from`, read once at device creation and consumed at pipeline creation, so one binary serves both arms. Unset or invalid resolves to `4`, which is textually the inherited `i >= 4`. One stderr line at device init: `ggml_vulkan: mmvq wide rows_from: 4 (default)`. Bit-identical by construction: `NUM_ROWS` changes only which output rows a workgroup owns; the per-row k-order, the accumulation into `temp[j][n]` and the `reduce_result` tree are untouched. | **Diagnostic. Do not turn it on.** It exists so the width-knee question could be asked from one binary. See the closed lever `mmvq-width-knee-capacity` in `registers/closed-levers.jsonl` — never re-test it. | **No perf receipt for the `v2` arm exists; R65 never timed it** (CHECK-R65-FABLE finding 7). What IS receipted is the correctness of the arm: full `MUL_MAT` sweep **2130 OK / 0 FAIL** executed cases with the knob at `v2` against **2129 OK / 1 FAIL** at the default (`r65-evidence/41-mulmat-v2.txt:3435`, `40-mulmat-default.txt:3435`; the maker's "2132" was `grep -c OK`, which also counts the two banner lines — CHECK-R65 gate G2). The one FAIL is q3_K `m=248320 n=5 ERR=inf`, which the v2 arm passed on the identical pipeline in the same binary: **intermittent on identical pipelines within one binary; the base binary was not run**, so "pre-existing" is ASSUMED, not receipted (gate G4). Prior art for the direction: rows 1→4 at n=4 is **9.8% slower** on q4_K (R50 `r50-evidence/41-rows-table.txt`, 3 rounds) — that is R50's number, not R65's. |
+ | `GGML_ARIFI_MMVQ_WIDE_ROWS_FROM` | **unset = `4` — default-inert.** A decimal `NUM_COLS-1` index in `0..8`; anything unparsable or out of range keeps `4`. Overrides `GGML_ARIFI_MMVQ_WIDE` when both are set. Added 2026-09-17 (lane-253/R65), registered 2026-09-18 (lane-254/R66 — CHECK-R65-FABLE gate G1). | Scope: identical to the row above — the same `rm_int_n()` gate, addressed by index instead of by arm name. `0` gives 4 rows at every `NUM_COLS`, `8` gives the un-widened `rows` at every `NUM_COLS`. That is what makes a FIXED-`NUM_ROWS` cell possible at all: n=4 with 1 row and with 4 rows, and n=5 with 4 rows and with 1 row, are four values of this one knob. Same stderr line, with `(GGML_ARIFI_MMVQ_WIDE_ROWS_FROM)` as the source. | **Diagnostic only, never a serve setting.** Its intended use is the R68 step-0 pipeline-stats cell (`GGML_VK_PIPELINE_STATS` at fixed `NUM_ROWS`, arms unset/`0`/`8`) that the closed lever `mmvq-width-knee-capacity` names as its `reopen_requires` — an ISA-level VGPR/occupancy receipt. | **Instrument, no performance claim of its own.** The knee it was built to interrogate is REFUTED as a B-working-set capacity: the pre-registered falsifier (the knee must move to n=2 at k=10240/12288) failed — n1→2 stays 0–6%, n2→3 is NEGATIVE in all 8 rounds, n3→4 is the first large step at every k=4096..12288 (8.0–16.7%, 4 rounds). The knee's LOCATION is width-locked; its MAGNITUDE is **not** resolved against a 9% same-config spread, and below k=4096 it shrinks (R57: 5.9% at k=2048, 1.3% at k=1024). Receipts `r65-evidence/20b-ksweep-r{0..3}.txt`, `22-ksweep-table.txt`, `CHECK-R65-FABLE.md`. |
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 19a2ceaee..bb86bc24c 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1502,6 +1502,10 @@ struct vk_device_struct {
+     // default), 1 = route (admit Q5_K to the A-hoisted q8_1 MMVQ path at n=5..8, k <= 8192).
+     // Probed once at device creation next to mmvq_a_hoist, for the same reason.
+     uint32_t q5k_mmvq_route;
++    // arifi lane-256 / R71: the Q6_K q8_1 MMVQ admit. 0 = legacy (the shipped f32 dequant route
++    // at every width), 1 = the measured admit. DEFAULT 0 ON EVERY DEVICE -- the win is real but
++    // UNCLEARED, see ggml_vk_should_use_mmvq_impl.
++    uint32_t q6k_mmvq_route;
+     // arifi lane-253 / R65: the NUM_COLS index (i = NUM_COLS-1) at and above which rm_int_n() hands
+     // the q8_1 MMVQ pipelines the static 4-row shape. 4 = the inherited RDNA3 rule, untouched.
+     // Probed once here for the same reason as mmvq_a_hoist: pipeline creation is entered lazily.
+@@ -9633,6 +9637,27 @@ static vk_device ggml_vk_get_device(size_t idx) {
+                 q5k_src = "GGML_ARIFI_Q5K_MMVQ=legacy";
+             }
+             const bool q5k_v2_asked = q5k_env != nullptr && strcmp(q5k_env, "v2") == 0;
++
++            // arifi lane-256 / R71: GGML_ARIFI_Q6K_MMVQ gains two NAMED values on top of the R48c
++            // diagnostic 0/1 it already had, and the old values keep their old meaning exactly:
++            //   unset / "legacy" -> q6_K stays on mul_mat_vec_q6_k_f32_f32 at every width (DEFAULT)
++            //   "route"          -> the measured admit in ggml_vk_should_use_mmvq_impl
++            //   "1"              -> R48c diagnostic: MMVQ at EVERY width, ignores the admit
++            //   "0"              -> R48c diagnostic: off even on Intel
++            // The default is NOT device-probed and does NOT move on AMD, which is the difference
++            // from the Q5_K row above. R71's own 6-round paired table qualifies cells, but they do
++            // not form a region the row geometry explains (n=5 is the WORST cell at both measured
++            // k while n=7/8 are the best), so this ships like GGML_ARIFI_ROCMFP4_MMVQ: measured,
++            // kept, reachable, default OFF until an independent check clears it.
++            const char * q6k_env = getenv("GGML_ARIFI_Q6K_MMVQ");
++            const char * q6k_src = "default";
++            device->q6k_mmvq_route = 0u;
++            if (q6k_env != nullptr && strcmp(q6k_env, "route") == 0) {
++                device->q6k_mmvq_route = 1u;
++                q6k_src = "GGML_ARIFI_Q6K_MMVQ=route";
++            } else if (q6k_env != nullptr && strcmp(q6k_env, "legacy") == 0) {
++                q6k_src = "GGML_ARIFI_Q6K_MMVQ=legacy";
++            }
+             // arifi lane-253 / R65: rows-per-workgroup on the PLAIN q8_1 MMVQ path. Upstream's
+             // RDNA3 rule hands every type the static 4-row shape at NUM_COLS >= 5 (i >= 4) and 1-4
+             // rows below it; the tree's own note at rm_int_n records that the 4 "has never been
+@@ -9680,6 +9705,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
+             fprintf(stderr, "ggml_vulkan: q5_k mmvq route: %s (%s)%s\n",
+                     device->q5k_mmvq_route ? "route (n=5..8, k<=8192)" : "legacy", q5k_src,
+                     q5k_v2_asked ? " (GGML_ARIFI_Q5K_MMVQ=v2 is UNIMPLEMENTED - running legacy)" : "");
++            fprintf(stderr, "ggml_vulkan: q6_k mmvq route: %s (%s)\n",
++                    device->q6k_mmvq_route ? "route (MUL_MAT only: n=7,8 any k; n=2,3 at k>8192)"
++                                           : "legacy", q6k_src);
+         }
+ 
+         ggml_vk_load_shaders(device);
+@@ -12310,7 +12338,15 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+ }
+ 
+ // Device tuning
+-static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type) {
++// arifi lane-256 / R71: `is_id` distinguishes the two call sites. MUL_MAT passes false (:12656),
++// MUL_MAT_ID passes true (:13944) -- they share this predicate, which nothing before R71 needed to
++// tell apart. The Q6_K admit below needs it because the `_id` q8_1 pipeline is a DIFFERENT pipeline
++// with a different row rule (pipeline_dequant_mul_mat_vec_id_q8_1_f32 is [wg][type], :1606, with
++// rm_id() rows and NO NUM_COLS dimension, against the plain [wg][type][cols] at :1605), so a
++// width rule measured on the plain path says nothing about it -- and R71 measured the `_id` path
++// separately and found a WASH. Every other rule in this function ignores the flag, so no existing
++// route moves.
++static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type, bool is_id = false) {
+     if (device->mmvq_mode == 1) {
+         return true;
+     } else if (device->mmvq_mode == -1) {
+@@ -12333,15 +12369,62 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
+     // block alignment; that is a real property (block_q6_K is 210 bytes, types.glsl:452) and
+     // this flag does not claim it is wrong - it makes it measurable on this box.
+     {
++        // arifi lane-256 / R71 ROOT FIX: this parser used to read "anything that is not '0' means
++        // 1", which was safe while 0 and 1 were the only values but is a TRAP the moment the
++        // variable gains names. R71 adds `route`/`legacy`, and under the old rule BOTH of them
++        // parsed as 1 and force-routed q6_K at every width -- `legacy` would have silently been
++        // the opposite of legacy. Caught by the shipped-switch trace, which showed both arms
++        // identical. Only the EXACT strings "0" and "1" are the diagnostic now; every other value
++        // leaves mmvq_q6 alone and is handled by the named switch at device init (:9636).
+         static const int q6k_mmvq_env = [] {
+             const char * s = getenv("GGML_ARIFI_Q6K_MMVQ");
+-            return s != nullptr ? (s[0] == '0' ? 0 : 1) : -1;
++            if (s == nullptr)            { return -1; }
++            if (strcmp(s, "0") == 0)     { return 0; }
++            if (strcmp(s, "1") == 0)     { return 1; }
++            return -1;
+         }();
+         if (q6k_mmvq_env >= 0) {
+             mmvq_q6 = q6k_mmvq_env != 0;
+         }
+     }
++    // arifi lane-256 / R71: the Q6_K ADMIT. This has to live HERE, inside the turn-back, and not
++    // beside the Q5_K/Q4_K admits in the `vendor_id == AMD && n > 1` block below -- q6_K exits at
++    // this line and never reaches that block, which is why the R64 pattern could not be copied.
++    //
++    // MEASURED (r71-evidence/13-paired.txt, one binary, 6 interleaved + counterbalanced rounds,
++    // paired default/mmvq per round, bar pre-registered at 08907df1b before the first round:
++    // admit needs >=5/6 rounds won AND median >= 1.03, and a LOSS is never admitted):
++    //   k=5120,  m=17408 : n=7 1.122 6/6   n=8 1.085 6/6   | n=2..5 LOSE (0.965 at n=4)
++    //   k=5120,  m=248320: n=7 1.400 6/6   n=8 1.131 6/6   | n=4 0.909, n=5 0.735  LOSE
++    //   k=17408, m=5120  : n=7 1.163 6/6   n=8 1.050 6/6   n=2 1.054 5/6  n=3 1.046 5/6
++    //                                                      | n=5 0.914, n=6 0.958  LOSE
++    // n=1 is OUT although it wins on two shapes: it LOSES on the lm_head shape (248320x5120,
++    // 0.982, 1/6), and the shipped f32 pipeline carries two q6_K-specific optimisations the MMVQ
++    // one does not (q6k_direct_scales + q6k_xfold, :7555). n=2,3 are admitted only at k > 8192
++    // because at k=5120 they are losses on both measured m.
++    //
++    // WHY THIS SHIPS DEFAULT OFF. The qualifying widths are a NON-CONTIGUOUS ISLAND with a hard
++    // loss two widths below it, and the row geometry does NOT explain that shape. Geometry alone
++    // predicts a clean sign flip at n=5 -- the f32 shader runs rm_kq = 2 rows at every width
++    // (:7555) while the MMVQ one runs rm_int_n(rm_kq_int=1, i) = 1 row at NUM_COLS <= 4 and 4 at
++    // >= 5 (:7666), exactly the pair that made the Q5_K n>=5 admit a rule -- and n=5 is instead
++    // the WORST cell on all three shapes. What the raw us/run actually show is two different
++    // shaders with two different width cliffs: the f32 route jumps at n=6,7 (13882 -> 20967 ->
++    // 20046 us on 248320x5120) and the MMVQ route jumps at n=5,6 (15245 -> 20971 -> 21121). The
++    // n=7,8 "win" is the gap between two defects, not a property that makes MMVQ the right route,
++    // and a rule fitted to it is overfitting. Both cliffs are the brief for a real q6_K shader
++    // lane. Precedent for keeping a measured win reachable while its default stays put:
++    // GGML_ARIFI_ROCMFP4_MMVQ below.
++    //
++    // MUL_MAT_ID is EXCLUDED, and that is measured too, not caution: 26 executed `_id` cells over
++    // the same 6 rounds gave 1 admit, 9 losses and a median ratio of 1.00 on the rest
++    // (r71-evidence/16-paired-id.txt) -- a wash. Admitting it would move the arithmetic for 88% of
++    // Ornith-1.5's q6_K bytes (21.3% of that whole file, r71-evidence/11-q6k-shapes.txt) for
++    // nothing. GGML_ARIFI_Q6K_MMVQ=1 still reaches `_id`; only `route` is fenced.
+     if (src0_type == GGML_TYPE_Q6_K && !mmvq_q6) {
++        if (device->q6k_mmvq_route != 0 && !is_id && device->vendor_id == VK_VENDOR_ID_AMD) {
++            return n == 7 || n == 8 || (k > 8192 && (n == 2 || n == 3));
++        }
+         return false;
+     }
+ 
+@@ -12594,8 +12677,8 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
+ // take at n=4" is answered by the built binary rather than by reading the rule set. Dedup, because
+ // a perf run calls this thousands of times for the same cell. Off by default and no behavioural
+ // effect either way: the wrapper returns exactly what the rule set returned.
+-static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type) {
+-    const bool r = ggml_vk_should_use_mmvq_impl(device, m, n, k, src0_type);
++static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type, bool is_id = false) {
++    const bool r = ggml_vk_should_use_mmvq_impl(device, m, n, k, src0_type, is_id);
+     static const bool trace = [] {
+         const char * s = getenv("GGML_ARIFI_MMVQ_TRACE");
+         return s != nullptr && s[0] == '1';
+@@ -12604,7 +12687,11 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
+         static std::mutex           mtx;
+         static std::set<std::string> seen;
+         char buf[256];
+-        snprintf(buf, sizeof(buf), "ggml_vulkan: mmvq route: type=%s m=%u n=%u k=%u -> %s",
++        // arifi lane-256 / R71: `op` is part of the dedup KEY, not decoration. MUL_MAT and
++        // MUL_MAT_ID can now answer differently for the same (type, m, n, k), so a key without it
++        // would print whichever ran first and silently hide the other.
++        snprintf(buf, sizeof(buf), "ggml_vulkan: mmvq route: op=%s type=%s m=%u n=%u k=%u -> %s",
++                 is_id ? "MUL_MAT_ID" : "MUL_MAT",
+                  ggml_type_name(src0_type), m, n, k, r ? "MMVQ(q8_1)" : "f32-dequant");
+         std::lock_guard<std::mutex> lock(mtx);
+         if (seen.insert(buf).second) {
+@@ -13941,7 +14028,7 @@ static void ggml_vk_mul_mat_vec_id_q_f16(ggml_backend_vk_context * ctx, vk_conte
+     const bool y_non_contig = !ggml_vk_dim01_contiguous(src1);
+ 
+     const bool f16_f32_kernel = src1->type == GGML_TYPE_F32;
+-    bool quantize_y = ctx->device->integer_dot_product && src1->type == GGML_TYPE_F32 && ggml_is_contiguous(src1) && !y_non_contig && (ne11 * ne10) % 4 == 0 && ggml_vk_should_use_mmvq(ctx->device, ne01, ne12, ne10, src0->type);
++    bool quantize_y = ctx->device->integer_dot_product && src1->type == GGML_TYPE_F32 && ggml_is_contiguous(src1) && !y_non_contig && (ne11 * ne10) % 4 == 0 && ggml_vk_should_use_mmvq(ctx->device, ne01, ne12, ne10, src0->type, /* is_id = */ true);
+ 
+     vk_pipeline to_fp16_vk_0 = nullptr;
+     vk_pipeline to_fp16_vk_1 = nullptr;
