@@ -82,7 +82,11 @@ python tools/arifi-sync/arifi_sync.py series replay --onto 4df29be4f   # reprodu
 ```
 
 The procedure for the next upstream bump, the next fork ingest, and what must be re-verified
-afterwards is written out command-by-command in [`UPDATE-RUNBOOK.md`](UPDATE-RUNBOOK.md).
+afterwards is written out command-by-command in `UPDATE-RUNBOOK.md`. **That document is internal
+and is not published**: it is a studio operating procedure, not part of the released software, and
+it is absent from this repository and from its history. The commands it drives are the public ones
+— `tools/arifi-sync/arifi_sync.py series check|regen|replay`, `provenance`, `currency` — and
+`python tools/arifi-sync/arifi_sync.py --help` lists them.
 
 ### The seven ingested sources
 
@@ -319,14 +323,24 @@ verbatim from `docs/OPTIONS-REGISTRY.md`.*
 An attribution-first, rebaseable llama.cpp fork for local inference on **Vulkan**.
 
 - Upstream base: `ggml-org/llama.cpp` **b10825**, `9e0e220594af405a62835dc3a27495729fd8506b`.
-- On top of it: **588 patches**, linear, non-merge, individually toggleable, each carrying its
-  provenance in the commit message.
-- Release tag: **`r73i-release-engine-2026-09-21`** → `037b433a9` (source tip `5a7434218`,
-  engine `arifi-b10825-r73i-5a7434218`).
+  **That commit is upstream's own, byte for byte, signature and all.** This repository is a real
+  fork: every commit at or below the base is shared with `ggml-org/llama.cpp`, so
+  `git remote add upstream https://github.com/ggml-org/llama.cpp && git fetch upstream` gives you
+  a common ancestor and a rebase that works. Check it yourself:
+  `git merge-base --is-ancestor 9e0e220594af405a62835dc3a27495729fd8506b HEAD`.
+- On top of it: the fork's own commits, linear, non-merge, individually toggleable, each carrying
+  its provenance in the commit message. Count them with
+  `git rev-list --count 9e0e220594af405a62835dc3a27495729fd8506b..HEAD` rather than trusting a
+  number written here, which goes stale the moment a commit lands.
+- Engine of record: **`arifi-b10825-r73i-5a7434218`**. The engine's own patch series is **588
+  entries**; the release-prep commits on this branch add more, and `patches/series/SERIES` is the
+  live count.
+- Published release tag: **`r73i-public-2026-09-22`**. The internal tag
+  `r73i-release-engine-2026-09-21` names the engine commit inside the studio and is not published.
 - The series is generated from git, never hand-edited, and verified on every run: every patch is
-  byte-identical to a fresh generation *and* to a committed blob, and replaying all 588 with `git am`
-  reproduces the tree exactly. Receipt: `r73-evidence/74-series-check.txt` (lane-local; see
-  `evidence/MANIFEST.md`).
+  byte-identical to a fresh generation *and* to a committed blob, and replaying all of them with
+  `git am` reproduces the tree exactly. Run it yourself:
+  `python tools/arifi-sync/arifi_sync.py series check`.
 
 **It is for anyone on Vulkan.** A proven-safe improvement ships enabled even where our own GPU shows
 no gain — other drivers may not already do what AMD's does. One of the three defaults turned on in
@@ -343,7 +357,8 @@ transfer; numbers do not. If you are on other hardware, read
 ### Build
 
 Windows / MinGW-w64 / Vulkan. **This is the only configuration any number in this repository was
-measured on** (source: `UPDATE-RUNBOOK.md:849-884`):
+measured on** (source: the internal `UPDATE-RUNBOOK.md`, not published; the same flags are in
+[`docs/BUILDING.md`](docs/BUILDING.md)):
 
 ```powershell
 cmake -S . -B build-vulkan -G Ninja `
@@ -363,7 +378,8 @@ All three extra flags are load-bearing:
 - `GGML_ARIFI_ROCMFPX_FORMATS` — without it the six ROCmFPX types do not compile and a ROCmFP4 GGUF is
   refused at load.
 - `GGML_ARIFI_TURBO_WEIGHT_QUANTS` — without it `TQ3_1S`/`TQ4_1S` and the tq3 family (type ids 48–51)
-  do not compile.
+  do not compile. It is a **CMake option** (`ggml/CMakeLists.txt`), not a runtime switch, which is
+  why `docs/OPTIONS-REGISTRY.md` — a registry of environment switches — does not carry a row for it.
 - `-D_WIN32_WINNT=0x0A00` in **both** `C` and `CXX` flags — without it the Windows IOCP path fails to
   compile. One of the two is not enough; the failure lands in whichever language you left out.
 
@@ -425,16 +441,17 @@ Two warnings from that page, quoted because they change results:
 **`GGML_ARIFI_Q6K_MMVQ` — q6_K takes the q8_1 MMVQ route. NEW IN R73, default ON (AMD, n=7,8,
 `MUL_MAT` only).** `GGML_ARIFI_Q6K_MMVQ=legacy` restores the old path.
 
+**Read the reach before you read the percentages.** A speculative decoder verifies at
+**width = 1 + draft depth**, so n=7,8 is reached by a **draft depth of 6 or 7** — the DFlash2
+publisher recipe's depth. At our own served draft depth of 4 (verify width 5) it is **latent: zero
+served tokens change on this box**, and no throughput claim is made for it.
+
 Upstream keeps q6_K off MMVQ on an unmeasured source comment. Measured at the widths a speculative
 decoder verifies at: **+5% to +40% per q6_K verify column**, **58 of 60 paired rounds won** across
 five shapes, worst single round **0.9894**. Best cell 248320×5120 at n=7: **20,046 → 14,313 us**,
-6/6. `MUL_MAT_ID` is excluded — measured wash.
-
-**Its reach, before its percentages.** A speculative decoder verifies at **width = 1 + draft
-depth**, so n=7,8 is reached by a **draft depth of 6 or 7** — the DFlash2 publisher recipe's depth.
-At our own served draft depth of 4 (verify width 5) it is **latent: zero served tokens change on
-this box**, and no throughput claim is made for it. Correctness 83/83; perplexity at `-b 7` and
-`-b 8` within one stderr.
+6/6. `MUL_MAT_ID` is excluded — measured wash. Correctness 83/83; perplexity at `-b 7` and `-b 8`
+within one stderr. *These five figures have no receipt shipped in `evidence/` — see
+`evidence/MANIFEST.md`, "claims without a shipped receipt".*
 
 
 | Switch | Registry default (quoted) | Restores the old behaviour |
@@ -454,7 +471,6 @@ this box**, and no throughput claim is made for it. Correctness 83/83; perplexit
 | `GGML_ARIFI_Q6K_XFOLD` | *"ON when unset"* (`=0` opts out) |
 | `GGML_VK_Q6K_DIRECT_SCALES` | *"ON when unset — this row inverts the usual shape of this registry"* |
 | `GGML_ARIFI_Q5K_B_HOIST` | *"ON when unset, but only for mat-vec pipelines with `NUM_COLS` …"* |
-| `GGML_ARIFI_Q6K_MMVQ` | *"unset = the shipped route (MMVQ for Q6_K on Intel only)"* |
 | `GGML_ARIFI_SX8_MMVQ` | inverted 2026-09-14 (lane-235/R48b phase 2) |
 | `GGML_ARIFI_SX8_MM_PACKED` | *"ON by device probe when unset on AMD RDNA3, OFF on every other"* |
 | `GGML_ARIFI_MMQ_UNDER_COOPMAT` | *"OFF when unset — shipped behaviour is byte-identical without it"* |

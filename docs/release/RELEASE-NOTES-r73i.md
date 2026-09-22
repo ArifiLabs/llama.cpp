@@ -12,6 +12,13 @@ Base: upstream `ggml-org/llama.cpp` **b10825** (`9e0e22059`) + **588 patches**. 
 **q6_K takes the q8_1 MMVQ route** — AMD only, **n=7,8 only**, **`MUL_MAT` only**;
 `GGML_ARIFI_Q6K_MMVQ=legacy` restores the old path.
 
+**Read the reach before you read the percentages.** A speculative decoder verifies at
+**width = 1 + draft depth**. This route fires at n=7,8, so it is reached by a **draft depth of 6 or
+7** — the depth the **DFlash2 publisher recipe** calls for — and it is **latent at our own served
+draft depth of 4**, which verifies at width 5. **R73 therefore changes zero served tokens on our
+box, and no throughput claim is made for it.** The win is an op-level, per-column number. Anyone
+running a deeper draft gets it immediately; we do not, yet.
+
 Upstream keeps q6_K off MMVQ on an unmeasured source comment ("only a win on Intel"). Measured at
 the widths a speculative decoder verifies at, it wins: **+5% to +40% per q6_K verify column**,
 **58 of 60 paired rounds won** across five shapes, **worst single round 0.9894**.
@@ -26,12 +33,6 @@ the widths a speculative decoder verifies at, it wins: **+5% to +40% per q6_K ve
 
 `MUL_MAT_ID` is **excluded**: measured wash, so the MoE path does not take the route.
 
-**Read the reach before you read the percentages.** A speculative decoder verifies at
-**width = 1 + draft depth**. This route fires at n=7,8, so it is reached by a **draft depth of 6 or
-7** — the depth the **DFlash2 publisher recipe** calls for — and it is **latent at our own served
-draft depth of 4**, which verifies at width 5. **R73 therefore changes zero served tokens on our
-box, and no throughput claim is made for it.** The win is an op-level, per-column number. Anyone
-running a deeper draft gets it immediately; we do not, yet.
 
 ## Unchanged from R66 — three defaults still ON, each with its switch
 

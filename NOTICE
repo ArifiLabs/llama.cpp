@@ -68,6 +68,40 @@ turboquant_plus
               This product includes software developed by Tom Turney
               (https://github.com/TheTom/turboquant_plus).
 
+perfetto (tracing SDK, single-header amalgamation)
+  Author:   The Android Open Source Project
+            Copyright (C) 2019 The Android Open Source Project
+  Licence:  Apache License 2.0 - licenses/perfetto-Apache-2.0.txt
+  Carried:  powerinfer/libaz/external/perfetto/, vendored into this tree by the PowerInfer
+            ingest. The upstream drop ships NO licence file of its own: the licence is stated
+            in the header of perfetto.h. The Apache-2.0 text is therefore retained here by
+            this repository so that section 4(a) is satisfied, because a licence that is not
+            shipped does not travel. It is a SECOND copy of the same terms already at
+            licenses/turboquant-plus-Apache-2.0.txt, and that is deliberate: the phase-2
+            audit removed a licensor-neutral Apache-2.0 stand-in on the reasoning that two
+            copies invite the reader to ask which governs, and this file is named for its
+            component so that question cannot arise.
+  Notice:   Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+            these files except in compliance with the License. You may obtain a copy of the
+            License at http://www.apache.org/licenses/LICENSE-2.0. Unless required by
+            applicable law or agreed to in writing, software distributed under the License is
+            distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+            either express or implied.
+
+--------------------------------------------------------------------------------
+BSD 3-Clause components
+--------------------------------------------------------------------------------
+
+Carried with PowerInfer/libaz. These are third-party libraries vendored under
+powerinfer/libaz/external/ by the PowerInfer ingest, not written by this fork. Each licence
+file is the one the vendored drop itself ships, copied verbatim into licenses/.
+
+  CLI11 (University of Cincinnati / Henry Schreiner et al.)
+                                       licenses/libaz-cli11-BSD-3-Clause.txt
+                                       powerinfer/libaz/external/cli11/
+  GoogleTest (Google Inc.)             licenses/libaz-googletest-BSD-3-Clause.txt
+                                       powerinfer/libaz/external/googletest/
+
 --------------------------------------------------------------------------------
 MIT components
 --------------------------------------------------------------------------------
@@ -89,6 +123,12 @@ that is done here.
   LaurentZuijdwijk/llama.cpp           licenses/zuijdwijk-MIT.txt
   thecodacus/llama.cpp                 licenses/thecodacus-MIT.txt
 
+Carried with PowerInfer/libaz, under powerinfer/libaz/external/:
+
+  {fmt} (Victor Zverovich and contributors)
+                                       licenses/libaz-fmt-MIT.txt
+                                       powerinfer/libaz/external/fmt/
+
 ciru-ai/ROCmFPX is a registered source with its notice retained ahead of any ingest; no code
 from it is carried at this revision.
 
@@ -96,5 +136,27 @@ from it is carried at this revision.
 Inherited from upstream, not retained by this fork
 --------------------------------------------------------------------------------
 
+These are upstream llama.cpp's own vendored third-party files. They arrived with the tree,
+they carry whatever notices upstream ships with them, and this fork adds nothing to and
+removes nothing from them. They are named here so a reader is not left to discover them.
+
 nlohmann/json (Niels Lohmann), MIT - licenses/LICENSE-jsonhpp. Upstream llama.cpp's own file,
-covering its vendored vendor/nlohmann/json.hpp and json_fwd.hpp. It arrived with the tree.
+covering its vendored vendor/nlohmann/json.hpp and json_fwd.hpp.
+
+Also inherited under vendor/, each carrying its own licence file or in-file licence header,
+named here only so a reader is not left to discover them. Read from the files themselves,
+not from memory:
+
+  vendor/cpp-httplib/         MIT            LICENSE, Copyright (c) 2017 yhirose /
+                                             Copyright (c) 2026 Yuji Hirose
+  vendor/miniaudio/           MIT-0 or       in-file header, Copyright 2026 David Reid
+                              public domain
+  vendor/stb/                 MIT or         in-file header, Copyright (c) 2017 Sean Barrett
+                              public domain
+  vendor/sheredom/            public-domain  in-file header (subprocess.h)
+                              dedication
+  vendor/hash/rotate-bits/    MIT            LICENSE.md, Copyright (c) 2021 William Casarin
+  vendor/hash/sha256/         public domain  in-file header
+  vendor/hash/xxhash/         BSD 2-Clause   LICENSE, Copyright (c) 2012-2021 Yann Collet
+
+Upstream llama.cpp is the licensee of record for every row above.

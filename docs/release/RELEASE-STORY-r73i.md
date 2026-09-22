@@ -280,6 +280,11 @@ work and flips **one** new Vulkan default ON. The three R66 defaults are unchang
 at startup. Checker: `cache/r73-wt/CHECK-R73-FABLE.md` — **"VERDICT: PASS. PROMOTION RULE: PROMOTE
 `arifi-b10825-r73i-5a7434218`"**. Record: `cache/r73-wt/R73-PROMOTION-RECORD.md`.
 
+**Read the reach before you read the size column.** The route fires at **n=7,8**, a speculative
+decoder verifies at **width = 1 + draft depth**, so this default is reached by a **draft depth of
+6 or 7** and is **latent at our own served draft depth of 4** — zero served tokens change on this
+box. The section below states it in full.
+
 | Default now ON | Scope | Size | Legacy switch |
 |---|---|---|---|
 | **q6_K q8_1 MMVQ route** | AMD, **n=7,8 only**, **MUL_MAT only** | **+5% to +40% per q6_K verify column**; **58/60 paired rounds won** across five shapes; **worst single round 0.9894** | `GGML_ARIFI_Q6K_MMVQ=legacy` |

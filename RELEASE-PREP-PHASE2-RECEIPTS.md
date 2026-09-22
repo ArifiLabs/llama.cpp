@@ -119,11 +119,16 @@ origin/release/r73i-public-prep-2026-09-21` → tip `e2e0f219c`, matching the pr
 `git-filter-repo==2.47.0` installed with `uv pip install --python <repo>/shared/.venv/…`.
 Rewrite: `git_filter_repo.py --mailmap … --refs export --force`.
 
+> *Phase 4 note: the fork-range rewrite replaces the President's personal address in every
+> blob and every commit message, so the right-hand side of the first mailmap line below is
+> written as its class rather than as the address itself — a receipt that quotes the literal
+> is how the literal survives a scrub (LL-217).*
+
 Mailmap — **our identities only**. Third-party authors (`Codex`, `Marshall`, `Jian Chen`) are
 attribution and are untouched:
 
 ```
-Angelo Arifi <arifilabs@users.noreply.github.com> Angelo Arifi <arifilabs@users.noreply.github.com>
+Angelo Arifi <arifilabs@users.noreply.github.com> Angelo Arifi <the President's personal address>
 m <arifilabs@users.noreply.github.com> m <m@l>
 hq <arifilabs@users.noreply.github.com> hq <hq@arifilabs>
 ```
@@ -207,7 +212,7 @@ nothing in the clone passes at all.
 
 | Class | Prep | Export |
 |---|---|---|
-| `arifilabs@users.noreply.github.com` | **403** lines / 403 files | **0** |
+| the President's personal address (the class, never the literal) | **403** lines / 403 files | **0** |
 | `hq@arifilabs` | 1 | **0** |
 | `<m@l>` | 156 | **4** (3 files — inside patch *content*, not a `From:` header, so a mailmap cannot reach them) |
 | `arifilabs@users.noreply.github.com` | 0 | 549 |

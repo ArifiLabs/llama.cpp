@@ -105,7 +105,7 @@ Measured on the converged export tip **`55579bb11`**:
 | **user-home, the President's name** | **114** / 15 files | **0** / 0 files | **target met** |
 | user-home, upstream's placeholders | 2 | 8 / 3 files | upstream content, left alone |
 | studio-path | 1,615 / 54 | 2,842 / 60 | unchanged **by intent**; see below |
-| e-mail: `arifilabs@users.noreply.github.com` | 403 | **0** | **zero** |
+| e-mail: the President's personal address | 403 | **0** | **zero** |
 | credential / token shapes | **0** | **0** | clean |
 | qnap | 19 | 37 | reviewed noise, see below |
 | rig hostname | 38 | 50 | intentional disclosure |

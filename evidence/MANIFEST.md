@@ -86,16 +86,39 @@ Scrub patterns applied to text receipts: absolute user-home paths -> `<home>`, s
 
 ## MISSING — a cited claim whose receipt could not be found
 
-**None.** Every receipt cited by name in `README.md`,
+**None by path.** Every receipt cited *by name* in `README.md`,
 `docs/release/RELEASE-STORY-r73i.md` and `docs/release/RELEASE-NOTES-r73i.md` was located
-and is shipped above. The citation list was extracted from the documents themselves
-(`cache/relprep-tmp/evidence.py`), not hand-written, so it cannot drift from what the
-release actually claims.
+and is shipped above. The citation list was extracted from the documents themselves, not
+hand-written, so it cannot drift from what the release actually claims.
+
+## Claims without a shipped receipt — read this before the percentages
+
+**"None by path" is not "nothing is missing", and the distinction matters.** The section
+above only checks the receipts a document names. It cannot see a headline number that carries
+no path at all, and several do. An independent check of this release found that the
+documents cite 91 distinct receipt paths of which 54 resolve to nothing a clone contains —
+34 are lane `REPORT` / `CHECK-*` / `PROMOTION-RECORD` / `AB.json` files that live in lane
+worktrees, and 9 are internal studio paths a public reader cannot open at all.
+
+These five headline figures have **no receipt in this folder**:
+
+| Claim | Where it is stated |
+|---|---|
+| q6_K route: **+5% to +40%**, **58 of 60** paired rounds won, worst **0.9894** | `README.md`, notes, story |
+| best cell 248320×5120 n=7: **20,046 → 14,313 us** | `README.md`, notes, story |
+| q5_K marginal verify column **113.8 → 5.4 us** | notes, story |
+| perplexity **5.9932 ± 0.14292** vs 5.9918 legacy | notes, story |
+| chain151: **every CI contains zero** | notes, story |
+
+They were measured, and the measurement lives in the lane worktrees and the promotion
+records named beside them. **They are not reproducible from this repository alone.** Read
+them as stated-not-shipped until the paired-round dumps behind them are published.
 
 ## What is deliberately NOT here
 
 The 436 lane evidence files that were tracked at the R66 tip — build logs, configure logs
-and sweep dumps from thirteen `r4*`/`r5*` directories — were dropped from the release branch
-under the publish-scope decision, together with 136 internal maker and checker documents.
-They remain in the fork's history and in the studio's own worktrees. This folder holds the
-receipts the published documents cite, not every file a lane ever wrote.
+and sweep dumps from thirteen `r4*`/`r5*` directories — together with 133 internal maker and
+checker documents, are **absent from this repository and from its history**. They were not
+merely deleted by a later commit: the paths were removed from every commit in the fork range,
+so no `git show`, no `git log -p` and no file under `patches/` can reconstruct them. This
+folder holds the receipts the published documents cite, not every file a lane ever wrote.
