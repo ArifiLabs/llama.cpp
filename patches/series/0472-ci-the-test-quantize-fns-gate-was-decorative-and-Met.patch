@@ -1,0 +1,225 @@
+From 1a6607876ba5048b9258204275b276704ce3a08f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 6 Sep 2026 04:09:24 -0400
+Subject: [PATCH] ci: the test-quantize-fns gate was decorative, and Metal
+ needs both library modes
+
+Two defects in ce9a2ed60, both found by review before the matrix ever ran.
+
+1. THE TEST STEP COULD NOT FAIL. `./build/bin/test-quantize-fns 2>&1 | tee -a
+   build-<tag>.log` exits with tee's status, not the test's, and `set -o pipefail`
+   was set in the Configure step only - each `run:` is a fresh shell. All four jobs
+   would have reported the test green regardless of the result. The Windows job had
+   the same shape through Tee-Object.
+
+   Fixed, and baselined rather than forced to zero: test-quantize-fns exits 1 on
+   this fork because six ROCmFPX q2_0/q3_0/q4_0 absolute-error and dot-product rows
+   fail, and those six are PRE-EXISTING - the rig's own receipt on the same base
+   reports them line for line (12-test-quantize-fns.txt). Demanding exit 0 would
+   have painted all four jobs red for a reason unrelated to the unions. The step now
+   reads PIPESTATUS, counts FAILED rows, and passes on zero failures or on exactly
+   the banked six. Anything else is a regression and fails the job.
+
+2. METAL NOW BUILDS BOTH LIBRARY MODES. The fork carries TWO Metal sources and they
+   disagree:
+
+     kernels/fa.metal (upstream's split tree -> default.metallib)   401 vec kernel
+       names, 318 of them the _q#_ne# fa_vec tuning instantiations
+     ggml-metal.metal (the fork's monolith -> the EMBED path)       205 vec names,
+       ZERO _q#_ne#
+
+   CMakeLists uses the split tree for default.metallib (lines 124-166) and the
+   monolith for GGML_METAL_EMBED_LIBRARY (line 33). bf0c4aecc restored upstream's
+   qne_suffix, so the getter now asks for names like
+   kernel_flash_attn_ext_vec_f16_dk128_dv128_q2_ne1. On the default build those all
+   exist. On an embed build they do not, compile_pipeline returns null, and the next
+   GGML_ASSERT dereferences it - AT RUNTIME, which no compile job catches.
+
+   That stale monolith is a pre-existing fork defect with the same root as the
+   deferred per-kind library split, not something the union introduced. So the job
+   is now a 2-cell matrix, embed ON and OFF, fail-fast false: embed=OFF is the
+   union's real target and embed=ON is there to SURFACE the gap rather than ship it.
+
+Also verified while reviewing bf0c4aecc, because neither existing loss-control check
+could see it: the rebuilt FA function initializes ggml_metal_kargs_flash_attn_ext,
+_vec and _kv_f16 by POSITIONAL aggregate init - the /*.nb11 =*/ marks are comments,
+not designators - and ggml-metal-impl.h carries 62 lines of fork additions over
+upstream. A single inserted or reordered field would have shifted every subsequent
+value into the wrong member: compiles clean, produces garbage, green CI. CHECKED by
+comparing all three struct field lists at 6a1a922d2 and at the tip: IDENTICAL. The
+positional init is safe. Recorded in the report because brace balance and token
+presence are both blind to it.
+
+Origin: ArifiLabs (native)
+WI: WI-1698
+Lane: lane-210
+---
+ .github/workflows/arifi-backends-matrix.yml | 111 ++++++++++++++++++--
+ 1 file changed, 100 insertions(+), 11 deletions(-)
+
+diff --git a/.github/workflows/arifi-backends-matrix.yml b/.github/workflows/arifi-backends-matrix.yml
+index daf3265e3..fff432106 100644
+--- a/.github/workflows/arifi-backends-matrix.yml
++++ b/.github/workflows/arifi-backends-matrix.yml
+@@ -19,6 +19,13 @@
+ # correctness test and runs on every job. GitHub runners have no NVIDIA, Apple or
+ # Intel GPU, so nothing here executes a GPU kernel and nothing here is a benchmark.
+ # A green run means "compile-verified, not benched" and must be reported that way.
++#
++# test-quantize-fns is BASELINED, not required to exit 0: it exits 1 on this fork
++# because six ROCmFPX rows fail, and those six are pre-existing (the rig's own
++# receipt on the same base reports them line for line). The step passes on zero
++# failures or on exactly those six, and fails on anything else. It does NOT pipe
++# straight into tee - that would take tee's exit status and the step could never
++# fail at all.
+ 
+ name: CI (ArifiLabs backends matrix)
+ 
+@@ -85,8 +92,28 @@ jobs:
+             2>&1 | tee build-cuda.log
+           cmake --build build --target test-quantize-fns 2>&1 | tee -a build-cuda.log
+ 
+-      - name: test-quantize-fns (CPU)
+-        run: ./build/bin/test-quantize-fns 2>&1 | tee -a build-cuda.log
++      - name: test-quantize-fns (CPU, baselined)
++        shell: bash
++        run: |
++          set -o pipefail
++          set +e
++          ./build/bin/test-quantize-fns 2>&1 | tee -a build-cuda.log
++          rc=${PIPESTATUS[0]}
++          set -e
++          # test-quantize-fns exits 1 on this fork because the ROCmFPX q2_0/q3_0/q4_0
++          # absolute-error and dot-product rows fail. That is PRE-EXISTING - the rig's
++          # own receipt on lane-206/upstream-b10819 reports the same six, line for line
++          # (lane-evidence/2026-09-02-lane-209/r17-offrig-union/12-test-quantize-fns.txt).
++          # So the gate is "exactly the known six, or none", never "exit 0": a bare
++          # `| tee` would take tee's status and this step could never fail at all.
++          fails=$(grep -c 'FAILED' build-cuda.log || true)
++          echo "test-quantize-fns rc=$rc, FAILED rows=$fails (baseline 6)"
++          if [ "$rc" -eq 0 ] && [ "$fails" -eq 0 ]; then exit 0; fi
++          if [ "$rc" -eq 1 ] && [ "$fails" -eq 6 ]; then
++            echo "matches the banked ROCmFPX baseline - not a regression"; exit 0
++          fi
++          echo "REGRESSION: expected 0 or the baselined 6 failures, got $fails (rc $rc)"
++          exit 1
+ 
+       - uses: actions/upload-artifact@v4
+         if: always()
+@@ -95,8 +122,19 @@ jobs:
+           path: build-cuda.log
+ 
+   metal-macos:
+-    name: Metal (compile only, no GPU dispatch)
++    # Both library modes, deliberately. The fork carries TWO Metal sources: upstream's
++    # split kernels/*.metal (401 vec kernel names, 318 of them the _q#_ne# fa_vec
++    # tuning instantiations) and its own monolithic ggml-metal.metal (205 vec names,
++    # ZERO _q#_ne#). CMakeLists builds the split tree into default.metallib but uses
++    # the monolith for the EMBED path, so an embed build can be missing kernels the
++    # dispatch asks for. embed=OFF is the union's real target; embed=ON is here to
++    # SURFACE that gap rather than ship it.
++    name: Metal, embed=${{ matrix.embed }} (compile only, no GPU dispatch)
+     runs-on: macos-latest
++    strategy:
++      fail-fast: false
++      matrix:
++        embed: [ON, OFF]
+     steps:
+       - uses: actions/checkout@v6
+ 
+@@ -109,17 +147,37 @@ jobs:
+           cmake -S . -B build -G Ninja \
+             ${ARIFI_CMAKE_COMMON} \
+             -DGGML_METAL=ON \
+-            -DGGML_METAL_EMBED_LIBRARY=ON \
++            -DGGML_METAL_EMBED_LIBRARY=${{ matrix.embed }} \
+             2>&1 | tee build-metal.log
+           cmake --build build --target test-quantize-fns 2>&1 | tee -a build-metal.log
+ 
+-      - name: test-quantize-fns (CPU)
+-        run: ./build/bin/test-quantize-fns 2>&1 | tee -a build-metal.log
++      - name: test-quantize-fns (CPU, baselined)
++        shell: bash
++        run: |
++          set -o pipefail
++          set +e
++          ./build/bin/test-quantize-fns 2>&1 | tee -a build-metal.log
++          rc=${PIPESTATUS[0]}
++          set -e
++          # test-quantize-fns exits 1 on this fork because the ROCmFPX q2_0/q3_0/q4_0
++          # absolute-error and dot-product rows fail. That is PRE-EXISTING - the rig's
++          # own receipt on lane-206/upstream-b10819 reports the same six, line for line
++          # (lane-evidence/2026-09-02-lane-209/r17-offrig-union/12-test-quantize-fns.txt).
++          # So the gate is "exactly the known six, or none", never "exit 0": a bare
++          # `| tee` would take tee's status and this step could never fail at all.
++          fails=$(grep -c 'FAILED' build-metal.log || true)
++          echo "test-quantize-fns rc=$rc, FAILED rows=$fails (baseline 6)"
++          if [ "$rc" -eq 0 ] && [ "$fails" -eq 0 ]; then exit 0; fi
++          if [ "$rc" -eq 1 ] && [ "$fails" -eq 6 ]; then
++            echo "matches the banked ROCmFPX baseline - not a regression"; exit 0
++          fi
++          echo "REGRESSION: expected 0 or the baselined 6 failures, got $fails (rc $rc)"
++          exit 1
+ 
+       - uses: actions/upload-artifact@v4
+         if: always()
+         with:
+-          name: arifi-build-log-metal
++          name: arifi-build-log-metal-embed-${{ matrix.embed }}
+           path: build-metal.log
+ 
+   sycl-ubuntu:
+@@ -151,8 +209,28 @@ jobs:
+             2>&1 | tee build-sycl.log
+           cmake --build build --target test-quantize-fns 2>&1 | tee -a build-sycl.log
+ 
+-      - name: test-quantize-fns (CPU)
+-        run: ./build/bin/test-quantize-fns 2>&1 | tee -a build-sycl.log
++      - name: test-quantize-fns (CPU, baselined)
++        shell: bash
++        run: |
++          set -o pipefail
++          set +e
++          ./build/bin/test-quantize-fns 2>&1 | tee -a build-sycl.log
++          rc=${PIPESTATUS[0]}
++          set -e
++          # test-quantize-fns exits 1 on this fork because the ROCmFPX q2_0/q3_0/q4_0
++          # absolute-error and dot-product rows fail. That is PRE-EXISTING - the rig's
++          # own receipt on lane-206/upstream-b10819 reports the same six, line for line
++          # (lane-evidence/2026-09-02-lane-209/r17-offrig-union/12-test-quantize-fns.txt).
++          # So the gate is "exactly the known six, or none", never "exit 0": a bare
++          # `| tee` would take tee's status and this step could never fail at all.
++          fails=$(grep -c 'FAILED' build-sycl.log || true)
++          echo "test-quantize-fns rc=$rc, FAILED rows=$fails (baseline 6)"
++          if [ "$rc" -eq 0 ] && [ "$fails" -eq 0 ]; then exit 0; fi
++          if [ "$rc" -eq 1 ] && [ "$fails" -eq 6 ]; then
++            echo "matches the banked ROCmFPX baseline - not a regression"; exit 0
++          fi
++          echo "REGRESSION: expected 0 or the baselined 6 failures, got $fails (rc $rc)"
++          exit 1
+ 
+       - uses: actions/upload-artifact@v4
+         if: always()
+@@ -191,9 +269,20 @@ jobs:
+             -DGGML_VULKAN=ON 2>&1 | Tee-Object -FilePath build-vulkan.log
+           cmake --build build --config Release --target test-quantize-fns 2>&1 | Tee-Object -FilePath build-vulkan.log -Append
+ 
+-      - name: test-quantize-fns (CPU)
++      - name: test-quantize-fns (CPU, baselined)
+         shell: pwsh
+-        run: ./build/bin/Release/test-quantize-fns.exe 2>&1 | Tee-Object -FilePath build-vulkan.log -Append
++        run: |
++          $out = & ./build/bin/Release/test-quantize-fns.exe 2>&1
++          $rc = $LASTEXITCODE
++          $out | Tee-Object -FilePath build-vulkan.log -Append
++          # same baseline as the bash jobs: the six ROCmFPX rows are pre-existing on
++          # this fork. Piping straight into Tee-Object would discard the exit code.
++          $fails = ($out | Select-String -Pattern 'FAILED').Count
++          Write-Output ('test-quantize-fns rc=' + $rc + ', FAILED rows=' + $fails + ' (baseline 6)')
++          if ($rc -eq 0 -and $fails -eq 0) { exit 0 }
++          if ($rc -eq 1 -and $fails -eq 6) { Write-Output 'matches the banked baseline'; exit 0 }
++          Write-Output 'REGRESSION: expected 0 or the baselined 6 failures'
++          exit 1
+ 
+       - uses: actions/upload-artifact@v4
+         if: always()

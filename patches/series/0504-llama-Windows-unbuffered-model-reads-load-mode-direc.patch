@@ -1,0 +1,272 @@
+From 91609a2644ed5bb1fa8e8068cce2b2b279ef6413 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 7 Sep 2026 03:18:53 -0400
+Subject: [PATCH] llama : Windows unbuffered model reads (--load-mode
+ direct_io) + PR #28223 host bufts under mmap (R31 M17 / M07)
+
+Windows llama_file opens with FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN when use_direct_io, sector size from FILE_STORAGE_INFO (4096 floor), handle wrapped in a FILE* so file_id() and the mmap path are untouched, probe read at open, every read through a sector-aligned staging buffer (EOF padding zeroed); any failure falls back to buffered with a warning. has_direct_io() = alignment > 1 on both platforms (was unconditionally true on Windows with alignment 1). Runtime switch: --load-mode direct_io; the buffered path is the generic path.
+
+Loader: an explicit -ot host buft is kept under mmap instead of being downgraded to CPU, and host-destination tensors are read from the file rather than memcpy'd from the mapping (upstream PR #28223, part 1 + 2).
+
+Staged by lane-223 (Fable 5.1 MEDIUM, POOL MODE code half); its commit job never found a CLEAR window, so the serial lane (R31 measure) lands it unchanged from the worktree before building.
+
+Origin: FreeToken host_banks.py:380-471 (O_DIRECT readers, pinned banks) + upstream PR #25294 llama_moe_stream_pread (the llama_file half)
+Origin: upstream PR #28223 (Inovello) - keep -ot host buffer types under mmap; file-read host tensors
+Lane: lane-223
+(cherry picked from commit d596383b6ba989b620ec98436a1e58f5943ce54b)
+---
+ src/llama-mmap.cpp         | 140 +++++++++++++++++++++++++++++++++++--
+ src/llama-model-loader.cpp |  17 ++++-
+ 2 files changed, 151 insertions(+), 6 deletions(-)
+
+diff --git a/src/llama-mmap.cpp b/src/llama-mmap.cpp
+index 96c3a45fc..8efa99e5e 100644
+--- a/src/llama-mmap.cpp
++++ b/src/llama-mmap.cpp
+@@ -34,6 +34,10 @@
+         #define PATH_MAX MAX_PATH
+     #endif
+     #include <io.h>
++    #include <fcntl.h>   // _O_RDONLY for the unbuffered handle wrap (R31/M17)
++    #include <malloc.h>  // _aligned_malloc
++    #include <memory>
++    #include <vector>
+ #endif
+ 
+ #if defined(__APPLE__)
+@@ -83,7 +87,23 @@ struct llama_file::impl {
+         return ret;
+     }
+ 
+-    impl(const char * fname, const char * mode, [[maybe_unused]] const bool use_direct_io = false) {
++    impl(const char * fname, const char * mode, const bool use_direct_io = false) {
++        // R31/M17 (lane-223): the Windows O_DIRECT. FILE_FLAG_NO_BUFFERING bypasses the page cache, which
++        // is what a model far bigger than RAM needs (a buffered read of a 93 GB file thrashes the cache the
++        // resident tensors live in). Unbuffered handles require sector-aligned offset/length/buffer, so
++        // reads go through read_aligned_chunk() with `alignment` = the volume's physical sector size.
++        // Runtime switch: --load-mode direct_io (use_direct_io) selects it; any failure falls back to the
++        // buffered fopen path below, exactly like the Linux O_DIRECT branch.
++        // Origin: FreeToken host_banks.py:380-471 (O_DIRECT readers) + upstream PR #25294 (llama_moe_stream_pread);
++        // this is the llama_file half, shared by --load-mode direct_io and any future expert streamer.
++        if (use_direct_io && std::strcmp(mode, "rb") == 0) {
++            if (init_unbuffered(fname)) {
++                return;
++            }
++            LLAMA_LOG_WARN("Failed to open file '%s' unbuffered (FILE_FLAG_NO_BUFFERING): %s. Falling back to buffered I/O\n",
++                           fname, GetErrorMessageWin32(GetLastError()).c_str());
++        }
++
+         fp = ggml_fopen(fname, mode);
+         if (fp == NULL) {
+             throw std::runtime_error(format("failed to open %s: %s", fname, strerror(errno)));
+@@ -94,6 +114,77 @@ struct llama_file::impl {
+         seek(0, SEEK_SET);
+     }
+ 
++    // open with FILE_FLAG_NO_BUFFERING; on success fp/fp_win32/size/alignment are set and true is returned
++    bool init_unbuffered(const char * fname) {
++        // UTF-8 -> UTF-16, as ggml_fopen does
++        const int wlen = MultiByteToWideChar(CP_UTF8, 0, fname, -1, NULL, 0);
++        if (wlen <= 0) {
++            return false;
++        }
++        std::vector<wchar_t> wfname(wlen);
++        MultiByteToWideChar(CP_UTF8, 0, fname, -1, wfname.data(), wlen);
++
++        HANDLE h = CreateFileW(wfname.data(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
++                               FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
++        if (h == INVALID_HANDLE_VALUE) {
++            return false;
++        }
++
++        // sector size for the alignment rule; FILE_STORAGE_INFO is Win8+, 4096 is a multiple of any
++        // logical/physical sector size in use, so it is the safe default
++        size_t sector = 4096;
++#if _WIN32_WINNT >= 0x602
++        FILE_STORAGE_INFO fsi;
++        if (GetFileInformationByHandleEx(h, FileStorageInfo, &fsi, sizeof(fsi)) && fsi.PhysicalBytesPerSectorForAtomicity > 0) {
++            sector = std::max<size_t>(sector, fsi.PhysicalBytesPerSectorForAtomicity);
++        }
++#endif
++
++        LARGE_INTEGER li;
++        if (!GetFileSizeEx(h, &li)) {
++            CloseHandle(h);
++            return false;
++        }
++
++        // wrap the handle in a FILE* so file_id()/_fileno() and the mmap path keep working unchanged
++        const int fd = _open_osfhandle((intptr_t) h, _O_RDONLY);
++        if (fd == -1) {
++            CloseHandle(h);
++            return false;
++        }
++        FILE * f = _fdopen(fd, "rb");
++        if (f == NULL) {
++            _close(fd); // closes h too
++            return false;
++        }
++
++        fp        = f;
++        fp_win32  = h;
++        size      = (size_t) li.QuadPart;
++        alignment = sector;
++
++        // probe: one aligned read at offset 0 proves the volume honours the flag (network/overlay
++        // filesystems can accept the flag and then refuse aligned reads)
++        try {
++            std::vector<uint8_t> probe_dst(std::min<size_t>(size, 64));
++            if (!probe_dst.empty()) {
++                seek(0, SEEK_SET);
++                read_aligned_chunk(probe_dst.data(), probe_dst.size());
++                seek(0, SEEK_SET);
++            }
++        } catch (const std::exception & e) {
++            LLAMA_LOG_WARN("unbuffered probe read failed on '%s': %s\n", fname, e.what());
++            std::fclose(fp);
++            fp = NULL;
++            fp_win32 = NULL;
++            alignment = 1;
++            return false;
++        }
++
++        LLAMA_LOG_INFO("%s: opened '%s' unbuffered (FILE_FLAG_NO_BUFFERING, sector %zu)\n", __func__, fname, alignment);
++        return true;
++    }
++
+     impl(FILE * file) : owns_fp(false) {
+         fp = file;
+         fp_win32 = (HANDLE) _get_osfhandle(_fileno(fp));
+@@ -126,7 +217,9 @@ struct llama_file::impl {
+         }
+     }
+ 
+-    void read_raw(void * ptr, size_t len) {
++    // plain ReadFile loop; on an unbuffered handle the caller guarantees the alignment rule.
++    // allow_eof_pad: an unbuffered read of the last partial sector legitimately comes back short at EOF
++    void read_raw_unsafe(void * ptr, size_t len, bool allow_eof_pad = false) {
+         size_t bytes_read = 0;
+         while (bytes_read < len) {
+             size_t chunk_size = std::min<size_t>(len - bytes_read, 64*1024*1024);
+@@ -136,6 +229,11 @@ struct llama_file::impl {
+                 throw std::runtime_error(format("read error: %s", GetErrorMessageWin32(GetLastError()).c_str()));
+             }
+             if (chunk_read < chunk_size || chunk_read == 0) {
++                if (allow_eof_pad && tell() == size) {
++                    // EOF inside the alignment padding: zero the rest, the caller only copies `len` real bytes
++                    std::memset(reinterpret_cast<char *>(ptr) + bytes_read + chunk_read, 0, len - bytes_read - chunk_read);
++                    return;
++                }
+                 throw std::runtime_error("unexpectedly reached end of file");
+             }
+ 
+@@ -143,6 +241,39 @@ struct llama_file::impl {
+         }
+     }
+ 
++    // unbuffered handles: read the sector-aligned superset into an aligned staging buffer, copy `size` bytes out
++    void read_aligned_chunk(void * dest, size_t sz) {
++        const size_t offset = tell();
++        const size_t aligned_offset      = offset & ~(alignment - 1);
++        const size_t offset_from_aligned = offset - aligned_offset;
++        const size_t bytes_to_read       = (offset_from_aligned + sz + alignment - 1) & ~(alignment - 1);
++
++        void * raw_buffer = _aligned_malloc(bytes_to_read, alignment);
++        if (raw_buffer == nullptr) {
++            throw std::runtime_error(format("_aligned_malloc(%zu, %zu) failed", bytes_to_read, alignment));
++        }
++        struct aligned_buffer_deleter {
++            void operator()(void * p) const { _aligned_free(p); }
++        };
++        std::unique_ptr<void, aligned_buffer_deleter> buffer(raw_buffer);
++
++        seek(aligned_offset, SEEK_SET);
++        read_raw_unsafe(buffer.get(), bytes_to_read, /*allow_eof_pad =*/ true);
++
++        std::memcpy(dest, reinterpret_cast<const char *>(buffer.get()) + offset_from_aligned, sz);
++
++        // leave the logical position where a buffered read would have left it
++        seek(offset + sz, SEEK_SET);
++    }
++
++    void read_raw(void * ptr, size_t len) {
++        if (has_direct_io()) {
++            read_aligned_chunk(ptr, len);
++        } else {
++            read_raw_unsafe(ptr, len);
++        }
++    }
++
+     uint32_t read_u32() {
+         uint32_t val;
+         read_raw(&val, sizeof(val));
+@@ -170,8 +301,9 @@ struct llama_file::impl {
+         write_raw(&val, sizeof(val));
+     }
+ 
++    // true only for a FILE_FLAG_NO_BUFFERING handle (alignment = sector size); buffered opens read plainly
+     bool has_direct_io() const {
+-        return true;
++        return alignment > 1;
+     }
+ 
+     ~impl() {
+@@ -426,7 +558,7 @@ int llama_file::file_id() const {
+ void llama_file::seek(size_t offset, int whence) const { pimpl->seek(offset, whence); }
+ void llama_file::read_raw(void * ptr, size_t len) { pimpl->read_raw(ptr, len); }
+ #ifdef _WIN32
+-void llama_file::read_raw_unsafe(void * ptr, size_t len) { pimpl->read_raw(ptr, len); }
++void llama_file::read_raw_unsafe(void * ptr, size_t len) { pimpl->read_raw_unsafe(ptr, len); }
+ #else
+ void llama_file::read_raw_unsafe(void * ptr, size_t len) { pimpl->read_raw_unsafe(ptr, len); }
+ #endif
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index 4c7c5f660..f351d4963 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -1449,6 +1449,7 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+         }
+ 
+         ggml_backend_buffer_type_t buft = nullptr;
++        bool buft_overridden = false; // upstream PR #28223: an explicit -ot host buft is kept under mmap
+ 
+         // check overrides
+         if (tensor_buft_overrides) {
+@@ -1467,6 +1468,7 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+                         }
+                     } else {
+                         buft = overrides->buft;
++                        buft_overridden = true;
+                     }
+ 
+                     LLAMA_LOG_DEBUG("tensor %s (%zu MiB %s) buffer type overridden to %s\n",
+@@ -1485,9 +1487,11 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+             }
+         }
+ 
+-        // avoid using a host buffer when using mmap
++        // avoid using a host buffer when using mmap, unless an override asks for it: the tensor is then
++        // copied into pinned memory (upstream PR #28223, Inovello: CPU-resident experts in pinned memory
++        // for op offload while the rest of the model stays mapped; 26k prefill 166 -> 379 t/s on 2x3090)
+         auto * buft_dev = ggml_backend_buft_get_device(buft);
+-        if (use_mmap && buft_dev && buft == ggml_backend_dev_host_buffer_type(buft_dev)) {
++        if (use_mmap && !buft_overridden && buft_dev && buft == ggml_backend_dev_host_buffer_type(buft_dev)) {
+             auto * cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+             if (!cpu_dev) {
+                 throw std::runtime_error("no CPU backend found");
+@@ -1885,6 +1889,15 @@ bool llama_model_loader::load_all_data(
+                 auto & mmap_used = mmaps_used[weight->idx];
+                 mmap_used.first  = std::min(mmap_used.first,  weight->offs);
+                 mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
++            } else if (ggml_backend_buffer_is_host(cur->buffer)) {
++                // The destination is host memory (e.g. a pinned CUDA_Host buffer selected by -ot), so it can be
++                // filled directly from the file. Copying from the mapping instead would fault in every page one
++                // by one at queue depth 1 - and with --numa distribute the whole mapping carries POSIX_MADV_RANDOM,
++                // which disables readahead entirely. A plain read gets full readahead and is an order of magnitude
++                // faster (upstream PR #28223 part 2: cold load 512 s -> 168 s). Non-host destinations keep the memcpy.
++                const auto & file = files.at(weight->idx);
++                file->seek(weight->offs, SEEK_SET);
++                file->read_raw(cur->data, n_size);
+             } else {
+                 ggml_backend_tensor_set(cur, data, 0, n_size);
+             }

@@ -1,0 +1,232 @@
+From 48c3d2fe4d53819fcfbaf659e217c472dbc9875d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 18:58:22 -0400
+Subject: [PATCH] evidence: ship the receipts the published documents actually
+ cite, with a manifest
+
+60 files: 12 named receipts plus the 47 R73 gate cells and the S-X8 provenance record. The citation list is EXTRACTED from README.md and the two release documents rather than hand-written, so the manifest cannot drift from what the release claims. MISSING: none - every cited receipt was located.
+
+MANIFEST.md maps each file to the claim it supports, its original lane path, and the sha256 of the ORIGINAL. Where the path scrub changed a file it says so and carries the shipped copy's own sha256 too, because a verifier hashing the shipped file must not be able to mistake a scrub for tampering. Scrub: user-home paths, studio paths and e-mail addresses only; nothing measured was altered.
+
+This closes the gap the phase-1 branch disclosed: the story's headline receipts were not tracked at any revision, so the curated folder held a single file. evidence/10-memtypes.txt is superseded by r58-evidence__10-memtypes.txt under the manifest's naming and is removed.
+
+Origin: ArifiLabs (native) - release engineering for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - evidence files and an index; no code path is touched.
+---
+ evidence/10-memtypes.txt | 143 ---------------------------------------
+ evidence/README.md       |  56 ++++++---------
+ 2 files changed, 21 insertions(+), 178 deletions(-)
+ delete mode 100644 evidence/10-memtypes.txt
+
+diff --git a/evidence/10-memtypes.txt b/evidence/10-memtypes.txt
+deleted file mode 100644
+index 195bb450d..000000000
+--- a/evidence/10-memtypes.txt
++++ /dev/null
+@@ -1,143 +0,0 @@
+-R58 lane-244 - ENUMERATION RECEIPT: Vulkan memory heaps, memory types, and the memory type every
+-buffer class of the 27B S-X8 load actually lands in on the Beelink SER7 Pro (Radeon 780M).
+-
+-SOURCES (no new box time was spent; both are pre-existing CHECKED receipts):
+-  A. `vulkaninfo` VkPhysicalDeviceMemoryProperties, read 2026-09-15 (instance/device creation only,
+-     no allocation, no GPU work). Raw: r58-evidence/vulkaninfo-memprops-raw.txt
+-  B. R51 lane-240 GGML_VK_ALLOC_TRACE=1 load of the 27B S-X8,
+-     <repo>/cache/r51-spill-wt/r51-evidence/30-planorder.txt (99034 lines), which carries both
+-     the engine's own memtype enumeration and, per buffer, `state=planned type=T heap=H`.
+-  The two agree line for line, so this receipt needed no load cell of its own.
+-
+-DEVICE: Vulkan0, uma=1, prefer_host=0, max_buffer_size=2147483648 (2 GiB)   [source B, preamble]
+-
+----------------------------------------------------------------------------------------------------
+-1. HEAPS
+----------------------------------------------------------------------------------------------------
+-  heap 0   22,623,813,632 B (21.07 GiB)  DEVICE_LOCAL | MULTI_INSTANCE     budget 21,492,623,360 B
+-  heap 1   11,311,906,816 B (10.54 GiB)  (no flags)                        budget 10,746,311,680 B
+-  heap 2      268,435,456 B (256.0 MiB)  DEVICE_LOCAL | MULTI_INSTANCE     budget    255,013,680 B
+-
+-  REFUTATION of the brief/register framing: heap 0 is 21.07 GiB, NOT the 16 GiB BIOS reservation -
+-  the driver already exposes ~5 GiB more DEVICE_LOCAL than the carve. Heap 1 is 10.54 GiB, not the
+-  ~15.86 GiB "dynamic shared ceiling" the equipment register implies. Total 31.6 GiB. Stated as an
+-  observation only; UMA/BIOS changes are the President's alone and none is proposed here.
+-
+----------------------------------------------------------------------------------------------------
+-2. MEMORY TYPES, AND WHICH ARE ELIGIBLE AT ALL
+----------------------------------------------------------------------------------------------------
+-  16 types are enumerated (0-7 mirrored as 8-15). But EVERY storage buffer this engine creates
+-  reports VkMemoryRequirements::memoryTypeBits = 0xf (source B, every `state=attempt` line, 46 of
+-  46). Only memory types 0,1,2,3 can therefore ever hold our weights. Types 4-15 - including every
+-  AMD DEVICE_COHERENT / DEVICE_UNCACHED variant - are enumeration noise for this workload.
+-
+-  idx  heap  flags                                                        eligible (typeBits 0xf)
+-  ---  ----  -----------------------------------------------------------  -----------------------
+-    0     0  DEVICE_LOCAL                                                 YES
+-    1     1  HOST_VISIBLE | HOST_COHERENT                                 YES
+-    2     2  DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT                  YES
+-    3     1  HOST_VISIBLE | HOST_COHERENT | HOST_CACHED                   YES
+-    4     0  DEVICE_LOCAL | DEVICE_COHERENT_AMD | DEVICE_UNCACHED_AMD     no
+-    5     1  HOST_VISIBLE | HOST_COHERENT | DEVICE_COHERENT_AMD | DEVICE_UNCACHED_AMD    no
+-    6     2  DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT | DEVICE_COHERENT_AMD | ...     no
+-    7     1  HOST_VISIBLE | HOST_COHERENT | HOST_CACHED | DEVICE_COHERENT_AMD | ...      no
+-   8-15     exact mirrors of types 0-7                                    no
+-
+-  VERDICT: BEYOND THE RESERVATION THERE ARE EXACTLY TWO USABLE MEMORY TYPES.
+-    type 1 - HOST_VISIBLE | HOST_COHERENT                (uncached / write-combined)
+-    type 3 - HOST_VISIBLE | HOST_COHERENT | HOST_CACHED  (snooped, CPU-cached)
+-  Both sit on heap 1. That is the whole lever this lane has, and it is a real one: type 3 is
+-  already in production use on this box for the transfer/staging buffers (7 allocations,
+-  27,695,584 B, source B), so the driver demonstrably serves it - it has simply never carried
+-  weights.
+-
+----------------------------------------------------------------------------------------------------
+-3. WHICH TYPE EACH BUFFER CLASS GETS TODAY - and WHY
+----------------------------------------------------------------------------------------------------
+-  Aggregate over the whole S-X8 load (source B, 46 successful allocations):
+-
+-  class                              allocs           bytes   memtype  heap  flags
+-  ---------------------------------  ------  --------------   -------  ----  --------------------------
+-  weights, device-local                  23  23,223,063,296         0     0  DEVICE_LOCAL
+-  weights, HOST SPLIT                     5   3,281,736,960         1     1  HOST_VISIBLE|HOST_COHERENT
+-  KV / small tensors                     11     196,109,596         2     2  DL|HOST_VISIBLE|HOST_COHERENT
+-  staging / transfer                      7      27,695,584         3     1  HV|HC|HOST_CACHED
+-
+-  WHY the host split lands in type 1 - it is ENUMERATION ORDER, never a measurement:
+-  ggml_vk_placement_attempts() (ggml-vulkan.cpp, UMA branch) offers the required-flag passes
+-  { DEVICE_LOCAL|HOST_VISIBLE|HOST_COHERENT }, { DEVICE_LOCAL }, { HOST_VISIBLE|HOST_COHERENT }.
+-    pass 1 (DL|HV|HC) matches only types 2/6/10/14, all on the 256 MiB heap 2 -> structurally dead
+-           for GiB-sized weight blocks. (It is alive for the small KV tensors, which is exactly why
+-           those land in type 2.)
+-    pass 2 (DL) matches types 0/4/8/12 on heap 0 -> takes every block until heap 0 is full.
+-    pass 3 (HV|HC) matches types 1 and 3 on heap 1. ggml_vk_find_memory_properties() walks memory
+-           types in ASCENDING INDEX, and the planner deduplicates keeping the FIRST position, so
+-           type 1 beats type 3 purely because 1 < 3. Nothing measured it.
+-
+----------------------------------------------------------------------------------------------------
+-4. PER-BUFFER RECEIPT of the S-X8 load (the table HQ asked for)
+----------------------------------------------------------------------------------------------------
+-  Join of source B's `plan order i/N: <name> <bytes> B` lines (R51's named-plan receipt, lane-240
+-  commit 251b7e3f7) to the `state=planned type=T heap=H` line of the same plan entry.
+-  NOTE on names: one plan entry is one ~1 GB SUBALLOCATION BLOCK, and the name printed is the
+-  FIRST tensor in that block - not the only tensor in it.
+-
+-  batch entry  name                                 bytes  memtype heap  flags
+-  ----- -----  ---------------------------- -------------  ------- ----  --------------------------
+-      0     0  cache_r_l0                       627572736        0    0  DEVICE_LOCAL
+-      1     0  output_norm.weight                   20480        2    2  DEVICE_LOCAL|HOST_VISIBLE|HOST_COHERENT
+-      1     1  output.weight                   1191936000        0    0  DEVICE_LOCAL
+-      1     2  blk.0.attn_norm.weight          1038307968        0    0  DEVICE_LOCAL
+-      1     3  blk.2.ffn_up.weight             1026481920        0    0  DEVICE_LOCAL
+-      1     4  blk.5.ffn_down.weight           1026481920        0    0  DEVICE_LOCAL
+-      1     5  blk.8.ffn_gate.weight           1071044352        0    0  DEVICE_LOCAL
+-      1     6  blk.11.attn_v.weight            1037623040        0    0  DEVICE_LOCAL
+-      1     7  blk.14.attn_qkv.weight          1026440960        0    0  DEVICE_LOCAL
+-      1     8  blk.16.ffn_up.weight            1026481920        0    0  DEVICE_LOCAL
+-      1     9  blk.19.ffn_down.weight          1038307968        0    0  DEVICE_LOCAL
+-      1    10  blk.22.ffn_gate.weight          1042506624        0    0  DEVICE_LOCAL
+-      1    11  blk.25.attn_gate.weight         1054334720        0    0  DEVICE_LOCAL
+-      1    12  blk.28.attn_qkv.weight          1038267008        0    0  DEVICE_LOCAL
+-      1    13  blk.30.ffn_up.weight            1026481920        0    0  DEVICE_LOCAL
+-      1    14  blk.33.ffn_down.weight          1026481920        0    0  DEVICE_LOCAL
+-      1    15  blk.36.ffn_gate.weight          1071044352        0    0  DEVICE_LOCAL
+-      1    16  blk.39.attn_v.weight            1037623040        0    0  DEVICE_LOCAL
+-      1    17  blk.42.attn_qkv.weight          1026440960        0    0  DEVICE_LOCAL
+-      1    18  blk.44.ffn_up.weight            1026481920        0    0  DEVICE_LOCAL
+-      1    19  blk.47.ffn_down.weight          1038307968        0    0  DEVICE_LOCAL
+-      1    20  blk.50.ffn_gate.weight          1042506624        0    0  DEVICE_LOCAL
+-      1    21  blk.53.attn_gate.weight         1054334720        0    0  DEVICE_LOCAL
+-      1    22  blk.56.attn_qkv.weight          1038267008        1    1  HOST_VISIBLE|HOST_COHERENT
+-      1    23  blk.58.ffn_up.weight            1026481920        1    1  HOST_VISIBLE|HOST_COHERENT
+-      1    24  blk.61.ffn_down.weight           903201664        1    1  HOST_VISIBLE|HOST_COHERENT
+-      2     0  cache_k_l3                        33554432        2    2  DEVICE_LOCAL|HOST_VISIBLE|HOST_COHERENT
+-      3     0  cache_r_l0                       627572736        0    0  DEVICE_LOCAL
+-      4     0  (unnamed)                        156893184        1    1  HOST_VISIBLE|HOST_COHERENT
+-      5     0  (unnamed)                        156893184        1    1  HOST_VISIBLE|HOST_COHERENT
+-
+-  READING IT:
+-  * HOST SPLIT = the three rows at memtype 1 / heap 1 in batch 1 (blk.56.attn_qkv.weight,
+-    blk.58.ffn_up.weight, blk.61.ffn_down.weight) = 2,967,950,592 B, plus the two 156,893,184 B
+-    single-buffer batches 4 and 5 = 313,786,368 B. Total on the host path 3,281,736,960 B - which
+-    matches the independent aggregate in section 3 exactly.
+-  * output.weight (1,191,936,000 B) is DEVICE-LOCAL (batch 1 entry 1, memtype 0 heap 0).
+-  * cache_r_l0, the DFlash2 recurrent state (627,572,736 B), is DEVICE-LOCAL (batches 0 and 3,
+-    memtype 0 heap 0).
+-    -> Both CORRECT the brief's "THE GAP" paragraph, which claimed output.weight and the recurrent
+-       cache land on the host-visible path. They do not. HQ's correction is confirmed byte-for-byte
+-       by this join.
+-  * The two `(unnamed)` 156,893,184 B buffers (batches 4 and 5): owner INFERRED, stated as such.
+-    They are single-buffer plan batches appearing only after ~24,550 compute submissions (source B
+-    lines 98196 and 98609), long past model load, and they carry no tensor name because a
+-    ggml-alloc compute-graph buffer is a raw backend buffer, not a named ctx tensor. That makes
+-    them the Vulkan0 COMPUTE-GRAPH buffer being reserved and re-reserved mid-run. The receipt does
+-    not name them and this lane spent no box time to prove it: treat the owner as UNRECEIPTED.
+-    They matter because they are touched every token and they are on the host path.
+-
+----------------------------------------------------------------------------------------------------
+-5. CORRECTNESS NOTE
+----------------------------------------------------------------------------------------------------
+-  Every eligible heap-1 type (1 and 3) carries HOST_COHERENT. Moving the host split from type 1 to
+-  type 3 therefore needs no vkFlushMappedMemoryRanges / vkInvalidateMappedMemoryRanges code and
+-  adds no new coherence obligation - which is the real reason outputs stay bit-identical, a
+-  stronger argument than "placement does not change arithmetic".
+diff --git a/evidence/README.md b/evidence/README.md
+index ee17511e0..0e794aeeb 100644
+--- a/evidence/README.md
++++ b/evidence/README.md
+@@ -1,37 +1,23 @@
+ # Curated evidence
+ 
+-This folder holds the receipts behind the headline numbers **that are tracked in this
+-repository**. It is deliberately small, and the gap is stated rather than hidden.
+-
+-## What is here
+-
+-| File | What it backs |
+-|---|---|
+-| `10-memtypes.txt` | The host-split memory-type read, cited by the release story §"the memory types the device actually offers". Originally tracked at `r58-evidence/10-memtypes.txt`. |
+-
+-**This copy is not byte-identical to the original.** One line of it named an absolute studio path
+-(`…/cache/r51-spill-wt/r51-evidence/30-planorder.txt`) and was rewritten to a `<repo>` placeholder by
+-the release-prep path scrub. Nothing measured was altered — the change is one path string in a prose
+-line — but an edited receipt must say it was edited. The unedited original is in the fork history at
+-`94461e770:r58-evidence/10-memtypes.txt`.
+-
+-## What is NOT here, and why
+-
+-The release story cites most of its gate receipts from `r66-evidence/*` — `71-promote-ff.txt`,
+-`73-regen.txt`, `74-series-check.txt` (the series-integrity PASS), `75-tag.txt`, `76-flip.txt`,
+-`17-correct-MUL_MAT.txt`, `19-executed-counts.txt`, the `18-*`..`24-*` legacy arms and the `*.rc`
+-gate cells — and `r65-evidence/22-ksweep-table.txt`.
+-
+-**None of those is tracked in this repository at any revision.** They live in the lane worktrees
+-that produced them, which are not part of the published tree. The cited set and the tracked set are
+-two different sets, and this folder reports them as two sets rather than quietly presenting the
+-tracked leftovers as though they were the cited receipts.
+-
+-The 436 evidence files that *were* tracked at `94461e770` were lane working files — build logs,
+-configure logs, sweep dumps — from thirteen `r4*`/`r5*` lane directories. They were dropped from the
+-release branch under the publish-scope decision, together with 133 internal maker and checker
+-documents. They remain in the fork's history and in the studio's own worktrees; nothing was
+-destroyed.
+-
+-Publishing a folder that actually backs the headline numbers means committing those lane receipts as
+-new content, which is a scope decision this branch does not take on its own.
++**`MANIFEST.md` is the index.** It maps every file here to the claim it supports, its original path
++in the lane worktree that produced it, and the sha256 of the original — plus the shipped file's own
++sha256 wherever the release-prep path scrub changed it.
++
++These receipts were produced in lane worktrees, which are not part of this repository. They are
++copied here so that a clone actually contains the receipts its documents cite. Earlier drafts of
++this branch shipped only the one receipt that happened to be tracked in the fork; that gap is
++closed.
++
++**The citation list is extracted from the documents, not hand-written** — see `MANIFEST.md` for the
++method — so it cannot drift from what `README.md`, `docs/release/RELEASE-STORY-r73i.md` and
++`docs/release/RELEASE-NOTES-r73i.md` actually claim. A cited receipt that could not be found is
++listed in the manifest's **MISSING** section rather than dropped, and no receipt was invented.
++
++## What is deliberately not here
++
++The 436 lane evidence files tracked at the R66 tip — build logs, configure logs and sweep dumps from
++thirteen `r4*`/`r5*` directories — were dropped from the release branch under the publish-scope
++decision, with 136 internal maker and checker documents. They remain in the fork's history and in
++the studio's own worktrees; nothing was destroyed. This folder holds the receipts the published
++documents cite, not every file a lane ever wrote.

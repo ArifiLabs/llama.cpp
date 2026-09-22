@@ -1,0 +1,130 @@
+From 76be7e779632f97aa092e2598084be95920f9513 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 6 Sep 2026 05:06:27 -0400
+Subject: [PATCH] ci: each job now proves the unioned file itself produced an
+ object
+
+"The backend built" and "the file this lane rewrote was compiled" are not the
+same claim: a CMake glob, a stale if() around a source, or a target list that
+omits a file all build green without touching it. Every job gets a step that
+finds the object for each file lane-210 unioned or that a fork mechanism lives
+in, and fails when one is missing:
+
+  cpu-ubuntu     ggml-cpu.c.o iqp.cpp.o repack.cpp.o
+  cuda-ubuntu    ggml-cuda.cu.o mmvq.cu.o moe-cache.cu.o fattn.cu.o
+  metal-macos    ggml-metal-ops.cpp.o ggml-metal-device.cpp.o ggml-metal-device.m.o ggml-metal-tuning.cpp.o
+  sycl-ubuntu    mmvq.cpp.o ggml-sycl.cpp.o fattn.cpp.o set_rows.cpp.o
+  vulkan-windows ggml-vulkan.cpp.obj ggml-vulkan-moe-cache.cpp.obj
+
+ggml-metal-device.m is on the Metal list on purpose: lane-210 part 2 read it
+referencing the per-kind library split's symbols (GGML_METAL_LIB_COUNT,
+k_lib_names, err_per_lib, lib->fn_to_lib) with none of their declarations
+present, so the metal-macos job is expected to fail at that object until the
+Metal library-layer union lands. The step makes the failure name the file.
+
+test-backend-ops -b CPU already runs on cpu-ubuntu (770e3dac7); unchanged.
+Upstream workflows untouched. YAML parses; 5 jobs, step lists checked. Never
+run: the branch is not pushed.
+
+WI: WI-1702
+Lane: lane-210
+---
+ .github/workflows/arifi-backends-matrix.yml | 57 +++++++++++++++++++++
+ 1 file changed, 57 insertions(+)
+
+diff --git a/.github/workflows/arifi-backends-matrix.yml b/.github/workflows/arifi-backends-matrix.yml
+index cca3c9918..666b5edd0 100644
+--- a/.github/workflows/arifi-backends-matrix.yml
++++ b/.github/workflows/arifi-backends-matrix.yml
+@@ -100,6 +100,18 @@ jobs:
+             2>&1 | tee build-cpu.log
+           cmake --build build --target ${ARIFI_TARGETS} 2>&1 | tee -a build-cpu.log
+ 
++      - name: unioned files compiled (lane-210 receipts)
++        shell: bash
++        run: |
++          # every off-rig union commit names the file it rewrote; this step turns "the
++          # backend built" into "THAT file produced an object". A build that skipped or
++          # excluded the file (a CMake glob, an if() around the source) fails here.
++          for f in ggml-cpu.c.o iqp.cpp.o repack.cpp.o; do
++            hit=$(find build/ggml/src/ggml-cpu -name "$f" | head -n1)
++            if [ -z "$hit" ]; then echo "MISSING object for $f"; exit 1; fi
++            echo "ok  $hit"
++          done
++
+       - name: test-quantize-fns (CPU, baselined)
+         shell: bash
+         run: |
+@@ -160,6 +172,17 @@ jobs:
+             2>&1 | tee build-cuda.log
+           cmake --build build --target ${ARIFI_TARGETS} 2>&1 | tee -a build-cuda.log
+ 
++      - name: unioned files compiled (lane-210 receipts)
++        shell: bash
++        run: |
++          # 4d176decc ggml-cuda.cu (mul_mat_id_needs_sync), e7f462156 mmvq.cu (WI-1699
++          # moe_cache_mmv_fused), plus the two files the fork's CUDA wins live in
++          for f in ggml-cuda.cu.o mmvq.cu.o moe-cache.cu.o fattn.cu.o; do
++            hit=$(find build/ggml/src/ggml-cuda -name "$f" | head -n1)
++            if [ -z "$hit" ]; then echo "MISSING object for $f"; exit 1; fi
++            echo "ok  $hit"
++          done
++
+       - name: test-quantize-fns (CPU, baselined)
+         shell: bash
+         run: |
+@@ -219,6 +242,18 @@ jobs:
+             2>&1 | tee build-metal.log
+           cmake --build build --target ${ARIFI_TARGETS} 2>&1 | tee -a build-metal.log
+ 
++      - name: unioned files compiled (lane-210 receipts)
++        shell: bash
++        run: |
++          # bf0c4aecc rewrote ggml-metal-ops.cpp and ggml-metal-device.cpp; device.m is the
++          # library loader (lane-210 part 2 found it referencing the per-kind split's
++          # symbols without their declarations - this is the step that proves or refutes it)
++          for f in ggml-metal-ops.cpp.o ggml-metal-device.cpp.o ggml-metal-device.m.o ggml-metal-tuning.cpp.o; do
++            hit=$(find build/ggml/src/ggml-metal -name "$f" | head -n1)
++            if [ -z "$hit" ]; then echo "MISSING object for $f"; exit 1; fi
++            echo "ok  $hit"
++          done
++
+       - name: test-quantize-fns (CPU, baselined)
+         shell: bash
+         run: |
+@@ -277,6 +312,17 @@ jobs:
+             2>&1 | tee build-sycl.log
+           cmake --build build --target ${ARIFI_TARGETS} 2>&1 | tee -a build-sycl.log
+ 
++      - name: unioned files compiled (lane-210 receipts)
++        shell: bash
++        run: |
++          # lane-210 part 2: mmvq.cpp launch-geometry union (block_nums/block_dims were
++          # used undeclared in 11 launchers); the other three carry fork SYCL mechanisms
++          for f in mmvq.cpp.o ggml-sycl.cpp.o fattn.cpp.o set_rows.cpp.o; do
++            hit=$(find build/ggml/src/ggml-sycl -name "$f" | head -n1)
++            if [ -z "$hit" ]; then echo "MISSING object for $f"; exit 1; fi
++            echo "ok  $hit"
++          done
++
+       - name: test-quantize-fns (CPU, baselined)
+         shell: bash
+         run: |
+@@ -338,6 +384,17 @@ jobs:
+             -DGGML_VULKAN=ON 2>&1 | Tee-Object -FilePath build-vulkan.log
+           cmake --build build --config Release --target test-quantize-fns test-backend-ops 2>&1 | Tee-Object -FilePath build-vulkan.log -Append
+ 
++      - name: unioned files compiled (lane-210 receipts)
++        shell: pwsh
++        run: |
++          # the rig's own backend on the second toolchain: the object for the file every
++          # Vulkan protected win lives in must exist, or the build silently skipped it
++          foreach ($f in @('ggml-vulkan.cpp.obj', 'ggml-vulkan-moe-cache.cpp.obj')) {
++            $hit = Get-ChildItem -Path build/ggml/src/ggml-vulkan -Recurse -Filter $f | Select-Object -First 1
++            if (-not $hit) { Write-Output "MISSING object for $f"; exit 1 }
++            Write-Output ("ok  " + $hit.FullName)
++          }
++
+       - name: test-quantize-fns (CPU, baselined)
+         shell: pwsh
+         run: |

@@ -1,0 +1,54 @@
+From 17faa5ef86cc8f4429ee3f894aeee26b0cdf8a41 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 8 Sep 2026 09:15:37 -0400
+Subject: [PATCH] vulkan: MUL_MAT_ID B-staging receipt, and a loud assert on
+ the tq_rotate x K-padding hazard
+
+Receipt: one GGML_LOG_INFO per distinct B-staging mode per process (contiguous | K-padded | q8_1), naming coopmat2, both source types, ne10, the staged row stride and ne11 - so any A/B log proves which path MUL_MAT_ID took instead of the command line implying it. The K-padded staging (upstream 77f132cb1) is a coopmat2 requirement: its B decode callback does not bounds-check K. On a coopmat1/scalar device y_needs_k_padding is false on every dispatch and this line is the runtime witness of that. No override is offered on purpose: forcing the padded staging elsewhere would also swap the f32-B kernel for the f16-B kernel, and disabling it on coopmat2 re-opens the out-of-bounds read the upstream commit fixed.
+
+Hazard assert: the fork's tq_rotate staging wins the tq_rotate / y_needs_reformat ladder and copies B CONTIGUOUS f32 while stride_b_y still follows y_needs_k_padding. Reachable only on a coopmat2 device with a TQ3_1S/TQ4_1S expert whose ne10 % 64 != 0. GGML_ASSERT(!(tq_rotate && y_needs_k_padding)) aborts instead of reading B with a padded stride over an unpadded copy. The real cure - padded f32 rotate staging - is owed to the off-rig lane where a coopmat2 device exists. Nothing removed: upstream's padding and the fork's rotate both stay. No default changes.
+
+Origin: ArifiLabs lane-212 R18 R15-C6 (Fable 5.1 MEDIUM, kernel-maker), PREREG-r15c6-mul-mat-id-kpad.md
+Measured-effect: DOCUMENTED-TAKE. Receipt proved the path cannot engage on this GPU: 0 K-padded rows in 7 logs (no coopmat2 on gfx1103). Op ladder 48 MUL_MAT_ID ops, 3 rounds per arm, x0.976 to x1.032, no CI claimed at n=3. No default changed, so there is nothing to lose here.
+Cherry-picked-from: 6604b08ffda795c816eea5727ca0c14fbcb52847 (lane-212/r15c6-mul-mat-id-kpad-2026-09-06, b10819 base)
+Lane: lane-225
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index e9f5929ba..c679d24ad 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -11219,6 +11219,31 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
+     // Not implemented
+     GGML_ASSERT(y_needs_reformat || !qy_needs_dequant);  // NOLINT
+ 
++    // R15-C6 (ArifiLabs lane-212): runtime receipt of the B-staging mode, once per distinct mode per
++    // process, so any A/B log proves which path MUL_MAT_ID took. The K-padded staging (upstream
++    // 77f132cb1) is a coopmat2 requirement: its B decode callback does not bounds-check K. On a
++    // coopmat1/scalar device y_needs_k_padding is false on every dispatch, and this line is the
++    // runtime witness of that. It is not a device-specific tuning and deliberately has no override:
++    // forcing the padded staging elsewhere would also swap the f32-B kernel for the f16-B kernel,
++    // and disabling it on coopmat2 re-opens the out-of-bounds read the upstream commit fixed.
++    {
++        const int mode = quantize_y ? 2 : (y_needs_k_padding ? 1 : 0);
++        static bool printed[3] = { false, false, false };
++        if (!printed[mode]) {
++            printed[mode] = true;
++            static const char * names[3] = { "contiguous", "K-padded", "q8_1" };
++            GGML_LOG_INFO("ggml_vulkan: MUL_MAT_ID B staging: %s (coopmat2=%d, src0=%s, src1=%s, ne10=%llu, stride_b=%u, ne11=%llu)\n",
++                          names[mode], ctx->device->coopmat2 ? 1 : 0, ggml_type_name(src0->type), ggml_type_name(src1->type),
++                          (unsigned long long) ne10, (unsigned) y_staged_row_stride, (unsigned long long) ne11);
++        }
++    }
++    // The fork's tq_rotate staging wins the `if (tq_rotate) ... else if (y_needs_reformat)` ladder below
++    // and copies B CONTIGUOUS f32, while stride_b_y still follows y_needs_k_padding. Reachable only on a
++    // coopmat2 device with a TQ3_1S/TQ4_1S expert whose ne10 % 64 != 0 (no real model; the odd-K tests
++    // are F16). Abort loudly rather than read B with a padded stride over an unpadded copy; the padded
++    // f32 rotate staging is owed to the off-rig union lane.
++    GGML_ASSERT(!(tq_rotate && y_needs_k_padding));
++
+     const bool aligned = !quantize_y && ne10 == kpad && ne01 > 8 && nei1 > 8;
+ 
+     vk_pipeline pipeline = ggml_vk_guess_matmul_id_pipeline(ctx, mmp, ne01, nei1, aligned, qx_needs_dequant ? f16_type : src0->type, effective_src1_type);

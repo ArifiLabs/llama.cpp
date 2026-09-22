@@ -1,0 +1,219 @@
+From 6619dd0ce926843e258305a83098807c561450bd Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 27 Aug 2026 20:05:58 -0400
+Subject: [PATCH] dflash: a rejected draft checkpoint image must not kill the
+ server process
+
+Ports the portable half of buun's e332b2494 "dflash: harden checkpoint rewind lifecycle" and
+records the buun review wave the 2026-08-27 deep review chartered.
+
+WHAT LANDED. common_prompt_checkpoint::try_load_dft - a non-aborting variant of load_dft. Our tree
+has four load_dft call sites; three are prompt/spec-checkpoint restores in server-context.cpp and
+every one of them reached GGML_ABORT("checkpoint size mismatch") on an incompatible draft image,
+i.e. an ill-formed restore killed the whole server. Those three now reject the image, warn, clear
+the drafter sequence, and continue; ordinary prefill rebuilds it.
+
+CONSERVATIVE DEVIATION, deliberate: buun's rewrite makes load_dft(ctx == nullptr) with a non-empty
+image an abort. Ours keeps the pre-existing no-op for a null context - only try_load_dft treats a
+missing context as a rejection. One previously un-guarded call site would otherwise have gained a
+new abort path.
+
+WHAT WAS NOT TAKEN, and why. common_speculative_sequence_event / _sequence_transition and both impl
+overrides mutate buun-only drafter state (stash, positions[].target_base, adpt, pregate_*,
+seq_in_gen, proposals, carry_rows_per_seq, common_speculative_impl_dflash::ring_state_reset). Grep
+over our common/speculative.cpp: zero hits for all of them - our draft_dflash impl is the PR-27342 +
+0394/0397 lineage with a dflash2_adpt controller instead. The enum alone would be a dispatcher with
+no overrides and no callers. The cross-ring-interleave.cu leg is CUDA, off-rig.
+
+THE OTHER THREE TAKEs ARE SKIPPED on the defect-presence check the deep review itself listed as
+owed, each shown rather than assumed:
+  2714303b5 - defect ABSENT. Its HTTP-500 fix lives in buun's target_base/dft_pos0 rebase
+              machinery; our tree has neither symbol (Grep over common/: 0 hits).
+  92eef392a - substrate ABSENT. It repairs buun's mmproj-GPU-swap fit solver; none of
+              mmproj_gpu_swap / swap_fit_solved / n_ctx_fit / hp_nct_mtp / n_seq_max_full exists
+              in our server-context.cpp.
+  9d0d4b650 - VBR-only, and the review's "no VBR symbols" claim is refuted: the 54 lines use
+              vbr_params_, vbr_layer_policy, cpu_bound_kv, try_vmm_alloc, ggml_type_is_turbo, and
+              our src/llama-kv-cache.cpp has none of them.
+
+REGISTER WORK. licenses/buun-MIT.txt did not exist while buun-derived code (series patch 0394,
+2026-08-21) was already on arifi/main - retained verbatim and rowed in licenses/README.md. Two
+sources.json rows added, neither moving the pin: the 0394 ingestion backfill the review filed as
+owed, and this wave. buun stays pinned at 39d97a876; the 70-commit VBR CONFLICT bucket stands.
+
+CONSERVATISM PROOF: git diff --numstat arifi/main..HEAD over ggml/src/ggml-vulkan/*, *vulkan*,
+*.comp and ggml/include/ggml.h is EMPTY - the F-138 reorder fix and the TQ3/TURBO id block are
+untouched.
+
+BUILD: compiled and archived clean (libserver-context.a, libllama-server-impl.a, libllama-common.a
+relinked 2026-08-27 20:01-20:02); llama-cli/llama-quantize/test-backend-ops/test-quantize-fns exes
+relinked 20:03-20:04. llama-server.exe could NOT be relinked - a live server process (PID 22172,
+started 19:17) holds the file; it was deliberately NOT killed.
+
+Taken-from: github.com/spiritbuun/buun-llama-cpp@e332b2494
+Origin: ArifiLabs - portable half only, re-derived against our server; see body for the declined half
+Measured-effect: UNMEASURED (no benchmark arm; the guard replaces a process abort on a path that needs a mismatched draft image to reach)
+---
+ common/common.cpp               | 20 ++++++++++++++++----
+ common/common.h                 |  8 ++++++++
+ licenses/README.md              |  1 +
+ licenses/buun-MIT.txt           | 21 +++++++++++++++++++++
+ tools/arifi-sync/sources.json   |  2 ++
+ tools/server/server-context.cpp | 19 ++++++++++++++-----
+ 6 files changed, 62 insertions(+), 9 deletions(-)
+ create mode 100644 licenses/buun-MIT.txt
+
+diff --git a/common/common.cpp b/common/common.cpp
+index f6f53fb1d..08c3c7df5 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -2437,18 +2437,30 @@ void common_prompt_checkpoint::load_dft(
+         llama_context * ctx,
+         llama_seq_id seq_id,
+         llama_state_seq_flags flags) const {
++    // ctx == nullptr keeps its pre-existing no-op meaning here; only try_load_dft
++    // treats a missing context as a rejection, for callers that can recover.
+     if (ctx == nullptr) {
+         return;
+     }
+ 
++    if (!try_load_dft(ctx, seq_id, flags)) {
++        GGML_ABORT("checkpoint size mismatch: expected %zu bytes\n", data_dft.size());
++    }
++}
++
++bool common_prompt_checkpoint::try_load_dft(
++        llama_context * ctx,
++        llama_seq_id seq_id,
++        llama_state_seq_flags flags) const {
+     if (data_dft.empty()) {
+-        return;
++        return true;
+     }
+ 
+-    const size_t n = llama_state_seq_set_data_ext(ctx, data_dft.data(), data_dft.size(), seq_id, flags);
+-    if (n != data_dft.size()) {
+-        GGML_ABORT("checkpoint size mismatch: expected %zu, got %zu\n", data_dft.size(), n);
++    if (ctx == nullptr) {
++        return false;
+     }
++
++    return llama_state_seq_set_data_ext(ctx, data_dft.data(), data_dft.size(), seq_id, flags) == data_dft.size();
+ }
+ 
+ void common_prompt_checkpoint::clear_tgt() {
+diff --git a/common/common.h b/common/common.h
+index 206bfaba6..5023e9f5f 100644
+--- a/common/common.h
++++ b/common/common.h
+@@ -1257,6 +1257,14 @@ struct common_prompt_checkpoint {
+             llama_seq_id seq_id,
+             llama_state_seq_flags flags) const;
+ 
++    // Server restore paths must be able to reject an incompatible draft image
++    // without terminating the process. The aborting load_dft() wrapper remains
++    // for callers whose checkpoint mismatch is an invariant violation.
++    bool try_load_dft(
++            llama_context * ctx,
++            llama_seq_id seq_id,
++            llama_state_seq_flags flags) const;
++
+     void clear_tgt();
+     void clear_dft();
+ };
+diff --git a/licenses/README.md b/licenses/README.md
+index 84e47bbb8..c362cca7f 100644
+--- a/licenses/README.md
++++ b/licenses/README.md
+@@ -15,6 +15,7 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
+ | `tq3-MIT.txt` | `git show refs/remotes/tq3/main:LICENSE` (turbo-tan/llama.cpp-tq3) | tq3 MIT — the `TQ3_4S` family at ids 48-51 is ported from this tree. **Retained 2026-08-18 (lane-151); this was the one real gap.** |
+ | `prisml-MIT.txt` | `git show refs/remotes/prisml/prism:LICENSE` (PrismML-Eng/llama.cpp) | PrismML MIT. **Retained 2026-08-18 (lane-151) — see the correction below.** |
+ | `ciru-MIT.txt` | `git show refs/remotes/ciru/main:LICENSE` (ciru-ai/ROCmFPX) | ciru MIT. Registered source, no code carried yet; retained ahead of any ingest so the notice can never lag the code. |
++| `buun-MIT.txt` | `git show refs/remotes/buun/master:LICENSE` (spiritbuun/buun-llama-cpp) | buun MIT. **Retained 2026-08-27; this was a GAP** — series patch `0394` ingested buun's DFlash2 controller on 2026-08-21 with no notice row, so the notice lagged the code by six days. Byte-identical to the upstream MIT text apart from LF termination. |
+ 
+ `../LICENSE` is also the verbatim copy of upstream llama.cpp’s MIT license.
+ 
+diff --git a/licenses/buun-MIT.txt b/licenses/buun-MIT.txt
+new file mode 100644
+index 000000000..e7dca554b
+--- /dev/null
++++ b/licenses/buun-MIT.txt
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2023-2026 The ggml authors
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/tools/arifi-sync/sources.json b/tools/arifi-sync/sources.json
+index 1c86780b4..869aaf438 100644
+--- a/tools/arifi-sync/sources.json
++++ b/tools/arifi-sync/sources.json
+@@ -244,6 +244,8 @@
+       "url": "https://github.com/spiritbuun/buun-llama-cpp",
+       "ref": "buun/master",
+       "pin": "39d97a876",
++      "pin_review_2026_08_27_take_ports": "PIN DELIBERATELY HELD at 39d97a876. The four TAKE commits ruled by research/local-inference/2026-08-27-buun-deep-review.md were adapted onto this tree; three are SKIPPED on a DEFECT-PRESENCE check the review itself listed as owed, one is PORTED IN PART. (1) e332b2494 'dflash: harden checkpoint rewind lifecycle' - PORTED IN PART: common_prompt_checkpoint::try_load_dft (the non-aborting draft-image restore) plus its three server call sites, which previously GGML_ABORT'ed the whole process on an incompatible draft image. NOT taken: common_speculative_sequence_event / _sequence_transition and both impl overrides - they mutate buun-only drafter state (stash/positions/adpt/pregate_*/carry_rows_per_seq and common_speculative_impl_dflash::ring_state_reset), none of which exists in our common/speculative.cpp (Grep: 0 hits); porting the enum alone would be a dispatcher with zero overrides and zero callers. The cross-ring-interleave.cu leg is CUDA, off-rig, dropped. (2) 2714303b5 'server: repair speculative state after cache restores' - SKIPPED, defect ABSENT: its real fix is the dft_pos0 discontinuity fail-safe inside buun's draft_dflash rebase machinery (pstate.target_base / dft_pos_max / 'precedes drafter base'), and our tree has no target_base or dft_pos0 at all (Grep over common/: 0 hits; the 4 dft_pos_max hits are the unrelated eagle3 cross-ubatch bridge). The HTTP 500 it converts to a cold rebase is not reachable here. The rest of the commit renames the enum from (1) and wires composite_image_restored through VBR artifact companions. (3) 92eef392a 'server: fix MTP and mmproj swap fit accounting' - SKIPPED, substrate ABSENT: it repairs buun's mmproj-GPU-swap fixed-point fit solver, and our server-context.cpp has none of mmproj_gpu_swap / swap_fit_solved / n_ctx_fit / hp_nct_mtp / n_seq_max_full / DFLASH_VERIFY_OUTPUTS_PER_SEQ (Grep: 0 hits) - our fit path is the upstream one that adds mmproj/draft sizes to fit_params_target. The common/ half is a VBR growth-headroom param (cparams.vbr_dynamic, absent) plus common_model_uses_recurrent_memory, which has no caller without the server half. (4) 9d0d4b650 'vbr: restore dynamic partial-offload KV placement' - SKIPPED, and the review's 'no VBR symbols despite its vbr: prefix' claim is REFUTED: the 54 lines are entirely VBR-substrate - vbr_params_, vbr_layer_policy, cpu_bound_kv, try_vmm_alloc, ggml_type_is_turbo - and our src/llama-kv-cache.cpp contains none of the five (Grep: 0 hits). The review checked for llama-vbr* FILENAMES, not for the symbols the hunks use. Conservatism proof for the whole wave: git diff --numstat arifi/main..ingest/buun-2026-08-27 over 'ggml/src/ggml-vulkan/*' '*vulkan*' '*.comp' 'ggml/include/ggml.h' is EMPTY, so F-138's reorder fix and the TQ3/TURBO id block are untouched. Buckets 3/4/5 (VBR prompt-cache CONFLICT, decayed-frequency retention, the HIP commit) are unchanged and still owed; the re-pin stays unlawful under runbook 3 while they stand. Report: research/local-inference/2026-08-27-buun-take-ports-report.md.",
++      "pin_review_2026_08_21_patch0394_backfill": "BACKFILL, written 2026-08-27 for an ingestion that happened on 2026-08-21 without one. Series patch 0394-dflash-ingest-buun-s-DFlash2-adaptive-controller-bui (commit b95c9e637) took buun's DFlash2 adaptive controller, per-sequence state, the 8->13 block-size metadata mapping, the DFlash2 pre-flight sizing draft.n_max, and explicit-depth tracking - content from 396469835..1ab12e269, i.e. commits INSIDE the then-unreviewed 39d97a876..head surface - while this pin stayed at 39d97a876 and no pin_review row was written. Its own trailer says 'Origin: ArifiLabs (native), integrating github.com/spiritbuun/buun-llama-cpp 396469835..1ab12e269'. VERDICT AS INGESTED: taken, built, and then defaulted OFF by measurement (16 prompts: fixed cap 3 = 6.59 t/s clean vs reactive/buun = 4.04 t/s with 8/16 degenerate); both policies stay reachable behind GGML_DFLASH2_ADAPTIVE / GGML_DFLASH2_PREVENTIVE. Series patch 0397 later added our three defect fixes on top. The pin did NOT move and MUST NOT be read as having moved: the ingest was partial and the remaining 39d97a876..2174ad63b surface was still unreviewed until 2026-08-27. Second defect corrected at the same time: licenses/buun-MIT.txt did not exist while buun-derived code was already on arifi/main - retained 2026-08-27, row added to licenses/README.md.",
+       "role": "speed/cache lineage: VBR dynamic KV retiering, MTP-vocab sampling, swap-fit accounting; DFlash2-for-3.8 in progress",
+       "track_tags": false,
+       "pin_review": "NEVER REVIEWED. Pinned at first registration 2026-08-20 (President ruling 2026-08-19/20: 'ingest all features so we are robust and keep the fork up to date... part of our arifilabs llama.cpp fork we serve to the public even if we settle on an option that fits us better' — the greedy-currency program extended to this source). First review + ingestion wave = a chartered lane; UMA-VBR context spill is the estate's own experiment on top. Intel: board/hq/2026-08-19-chat-drop-buun-llama-cpp.md."
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index ce57d21d9..3ef062815 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -3410,8 +3410,11 @@ private:
+             const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+ 
+             if (ctx_dft) {
+-                if (use_ckpt_dft) {
+-                    ckpt.load_dft(ctx_dft, slot.id, spec_ckpt_flags());
++                if (use_ckpt_dft && !ckpt.try_load_dft(ctx_dft, slot.id, spec_ckpt_flags())) {
++                    // An incompatible draft image must not kill the server process: drop the
++                    // drafter sequence and let the next prefill rebuild it. Taken-from buun.
++                    SLT_WRN(slot, "%s", "draft checkpoint image rejected - clearing drafter sequence\n");
++                    llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, -1, -1);
+                 }
+ 
+                 if (!llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, ckpt.pos_max + 1, -1)) {
+@@ -3729,7 +3732,11 @@ private:
+                                     if (!do_reset) {
+                                         // restore the context checkpoint
+                                         it->load_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+-                                        it->load_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
++                                        if (ctx_dft && !it->try_load_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY)) {
++                                            // reject the draft image instead of aborting the process
++                                            SLT_WRN(slot, "%s", "draft checkpoint image rejected - clearing drafter sequence\n");
++                                            llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, -1, -1);
++                                        }
+                                         // restore the draft's speculative state
+                                         common_speculative_set_state(spec.get(), slot.id, it->data_spec);
+ 
+@@ -4367,8 +4374,10 @@ private:
+ 
+                         ckpt.load_tgt(slot.ctx_tgt, slot.id, spec_ckpt_flags());
+ 
+-                        if (slot.ctx_dft) {
+-                            ckpt.load_dft(slot.ctx_dft, slot.id, spec_ckpt_flags());
++                        if (slot.ctx_dft && !ckpt.try_load_dft(slot.ctx_dft, slot.id, spec_ckpt_flags())) {
++                            // reject the draft image instead of aborting the process
++                            SLT_WRN(slot, "%s", "draft checkpoint image rejected - clearing drafter sequence\n");
++                            llama_memory_seq_rm(llama_get_memory(slot.ctx_dft), slot.id, -1, -1);
+                         }
+ 
+                         slot.spec_t_restore_us += ggml_time_us() - t_restore_start;

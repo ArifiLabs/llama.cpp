@@ -1,0 +1,141 @@
+From 2a4620b5292983c3ae66e584d9f4f67a51e6c861 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 18:32:20 -0400
+Subject: [PATCH] lane-145: Q6_0_ROCMFPX Vulkan fix - implement the 6-bit
+ unpack (block struct was 34B vs CPU 26B; qs read as whole signed bytes).
+ 60/60 MUL_MAT + 24/24 GET_ROWS on Vulkan0, was 50/60 + 20/24.
+
+---
+ .../vulkan-shaders/dequant_funcs.glsl         | 16 ++++++++++++-
+ .../vulkan-shaders/dequant_funcs_cm2.glsl     | 23 +++++++++++++++----
+ .../vulkan-shaders/dequant_rocmfpx_fp6.comp   | 14 ++++++++++-
+ .../src/ggml-vulkan/vulkan-shaders/types.glsl |  6 +++--
+ 4 files changed, 50 insertions(+), 9 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
+index 2cf154a52..6159050e6 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
+@@ -1012,9 +1012,23 @@ vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
+ #endif
+ 
+ #if defined(DATA_A_ROCMFPX_FP6)
++// Code idx lives at bit 6*idx of the 24-byte little-endian stream. sh is always even
++// (0/6/4/2), so the second byte is needed iff sh > 2 — and idx=31 -> byte 23, sh=2,
++// which stays in bounds.
++uint rocmfpx_fp6_get_code(uint ib, uint idx, uint a_offset) {
++    const uint bit_pos  = idx * 6u;
++    const uint byte_pos = bit_pos >> 3u;
++    const uint sh       = bit_pos & 7u;
++    uint bits = uint(data_a[a_offset + ib].qs[byte_pos]) >> sh;
++    if (sh > 2u) {
++        bits |= uint(data_a[a_offset + ib].qs[byte_pos + 1u]) << (8u - sh);
++    }
++    return bits & 0x3Fu;
++}
++
+ float rocmfpx_fp6_dequant(uint ib, uint idx, uint a_offset) {
+     const float d = ue4m3_to_fp32(data_a[a_offset + ib].e[idx >= 16u ? 1u : 0u]);
+-    return float(int(data_a[a_offset + ib].qs[idx])) * d;
++    return float(int(kvalues_rocmfpx_fp6_const[rocmfpx_fp6_get_code(ib, idx, a_offset)])) * d;
+ }
+ 
+ vec2 dequantize(uint ib, uint iqs, uint a_offset) {
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl
+index 99f70c737..f96f58494 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl
+@@ -1644,20 +1644,33 @@ layout(buffer_reference, std430, buffer_reference_align = 1) buffer decodeBufROC
+    block_rocmfpx_fp6 block;
+ };
+ 
++// Code idx lives at bit 6*idx of the 24-byte little-endian stream (CPU: rocmfpx_fp6_unpack4).
++int rocmfpx_cm2_fp6_decode(const in decodeBufROCMFPXFP6 bl, uint idx)
++{
++    const uint bit_pos  = idx * 6u;
++    const uint byte_pos = bit_pos >> 3u;
++    const uint sh       = bit_pos & 7u;
++    uint bits = uint(bl.block.qs[byte_pos]) >> sh;
++    if (sh > 2u) {
++        bits |= uint(bl.block.qs[byte_pos + 1u]) << (8u - sh);
++    }
++    return int(kvalues_rocmfpx_fp6_const[bits & 0x3Fu]);
++}
++
+ float16_t dequantFuncROCMFPXFP6(const in decodeBufROCMFPXFP6 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
+ {
+     const uint idx = coordInBlock[1];
+     const float d = ue4m3_to_fp32(bl.block.e[idx >= 16u ? 1u : 0u]);
+-    return float16_t(float(int(bl.block.qs[idx])) * d);
++    return float16_t(float(rocmfpx_cm2_fp6_decode(bl, idx)) * d);
+ }
+ 
+ f16vec4 dequantFuncROCMFPXFP6_v(const in decodeBufROCMFPXFP6 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
+ {
+     const uint idx = coordInBlock[1];
+-    return f16vec4(float16_t(float(int(bl.block.qs[idx + 0u])) * ue4m3_to_fp32(bl.block.e[(idx + 0u) >= 16u ? 1u : 0u])),
+-                   float16_t(float(int(bl.block.qs[idx + 1u])) * ue4m3_to_fp32(bl.block.e[(idx + 1u) >= 16u ? 1u : 0u])),
+-                   float16_t(float(int(bl.block.qs[idx + 2u])) * ue4m3_to_fp32(bl.block.e[(idx + 2u) >= 16u ? 1u : 0u])),
+-                   float16_t(float(int(bl.block.qs[idx + 3u])) * ue4m3_to_fp32(bl.block.e[(idx + 3u) >= 16u ? 1u : 0u])));
++    return f16vec4(float16_t(float(rocmfpx_cm2_fp6_decode(bl, idx + 0u)) * ue4m3_to_fp32(bl.block.e[(idx + 0u) >= 16u ? 1u : 0u])),
++                   float16_t(float(rocmfpx_cm2_fp6_decode(bl, idx + 1u)) * ue4m3_to_fp32(bl.block.e[(idx + 1u) >= 16u ? 1u : 0u])),
++                   float16_t(float(rocmfpx_cm2_fp6_decode(bl, idx + 2u)) * ue4m3_to_fp32(bl.block.e[(idx + 2u) >= 16u ? 1u : 0u])),
++                   float16_t(float(rocmfpx_cm2_fp6_decode(bl, idx + 3u)) * ue4m3_to_fp32(bl.block.e[(idx + 3u) >= 16u ? 1u : 0u])));
+ }
+ #endif
+ 
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp6.comp b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp6.comp
+index dc40a0985..2734da150 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp6.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp6.comp
+@@ -7,6 +7,18 @@ layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+ layout (binding = 0) readonly buffer A {block_rocmfpx_fp6 data_a[];};
+ layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
+ 
++// Code idx lives at bit 6*idx of the 24-byte little-endian stream (CPU: rocmfpx_fp6_unpack4).
++uint rocmfpx_fp6_get_code(uint ib, uint idx) {
++    const uint bit_pos  = idx * 6u;
++    const uint byte_pos = bit_pos >> 3u;
++    const uint sh       = bit_pos & 7u;
++    uint bits = uint(data_a[ib].qs[byte_pos]) >> sh;
++    if (sh > 2u) {
++        bits |= uint(data_a[ib].qs[byte_pos + 1u]) << (8u - sh);
++    }
++    return bits & 0x3Fu;
++}
++
+ void main() {
+     const uint i = gl_WorkGroupID.x * 4 + gl_LocalInvocationID.x / 64;
+ 
+@@ -28,6 +40,6 @@ void main() {
+ 
+     [[unroll]] for (uint l = 0; l < 16; ++l) {
+         const uint idx = q_idx + l;
+-        data_b[b_idx + l] = D_TYPE(d * float(int(data_a[ib].qs[idx])));
++        data_b[b_idx + l] = D_TYPE(d * float(int(kvalues_rocmfpx_fp6_const[rocmfpx_fp6_get_code(ib, idx)])));
+     }
+ }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
+index 67ceb308b..eedd110d0 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
+@@ -1838,15 +1838,17 @@ struct block_rocmfpx_fp3
+     uint8_t e[2];
+ };
+ 
++// 32 codes x 6 bits = 24 bytes, packed as a contiguous little-endian 6-bit stream
++// (CPU reference: rocmfpx.h QS_ROCMFP6 / block_rocmfp6, rocmfpx.c rocmfpx_fp6_pack4).
+ struct block_rocmfpx_fp6
+ {
+-    int8_t qs[32];
++    uint8_t qs[24];
+     uint8_t e[2];
+ };
+ 
+ struct block_rocmfpx_fp6_packed16
+ {
+-    int16_t qs[16];
++    uint16_t qs[12];
+     uint16_t e;
+ };
+ 

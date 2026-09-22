@@ -1,0 +1,57 @@
+From f93734b62a0e5f8a547b928a9241748db74c6a75 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 6 Sep 2026 10:28:42 -0400
+Subject: [PATCH] docs: state the power plan and RAM as pre-registered
+ conditions, not per-launch receipts
+
+The R14 check (FABLE-53-LOW-R14-CHECK.md, FIX-1): Balanced power plan and
+RAM 48 GB (32 + 16) appear in no AB.json header and no per-launch receipt;
+they are declared in PREREG-r8-integration.md only, and the R8 report says
+not to credit them. The CHANGELOG conditions line and F-18 now say so, and
+name what IS receipted per launch (free RAM before and after, the
+load-governor guard, the RAM-floor wait). F-18 also gains "context 8192",
+which the CHANGELOG line already carried (check residual).
+
+Docs only.
+
+Origin: lane-213 R17C docs fix (HQ seat-53 amendment, R14 check FIX-1)
+Measured-effect: UNMEASURED - documentation wording; no engine behaviour changed by this commit.
+Lane: lane-213
+---
+ CHANGELOG.md     | 6 ++++--
+ docs/FINDINGS.md | 5 +++--
+ 2 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 57b67ead7..d7a61856c 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -181,8 +181,10 @@ prefill than any decode number shows.
+ **Conditions, stated once for every row:** integration tip `50e78fdc5` against base `131fad035`,
+ `llama-server` on RIG-A, both arms in the same session, an 8-cell × 2-launch paired palindrome per slot
+ (8 independent prompt/seed cells, each measured twice, 16 rounds per slot), thinking OFF, context 8192,
+-drafter DFlash2 Q4_K_M at `--spec-draft-n-max 2`, **Balanced** power plan, RAM 48 GB (32 + 16,
+-asymmetric). Decode is the server's own `predicted_per_second`, median of the 16 rounds; the bracketed
++drafter DFlash2 Q4_K_M at `--spec-draft-n-max 2`, **Balanced** power plan and RAM 48 GB (32 + 16,
++asymmetric) as declared in the run's pre-registration, not receipted per launch (what each launch does
++receipt is free RAM before and after, the load-governor guard and the RAM-floor wait). Decode is the
++server's own `predicted_per_second`, median of the 16 rounds; the bracketed
+ figure is the paired cell-wise mean difference with its 95% interval over the 8 cells, and the whole
+ percent is that mean difference over the base arm's cell mean. Prefill is the 782-token fill request,
+ median of the two launches per slot — a per-launch figure with no interval. The quality gate is the
+diff --git a/docs/FINDINGS.md b/docs/FINDINGS.md
+index 5a9492197..7af9b1b90 100644
+--- a/docs/FINDINGS.md
++++ b/docs/FINDINGS.md
+@@ -723,8 +723,9 @@ integer-dot mat-vec on that type is gated off on both arms, so the design docume
+ number was read, that *"a TIE on that cell is the CORRECT result"*.
+ 
+ It was not a tie. On RIG-A, `llama-server`, integration tip `50e78fdc5` against base `131fad035`, both
+-arms in one session, 8 paired prompt/seed cells each measured twice, thinking OFF, DFlash2 Q4_K_M at
+-draft depth 2, Balanced plan, 48 GB (32 + 16):
++arms in one session, 8 paired prompt/seed cells each measured twice, thinking OFF, context 8192,
++DFlash2 Q4_K_M at draft depth 2, Balanced plan and 48 GB (32 + 16) as declared in the pre-registration
++(not receipted per launch; free RAM before and after each launch is):
+ 
+ | line | decode, base → tip | prefill 107 tok, base → tip | prefill 782 tok, base → tip |
+ |---|---|---|---|

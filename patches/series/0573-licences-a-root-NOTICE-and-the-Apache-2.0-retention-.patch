@@ -1,0 +1,330 @@
+From cad49c8302894c12c34519af4970ff78d9e44957 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 01:21:01 -0400
+Subject: [PATCH] licences: a root NOTICE, and the Apache-2.0 retention the
+ S-X8 code required
+
+RELEASE-CHECKLIST.md item 2 said 'no LICENSES/ directory, and no per-source licence file'. That is false at 3f574313f: git ls-files licenses returns 16 tracked files and an audited retention table. The true gap was narrower - no root NOTICE, and no Apache-2.0 text for the S-X8 code the tree carries across 37 files.
+
+S-X8's licence is established, not guessed: the 2026-09-15 capture banks ten files as Apache-2.0 (Marti Vidal Leandro, MarlaLabs, DOI 10.5281/zenodo.21922640) with a sha256 each, and 2b0123b0b carries the Apache-2.0 Taken-from. licenses/Apache-2.0.txt is lines 1-176 of the already-retained turboquant-plus copy - the terms, ending at END OF TERMS AND CONDITIONS, because lines 177+ are that licensor's own filled-in copyright block. Nothing is fabricated and the equality is checkable.
+
+Still OWED and recorded in licenses/README.md rather than papered over: the licensor's OWN LICENSE file was never fetched, and closing that needs a network call this lane is barred from making. No per-file headers were added - Apache-2.0 section 4 does not require them, and a header composed here would be our text over the author's name.
+
+Origin: ArifiLabs (native) - release engineering for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - licence and notice files only, no code path touched.
+---
+ NOTICE                  |  81 ++++++++++++++++++
+ licenses/Apache-2.0.txt | 176 ++++++++++++++++++++++++++++++++++++++++
+ licenses/README.md      |  27 ++++++
+ 3 files changed, 284 insertions(+)
+ create mode 100644 NOTICE
+ create mode 100644 licenses/Apache-2.0.txt
+
+diff --git a/NOTICE b/NOTICE
+new file mode 100644
+index 000000000..dc228b62b
+--- /dev/null
++++ b/NOTICE
+@@ -0,0 +1,81 @@
++ArifiLabs llama.cpp fork
++Copyright 2026 ArifiLabs
++
++This product is a derivative work of llama.cpp (https://github.com/ggml-org/llama.cpp),
++Copyright (c) 2023-2026 The ggml authors, licensed under the MIT License. The MIT text is
++retained verbatim at ./LICENSE and at licenses/llama.cpp-MIT.txt, and upstream's own
++contributor list is retained at ./AUTHORS.
++
++This file exists because the repository carries code and formats from third parties, one of
++them under the Apache License 2.0, whose section 4 requires the licence text and the
++attribution notices to travel with a redistributed derivative work. Every component below is
++named with its licence, its source, and the file in licenses/ that holds its licence text
++verbatim. The audit behind those retentions, including its corrections, is licenses/README.md;
++the machine-readable source pins are tools/arifi-sync/sources.json.
++
++No model weights are distributed with this repository. Model files named in the documents are
++measurement subjects, not redistributed artefacts, and naming one implies no licence to it.
++
++--------------------------------------------------------------------------------
++Apache License 2.0 components
++--------------------------------------------------------------------------------
++
++S-X8 v4.3 (the quantization format and its reference implementation)
++  Author:   Martí Vidal Leandro (MarlaLabs)
++  Licence:  Apache License 2.0 - licenses/Apache-2.0.txt
++  Source:   DOI 10.5281/zenodo.21922640, v1.0 2026-08-13
++            https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8 @ 808043e0a3f0dea1080e8859d6bccad23fc684d7
++  Carried:  The S-X8 container format, its per-8 affine sub-block decomposition, the reference
++            CUDA kernels and the author's own llama.cpp patch are the author's work. This
++            repository implements GGML_TYPE_SX8 (57) against that format.
++            THE VULKAN KERNELS IN THIS TREE ARE OURS, not the author's - the format, the
++            reference CUDA kernels and the reference patch are his. That distinction is
++            stated here, in the release story, and in the commit trailers.
++  Notice:   Licensed under the Apache License, Version 2.0 (the "License"); you may not use
++            these files except in compliance with the License. You may obtain a copy of the
++            License at http://www.apache.org/licenses/LICENSE-2.0. Unless required by
++            applicable law or agreed to in writing, software distributed under the License is
++            distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
++            either express or implied.
++
++turboquant_plus
++  Author:   Tom Turney
++  Licence:  Apache License 2.0 - licenses/turboquant-plus-Apache-2.0.txt
++  Source:   https://github.com/TheTom/turboquant_plus
++  Notice:   The licensor's own NOTICE is retained verbatim at
++            licenses/turboquant-plus-NOTICE.txt:
++              turboquant_plus
++              Copyright 2026 Tom Turney
++              This product includes software developed by Tom Turney
++              (https://github.com/TheTom/turboquant_plus).
++
++--------------------------------------------------------------------------------
++MIT components
++--------------------------------------------------------------------------------
++
++Each MIT licence below is retained verbatim in licenses/. MIT requires the copyright notice
++and permission notice to be retained in redistributions; retaining the licence file is how
++that is done here.
++
++  ggml-org/llama.cpp (upstream)        LICENSE, licenses/llama.cpp-MIT.txt
++  Tiiny-AI/PowerInfer                  licenses/powerinfer-MIT.txt
++  PowerInfer / smallthinker            licenses/smallthinker-MIT.txt
++  charlie12345/ROCmFPX                 licenses/rocmfpx-MIT.txt
++  ciru-ai/ROCmFPX                      licenses/ciru-MIT.txt
++  PrismML-Eng/llama.cpp                licenses/prisml-MIT.txt
++  turbo-tan/llama.cpp-tq3              licenses/tq3-MIT.txt
++  llama-cpp-turboquant                 licenses/llama-cpp-turboquant-MIT.txt
++  jtrefon/llama.cpp-turboq-mtp         licenses/turboq-mtp-MIT.txt
++  spiritbuun/buun-llama-cpp            licenses/buun-MIT.txt
++  LaurentZuijdwijk/llama.cpp           licenses/zuijdwijk-MIT.txt
++  thecodacus/llama.cpp                 licenses/thecodacus-MIT.txt
++
++ciru-ai/ROCmFPX is a registered source with its notice retained ahead of any ingest; no code
++from it is carried at this revision.
++
++--------------------------------------------------------------------------------
++Inherited from upstream, not retained by this fork
++--------------------------------------------------------------------------------
++
++nlohmann/json (Niels Lohmann), MIT - licenses/LICENSE-jsonhpp. Upstream llama.cpp's own file,
++covering its vendored vendor/nlohmann/json.hpp and json_fwd.hpp. It arrived with the tree.
+diff --git a/licenses/Apache-2.0.txt b/licenses/Apache-2.0.txt
+new file mode 100644
+index 000000000..f67df4866
+--- /dev/null
++++ b/licenses/Apache-2.0.txt
+@@ -0,0 +1,176 @@
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to the Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by the Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding any notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
+diff --git a/licenses/README.md b/licenses/README.md
+index 865a6ad4b..afd0a8c87 100644
+--- a/licenses/README.md
++++ b/licenses/README.md
+@@ -20,7 +20,34 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
+ | `buun-MIT.txt` | `git show refs/remotes/buun/master:LICENSE` (spiritbuun/buun-llama-cpp) | buun MIT. **Retained 2026-08-27; this was a GAP** — series patch `0394` ingested buun's DFlash2 controller on 2026-08-21 with no notice row, so the notice lagged the code by six days. Byte-identical to the upstream MIT text apart from LF termination. |
+ | `turboq-mtp-MIT.txt` | `LICENSE` of `https://github.com/jtrefon/llama.cpp-turboq-mtp` at `6a02d0494` (shallow clone `cache/r18-turboq-src`, 1099 bytes, "The ggml authors") | jtrefon MIT (llama.cpp lineage). **Retained 2026-09-07 (lane-212, WI-1694) in the same commit that carries the code**: the TBQ3_0/TBQ4_0 codec (`ggml/src/ggml-tbq-quant.c`, tables) at ids 58/59 is ported from this tree. Tracked source in `sources.json` `remotes` as `turboq`, pinned `6a02d0494`. |
+ 
++| `Apache-2.0.txt` | lines 1–176 of `turboquant-plus-Apache-2.0.txt`, already retained here — the Apache License 2.0 **terms**, licensor-neutral | The canonical Apache-2.0 terms, retained for **S-X8 v4.3** (Martí Vidal Leandro, MarlaLabs; DOI 10.5281/zenodo.21922640, v1.0 2026-08-13). **Retained 2026-09-21 (release prep); this was the one real gap at `94461e770`.** The slice ends at `END OF TERMS AND CONDITIONS`: lines 177+ of the source file are *turboquant's own* filled-in copyright block, which belongs to that licensor and is not reused. `python -c "a=open('Apache-2.0.txt','rb').read(); print(open('turboquant-plus-Apache-2.0.txt','rb').read().startswith(a[:-1]))"` → `True`. sha256 `e1b4dc6f479b2401e8d1acf04b7cc41e39b9deb6c9aed6a3633f9ce5a2be2abf`. |
++
+ `../LICENSE` is also the verbatim copy of upstream llama.cpp’s MIT license.
++`../NOTICE` names every component above with its licence and source; it was added 2026-09-21 in
++the same release-prep commit as `Apache-2.0.txt`.
++
++### S-X8 v4.3 — Apache-2.0, retained 2026-09-21 (release prep)
++
++The tree implements `GGML_TYPE_SX8` (57) across 37 source files. The **licence is established, not
++assumed**: `research/local-inference/lane-evidence/2026-09-15-sx8-paper-docs/PROVENANCE.md:3` reads
++*"All files Apache-2.0 (author Martí Vidal Leandro, MarlaLabs)"* over ten files, each banked with a
++source URL and a sha256 — the papers, `SX8_FLASH_V4_3_SPEC.md`, the container scripts, the reference
++CUDA kernels (`sx8_decode1_v3.cu`, `sx8_embed_v44.cu`) and the author's own `llama-cpp-sx8.patch`.
++Commit `948aab9c6` carries `Taken-from: MarlaLabsAI/sx8-quantization docs/S-X-METHODOLOGY.md section
++2 (per-8 affine sub-block decomposition), Apache-2.0`.
++
++**OWED, and stated rather than papered over.** The licensor's *own* `LICENSE` file has never been
++fetched — the 2026-09-15 capture took the papers, the scripts, the kernels and the patch, and no
++LICENSE blob. What is retained above is the canonical Apache-2.0 text, which is the same document
++for every Apache-2.0 licensor; what is *not* retained is a copy taken from the author's repository.
++Closing that needs one network fetch, which the release-prep lane was barred from making. This
++directory's standing rule holds: it contains no fabricated licence text, and the appendix copyright
++line was deliberately not filled in with a name the author did not write.
++
++**No per-file headers were added.** Apache-2.0 §4(a)–(d) requires the licence, the NOTICE contents
++and any retained attribution notices to travel with the derivative work; it does not require a
++header on every file. The S-X8 sources captured carry no header of the author's to retain, and a
++header composed here would be our text over his name.
+ 
+ ### Inherited from upstream, not retained by this fork
+ 

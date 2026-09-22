@@ -1,0 +1,403 @@
+From f05bd66e075b925154e560b97f325dc94c0cbff4 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 15:07:45 -0400
+Subject: [PATCH] lane-144 GOAL 2 step 1: TQ3_4S (id 48) Vulkan port - dequant
+ + mat-vec + mat-vec_id shaders, wired
+
+Modelled on TQ3_1S: identical 32-value block, 3-bit packing, Lloyd-Max centroids, inverse RHT. Only the scale differs (four E3M5 bytes per group of 8 vs two f16 halves), and the four scale groups ARE the four 3-byte packing groups, so the group index each thread already computes serves both. E3M5 decode mirrors arifi_tq3_4s_decode_scale() incl. the byte==0 zero-scale case. 4 host pipeline rows + 4 dispatch-switch cases (to_fp16, mat-vec, mat-vec_id, supports_op). NOT in the ROTATED mul_mm_id switch and no get_rows: get_rows_quant.comp applies no inverse WHT. Build GREEN, 4 exes mtime 15:07:18, 4 new spv blobs.
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  10 ++
+ .../vulkan-shaders/dequant_tq3_4s.comp        |  89 +++++++++++
+ .../vulkan-shaders/mul_mat_vec_tq3_4s.comp    | 142 ++++++++++++++++++
+ .../src/ggml-vulkan/vulkan-shaders/types.glsl |  36 +++++
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     |  15 ++
+ 5 files changed, 292 insertions(+)
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/dequant_tq3_4s.comp
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq3_4s.comp
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 7039cb26f..760916aeb 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -5457,6 +5457,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_NVFP4][i],   "mul_mat_vec_nvfp4_f32_f32",   OCP_DMMV_LEN(arr_dmmv_nvfp4_f32_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_nvfp4_f32_f32, reduc16), "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_TQ3_1S][i],  "mul_mat_vec_tq3_1s_f32_f32",  mul_mat_vec_tq3_1s_f32_f32_len, mul_mat_vec_tq3_1s_f32_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1, 1, 1}, {tq_wg_size, 1, i+1}, 1, true, tq_use_subgroups, tq_force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_TQ4_1S][i],  "mul_mat_vec_tq4_1s_f32_f32",  mul_mat_vec_tq4_1s_f32_f32_len, mul_mat_vec_tq4_1s_f32_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1, 1, 1}, {tq_wg_size, 1, i+1}, 1, true, tq_use_subgroups, tq_force_subgroup_size);
++            // tq3 family. TQ3_4S shares TQ3_1S's block geometry and butterfly, so it
++            // takes the identical 32-thread pin and shmem reduction (lane-144).
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_TQ3_4S][i],  "mul_mat_vec_tq3_4s_f32_f32",  mul_mat_vec_tq3_4s_f32_f32_len, mul_mat_vec_tq3_4s_f32_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1, 1, 1}, {tq_wg_size, 1, i+1}, 1, true, tq_use_subgroups, tq_force_subgroup_size);
+ 
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_F32 ][i], "mul_mat_vec_f32_f16_f32",  arr_dmmv_f32_f16_f32_len[reduc],  arr_dmmv_f32_f16_f32_data[reduc],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1, 1, 1}, {wg_size_subgroup, 1, i+1}, 1, false, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_F16 ][i], "mul_mat_vec_f16_f16_f32",  arr_dmmv_f16_f16_f32_len[reduc],  arr_dmmv_f16_f16_f32_data[reduc],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2, 1, 1}, {wg_size_subgroup, 2, i+1}, 1, false, use_subgroups, force_subgroup_size);
+@@ -5494,6 +5497,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_NVFP4][i],   "mul_mat_vec_nvfp4_f16_f32",   OCP_DMMV_LEN(arr_dmmv_nvfp4_f16_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_nvfp4_f16_f32, reduc16), "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_TQ3_1S][i],  "mul_mat_vec_tq3_1s_f16_f32",  mul_mat_vec_tq3_1s_f16_f32_len, mul_mat_vec_tq3_1s_f16_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1, 1, 1}, {tq_wg_size, 1, i+1}, 1, true, tq_use_subgroups, tq_force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_TQ4_1S][i],  "mul_mat_vec_tq4_1s_f16_f32",  mul_mat_vec_tq4_1s_f16_f32_len, mul_mat_vec_tq4_1s_f16_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1, 1, 1}, {tq_wg_size, 1, i+1}, 1, true, tq_use_subgroups, tq_force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_TQ3_4S][i],  "mul_mat_vec_tq3_4s_f16_f32",  mul_mat_vec_tq3_4s_f16_f32_len, mul_mat_vec_tq3_4s_f16_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1, 1, 1}, {tq_wg_size, 1, i+1}, 1, true, tq_use_subgroups, tq_force_subgroup_size);
+ 
+ #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+             if (device->integer_dot_product) {
+@@ -5568,6 +5572,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         // pipelines have no num_cols dimension, hence {tq_wg_size, 1}.
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_TQ3_1S],  "mul_mat_vec_id_tq3_1s_f32",  mul_mat_vec_id_tq3_1s_f32_f32_len, mul_mat_vec_id_tq3_1s_f32_f32_data, "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {1, 1, 1}, {tq_wg_size, 1}, 1, true, tq_use_subgroups, tq_force_subgroup_size);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_TQ4_1S],  "mul_mat_vec_id_tq4_1s_f32",  mul_mat_vec_id_tq4_1s_f32_f32_len, mul_mat_vec_id_tq4_1s_f32_f32_data, "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {1, 1, 1}, {tq_wg_size, 1}, 1, true, tq_use_subgroups, tq_force_subgroup_size);
++        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_TQ3_4S],  "mul_mat_vec_id_tq3_4s_f32",  mul_mat_vec_id_tq3_4s_f32_f32_len, mul_mat_vec_id_tq3_4s_f32_f32_data, "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {1, 1, 1}, {tq_wg_size, 1}, 1, true, tq_use_subgroups, tq_force_subgroup_size);
+ 
+ #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+         if (device->integer_dot_product) {
+@@ -5652,6 +5657,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+ 
+     ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_TQ3_1S],  "dequant_tq3_1s",  dequant_tq3_1s_len,  dequant_tq3_1s_data,  "main", 2, 5 * sizeof(uint32_t), {256 * 32, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_TQ4_1S],  "dequant_tq4_1s",  dequant_tq4_1s_len,  dequant_tq4_1s_data,  "main", 2, 5 * sizeof(uint32_t), {256 * 32, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_TQ3_4S],  "dequant_tq3_4s",  dequant_tq3_4s_len,  dequant_tq3_4s_data,  "main", 2, 5 * sizeof(uint32_t), {256 * 32, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_TURBO3_0], "dequant_turbo3_0", dequant_turbo3_0_len, dequant_turbo3_0_data, "main", 2, 5 * sizeof(uint32_t), {128, 1, 1}, {}, 1);
+ 
+     // get_rows
+@@ -7972,6 +7978,7 @@ static vk_pipeline ggml_vk_get_to_fp16(ggml_backend_vk_context * ctx, ggml_type
+         case GGML_TYPE_MXFP4:
+         case GGML_TYPE_TQ3_1S:
+         case GGML_TYPE_TQ4_1S:
++        case GGML_TYPE_TQ3_4S:
+         case GGML_TYPE_NVFP4:
+         case GGML_TYPE_TQ2_0:
+             break;
+@@ -8152,6 +8159,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context *
+         case GGML_TYPE_MXFP4:
+         case GGML_TYPE_TQ3_1S:
+         case GGML_TYPE_TQ4_1S:
++        case GGML_TYPE_TQ3_4S:
+         case GGML_TYPE_NVFP4:
+         case GGML_TYPE_TQ2_0:
+             break;
+@@ -8371,6 +8379,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
+         // their id pipelines are f32-B only.
+         case GGML_TYPE_TQ3_1S:
+         case GGML_TYPE_TQ4_1S:
++        case GGML_TYPE_TQ3_4S:
+             break;
+         default:
+             return nullptr;
+@@ -19095,6 +19104,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_MXFP4:
+                     case GGML_TYPE_TQ3_1S:
+                     case GGML_TYPE_TQ4_1S:
++                    case GGML_TYPE_TQ3_4S:
+                     case GGML_TYPE_NVFP4:
+                     case GGML_TYPE_TQ2_0:
+                         break;
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_tq3_4s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_tq3_4s.comp
+new file mode 100644
+index 000000000..d02b16759
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_tq3_4s.comp
+@@ -0,0 +1,89 @@
++#version 450
++
++#include "dequant_head.glsl"
++
++// TQ3_4S (type-id 48) full-block dequant. Structurally identical to
++// dequant_tq3_1s.comp -- same 32-value block, same 3-bit packing, same centroids,
++// same inverse RHT. The ONLY difference is the scale: TQ3_1S carries two f16
++// halves (elements 0-15 / 16-31); TQ3_4S carries four E3M5 bytes, one per group
++// of 8, which lines up exactly with the four 3-byte packing groups. Reference:
++// dequantize_row_tq3_4s() in ggml/src/ggml-arifi-turbo-weights.c:509-524.
++//
++// 256 threads per workgroup, each thread fully dequants one block (32 elements,
++// 16 bytes). Workgroups process 256 blocks = 8192 elements so the x dispatch
++// stays under maxComputeWorkGroupCount[0] for large tensors.
++layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
++
++layout (binding = 0) readonly buffer A {block_tq3_4s data_a[];};
++layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
++
++// One WHT butterfly stage as a flat 16-iteration loop with a compile-time
++// constant stride. Deliberately NOT the rolled triple loop of tq3_0_rht_inverse():
++// a non-constant inner increment stops glslang unrolling, buf[] stays a
++// dynamically indexed function-local array and becomes scratch instead of
++// registers. This shader runs over the entire weight tensor on the prefill path,
++// so that matters. Identical construction to dequant_tq3_1s.comp; lo enumerates
++// the same (j, j + step) pairs in the same order as the reference.
++#define TQ3_WHT_STAGE(STEP)                                             \
++    [[unroll]] for (uint k = 0u; k < 16u; k++) {                        \
++        const uint lo = ((k / (STEP)) * (2u * (STEP))) + (k % (STEP));  \
++        const float a = buf[lo];                                        \
++        const float b = buf[lo + (STEP)];                               \
++        buf[lo]          = a + b;                                       \
++        buf[lo + (STEP)] = a - b;                                       \
++    }
++
++void main() {
++    // Lloyd-Max centroids for 3-bit normal quantization. ASYMMETRIC -- must match
++    // TQ3_0_CENTROIDS in ggml/src/ggml-arifi-turbo-weights.c:29-32 byte for byte.
++    const float centroids[8] = float[8](
++        -1.996684, -1.291398, -0.740341, -0.247508,
++         0.230106,  0.725222,  1.277503,  1.988943
++    );
++
++    // TQ3_0_SIGNS, ggml-arifi-turbo-weights.c:42-47.
++    const float signs[32] = float[32](
++        +1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
++        -1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
++        -1.0, -1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0,
++        -1.0, +1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0
++    );
++
++    const float INV_SQRT32 = 0.17677669529663688;
++
++    const uint ib = gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
++    if (ib >= p.nel / 32) return;
++
++    // Load centroid*scale into per-thread buffer. TQ3 packs 8 three-bit indices
++    // into each 3-byte group, 4 groups per block. Reading the group as a 24-bit
++    // little-endian word turns the extraction into a single shift: tq3_pack8()
++    // lays index i at bits [3i, 3i+2] of that word, including indices 2 and 5
++    // which straddle a byte.
++    float buf[32];
++    [[unroll]] for (uint g = 0u; g < 4u; g++) {
++        const uint qb = g * 3u;
++        const uint packed = uint(data_a[ib].qs[qb])
++                          | (uint(data_a[ib].qs[qb + 1u]) << 8)
++                          | (uint(data_a[ib].qs[qb + 2u]) << 16);
++        // One E3M5 scale per group of 8 -- the whole reason this file exists.
++        const float d = tq3_4s_decode_scale(uint(data_a[ib].d[g]));
++        [[unroll]] for (uint i = 0u; i < 8u; i++) {
++            const uint j   = g * 8u + i;
++            const uint idx = (packed >> (i * 3u)) & 7u;
++            buf[j] = centroids[idx] * d;
++        }
++    }
++
++    // Inverse WHT butterfly (5 stages for 32 elements) -- matches CPU reference.
++    TQ3_WHT_STAGE(1u)
++    TQ3_WHT_STAGE(2u)
++    TQ3_WHT_STAGE(4u)
++    TQ3_WHT_STAGE(8u)
++    TQ3_WHT_STAGE(16u)
++
++    // Normalize and apply sign pattern.
++    const uint out_base = ib * 32u;
++    [[unroll]] for (uint j = 0u; j < 32u; j++) {
++        data_b[out_base + j] = D_TYPE(buf[j] * INV_SQRT32 * signs[j]);
++    }
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq3_4s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq3_4s.comp
+new file mode 100644
+index 000000000..46feedc8e
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq3_4s.comp
+@@ -0,0 +1,142 @@
++#version 450
++
++#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
++
++#include "mul_mat_vec_base.glsl"
++
++layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
++
++// TQ3_4S (type-id 48) mat-vec. Same kernel shape as mul_mat_vec_tq3_1s.comp --
++// the algebra below is identical because TQ3_4S uses the same rotation, the same
++// centroids and the same 3-bit packing. Only the scale lookup differs: four E3M5
++// bytes, one per group of 8, instead of two f16 halves. Reference for the codec:
++// dequantize_row_tq3_4s() in ggml/src/ggml-arifi-turbo-weights.c:509-524.
++
++// TQ3_0_CENTROIDS, ggml-arifi-turbo-weights.c:29-32. ASYMMETRIC.
++const float TQ3_CENTROIDS[8] = float[8](
++    -1.996684, -1.291398, -0.740341, -0.247508,
++     0.230106,  0.725222,  1.277503,  1.988943
++);
++
++// TQ3_0_SIGNS, ggml-arifi-turbo-weights.c:42-47.
++const float TQ3_SIGNS[32] = float[32](
++    +1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
++    -1.0, -1.0, +1.0, -1.0, +1.0, +1.0, -1.0, +1.0,
++    -1.0, -1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0,
++    -1.0, +1.0, +1.0, -1.0, +1.0, -1.0, -1.0, +1.0
++);
++
++const float TQ3_INV_SQRT32 = 0.17677669529663688;
++
++// ---------------------------------------------------------------------------
++// Why this kernel never dequantizes a weight (identical argument to TQ3_1S)
++// ---------------------------------------------------------------------------
++//
++// A stored TQ3_4S block holds c[j] = centroid[idx_j] * d_(j/8), i.e. the block
++// *after* the rotation that quantization applied. The true weight is recovered by
++// the inverse RHT in dequantize_row_tq3_4s():
++//
++//     w = k * S * H * c
++//
++// with H the 32x32 natural-ordered (Sylvester) Hadamard matrix realised by the
++// in-place butterfly, S = diag(TQ3_SIGNS), and k = 1/sqrt(32). H is symmetric and
++// S is diagonal, so for any activation block x:
++//
++//     <w, x> = <k*S*H*c, x> = k * <H*c, S*x> = k * <c, H*S*x>
++//
++// So sign-flip and butterfly the *activation* block once per workgroup, then dot
++// against the raw centroid*scale values straight out of memory. One 32-point WHT
++// per (block, column) instead of per (block, row).
++//
++// The per-group E3M5 scale changes nothing here: it is still a per-element factor
++// applied to c before the dot, exactly as d0/d1 was for TQ3_1S. Because the four
++// scale groups are the four 3-byte packing groups, the group index a thread needs
++// is the SAME `group` it already computes for its packing offset.
++//
++// Shared memory budget: NUM_COLS * 32 floats (max 1 KiB at NUM_COLS=8).
++// ---------------------------------------------------------------------------
++
++shared float tq3_smem[8 * 32];
++
++void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
++    const uint tid = gl_LocalInvocationID.x;
++
++    uint a_offset, b_offset, d_offset;
++    get_offsets(a_offset, b_offset, d_offset);
++
++    FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
++    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++        [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
++            temp[j][n] = FLOAT_TYPE(0);
++        }
++    }
++
++    const uint num_blocks_per_row = p.ncols / 32u;
++
++    const uint group   = tid >> 3u;         // 3-byte group AND scale group, 0..3
++    const uint qs_base = group * 3u;        // byte offset of the group
++    const uint shift   = (tid & 7u) * 3u;   // bit offset within the group
++    const float sign_tid = TQ3_SIGNS[tid];
++
++    for (uint blk = 0; blk < num_blocks_per_row; blk++) {
++        // --- Stage 1: load activation, sign-flip, write to shared memory ---
++        [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
++            const uint b_base = c * p.batch_stride_b + b_offset + blk * 32u;
++            tq3_smem[c * 32u + tid] = float(data_b[b_base + tid]) * sign_tid;
++        }
++        barrier();
++
++        // --- Stage 2: forward WHT butterfly in shared memory (5 stages) ---
++        [[unroll]] for (uint step = 1u; step < 32u; step <<= 1u) {
++            if ((tid & step) == 0u) {
++                const uint partner = tid + step;
++                [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
++                    const uint base = c * 32u;
++                    const float a = tq3_smem[base + tid];
++                    const float b = tq3_smem[base + partner];
++                    tq3_smem[base + tid]     = a + b;
++                    tq3_smem[base + partner] = a - b;
++                }
++            }
++            barrier();
++        }
++
++        // --- Stage 3: weight term for this block position, every row ---
++        float w_vals[NUM_ROWS];
++        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
++            const uint ib = (first_row + n) * num_blocks_per_row + blk;
++            const uint packed = uint(data_a[a_offset + ib].qs[qs_base])
++                              | (uint(data_a[a_offset + ib].qs[qs_base + 1u]) << 8)
++                              | (uint(data_a[a_offset + ib].qs[qs_base + 2u]) << 16);
++            const uint idx = (packed >> shift) & 7u;
++            const float d  = tq3_4s_decode_scale(uint(data_a[a_offset + ib].d[group]));
++            w_vals[n] = TQ3_CENTROIDS[idx] * d * TQ3_INV_SQRT32;
++        }
++
++        // --- Stage 4: accumulate dot products ---
++        [[unroll]] for (uint c = 0; c < NUM_COLS; ++c) {
++            const float b_rotated = tq3_smem[c * 32u + tid];
++            [[unroll]] for (uint n = 0; n < num_rows; ++n) {
++                temp[c][n] += FLOAT_TYPE(w_vals[n] * b_rotated);
++            }
++        }
++
++        // Ensure every thread is done reading before the next block's store.
++        barrier();
++    }
++
++    reduce_result(temp, d_offset, first_row, num_rows, tid);
++}
++
++void main() {
++    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
++
++    if (first_row + NUM_ROWS <= p.stride_d) {
++        compute_outputs(first_row, NUM_ROWS);
++    } else {
++        if (first_row >= p.stride_d) {
++            return;
++        }
++        compute_outputs(first_row, p.stride_d - first_row);
++    }
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
+index af7bf1420..67ceb308b 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
+@@ -2010,6 +2010,42 @@ struct block_tq4_1s
+ #define A_TYPE block_tq4_1s
+ #endif
+ 
++// tq3 family, type-id 48. Mirrors block_tq3_4s in ggml/src/ggml-common.h:
++// 4 + 12 = 16 bytes. Structurally TQ3_1S with a different scale representation:
++// four E3M5 mini-float bytes, one per group of 8 rotated values, instead of two
++// f16 halves. Same 32-value block, same 3-bit packing, same Lloyd-Max centroids
++// and same randomized Hadamard rotation -- verified against
++// dequantize_row_tq3_4s() / tq3_0_rht_inverse() in ggml/src/ggml-arifi-turbo-weights.c.
++// The four scale groups line up exactly with the four 3-byte packing groups.
++#define QUANT_K_TQ3_4S 32
++#define QUANT_R_TQ3_4S 1
++
++struct block_tq3_4s
++{
++    uint8_t d[4];      // E3M5 scale, one per group of 8
++    uint8_t qs[12];    // 3-bit centroid indices, 8 packed per 3-byte group
++};
++
++#if defined(DATA_A_TQ3_4S)
++#define QUANT_K QUANT_K_TQ3_4S
++#define QUANT_R QUANT_R_TQ3_4S
++#define QUANT_AUXF 1
++#define A_TYPE block_tq3_4s
++#endif
++
++// E3M5 mini-float scale decode. Byte 0 means "zero scale" and is NOT
++// representable by the formula -- dropping that case is the silently-wrong-numbers
++// failure TYPE-ID-ALLOCATION.md 3.1.1 warns about. Exact mirror of
++// arifi_tq3_4s_decode_scale() in ggml/src/ggml-arifi-turbo-weights.c:447-452.
++#if defined(DATA_A_TQ3_4S)
++float tq3_4s_decode_scale(uint b) {
++    if (b == 0u) return 0.0;
++    const int   e = int(b >> 5) - 9;
++    const float m = 1.0 + float(b & 31u) / 32.0;
++    return ldexp(m, e);
++}
++#endif
++
+ #if defined(DATA_A_IQ4_NL) || defined(DATA_A_IQ4_XS)
+ const int8_t kvalues_iq4nl_const[16] = {
+     int8_t(-127), int8_t(-104), int8_t(-83), int8_t(-65), int8_t(-49), int8_t(-35), int8_t(-22), int8_t(-10),
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index 3576dc0af..f398ab2b0 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -973,6 +973,21 @@ void process_shaders() {
+     string_to_spv("dequant_tq3_1s", "dequant_tq3_1s.comp",
+         merge_maps(base_dict, {{"DATA_A_TQ3_1S", "1"}, {"D_TYPE", "float16_t"}}));
+ 
++    // tq3 family, TQ3_4S (type-id 48). Same block geometry, packing, centroids
++    // and rotation as TQ3_1S -- only the scale representation differs (four E3M5
++    // bytes per group of 8 instead of two f16 halves), so the same three-point
++    // rationale above binds: explicit generation, 32-thread pin host-side, no
++    // coopmat/coopmat2, no GET_ROWS via get_rows_quant.comp (that path applies no
++    // inverse WHT and would hand back un-rotated centroid*scale values).
++    string_to_spv("mul_mat_vec_tq3_4s_f32_f32", "mul_mat_vec_tq3_4s.comp",
++        merge_maps(base_dict, {{"DATA_A_TQ3_4S", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
++    string_to_spv("mul_mat_vec_tq3_4s_f16_f32", "mul_mat_vec_tq3_4s.comp",
++        merge_maps(base_dict, {{"DATA_A_TQ3_4S", "1"}, {"B_TYPE", "float16_t"}, {"B_TYPEV2", "f16vec2"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}));
++    string_to_spv("mul_mat_vec_id_tq3_4s_f32_f32", "mul_mat_vec_tq3_4s.comp",
++        merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {"DATA_A_TQ3_4S", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
++    string_to_spv("dequant_tq3_4s", "dequant_tq3_4s.comp",
++        merge_maps(base_dict, {{"DATA_A_TQ3_4S", "1"}, {"D_TYPE", "float16_t"}}));
++
+     // Activation pre-rotation for the rotated matmul path. Type-independent:
+     // TQ3 and TQ4 share the same 32-element sign pattern and butterfly, so one
+     // pipeline serves both. Takes no DATA_A_* define -- it only touches the

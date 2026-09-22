@@ -1,0 +1,105 @@
+From 11da444918655de0f488ea9097fbf0d8fc6ef3cd Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 19:27:44 -0400
+Subject: [PATCH] escha: F-125 fix - full 64-bit pair sourcing + row-parity
+ correction (K=2 AND K=3)
+
+Two defects, both located by the independent real-tensor correlation probe (a
+known-good GGUF of the same base checkpoint, positive control first) rather than
+by any test that compared our implementations against each other:
+1. K=2 windowed a bare u16 where the PTX builds a 64-bit pair and windows a
+   32-bit suffix - 7 of every 8 weights decoded from truncated data (F-125).
+2. The tile scatter row term used (c & 1) where the PTX predicate inverts it;
+   this one hit BOTH K values and is why K=3 nulled with correct sourcing.
+Whole-tensor correlation over 25 projections: 0.000 -> 0.936 worst, 0.987 median.
+End-to-end Vulkan coherence now PASSES (banked GOAL5-FIX-coherence-vulkan.txt).
+
+Origin: ArifiLabs (native)
+Measured-effect: Escha-W2 native decode goes from token salad to coherent; worst-projection weight correlation 0.9358, K=2 and K=3 both correct
+---
+ ggml/src/ggml-cpu/ops.cpp                       | 11 ++++++++---
+ .../ggml-vulkan/vulkan-shaders/escha_mm.comp    | 17 +++++++----------
+ 2 files changed, 15 insertions(+), 13 deletions(-)
+
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+index 71f151fd3..93ae14c89 100644
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -12783,11 +12783,16 @@ static void escha_build_k3_lanes(void) {
+ // decode one 16x16 tile into wtile[row=in][col=out]
+ static inline void escha_decode_tile_k2(const uint16_t * w, float wtile[16][16]) {
+     for (int lane = 0; lane < 32; ++lane) {
+-        const uint32_t word = w[lane ^ 1];
++        // lane windows a 32-bit suffix of a 64-bit pair; a bare u16 truncates it
++        uint32_t lo, hi;
++        memcpy(&lo, (const char *) w + 4*((lane >> 1) & 15), 4);
++        memcpy(&hi, (const char *) w + 4*(((lane >> 1) - 1) & 15), 4);
++        const uint64_t z = (uint64_t) lo | ((uint64_t) hi << 32);
++        const uint32_t word = (uint32_t) (z >> ((lane & 1) ? 0 : 16));
+         const int colbase = 2*(lane >> 3) + ((lane >> 2) & 1);
+         const int rowbase = 2*(lane & 3);
+         for (int c = 0; c < 8; ++c) {
+-            const int row = rowbase + (c & 1) + 8*(1 - ((c >> 1) & 1));
++            const int row = rowbase + (1 - (c & 1)) + 8*(1 - ((c >> 1) & 1));
+             const int col = (c < 4 ? 8 : 0) + colbase;
+             wtile[row][col] = escha_cba_lut[(word >> (2*c)) & 0xFFFF];
+         }
+@@ -12807,7 +12812,7 @@ static inline void escha_decode_tile_k3(const uint16_t * w, float wtile[16][16])
+         const int colbase = 2*(lane >> 3) + ((lane >> 2) & 1);
+         const int rowbase = 2*(lane & 3);
+         for (int c = 0; c < 8; ++c) {
+-            const int row = rowbase + (c & 1) + 8*(1 - ((c >> 1) & 1));
++            const int row = rowbase + (1 - (c & 1)) + 8*(1 - ((c >> 1) & 1));
+             const int col = (c < 4 ? 8 : 0) + colbase;
+             const uint64_t win = (c < 4) ? (p >> (3*c)) : (r >> (3*(c - 4)));
+             wtile[row][col] = escha_cba_lut[(uint32_t)(win & 0xFFFF)];
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+index a05c01e05..63c3ea346 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+@@ -79,19 +79,13 @@ float escha_F(uint xw) {
+     return unpackHalf2x16(f32_to_f16_rte(s)).x;    // value of the f16-rounded sum
+ }
+ 
+-uint word16(uint base_u32, uint idx) {
+-    return (data_a[base_u32 + (idx >> 1u)] >> (16u * (idx & 1u))) & 0xFFFFu;
+-}
+-
+-#if ESCHA_K == 3
+-// 64-bit funnel shift via two u32s, shift in {0,8,16,24,12,20,28,36}; no shaderInt64
++// 64-bit funnel shift via two u32s; no shaderInt64
+ uint shr64_32(uint lo, uint hi, uint s) {
+     if (s == 0u)  return lo;
+     if (s < 32u)  return (lo >> s) | (hi << (32u - s));
+     if (s == 32u) return hi;
+     return hi >> (s - 32u);
+ }
+-#endif
+ 
+ void hadamard128(uint tid) {
+     [[unroll]] for (uint step = 1u; step < 128u; step <<= 1u) {
+@@ -133,10 +127,13 @@ void main() {
+             [[unroll]] for (uint b = 0u; b < 4u; ++b) {
+                 const uint lane = lhi + b;
+ #if ESCHA_K == 2
+-                const uint word = word16(base, lane ^ 1u);
++                // lane windows a 32-bit suffix of a 64-bit pair, not one u16
++                const uint pw   = (lane >> 1u) & 15u;
++                const uint qw   = (pw + 15u) & 15u;
++                const uint word = shr64_32(data_a[base + pw], data_a[base + qw], ((lane & 1u) == 0u) ? 16u : 0u);
+                 [[unroll]] for (uint k = 0u; k < 4u; ++k) {
+                     const uint c   = c0 + k;
+-                    const uint row = 2u*b + (c & 1u) + 8u*(1u - ((c >> 1u) & 1u));
++                    const uint row = 2u*b + (1u - (c & 1u)) + 8u*(1u - ((c >> 1u) & 1u));
+                     acc += sh[t*16u + row] * escha_F((word >> (2u*c)) & 0xFFFFu);
+                 }
+ #else
+@@ -153,7 +150,7 @@ void main() {
+                 const uint rr   = shr64_32(zlo, zhi, sh0 + 12u);
+                 [[unroll]] for (uint k = 0u; k < 4u; ++k) {
+                     const uint c   = c0 + k;
+-                    const uint row = 2u*b + (c & 1u) + 8u*(1u - ((c >> 1u) & 1u));
++                    const uint row = 2u*b + (1u - (c & 1u)) + 8u*(1u - ((c >> 1u) & 1u));
+                     const uint win = (c < 4u) ? (pp >> (3u*c)) : (rr >> (3u*(c - 4u)));
+                     acc += sh[t*16u + row] * escha_F(win & 0xFFFFu);
+                 }

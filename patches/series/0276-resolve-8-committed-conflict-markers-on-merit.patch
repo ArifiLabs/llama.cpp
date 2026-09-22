@@ -1,0 +1,70 @@
+From 5d90b7e3f9c9b27a04e2d64450cb6cbd4e421a34 Mon Sep 17 00:00:00 2001
+From: m <arifilabs@users.noreply.github.com>
+Date: Sat, 15 Aug 2026 20:55:45 -0400
+Subject: [PATCH] resolve 8 committed conflict markers on merit
+
+---
+ .github/workflows/server-self-hosted.yml | 3 ---
+ conversion/__init__.py                   | 9 ---------
+ conversion/deepseek.py                   | 4 ----
+ 3 files changed, 16 deletions(-)
+
+diff --git a/.github/workflows/server-self-hosted.yml b/.github/workflows/server-self-hosted.yml
+index 9c3bc2bba..365c263ca 100644
+--- a/.github/workflows/server-self-hosted.yml
++++ b/.github/workflows/server-self-hosted.yml
+@@ -171,7 +171,6 @@ jobs:
+           export LLAMA_ARG_BACKEND_SAMPLING=1
+           ./tests.sh
+ 
+-<<<<<<< ours
+       - name: Tests (GPUx2)
+         id: server_integration_tests_gpu2
+         if: ${{ !github.event.pull_request }}
+@@ -190,8 +189,6 @@ jobs:
+           export GGML_CUDA_DEVICES=2 LLAMA_ARG_BACKEND_SAMPLING=1
+           ./tests.sh
+ 
+-=======
+->>>>>>> theirs
+   server-kleidiai:
+     runs-on: ah-ubuntu_22_04-c8g_8x
+ 
+diff --git a/conversion/__init__.py b/conversion/__init__.py
+index d59f52bb6..df32cda51 100644
+--- a/conversion/__init__.py
++++ b/conversion/__init__.py
+@@ -61,16 +61,7 @@ TEXT_MODEL_MAP: dict[str, str] = {
+     "Lfm2DSparkDraftModel": "qwen",
+     "LingDSparkModel": "qwen",
+     "DeepseekV4ForCausalLM": "deepseek",
+-<<<<<<< ours
+-<<<<<<< ours
+-=======
+     "DFlashLagunaForCausalLM": "laguna",
+-
+->>>>>>> theirs
+-    "DeepseekV4DSparkModel": "deepseek",
+-=======
+-    "DFlashLagunaForCausalLM": "laguna",
+->>>>>>> theirs
+     "DistilBertForMaskedLM": "bert",
+     "DistilBertForSequenceClassification": "bert",
+     "DistilBertModel": "bert",
+diff --git a/conversion/deepseek.py b/conversion/deepseek.py
+index fe9366437..817eb7612 100644
+--- a/conversion/deepseek.py
++++ b/conversion/deepseek.py
+@@ -683,12 +683,8 @@ class DeepseekV4Model(TextModel):
+         self.gguf_writer.add_hyper_connection_sinkhorn_iterations(hparams["hc_sinkhorn_iters"])
+         self.gguf_writer.add_hyper_connection_epsilon(hparams["hc_eps"])
+         self.gguf_writer.add_hash_layer_count(hparams["num_hash_layers"])
+-<<<<<<< ours
+         if self.model_arch == gguf.MODEL_ARCH.DEEPSEEK4:
+             self.gguf_writer.add_embedding_length_out(hparams["hidden_size"] * hparams["hc_mult"])
+-=======
+-        self.gguf_writer.add_embedding_length_out(hparams["hidden_size"] * hparams["hc_mult"])
+->>>>>>> theirs
+         if self.mtp_only and (num_nextn_predict_layers := hparams.get("num_nextn_predict_layers", 0)) > 0:
+             self.gguf_writer.add_nextn_predict_layers(num_nextn_predict_layers)
+ 

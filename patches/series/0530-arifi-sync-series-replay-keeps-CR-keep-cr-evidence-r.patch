@@ -1,0 +1,31 @@
+From f7fa7aa5286ad2e917d1541c39ca7709ca689082 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 06:10:36 -0400
+Subject: [PATCH] arifi-sync: series replay keeps CR (--keep-cr); evidence
+ receipts restored to their original LF bytes
+
+The -text renormalize took the CRLF checkout bytes as the blob, turning LF receipts into CRLF
+blobs that git am (which strips CR by default) could never reproduce. Receipts are back to the
+LF bytes their tools wrote; replay now applies with --keep-cr and core.autocrlf=false so any
+future byte-exact receipt survives the round trip.
+
+Origin: ArifiLabs (native) - HQ seat-58 root fix for replay parity
+Measured-effect: UNMEASURED - tooling and evidence bytes
+Lane: lane-233
+---
+ tools/arifi-sync/arifi_sync.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
+index e9f6fc912..d6762054d 100644
+--- a/tools/arifi-sync/arifi_sync.py
++++ b/tools/arifi-sync/arifi_sync.py
+@@ -679,7 +679,7 @@ def _replay(repo: str, cfg: dict, onto: str, series_path: str, expect_ref: str =
+             # Git-for-Windows default (true) `git am` eol-converts any file the base's .gitattributes
+             # does not yet mark -text, and the replayed tree differs from arifi/main by line endings
+             # alone (HQ seat-58, 2026-09-14: eight evidence receipts, 1584 lines swapped).
+-            rc, out, err = git(wt, "-c", "core.autocrlf=false", "am", "--keep-non-patch", patch, check=False)
++            rc, out, err = git(wt, "-c", "core.autocrlf=false", "am", "--keep-cr", "--keep-non-patch", patch, check=False)
+             if rc != 0:
+                 say("\n" + "=" * 78)
+                 say("REPLAY FAILED - STOPPING. Nothing was auto-resolved.")

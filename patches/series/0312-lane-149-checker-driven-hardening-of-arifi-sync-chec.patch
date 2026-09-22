@@ -1,0 +1,255 @@
+From 466345de6f80c76238b8d0d451ec2c3645e9b373 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 23:52:50 -0400
+Subject: [PATCH] lane-149 checker-driven hardening of arifi-sync-check:
+ FA_TYPE/QUANT_K literal spellings, ordinal (not line) pins, per-definition
+ completeness, any array type, recursive shader walk, scalar-mirror class,
+ expected-count assertions
+
+---
+ ggml/src/ggml-vulkan/arifi_sync_check.py | 143 +++++++++++++++++------
+ 1 file changed, 109 insertions(+), 34 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/arifi_sync_check.py b/ggml/src/ggml-vulkan/arifi_sync_check.py
+index 9da2e41ca..3f38d791c 100644
+--- a/ggml/src/ggml-vulkan/arifi_sync_check.py
++++ b/ggml/src/ggml-vulkan/arifi_sync_check.py
+@@ -80,7 +80,9 @@ def initialiser(text, idx):
+                 return text[start + 1:i]
+     return ""
+ 
+-GLSL_ARRAY = re.compile(r"(?:const\s+)?(?:float|uint|int|uint32_t|int8_t|uint8_t|uvec2|vec4)\s+"
++# ANY type, not a fixed list: the first version enumerated (float|uint|...) and a LUT declared
++# `float16_t` or `f16vec2` walked straight past completeness (lane-149 checker, finding 6).
++GLSL_ARRAY = re.compile(r"(?:const\s+)?(?:[A-Za-z_]\w*)\s+"
+                         r"(?P<name>[A-Za-z_]\w*)\s*\[\s*(?P<n>[0-9]+)\s*\]\s*=")
+ C_ARRAY = re.compile(r"(?:static\s+)?(?:__constant__\s+|constexpr\s+)?(?:const\s+)?"
+                      r"(?:float|double|int8_t|uint8_t|int|uint32_t)\s+"
+@@ -139,11 +141,11 @@ PAIRS = [
+     (TURBO,   "CENTROIDS_4BIT",  "copy_to_quant.comp",     "TC4"),
+     (CUDA,    "TURBO_MID_4BIT",  "copy_to_quant.comp",     "TM4"),
+     (WEIGHTS, "search",          "copy_to_quant.comp",     "SCALES"),
+-    (TURBO,   "CENTROIDS_3BIT",  "dequant_funcs.glsl",     "centroids@772"),
+-    (TURBO,   "CENTROIDS_2BIT",  "dequant_funcs.glsl",     "centroids@814"),
+-    (TURBO,   "CENTROIDS_4BIT",  "dequant_funcs.glsl",     "centroids@834"),
+-    (WEIGHTS, "TQ3_0_CENTROIDS", "dequant_funcs.glsl",     "centroids@860"),
+-    (WEIGHTS, "TQ4_0_CENTROIDS", "dequant_funcs.glsl",     "centroids@910"),
++    (TURBO,   "CENTROIDS_3BIT",  "dequant_funcs.glsl",     "centroids#0"),
++    (TURBO,   "CENTROIDS_2BIT",  "dequant_funcs.glsl",     "centroids#1"),
++    (TURBO,   "CENTROIDS_4BIT",  "dequant_funcs.glsl",     "centroids#2"),
++    (WEIGHTS, "TQ3_0_CENTROIDS", "dequant_funcs.glsl",     "centroids#3"),
++    (WEIGHTS, "TQ4_0_CENTROIDS", "dequant_funcs.glsl",     "centroids#4"),
+     (TURBO,   "CENTROIDS_3BIT",  "dequant_funcs_cm2.glsl", "centroids"),
+     (WEIGHTS, "TQ3_0_CENTROIDS", "dequant_tq3_1s.comp",    "centroids"),
+     (WEIGHTS, "TQ3_0_SIGNS",     "dequant_tq3_1s.comp",    "signs"),
+@@ -152,17 +154,17 @@ PAIRS = [
+     (WEIGHTS, "TQ4_0_CENTROIDS", "dequant_tq4_1s.comp",    "centroids"),
+     (WEIGHTS, "TQ3_0_SIGNS",     "dequant_tq4_1s.comp",    "signs"),
+     (TURBO,   "CENTROIDS_3BIT",  "dequant_turbo3_0.comp",  "centroids"),
+-    (TURBO,   "CENTROIDS_2BIT",  "flash_attn_dequant.glsl", "c@138"),
+-    (TURBO,   "CENTROIDS_3BIT",  "flash_attn_dequant.glsl", "c@152"),
+-    (TURBO,   "CENTROIDS_4BIT",  "flash_attn_dequant.glsl", "c@169"),
++    (TURBO,   "CENTROIDS_2BIT",  "flash_attn_dequant.glsl", "c#0"),
++    (TURBO,   "CENTROIDS_3BIT",  "flash_attn_dequant.glsl", "c#1"),
++    (TURBO,   "CENTROIDS_4BIT",  "flash_attn_dequant.glsl", "c#2"),
+     (WEIGHTS, "TQ3_0_CENTROIDS", "mul_mat_vec_tq3_1s.comp", "TQ3_CENTROIDS"),
+     (WEIGHTS, "TQ3_0_SIGNS",     "mul_mat_vec_tq3_1s.comp", "TQ3_SIGNS"),
+     (WEIGHTS, "TQ3_0_CENTROIDS", "mul_mat_vec_tq3_4s.comp", "TQ3_CENTROIDS"),
+     (WEIGHTS, "TQ3_0_SIGNS",     "mul_mat_vec_tq3_4s.comp", "TQ3_SIGNS"),
+     (WEIGHTS, "TQ4_0_CENTROIDS", "mul_mat_vec_tq4_1s.comp", "TQ4_CENTROIDS"),
+     (WEIGHTS, "TQ3_0_SIGNS",     "mul_mat_vec_tq4_1s.comp", "TQ4_SIGNS"),
+-    (WEIGHTS, "TQ3_0_CENTROIDS", "mul_mm_funcs.glsl",      "centroids@621"),
+-    (WEIGHTS, "TQ4_0_CENTROIDS", "mul_mm_funcs.glsl",      "centroids@654"),
++    (WEIGHTS, "TQ3_0_CENTROIDS", "mul_mm_funcs.glsl",      "centroids#0"),
++    (WEIGHTS, "TQ4_0_CENTROIDS", "mul_mm_funcs.glsl",      "centroids#1"),
+     (WEIGHTS, "TQ3_0_SIGNS",     "tq_rotate_act.comp",     "TQ_SIGNS"),
+     (TURBO,   "turbo_cpu_s1",    "turbo_wht.comp",         "S1"),
+     (TURBO,   "turbo_cpu_s2",    "turbo_wht.comp",         "S2"),
+@@ -182,6 +184,8 @@ WAIVED = {
+     ("types.glsl", "iq2xs_grid_const"):
+         "upstream iq2xs grid: GLSL packs each 8-byte C entry into a uvec2, so an elementwise "
+         "diff is not defined; the C table is upstream-frozen (ggml-common.h iq2xs_grid)",
++    ("mul_mat_vec_q6_k.comp", "sum"):
++        "local accumulator zero-init (FLOAT_TYPE sum[4] = {0,0,0,0}), not a mirror",
+     ("types.glsl", "iq2s_grid_const"):
+         "upstream iq2s grid, same uvec2 packing as iq2xs_grid_const",
+     ("types.glsl", "kvalues_rocmfpx_fp3_const"):
+@@ -192,10 +196,21 @@ WAIVED = {
+         "(ggml/rocmfpx/rocmfpx.c), not a literal 64-entry array",
+ }
+ 
++def shader_files():
++    """Every shader in the tree, subdirectories included (feature-tests/ was missed at first)."""
++    out = []
++    for dirpath, _, files in os.walk(SH):
++        for fn in sorted(files):
++            if fn.endswith((".comp", ".glsl")):
++                out.append(os.path.relpath(os.path.join(dirpath, fn), SH).replace("\\", "/"))
++    return sorted(out)
++
+ def check_lut_pairs():
+-    checked = set()
++    # `NAME#K` pins the K-th definition of NAME in that shader (ORDINAL, not line number: a pin by
++    # line silently stopped matching as soon as anything above it moved - lane-149 checker, f.2).
++    covered = set()
+     for cfile, csym, gfile, gsym in PAIRS:
+-        gname, _, at = gsym.partition("@")
++        gname, _, ordinal = gsym.partition("#")
+         cs = c_arrays(cfile).get(csym)
+         gs = glsl_arrays(gfile).get(gname)
+         if not cs:
+@@ -205,32 +220,39 @@ def check_lut_pairs():
+         if not gs:
+             fail("PAIR %s:%s -> %s:%s : GLSL symbol NOT FOUND" % (cfile, csym, gfile, gname))
+             continue
+-        checked.add((gfile, gname))
++        if ordinal:
++            k = int(ordinal)
++            if k >= len(gs):
++                fail("PAIR %s:%s#%d : that shader has only %d definition(s) of %s - the pin is "
++                     "stale, so the pair was NOT being diffed" % (gfile, gname, k, len(gs), gname))
++                continue
++            targets = [(k, gs[k])]
++        else:
++            targets = list(enumerate(gs))
+         want = cs[0][1]
+         for line, vals in cs[1:]:
+             if not approx_equal(want, vals):
+                 fail("C<->C DIVERGENT: %s:%s has copies that disagree (line %d)"
+                      % (cfile, csym, line))
+-        for line, vals in gs:
+-            if at and str(line) != at:
+-                continue
++        for k, (line, vals) in targets:
++            covered.add((gfile, gname, k))
+             if not approx_equal(want, vals):
+                 fail("DIVERGENT: %s:%d %s does not match %s:%s\n"
+                      "        C   (%d values): %s\n        GLSL(%d values): %s"
+                      % (gfile, line, gname, cfile, csym,
+                         len(want), want[:8], len(vals), vals[:8]))
+-    # completeness: no unregistered constant array may exist in the shader tree
+-    for fname in sorted(os.listdir(SH)):
+-        if not fname.endswith((".comp", ".glsl")):
+-            continue
++    # completeness: EVERY definition must be covered by a row (not merely the name - deleting one
++    # of several rows for the same name used to slip past: lane-149 checker, finding 4)
++    for fname in shader_files():
+         for name, defs in glsl_arrays(fname).items():
+-            if not defs or not defs[0][1]:
+-                continue
+-            if (fname, name) in checked or (fname, name) in WAIVED:
+-                continue
+-            fail("UNREGISTERED constant array %s:%d %s — add a PAIR row naming its C source of "
+-                 "truth, or a WAIVED entry with a reason, in ggml-vulkan/arifi_sync_check.py"
+-                 % (fname, defs[0][0], name))
++            for k, (line, vals) in enumerate(defs):
++                if not vals:
++                    continue
++                if (fname, name, k) in covered or (fname, name) in WAIVED:
++                    continue
++                fail("UNREGISTERED constant array %s:%d %s (definition #%d) - add a PAIR row naming "
++                     "its C source of truth, or a WAIVED entry with a reason, in "
++                     "ggml-vulkan/arifi_sync_check.py" % (fname, line, name, k))
+     for key, reason in WAIVED.items():
+         if not reason.strip():
+             fail("WAIVED entry %s carries no reason" % (key,))
+@@ -275,8 +297,13 @@ def blck_sizes(enum):
+ def check_fa_type_ids(enum):
+     text = read(os.path.join(SH, "flash_attn_base.glsl"))
+     n = 0
+-    for m in re.finditer(r"^#define\s+FA_TYPE_([A-Z0-9_]+)\s+([0-9]+)u", text, re.M):
+-        name, val = m.group(1), int(m.group(2))
++    # accept every legal spelling: `201u`, `201U`, `201`, `0xC9`, plus a trailing comment. The
++    # first version demanded a lowercase `u` and a `44U` plant sailed through (checker, f.1).
++    for m in re.finditer(
++            r"^#define\s+FA_TYPE_([A-Z0-9_]+)\s+(0[xX][0-9a-fA-F]+|[0-9]+)\s*[uU]?\s*(?://.*)?$",
++            text, re.M):
++        name, lit = m.group(1), m.group(2)
++        val = int(lit, 16) if lit[:2].lower() == "0x" else int(lit)
+         n += 1
+         if name not in enum:
+             fail("FA_TYPE_%s has no GGML_TYPE_%s in ggml.h" % (name, name))
+@@ -301,7 +328,10 @@ QUANT_K_ALIAS = {
+ def check_quant_k(enum, blck):
+     text = read(os.path.join(SH, "types.glsl"))
+     n = 0
+-    for m in re.finditer(r"^#define\s+QUANT_K_([A-Z0-9_]+)\s+([0-9]+)\s*$", text, re.M):
++    # a trailing comment is legal GLSL and ordinary style; requiring end-of-line let a wrong
++    # block size hide behind `// probe` (checker, f.3).
++    for m in re.finditer(r"^#define\s+QUANT_K_([A-Z0-9_]+)\s+([0-9]+)\s*(?://.*|/\*.*)?$",
++                         text, re.M):
+         name, val = m.group(1), int(m.group(2))
+         name = QUANT_K_ALIAS.get(name, name)
+         n += 1
+@@ -405,6 +435,38 @@ def check_type_list_sets():
+                      % (name, base_line, line, base_line, only_a, line, only_b))
+     return len(regions), len(groups)
+ 
++# ============================================================== 6. scalar mirrors
++# Scalar constants mirroring a C value. The C side is sometimes a #define and sometimes an inline
++# literal inside a function, so the rule is: the GLSL value must still appear as a float literal in
++# the named C file. Change the C constant and the GLSL copy stops matching, which is the point.
++SCALARS = [
++    (TURBO,   "copy_to_quant.comp",      "TINV",           "1/sqrt(128) turbo WHT normaliser"),
++    (TURBO,   "copy_to_quant.comp",      "TINV_T2",        "1/sqrt(128) turbo2"),
++    (TURBO,   "copy_to_quant.comp",      "TINV_T4",        "1/sqrt(128) turbo4"),
++    (WEIGHTS, "copy_to_quant.comp",      "TQ4_INV_SQRT32", "TQ_INV_SQRT32 = 1/sqrt(32)"),
++    (WEIGHTS, "copy_from_quant.comp",    "TQ4_INV_SQRT32", "TQ_INV_SQRT32"),
++    (WEIGHTS, "mul_mat_vec_tq4_1s.comp", "TQ4_INV_SQRT32", "TQ_INV_SQRT32"),
++    (WEIGHTS, "tq_rotate_act.comp",      "TQ_INV_SQRT32",  "TQ_INV_SQRT32"),
++]
++
++def check_scalars():
++    n = 0
++    for cfile, gfile, gname, note in SCALARS:
++        gtext = read(os.path.join(SH, gfile))
++        m = re.search(r"(?:const\s+float\s+%s\s*=\s*|#define\s+%s\s+)([-+0-9.eE]+)"
++                      % (gname, gname), gtext)
++        if not m:
++            fail("SCALAR %s:%s NOT FOUND (renamed?) - the pair was not being checked"
++                 % (gfile, gname))
++            continue
++        n += 1
++        val = float(m.group(1).rstrip("fF"))
++        cvals = numbers(read(os.path.join(ROOT, cfile)))
++        if not any(abs(v - val) <= 1e-12 + 1e-9 * abs(val) for v in cvals):
++            fail("SCALAR DIVERGENT: %s:%s = %r (%s) does not appear anywhere in %s. A wrong scale "
++                 "is a silently wrong number, never an abort." % (gfile, gname, val, note, cfile))
++    return n
++
+ # ============================================================== 5. FA K/V types have a FA_TYPE id
+ def check_fa_kv_coverage():
+     text = read(VKCPP)
+@@ -429,6 +491,19 @@ def main():
+     n_qk = check_quant_k(enum, blck)
+     n_regions, n_sets = check_type_list_sets()
+     n_kv = check_fa_kv_coverage()
++    n_scalar = check_scalars()
++
++    # EXPECTED COUNTS. Without these, every "the parser stopped seeing it" bug is invisible: the
++    # summary line prints a smaller number and the build goes green (lane-149 checker, f.5).
++    # Changing a count is a DELIBERATE edit that lands with the change that caused it.
++    for label, got, want in (("FA_TYPE ids", n_fa, 16), ("QUANT_K sizes", n_qk, 35),
++                             ("marked type lists", n_regions, 16), ("SETs", n_sets, 4),
++                             ("FA K/V types", n_kv, 12), ("scalar mirrors", n_scalar, len(SCALARS)),
++                             ("LUT pairs", len(PAIRS), 49)):
++        if got != want:
++            fail("COUNT CHANGED: %s = %d, expected %d. If you added or removed one deliberately, "
++                 "update the expected count in arifi_sync_check.py main(); if you did not, a mirror "
++                 "just stopped being checked." % (label, got, want))
+ 
+     if errors:
+         sys.stderr.write("\n=== arifi-sync-check FAILED: %d divergence(s) ===\n" % len(errors))
+@@ -437,9 +512,9 @@ def main():
+         sys.stderr.write("\nThese pairs are hand-synced by construction (failure-ledger F-110).\n"
+                          "Fix the mirror, or update the C source of truth — never silence this.\n")
+         return 1
+-    print("arifi-sync-check OK: %d LUT pairs, %d FA_TYPE ids, %d QUANT_K sizes, "
+-          "%d marked type lists in %d sets, %d FA K/V types"
+-          % (len(PAIRS), n_fa, n_qk, n_regions, n_sets, n_kv))
++    print("arifi-sync-check OK: %d LUT pairs, %d scalar mirrors, %d FA_TYPE ids, %d QUANT_K "
++          "sizes, %d marked type lists in %d sets, %d FA K/V types"
++          % (len(PAIRS), n_scalar, n_fa, n_qk, n_regions, n_sets, n_kv))
+     return 0
+ 
+ if __name__ == "__main__":

@@ -1,0 +1,773 @@
+From 50af80e8b4ed1e2b967420bcc5070e1599d8bb5e Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 9 Sep 2026 19:17:22 -0400
+Subject: [PATCH] server/llama : device checkpoint storage-ID ownership +
+ quantized device-view extent (R45, lane-229)
+
+Two defects in the R44 device-resident context-checkpoint path, both of which corrupt a restored checkpoint on the drafted seat line. The first aborts the server; the second is silent.
+
+1. tools/server/server-context.cpp ctx_ckpt_flags() handed out storage ids from a bare modulo counter, 1 + (ckpt_storage_next++ % n_ring), on the premise that the live checkpoint list only ever holds the last n created entries. It does not: thinning keeps the FIRST entry and exempts tool-call anchors, and prefix invalidation erases NEWER entries. The counter therefore wraps onto an id a live checkpoint still owns, the new save overwrites that checkpoint's device buffers under the same storage key, and restoring the old metadata reads the new buffers - the "~llama_io_read_device: memory buffer mismatch" abort at task 594 of the R44 c1 sanity run when the totals differ, and a silent wrong-state restore when they happen to match. server_ckpt_storage_alloc() (new header tools/server/server-ckpt-storage.h) allocates only an id no live ON_DEVICE checkpoint owns, scanning after eviction and after the new entry is appended, which is where create_checkpoint calls it. It returns 0 - fall back to a host image - when the ring exceeds the 255 usable storage ids or every id is owned; with ring = n_ctx_checkpoints + 1 and a list capped at n_ctx_checkpoints entries, an id is always free.
+
+2. src/llama-context.cpp built its device views with bytes/ggml_element_size(). For a quantized tensor that is the BLOCK size, so the expression yields blocks while ggml_view_1d and ggml_new_tensor_1d take an ELEMENT count. With a q8_0 KV cache every device-checkpoint view was 1/32 of the intended extent: the image carried a fraction of the cells and the restore silently returned mostly stale KV. f16/f32 have block size 1, which is why every existing device test - all of them f16 - passed. The seat line runs q8_0 K/V.
+
+Also hardening: llama_io_read_device's validation and copy moved out of the destructor into an explicit commit(), called by state_seq_set_data only after state_seq_read_data returns cleanly, so a failed deserialization can no longer copy a partial request set or abort the process during cleanup. The size-guard abort now names the branch and both byte totals; the R44 crash logs had neither.
+
+tests: tests/test-ctx-checkpoint-storage.cpp is a pure allocator regression - Astra's capacity-32 counterexample plus the anchor, invalidation, capacity, two-slot and reserved-id-0 variants. It drives both allocators, so one run receipts RED (R44 reuses live id 1 at creation 34) and GREEN (R45 holds). test-save-load-state gains Test 10: save A at 40 cells under an allocator-issued id, advance to 60, rotate past a full ring while A stays live, restore A and compare against a host-image control - f16 and q8_0, device and host-control legs. 54 of 54 generated archs pass. LLAMA_R45_RED_QUANT_VIEW=1 restores the old view math for one run so the q8_0 RED stays reproducible without a rebuild.
+
+Origin: fork-authored (ArifiLabs lane-229 R45, Opus 5 MEDIUM, kernel-maker); repairs the ring introduced by 6cea1530a (R31 P1/P2, FreeToken M14/M15); crash analysis ASTRA-R44-CRASH-ANALYSIS.md
+Measured-effect: UNMEASURED for speed - correctness only. Fixes the reproducible R44 abort at task 594 of the c1 drafted sanity run (FIX-df2-L2/L5); served A/B in the lane-229 report
+Lane: lane-229
+---
+ src/llama-context.cpp                 |  53 +++++-
+ tests/CMakeLists.txt                  |   6 +
+ tests/test-ctx-checkpoint-storage.cpp | 262 ++++++++++++++++++++++++++
+ tests/test-save-load-state.cpp        | 188 ++++++++++++++++++
+ tools/server/CMakeLists.txt           |   1 +
+ tools/server/server-ckpt-storage.h    |  62 ++++++
+ tools/server/server-context.cpp       |  19 +-
+ 7 files changed, 578 insertions(+), 13 deletions(-)
+ create mode 100644 tests/test-ctx-checkpoint-storage.cpp
+ create mode 100644 tools/server/server-ckpt-storage.h
+
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 1e2685f1b..f5f9408ed 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -3207,6 +3207,21 @@ private:
+     std::vector<uint8_t> temp_buffer;
+ };
+ 
++// R45 (lane-229): ggml_view_1d and ggml_new_tensor_1d take an ELEMENT count, but a quantized
++// tensor's "element size" is its BLOCK size, so bytes/ggml_element_size() yields BLOCKS. With a
++// q8_0 KV cache (32 elements per 34-byte block) every device-checkpoint view was 1/32 of the
++// intended extent, so the image carried a fraction of the cells and a restore silently returned
++// mostly stale KV. f16/f32 have block size 1 and were unaffected - which is why every existing
++// device test, all of them f16, passed. Found by Test 10's q8_0 leg against its host control.
++static int64_t llama_io_device_n_elements(const ggml_tensor * t, size_t size) {
++    const size_t ts = ggml_type_size(t->type);
++    GGML_ASSERT(size % ts == 0);
++    if (getenv("LLAMA_R45_RED_QUANT_VIEW")) {
++        return (int64_t) (size / ts); // the R44 math, for the RED receipt only
++    }
++    return (int64_t) (size / ts) * ggml_blck_size(t->type);
++}
++
+ class llama_io_write_device : public llama_io_write_i {
+ public:
+     llama_io_write_device(uint8_t * p, size_t len, llama_memory_buffers & mbufs) : ptr(p), buf_size(len), mbufs(mbufs)  {
+@@ -3238,7 +3253,7 @@ public:
+         for (const auto & winfo : winfos) {
+             auto * buft = ggml_backend_buffer_get_type(winfo.tensor->buffer);
+ 
+-            const int64_t n = winfo.size/ggml_element_size(winfo.tensor);
++            const int64_t n = llama_io_device_n_elements(winfo.tensor, winfo.size);
+ 
+             auto & mbuf = mbufs_new[buft];
+ 
+@@ -3344,7 +3359,12 @@ public:
+     llama_io_read_device(const uint8_t * p, size_t len, const llama_memory_buffers & mbufs) : ptr(p), buf_size(len), mbufs(mbufs) {
+     }
+ 
+-    ~llama_io_read_device() {
++    // R45 (lane-229): validation + copy is an explicit SUCCESS-ONLY step, not destructor work.
++    // As a destructor body it ran even when state_seq_read_data threw, so a half-built request
++    // set could be validated and copied, and the size guard could abort the process during
++    // cleanup (including while another exception was propagating). state_seq_set_data now calls
++    // commit() only after the deserialization returned cleanly.
++    void commit() {
+         llama_memory_buffers mbufs_new;
+ 
+         for (const auto & rinfo : rinfos) {
+@@ -3369,7 +3389,7 @@ public:
+         for (const auto & rinfo : rinfos) {
+             auto * buft = ggml_backend_buffer_get_type(rinfo.tensor->buffer);
+ 
+-            const int64_t n = rinfo.size/ggml_element_size(rinfo.tensor);
++            const int64_t n = llama_io_device_n_elements(rinfo.tensor, rinfo.size);
+ 
+             auto & mbuf = mbufs_new[buft];
+ 
+@@ -3382,7 +3402,10 @@ public:
+             const auto & mbuf_cur = mbufs.at(buft);
+ 
+             if (!mbuf_cur.buf || mbuf_cur.total_size != mbuf.total_size) {
+-                GGML_ABORT("%s: memory buffer mismatch\n", __func__);
++                // R45: name the branch and the two totals - the R44 crash logs had neither
++                GGML_ABORT("llama_io_read_device::commit: memory buffer mismatch (%s, saved %zu bytes / %d tensors, requested %zu bytes / %d tensors)\n",
++                        mbuf_cur.buf ? "size" : "no saved buffer",
++                        mbuf_cur.total_size, mbuf_cur.n_tensors, mbuf.total_size, mbuf.n_tensors);
+             }
+ 
+             if (mbuf_cur.n_tensors == mbuf.n_tensors) {
+@@ -3436,12 +3459,12 @@ public:
+ 
+                 const size_t n_copy = std::min(src_size - src_off, dst_size - dst_off);
+ 
+-                const size_t   el   = ggml_element_size(src_t);
+-                const int64_t n_el = (int64_t) (n_copy / el);
++                const int64_t n_el_src = llama_io_device_n_elements(src_t, n_copy);
++                const int64_t n_el_dst = llama_io_device_n_elements(dst_t, n_copy);
+ 
+-                auto * src_v = ggml_view_1d(ctx_scratch, src_t, n_el, src_off);
++                auto * src_v = ggml_view_1d(ctx_scratch, src_t, n_el_src, src_off);
+                 ggml_backend_view_init(src_v);
+-                auto * dst_v = ggml_view_1d(ctx_scratch, dst_t, n_el, dst_off);
++                auto * dst_v = ggml_view_1d(ctx_scratch, dst_t, n_el_dst, dst_off);
+                 ggml_backend_view_init(dst_v);
+ 
+                 ggml_backend_tensor_copy(src_v, dst_v);
+@@ -3575,6 +3598,7 @@ size_t llama_context::state_seq_get_data(llama_seq_id seq_id, uint8_t * dst, siz
+ 
+ size_t llama_context::state_seq_set_data(llama_seq_id seq_id, const uint8_t * src, size_t size, llama_state_seq_flags flags) {
+     std::unique_ptr<llama_io_read_i> io;
++    llama_io_read_device * io_dev = nullptr; // R45: non-owning, for the success-only commit()
+     if (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) {
+         // create a temporary io to read the magic and the src seq_id
+         io = std::make_unique<llama_io_read_host>(src, size);
+@@ -3592,7 +3616,9 @@ size_t llama_context::state_seq_set_data(llama_seq_id seq_id, const uint8_t * sr
+ 
+         GGML_ASSERT(mem_storage.find(key) != mem_storage.end());
+ 
+-        io = std::make_unique<llama_io_read_device>(src, size, mem_storage[key]);
++        auto io_d = std::make_unique<llama_io_read_device>(src, size, mem_storage[key]);
++        io_dev = io_d.get();
++        io = std::move(io_d);
+     } else {
+         io = std::make_unique<llama_io_read_host>(src, size);
+     }
+@@ -3607,7 +3633,14 @@ size_t llama_context::state_seq_set_data(llama_seq_id seq_id, const uint8_t * sr
+         llama_seq_id seq_id_read;
+         io->read(&seq_id_read, sizeof(seq_id_read));
+ 
+-        return state_seq_read_data(*io, seq_id, flags);
++        const size_t n_read = state_seq_read_data(*io, seq_id, flags);
++
++        if (io_dev) {
++            // only a clean deserialization may validate and copy the device buffers
++            io_dev->commit();
++        }
++
++        return n_read;
+     } catch (const std::exception & err) {
+         LLAMA_LOG_ERROR("%s: error loading state: %s\n", __func__, err.what());
+         return 0;
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 29b67be7c..aba4dba3e 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -150,6 +150,12 @@ endif ()
+ 
+ llama_build(test-recurrent-state-rollback.cpp)
+ llama_build(test-save-load-state.cpp)
++target_include_directories(test-save-load-state PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
++
++# R45 (lane-229): server context-checkpoint device storage-ID ownership. Pure allocator test -
++# no model, no context, so it runs in CI without the generate-models fixture.
++llama_build_and_test(test-ctx-checkpoint-storage.cpp)
++target_include_directories(test-ctx-checkpoint-storage PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
+ 
+ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
+     # these tests are disabled on Windows because they use internal functions not exported with LLAMA_API (when building with shared libraries)
+diff --git a/tests/test-ctx-checkpoint-storage.cpp b/tests/test-ctx-checkpoint-storage.cpp
+new file mode 100644
+index 000000000..cefdd9f18
+--- /dev/null
++++ b/tests/test-ctx-checkpoint-storage.cpp
+@@ -0,0 +1,262 @@
++// R45 (lane-229) regression: device storage-ID ownership in the server context-checkpoint ring.
++//
++// Astra's capacity-32 counterexample, plus the retention shapes that produce it in the server:
++// thinning keeps the FIRST entry, tool-call anchors are thinning-exempt, and prefix invalidation
++// erases NEWER entries. Under any of those the R44 modulo allocator wraps onto an id a LIVE
++// checkpoint still owns, and the newer save overwrites that checkpoint's device buffers.
++//
++// The test drives BOTH allocators through the same schedules, so one run receipts RED (R44
++// violates the ownership invariant) and GREEN (R45 holds it) without rebuilding anything.
++
++#include "server-ckpt-storage.h"
++
++#include <cstdint>
++#include <cstdio>
++#include <list>
++#include <set>
++#include <string>
++#include <vector>
++
++using ckpt_list = std::list<common_prompt_checkpoint>;
++using alloc_fn  = uint32_t (*)(const ckpt_list &, uint32_t &, uint32_t);
++
++// the R44 allocator, kept here only so the regression can go RED on it
++static uint32_t alloc_r44(const ckpt_list & /*checkpoints*/, uint32_t & next, uint32_t n_ring) {
++    return 1 + (next++ % n_ring);
++}
++
++static uint32_t alloc_r45(const ckpt_list & checkpoints, uint32_t & next, uint32_t n_ring) {
++    return server_ckpt_storage_alloc(checkpoints, next, n_ring);
++}
++
++// a faithful copy of the list bookkeeping in server-context.cpp create_checkpoint()
++struct sim_slot {
++    ckpt_list checkpoints;
++    uint32_t  next = 0;
++
++    int     n_ctx_checkpoints = 32;
++    int64_t checkpoint_min_step = 8192;
++
++    alloc_fn alloc = alloc_r45;
++
++    uint32_t create(int id_task, int64_t n_tokens, bool anchor = false) {
++        // evict checkpoints within min-step of a previous one, unless created by this task or an anchor
++        int64_t last = -1;
++        for (auto it = checkpoints.begin(); it != checkpoints.end(); ) {
++            if (!it->anchor && it->id_task != id_task && last >= 0 && it->n_tokens <= last + checkpoint_min_step) {
++                it = checkpoints.erase(it);
++                continue;
++            }
++            last = it->n_tokens;
++            ++it;
++        }
++
++        while (checkpoints.size() >= (size_t) n_ctx_checkpoints) {
++            checkpoints.erase(checkpoints.begin());
++        }
++
++        auto & cur = checkpoints.emplace_back();
++        cur.id_task = id_task;
++        cur.anchor  = anchor;
++        cur.n_tokens = n_tokens;
++        cur.pos_min  = (llama_pos) n_tokens;
++        cur.pos_max  = (llama_pos) n_tokens;
++
++        const uint32_t n_ring  = (uint32_t) n_ctx_checkpoints + 1;
++        const uint32_t storage = alloc(checkpoints, next, n_ring);
++
++        if (storage != 0) {
++            const llama_state_seq_flags flags =
++                LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY | LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(storage);
++            cur.flags_tgt = flags;
++            cur.flags_dft = flags;
++        }
++
++        return storage;
++    }
++
++    // prefix invalidation (server-context.cpp): drop checkpoints past the reuse position
++    void invalidate_after(int64_t n_tokens_keep) {
++        for (auto it = checkpoints.begin(); it != checkpoints.end(); ) {
++            if (it->n_tokens > n_tokens_keep) {
++                it = checkpoints.erase(it);
++                continue;
++            }
++            ++it;
++        }
++    }
++};
++
++static int n_fail = 0;
++
++static void check(bool ok, const std::string & what) {
++    printf("%-52s %s\n", what.c_str(), ok ? "OK" : "FAIL");
++    if (!ok) {
++        n_fail++;
++    }
++}
++
++// THE invariant: no two live ON_DEVICE checkpoints share a storage id, and 0 is never handed out
++// as a usable id. A duplicate means one checkpoint's device buffers were overwritten by another.
++static bool ids_unique(const ckpt_list & checkpoints, uint32_t * dup_out = nullptr) {
++    std::set<uint32_t> seen;
++    for (const auto & ckpt : checkpoints) {
++        // target and draft of the same entry share the entry's flags, so collect the entry's own
++        // ids first and only then check them against the ids other live entries already own
++        std::set<uint32_t> own;
++        for (const llama_state_seq_flags f : { ckpt.flags_tgt, ckpt.flags_dft }) {
++            if ((f & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) == 0) {
++                continue;
++            }
++            const uint32_t id = (f & LLAMA_STATE_SEQ_FLAGS_STORAGE_MASK) >> LLAMA_STATE_SEQ_FLAGS_STORAGE_SHIFT;
++            if (id == 0) {
++                if (dup_out) { *dup_out = 0; }
++                return false;
++            }
++            own.insert(id);
++        }
++
++        for (const uint32_t id : own) {
++            if (!seen.insert(id).second) {
++                if (dup_out) { *dup_out = id; }
++                return false;
++            }
++        }
++    }
++    return true;
++}
++
++// Astra's counterexample: retain the first checkpoint, thin every newer one against it, and run
++// past one full ring. Each task's checkpoint is thinned by the NEXT task, so the live list stays
++// at {first, latest} while the counter cycles through all n_ring ids.
++static bool sched_retain_first(alloc_fn alloc, int n_creations, uint32_t * dup_out) {
++    sim_slot slot;
++    slot.alloc = alloc;
++
++    slot.create(/*id_task =*/ 1, /*n_tokens =*/ 100);
++    for (int i = 2; i <= n_creations; ++i) {
++        slot.create(i, 100 + i);
++        if (!ids_unique(slot.checkpoints, dup_out)) {
++            return false;
++        }
++    }
++    return true;
++}
++
++// same, with a thinning-exempt tool-call anchor as the retained entry
++static bool sched_anchor(alloc_fn alloc, int n_creations, uint32_t * dup_out) {
++    sim_slot slot;
++    slot.alloc = alloc;
++
++    slot.create(/*id_task =*/ 1, /*n_tokens =*/ 100, /*anchor =*/ true);
++    slot.create(/*id_task =*/ 2, /*n_tokens =*/ 101, /*anchor =*/ true);
++    for (int i = 3; i <= n_creations; ++i) {
++        slot.create(i, 100 + i);
++        if (!ids_unique(slot.checkpoints, dup_out)) {
++            return false;
++        }
++    }
++    return true;
++}
++
++// prefix invalidation erases the NEWER entries, so the surviving old entry's id is behind the counter
++static bool sched_invalidation(alloc_fn alloc, int n_creations, uint32_t * dup_out) {
++    sim_slot slot;
++    slot.alloc = alloc;
++    slot.checkpoint_min_step = 0; // no thinning: capacity + invalidation shape the list
++
++    slot.create(1, 100);
++    for (int i = 2; i <= n_creations; ++i) {
++        slot.create(i, 100 + i);
++        if ((i % 4) == 0) {
++            slot.invalidate_after(100 + i - 2);
++        }
++        if (!ids_unique(slot.checkpoints, dup_out)) {
++            return false;
++        }
++    }
++    return true;
++}
++
++// plain FIFO churn at capacity: the R44 premise actually holds here, both allocators must pass
++static bool sched_capacity(alloc_fn alloc, int n_creations, uint32_t * dup_out) {
++    sim_slot slot;
++    slot.alloc = alloc;
++    slot.checkpoint_min_step = 0;
++
++    for (int i = 1; i <= n_creations; ++i) {
++        slot.create(i, 100 + (int64_t) i * 10000);
++        if (!ids_unique(slot.checkpoints, dup_out)) {
++            return false;
++        }
++    }
++    return true;
++}
++
++int main() {
++    printf("=== R45 context-checkpoint storage ownership ===\n");
++
++    uint32_t dup = 0;
++
++    // --- RED: the R44 allocator must violate ownership on the retention schedules ---
++    check(!sched_retain_first(alloc_r44, 40, &dup), "RED  r44 retain-first reuses a live id");
++    printf("       (r44 retain-first duplicate id = %u)\n", dup);
++    check(!sched_anchor(alloc_r44, 40, &dup), "RED  r44 anchor-retained reuses a live id");
++    check(!sched_invalidation(alloc_r44, 80, &dup), "RED  r44 invalidation reuses a live id");
++
++    // --- GREEN: the R45 allocator holds the invariant on every schedule ---
++    check(sched_retain_first(alloc_r45, 200, &dup), "GREEN r45 retain-first ids stay distinct");
++    check(sched_anchor(alloc_r45, 200, &dup), "GREEN r45 anchor-retained ids stay distinct");
++    check(sched_invalidation(alloc_r45, 200, &dup), "GREEN r45 invalidation ids stay distinct");
++    check(sched_capacity(alloc_r45, 200, &dup), "GREEN r45 capacity churn ids stay distinct");
++    check(sched_capacity(alloc_r44, 200, &dup), "GREEN r44 capacity churn (premise holds here)");
++
++    // --- two sequences: separate slots keep separate counters and lists ---
++    {
++        sim_slot a; sim_slot b;
++        bool ok = true;
++        for (int i = 1; i <= 100; ++i) {
++            a.create(i, 100 + i);
++            b.create(i, 100 + i);
++            ok = ok && ids_unique(a.checkpoints) && ids_unique(b.checkpoints);
++        }
++        check(ok, "GREEN r45 two slots hold independently");
++    }
++
++    // --- storage 0 is reserved, and every id stays inside the ring ---
++    {
++        ckpt_list empty;
++        uint32_t next = 0;
++        bool ok = true;
++        for (int i = 0; i < 100; ++i) {
++            const uint32_t id = server_ckpt_storage_alloc(empty, next, 33);
++            ok = ok && id >= 1 && id <= 33;
++        }
++        check(ok, "GREEN r45 ids are in [1, n_ring], never 0");
++    }
++
++    // --- capacity guard: a ring past the 8 storage bits must refuse, not alias onto id 0 ---
++    {
++        ckpt_list empty;
++        uint32_t next = 0;
++        const bool ok = server_ckpt_storage_alloc(empty, next, 256) == 0 &&
++                        server_ckpt_storage_alloc(empty, next, 1000) == 0 &&
++                        server_ckpt_storage_alloc(empty, next, 255) != 0;
++        check(ok, "GREEN r45 refuses a ring larger than 255 ids");
++    }
++
++    // --- exhausted ring: every id owned -> 0 (host image), never a live id ---
++    {
++        uint32_t next = 0;
++        ckpt_list all;
++        for (uint32_t id = 1; id <= 5; ++id) {
++            auto & c = all.emplace_back();
++            c.flags_tgt = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(id);
++            c.flags_dft = c.flags_tgt;
++        }
++        check(server_ckpt_storage_alloc(all, next, 5) == 0, "GREEN r45 fully owned ring returns 0");
++    }
++
++    printf("=== %s (%d failure%s) ===\n", n_fail == 0 ? "PASS" : "FAIL", n_fail, n_fail == 1 ? "" : "s");
++    return n_fail == 0 ? 0 : 1;
++}
+diff --git a/tests/test-save-load-state.cpp b/tests/test-save-load-state.cpp
+index efcee5507..6c0188337 100644
+--- a/tests/test-save-load-state.cpp
++++ b/tests/test-save-load-state.cpp
+@@ -2,11 +2,13 @@
+ #include "common.h"
+ #include "log.h"
+ #include "llama-cpp.h"
++#include "server-ckpt-storage.h" // R45: Test 10 allocates ids through the production allocator
+ 
+ #include <algorithm>
+ #include <clocale>
+ #include <cstring>
+ #include <filesystem>
++#include <list>
+ #include <random>
+ #include <string>
+ #include <vector>
+@@ -467,6 +469,182 @@ static bool test_seq_storage_ring(struct llama_model * model, const struct commo
+     return true;
+ }
+ 
++// Test 10: device storage-ID OWNERSHIP across a full ring rotation (R45, lane-229)
++// - snapshot A on seq 0 at N cells under an ALLOCATOR-ISSUED id, plus a host control of the same state
++// - advance seq 0 so the cell count differs, then rotate past a full ring of saves while A stays LIVE
++// - restore A into seq 1 and host-save it: the bytes must equal the host control
++// RED on the R44 modulo allocator: the rotation wraps onto A's id and overwrites A's device buffers,
++// so the restore aborts on the size guard (different cell counts) or silently returns the newer state.
++static bool test_seq_storage_ownership(struct llama_model * model, const struct common_params & params,
++                                       const llama_tokens & tokens, int test_num,
++                                       ggml_type kv_type, const char * kv_name, bool on_device) {
++    auto params_ctx = common_context_params_to_llama(params);
++    params_ctx.n_ctx      = 256;
++    params_ctx.n_seq_max  = 2;
++    params_ctx.kv_unified = true;
++    params_ctx.type_k     = kv_type;
++    params_ctx.type_v     = kv_type;
++    if (kv_type != GGML_TYPE_F16) {
++        // a quantized V cache needs flash attention; archs that cannot do FA skip this leg below
++        params_ctx.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
++    }
++
++    LOG("\n=== Test %d: storage-id ownership (%s KV, %s) ===\n", test_num, kv_name,
++        on_device ? "device" : "host control");
++
++    auto ctx = llama_context_ptr{llama_init_from_model(model, params_ctx)};
++    if (ctx == nullptr) {
++        // e.g. quantized KV on an arch that forces flash attention off - not a defect of this fix
++        LOG("\nSKIP (%s KV context unsupported for this arch)\n", kv_name);
++        return true;
++    }
++
++    if (tokens.size() < 60) {
++        LOG_ERR("\n%s: need at least 60 tokens, got %zu\n", __func__, tokens.size());
++        return false;
++    }
++
++    const auto decode_range = [&](int i0, int i1, llama_seq_id seq) {
++        llama_batch_ptr batch(i1 - i0, 0, 1);
++        common_batch_clear(batch.get());
++        for (int i = i0; i < i1; ++i) {
++            common_batch_add(batch.get(), tokens[i], i, { seq }, i == i1 - 1);
++        }
++        return llama_decode(ctx.get(), batch.get()) == 0;
++    };
++
++    const auto get_seq_state = [&](llama_seq_id seq_id, uint32_t fl, std::vector<uint8_t> & state) {
++        const size_t state_size = llama_state_seq_get_size_ext(ctx.get(), seq_id, fl);
++        if (state_size == 0) {
++            LOG_ERR("\n%s: sequence state is empty\n", __func__);
++            return false;
++        }
++        state.resize(state_size);
++        const size_t ncopy = llama_state_seq_get_data_ext(ctx.get(), state.data(), state.size(), seq_id, fl);
++        if (ncopy != state.size()) {
++            LOG_ERR("\n%s: saved %zu bytes, expected %zu\n", __func__, ncopy, state.size());
++            return false;
++        }
++        return true;
++    };
++
++    // the live checkpoint list the server would hold; A stays in it for the whole rotation
++    std::list<common_prompt_checkpoint> live;
++    uint32_t storage_next = 0;
++    const uint32_t n_ring = 33;
++
++    // the host control runs the same schedule through independent host images (no storage ids)
++    const auto alloc_flags = [&](std::list<common_prompt_checkpoint> & lst) -> uint32_t {
++        if (!on_device) {
++            return LLAMA_STATE_SEQ_FLAGS_NONE;
++        }
++        const uint32_t storage = server_ckpt_storage_alloc(lst, storage_next, n_ring);
++        if (storage == 0) {
++            return 0;
++        }
++        return (uint32_t) (LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(storage));
++    };
++
++    // Everything happens on seq 1: a host state blob carries the sequence's own cell metadata, so a
++    // byte comparison is only meaningful between saves of the SAME sequence id (see Tests 6/7).
++    const llama_seq_id seq = 1;
++
++    // --- state A: 40 cells ---
++    if (!decode_range(0, 40, seq)) {
++        LOG_ERR("\n%s: failed to build state A\n", __func__);
++        return false;
++    }
++
++    std::vector<uint8_t> host_control;
++    if (!get_seq_state(seq, LLAMA_STATE_SEQ_FLAGS_NONE, host_control)) {
++        return false;
++    }
++
++    const uint32_t flags_a = alloc_flags(live);
++    if (on_device) {
++        if (flags_a == 0) {
++            LOG_ERR("\n%s: allocator returned no storage id for A\n", __func__);
++            return false;
++        }
++        auto & ckpt_a = live.emplace_back();
++        ckpt_a.flags_tgt = flags_a;
++        ckpt_a.flags_dft = flags_a;
++    }
++
++    std::vector<uint8_t> store_a;
++    if (!get_seq_state(seq, flags_a, store_a)) {
++        return false;
++    }
++
++    // --- advance to 60 cells: state B has a DIFFERENT byte total than A ---
++    if (!decode_range(40, 60, seq)) {
++        LOG_ERR("\n%s: failed to advance to state B\n", __func__);
++        return false;
++    }
++
++    // --- rotate past a full ring while A stays live ---
++    std::vector<uint8_t> store_rot;
++    for (uint32_t r = 0; r < n_ring + 2; ++r) {
++        // the rotating entry is transient: only A is retained, exactly the shape thinning produces
++        std::list<common_prompt_checkpoint> live_now = live;
++        const uint32_t flags_r = alloc_flags(live_now);
++        if (on_device) {
++            if (flags_r == 0) {
++                LOG_ERR("\n%s: allocator returned no storage id at rotation %u\n", __func__, r);
++                return false;
++            }
++            if ((flags_r & LLAMA_STATE_SEQ_FLAGS_STORAGE_MASK) == (flags_a & LLAMA_STATE_SEQ_FLAGS_STORAGE_MASK)) {
++                LOG_ERR("\n%s: rotation %u was handed A's live storage id\n", __func__, r);
++                return false;
++            }
++        }
++        if (!get_seq_state(seq, flags_r, store_rot)) {
++            return false;
++        }
++    }
++
++    // --- restore A and compare with the host control ---
++    llama_memory_clear(llama_get_memory(ctx.get()), true);
++    {
++        const size_t nset = llama_state_seq_set_data_ext(ctx.get(), store_a.data(), store_a.size(), seq, flags_a);
++        if (nset != store_a.size()) {
++            LOG_ERR("\n%s: storage A restore returned %zu, expected %zu\n", __func__, nset, store_a.size());
++            return false;
++        }
++    }
++
++    std::vector<uint8_t> host_after;
++    if (!get_seq_state(seq, LLAMA_STATE_SEQ_FLAGS_NONE, host_after)) {
++        return false;
++    }
++
++    if (host_control.size() != host_after.size()) {
++        LOG_ERR("\n%s: error: restored state is %zu bytes, host control is %zu\n",
++                __func__, host_after.size(), host_control.size());
++        return false;
++    }
++
++    size_t n_diff = 0;
++    size_t i_diff = 0;
++    for (size_t i = 0; i < host_control.size(); ++i) {
++        if (host_control[i] != host_after[i]) {
++            if (n_diff == 0) {
++                i_diff = i;
++            }
++            n_diff++;
++        }
++    }
++
++    if (n_diff > 0) {
++        LOG_ERR("\n%s: error: state A was clobbered by the ring rotation: %zu of %zu bytes differ, first at offset %zu\n",
++                __func__, n_diff, host_control.size(), i_diff);
++        return false;
++    }
++
++    LOG("\nPASS\n");
++    return true;
++}
++
+ // Test 6/7: seq copy (scatter)
+ // - decode the same prefix on two sequences, interleaving seq 0 cells between the seq 1 cells
+ // - save the seq 1 state, free the interleaved seq 0 cells, and restore via the given io path
+@@ -707,6 +885,16 @@ static bool run_save_load_tests_for_model(const std::string & model_path, const
+         return false;
+     }
+ 
++    // Test 10: storage-id ownership across a ring rotation (R45, lane-229). The host-image legs are
++    // the control: they run the same schedule with no storage ids, so a failure there is a harness
++    // problem, not a device-ownership defect.
++    if (!test_seq_storage_ownership(model, params, tokens, 10, GGML_TYPE_F16,  "f16",  false) ||
++        !test_seq_storage_ownership(model, params, tokens, 10, GGML_TYPE_F16,  "f16",  true)  ||
++        !test_seq_storage_ownership(model, params, tokens, 10, GGML_TYPE_Q8_0, "q8_0", false) ||
++        !test_seq_storage_ownership(model, params, tokens, 10, GGML_TYPE_Q8_0, "q8_0", true)) {
++        return false;
++    }
++
+     LOG("\nAll tests passed.\n");
+ 
+     return true;
+diff --git a/tools/server/CMakeLists.txt b/tools/server/CMakeLists.txt
+index 43c245633..caf432fc7 100644
+--- a/tools/server/CMakeLists.txt
++++ b/tools/server/CMakeLists.txt
+@@ -15,6 +15,7 @@ add_library(${TARGET} STATIC
+     server-common.h
+     server-context.cpp
+     server-context.h
++    server-ckpt-storage.h
+     server-stream.cpp
+     server-stream.h
+     server-tools.cpp
+diff --git a/tools/server/server-ckpt-storage.h b/tools/server/server-ckpt-storage.h
+new file mode 100644
+index 000000000..2fa2b01fd
+--- /dev/null
++++ b/tools/server/server-ckpt-storage.h
+@@ -0,0 +1,62 @@
++#pragma once
++
++// R45 (lane-229): device storage-ID OWNERSHIP for the server context-checkpoint ring.
++//
++// R44 handed out ids with `1 + (ckpt_storage_next++ % n_ring)` on the premise that the live
++// checkpoint list never exceeds n_ctx_checkpoints entries, all among the last n created, so a
++// reused id is dead. That premise is false: thinning keeps the first entry and is exempt for
++// tool-call anchors (server-context.cpp create_checkpoint), and prefix invalidation erases
++// NEWER entries. The counter therefore wraps onto an id a live checkpoint still owns; the new
++// save overwrites that checkpoint's device buffers under the same storage key, and restoring
++// the old metadata reads the new buffers -- `~llama_io_read_device: memory buffer mismatch`
++// when the totals differ, a silent wrong-state restore when they happen to match.
++//
++// The repair is allocation-side: hand out only an id no LIVE checkpoint owns. Callers invoke
++// this AFTER eviction and AFTER appending the new entry (whose flags are still default, so it
++// is not yet an owner), which is exactly where create_checkpoint calls it.
++
++#include "common.h"
++
++#include <cstdint>
++#include <list>
++
++// Returns a storage id in [1, n_ring] that no live ON_DEVICE checkpoint in `checkpoints` owns,
++// advancing `next` past every id it tried. Returns 0 when no id is free: the ring is larger than
++// the 255 usable storage ids (id 0 is reserved), or every id is still owned. Callers must treat 0
++// as "use a host checkpoint image", never as a usable id.
++//
++// With ring = n_ctx_checkpoints + 1 and a live list capped at n_ctx_checkpoints entries (one id
++// per entry, target and draft sharing the entry's flags), at least one id is always free.
++inline uint32_t server_ckpt_storage_alloc(
++        const std::list<common_prompt_checkpoint> & checkpoints,
++        uint32_t & next,
++        uint32_t n_ring) {
++    if (n_ring == 0 || n_ring > 255) {
++        return 0;
++    }
++
++    for (uint32_t attempt = 0; attempt < n_ring; ++attempt) {
++        const uint32_t storage = 1 + (next++ % n_ring);
++        const llama_state_seq_flags bits = LLAMA_STATE_SEQ_FLAGS_STORAGE(storage);
++
++        bool live = false;
++        for (const auto & ckpt : checkpoints) {
++            for (const llama_state_seq_flags f : { ckpt.flags_tgt, ckpt.flags_dft }) {
++                if ((f & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) != 0 &&
++                    (f & LLAMA_STATE_SEQ_FLAGS_STORAGE_MASK) == bits) {
++                    live = true;
++                    break;
++                }
++            }
++            if (live) {
++                break;
++            }
++        }
++
++        if (!live) {
++            return storage;
++        }
++    }
++
++    return 0;
++}
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index d3d4fb3f4..08651212c 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -1,5 +1,6 @@
+ #include "server-context.h"
+ #include "server-chat.h"
++#include "server-ckpt-storage.h"
+ #include "server-common.h"
+ #include "server-http.h"
+ #include "server-task.h"
+@@ -2797,10 +2798,22 @@ private:
+     llama_state_seq_flags ctx_ckpt_flags(server_slot & slot) {
+         llama_state_seq_flags flags = LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY;
+         if (ctx_ckpt_on_device()) {
+-            // ring of n_ctx_checkpoints + 1 storage ids: the live list never exceeds
+-            // n_ctx_checkpoints entries, all among the last n created, so a reused id is dead
++            // R45 (lane-229): the ring of n_ctx_checkpoints + 1 ids is only safe if a reused id is
++            // DEAD. Thinning keeps the first entry, anchors are exempt and prefix invalidation
++            // erases newer entries, so the bare modulo counter could wrap onto a LIVE owner and
++            // overwrite its device buffers. Allocate ownership-aware instead; 0 = no free id, in
++            // which case the checkpoint falls back to an independent host image.
+             const uint32_t n_ring  = (uint32_t) params_base.n_ctx_checkpoints + 1;
+-            const uint32_t storage = 1 + (slot.ckpt_storage_next++ % n_ring);
++            const uint32_t storage = server_ckpt_storage_alloc(slot.prompt.checkpoints, slot.ckpt_storage_next, n_ring);
++            if (storage == 0) {
++                static bool warned = false;
++                if (!warned) {
++                    warned = true;
++                    SRV_WRN("no free device checkpoint storage id (n_ctx_checkpoints = %d, ring = %u, max 255) - "
++                            "context checkpoints fall back to host images\n", params_base.n_ctx_checkpoints, n_ring);
++                }
++                return flags;
++            }
+             flags |= LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(storage);
+         }
+         return flags;

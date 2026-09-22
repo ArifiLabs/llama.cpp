@@ -1,0 +1,510 @@
+From 40f9e07e21d13c169e7a3eb2141f6bcf580ee479 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 18:52:27 -0400
+Subject: [PATCH] docs: carry the release documents to R73 - the q6_K MMVQ
+ route, with its reach stated before its percentages
+
+Identity moves to the release engine: series 586 -> 588, tip 3f574313f -> 79f11389b (source 3cd91bf2f), tag r66i-integration-2026-09-19 -> r73i-release-engine-2026-09-21, engine arifi-b10825-r66i-aadddfb9f -> arifi-b10825-r73i-3cd91bf2f. RELEASE-NOTES-r66i.md is renamed to RELEASE-NOTES-r73i.md and the story to RELEASE-STORY-r73i.md.
+
+New story sections 5a and 5a-gates cover what R73 shipped: the q6_K q8_1 MMVQ route default ON on AMD at n=7,8, MUL_MAT only, GGML_ARIFI_Q6K_MMVQ=legacy to revert. +5% to +40% per verify column, 58/60 paired rounds across five shapes, worst round 0.9894, per-shape table sourced from the promotion record and seat-62 4ah. MUL_MAT_ID excluded on a measured wash. 1024x5120 n=8 is a tie at 1.0087 and is disclosed, not banked.
+
+THE REACH IS STATED BEFORE THE PERCENTAGES, in all three documents. A speculative decoder verifies at width = 1 + draft depth, so n=7,8 needs a draft depth of 6 or 7 - the DFlash2 publisher recipe's depth - and at our served depth 4 (verify width 5) the route is LATENT. Zero served tokens change on this box and no throughput claim is made.
+
+New section 6a carries chain151: R66 vs R56 at LAUNCH level, 8 launches per arm, counterbalanced, 0 invalid, every CI contains zero, quality identical. The honest end-to-end statement is that there is no served change at draft depth 4 and the gains are per-column at verify widths 5-8. The R56 and R66 narrative is left as written - it is the history of how the fork got here.
+
+Origin: ArifiLabs (native) - release engineering for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched. Every number carries its receipt.
+---
+ README.md                                     |  29 +++-
+ RELEASE-PREP-PLAN.md                          |  16 +-
+ RELEASE-PREP-RECEIPTS.md                      |   6 +-
+ docs/release/RELEASE-NOTES-r66i.md            |  63 --------
+ docs/release/RELEASE-NOTES-r73i.md            |  98 +++++++++++++
+ ...SE-STORY-r66i.md => RELEASE-STORY-r73i.md} | 138 +++++++++++++++++-
+ 6 files changed, 267 insertions(+), 83 deletions(-)
+ delete mode 100644 docs/release/RELEASE-NOTES-r66i.md
+ create mode 100644 docs/release/RELEASE-NOTES-r73i.md
+ rename docs/release/{RELEASE-STORY-r66i.md => RELEASE-STORY-r73i.md} (83%)
+
+diff --git a/README.md b/README.md
+index 7082e15af..7c5da07c4 100644
+--- a/README.md
++++ b/README.md
+@@ -307,7 +307,7 @@ not justify inventing license text: no PrismML or thecodacus license file is
+ manufactured where Phase 0 did not observe one. Their credit and provenance
+ remain explicit in this README, the series manifest, and each eventual commit.
+ 
+-## The R66i release — what shipped, how to build it, how to reproduce a number
++## The R73i release — what shipped, how to build it, how to reproduce a number
+ 
+ > **Where the receipts live.** Receipt paths of the form `r66-evidence/…`, `r65-evidence/…` and other `r*-evidence/…` names in this document are **lane-local**: they name files in the lane worktree that produced them, not paths in this repository. A clone does not contain them. `evidence/README.md` lists what is tracked here and says plainly what is not.
+ 
+@@ -319,12 +319,14 @@ verbatim from `docs/OPTIONS-REGISTRY.md`.*
+ An attribution-first, rebaseable llama.cpp fork for local inference on **Vulkan**.
+ 
+ - Upstream base: `ggml-org/llama.cpp` **b10825**, `9e0e220594af405a62835dc3a27495729fd8506b`.
+-- On top of it: **586 patches**, linear, non-merge, individually toggleable, each carrying its
++- On top of it: **588 patches**, linear, non-merge, individually toggleable, each carrying its
+   provenance in the commit message.
+-- Release tag: **`r66i-integration-2026-09-19`** → `94461e770`.
++- Release tag: **`r73i-release-engine-2026-09-21`** → `037b433a9` (source tip `5a7434218`,
++  engine `arifi-b10825-r73i-5a7434218`).
+ - The series is generated from git, never hand-edited, and verified on every run: every patch is
+-  byte-identical to a fresh generation *and* to a committed blob, and replaying all 586 with `git am`
+-  reproduces the tree exactly. Receipt: `r66-evidence/74-series-check.txt`.
++  byte-identical to a fresh generation *and* to a committed blob, and replaying all 588 with `git am`
++  reproduces the tree exactly. Receipt: `r73-evidence/74-series-check.txt` (lane-local; see
++  `evidence/MANIFEST.md`).
+ 
+ **It is for anyone on Vulkan.** A proven-safe improvement ships enabled even where our own GPU shows
+ no gain — other drivers may not already do what AMD's does. One of the three defaults turned on in
+@@ -420,6 +422,21 @@ Two warnings from that page, quoted because they change results:
+ 
+ #### Changed in this release
+ 
++**`GGML_ARIFI_Q6K_MMVQ` — q6_K takes the q8_1 MMVQ route. NEW IN R73, default ON (AMD, n=7,8,
++`MUL_MAT` only).** `GGML_ARIFI_Q6K_MMVQ=legacy` restores the old path.
++
++Upstream keeps q6_K off MMVQ on an unmeasured source comment. Measured at the widths a speculative
++decoder verifies at: **+5% to +40% per q6_K verify column**, **58 of 60 paired rounds won** across
++five shapes, worst single round **0.9894**. Best cell 248320×5120 at n=7: **20,046 → 14,313 us**,
++6/6. `MUL_MAT_ID` is excluded — measured wash.
++
++**Its reach, before its percentages.** A speculative decoder verifies at **width = 1 + draft
++depth**, so n=7,8 is reached by a **draft depth of 6 or 7** — the DFlash2 publisher recipe's depth.
++At our own served draft depth of 4 (verify width 5) it is **latent: zero served tokens change on
++this box**, and no throughput claim is made for it. Correctness 83/83; perplexity at `-b 7` and
++`-b 8` within one stderr.
++
++
+ | Switch | Registry default (quoted) | Restores the old behaviour |
+ |---|---|---|
+ | `GGML_ARIFI_Q5K_MMVQ` | *"**DEFAULT `route` on AMD, `legacy` on every other vendor**"* — scope: *"the `Q5_K` arm of `ggml_vk_should_use_mmvq()` on AMD at `n > 1`, and nothing else"* | `GGML_ARIFI_Q5K_MMVQ=0` |
+@@ -512,7 +529,7 @@ ours. Please include, in the issue:
+ | Memory layout | one shared pool: 48 GB physical, 16 GB BIOS reservation, 31.73 GiB system-visible — **say if yours is a discrete GPU with its own memory, because our defaults assume it is not** |
+ | OS + build | Windows 11, build 29648 |
+ | Power / performance plan | Balanced (it moved our decode from 29.0 to 11.2 tok/s when changed) |
+-| Fork tip | `git rev-parse HEAD` — e.g. `94461e770`, tag `r66i-integration-2026-09-19` |
++| Fork tip | `git rev-parse HEAD` — e.g. `037b433a9`, tag `r73i-release-engine-2026-09-21` |
+ | Build line | the exact `cmake` invocation you used |
+ | The startup lines | which of the three default lines printed on your device |
+ | Method | how many launches per arm, whether arms were interleaved, and whether anything else ran on the box |
+diff --git a/RELEASE-PREP-PLAN.md b/RELEASE-PREP-PLAN.md
+index e4e9bf778..5ac6210dc 100644
+--- a/RELEASE-PREP-PLAN.md
++++ b/RELEASE-PREP-PLAN.md
+@@ -1,8 +1,16 @@
+-# RELEASE-PREP PLAN — branch `release/r66i-public-prep-2026-09-21`
++# RELEASE-PREP PLAN — branch `release/r73i-public-prep-2026-09-21`
+ 
+-Base: `94461e770` (`arifi/main` tip, tag `r66i-integration-2026-09-19`), read live
++Base: **`037b433a9`** (`arifi/main` tip, tag `r73i-release-engine-2026-09-21`, source tip
++`5a7434218`, engine `arifi-b10825-r73i-5a7434218`), read live
+ (`git -C <repo>/cache/main-wt rev-parse HEAD`).
+ 
++**Phase 2, 2026-09-21.** This branch is the seven phase-1 prep commits, cut originally from
++`94461e770`, cherry-picked onto the promoted R73 release engine. The cherry-pick was clean: no
++conflict, and `patches/series` is untouched by the prep commits, so main's own generated series
++(now **588** entries, gaining `0587`/`0588`) is the one that ships. Source equivalence was re-proved
++against `037b433a9`. Where a paragraph below says `94461e770`, it is describing the phase-1 read and
++is left as written; the phase-2 figures are in `RELEASE-PREP-RECEIPTS.md`.
++
+ **Nothing is published by this lane.** No `git push`, no remote added, used or removed, no network
+ call. Publication is the President's word alone.
+ 
+@@ -143,7 +151,7 @@ this tree. The one cited receipt that *is* tracked is `r58-evidence/10-memtypes.
+ produced.
+ 
+ Also added to the branch, from `board/programs/local-inference/releases/`: the R66 release story,
+-`RELEASE-NOTES-r66i.md`, and the README section merged into the fork `README.md` under a clear
++`RELEASE-NOTES-r73i.md`, and the README section merged into the fork `README.md` under a clear
+ heading with the upstream README content preserved.
+ 
+ `patches/series/` is **NOT** dropped. It is the fork's reproducibility claim (item 8) and dropping it
+@@ -208,7 +216,7 @@ changes and the `arifi_sync.py` ledger support may appear.
+ 
+ ## The export branch — PROPOSAL ONLY, built after 2–7 pass
+ 
+-`release/r66i-public-export`, built **from** this prep branch, is the only place a history rewrite
++`release/r73i-public-export`, built **from** this prep branch, is the only place a history rewrite
+ would happen. It is proposed, not created, and HQ and the President decide whether it is the branch
+ that gets published.
+ 
+diff --git a/RELEASE-PREP-RECEIPTS.md b/RELEASE-PREP-RECEIPTS.md
+index b07439cea..c5fb930c6 100644
+--- a/RELEASE-PREP-RECEIPTS.md
++++ b/RELEASE-PREP-RECEIPTS.md
+@@ -1,4 +1,4 @@
+-# RELEASE-PREP RECEIPTS — `release/r66i-public-prep-2026-09-21`
++# RELEASE-PREP RECEIPTS — `release/r73i-public-prep-2026-09-21`
+ 
+ Every count below carries the command that produced it. Base `94461e770`.
+ **Nothing was pushed; no remote was added, used or removed; no network call was made.**
+@@ -98,7 +98,7 @@ network fetch, which this lane is barred from making. No licence was guessed.
+ 
+ | Added | |
+ |---|---|
+-| `docs/release/RELEASE-STORY-r66i.md`, `docs/release/RELEASE-NOTES-r66i.md` | the release documents |
++| `docs/release/RELEASE-STORY-r73i.md`, `docs/release/RELEASE-NOTES-r73i.md` | the release documents |
+ | `README.md` | the README section merged under its own heading, existing content preserved; SF-1's stale base (`b10453` / `4df29be4f`) corrected to `b10825` / `9e0e22059` |
+ | `evidence/` | **2 files** — the one cited receipt that is tracked, plus a README stating what is not here and why |
+ 
+@@ -183,7 +183,7 @@ branch deletes, so the check will report that difference. **The series claim bel
+ 
+ ## 7. Dangling receipt citations, annotated rather than deleted
+ 
+-`README.md`, `docs/release/RELEASE-STORY-r66i.md` and `docs/release/RELEASE-NOTES-r66i.md` cite
++`README.md`, `docs/release/RELEASE-STORY-r73i.md` and `docs/release/RELEASE-NOTES-r73i.md` cite
+ receipt paths of the form `r66-evidence/74-series-check.txt`. Those paths are **true statements
+ about where the receipt lives** — a lane worktree — and **false as paths in a clone**, which is
+ exactly the failure an attribution-first fork must not ship. Each document now carries a note at
+diff --git a/docs/release/RELEASE-NOTES-r66i.md b/docs/release/RELEASE-NOTES-r66i.md
+deleted file mode 100644
+index 80e4c45f9..000000000
+--- a/docs/release/RELEASE-NOTES-r66i.md
++++ /dev/null
+@@ -1,63 +0,0 @@
+-# ArifiLabs llama.cpp — `r66i-integration-2026-09-19`
+-
+-> **Where the receipts live.** Receipt paths of the form `r66-evidence/…`, `r65-evidence/…` and other `r*-evidence/…` names in this document are **lane-local**: they name files in the lane worktree that produced them, not paths in this repository. A clone does not contain them. `evidence/README.md` lists what is tracked here and says plainly what is not.
+-
+-
+-*(DRAFT release body. Not published. Publication is the President's call.)*
+-
+-Base: upstream `ggml-org/llama.cpp` **b10825** (`9e0e22059`) + **586 patches**. Tip `94461e770`.
+-
+-## What changed — three Vulkan mat-vec defaults are now ON, each keeping a revert switch
+-
+-**1. q5_K takes the MMVQ route** (AMD, widths 5–8, k ≤ 8192) — `GGML_ARIFI_Q5K_MMVQ=0` to revert.
+-The marginal q5_K verify column drops **113.8 → 5.4 us** (q4_K's is 27). Paired 6-round ratios
+-1.067 / 1.109 / 1.095 / 1.204 at n=5..8. Perplexity is identical: 5.9932 ± 0.14292 vs 5.9918 legacy.
+-90.5% of a typical served file's q5_K bytes are k ≤ 8192. **No served throughput change was shown** —
+-every served contrast in this release is a tie.
+-
+-**2. iq3 mat-vec sign hoist v2**, all devices — `GGML_ARIFI_IQ3_MMVQ=1` to revert.
+-SPIR-V drops from **1229 to 349 instructions per column**. Wall clock on our gfx1103: **no change** —
+-the AMD driver's compiled pipeline statistics are identical between the arms, so its compiler appears
+-to hoist it already. It ships ON for the drivers that do not. Bit-identical, never slower here.
+-
+-**3. iq3 mat-vec, 2 rows per workgroup at width 7** (RDNA3) — `GGML_ARIFI_IQ3_N7_ROWS=4` to revert.
+-A register spill at exactly one width: the driver reports 768 B of scratch at n=7 and 0 everywhere
+-else. Fixing it gives **465,400 → 20,890 us/run** at m=248320, and 34,674 → 1,636 / 39,284 → 1,573 at
+-two other shapes — **21–25x**, 6/6 rounds, bit-identical. iq3_xxs gains 1.20–1.42x. Dispatch width is
+-`1 + draft`, so only a draft depth of 6 reaches width 7: a **latent cliff** removed for that depth.
+-
+-Also in tree, all inert by default: `GGML_ARIFI_MMV_MAX_COLS` (R57), the R65 rows knob,
+-`GGML_ARIFI_OP_DUMP` (R61), R60 coverage rows.
+-
+-## Verification
+-
+-- 40/40 gate cells rc = 0. `MUL_MAT` **2222 executed / 0 FAIL** / 876 not-supported, with the flipped
+-  routes exercised (iq3 at n=7 across 4 shapes; q5_K n=5..8 at k=256/4096/5120); `MUL_MAT_ID` 1004 / 0.
+-- Seven legacy arms all rc = 0 — the old behaviour is tested, not just reachable.
+-- Bit-identity 6/6 vs the previous stage (this proves the build, not the flips: n=1 is outside every
+-  flipped route). Perplexity at batch 8: 5.9932 ± 0.14292.
+-- Series integrity: every patch byte-identical to a fresh generation and to a committed blob; 586
+-  patches replayed cleanly, replayed tree identical to the branch outside `patches/series`.
+-
+-## What we could not show
+-
+-- **No served throughput win.** Under llama-server (our method of record): S-X8 5.433 → 5.530, GSQ
+-  IQ3_S 7.771 → 7.681, Q4_K_XL plain 4.095 → 4.108 — all ties; served prefill sits inside the
+-  launch-level band below. The `us/run` and instruction counts above are `test-backend-ops` op-level
+-  numbers, not throughput.
+-- **An instrument defect, found and disclosed.** A null control ran the *same binary* in both arms and
+-  read +5.30 t/s prefill, 16/16, "CI-clean". Cells were pseudo-replicates of 2 server launches, and
+-  launch level moves 4–26%. Every banked prefill or plain-decode delta of this size from 2-launch cells
+-  is therefore **UNRESOLVED**, including some of our own earlier claims. The harness fix is in flight.
+-- **An unresolved prefill residual**: 27B S-X8 under llama-bench, −1.7%, CI95 [−4.4, +1.0]. Not shown
+-  nonzero, not shown zero.
+-- **The Q4_K_XL drafted cell has no number**: two of four launches recorded zero draft acceptance on
+-  *both* engines. Cause unknown, not reproduced.
+-- **The f16 iq3 pipelines ship with 0 executed test cases** under the new width-7 default.
+-
+-## Where every number was measured
+-
+-Beelink SER7 Pro — Ryzen 7 7840HS, **Radeon 780M (RDNA3, gfx1103)**, driver 32.0.31041.1004,
+-Windows 11 build 29648, Balanced power plan, MinGW-w64 + Ninja, one shared pool of system RAM (48 GB
+-physical, 16 GB reserved in BIOS). No other GPU, OS, compiler or architecture has ever run this code.
+-Kernels transfer; numbers do not. Results from other GPUs are wanted — see the README.
+diff --git a/docs/release/RELEASE-NOTES-r73i.md b/docs/release/RELEASE-NOTES-r73i.md
+new file mode 100644
+index 000000000..c93fd9be8
+--- /dev/null
++++ b/docs/release/RELEASE-NOTES-r73i.md
+@@ -0,0 +1,98 @@
++# ArifiLabs llama.cpp — `r73i-release-engine-2026-09-21`
++
++> **Where the receipts live.** Receipt paths of the form `r73-evidence/…`, `r66-evidence/…` and other `r*-evidence/…` names in this document are **lane-local**: they name files in the lane worktree that produced them, not paths in this repository. A clone does not contain them. `evidence/MANIFEST.md` lists what is tracked here, maps each file to the claim it supports, and says plainly what is missing.
++
++*(DRAFT release body. Not published. Publication is the President's call.)*
++
++Base: upstream `ggml-org/llama.cpp` **b10825** (`9e0e22059`) + **588 patches**. Series tip
++`037b433a9`, source tip `5a7434218`, engine `arifi-b10825-r73i-5a7434218`.
++
++## New in R73 — one Vulkan default ON, with its revert switch
++
++**q6_K takes the q8_1 MMVQ route** — AMD only, **n=7,8 only**, **`MUL_MAT` only**;
++`GGML_ARIFI_Q6K_MMVQ=legacy` restores the old path.
++
++Upstream keeps q6_K off MMVQ on an unmeasured source comment ("only a win on Intel"). Measured at
++the widths a speculative decoder verifies at, it wins: **+5% to +40% per q6_K verify column**,
++**58 of 60 paired rounds won** across five shapes, **worst single round 0.9894**.
++
++| Shape | n=7 | n=8 |
++|---|---|---|
++| 248320×5120 (lm_head) | **1.400** 6/6 (20,046 → 14,313 us) | **1.131** 6/6 |
++| 5120×17408 | **1.163** 6/6 | **1.050** 6/6 |
++| 5120×6144 | **1.125** 6/6 | 1.058 5/6 |
++| 17408×5120 | **1.122** 6/6 | **1.085** 6/6 |
++| 1024×5120 | **1.088** 6/6 | 1.009 5/6 — **a tie, disclosed not banked** |
++
++`MUL_MAT_ID` is **excluded**: measured wash, so the MoE path does not take the route.
++
++**Read the reach before you read the percentages.** A speculative decoder verifies at
++**width = 1 + draft depth**. This route fires at n=7,8, so it is reached by a **draft depth of 6 or
++7** — the depth the **DFlash2 publisher recipe** calls for — and it is **latent at our own served
++draft depth of 4**, which verifies at width 5. **R73 therefore changes zero served tokens on our
++box, and no throughput claim is made for it.** The win is an op-level, per-column number. Anyone
++running a deeper draft gets it immediately; we do not, yet.
++
++## Unchanged from R66 — three defaults still ON, each with its switch
++
++**1. q5_K takes the MMVQ route** (AMD, widths 5–8, k ≤ 8192) — `GGML_ARIFI_Q5K_MMVQ=0` to revert.
++The marginal q5_K verify column drops **113.8 → 5.4 us** (q4_K's is 27). Paired 6-round ratios
++1.067 / 1.109 / 1.095 / 1.204 at n=5..8. Perplexity identical: 5.9932 ± 0.14292 vs 5.9918 legacy.
++
++**2. iq3 mat-vec sign hoist v2**, all devices — `GGML_ARIFI_IQ3_MMVQ=1` to revert.
++SPIR-V drops from **1229 to 349 instructions per column**. Wall clock on our gfx1103: **no change** —
++the AMD driver appears to hoist it already. It ships ON for the drivers that do not. Bit-identical.
++
++**3. iq3 mat-vec, 2 rows per workgroup at width 7** (RDNA3) — `GGML_ARIFI_IQ3_N7_ROWS=4` to revert.
++A register spill at exactly one width: 768 B of scratch at n=7, 0 everywhere else. Fixing it gives
++**465,400 → 20,890 us/run** at m=248320 — **21–25x**, 6/6 rounds, bit-identical.
++
++Also in tree, all inert by default: `GGML_ARIFI_MMV_MAX_COLS` (R57), the R65 rows knob,
++`GGML_ARIFI_OP_DUMP` (R61), R60 coverage rows.
++
++## Verification — R73
++
++- **47 rc files, all rc=0** (24 test cells + 12 bit-identity runs), including a set re-run beside a
++  live 27B load.
++- **q6_K correctness 83/83.** The planted-RED arm fails 21 cases, **all at n=7,8**, including both
++  newly added shapes; the tree restores byte-identical.
++- **Perplexity at `-b 7` and `-b 8` within one stderr.** The `-b 7` arm asserts `batch_size=7` per
++  arm, so the route was genuinely dispatched: 5.9897 ± 0.143 → 5.9947 ± 0.143.
++- **Bit-identity 6/6** vs the r66i stage — scope stated: greedy runs never reach q6_K at n=7/8, so
++  this shows **no collateral change**, not route correctness.
++- **Series integrity PASS** — every patch byte-identical to a fresh generation and to a committed
++  blob; **588** patches replayed cleanly, replayed tree IDENTICAL outside `patches/series`, rc=0.
++- **Post-flip smoke rc=0**, 37.4 s, all four startup lines present.
++- **0 untrailered commits** in the R73 range.
++
++## R66 validated end to end, with the fixed harness
++
++Unit = **launch**, **8 launches per arm** × 4 rounds, order counterbalanced, **0 invalid launches**,
++INTEGRITY clean, Welch CIs. df2 decode R56 → R66: Q4_K_XL 7.34 → 7.46 ([−0.23, +0.47]); S-X8
++5.90 → 5.94 ([−0.11, +0.20]); GSQ IQ3_S 8.08 → 8.02 ([−0.18, +0.06]).
++
++**Every interval contains zero — no regression on any line in any mode, quality identical.** At
++draft depth 4 the verify width is 5, where only the q5_K route is reached at all. The kernel gains
++in this release are **per-column at verify widths 5–8**; the served line is flat. Both statements
++are here on purpose. This also kills, at launch level, the prefill "regression" an earlier
++cell-level chain reported, and closes the owed Q4_K_XL df2 re-run (16 valid launches).
++
++## What we still cannot show
++
++- **No served throughput win**, in R66 or R73. The `us/run` and instruction counts above are
++  `test-backend-ops` op-level numbers, not throughput.
++- **An instrument defect, found and disclosed.** A null control ran the *same binary* in both arms
++  and read +5.30 t/s prefill, "CI-clean". Every banked prefill or plain-decode delta of that size
++  from 2-launch cells is **UNRESOLVED**, including some of our own earlier claims.
++- **An unresolved prefill residual**: 27B S-X8 under llama-bench, −1.7%, CI95 [−4.4, +1.0]. Not
++  shown nonzero, not shown zero.
++- **q6_K × f16 `src1` and 5120×10240 were never timed** — correctness only.
++- **The f16 iq3 pipelines ship with 0 executed test cases** under the width-7 default.
++- **1024×5120 n=8 is a tie** (1.0087) under our own 1.03 admit bar — disclosed, not banked.
++
++## Where every number was measured
++
++Beelink SER7 Pro — Ryzen 7 7840HS, **Radeon 780M (RDNA3, gfx1103)**, driver 32.0.31041.1004,
++Windows 11 build 29648, Balanced power plan, MinGW-w64 + Ninja, one shared pool of system RAM (48 GB
++physical, 16 GB reserved in BIOS). No other GPU, OS, compiler or architecture has ever run this code.
++Kernels transfer; numbers do not. Results from other GPUs are wanted — see the README.
+diff --git a/docs/release/RELEASE-STORY-r66i.md b/docs/release/RELEASE-STORY-r73i.md
+similarity index 83%
+rename from docs/release/RELEASE-STORY-r66i.md
+rename to docs/release/RELEASE-STORY-r73i.md
+index 91668df33..4208bb055 100644
+--- a/docs/release/RELEASE-STORY-r66i.md
++++ b/docs/release/RELEASE-STORY-r73i.md
+@@ -1,4 +1,4 @@
+-# The Arifi Labs llama.cpp fork — R66 release story (DRAFT)
++# The Arifi Labs llama.cpp fork — R73 release story (DRAFT)
+ 
+ > **Where the receipts live.** Receipt paths of the form `r66-evidence/…`, `r65-evidence/…` and other `r*-evidence/…` names in this document are **lane-local**: they name files in the lane worktree that produced them, not paths in this repository. A clone does not contain them. `evidence/README.md` lists what is tracked here and says plainly what is not.
+ 
+@@ -9,6 +9,10 @@
+ > (`2026-09-16-arifilabs-llamacpp-fork-r56-RELEASE-STORY.md`, studio commit `72d6689c`, 481 lines,
+ > *"Draft ends. Publication is the President's call."*) and extends it through the R66 promotion.
+ > The R56 file is left in place, unedited.
++> **Extended to R73 on 2026-09-21 by the release-prep lane.** The identity table in §1, the new
++> §5a and §6a, and the closing gates section carry R73; **the R56 and R66 narrative below is left
++> as written**, because it is the history of how the fork got here and re-writing it would destroy
++> the record. Where a section says "R66", it is a statement about R66 and is still true.
+ > Every number carries the receipt path it came from. A number we could not source is written
+ > **OWED** — never invented. **CHECKED** = read from a receipt or ledger row. **ASSUMED** = a reading
+ > that no measurement pins down. **UNRESOLVED** = two CHECKED records disagree, or the instrument
+@@ -42,12 +46,17 @@ Company law behind the mandate: `registers/company/canon.json` →
+ | Item | Value | Receipt |
+ |---|---|---|
+ | Upstream base | `ggml-org/llama.cpp` tag **b10825**, `9e0e220594af405a62835dc3a27495729fd8506b` | `cache/main-wt/tools/arifi-sync/sources.json` → `base` |
+-| Our series | **586 patches**, all non-merge, applied in filename order | `cache/r66-wt/r66-evidence/73-regen.txt`, `74-series-check.txt` |
+-| Branch tip | `arifi/main` = **`94461e770`** (series tip), source-code tip **`f6f5ab0cf`** | `cache/r66-wt/R66-PROMOTION-RECORD.md` §1; `r66-evidence/71-promote-ff.txt`, `75-tag.txt` |
+-| Tag | **`r66i-integration-2026-09-19`** → `94461e770` | `r66-evidence/75-tag.txt` |
+-| Integrity | `series check` **PASS** — every patch byte-identical to a fresh generation *and* to a committed blob; 586 patches replayed cleanly, replayed tree **IDENTICAL** to `arifi/main` outside `patches/series` | `r66-evidence/74-series-check.txt:3` and tail |
+-| Engine of record | **`arifi-b10825-r66i-f6f5ab0cf`** (superseding `arifi-b10825-r56i-280b1553f`, which stays on disk as the rollback) | `registers/current-state.json`; studio commit `73e88bc6`; `r66-evidence/76-flip.txt` |
+-| Promotion | ff `1b6185951` → `f6f5ab0cf`, 20 commits, 0 merges, **LOCAL ONLY — nothing pushed** | `r66-evidence/71-promote-ff.txt`; seat-62 §4w |
++| Our series | **588 patches**, all non-merge, applied in filename order | `cache/r73-wt/r73-evidence/73-regen.txt`, `74-series-check.txt` |
++| Branch tip | `arifi/main` = **`037b433a9`** (series tip), source-code tip **`5a7434218`** | `cache/r73-wt/R73-PROMOTION-RECORD.md` §1 |
++| Tag | **`r73i-release-engine-2026-09-21`** → `037b433a9` | `r73-evidence/75-tag.txt` |
++| Integrity | `series check` **PASS** — every patch byte-identical to a fresh generation *and* to a committed blob; **588** patches replayed cleanly, replayed tree **IDENTICAL** to `arifi/main` outside `patches/series`, rc=0 | `r73-evidence/74-series-check.txt` |
++| Engine of record | **`arifi-b10825-r73i-5a7434218`** — the RELEASE ENGINE (superseding `arifi-b10825-r66i-f6f5ab0cf`, which stays on disk as the rollback, with `r56i-280b1553f` behind it) | `registers/current-state.json`; `r73-evidence/76-flip.txt` |
++| Promotion | ff `94461e770` → `5a7434218`, 2 commits, 0 merges, **LOCAL ONLY — nothing pushed** | `r73-evidence/71-promote-ff.txt` |
++| Trailers | **0 untrailered commits** in the R73 range | `r73-evidence/72-trailers.txt` |
++
++*(The R66 identity this table replaced — series 586, tip `94461e770`, tag
++`r66i-integration-2026-09-19`, engine `arifi-b10825-r66i-f6f5ab0cf`, ff `1b6185951` → `f6f5ab0cf`
++over 20 commits — is the previous release and is recorded in `cache/r66-wt/R66-PROMOTION-RECORD.md`.)*
+ 
+ ### The measurement box — every number below was measured here
+ 
+@@ -264,6 +273,89 @@ tree, all default-inert. Receipt: seat-62 §4w.
+ 
+ ---
+ 
++## 5a. What R73 shipped — one new default ON, and it is honest about its reach
++
++R73 (lane-257) is the **release engine**, `arifi-b10825-r73i-5a7434218`. It integrates R71's q6_K
++work and flips **one** new Vulkan default ON. The three R66 defaults are unchanged and still print
++at startup. Checker: `cache/r73-wt/CHECK-R73-FABLE.md` — **"VERDICT: PASS. PROMOTION RULE: PROMOTE
++`arifi-b10825-r73i-5a7434218`"**. Record: `cache/r73-wt/R73-PROMOTION-RECORD.md`.
++
++| Default now ON | Scope | Size | Legacy switch |
++|---|---|---|---|
++| **q6_K q8_1 MMVQ route** | AMD, **n=7,8 only**, **MUL_MAT only** | **+5% to +40% per q6_K verify column**; **58/60 paired rounds won** across five shapes; **worst single round 0.9894** | `GGML_ARIFI_Q6K_MMVQ=legacy` |
++
++Upstream keeps q6_K off the MMVQ path on an unmeasured source comment ("only a win on Intel"). We
++measured it at the widths a speculative decoder actually verifies at, and admitted only the cells
++that won.
++
++**Per shape, legacy/route (>1 = route faster), 6 counterbalanced paired rounds each**
++(`R73-PROMOTION-RECORD.md` §2; seat-62 §4ah):
++
++| Shape | n=7 | n=8 |
++|---|---|---|
++| 248320×5120 (lm_head) | **1.400** 6/6 (20,046 → 14,313 us) | **1.131** 6/6 |
++| 5120×17408 | **1.163** 6/6 | **1.050** 6/6 |
++| 5120×6144 | **1.125** 6/6 | 1.058 5/6 |
++| 17408×5120 | **1.122** 6/6 | **1.085** 6/6 |
++| 1024×5120 | **1.088** 6/6 | 1.009 5/6 — **a tie, disclosed not banked** |
++
++**`MUL_MAT_ID` is excluded — a measured wash, not an oversight.** The MoE path does not take this
++route.
++
++### The reach, stated plainly, because it is the part a benchmark table hides
++
++The route fires at **n=7 and n=8**. A speculative decoder verifies at **width = 1 + draft depth**.
++So this default is reached by a **draft depth of 6 or 7** — which is the depth the **DFlash2
++publisher recipe** calls for — and it is **latent at our own served draft depth of 4**, which
++verifies at width 5.
++
++**Therefore R73 changes zero served tokens on our box today, and no throughput claim is made for
++it.** The promotion record says so in its own words: *"Served effect today: none … No t/s claim is
++banked from this promotion."* The win is real, it is per-column at verify widths 7–8, and it is
++banked as an op-level number only. Anyone running a deeper draft gets it on the day they upgrade;
++we do not, yet, and we are not going to imply otherwise by quoting the +40% without this paragraph
++attached to it.
++
++That is the same law that put one of the three R66 defaults on with zero measured change here: the
++fork is for everyone on Vulkan, not for the 780M.
++
++### The gates R73 passed
++
++- **47 rc files, all rc=0** — 24 test cells + 12 bit-identity runs, including a set re-run beside a
++  live 27B load (`r73-evidence/*.rc`).
++- **q6_K correctness 83/83.** The planted-RED arm fails 21 cases, **all of them at n=7,8**, including
++  both newly added shapes, and the tree restores byte-identical afterwards.
++- **Perplexity at `-b 7` and at `-b 8` within one stderr of each other.** The `-b 7` arm asserts
++  `batch_size=7` per arm, so the route was genuinely dispatched: 5.9897 ± 0.143 → 5.9947 ± 0.143.
++- **Bit-identity 6/6** against the r66i stage — with the scope stated: greedy runs never reach q6_K
++  at n=7/8, so this proves **no collateral change**, not route correctness, which rests on the
++  83/83, the RED arm and the PPL pair.
++- **Series check PASS**, 588 patches replayed, tree IDENTICAL outside `patches/series`, rc=0.
++- **Post-flip smoke rc=0**, 37.4 s, all four startup lines present.
++
++Startup lines as captured (`77-smoke.txt`):
++
++```
++q5_k mmvq route: route (n=5..8, k<=8192) (device-probe)
++q6_k mmvq route: route (MUL_MAT only, n=7..8) (device-probe)
++iq3 mat-vec sign-hoist: v2 [GGML_ARIFI_IQ3_MMVQ]
++iq3 mat-vec n=7 rows: 2 (device-probe (RDNA3)) [GGML_ARIFI_IQ3_N7_ROWS]
++```
++
++### What R73 left open, verbatim from the checker
++
++- **1024×5120 n=8 is a tie** (1.0087) under the lane's own 1.03 admit bar — re-run with the next
++  decider; fence by shape if it ever reads below 1.
++- q6_K × **f16** `src1` (the 17408×5120 f16 case) and 5120×10240 were **never timed** — correctness
++  only.
++- A source comment still reads "36/36, worst 1.003" against the true 58/60, worst 0.9894. It is a
++  comment fix owed to the next lane that touches that file; a promotion makes no code changes.
++- `docs/OPTIONS-REGISTRY.md` carries two rows for `GGML_ARIFI_Q6K_MMVQ`; the older one is stale and
++  they need merging.
++- The real follow-up is the **q6_K shader lane** — both pipelines have cliffs (MMVQ at n=5,6; f32 at
++  n=6,7), and that is what would reach verify width 5, where our own serve lives.
++
++
+ ## 6. What we measured, and what we could not
+ 
+ This chapter is the one most forks skip. It is why the numbers above can be quoted at all.
+@@ -390,6 +482,38 @@ stack. Receipt: seat-62 §4r.
+ 
+ ---
+ 
++## 6a. R66 validated end to end — and the honest reading of it
++
++Between R66 and R73, the R66 engine was validated against R56 with the **fixed** harness: unit =
++**launch**, **8 launches per arm** × 4 rounds, arm order counterbalanced [2,2,2,2], **0 invalid
++launches**, INTEGRITY clean three times over, Welch confidence intervals
++(`r66-lane-254/c29..c31-*-launchlevel/*/AB.json`; seat-62 §4aj).
++
++| 27B file | df2 decode R56 → R66 (CI95 of the difference) | plain decode |
++|---|---|---|
++| Q4_K_XL | 7.34 → 7.46 (+0.12, [−0.23, +0.47]) | 3.73 → 3.86 (+0.14, [−0.35, +0.63]) |
++| S-X8 | 5.90 → 5.94 (+0.04, [−0.11, +0.20]) | 2.19 → 2.18 (−0.004, [−0.05, +0.04]) |
++| GSQ IQ3_S | 8.08 → 8.02 (−0.06, [−0.18, +0.06]) | 5.200 → 5.202 (+0.001, [−0.005, +0.008]) |
++
++**Every confidence interval contains zero.** Read it exactly as it reads: at the served draft depth
++of 4, **R66 is R56 end to end — no regression on any line in any mode, and quality identical.** That
++is the expected result, not a disappointing one: at draft depth 4 the verify width is 5, and only
++the q5_K route is reached there at all, with a ceiling of about 2%.
++
++Two things this closes, and one it does not:
++
++- The prefill "regression" that chain150 reported at cell level is **dead at launch level**.
++- The owed c26 Q4_K_XL df2 re-run is **CLOSED** — 16 valid df2 launches with the acceptance gate
++  clean.
++- It does **not** turn the per-column kernel wins into served wins. They are reached at verify
++  widths 5–8; our serve verifies at 5. The gains are real and they are per-column; the served line
++  is flat, and both statements are in this document on purpose.
++
++A harness note worth keeping: the first launch of each arm × mode reads low on Q4_K_XL (6.69 against
++about 7.4) — a cold-first-launch effect present **in both arms**, so it cancels, but launch 0 should
++be dropped or flagged.
++
++
+ ## 7. The ideas we killed, with their mechanisms
+ 
+ Negative results with receipts are part of this release. `registers/closed-levers.jsonl` holds ten

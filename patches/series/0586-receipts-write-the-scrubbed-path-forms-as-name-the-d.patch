@@ -1,0 +1,75 @@
+From d47c3a9789b7cc497d6f148a682b16e63ddb6f4d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 22 Sep 2026 00:56:06 -0400
+Subject: [PATCH] receipts: write the scrubbed path forms as <name> - the
+ documents were reintroducing what they documented
+
+The first revision of the phase-3 receipts and the side-findings described the scrub by quoting the exact strings being removed, so carrying them onto the export branch put the user name back 24 times across 4 files - inside the documents proving it was gone. A document about a scrub is inside that scrub's blast radius. Caught only because the sweep was re-run AFTER the documents were carried across.
+
+Origin: ArifiLabs (native) - release engineering for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ RELEASE-PREP-PHASE3-RECEIPTS.md | 22 +++++++++++++++-------
+ SIDE-FINDINGS-RELEASE-PREP.md   |  2 +-
+ 2 files changed, 16 insertions(+), 8 deletions(-)
+
+diff --git a/RELEASE-PREP-PHASE3-RECEIPTS.md b/RELEASE-PREP-PHASE3-RECEIPTS.md
+index 0b0f09779..29255b15f 100644
+--- a/RELEASE-PREP-PHASE3-RECEIPTS.md
++++ b/RELEASE-PREP-PHASE3-RECEIPTS.md
+@@ -18,9 +18,9 @@ scans every tracked blob *and* every commit message in the range):
+ 
+ | Kind | Form | Hits | Files |
+ |---|---|---|---|
+-| blob | `<home>` | 188 | 10 |
+-| blob | `<home>` | 28 | 10 |
+-| blob | `<home>` | 6 | 4 |
++| blob | `C:/Users/<name>` | 188 | 10 |
++| blob | `C:\Users\<name>` | 28 | 10 |
++| blob | `/c/Users/<name>` | 6 | 4 |
+ | blob | `c:\Users\MyUser` | 1 | 1 |
+ | blob | `c:\Users\MyUsers` | 1 | 1 |
+ | **message** | *(any form)* | **0** | — |
+@@ -39,10 +39,10 @@ Two findings that shaped the rules:
+ `git-filter-repo 2.47.0`, `--replace-text` + `--replace-message` with the same file, `--refs export`:
+ 
+ ```
+-literal:<home>==><home>
+-literal:<home>==><home>
+-literal:<home>==><home>
+-literal:<home>==><home>
++literal:C:/Users/<name>==><home>
++literal:C:\Users\<name>==><home>
++literal:c:/users/<name>==><home>
++literal:/c/Users/<name>==><home>
+ ```
+ 
+ 11,504 commits parsed, new history written in 44 s. Tip `cb4df7a48` → `24bfb88f8` → (after the
+@@ -119,6 +119,14 @@ contributor is `0593-scope-cut-…patch` at **1,205** lines — the patch that *
+ evidence files, so by construction it carries their content, studio paths included. The same
+ mechanism raises the `qnap` and hostname counts.
+ 
++**The receipts put the name back, and the sweep caught it.** The first revision of this document and
++of `SIDE-FINDINGS-RELEASE-PREP.md` *described* the scrub by quoting the exact strings being removed —
++so carrying them onto the export branch reintroduced the user name **24 times across 4 files**, in
++the very documents proving it was gone. Both are now written with `<name>`, the series was
++regenerated and the sweep re-run. **A document about a scrub is inside the scrub's blast radius**;
++the only reason this did not ship is that the sweep was re-run *after* the documents were carried
++across rather than before.
++
+ **A correction to the phase-2 receipts.** Phase 2 reported the export sweep as 1,614 studio lines.
+ That figure was taken **before the series had converged** — 20 regenerated patches were still
+ untracked at the moment of measurement — so it understated the tree. The prep-branch column above is
+diff --git a/SIDE-FINDINGS-RELEASE-PREP.md b/SIDE-FINDINGS-RELEASE-PREP.md
+index 80eae7810..02cf2fee6 100644
+--- a/SIDE-FINDINGS-RELEASE-PREP.md
++++ b/SIDE-FINDINGS-RELEASE-PREP.md
+@@ -71,7 +71,7 @@ what I would do.
+ 
+ ### SF-P6 — the President's first name survives as a bare token, outside any path
+ 
+-- **What.** The path scrub removes `<home>` and its variants. The bare token `<first-name>` still
++- **What.** The path scrub removes `C:/Users/<name>` and its variants. The bare token `<first-name>` still
+   appears **240 times across 18 files** on the export branch.
+ - **Where.** `AUTHORS` (upstream's own contributor list), `docs/speculative.md` (upstream), and 16
+   `patches/series/*.patch` files.

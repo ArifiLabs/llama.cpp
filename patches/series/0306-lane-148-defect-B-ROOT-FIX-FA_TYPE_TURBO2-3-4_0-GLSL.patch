@@ -1,0 +1,39 @@
+From f38808d8b26aee5f175315d0b4868739f9be96d7 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 20:44:25 -0400
+Subject: [PATCH] lane-148 defect B ROOT FIX: FA_TYPE_TURBO2/3/4_0 GLSL
+ spec-constant ids were stale (43/44/47) while enum ggml_type puts them at
+ 200/201/202. Host passes the raw enum, so both switches fell through:
+ fa_block_elems() returned its 1u default and dequantize4() returned vec4(0),
+ zeroing V and the whole FA output. FLASH_ATTN_EXT -p turbo 0/1728 ->
+ 1728/1728.
+
+---
+ ggml/src/ggml-vulkan/vulkan-shaders/fa_types.glsl | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/fa_types.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/fa_types.glsl
+index 665c8c3e8..427389762 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/fa_types.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/fa_types.glsl
+@@ -14,11 +14,17 @@
+ #define FA_TYPE_BF16 30u
+ #define FA_TYPE_Q1_0 41u
+ #define FA_TYPE_Q2_0 42u
+-#define FA_TYPE_TURBO2_0 43u
+-#define FA_TYPE_TURBO3_0 44u
+ #define FA_TYPE_TQ3_1S 45u
+ #define FA_TYPE_TQ4_1S 46u
+-#define FA_TYPE_TURBO4_0 47u
++// The TurboQuant KV types live in the 200+ runtime-only block of enum ggml_type
++// (ggml.h). These three read 43/44/47 until lane-148: stale ids from before the
++// move. The host passes the raw enum (get_fa_spec_constants: FaTypeK/FaTypeV =
++// (uint32_t) k_type), so a stale id makes BOTH switches fall through -
++// fa_block_elems() returns its 1u default and dequantize4() returns vec4(0),
++// which zeroes V and therefore the whole FA output. Silent, not an abort.
++#define FA_TYPE_TURBO2_0 200u
++#define FA_TYPE_TURBO3_0 201u
++#define FA_TYPE_TURBO4_0 202u
+ 
+ // Number of matrix elements per buffer block, derived from the K/V type spec
+ // constant. F32 is treated as a vec4 "block" of 4 floats. F16 uses block size 1

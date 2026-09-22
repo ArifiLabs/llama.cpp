@@ -1,0 +1,106 @@
+From 014beddad2b76baf64a87b736212d67658405e11 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 04:00:27 -0400
+Subject: [PATCH] lane-152: what the FIRST live run of UPDATE-RUNBOOK section 2
+ corrected - one build break, two arifi_sync defects, the runbook itself, and
+ the last license row
+
+src/models/dflash.cpp:138 - the one real build breakage of the b10481 bump. `ml->get_tensor_meta("d2t")` does not compile here.
+
+MY FIRST ATTRIBUTION WAS WRONG AND IS RECORDED AS WRONG: I wrote that upstream b10481 is broken because it uses `ml->` inside a load_arch_tensors(llama_model_loader &) whose parameter it never names. Upstream master does not ship a file that cannot compile, and it does not here either - llama_model_base carries a member `llama_model_loader * ml` (src/llama-model.h line 767), so upstream's unnamed parameter is deliberate and `ml->` resolves to the MEMBER. The divergence is OURS: our signature names the parameter `ml`, which SHADOWS that member. Fixed to `ml.`, matching the sibling lookup twelve lines down that has always been `ml.`. Only occurrence in src/.
+
+tools/arifi-sync/arifi_sync.py, two defects found by RUNNING `bump` rather than reading it.
+(1) cmd_bump read `args.ref if hasattr(args, "ref") else "master"` while bump's parser had NO --ref, so it ALWAYS took the hardcoded fallback - and `master` is a live branch here (9aa7b3d2b, the pre-recut history), so it printed a plausible rebase surface computed against a dead branch, with no error. sources.json's own _comment says lane-139 fixed "three argparse defaults"; this was the fourth. --ref added, fallback removed.
+(2) NOT fixed, documented loudly in the runbook instead: bump's build and judge legs run against repo's own build-vulkan - the tree you are standing in, still on the OLD base - not against the replayed worktree. A green bump therefore never proves the new base builds. Moving the build into the throwaway worktree is a tool redesign, not a bump.
+
+UPDATE-RUNBOOK.md - this is exactly what its old section 6 asked for: "the first real bump is the test of this document, and whoever runs it should fix this file where it is wrong rather than working around it".
+- New 2.0: take the TAG, not the head, with the three tag-shaped facts that decide it.
+- 2.1 rewritten with what `bump` actually does and does not prove.
+- 2.2 gains the two things it did not warn about: a stale lane worktree holding arifi/main hostage so `git switch` refuses (that is 5.2 being violated, not a git quirk), and a lane working on its own branch needing --ref until merge-back. Plus the patches/ EOL churn (core.autocrlf=true against .gitattributes -text) that dirties the tree and makes `rebase --continue` refuse.
+- New 6 documents the nightly drift watch.
+- Old 6 becomes 7 and now tells the truth: 2 HAS been run once, 4.5 has not, 3 has never been run as a sweep.
+
+licenses/README.md - the row d40e42fae's license file was missing (section 3 requires the row beside the retained license, so the retention was half-landed). The old thecodacus text is PRESERVED inside the correction section rather than deleted, because its error is the same one that section is about, one level out: every clause of "there is no thecodacus remote on this repository" was true, and the conclusion drawn from it was still wrong. NO LOCAL REMOTE IS NOT NO SOURCE.
+
+Lane: lane-152
+---
+ licenses/README.md             | 12 ++++++++++--
+ src/models/dflash.cpp          |  8 +++++++-
+ tools/arifi-sync/arifi_sync.py |  8 +++++++-
+ 3 files changed, 24 insertions(+), 4 deletions(-)
+
+diff --git a/licenses/README.md b/licenses/README.md
+index f7fa1dcd9..84e47bbb8 100644
+--- a/licenses/README.md
++++ b/licenses/README.md
+@@ -44,7 +44,7 @@ the audit.
+ | `PrismML-Eng/llama.cpp` | **yes — `prisml-MIT.txt`** | **CLOSED 2026-08-18.** See the correction below: the "Phase 0 observed no LICENSE" finding was about the retained *release material*, and it was carried forward for a year as though it were a fact about the project. `refs/remotes/prisml/prism:LICENSE` exists and is MIT. |
+ | `turbo-tan/llama.cpp-tq3` | **yes — `tq3-MIT.txt`** | **CLOSED 2026-08-18.** Code IS ported (`58ad80ffb`, the `TQ3_4S` family at ids 48-51), and the license is now retained from `refs/remotes/tq3/main:LICENSE`. |
+ | `ciru-ai/ROCmFPX` | **yes — `ciru-MIT.txt`** | registered source, no code carried yet; the notice is retained ahead of any ingest so it can never lag the code. |
+-| `thecodacus/llama.cpp` | **no** | Still open, and honestly so: there is no `thecodacus` remote on this repository — the three prefetch patches were captured as patch artifacts, and those artifacts carry no license grant. There is nothing to `git show`. Documented, not manufactured. |
++| `thecodacus/llama.cpp` | **yes — `thecodacus-MIT.txt`** | **CLOSED 2026-08-18** (President's correction, retained in `d40e42fae`; row landed lane-152). The last open attribution. The old text of this row is preserved in the correction below because the error in it is instructive. |
+ 
+ ### Correction, 2026-08-18 (lane-151): a false absence that stood for months
+ 
+@@ -69,7 +69,15 @@ observed no source `LICENSE` or `NOTICE` file in the retained PrismML release ma
+ grant inside the captured thecodacus patch artifacts. The PrismML half is now closed: `prisml-MIT.txt`
+ is retained from `refs/remotes/prisml/prism:LICENSE`, and the correction above explains why the
+ original finding was true of the material examined and false of the project. The thecodacus half
+-STANDS — there is no thecodacus remote and no license text to copy.
++**FELL THE SAME DAY, to the same mistake one level out.** Its old text read: *"there is no
++`thecodacus` remote on this repository — the three prefetch patches were captured as patch artifacts,
++and those artifacts carry no license grant. There is nothing to `git show`. Documented, not
++manufactured."* Every clause of that is true, and the conclusion drawn from it is still wrong: the
++correction above says an absence claim is only as good as the place you looked, and this row then
++looked in exactly one place — this repository — and stopped. **NO LOCAL REMOTE IS NOT NO SOURCE.**
++The project is public; its LICENSE is a fetch away and needs no remote configured here. The President
++made that correction and `thecodacus-MIT.txt` is retained (`d40e42fae`). All seven registered sources
++plus thecodacus are now closed; this directory still contains no fabricated license text.
+ 
+ A 2026-07-22 project decision authorizes their inclusion with maximal attribution and provenance; it
+ does not authorize inventing a license text. Therefore this directory still contains no fabricated
+diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
+index 79721454e..f60d59a60 100644
+--- a/src/models/dflash.cpp
++++ b/src/models/dflash.cpp
+@@ -105,7 +105,13 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
+ 
+     // reduced draft vocab (optional): d2t maps draft rows to target token ids
+     int64_t n_vocab_draft = n_vocab;
+-    const struct ggml_tensor * d2t_meta = ml->get_tensor_meta("d2t");
++    // `ml.`, not `ml->`, and the reason is a SHADOW, not an upstream bug. Upstream b10481 writes
++    // this line as `ml->` and leaves its parameter UNNAMED on purpose: `ml` there resolves to the
++    // `llama_model_loader * ml` member of llama_model_base (llama-model.h:767). Our signature names
++    // the parameter `ml`, so inside this function the member is shadowed by a reference and `->`
++    // has nothing to reach through. The sibling lookup twelve lines down has always been `ml.` for
++    // exactly this reason; this line arrived through the b10481 merge still in upstream's shape.
++    const struct ggml_tensor * d2t_meta = ml.get_tensor_meta("d2t");
+     if (d2t_meta) {
+         n_vocab_draft = d2t_meta->ne[0];
+         d2t = create_tensor(tn(LLM_TENSOR_D2T), { n_vocab_draft }, 0);
+diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
+index 48de49344..58deed297 100644
+--- a/tools/arifi-sync/arifi_sync.py
++++ b/tools/arifi-sync/arifi_sync.py
+@@ -968,7 +968,12 @@ def cmd_bump(repo: str, cfg: dict, args) -> int:
+ 
+     step("1/4  rebase surface: what upstream touched that our patches also touch")
+     base = cfg["base"]["upstream_sha"]
+-    _, ours, _ = git(repo, "diff", "--name-only", base, args.ref if hasattr(args, "ref") else "master")
++    # lane-152: this read `args.ref if hasattr(args, "ref") else "master"`, and `bump`'s parser had no
++    # --ref, so it ALWAYS took the hardcoded fallback. sources.json's own _comment says the three
++    # argparse "master" defaults were fixed at lane-139 - this fourth one was missed, and `master` is
++    # still a live branch here (9aa7b3d2b, the pre-recut history), so it printed a plausible rebase
++    # surface computed against a dead branch instead of failing. Silent wrong numbers, not an error.
++    _, ours, _ = git(repo, "diff", "--name-only", base, args.ref)
+     our_paths = set(p for p in ours.split("\n") if p)
+     _, theirs, _ = git(repo, "diff", "--name-only", base, args.onto)
+     their_paths = set(p for p in theirs.split("\n") if p)
+@@ -1057,6 +1062,7 @@ def main(argv=None) -> int:
+     p.add_argument("--i-have-read-bench-purity", action="store_true")
+     p = sub.add_parser("bump")
+     p.add_argument("--onto", required=True)
++    p.add_argument("--ref", default=None)   # lane-152: without this, cmd_bump fell back to "master"
+     p.add_argument("--i-have-read-bench-purity", action="store_true")
+ 
+     args = ap.parse_args(argv)

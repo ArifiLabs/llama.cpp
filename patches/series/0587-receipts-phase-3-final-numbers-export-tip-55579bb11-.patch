@@ -1,0 +1,116 @@
+From a067bf3ae53538e95519949b1d09174bfd5100bd Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 22 Sep 2026 01:16:26 -0400
+Subject: [PATCH] receipts: phase-3 final numbers - export tip 55579bb11, the
+ name at zero in blobs and messages
+
+provenance --strict rc=0 over 684 commits; series regen 604 patches, converged; series check rc=0 both halves, replayed tree IDENTICAL. Identity vs the prep tip: differences confined to patches/ plus exactly the 6 re-keyed ledgers.
+
+Origin: ArifiLabs (native) - release engineering for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ RELEASE-PREP-PHASE3-RECEIPTS.md | 54 +++++++++++++++++++++------------
+ 1 file changed, 34 insertions(+), 20 deletions(-)
+
+diff --git a/RELEASE-PREP-PHASE3-RECEIPTS.md b/RELEASE-PREP-PHASE3-RECEIPTS.md
+index 29255b15f..52ef13a6c 100644
+--- a/RELEASE-PREP-PHASE3-RECEIPTS.md
++++ b/RELEASE-PREP-PHASE3-RECEIPTS.md
+@@ -46,7 +46,7 @@ literal:/c/Users/<name>==><home>
+ ```
+ 
+ 11,504 commits parsed, new history written in 44 s. Tip `cb4df7a48` → `24bfb88f8` → (after the
+-re-key and series commits) **`<EXPORT_TIP>`**.
++re-key and series commits) **`55579bb11`**.
+ 
+ **No studio path is in the rule set**, so `C:/ArifiLabs/…` could not be rewritten.
+ 
+@@ -85,47 +85,61 @@ Prior keys are preserved in `sha_pre_rewrite`. Verified after: `native-grandfath
+ ## 4. Verification in the clone
+ 
+ - `provenance --strict --ref export` → **rc=0**.
+-  `range : 4627f376fd267247c0e3c5faf2879da2d5bfe38d..export`, **682 commits**,
++  `range : 4627f376fd267247c0e3c5faf2879da2d5bfe38d..export`, **684 commits**,
+   `PASS (15 EXEMPT, not repaired — 12 loose-only, 3 without Measured-effect)`.
+-- `series regen --ref export` → **603 patches**; a second regen is a no-op (clean tree) — converged.
++- `series regen --ref export` → **604 patches**; a second regen is a no-op (clean tree) — converged.
+ - `series check --ref export` → **rc=0, both halves**:
+ 
+ ```
+ PASS: every patch is byte-identical to a fresh generation from git AND a committed blob.
+-replayed 603 patches cleanly -> 2a480accb (tree 014be9d50)
++replayed 604 patches cleanly
+ PASS: replayed tree is IDENTICAL to export outside patches/series
+ ```
+ 
+ ## 5. Sweep — export tip
+ 
+-| class | prep `7be225d3c` | export | verdict |
++Measured on the converged export tip **`55579bb11`**:
++
++| class | prep `7be225d3c` | export `55579bb11` | verdict |
+ |---|---|---|---|
+-| **user-home** | **114** / 15 files | **2** / 1 file | **target met** |
+-| studio-path | 1,615 / 54 | 2,838 / 58 | unchanged **by intent**; see below |
++| **user-home, the President's name** | **114** / 15 files | **0** / 0 files | **target met** |
++| user-home, upstream's placeholders | 2 | 8 / 3 files | upstream content, left alone |
++| studio-path | 1,615 / 54 | 2,842 / 60 | unchanged **by intent**; see below |
+ | e-mail: `arifilabs@users.noreply.github.com` | 403 | **0** | **zero** |
+ | credential / token shapes | **0** | **0** | clean |
+-| qnap | 19 | 29 | reviewed noise, see below |
++| qnap | 19 | 37 | reviewed noise, see below |
+ | rig hostname | 38 | 50 | intentional disclosure |
+ 
+-**The 2 remaining user-home hits are upstream's** — `docs/backend/snapdragon/windows.md:127` and
+-`:131`, the `MyUser` / `MyUsers` placeholders in upstream's certificate example. **The President's
+-Windows user name appears nowhere on the export branch**, in any form, in any blob or message.
++**The President's Windows user name appears nowhere on the export branch** — 0 hits across every
++tracked blob and 0 across every commit message in `4627f376f..export`, measured with
++`Users[\\/]+<name>` over both.
++
++**The 8 remaining user-home hits are upstream's own anonymous placeholders** — `MyUser` / `MyUsers`
++in `docs/backend/snapdragon/windows.md`, a certificate-signing example, plus the generated patches
++that carry that file. They contain no real user name and were deliberately outside the rule set.
+ 
+ **Why studio-path *rose* while being untouched.** Outside the generated series the count is
+ **identical on both branches — 18 lines under `tools/`** (`arifi_sync.py`'s `STUDIO_ROOT` and
+ `sources.json`'s `turbomerge` url, both read at run time; SF-P4). Every one of the additional lines
+-is inside `patches/series/`, which was regenerated and now holds **603** patches. The single largest
++is inside `patches/series/`, which was regenerated and now holds **604** patches. The single largest
+ contributor is `0593-scope-cut-…patch` at **1,205** lines — the patch that *deletes* 435 lane
+ evidence files, so by construction it carries their content, studio paths included. The same
+ mechanism raises the `qnap` and hostname counts.
+ 
+-**The receipts put the name back, and the sweep caught it.** The first revision of this document and
+-of `SIDE-FINDINGS-RELEASE-PREP.md` *described* the scrub by quoting the exact strings being removed —
+-so carrying them onto the export branch reintroduced the user name **24 times across 4 files**, in
+-the very documents proving it was gone. Both are now written with `<name>`, the series was
+-regenerated and the sweep re-run. **A document about a scrub is inside the scrub's blast radius**;
+-the only reason this did not ship is that the sweep was re-run *after* the documents were carried
+-across rather than before.
++**The receipts put the name back — twice — and the sweep caught it both times.** The first revision
++of this document and of `SIDE-FINDINGS-RELEASE-PREP.md` *described* the scrub by quoting the exact
++strings being removed, so carrying them onto the export branch reintroduced the user name **24 times
++across 4 files**, in the very documents proving it was gone.
++
++Correcting them in a follow-up commit was **not enough, and the reason matters**: the patch series is
++generated from history, so the commit that *added* the literal and the commit that *removed* it each
++produced a patch containing it — 10 hits in `0604` and `0605`. **The series faithfully records what
++history contains, so there is no way to zero except for the literal never to enter history at all.**
++Those two commits were therefore dropped (banked at `export-bank-2b3e1dde8`) and replaced by one
++commit carrying the de-named documents, after which the series regenerates clean.
++
++**A document about a scrub is inside that scrub's blast radius**, and a correcting commit does not
++help when a generated artefact mirrors history.
+ 
+ **A correction to the phase-2 receipts.** Phase 2 reported the export sweep as 1,614 studio lines.
+ That figure was taken **before the series had converged** — 20 regenerated patches were still
+@@ -166,7 +180,7 @@ cd <repo>/cache/release-export
+ git remote add publish git@github.com:<org>/<repo>.git
+ 
+ # 2. tag the release from the clone
+-git tag -a r73i-release-engine-2026-09-21 <EXPORT_TIP> \
++git tag -a r73i-release-engine-2026-09-21 55579bb11 \
+     -m "ArifiLabs llama.cpp fork - R73 release engine (arifi-b10825-r73i-5a7434218)"
+ 
+ # 3. push the branch, then the tag

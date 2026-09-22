@@ -1,0 +1,62 @@
+From 7f6a35f6dc541f9ffda76024ede3736684b6f551 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 6 Sep 2026 03:32:43 -0400
+Subject: [PATCH] vulkan: tq_rotate is a src1 reformat - restore the TQ
+ MUL_MAT_ID path
+
+Seventh merge defect from the b10819 bump, and the first one a build could not
+find: it needs test-backend-ops to reach a TQ3_1S/TQ4_1S MUL_MAT_ID case.
+
+Upstream 77f132cb1 (mul_mat_id pads K rather than N) introduced a derived flag,
+y_needs_reformat = y_non_contig || y_needs_k_padding, and a new assert on it:
+
+  GGML_ASSERT(y_needs_reformat || !qy_needs_dequant)   ggml-vulkan.cpp:11192
+
+The fork sets qy_needs_dequant when tq_rotate is true, because the TurboQuant
+rotate FORCES staging into prealloc_y even for a contiguous f32 src1 - otherwise
+d_Y aliases the graph own activation and the rotate would mutate it. That
+exception was threaded into the older assert at 11179 but not into upstream new
+derived flag, so tq_rotate implied qy_needs_dequant while y_needs_reformat stayed
+false, and the assert aborted the process. Measured: the full sweep died at
+12,343 cases with STATUS_STACK_BUFFER_OVERRUN (rc 0xC0000409) instead of
+reporting a result.
+
+Fix: tq_rotate is a reformat by definition, so it joins the flag. Both
+else-if (y_needs_reformat) staging sites are already guarded by an
+if (tq_rotate) branch that wins first, so nothing is double-staged; the change
+only widens the assert and one more thing.
+
+THE QUIETER DEFECT THIS ALSO CLOSES: line 11464 marks
+ctx->prealloc_y_need_sync from y_needs_reformat || quantize_y. With tq_rotate
+excluded, a rotate wrote prealloc_y and never marked it for sync, so a later
+consumer of the same buffer could read it without a barrier. That is a data
+hazard rather than an assert, it would not abort, and no test names it - it is
+fixed here because it has the same root, not because anything caught it.
+
+Origin: ArifiLabs (native)
+Measured-effect: test-backend-ops goes from ABORT at case 12343 (GGML_ASSERT y_needs_reformat, rc 0xC0000409, no result at all) to a completed sweep; build stays RC=0 on all five targets.
+Lane: lane-209
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 5800f14af..6135f42d8 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -11185,7 +11185,14 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
+     // Coopmat2 MUL_MAT_ID BK specialization constants in ggml_vk_load_shaders are at most 64.
+     const uint32_t y_staged_row_stride = ctx->device->coopmat2 && !quantize_y ? ggml_vk_align_size(ne10, 64) : ne10;
+     const bool y_needs_k_padding = ne10 != y_staged_row_stride;
+-    const bool y_needs_reformat = y_non_contig || y_needs_k_padding;
++    // tq_rotate belongs here: it FORCES staging into prealloc_y (see the block above), so by
++    // definition src1 is reformatted. b10819 (77f132cb1) derived this flag from y_non_contig and
++    // the new K-padding only; the fork's tq_rotate exception was threaded into the older assert at
++    // ~11179 but not into this one, so a TQ3_1S/TQ4_1S MUL_MAT_ID aborted the whole sweep on the
++    // assert below. Both `else if (y_needs_reformat)` sites are guarded by an `if (tq_rotate)`
++    // branch that wins first, so this only widens the assert and the prealloc_y sync mark - the
++    // latter being a second, quieter defect: the rotate writes prealloc_y and was not marking it.
++    const bool y_needs_reformat = y_non_contig || y_needs_k_padding || tq_rotate;
+     qy_needs_dequant = qy_needs_dequant || y_needs_k_padding;
+ 
+     // Not implemented

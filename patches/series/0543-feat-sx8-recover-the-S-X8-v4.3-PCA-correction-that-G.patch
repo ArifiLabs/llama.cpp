@@ -1,0 +1,1449 @@
+From d4de3ed5667f7ce5294a616ecbb156c7547a108b Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 15 Sep 2026 07:45:57 -0400
+Subject: [PATCH] feat(sx8): recover the S-X8 v4.3 PCA correction that GGUF
+ conversion drops (lane-242/R53)
+
+Every 30-byte S-X8 block carries two signed-4-bit PCA coefficients, but the PCA bases and
+scales live only in the .sx8v43 container. The author's GGUF converter drops them and his
+llama.cpp patch ignores the coefficients. This recovers both halves and measures what they
+are worth.
+
+  tools/sx8/extract_sx8_pca.py     bases/scales out of a container over HTTP RANGE requests,
+                                   skipping every block payload: 300 MB read of the 4.38 GB
+                                   4B file, 550 MB of the 26.09 GB 27B file, both landing on
+                                   exact EOF. --verify-stream re-reads the whole container
+                                   with the reference reader and proves the walk bit-identical
+                                   without putting 4.38 GB on disk.
+  tools/sx8/add_sx8_pca_to_gguf.py writes them, with the coefficient planes unpacked from the
+                                   blocks already in the GGUF, into a companion GGUF: 366 MB
+                                   beside the 4B instead of a 3.9 GB model rewrite, and no
+                                   26 GB rewrite for the 27B at all.
+  loader                           picks the companion up as an extra file, so its tensors take
+                                   the ordinary weights_map / backend-upload route.
+  build_lora_mm                    applies Y[n] += c0*Z0 + c1*Z1 in stock ggml ops, so CPU,
+                                   Vulkan and any future backend share one implementation and
+                                   no kernel or shader learns about PCA.
+
+Absent a companion the map is empty and the graph is the pre-R53 graph, bit for bit.
+
+The correction is right and it is small. Against float64 goldens taken from the spec it lands
+within 7.3e-07 of the output on CPU and 4.3e-08 on Vulkan, the two backends agree to 8.2e-07,
+and a planted coefficient-sign flip is caught. In weight space it moves five tested tensors
+TOWARD a Q8_0 reference by 3.0-3.4% RMS error, while a sign flip and a c0/c1 swap both move
+them away. But PPL wikitext-2 on the 4B goes 9.9989 -> 9.9955, -0.034%, against the -2.64% of
+the author's Table 4. On this file the dropped PCA coefficients are worth ~0.03% of perplexity,
+not the 2.6% gap. See OPUS-R53-SX8-PCA-REPORT.md section 6 for what reproduces and what does not.
+
+Origin: fork-authored (ArifiLabs lane-242 R53 S-X8 PCA correction path, Opus 5 MEDIUM maker; formula and bases from MarlaLabs S-X8 v4.3, Apache-2.0)
+Measured-effect: QUALITY - PPL wikitext-2 4B S-X8 9.9989 -> 9.9955 (-0.034%) with PCA ON (Q8_0 9.9742); llama-perplexity -c 512, 580 chunks, one cell at a time; speed UNMEASURED
+Lane: lane-242
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ docs/OPTIONS-REGISTRY.md                   |   1 +
+ src/llama-graph.cpp                        |  38 +++
+ src/llama-model-loader.cpp                 |  90 ++++++
+ src/llama-model-loader.h                   |  18 ++
+ src/llama-model.cpp                        |   7 +
+ src/llama-model.h                          |  10 +
+ tests/CMakeLists.txt                       |   3 +
+ tests/test-sx8-pca.cpp                     | 256 ++++++++++++++++
+ tools/sx8/add_sx8_pca_to_gguf.py           | 163 +++++++++++
+ tools/sx8/check_pca_reduces_error.py       | 111 +++++++
+ tools/sx8/extract_sx8_pca.py               | 322 +++++++++++++++++++++
+ tools/sx8/make_sx8_pca_fixtures.py         | 120 ++++++++
+ tools/sx8/prep_wikitext2_test.py           |  26 ++
+ tools/sx8/verify_gguf_matches_container.py |  86 ++++++
+ 14 files changed, 1251 insertions(+)
+ create mode 100644 tests/test-sx8-pca.cpp
+ create mode 100644 tools/sx8/add_sx8_pca_to_gguf.py
+ create mode 100644 tools/sx8/check_pca_reduces_error.py
+ create mode 100644 tools/sx8/extract_sx8_pca.py
+ create mode 100644 tools/sx8/make_sx8_pca_fixtures.py
+ create mode 100644 tools/sx8/prep_wikitext2_test.py
+ create mode 100644 tools/sx8/verify_gguf_matches_container.py
+
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index 02d332182..7b116585d 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -64,6 +64,7 @@ safe measurement posture.
+ | `GGML_ARIFI_MMVQ_A_HOIST` | **ON by device probe when unset on AMD, OFF on every other vendor** — the only vendor this was measured on. Specialization constant 3 of `mul_mat_vecq.comp`; `1` = decode each row's weight block once per (row, k-slice) into registers and loop the columns doing only the B load and the integer dot, `0` = the inherited nest, which re-runs the whole A decode once per column. Only an exact `0` or `1` is taken; anything else falls back to the probe. Added 2026-09-14 (lane-235/R48b). | Scope: every `q8_1` integer-dot `mul_mat_vec` pipeline. Both nests call the same `mmvq_load_a()` / `mmvq_dot_a()` pair in the same order, so results are **bit-identical by construction** and this is a scheduling change only. `NUM_COLS == 1` folds to the inherited nest at pipeline-compile time. Probed once at device creation, because routing reads the same answer. Two narrowings ride on top: `IQ1_S`/`IQ1_M` are OFF by default on register grounds (see the next row) and the legacy-block family (`Q4_0`, `Q4_1`, `Q5_0`, `Q5_1`, `Q8_0`, `MXFP4`) is OFF at `NUM_COLS >= 6`. **`=0` is the widest switch in this group: it removes the hoisted nest AND the R48b routing that depends on it.** | Default. Use `=0` for the OFF arm of a pairing — one binary serves both arms — or on a vendor this has not been measured on. | **Correctness CLEARED, default-route performance UNMEASURED.** `test-backend-ops MUL_MAT -b Vulkan0` is 0 FAIL in both arms, and two planted reds proved the decode site live (RED-1, fires in both arms) and the hoisted nest the one serving (RED-2, red ON / green OFF). HQ forced-MMVQ pairing (`32-paired-r48bforce.txt`, 3 quiet interleaved rounds, same binary): the hoist removes a **10-15x tail cliff** at `NUM_COLS` 6..7 for `q4_K` (248320x5120 `5.1 / 3.3` → `52 / 48` GB/s; 5120x17408 `3.7 / 2.5` → `26.8 / 24.3`) and holds S-X8 flat at the bus across `n=1..8`. It **REGRESSES Q8_0 at `n>=6`** (`-25 / -17 / -24%` at `n=6/7/8` on 4096x14336, `-17%` at `n=8` on 5120x17408, `-10%` at `n=6` on 248320x5120), which is what the legacy-family `NUM_COLS >= 6` gate is for. `q5_K` at `n=1`, its only MMVQ width, is a wash. Every number here is from a `GGML_VK_FORCE_MMVQ=1` arm; a **default-routing re-pair is owed**. |
+ | `GGML_ARIFI_MMVQ_A_HOIST_IQ1` | **OFF when unset.** Only an exact `1` turns the A-side hoist on for the `IQ1_S` and `IQ1_M` `q8_1` pipelines, and never above the global switch — `GGML_ARIFI_MMVQ_A_HOIST=0` forces it off regardless. Added 2026-09-14 (lane-235/R48b). | Scope: the `IQ1_S` and `IQ1_M` `q8_1` `mul_mat_vec` pipelines only. They carry the largest A state of any MMVQ type (10 and 12 registers per row against 5-6 for the K-quants) and run the most rows per workgroup (`rm_iq_int` = 4 or 8), the highest product in the register table. Gated in the HOST, not by an `#ifdef`: the shader keeps both paths, so no rebuild moves it. | Only to pair the IQ1 types specifically. | **UNMEASURED on these two types — that is exactly why they ship OFF.** The default is a register-pressure judgement (report section 3 of `OPUS-R48B-MMVQ-A-HOIST-REPORT.md`), not a measurement. Arithmetic is identical either way; correctness is covered by the same `MUL_MAT` sweep. |
+ | `GGML_ARIFI_MMVQ_ROUTE` | **unset = R48b routing.** Only the exact string `legacy` pins `ggml_vk_should_use_mmvq()` back to the pre-R48b rules while KEEPING the hoisted nest. Added 2026-09-14 (lane-235/R48b phase 2). | Scope: two AMD routing rules, and nothing else. (i) `GGML_TYPE_SX8` → MMVQ at every width (`legacy`: opt-in via `GGML_ARIFI_SX8_MMVQ=1`). (ii) `GGML_TYPE_Q4_K` at `n >= 5` → MMVQ when `k <= 8192`, f32 above (`legacy`: f32 at every `n >= 5`). `Q5_K`, `Q8_0` and the legacy-block family are untouched in both modes. Both rules are additionally gated on the hoist being live, so on a non-AMD device or under `GGML_ARIFI_MMVQ_A_HOIST=0` they are already the legacy rules. **`legacy` is NOT the same arm as `GGML_ARIFI_MMVQ_A_HOIST=0`**: this one keeps the hoisted nest and changes only where traffic is sent, the other removes the nest as well. A pairing log must say which was used. | Use `legacy` to pair the ROUTING change alone, holding the kernel constant. | **Routing derived from the HQ forced-MMVQ pairing, not yet re-measured at default routing.** `q4_K` MMVQ+hoist vs the f32 default at `n=5..8`: 248320x5120 (k=5120) `55.7/52.1/48.0/45.6` vs `46.0/36.1/35.0/29.0` GB/s (**+21/+44/+37/+57%**), 17408x5120 (k=5120) `35.7/34.8/33.5/31.3` vs `33.2/27.9/29.9/24.4` (win), 5120x17408 (**k=17408**) `32.4/26.8/24.3/22.7` vs `37.0/30.8/31.6/27.2` (**LOSS**) — hence the `k` split. `k = 8192` is the midpoint of the two measured `k` values and is an **untested boundary**: nothing was run between 5120 and 17408. S-X8 evidence is in the `GGML_ARIFI_SX8_MMVQ` row above. |
++| `GGML_ARIFI_SX8_PCA` / `GGML_ARIFI_SX8_PCA_FILE` | **ON when a PCA companion GGUF is present, and there is nothing to turn on when there is not.** `GGML_ARIFI_SX8_PCA=0` makes the loader skip the companion entirely; `GGML_ARIFI_SX8_PCA_FILE=<path>` names one instead of the auto-discovered `<model>.sx8pca.gguf` beside the model. Added 2026-09-15 (lane-242/R53). | Scope: `GGML_TYPE_SX8` weights reached through `build_lora_mm`. S-X8 v4.3 stores two signed-4-bit PCA coefficients in byte 29 of every 30-byte block, but the PCA bases and scales live only in the `.sx8v43` container - the author's GGUF converter drops them and his llama.cpp patch ignores the coefficients. `tools/sx8/extract_sx8_pca.py` pulls the bases/scales out of the container over HTTP ranges and `tools/sx8/add_sx8_pca_to_gguf.py` writes them, with the unpacked coefficient planes, into a companion GGUF (366 MB for the 4B, against a 3.9 GB rewrite of the model file). The correction is built from stock ggml ops in `src/llama-graph.cpp` (`Z0[kb] = s0*sum_t X*b0`, `Y[n] += c0*Z0 + c1*Z1`), so CPU, Vulkan and any future backend get it from one place and no kernel or shader knows about PCA. **With no companion file the map is empty and the graph is the pre-R53 graph, bit for bit.** One receipt line at load names how many tensors were attached. | Leave it alone when a companion is beside the model. Use `=0` for the OFF arm of a quality pairing on the same binary and the same files. | **QUALITY MEASURED, speed UNMEASURED.** `test-backend-ops MUL_MAT` is 0 FAIL in both arms (its synthetic tensors carry no companion, so the arms are the same code). `test-sx8-pca` runs a real 64-row slice of `blk.0.ffn_down.weight` against float64 goldens taken straight from the spec: the PCA term lands within `7.3e-07` of the output on CPU and `4.3e-08` on Vulkan, and the two backends agree to `8.2e-07`. A planted coefficient-sign flip moves the term by `1.5x` and is caught. The pre-existing `2.159e-03` core gap against an exact decode is the Q8_1 activation quantization of the S-X8 mat-mul, identical on both backends and untouched by R53. PPL wikitext-2 on the 4B (`llama-perplexity -c 512`, 580 chunks, one cell at a time): S-X8 PCA OFF **9.9989**, PCA ON **9.9955** (**-0.034%**), Q8_0 **9.9742**. The correction is oriented correctly -- it moves the weights TOWARD a Q8_0 reference on every tensor tested (-3.0% to -3.4% RMS error), while a sign flip and a c0/c1 swap both move them away -- but it does **NOT** reproduce the -2.64% of the author's Table 4. On this file the dropped PCA coefficients are worth ~0.03% of perplexity. Absolute values are not comparable to his: he scores 512-token windows at stride 128, `llama-perplexity` does not. **Not applied to the embedding LOOKUP** (`token_embd` via `get_rows`), which is not a matmul - that arm of the correction is OWED. |
+ | `GGML_VK_SX8_MMV_ROWS` / `GGML_VK_SX8_MMV_WG` | **unset = the probed default** (workgroup = the device subgroup width when it is a multiple of 32, else 32; rows = 2). Read once at pipeline creation. Added 2026-09-11 (lane-232/R47a), extended 2026-09-11 (lane-230/R46b commit D). | Scope: every S-X8 `mul_mat_vec` pipeline, f32/f16/q8_1/id alike. An override is taken WHOLE or refused WHOLE against this device's real limits: workgroup a positive multiple of 32, within `maxComputeWorkGroupInvocations`, and `NUM_COLS * rows * wg * 4` within `maxComputeSharedMemorySize` at the WIDEST `NUM_COLS`. **Setting either variable also switches the R46b shape-tuned lookup OFF for the whole run** — a run that kept the measured table on the cells the arm does not name would be a mixed arm. A stderr receipt names APPLIED or REFUSED once per distinct pair. | Sweep instrument. Use it to pair rows 1/2/4/8 against workgroups 64/128/256 out of one binary, or to pin the pre-R46b behaviour for an A/B. Not a serve setting. | On the 780M (subgroup 64, 32 KiB shared) `rows=8/wg=256` is REFUSED by shared memory and the run keeps the default; `rows=4/wg=256` and `rows=8/wg=128` sit exactly on the 32,768-byte limit, are admitted, and measured 12/12 GREEN on `MUL_MAT` (`research/local-inference/lane-evidence/2026-09-11-lane-232-r47a-alloc-instrument/33-boundary-rows4-wg256.txt`, `34-boundary-rows8-wg128.txt`). |
+ | S-X8 mat-vec shape tuning (R47d lookup) | **Code, not an environment variable. ON by device probe** — subgroup width 64 with `maxComputeSharedMemorySize == 32768`, the SUBGROUP workgroup class, f32 activations, and only for the exact (m, k, n) cells the table names. Added 2026-09-11 (lane-230/R46b commit D). | Scope: `GGML_TYPE_SX8` `mul_mat_vec` with f32 activations. 31 measured cells over the four real 27B S-X8 decode shapes at n=1..8; the n=1 FFN orientations take rows=4/wg=256 and the 248320x5120 output takes rows=8/wg=64, which is why one global pair cannot express it. Every other shape, every n>8, the f16/q8_1/id paths and every other device keep the probed default. A stderr receipt at pipeline creation names ON/OFF and the probed default. | Nothing to operate. To measure against it, set `GGML_VK_SX8_MMV_ROWS`/`_WG` (which turns the lookup off whole). | **MEASURED on lane-232's base, which does NOT carry R46's `n <= 3` whole-block decode.** Every selected cell read >= 0.97 of the probed default in BOTH rounds, best cells +12.18% (248320x5120 n=2) and +10.76% (n=6); source `research/local-inference/lane-evidence/2026-09-11-lane-232-r47a-alloc-instrument/R47D-TRACES-SWEEP.md`, "Sweep selection". R46 replaces the decode math and row-blocking loop at `n <= 3` and leaves the reduction shape untouched, so the shared-memory arithmetic still holds, but **the n=1/2/3 optima are UNVERIFIED on the rebased kernel** until they are re-measured on the R46b stage. No held-out deployment guarantee is claimed. |
+ | `GGML_VK_PLACEMENT=bulk-large-heap` | **OFF when unset; unset changes no byte of the existing placement chain.** Only the exact string `bulk-large-heap` is accepted. Added 2026-09-11 (lane-230/R46b commit E). | Scope: the bulk device buffers the model loader suballocates weights from (`ggml_backend_vk_buffer_type_alloc_buffer`), and nothing else — prealloc scratch and staging keep their current paths. The policy asks for a `DEVICE_LOCAL` type on the LARGEST heap and excludes every other heap for those buffers; grouping is untouched. A refusal is not fatal: that one buffer falls back to the stock chain and says so on stderr. A receipt names the chosen heap **with tracing off**. | Only to test the R47d placement hypothesis, in proof cells A/B, against an unchanged-policy control. | **UNMEASURED as a fix — commissioned, not proven.** R47d established the mechanism it targets: the placement chain tests each allocation against the WHOLE heap size with no cumulative accounting (`ggml-vulkan.cpp` `ggml_vk_find_memory_properties`), so `GGML_VK_PREFER_HOST_MEMORY=1` puts bulk weights on host-visible heap 1 and a 256 MiB grouping puts them in the small combined-property heap 2, and the first pinned upload then dies at `submit seq=0` with `ErrorUnknown` in both arms (`R47D-TRACES-SWEEP.md`, "Exact failure boundaries"). The driver-internal cause of `ErrorUnknown` is **UNSCORED**. The cumulative requirement reservation with rollback that the same commission asks for is **NOT implemented**; this is heap selection only. |
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index adf766dae..8d2d39d24 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -1651,6 +1651,44 @@ ggml_tensor * llm_graph_context::build_lora_mm(
+ 
+     ggml_tensor * res = ggml_mul_mat(ctx0, w, cur);
+ 
++    // ArifiLabs lane-242 / R53: the S-X8 v4.3 PCA correction.
++    //
++    // Every 30-byte S-X8 block carries two signed-4-bit PCA coefficients (c0, c1) that the
++    // llama.cpp decoders throw away, costing his Table 4 gap: PPL 10.5043 without them against
++    // 10.2267 with. The correction rides on the linearity of the dot product
++    // (SX8_FLASH_V4_3_SPEC.md section 5, sx8_decode1_v3.cu:8-13):
++    //
++    //     Z0[kb] = s0[kb] * sum_t X[kb*32+t] * b0[kb][t]         (once per token, per matmul)
++    //     Y[n]  += sum_kb c0(kb,n)*Z0[kb] + c1(kb,n)*Z1[kb]
++    //
++    // so the per-weight PCA cost collapses to two FMAs per 32-weight block. Expressed here in
++    // stock ggml ops, which is what makes it backend-agnostic: no CPU kernel and no shader has
++    // to learn about PCA, and CPU, Vulkan and any future backend all get it from one place.
++    // s0/s1 are pre-folded into b0/b1 by tools/sx8/add_sx8_pca_to_gguf.py, so the scale multiply
++    // is already paid at build time.
++    //
++    // Without a PCA companion GGUF the map is empty and this is not reached at all.
++    if (w->type == GGML_TYPE_SX8 && mdl != nullptr) {
++        if (const auto * pca = mdl->get_sx8_pca(w)) {
++            const int64_t n_cb = pca->b0->ne[1];
++            const int64_t n_tk = ggml_nelements(cur) / cur->ne[0];
++
++            // [K, n_tk] -> [32, n_cb, n_tk]; b0 is [32, n_cb, 1] and broadcasts over the tokens.
++            ggml_tensor * xc = ggml_is_contiguous(cur) ? cur : ggml_cont(ctx0, cur);
++            ggml_tensor * xr = ggml_reshape_3d(ctx0, xc, 32, n_cb, n_tk);
++
++            ggml_tensor * z0 = ggml_sum_rows(ctx0, ggml_mul(ctx0, xr, pca->b0)); // [1, n_cb, n_tk]
++            ggml_tensor * z1 = ggml_sum_rows(ctx0, ggml_mul(ctx0, xr, pca->b1));
++
++            z0 = ggml_reshape_2d(ctx0, z0, n_cb, n_tk);
++            z1 = ggml_reshape_2d(ctx0, z1, n_cb, n_tk);
++
++            // c is [n_cb, N], so each mat-vec contributes one of the two rank-1 terms.
++            res = ggml_add(ctx0, res, ggml_mul_mat(ctx0, pca->c0, z0));
++            res = ggml_add(ctx0, res, ggml_mul_mat(ctx0, pca->c1, z1));
++        }
++    }
++
+     if (w_s) {
+         res = ggml_mul(ctx0, res, w_s);
+     }
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index f351d4963..bf74dc7bd 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -846,6 +846,56 @@ llama_model_loader::llama_model_loader(
+ 
+             LLAMA_LOG_INFO("%s: additional %d GGUFs metadata loaded.\n",  __func__, n_split - 1);
+         }
++
++        // ArifiLabs lane-242 / R53: optional S-X8 v4.3 PCA companion GGUF.
++        //
++        // The .sx8v43 container carries per-tensor PCA bases and scales that the author's GGUF
++        // converter drops, so a GGUF-only engine cannot apply the correction and pays his
++        // Table 4 gap (PPL 10.5043 instead of 10.2267). They are ~0.4% of the weights, so they
++        // ride in a companion file rather than forcing a rewrite of a 26 GB GGUF. Discovered as
++        // "<model>.sx8pca.gguf" beside the model, or named by GGML_ARIFI_SX8_PCA_FILE.
++        // GGML_ARIFI_SX8_PCA=0 skips the companion entirely -- the no-companion path is the
++        // pre-R53 path, bit for bit.
++        //
++        // Its tensors join weights_map exactly like a split's, so loading, mmap, backend
++        // placement and upload all take the ordinary route.
++        const char * pca_env = getenv("GGML_ARIFI_SX8_PCA");
++        if (!(pca_env && pca_env[0] == '0' && pca_env[1] == '\0')) {
++            std::string pca_fname;
++            if (const char * e = getenv("GGML_ARIFI_SX8_PCA_FILE")) {
++                pca_fname = e;
++            } else {
++                std::string base = fname;
++                if (base.size() > 5 && base.compare(base.size() - 5, 5, ".gguf") == 0) {
++                    base.resize(base.size() - 5);
++                }
++                const std::string cand = base + ".sx8pca.gguf";
++                if (FILE * probe = ggml_fopen(cand.c_str(), "rb")) {
++                    fclose(probe);
++                    pca_fname = cand;
++                }
++            }
++
++            if (!pca_fname.empty()) {
++                struct ggml_context * pca_ctx = NULL;
++                struct gguf_init_params pca_params = {
++                    /*.no_alloc = */ true,
++                    /*.ctx      = */ &pca_ctx,
++                };
++                gguf_context_ptr pca_gguf { gguf_init_from_file(pca_fname.c_str(), pca_params) };
++                if (!pca_gguf) {
++                    throw std::runtime_error(format("%s: failed to load S-X8 PCA companion from %s",
++                                __func__, pca_fname.c_str()));
++                }
++
++                split_metadata.emplace_back(std::move(pca_gguf));
++                gguf_contexts.push_back(split_metadata.back().get());
++                files.emplace_back(new llama_file(pca_fname.c_str(), "rb", use_direct_io));
++                contexts.emplace_back(pca_ctx);
++
++                LLAMA_LOG_INFO("%s: S-X8 PCA companion: %s\n", __func__, pca_fname.c_str());
++            }
++        }
+     } else if (file != nullptr) {
+         struct ggml_context * ctx = NULL;
+         struct gguf_init_params params = {
+@@ -1609,6 +1659,46 @@ struct ggml_tensor * llama_model_loader::create_tensor(
+         n_created++;
+     }
+ 
++    // ArifiLabs lane-242 / R53: an S-X8 weight pulls in its PCA correction companions, when a
++    // companion GGUF supplied them. Doing it HERE rather than per-architecture (the escha_aux
++    // pattern in llama-model.cpp) means every architecture that can hold an S-X8 weight is
++    // covered by one block, and the companions inherit this weight's buffer type for free.
++    //
++    // A TENSOR_DUPLICATED weight (token_embd reused as the tied output) re-enters under the same
++    // NAME, but lands in a second buffer-type context as a different ggml_tensor. So the guard is
++    // by name: the second arrival shares the companions the first created instead of loading them
++    // twice, which would overshoot done_getting_tensors' count.
++    if (tensor->type == GGML_TYPE_SX8 && sx8_pca.find(tensor) == sx8_pca.end()) {
++        const auto seen = sx8_pca_by_name.find(tn.str());
++        if (seen != sx8_pca_by_name.end()) {
++            sx8_pca.emplace(tensor, seen->second);
++            return tensor;
++        }
++
++        const int64_t n_cb = tensor->ne[0] / 32;   // blocks-of-K per row
++        const int64_t n_r  = tensor->ne[1];        // output rows
++
++        // c0 decides: absent means this build has no PCA companion and the correction is off.
++        ggml_tensor * c0 = create_tensor(hparams, buft_list_cpu, buft_list_input, buft_list_output,
++                buft_list_layer, LLM_TN_IMPL(tn.arch, tn.tensor, "sx8_pca_c0", tn.bid, tn.xid),
++                { n_cb, n_r }, TENSOR_NOT_REQUIRED);
++        if (c0 != nullptr) {
++            sx8_pca_weights w;
++            w.c0 = c0;
++            w.c1 = create_tensor(hparams, buft_list_cpu, buft_list_input, buft_list_output,
++                    buft_list_layer, LLM_TN_IMPL(tn.arch, tn.tensor, "sx8_pca_c1", tn.bid, tn.xid),
++                    { n_cb, n_r }, 0);
++            w.b0 = create_tensor(hparams, buft_list_cpu, buft_list_input, buft_list_output,
++                    buft_list_layer, LLM_TN_IMPL(tn.arch, tn.tensor, "sx8_pca_b0", tn.bid, tn.xid),
++                    { 32, n_cb }, 0);
++            w.b1 = create_tensor(hparams, buft_list_cpu, buft_list_input, buft_list_output,
++                    buft_list_layer, LLM_TN_IMPL(tn.arch, tn.tensor, "sx8_pca_b1", tn.bid, tn.xid),
++                    { 32, n_cb }, 0);
++            sx8_pca.emplace(tensor, w);
++            sx8_pca_by_name.emplace(tn.str(), w);
++        }
++    }
++
+     return tensor;
+ }
+ 
+diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
+index 9e51d0ce7..27ea839cc 100644
+--- a/src/llama-model-loader.h
++++ b/src/llama-model-loader.h
+@@ -124,6 +124,24 @@ struct llama_model_loader {
+     llama_mmaps mappings;
+ 
+     std::map<std::string, llama_tensor_weight, weight_name_comparer> weights_map;
++
++    // ArifiLabs lane-242 / R53: the S-X8 v4.3 PCA correction companions of one S-X8 weight.
++    // b0/b1 are the two PCA basis vectors per block-of-K with their scale folded in
++    // (SX8_FLASH_V4_3_SPEC.md section 5); c0/c1 are the two signed-4-bit coefficient planes
++    // unpacked from byte 29 of every block. Populated by create_tensor() whenever a PCA
++    // companion GGUF supplied them; empty otherwise, and the engine then behaves exactly as before.
++    struct sx8_pca_weights {
++        ggml_tensor * b0 = nullptr;   // f32 [32, n_cb]   s0[kb] * b0[kb][0:32]
++        ggml_tensor * b1 = nullptr;   // f32 [32, n_cb]   s1[kb] * b1[kb][32:64]
++        ggml_tensor * c0 = nullptr;   // f16 [n_cb, N]    signed4(coeff & 0xF)
++        ggml_tensor * c1 = nullptr;   // f16 [n_cb, N]    signed4(coeff >> 4)
++    };
++    std::map<const ggml_tensor *, sx8_pca_weights> sx8_pca;
++    // keyed by tensor NAME as well: a TENSOR_DUPLICATED weight (token_embd reused as the tied
++    // output) can land in a second buffer-type context as a DIFFERENT ggml_tensor under the same
++    // name, and must share the one set of companions rather than create a second.
++    std::map<std::string, sx8_pca_weights> sx8_pca_by_name;
++
+     std::unordered_map<std::string, llama_model_kv_override> kv_overrides;
+     const llama_model_tensor_buft_override * tensor_buft_overrides;
+ 
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index f036bee8e..5474e02f9 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1721,6 +1721,13 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+     }
+     ml.done_getting_tensors();
+ 
++    // ArifiLabs lane-242 / R53: take custody of the S-X8 PCA companions the loader attached.
++    sx8_pca = ml.sx8_pca;
++    if (!sx8_pca.empty()) {
++        LLAMA_LOG_INFO("%s: S-X8 v4.3 PCA correction ACTIVE on %zu tensors "
++                "(GGML_ARIFI_SX8_PCA=0 to disable)\n", __func__, sx8_pca.size());
++    }
++
+     // Tied NVFP4 output is valid when no separate LM-head scale tensors are present.
+     // If sidecar scales exist, the output weight must be an actual output tensor.
+     GGML_ASSERT(!(output && tok_embd &&
+diff --git a/src/llama-model.h b/src/llama-model.h
+index d7fa2d3f4..8ea2346ea 100644
+--- a/src/llama-model.h
++++ b/src/llama-model.h
+@@ -5,6 +5,7 @@
+ #include "llama-graph.h"
+ #include "llama-hparams.h"
+ #include "llama-memory.h"
++#include "llama-model-loader.h" // ArifiLabs lane-242 / R53: sx8_pca_weights
+ #include "llama-vocab.h"
+ 
+ #include <map>
+@@ -714,6 +715,15 @@ struct llama_model {
+         return it == escha_aux.end() ? nullptr : it->second;
+     }
+ 
++    // ArifiLabs lane-242 / R53: S-X8 v4.3 PCA correction companions, keyed by the S-X8 weight.
++    // Empty unless a PCA companion GGUF was loaded, which is what keeps the old path bit-identical.
++    std::map<const ggml_tensor *, llama_model_loader::sx8_pca_weights> sx8_pca;
++
++    const llama_model_loader::sx8_pca_weights * get_sx8_pca(const ggml_tensor * w) const {
++        const auto it = sx8_pca.find(w);
++        return it == sx8_pca.end() ? nullptr : &it->second;
++    }
++
+     //Dense linear projections for SentenceTransformers models like embeddinggemma
+     // For Sentence Transformers models structure see
+     // https://sbert.net/docs/sentence_transformer/usage/custom_models.html#structure-of-sentence-transformer-models
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 92fa85191..d5df802c6 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -425,6 +425,9 @@ llama_build_and_test(test-turbo-quant.c LABEL "turbo")
+ # ArifiLabs Escha-W2 (lane-164): CPU kernel vs Python goldens (fixtures dir passed manually)
+ llama_build_and_test(test-escha-mm.cpp)
+ 
++# ArifiLabs lane-242 / R53: S-X8 v4.3 PCA correction vs NumPy goldens (fixtures dir passed manually)
++llama_build_and_test(test-sx8-pca.cpp)
++
+ if (NOT LLAMA_USE_SYSTEM_GGML)
+     # Needs non-public ggml-impl.h
+     llama_build_and_test(test-gguf.cpp)
+diff --git a/tests/test-sx8-pca.cpp b/tests/test-sx8-pca.cpp
+new file mode 100644
+index 000000000..cbb80cafd
+--- /dev/null
++++ b/tests/test-sx8-pca.cpp
+@@ -0,0 +1,256 @@
++// ArifiLabs lane-242 / R53: the S-X8 v4.3 PCA correction vs a NumPy golden.
++//
++// One REAL S-X8 tensor out of the 4B GGUF (a 64-row slice of blk.0.ffn_down.weight) is run
++// through exactly the op sequence llama_graph's build_lora_mm builds for an S-X8 weight that has
++// PCA companions, and checked against float64 goldens computed straight from
++// SX8_FLASH_V4_3_SPEC.md sections 3-5 (tools/sx8/make_sx8_pca_fixtures.py -- no engine code).
++//
++// Checked here:
++//   1. mul_mat alone reproduces y_core  -- the decode is untouched by R53.
++//   2. mul_mat + correction reproduces y_pca.
++//   3. with --plant, c0's sign is flipped and case 2 MUST fail; that is what proves the
++//      correction actually ran rather than the tolerance being loose.
++//
++// Usage: test-sx8-pca <fixtures-dir> [backend-name] [--plant]
++//        (no dir -> skip with exit 0, so a bare CTest run stays green)
++
++#include "ggml.h"
++#include "ggml-alloc.h"
++#include "ggml-backend.h"
++
++#include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++#include <vector>
++
++static std::vector<uint8_t> read_file(const std::string & p) {
++    FILE * f = fopen(p.c_str(), "rb");
++    if (!f) {
++        fprintf(stderr, "FATAL: cannot open %s\n", p.c_str());
++        exit(1);
++    }
++    fseek(f, 0, SEEK_END);
++    const long n = ftell(f);
++    fseek(f, 0, SEEK_SET);
++    std::vector<uint8_t> v(n);
++    if (n > 0 && fread(v.data(), 1, n, f) != (size_t) n) {
++        fprintf(stderr, "FATAL: short read %s\n", p.c_str());
++        exit(1);
++    }
++    fclose(f);
++    return v;
++}
++
++// max |a-b| relative to the golden's own scale -- the tensor's outputs are O(10), so a plain
++// absolute epsilon would either be meaningless or fail on honest f32 rounding.
++static double rel_err(const float * a, const float * b, size_t n) {
++    double maxd = 0.0, maxb = 0.0;
++    for (size_t i = 0; i < n; i++) {
++        maxd = std::max(maxd, (double) std::fabs(a[i] - b[i]));
++        maxb = std::max(maxb, (double) std::fabs(b[i]));
++    }
++    return maxd / std::max(maxb, 1e-9);
++}
++
++int main(int argc, char ** argv) {
++    if (argc < 2) {
++        printf("test-sx8-pca: no fixtures dir given, skipping\n");
++        return 0;
++    }
++    const std::string dir = argv[1];
++    std::string backend_name;
++    bool plant = false;
++    for (int i = 2; i < argc; i++) {
++        if (strcmp(argv[i], "--plant") == 0) {
++            plant = true;
++        } else {
++            backend_name = argv[i];
++        }
++    }
++
++    int64_t K = 0, n_rows = 0, n_cb = 0, n_cols = 0;
++    {
++        FILE * f = fopen((dir + "/dims.txt").c_str(), "r");
++        if (!f || fscanf(f, "%lld %lld %lld %lld", (long long *) &K, (long long *) &n_rows,
++                         (long long *) &n_cb, (long long *) &n_cols) != 4) {
++            fprintf(stderr, "FATAL: cannot read %s/dims.txt\n", dir.c_str());
++            return 1;
++        }
++        fclose(f);
++    }
++
++    auto w_raw  = read_file(dir + "/w.bin");
++    auto b0_raw = read_file(dir + "/b0.bin");
++    auto b1_raw = read_file(dir + "/b1.bin");
++    auto c0_raw = read_file(dir + "/c0.bin");
++    auto c1_raw = read_file(dir + "/c1.bin");
++    auto x_raw  = read_file(dir + "/x.bin");
++    auto y_core = read_file(dir + "/y_core.bin");
++    auto y_pca  = read_file(dir + "/y_pca.bin");
++
++    if (plant) {
++        // flip the sign of every c0 coefficient (f16 sign bit)
++        for (size_t i = 1; i < c0_raw.size(); i += 2) {
++            c0_raw[i] ^= 0x80;
++        }
++    }
++
++    ggml_backend_t backend = nullptr;
++    if (!backend_name.empty()) {
++        for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
++            ggml_backend_dev_t dev = ggml_backend_dev_get(i);
++            if (backend_name == ggml_backend_dev_name(dev) ||
++                backend_name == ggml_backend_reg_name(ggml_backend_dev_backend_reg(dev))) {
++                backend = ggml_backend_dev_init(dev, nullptr);
++                break;
++            }
++        }
++        if (!backend) {
++            fprintf(stderr, "FATAL: backend '%s' not found\n", backend_name.c_str());
++            return 1;
++        }
++    } else {
++        backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
++    }
++    printf("backend: %s | K=%lld n_cb=%lld rows=%lld cols=%lld%s\n",
++           ggml_backend_name(backend), (long long) K, (long long) n_cb,
++           (long long) n_rows, (long long) n_cols, plant ? "  [PLANTED RED]" : "");
++
++    ggml_init_params ip = { /*.mem_size=*/ ggml_tensor_overhead() * 32, nullptr, /*.no_alloc=*/ true };
++    ggml_context * ctx = ggml_init(ip);
++
++    ggml_tensor * w  = ggml_new_tensor_2d(ctx, GGML_TYPE_SX8, K,    n_rows);
++    ggml_tensor * x  = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, K,    n_cols);
++    ggml_tensor * b0 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 32,   n_cb);
++    ggml_tensor * b1 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 32,   n_cb);
++    ggml_tensor * c0 = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, n_cb, n_rows);
++    ggml_tensor * c1 = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, n_cb, n_rows);
++
++    ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(ctx, backend);
++    if (!buf) {
++        fprintf(stderr, "FATAL: cannot allocate tensors on %s\n", ggml_backend_name(backend));
++        return 1;
++    }
++
++    struct { ggml_tensor * t; std::vector<uint8_t> * src; const char * name; } up[] = {
++        { w, &w_raw, "w" }, { x, &x_raw, "x" }, { b0, &b0_raw, "b0" },
++        { b1, &b1_raw, "b1" }, { c0, &c0_raw, "c0" }, { c1, &c1_raw, "c1" },
++    };
++    for (auto & u : up) {
++        if (u.src->size() != ggml_nbytes(u.t)) {
++            fprintf(stderr, "FATAL: %s.bin is %zu bytes, tensor wants %zu\n",
++                    u.name, u.src->size(), ggml_nbytes(u.t));
++            return 1;
++        }
++        ggml_backend_tensor_set(u.t, u.src->data(), 0, u.src->size());
++    }
++
++    // ---- the graph, mirroring src/llama-graph.cpp build_lora_mm ----
++    ggml_init_params gp = { /*.mem_size=*/ ggml_tensor_overhead() * 64 + ggml_graph_overhead(),
++                            nullptr, /*.no_alloc=*/ true };
++    ggml_context * gctx = ggml_init(gp);
++
++    ggml_tensor * core = ggml_mul_mat(gctx, w, x);
++    ggml_set_output(core);
++
++    ggml_tensor * xr  = ggml_reshape_3d(gctx, x, 32, n_cb, n_cols);
++    ggml_tensor * z0  = ggml_reshape_2d(gctx, ggml_sum_rows(gctx, ggml_mul(gctx, xr, b0)), n_cb, n_cols);
++    ggml_tensor * z1  = ggml_reshape_2d(gctx, ggml_sum_rows(gctx, ggml_mul(gctx, xr, b1)), n_cb, n_cols);
++    ggml_tensor * res = ggml_add(gctx, core, ggml_mul_mat(gctx, c0, z0));
++    res = ggml_add(gctx, res, ggml_mul_mat(gctx, c1, z1));
++    ggml_set_output(res);
++
++    ggml_cgraph * gf = ggml_new_graph(gctx);
++    ggml_build_forward_expand(gf, core);
++    ggml_build_forward_expand(gf, res);
++
++    ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
++    if (!ggml_gallocr_alloc_graph(alloc, gf)) {
++        fprintf(stderr, "FATAL: graph alloc failed\n");
++        return 1;
++    }
++    if (ggml_backend_graph_compute(backend, gf) != GGML_STATUS_SUCCESS) {
++        fprintf(stderr, "FATAL: graph compute failed\n");
++        return 1;
++    }
++
++    std::vector<float> got_core(n_rows * n_cols), got_pca(n_rows * n_cols);
++    ggml_backend_tensor_get(core, got_core.data(), 0, got_core.size() * sizeof(float));
++    ggml_backend_tensor_get(res,  got_pca.data(),  0, got_pca.size()  * sizeof(float));
++
++    const double e_core = rel_err(got_core.data(), (const float *) y_core.data(), got_core.size());
++    const double e_pca  = rel_err(got_pca.data(),  (const float *) y_pca.data(),  got_pca.size());
++
++    // The S-X8 mat-mul is an INTEGER-dot path: it quantizes the activations to Q8_1 before the
++    // dot (ggml_vec_dot_sx8_q8_1, and the MMVQ route on Vulkan). So the core can never match an
++    // exact float64 decode better than that quantization allows -- a few 1e-3, identical on CPU
++    // and Vulkan because both quantize the same way. That error predates R53 and is not what
++    // this test is about, so it gets a loose sanity bound only.
++    //
++    // R53's own contribution is the DIFFERENCE the correction makes. Isolating it
++    // (got_pca - got_core against y_pca - y_core) takes the shared Q8_1 error out of both sides
++    // and tests the PCA arithmetic at full f32 precision, which is where 1e-5 belongs.
++    std::vector<float> d_got(got_pca.size()), d_ref(got_pca.size());
++    for (size_t i = 0; i < d_got.size(); i++) {
++        d_got[i] = got_pca[i] - got_core[i];
++        d_ref[i] = ((const float *) y_pca.data())[i] - ((const float *) y_core.data())[i];
++    }
++    // Two denominators, because they answer different questions:
++    //   e_term: error relative to the PCA term's own size -- how exactly the term is computed.
++    //   e_out : error relative to the output -- how much of y is wrong because of it. This is
++    //           the one that gates, since it is the quantity that reaches perplexity.
++    // On CPU e_term sits near 4e-4: ggml's F16 mat_mul rounds its activations to F16, so the
++    // z vector loses precision inside the correction's own mat-vec. The coefficients themselves
++    // are integers in [-8,7] and exact in F16. Storing c0/c1 as F32 instead removes that
++    // rounding and takes e_term to ~1e-6, at +366 MB of companion for a term that is already
++    // three orders of magnitude below the path's pre-existing Q8_1 floor -- so F16 stands.
++    double max_ref = 0.0, max_y = 0.0;
++    for (size_t i = 0; i < d_ref.size(); i++) {
++        max_ref = std::max(max_ref, (double) std::fabs(d_ref[i]));
++        max_y   = std::max(max_y,   (double) std::fabs(((const float *) y_pca.data())[i]));
++    }
++    double maxd = 0.0;
++    for (size_t i = 0; i < d_got.size(); i++) {
++        maxd = std::max(maxd, (double) std::fabs(d_got[i] - d_ref[i]));
++    }
++    const double e_term = maxd / std::max(max_ref, 1e-9);
++    const double e_out  = maxd / std::max(max_y,   1e-9);
++
++    const double TOL      = 1e-5;   // the PCA term's error as seen at the output
++    const double TOL_CORE = 5e-3;   // Q8_1 activation quantization, pre-existing
++
++    printf("  mul_mat        vs y_core  : rel %.3e  %s  (Q8_1 activations, bound %.0e)\n",
++           e_core, e_core < TOL_CORE ? "OK" : "FAIL", TOL_CORE);
++    printf("  mul_mat + PCA  vs y_pca   : rel %.3e     (carries the same Q8_1 error)\n", e_pca);
++    printf("  PCA TERM       vs golden  : rel %.3e of the term | %.3e of the output  %s (bound %.0e)\n",
++           e_term, e_out, e_out < TOL ? "OK" : "FAIL", TOL);
++
++    // Dump the corrected output so a second backend run can be diffed against this one.
++    {
++        FILE * f = fopen((dir + "/got_pca_" + ggml_backend_name(backend) +
++                          (plant ? "_planted" : "") + ".bin").c_str(), "wb");
++        if (f) {
++            fwrite(got_pca.data(), sizeof(float), got_pca.size(), f);
++            fclose(f);
++        }
++    }
++
++    int rc = 0;
++    if (plant) {
++        // The planted red must break the PCA term and leave the core untouched.
++        rc = (e_out > TOL && e_core < TOL_CORE) ? 0 : 1;
++        printf("PLANTED RED: %s (the correction is live and the check bites)\n", rc == 0 ? "caught" : "NOT CAUGHT");
++    } else {
++        rc = (e_core < TOL_CORE && e_out < TOL) ? 0 : 1;
++    }
++
++    ggml_gallocr_free(alloc);
++    ggml_free(gctx);
++    ggml_backend_buffer_free(buf);
++    ggml_free(ctx);
++    ggml_backend_free(backend);
++    printf("%s\n", rc == 0 ? "PASS" : "FAIL");
++    return rc;
++}
+diff --git a/tools/sx8/add_sx8_pca_to_gguf.py b/tools/sx8/add_sx8_pca_to_gguf.py
+new file mode 100644
+index 000000000..490def315
+--- /dev/null
++++ b/tools/sx8/add_sx8_pca_to_gguf.py
+@@ -0,0 +1,163 @@
++"""add_sx8_pca_to_gguf.py -- attach the S-X8 v4.3 PCA correction data to a GGUF.
++
++Input: a GGUF holding GGML_TYPE_SX8 (57) weights, plus the .npz produced by extract_sx8_pca.py.
++Output (default `companion` mode): a small `<model>.sx8pca.gguf` holding only the PCA tensors.
++`inplace` mode instead copies the whole model GGUF and adds the same tensors to it.
++
++Per S-X8 weight `W` (ne = [K, N], n_cb = K/32) four tensors are emitted:
++
++  <W>.sx8_pca_b0   f32  ne=[32, n_cb]   s0[kb] * b0[kb][0:32]    (the scale is FOLDED IN)
++  <W>.sx8_pca_b1   f32  ne=[32, n_cb]   s1[kb] * b1[kb][32:64]
++  <W>.sx8_pca_c0   f16  ne=[n_cb, N]    signed4(coeff & 0xF)
++  <W>.sx8_pca_c1   f16  ne=[n_cb, N]    signed4(coeff >> 4)
++
++Folding s into b is exact -- Z0(kb) = s0(kb) * sum_t X * b0 (SX8_FLASH_V4_3_SPEC.md section 5) -- and
++saves a broadcast multiply per matmul. The unfolded bases and scales stay in the .npz.
++
++c0/c1 come from byte 29 of each 30-byte block, which is ALREADY in the GGUF: the container walk never
++downloads it. Nibble order and sign follow sx8_decode1_v3.cu:120-121
++(`c0 = coeff & 0xF; if (c0 >= 8) c0 -= 16;` and `c1 = (coeff >> 4) & 0xF; ...`).
++
++GGUF block layout for S-X8: row-major (N, n_cb) blocks of 30 bytes, coeff at byte 29.
++
++Apache-2.0. Format: MarlaLabs S-X8 v4.3.
++"""
++
++import argparse
++import hashlib
++import os
++import sys
++import time
++
++import numpy as np
++
++SX8 = 57
++BYTES_PER_BLOCK = 30
++COEFF_OFF = 29
++
++
++def signed4(x):
++    """signed4(x) = x < 8 ? x : x - 16  -- SX8_FLASH_V4_3_SPEC.md section 2."""
++    return np.where(x < 8, x, x.astype(np.int16) - 16).astype(np.int16)
++
++
++def pca_tensors_for(name, raw, ne0, ne1, npz):
++    """Build the four PCA arrays for one S-X8 weight. `raw` is its uint8 block payload."""
++    n_cb = ne0 // 32
++    n_rows = ne1
++    assert raw.size == n_rows * n_cb * BYTES_PER_BLOCK, (
++        "%s: %d bytes, expected %d" % (name, raw.size, n_rows * n_cb * BYTES_PER_BLOCK))
++
++    bases = npz[name + ".pca_bases"]     # (n_cb, 64) f32
++    scales = npz[name + ".pca_scales"]   # (n_cb, 2)  f32
++    assert bases.shape == (n_cb, 64), "%s: bases %s, n_cb=%d" % (name, bases.shape, n_cb)
++    assert scales.shape == (n_cb, 2)
++
++    b0 = np.ascontiguousarray(bases[:, 0:32] * scales[:, 0:1], dtype=np.float32)   # (n_cb, 32)
++    b1 = np.ascontiguousarray(bases[:, 32:64] * scales[:, 1:2], dtype=np.float32)  # (n_cb, 32)
++
++    coeff = raw.reshape(n_rows, n_cb, BYTES_PER_BLOCK)[:, :, COEFF_OFF]            # (N, n_cb)
++    c0 = signed4(coeff & 0x0F).astype(np.float16)
++    c1 = signed4(coeff >> 4).astype(np.float16)
++    # The engine creates these with LLM_TN(tensor, "sx8_pca_c0", bid), which spells the parent
++    # WITHOUT its ".weight" suffix -- "blk.0.ffn_down.sx8_pca_c0" (same shape as the fork's
++    # escha_aux sidecars). Strip ".weight" so the names line up.
++    stem = name[:-len(".weight")] if name.endswith(".weight") else name
++    return {
++        stem + ".sx8_pca_b0": b0,
++        stem + ".sx8_pca_b1": b1,
++        stem + ".sx8_pca_c0": np.ascontiguousarray(c0),
++        stem + ".sx8_pca_c1": np.ascontiguousarray(c1),
++    }
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--gguf", required=True, help="source GGUF with S-X8 (type 57) weights")
++    ap.add_argument("--npz", required=True, help="output of extract_sx8_pca.py")
++    ap.add_argument("--out", required=True)
++    ap.add_argument("--mode", choices=("companion", "inplace"), default="companion",
++                    help="companion: PCA tensors only (small). inplace: full model copy + PCA tensors.")
++    ap.add_argument("--gguf-py", default=None, help="path to the fork's gguf-py (for type 57)")
++    a = ap.parse_args()
++
++    if a.gguf_py:
++        sys.path.insert(0, a.gguf_py)
++    from gguf import GGUFWriter, GGMLQuantizationType, GGUFValueType
++    from gguf.gguf_reader import GGUFReader
++
++    t0 = time.time()
++    npz = np.load(a.npz)
++    r = GGUFReader(a.gguf)
++    sx8 = [t for t in r.tensors if int(t.tensor_type) == SX8]
++    print("source: %s | %d tensors, %d S-X8" % (a.gguf, len(r.tensors), len(sx8)), flush=True)
++
++    missing = [t.name for t in sx8 if (t.name + ".pca_bases") not in npz.files]
++    if missing:
++        print("FAIL: %d S-X8 tensors have no PCA record in the npz, e.g. %s"
++              % (len(missing), missing[:3]))
++        return 2
++
++    if os.path.exists(a.out):
++        os.remove(a.out)
++    w = GGUFWriter(a.out, "qwen35" if a.mode == "inplace" else "sx8pca")
++
++    if a.mode == "inplace":
++        # Copy every KV of the source verbatim (same method as the author's converter:
++        # f.parts, never f.data).
++        for name, f in sorted(r.fields.items()):
++            t = f.types[0]
++            if name.startswith("GGUF.") or name == "general.architecture":
++                continue
++            if t == GGUFValueType.STRING:
++                w.add_string(name, bytes(f.parts[-1]).decode())
++            elif t == GGUFValueType.UINT32:
++                w.add_uint32(name, int(np.asarray(f.parts[-1]).reshape(-1)[0]))
++            elif t == GGUFValueType.INT32:
++                w.add_int32(name, int(np.asarray(f.parts[-1]).reshape(-1)[0]))
++            elif t == GGUFValueType.FLOAT32:
++                w.add_float32(name, float(np.asarray(f.parts[-1]).reshape(-1)[0]))
++            elif t == GGUFValueType.BOOL:
++                w.add_bool(name, bool(np.asarray(f.parts[-1]).reshape(-1)[0]))
++            elif t == GGUFValueType.ARRAY:
++                arr_t = f.types[1]
++                if arr_t == GGUFValueType.STRING:
++                    w.add_array(name, [bytes(f.parts[i]).decode(errors="replace") for i in f.data])
++                elif arr_t in (GGUFValueType.UINT32, GGUFValueType.INT32):
++                    w.add_array(name, [int(np.asarray(p).reshape(-1)[0]) for p in f.parts[5:]])
++                else:
++                    w.add_array(name, [float(np.asarray(p).reshape(-1)[0]) for p in f.parts[5:]])
++            else:
++                print("  [skip kv] %s type %s" % (name, t))
++        for ti in r.tensors:
++            arr = ti.data
++            w.add_tensor(ti.name, np.ascontiguousarray(arr),
++                         raw_dtype=GGMLQuantizationType(int(ti.tensor_type)))
++
++    n_pca = 0
++    nbytes = 0
++    digest = hashlib.sha256()
++    for ti in sx8:
++        ne0, ne1 = int(ti.shape[0]), int(ti.shape[1])
++        raw = np.asarray(ti.data).view(np.uint8).reshape(-1)
++        for tn, arr in pca_tensors_for(ti.name, raw, ne0, ne1, npz).items():
++            w.add_tensor(tn, arr)
++            nbytes += arr.nbytes
++            n_pca += 1
++            digest.update(tn.encode())
++            digest.update(arr.tobytes()[:4096])
++        del raw
++
++    w.write_header_to_file()
++    w.write_kv_data_to_file()
++    w.write_tensors_to_file()
++    w.close()
++    print("wrote %s | mode=%s | %d PCA tensors (%d weights) | %.1f MB of PCA data | %.0f s"
++          % (a.out, a.mode, n_pca, len(sx8), nbytes / 1e6, time.time() - t0), flush=True)
++    print("pca-digest(sha256 of names + first 4 KB of each): %s" % digest.hexdigest(), flush=True)
++    print("file size: %d bytes" % os.path.getsize(a.out), flush=True)
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tools/sx8/check_pca_reduces_error.py b/tools/sx8/check_pca_reduces_error.py
+new file mode 100644
+index 000000000..2d1204c96
+--- /dev/null
++++ b/tools/sx8/check_pca_reduces_error.py
+@@ -0,0 +1,111 @@
++"""check_pca_reduces_error.py -- does the PCA term move the S-X8 weights TOWARD the reference?
++
++The decisive test of orientation. A rank-2 correction fitted to cancel the quantization residual is
++small in norm by construction, so its norm says nothing about whether it helps. What settles it is
++whether adding it REDUCES the distance to the unquantized weight.
++
++Reference: the same base model's Q8_0 GGUF. Q8_0's own error is well under the S-X8 PCA term, so it
++stands in for FP16 here. The format's own check is CosSim vs FP16 = 1.000000 with PCA
++(SX8_FLASH_V4_3_SPEC.md section 7), which is what this reproduces.
++
++  core          = S-X8 decode without PCA
++  core + pca    = with the correction
++  ref           = Q8_0 dequantized
++
++If ||core+pca - ref|| < ||core - ref||, the correction is oriented correctly.
++"""
++
++import argparse
++import os
++import sys
++
++import numpy as np
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++from make_sx8_pca_fixtures import decode_blocks   # noqa: E402
++
++BPB = 30
++
++
++def signed4(x):
++    return np.where(x < 8, x, x.astype(np.int16) - 16).astype(np.int16)
++
++
++def dequant_q8_0(raw, n_rows, K):
++    """Q8_0: per 32 weights, f16 d + 32 int8. 34 bytes per block."""
++    nb = K // 32
++    b = raw.reshape(n_rows, nb, 34)
++    d = b[:, :, 0:2].copy().view(np.float16).astype(np.float64).reshape(n_rows, nb, 1)
++    q = b[:, :, 2:34].view(np.int8).astype(np.float64)
++    return (d * q).reshape(n_rows, K)
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--sx8-gguf", required=True)
++    ap.add_argument("--companion", required=True)
++    ap.add_argument("--ref-gguf", required=True, help="Q8_0 GGUF of the same base model")
++    ap.add_argument("--tensor", default="blk.0.ffn_down.weight")
++    ap.add_argument("--rows", type=int, default=256)
++    ap.add_argument("--gguf-py", default=None)
++    a = ap.parse_args()
++
++    if a.gguf_py:
++        sys.path.insert(0, a.gguf_py)
++    from gguf.gguf_reader import GGUFReader
++
++    rs = GGUFReader(a.sx8_gguf)
++    t = next(x for x in rs.tensors if x.name == a.tensor)
++    K, N = int(t.shape[0]), int(t.shape[1])
++    n_cb = K // 32
++    n_rows = min(a.rows, N)
++    raw = np.asarray(t.data).view(np.uint8).reshape(N, n_cb, BPB)[:n_rows].copy()
++
++    rr = GGUFReader(a.ref_gguf)
++    tr = next(x for x in rr.tensors if x.name == a.tensor)
++    assert int(tr.shape[0]) == K and int(tr.shape[1]) == N, \
++        "reference geometry %s vs %s" % (tr.shape, t.shape)
++    ref = dequant_q8_0(np.asarray(tr.data).view(np.uint8).reshape(N, -1)[:n_rows].copy(), n_rows, K)
++
++    stem = a.tensor[:-len(".weight")] if a.tensor.endswith(".weight") else a.tensor
++    c = GGUFReader(a.companion)
++    got = {x.name: np.asarray(x.data) for x in c.tensors if x.name.startswith(stem + ".sx8_pca_")}
++    b0 = got[stem + ".sx8_pca_b0"].reshape(n_cb, 32).astype(np.float64)
++    b1 = got[stem + ".sx8_pca_b1"].reshape(n_cb, 32).astype(np.float64)
++    c0 = got[stem + ".sx8_pca_c0"].reshape(N, n_cb)[:n_rows].astype(np.float64)
++    c1 = got[stem + ".sx8_pca_c1"].reshape(N, n_cb)[:n_rows].astype(np.float64)
++
++    core = decode_blocks(raw)                                        # (rows, n_cb, 32)
++    pca = c0[:, :, None] * b0[None, :, :] + c1[:, :, None] * b1[None, :, :]
++
++    core2 = core.reshape(n_rows, K)
++    with_pca = (core + pca).reshape(n_rows, K)
++
++    def stats(w, label):
++        e = w - ref
++        rms = np.sqrt((e ** 2).mean())
++        cos = float((w * ref).sum() / (np.linalg.norm(w) * np.linalg.norm(ref)))
++        print("  %-22s RMS err = %.6e   CosSim = %.8f" % (label, rms, cos))
++        return rms
++
++    print("tensor %s  K=%d N=%d n_cb=%d rows=%d" % (a.tensor, K, N, n_cb, n_rows))
++    print("  reference              Q8_0 dequantized, RMS = %.6e" % np.sqrt((ref ** 2).mean()))
++    e0 = stats(core2, "core (no PCA)")
++    e1 = stats(with_pca, "core + PCA")
++    # also try the two obvious orientation mistakes, so a wrong answer names itself
++    e_neg = stats((core - pca).reshape(n_rows, K), "core - PCA (sign flip)")
++    swp = (c1[:, :, None] * b0[None, :, :] + c0[:, :, None] * b1[None, :, :])
++    e_swp = stats((core + swp).reshape(n_rows, K), "core + PCA (c0/c1 swap)")
++
++    print()
++    print("  PCA changes the error by %+.3f%%" % (100 * (e1 - e0) / e0))
++    best = min([(e0, "core"), (e1, "core+PCA"), (e_neg, "core-PCA"), (e_swp, "swapped")])[1]
++    print("  closest to the reference: %s" % best)
++    print("VERDICT: %s" % ("PCA REDUCES the error -- orientation correct"
++                           if e1 < e0 else
++                           "PCA does NOT reduce the error -- orientation or indexing is wrong"))
++    return 0 if e1 < e0 else 3
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tools/sx8/extract_sx8_pca.py b/tools/sx8/extract_sx8_pca.py
+new file mode 100644
+index 000000000..db3a8fd17
+--- /dev/null
++++ b/tools/sx8/extract_sx8_pca.py
+@@ -0,0 +1,322 @@
++"""extract_sx8_pca.py -- pull the S-X8 v4.3 PCA bases/scales out of a .sx8v43 container.
++
++The PCA correction of S-X8 v4.3 needs two per-(block-of-K) f32 arrays that live ONLY in the
++container: `bases` (n_cb, 64) = [b0[0:32] | b1[32:64]] and `scales` (n_cb, 2) = [s0, s1].
++The author's GGUF converter drops them, so a GGUF-only engine cannot apply the correction
++(SX8_FLASH_V4_3_SPEC.md section 5).
++
++Containers are 4-26 GB and the PCA sections are ~0.5% of that, so the default reader walks the
++tensor records over HTTP RANGE requests and SKIPS each record's nb*30-byte block payload -- the
++same skip the author's own indexer does (container_to_gguf_sx8_27b.py:
++`f.seek(nb * 30 + 4 + ncb * 256 + ncb * 8, 1)`).
++
++`--verify-stream` re-reads the whole container sequentially with a verbatim port of the reference
++reader (sx8_container_v43.py `read_all`, which reads EVERY field and skips nothing) and asserts the
++two readers produce bit-identical bases/scales. That proves the range walk without ever landing
++4.38 GB on disk.
++
++Output: an .npz with `<gguf tensor name>.pca_bases` (n_cb,64) f32 and `<name>.pca_scales` (n_cb,2) f32.
++coeff is NOT extracted: it already rides in byte 29 of every GGUF S-X8 block.
++
++Apache-2.0. Format and reference reader: MarlaLabs S-X8 v4.3.
++"""
++
++import argparse
++import hashlib
++import re
++import struct
++import sys
++import time
++
++import numpy as np
++import requests
++
++MAGIC = b"SX43FILE"
++BYTES_PER_BLOCK = 30
++
++
++# ---------------------------------------------------------------------------
++# GGUF <- container tensor-name mapping.
++# Inverse of `ct_name` in container_to_gguf_sx8_27b.py (the author's converter):
++#   token_embd.weight              <- model.language_model.embed_tokens.weight
++#   output.weight                  <- lm_head.weight
++#   blk.N.ffn_{gate,up,down}.weight<- model.language_model.layers.N.mlp.{gate,up,down}_proj.weight
++# The 4B pipeline (gguf_replace_weights_sx8.py) emits the same HF names without the
++# `language_model.` segment, so both spellings are accepted.
++# ---------------------------------------------------------------------------
++_MLP = {"gate_proj": "ffn_gate", "up_proj": "ffn_up", "down_proj": "ffn_down"}
++_LAYER_RE = re.compile(r"^model\.(?:language_model\.)?layers\.(\d+)\.mlp\.(gate_proj|up_proj|down_proj)\.weight$")
++
++
++def gguf_name(container_name):
++    """Container tensor name -> GGUF tensor name, or None when it is not a 1:1 S-X8 tensor."""
++    if container_name in ("model.language_model.embed_tokens.weight", "model.embed_tokens.weight"):
++        return "token_embd.weight"
++    if container_name == "lm_head.weight":
++        return "output.weight"
++    m = _LAYER_RE.match(container_name)
++    if m:
++        return "blk.%s.%s.weight" % (m.group(1), _MLP[m.group(2)])
++    return None
++
++
++# ---------------------------------------------------------------------------
++# HTTP range reader: a seekable, read-only file object over a URL.
++# ---------------------------------------------------------------------------
++class RangeReader:
++    def __init__(self, url, chunk=1 << 20, session=None):
++        self.url = url
++        self.chunk = chunk
++        self.s = session or requests.Session()
++        self.pos = 0
++        self._buf = b""
++        self._buf_start = 0
++        self.n_requests = 0
++        self.n_bytes = 0
++        r = self.s.head(url, allow_redirects=True, timeout=60)
++        r.raise_for_status()
++        if r.headers.get("Accept-Ranges") != "bytes":
++            raise RuntimeError("server does not advertise byte ranges: %s" % url)
++        self.size = int(r.headers["Content-Length"])
++
++    def _fetch(self, start, length):
++        end = min(start + length, self.size) - 1
++        for attempt in range(5):
++            try:
++                r = self.s.get(self.url, headers={"Range": "bytes=%d-%d" % (start, end)},
++                               allow_redirects=True, timeout=120)
++                r.raise_for_status()
++                if r.status_code != 206:
++                    raise RuntimeError("server ignored Range (status %d)" % r.status_code)
++                self.n_requests += 1
++                self.n_bytes += len(r.content)
++                return r.content
++            except Exception:
++                if attempt == 4:
++                    raise
++                time.sleep(1.5 * (attempt + 1))
++
++    def read(self, n):
++        out = bytearray()
++        while n > 0:
++            off = self.pos - self._buf_start
++            if 0 <= off < len(self._buf):
++                take = min(n, len(self._buf) - off)
++                out += self._buf[off:off + take]
++                self.pos += take
++                n -= take
++                continue
++            want = max(n, self.chunk)
++            self._buf = self._fetch(self.pos, want)
++            self._buf_start = self.pos
++            if not self._buf:
++                break
++        return bytes(out)
++
++    def seek(self, off, whence=0):
++        self.pos = off if whence == 0 else self.pos + off if whence == 1 else self.size + off
++
++    def tell(self):
++        return self.pos
++
++    def close(self):
++        self.s.close()
++
++
++class StreamReader:
++    """Sequential-only file object over a streaming HTTP GET. read() never seeks backwards."""
++
++    def __init__(self, url, session=None):
++        self.s = session or requests.Session()
++        self.r = self.s.get(url, stream=True, allow_redirects=True, timeout=120)
++        self.r.raise_for_status()
++        self.size = int(self.r.headers["Content-Length"])
++        self.it = self.r.iter_content(chunk_size=1 << 22)
++        self._buf = b""
++        self.pos = 0
++
++    def read(self, n):
++        while len(self._buf) < n:
++            try:
++                self._buf += next(self.it)
++            except StopIteration:
++                break
++        out, self._buf = self._buf[:n], self._buf[n:]
++        self.pos += len(out)
++        return out
++
++    def seek(self, off, whence=0):
++        target = off if whence == 0 else self.pos + off
++        if target < self.pos:
++            raise RuntimeError("StreamReader cannot seek backwards (%d < %d)" % (target, self.pos))
++        while target > self.pos:
++            if not self.read(min(1 << 22, target - self.pos)):
++                break
++
++    def tell(self):
++        return self.pos
++
++    def close(self):
++        self.r.close()
++        self.s.close()
++
++
++# ---------------------------------------------------------------------------
++# Readers.
++# ---------------------------------------------------------------------------
++def _read_header(f):
++    assert f.read(8) == MAGIC, "not a .sx8v43 container"
++    f.read(1)  # VERSION
++    (ml,) = struct.unpack("<I", f.read(4))
++    f.read(ml)  # meta blob
++    (nt,) = struct.unpack("<I", f.read(4))
++    return nt
++
++
++def walk_ranges(f, verbose=True):
++    """Range walk: read name/shape/n_cb, SKIP the nb*30 block payload, read bases+scales."""
++    nt = _read_header(f)
++    out = {}
++    for i in range(nt):
++        (nl,) = struct.unpack("<I", f.read(4))
++        name = f.read(nl).decode()
++        sh = struct.unpack("<II", f.read(8))
++        (n_os,) = struct.unpack("<B", f.read(1))
++        f.read(4 * n_os)
++        nb, ncb = struct.unpack("<II", f.read(8))
++        f.seek(nb * BYTES_PER_BLOCK, 1)                       # the payload we never download
++        (ncb2,) = struct.unpack("<I", f.read(4))
++        data = np.frombuffer(f.read(ncb2 * 64 * 4), np.float32).reshape(ncb2, 64)
++        scales = np.frombuffer(f.read(ncb2 * 2 * 4), np.float32).reshape(ncb2, 2)
++        out[name] = {"shape": sh, "n_blocks": nb, "n_cb": ncb, "bases": data, "scales": scales}
++        if verbose and (i < 2 or i == nt - 1):
++            print("  [%d/%d] %-56s shape=%s nb=%d n_cb=%d" % (i + 1, nt, name[:56], sh, nb, ncb),
++                  flush=True)
++    end = f.tell()
++    # A v1.1 container appends an SXT1 section (JSON config + small 1D tensors) that v1.0 readers
++    # ignore -- sx8_container_v43.py `read_small_section`. Consume it so the EOF check is exact.
++    end = _skip_small_section(f, end)
++    return out, end
++
++
++SMALL_MAGIC = b"SXT1"
++
++
++def _skip_small_section(f, end):
++    """Consume the optional trailing SXT1 section; return the new end offset."""
++    f.seek(end)
++    if f.read(4) != SMALL_MAGIC:
++        return end
++    (cl,) = struct.unpack("<I", f.read(4))
++    f.read(cl)
++    (n,) = struct.unpack("<I", f.read(4))
++    for _ in range(n):
++        (nl,) = struct.unpack("<I", f.read(4))
++        f.read(nl)
++        (nd,) = struct.unpack("<B", f.read(1))
++        shape = struct.unpack("<%dI" % nd, f.read(4 * nd))
++        (dt,) = struct.unpack("<B", f.read(1))
++        f.seek(int(np.prod(shape)) * (2 if dt == 0 else 4), 1)
++    print("  SXT1 section: %d small tensors, %d bytes" % (n, f.tell() - end), flush=True)
++    return f.tell()
++
++
++def read_all_sequential(f, verbose=True):
++    """Verbatim port of sx8_container_v43.py `read_all` (reads EVERY field, skips nothing),
++    taking an already-open file object instead of a path. Returns the same PCA dict shape."""
++    nt = _read_header(f)
++    out = {}
++    for i in range(nt):
++        (nl,) = struct.unpack("<I", f.read(4))
++        name = f.read(nl).decode()
++        sh = struct.unpack("<II", f.read(8))
++        (n_os,) = struct.unpack("<B", f.read(1))
++        struct.unpack("<%dI" % n_os, f.read(4 * n_os))
++        nb, ncb = struct.unpack("<II", f.read(8))
++        np.frombuffer(f.read(nb * 2), np.float16)    # dmin
++        np.frombuffer(f.read(nb * 2), np.float16)    # dmax
++        np.frombuffer(f.read(nb), np.uint8)          # config
++        np.frombuffer(f.read(nb * 16), np.uint8)     # levels_hi
++        np.frombuffer(f.read(nb * 8), np.uint8)      # levels_lo
++        np.frombuffer(f.read(nb), np.uint8)          # coeff
++        (ncb2,) = struct.unpack("<I", f.read(4))
++        data = np.frombuffer(f.read(ncb2 * 64 * 4), np.float32).reshape(ncb2, 64)
++        scales = np.frombuffer(f.read(ncb2 * 2 * 4), np.float32).reshape(ncb2, 2)
++        out[name] = {"shape": sh, "n_blocks": nb, "n_cb": ncb, "bases": data, "scales": scales}
++        if verbose and (i % 100 == 0):
++            print("  stream %d/%d  %.2f GB" % (i + 1, nt, f.tell() / 1e9), flush=True)
++    return out, _skip_small_section(f, f.tell())
++
++
++def _sig(rec):
++    h = hashlib.sha256()
++    h.update(np.ascontiguousarray(rec["bases"]).tobytes())
++    h.update(np.ascontiguousarray(rec["scales"]).tobytes())
++    return h.hexdigest()
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--url", required=True)
++    ap.add_argument("--out", required=True, help="output .npz")
++    ap.add_argument("--verify-stream", action="store_true",
++                    help="re-read the whole container sequentially with the reference reader "
++                         "and assert bit-identical bases/scales (no disk used)")
++    a = ap.parse_args()
++
++    t0 = time.time()
++    f = RangeReader(a.url)
++    print("container: %s (%.2f GB)" % (a.url, f.size / 1e9), flush=True)
++    recs, end = walk_ranges(f)
++    print("range walk: %d tensors | %d HTTP requests | %.1f MB downloaded | walk ended at %d, "
++          "file size %d | %s" % (len(recs), f.n_requests, f.n_bytes / 1e6, end, f.size,
++                                 "EXACT EOF" if end == f.size else "MISMATCH"), flush=True)
++    if end != f.size:
++        # A wrong record length desynchronises the walk; landing exactly on EOF after n_tensors
++        # records is a whole-file structural check of every length we computed.
++        print("FAIL: walk did not consume the file exactly", flush=True)
++        return 2
++    f.close()
++
++    if a.verify_stream:
++        print("verify-stream: re-reading %.2f GB sequentially with the reference reader..."
++              % (f.size / 1e9), flush=True)
++        g = StreamReader(a.url)
++        ref, end2 = read_all_sequential(g)
++        g.close()
++        assert end2 == f.size, "reference reader ended at %d, size %d" % (end2, f.size)
++        assert set(ref) == set(recs), "tensor name sets differ"
++        bad = 0
++        for n in ref:
++            for k in ("bases", "scales"):
++                if not np.array_equal(np.asarray(ref[n][k]), np.asarray(recs[n][k])):
++                    print("  MISMATCH %s.%s" % (n, k))
++                    bad += 1
++            for k in ("shape", "n_blocks", "n_cb"):
++                assert ref[n][k] == recs[n][k], "%s.%s" % (n, k)
++        print("verify-stream: %d tensors | %s" % (len(ref), "BIT-IDENTICAL" if not bad else "%d DIFFS" % bad),
++              flush=True)
++        if bad:
++            return 3
++
++    save = {}
++    mapped = unmapped = 0
++    for cname, rec in sorted(recs.items()):
++        gn = gguf_name(cname)
++        if gn is None:
++            unmapped += 1
++            continue
++        save[gn + ".pca_bases"] = np.ascontiguousarray(rec["bases"], dtype=np.float32)
++        save[gn + ".pca_scales"] = np.ascontiguousarray(rec["scales"], dtype=np.float32)
++        mapped += 1
++    np.savez(a.out, **save)
++    nbytes = sum(v.nbytes for v in save.values())
++    print("mapped %d container tensors to GGUF names (%d unmapped) | %.1f MB of f32 | -> %s | %.0fs"
++          % (mapped, unmapped, nbytes / 1e6, a.out, time.time() - t0), flush=True)
++    for gn in sorted(save)[:2]:
++        print("  %-44s %s  sha256=%s" % (gn, save[gn].shape, hashlib.sha256(save[gn].tobytes()).hexdigest()[:16]))
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tools/sx8/make_sx8_pca_fixtures.py b/tools/sx8/make_sx8_pca_fixtures.py
+new file mode 100644
+index 000000000..0bfd5a069
+--- /dev/null
++++ b/tools/sx8/make_sx8_pca_fixtures.py
+@@ -0,0 +1,120 @@
++"""make_sx8_pca_fixtures.py -- goldens for tests/test-sx8-pca.cpp.
++
++Takes ONE real S-X8 tensor out of the 4B GGUF (a row slice, to keep the fixtures small), its PCA
++companions out of the companion GGUF, and computes in float64 -- straight from
++SX8_FLASH_V4_3_SPEC.md sections 3-5, with no engine code involved -- both
++
++  y_core[n] = sum_k X[k] * W[n,k]                     (today's path)
++  y_pca [n] = y_core[n] + sum_kb c0(kb,n)*Z0[kb] + c1(kb,n)*Z1[kb]
++
++Writes raw little-endian .bin files the C++ test reads back.
++"""
++
++import argparse
++import os
++import sys
++
++import numpy as np
++
++BPB = 30
++
++
++def decode_blocks(raw):
++    """raw (n_rows, n_cb, 30) uint8 -> float64 weights (n_rows, n_cb, 32)."""
++    n_rows, n_cb, _ = raw.shape
++    lo = raw[:, :, 0:2].copy().view(np.float16).astype(np.float64).reshape(n_rows, n_cb)
++    hi = raw[:, :, 2:4].copy().view(np.float16).astype(np.float64).reshape(n_rows, n_cb)
++    cfg = raw[:, :, 4].astype(np.int32)
++    qh = raw[:, :, 5:21]
++    ql = raw[:, :, 21:29]
++
++    q = (hi - lo) * 0.25
++    w = np.empty((n_rows, n_cb, 32), dtype=np.float64)
++    for j in range(32):
++        sb = j >> 3
++        s = (cfg >> (sb * 2)) & 3
++        rlo = lo + q * (3 * (s == 2) + (s == 3))
++        rhi = hi - q * (3 * (s == 1) + (s == 3))
++        step = np.maximum((rhi - rlo) * 0.015873, 1e-10)
++        nib = (qh[:, :, j >> 1].astype(np.int32) >> ((j & 1) * 4)) & 0xF
++        qua = (ql[:, :, j >> 2].astype(np.int32) >> ((3 - (j & 3)) * 2)) & 0x3
++        w[:, :, j] = rlo + step * ((nib << 2) | qua)
++    return w
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--gguf", required=True)
++    ap.add_argument("--companion", required=True)
++    ap.add_argument("--tensor", default="blk.0.ffn_down.weight")
++    ap.add_argument("--rows", type=int, default=64)
++    ap.add_argument("--cols", type=int, default=3)
++    ap.add_argument("--out", required=True)
++    ap.add_argument("--gguf-py", default=None)
++    a = ap.parse_args()
++
++    if a.gguf_py:
++        sys.path.insert(0, a.gguf_py)
++    from gguf.gguf_reader import GGUFReader
++
++    os.makedirs(a.out, exist_ok=True)
++    r = GGUFReader(a.gguf)
++    t = next(x for x in r.tensors if x.name == a.tensor)
++    K, N = int(t.shape[0]), int(t.shape[1])
++    n_cb = K // 32
++    n_rows = min(a.rows, N)
++    raw = np.asarray(t.data).view(np.uint8).reshape(N, n_cb, BPB)[:n_rows].copy()
++
++    stem = a.tensor[:-len(".weight")] if a.tensor.endswith(".weight") else a.tensor
++    c = GGUFReader(a.companion)
++    got = {x.name: np.asarray(x.data) for x in c.tensors
++           if x.name.startswith(stem + ".sx8_pca_")}
++    b0 = got[stem + ".sx8_pca_b0"].reshape(n_cb, 32).astype(np.float64)
++    b1 = got[stem + ".sx8_pca_b1"].reshape(n_cb, 32).astype(np.float64)
++    c0 = got[stem + ".sx8_pca_c0"].reshape(N, n_cb)[:n_rows]
++    c1 = got[stem + ".sx8_pca_c1"].reshape(N, n_cb)[:n_rows]
++
++    # Cross-check the coefficient planes against the blocks they came from, so a mistake in
++    # add_sx8_pca_to_gguf.py cannot hide behind a fixture built from its own output.
++    coeff = raw[:, :, 29]
++    ref0 = np.where((coeff & 0xF) < 8, coeff & 0xF, (coeff & 0xF).astype(np.int16) - 16)
++    ref1 = np.where((coeff >> 4) < 8, coeff >> 4, (coeff >> 4).astype(np.int16) - 16)
++    assert np.array_equal(c0.astype(np.int16), ref0), "c0 plane does not match block byte 29"
++    assert np.array_equal(c1.astype(np.int16), ref1), "c1 plane does not match block byte 29"
++    print("coeff planes match block byte 29 for %d x %d blocks" % (n_rows, n_cb))
++
++    rng = np.random.default_rng(20260915)
++    x = rng.standard_normal((a.cols, K)).astype(np.float32)
++    xd = x.astype(np.float64)
++
++    w = decode_blocks(raw).reshape(n_rows, K)                      # (n_rows, K)
++    y_core = xd @ w.T                                              # (cols, n_rows)
++
++    xb = xd.reshape(a.cols, n_cb, 32)
++    z0 = np.einsum("mct,ct->mc", xb, b0)                           # scales already folded in
++    z1 = np.einsum("mct,ct->mc", xb, b1)
++    y_pca = y_core + z0 @ c0.astype(np.float64).T + z1 @ c1.astype(np.float64).T
++
++    def dump(name, arr, dtype):
++        p = os.path.join(a.out, name)
++        np.ascontiguousarray(arr, dtype=dtype).tofile(p)
++        return p
++
++    dump("w.bin", raw, np.uint8)
++    dump("b0.bin", got[stem + ".sx8_pca_b0"].reshape(n_cb, 32), np.float32)
++    dump("b1.bin", got[stem + ".sx8_pca_b1"].reshape(n_cb, 32), np.float32)
++    dump("c0.bin", c0, np.float16)
++    dump("c1.bin", c1, np.float16)
++    dump("x.bin", x, np.float32)
++    dump("y_core.bin", y_core, np.float32)
++    dump("y_pca.bin", y_pca, np.float32)
++    with open(os.path.join(a.out, "dims.txt"), "w") as f:
++        f.write("%d %d %d %d\n" % (K, n_rows, n_cb, a.cols))
++
++    rel = np.abs(y_pca - y_core).max() / max(np.abs(y_core).max(), 1e-9)
++    print("tensor=%s K=%d n_cb=%d rows=%d cols=%d" % (a.tensor, K, n_cb, n_rows, a.cols))
++    print("PCA term moves the output by up to %.3f%% of |y_core|max -> %s" % (100 * rel, a.out))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/sx8/prep_wikitext2_test.py b/tools/sx8/prep_wikitext2_test.py
+new file mode 100644
+index 000000000..53398c705
+--- /dev/null
++++ b/tools/sx8/prep_wikitext2_test.py
+@@ -0,0 +1,26 @@
++"""prep_wikitext2_test.py -- wikitext-2-raw-v1 test split as one .txt, for llama-perplexity.
++
++Same content as the author's prep_wikitext_txt.py (`"\\n".join(ds["text"])` over the test split),
++but pulls the parquet straight from the hub so the `datasets` package is not needed.
++"""
++import io
++import sys
++
++import requests
++
++URL = ("https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/"
++       "wikitext-2-raw-v1/test-00000-of-00001.parquet")
++
++def main(out):
++    import pyarrow.parquet as pq
++    r = requests.get(URL, timeout=300)
++    r.raise_for_status()
++    t = pq.read_table(io.BytesIO(r.content))
++    rows = t.column("text").to_pylist()
++    text = "\n".join(rows)
++    with open(out, "w", encoding="utf-8", newline="") as f:
++        f.write(text)
++    print("wikitext-2 test -> %s (%d rows, %d chars)" % (out, len(rows), len(text)))
++
++if __name__ == "__main__":
++    main(sys.argv[1])
+diff --git a/tools/sx8/verify_gguf_matches_container.py b/tools/sx8/verify_gguf_matches_container.py
+new file mode 100644
+index 000000000..a4c73a36d
+--- /dev/null
++++ b/tools/sx8/verify_gguf_matches_container.py
+@@ -0,0 +1,86 @@
++"""verify_gguf_matches_container.py -- do the GGUF's S-X8 blocks and the container's come from the
++same quantization run?
++
++The PCA bases/scales only correspond to the GGUF's coefficient bytes if both files are the same
++quantization. This pulls ONE tensor's block payload out of the container over HTTP ranges and
++compares it, field by field, with the same tensor's blocks in the GGUF.
++"""
++
++import argparse
++import struct
++import sys
++
++import numpy as np
++
++sys.path.insert(0, __file__.rsplit("/", 1)[0] if "/" in __file__ else ".")
++from extract_sx8_pca import RangeReader, MAGIC, gguf_name   # noqa: E402
++
++BPB = 30
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--url", required=True)
++    ap.add_argument("--gguf", required=True)
++    ap.add_argument("--tensor", default="blk.0.ffn_down.weight", help="GGUF tensor name")
++    ap.add_argument("--gguf-py", default=None)
++    a = ap.parse_args()
++
++    if a.gguf_py:
++        sys.path.insert(0, a.gguf_py)
++    from gguf.gguf_reader import GGUFReader
++
++    r = GGUFReader(a.gguf)
++    t = next(x for x in r.tensors if x.name == a.tensor)
++    K, N = int(t.shape[0]), int(t.shape[1])
++    n_cb = K // 32
++    g = np.asarray(t.data).view(np.uint8).reshape(N, n_cb, BPB)
++    print("gguf %s: K=%d N=%d n_cb=%d blocks=%d" % (a.tensor, K, N, n_cb, N * n_cb))
++
++    f = RangeReader(a.url)
++    assert f.read(8) == MAGIC
++    f.read(1)
++    (ml,) = struct.unpack("<I", f.read(4)); f.read(ml)
++    (nt,) = struct.unpack("<I", f.read(4))
++    for _ in range(nt):
++        (nl,) = struct.unpack("<I", f.read(4))
++        name = f.read(nl).decode()
++        sh = struct.unpack("<II", f.read(8))
++        (n_os,) = struct.unpack("<B", f.read(1)); f.read(4 * n_os)
++        nb, ncb = struct.unpack("<II", f.read(8))
++        if gguf_name(name) != a.tensor:
++            f.seek(nb * BPB + 4 + ncb * 256 + ncb * 8, 1)
++            continue
++        print("container %s: shape=%s nb=%d n_cb=%d" % (name, sh, nb, ncb))
++        assert nb == N * n_cb and ncb == n_cb, "geometry differs!"
++        dmin = np.frombuffer(f.read(nb * 2), np.uint8).reshape(nb, 2)
++        dmax = np.frombuffer(f.read(nb * 2), np.uint8).reshape(nb, 2)
++        cfg = np.frombuffer(f.read(nb), np.uint8)
++        hi = np.frombuffer(f.read(nb * 16), np.uint8).reshape(nb, 16)
++        lo = np.frombuffer(f.read(nb * 8), np.uint8).reshape(nb, 8)
++        coeff = np.frombuffer(f.read(nb), np.uint8)
++        gg = g.reshape(nb, BPB)
++        checks = [
++            ("dmin", gg[:, 0:2], dmin), ("dmax", gg[:, 2:4], dmax),
++            ("config", gg[:, 4], cfg), ("levels_hi", gg[:, 5:21], hi),
++            ("levels_lo", gg[:, 21:29], lo), ("coeff", gg[:, 29], coeff),
++        ]
++        allok = True
++        for nm, a_, b_ in checks:
++            same = np.array_equal(np.asarray(a_), np.asarray(b_))
++            allok &= same
++            extra = ""
++            if not same:
++                d = (np.asarray(a_).reshape(nb, -1) != np.asarray(b_).reshape(nb, -1)).any(axis=1)
++                extra = "  (%d/%d blocks differ)" % (d.sum(), nb)
++            print("  %-10s %s%s" % (nm, "IDENTICAL" if same else "DIFFERENT", extra))
++        print("VERDICT: %s" % ("SAME quantization run" if allok else "DIFFERENT FILES -- the PCA arrays do NOT belong to this GGUF"))
++        f.close()
++        return 0 if allok else 3
++    f.close()
++    print("tensor not found in container")
++    return 2
++
++
++if __name__ == "__main__":
++    sys.exit(main())

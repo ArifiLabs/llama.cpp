@@ -1,0 +1,92 @@
+From 8c330656ca567ad74bb06a9fad05fb5299fc819c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 11:18:22 -0400
+Subject: [PATCH] vulkan: wire the MoE expert cache provider into the build
+ (VK-MOE-CACHE step 2 of 2)
+
+Three wiring points, all add-only: ggml-vulkan/CMakeLists.txt gains the provider source; ggml-vulkan.cpp gains the extern declaration and the ggml_vulkan_moe_cache_register(&reg) call inside ggml_backend_vk_reg() after ggml_vk_instance_init(); vulkan-shaders-gen.cpp gains 23 string_to_spv variants of moe_cache_mv.comp, inserted after the topk_moe_f32 anchor exactly where the source fork places them.
+
+The shader-side risk was CHECKED before wiring, not assumed. moe_cache_mv.comp reaches types.glsl through DATA_A_IQ2_XXS / IQ2_XS / IQ2_S / IQ3_XXS / IQ3_S / IQ1_S / IQ1_M / IQ4_NL / IQ4_XS / MXFP4 / NVFP4, and all ELEVEN resolve in OUR types.glsl - which matters because their types.glsl and ours differ by 290 lines (they deleted the rocmfpx and tq3_4s types we added). The shader defines no block struct of its own, so it adds no new CPU/GLSL mirror for the lane-149 build-time constant guard to police.
+
+Taken-from: TheTom/llama-cpp-turboquant@7ebcbb0b6
+Origin: lane-154 turboquant greedy ingest, VK-MOE-CACHE cluster (21 disposition rows, 2026-08-10..08-17, all new since the pin).
+Measured-effect: UNMEASURED for throughput - this lane makes NO timed claim about the cache. The proofs carried are correctness proofs only: baseline exe mtimes banked before the ingest, then a rebuild with fresh mtimes, test-backend-ops and test-quantize-fns compared against the banked baseline, and arifi_sync_check.py green.
+Lane: lane-154
+---
+ ggml/src/ggml-vulkan/CMakeLists.txt           |  1 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  5 ++++
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     | 26 +++++++++++++++++++
+ 3 files changed, 32 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/CMakeLists.txt b/ggml/src/ggml-vulkan/CMakeLists.txt
+index ed3a76117..edd327741 100644
+--- a/ggml/src/ggml-vulkan/CMakeLists.txt
++++ b/ggml/src/ggml-vulkan/CMakeLists.txt
+@@ -76,6 +76,7 @@ if (Vulkan_FOUND)
+ 
+     ggml_add_backend_library(ggml-vulkan
+                              ggml-vulkan.cpp
++                             ggml-vulkan-moe-cache.cpp
+                              ../../include/ggml-vulkan.h
+                             )
+ 
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index dbb9c46ae..72ced9765 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -95,6 +95,8 @@ typedef struct VkPhysicalDeviceCooperativeMatrixDecodeVectorFeaturesNV {
+ 
+ #include "ggml-vulkan-shaders.hpp"
+ 
++extern "C" void ggml_vulkan_moe_cache_register(void * reg);
++
+ // remove this once it's more widely available in the SDK
+ #if !defined(VK_KHR_shader_bfloat16)
+ 
+@@ -19950,6 +19952,9 @@ ggml_backend_reg_t ggml_backend_vk_reg() {
+     };
+     try {
+         ggml_vk_instance_init();
++        // No GGML_USE_* guard: see the Metal backend; that macro is not defined
++        // for this target, so the registration was compiled out.
++        ggml_vulkan_moe_cache_register(&reg);
+         return &reg;
+     } catch (const vk::SystemError& e) {
+         VK_LOG_DEBUG("ggml_backend_vk_reg() -> Error: System error: " << e.what());
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index 5e9796fae..8201edb82 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -1323,6 +1323,32 @@ void process_shaders() {
+ 
+     string_to_spv("topk_moe_f32", "topk_moe.comp", {});
+ 
++    // MoE expert cache matvec variants (Q8_0/Q4_0/Q4_K/Q6_K/Q5_K weights).
++    // Compiled separately per weight type; see moe_cache_mv.comp.
++    string_to_spv("moe_cache_mv_q8_0", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "1"}});
++    string_to_spv("moe_cache_mv_q4_0", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "2"}});
++    string_to_spv("moe_cache_mv_q4_K", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "3"}});
++    string_to_spv("moe_cache_mv_q6_K", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "4"}});
++    string_to_spv("moe_cache_mv_q5_K", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "5"}});
++    string_to_spv("moe_cache_mv_q1_0", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "6"}});
++    string_to_spv("moe_cache_mv_q2_0", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "7"}});
++    string_to_spv("moe_cache_mv_q4_1", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "8"}});
++    string_to_spv("moe_cache_mv_q5_0", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "9"}});
++    string_to_spv("moe_cache_mv_q5_1", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "10"}});
++    string_to_spv("moe_cache_mv_q2_K", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "11"}});
++    string_to_spv("moe_cache_mv_q3_K", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "12"}});
++    string_to_spv("moe_cache_mv_iq2_xxs", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "13"}, {"DATA_A_IQ2_XXS", "1"}});
++    string_to_spv("moe_cache_mv_iq2_xs", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "14"}, {"DATA_A_IQ2_XS", "1"}});
++    string_to_spv("moe_cache_mv_iq2_s", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "15"}, {"DATA_A_IQ2_S", "1"}});
++    string_to_spv("moe_cache_mv_iq3_xxs", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "16"}, {"DATA_A_IQ3_XXS", "1"}});
++    string_to_spv("moe_cache_mv_iq3_s", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "17"}, {"DATA_A_IQ3_S", "1"}});
++    string_to_spv("moe_cache_mv_iq1_s", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "18"}, {"DATA_A_IQ1_S", "1"}, {"NEEDS_IQ1S_GRID_GPU", "1"}});
++    string_to_spv("moe_cache_mv_iq1_m", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "19"}, {"DATA_A_IQ1_M", "1"}, {"NEEDS_IQ1S_GRID_GPU", "1"}});
++    string_to_spv("moe_cache_mv_iq4_nl", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "20"}, {"DATA_A_IQ4_NL", "1"}});
++    string_to_spv("moe_cache_mv_iq4_xs", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "21"}, {"DATA_A_IQ4_XS", "1"}});
++    string_to_spv("moe_cache_mv_mxfp4", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "22"}, {"DATA_A_MXFP4", "1"}});
++    string_to_spv("moe_cache_mv_nvfp4", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "23"}, {"DATA_A_NVFP4", "1"}});
++
+     for (auto &c : compiles) {
+         c.wait();
+     }

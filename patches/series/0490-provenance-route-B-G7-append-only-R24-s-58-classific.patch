@@ -1,0 +1,1020 @@
+From 0ed14090507058d22a48da322436c9bfa5b0a81c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 7 Sep 2026 11:22:18 -0400
+Subject: [PATCH] provenance route B (G7 append-only): R24's 58 classifications
+ recorded in native-grandfather (55 ARIFI, remapped to the b10825 shas) +
+ pending-trailers (2 FORK, 1 UPSTREAM); 46 fork-authored tooling/manifest
+ commits grandfathered; provenance PASS; series regen 496 patches
+
+Origin: ArifiLabs (native)
+Lane: lane-220
+---
+ tools/arifi-sync/native-grandfather.json | 927 ++++++++++++++++++++++-
+ tools/arifi-sync/pending-trailers.json   |  51 ++
+ 2 files changed, 977 insertions(+), 1 deletion(-)
+
+diff --git a/tools/arifi-sync/native-grandfather.json b/tools/arifi-sync/native-grandfather.json
+index 0d444bd3f..274b4f10b 100644
+--- a/tools/arifi-sync/native-grandfather.json
++++ b/tools/arifi-sync/native-grandfather.json
+@@ -2955,6 +2955,924 @@
+         "0d9e267fa02f19579db1ed1e5ecb545d9d026742",
+         "63026374d20c070316a417547c1e20bf2fccd387"
+       ]
++    },
++    {
++      "sha": "98a07ce7755d7e8d8a541ef9011c35d092afedcc",
++      "subject": "patches/series: regen to 397 - the eight seat-40 fork commits enter the replayable series",
++      "date": "2026-08-22",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/hq/succession/2026-08-21-hq-session-41-resume.md (the seat-40 arc it packages)']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "230d7eee745cb15c06beccf33d15fbb67ccb3e9a",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "3d3bc4fd4ca6ea8fb75074dde3411cda2423e5c1",
++      "subject": "spec: load the draft model from the same variable the log prints, and add an env-gated DFlash verify trace",
++      "date": "2026-08-22",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-08-22-f136-spec-losslessness/2026-08-22-f136-investigation-blocked.md', 'board/hq/succession/2026-08-21-hq-session-41-resume.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "f0d0d86b084a6aac68ff98aad5cdf892ac8740e7",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "2ef0bd659c699682e362600fb8d2f592171d4334",
++      "subject": "F-136 ROOT CAUSE + FIX: the recurrent snapshot-bank (n_rs_seq) machinery corrupts hybrid targets; drafters no longer flip the target onto it",
++      "date": "2026-08-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/hq/succession/2026-08-24-hq-session-42-resume.md', 'research/local-inference/lane-evidence/2026-08-24-ring-repair/', 'registers/failure-ledger.jsonl#F-136']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "56a120f42ff00f015c21ec55cb90c6a042308770",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "2974512cbca32ac8927a27ff8411154ed4545b6d",
++      "subject": "spec: ON-DEVICE speculative checkpoints - drafter now BEATS plain (8.02 vs 4.5 t/s, byte-clean)",
++      "date": "2026-08-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/hq/succession/2026-08-25-hq-session-43-resume.md (fd90a48a9 = pre-rebase sha)', 'research/local-inference/PATCH-PROVENANCE.md (ODCP row)']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "f5880edbb17fff5e50c5b8ead8525c20b75449e7",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "c030c10e2e14d4634a60d2da2c8252fc033680de",
++      "subject": "spec: ring rollback re-enabled - DFlash2 depth 3 = 8.80 t/s (2.0x plain), 0 degenerate",
++      "date": "2026-08-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/hq/succession/2026-08-25-hq-session-43-resume.md', 'board/programs/local-inference/lanes/2026-08-30-lane-173-gdn-copy-attack-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "80d31d94e653522684bd27cbe8c98b276978fe71",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "378ddb52617f6cc4bec43e62d1a06654fd62e6a3",
++      "subject": "rs: zero-on-clear ROOT FIX - cross-request recurrent-state leak was the residual F-136 mechanism",
++      "date": "2026-08-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/hq/succession/2026-08-25-hq-session-43-resume.md', 'registers/2026-08-29-release-attribution-audit.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "28b23f36418c7f2ead153a3a8c8f32aad26d1223",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "7c2a235ec976fb0810c407608b6693a9bbd127db",
++      "subject": "tests: zero_gather + CPY/GET_ROWS Vulkan probe cases; server: depth>cap clamps with warning instead of load abort (F-136 arc)",
++      "date": "2026-08-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/hq/succession/2026-08-25-hq-session-43-resume.md (test_scale_view_zero_gather)', 'registers/2026-08-29-release-attribution-audit.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "c98d559806fda1032b83f0fbfda86f7c69621cf5",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "8d7876f51046779afa7ce08d22d8d57cfb1c9ec9",
++      "subject": "rs zeroing hunt CLOSED: leak is backend-independent (CPU repro), in-graph rs_z zero never lands on the live cache tensor; zero-on-clear promoted belt->contract. Env-gated discriminators: PDH hash, plane0/sl/rl belt scoping, zero-gather-out, hybrid set_input trace",
++      "date": "2026-08-25",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-08-24-ring-repair/2026-08-25-zeroing-hunt-verdict.md', 'board/hq/succession/2026-08-25-hq-session-44-resume.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "53b8365fc318888128aae69e43bbad0d665709cc",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "db0cd3814a1239b54692ba401b401a0e4b71e17a",
++      "subject": "vulkan: F-136 residual ROOT FIX in graph_optimize is_src_of - full view-chain roots + RAW/WAR hazards through node sources; reorder no longer hoists reads over aliased inplace writes (repeat repro: belt-off now 3/3 byte-identical)",
++      "date": "2026-08-25",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/hq/succession/2026-08-25-hq-session-44-resume.md (proof chain)', 'registers/failure-ledger.jsonl#F-136']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "6605fc1cd911340003317cfcd3c1274d7884d184",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "44d9f0bfee2a05bc33fd9ec91d2d93ce97b5700b",
++      "subject": "arifi-sync: base move b10524/9ee9fc04c -> b10636/4d19b2876 (runbook 2.2 manual path); upstream pin advanced as the same pair; prisml + tq3 pins HELD with 3 reviews recorded",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['registers/2026-08-29-fork-base-move-report.md', 'research/local-inference/lane-evidence/2026-08-29-b10636-bump-proofs/']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "2c0e040d84587b580c226334967433e6ef04ae44",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "e9c7f5d230aa27f6b34596f93a993574b8ccc9f4",
++      "subject": "series regen at the b10636 base (generated artifact - never hand-edited): 406 patches over 4d19b2876",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-08-29-b10636-bump-proofs/07-series-regen.txt']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "ab3480a5a1557e9f1aa7a979db4c3a6ba522dca1",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "4f1f902d70e42a4e8bf8e2aaa002aaa4e738c619",
++      "subject": "series regen at the b10636 base: the 9 new patch files (0398-0406) the previous commit's dir pathspec left untracked",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-08-29-b10636-bump-proofs/07-series-regen.txt']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "53465d04e3fb8b461dcb6e03042bdf80e3a11e13",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "72e3f4357bc0d57786759fd0da5f946b342c9bd2",
++      "subject": "series regen after the kv-cache bump repair: 407 patches over b10636",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-08-29-b10636-bump-proofs/']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "daeb017aa277fc000a91389b878937ba49866e0e",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "0bccc45a3344da9cce4f1af79632b8b45d6b42b8",
++      "subject": "b10636 bump repair 2: close llm_graph_input_attn_k_dsa_iswa::can_reuse - the union resolution at ef642481d kept both sides' bodies but only one shared 'return res; }' tail, nesting every following definition inside it (build FAILED, 18 errors)",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['registers/2026-08-29-fork-base-move-report.md', 'research/local-inference/lane-evidence/2026-08-29-b10636-bump-proofs/04-RESOLUTIONS.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "120128896be641e4f4331379dc5e4796bc10c99d",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "0c549a878b237775f5018518b8ac7317364fe278",
++      "subject": "series regen after bump repair 2: 408 patches over b10636",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-08-29-b10636-bump-proofs/']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "bf80886eb8eff23f0b70eaea024e4ab5c8988016",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "df731fd27aec8b644cf6e1ccdfbede25ee782bfb",
++      "subject": "seat-46: MSVC portability root-fixes for the ROCm/HIP build (6 latent bugs: -fPIC on Windows, _MSC_VER fp16 macro parens, math.h/unistd.h guards, ssize_t->streamsize, dllimport on static lib) - build-rocm GREEN gfx1103, Vulkan build confirmed no-op",
++      "date": "2026-08-28",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['registers/2026-08-28-fork-rocm-build-report.md', 'research/local-inference/2026-08-28-rocm-gfx1103-trial-results.md', 'board/hq/succession/2026-08-28-hq-session-46-resume.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "db7793fa0b3a1d872d9b8c1f511f42824d723d7f",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "e7c4ffd7ae9d0e83cf6157a7b64ff7ba97dd5a11",
++      "subject": "arifi-sync: base move b10636/4d19b2876 -> b10680/d7bd3bfca (LATEST upstream tag, President mandate 2026-08-29); upstream pin advanced as one pair",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['registers/2026-08-29-latest-bump-report.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "7591c4a6b9c074948f4099d14ffb5a7a7c7b4ba0",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "a3733366a13afa35ba817520a1e4f70c12e9f884",
++      "subject": "series regen after the b10680 base move: 412 patches over d7bd3bfca",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-08-29-latest-bump-proofs/07-series-regen.txt']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "832bee7033701f4b3c65125f64cf38c9652bfdcd",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "cc31c8aa1241df5634077567a4b6608ba9c0e1e9",
++      "subject": "vulkan sync-check: follow the FA_TYPE defines into b10680's new fa_types.glsl - reading only flash_attn_base.glsl found ZERO ids and silently turned checks 2 and 5 into no-ops (the exact F-110 class the guard exists for); now 16 FA_TYPE ids + 12 FA K/V types again",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['registers/2026-08-29-latest-bump-report.md', 'registers/failure-ledger.jsonl#F-110']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "57cca304dfdca49c16dee90a5bcd6f6b9f4c4459",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "0314f0ca96a9b254dc44c677f6756ac80f35e6d8",
++      "subject": "series regen after the b10680 base move, the buun landing, the shared_draft_devices re-add and the sync-check fix",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-08-29-latest-bump-proofs/']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "9566124ca645f3dd4abe2a7782a9122ffbd973db",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "53270c9b19fcb0a8ed69581a950610b7bafef85e",
++      "subject": "b10680 bump repair: common/fit.cpp still called llm_ffn_exps_block_regex(idx), which b10680 renamed to llm_ffn_block_regex(idx, ffn_regex) - the fork's moe_cache code auto-merged past the rename and the build failed. Same body, LLM_FFN_EXPS_REGEX passed explicitly, so behaviour is identical.",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['registers/2026-08-29-latest-bump-report.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "5a316922efec49a841b9a11575d6d85b762b7a41",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "f6c485363441608601609b2b1f05c91d8e423093",
++      "subject": "series regen after the b10680 build repair",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-08-29-latest-bump-proofs/']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "b53987d206360ac3331c054f0f0eb2d568fb7581",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "047f211f8756fad2184434e71acc6c1ad8bd681b",
++      "subject": "b10680 bump repair 2: my hunk-1 union in the 3aa479a04 (support DFlash2) resolution kept selector_top_k from BOTH sides - duplicate member, build FAILED. One copy kept. The union trap the runbook already names, this time on a declaration rather than a shared block terminator.",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['registers/2026-08-29-latest-bump-report.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "08aea2c3105aeb27d78e655c007daa5d0bdc96b1",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "806bc8ff5a9e9148d0461a0b409d1e7ffa7acecb",
++      "subject": "series regen after b10680 bump repair 2",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-08-29-latest-bump-proofs/']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "96bdee12dcac068828b5f968c327b1dd373a9cd7",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "5020dfb1eb0c5714048513fe99cc9020275d4995",
++      "subject": "runbook 4.1b: COLLISION MAP law (President 2026-08-29) - never lose our patches; A/B only where upstream delta intersects our changes; collision list = required bump-report line",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['registers/2026-08-29-latest-bump-report.md', 'board/programs/local-inference/lanes/2026-08-29-lane-170-tq3-effect-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "5bcb3a014d03d9b71a42f16ff0d5399b39f3980e",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "6b2a7943bd17b249b167af2e66702a07a1efad72",
++      "subject": "R1: the bank plane is a RUNTIME INDEX TENSOR, so the copies go AND graph reuse stays",
++      "date": "2026-08-30",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-08-30-lane-176-bank-plane-index-REPORT.md', 'registers/2026-09-01-arifilabs-inventions.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "743a3f3d54205383227fba17cf24ccaf8ae2e17d",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "68979d342f155a61b952979f210ad9d53ee7da55",
++      "subject": "R1 fix: guard the bank index tensors on ALLOCATION, not on rs_r1",
++      "date": "2026-08-30",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-08-30-lane-177-ring-cost-REPORT.md', 'board/programs/local-inference/lanes/2026-09-02-lane-201-df2-regression-bisect-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "296801fe2f1b4592540f86cfef20d56840de05dc",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "b40d344551ee869c0b9c632bdfeb993da42d5b67",
++      "subject": "lane-178: the ring's extra graph split is the SPLIT-INPUTS CAP, not a CPU fallback - runtime-selectable so one binary is both arms",
++      "date": "2026-08-31",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-08-31-lane-178-splits-and-tail-REPORT.md', 'research/local-inference/lane-evidence/2026-08-31-lane-178/']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "43a1743d5244b14280134e8ddc0ca6403e34bfea",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "d7109fafe9a1e60678d75e595c844ef465c99375",
++      "subject": "ggml-backend : adopt split-inputs cap 64 as the default",
++      "date": "2026-08-31",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-08-31-lane-178/adopt-commit-msg.txt', 'board/programs/local-inference/lanes/2026-08-31-lane-178-splits-and-tail-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "a4e65ec40ee1bcc49cca4778ab7d051a208af2ed",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "83c82af96894aa801da90e68de634217a34054f0",
++      "subject": "q2_0_g128: the tie predicate is exact on both sides, not a reciprocal",
++      "date": "2026-08-31",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-08-31-lane-179-q2g128-REPORT.md', 'board/programs/local-inference/lanes/2026-08-31-lane-179-evidence/']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "ef183654b41b97bd8c2afec8c25af6395faadee5",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "532932a6f23614d06ef5bd6034d31be8e148f42b",
++      "subject": "lane-180: the ring's 26 extra graph inputs are 23 IDENTICAL s_wrow views - one per recurrent layer (delta-net-base.cpp:849), 4 bytes each; share one view behind LLAMA_RS_WROW_SHARE=1",
++      "date": "2026-08-31",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-08-31-lane-180-ring-inputs-DESIGN.md', 'board/programs/local-inference/lanes/2026-08-31-lane-184-share-map-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "3a4378a90fb694f74a72e1b3527c12348b557745",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "38195137048e656fe58761941f69ad90e2471169",
++      "subject": "lane-180: GATE 0 receipt - report eHostVisible in the vk memory logger, not just eDeviceLocal",
++      "date": "2026-08-31",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-08-31-lane-180-ring-inputs-DESIGN.md', 'board/programs/local-inference/lanes/2026-08-31-lane-182-morning-window-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "993a700cd4558991aa763794aee748558682a963",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "a1a1380009c348e72ae81caf77737b28af9a0115",
++      "subject": "lane-180 ADOPT: share ONE s_wrow view by default - 29 identical per-layer split inputs collapsed",
++      "date": "2026-08-31",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-08-31-lane-184-share-map-REPORT.md', 'research/local-inference/lane-evidence/2026-08-31-lane-184/wrow_gate.py']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "be321dedebd6e157212619cd344e74cbd5b9ea33",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "e7608c07521f019226d56ab3130fa128459a338d",
++      "subject": "vulkan: perf logger must not abort when an async copy left a compute context alive",
++      "date": "2026-08-31",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-08-31-lane-185-matvec-head-REPORT.md', 'board/programs/local-inference/lanes/2026-08-30-lane-177-ring-cost-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "f8fb00f60a0de2a83a502d8e328a7c8231f01455",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "ad42d9028c89cf288cedb4ef81c19a49b287eb2f",
++      "subject": "lane-188: refuse the tail on MLA caches - the write-order detector cannot see the mla/lid idxs paths",
++      "date": "2026-08-31",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-08-31-lane-188-shipping-tail-REPORT.md', 'research/local-inference/lane-evidence/2026-08-31-lane-188/commit-5-closure.txt']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "cd082399d88786baa8d3812c1ff200220541160f",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "049697c796df383f72d59743ade6a73e69813f03",
++      "subject": "lane-192 FIX (a): the precision tail survives a prefix-cache rewind",
++      "date": "2026-09-01",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-01-lane-192-tail-fix-REPORT.md', 'registers/2026-09-01-arifilabs-inventions.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "6877f148d14167e42fa1ef42f4e623f808b51cbf",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "f4dcd3f19e3a07de75a1b3d1d62278fb75ad1b7f",
++      "subject": "lane-194: q4_0 -> F16 Vulkan cpy shader + F16 KV tail compose (OPT-IN, default OFF)",
++      "date": "2026-09-01",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-01-lane-194-q4f16-shader-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "227273a8cca8373d183a442a19c7683475616628",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "ba591ac566ec24ca4bfe68d2ed589a4da970b1eb",
++      "subject": "lane-194: the CPU reference for quant -> F16 dup, which did not exist",
++      "date": "2026-09-01",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-01-lane-194-q4f16-shader-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "cbc4a508ccd89041eadeec8da860a6c91feb17db",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "4c7ce3f6226397eca42c76be6969bfb682602551",
++      "subject": "lane-194: name the compose type in the tail banner - the receipt that stops a vacuous fidelity green",
++      "date": "2026-09-01",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-01-lane-194-q4f16-shader-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "8c96d199039d75ff39c981647f18fd0f9b152d07",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "a04638027308c4dc4941bf6cc11636ce970f8c24",
++      "subject": "lane-195: multi-segment flash attention - the ggml API + CPU reference + its gate",
++      "date": "2026-09-01",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-01-lane-195-per-query-read-REPORT.md', 'board/work_items.d/...wi-1704 (WI-1704, CPU FA MLA access violation on this code)']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "5738f0cbda9b7df0733ce113bef2a5f950f870bf",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "34f4553d02df7d1a5090886e382abc6b74b3c2ba",
++      "subject": "lane-195: LEG 0 - the regression leg the branch was missing, plus the sinks condition stated",
++      "date": "2026-09-01",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-01-lane-195-per-query-read-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "efb4770a3eb8b2ad6da434e30f398ec5a95891d8",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "dc0d0a9bfea5ac9c813630cae70150edae243737",
++      "subject": "lane-196: Design B BUILT - heterogeneous split-k FA (per-query source selection), the Vulkan dispatch",
++      "date": "2026-09-01",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-01-lane-196-designB-build-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "50e68abca3f19a418e851b24c52552d6bc50378c",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "50e38d7ecdd8ac958e716f3e3677c1754764376a",
++      "subject": "lane-196: promote the tail-ON banner to WARN - llama-server drops INFO at default verbosity",
++      "date": "2026-09-01",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-01-lane-196-designB-build-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "cfefa18471ecb5df8596934b511f249e1a0583ff",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "abebad0c61934140e7f399412e7470669aa7685f",
++      "subject": "lane-197: honor --spec-draft-p-min in the DFlash2 sampled selector path - the gate was greedy-branch-only, so the seated serve line (temp 0.7) ignored the flag entirely; hoisted to the shared site, greedy duplicate removed, flag-unset path untouched (p_min defaults 0.0)",
++      "date": "2026-09-01",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-01-lane-197-daily-drafter-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "e5bd321f543ac50e20f0ef3c09c660940d1643c4",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "111973f5d6418cf87e5729b1aaa9147820f1acef",
++      "subject": "lane-198: gate Q5_K (n>1) and Q4_K (n>=5) off the q8_1 MMVQ mat-vec shader on AMD - measured on the live speculative-verify graph (780M, proprietary driver): MMVQ per-dispatch cost steps 2.0-2.3x (Q4_K) / 1.55x (Q5_K) from NUM_COLS 4 to 5 while the f32 dequant shader rises 1.4-1.6x, and Q5_K is faster on the f32 shader at every measured n>1 (0.73-0.88x). GGML_VK_FORCE_MMVQ / GGML_VK_DISABLE_MMVQ still override; n==1 path untouched. Evidence: research/local-inference/lane-evidence/2026-09-01-lane-198/TABLE.json",
++      "date": "2026-09-01",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-01-lane-198-verify-width-REPORT.md', 'research/local-inference/lane-evidence/2026-09-01-lane-198/TABLE.json']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "47c0deaa1f74b9bb8bc59eed134032f765333b70",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "58df3f895217accff56d3a367a46ee4f6609d6bb",
++      "subject": "runbook 4.1b duty 3: a named collision is decided by MECHANISM READ + THREE ARMS (theirs / ours / union), never by one number - President 2026-09-02",
++      "date": "2026-09-02",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-02-lane-205-drift-review-REPORT.md', 'board/programs/local-inference/lanes/2026-09-02-lane-201-df2-regression-bisect-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "520a2fbdea94faa79fa82cd881a1b63f7915a3eb",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "725a5ff97be0831532052889fa2bf4734da7ae51",
++      "subject": "arifi-sync: recognize `correctness only` as no-effect vocabulary",
++      "date": "2026-09-05",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-09-02-lane-209/rank3-r10/OPUS-5-R6C-TRAILER-CLASSIFIER-FIX-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "c16f6729a68944f2e00983eabaf5b2c08240e71b",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "f10f3a95e29894d93340d22d6330c334b325d76c",
++      "subject": "vulkan: create the ROCmFP4-FAST mat-mat pipelines and dequantize once per row in the generic mat-vec",
++      "date": "2026-09-02",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-02-lane-204-kernel-gap-census-REPORT.md', 'board/programs/local-inference/lanes/2026-09-02-lane-203-rocmfp4-fast-target-REPORT.md', 'research/local-inference/lane-evidence/2026-09-02-lane-209/r8-integrate/OPUS-5-R8-LANE-206-INTEGRATE-WINS-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "f227d23163abf9c97acdf81c53c6d0f824315805",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "7062c6794965a3e7ee5e260a41fb60602cc2773c",
++      "subject": "vulkan: dedicated IQ4_XS mat-vec shader (K-quant style, 16 threads per superblock) + the 17408x5120 perf rows for test-backend-ops (lane-209 rank 5; gates run next)",
++      "date": "2026-09-02",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-02-lane-209-kernel-attacks-REPORT.md (Rank 5 verdict)', 'tools/arifi-sync/protected-wins.json#vulkan-iq4xs-matvec-dedicated']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "b4486cbdd8a96659620cd461ee22b6a99cb91a2e",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "81dcb48fb804bf915f7706e6c5de5a5d64cf2c83",
++      "subject": "vulkan: keep the ROCmFP4-FAST q8_1 MMVQ path to n=2..5 only",
++      "date": "2026-09-03",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-02-lane-209-kernel-attacks-REPORT.md (Rank 7)', 'research/local-inference/lane-evidence/2026-09-02-lane-209/r4c/TBO-17408.txt']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "33caf7ff7f501f18652d49793b7cb8b1efe28061",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "f63bc66f8f88ffd19631b8fea701ba03f5d97f93",
++      "subject": "vulkan: enforce ROCmFP4 MMVQ width gate before batch routing",
++      "date": "2026-09-03",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-09-02-lane-209/rank3-r10/OPUS-5-R9-PUBLIC-TRAIL-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "c5109627155125ceb31a31d131dbcf4ec64065ef",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "80bff6e98bc23f7af78ca178140defb9a859ef2b",
++      "subject": "vulkan: exclude ROCmFP4 MMVQ n=4 tie width",
++      "date": "2026-09-03",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-09-02-lane-209/PREREG-r9.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "a40f3b1b86b5dd41748480aa4b30ab6c1d1cc36b",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "618c894d931f05b31254a1ac5851c6a671f52d5d",
++      "subject": "vulkan: isolate ROCmFP4 MMVQ to n=3 and n=5",
++      "date": "2026-09-03",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-09-02-lane-209/TRIAL-r10.md', 'board/programs/local-inference/lanes/2026-09-02-lane-209-kernel-attacks-REPORT.md']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "4b361889c6d957b72891fe9db4e3b08df3fd7273",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "e23edc305e235db85f050b4c926b0c24c02b740b",
++      "subject": "vulkan: correct lane-209 backend coverage comment",
++      "date": "2026-09-03",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['board/programs/local-inference/lanes/2026-09-02-lane-209-kernel-attacks-REPORT.md (chain context)']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "d9a695bc2f8ed8ef89bd086a4fc0d675ecb4c12c",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "f425b2c799cfc72d04c210b932af53e738979e19",
++      "subject": "arifi-sync: register the three lane-209 mechanisms this integration lands",
++      "date": "2026-09-05",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "R24 (lane-218, 2026-09-06) classified ARIFI (native) from the fork's own evidence; recorded here under the 2026-08-29 G7 append-only ruling instead of an amend. Evidence: ['research/local-inference/lane-evidence/2026-09-02-lane-209/wi1700-protected-win-symbols/FABLE-53-MED-WI1700-REPORT.md', 'research/local-inference/lane-evidence/2026-09-02-lane-209/r8-integrate/register_wins.py']",
++      "origin_owed": "Origin: ArifiLabs (native)",
++      "sha_pre_rebase": "a73f7d6d7660c39ee10bb1fb6c3bcc1cdda0ca1e",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "1797838f0bf28434b548fff5bdf9f5be2547a092",
++      "subject": "docs: phase-3a OPTIONS-REGISTRY rows (M-RoPE, f16-recurrent, DSpark-iGPU)",
++      "date": "2026-07-23",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "57cddcfd3348d753f0585bf902acd5d55d45d77e",
++      "subject": "patches: make the series generator implement its own convergence rule",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "43f38b8225ab1d352b53e793231469d9854098ad",
++      "subject": "patches: stop the manifest deriving anything from excluded commits",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "43f2d29b15a0e9276d7c39b4498e9cbfc626b4b9",
++      "subject": "ggml-cpu: GGML_ARIFI_VNNI_REPACK defaults to OFF (diverging from upstream, on measurement)",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "01ad15f291eca4269160ebae4935c38f86cf4df4",
++      "subject": "docs: make the fork buildable by someone who did not build it",
++      "date": "2026-07-25",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "c16526b3b1feb6c803e913ad4490a7eaff865d5b",
++      "subject": "fix(ggml-cpu/x86): don't pass __m256i by value across the repack GEMV/GEMM ABI boundary (Windows 0xC0000005)",
++      "date": "2026-07-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "0f1afa73d7f776310052d6e604fff89742988a3c",
++      "subject": "patches: regenerate the series after the repack ABI-alignment fix",
++      "date": "2026-07-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "3d9668cdc62c0e316867c080cd1f7f39f2b33f0a",
++      "subject": "ggml: TurboQuant TQ3_1S/TQ4_1S weight formats behind GGML_ARIFI_TURBO_WEIGHT_QUANTS",
++      "date": "2026-07-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "a10d81dd4006aa735b537860c87fdbd190541d53",
++      "subject": "docs: USAGE - a task-oriented guide for humans, not an option reference",
++      "date": "2026-07-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "c77c324abdeeaab62af3d4acf98fa75b69906dd7",
++      "subject": "ggml-cpu/x86: use the row-stride parameter in repack GEMV stores instead of the row count",
++      "date": "2026-07-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "8f7895381a7c386c5b5f03ab5deede89e40d9438",
++      "subject": "ggml-cpu: fuse the TurboQuant dot product - transform the activation, not the weights",
++      "date": "2026-07-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "b6a36788ef8e9f50490c4619751eedd84cd03596",
++      "subject": "docs(FINDINGS): F-09 - the repack/GPU trade-off is a compute-placement choice, not a bug",
++      "date": "2026-07-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "77f8e7ddeafb202316456eaa91f1e1060f43bcb4",
++      "subject": "port: f16 recurrent S-state (env-gated GGML_RECURRENT_STATE_F16)",
++      "date": "2026-07-23",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "3c6322b8146d09d327016bf96f5f314301e9ca6d",
++      "subject": "port: M-RoPE embedded-batch position guard",
++      "date": "2026-07-23",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "b117c4856f24782f3f99710d1907e041b8482f2b",
++      "subject": "port: Windows IOCP async expert-bundle reads (M2b)",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "a578f05dd1f1a6557b89a250b95e77513863f141",
++      "subject": "feat: POWERINFER_IOCP runtime toggle for the Windows expert-read path",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "7be86e3467f09d4b49e0db618a7036181b84c872",
++      "subject": "docs: OPTIONS-REGISTRY POWERINFER_IOCP measured row (same-binary A/B)",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "953a962192aa82a4f72f03cf6f9a1a024e5502bd",
++      "subject": "docs: correct POWERINFER_IOCP row - A/B was noise, direction UNRESOLVED",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "d9f1a2117d0f9e737a49c5eb3627e2bbd5153adc",
++      "subject": "port: Q1_0 repack scaffolding + Arm NEON/DP GEMV-GEMM kernels",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "38232d775feb0a74a8dd3bf82ceb523af1e89deb",
++      "subject": "port: native x86 Q2_0 vec_dot (AVX512-VNNI / AVX-VNNI), drop scalar fallback alias",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "a2fa737a6daa658383942d4110be3314086d86cb",
++      "subject": "port: x86 AVX512-VNNI repack GEMV/GEMM for Q1_0 and Q2_0",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "9bf54af26083b1c423dce73019247d6aefc12256",
++      "subject": "feat: GGML_ARIFI_VNNI_REPACK runtime toggle + explicit g64/g128 tripwire",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "bde65d3f1a6f7bb4c512a1a6e9538eee82b2e9b0",
++      "subject": "docs: OPTIONS-REGISTRY row for GGML_ARIFI_VNNI_REPACK - UNMEASURED, artifact-blocked",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "b8060d46bf23619db68ffedd60a1b0fdd4391689",
++      "subject": "docs: OPTIONS-REGISTRY GGML_ARIFI_VNNI_REPACK - CORRECTNESS FAIL, GEMM returns NaN",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "56ac77b01303c1475dcc39a0e37126169e837542",
++      "subject": "fix(ggml-cpu): parameterize Q2_0 GEMM activation stride by QK2_0/QK8_0 - g64 NaN",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "a01ed569b6e6d29aaf4009e368323f695a3fccb5",
++      "subject": "fix(ggml-cpu): same g64 stride defect in the ported x86 Q2_0 vec_dot",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "81f5fae50860f1729825a4fd875708508e51a2a8",
++      "subject": "docs: OPTIONS-REGISTRY GGML_ARIFI_VNNI_REPACK - NaN FIXED, bit-identity NOT established",
++      "date": "2026-07-24",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "7a40b423eca672670b7425a02fd13049f18a091c",
++      "subject": "b10636 bump repair: restore upstream's DOTS3NOTE indexer arch + the two TAG_LLAMA_SEQ_ID_NEG TODOs that a whole-file --theirs resolution reverted. checkout --theirs takes stage 3 (the WHOLE file), not just the conflicting hunks - upstream's 4-line b10524..b10636 delta to this file was lost with it. GLM_DSA is absent here PRE-EXISTING (also absent on lane165-pre-bump-arifi-main), so it is NOT restored by this commit and stays a President item.",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "197f8f343ca767d36ffe88946f3b6b86bea4e46f",
++      "subject": "server: re-add the shared_draft_devices VRAM accounting on top of common_fit_extra_model (multi-device only)",
++      "date": "2026-08-29",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "0be0c05088c1e4dc045b1489966d2d725d39ac11",
++      "subject": "lane-188: SHIPPING KV precision tail (store-side) - quantized body + exact F16 ring",
++      "date": "2026-08-31",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "74ea96ac644bf0aee18aed2b8e406630dd2c067e",
++      "subject": "vulkan: IQ3_S mat-vec 16 invocations per superblock at NUM_COLS >= 2 (zuijdwijk 211abf6a9 via lane-166, gate extended from >4; lane-209 rank 4; gates run next)",
++      "date": "2026-09-02",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "32a480d5430af31a46f5a5e768e5b8dd03e1e602",
++      "subject": "vulkan: IQ3_S mat-vec split gate becomes (NUM_COLS == 3 || NUM_COLS > 4); the stock widths keep the upstream body bit for bit",
++      "date": "2026-09-03",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "d094f7befae670d6504ba414bf73cfa5e9d4e33f",
++      "subject": "vulkan: create the ROCmFP4-FAST q8_1 MMVQ mat-vec pipelines and gate them to n <= 5 on AMD",
++      "date": "2026-09-03",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "ccd09f526ba5645129a8d429f05249a1671ad266",
++      "subject": "speculative: size drafts from measured acceptance (--spec-draft-adaptive)",
++      "date": "2026-08-23",
++      "author": "Marshall",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "e1b6361f5d9cb5d1ad27fa971e05011374fdb815",
++      "subject": "server: do not re-verify replayed draft tokens after a checkpoint restore",
++      "date": "2026-08-25",
++      "author": "Marshall",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "02893efe4ef5deccbf17393cfa83f337295397be",
++      "subject": "metal: union the dropped upstream FA machinery back in - the tree did not compile",
++      "date": "2026-09-06",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "f16d2b3b414b295de4dd8536a8706861e7463689",
++      "subject": "cuda: union upstream's mul_mat_id_needs_sync predicate with our TQ arm",
++      "date": "2026-09-06",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "9dcd2e8a7ae0651f9f77733774bff55c92c29d8e",
++      "subject": "cuda: restore the fused MoE-cache matvec on upstream's fusion kernel (WI-1699)",
++      "date": "2026-09-06",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "b7b2751dca8e349077c4fb518c9f01c078784548",
++      "subject": "ci: make the link contract real, and run test-backend-ops on the CPU job",
++      "date": "2026-09-06",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "cbe00c86f2a8932a8eec87a6db8bb828eeec517c",
++      "subject": "arifi-sync: R13B's two b10819 repair commits become also_commits of the mechanisms they keep alive",
++      "date": "2026-09-06",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "618e0769a4edc3d2437944dec26046615f8f8a6a",
++      "subject": "sycl: the MMVQ launchers declared one pair of ranges and launched with another",
++      "date": "2026-09-06",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "8a4b5a1d4168f82250932b7f7b309f4965362252",
++      "subject": "ci: each job now proves the unioned file itself produced an object",
++      "date": "2026-09-06",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "1d9c228568da0556d2fa12038a79449f22860725",
++      "subject": "ggml: flash-attention segment count moves to op_params[5] - it collided with upstream's n_kv_max in [4]",
++      "date": "2026-09-06",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "568d6075182595e90f74636cc8be1e695ef76a3b",
++      "subject": "arifi-sync: base move b10819/6a1a922d2 -> b10825/9e0e22059 (R22 read, R27 execution); 552/552 replayed clean, 0 merges, 0 hunk collisions, marker scan 0, protected wins PASS; R20 slot fix + R19 gate (default ON per R19D) carried Lane: lane-220",
++      "date": "2026-09-07",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "44897b55e377ae224dce836338feeadb7a0b3a14",
++      "subject": "arifi-sync: rekey 3 protected-win manifests to the b10825 line (R27 check 05:1x: validate PASS only with this rekey; committed so the built line validates) Lane: lane-220",
++      "date": "2026-09-07",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
++    },
++    {
++      "sha": "b7c2d98bae40171b9ce9ec9dda9fa36f3a265f92",
++      "subject": "arifi-sync: scope subcommand (F-161) - the ingest A/B scope derived from the collision map (upstream files x our files x hunk overlap x speed paths) = sanity|named|full; UPDATE-RUNBOOK 4.1b.4 scope law; selfcheck Lane: lane-220",
++      "date": "2026-09-07",
++      "author": "Angelo Arifi",
++      "reaudit_2026_09_07": "grandfathered by HQ seat-54 under the 2026-08-29 G7 append-only ruling: authored on this fork (lane-206..220 work, tooling/manifests/ci), no upstream origin; new commits carry the native Origin trailer.",
++      "origin_owed": "Origin: ArifiLabs (native)"
+     }
+   ],
+   "range_base_pre_rebase": "9ee9fc04c136ef2ae729bfc60d18961b23c13ddf",
+@@ -2963,5 +3881,12 @@
+   "reaudit_2026_08_29": "G12 RE-AUDIT, PARTIAL. 180 of the 289 have a patch-filename subject. Diff-level checked so far: 46 are BYTE-IDENTICAL to a commit on a registered source (36 llama-cpp-turboquant, 10 spiritbuun/buun-llama-cpp) by git patch-id --stable against all 3420 non-upstream commits of every third-party remote; 6 more resolve to merged upstream llama.cpp pull requests by number. 52 proven NOT fork-authored, 0 of them unlicensed - every true source has a retained notice, so the exposure is a FALSE CLASSIFICATION CLAIM, not a missing attribution. The remaining 128 patch-filename commits are UNRESOLVED: patch-id found no verbatim source, which means either fork-original work or a port that was edited on the way in - patch-id cannot tell those apart. That set needs per-commit diff reading against the named project and is NOT closed by this pass.",
+   "range_base_pre_rebase_b10680": "d7bd3bfcad3e29c7e49fd26f38c79ee3e9a3fd6b",
+   "rekeyed_b10819": "2026-09-06 lane-206 R13 base move b10680 -> b10819; keys re-derived by exact-subject match, one unique hit per row asserted",
+-  "rekeyed_b10825": "2026-09-07 R27 (lane-220): re-keyed by exact-subject match after the b10819 -> b10825 rebase; old keys appended to sha_pre_rebase_chain, never overwritten (lane-214 recipe)"
++  "rekeyed_b10825": "2026-09-07 R27 (lane-220): re-keyed by exact-subject match after the b10819 -> b10825 rebase; old keys appended to sha_pre_rebase_chain, never overwritten (lane-214 recipe)",
++  "reaudits": [
++    {
++      "date": "2026-09-07",
++      "by": "HQ seat-54",
++      "what": "R24 route B: 55 ARIFI rows added from R24 (55 ARIFI / 2 FORK / 1 UPSTREAM audited)"
++    }
++  ]
+ }
+diff --git a/tools/arifi-sync/pending-trailers.json b/tools/arifi-sync/pending-trailers.json
+index 08077bb5e..a47cbf053 100644
+--- a/tools/arifi-sync/pending-trailers.json
++++ b/tools/arifi-sync/pending-trailers.json
+@@ -37,6 +37,57 @@
+         "Origin": "Ported and env-gated as GGML_VK_NONTEMPORAL_WEIGHTS so base and treatment are the SAME BINARY, plus a one-shot ENGAGEMENT RECEIPT at INFO so a TIED result cannot be mistaken for a no-op (the wave32 lesson).",
+         "Measured-effect": "UNMEASURED, and expected not to transfer: the PR's proven chain is Mesa-only (NonTemporal -> NIR -> ACO -> SLC) and this rig is DRIVER_ID_AMD_PROPRIETARY 26.7.1 (LLPC). Correctness gate + measurement owed before any verdict."
+       }
++    },
++    {
++      "sha": "7a40b423e",
++      "sha_full": "7a40b423eca672670b7425a02fd13049f18a091c",
++      "branch": "lane-220/b10825-2026-09-06 (arifi/main line)",
++      "subject": "b10636 bump repair: restore upstream's DOTS3NOTE indexer arch + the two TAG_LLAMA_SEQ_ID_NEG TODOs that a whole-file --theirs resolution reverted. checkout --theirs takes stage 3 (the WHOLE file), not just the conflicting hunks - upstream's 4-line b10524..b10636 delta to this file was lost with it. GLM_DSA is absent here PRE-EXISTING (also absent on lane165-pre-bump-arifi-main), so it is NOT restored by this commit and stays a President item.",
++      "classification": "UPSTREAM",
++      "evidence": "['registers/2026-08-29-fork-base-move-report.md', 'research/local-inference/lane-evidence/2026-08-29-b10636-bump-proofs/04-RESOLUTIONS.md']",
++      "trailers_owed": [
++        "Taken-from: ggml-org/llama.cpp@5a32f7b66 (Xuan-Son Nguyen, \"model: add dots3-note (#27060)\", MIT licenses/llama.cpp-MIT.txt)",
++        "Origin: bump repair - restores the upstream b10524..b10636 delta a whole-file --theirs resolution lost",
++        "Measured-effect: correctness only - restores 4 upstream lines lost to a whole-file --theirs resolution; no throughput claim"
++      ],
++      "recorded": "2026-09-07",
++      "recorded_by": "HQ seat-54 route B under the 2026-08-29 G7 ruling (no amend)",
++      "sha_pre_rebase": "434df54873c559230e9f53d5760b0f413e5ac214",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "197f8f343",
++      "sha_full": "197f8f343ca767d36ffe88946f3b6b86bea4e46f",
++      "branch": "lane-220/b10825-2026-09-06 (arifi/main line)",
++      "subject": "server: re-add the shared_draft_devices VRAM accounting on top of common_fit_extra_model (multi-device only)",
++      "classification": "FORK",
++      "evidence": "['registers/2026-08-29-latest-bump-report.md', 'registers/2026-08-29-release-attribution-audit.md', 'licenses/README.md (buun row)']",
++      "trailers_owed": [
++        "Taken-from: spiritbuun/buun-llama-cpp@26eb3d131 + @6d54354f7 (leloch, 2026-08-05, \"server: harden shared draft device placement\" / \"server: account for MTP placement in fit reservations\", MIT licenses/buun-MIT.txt)",
++        "Origin: RE-ADD after the b10636 base move (President ruling 2 of 2026-08-29); first carried by the fork on 2026-08-15 as lane-139 patches resolved/0029 + resolved/0033 (592e29ee2, af55226c9 - trailered only \"Assisted-by: Codex\")",
++        "Measured-effect: correctness only - multi-device VRAM accounting; inert on the single-device 780M (no A/B owed)"
++      ],
++      "recorded": "2026-09-07",
++      "recorded_by": "HQ seat-54 route B under the 2026-08-29 G7 ruling (no amend)",
++      "sha_pre_rebase": "5d644f0c59d4a2f99b638bc32d759a9204d833be",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
++    },
++    {
++      "sha": "74ea96ac6",
++      "sha_full": "74ea96ac644bf0aee18aed2b8e406630dd2c067e",
++      "branch": "lane-220/b10825-2026-09-06 (arifi/main line)",
++      "subject": "vulkan: IQ3_S mat-vec 16 invocations per superblock at NUM_COLS >= 2 (zuijdwijk 211abf6a9 via lane-166, gate extended from >4; lane-209 rank 4; gates run next)",
++      "classification": "FORK",
++      "evidence": "['board/programs/local-inference/lanes/2026-09-02-lane-209-kernel-attacks-REPORT.md (§4 rank 4)', 'board/programs/local-inference/lanes/2026-08-29-lane-166-matvec-fix-REPORT.md', 'licenses/README.md (zuijdwijk row)']",
++      "trailers_owed": [
++        "Taken-from: LaurentZuijdwijk/llama.cpp@211abf6a9 (Marshall, 2026-08-20, \"vulkan: handle larger batch sizes (>4) efficiently for IQ3_S mat-vec\", MIT licenses/zuijdwijk-MIT.txt)",
++        "Origin: gate extended from NUM_COLS > 4 to >= 2 by lane-209 rank 4 (superseded by 4cfca0c08 union gate); first ported by lane-166 e146c1175",
++        "Measured-effect: n=3 39.7 -> 53.8 GB/s (+35%) test-backend-ops 17408x5120, n=5 x1.472, n=8 x4.803; serve U-Q3KXL df2 8.367 -> 9.268 t/s (+10.8%, CI [+0.622,+1.018], 8/8) - lane-209 rank 4 verdict"
++      ],
++      "recorded": "2026-09-07",
++      "recorded_by": "HQ seat-54 route B under the 2026-08-29 G7 ruling (no amend)",
++      "sha_pre_rebase": "10b2ed4afaa0d9c2121467f7a2c0fdb3ef17567e",
++      "remapped": "2026-09-07 b10825 rebase (runbook 2.2.1)"
+     }
+   ]
+ }

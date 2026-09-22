@@ -1,0 +1,223 @@
+From 6f24a58a659c9a6d8fc7b3952048b845ebeaf855 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 5 Sep 2026 14:23:23 -0400
+Subject: [PATCH] vulkan: q6_k mat-vec reads its scales from the block, not
+ through LDS - MEASURED NEUTRAL on gfx1103
+
+mul_mat_vec_q6_k.comp is the only q*_k mat-vec shader that stages its scales
+through shared memory: it loads all 16 int8 scales of the superblock into a
+double-buffered LDS tile and pays a barrier() per ROW, inside the row loop.
+q4_k and q5_k unpack their scales in registers with no shared memory and no
+barrier at all.
+
+The exchange moves no data between threads. The 16 threads of a group all work
+on the same block, each writes scales[itid], and each then reads only
+scales[s_offset + {0,2,4,6}] of that same block. Reading those four bytes
+straight out of the block yields the identical values, in the identical fma
+order, off the same 16-byte cache line the staging was already fetching. The
+result is bit-identical by construction, and measured so.
+
+Specialization constant 3 selects the path, so ONE binary serves both arms:
+default 1 = direct reads, GGML_VK_Q6K_DIRECT_SCALES=0 = upstream's LDS path
+byte for byte. The host prints the resolved mode on stderr at pipeline creation
+(llama-server's logger drops ggml INFO records, so the receipt has to be on the
+same channel the Vulkan perf logger already uses).
+
+MEASURED ON THE SEAT LINE (Radeon 780M / gfx1103, Vulkan, Huihui-Qwen3.8-27B
+UD-Q4_K_XL + DFlash2 Q4_K_M drafter at --spec-draft-n-max 2, so verify width 3;
+one binary, arms env-gated, 6 position-balanced interleaved launches per phase,
+Balanced power plan, 32+16 GB asymmetric RAM):
+
+  op level    q6_k rows median ON/OFF ratio 0.9796, against a CONTROL of 78
+              untouched op rows at median 0.9990, p10-p90 [0.952, 1.053].
+              No q6_k row separates. NEUTRAL.
+  serve level TIED on all six cells - prefill and decode, reported separately,
+              at three prompt lengths. Every arm range overlaps.
+  identity    byte-identical output: 1 distinct sha256 per prompt across all
+              12 arm-launches (3 prompts x 6 launches).
+  correctness test-backend-ops -o MUL_MAT 1394/1394, 0 FAIL, both arms.
+
+This does NOT claim a speed win on this box and must not be quoted as one. It
+is kept because it is strictly less work for a bit-identical result - one fewer
+workgroup barrier per row per superblock, and no shared-memory tile - on an
+engine that ships to other people's hardware, where LDS pressure and barrier
+cost are not what they are here.
+
+THE HYPOTHESIS IT FALSIFIES, which is the more useful half. q6_k mat-vec on
+this box runs at 41.0 GB/s effective at m=17408 n=3 k=5120 while q5_k at the
+identical shape runs 63.8 and q4_k reaches 72.5 - a real, reproducible ~35%
+deficit. The per-row barrier was the leading mechanism for it. It is not:
+removing the barrier moves nothing measurable, in the gated build or in an
+ungated probe build measured against clean arifi/main under the same
+position-balanced discipline (q6_k median 0.988, control 0.999). The deficit
+stands, unexplained, and the next attempt should look elsewhere.
+
+Evidence lives in research/local-inference/lane-evidence/2026-09-02-lane-209/rank3-r10/ :
+OPUS-5-R7-780M-KERNEL-ATTACK-REPORT.md, R7-AB-opA.json, R7-AB-serveA.json,
+R7-AB-binA.json, R7-OP-ANALYSIS-opA.json, R7-OP-ANALYSIS-binA.json,
+R7-SERVE-ANALYSIS.json, R7-PROFILE-base.json
+
+Origin: ArifiLabs (native)
+Measured-effect: NEUTRAL on gfx1103 - op-level q6_k median ON/OFF 0.9796 inside a
+  78-row untouched control at 0.9990, p10-p90 [0.952, 1.053]; serve TIED on all
+  six prefill/decode cells; output byte-identical, 1 sha per prompt over 12
+  launches. No speed win is claimed.
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 27 +++++++-
+ .../vulkan-shaders/mul_mat_vec_q6_k.comp      | 65 +++++++++++++++----
+ 2 files changed, 79 insertions(+), 13 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 14a4afa54..95024c63c 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -5539,6 +5539,29 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         const bool     tq_use_subgroups       = tq_subgroup_fast;
+         const uint32_t tq_force_subgroup_size = 0;
+ 
++        // arifi lane-209 R7: q6_k mat-vec DIRECT SCALES (specialization constant 3 of
++        // mul_mat_vec_q6_k.comp). 1 = read the four scales this thread needs straight out of the
++        // block; 0 = upstream's LDS staging with a barrier() per row inside the row loop. The
++        // values are bit-identical either way - the exchange never moved data between threads -
++        // so this is a scheduling change only. Default ON, GGML_VK_Q6K_DIRECT_SCALES=0 opts out,
++        // which keeps ONE binary serving both arms of an A/B.
++        const uint32_t q6k_direct_scales = [] {
++            const char * s = getenv("GGML_VK_Q6K_DIRECT_SCALES");
++            return (s != nullptr && s[0] == '0') ? 0u : 1u;
++        }();
++        {
++            static bool once = false;
++            if (!once) {
++                once = true;
++                // stderr, not GGML_LOG_INFO: llama-server's logger drops ggml INFO records at
++                // the default verbosity (CHECKED - no ggml_vulkan line of any kind reaches a
++                // server log), and this receipt has to be readable in the A/B's own server log.
++                // Same channel the Vulkan perf logger already writes on.
++                fprintf(stderr, "ggml_vulkan: q6_k mat-vec direct-scales: %s\n",
++                        q6k_direct_scales ? "ON" : "OFF");
++            }
++        }
++
+         for (uint32_t i = 0; i < mul_mat_vec_max_cols; ++i) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_F32 ][i], "mul_mat_vec_f32_f32_f32",  arr_dmmv_f32_f32_f32_len[reduc],  arr_dmmv_f32_f32_f32_data[reduc],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1, 1, 1}, {wg_size_subgroup, 1, i+1}, 1, false, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_F16 ][i], "mul_mat_vec_f16_f32_f32",  arr_dmmv_f16_f32_f32_len[reduc],  arr_dmmv_f16_f32_f32_data[reduc],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2, 1, 1}, {wg_size_subgroup, 2, i+1}, 1, false, use_subgroups, force_subgroup_size);
+@@ -5562,7 +5585,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_f32_f32", arr_dmmv_q3_k_f32_f32_len[reduc16], arr_dmmv_q3_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_f32_f32", arr_dmmv_q4_k_f32_f32_len[reduc16], arr_dmmv_q4_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_f32_f32", arr_dmmv_q5_k_f32_f32_len[reduc16], arr_dmmv_q5_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_f32_f32", arr_dmmv_q6_k_f32_f32_len[reduc16], arr_dmmv_q6_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_f32_f32", arr_dmmv_q6_k_f32_f32_len[reduc16], arr_dmmv_q6_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1, q6k_direct_scales}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ1_S][i],   "mul_mat_vec_iq1_s_f32_f32",   arr_dmmv_iq1_s_f32_f32_len[reduc16],   arr_dmmv_iq1_s_f32_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ1_M][i],   "mul_mat_vec_iq1_m_f32_f32",   arr_dmmv_iq1_m_f32_f32_len[reduc16],   arr_dmmv_iq1_m_f32_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ2_XXS][i], "mul_mat_vec_iq2_xxs_f32_f32", arr_dmmv_iq2_xxs_f32_f32_len[reduc16], arr_dmmv_iq2_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+@@ -5601,7 +5624,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_f16_f32", arr_dmmv_q3_k_f16_f32_len[reduc16], arr_dmmv_q3_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_f16_f32", arr_dmmv_q4_k_f16_f32_len[reduc16], arr_dmmv_q4_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_f16_f32", arr_dmmv_q5_k_f16_f32_len[reduc16], arr_dmmv_q5_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_f16_f32", arr_dmmv_q6_k_f16_f32_len[reduc16], arr_dmmv_q6_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_f16_f32", arr_dmmv_q6_k_f16_f32_len[reduc16], arr_dmmv_q6_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1, q6k_direct_scales}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ1_S][i],   "mul_mat_vec_iq1_s_f16_f32",   arr_dmmv_iq1_s_f16_f32_len[reduc16],   arr_dmmv_iq1_s_f16_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ1_M][i],   "mul_mat_vec_iq1_m_f16_f32",   arr_dmmv_iq1_m_f16_f32_len[reduc16],   arr_dmmv_iq1_m_f16_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ2_XXS][i], "mul_mat_vec_iq2_xxs_f16_f32", arr_dmmv_iq2_xxs_f16_f32_len[reduc16], arr_dmmv_iq2_xxs_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q6_k.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q6_k.comp
+index 3e89d91cb..5235934b4 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q6_k.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q6_k.comp
+@@ -6,25 +6,54 @@
+ 
+ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+ 
++// ArifiLabs lane-209 R7 - DIRECT SCALES.
++//
++// This is the only q*_k mat-vec shader that stages its scales through LDS: upstream loads all 16
++// int8 scales of the superblock into a double-buffered shared tile and pays a barrier() per ROW,
++// INSIDE the row loop (q4_k / q5_k unpack their scales in registers, no shared memory, no
++// barrier). The barrier is a workgroup-wide ordering point in the middle of that loop, so row
++// n+1's global loads cannot be issued underneath row n's math and the shader runs latency-bound
++// rather than bandwidth-bound.
++//
++// The exchange moves NO data between threads: every thread only ever consumed
++// scales[s_offset + {0,2,4,6}] of its OWN block (the group of 16 threads all work on block i, and
++// each writes scales[itid] before reading four fixed indices back). Reading those four bytes
++// straight out of the block yields the identical values in the identical fma order, so the result
++// is bit-identical - the block's scale array is 16 bytes, so all four reads are the same cache
++// line the LDS staging was fetching anyway.
++//
++// Gated by specialization constant 3 so ONE binary serves both arms:
++//   1 (default) = direct register reads       0 = upstream LDS + barrier path, byte for byte.
++// The host reads GGML_VK_Q6K_DIRECT_SCALES=0 to build the pipelines with 0.
++layout (constant_id = 3) const uint ARIFI_Q6K_DIRECT_SCALES = 1;
++
+ shared FLOAT_TYPE sccache[2][BLOCK_SIZE/16][16];
+ 
+ FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+ uint csel = 0;
+ 
+ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, const uint ix, const uint ql_offset, const uint qh_offset, const uint s_offset, const uint y_offset, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows, const bool all_threads) {
++    if (ARIFI_Q6K_DIRECT_SCALES != 0 && i >= num_blocks_per_row) {
++        // no cross-thread exchange to join, so a thread with no block simply has no work
++        return;
++    }
++
+     const uint y_idx = i * QUANT_K + y_offset;
+ 
+     [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+         const uint ib0 = a_offset + (first_row+n)*num_blocks_per_row;
+-        csel ^= 1;
+ 
+-        if (!all_threads) { // when we don't have enough blocks to use all threads
+-            if (i < num_blocks_per_row)
+-                sccache[csel][ix][itid] = FLOAT_TYPE(data_a[ib0 + i].scales[itid]);
+-            barrier();
++        if (ARIFI_Q6K_DIRECT_SCALES == 0) {
++            csel ^= 1;
+ 
+-            if (i >= num_blocks_per_row)
+-                continue;
++            if (!all_threads) { // when we don't have enough blocks to use all threads
++                if (i < num_blocks_per_row)
++                    sccache[csel][ix][itid] = FLOAT_TYPE(data_a[ib0 + i].scales[itid]);
++                barrier();
++
++                if (i >= num_blocks_per_row)
++                    continue;
++            }
+         }
+ 
+         const uint32_t ql0_u32 =  uint32_t(data_a_packed16[ib0 + i].ql[ql_offset / 2]) | (uint32_t(data_a_packed16[ib0 + i].ql[ql_offset / 2 + 1]) << 16);
+@@ -51,9 +80,23 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+         const vec4 q2 = vec4(unpack8(q2_u32)) - 32;
+         const vec4 q3 = vec4(unpack8(q3_u32)) - 32;
+ 
+-        if (all_threads) {
+-            sccache[csel][ix][itid] = FLOAT_TYPE(data_a[ib0 + i].scales[itid]);
+-            barrier();
++        FLOAT_TYPE sc0, sc2, sc4, sc6;
++        if (ARIFI_Q6K_DIRECT_SCALES == 0) {
++            if (all_threads) {
++                sccache[csel][ix][itid] = FLOAT_TYPE(data_a[ib0 + i].scales[itid]);
++                barrier();
++            }
++            // hoisted out of the j loop below; nothing writes sccache in between, so the values
++            // and the fma order are unchanged from upstream reading them inside the loop.
++            sc0 = sccache[csel][ix][s_offset    ];
++            sc2 = sccache[csel][ix][s_offset + 2];
++            sc4 = sccache[csel][ix][s_offset + 4];
++            sc6 = sccache[csel][ix][s_offset + 6];
++        } else {
++            sc0 = FLOAT_TYPE(data_a[ib0 + i].scales[s_offset    ]);
++            sc2 = FLOAT_TYPE(data_a[ib0 + i].scales[s_offset + 2]);
++            sc4 = FLOAT_TYPE(data_a[ib0 + i].scales[s_offset + 4]);
++            sc6 = FLOAT_TYPE(data_a[ib0 + i].scales[s_offset + 6]);
+         }
+ 
+         const FLOAT_TYPE d = FLOAT_TYPE(data_a[ib0 + i].d);
+@@ -71,7 +114,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+                 sum[2] = fma(FLOAT_TYPE(by64[l]), q2[l], sum[2]);
+                 sum[3] = fma(FLOAT_TYPE(by96[l]), q3[l], sum[3]);
+             }
+-            temp[j][n] = fma(fma(sum[0], sccache[csel][ix][s_offset], fma(sum[1], sccache[csel][ix][s_offset + 2], fma(sum[2], sccache[csel][ix][s_offset + 4], sum[3] * sccache[csel][ix][s_offset + 6]))), d, temp[j][n]);
++            temp[j][n] = fma(fma(sum[0], sc0, fma(sum[1], sc2, fma(sum[2], sc4, sum[3] * sc6))), d, temp[j][n]);
+         }
+     }
+ }

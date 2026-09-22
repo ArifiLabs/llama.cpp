@@ -1,0 +1,51 @@
+From 7b13f951c8010932f4f8b1eeade27f786b8c5649 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 19:55:54 -0400
+Subject: [PATCH] receipts: the export branch's series check PASSES - both
+ halves, rc=0
+
+602 patches byte-identical to a fresh generation AND to a committed blob; replayed cleanly onto the re-keyed base 4627f376f; replayed tree IDENTICAL to export outside patches/series. Export tip cb4df7a48.
+
+Recorded honestly: it failed on the first attempt for two reasons, both mine and neither a defect in the rewrite - the fork's own convergence rule (committing the series creates a commit the series cannot yet contain, which is why main takes the same two steps every regen), and a directory pathspec that stages tracked changes and deletions but not newly generated files, leaving 20 regenerated patches untracked.
+
+Origin: ArifiLabs (native) - release engineering for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - an evidence document; no code path is touched.
+---
+ RELEASE-PREP-PHASE2-RECEIPTS.md | 24 +++++++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/RELEASE-PREP-PHASE2-RECEIPTS.md b/RELEASE-PREP-PHASE2-RECEIPTS.md
+index 82a2712ed..3340acf5a 100644
+--- a/RELEASE-PREP-PHASE2-RECEIPTS.md
++++ b/RELEASE-PREP-PHASE2-RECEIPTS.md
+@@ -156,7 +156,29 @@ of `export`, so the audit **does not fail — it silently widens** from 675 comm
+   3 without Measured-effect)`.
+ - `series regen --ref export` → **602 patches** (the 588 the engine carries + the 14 release-prep
+   commits this branch adds), generated from git, never hand-edited. rc=0.
+-- `series check --ref export` → see §7.
++- `series check --ref export` → **rc=0, PASS on both halves**:
++
++```
++==> Integrity check: regenerating the series and byte-comparing against patches/series
++PASS: every patch is byte-identical to a fresh generation from git AND a committed blob.
++
++==> Replay check: git am the committed series onto 4627f376f
++replayed 602 patches cleanly -> 12c75e3aa (tree 6b1b3805b)
++PASS: replayed tree is IDENTICAL to export outside patches/series
++```
++
++**It did not pass on the first attempt, and the reason is worth recording.** The first run reported
++14 patches *"exists on disk but is NOT COMMITTED at export — a fresh clone dies on it"*. Two causes,
++both mine, neither a defect in the rewrite:
++
++1. Committing `patches/series` creates a commit the series it just generated cannot contain — the
++   fork's own convergence rule. `arifi/main` takes exactly the same two steps every regen
++   (`82f17cd1c` then `037b433a9`).
++2. A **directory** pathspec stages tracked changes and deletions but **not newly generated files**,
++   so 20 regenerated patches were silently left untracked. Committed by explicit pathspec.
++
++Export tip after convergence: **`cb4df7a48`**. A further `series regen` is a no-op — the working
++tree is clean, which is what convergence means.
+ 
+ ### Tree identity, cross-repo without a remote
+ 

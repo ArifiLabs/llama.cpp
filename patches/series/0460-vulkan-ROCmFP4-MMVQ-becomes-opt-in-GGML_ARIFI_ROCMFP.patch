@@ -1,0 +1,124 @@
+From d514ceeba0aa8aba39220b2ffdc2a1bd7c3f9f09 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 5 Sep 2026 15:52:38 -0400
+Subject: [PATCH] vulkan: ROCmFP4 MMVQ becomes opt-in
+ (GGML_ARIFI_ROCMFP4_MMVQ=1) - kept in full, not yet cleared
+
+lane-209 closed rank 7 as MEASURED WIN, INTEGRATION BLOCKED: +26.9% drafted
+decode on the ROCmFP4-FAST file, CI [1.3212, 2.7186], 8/8 cells, zero empties -
+with the numerical safety of the two retained widths n=3 and n=5 never tested,
+because the plain cache-history reproducer that isolated the n=2 first-token EOG
+cannot reach n=3. The five rank-7 commits sit linearly between rank 5 and the
+lane branch tip, so they cannot be excluded from an integration without
+rewriting history. This commit therefore decides the DEFAULT, and changes no
+kernel: every line of the mechanism stays exactly where it was.
+
+The gate that decided it was pre-registered before it ran
+(lane-evidence/2026-09-02-lane-209/r8-integrate/PREREG-r8-integration.md), with
+three verdicts rather than two, because a width that never executes is neither
+proven safe nor proven unsafe.
+
+ARM A - adversarial op level, CLEAN, with a dispatch receipt.
+Six data patterns built to break q8_1 activation quantization (9-decade block
+range, f32 denormals, exact sign alternation, all-zero rows, an E2M1 code sweep,
+31 octaves of per-block scale), at n=1..5, on the seat row k=5120 and a ragged
+9-block k=288, plus the exact 17408x5120 seat shape. 63 cases, 0 materially
+worse, 0 NaN, 0 FAIL. The ON-vs-OFF differential is the receipt that the code
+under test actually ran: the arms differ at exactly n=3 and n=5 and are
+identical at n=1, n=2, n=4 - precisely the r10 gate, so this is not two runs of
+the f32 shader agreeing with itself. MMVQ came out CLOSER to the CPU reference
+than the f32 shader on every pattern, by 2 to 6 orders of magnitude. That is NOT
+read as "more accurate": CHECKED ggml-cpu.c, this type's CPU vec_dot_type is
+GGML_TYPE_Q8_0 and its vec_dot is an integer dot, so the reference is itself an
+int-quantized-activation path and MMVQ is arithmetically its family member. The
+honest reading is the negative one - no adversarial input made the MMVQ path
+diverge in a way the f32 path did not.
+
+ARM B - served, ROUTE RECEIPT PRESENT at n=3, NOT byte-identical, no degradation.
+Three arms on one binary, one load at a time, on the seated DFlash2 line
+(--spec-draft-n-max 2, so the verify ubatch is n_draft+1 = 3): OFF, ON, and a
+SECOND ON. The second ON is what makes the first readable - F-141 records that
+Vulkan decode is not always reproducible at temp 0 on this box, so without it
+"the arms differ" and "the box differs from itself" are the same observation.
+Control ON vs ON2: identical 3/3. Test ON vs OFF: 2 of 3 identical; prompt 2
+differs by ONE synonym at equal token count (34/34), both arms finishing `stop`,
+"improve data transfer efficiency" against "optimize data transfer speed". Zero
+empty completions in either arm. The perf logger shows the ON arm executed
+ROCmFP4 at n=3. It never executed n=5, and neither did lane-209.
+
+WHY OFF ANYWAY, when both arms came back clean.
+
+Not because the mechanism looks unsafe - it does not. Because it is not CLEARED,
+and those are different claims:
+
+  - n=5 is live in the selector and has never run in served generation, here or
+    in lane-209. The seated line emits n=3 and never n=5.
+  - three prompts is a far weaker probe than the exact-fill cache-history replay
+    that found the n=2 defect. That defect appeared on one prompt cell out of
+    eight, deterministically, and only under a replayed history.
+  - the pre-registered PASS row required byte-identity, and byte-identity did
+    not hold. Reading the difference as benign after seeing it - which it plainly
+    is - and then calling it a PASS would be moving the goalpost the
+    pre-registration exists to hold still.
+  - maker != checker. A maker does not certify its own path ON by default.
+
+So the win is preserved whole and costs one environment variable to take:
+GGML_ARIFI_ROCMFP4_MMVQ=1. Nothing is dropped, nothing is reverted, and the
+evidence FOR flipping the default is banked beside the evidence that stopped it.
+On the seated Huihui line this changes nothing either way - that file carries no
+ROCmFP4 tensors at all.
+
+Evidence: research/local-inference/lane-evidence/2026-09-02-lane-209/r8-integrate/
+33-ADV-RESULT.json, 41-SERVE-MMVQ.json, 30-adv-ON.txt, 31-adv-OFF.txt,
+40-serve-{OFF,ON,ON2}.server.log, PREREG-r8-integration.md
+
+Origin: ArifiLabs (native)
+Measured-effect: none on the seated line (no ROCmFP4 tensors); on ROCmFP4 files
+  this defers a measured +26.9% drafted decode behind an opt-in env var
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 32 ++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 95024c63c..017b0aac8 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -10113,6 +10113,38 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
+     // 1.55x (width-3 baseline) - while the f32 dequant shader rises 1.4-1.6x on the same rows, and
+     // Q5_K is faster on the f32 shader at every measured n>1 (0.73-0.88x). Route them where they win.
+     // GGML_VK_FORCE_MMVQ / GGML_VK_DISABLE_MMVQ (mmvq_mode above) still override this.
++
++    // arifi lane-206: ROCmFP4 MMVQ is OPT-IN. GGML_ARIFI_ROCMFP4_MMVQ=1 enables the n=3/n=5 route
++    // that the block below describes; without it every width takes the f32 dequant shader.
++    //
++    // The mechanism is a MEASURED WIN and is kept in full - +26.9% drafted decode on the ROCmFP4
++    // file, CI [1.3212, 2.7186], 8/8 cells (lane-209 r10). It ships OFF because it is not yet
++    // CLEARED, which is a different statement from unsafe, and the two must not be collapsed:
++    //
++    //   - n=5 has never executed in served generation. Not in lane-209, and not in the lane-206
++    //     gate either: the seated --spec-draft-n-max 2 line emits n=3 and never n=5, so the width
++    //     is live in this selector and completely unexercised outside test-backend-ops.
++    //   - the lane-206 adversarial op gate came back CLEAN at n=3 and n=5 - six patterns that break
++    //     q8_1 activation quantization, at the seat shape and at a ragged k, MMVQ closer to the CPU
++    //     reference than the f32 shader on every one, zero NaN, zero FAIL - but the CPU reference
++    //     for this type is ITSELF a q8_0 int-dot (ggml-cpu.c, vec_dot_type), so MMVQ agreeing with
++    //     it more closely is partly structural and cannot be read as "more accurate".
++    //   - served ON vs OFF is NOT byte-identical: 1 of 3 prompts diverges by one synonym at equal
++    //     token count with both arms finishing `stop`, against an ON-vs-ON control that reproduces
++    //     3/3. That is the expected consequence of a different numerical path, not a defect - but
++    //     three prompts is a far weaker probe than the cache-history replay that found the n=2
++    //     first-token EOG in the first place.
++    //
++    // So: the evidence is good and the coverage is thin, and this session is the maker. Flipping
++    // the default is an independent checker's call, and costs one line when it is made.
++    if (device->vendor_id == VK_VENDOR_ID_AMD && src0_type == GGML_TYPE_Q4_0_ROCMFP4_FAST) {
++        static const char * rocmfp4_mmvq_env = getenv("GGML_ARIFI_ROCMFP4_MMVQ");
++        static const bool   rocmfp4_mmvq     = rocmfp4_mmvq_env && rocmfp4_mmvq_env[0] == '1';
++        if (!rocmfp4_mmvq) {
++            return false;
++        }
++    }
++
+     // arifi lane-209 rank 8: keep ROCmFP4 MMVQ off the n=1 decode path.  This check must remain
+     // outside the n > 1 batch-routing block below; placing it inside that block makes n < 2
+     // unreachable and silently routes n=1 back through MMVQ.

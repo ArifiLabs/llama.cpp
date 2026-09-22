@@ -1,0 +1,63 @@
+From 1ff48ff2b794e5f77a8abfad37857d5176acd4c3 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 01:33:54 -0400
+Subject: [PATCH] lane-150 checker-driven fixes: type_bucket prefix-boundary
+ bug + dispatch block-size assert + the tallys limits named in code
+
+Checker finding 3 (latent bug, fixed): the "type=" key also matched INSIDE dst_type=, pool_type=, kernel_type=, tri_type= - POOL_2D would have been labelled POOL_2D[type=avg], a pooling MODE printed as a tensor type. The match must now start a var name. Verified: POOL_2D 128/128 with no bogus bucket, SET_ROWS tally still names exactly 27 cells. Checker finding 9: the bare 32 in the new dispatch arm is now GGML_ASSERT(ggml_blck_size(dst->type) == 32) plus the block-size expression, so an F-110-class silent desync across three files trips. Checker findings 1/2/8: the tallys real limits (one axis per case, four keys only, FLASH_ATTN_EXT uncovered) are now named in the code comment instead of implied away.
+
+Lane: lane-150
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp |  6 +++++-
+ tests/test-backend-ops.cpp           | 16 +++++++++++++++-
+ 2 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index ebef7d152..dbb9c46ae 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -12858,7 +12858,11 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
+                 // (its main() indexes gl_WorkGroupID as a block index, guard `g >= p.ne / 32`).
+                 // The generic arm below assumes 32 threads each doing a WHOLE block, so it would
+                 // dispatch 1/32 of the workgroups needed and leave 31/32 of the rows unwritten.
+-                ne = CEIL_DIV(ne, 32);
++                // The 32 is the block size AND the workgroup size at once, and the shader hardcodes
++                // it too (`p.ne / 32`, `p.ne00 / 32` in copy_to_quant.comp). Pin it: an F-110-class
++                // silent desync across three files is exactly what this assert is for.
++                GGML_ASSERT(ggml_blck_size(dst->type) == 32);
++                ne = CEIL_DIV(ne, ggml_blck_size(dst->type));
+             } else if (ggml_is_quantized(dst->type)) {
+                 // quants run 32 threads each doing QUANT_K elements
+                 ne = CEIL_DIV(ne, 32 * ggml_blck_size(dst->type));
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 7551e1c73..327221477 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -11926,12 +11926,26 @@ static bool test_backend(ggml_backend_t backend, ggml_backend_dev_t dev, test_mo
+         // TQ4_1S was ever caught, and only because it happened to have a bespoke class with its
+         // own op_desc. This second tally keys on the tensor type named in vars(), so a per-TYPE
+         // hole inside a mixed op is named the same way a per-op hole is.
++        // KNOWN LIMITS, named rather than implied (lane-150 checker, findings 1/2/8):
++        //   * ONE axis per case. A bucket with any executing cell stays silent, so a hole on a
++        //     second axis still hides — CPY[type_dst=tq4_1s] has 3 passing same-type memcpy cells,
++        //     which is why this tally would NOT have caught the tq4_1s->f32 read-back hole, and
++        //     SET_ROWS[type_dst=X] mixes f32-src and f16-src cells.
++        //   * Only these four keys. type_K / type_V / type_b / type_kernel / type_input carry no
++        //     bucket, so FLASH_ATTN_EXT — the largest type-parameterised op, and the KV-cache path —
++        //     is NOT covered here.
+         std::map<std::string, std::pair<size_t, size_t>> per_op_type;
+         // Pull the type this case is really about out of the vars() string. Order matters: the
+         // destination is what a write-path cell is about, the source is what a read-path cell is.
+         auto type_bucket = [](const std::string & op, const std::string & vars) -> std::string {
+             for (const char * key : { "type_dst=", "type=", "type_a=", "type_src=" }) {
+-                const size_t p = vars.find(key);
++                size_t p = vars.find(key);
++                // The match must START a var name, or "type=" matches inside "dst_type=",
++                // "pool_type=", "kernel_type=", "tri_type=" and labels a POOLING MODE as a tensor
++                // type (checker finding 3). Walk on until the match is at the start or after ','.
++                while (p != std::string::npos && p != 0 && vars[p - 1] != ',' && vars[p - 1] != ' ') {
++                    p = vars.find(key, p + 1);
++                }
+                 if (p == std::string::npos) {
+                     continue;
+                 }

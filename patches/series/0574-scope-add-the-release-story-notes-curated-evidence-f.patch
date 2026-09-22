@@ -1,0 +1,1102 @@
+From da5ad3e798fb949ae425816409d65e7c312bc1a3 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 01:22:53 -0400
+Subject: [PATCH] scope: add the release story, notes, curated evidence folder
+ and the README section
+
+The R66 release story and RELEASE-NOTES-r66i.md are placed under docs/release/. The README section draft is merged into README.md under its own heading, with the existing content preserved, and NOTICE is referenced from the licence section.
+
+evidence/ holds the ONE receipt cited by the story that is actually tracked in this repository (r58-evidence/10-memtypes.txt). Its README states plainly that the story's other cited receipts - r66-evidence/*, r65-evidence/* - are not tracked at any revision and live in the lane worktrees. Cited and tracked are two different sets and are reported as two sets.
+
+Also fixes SF-1: README stated its base as b10453 / 4df29be4f, while the tip is b10825 / 9e0e22059.
+
+Origin: ArifiLabs (native) - release engineering for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ README.md                          | 219 ++++++++++-
+ docs/release/RELEASE-NOTES-r66i.md |  60 +++
+ docs/release/RELEASE-STORY-r66i.md | 567 +++++++++++++++++++++++++++++
+ evidence/10-memtypes.txt           | 143 ++++++++
+ evidence/README.md                 |  31 ++
+ 5 files changed, 1018 insertions(+), 2 deletions(-)
+ create mode 100644 docs/release/RELEASE-NOTES-r66i.md
+ create mode 100644 docs/release/RELEASE-STORY-r66i.md
+ create mode 100644 evidence/10-memtypes.txt
+ create mode 100644 evidence/README.md
+
+diff --git a/README.md b/README.md
+index 3ae7af5c5..01e95b82a 100644
+--- a/README.md
++++ b/README.md
+@@ -3,7 +3,7 @@
+ An attribution-first, rebaseable llama.cpp fork for local inference across current and future ArifiLabs hardware.
+ 
+ This repository starts from upstream llama.cpp master
+-(`4df29be4f`, 2026-08-16) and carries an ordered,
++(`9e0e220594af405a62835dc3a27495729fd8506b`, tag `b10825`) and carries an ordered,
+ feature-toggled patch series. Its scope is deliberately broad: one engine for
+ the current Beelink SER7, future 64/96 GB RAM configurations, an AMD Strix Halo
+ 128 GB system, and an NVIDIA DGX Spark 128 GB system.
+@@ -16,7 +16,7 @@ currency review.
+ 
+ ## Scope — what this is, and what it is not
+ 
+-**It is** upstream llama.cpp `b10453` plus a linear, individually-toggleable, fully-attributed
++**It is** upstream llama.cpp `b10825` plus a linear, individually-toggleable, fully-attributed
+ patch series, carrying real mechanisms from PowerInfer, PrismML, ROCmFPX, TurboQuant, tq3 and
+ thecodacus that are not in upstream, each one gated and each one documented with its measured effect
+ or an explicit `UNMEASURED`. The series replays byte-identically onto its base, and that is verified by a command
+@@ -295,6 +295,8 @@ unmeasured status with `Measured-effect:`.
+ 
+ ## License notices
+ 
++**`NOTICE` at the repository root** names every third-party component carried here with its licence, its source, and the file in `licenses/` holding its licence text verbatim. Apache-2.0 components (S-X8 v4.3, turboquant_plus) are listed there with their required attribution notices.
++
+ `LICENSE` is the verbatim upstream llama.cpp MIT license. Retained third-party
+ notices and the exact source from which each was copied are enumerated in
+ [`licenses/README.md`](licenses/README.md).
+@@ -305,6 +307,219 @@ not justify inventing license text: no PrismML or thecodacus license file is
+ manufactured where Phase 0 did not observe one. Their credit and provenance
+ remain explicit in this README, the series manifest, and each eventual commit.
+ 
++## The R66i release — what shipped, how to build it, how to reproduce a number
++
++*Applied from the release-prep branch, 2026-09-21. Switch meanings below are quoted
++verbatim from `docs/OPTIONS-REGISTRY.md`.*
++
++### What this is
++
++An attribution-first, rebaseable llama.cpp fork for local inference on **Vulkan**.
++
++- Upstream base: `ggml-org/llama.cpp` **b10825**, `9e0e220594af405a62835dc3a27495729fd8506b`.
++- On top of it: **586 patches**, linear, non-merge, individually toggleable, each carrying its
++  provenance in the commit message.
++- Release tag: **`r66i-integration-2026-09-19`** → `94461e770`.
++- The series is generated from git, never hand-edited, and verified on every run: every patch is
++  byte-identical to a fresh generation *and* to a committed blob, and replaying all 586 with `git am`
++  reproduces the tree exactly. Receipt: `r66-evidence/74-series-check.txt`.
++
++**It is for anyone on Vulkan.** A proven-safe improvement ships enabled even where our own GPU shows
++no gain — other drivers may not already do what AMD's does. One of the three defaults turned on in
++this release is exactly that case.
++
++**Every number in this repository was measured on one machine**: a Beelink SER7 Pro — Ryzen 7 7840HS,
++**Radeon 780M (RDNA3, gfx1103)**, driver 32.0.31041.1004, Windows 11 build 29648, Balanced power plan,
++one pool of system RAM (48 GB physical, 16 GB reserved in BIOS), Vulkan with `KHR_coopmat`. Kernels
++transfer; numbers do not. If you are on other hardware, read
++[`docs/HARDWARE-PROFILES.md`](docs/HARDWARE-PROFILES.md) first — several defaults are wrong for you.
++
++---
++
++### Build
++
++Windows / MinGW-w64 / Vulkan. **This is the only configuration any number in this repository was
++measured on** (source: `UPDATE-RUNBOOK.md:849-884`):
++
++```powershell
++cmake -S . -B build-vulkan -G Ninja `
++  -DCMAKE_BUILD_TYPE=Release `
++  -DGGML_VULKAN=ON `
++  -DGGML_ARIFI_ROCMFPX_FORMATS=ON `
++  -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON `
++  -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00" `
++  -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00"
++
++cmake --build build-vulkan -j2 --target llama-cli llama-server llama-quantize `
++                                        test-backend-ops test-quantize-fns
++```
++
++All three extra flags are load-bearing:
++
++- `GGML_ARIFI_ROCMFPX_FORMATS` — without it the six ROCmFPX types do not compile and a ROCmFP4 GGUF is
++  refused at load.
++- `GGML_ARIFI_TURBO_WEIGHT_QUANTS` — without it `TQ3_1S`/`TQ4_1S` and the tq3 family (type ids 48–51)
++  do not compile.
++- `-D_WIN32_WINNT=0x0A00` in **both** `C` and `CXX` flags — without it the Windows IOCP path fails to
++  compile. One of the two is not enough; the failure lands in whichever language you left out.
++
++**Rig-specific, not requirements:**
++
++- `-j2` is a property of *our* box, not of the fork: Vulkan shader generation is memory-hungry and a
++  wider build dies on a machine with one shared pool of RAM. Use what your machine can feed.
++- `-D_WIN32_WINNT=0x0A00` is Windows-only.
++- The two `GGML_ARIFI_*` CMake flags are optional unless you intend to load those formats.
++- Nothing here has ever been built or run on Linux, macOS, MSVC, clang-cl, CUDA, ROCm/HIP, Arm/NEON,
++  or any GPU other than gfx1103.
++
++**Verify the binaries by mtime, never by the wrapper's exit code** — a build tool can exit 0 having
++relinked nothing:
++
++```powershell
++Get-ChildItem build-vulkan\bin\llama-*.exe | Select-Object Name, LastWriteTime, Length
++```
++
++---
++
++### Quick start
++
++```powershell
++build-vulkan\bin\llama-server.exe -m <model>.gguf -ngl 999 -c 8192 -fa on
++```
++
++At startup the Vulkan backend prints one line per non-inherited default it applied. In this release
++you should see all three of:
++
++```
++q5_k mmvq route: route (n=5..8, k<=8192) (device-probe)
++iq3 mat-vec sign-hoist: v2 [GGML_ARIFI_IQ3_MMVQ]
++iq3 mat-vec n=7 rows: 2 (device-probe (RDNA3))
++```
++
++If a line is missing, the default did not apply on your device — that is information, not a fault.
++Lines 1 and 3 are device-gated (AMD; RDNA3 respectively).
++
++---
++
++### Switches
++
++Full contract: [`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.md) — *"the public contract for
++runtime-toggled capabilities … An option is never silently enabled because it exists. Every option
++records its default, placement boundary, evidence, and safe measurement posture."*
++
++Two warnings from that page, quoted because they change results:
++
++> *"Every default below was chosen under the Windows Balanced power plan."* On this APU the CPU and the
++> integrated GPU share one package power budget, and a "performance" plan measured **11.2 tok/s against
++> Balanced's 29.0** on GPU-resident decode while *speeding up* CPU-bound work (`FINDINGS.md` F-12).
++
++> *"If you are not on one of the four machines below, read `HARDWARE-PROFILES.md` first."* At least one
++> default (`GGML_ARIFI_VNNI_REPACK`) is measurably the wrong choice on a CPU-only path.
++
++#### Changed in this release
++
++| Switch | Registry default (quoted) | Restores the old behaviour |
++|---|---|---|
++| `GGML_ARIFI_Q5K_MMVQ` | *"**DEFAULT `route` on AMD, `legacy` on every other vendor**"* — scope: *"the `Q5_K` arm of `ggml_vk_should_use_mmvq()` on AMD at `n > 1`, and nothing else"* | `GGML_ARIFI_Q5K_MMVQ=0` |
++| `GGML_ARIFI_IQ3_MMVQ` | *"**DEFAULT `v2` on ALL devices — flipped 2026-09-18 (lane-254)**"* — scope: *"the application of the iq3 sign bits, and nothing else"* | `GGML_ARIFI_IQ3_MMVQ=1` (v1) |
++| `GGML_ARIFI_IQ3_N7_ROWS` | *"**DEFAULT `2` on AMD RDNA3 (gfx110x)**"* — scope: *"`NUM_ROWS` … of the **`NUM_COLS == 7` iq3 mat-vec pipelines**, `iq3_s` AND `iq3_xxs`, f32 and f16"* | `GGML_ARIFI_IQ3_N7_ROWS=4` |
++
++#### The rest, by area (meanings quoted from the registry)
++
++| Switch | Default (quoted) |
++|---|---|
++| `GGML_ARIFI_MMVQ_A_HOIST` | *"ON by device probe when unset on AMD, OFF on every other vendor"* |
++| `GGML_ARIFI_MMVQ_ROUTE` | *"unset = R48b routing"*; only the exact string `legacy` pins the old rules |
++| `GGML_ARIFI_MMVQ_WIDE` / `_WIDE_ROWS_FROM` | *"`legacy` when unset — default-inert"* / *"unset = `4` — default-inert"* |
++| `GGML_ARIFI_MMV_MAX_COLS` | *"unset = the inherited routing"* — *"Scope: which of two EXISTING code paths a MUL_MAT takes"* |
++| `GGML_ARIFI_Q6K_XFOLD` | *"ON when unset"* (`=0` opts out) |
++| `GGML_VK_Q6K_DIRECT_SCALES` | *"ON when unset — this row inverts the usual shape of this registry"* |
++| `GGML_ARIFI_Q5K_B_HOIST` | *"ON when unset, but only for mat-vec pipelines with `NUM_COLS` …"* |
++| `GGML_ARIFI_Q6K_MMVQ` | *"unset = the shipped route (MMVQ for Q6_K on Intel only)"* |
++| `GGML_ARIFI_SX8_MMVQ` | inverted 2026-09-14 (lane-235/R48b phase 2) |
++| `GGML_ARIFI_SX8_MM_PACKED` | *"ON by device probe when unset on AMD RDNA3, OFF on every other"* |
++| `GGML_ARIFI_MMQ_UNDER_COOPMAT` | *"OFF when unset — shipped behaviour is byte-identical without it"* |
++| `GGML_ARIFI_SX8_PCA` / `_PCA_FILE` | *"ON when a PCA companion GGUF is present"* |
++| `GGML_VK_SX8_MMV_ROWS` / `_WG` | *"unset = the probed default"* (an override is taken WHOLE or refused WHOLE) |
++| `GGML_ARIFI_FA_DEQUANT_KV` | *"Device default when unset, which is ON on every device"* |
++| `GGML_ARIFI_MMV_ID_ROWS` | *"unset = upstream's 4"* (RDNA3) |
++| `GGML_VK_HOST_SPLIT_MAX` | *"unset = the derived bound"* — caps bytes one load may place off `DEVICE_LOCAL` |
++| `GGML_VK_HOST_SPLIT_MEMTYPE` / `_CACHED` | *"unset = `legacy`, which changes no byte of today's placement"* |
++| `GGML_VK_PLACEMENT=bulk-large-heap` | *"OFF when unset; unset changes no byte of the existing placement"* |
++| `GGML_VK_ALLOC_TRACE=1` | *"OFF when unset, zero cost"* — diagnostic only |
++| `GGML_ARIFI_MMVQ_TRACE` | *"OFF when unset"* — *"no behavioural effect in either arm"* |
++| `GGML_ARIFI_OP_DUMP` | *"Unset = off"*, test-only |
++| `GGML_ARIFI_VNNI_REPACK` | *"OFF when unset"* — **but set it to `1` on a CPU-only path**; the registry measures `+327%` to `+442%` prompt there |
++| `GGML_RECURRENT_STATE_F16=1` | *"unset (`f32`)"* — opt in only after a quality gate |
++| `GGML_ARIFI_UMA_READ_PATH` | *"`auto` when unset"* — read-back only |
++
++Build-time: `GGML_ARIFI_ROCMFPX_FORMATS` — *"**OFF.** Build-time option in `ggml/CMakeLists.txt`"*.
++
++---
++
++### Reproduce a headline number
++
++The clearest single result in this release is the **iq3 `n=7` register-spill fix** (21–25x on the
++affected pipeline). It needs no model file — it is a kernel micro-benchmark.
++
++```powershell
++# AFTER (the shipped default on RDNA3)
++build-vulkan\bin\test-backend-ops.exe perf -o MUL_MAT -b Vulkan0 > after.txt
++
++# BEFORE (the pre-R66 behaviour)
++$env:GGML_ARIFI_IQ3_N7_ROWS="4"
++build-vulkan\bin\test-backend-ops.exe perf -o MUL_MAT -b Vulkan0 > before.txt
++Remove-Item Env:\GGML_ARIFI_IQ3_N7_ROWS
++```
++
++Compare the `iq3_s` rows at `n=7`. On gfx1103 we measured **465,400 → 20,890 us/run** at m=248320,
++**34,674 → 1,636** and **39,284 → 1,573** at the other two shapes, 6/6 rounds each. iq3_xxs moves
++1.20–1.42x; n=6 and n=8 are flat. Receipt: `2026-09-18-hq-seat-62-state.md` §4p.
++
++Three honest caveats. Dispatch width is `1 + draft`, so only a draft depth of 6 reaches n=7 in
++serving — this is a **latent cliff removal**, not a change at draft depth 4. Run it on an otherwise
++idle machine: our own measurement law is that any A/B not interleaved on a quiet box is not
++trustworthy. And this is a `test-backend-ops` **op-level** number, not throughput — under
++**llama-server**, which is our method of record and prints its own perf receipt, this release changes
++nothing we could measure: decode ties on all three 27B lines (S-X8 5.433 → 5.530, GSQ IQ3_S
++7.771 → 7.681, Q4_K_XL plain 4.095 → 4.108) and the served prefill column beside them sits inside a
++launch-to-launch band of 4–26% that our harness could not see past. Full account: the release story
++§6.
++
++Correctness for the same paths:
++
++```powershell
++build-vulkan\bin\test-backend-ops.exe test -o MUL_MAT -b Vulkan0
++```
++
++We report **2222 executed / 0 FAIL / 876 not-supported** on the promoted tip
++(`r66-evidence/17-correct-MUL_MAT.txt`, `19-executed-counts.txt`).
++
++---
++
++### Reporting a result from another GPU
++
++We cannot test any GPU but one. A result from yours is worth more to this project than another run on
++ours. Please include, in the issue:
++
++| Field | Example from our rig |
++|---|---|
++| GPU + architecture ID | `AMD Radeon 780M Graphics`, RDNA3 / gfx1103 |
++| Driver version | `32.0.31041.1004` |
++| CPU | `AMD Ryzen 7 7840HS w/ Radeon 780M Graphics` |
++| Memory layout | one shared pool: 48 GB physical, 16 GB BIOS reservation, 31.73 GiB system-visible — **say if yours is a discrete GPU with its own memory, because our defaults assume it is not** |
++| OS + build | Windows 11, build 29648 |
++| Power / performance plan | Balanced (it moved our decode from 29.0 to 11.2 tok/s when changed) |
++| Fork tip | `git rev-parse HEAD` — e.g. `94461e770`, tag `r66i-integration-2026-09-19` |
++| Build line | the exact `cmake` invocation you used |
++| The startup lines | which of the three default lines printed on your device |
++| Method | how many launches per arm, whether arms were interleaved, and whether anything else ran on the box |
++
++Those fields are our own rig-stamp schema (`python -m arifi_core.rig_stamp`; history in
++`registers/rig-history.jsonl`): rig id, RAM epoch, CPU, GPU + driver, DIMMs, system-visible memory, OS
++build, BIOS, power plan. Every number we publish carries it, because a number without its rig and its
++method is not a result.
++
+ ## Status
+ 
+ The patch series is real and complete: every fork commit on `arifi/main` is linear on upstream
+diff --git a/docs/release/RELEASE-NOTES-r66i.md b/docs/release/RELEASE-NOTES-r66i.md
+new file mode 100644
+index 000000000..bdcff3da1
+--- /dev/null
++++ b/docs/release/RELEASE-NOTES-r66i.md
+@@ -0,0 +1,60 @@
++# ArifiLabs llama.cpp — `r66i-integration-2026-09-19`
++
++*(DRAFT release body. Not published. Publication is the President's call.)*
++
++Base: upstream `ggml-org/llama.cpp` **b10825** (`9e0e22059`) + **586 patches**. Tip `94461e770`.
++
++## What changed — three Vulkan mat-vec defaults are now ON, each keeping a revert switch
++
++**1. q5_K takes the MMVQ route** (AMD, widths 5–8, k ≤ 8192) — `GGML_ARIFI_Q5K_MMVQ=0` to revert.
++The marginal q5_K verify column drops **113.8 → 5.4 us** (q4_K's is 27). Paired 6-round ratios
++1.067 / 1.109 / 1.095 / 1.204 at n=5..8. Perplexity is identical: 5.9932 ± 0.14292 vs 5.9918 legacy.
++90.5% of a typical served file's q5_K bytes are k ≤ 8192. **No served throughput change was shown** —
++every served contrast in this release is a tie.
++
++**2. iq3 mat-vec sign hoist v2**, all devices — `GGML_ARIFI_IQ3_MMVQ=1` to revert.
++SPIR-V drops from **1229 to 349 instructions per column**. Wall clock on our gfx1103: **no change** —
++the AMD driver's compiled pipeline statistics are identical between the arms, so its compiler appears
++to hoist it already. It ships ON for the drivers that do not. Bit-identical, never slower here.
++
++**3. iq3 mat-vec, 2 rows per workgroup at width 7** (RDNA3) — `GGML_ARIFI_IQ3_N7_ROWS=4` to revert.
++A register spill at exactly one width: the driver reports 768 B of scratch at n=7 and 0 everywhere
++else. Fixing it gives **465,400 → 20,890 us/run** at m=248320, and 34,674 → 1,636 / 39,284 → 1,573 at
++two other shapes — **21–25x**, 6/6 rounds, bit-identical. iq3_xxs gains 1.20–1.42x. Dispatch width is
++`1 + draft`, so only a draft depth of 6 reaches width 7: a **latent cliff** removed for that depth.
++
++Also in tree, all inert by default: `GGML_ARIFI_MMV_MAX_COLS` (R57), the R65 rows knob,
++`GGML_ARIFI_OP_DUMP` (R61), R60 coverage rows.
++
++## Verification
++
++- 40/40 gate cells rc = 0. `MUL_MAT` **2222 executed / 0 FAIL** / 876 not-supported, with the flipped
++  routes exercised (iq3 at n=7 across 4 shapes; q5_K n=5..8 at k=256/4096/5120); `MUL_MAT_ID` 1004 / 0.
++- Seven legacy arms all rc = 0 — the old behaviour is tested, not just reachable.
++- Bit-identity 6/6 vs the previous stage (this proves the build, not the flips: n=1 is outside every
++  flipped route). Perplexity at batch 8: 5.9932 ± 0.14292.
++- Series integrity: every patch byte-identical to a fresh generation and to a committed blob; 586
++  patches replayed cleanly, replayed tree identical to the branch outside `patches/series`.
++
++## What we could not show
++
++- **No served throughput win.** Under llama-server (our method of record): S-X8 5.433 → 5.530, GSQ
++  IQ3_S 7.771 → 7.681, Q4_K_XL plain 4.095 → 4.108 — all ties; served prefill sits inside the
++  launch-level band below. The `us/run` and instruction counts above are `test-backend-ops` op-level
++  numbers, not throughput.
++- **An instrument defect, found and disclosed.** A null control ran the *same binary* in both arms and
++  read +5.30 t/s prefill, 16/16, "CI-clean". Cells were pseudo-replicates of 2 server launches, and
++  launch level moves 4–26%. Every banked prefill or plain-decode delta of this size from 2-launch cells
++  is therefore **UNRESOLVED**, including some of our own earlier claims. The harness fix is in flight.
++- **An unresolved prefill residual**: 27B S-X8 under llama-bench, −1.7%, CI95 [−4.4, +1.0]. Not shown
++  nonzero, not shown zero.
++- **The Q4_K_XL drafted cell has no number**: two of four launches recorded zero draft acceptance on
++  *both* engines. Cause unknown, not reproduced.
++- **The f16 iq3 pipelines ship with 0 executed test cases** under the new width-7 default.
++
++## Where every number was measured
++
++Beelink SER7 Pro — Ryzen 7 7840HS, **Radeon 780M (RDNA3, gfx1103)**, driver 32.0.31041.1004,
++Windows 11 build 29648, Balanced power plan, MinGW-w64 + Ninja, one shared pool of system RAM (48 GB
++physical, 16 GB reserved in BIOS). No other GPU, OS, compiler or architecture has ever run this code.
++Kernels transfer; numbers do not. Results from other GPUs are wanted — see the README.
+diff --git a/docs/release/RELEASE-STORY-r66i.md b/docs/release/RELEASE-STORY-r66i.md
+new file mode 100644
+index 000000000..eb2ec1345
+--- /dev/null
++++ b/docs/release/RELEASE-STORY-r66i.md
+@@ -0,0 +1,567 @@
++# The Arifi Labs llama.cpp fork — R66 release story (DRAFT)
++
++> **DRAFT for the President's read. Nothing here has been published. No GitHub push has happened,
++> no remote has been touched.**
++> Written 2026-09-19 by a docs maker. It **carries forward** the R56 draft
++> (`2026-09-16-arifilabs-llamacpp-fork-r56-RELEASE-STORY.md`, studio commit `72d6689c`, 481 lines,
++> *"Draft ends. Publication is the President's call."*) and extends it through the R66 promotion.
++> The R56 file is left in place, unedited.
++> Every number carries the receipt path it came from. A number we could not source is written
++> **OWED** — never invented. **CHECKED** = read from a receipt or ledger row. **ASSUMED** = a reading
++> that no measurement pins down. **UNRESOLVED** = two CHECKED records disagree, or the instrument
++> cannot separate the claim from its own noise.
++
++**The mandate, verbatim (President, 2026-09-16):**
++
++> "chase performance gains everywhere through a greedy path without breaking things or degrading quality and if possible increasing quality too."
++
++That sentence is the whole design. Greedy: take every gain, on every format, on every model, wherever
++it is. Without breaking things: bit-identity proofs, correctness sweeps and quality gates sit in front
++of every merge. Without degrading quality: a speed win that moves the output is not a win.
++
++**Who this fork is for (President law, 2026-09-18 ~19:5x, verbatim from seat-62 §4l):**
++
++> "The fork is for EVERYONE on Vulkan, not for the 780M. A proven-safe improvement (bit-identical or
++> PPL-gated, never slower here) SHIPS ON even when our GPU shows no gain — other drivers/GPUs may not
++> do what AMD's driver already does."
++
++That law is why one of the three R66 defaults ships ON with **zero measured wall-clock change on our
++own GPU**. Receipt: `board/hq/succession/2026-09-18-hq-seat-62-state.md` §4l.
++
++Company law behind the mandate: `registers/company/canon.json` →
++`canon-maximum-gains-everywhere-all-quants` (Adopted 2026-09-03, President verbatim 2026-09-02):
++*"it's fine to put effort into all quants, etc… I want maximum gains everywhere"*.
++
++---
++
++## 1. What this is
++
++| Item | Value | Receipt |
++|---|---|---|
++| Upstream base | `ggml-org/llama.cpp` tag **b10825**, `9e0e220594af405a62835dc3a27495729fd8506b` | `cache/main-wt/tools/arifi-sync/sources.json` → `base` |
++| Our series | **586 patches**, all non-merge, applied in filename order | `cache/r66-wt/r66-evidence/73-regen.txt`, `74-series-check.txt` |
++| Branch tip | `arifi/main` = **`94461e770`** (series tip), source-code tip **`f6f5ab0cf`** | `cache/r66-wt/R66-PROMOTION-RECORD.md` §1; `r66-evidence/71-promote-ff.txt`, `75-tag.txt` |
++| Tag | **`r66i-integration-2026-09-19`** → `94461e770` | `r66-evidence/75-tag.txt` |
++| Integrity | `series check` **PASS** — every patch byte-identical to a fresh generation *and* to a committed blob; 586 patches replayed cleanly, replayed tree **IDENTICAL** to `arifi/main` outside `patches/series` | `r66-evidence/74-series-check.txt:3` and tail |
++| Engine of record | **`arifi-b10825-r66i-f6f5ab0cf`** (superseding `arifi-b10825-r56i-280b1553f`, which stays on disk as the rollback) | `registers/current-state.json`; studio commit `73e88bc6`; `r66-evidence/76-flip.txt` |
++| Promotion | ff `1b6185951` → `f6f5ab0cf`, 20 commits, 0 merges, **LOCAL ONLY — nothing pushed** | `r66-evidence/71-promote-ff.txt`; seat-62 §4w |
++
++### The measurement box — every number below was measured here
++
++Beelink SER7 Pro — AMD Ryzen 7 7840HS, **Radeon 780M (RDNA3, gfx1103)**, driver 32.0.31041.1004,
++Windows 11 build 29648, BIOS `SER7PRO_P5C8V38`, Balanced power plan, Vulkan backend with
++`KHR_coopmat`, no discrete GPU.
++
++Rig stamp (`python -m arifi_core.rig_stamp`, 2026-09-19): rig `beelink-ser7-pro`, **RAM epoch
++`32+16-asymmetric`**. **One pool of RAM. There is no VRAM on this machine.** 48 GB physical with a
++16 GB BIOS reservation — the President-set maximum of the 4 / 8 / auto / 16 options. Speed on this box
++is **bytes per token against bandwidth achieved**, and nothing else. `ARIFI_GPU_BUDGET_GIB=26` is our
++own load-governor policy switch, not a second memory. Register:
++`registers/equipment/beelink-ser7-pro.md`; rig history `registers/rig-history.jsonl`.
++
++**Kernels transfer, numbers do not.** Every figure in this document is stamped with that rig and that
++RAM epoch. Nothing here is a claim about your GPU.
++
++Bandwidth reference used throughout:
++
++| Number | Value | Receipt |
++|---|---|---|
++| Theoretical, dual channel DDR5-5600 | 89.6 GB/s | `research/local-inference/2026-09-10-bandwidth-envelope-program.md` |
++| Best ever measured on this box | 78.4 GB/s (q4_K decode map, lane-185) | same |
++| Beyond-reservation host-visible path (R58 probe, 4 GB, best of 3) | 39.9 GB/s (memory type 1, uncached) | `cache/r58-memtype-wt/r58-evidence/10-memtypes.txt`; seat-60 §3g |
++
++### The product ruling
++
++2026-09-16 (seat-60 §3h): this fork is the **first Arifi Labs open-source product**. The release is a
++story with dated receipts, and the President reads the draft before anything is published. That ruling
++is why this document exists and why nothing has been pushed.
++
++---
++
++## 2. What we ingested, and from where
++
++The fork is built by *greedy ingestion*: anything that is a quality-safe gain gets taken, pinned, and
++replayed as a patch with a provenance trailer. Nine upstream/third-party remotes are tracked with a
++reviewed pin each.
++
++| Remote | URL | Pin | Patches taken (by trailer) |
++|---|---|---|---|
++| upstream | https://github.com/ggml-org/llama.cpp | `d7bd3bfca` | base b10825 + 2 |
++| powerinfer | https://github.com/Tiiny-AI/PowerInfer | `8bd56d699` | 12 |
++| prisml | https://github.com/PrismML-Eng/llama.cpp | `7529fdaaf` | 9 (+3 `prisml/prism*` rows) |
++| rocmfpx | https://github.com/charlie12345/ROCmFPX | `0a59add89` | 5 |
++| tq3 | https://github.com/turbo-tan/llama.cpp-tq3 | `7e24c7caa` | 3 |
++| ciru | https://github.com/ciru-ai/ROCmFPX | `64d528be7` | OWED (no trailer rows counted) |
++| buun | https://github.com/spiritbuun/buun-llama-cpp | `39d97a876` | 1 |
++| zuijdwijk | https://github.com/LaurentZuijdwijk/llama.cpp | `f97c0e6fe` | 3 |
++| turboq | https://github.com/jtrefon/llama.cpp-turboq-mtp | `6a02d0494` | 1 |
++| (via trailers) TheTom/llama-cpp-turboquant | — | — | 9 |
++| (via trailers) thecodacus/llama.cpp | — | — | 3 |
++
++Receipt: `cache/main-wt/tools/arifi-sync/sources.json` (remotes + pins); counts computed from the
++`Taken-from` column of `cache/main-wt/patches/series/MANIFEST.md` (566 rows at R56; the R66 regen
++added 20 entries, 0567–0586, **none of which carries a `Taken-from:` trailer** — CHECKED by scanning
++`patches/series/05*.patch`, where the highest-numbered file carrying one is `0532`, so the per-remote
++counts above are unchanged by R66).
++
++The series is generated from git, never hand-edited, and `series check` replays it with `git am` and
++diffs the result against `master` on every run. Rebuild it yourself:
++
++```bash
++git checkout -b my-rebuild 9e0e22059
++git am patches/series/*.patch
++```
++
++### S-X8 provenance and licence
++
++The S-X8 v4.3 format is **not ours**. It is the work of **Martí Vidal Leandro (MarlaLabs)**, Apache-2.0,
++DOI **10.5281/zenodo.21922640** (v1.0, 2026-08-13). We fetched the paper, methodology, container spec,
++reference CUDA kernels and the author's own llama.cpp patch, with a sha256 per file, on 2026-09-15.
++What we wrote is the **Vulkan** port and the correction path.
++Receipt: `research/local-inference/lane-evidence/2026-09-15-sx8-paper-docs/PROVENANCE.md` (10 files, sha256 each).
++
++### Upstream currency
++
++2026-09-15 review of **b10825 → b10903**, the Vulkan / allocator / loader / server surface: 24 commits
++classified — **11 TAKE-VERBATIM, 5 TAKE-BEHIND-SWITCH, 8 CONFLICTS-WITH-LANE**. Classification is by
++hunk-range overlap, not file overlap (the fork adds 4,390 lines to `ggml-vulkan.cpp` alone, so file-level
++overlap is meaningless). The base move is scheduled as **R55** and has not happened.
++Receipt: `research/local-inference/lane-evidence/2026-09-15-upstream-currency-b10825-b10903/UPSTREAM-VULKAN-DELTA-REVIEW.md`.
++
++### One open item before any publication
++
++`sources.json` → `other_remotes` records remotes that were configured and fetched while appearing in no
++governed artifact. Its own note: *a fork about to be published should not ship remotes no register
++accounts for.* **Disposition is OWED from the President** — track them with a reviewed pin, or remove them.
++
++---
++
++## 3. Formats added, and how
++
++| Format | Type id | What we added | Dated result | Receipt |
++|---|---|---|---|---|
++| **S-X8 v4.3** (MarlaLabs) | 57 | Full Vulkan port: mat-vec, `mul_mm`, MMQ branch, prompt-processing route, whole-block decode, packed tile decode under coopmat, PCA correction path, companion identity guard | 2026-09-08 first Vulkan kernel; shipped from R56 on | `board/programs/local-inference/lanes/2026-09-08-lane-224-sx8-vulkan-REPORT.md`; `…2026-09-10-lane-230-r46-sx8-mmv-REPORT.md`; `…2026-09-15-lane-243-r52b-sx8-coopmat-mulmm-REPORT.md`; `…2026-09-15-lane-242-r53-sx8-pca-REPORT.md` |
++| **TBQ3_0 / TBQ4_0** (TurboQuant) | 58 / 59 | Fork-owned type ids, write path and Vulkan coverage | 2026-08-18 write path | `…2026-08-18-lane-150-tq-writepath-REPORT.md` |
++| **TQ3_1S / TQ4_1S** | 45 / 46 | Subgroup mat-vec rewrite (`mul_mat_vec_tq_sg.comp`, register WHT via `subgroupShuffleXor`, zero hot-loop barriers) | 2026-08-20, landed `69324887f` | `…2026-08-20-lane-163-REPORT.md` |
++| **TQ3_4S / TQ3_0 / TQ3_4SE / TQ3_1S_SHIFT** | 48 / 49 / 50 / 51 | CUDA + Metal lift from `tq3/master`; **no Vulkan coverage** — census says NONE in all five stages | 2026-08-20 (CUDA `28e4af5c0`, Metal `827f683e4`); hardware validation OWED by design | `…2026-08-20-lane-160-REPORT.md`; `research/local-inference/2026-08-17-vulkan-kernel-coverage-census.md` |
++| **Q2_0_G128** (ternary, PrismML lineage) | 43 | Full Vulkan coverage: dequant, get_rows, mat-vec, `mul_mm`, `mul_mm_id` | 2026-08-17 census confirms all five columns present | census §1 |
++| **ROCmFPX family** — Q4_0_ROCMFP4, Q4_0_ROCMFP4_FAST, Q6_0_ROCMFPX, Q8_0_ROCMFPX, Q3_0_ROCMFPX, Q2_0_ROCMFPX | 100–104, 107 | dequant + get_rows + mat-vec on Vulkan; `mul_mm` / `mul_mm_id` are NONE; Q6_0 numerical fix; honest `supports_op` shaped as a pipeline-existence query | 2026-08-17 | `…2026-08-17-lane-145-REPORT.md`; `…2026-08-17-lane-146-REPORT.md`; census §1 |
++| **NVFP4** | — | Trialed as a model format on the 35B/27B lines, not a kernel we wrote | 35B NVFP4 > iq4_xs graft, blind-read; 9B NVFP4 > Q4_K_M 4–2 blind | SPINE §3 (DPR-080, DPR-086) |
++
++**The census correction that made all of this honest** (lane-144, 2026-08-17): a format can be at three
++independent stages — SPIR-V generated, host pipeline created, dispatched at runtime — and prose had been
++collapsing them. "The shader exists" had repeatedly failed to mean "it runs", because an uncreated
++pipeline entry is a valid pointer to an all-null struct, not a null. The empty-pipeline guard
++(`9755b2946`) turns that into `nullptr` and sends the caller down the dequant fallback. Every cell in the
++coverage table is a `file:line` citation or an explicit NONE.
++Receipt: `research/local-inference/2026-08-17-vulkan-kernel-coverage-census.md`.
++Per-format state as it stands today: `research/local-inference/KERNEL-FORMAT-MATRIX.md`.
++
++---
++
++## 4. Kernels attacked, per quant — which, why, what came back
++
++Attack order is set by **byte share of the file under test**, never by which model happens to be seated.
++
++| Wave | Target | Why that target | Result, dated | Receipt |
++|---|---|---|---|---|
++| **R46** (2026-09-10 → 09-14) | S-X8 whole-block decode | The S-X8 decode read the weights twice per width | 27B plain **1.831 → 2.247 t/s (+22%)**, CI95 [+0.386, +0.422], 8/8, 2026-09-14 | `…lane-230-r46-sx8-mmv-REPORT.md`; `lane-209/r46i-lane-230/c1-sx8-27b/SX8/AB.json` |
++| **R48** (2026-09-14) | q5_K mat-vec activation hoist | q5_K is **33.5%** of the Q4_K_XL 27B file by bytes | shipped gated to n≤3 | `…lane-234-r48-q5k-matvec-REPORT.md` |
++| **R48b** (2026-09-14) | MMVQ A-side hoist + per-type/width gate + route change | Decode each weight block once per row and k-slice instead of once per column | **The largest measured kernel win of the wave.** S-X8 lm_head 248320×5120 widths 4–8: **51.9/43.0/40.7/37.2/35.7 → 73.0/73.4/73.3/72.7/71.0 GB/s** (+29% to +50%, flat at the bus) | `lane-234/32-paired-r48ivsr46i.txt` |
++| **R48b** | S-X8 ffn-gate-up 17408×5120, widths 2/3 | Narrow widths were off the route | 31.6/27.6 → **36.5/36.5 GB/s** (+13% / +24%) | same |
++| **R48c** (2026-09-14) | q6_K x-fold + activation hoist + direct scales | q6_K is **19.7%** of the Q4_K_XL 27B file | shipped (`GGML_VK_Q6K_DIRECT_SCALES`, serve bit-identity IDENTICAL ×3) | `…lane-236-r48c-q6k-matvec-REPORT.md` |
++| **R48b** | q4_K mat-vec, widths 5–8 | The wide-width tail on the interactive-brain file | 45.6/35.7/35.5/29.0 → **55.3/51.7/47.9/45.2 GB/s** (+17% to +36%); tail shortened, not closed | `lane-234/32-paired-r48ivsr46i.txt` |
++| **R50** (2026-09-15) | q4_K wide-width tail | Chase the tail to the bus | **BLOCKED with receipts.** Both mechanism candidates falsified. Switch `GGML_ARIFI_KQ_MMVQ_ROWS` ships default 0 as a pairing instrument | `…lane-239-r50-q4k-wide-width-REPORT.md`; `cache/r50-q4k-wt/CHECK-R50-FABLE.md` |
++| **R52** (2026-09-15) | S-X8 integer MMQ prefill | Premise: MMQ would beat the coopmat path | **Premise refuted.** MMQ is dead for every type on the 780M — the coopmat arm registers zero MMQ pipelines | `…lane-241-r52-sx8-int-mmq-REPORT.md` |
++| **R52b** (2026-09-15) | Packed S-X8 tile decode under coopmat | Find where the S-X8 prefill deficit lives | Packed tile decode = **bit-identical TIE, ships**. `GGML_ARIFI_MMQ_UNDER_COOPMAT` default **OFF** (q8_0 arm lost 37% at graph level) | `…lane-243-r52b-sx8-coopmat-mulmm-REPORT.md`; seat-60 §3i |
++| **R64** (2026-09-17) | q5_K → MMVQ **route** at n=5..8 | q5_K's ffn mat-vec marginal column cost 128 us vs q4_K's 27; q5_K = 33.5% of the served Q4_K_XL file | **Marginal verify column 113.8 → 5.4 us/col**; ratios 1.067 / 1.109 / 1.095 / 1.204 at n=5..8, 6/6 rounds each; n=1 0.999; `k<=8192` gate measured; **PPL identical** | seat-61 §3p, §3s; `cache/r64-q5k-route-wt/OPUS-R64-Q5K-MMVQ-ROUTE-REPORT.md`; `r64-lane-252/c24-q4kxl-27b/SEAT/AB.json` |
++| **R65** (2026-09-18) | The k-quant MMVQ **width-4 knee** (79 → 61 GB/s at n=3→4) | The knee caps every k-quant verify column | **Refuted as a B-side capacity effect**: width-locked across k=4096..12288 under a pre-registered falsifier; B read once per workgroup; split-k not bit-identical; rows 1→4 10% slower | `cache/r65-width-knee-wt/CHECK-R65-FABLE.md`; `r65-evidence/22-ksweep-table.txt`; `registers/closed-levers.jsonl` → `mmvq-width-knee-capacity` |
++| **R61** (2026-09-18) | iq3 mat-vec: sign hoist + the n=7 cliff | iq3_s is the GSQ 27B line's format | **Two results, opposite kinds** — see §5 | seat-62 §4j, §4k |
++| **R60 / R57** (2026-09-16/17) | S-X8 small-n tile decode; a cheaper q4_K dot | The two named prefill/decode levers | **Both refuted**, no switch shipped from R60; R57 cuts 1–3 refuted from the thread→data mapping | `registers/closed-levers.jsonl` → `sx8-smalln-tile-decode`, `q4k-instruction-cuts` |
++
++---
++
++## 5. What R66 shipped — three defaults ON, each with a legacy switch
++
++R66 (lane-254) is one integration commit that flips three Vulkan mat-vec defaults ON. Every one keeps
++the old behaviour reachable by an environment switch. Checker: `cache/r66-wt/CHECK-R66-FABLE.md`
++(Fable 5.1) — **PASS-GATED, PROMOTE**. Record: `cache/r66-wt/R66-PROMOTION-RECORD.md`.
++
++| # | Default now ON | Scope | Legacy switch | Startup line it prints |
++|---|---|---|---|---|
++| 1 | q5_K MMVQ **route** | AMD only, `n=5..8`, `k<=8192` (`ggml-vulkan.cpp:9627`, admit `:12459`, `:12487-12491`) | `GGML_ARIFI_Q5K_MMVQ=0` | `q5_k mmvq route: route (n=5..8, k<=8192) (device-probe)` |
++| 2 | iq3 mat-vec sign-hoist **v2** | all devices (`:7455`, fallback `:7464`) | `GGML_ARIFI_IQ3_MMVQ=1` (v1) | `iq3 mat-vec sign-hoist: v2 [GGML_ARIFI_IQ3_MMVQ]` |
++| 3 | iq3 mat-vec **n=7 rows = 2** | RDNA3 only, n=7 pipeline only (`:7493`, `:7509-7511`) | `GGML_ARIFI_IQ3_N7_ROWS=4` | `iq3 mat-vec n=7 rows: 2 (device-probe (RDNA3))` |
++
++Line cites are the checker's corrected ones (CHECK-R66 F1). Source: `R66-PROMOTION-RECORD.md` §2.
++
++### 5.1 q5_K MMVQ route — a real op-level win, no served effect
++
++**Before → after: the marginal q5_K verify column costs 113.8 us, then 5.4 us** (q4_K's is 27).
++Paired 6-round measurement on one binary, 17408×5120: route/default ratios **1.067 / 1.109 / 1.095 /
++1.204 at n=5..8**, 6/6 rounds each; n=1 is 0.999 (the route is inert there). The `k<=8192` gate was
++measured, not assumed — at k=17408 the route loses 0/6 at n=5, and **90.5%** of the served file's q5_K
++bytes are k≤8192. Widths n≥5 are where MMVQ switches from 1 row per workgroup to 4.
++
++**Quality: identical.** Perplexity at batch 8 on Q4_K_XL read **5.9932 ± 0.14292** with the route on
++and **5.9918** on the legacy arm — the same number twice, once in chain149 (R64) and again in chain150
++(R66). Receipts: seat-61 §3p/§3s; `r64-lane-252/c24-q4kxl-27b/SEAT/AB.json`;
++`100-r64-q5k-route/10-,11-ppl-*-b8.txt`; seat-62 §4q.
++
++**Served effect: none shown.** Every valid served contrast is a tie (§6). The op-level number is the
++claim; the served number is not.
++
++The maker withdrew two of its own lines before shipping: the n=3/4 "loss" (a null control bounds the
++artifact at 1–3%) and the k=17408 n=7/8 row. Named here because a withdrawn claim is part of the record.
++
++### 5.2 iq3 sign hoist v2 — ships ON with no measured gain on our GPU
++
++The v2 shader hoists the iq3 sign application out of the `NUM_COLS` loop. The SPIR-V it emits drops
++from **1229 to 349 instructions per column** (counted with SPIRV-Tools). Wall clock on gfx1103:
++**nothing** — v2/legacy ratios 0.99–1.01 at every width, 6 rounds, both iq3 types. Bit-identity passes
++sha-for-sha at n=1..8, and a planted defect reddens the v2 arm only, so the arm is provably live.
++
++Why it buys nothing here, honestly: the AMD driver's own compiled pipeline statistics are **identical
++between the two arms at all eight widths**, so the driver's compiler is **ASSUMED** to perform the same
++hoist itself. Other drivers are untested. Under the President's §4l law this ships **default ON on all
++devices** — fewer instructions per column for the drivers that do not already do it, and never slower
++here. Receipts: seat-62 §4j, §4k (`cache/r61-iq3-wide-wt/CHECK-R61-FABLE.md`).
++
++For our own throughput program the idea is **closed** — that closes the idea for our t/s, never the
++code. Register row owed: `registers/closed-levers.jsonl` → `iq3-sign-hoist` (seat-62 §4w, OWED).
++
++### 5.3 iq3 n=7 rows = 2 — a 21–25x latent cliff, removed
++
++The iq3 mat-vec had a cliff at exactly one width. It is a **register spill**, read from the AMD
++driver's own `GGML_VK_PIPELINE_STATS`: `scratchMemUsageInBytes` = 768 at n=7 and 0 at every other
++width; VGPRs used at n=1..8 run 115/133/134/**216**/165/180/239/**255** (255 is the RDNA3 maximum).
++No disassembler was needed — the driver reports it.
++
++Confirmed 6/6 rounds at three shapes (2026-09-19):
++
++| Shape (iq3_s) | Before | After | Factor |
++|---|---|---|---|
++| m=248320 | 465,400 us/run | **20,890 us/run** | ~22x |
++| (second shape) | 34,674 | **1,636** | ~21x |
++| (third shape) | 39,284 | **1,573** | ~25x |
++
++iq3_xxs gains 1.20–1.42x, 6/6; n=6 and n=8 are flat. Identity: five OP_DUMP arms produce one sha
++(`271472A9…C993`), 76 executed cases each. Scratch goes 768 → 0 under rows=1 and rows=2, and back to
++768 at rows=4. Receipts: seat-62 §4h (`cbefd4e30`), §4j, §4p.
++
++**What it is and is not.** Dispatch width is `1 + draft` (`server-context.cpp:809-819`), so only a
++draft depth of 6 ever reaches n=7 — and our serve line runs n-max 4. This is a **latent-cliff removal**
++that protects anyone running draft depth 6, not a change to our own throughput. RDNA3-gated, iq3_s and
++iq3_xxs, f32 and f16 pipelines.
++
++### 5.4 What else rode along, inert
++
++R57 `GGML_ARIFI_MMV_MAX_COLS`, the R65 rows knob, R61 `GGML_ARIFI_OP_DUMP`, R60 coverage rows — all in
++tree, all default-inert. Receipt: seat-62 §4w.
++
++---
++
++## 6. What we measured, and what we could not
++
++This chapter is the one most forks skip. It is why the numbers above can be quoted at all.
++
++### 6.1 The served lines tie
++
++R66 vs the R56 stage, 16 rounds, INTEGRITY clean, rig-stamped:
++
++| File | decode, drafted (DFlash2) | decode, plain | rolled40 |
++|---|---|---|---|
++| S-X8 27B | 5.433 → 5.530, CI95 [−0.15, +0.35] — **TIE** | 2.109 → 2.103 — **TIE** | 35/35 |
++| GSQ IQ3_S 27B | 7.771 → 7.681, CI95 [−0.24, +0.06] — **TIE** | 5.157 → 5.166 — **TIE** | 31/31 |
++| Q4_K_XL 27B | **INVALID session** (see 6.2) | 4.095 → 4.108 — **TIE** | — |
++
++The ties hold at launch level as well as cell level. Receipts: `r66-lane-254/c27-sx8-27b/SX8/AB.json`,
++`c28-gsq3s-27b/GSQ3S/AB.json`; `CHECK-R66-FABLE.md` §2; seat-62 §4s.
++
++**Both served lines moved to R66 on a tie, not on a win.** There is no CI-clean served win in R66, and
++the promotion record says so: *"No served-throughput GAINS row is proposed for R66: every valid served
++contrast is a tie."*
++
++### 6.2 The harness defect we found in our own instrument
++
++This is the most important negative result of the release, because it retroactively demotes some of
++our own earlier claims.
++
++**The null control.** In chain149 the *same binary* ran in both arms with the switch inert in prefill.
++It should have read zero. It read **plain prefill 58.92 vs 53.62 t/s, +5.30, 16/16 rounds,
++CI95 [+4.77, +5.83]** — identical code, "CI-clean". Receipt:
++`r64-lane-252/c24-q4kxl-27b/SEAT/AB.json`; seat-62 §4t.
++
++**The mechanism.** Each arm × mode used only **2 server launches**; the 16 "cells" are pseudo-replicates
++of those 2 loads, and the CI is computed over cells. Prefill and plain decode carry a **per-launch
++level** that the CI never sees. The checker measured same-arm launch pairs differing **4–26%** in
++prefill, and found the launch order was **fixed** (the FIX arm always in positions 2–5), violating the
++counterbalancing law F-145-AMEND-1. Receipt: `CHECK-R66-FABLE.md` §3; seat-62 §4u.
++
++**What it cost us.** chain150 first read a "prefill regression" of **−11.7%** on 27B S-X8
++(42.32 → 37.35) and −3.3% on GSQ, and R66 was **not promoted**. A dedicated bisect lane (R66b, 84
++llama-bench launches / 276 pp cells, rc=0) then showed **no engine regression**: 4B S-X8 pp128/512
++−0.36%/−0.09%; a third arm with all three flips reverted by environment never recovers R56 either, so
++the flips are not a cause; the prefill path `ggml_vk_mul_mat_q_f16` is untouched and there is zero diff
++in `common/` or `tools/server/`. The −11.7% was **one launch** (33.66 vs 45.26). Receipt:
++`cache/r66-wt/OPUS-R66B-PREFILL-REGRESSION-REPORT.md`; seat-62 §4t; `CHECK-R66-FABLE.md` §3.
++
++**What it demotes, named.** Two rows carried in the R56 draft are now **UNRESOLVED**, not withdrawn and
++not confirmed:
++
++- *"Q4_K_XL drafted, registered line: R48i 7.656 → R56 7.832, +2.3%, CI95 [+0.11, +0.38], 8/8 — the one
++  CI-clean win in the R56 integration."*
++- *"plain prefill +1.7 t/s CI-clean on R56"* and the R56 promotion's *"prefill 35.6 → 39.4"*.
++
++Both are small deltas from 2-launch cells, which is exactly the class the null control invalidates.
++
++**UNRESOLVED — the two CHECKED records disagree on where the bar sits.** Seat-62 §4t writes *"mark every
++banked served prefill / plain-decode 'win' or 'loss' of **≤10%** from 2-launch cells as UNRESOLVED"*.
++`CHECK-R66-FABLE.md` §5.4, as quoted in `R66-PROMOTION-RECORD.md` §4, writes *"Every banked served
++prefill or plain-decode delta **≤ ~25%** from 2-launch cells is UNRESOLVED (R56's '35.6 → 39.4'
++included) — HQ wrote ≤10%; C1 moves the bar."* We do not pick one. Both bounds are recorded, both
++paths are above, and the rows are marked UNRESOLVED under either.
++
++The fix is in flight: CI over **launch** means (or ≥8 launches per arm), counterbalanced launch order,
++and an invalid-launch gate. Until it lands, no new served delta of this size is quotable.
++
++### 6.3 The unresolved prefill residual
++
++After the artifact was accounted for, one number did not go to zero and did not stay a loss:
++**27B S-X8 prefill under llama-bench, −1.7%, CI95 [−4.4, +1.0]**; pp512 −1.29% at 2/6 sets. The checker
++banked it as **UNRESOLVED — "not shown nonzero, not shown zero; never bank as zero"**, and named the
++closure: ≥12 counterbalanced sets at pp512 on the serve config (`-fa on -ctk q8_0 -ctv q8_0 -ub 512`),
++arms A/B/C. Receipt: `CHECK-R66-FABLE.md` §3; `R66-PROMOTION-RECORD.md` §4.3.
++
++### 6.4 The Q4_K_XL drafted session we threw away
++
++Two of four drafted launches in chain150's Q4_K_XL cell recorded **draft acceptance 0.000** — one on
++R66 (04:24), one on R56 (04:57) — while the other two accepted 0.576 normally. Both engines, so it is
++not an R66 regression; **cause UNKNOWN and not reproduced**. The harness printed a "CI-clean +0.207 win"
++on that garbage, which is the proof the invalid-launch gate is needed. A first guess (missing host
++split) was **killed by the next day's census**: 8/8 post-reboot launches accept normally, and the GSQ
++launches log no host split at all yet accept fine. Verdict in the record: *"Q4_K_XL df2: no served
++number for R66."* Receipts: seat-62 §4q, §4r, §4s; `R66-PROMOTION-RECORD.md` §4.1.
++
++A related self-correction belongs here. HQ first wrote a RAM/page-corruption story for an unclean
++shutdown on 2026-09-19 and for those zero-acceptance launches. The President struck it —
++*"stop assuming — the system did not crash because of RAM"* — and the rig law already forbids citing
++the RAM kit as a cause. What is CHECKED about the shutdown: Kernel-Power 41, BugcheckCode 0, no
++minidump, **cause UNKNOWN**. The zero-acceptance launches are owned as a software defect in our own
++stack. Receipt: seat-62 §4r.
++
++### 6.5 Coverage we know is missing
++
++- **f16 iq3 pipelines ship with 0 executed test cases** under the new n=7 default. One test row is owed.
++  (`CHECK-R66-FABLE.md` §5.5.)
++- **R49-class intermittents** (a rare wrong destination on ~1 GB Q6_K Vulkan mat-vec inputs, m=248320)
++  did not fire in the R66 run — 0 FAIL in 2222 executed MUL_MAT cases. The class stays **OPEN**; no
++  failure has yet been caught with probes attached.
++- **MUL_MAT_ID 1004 executed / 0 FAIL** is carried in the promotion record as **ASSUMED** by its own
++  author: read from the checker and HQ's message, not recounted from the file.
++- **The "load-level lever"** — the idea that pinning every launch at the fast level buys 5–10% — is a
++  **HYPOTHESIS**, explicitly demoted by the checker: *"no receipt ties the launch level to placement;
++  do not bank it as a lever or a gain size."* (`R66-PROMOTION-RECORD.md` §4.)
++
++### 6.6 The measurement laws that made the rest trustworthy
++
++- **The box shares its DDR5 with everything else on it** (lane-166). n=25, one server, one unchanging
++  request: decode is bimodal **22.68 → 15.25 t/s** while prefill is unchanged. **Every A/B must be
++  interleaved**; the guard is code (`lane-evidence/2026-08-29-lane-166/interleaved_ab.py`) and returns
++  TIED unless the CI excludes 1.0. SPINE §4.
++- **HQ itself was the noise.** A "post-reboot 1.86 t/s regime" turned out to be HQ's own file writes and
++  git commands inside the measurement window. Quiet, the same binaries read 2.145 / 2.162 — a tie. The
++  law: during a perf leg, HQ does nothing on the box. Receipt: `lane-234/77-chain138-hq-activity-note.txt`.
++- **F-165**: the A/B palindrome ran the AFTER arm's plain slot back to back with no idle, so every
++  candidate carried a systematic penalty — read as a regression by two checkers before it was caught.
++  Cool-downs are mandatory. `registers/failure-ledger.jsonl` F-165.
++- **Thermal state moves prefill more than kernels do.** The same 4B S-X8 file read pp128 **493 and 400**
++  in two cooled runs. Receipt: `lane-234/84-*`, `81-*`.
++- **F-143**: an LDS pad-2 change measured +15% CI-clean on a q4_K micro-bench, then **−40%** at
++  whole-model pp2048. A micro-bench win is not a win until the graph agrees.
++- **F-127**: a perplexity scalar was carried estate-wide with its geometry stripped; a second receipt
++  for the same model and quant read 0.5 PPL apart. Every PPL number now carries `n_ctx` and chunk count
++  or it is not quotable.
++- **Reuse a binary, never a number.** Lane-71's 27B pp512 of 105.2 did not reproduce on the *identical*
++  binary weeks later (85.41, −19%). SPINE §6b.
++
++---
++
++## 7. The ideas we killed, with their mechanisms
++
++Negative results with receipts are part of this release. `registers/closed-levers.jsonl` holds ten
++rows; a closed row closes the idea **for our throughput program only** — it never means drop the code.
++
++| Lever | Closed | What the receipt said |
++|---|---|---|
++| `depth-nmax` | 2026-09-17 | Draft depth 2→4 WIN +20%; 4v6 TIE at 16 rounds; 6v8 LOSS; adaptive LOSS; 4v9 LOSS 5.42 vs 7.14, CI [−1.96,−1.07]. Acceptance halves past position 4. |
++| `host-split-memtype` | 2026-09-16 | Host-split memory type 1 vs 3: probe 39.9 vs 36.1 GB/s; served plain 1.998 → 1.321 LOSS. Memory type is not a lever. |
++| `spill-reorder-by-name` | 2026-09-15 | Every host-visible byte on the 27B S-X8 plain line is a hot late-layer weight; read-cost order produced **byte-identical** placement. |
++| `q8_0-mmq-under-coopmat-serve` | 2026-09-16 | As a serve default: llama-bench pp128 −37% (494 → 313); S-X8 +31.8% in the microbench. Default OFF. |
++| `sx8-smalln-tile-decode` | 2026-09-16 | R60: the sx8/q8_0 ratio is FLAT in n (0.94–0.98 at 9216×2560). Dtype path refuted — the types are identical in both files. No switch shipped. |
++| `q4k-instruction-cuts` | 2026-09-17 | R50 rows/hoist switches and R57 cuts 1–3 refuted from the thread→data mapping; the width-4 knee is k-dependent, not instruction count. |
++| `sampler-arms-via-harness` | 2026-09-17 | The sampler arms measured **nothing**: the harness sends its own sampler in the request body, and one flag was dead. |
++| `checkpoint-mismatch-drafter` | 2026-09-17 | Stock vs abliterated Q4_K_XL with the same drafter: identical acceptance 0.571. The drafter is not mismatched. |
++| `spec-p-min-and-publisher-recipe` | 2026-09-17 | `--spec-draft-p-min 0.75` raises acceptance to 0.85 but loses t/s; the publisher's full recipe reaches 0.865 acceptance and 7.0 vs 7.5 t/s. |
++| `mmvq-width-knee-capacity` | 2026-09-18 | R65: the width-4 knee (79 → 61 GB/s) is **not** a B-side capacity effect — width-locked across k=4096..12288 under a pre-registered falsifier; split-k not bit-identical. |
++
++Older dead ends with their mechanisms (SPINE §5): prefill-mm interior (WMMA-MAC-bound) · decode kernel,
++7 variants (DRAM-latency wall) · D3 rollback-store fusion · tree speculation · draft-head requant ·
++prefetch-experts · **RDNA3 wave32 subgroup tuning** — the defect is real and upstream-wide, but it buys
++0.998 / 0.999 medians across 280 properly-paired kernel cases, because mat-vec is bandwidth-bound ·
++**MoE router fusion** (disabling all existing fusion costs 1.3%, which caps what more could return) ·
++**coopmat2** — permanently impossible here; the 780M exposes only `VK_KHR_cooperative_matrix`.
++The one survivor: `GGML_VK_MAX_NODES_PER_SUBMIT=4096`, +1.3% CI-clean, adopted.
++
++---
++
++## 8. The allocator, speculation, and the quality gates
++
++*(Carried forward from the R56 draft; nothing in R66 changed these.)*
++
++**The 27B drafted line used to die at load**, and it was never a capacity problem. Both drafted
++launches refused a **156,893,184 B** checkpoint buffer while the box had **22.9 GB free** — in one pool
++of RAM that is a heap-choice glitch, not exhaustion (`lane-209/r46i-lane-230/c1-sx8-27b/SX8/SEAT-df2-L0.server.log`).
++The fix shipped in R46i: a per-heap ledger, a per-type planner, a loader-wide transaction and a bounded
++host split with a staging reserve. **Crash → serving**, same file, same recipe. F-175 records what
++getting it wrong cost: a server that answered HTTP 500 while holding about 16 GB, a process-tree kill
++that did not reach it, and a hard reboot. Mechanized.
++
++**Speculation.** DFlash2 is the drafter of record; the serve line is n-max 4 and stays there (`depth-nmax`
++above). Depth 2→4 bought **4.617 → 5.551 t/s, +20%**, CI95 [+0.62, +1.76], 8/8. **LL-180**: run the MTP
++draft only when base and draft quant are compatible — a Q4/Q8 base gives 35–50% acceptance, a **Q2 base
++gives 0% and MTP backfires 2.6× slower**.
++
++**The gates that run before anything ships**, R66 results:
++
++- **40/40 gate cells rc=0** (`r66-evidence/*.rc`).
++- **MUL_MAT 2222 executed / 0 FAIL / 876 not-supported**, with the flipped routes actually exercised
++  (iq3_s + iq3_xxs at n=7 across 4 shapes; q5_K n=5..8 at k=256/4096/5120) —
++  `17-correct-MUL_MAT.txt`, `19-executed-counts.txt`.
++- **MUL_MAT_ID 1004 / 0 FAIL** (ASSUMED, see §6.5); CPY, GET_ROWS, ADD rc=0.
++- **Seven legacy arms all rc=0** — route-legacy, hoist-off, q6k-ds-off, mmq-coopmat-on, q5k-legacy,
++  iq3-legacy, iq3-n7rows4 (`18-*`..`24-*`). The old behaviour is not theoretical; it is tested.
++- **Bit-identity 6/6 IDENTICAL** vs the R56 stage — with the honest caveat printed in the record:
++  *this proves nothing about the flips*, because n=1 is outside every flipped route.
++- **Perplexity batch 8: 5.9932 ± 0.14292** (legacy arm 5.9918).
++- **Series check PASS** byte-identical, 586 patches replayed → tree IDENTICAL.
++- **Smoke cell post-flip rc=0**, 16.7 s, all three startup lines present.
++
++**Quality: did we increase it?** The mandate's stretch goal got one honest attempt and one honest
++answer. Every llama.cpp integration of S-X8 drops the author's PCA output correction; we built it.
++Measured on wikitext-2: **Q8_0 9.9742 · S-X8 correction off 9.9989 · on 9.9955** — a **−0.034%** move,
++about 5% of one cell's ±0.072 stderr. **That is a sign, not a win, and it is reported as a sign.**
++Receipt: `…lane-242-r53-sx8-pca-REPORT.md`. R66 adds nothing to this: PPL is identical across its arms.
++
++---
++
++## 9. Timeline, per served line
++
++All figures are llama-server decode tokens/s on the 27B, palindrome A/B, cell-wise CI95, cool-downs
++between slots, nothing else running on the box. **Read §6.2 before quoting any small delta here.**
++
++### 27B S-X8, plain decode
++
++| Date | Engine | t/s | Read |
++|---|---|---|---|
++| 2026-09-14 | R45 | **1.831** | historical baseline, `r46i-lane-230/c1-sx8-27b/SX8/AB.json` |
++| 2026-09-14 | R46i | **2.247** | +22%, CI95 [+0.386, +0.422], 8/8 |
++| 2026-09-15 (quiet re-run) | R46i / R48i | **2.145 / 2.162** | TIE — supersedes the "1.86 post-reboot" readings, which were HQ noise |
++| 2026-09-16 | R48i / R56 | **2.099 / 2.170** | TIE. *(The R56 "plain prefill +1.7 t/s CI-clean" that accompanied this row is now **UNRESOLVED** — §6.2.)* |
++| 2026-09-19 | R56 / R66 | **2.109 / 2.103** | TIE, 16 rounds, tie holds at launch level |
++
++### 27B S-X8, drafted (DFlash2)
++
++| Date | Configuration | t/s | Read |
++|---|---|---|---|
++| before R46 | R45, n-max 2 | **both launches DIED** | the B3 allocation crash |
++| 2026-09-15 | R46i, n-max 2, same-night control | **3.334** | `r48i-lane-234/c1-sx8-27b/SX8/AB.json` |
++| 2026-09-15 | R48i, n-max 2 | **4.475** | +34% vs the same-night control, CI95 [+0.43, +1.87], 7/8 |
++| 2026-09-15 | R48i, n-max 4 | **5.551** | +20% over n-max 2, CI95 [+0.62, +1.76], 8/8 |
++| 2026-09-16 | R48i / R56, n-max 4, quiet 16 rounds | **5.916 / 5.848** | TIE |
++| 2026-09-19 | R56 / R66, n-max 4, 16 rounds | **5.433 / 5.530** | TIE, CI95 [−0.15, +0.35] |
++
++### 27B Q4_K_XL (Huihui UD) — the interactive-brain line
++
++| Date | Serve line | Before | After | Read |
++|---|---|---|---|---|
++| 2026-09-15 | plain | R45 **3.864** | R48i **4.104** | +6.2%, CI95 [+0.12, +0.58], 8/8 |
++| 2026-09-15 | drafted, n-max 2 | R45 **7.085** | R48i **7.578** | +7%, CI95 [+0.28, +0.70], 8/8 |
++| 2026-09-16 | drafted, registered line (n-max 3 + `--ctx-checkpoints 32`) | R48i **7.656** | R56 **7.832** | +2.3%, CI95 [+0.11, +0.38], 8/8 — **now UNRESOLVED, §6.2** |
++| 2026-09-19 | plain | R56 **4.095** | R66 **4.108** | TIE |
++| 2026-09-19 | drafted | — | — | **no served number for R66** — invalid session, §6.4 |
++
++### 27B GSQ IQ3_S — the newest line
++
++| Date | Serve line | R56 | R66 | Read |
++|---|---|---|---|---|
++| 2026-09-19 | plain | **5.157** | **5.166** | TIE, 13/16. Plain 5.17 t/s is the **fastest 27B plain measured on this box** (seat-61 §9) |
++| 2026-09-19 | drafted | **7.771** | **7.681** | TIE, CI95 [−0.24, +0.06] |
++
++### The 3.0× headline, with its caveat attached
++
++The best working served configuration on the 27B S-X8 went **1.831 t/s (R45, plain — drafted crashed)
++→ 5.551 t/s (R48i, drafted n-max 4)** between 2026-09-14 and 2026-09-15.
++
++**This is a configuration progression, not a like-for-like kernel speedup.** It changes engine,
++allocator, speculation (crashed → DFlash2) and draft depth. The 1.831 endpoint is historical; today's
++quiet plain line is 2.10–2.17. The like-for-like evidence is the component A/B rows above, each with
++its own CI. That caveat is in the GAINS ledger row itself, not a footnote.
++
++---
++
++## 10. What is next (roadmap, not a claim)
++
++Nothing here is measured yet.
++
++1. **The harness fix** — CI over launch means, counterbalanced launch order, invalid-launch gate on
++   acceptance < 0.2, re-analysis of the banked cells. Everything else waits behind it (§6.2).
++2. **R68** — read the driver's own pipeline statistics on the q4_K/q5_K/q6_K mat-vec pipelines at
++   n=1..8. The R61 finding says the method works: the same field already showed a VGPR jump at n=4
++   (134 → 216), the exact signature R65 asked for at the width-4 knee. RGA 2.14.2 is installed for the
++   ISA and live-register read.
++3. **R70 — a load-time kernel autotuner**, from the President's 2026-09-18 question *"dynamic or tuned
++   to our iGPU? make it work for any"*. Two classes of win: **less-work fixes** (the sign hoist, the
++   R48 hoists) are faster on every GPU with nothing to tune; **shape choices** (rows per workgroup,
++   route widths, the n=7 reshape) were measured on gfx1103 and differ per GPU and driver. R70 times the
++   candidates on the real device at first model load, caches the pick, re-probes when the driver version
++   changes, and rejects any variant the driver reports as spilling. Every switch stays a manual
++   override; `--no-autotune` for reproducible benches. This is the fork's portability answer.
++   Receipt: seat-62 §4i.
++4. **R59 — ownership-aware placement.** Ceiling honestly priced: 2.97 GB at 40 GB/s is about 7% of the
++   plain line at most.
++5. **R55 — the base move** b10825 → b10903 (11 verbatim, 5 behind-switch, 8 conflicting).
++6. **The MoE / FreeToken program**, P1–P14. President's ruling, verbatim: *"we would open that same path
++   to vulkan ppl not just cuda/metal ppl."* Dense rows first.
++7. **The stated target** on the 27B dense line is **15 to 20 t/s**. The arithmetic says it needs *both*
++   a cheaper verify column *and* accepted length past position 4 — the marginal verify column is 43 ms
++   = 0.177 plain-token-equivalent on Q4_K_XL, and a perfect drafter at n-max 4 tops out at 10.9 t/s
++   (seat-61 §9). It is a target, not a projection.
++
++---
++
++## OWED — every number and decision this draft could not close
++
++| Item | Why |
++|---|---|
++| Q4_K_XL **drafted** served number for R66 | The session is invalid (two zero-acceptance launches, cause unknown) — §6.4 |
++| The banked R56 "+2.3% CI-clean" and "prefill 35.6 → 39.4" rows | UNRESOLVED under the launch-level defect; two CHECKED records disagree on the bound (≤10% vs ≤~25%) — §6.2 |
++| 27B S-X8 llama-bench prefill residual −1.7%, CI95 [−4.4, +1.0] | Not shown nonzero, not shown zero — §6.3 |
++| f16 iq3 pipelines | 0 executed test cases under the new default; one test row owed |
++| R49 quiet repro with `GGML_R49_DUMP=1` | The class is open; no failure yet caught with probes attached |
++| MUL_MAT_ID 1004/0 for R66 | ASSUMED in the promotion record, not recounted from the file |
++| The "load-level lever" | HYPOTHESIS — no receipt ties launch level to placement |
++| `other_remotes` disposition; `ciru` patch count | OWED from the President before publication |
++| `closed-levers.jsonl` row `iq3-sign-hoist` | Owed (seat-62 §4w) |
++| `KERNEL-FORMAT-MATRIX.md` §5 "Not-our-rig gains" | The section the President's §4l law requires does not exist yet |
++| 27B S-X8 served plain **t/s** before R46 (2026-09-08) | The lane-224 receipt banks GB/s achieved (48), not a served t/s cell |
++| TurboQuant TQ types — exact served t/s on `b10447-turbo` | No banked cell found |
++| Per-region bandwidth probe; device-local reference probe | Never run; the R58 device-local probe crashed (OutOfDeviceMemory on a forced 1 GB alloc) |
++| A dual-channel vs single-channel A/B | No matched kit exists on this box; the single-channel tail is ASSUMED |
++| HumanEval and GSM8K cells for Escha-W2; ARC rescores | SPINE §2b.1 marks them OWED |
++| Machine-readable evidence manifest for the GAINS ledger | The page cannot yet prove its own freshness |
++
++---
++
++*Draft ends. Publication is the President's call. Blocking items before any push:*
++`RELEASE-CHECKLIST.md` *beside this file.*
+diff --git a/evidence/10-memtypes.txt b/evidence/10-memtypes.txt
+new file mode 100644
+index 000000000..b6445e4f4
+--- /dev/null
++++ b/evidence/10-memtypes.txt
+@@ -0,0 +1,143 @@
++R58 lane-244 - ENUMERATION RECEIPT: Vulkan memory heaps, memory types, and the memory type every
++buffer class of the 27B S-X8 load actually lands in on the Beelink SER7 Pro (Radeon 780M).
++
++SOURCES (no new box time was spent; both are pre-existing CHECKED receipts):
++  A. `vulkaninfo` VkPhysicalDeviceMemoryProperties, read 2026-09-15 (instance/device creation only,
++     no allocation, no GPU work). Raw: r58-evidence/vulkaninfo-memprops-raw.txt
++  B. R51 lane-240 GGML_VK_ALLOC_TRACE=1 load of the 27B S-X8,
++     C:/ArifiLabs/cache/r51-spill-wt/r51-evidence/30-planorder.txt (99034 lines), which carries both
++     the engine's own memtype enumeration and, per buffer, `state=planned type=T heap=H`.
++  The two agree line for line, so this receipt needed no load cell of its own.
++
++DEVICE: Vulkan0, uma=1, prefer_host=0, max_buffer_size=2147483648 (2 GiB)   [source B, preamble]
++
++---------------------------------------------------------------------------------------------------
++1. HEAPS
++---------------------------------------------------------------------------------------------------
++  heap 0   22,623,813,632 B (21.07 GiB)  DEVICE_LOCAL | MULTI_INSTANCE     budget 21,492,623,360 B
++  heap 1   11,311,906,816 B (10.54 GiB)  (no flags)                        budget 10,746,311,680 B
++  heap 2      268,435,456 B (256.0 MiB)  DEVICE_LOCAL | MULTI_INSTANCE     budget    255,013,680 B
++
++  REFUTATION of the brief/register framing: heap 0 is 21.07 GiB, NOT the 16 GiB BIOS reservation -
++  the driver already exposes ~5 GiB more DEVICE_LOCAL than the carve. Heap 1 is 10.54 GiB, not the
++  ~15.86 GiB "dynamic shared ceiling" the equipment register implies. Total 31.6 GiB. Stated as an
++  observation only; UMA/BIOS changes are the President's alone and none is proposed here.
++
++---------------------------------------------------------------------------------------------------
++2. MEMORY TYPES, AND WHICH ARE ELIGIBLE AT ALL
++---------------------------------------------------------------------------------------------------
++  16 types are enumerated (0-7 mirrored as 8-15). But EVERY storage buffer this engine creates
++  reports VkMemoryRequirements::memoryTypeBits = 0xf (source B, every `state=attempt` line, 46 of
++  46). Only memory types 0,1,2,3 can therefore ever hold our weights. Types 4-15 - including every
++  AMD DEVICE_COHERENT / DEVICE_UNCACHED variant - are enumeration noise for this workload.
++
++  idx  heap  flags                                                        eligible (typeBits 0xf)
++  ---  ----  -----------------------------------------------------------  -----------------------
++    0     0  DEVICE_LOCAL                                                 YES
++    1     1  HOST_VISIBLE | HOST_COHERENT                                 YES
++    2     2  DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT                  YES
++    3     1  HOST_VISIBLE | HOST_COHERENT | HOST_CACHED                   YES
++    4     0  DEVICE_LOCAL | DEVICE_COHERENT_AMD | DEVICE_UNCACHED_AMD     no
++    5     1  HOST_VISIBLE | HOST_COHERENT | DEVICE_COHERENT_AMD | DEVICE_UNCACHED_AMD    no
++    6     2  DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT | DEVICE_COHERENT_AMD | ...     no
++    7     1  HOST_VISIBLE | HOST_COHERENT | HOST_CACHED | DEVICE_COHERENT_AMD | ...      no
++   8-15     exact mirrors of types 0-7                                    no
++
++  VERDICT: BEYOND THE RESERVATION THERE ARE EXACTLY TWO USABLE MEMORY TYPES.
++    type 1 - HOST_VISIBLE | HOST_COHERENT                (uncached / write-combined)
++    type 3 - HOST_VISIBLE | HOST_COHERENT | HOST_CACHED  (snooped, CPU-cached)
++  Both sit on heap 1. That is the whole lever this lane has, and it is a real one: type 3 is
++  already in production use on this box for the transfer/staging buffers (7 allocations,
++  27,695,584 B, source B), so the driver demonstrably serves it - it has simply never carried
++  weights.
++
++---------------------------------------------------------------------------------------------------
++3. WHICH TYPE EACH BUFFER CLASS GETS TODAY - and WHY
++---------------------------------------------------------------------------------------------------
++  Aggregate over the whole S-X8 load (source B, 46 successful allocations):
++
++  class                              allocs           bytes   memtype  heap  flags
++  ---------------------------------  ------  --------------   -------  ----  --------------------------
++  weights, device-local                  23  23,223,063,296         0     0  DEVICE_LOCAL
++  weights, HOST SPLIT                     5   3,281,736,960         1     1  HOST_VISIBLE|HOST_COHERENT
++  KV / small tensors                     11     196,109,596         2     2  DL|HOST_VISIBLE|HOST_COHERENT
++  staging / transfer                      7      27,695,584         3     1  HV|HC|HOST_CACHED
++
++  WHY the host split lands in type 1 - it is ENUMERATION ORDER, never a measurement:
++  ggml_vk_placement_attempts() (ggml-vulkan.cpp, UMA branch) offers the required-flag passes
++  { DEVICE_LOCAL|HOST_VISIBLE|HOST_COHERENT }, { DEVICE_LOCAL }, { HOST_VISIBLE|HOST_COHERENT }.
++    pass 1 (DL|HV|HC) matches only types 2/6/10/14, all on the 256 MiB heap 2 -> structurally dead
++           for GiB-sized weight blocks. (It is alive for the small KV tensors, which is exactly why
++           those land in type 2.)
++    pass 2 (DL) matches types 0/4/8/12 on heap 0 -> takes every block until heap 0 is full.
++    pass 3 (HV|HC) matches types 1 and 3 on heap 1. ggml_vk_find_memory_properties() walks memory
++           types in ASCENDING INDEX, and the planner deduplicates keeping the FIRST position, so
++           type 1 beats type 3 purely because 1 < 3. Nothing measured it.
++
++---------------------------------------------------------------------------------------------------
++4. PER-BUFFER RECEIPT of the S-X8 load (the table HQ asked for)
++---------------------------------------------------------------------------------------------------
++  Join of source B's `plan order i/N: <name> <bytes> B` lines (R51's named-plan receipt, lane-240
++  commit 251b7e3f7) to the `state=planned type=T heap=H` line of the same plan entry.
++  NOTE on names: one plan entry is one ~1 GB SUBALLOCATION BLOCK, and the name printed is the
++  FIRST tensor in that block - not the only tensor in it.
++
++  batch entry  name                                 bytes  memtype heap  flags
++  ----- -----  ---------------------------- -------------  ------- ----  --------------------------
++      0     0  cache_r_l0                       627572736        0    0  DEVICE_LOCAL
++      1     0  output_norm.weight                   20480        2    2  DEVICE_LOCAL|HOST_VISIBLE|HOST_COHERENT
++      1     1  output.weight                   1191936000        0    0  DEVICE_LOCAL
++      1     2  blk.0.attn_norm.weight          1038307968        0    0  DEVICE_LOCAL
++      1     3  blk.2.ffn_up.weight             1026481920        0    0  DEVICE_LOCAL
++      1     4  blk.5.ffn_down.weight           1026481920        0    0  DEVICE_LOCAL
++      1     5  blk.8.ffn_gate.weight           1071044352        0    0  DEVICE_LOCAL
++      1     6  blk.11.attn_v.weight            1037623040        0    0  DEVICE_LOCAL
++      1     7  blk.14.attn_qkv.weight          1026440960        0    0  DEVICE_LOCAL
++      1     8  blk.16.ffn_up.weight            1026481920        0    0  DEVICE_LOCAL
++      1     9  blk.19.ffn_down.weight          1038307968        0    0  DEVICE_LOCAL
++      1    10  blk.22.ffn_gate.weight          1042506624        0    0  DEVICE_LOCAL
++      1    11  blk.25.attn_gate.weight         1054334720        0    0  DEVICE_LOCAL
++      1    12  blk.28.attn_qkv.weight          1038267008        0    0  DEVICE_LOCAL
++      1    13  blk.30.ffn_up.weight            1026481920        0    0  DEVICE_LOCAL
++      1    14  blk.33.ffn_down.weight          1026481920        0    0  DEVICE_LOCAL
++      1    15  blk.36.ffn_gate.weight          1071044352        0    0  DEVICE_LOCAL
++      1    16  blk.39.attn_v.weight            1037623040        0    0  DEVICE_LOCAL
++      1    17  blk.42.attn_qkv.weight          1026440960        0    0  DEVICE_LOCAL
++      1    18  blk.44.ffn_up.weight            1026481920        0    0  DEVICE_LOCAL
++      1    19  blk.47.ffn_down.weight          1038307968        0    0  DEVICE_LOCAL
++      1    20  blk.50.ffn_gate.weight          1042506624        0    0  DEVICE_LOCAL
++      1    21  blk.53.attn_gate.weight         1054334720        0    0  DEVICE_LOCAL
++      1    22  blk.56.attn_qkv.weight          1038267008        1    1  HOST_VISIBLE|HOST_COHERENT
++      1    23  blk.58.ffn_up.weight            1026481920        1    1  HOST_VISIBLE|HOST_COHERENT
++      1    24  blk.61.ffn_down.weight           903201664        1    1  HOST_VISIBLE|HOST_COHERENT
++      2     0  cache_k_l3                        33554432        2    2  DEVICE_LOCAL|HOST_VISIBLE|HOST_COHERENT
++      3     0  cache_r_l0                       627572736        0    0  DEVICE_LOCAL
++      4     0  (unnamed)                        156893184        1    1  HOST_VISIBLE|HOST_COHERENT
++      5     0  (unnamed)                        156893184        1    1  HOST_VISIBLE|HOST_COHERENT
++
++  READING IT:
++  * HOST SPLIT = the three rows at memtype 1 / heap 1 in batch 1 (blk.56.attn_qkv.weight,
++    blk.58.ffn_up.weight, blk.61.ffn_down.weight) = 2,967,950,592 B, plus the two 156,893,184 B
++    single-buffer batches 4 and 5 = 313,786,368 B. Total on the host path 3,281,736,960 B - which
++    matches the independent aggregate in section 3 exactly.
++  * output.weight (1,191,936,000 B) is DEVICE-LOCAL (batch 1 entry 1, memtype 0 heap 0).
++  * cache_r_l0, the DFlash2 recurrent state (627,572,736 B), is DEVICE-LOCAL (batches 0 and 3,
++    memtype 0 heap 0).
++    -> Both CORRECT the brief's "THE GAP" paragraph, which claimed output.weight and the recurrent
++       cache land on the host-visible path. They do not. HQ's correction is confirmed byte-for-byte
++       by this join.
++  * The two `(unnamed)` 156,893,184 B buffers (batches 4 and 5): owner INFERRED, stated as such.
++    They are single-buffer plan batches appearing only after ~24,550 compute submissions (source B
++    lines 98196 and 98609), long past model load, and they carry no tensor name because a
++    ggml-alloc compute-graph buffer is a raw backend buffer, not a named ctx tensor. That makes
++    them the Vulkan0 COMPUTE-GRAPH buffer being reserved and re-reserved mid-run. The receipt does
++    not name them and this lane spent no box time to prove it: treat the owner as UNRECEIPTED.
++    They matter because they are touched every token and they are on the host path.
++
++---------------------------------------------------------------------------------------------------
++5. CORRECTNESS NOTE
++---------------------------------------------------------------------------------------------------
++  Every eligible heap-1 type (1 and 3) carries HOST_COHERENT. Moving the host split from type 1 to
++  type 3 therefore needs no vkFlushMappedMemoryRanges / vkInvalidateMappedMemoryRanges code and
++  adds no new coherence obligation - which is the real reason outputs stay bit-identical, a
++  stronger argument than "placement does not change arithmetic".
+diff --git a/evidence/README.md b/evidence/README.md
+new file mode 100644
+index 000000000..f43c048eb
+--- /dev/null
++++ b/evidence/README.md
+@@ -0,0 +1,31 @@
++# Curated evidence
++
++This folder holds the receipts behind the headline numbers **that are tracked in this
++repository**. It is deliberately small, and the gap is stated rather than hidden.
++
++## What is here
++
++| File | What it backs |
++|---|---|
++| `10-memtypes.txt` | The host-split memory-type read, cited by the release story §"the memory types the device actually offers". Originally tracked at `r58-evidence/10-memtypes.txt`. |
++
++## What is NOT here, and why
++
++The release story cites most of its gate receipts from `r66-evidence/*` — `71-promote-ff.txt`,
++`73-regen.txt`, `74-series-check.txt` (the series-integrity PASS), `75-tag.txt`, `76-flip.txt`,
++`17-correct-MUL_MAT.txt`, `19-executed-counts.txt`, the `18-*`..`24-*` legacy arms and the `*.rc`
++gate cells — and `r65-evidence/22-ksweep-table.txt`.
++
++**None of those is tracked in this repository at any revision.** They live in the lane worktrees
++that produced them, which are not part of the published tree. The cited set and the tracked set are
++two different sets, and this folder reports them as two sets rather than quietly presenting the
++tracked leftovers as though they were the cited receipts.
++
++The 436 evidence files that *were* tracked at `94461e770` were lane working files — build logs,
++configure logs, sweep dumps — from thirteen `r4*`/`r5*` lane directories. They were dropped from the
++release branch under the publish-scope decision, together with 133 internal maker and checker
++documents. They remain in the fork's history and in the studio's own worktrees; nothing was
++destroyed.
++
++Publishing a folder that actually backs the headline numbers means committing those lane receipts as
++new content, which is a scope decision this branch does not take on its own.

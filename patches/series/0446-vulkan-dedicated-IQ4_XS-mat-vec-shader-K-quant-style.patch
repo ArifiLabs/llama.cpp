@@ -1,0 +1,166 @@
+From c52f7ee5f3092974dd500350970bb60d8b30afe0 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 2 Sep 2026 19:52:28 -0400
+Subject: [PATCH] vulkan: dedicated IQ4_XS mat-vec shader (K-quant style, 16
+ threads per superblock) + the 17408x5120 perf rows for test-backend-ops
+ (lane-209 rank 5; gates run next)
+
+---
+ .../vulkan-shaders/mul_mat_vec_iq4_xs.comp    | 112 ++++++++++++++++++
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     |   3 +-
+ tests/test-backend-ops.cpp                    |   9 ++
+ 3 files changed, 123 insertions(+), 1 deletion(-)
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp
+new file mode 100644
+index 000000000..e3ad9f286
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp
+@@ -0,0 +1,112 @@
++#version 450
++
++#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
++#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
++#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
++
++#include "mul_mat_vec_base.glsl"
++
++layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
++
++// arifi lane-209: dedicated IQ4_XS mat-vec, K-quant style (mirrors mul_mat_vec_q4_k.comp).
++//
++// Before this shader IQ4_XS ran the generic mul_mat_vec.comp: each thread took 8 consecutive k of a
++// 256-block and called dequantize4() twice, which re-decoded the sub-block scale each call, loaded
++// the scales as separate byte/u16 loads, and used only ONE nibble half of each packed32 qs word (the
++// other half was fetched again by the thread 16 positions away). On the 780M that path ran at
++// 58-78% of the box's best mat-vec rate at n=1 while q4_K's dedicated shader ran at 96-100%
++// (lane-204 census, CENSUS-TABLE.txt).
++//
++// Here 16 threads share a 256-superblock: thread itid takes sub-block ib32 = itid/2 and byte-half
++// h = itid%2 -> two packed32 words -> 8 low-nibble values (k = 32*ib32 + 8h + 0..7) and 8
++// high-nibble values (k = 32*ib32 + 16 + 8h + 0..7): 16 MACs per row per superblock from 2 word
++// loads, one scale decode per row per superblock. The value order is the one dequant_funcs.glsl
++// uses (value k < 16 = low nibble of byte k, value 16+k = high nibble of byte k).
++
++FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
++
++void calc_superblock(const uint a_offset, const uint b_offset, const uint ib32, const uint q_offset, const uint y_offset, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows) {
++    const uint y1_idx = i * QUANT_K + y_offset;   // low-nibble values
++    const uint y2_idx = y1_idx + 16;              // high-nibble values
++
++    [[unroll]] for (uint n = 0; n < num_rows; ++n) {
++        const uint ib = a_offset + (first_row + n) * num_blocks_per_row + i;
++
++        const FLOAT_TYPE d = FLOAT_TYPE(data_a[ib].d);
++        // scales_l is 4 bytes = 8 nibbles, nibble ib32 sits at bit 4*ib32 of the packed32 word
++        const uint sl = (data_a_packed32[ib].scales_l >> (4 * ib32)) & 0xF;
++        const uint sh = (data_a[ib].scales_h >> (2 * ib32)) & 3;
++        const FLOAT_TYPE dl = d * FLOAT_TYPE(int(sl | (sh << 4)) - 32);
++
++        const uint32_t q0_u32 = data_a_packed32[ib].qs[q_offset];
++        const uint32_t q1_u32 = data_a_packed32[ib].qs[q_offset + 1];
++
++        const u8vec4 q0_lo = unpack8(q0_u32 & 0x0F0F0F0F);
++        const u8vec4 q1_lo = unpack8(q1_u32 & 0x0F0F0F0F);
++        const u8vec4 q0_hi = unpack8((q0_u32 >> 4) & 0x0F0F0F0F);
++        const u8vec4 q1_hi = unpack8((q1_u32 >> 4) & 0x0F0F0F0F);
++
++        const vec4 v0 = vec4(kvalues_iq4nl[q0_lo.x], kvalues_iq4nl[q0_lo.y], kvalues_iq4nl[q0_lo.z], kvalues_iq4nl[q0_lo.w]);
++        const vec4 v1 = vec4(kvalues_iq4nl[q1_lo.x], kvalues_iq4nl[q1_lo.y], kvalues_iq4nl[q1_lo.z], kvalues_iq4nl[q1_lo.w]);
++        const vec4 v2 = vec4(kvalues_iq4nl[q0_hi.x], kvalues_iq4nl[q0_hi.y], kvalues_iq4nl[q0_hi.z], kvalues_iq4nl[q0_hi.w]);
++        const vec4 v3 = vec4(kvalues_iq4nl[q1_hi.x], kvalues_iq4nl[q1_hi.y], kvalues_iq4nl[q1_hi.z], kvalues_iq4nl[q1_hi.w]);
++
++        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++            const vec4 by10 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y1_idx) / 4    ]);
++            const vec4 by11 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y1_idx) / 4 + 1]);
++            const vec4 by20 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y2_idx) / 4    ]);
++            const vec4 by21 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y2_idx) / 4 + 1]);
++
++            const FLOAT_TYPE sum = fma(FLOAT_TYPE(by10.x), v0.x, fma(FLOAT_TYPE(by10.y), v0.y, fma(FLOAT_TYPE(by10.z), v0.z, fma(FLOAT_TYPE(by10.w), v0.w,
++                                   fma(FLOAT_TYPE(by11.x), v1.x, fma(FLOAT_TYPE(by11.y), v1.y, fma(FLOAT_TYPE(by11.z), v1.z, fma(FLOAT_TYPE(by11.w), v1.w,
++                                   fma(FLOAT_TYPE(by20.x), v2.x, fma(FLOAT_TYPE(by20.y), v2.y, fma(FLOAT_TYPE(by20.z), v2.z, fma(FLOAT_TYPE(by20.w), v2.w,
++                                   fma(FLOAT_TYPE(by21.x), v3.x, fma(FLOAT_TYPE(by21.y), v3.y, fma(FLOAT_TYPE(by21.z), v3.z, FLOAT_TYPE(by21.w) * v3.w)))))))))))))));
++            temp[j][n] = fma(dl, sum, temp[j][n]);
++        }
++    }
++}
++
++void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
++    uint a_offset, b_offset, d_offset;
++    get_offsets(a_offset, b_offset, d_offset);
++
++    const uint num_blocks_per_row = p.ncols / QUANT_K;
++
++    // 16 threads are used to process each block
++    const uint it_size = gl_WorkGroupSize.x/16;
++    const uint tid = gl_LocalInvocationID.x;
++    const uint itid = tid%16;  // 0...15
++    const uint ix = tid/16;
++
++    const uint ib32 = itid / 2;                     // sub-block 0...7 (32 values each)
++    const uint h    = itid % 2;                     // byte half of the sub-block's 16 qs bytes
++    const uint q_offset = 4*ib32 + 2*h;             // packed32 word index of the first of this thread's 2 words
++    const uint y_offset = 32*ib32 + 8*h;            // k of this thread's first low-nibble value
++
++    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++        [[unroll]] for (uint i = 0; i < NUM_ROWS; ++i) {
++            temp[j][i] = FLOAT_TYPE(0);
++        }
++    }
++
++    [[unroll]] for (uint i = ix; i < num_blocks_per_row; i += it_size)
++        calc_superblock(a_offset, b_offset, ib32, q_offset, y_offset, i, num_blocks_per_row, first_row, num_rows);
++
++    reduce_result(temp, d_offset, first_row, num_rows, tid);
++}
++
++void main() {
++    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
++
++    init_iq_shmem(gl_WorkGroupSize);
++
++    // do NUM_ROWS at a time, unless there aren't enough remaining rows
++    if (first_row + NUM_ROWS <= p.stride_d) {
++        compute_outputs(first_row, NUM_ROWS);
++    } else {
++        if (first_row >= p.stride_d) {
++            return;
++        }
++        compute_outputs(first_row, p.stride_d - first_row);
++    }
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index b869b3d23..f6c9f0c40 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -788,7 +788,8 @@ void process_shaders() {
+     for (const auto& tname : type_names) {
+         // mul mat vec
+         std::string data_a_key = "DATA_A_" + to_uppercase(tname);
+-        std::string shader = (string_ends_with(tname, "_k") || string_starts_with(tname, "iq1_") || string_starts_with(tname, "iq2_") || string_starts_with(tname, "iq3_") || tname == "tq2_0") ? "mul_mat_vec_" + tname + ".comp" : "mul_mat_vec.comp";
++        // arifi lane-209: iq4_xs gets a dedicated K-quant-style shader (mul_mat_vec_iq4_xs.comp)
++        std::string shader = (string_ends_with(tname, "_k") || string_starts_with(tname, "iq1_") || string_starts_with(tname, "iq2_") || string_starts_with(tname, "iq3_") || tname == "iq4_xs" || tname == "tq2_0") ? "mul_mat_vec_" + tname + ".comp" : "mul_mat_vec.comp";
+ 
+         string_to_spv("mul_mat_vec_" + tname + "_f32_f32", shader, merge_maps(base_dict, {{data_a_key, "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
+         string_to_spv("mul_mat_vec_" + tname + "_f16_f32", shader, merge_maps(base_dict, {{data_a_key, "1"}, {"B_TYPE", "float16_t"}, {"B_TYPEV2", "f16vec2"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}));
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 29c9f6dd3..7f07d9e26 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -11694,6 +11694,15 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+         }
+     }
+ 
++    // ArifiLabs lane-209: the 27B ffn row (17408x5120) at the plain / DFlash2-verify widths, for the types the
++    // seat and the Unleashed quality winners actually carry there (q4_K = the yardstick shader at 96-100% of
++    // best on the 780M). `-p "m=17408"` narrows perf to these 24 rows.
++    for (int bs : {1, 2, 3, 4, 5, 8}) {
++        for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_IQ4_XS, GGML_TYPE_IQ3_S, GGML_TYPE_Q4_0_ROCMFP4_FAST}) {
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, bs, 5120, {1,  1}, {1, 1}));
++        }
++    }
++
+     // qwen3-30b-a3b
+     for (int bs : {1, 4, 8, 32, 64, 128, 256, 512}) {
+         for (ggml_type type_a : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ2_XS}) {

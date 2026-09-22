@@ -1,0 +1,152 @@
+From 47e3fea31406c82b9f5b3ad367701ced481975ae Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 01:31:40 -0400
+Subject: [PATCH] citations: stop the published documents pointing a reader at
+ files a clone does not contain
+
+README.md and both release documents cite receipt paths like r66-evidence/74-series-check.txt. Those are TRUE statements about where the receipt lives - a lane worktree - and FALSE as paths in a clone. A public README of an attribution-first fork that points at a file the clone does not have is the failure this branch exists to prevent. Each document now carries a note at its head and points at evidence/README.md. The citations are kept: deleting a true fact to make a link stop dangling would be the wrong repair.
+
+evidence/README.md now states that 10-memtypes.txt is NOT byte-identical to the lane receipt - one prose line naming an absolute studio path was placeholder-scrubbed - and points at the unedited original in the fork history. An edited receipt presented as a receipt is the same class of problem as a bare PASS.
+
+The export-branch proposal named git filter-repo as its tool without checking: it is NOT installed on this box (git filter-repo --version returns 'not a git command'). The plan now says so, names the deprecated fallback, and records that no part of that command has been run. docs/OPTIONS-REGISTRY.md was verified tracked, so the merged README section's reference to it resolves.
+
+Also recorded: 5c8d176b7's message says tracked 5727 -> 5161; the true figure is 5164, because three .cmd files with hyphenated stems were missed by that pass and removed in the next one.
+
+Origin: ArifiLabs (native) - release engineering for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ README.md                          |  2 ++
+ RELEASE-PREP-PLAN.md               | 11 +++++---
+ RELEASE-PREP-RECEIPTS.md           | 40 ++++++++++++++++++++++++++----
+ docs/release/RELEASE-NOTES-r66i.md |  3 +++
+ docs/release/RELEASE-STORY-r66i.md |  3 +++
+ evidence/README.md                 |  6 +++++
+ 6 files changed, 57 insertions(+), 8 deletions(-)
+
+diff --git a/README.md b/README.md
+index 01e95b82a..7082e15af 100644
+--- a/README.md
++++ b/README.md
+@@ -309,6 +309,8 @@ remain explicit in this README, the series manifest, and each eventual commit.
+ 
+ ## The R66i release — what shipped, how to build it, how to reproduce a number
+ 
++> **Where the receipts live.** Receipt paths of the form `r66-evidence/…`, `r65-evidence/…` and other `r*-evidence/…` names in this document are **lane-local**: they name files in the lane worktree that produced them, not paths in this repository. A clone does not contain them. `evidence/README.md` lists what is tracked here and says plainly what is not.
++
+ *Applied from the release-prep branch, 2026-09-21. Switch meanings below are quoted
+ verbatim from `docs/OPTIONS-REGISTRY.md`.*
+ 
+diff --git a/RELEASE-PREP-PLAN.md b/RELEASE-PREP-PLAN.md
+index 9a3e415f6..e4e9bf778 100644
+--- a/RELEASE-PREP-PLAN.md
++++ b/RELEASE-PREP-PLAN.md
+@@ -214,9 +214,14 @@ that gets published.
+ 
+ - **Why.** One rewrite closes two items at once: the author e-mail on 396 commits, and the 1,709
+   absolute-path lines inside `patches/series/*.patch`, which cannot be scrubbed any other way.
+-- **Tool.** `git filter-repo --email-callback` (rewrite `<author-email>` to the GitHub
+-  no-reply form, per seat-62 §4aa) plus a `--replace-text` file for the path placeholders, then
+-  regenerate the series with `arifi_sync` and re-run `series check` on the export branch's own base.
++- **Tool — and it is NOT installed on this box.** `git filter-repo --version` returns
++  *"git: 'filter-repo' is not a git command"*. The proposal names it because it is the right tool
++  (`--email-callback` to rewrite the author address to the GitHub no-reply form per seat-62 §4aa,
++  plus a `--replace-text` file for the path placeholders), then regenerate the series with
++  `arifi_sync` and re-run `series check` on the export branch's own base. **Installing it is a
++  prerequisite nobody has paid**, and no part of this command has been run here. The fallback,
++  `git filter-branch`, is slower and is deprecated by git itself; it is named only so the choice is
++  not silently made later.
+ - **What breaks.** Every sha in the range changes. Therefore: the `r66i-integration-2026-09-19` tag
+   and every other tag no longer point into the published history; every sha-pinned ledger
+   (`native-grandfather.json`, the new `trailer-exemptions.json`, `protected-wins.json`) needs
+diff --git a/RELEASE-PREP-RECEIPTS.md b/RELEASE-PREP-RECEIPTS.md
+index 42be465f6..b07439cea 100644
+--- a/RELEASE-PREP-RECEIPTS.md
++++ b/RELEASE-PREP-RECEIPTS.md
+@@ -181,9 +181,39 @@ advance and honestly: the prep commits are not in the series, and a replay recre
+ branch deletes, so the check will report that difference. **The series claim belongs to
+ `arifi/main`'s 658-commit history and is untouched there** — this branch only adds commits on top.
+ 
+-## 7. Known defect in this branch's own record
++## 7. Dangling receipt citations, annotated rather than deleted
+ 
+-The commit message of `405315f0c` lost the words "series check" to a shell backtick substitution:
+-it reads *"editing those files in place breaks , whose whole claim is byte-identity"*. The commit
+-content is unaffected and the full statement is in `RELEASE-PREP-PLAN.md` blocker 4. Recorded rather
+-than amended, because amending to tidy a receipt is the habit this branch exists to avoid.
++`README.md`, `docs/release/RELEASE-STORY-r66i.md` and `docs/release/RELEASE-NOTES-r66i.md` cite
++receipt paths of the form `r66-evidence/74-series-check.txt`. Those paths are **true statements
++about where the receipt lives** — a lane worktree — and **false as paths in a clone**, which is
++exactly the failure an attribution-first fork must not ship. Each document now carries a note at
++its head saying so and pointing at `evidence/README.md`. The citations are kept: deleting them
++would remove a true fact to make a link stop dangling.
++
++`docs/OPTIONS-REGISTRY.md` is tracked (`git ls-files docs/OPTIONS-REGISTRY.md`), so the merged
++README section's reference to it resolves inside the clone.
++
++`evidence/10-memtypes.txt` is **not** byte-identical to the lane receipt: one prose line naming an
++absolute studio path was placeholder-scrubbed. `evidence/README.md` now states that and points at
++the unedited original in the fork history.
++
++## 8. Known defects in this branch's own record
++
++Two, both in commit messages, both recorded rather than amended — amending to tidy a receipt is the
++habit this branch exists to avoid.
++
++- `405315f0c` lost the words "series check" to a shell backtick substitution: it reads *"editing
++  those files in place breaks , whose whole claim is byte-identity"*. The full statement is in
++  `RELEASE-PREP-PLAN.md` blocker 4.
++- `5c8d176b7` says tracked files went `5727 -> 5161`. The true figure is **5,164**: three further
++  `.cmd` files with hyphenated stems were missed by that pass's pattern and were removed in
++  `405315f0c` instead. The table in §3 above is correct.
++
++## 9. Test name, for the record
++
++```
++python tools/arifi-sync/test_arifi_sync.py SeriesRegenTest -v
++test_a_sha_pinned_trailer_exemption_clears_strict_but_is_never_reported_as_repaired ... ok
++Ran 5 tests in 16.531s
++OK
++```
+diff --git a/docs/release/RELEASE-NOTES-r66i.md b/docs/release/RELEASE-NOTES-r66i.md
+index bdcff3da1..80e4c45f9 100644
+--- a/docs/release/RELEASE-NOTES-r66i.md
++++ b/docs/release/RELEASE-NOTES-r66i.md
+@@ -1,5 +1,8 @@
+ # ArifiLabs llama.cpp — `r66i-integration-2026-09-19`
+ 
++> **Where the receipts live.** Receipt paths of the form `r66-evidence/…`, `r65-evidence/…` and other `r*-evidence/…` names in this document are **lane-local**: they name files in the lane worktree that produced them, not paths in this repository. A clone does not contain them. `evidence/README.md` lists what is tracked here and says plainly what is not.
++
++
+ *(DRAFT release body. Not published. Publication is the President's call.)*
+ 
+ Base: upstream `ggml-org/llama.cpp` **b10825** (`9e0e22059`) + **586 patches**. Tip `94461e770`.
+diff --git a/docs/release/RELEASE-STORY-r66i.md b/docs/release/RELEASE-STORY-r66i.md
+index eb2ec1345..91668df33 100644
+--- a/docs/release/RELEASE-STORY-r66i.md
++++ b/docs/release/RELEASE-STORY-r66i.md
+@@ -1,5 +1,8 @@
+ # The Arifi Labs llama.cpp fork — R66 release story (DRAFT)
+ 
++> **Where the receipts live.** Receipt paths of the form `r66-evidence/…`, `r65-evidence/…` and other `r*-evidence/…` names in this document are **lane-local**: they name files in the lane worktree that produced them, not paths in this repository. A clone does not contain them. `evidence/README.md` lists what is tracked here and says plainly what is not.
++
++
+ > **DRAFT for the President's read. Nothing here has been published. No GitHub push has happened,
+ > no remote has been touched.**
+ > Written 2026-09-19 by a docs maker. It **carries forward** the R56 draft
+diff --git a/evidence/README.md b/evidence/README.md
+index f43c048eb..ee17511e0 100644
+--- a/evidence/README.md
++++ b/evidence/README.md
+@@ -9,6 +9,12 @@ repository**. It is deliberately small, and the gap is stated rather than hidden
+ |---|---|
+ | `10-memtypes.txt` | The host-split memory-type read, cited by the release story §"the memory types the device actually offers". Originally tracked at `r58-evidence/10-memtypes.txt`. |
+ 
++**This copy is not byte-identical to the original.** One line of it named an absolute studio path
++(`…/cache/r51-spill-wt/r51-evidence/30-planorder.txt`) and was rewritten to a `<repo>` placeholder by
++the release-prep path scrub. Nothing measured was altered — the change is one path string in a prose
++line — but an edited receipt must say it was edited. The unedited original is in the fork history at
++`94461e770:r58-evidence/10-memtypes.txt`.
++
+ ## What is NOT here, and why
+ 
+ The release story cites most of its gate receipts from `r66-evidence/*` — `71-promote-ff.txt`,

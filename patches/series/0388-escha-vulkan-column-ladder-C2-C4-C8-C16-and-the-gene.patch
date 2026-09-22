@@ -1,0 +1,400 @@
+From 04807c88f8f85a2ba50e7d76eb5d489ec4d4fc1d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 06:55:47 -0400
+Subject: [PATCH] escha vulkan: column ladder C2/C4/C8/C16, and the generator
+ table measured and REFUTED
+
+THE LADDER. One weight decode costs ~6 operations and feeds ONE multiply-add per column, so the
+kernel does C multiply-adds per decode. Only two rungs existed, C=1 and C=8, which wasted half the
+lanes at 4 columns and paid two decode passes at 16. The ladder adds C=2/4/16 and picks the smallest
+rung that covers ncols, the widest once ncols passes it. GGML_VK_ESCHA_MAX_COLS caps it for A/B.
+
+Effect on the speculative curve, which was violently non-monotonic before (decode 5.53 at n_max=3,
+2.91 at 7, 10.03 at 9 - the dips landing exactly where rung selection flipped). With the ladder the
+curve flattens and lifts: every depth from 7 up sits near 10.3-10.5 against plain 3.92.
+
+THE TABLE, REFUTED. escha_F is a pure function of a 16-bit codeword, so all 65,536 values fit in
+128 KiB. The estate had closed this by reasoning; an unverified refusal is not evidence, so it was
+built and measured:
+    arithmetic generator   pp512 16.78   tg32 3.92
+    65,536-entry table     pp512 16.62   tg32 0.80
+4.9x slower on decode. The reasoning was right. Kept behind GGML_VK_ESCHA_LUT with the numbers.
+
+A REGRESSION I CAUSED AND FIXED. The table was first wired by declaring binding 4 in every escha
+variant so one layout could serve both arms, on the assumption an unused binding is free. It is not:
+binding a fifth buffer on all 13,200 decode dispatches cost 4.8x (3.91 -> 0.81), and it was caught
+only because a saved pre-ladder binary was re-run on the same box minutes later. The table now binds
+on the table arm alone.
+
+The table is also built on FIRST USE, not at device init: ggml_vk_buffer_write needs queues and a
+command pool that do not exist while pipelines are still being created, and doing it there crashed
+every binary with an access violation the moment the device was enumerated.
+
+Correctness: test-backend-ops -o ESCHA_MM, 20 cases, 22 OK, 0 FAIL, on BOTH generator arms. New
+cases cover every rung full and ragged (ncols 3/5/16/17) plus C16 at model depth, because a case
+only ever proves the rung its ncols selects.
+
+Origin: ArifiLabs (native)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 124 +++++++++++++++---
+ .../ggml-vulkan/vulkan-shaders/escha_mm.comp  |  75 ++++++++++-
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     |  13 ++
+ tests/test-backend-ops.cpp                    |  24 +++-
+ 4 files changed, 208 insertions(+), 28 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 906693e3b..5df9863c7 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1092,6 +1092,10 @@ struct vk_device_struct {
+     vk_pipeline pipeline_fwht_f32[4];
+     vk_pipeline pipeline_escha_mm[2];    // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
+     vk_pipeline pipeline_escha_mm_mc[2]; // same, multi-column (ESCHA_MM_COLS per workgroup)
++    // Column ladder (seat-40), indexed [rung][K]. Rung r serves ESCHA_COL_RUNGS[r] columns.
++    vk_pipeline pipeline_escha_mm_col[4][2];
++    vk_pipeline pipeline_escha_mm_lut[2];   // table-generator arm (seat-40)
++    vk_buffer   escha_lut;                  // 65,536 f16 generator values, 128 KiB
+     vk_pipeline pipeline_escha_mm_b2[2]; // same, 256 threads over two output blocks (seat-40)
+     vk_pipeline pipeline_cumsum_f32;
+     vk_pipeline pipeline_cumsum_small_f32;
+@@ -2167,6 +2171,7 @@ struct ggml_vk_garbage_collector {
+ };
+ 
+ static void ggml_vk_preallocate_buffers(ggml_backend_vk_context * ctx, vk_context subctx);
++static void ggml_vk_buffer_write(vk_buffer& dst, size_t offset, const void * src, size_t size);  // seat-40: escha generator table upload runs at device init, before the definition
+ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested = nullptr);
+ static void ggml_pipeline_allocate_descriptor_sets(ggml_backend_vk_context * ctx);
+ static bool ggml_vk_intel_windows_driver_in_range(uint32_t driver_version, uint32_t lower_major, uint32_t lower_minor, uint32_t upper_major, uint32_t upper_minor);
+@@ -6105,6 +6110,16 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[1], "escha_mm_k3_c8_f32", escha_mm_k3_c8_f32_len, escha_mm_k3_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_b2[0], "escha_mm_k2_b2_f32", escha_mm_k2_b2_f32_len, escha_mm_k2_b2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_b2[1], "escha_mm_k3_b2_f32", escha_mm_k3_b2_f32_len, escha_mm_k3_b2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[0][0], "escha_mm_k2_c2_f32", escha_mm_k2_c2_f32_len, escha_mm_k2_c2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[0][1], "escha_mm_k3_c2_f32", escha_mm_k3_c2_f32_len, escha_mm_k3_c2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[1][0], "escha_mm_k2_c4_f32", escha_mm_k2_c4_f32_len, escha_mm_k2_c4_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[1][1], "escha_mm_k3_c4_f32", escha_mm_k3_c4_f32_len, escha_mm_k3_c4_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[2][0], "escha_mm_k2_c8_f32", escha_mm_k2_c8_f32_len, escha_mm_k2_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[2][1], "escha_mm_k3_c8_f32", escha_mm_k3_c8_f32_len, escha_mm_k3_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[3][0], "escha_mm_k2_c16_f32", escha_mm_k2_c16_f32_len, escha_mm_k2_c16_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[3][1], "escha_mm_k3_c16_f32", escha_mm_k3_c16_f32_len, escha_mm_k3_c16_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_lut[0], "escha_mm_k2_lut_f32", escha_mm_k2_lut_f32_len, escha_mm_k2_lut_f32_data, "main", 5, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_lut[1], "escha_mm_k3_lut_f32", escha_mm_k3_lut_f32_len, escha_mm_k3_lut_f32_data, "main", 5, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+ 
+     const uint32_t cumsum_elem_per_thread = (device->vendor_id == VK_VENDOR_ID_AMD || device->vendor_id == VK_VENDOR_ID_INTEL) ? 2 : 4;
+     ggml_vk_create_pipeline(device, device->pipeline_cumsum_f32,       "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 256, device->subgroup_size, cumsum_elem_per_thread }, 1, true, true, device->subgroup_size);
+@@ -10475,6 +10490,38 @@ static void ggml_vk_fwht(ggml_backend_vk_context * ctx, vk_context& subctx, cons
+     ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { src_buf, dst_buf }, pc, { workgroups_x, 1, 1 });
+ }
+ 
++// The generator table, built on FIRST USE.
++//
++// It cannot be built at device-init time: ggml_vk_buffer_write needs the queues and command pool,
++// and neither exists while pipelines are still being created. Doing it there crashed every binary
++// with an access violation the instant the Vulkan device was enumerated.
++//
++// Values use the SAME arithmetic as the shader - same mix, same two f16 halves, same f16 add - so
++// the table is exact by construction rather than approximately equal. 65,536 entries, two f16 per
++// uint, 128 KiB.
++static void ggml_vk_escha_ensure_lut(ggml_backend_vk_context * ctx) {
++    if (ctx->device->escha_lut) {
++        return;
++    }
++    std::vector<uint32_t> lut(32768, 0u);
++    for (uint32_t xw = 0; xw < 65536u; ++xw) {
++        const uint32_t q = 0x3B603B60u ^ ((xw * 0xCBAC1FEDu) & 0x8FFF8FFFu);
++        ggml_fp16_t hlo, hhi;
++        memcpy(&hlo, &q, sizeof(ggml_fp16_t));
++        const uint16_t hi_bits = (uint16_t) (q >> 16);
++        memcpy(&hhi, &hi_bits, sizeof(ggml_fp16_t));
++        const float    sum  = ggml_fp16_to_fp32(hlo) + ggml_fp16_to_fp32(hhi);
++        const ggml_fp16_t r = ggml_fp32_to_fp16(sum);
++        uint16_t bits;
++        memcpy(&bits, &r, sizeof(uint16_t));
++        if ((xw & 1u) == 0u) { lut[xw >> 1] |= (uint32_t) bits; }
++        else                 { lut[xw >> 1] |= ((uint32_t) bits) << 16; }
++    }
++    ctx->device->escha_lut = ggml_vk_create_buffer_check(ctx->device, lut.size() * sizeof(uint32_t),
++        vk::MemoryPropertyFlagBits::eDeviceLocal);
++    ggml_vk_buffer_write(ctx->device->escha_lut, 0, lut.data(), lut.size() * sizeof(uint32_t));
++}
++
+ // ArifiLabs Escha-W2 fused linear (lane-164)
+ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx, ggml_tensor * dst) {
+     const ggml_tensor * src0 = dst->src[0]; // packed codes
+@@ -10499,27 +10546,47 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+     // and acc[16] registers); raise it only from a measurement, not from the trend.
+     // Note this is NOT lane-165's rows=8, which was refuted on this device: that lever was
+     // register row blocking inside one column, this one shares a decode across columns.
+-    constexpr uint32_t ESCHA_MM_COLS = 8;
+     static const bool no_multicol = getenv("GGML_VK_ESCHA_NO_MULTICOL") != nullptr;
+ 
+-    // WHERE THE THRESHOLD BELONGS (seat-40 correction).
++    // WHY THE FLOOR IS 2 AND NOT 1 (seat-40).
+     //
+-    // It used to demand a FULL block, ncols >= 8. That silently disabled the whole optimisation
+-    // for speculative decoding, which is the case that needs it most: DFlash2 runs with n_max=3,
+-    // so a verify pass arrives with about 4 columns, took the one-column kernel, and re-decoded
+-    // the entire weight matrix ONCE PER COLUMN. Four tokens cost four full decodes - precisely
+-    // cancelling what speculation saves. It measured as "speculation gains nothing on Escha"
+-    // (23/23 draft acceptance, decode 3.14 -> 3.09) and was very nearly written off as a property
+-    // of the model.
++    // The threshold used to demand a FULL block, ncols >= 8, which silently disabled the whole
++    // optimisation for speculative decoding - the case that needs it most. DFlash2 runs n_max=3, so
++    // a verify pass arrives with about 4 columns, took the one-column kernel, and re-decoded the
++    // entire weight matrix ONCE PER COLUMN. Four tokens cost four full decodes, exactly cancelling
++    // what speculation saves. It measured as "speculation gains nothing on Escha" (23/23 draft
++    // acceptance, decode 3.14 -> 3.09) and was very nearly written off as a property of the model.
+     //
+-    // The multi-column kernel already handles a partial block correctly: staging clamps with
+-    // min(col0+cj, ncols-1) and the store is guarded by cc < ncols, so the surplus lanes recompute
+-    // a duplicate column that is never written. So the real trade is one decode pass for a partial
+-    // block against ncols decode passes, and it pays from ncols=2 upward.
++    // A partial block is already handled: staging clamps with min(col0+cj, ncols-1) and the store is
++    // guarded by cc < ncols, so surplus lanes recompute a column that is never written. The floor is
++    // 2 because a single column has nothing to share a decode across - which is what the old ncols=1
++    // measurement (C=4 at 1537 us vs C=1 at 1208 us) actually showed.
++
++    // COLUMN LADDER SELECTION (seat-40).
++    //
++    // The decode of one weight costs ~6 operations and feeds ONE multiply-add per column, so this
++    // kernel's arithmetic intensity is exactly C FMAs per decode. Everything else is second order.
++    // With only C=1 and C=8 available, a 4-column verify pass wasted half its lanes and a
++    // 16-column batch paid two decode passes for what one rung could do.
+     //
+-    // The old comment's ncols=1 measurement (C=4 at 1537 us vs C=1 at 1208 us) stands and is why
+-    // the floor is 2, not 1: with a single column there is nothing to share a decode across.
+-    const bool use_mc = !no_multicol && ncols >= 2;
++    // Pick the SMALLEST rung that covers ncols, and the largest rung once ncols exceeds it: below
++    // the top rung a bigger C only adds idle lanes, above it a bigger C removes whole decode passes.
++    static const uint32_t ESCHA_COL_RUNGS[4] = { 2, 4, 8, 16 };
++    // Cap the ladder for A/B work: GGML_VK_ESCHA_MAX_COLS=8 makes a 10-column batch take C8 twice
++    // instead of C16 once, which is the comparison that decides whether the widest rung earns its
++    // register pressure. Unset means no cap.
++    static const char * const max_cols_env = getenv("GGML_VK_ESCHA_MAX_COLS");
++    static const uint32_t max_cols = max_cols_env ? (uint32_t) atoi(max_cols_env) : 0u;
++    int rung = -1;
++    if (!no_multicol && ncols >= 2) {
++        int top = 3;
++        while (top > 0 && max_cols && ESCHA_COL_RUNGS[top] > max_cols) { --top; }
++        rung = top;                                 // widest rung allowed
++        for (int r = 0; r <= top; ++r) {
++            if (ncols <= ESCHA_COL_RUNGS[r]) { rung = r; break; }
++        }
++    }
++    const bool use_mc = rung >= 0;
+ 
+     // Occupancy arm (seat-40) - REFUTED BY MEASUREMENT, OFF BY DEFAULT.
+     // The reasoning was that 128 threads is two waves at warp 64, too few to hide code-fetch
+@@ -10538,11 +10605,17 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+     static const bool want_block2 = getenv("GGML_VK_ESCHA_BLOCK2") != nullptr;
+     const bool use_b2 = !use_mc && want_block2 && (n_out % 256 == 0);
+ 
++    // Table-generator arm (seat-40), opt-in, single-column path only for now: that is the clean
++    // arm to measure, since plain decode is the case with no column reuse to muddy the comparison.
++    static const bool want_lut = getenv("GGML_VK_ESCHA_LUT") != nullptr;
++    const bool use_lut = want_lut && !use_mc && !use_b2;
++
+     const int kidx = src0->type == GGML_TYPE_ESCHA3 ? 1 : 0;
+-    vk_pipeline pipeline = use_mc ? ctx->device->pipeline_escha_mm_mc[kidx]
+-                         : use_b2 ? ctx->device->pipeline_escha_mm_b2[kidx]
+-                                  : ctx->device->pipeline_escha_mm[kidx];
+-    const uint32_t cols_per_wg = use_mc ? ESCHA_MM_COLS : 1;
++    vk_pipeline pipeline = use_mc  ? ctx->device->pipeline_escha_mm_col[rung][kidx]
++                         : use_b2  ? ctx->device->pipeline_escha_mm_b2[kidx]
++                         : use_lut ? ctx->device->pipeline_escha_mm_lut[kidx]
++                                   : ctx->device->pipeline_escha_mm[kidx];
++    const uint32_t cols_per_wg = use_mc ? ESCHA_COL_RUNGS[rung] : 1;
+     const uint32_t out_per_wg  = use_b2 ? 256u : 128u;
+     GGML_ASSERT(pipeline != nullptr);
+ 
+@@ -10573,8 +10646,17 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+     // per column, so raise it only from a measured ncols curve (test-backend-ops perf -o ESCHA_MM).
+     constexpr uint32_t COLS_PER_DISPATCH = 32;
+ 
++    // Bind the table ONLY on the table arm. Handing every dispatch a fifth buffer it never reads
++    // cost 4.8x on single-column decode - the arithmetic arm keeps its four-buffer layout.
++    // (The dispatch helper takes an initializer_list, so the two arms are two literal calls.)
+     const std::array<uint32_t, 3> elements = { wg_x, CEIL_DIV(std::min(ncols, COLS_PER_DISPATCH), cols_per_wg), 1 };
+-    ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { a_buf, b_buf, aux_buf, dst_buf }, pc, elements);
++    if (use_lut) {
++        ggml_vk_escha_ensure_lut(ctx);
++        const vk_subbuffer lut_buf = { ctx->device->escha_lut, 0, VK_WHOLE_SIZE };
++        ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { a_buf, b_buf, aux_buf, dst_buf, lut_buf }, pc, elements);
++    } else {
++        ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { a_buf, b_buf, aux_buf, dst_buf }, pc, elements);
++    }
+ 
+     for (uint32_t off = COLS_PER_DISPATCH; off < ncols; off += COLS_PER_DISPATCH) {
+         pc.col_offset = off;
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+index 90ffea97d..5afce0c71 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+@@ -66,6 +66,40 @@ layout (binding = 1) readonly  buffer B { float data_b[]; };  // x [n_in, ncols]
+ layout (binding = 2) readonly  buffer C { float data_c[]; };  // aux: rin | rout | bias
+ layout (binding = 3) writeonly buffer D { float data_d[]; };  // y [n_out, ncols]
+ 
++// SEAT-40 LEVER 4: the generator as a table instead of arithmetic.
++//
++// escha_F is a pure function of a 16-bit codeword, so all 65,536 of its values fit in a table of
++// 128 KiB (two f16 results per uint). The estate CLOSED this option by reasoning - "a 128 KB random
++// lookup per weight on a bandwidth-shared APU loses to ~7 ALU ops" - and never ran it. That is an
++// unverified refusal, and the arithmetic behind it has changed twice since: the generator is now
++// about six operations, and this device carries 2 MiB of L2, so the whole table can sit resident.
++//
++// The access is not really random either: consecutive codewords come from one 32-bit word shifted
++// by two bits at a time, so neighbouring lookups land in nearby table entries.
++//
++// MEASURED AND REFUTED, 2026-08-21. The table is 4.9x SLOWER than the arithmetic:
++//     arithmetic generator   pp512 16.78   tg32 3.92
++//     65,536-entry table     pp512 16.62   tg32 0.80
++// Same binary, arms alternated, idle rig, Balanced. The estate had closed this option by reasoning
++// and the reasoning was right - it is now closed by a number instead. Prefill is untouched because
++// the multi-column path amortises the lookup across columns; decode, one lookup per weight, is
++// where it dies. Correctness was proven first: test-backend-ops -o ESCHA_MM, 20 cases, 0 FAIL on
++// BOTH arms, so this is a speed verdict on a correct implementation.
++//
++// Values are computed host-side with the SAME arithmetic, so the table is exact by construction,
++// not approximately equal. ESCHA_LUT=0 restores the arithmetic generator.
++#ifndef ESCHA_LUT
++#define ESCHA_LUT 0
++#endif
++// Declared ONLY in the table arm. It was briefly declared in both so one pipeline layout could
++// serve either, and the assumption that "an unused binding costs nothing" was wrong on this
++// driver: binding a fifth buffer on every dispatch cost 4.8x on the single-column decode path
++// (3.91 -> 0.81 t/s, same box, same session, verified against a saved binary). The arithmetic arm
++// must not pay for a table it never reads.
++#if ESCHA_LUT
++layout (binding = 4) readonly buffer L { uint data_l[]; };   // 32768 uints = 65536 f16 values
++#endif
++
+ shared float sh[NB][NC][128];
+ 
+ const float INV_SQRT128 = 0.08838834764831845;
+@@ -152,8 +186,42 @@ uint f32_to_f16_rte(float f) {
+ #define ESCHA_F16_GEN 1
+ #endif
+ 
++// SEAT-40 LEVER 3: get the generator's multiply off the quarter-rate path.
++//
++// Instruction COUNT was the wrong thing to minimise. On RDNA, V_MUL_LO_U32 is a quarter-rate
++// instruction - roughly four normal ALU slots - while V_MUL_U32_U24 is full rate. The generator's
++// `xw * 0xCBAC1FED` is a full 32-bit multiply, so by cost it can be a larger share of the
++// generator than every other step put together, and the earlier levers were all shaving the cheap
++// part.
++//
++// xw is a 16-bit window. Split the constant into two halves and the same low 32 bits fall out of
++// two multiplies whose operands are both under 2^24, which is the form the full-rate instruction
++// accepts:
++//     xw*M = xw*(M & 0xFFFF) + (xw*(M >> 16) << 16)   (mod 2^32)
++// Proven exhaustively over all 65,536 windows before it was written here: zero mismatches.
++//
++// Whether the driver actually selects the 24-bit form is its choice, not ours - GLSL has no way to
++// demand it. Hence a switch and a measurement.
++#ifndef ESCHA_MUL24
++#define ESCHA_MUL24 0
++#endif
++
++uint escha_mix(uint xw) {
++#if ESCHA_MUL24
++    const uint lo = xw * 0x1FEDu;                  // operands < 2^24: full-rate form available
++    const uint hi = xw * 0xCBACu;
++    return lo + (hi << 16);                        // low 32 bits of xw * 0xCBAC1FED
++#else
++    return xw * 0xCBAC1FEDu;                       // one quarter-rate V_MUL_LO_U32
++#endif
++}
++
+ float escha_F(uint xw) {
+-    const uint q = 0x3B603B60u ^ ((xw * 0xCBAC1FEDu) & 0x8FFF8FFFu);
++#if ESCHA_LUT
++    const uint packed = data_l[xw >> 1u];
++    return float(unpackFloat2x16(packed)[xw & 1u]);
++#else
++    const uint q = 0x3B603B60u ^ (escha_mix(xw) & 0x8FFF8FFFu);
+ #if ESCHA_F16_GEN
+     const f16vec2 hh = unpackFloat2x16(q);         // pure bit reinterpret, no convert
+     return float(hh.x + hh.y);                     // one f16 add, one widen
+@@ -166,6 +234,7 @@ float escha_F(uint xw) {
+     return unpackHalf2x16(f32_to_f16_rte(s)).x;    // value of the f16-rounded sum
+ #endif
+ #endif
++#endif
+ }
+ 
+ // SEAT-40 LEVER 2: decode TWO codewords per packed f16 add.
+@@ -194,8 +263,8 @@ float escha_F(uint xw) {
+ #endif
+ 
+ vec2 escha_F2(uint x0, uint x1) {
+-    const uint q0 = 0x3B603B60u ^ ((x0 * 0xCBAC1FEDu) & 0x8FFF8FFFu);
+-    const uint q1 = 0x3B603B60u ^ ((x1 * 0xCBAC1FEDu) & 0x8FFF8FFFu);
++    const uint q0 = 0x3B603B60u ^ (escha_mix(x0) & 0x8FFF8FFFu);
++    const uint q1 = 0x3B603B60u ^ (escha_mix(x1) & 0x8FFF8FFFu);
+     const f16vec2 h0 = unpackFloat2x16(q0);
+     const f16vec2 h1 = unpackFloat2x16(q1);
+     const f16vec2 s  = f16vec2(h0.x, h1.x) + f16vec2(h0.y, h1.y);   // one v_pk_add_f16
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index e714da516..65a34c705 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -1217,8 +1217,21 @@ void process_shaders() {
+     string_to_spv("escha_mm_k3_f32", "escha_mm.comp", {{"ESCHA_K", "3"}});
+     // multi-column arm: one weight decode serves ESCHA_MM_COLS columns (keep in sync with
+     // ESCHA_MM_COLS in ggml-vulkan.cpp)
++    // COLUMN LADDER (seat-40). One weight decode costs ~6 operations and feeds ONE multiply-add per
++    // column, so the arithmetic intensity of this kernel is exactly C FMAs per decode. A two-rung
++    // ladder (C=1 and C=8) wastes half the lanes at 4 columns and needs two decode passes at 16.
++    // Every rung is a power of two so the host can match the batch it actually receives.
++    // table-generator arm (seat-40): same kernel, escha_F served from a 65,536-entry f16 table
++    string_to_spv("escha_mm_k2_lut_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_LUT", "1"}});
++    string_to_spv("escha_mm_k3_lut_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_LUT", "1"}});
++    string_to_spv("escha_mm_k2_c2_f32",  "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "2"}});
++    string_to_spv("escha_mm_k3_c2_f32",  "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "2"}});
++    string_to_spv("escha_mm_k2_c4_f32",  "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "4"}});
++    string_to_spv("escha_mm_k3_c4_f32",  "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "4"}});
+     string_to_spv("escha_mm_k2_c8_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "8"}});
+     string_to_spv("escha_mm_k3_c8_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "8"}});
++    string_to_spv("escha_mm_k2_c16_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "16"}});
++    string_to_spv("escha_mm_k3_c16_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "16"}});
+     // occupancy arm (seat-40): 256 threads covering two adjacent output blocks. Decode-shaped work
+     // only (one column), where 128 threads is two waves on a warp-64 device. Requires n_out % 256.
+     string_to_spv("escha_mm_k2_b2_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_BLOCKS", "2"}});
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 99fc2be19..c8b277e6e 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -10058,13 +10058,29 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     // 205 = 6*32 + 13, 133 = 4*32 + 5 — both tails are also partial column-blocks for C>1.
+     test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, 205));
+     test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, 133));
+-    // ncols=9 at the real 27B shapes: the only eval cases that reach the column-blocked kernel
+-    // AT MODEL DEPTH. The two ncols=2 cases above sit below the ESCHA_MM_COLS=8 threshold and
+-    // therefore exercise the one-column kernel, so without these the shipped prefill path is
+-    // only ever checked at 512x256. 9 = one full column block plus a 1-wide tail.
++    // ncols=9 at the real 27B shapes: column-blocked kernel AT MODEL DEPTH.
++    // 9 = one full 8-wide block plus a 1-wide tail.
+     test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, 9));
+     test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, 9));
+ 
++    // COLUMN LADDER COVERAGE (seat-40). The Vulkan backend now selects among C = 1/2/4/8/16 by
++    // column count, so a case only proves the rung its ncols happens to select. Every rung needs a
++    // FULL block and a RAGGED tail, or the tail clamp and the store guard go unchecked on that rung.
++    //
++    // This is written against the SELECTION RULE, not against a remembered threshold: the previous
++    // comment here claimed the ncols=2 cases "exercise the one-column kernel", which was true when
++    // the floor was 8 and became false the moment it dropped to 2. A test comment that names a
++    // constant rots as soon as the constant moves; naming the rung it lands on does not.
++    //   ncols 2 -> C2 full     3 -> C4 ragged     4 -> C4 full
++    //   ncols 5 -> C8 ragged   8 -> C8 full      16 -> C16 full     17 -> C16 + 1-wide tail
++    for (int64_t ncols : {3, 5, 16, 17}) {
++        test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 512, 256, ncols));
++        test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 512, 256, ncols));
++    }
++    // and the two widest rungs at model depth, where register pressure is real
++    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA2, 5120, 12288, 16));
++    test_cases.emplace_back(new test_escha_mm(GGML_TYPE_ESCHA3, 17408, 5120, 17));
++
+     for (int64_t d_conv : {3, 4, 9}) {
+         for (int64_t d_inner: {1024, 1536, 2048}) {
+             test_cases.emplace_back(new test_ssm_conv(GGML_TYPE_F32, {d_conv, d_inner, 1, 1}, {d_conv, d_inner, 1, 1}));

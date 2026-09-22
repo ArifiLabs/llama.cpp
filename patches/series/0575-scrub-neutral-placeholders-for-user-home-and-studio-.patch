@@ -1,0 +1,148 @@
+From c526899167ae7771f349e63c5753bae3d2ff05b0 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 01:26:07 -0400
+Subject: [PATCH] scrub: neutral placeholders for user-home and studio paths in
+ the tracked text that remains
+
+Tracked-file sweep, lines: user-home 220 -> 114 (36 -> 15 files); studio-path 2826 -> 1615 (235 -> 54 files); credential/token shapes 0 throughout. Three more internal run scripts the first scope pass missed (a hyphenated stem the pattern did not match) are removed: r53-route-probe.cmd, r58-build-server.cmd, r58-q6k-repeat.cmd.
+
+TARGET 0 IS NOT REACHED AND THE REMAINDER IS NOT HIDDEN. 112 user-home and 1,597 studio-path lines live in patches/series/*.patch, which is GENERATED from git: editing those files in place breaks , whose whole claim is byte-identity to a fresh generation, and regenerating them means rewriting the source commits. Both costs are real; neither is paid here. This is the second thing the proposed export branch would fix.
+
+Also left alone, deliberately: arifi_sync.py's STUDIO_ROOT and sources.json's turbomerge url are values read at RUN TIME, not prose - substituting a placeholder would make the code and the config describe a path that does not exist, which is a behaviour change dressed up as a scrub (SF-P4). docs/backend/snapdragon/windows.md is upstream content. The rig hostnames are the intentional disclosure and the qnap hits were reviewed and cleared as a base64 token and an integrity hash.
+
+Origin: ArifiLabs (native) - release engineering for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - text substitution in documents and one build-cache snapshot; no code path is touched.
+---
+ RELEASE-PREP-PLAN.md                          | 16 +++++++-----
+ SIDE-FINDINGS-RELEASE-PREP.md                 | 25 ++++++++++++-------
+ evidence/10-memtypes.txt                      |  2 +-
+ .../recipe/build-vulkan.cache-snapshot.txt    |  2 +-
+ 4 files changed, 28 insertions(+), 17 deletions(-)
+
+diff --git a/RELEASE-PREP-PLAN.md b/RELEASE-PREP-PLAN.md
+index b7296ff76..9a3e415f6 100644
+--- a/RELEASE-PREP-PLAN.md
++++ b/RELEASE-PREP-PLAN.md
+@@ -1,7 +1,7 @@
+ # RELEASE-PREP PLAN — branch `release/r66i-public-prep-2026-09-21`
+ 
+ Base: `94461e770` (`arifi/main` tip, tag `r66i-integration-2026-09-19`), read live
+-(`git -C C:/ArifiLabs/cache/main-wt rev-parse HEAD`).
++(`git -C <repo>/cache/main-wt rev-parse HEAD`).
+ 
+ **Nothing is published by this lane.** No `git push`, no remote added, used or removed, no network
+ call. Publication is the President's word alone.
+@@ -52,10 +52,14 @@ Amending is a history rewrite of published, tagged, series-pinned commits. Barre
+ is qualified, so that a reader of the receipt cannot mistake an exempted commit for a fixed one:
+ 
+ ```
+-format-exempt             : 15 / 658  (sha-pinned in tools/arifi-sync/trailer-exemptions.json)
+-PASS (15 exempt - 12 loose-only, 3 without Measured-effect; see the ledger for each reason).
++EXEMPT, NOT REPAIRED      : 15 / 658  (12 loose-only + 3 without Measured-effect; sha-pinned
++                                       with a reason each in tools/arifi-sync/trailer-exemptions.json)
++PASS (15 EXEMPT, not repaired - 12 loose-only, 3 without Measured-effect)
+ ```
+ 
++(As shipped. Every exempted sha is also listed individually under an `EXEMPT` heading in the
++report, so the count can be checked against the names.)
++
+ A bare `PASS` here would be a manufactured receipt. Verified on the after-run output, not asserted.
+ 
+ - One assertion added to `tools/arifi-sync/test_arifi_sync.py`: a listed sha is not reported
+@@ -121,7 +125,7 @@ MarlaLabs)"*, over ten files each banked with a sha256 and a source URL, DOI
+ 
+ ## Blocker 3 — publish scope
+ 
+-**Approach.** Delete from this branch (the files stay untouched in `C:/ArifiLabs/cache/main-wt`,
++**Approach.** Delete from this branch (the files stay untouched in `<repo>/cache/main-wt`,
+ a separate worktree of the same repository):
+ 
+ - the root internal documents — `AGENTS.md`, `CLAUDE.md`, `UPDATE-RUNBOOK.md`,
+@@ -156,7 +160,7 @@ to improve a sweep number would be cosmetic.
+ ## Blocker 4 — path and identity scrub
+ 
+ Baseline on this branch, tracked text files only (5,645 of 5,727 scanned;
+-`python cache/relprep-tmp/sweep.py C:/ArifiLabs/cache/release-wt --bucket`):
++`python cache/relprep-tmp/sweep.py <repo>/cache/release-wt --bucket`):
+ 
+ | class | lines | files |
+ |---|---|---|
+@@ -210,7 +214,7 @@ that gets published.
+ 
+ - **Why.** One rewrite closes two items at once: the author e-mail on 396 commits, and the 1,709
+   absolute-path lines inside `patches/series/*.patch`, which cannot be scrubbed any other way.
+-- **Tool.** `git filter-repo --email-callback` (rewrite `arifilabs@users.noreply.github.com` to the GitHub
++- **Tool.** `git filter-repo --email-callback` (rewrite `<author-email>` to the GitHub
+   no-reply form, per seat-62 §4aa) plus a `--replace-text` file for the path placeholders, then
+   regenerate the series with `arifi_sync` and re-run `series check` on the export branch's own base.
+ - **What breaks.** Every sha in the range changes. Therefore: the `r66i-integration-2026-09-19` tag
+diff --git a/SIDE-FINDINGS-RELEASE-PREP.md b/SIDE-FINDINGS-RELEASE-PREP.md
+index 1d08a863b..d715c4693 100644
+--- a/SIDE-FINDINGS-RELEASE-PREP.md
++++ b/SIDE-FINDINGS-RELEASE-PREP.md
+@@ -11,7 +11,7 @@ what I would do.
+   file. Verified by directory listing and `git ls-files` at `94461e770`."* The directory exists and
+   is tracked, with 16 files and an audited retention table.
+ - **Where.** `licenses/` at `94461e770`; `licenses/README.md`.
+-- **Proof.** `git -C C:/ArifiLabs/cache/release-wt ls-files licenses NOTICE` returns
++- **Proof.** `git -C <repo>/cache/release-wt ls-files licenses NOTICE` returns
+   `licenses/LICENSE-jsonhpp`, `licenses/README.md`, `buun-MIT.txt`, `ciru-MIT.txt`,
+   `llama-cpp-turboquant-MIT.txt`, `llama.cpp-MIT.txt`, `powerinfer-MIT.txt`, `prisml-MIT.txt`,
+   `rocmfpx-MIT.txt`, `smallthinker-MIT.txt`, `thecodacus-MIT.txt`, `tq3-MIT.txt`,
+@@ -52,15 +52,22 @@ what I would do.
+ 
+ ### SF-P4 — `arifi_sync.py` carries a studio absolute path in its own source
+ 
+-- **What.** 19 studio-path lines live under `tools/`, the first at `tools/arifi-sync/arifi_sync.py:2036`,
+-  plus `tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt` (25 user-home lines) and
+-  `sources.json`'s `other_remotes.turbomerge.url` = `C:/ArifiLabs/research/local-inference/src/_turbo-merge`.
++- **What.** 19 studio-path lines live under `tools/` at `94461e770`: the module-level constant
++  `STUDIO_ROOT` in `arifi_sync.py` (line 2036 at that revision), `sources.json`'s
++  `other_remotes.turbomerge.url`, and 25 user-home lines in
++  `tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt`. Each names the studio's own drive
++  layout, and two of the three are values the code reads at run time.
+ - **Where.** As above.
+-- **Proof.** `cache/relprep-tmp/sweep.py … --bucket`, `tools/` row.
+-- **Would do.** The `sources.json` one is a **runtime value**, not prose — it is the configured
+-  location of a local remote, and blind-replacing it with `<repo>` would make the config describe a
+-  path that does not exist. It is left alone and belongs with the `other_remotes` disposition the
+-  President owes (item 6). The prose and recipe-snapshot occurrences are scrubbed.
++- **Proof.** `cache/relprep-tmp/sweep.py … --bucket`, `tools/` row. `STUDIO_ROOT` is consumed by
++  `_evidence_resolves()` as a third search root in an `os.path.exists()` fallback; the
++  `turbomerge` url is the configured location of a local git remote.
++- **Would do.** Nothing here, by the lane's own rule: a path inside a string literal that is read at
++  run time is a side-finding, not a blind replace. Substituting `<repo>` into either would leave the
++  code and the config describing a path that does not exist — a silent behaviour change dressed up
++  as a scrub. The `turbomerge` url additionally belongs with the `other_remotes` disposition the
++  President owes (item 6). **Both remain in the published source and are reported as residual, not
++  as closed.** Only the recipe snapshot, which is a record of a build rather than an input to one,
++  was scrubbed.
+ 
+ ### SF-P5 — `cmd_provenance` exempts one failure class and not the other
+ 
+diff --git a/evidence/10-memtypes.txt b/evidence/10-memtypes.txt
+index b6445e4f4..195bb450d 100644
+--- a/evidence/10-memtypes.txt
++++ b/evidence/10-memtypes.txt
+@@ -5,7 +5,7 @@ SOURCES (no new box time was spent; both are pre-existing CHECKED receipts):
+   A. `vulkaninfo` VkPhysicalDeviceMemoryProperties, read 2026-09-15 (instance/device creation only,
+      no allocation, no GPU work). Raw: r58-evidence/vulkaninfo-memprops-raw.txt
+   B. R51 lane-240 GGML_VK_ALLOC_TRACE=1 load of the 27B S-X8,
+-     C:/ArifiLabs/cache/r51-spill-wt/r51-evidence/30-planorder.txt (99034 lines), which carries both
++     <repo>/cache/r51-spill-wt/r51-evidence/30-planorder.txt (99034 lines), which carries both
+      the engine's own memtype enumeration and, per buffer, `state=planned type=T heap=H`.
+   The two agree line for line, so this receipt needed no load cell of its own.
+ 
+diff --git a/tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt b/tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt
+index d09a8bcc9..6f54af9f0 100644
+--- a/tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt
++++ b/tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt
+@@ -110,7 +110,7 @@ CREATE_DISK_CREDIT:BOOL=OFF
+ CTEST_SUBMIT_RETRY_COUNT:STRING=3
+ CTEST_SUBMIT_RETRY_DELAY:STRING=5
+ DART_TESTING_TIMEOUT:STRING=1500
+-FETCHCONTENT_BASE_DIR:PATH=C:/ArifiLabs/research/local-inference/src/arifilabs-llama.cpp/build-vulkan/_deps
++FETCHCONTENT_BASE_DIR:PATH=<repo>/research/local-inference/src/arifilabs-llama.cpp/build-vulkan/_deps
+ FETCHCONTENT_FULLY_DISCONNECTED:BOOL=OFF
+ FETCHCONTENT_QUIET:BOOL=ON
+ FETCHCONTENT_UPDATES_DISCONNECTED:BOOL=OFF

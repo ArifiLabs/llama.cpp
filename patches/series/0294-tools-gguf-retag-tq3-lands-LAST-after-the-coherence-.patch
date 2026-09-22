@@ -1,0 +1,462 @@
+From 45f9a5cf2f67b7aa96fb211078581d97ac0c125e Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 13:01:20 -0400
+Subject: [PATCH] tools: gguf-retag-tq3 - lands LAST, after the coherence
+ proof, per TYPE-ID-ALLOCATION 3.1.1. Decides ambiguous id 46 by measured byte
+ span; five refusals, no in-place path
+
+---
+ tools/gguf-retag-tq3/README.md    |  64 +++++
+ tools/gguf-retag-tq3/retag_tq3.py | 372 ++++++++++++++++++++++++++++++
+ 2 files changed, 436 insertions(+)
+ create mode 100644 tools/gguf-retag-tq3/README.md
+ create mode 100644 tools/gguf-retag-tq3/retag_tq3.py
+
+diff --git a/tools/gguf-retag-tq3/README.md b/tools/gguf-retag-tq3/README.md
+new file mode 100644
+index 000000000..025db7afe
+--- /dev/null
++++ b/tools/gguf-retag-tq3/README.md
+@@ -0,0 +1,64 @@
++# gguf-retag-tq3
++
++Retags a tq3-authored GGUF onto this fork's type ids. Modelled on `tools/gguf-retag-g128/`,
++but it never writes in place.
++
++## Why this exists
++
++`github.com/turbo-tan/llama.cpp-tq3` serializes `TQ3_4S` at type-id **46**. Our 46 is
++`TQ4_1S`, in files we already wrote. Both are serialized weight formats, so for the first
++time two formats we want claim the same id, and the imported one has to move. The contract
++is `docs/TYPE-ID-ALLOCATION.md` §3.1.1; the mapping is:
++
++| tq3 id | tq3 type | ours |
++|---|---|---|
++| 46 | `TQ3_4S` | **48** |
++| 200 | `TQ3_0` (which is our `TURBO2_0`) | **49** |
++| 36 | `TQ3_4SE` | **50** |
++
++## Why id 46 is decided by geometry
++
++Only 25 % separates the two meanings of id 46 — tq3's `TQ3_4S` is 16 bytes per 32 values,
++our `TQ4_1S` is 20 — and that gap is what makes a mistake loud instead of silent. This tool
++does not trust the filename, the path, or any metadata key: it measures each id-46 tensor's
++byte span from the gaps between consecutive data offsets and votes. A file whose id-46
++tensors measure 20 B/32 is ours, and it is **refused**.
++
++That is not hypothetical. `research/local-inference/models/gguf/qwen2.5-0.5b-TQ4_1S.gguf`
++carries 169 tensors at id 46, all ours. A retag keyed on the type id alone would silently
++corrupt it.
++
++## Ordering rule (binding)
++
++This tool may only be used against a build whose tq3 codec is compiled in
++(`GGML_ARIFI_TURBO_WEIGHT_QUANTS=ON`). Retagging a file for a build that cannot dequantize
++it converts a loud load failure into a file that loads and emits garbage — the whole reason
++§3.1.1 requires the codec and its coherence proof to land first.
++
++## Use
++
++```
++python retag_tq3.py <input.gguf> <output.gguf> [--map-out map.tsv]
++python retag_tq3.py --selftest
++```
++
++`--map-out` writes a `tensor · old_id · new_id` table, and the run prints whether
++`token_embd.weight` was among the retagged tensors — i.e. whether loading the output will
++exercise `get_rows` for the new type, or only `mul_mat`.
++
++`--selftest` builds synthetic GGUFs in a temp dir and asserts all five refusals fire plus
++the one success path. It needs no model and no GPU.
++
++## Worked example (lane-142)
++
++```
++python retag_tq3.py \
++  C:/ArifiLabs/models/hf/YTan2000/Qwen3.8-27B-TQ3_4S/Qwen3.8-27B-TQ3_4S-v2.gguf \
++  C:/ArifiLabs/models/hf/YTan2000/Qwen3.8-27B-TQ3_4S/Qwen3.8-27B-TQ3_4S-v2-tq3retag-lane142.gguf \
++  --map-out map.tsv
++```
++
++866 tensors in, histogram `{f32: 360, q6_K: 2, 46: 504}`, id-46 verdict `tq3 504/504`,
++504 rewrites, output histogram `{f32: 360, q6_K: 2, 48: 504}`. The output generates coherent
++text at `-ngl 0` and at `-dev Vulkan0 -ngl 999`. Note `token_embd.weight` is Q6_K in that
++file, so it exercises `mul_mat`, not `get_rows`.
+diff --git a/tools/gguf-retag-tq3/retag_tq3.py b/tools/gguf-retag-tq3/retag_tq3.py
+new file mode 100644
+index 000000000..908da59e8
+--- /dev/null
++++ b/tools/gguf-retag-tq3/retag_tq3.py
+@@ -0,0 +1,372 @@
++#!/usr/bin/env python3
++"""Retag a tq3-authored GGUF onto the ArifiLabs type ids (docs/TYPE-ID-ALLOCATION.md §3.1.1).
++
++`github.com/turbo-tan/llama.cpp-tq3` serializes TQ3_4S at type-id 46. Our 46 is TQ4_1S, in
++files we wrote. tq3's ids are therefore remapped into free space at 48+, and a tq3-authored
++GGUF must be retagged before it will load here.
++
++Landed by lane-142 only AFTER the codec it depends on was proven: §3.1.1 binds the retag tool
++to follow a working dequant, because a retag ahead of one turns a file that fails loudly at
++load into a file that loads and emits garbage. The proof is a coherent -ngl 0 generation from
++the retagged 27B file (lane-evidence/2026-08-17-lane-142-tq3-proofs/H1-coherence-cpu-ngl0.txt).
++
++REFUSES, rather than guessing, on all of:
++  * an in-place write (the output is always a NEW file)
++  * a file with no tq3-authored ids
++  * a tq3 id with no destination reserved by the contract (37 TQ3_4SV, 31 TQ3_1S_AP1,
++    44 tq3's own TQ3_1S which is *probably* our 45 but has never been proven so)
++  * id 46 whose measured byte spans say the file is OURS (TQ4_1S, 20 B/32) and not tq3's
++    (TQ3_4S, 16 B/32) — id 46 is genuinely ambiguous on this estate, so the decision is made
++    from geometry, never from a name or a path
++  * id 46 with no geometry available to decide with
++
++Usage:
++  python retag_tq3.py <input.gguf> <output.gguf> [--map-out map.tsv]
++  python retag_tq3.py --selftest
++"""
++
++from __future__ import annotations
++
++import argparse
++import os
++import shutil
++import struct
++import sys
++import tempfile
++from pathlib import Path
++
++# docs/TYPE-ID-ALLOCATION.md §3.1.1. tq3's id -> ours.
++TQ3_ID_MAP = {
++    46: 48,   # TQ3_4S      -> GGML_TYPE_TQ3_4S
++    200: 49,  # TQ3_0       -> GGML_TYPE_TQ3_0        (their 200 is OUR TURBO2_0)
++    36: 50,   # TQ3_4SE     -> GGML_TYPE_TQ3_4SE
++}
++# tq3 ids that are real but have NO reserved destination. Refuse, never guess.
++TQ3_ID_UNMAPPED = {
++    37: "TQ3_4SV — no id reserved by the contract",
++    31: "TQ3_1S_AP1 — no id reserved by the contract",
++    44: "tq3 TQ3_1S — probably our 45, but unconfirmed; refusing rather than assuming",
++}
++
++_GGUF_MAGIC = b"GGUF"
++
++
++class RetagRefusal(RuntimeError):
++    pass
++
++
++class _Reader:
++    def __init__(self, fh):
++        self.fh = fh
++
++    def raw(self, n: int) -> bytes:
++        b = self.fh.read(n)
++        if len(b) != n:
++            raise RetagRefusal(f"truncated header: wanted {n} bytes at {self.fh.tell()}")
++        return b
++
++    def u32(self) -> int:
++        return struct.unpack("<I", self.raw(4))[0]
++
++    def u64(self) -> int:
++        return struct.unpack("<Q", self.raw(8))[0]
++
++    def string(self) -> str:
++        return self.raw(self.u64()).decode("utf-8", errors="replace")
++
++
++# GGUF metadata value types -> fixed byte width (None = variable, handled explicitly).
++_FIXED = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}
++
++
++def _skip_value(r: _Reader, vtype: int) -> None:
++    if vtype in _FIXED:
++        r.raw(_FIXED[vtype])
++    elif vtype == 8:  # string
++        r.raw(r.u64())
++    elif vtype == 9:  # array
++        itype = r.u32()
++        count = r.u64()
++        if itype == 9:
++            raise RetagRefusal("nested arrays are not supported")
++        if itype in _FIXED:
++            r.raw(_FIXED[itype] * count)
++        elif itype == 8:
++            for _ in range(count):
++                r.raw(r.u64())
++        else:
++            raise RetagRefusal(f"unknown array element type {itype}")
++    else:
++        raise RetagRefusal(f"unknown metadata value type {vtype}")
++
++
++def parse_gguf(path: Path):
++    """-> (tensors, data_start, file_size).
++
++    tensors: list of dicts with name, tid, type_at (file offset of the u32 type
++    field), nelem, offset (offset within the data section).
++    """
++    out = []
++    path = Path(path)
++    with open(path, "rb") as fh:
++        r = _Reader(fh)
++        if r.raw(4) != _GGUF_MAGIC:
++            raise RetagRefusal(f"{path}: not a GGUF file")
++        version = r.u32()
++        if version != 3:
++            raise RetagRefusal(f"{path}: GGUF version {version}, only 3 is handled")
++        n_tensors = r.u64()
++        n_kv = r.u64()
++        alignment = 32
++        for _ in range(n_kv):
++            key = r.string()
++            vtype = r.u32()
++            if key == "general.alignment" and vtype == 4:
++                alignment = struct.unpack("<I", r.raw(4))[0]
++            else:
++                _skip_value(r, vtype)
++        for _ in range(n_tensors):
++            name = r.string()
++            n_dims = r.u32()
++            nelem = 1
++            for _ in range(n_dims):
++                nelem *= r.u64()
++            type_at = fh.tell()
++            tid = r.u32()
++            offset = r.u64()
++            out.append({"name": name, "tid": tid, "type_at": type_at,
++                        "nelem": nelem, "offset": offset})
++        header_end = fh.tell()
++    data_start = (header_end + alignment - 1) // alignment * alignment
++    return out, data_start, path.stat().st_size
++
++
++def parse_tensor_types(path: Path):
++    """Back-compat shim: -> list of (name, type_id, type-field offset)."""
++    tensors, _, _ = parse_gguf(path)
++    return [(t["name"], t["tid"], t["type_at"]) for t in tensors]
++
++
++# Candidate geometries for a tensor tagged 46, in bytes per 32 values.
++# The whole reason a tq3-tagged 46 fails loudly here rather than silently is that
++# these two differ by 25% (TYPE-ID-ALLOCATION §3.1.1) - so a byte span decides it.
++# ASSUMPTION, stated rather than widened: the bands below carry no alignment slack, so a
++# tensor small enough that padding to the next tensor exceeds a quarter of its own size
++# votes 'ambiguous' and the file is refused. That is fail-closed and therefore safe, but it
++# would refuse a file of only tiny tq3 tensors for the wrong reason. All 504 YTan tensors
++# voted cleanly, so the bands are left tight rather than loosened on an unmeasured guess.
++_ID46_TQ3_4S_BPB = 16   # tq3 TQ3_4S  -> our 48
++_ID46_TQ4_1S_BPB = 20   # OUR TQ4_1S  -> leave alone, and refuse the file
++
++
++def _spans(tensors, data_start, file_size):
++    """-> {name: byte span}, from the gaps between consecutive data offsets."""
++    ordered = sorted(tensors, key=lambda t: t["offset"])
++    spans = {}
++    for i, t in enumerate(ordered):
++        end = ordered[i + 1]["offset"] if i + 1 < len(ordered) else file_size - data_start
++        spans[t["name"]] = end - t["offset"]
++    return spans
++
++
++def classify_id46(tensors, data_start, file_size):
++    """-> 'tq3' | 'ours' | 'ambiguous', decided by measured byte spans, never by name."""
++    spans = _spans(tensors, data_start, file_size)
++    votes = {"tq3": 0, "ours": 0, "ambiguous": 0}
++    for t in tensors:
++        if t["tid"] != 46:
++            continue
++        blocks = t["nelem"] // 32
++        span = spans[t["name"]]
++        tq3_size = blocks * _ID46_TQ3_4S_BPB
++        our_size = blocks * _ID46_TQ4_1S_BPB
++        # Padding to the next tensor can only ADD bytes, and never 25% of a row.
++        if tq3_size <= span < our_size:
++            votes["tq3"] += 1
++        elif our_size <= span < our_size * 5 // 4:
++            votes["ours"] += 1
++        else:
++            votes["ambiguous"] += 1
++    if votes["tq3"] and not votes["ours"]:
++        return "tq3", votes
++    if votes["ours"] and not votes["tq3"]:
++        return "ours", votes
++    return "ambiguous", votes
++
++
++def plan(tensors, data_start=None, file_size=None):
++    """-> (rewrites, histogram). Refuses on an unmapped tq3 id or on OUR id-46 files."""
++    if isinstance(tensors[0], tuple):  # back-compat shim path, no geometry available
++        tensors = [{"name": n, "tid": i, "type_at": a, "nelem": 0, "offset": 0}
++                   for n, i, a in tensors]
++        data_start = file_size = None
++
++    rewrites = []
++    hist = {}
++    for t in tensors:
++        hist[t["tid"]] = hist.get(t["tid"], 0) + 1
++        if t["tid"] in TQ3_ID_UNMAPPED:
++            raise RetagRefusal(
++                f"REFUSED: tensor {t['name']!r} carries tq3 id {t['tid']} — {TQ3_ID_UNMAPPED[t['tid']]}"
++            )
++
++    # id 46 is the ONE ambiguous id: tq3's TQ3_4S and our own TQ4_1S both use it.
++    # Blanket-rewriting it silently corrupts every TQ4_1S file we wrote ourselves.
++    # Missing geometry is a REFUSAL, never a bypass — otherwise the central safety
++    # check would depend on which entry point the caller happened to pick.
++    if 46 in hist and data_start is None:
++        raise RetagRefusal(
++            "REFUSED: cannot decide id 46 without byte spans. id 46 means tq3's TQ3_4S "
++            "(16 B/32) in their files and OUR TQ4_1S (20 B/32) in ours; call plan() with "
++            "the data_start/file_size from parse_gguf()."
++        )
++    if 46 in hist and data_start is not None:
++        verdict, votes = classify_id46(tensors, data_start, file_size)
++        if verdict == "ours":
++            raise RetagRefusal(
++                f"REFUSED: the id-46 tensors in this file measure 20 B / 32 values — that is OUR "
++                f"GGML_TYPE_TQ4_1S, not tq3's TQ3_4S. Nothing to retag. (spans: {votes})"
++            )
++        if verdict == "ambiguous":
++            raise RetagRefusal(
++                f"REFUSED: id-46 byte spans match neither TQ3_4S (16 B/32) nor TQ4_1S (20 B/32), "
++                f"or match both: {votes}"
++            )
++
++    for t in tensors:
++        if t["tid"] in TQ3_ID_MAP:
++            rewrites.append((t["name"], t["tid"], TQ3_ID_MAP[t["tid"]], t["type_at"]))
++    if not rewrites:
++        raise RetagRefusal("REFUSED: no tq3-authored tensor ids in this file — nothing to retag")
++    return rewrites, hist
++
++
++def retag(src: Path, dst: Path, map_out: Path | None = None) -> int:
++    src = Path(src).resolve()
++    dst = Path(dst).resolve()
++    if src == dst:
++        raise RetagRefusal("REFUSED: in-place retag. Give a NEW output path.")
++    if dst.exists():
++        raise RetagRefusal(f"REFUSED: {dst} already exists")
++
++    tensors, data_start, file_size = parse_gguf(src)
++    rewrites, hist = plan(tensors, data_start, file_size)
++
++    print(f"source     : {src}")
++    print(f"tensors    : {len(tensors)}   id histogram: {dict(sorted(hist.items()))}")
++    if 46 in hist:
++        print(f"id-46 verdict (byte spans, not names): {classify_id46(tensors, data_start, file_size)}")
++    print(f"rewrites   : {len(rewrites)}  map: "
++          f"{ {o: n for _, o, n, _ in rewrites} }")
++
++    shutil.copyfile(src, dst)
++    with open(dst, "r+b") as fh:
++        for _, _, new, at in rewrites:
++            fh.seek(at)
++            fh.write(struct.pack("<I", new))
++
++    hist_after = {}
++    for _, tid, _ in parse_tensor_types(dst):
++        hist_after[tid] = hist_after.get(tid, 0) + 1
++    print(f"output     : {dst}")
++    print(f"id histogram after: {dict(sorted(hist_after.items()))}")
++
++    if map_out is not None:
++        with open(map_out, "w", encoding="utf-8") as fh:
++            fh.write("tensor\told_id\tnew_id\n")
++            for name, old, new, _ in rewrites:
++                fh.write(f"{name}\t{old}\t{new}\n")
++        print(f"map        : {map_out}")
++        embd = [n for n, _, _, _ in rewrites if "token_embd" in n]
++        print(f"token_embd retagged: {embd if embd else 'NO — get_rows is NOT exercised by this file'}")
++    return 0
++
++
++def _build_gguf(tmp: Path, spec) -> Path:
++    """Minimal valid GGUF v3. `spec` is a list of (type_id, bytes_per_32_values).
++
++    Each tensor is 256 values, so its data span is 8 * bytes_per_32 - which is what
++    classify_id46 measures. Offsets are laid out contiguously, like a real file.
++    """
++    n = len(spec)
++    body = bytearray()
++    body += _GGUF_MAGIC + struct.pack("<I", 3)
++    body += struct.pack("<Q", n) + struct.pack("<Q", 1)
++    key = b"general.alignment"
++    body += struct.pack("<Q", len(key)) + key + struct.pack("<I", 4) + struct.pack("<I", 32)
++
++    offset = 0
++    total = 0
++    for i, (tid, bpb) in enumerate(spec):
++        name = f"t{i}.weight".encode()
++        body += struct.pack("<Q", len(name)) + name
++        body += struct.pack("<I", 1) + struct.pack("<Q", 256)
++        body += struct.pack("<I", tid) + struct.pack("<Q", offset)
++        size = 8 * bpb
++        offset += size
++        total += size
++
++    pad = (-len(body)) % 32
++    tmp.write_bytes(bytes(body) + b"\0" * pad + b"\0" * total)
++    return tmp
++
++
++def selftest() -> int:
++    """RED halves: refuses in-place, refuses a non-tq3 file, refuses an unmapped id."""
++    ok = True
++    with tempfile.TemporaryDirectory() as d:
++        d = Path(d)
++        # (type id, bytes per 32 values). 16 B/32 at id 46 = tq3 TQ3_4S; 20 B/32 = our TQ4_1S.
++        good = _build_gguf(d / "good.gguf", [(46, 16), (0, 128), (46, 16)])
++        plain = _build_gguf(d / "plain.gguf", [(0, 128), (8, 34)])
++        unmapped = _build_gguf(d / "unmapped.gguf", [(46, 16), (37, 16)])
++        ours = _build_gguf(d / "ours.gguf", [(46, 20), (0, 128)])
++
++        for label, fn in [
++            ("in-place", lambda: retag(good, good)),
++            ("non-tq3 file", lambda: retag(plain, d / "out1.gguf")),
++            ("unmapped id 37", lambda: retag(unmapped, d / "out2.gguf")),
++            ("OUR TQ4_1S at id 46", lambda: retag(ours, d / "out4.gguf")),
++            # The bypass half: the geometry-free entry point must REFUSE, not blanket-rewrite.
++            ("plan() without byte spans", lambda: plan(parse_tensor_types(good))),
++        ]:
++            try:
++                fn()
++                print(f"SELFTEST FAIL — {label} was NOT refused")
++                ok = False
++            except RetagRefusal as exc:
++                print(f"SELFTEST ok — {label} refused: {exc}")
++
++        out = d / "out3.gguf"
++        retag(good, out, map_out=d / "m.tsv")
++        ids = [t for _, t, _ in parse_tensor_types(out)]
++        if ids == [48, 0, 48]:
++            print(f"SELFTEST ok — GREEN half: 46 -> 48 rewritten, others untouched {ids}")
++        else:
++            print(f"SELFTEST FAIL — GREEN half wrong: {ids}")
++            ok = False
++    print("SELFTEST OK" if ok else "SELFTEST FAILED")
++    return 0 if ok else 1
++
++
++def main(argv=None) -> int:
++    ap = argparse.ArgumentParser(description=__doc__)
++    ap.add_argument("input", nargs="?")
++    ap.add_argument("output", nargs="?")
++    ap.add_argument("--map-out")
++    ap.add_argument("--selftest", action="store_true")
++    a = ap.parse_args(argv)
++    if a.selftest:
++        return selftest()
++    if not a.input or not a.output:
++        ap.error("input and output are required (or use --selftest)")
++    try:
++        return retag(Path(a.input), Path(a.output),
++                     Path(a.map_out) if a.map_out else None)
++    except RetagRefusal as exc:
++        print(str(exc), file=sys.stderr)
++        return 2
++
++
++if __name__ == "__main__":
++    sys.exit(main())

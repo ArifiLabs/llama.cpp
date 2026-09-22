@@ -1,0 +1,27 @@
+From de49df874635c50ea7b61d52f65e52540b4f69d6 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 20:10:43 -0400
+Subject: [PATCH] series: disclose in the record itself that the flatten
+ absorbed 17 empty commits - content unchanged, history count changed
+ (lane-147 checker finding 4)
+
+---
+ tools/arifi-sync/sources.json | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/tools/arifi-sync/sources.json b/tools/arifi-sync/sources.json
+index 0cb40d870..09e747b8d 100644
+--- a/tools/arifi-sync/sources.json
++++ b/tools/arifi-sync/sources.json
+@@ -36,6 +36,11 @@
+       "tagged `lane147/flatten-point` (f5de271ad) so the identity is permanently re-checkable. The",
+       "range is 301 commits with ZERO merges, so the linearity gate in format_patch passes on merit.",
+       "",
++      "DISCLOSED, so nobody discovers it later: the blessed branch carried 318 NON-MERGE commits over",
++      "4df29be4f and the flatten holds 301. The rebase absorbed 17 as EMPTY - each was already contained",
++      "in the other lineage. No CONTENT was dropped; that is exactly what the identical tree hash proves.",
++      "The 17 subjects are listed in B-acceptance-empty-diff.txt in the lane-147 evidence dir.",
++      "",
+       "`recut/2026-08-16` is NEVER rewritten - it stays as the blessed record. Evidence:",
+       "research/local-inference/lane-evidence/2026-08-17-lane-147-linearize-proofs/"
+     ]

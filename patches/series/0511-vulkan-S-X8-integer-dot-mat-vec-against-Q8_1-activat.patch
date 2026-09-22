@@ -1,0 +1,214 @@
+From 072eda60d05b642db15c231b583bf7d520a25032 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 10 Sep 2026 14:55:24 -0400
+Subject: [PATCH] vulkan: S-X8 integer-dot mat-vec against Q8_1 activations
+ (R46 commit C)
+
+Adds mul_mat_vec_sx8_q8_1_f32: one call consumes a whole 32-weight S-X8 block
+against a whole Q8_1 activation block, so the header, the four range strategies
+and the two planes are read once each.
+
+The affine decode w = rlo_s + step_s * L is fixed per 8-weight sub-block, so a
+sub-block needs TWO integer sums, sum(L*q) and sum(q). The Q8_1 ds.y term cannot
+stand in for sum(q) because rlo changes every 8 weights. sum(q) is a dot against
+0x01010101, the same instruction with no extra loads. Levels are in [0,63] and
+quants in [-127,127], so 63*127*4 = 32004 per call cannot overflow the 32-bit
+accumulator.
+
+Decode constants stay in sx8_range() / sx8_levels4() (types.glsl), shared with
+the float mat-vec and dequant_sx8 -- the F-110 single-home rule.
+
+ggml_vk_should_use_mmvq() admits S-X8 at every width for now: the per-width
+table this lane measures is what narrows it, and narrowing before the
+measurement would hide the widths that lose. Any width that loses at op level
+must be excluded there before this ships.
+
+The mmq_int_dot ARIFI-SYNC-SET marker carries EXCEPT SX8: no id q8_1 pipeline
+is generated for S-X8 (the mat-vec-id path is f32-B only, as its src0_types
+switch already records), so admitting it in the _id mirror would select a null
+pipeline.
+
+Correctness on the built binary (arm c, foreground, quiet hold): MUL_MAT
+type_a=sx8 12/12 OK, MUL_MAT_ID 2/2, GET_ROWS and CPY 2/2 backends passed,
+test-quantize-fns unchanged at the 6 pre-existing non-sx8 failures. A planted
+RED in this dot product turned n=1..8 red on every shape and left n=9 and n=64
+green, which proves the new pipeline is the one executing at every mat-vec
+width rather than a silent fallback.
+
+Origin: ArifiLabs (native)
+WI: WI-1729
+Lane: lane-230
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 22 +++++++-
+ .../vulkan-shaders/mul_mat_vecq.comp          |  5 ++
+ .../vulkan-shaders/mul_mat_vecq_funcs.glsl    | 53 +++++++++++++++++++
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     | 19 +++++--
+ 4 files changed, 95 insertions(+), 4 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 1cfdd6c84..2ccb1cd8c 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -5717,6 +5717,12 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q8_0][i], "mul_mat_vec_q8_0_q8_1_f32", arr_dmmv_q8_0_q8_1_f32_len[reduc], arr_dmmv_q8_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+ 
+                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_MXFP4][i], "mul_mat_vec_mxfp4_q8_1_f32", arr_dmmv_mxfp4_q8_1_f32_len[reduc], arr_dmmv_mxfp4_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
++
++                // arifi lane-230 / R46: S-X8 integer-dot mat-vec. Same rows and workgroup as the
++                // S-X8 float mat-vec above, and the same no-subgroup-pin treatment -- only the
++                // plain reduction variant is generated, so this must not ask for subgroups.
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_SX8][i], "mul_mat_vec_sx8_q8_1_f32", mul_mat_vec_sx8_q8_1_f32_len, mul_mat_vec_sx8_q8_1_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {sx8_num_rows, 1, 1}, {sx8_wg_size, sx8_num_rows, i+1}, 1, true, false, 0);
++
+                 // arifi lane-209: the q8_1 selector (ggml_vk_get_dequantize_mul_mat_vec) already listed ROCMFP4_FAST, but no pipeline was ever
+                 // created for it, so quantize_y fell back to the f32 shader at every width. Taken-from rocmfpx/main :4867.
+                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_0_ROCMFP4_FAST][i], "mul_mat_vec_rocmfp4_fast_q8_1_f32", arr_dmmv_rocmfp4_fast_q8_1_f32_len[reduc], arr_dmmv_rocmfp4_fast_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+@@ -8390,7 +8396,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context *
+     GGML_ASSERT(num_cols >= 1 && num_cols <= mul_mat_vec_max_cols);
+ 
+     if (b_type == GGML_TYPE_Q8_1) {
+-        // ARIFI-SYNC-SET: mul_mat.mmq_int_dot
++        // ARIFI-SYNC-SET: mul_mat.mmq_int_dot EXCEPT SX8=plain mat-vec only; no id q8_1 pipeline is generated for S-X8 (see the mul_mat.src0_types switch in ggml_vk_get_dequantize_mul_mat_vec_id), so admitting it in the _id mirror would select a null pipeline
+         switch (a_type) {
+             case GGML_TYPE_Q2_0:
+             case GGML_TYPE_Q2_0_G128:
+@@ -8413,6 +8419,10 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context *
+             case GGML_TYPE_Q6_K:
+             case GGML_TYPE_IQ1_S:
+             case GGML_TYPE_IQ1_M:
++            // arifi lane-230 / R46: S-X8 has a q8_1 mat-vec (mul_mat_vec_sx8_q8_1_f32).
++            // This switch alone does not route it -- ggml_vk_should_use_mmvq() must admit
++            // the type too, or quantize_y stays false and the pipeline is never selected.
++            case GGML_TYPE_SX8:
+                 break;
+             default:
+                 return nullptr;
+@@ -10230,6 +10240,16 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
+         return false;
+     }
+ 
++    // arifi lane-230 / R46: S-X8. Its q8_1 mat-vec decodes a whole 32-weight block per
++    // thread, so unlike q6_k the 2-byte block alignment costs it nothing. The width
++    // decision here is DELIBERATELY a single admit: the per-width table this lane
++    // measures (n=1..8 at 17408x5120, 5120x17408, 248320x5120) is what narrows it, and
++    // narrowing it before the measurement would hide the widths that lose. Any width
++    // that loses at op level must be excluded HERE before this ships.
++    if (src0_type == GGML_TYPE_SX8) {
++        return true;
++    }
++
+     // arifi lane-198 (AMD 780M, proprietary driver, measured on the live speculative-verify graph):
+     // the q8_1 MMVQ shader's per-dispatch cost STEPS from NUM_COLS 4 to 5 - Q4_K 2.0-2.3x, Q5_K
+     // 1.55x (width-3 baseline) - while the f32 dequant shader rises 1.4-1.6x on the same rows, and
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp
+index 6f48039d9..6df04b2c8 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp
+@@ -17,6 +17,11 @@ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+ #define K_PER_ITER 8
+ #elif defined(DATA_A_IQ1_S) || defined(DATA_A_IQ1_M)
+ #define K_PER_ITER 32
++#elif defined(DATA_A_SX8)
++// lane-230 / R46. S-X8 blocks are 32 weights, the same width as a Q8_1 activation
++// block, so one thread owning 32 columns owns exactly one weight block: the header,
++// the four range strategies and the two planes are each read once per block.
++#define K_PER_ITER 32
+ #else
+ #error unimplemented
+ #endif
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl
+index 119d91742..0c39b390b 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl
+@@ -617,3 +617,56 @@ FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+     return sum;
+ }
+ #endif
++
++#if defined(DATA_A_SX8)
++// S-X8 v4.3 (type-id 57) integer-dot mat-vec. lane-230 / R46.
++//
++// One call consumes a WHOLE 32-weight block against a whole Q8_1 activation block,
++// so the header, the four range strategies and the two planes are read once each.
++//
++// The affine decode is w = rlo_s + step_s * L, with (rlo_s, step_s) fixed per 8-weight
++// sub-block. Over one sub-block that gives
++//
++//     sum(w * a) = d_b * ( step_s * sum(L * q) + rlo_s * sum(q) )
++//
++// so TWO integer sums per sub-block, not one. The Q8_1 ds.y term (d_b * sum of all 32
++// quants) cannot stand in for sum(q) here: rlo changes every 8 weights, so the four
++// partial sums are needed separately. sum(q) is a dot against 0x01010101 -- the same
++// instruction, no extra loads.
++//
++// Levels are in [0,63] and quants in [-127,127], so a signed 8-bit packed dot cannot
++// overflow its 32-bit accumulator (worst case 63*127*4 = 32004 per call).
++//
++// Decode constants stay in sx8_range() / sx8_levels4() (types.glsl), shared with the
++// float mat-vec and dequant_sx8 -- the F-110 single-home rule. A planted error there
++// must turn every S-X8 path red at once, which is the only way the oracle proves it ran.
++FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
++    const float dlo = float(data_a[ib_a].dmin);
++    const float dhi = float(data_a[ib_a].dmax);
++    const uint  cfg = uint(data_a[ib_a].config);
++
++    float acc = 0.0;
++
++    [[unroll]] for (uint sb = 0; sb < 4u; ++sb) {
++        float rlo, step;
++        sx8_range(dlo, dhi, (cfg >> (sb * 2u)) & 3u, rlo, step);
++
++        int32_t lq = 0;   // sum of level * quant over the 8 weights
++        int32_t sq = 0;   // sum of quant          over the 8 weights
++
++        [[unroll]] for (uint g = 0; g < 2u; ++g) {
++            const uint qh_pair = uint(data_a[ib_a].qh[sb * 4u + g * 2u])
++                               | (uint(data_a[ib_a].qh[sb * 4u + g * 2u + 1u]) << 8u);
++            const int32_t lv = int32_t(sx8_levels4(qh_pair, uint(data_a[ib_a].ql[sb * 2u + g])));
++            const int32_t bq = cache_b_qs[sb * 2u + g];
++
++            lq += dotPacked4x8EXT(lv, bq);
++            sq += dotPacked4x8EXT(0x01010101, bq);
++        }
++
++        acc += step * float(lq) + rlo * float(sq);
++    }
++
++    return FLOAT_TYPE(float(cache_b_ds.x) * acc);
++}
++#endif
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index e7f78f8fc..8c81db42b 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -1102,15 +1102,28 @@ void process_shaders() {
+     // why ggml_vk_get_to_fp16 keeps its SX8 arm. GET_ROWS, CPY and
+     // SET_ROWS are deliberately not generated: nothing quantizes TO S-X8 on the GPU,
+     // and supports_op declines them rather than aborting (the honest-supports_op law).
+-    // Unlike the tq shaders, mul_mat_vec_sx8.comp needs no 32-thread pin -- it derives
+-    // its weight position from tid & 31 and strides whole blocks by BLOCK_SIZE/32, so
+-    // any workgroup size that is a multiple of 32 is correct.
++    // Unlike the tq shaders, mul_mat_vec_sx8.comp needs no 32-thread pin. AMENDED
++    // lane-230 / R46: the reason given here -- "it derives its weight position from
++    // tid & 31 and strides whole blocks by BLOCK_SIZE/32, so any workgroup size that
++    // is a multiple of 32 is correct" -- was TRUE until R46 and is now FALSE. One
++    // thread owns one whole 32-weight BLOCK and strides blocks by BLOCK_SIZE, so the
++    // multiple-of-32 condition is gone with it: ANY workgroup size is correct.
+     string_to_spv("mul_mat_vec_sx8_f32_f32", "mul_mat_vec_sx8.comp",
+         merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
+     string_to_spv("mul_mat_vec_sx8_f16_f32", "mul_mat_vec_sx8.comp",
+         merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"B_TYPE", "float16_t"}, {"B_TYPEV2", "f16vec2"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}));
+     string_to_spv("mul_mat_vec_id_sx8_f32_f32", "mul_mat_vec_sx8.comp",
+         merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {"DATA_A_SX8", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
++    // lane-230 / R46: S-X8 integer-dot mat-vec against Q8_1 activations. MUL_MAT only,
++    // and only the plain reduction: the S-X8 mat-vec pipelines take no subgroup pin
++    // (see the amended note above), so the subgroup and no-shmem variants would be
++    // generated and never selected. MUL_MAT_ID keeps the float path -- its Q8_1
++    // selector is a separate switch and the dense 27B FFN this lane targets never
++    // reaches it.
++#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
++    string_to_spv("mul_mat_vec_sx8_q8_1_f32", "mul_mat_vecq.comp",
++        merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}}));
++#endif
+     string_to_spv("dequant_sx8", "dequant_sx8.comp",
+         merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"D_TYPE", "float16_t"}}));
+ 

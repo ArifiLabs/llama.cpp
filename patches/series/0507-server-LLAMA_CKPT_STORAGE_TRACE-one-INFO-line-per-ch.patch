@@ -1,0 +1,70 @@
+From bc264e3ec71e15f9a46f6c615de8ca87f502f305 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 9 Sep 2026 19:25:06 -0400
+Subject: [PATCH] server : LLAMA_CKPT_STORAGE_TRACE - one INFO line per
+ checkpoint save and restore (R45, lane-229)
+
+The R44 crash logs recorded no storage id, no role, no cell count and no byte totals, so the abort at task 594 could not be attributed to the target or the draft image. This env-gated trace prints seq, both storage ids, the cell count, the position range, the anchor flag, both image sizes and the live checkpoint count, at INFO, on every save and every restore. Off unless LLAMA_CKPT_STORAGE_TRACE is set.
+
+Origin: fork-authored (ArifiLabs lane-229 R45, Opus 5 MEDIUM, kernel-maker); the diagnostic gap named in ASTRA-R44-CRASH-ANALYSIS.md OWED
+Measured-effect: UNMEASURED - diagnostic only, off by default
+Lane: lane-229
+---
+ tools/server/server-context.cpp | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 08651212c..af6e5186b 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -2795,6 +2795,20 @@ private:
+                ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+     }
+ 
++    // R45: the checkpoint trace (env LLAMA_CKPT_STORAGE_TRACE=1) - one INFO line per save and per
++    // restore naming the storage id, the role sizes and the cell count. Off by default.
++    static bool ckpt_storage_trace() {
++        static const bool on = getenv("LLAMA_CKPT_STORAGE_TRACE") != nullptr;
++        return on;
++    }
++
++    static uint32_t ckpt_storage_id(llama_state_seq_flags flags) {
++        if ((flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) == 0) {
++            return 0; // host image - no storage id
++        }
++        return (flags & LLAMA_STATE_SEQ_FLAGS_STORAGE_MASK) >> LLAMA_STATE_SEQ_FLAGS_STORAGE_SHIFT;
++    }
++
+     llama_state_seq_flags ctx_ckpt_flags(server_slot & slot) {
+         llama_state_seq_flags flags = LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY;
+         if (ctx_ckpt_on_device()) {
+@@ -2884,6 +2898,13 @@ private:
+         // stash the draft's speculative state with the checkpoint
+         common_speculative_get_state(spec.get(), slot.id, cur.data_spec);
+ 
++        if (ckpt_storage_trace()) {
++            SLT_INF(slot, "ckpt-trace SAVE    seq=%d storage_tgt=%u storage_dft=%u n_tokens=%" PRId64 " pos=[%d,%d] anchor=%d tgt=%zu B dft=%zu B live=%d\n",
++                    slot.id, ckpt_storage_id(cur.flags_tgt), ckpt_storage_id(cur.flags_dft),
++                    cur.n_tokens, cur.pos_min, cur.pos_max, (int) anchor,
++                    cur.data_tgt.size(), cur.data_dft.size(), (int) slot.prompt.checkpoints.size());
++        }
++
+         SLT_TRC(slot,
+                 "created context checkpoint %d of %d (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", size = %.3f MiB, %s, anchor = %d, %.3f ms)\n",
+                 (int) slot.prompt.checkpoints.size(), params_base.n_ctx_checkpoints, cur.pos_min,
+@@ -3928,6 +3949,15 @@ private:
+                                     bool do_reset = it == slot.prompt.checkpoints.rend();
+ 
+                                     if (!do_reset) {
++                                        // R45: env LLAMA_CKPT_STORAGE_TRACE prints the id/role/size of every
++                                        // restore at INFO. The R44 crash logs named none of them, so the abort
++                                        // could not be attributed to target vs draft or to a storage id.
++                                        if (ckpt_storage_trace()) {
++                                            SLT_INF(slot, "ckpt-trace RESTORE seq=%d storage_tgt=%u storage_dft=%u n_tokens=%" PRId64 " pos=[%d,%d] anchor=%d tgt=%zu B dft=%zu B\n",
++                                                    slot.id, ckpt_storage_id(it->flags_tgt), ckpt_storage_id(it->flags_dft),
++                                                    it->n_tokens, it->pos_min, it->pos_max, (int) it->anchor,
++                                                    it->data_tgt.size(), it->data_dft.size());
++                                        }
+                                         // restore the context checkpoint (with the flags it was captured under:
+                                         // the device storage id lives in them - R31/M14)
+                                         it->load_tgt(ctx_tgt, slot.id, it->flags_tgt);

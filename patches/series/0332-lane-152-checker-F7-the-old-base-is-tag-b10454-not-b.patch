@@ -1,0 +1,31 @@
+From 2614fddc99a0b46497d5248fb4c369a1fa079549 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 04:48:44 -0400
+Subject: [PATCH] lane-152 checker F7: the old base is tag b10454, not b10453 -
+ correction of record
+
+git describe --tags --exact-match 4df29be4f = b10454. b10453 is 3cb7ffb1a, a different commit. This file carried the wrong label before this lane and I re-asserted it without re-deriving, into commit subject 915a510fd and the upstream pin_review, before my own checker caught it. Every SHA is correct throughout; only the label was wrong. Commit subjects are history and are not rewritten, so this row is the correction of record. The staged engine directory models/engines/arifi-b10453-union/ carries the same wrong label - flag it at restage rather than propagating it into arifi-b10481-union.
+---
+ tools/arifi-sync/sources.json | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/tools/arifi-sync/sources.json b/tools/arifi-sync/sources.json
+index 4254424a7..ac78dcc76 100644
+--- a/tools/arifi-sync/sources.json
++++ b/tools/arifi-sync/sources.json
+@@ -22,7 +22,14 @@
+     "upstream_tag": "b10481",
+     "upstream_sha": "25ae3a9b331fffea50ff8d07a5cad34c33f1276f",
+     "_base_moved_2026_08_18_lane152": [
+-      "MOVED b10453/4df29be4f -> b10481/25ae3a9b3 by the first live execution of UPDATE-RUNBOOK.md 2.",
++      "MOVED 4df29be4f -> b10481/25ae3a9b3 by the first live execution of UPDATE-RUNBOOK.md 2.",
++      "TAG-LABEL CORRECTION, filed by this lane's checker (F7): the OLD base 4df29be4f was labelled",
++      "`b10453` in this file, and that label was WRONG and had been wrong since it was written.",
++      "`git describe --tags --exact-match 4df29be4f` = b10454; b10453 is 3cb7ffb1a, a DIFFERENT commit.",
++      "I inherited the wrong label and re-asserted it into new commit subjects and a pin_review before",
++      "the checker caught it. The commit subjects are history and are not rewritten; this row is the",
++      "correction of record, and the staged engine directory name `arifi-b10453-union` carries the same",
++      "wrong label - flag it at restage rather than propagating it into `arifi-b10481-union`.",
+       "TAG, NOT HEAD, and the choice is recorded because 2.2 does not make it: upstream/master was",
+       "8b8640097, exactly ONE commit past tag b10481, and that commit is `ci: create pre-release with",
+       "change log and nightly link in make-release (#27302)` - a release-workflow change with no engine",

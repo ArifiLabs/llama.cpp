@@ -1,0 +1,99 @@
+From 8eaf5ae242b0d0233881a00e85d7b8caac8cabb0 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 24 Aug 2026 23:55:53 -0400
+Subject: [PATCH] tests: zero_gather + CPY/GET_ROWS Vulkan probe cases; server:
+ depth>cap clamps with warning instead of load abort (F-136 arc)
+
+---
+ tests/test-backend-ops.cpp      | 53 +++++++++++++++++++++++++++++++++
+ tools/server/server-context.cpp |  6 +++-
+ 2 files changed, 58 insertions(+), 1 deletion(-)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 605524f9f..8c03d71b8 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -3518,6 +3518,55 @@ struct test_cpy : public test_case {
+ // GGML_OP_CONT
+ // permute = {0, 0, 0, 0} means no permutation: the source is transposed (or
+ // view-sliced). A non-identity permute applies ggml_permute before ggml_cont.
++// ring-repair 2026-08-24: the recurrent-cache seq-start zeroing pattern - scale a row VIEW of a
++// tall (plane-widened) tensor to zero in place, then gather that row with GET_ROWS. Vulkan
++// leaked prior state through exactly this pattern (cross-request F-136 mechanism); CPU is clean.
++struct test_scale_view_zero_gather : public test_case {
++    const int64_t n_embd;
++    const int64_t n_rows;
++    const int64_t zero_row;
++
++    std::string vars() override {
++        return VARS_TO_STR3(n_embd, n_rows, zero_row);
++    }
++
++    test_scale_view_zero_gather(int64_t n_embd = 4096, int64_t n_rows = 6, int64_t zero_row = 0)
++        : n_embd(n_embd), n_rows(n_rows), zero_row(zero_row) {}
++
++    ggml_tensor * build_graph(ggml_context * ctx) override {
++        ggml_tensor * states = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_rows);
++        ggml_set_param(states);
++        ggml_set_name(states, "states");
++
++        ggml_tensor * zero_view = ggml_view_1d(ctx, states, n_embd, zero_row * states->nb[1]);
++        ggml_tensor * zeroed = ggml_scale_inplace(ctx, zero_view, 0.0f);
++        ggml_set_name(zeroed, "zeroed");
++
++        ggml_tensor * rows = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 1);
++        ggml_set_name(rows, "rows");
++
++        ggml_tensor * gathered = ggml_get_rows(ctx, states, rows);
++        gathered = ggml_reshape_1d(ctx, gathered, n_embd);
++
++        // concat(zeroed, gathered): forward-expand visits `zeroed` first, so the node order is
++        // zero -> gather, exactly the production build_rs ordering (zero expanded before reads).
++        ggml_tensor * out = ggml_concat(ctx, zeroed, gathered, 0);
++        ggml_set_name(out, "out");
++        return out;
++    }
++
++    void initialize_tensors(ggml_context * ctx) override {
++        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
++            if (t->type == GGML_TYPE_I32) {
++                std::vector<int32_t> idx = { (int32_t) zero_row };
++                ggml_backend_tensor_set(t, idx.data(), 0, sizeof(int32_t));
++            } else {
++                init_tensor_uniform(t, -50.f, 50.f);
++            }
++        }
++    }
++};
++
+ struct test_cont : public test_case {
+     const ggml_type type;
+     const std::array<int64_t, 4> ne;
+@@ -9886,6 +9935,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     // ring-repair 2026-08-24: recurrent-bank plane writes - cpy into an OFFSET view of a
+     // larger buffer (conv/ssm snapshot-bank shape). KFLIP showed Vulkan corrupting these
+     // while offset-0 writes are clean; these pin it at op level.
++    test_cases.emplace_back(new test_scale_view_zero_gather(4096, 6, 0));
++    test_cases.emplace_back(new test_scale_view_zero_gather(163840, 6, 0));
++    test_cases.emplace_back(new test_scale_view_zero_gather(36864, 12, 3));
++
+     for (int64_t off : {1, 3, 7}) {
+         test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_F32, {12288, 1, 1, 1}, {-1,-1,-1,-1},
+             {0,0,0,0}, {0,0,0,0}, false, {12288, 8, 1, 1}, off));
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index b134a6914..ce57d21d9 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -179,7 +179,11 @@ static bool server_preflight_dflash2(common_params & params) {
+ 
+     const int32_t n_draft_max = (int32_t) block_size - 1;
+     if (spec.draft.n_max_set && spec.draft.n_max > n_draft_max) {
+-        throw std::runtime_error("requested --spec-draft-n-max exceeds the DFlash2 GGUF-declared trained block extent");
++        // ring-repair 2026-08-24: CLAMP to the trained extent instead of aborting the whole
++        // server load - the request is satisfiable at the sidecar's real capability.
++        SRV_WRN("requested --spec-draft-n-max %d exceeds the DFlash2 trained block extent; clamping to %d\n",
++                spec.draft.n_max, n_draft_max);
++        spec.draft.n_max = n_draft_max;
+     }
+ 
+     auto & types = spec.types;
