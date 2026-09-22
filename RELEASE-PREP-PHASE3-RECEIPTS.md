@@ -18,9 +18,9 @@ scans every tracked blob *and* every commit message in the range):
 
 | Kind | Form | Hits | Files |
 |---|---|---|---|
-| blob | `<home>` | 188 | 10 |
-| blob | `<home>` | 28 | 10 |
-| blob | `<home>` | 6 | 4 |
+| blob | `C:/Users/<name>` | 188 | 10 |
+| blob | `C:\Users\<name>` | 28 | 10 |
+| blob | `/c/Users/<name>` | 6 | 4 |
 | blob | `c:\Users\MyUser` | 1 | 1 |
 | blob | `c:\Users\MyUsers` | 1 | 1 |
 | **message** | *(any form)* | **0** | — |
@@ -39,10 +39,10 @@ Two findings that shaped the rules:
 `git-filter-repo 2.47.0`, `--replace-text` + `--replace-message` with the same file, `--refs export`:
 
 ```
-literal:<home>==><home>
-literal:<home>==><home>
-literal:<home>==><home>
-literal:<home>==><home>
+literal:C:/Users/<name>==><home>
+literal:C:\Users\<name>==><home>
+literal:c:/users/<name>==><home>
+literal:/c/Users/<name>==><home>
 ```
 
 11,504 commits parsed, new history written in 44 s. Tip `cb4df7a48` → `24bfb88f8` → (after the
@@ -118,6 +118,14 @@ is inside `patches/series/`, which was regenerated and now holds **603** patches
 contributor is `0593-scope-cut-…patch` at **1,205** lines — the patch that *deletes* 435 lane
 evidence files, so by construction it carries their content, studio paths included. The same
 mechanism raises the `qnap` and hostname counts.
+
+**The receipts put the name back, and the sweep caught it.** The first revision of this document and
+of `SIDE-FINDINGS-RELEASE-PREP.md` *described* the scrub by quoting the exact strings being removed —
+so carrying them onto the export branch reintroduced the user name **24 times across 4 files**, in
+the very documents proving it was gone. Both are now written with `<name>`, the series was
+regenerated and the sweep re-run. **A document about a scrub is inside the scrub's blast radius**;
+the only reason this did not ship is that the sweep was re-run *after* the documents were carried
+across rather than before.
 
 **A correction to the phase-2 receipts.** Phase 2 reported the export sweep as 1,614 studio lines.
 That figure was taken **before the series had converged** — 20 regenerated patches were still

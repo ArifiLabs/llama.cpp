@@ -71,7 +71,7 @@ what I would do.
 
 ### SF-P6 — the President's first name survives as a bare token, outside any path
 
-- **What.** The path scrub removes `<home>` and its variants. The bare token `<first-name>` still
+- **What.** The path scrub removes `C:/Users/<name>` and its variants. The bare token `<first-name>` still
   appears **240 times across 18 files** on the export branch.
 - **Where.** `AUTHORS` (upstream's own contributor list), `docs/speculative.md` (upstream), and 16
   `patches/series/*.patch` files.
