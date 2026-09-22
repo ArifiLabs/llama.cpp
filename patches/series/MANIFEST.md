@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **588**, all non-merge, applied in filename order.
+- Patches: **589**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 588 commit messages, same provenance trailers. Verified, not
+same file contents, same 589 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -667,6 +667,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 586 | `0586-receipts-write-the-scrubbed-path-forms-as-name-the-d.patch` | arifi-fork-base | `d47c3a978` | - | - | receipts: write the scrubbed path forms as <name> - the documents were reintroducing what they documented |
 | 587 | `0587-receipts-phase-3-final-numbers-export-tip-55579bb11-.patch` | arifi-fork-base | `a067bf3ae` | - | - | receipts: phase-3 final numbers - export tip 55579bb11, the name at zero in blobs and messages |
 | 588 | `0588-release-prep-phase-4-a-real-fork-of-ggml-org-at-b108.patch` | arifi-fork-base | `55dbec3bc` | - | - | release-prep phase 4: a real fork of ggml-org at b10825, internal material out of history |
+| 589 | `0589-receipts-phase-4-the-fork-range-only-rewrite-its-pro.patch` | arifi-fork-base | `fbf24b22f` | - | - | receipts: phase 4 - the fork-range-only rewrite, its proofs and its five new side-findings |
 
 ## Measured effect, per patch
 
@@ -1334,6 +1335,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0586-receipts-write-the-scrubbed-path-forms-as-name-the-d.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0587-receipts-phase-3-final-numbers-export-tip-55579bb11-.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0588-release-prep-phase-4-a-real-fork-of-ggml-org-at-b108.patch` | UNMEASURED - documents, licences and audit ledgers only; no code path is touched. |
+| `0589-receipts-phase-4-the-fork-range-only-rewrite-its-pro.patch` | UNMEASURED - documents only; no code path is touched. |
 
 ## Unclassified
 
@@ -1814,4 +1816,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `d47c3a978` receipts: write the scrubbed path forms as <name> - the documents were reintroducing what they documented
 - `a067bf3ae` receipts: phase-3 final numbers - export tip 55579bb11, the name at zero in blobs and messages
 - `55dbec3bc` release-prep phase 4: a real fork of ggml-org at b10825, internal material out of history
+- `fbf24b22f` receipts: phase 4 - the fork-range-only rewrite, its proofs and its five new side-findings
 
