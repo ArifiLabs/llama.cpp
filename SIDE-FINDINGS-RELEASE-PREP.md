@@ -71,11 +71,12 @@ what I would do.
 
 ### SF-P6 — the President's first name survives as a bare token, outside any path
 
-- **What.** The path scrub removes `C:/Users/<name>` and its variants. The bare token `<first-name>` still
+- **What.** The path scrub removes `C:/Users/<name>` and its variants. The bare token that is the President's Windows user name still
   appears **240 times across 18 files** on the export branch.
 - **Where.** `AUTHORS` (upstream's own contributor list), `docs/speculative.md` (upstream), and 16
   `patches/series/*.patch` files.
-- **Proof.** Regex `(?<![A-Za-z])<first-name>(?![a-z])` over every tracked text blob.
+- **Proof.** Regex `(?<![A-Za-z])<the name>(?![a-z])` over every tracked text blob, the name
+  supplied from the environment rather than written into this document.
 - **Would do.** **Nothing, and it should stay nothing.** Most hits are upstream's — `AUTHORS` lists
   real contributors and is not ours to edit. The remainder are inside generated patches. The scrub
   HQ ordered was of the *path* form, and a bare given name in a contributor list is not the same
@@ -105,3 +106,77 @@ what I would do.
 - **Would do.** Closed by this lane as blocker 1, with a separate ledger and a qualified PASS line so
   an exemption can never be read as a repair. Recorded here because the checklist's stated remedy
   was not executable as written, which is a finding about the checklist as much as the tool.
+
+---
+
+## Phase 4, 2026-09-22 — rebuilding the export branch as a real fork
+
+### SF-P8 — the scope-cut commit's delete list is NOT the list of internal material
+
+- **What.** Deriving the removal list from `git show --name-status <scope-cut>` gives what was in the
+  tree at that moment. Three `.cmd` wrappers had been added and deleted earlier in the fork range and
+  are in no delete list, yet they were in history and in the generated patches.
+- **Where.** `r53-route-probe.cmd`, `r58-build-server.cmd`, `r58-q6k-repeat.cmd`.
+- **Proof.** `git log --pretty=format: --name-only --no-renames 9e0e22059..export2 | sort -u` = 3,330
+  paths; 572 classify as internal, 569 of them in the scope-cut list, 3 not.
+- **Would do.** Done: the removal list is built from the union over the whole range, and the 13
+  evidence directories are passed as directory prefixes rather than 436 file literals so a
+  historically-deleted member cannot slip through. **The general rule: a path filter is derived from
+  the range, never from a tip.**
+
+### SF-P9 — removing a file does not remove the documents that cite it
+
+- **What.** `docs/OPTIONS-REGISTRY.md` and several generated patches name internal reports
+  (`OPUS-R48C-Q6K-MATVEC-REPORT.md`) and evidence directories (`r53-evidence/…`) as the source of a
+  measurement. The files are gone from the repository; the citations are not.
+- **Where.** `docs/OPTIONS-REGISTRY.md` (2 rows), `README.md` (the `UPDATE-RUNBOOK.md` link, fixed
+  here), plus patches that carry those documents' own history.
+- **Proof.** `git grep -I -c -F -e 'r53-evidence/' export2` -> 6 files, all prose; the same probe for
+  a content marker (`r48b-evidence/`) -> 0.
+- **Would do.** **Keep the claim, name the absence** — the alternative is deleting a measured
+  statement to tidy a link. `README.md` now says `UPDATE-RUNBOOK.md` is an internal document that is
+  not published, and `evidence/MANIFEST.md` states that the cut material is absent from the
+  repository *and* from its history. A future pass could add a one-line "not shipped" marker beside
+  each surviving citation in the registry; it is cosmetic, not a defect.
+
+### SF-P10 — the fork had overwritten two of UPSTREAM's own files, and the scope cut deleted them
+
+- **What.** `AGENTS.md` and `CLAUDE.md` exist in upstream llama.cpp. The fork replaced `AGENTS.md`
+  with an internal agent-instruction document (19,731 B against upstream's 12,170 B) and the
+  prep branch's scope cut then deleted both outright — so the published fork would have been missing
+  two files upstream ships.
+- **Where.** Repository root.
+- **Proof.** `git ls-tree 9e0e22059 -- AGENTS.md CLAUDE.md` lists both;
+  `git rev-parse 9e0e22059:AGENTS.md` = `git rev-parse export2:AGENTS.md` = `6d83a02f4…`, and the
+  same for `CLAUDE.md` at `302cdeab9…`.
+- **Would do.** Nothing further. Removing the fork's *changes* to those two paths (rather than the
+  paths themselves) restores upstream's blobs, which is the right answer for a fork: a fork may add
+  and may patch, but deleting an upstream file without a reason is a divergence nobody asked for.
+  Worth stating because it looks like an unexplained "A" in the identity diff until it is read.
+
+### SF-P11 — a pruned commit maps to an all-zeros sha, and a re-key must refuse it
+
+- **What.** filter-repo maps a commit it removed to forty zeros in its `commit-map`. Phases 2 and 3
+  never met this, because neither ran a path filter. A re-key script that trusts the map writes that
+  value into a sha-pinned ledger and pins the row to a commit that cannot exist.
+- **Where.** `native-grandfather.json` (6 rows) and `pending-trailers.json` (1 row).
+- **Proof.** 19 of 680 `commit-map` entries have an all-zeros value; the rewrite drops 680 fork
+  commits to 661.
+- **Would do.** Done: the re-key treats all-zeros as "commit removed", leaves the row on its original
+  key and adds a `sha_note`. It also distinguishes *absent from the map* (a commit at or below the
+  base — untouched and still valid) from *unmapped* (a real gap), which a naive script reports as the
+  same thing.
+
+### SF-P12 — the phase-2/3 receipts describe an export branch that no longer exists
+
+- **What.** `RELEASE-PREP-PHASE2-RECEIPTS.md` and `-PHASE3-` cite export tips (`cb4df7a48`,
+  `55579bb11`) and a re-keyed base pin (`4627f376f`) that belong to the abandoned rewrite. They ship
+  on this branch as the history of how the release got here.
+- **Where.** Both documents, throughout.
+- **Proof.** `git rev-parse 55579bb11` fails in the new clone; `sources.json` `base.upstream_sha` is
+  `9e0e22059…`, upstream's own.
+- **Would do.** **Kept, not rewritten.** They are the record of two phases that were done, checked
+  and superseded; editing them to look correct would destroy the trail that shows *why* the fork-range
+  rewrite exists. `RELEASE-PREP-PHASE4-RECEIPTS.md` is the current state and says so in its first
+  paragraph. A reader who starts at phase 2 should be pointed at phase 4 — that pointer is the one
+  thing a future pass should add.
