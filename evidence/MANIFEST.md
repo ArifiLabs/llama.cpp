@@ -84,35 +84,41 @@ Scrub patterns applied to text receipts: absolute user-home paths -> `<home>`, s
 | `r73-evidence__30-bitid-SX8-p3-r66.rc` | `93ff7811a209e2a8479230bbb9b6bc19f7f311d3af383ec350c1db2a7e7d5494` | no |
 | `r73-evidence__30-bitid-SX8-p3-r73.rc` | `93ff7811a209e2a8479230bbb9b6bc19f7f311d3af383ec350c1db2a7e7d5494` | no |
 
-## MISSING — a cited claim whose receipt could not be found
+## The headline numbers, and the receipt behind each one
+
+Every figure a reader is most likely to test now has its measurement file in this folder. These were
+copied out of the lane worktrees that produced them; each row gives the claim, the shipped file, the
+original lane path and the **sha256 of the original**, so a verifier can hash the shipped copy and
+see that it is the original byte for byte.
+
+| Claim it supports | Shipped file | Original lane path | sha256 of the ORIGINAL | sha256 shipped (scrub) |
+|---|---|---|---|---|
+| q6_K MMVQ route, PAIRED decider for the three wide shapes: per-round ratios, the `won` column that the 58/60 total is summed from, and the ADMIT/LOSS verdict per width. | `evidence/r71-evidence__13-paired.txt` | `C:/ArifiLabs/cache/r71-wt/r71-evidence/13-paired.txt` | `a61aa2cba4e83df5…` | *(identical)* |
+| q6_K MMVQ route, PAIRED decider for the two SERVED shapes, measured on the SHIPPED arms (`legacy` / `route`). Carries the worst single round, 0.9894. | `evidence/r71-evidence__82-paired-g2.txt` | `C:/ArifiLabs/cache/r71-wt/r71-evidence/82-paired-g2.txt` | `61c6c25892ab583e…` | *(identical)* |
+| Perplexity, legacy arm: the full run including the startup lines that assert which route and which batch size were live. | `evidence/r71-evidence__50-ppl-legacy.txt` | `C:/ArifiLabs/cache/r71-wt/r71-evidence/50-ppl-legacy.txt` | `5dc881927883b8f1…` | *(identical)* |
+| Perplexity, route arm at `-b 7`: the paired half of the PPL claim, same startup assertion. | `evidence/r71-evidence__50-ppl-b7-route.txt` | `C:/ArifiLabs/cache/r71-wt/r71-evidence/50-ppl-b7-route.txt` | `9ca1582a5b41caa9…` | *(identical)* |
+| q5_K route table: the marginal verify column, `marg(4..8)` 113.8 us on the inherited route against 5.4 us on the R64 route, with the per-round band% beside every cell. | `evidence/r64-evidence__12-table-ffn.txt` | `C:/ArifiLabs/cache/r64-q5k-route-wt/r64-evidence/12-table-ffn.txt` | `378bc7bbcf7707e0…` | *(identical)* |
+| iq3 rows-per-workgroup at width 7: 465,399.5 -> 20,890.3 us at m=248320 (22.278x, 6/6), and the neighbouring widths that show the spill is at exactly one width. | `evidence/r66-evidence__4b-perf-table.txt` | `C:/ArifiLabs/cache/r66-wt/r66-evidence/4b-perf-table.txt` | `8e527cb672bd058d…` | *(identical)* |
+| iq3 width-7 register-spill fold: the scratch bytes per width behind the rows-2 default. | `evidence/r61-evidence__47-n7rows-fold.txt` | `C:/ArifiLabs/cache/r61-iq3-wide-wt/r61-evidence/47-n7rows-fold.txt` | `727516e9688e99eb…` | *(identical)* |
+| iq3 sign-hoist v2 SPIR-V instruction counts: 1229 -> 349 marginal instructions per column, with the iq4_xs control. | `evidence/r61-evidence__22-isa-fold-s62.txt` | `C:/ArifiLabs/cache/r61-iq3-wide-wt/r61-evidence/22-isa-fold-s62.txt` | `f655abd363a08bb2…` | *(identical)* |
+| chain151 launch-level A/B, Q4_K_XL 27B: per-launch blocks and the Welch CI the 'every CI contains zero' statement is read from. | `evidence/chain151__c29-q4kxl-27b-launchlevel-AB.json` | `C:/ArifiLabs/research/local-inference/lane-evidence/2026-09-02-lane-209/r66-lane-254/c29-q4kxl-27b-launchlevel/SEAT/AB.json` | `9c1222e3bf136b4b…` | *(identical)* |
+| chain151 launch-level A/B, S-X8 27B: same shape. | `evidence/chain151__c30-sx8-27b-launchlevel-AB.json` | `C:/ArifiLabs/research/local-inference/lane-evidence/2026-09-02-lane-209/r66-lane-254/c30-sx8-27b-launchlevel/SX8/AB.json` | `12efdc0cdae1db82…` | *(identical)* |
+| chain151 launch-level A/B, GSQ IQ3_S 27B: same shape. | `evidence/chain151__c31-gsq3s-27b-launchlevel-AB.json` | `C:/ArifiLabs/research/local-inference/lane-evidence/2026-09-02-lane-209/r66-lane-254/c31-gsq3s-27b-launchlevel/GSQ3S/AB.json` | `5eda88505811b05f…` | *(identical)* |
+
+**Still UNRECEIPTED, and named rather than quietly dropped.** The documents state the best q6_K cell
+as **20,046 -> 14,313 us** (ratio 1.400, 6/6) at 248320x5120 n=7. The shipped paired receipt
+`evidence/r71-evidence__13-paired.txt` measures **that same cell** at **20,181.3 -> 14,297.7 us,
+ratio 1.4105, 6/6**. The two are the same result from two different round sets - R71's decider and
+the R73 re-measurement taken at promotion - and **the R73 raw dump is not shipped**. The ratio and
+the 6/6 are receipted; the two absolute microsecond figures in the documents are **not**. Read them
+as UNRECEIPTED until that dump is published, and read the shipped table for the measurement that is.
+
+## MISSING - a cited claim whose receipt could not be found
 
 **None by path.** Every receipt cited *by name* in `README.md`,
 `docs/release/RELEASE-STORY-r73i.md` and `docs/release/RELEASE-NOTES-r73i.md` was located
 and is shipped above. The citation list was extracted from the documents themselves, not
 hand-written, so it cannot drift from what the release actually claims.
-
-## Claims without a shipped receipt — read this before the percentages
-
-**"None by path" is not "nothing is missing", and the distinction matters.** The section
-above only checks the receipts a document names. It cannot see a headline number that carries
-no path at all, and several do. An independent check of this release found that the
-documents cite 91 distinct receipt paths of which 54 resolve to nothing a clone contains —
-34 are lane `REPORT` / `CHECK-*` / `PROMOTION-RECORD` / `AB.json` files that live in lane
-worktrees, and 9 are internal studio paths a public reader cannot open at all.
-
-These five headline figures have **no receipt in this folder**:
-
-| Claim | Where it is stated |
-|---|---|
-| q6_K route: **+5% to +40%**, **58 of 60** paired rounds won, worst **0.9894** | `README.md`, notes, story |
-| best cell 248320×5120 n=7: **20,046 → 14,313 us** | `README.md`, notes, story |
-| q5_K marginal verify column **113.8 → 5.4 us** | notes, story |
-| perplexity **5.9932 ± 0.14292** vs 5.9918 legacy | notes, story |
-| chain151: **every CI contains zero** | notes, story |
-
-They were measured, and the measurement lives in the lane worktrees and the promotion
-records named beside them. **They are not reproducible from this repository alone.** Read
-them as stated-not-shipped until the paired-round dumps behind them are published.
 
 ## What is deliberately NOT here
 

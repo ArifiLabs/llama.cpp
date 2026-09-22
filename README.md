@@ -332,11 +332,14 @@ An attribution-first, rebaseable llama.cpp fork for local inference on **Vulkan*
   its provenance in the commit message. Count them with
   `git rev-list --count 9e0e220594af405a62835dc3a27495729fd8506b..HEAD` rather than trusting a
   number written here, which goes stale the moment a commit lands.
-- Engine of record: **`arifi-b10825-r73i-5a7434218`**. The engine's own patch series is **588
-  entries**; the release-prep commits on this branch add more, and `patches/series/SERIES` is the
-  live count.
-- Published release tag: **`r73i-public-2026-09-22`**. The internal tag
-  `r73i-release-engine-2026-09-21` names the engine commit inside the studio and is not published.
+- Engine of record: **`arifi-b10825-r73i-5a7434218`**. Read that as a **label, not a git ref**: it is
+  the internal build-stage identifier for the engine this release carries, and the `5a7434218` inside
+  it names a commit in the studio's own repository that **does not exist here**. Nothing in this
+  repository needs it; it is printed so a bug report can say which engine stage it came from.
+- Published release tag: **`r73i-public-2026-09-22b`** — the only tag pushed with this release.
+  Every other tag you may see mentioned in the history (`r73i-release-engine-2026-09-21`,
+  `r66i-integration-2026-09-19`, and the `b*` upstream tags) is **internal or upstream** and is not
+  part of this publication. Resolve the tree with `git rev-parse HEAD`, never with those names.
 - The series is generated from git, never hand-edited, and verified on every run: every patch is
   byte-identical to a fresh generation *and* to a committed blob, and replaying all of them with
   `git am` reproduces the tree exactly. Run it yourself:
@@ -545,7 +548,7 @@ ours. Please include, in the issue:
 | Memory layout | one shared pool: 48 GB physical, 16 GB BIOS reservation, 31.73 GiB system-visible — **say if yours is a discrete GPU with its own memory, because our defaults assume it is not** |
 | OS + build | Windows 11, build 29648 |
 | Power / performance plan | Balanced (it moved our decode from 29.0 to 11.2 tok/s when changed) |
-| Fork tip | `git rev-parse HEAD` — e.g. `037b433a9`, tag `r73i-release-engine-2026-09-21` |
+| Fork tip | `git rev-parse HEAD` in your clone, plus `git describe --tags` (the first public tag is `r73i-public-2026-09-22b`) |
 | Build line | the exact `cmake` invocation you used |
 | The startup lines | which of the three default lines printed on your device |
 | Method | how many launches per arm, whether arms were interleaved, and whether anything else ran on the box |

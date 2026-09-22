@@ -3,6 +3,13 @@
 > **Where the receipts live.** Receipt paths of the form `r66-evidence/…`, `r65-evidence/…` and other `r*-evidence/…` names in this document are **lane-local**: they name files in the lane worktree that produced them, not paths in this repository. A clone does not contain them. `evidence/README.md` lists what is tracked here and says plainly what is not.
 
 
+> **Short SHAs in this story are not refs of this repository.** They are either **studio-internal**
+> commits from the lane worktrees this work was done in (`5a7434218`, `94461e770`, `f6f5ab0cf`,
+> `1b6185951`, the seat receipts) or **third-party pins** in other projects (the `sources.json`
+> remote table). `git rev-parse` will not resolve them here, and nothing in this repository needs
+> them: the only refs a reader resolves are `HEAD`, the upstream base
+> `9e0e220594af405a62835dc3a27495729fd8506b` and the release tag.
+
 > **DRAFT for the President's read. Nothing here has been published. No GitHub push has happened,
 > no remote has been touched.**
 > Written 2026-09-19 by a docs maker. It **carries forward** the R56 draft

@@ -3,6 +3,11 @@
 This directory retains verbatim license or notice text copied from the audited
 source tree. Do not edit, normalize, shorten, or regenerate these files.
 
+**The short SHAs in the audit prose below are studio-internal or third-party.** They record
+which commit in the fork's own working history made a retention or carried a take, and which
+commit of the upstream project a file was copied from. A public clone resolves neither, and the
+licence texts in this directory are complete without them.
+
 | Destination | Copy verbatim from | Audit disposition |
 |---|---|---|
 | `llama.cpp-MIT.txt` | `<FORK-WORKSPACE>/src/llama-upstream-b10068/LICENSE` | llama.cpp MIT; retain copyright and permission notice |

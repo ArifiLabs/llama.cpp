@@ -180,3 +180,74 @@ what I would do.
   rewrite exists. `RELEASE-PREP-PHASE4-RECEIPTS.md` is the current state and says so in its first
   paragraph. A reader who starts at phase 2 should be pointed at phase 4 — that pointer is the one
   thing a future pass should add.
+
+---
+
+## Phase 5, 2026-09-22 — closing the gates the re-check raised
+
+### SF-P13 — SF-P6 was wrong about where the first-name token lived, and the sweep agreed with it
+
+- **What.** SF-P6 said the bare first-name token was "almost all in upstream's `AUTHORS`, out of
+  scope". On the phase-4 tip the tree hits were **this lane's own receipts**, not upstream's list.
+  The phase-4 sweep printed a file list that contained `SIDE-FINDINGS-RELEASE-PREP.md` and three
+  generated patches, and the classification in the side-finding was carried forward unread.
+- **Where.** `SIDE-FINDINGS-RELEASE-PREP.md` SF-P6; `patches/series/0585`, `0586`, `0589`; commit
+  message `db77a0d2`.
+- **Proof.** Word-bounded enumeration over the tree and the whole fork range: 17 tree lines in 5
+  files — 1 in `AUTHORS` (a real contributor), 9 in `docs/speculative.md` (a third-party model
+  publisher), 7 ours.
+- **Would do.** Done: the three sentences that are ours are rewritten out of history, upstream's two
+  files are untouched. **The lesson is the one that keeps recurring here: a count is not a
+  classification.** A sweep that returns a number and a file list has not told you whose the hits
+  are, and a side-finding that says "almost all" has not checked.
+
+### SF-P14 — a blind word-boundary rule would have committed misattribution
+
+- **What.** The obvious fix for the token is `--replace-text` with `\b<name>\b`. Upstream's
+  `AUTHORS` carries a contributor whose **given name is that word**, followed by a space and his
+  surname — exactly the shape our own prose has.
+- **Where.** `AUTHORS:181`.
+- **Proof.** The same regex matches both lines; only the surrounding sentence distinguishes them.
+- **Would do.** Done: the rules are the three exact sentences the token occurs in on our side.
+  **Rewriting a third party's name out of an attribution file to tidy our own disclosure would be a
+  worse defect than the disclosure**, and a scrub rule wide enough to be convenient is exactly how
+  that happens.
+
+### SF-P15 — the headline receipts existed all along; the scope cut removed them without looking
+
+- **What.** Five figures shipped receipt-less because their receipt files sat inside the purged lane
+  evidence directories. Every one of them was findable in the lane worktrees in minutes, by
+  searching for the literal figure the document quotes.
+- **Where.** `cache/r71-wt/r71-evidence/`, `cache/r64-q5k-route-wt/r64-evidence/`,
+  `cache/r66-wt/r66-evidence/`, `cache/r61-iq3-wide-wt/r61-evidence/`, and the chain151 lane
+  evidence directory.
+- **Proof.** 11 files located and shipped; **0** needed the path scrub — every one is byte-identical
+  to its original.
+- **Would do.** Done. The general rule for the next scope cut: **cut by path, but curate by claim
+  first.** The manifest should be built from the documents' own numbers before anything is removed,
+  not reconciled afterwards.
+
+### SF-P16 — two documents quote the same cell from two different round sets
+
+- **What.** The release documents state the best q6_K cell as 20,046 → 14,313 us (ratio 1.400); the
+  shipped paired receipt measures 20,181.3 → 14,297.7 us (ratio 1.4105). Same cell, same 6/6, two
+  different round sets — R71's decider and the R73 re-measurement at promotion.
+- **Where.** `README.md`, `docs/release/RELEASE-NOTES-r73i.md`, `docs/release/RELEASE-STORY-r73i.md`
+  against `evidence/r71-evidence__13-paired.txt`.
+- **Proof.** The absolute figures appear in no lane receipt file — only in an R73 commit-message
+  draft.
+- **Would do.** **Neither number was changed.** The ratio and the round count are receipted; the two
+  absolute microsecond figures are marked UNRECEIPTED in `evidence/MANIFEST.md`. Correcting the
+  document to the shipped table would have been tidier and would have overwritten a measurement
+  nobody re-ran; inventing a receipt for it would have been worse.
+
+### SF-P17 — the publish clone is a loaded gun with 7,585 tags in it
+
+- **What.** The throwaway clone inherits every tag and remote-tracking ref of the fork — all of them
+  into pre-rewrite history. The publish block pushes two refs, but one `--tags`, `--all`, `--mirror`
+  or a configured `push.followTags` would publish the lot.
+- **Where.** `git for-each-ref` in `cache/release-export2`: 7,585 tags, 143 `refs/remotes/origin/*`.
+- **Proof.** The checker counted them; the block names exactly two refs.
+- **Would do.** The checklist now states the hazard above the commands. A stronger version, not
+  taken here because it destroys the clone's own audit trail, is to delete every ref but the branch
+  and the release tag before the push.
