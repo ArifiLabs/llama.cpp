@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **589**, all non-merge, applied in filename order.
+- Patches: **590**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 589 commit messages, same provenance trailers. Verified, not
+same file contents, same 590 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -668,6 +668,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 587 | `0587-receipts-phase-3-final-numbers-export-tip-55579bb11-.patch` | arifi-fork-base | `a067bf3ae` | - | - | receipts: phase-3 final numbers - export tip 55579bb11, the name at zero in blobs and messages |
 | 588 | `0588-release-prep-phase-4-a-real-fork-of-ggml-org-at-b108.patch` | arifi-fork-base | `55dbec3bc` | - | - | release-prep phase 4: a real fork of ggml-org at b10825, internal material out of history |
 | 589 | `0589-receipts-phase-4-the-fork-range-only-rewrite-its-pro.patch` | arifi-fork-base | `fbf24b22f` | - | - | receipts: phase 4 - the fork-range-only rewrite, its proofs and its five new side-findings |
+| 590 | `0590-docs-the-README-told-a-public-reader-the-wrong-upstr.patch` | arifi-fork-base | `63e4f7c08` | - | - | docs: the README told a public reader the wrong upstream base, in a runnable command |
 
 ## Measured effect, per patch
 
@@ -1336,6 +1337,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0587-receipts-phase-3-final-numbers-export-tip-55579bb11-.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0588-release-prep-phase-4-a-real-fork-of-ggml-org-at-b108.patch` | UNMEASURED - documents, licences and audit ledgers only; no code path is touched. |
 | `0589-receipts-phase-4-the-fork-range-only-rewrite-its-pro.patch` | UNMEASURED - documents only; no code path is touched. |
+| `0590-docs-the-README-told-a-public-reader-the-wrong-upstr.patch` | UNMEASURED - documents only; no code path is touched. |
 
 ## Unclassified
 

@@ -1,0 +1,125 @@
+From 63e4f7c080934f077771fb50642cd9037be1579c Mon Sep 17 00:00:00 2001
+From: ArifiLabs <arifilabs@users.noreply.github.com>
+Date: Tue, 22 Sep 2026 04:35:07 -0400
+Subject: [PATCH] docs: the README told a public reader the wrong upstream
+ base, in a runnable command
+
+Three places still named b10453 (4df29be4f), two upstream bumps out of date, including
+series replay --onto 4df29be4f. The branch replays onto b10825 / 9e0e22059 and now says so.
+Also: the 19 pruned commits named from the untouched prep worktree (0 touch anything outside
+the removal list), committer identity counted separately from author identity, and the
+annotated tag object read in full - three surfaces a tree sweep cannot see.
+
+Origin: ArifiLabs (native) - release engineering for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ README.md                       | 10 +++----
+ RELEASE-PREP-PHASE4-RECEIPTS.md | 47 +++++++++++++++++++++++++++++++++
+ evidence/MANIFEST.md            |  4 ++-
+ 3 files changed, 55 insertions(+), 6 deletions(-)
+
+diff --git a/README.md b/README.md
+index e80e07a3e..f9813c6c2 100644
+--- a/README.md
++++ b/README.md
+@@ -69,8 +69,8 @@ on `PATH`. A CPU-only build needs no Vulkan SDK and is verified working.
+ 
+ ## What this fork adds to upstream
+ 
+-Everything ArifiLabs adds lives as a **linear patch series** on top of upstream `b10453`
+-(`4df29be4f`). The canonical branch is **`arifi/main`** and it carries **zero merge commits** — the
++Everything ArifiLabs adds lives as a **linear patch series** on top of upstream **`b10825`**
++(`9e0e220594af405a62835dc3a27495729fd8506b`). The canonical branch carries **zero merge commits** — the
+ series exists to be replayed onto a newer upstream tag, and a merge commit is a hole in it
+ (`format-patch` omits merges, so their hand-made conflict resolutions never reach the series; that
+ was a real, measured failure here before the history was flattened).
+@@ -78,7 +78,7 @@ was a real, measured failure here before the history was flattened).
+ ```bash
+ git clone -c core.longpaths=true <this repo> arifilabs-llama.cpp && cd arifilabs-llama.cpp
+ python tools/arifi-sync/arifi_sync.py series check     # regenerate + verify the series
+-python tools/arifi-sync/arifi_sync.py series replay --onto 4df29be4f   # reproduces arifi/main
++python tools/arifi-sync/arifi_sync.py series replay --onto 9e0e220594af405a62835dc3a27495729fd8506b
+ ```
+ 
+ The procedure for the next upstream bump, the next fork ingest, and what must be re-verified
+@@ -557,8 +557,8 @@ method is not a result.
+ 
+ ## Status
+ 
+-The patch series is real and complete: every fork commit on `arifi/main` is linear on upstream
+-`b10453` (`4df29be4f`) with zero merges, and every one carries
++The patch series is real and complete: every fork commit is linear on upstream
++**`b10825`** (`9e0e220594af405a62835dc3a27495729fd8506b`) with zero merges, and every one carries
+ provenance trailers, generated into [`patches/series/`](patches/series/) and verified on demand to
+ replay to a tree identical to `master` outside the generated series directory itself.
+ 
+diff --git a/RELEASE-PREP-PHASE4-RECEIPTS.md b/RELEASE-PREP-PHASE4-RECEIPTS.md
+index 4ce99020a..e8c9f87e0 100644
+--- a/RELEASE-PREP-PHASE4-RECEIPTS.md
++++ b/RELEASE-PREP-PHASE4-RECEIPTS.md
+@@ -322,3 +322,50 @@ exist in the clone, and the publish block in `RELEASE-CHECKLIST.md` refuses befo
+ the tag resolves to the branch tip.
+ 
+ Publication is the President's word alone. Nothing here has been pushed.
++
++## 13. Three surfaces a tree sweep cannot see, and one stale base the check did not catch
++
++**The 19 pruned commits are named, not asserted.** The originals are still in the prep worktree, so
++each removed commit was read back — subject *and* the paths it touched:
++
++```
++commits pruned                                                : 19
++pruned commits touching ANY path outside the removal list     : 0
++```
++
++They are the scope-cut commit itself, twelve `docs(r48*/r51/r58)` receipt commits, three
++`OPUS-*-REPORT` commits and three `runbook` edits. Nothing load-bearing was pruned, and that is a
++checkable statement rather than a promise.
++
++**Committer identity.** `git log -p` prints `Author:` and never `Committer:`, so §7's history count
++could not have seen a committer address. Counted separately:
++
++```
++$ git log --format='%an|%ae|%cn|%ce' 9e0e22059..export2 | sort | uniq -c
++  477  Angelo Arifi|<no-reply>|Angelo Arifi|<no-reply>
++  151  m|<no-reply>|Angelo Arifi|<no-reply>
++   29  Codex|codex@openai.com|Angelo Arifi|<no-reply>
++    4  ArifiLabs|<no-reply>|ArifiLabs|<no-reply>
++    2  Marshall|assistant@llama.cpp|Angelo Arifi|<no-reply>
++    1  Jian Chen|jianchen0311@gmail.com|Angelo Arifi|<no-reply>
++    1  hq|<no-reply>|Angelo Arifi|<no-reply>
++distinct identities: 7; carrying a scrubbed value: 0
++```
++
++The three third-party authors keep their own addresses — that is attribution, and a mailmap that
++rewrote it would be misattribution.
++
++**The annotated tag object.** A tag's message is in neither the tree nor `git log -p`, and the tag is
++one of the two things a push sends. `git cat-file -p r73i-public-2026-09-22` was read in full:
++tagger `ArifiLabs <the no-reply address>`, no scrubbed value present.
++
++**A stale base in `README.md`, found by re-reading the shipped set for superseded values.** Three
++places still told a public reader the series sits on `b10453` (`4df29be4f`) — a base two upstream
++bumps out of date — including a runnable `series replay --onto 4df29be4f`. They now read `b10825`
++(`9e0e220594af405a62835dc3a27495729fd8506b`), which is what the branch actually replays onto. The
++same sweep confirms the abandoned re-hashed base `4627f376f` appears **nowhere** in the shipped set.
++Superseded shas still present in `patches/series/MANIFEST.md`, `docs/FINDINGS.md`,
++`licenses/README.md` and the release story are **history** — commit subjects and past audits — and
++are correct where they stand.
++
++Receipts: `cache/relprep4/21-stalesweep.txt`, `22-pruned-and-identity.txt`.
+diff --git a/evidence/MANIFEST.md b/evidence/MANIFEST.md
+index 71256fd6d..9fbea5b78 100644
+--- a/evidence/MANIFEST.md
++++ b/evidence/MANIFEST.md
+@@ -118,7 +118,9 @@ them as stated-not-shipped until the paired-round dumps behind them are publishe
+ 
+ The 436 lane evidence files that were tracked at the R66 tip — build logs, configure logs
+ and sweep dumps from thirteen `r4*`/`r5*` directories — together with 133 internal maker and
+-checker documents, are **absent from this repository and from its history**. They were not
++checker documents **and 3 further wrapper scripts that had been added and deleted earlier in
++the fork's history** (572 paths in all), are **absent from this repository and from its
++history**. They were not
+ merely deleted by a later commit: the paths were removed from every commit in the fork range,
+ so no `git show`, no `git log -p` and no file under `patches/` can reconstruct them. This
+ folder holds the receipts the published documents cite, not every file a lane ever wrote.
