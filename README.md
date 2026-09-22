@@ -69,8 +69,8 @@ on `PATH`. A CPU-only build needs no Vulkan SDK and is verified working.
 
 ## What this fork adds to upstream
 
-Everything ArifiLabs adds lives as a **linear patch series** on top of upstream `b10453`
-(`4df29be4f`). The canonical branch is **`arifi/main`** and it carries **zero merge commits** — the
+Everything ArifiLabs adds lives as a **linear patch series** on top of upstream **`b10825`**
+(`9e0e220594af405a62835dc3a27495729fd8506b`). The canonical branch carries **zero merge commits** — the
 series exists to be replayed onto a newer upstream tag, and a merge commit is a hole in it
 (`format-patch` omits merges, so their hand-made conflict resolutions never reach the series; that
 was a real, measured failure here before the history was flattened).
@@ -78,7 +78,7 @@ was a real, measured failure here before the history was flattened).
 ```bash
 git clone -c core.longpaths=true <this repo> arifilabs-llama.cpp && cd arifilabs-llama.cpp
 python tools/arifi-sync/arifi_sync.py series check     # regenerate + verify the series
-python tools/arifi-sync/arifi_sync.py series replay --onto 4df29be4f   # reproduces arifi/main
+python tools/arifi-sync/arifi_sync.py series replay --onto 9e0e220594af405a62835dc3a27495729fd8506b
 ```
 
 The procedure for the next upstream bump, the next fork ingest, and what must be re-verified
@@ -557,8 +557,8 @@ method is not a result.
 
 ## Status
 
-The patch series is real and complete: every fork commit on `arifi/main` is linear on upstream
-`b10453` (`4df29be4f`) with zero merges, and every one carries
+The patch series is real and complete: every fork commit is linear on upstream
+**`b10825`** (`9e0e220594af405a62835dc3a27495729fd8506b`) with zero merges, and every one carries
 provenance trailers, generated into [`patches/series/`](patches/series/) and verified on demand to
 replay to a tree identical to `master` outside the generated series directory itself.
 

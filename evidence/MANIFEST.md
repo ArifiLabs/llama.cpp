@@ -118,7 +118,9 @@ them as stated-not-shipped until the paired-round dumps behind them are publishe
 
 The 436 lane evidence files that were tracked at the R66 tip — build logs, configure logs
 and sweep dumps from thirteen `r4*`/`r5*` directories — together with 133 internal maker and
-checker documents, are **absent from this repository and from its history**. They were not
+checker documents **and 3 further wrapper scripts that had been added and deleted earlier in
+the fork's history** (572 paths in all), are **absent from this repository and from its
+history**. They were not
 merely deleted by a later commit: the paths were removed from every commit in the fork range,
 so no `git show`, no `git log -p` and no file under `patches/` can reconstruct them. This
 folder holds the receipts the published documents cite, not every file a lane ever wrote.

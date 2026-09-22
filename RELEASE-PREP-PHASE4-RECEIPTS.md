@@ -322,3 +322,50 @@ exist in the clone, and the publish block in `RELEASE-CHECKLIST.md` refuses befo
 the tag resolves to the branch tip.
 
 Publication is the President's word alone. Nothing here has been pushed.
+
+## 13. Three surfaces a tree sweep cannot see, and one stale base the check did not catch
+
+**The 19 pruned commits are named, not asserted.** The originals are still in the prep worktree, so
+each removed commit was read back — subject *and* the paths it touched:
+
+```
+commits pruned                                                : 19
+pruned commits touching ANY path outside the removal list     : 0
+```
+
+They are the scope-cut commit itself, twelve `docs(r48*/r51/r58)` receipt commits, three
+`OPUS-*-REPORT` commits and three `runbook` edits. Nothing load-bearing was pruned, and that is a
+checkable statement rather than a promise.
+
+**Committer identity.** `git log -p` prints `Author:` and never `Committer:`, so §7's history count
+could not have seen a committer address. Counted separately:
+
+```
+$ git log --format='%an|%ae|%cn|%ce' 9e0e22059..export2 | sort | uniq -c
+  477  Angelo Arifi|<no-reply>|Angelo Arifi|<no-reply>
+  151  m|<no-reply>|Angelo Arifi|<no-reply>
+   29  Codex|codex@openai.com|Angelo Arifi|<no-reply>
+    4  ArifiLabs|<no-reply>|ArifiLabs|<no-reply>
+    2  Marshall|assistant@llama.cpp|Angelo Arifi|<no-reply>
+    1  Jian Chen|jianchen0311@gmail.com|Angelo Arifi|<no-reply>
+    1  hq|<no-reply>|Angelo Arifi|<no-reply>
+distinct identities: 7; carrying a scrubbed value: 0
+```
+
+The three third-party authors keep their own addresses — that is attribution, and a mailmap that
+rewrote it would be misattribution.
+
+**The annotated tag object.** A tag's message is in neither the tree nor `git log -p`, and the tag is
+one of the two things a push sends. `git cat-file -p r73i-public-2026-09-22` was read in full:
+tagger `ArifiLabs <the no-reply address>`, no scrubbed value present.
+
+**A stale base in `README.md`, found by re-reading the shipped set for superseded values.** Three
+places still told a public reader the series sits on `b10453` (`4df29be4f`) — a base two upstream
+bumps out of date — including a runnable `series replay --onto 4df29be4f`. They now read `b10825`
+(`9e0e220594af405a62835dc3a27495729fd8506b`), which is what the branch actually replays onto. The
+same sweep confirms the abandoned re-hashed base `4627f376f` appears **nowhere** in the shipped set.
+Superseded shas still present in `patches/series/MANIFEST.md`, `docs/FINDINGS.md`,
+`licenses/README.md` and the release story are **history** — commit subjects and past audits — and
+are correct where they stand.
+
+Receipts: `cache/relprep4/21-stalesweep.txt`, `22-pruned-and-identity.txt`.
