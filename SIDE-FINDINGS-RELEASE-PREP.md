@@ -69,6 +69,30 @@ what I would do.
   as closed.** Only the recipe snapshot, which is a record of a build rather than an input to one,
   was scrubbed.
 
+### SF-P6 — the President's first name survives as a bare token, outside any path
+
+- **What.** The path scrub removes `<home>` and its variants. The bare token `<first-name>` still
+  appears **240 times across 18 files** on the export branch.
+- **Where.** `AUTHORS` (upstream's own contributor list), `docs/speculative.md` (upstream), and 16
+  `patches/series/*.patch` files.
+- **Proof.** Regex `(?<![A-Za-z])<first-name>(?![a-z])` over every tracked text blob.
+- **Would do.** **Nothing, and it should stay nothing.** Most hits are upstream's — `AUTHORS` lists
+  real contributors and is not ours to edit. The remainder are inside generated patches. The scrub
+  HQ ordered was of the *path* form, and a bare given name in a contributor list is not the same
+  disclosure as a filesystem layout. Raised only so nobody later reports it as a miss.
+
+### SF-P7 — the phase-2 export sweep was measured on an unconverged tree
+
+- **What.** Phase 2 reported the export branch at 1,614 studio-path lines. The measurement was taken
+  after the first series commit but **before** the 20 still-untracked regenerated patches were
+  committed, so it described a tree that no commit ever held.
+- **Where.** `RELEASE-PREP-PHASE2-RECEIPTS.md` §6, the export column.
+- **Proof.** The phase-2 `series check` failed at that moment with 14 patches reported *"exists on
+  disk but is NOT COMMITTED at export"*; the sweep had already been run.
+- **Would do.** Corrected in `RELEASE-PREP-PHASE3-RECEIPTS.md` §5 rather than silently re-stated, and
+  the prep branch is used as the sound baseline. The general lesson is the one the phase-2 document
+  already records about directory pathspecs: **sweep after convergence, never between two commits.**
+
 ### SF-P5 — `cmd_provenance` exempts one failure class and not the other
 
 - **What.** The sha-pinned ledger is consulted for the missing-`Measured-effect` class but not for
