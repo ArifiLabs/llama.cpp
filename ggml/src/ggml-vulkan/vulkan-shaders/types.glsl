@@ -2214,6 +2214,12 @@ shared int8_t kvalues_iq4nl[16];
 shared FLOAT_TYPE kvalues_iq4nl[16];
 #endif
 
+#ifdef KVALUES_IQ4NL_I8
+// arifi lane-262 / R75: the q8_1 integer-dot IQ4_XS arm reads the LUT as int8. Upstream b1ff4ca23 made
+// kvalues_iq4nl itself int8 in these shaders, so the R75 name is an alias of that one table.
+#define kvalues_iq4nl_i8 kvalues_iq4nl
+#endif
+
 #if defined(DATA_A_IQ4_NL) || defined(DATA_A_IQ4_XS)
 #define NEEDS_INIT_IQ_SHMEM
 void init_iq_shmem(uvec3 wgsize)
