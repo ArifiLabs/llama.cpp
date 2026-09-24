@@ -5937,10 +5937,12 @@ vk_device ggml_vk_get_device(size_t idx) {
             }
             // arifi lane-262 / R75: GGML_ARIFI_IQ4XS_MMVQ=<legacy|route|all>. Exact strings only
             // (the R71b 0/1 trap: an unknown value keeps the probe, it never parses as "on").
-            // `all` is the decider's arm, not a shipping value.
+            // `all` is the decider's arm, not a shipping value. DEFAULT: `route` on AMD (the only
+            // vendor measured), `legacy` elsewhere -- the admit itself is AMD-fenced as well.
+            // GGML_ARIFI_IQ4XS_MMVQ=legacy restores the pre-R75 route on one binary.
             const char * iq4xs_env = getenv("GGML_ARIFI_IQ4XS_MMVQ");
             const char * iq4xs_src = "device-probe";
-            device->iq4xs_mmvq_route = 0u;
+            device->iq4xs_mmvq_route = (uint32_t) (device->vendor_id == VK_VENDOR_ID_AMD);
             if (iq4xs_env != nullptr && strcmp(iq4xs_env, "route") == 0) {
                 device->iq4xs_mmvq_route = 1u;
                 iq4xs_src = "GGML_ARIFI_IQ4XS_MMVQ=route";
@@ -6038,7 +6040,7 @@ vk_device ggml_vk_get_device(size_t idx) {
                     device->q6k_mmvq_route ? "route (MUL_MAT only, n=7..8; n=6 at 5120x6144 on RDNA3 when the n=6 pipeline is rows 1)" : "legacy", q6k_src);
             fprintf(stderr, "ggml_vulkan: iq4_xs mmvq route: %s (%s)\n",
                     device->iq4xs_mmvq_route == 2 ? "all" :
-                    device->iq4xs_mmvq_route == 1 ? "route (MUL_MAT only, admit table: NONE YET)" : "legacy", iq4xs_src);
+                    device->iq4xs_mmvq_route == 1 ? "route (MUL_MAT only, 5120x17408 n=2..4; 17408/12288/10240x5120 n=6)" : "legacy", iq4xs_src);
         }
 
         ggml_vk_load_shaders(device);
@@ -7880,9 +7882,20 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
         if (device->iq4xs_mmvq_route == 2) {
             return true;
         }
+        // R75 MEASURED ADMIT (r75-evidence/25-paired.txt; 6 counterbalanced paired rounds, bar
+        // pre-registered at eaa386f07: >=5/6 won AND median >=1.03 on first/mean/last occurrence,
+        // a loss on any pick never admitted). EXACT (m, n, k) cells, no interpolation: every other
+        // served iq4_xs cell measured a tie or a LOSS -- n=5 (the served verify width) loses on all
+        // seven served shapes (0.70..0.97), so the route does not reach it.
+        //   5120 x 17408 (ffn_down)            n=2 1.051  n=3 1.042  n=4 1.056   (6/6, 6/6, 5/6)
+        //   17408/12288/10240 x 5120, n=6      1.084      1.112      1.106       (6/6, 5/6, 5/6)
+        // MUL_MAT_ID fenced: zero served iq4_xs `_exps` bytes in either 27B file.
         if (device->iq4xs_mmvq_route == 1 && !is_id && device->vendor_id == VK_VENDOR_ID_AMD &&
             device->mmvq_a_hoist != 0 && !device->mmvq_route_legacy) {
-            return false; // R75 admit table: filled from the decider (step 4)
+            if (m == 5120 && k == 17408) {
+                return n >= 2 && n <= 4;
+            }
+            return n == 6 && k == 5120 && (m == 17408 || m == 12288 || m == 10240);
         }
         return false;
     }

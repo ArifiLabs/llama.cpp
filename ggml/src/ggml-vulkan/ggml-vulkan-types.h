@@ -1292,7 +1292,7 @@ struct vk_device_struct {
     uint32_t q6k_mmvq_route;
     bool q6k_mmvq_n6_rows1 = false;  // lane-270 / R74b: set in ggml_vk_load_shaders
     // arifi lane-262 / R75: the IQ4_XS q8_1 MMVQ arm. 0 = legacy (mul_mat_vec_iq4_xs f32 dequant
-    // at every width), 1 = route (the measured admit in ggml_vk_should_use_mmvq_impl),
+    // at every width), 1 = route (the measured admit in ggml_vk_should_use_mmvq_impl; AMD default),
     // 2 = all (decider diagnostic: MMVQ at every n and k, MUL_MAT and MUL_MAT_ID).
     uint32_t iq4xs_mmvq_route;
     // arifi lane-253 / R65: the NUM_COLS index (i = NUM_COLS-1) at and above which rm_int_n() hands
