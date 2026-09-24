@@ -7570,7 +7570,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         //
         // DEFAULT (lane-270 / R74b): RDNA3 = 1 row at NUM_COLS 6 EXACTLY, rm_int_n everywhere else;
         // every other device = rm_int_n everywhere. The n=6 q8_1 pipeline is dispatched only by the
-        // route's two n=6 cells below (ggml_vk_should_use_mmvq_impl) and by the `=1` diagnostic, so
+        // route's n=6 cell below (ggml_vk_should_use_mmvq_impl) and by the `=1` diagnostic, so
         // this reshapes nothing the tree served before. Bit-identical across rows (R74 sha proof).
         uint32_t q6k_mmvq_rows_wide = 0;   // 0 = unset, keep rm_int_n
         uint32_t q6k_mmvq_rows_from = 9;
@@ -7580,7 +7580,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             q6k_mmvq_rows_wide  = 1;
             q6k_mmvq_rows_from  = 6;
             q6k_mmvq_rows_exact = true;
-            q6k_mmvq_rows_src   = "device-probe (RDNA3: R74b n=6 cells)";
+            q6k_mmvq_rows_src   = "device-probe (RDNA3: R74b n=6 cell)";
         }
         if (const char * s = getenv("GGML_ARIFI_Q6K_MMVQ_ROWS")) {
             const uint32_t rows = (uint32_t) atoi(s);
@@ -9839,7 +9839,7 @@ static vk_device ggml_vk_get_device(size_t idx) {
                     device->q5k_mmvq_route ? "route (n=5..8, k<=8192)" : "legacy", q5k_src,
                     q5k_v2_asked ? " (GGML_ARIFI_Q5K_MMVQ=v2 is UNIMPLEMENTED - running legacy)" : "");
             fprintf(stderr, "ggml_vulkan: q6_k mmvq route: %s (%s)\n",
-                    device->q6k_mmvq_route ? "route (MUL_MAT only, n=7..8; n=6 at 248320x5120 + 5120x6144 when the n=6 pipeline is rows 1)" : "legacy", q6k_src);
+                    device->q6k_mmvq_route ? "route (MUL_MAT only, n=7..8; n=6 at 5120x6144 when the n=6 pipeline is rows 1)" : "legacy", q6k_src);
         }
 
         ggml_vk_load_shaders(device);
@@ -12566,13 +12566,12 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
     // nothing. GGML_ARIFI_Q6K_MMVQ=1 still reaches `_id`; only `route` is fenced.
     if (src0_type == GGML_TYPE_Q6_K && !mmvq_q6) {
         if (device->q6k_mmvq_route != 0 && !is_id && device->vendor_id == VK_VENDOR_ID_AMD) {
-            // arifi lane-270 / R74b: two exact n=6 cells, measured on the rows-1 n=6 pipeline
-            // (r74-evidence/21-paired.txt `mmvqrow1`: 248320x5120 1.0557 6/6, 5120x6144 1.0355 6/6;
-            // re-confirmed on the route as coded in r74b-evidence). Every other measured n=6 shape
-            // LOSES or ties on that arm (17408x5120 0.959, 5120x17408 0.928, 1024x5120 1.003), so the
-            // fence is (m, k) equality, not a range -- nothing between the cells is measured.
-            if (n == 6 && device->q6k_mmvq_n6_rows1 &&
-                ((m == 248320 && k == 5120) || (m == 5120 && k == 6144))) {
+            // arifi lane-270 / R74b: ONE exact n=6 cell on the rows-1 n=6 pipeline, 5120x6144
+            // (r74b-evidence/21-paired.txt: 1.0363, 6/6 on the route as coded). 248320x5120 n=6 read
+            // 1.0259 5/6 PICK-DEP there (a win below the 3% bar, not admitted). Every other measured
+            // n=6 shape LOSES or ties on that arm (R74: 17408x5120 0.959, 5120x17408 0.928, 1024x5120
+            // 1.003), so the fence is (m, k) equality, not a range.
+            if (n == 6 && device->q6k_mmvq_n6_rows1 && m == 5120 && k == 6144) {
                 return true;
             }
             return n == 7 || n == 8;
