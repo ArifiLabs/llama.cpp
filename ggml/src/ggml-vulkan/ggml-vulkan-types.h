@@ -1290,6 +1290,7 @@ struct vk_device_struct {
     // at every width), 1 = the measured admit. DEFAULT 0 ON EVERY DEVICE -- the win is real but
     // UNCLEARED, see ggml_vk_should_use_mmvq_impl.
     uint32_t q6k_mmvq_route;
+    bool q6k_mmvq_n6_rows1 = false;  // lane-270 / R74b: set in ggml_vk_load_shaders
     // arifi lane-253 / R65: the NUM_COLS index (i = NUM_COLS-1) at and above which rm_int_n() hands
     // the q8_1 MMVQ pipelines the static 4-row shape. 4 = the inherited RDNA3 rule, untouched.
     // Probed once here for the same reason as mmvq_a_hoist: pipeline creation is entered lazily.
