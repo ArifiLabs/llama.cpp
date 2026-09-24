@@ -3590,7 +3590,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         };
         // The route admits its n=6 cells only when the n=6 pipeline it would dispatch is the rows-1
         // shape those cells were measured on (R74 `mmvqrow1`); rm_int_n gives 4 there and loses.
-        device->q6k_mmvq_n6_rows1 = q6k_mmvq_rows(5) == 1;
+        // RDNA3 only: off RDNA3 rm_int_n is already 1 row, which would admit unmeasured devices.
+        device->q6k_mmvq_n6_rows1 = is_rdna3 && q6k_mmvq_rows(5) == 1;
         {
             static bool once = false;
             if (!once) {
