@@ -3773,6 +3773,9 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_K][i], "mul_mat_vec_q2_k_q8_1_f32", arr_dmmv_q2_k_q8_1_f32_len[reduc], arr_dmmv_q2_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_q8_1_f32", arr_dmmv_q3_k_q8_1_f32_len[reduc], arr_dmmv_q3_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_q8_1_f32", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q4k_rows(i), 1, 1}, {wg_size_subgroup_int, q4k_rows(i), i+1, mmvq_a_hoist, i >= 4 ? device->q4k_w5_overlap : 0u}, 1, true, use_subgroups, subgroup_size_int);
+                if (i == 4 || i == 5) {
+                    ggml_vk_create_pipeline(device, device->pipeline_mul_mat_vec_q4k_q8_1_split[w][i], "mul_mat_vec_q4_k_q8_1_f32_split", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist, 3u}, 1, true, use_subgroups, subgroup_size_int);
+                }
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_q8_1_f32", arr_dmmv_q5_k_q8_1_f32_len[reduc], arr_dmmv_q5_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_q8_1_f32", arr_dmmv_q6_k_q8_1_f32_len[reduc], arr_dmmv_q6_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q6k_mmvq_rows(i), 1, 1}, {wg_size_subgroup_int, q6k_mmvq_rows(i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
 
@@ -5932,6 +5935,24 @@ vk_device ggml_vk_get_device(size_t idx) {
                     device->q4k_w5_overlap, device->q4k_w5_rows,
                     (getenv("GGML_ARIFI_Q4K_W5_OVERLAP") || getenv("GGML_ARIFI_Q4K_W5_ROWS")) ? "env" : "default");
 
+            // arifi lane-271 / R85: ship the C3 split where the decider measured it winning
+            // (r85-evidence/13-paired-c3.txt): 248320x5120 n=5 x1.31, n=6 x1.30 (6/6); 1024x5120 n=5
+            // x1.06 (5/6), n=6 x1.09 (6/6). It LOSES at 17408x5120 n=5/6 (x0.96/x0.97, 0/6) and
+            // 5120x6144 n=6 (x0.95, 0/6), so the admit is per m, not per width. Measured on gfx1103.
+            {
+                const bool is_rdna3_dev = device->vendor_id == VK_VENDOR_ID_AMD && device->architecture == AMD_RDNA3;
+                device->q4k_w5_split = is_rdna3_dev ? 1u : 0u;
+                const char * split_src = "device-probe (RDNA3)";
+                if (const char * s = getenv("GGML_ARIFI_Q4K_W5_SPLIT")) {
+                    if (strcmp(s, "0") == 0 || strcmp(s, "1") == 0) {
+                        device->q4k_w5_split = (uint32_t) atoi(s);
+                        split_src = "GGML_ARIFI_Q4K_W5_SPLIT";
+                    }
+                }
+                fprintf(stderr, "ggml_vulkan: q4_k w5 split: %s (%s) (n=5..6, m>=131072 or m<=1024, k<=8192)\n",
+                        device->q4k_w5_split ? "ON" : "OFF", split_src);
+            }
+
             // stderr, for the same reason as the q6_k line: llama-server drops ggml INFO. Names the
             // SOURCE as well as the state -- a pairing log must prove probe vs override.
             fprintf(stderr, "ggml_vulkan: mmvq A-side hoist: %s (%s) (iq1: %s) (route: %s)\n",
@@ -6715,6 +6736,14 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context * 
     if (b_type == GGML_TYPE_Q8_1) {
         if (ctx->device->vendor_id == VK_VENDOR_ID_INTEL) {
             dmmv_wg = DMMV_WG_SIZE_SUBGROUP;
+        }
+        // arifi lane-271 / R85: measured m classes only -- 248320 and 1024, both at k=5120. The
+        // 131072 and 1024 bounds are UNTESTED boundaries: nothing was measured between m=1024 and
+        // m=5120, nor between 17408 and 248320. Every other m keeps the shipped pipeline.
+        if (a_type == GGML_TYPE_Q4_K && ctx->device->q4k_w5_split && (num_cols == 5 || num_cols == 6) &&
+            k <= 8192 && (m >= 131072 || m <= 1024) &&
+            ctx->device->pipeline_mul_mat_vec_q4k_q8_1_split[dmmv_wg][num_cols-1]) {
+            return ctx->device->pipeline_mul_mat_vec_q4k_q8_1_split[dmmv_wg][num_cols-1];
         }
         return ctx->device->pipeline_dequant_mul_mat_vec_q8_1_f32[dmmv_wg][a_type][num_cols-1];
     }
@@ -8189,6 +8218,25 @@ static void ggml_vk_mul_mat_vec_q_f16(ggml_backend_vk_context * ctx, vk_context&
         // Fall back to f16 dequant mul mat
         dmmv = ggml_vk_get_dequantize_mul_mat_vec(ctx, src0->type, src1->type, ne11, ne20, ne00);
         quantize_y = false;
+    }
+    // arifi lane-271 / R85: GGML_ARIFI_MMVQ_TRACE=1 also names the PIPELINE chosen per (type, m, n,
+    // k), so the per-m q4_K split admit is proven by the binary, not by reading the rule.
+    {
+        static const bool trace = [] {
+            const char * s = getenv("GGML_ARIFI_MMVQ_TRACE");
+            return s != nullptr && s[0] == '1';
+        }();
+        if (trace && dmmv) {
+            static std::mutex           mtx;
+            static std::set<std::string> seen;
+            char buf[256];
+            snprintf(buf, sizeof(buf), "ggml_vulkan: mmvq pipeline: type=%s m=%u n=%u k=%u -> %s",
+                     ggml_type_name(src0->type), (unsigned) ne01, (unsigned) ne11, (unsigned) ne10, dmmv->name.c_str());
+            std::lock_guard<std::mutex> lock(mtx);
+            if (seen.insert(buf).second) {
+                fprintf(stderr, "%s\n", buf);
+            }
+        }
     }
 
     if (quantize_y) {

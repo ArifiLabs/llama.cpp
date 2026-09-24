@@ -1300,6 +1300,9 @@ struct vk_device_struct {
     // q4k_w5_rows = rows per workgroup (0 = the inherited rm_int_n value). Both 0 by default.
     uint32_t q4k_w5_overlap;
     uint32_t q4k_w5_rows;
+    // arifi lane-271 / R85: the shipped cell switch. 1 = route the measured-winning (m, n) cells to
+    // pipeline_mul_mat_vec_q4k_q8_1_split. Device probe: ON on AMD RDNA3; GGML_ARIFI_Q4K_W5_SPLIT=0|1.
+    uint32_t q4k_w5_split;
 
     bool subgroup_size_control;
     uint32_t subgroup_min_size;
@@ -1383,6 +1386,9 @@ struct vk_device_struct {
     vk_pipeline pipeline_dequant_mul_mat_vec_id_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
 
     vk_pipeline pipeline_dequant_mul_mat_vec_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
+    // arifi lane-271 / R85: Q4_K q8_1 MMVQ with the 4+1 column split (spec constant 4 = 3), created
+    // at NUM_COLS 5 and 6 only and chosen per m in ggml_vk_get_dequantize_mul_mat_vec.
+    vk_pipeline pipeline_mul_mat_vec_q4k_q8_1_split[DMMV_WG_SIZE_COUNT][mul_mat_vec_max_cols];
     vk_pipeline pipeline_dequant_mul_mat_vec_id_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
 
     // Activation pre-rotation for the TurboQuant rotated matmul path. One
