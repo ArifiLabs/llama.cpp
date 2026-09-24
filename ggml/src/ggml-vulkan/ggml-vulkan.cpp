@@ -1508,7 +1508,7 @@ struct vk_device_struct {
     uint32_t q6k_mmvq_route;
     bool q6k_mmvq_n6_rows1 = false;  // lane-270 / R74b: set in ggml_vk_load_shaders
     // arifi lane-262 / R75: the IQ4_XS q8_1 MMVQ arm. 0 = legacy (mul_mat_vec_iq4_xs f32 dequant
-    // at every width), 1 = route (the measured admit in ggml_vk_should_use_mmvq_impl; AMD default),
+    // at every width), 1 = route (the measured admit in ggml_vk_should_use_mmvq_impl; opt-in, greedy gate FAILED),
     // 2 = all (decider diagnostic: MMVQ at every n and k, MUL_MAT and MUL_MAT_ID).
     uint32_t iq4xs_mmvq_route;
     // arifi lane-253 / R65: the NUM_COLS index (i = NUM_COLS-1) at and above which rm_int_n() hands
@@ -9873,12 +9873,12 @@ static vk_device ggml_vk_get_device(size_t idx) {
             }
             // arifi lane-262 / R75: GGML_ARIFI_IQ4XS_MMVQ=<legacy|route|all>. Exact strings only
             // (the R71b 0/1 trap: an unknown value keeps the probe, it never parses as "on").
-            // `all` is the decider's arm, not a shipping value. DEFAULT: `route` on AMD (the only
-            // vendor measured), `legacy` elsewhere -- the admit itself is AMD-fenced as well.
-            // GGML_ARIFI_IQ4XS_MMVQ=legacy restores the pre-R75 route on one binary.
+            // `all` is the decider's arm, not a shipping value. DEFAULT: `legacy` everywhere -- the
+            // 6-cell admit passed timing and PPL but FAILED greedy identity (3/12 pairs differ,
+            // r75-evidence/56-greedy-verdict.txt). `route` stays selectable for A/B.
             const char * iq4xs_env = getenv("GGML_ARIFI_IQ4XS_MMVQ");
-            const char * iq4xs_src = "device-probe";
-            device->iq4xs_mmvq_route = (uint32_t) (device->vendor_id == VK_VENDOR_ID_AMD);
+            const char * iq4xs_src = "default";
+            device->iq4xs_mmvq_route = 0u;
             if (iq4xs_env != nullptr && strcmp(iq4xs_env, "route") == 0) {
                 device->iq4xs_mmvq_route = 1u;
                 iq4xs_src = "GGML_ARIFI_IQ4XS_MMVQ=route";
