@@ -7513,6 +7513,46 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         const auto iq3_rows = [rm_iq, iq3_n7_rows](uint32_t i) {
             return (i + 1 == 7) ? iq3_n7_rows : rm_iq;
         };
+        // arifi lane-258 / R74: NUM_ROWS of the q6_K *f32* (legacy, non-MMVQ) mat-vec, per NUM_COLS.
+        //
+        // The shipped shape is rm_kq = 2 rows at EVERY width (:7559). R71's per-width sweep of this
+        // pipeline on 248320x5120 is flat at ~13.9 ms for n=1..4 and then steps +1641 us at n=5 and
+        // +5278 us at n=6 (r74-pin-cliff.py over r71-evidence/10-default-*), and R68 step 0 read its
+        // allocated VGPRs as 77/103/138/136/139/175/191/245 over n=1..8 with scratch 0 -- the
+        // steepest late register growth of any type measured there. This knob is what lets ONE
+        // binary measure a different NUM_ROWS at a FIXED NUM_COLS, the same way
+        // GGML_ARIFI_MMVQ_WIDE_ROWS_FROM does for the integer-dot pipeline, and it is the R61
+        // reshape lever (iq3_s n=7, 465,400 -> 20,890 us/run, bit-identical) applied to q6_K.
+        //
+        // BIT-IDENTICAL: NUM_ROWS partitions output rows across workgroups. It does not change the
+        // order in which any single output's partial products are formed or summed.
+        //
+        //   GGML_ARIFI_Q6K_F32_ROWS=<rows>          rows in {1,2,4} at every NUM_COLS
+        //   GGML_ARIFI_Q6K_F32_ROWS=<rows>@<n>      those rows at NUM_COLS >= n only, rm_kq below
+        //
+        // DEFAULT: rm_kq at every width, i.e. byte-for-byte the inherited shape, until a timed
+        // decider says otherwise.
+        uint32_t q6k_f32_rows_wide = rm_kq;
+        uint32_t q6k_f32_rows_from = 9;  // 9 = never; the default shape is rm_kq everywhere
+        const char * q6k_f32_rows_src = "device-probe (upstream shape)";
+        if (const char * s = getenv("GGML_ARIFI_Q6K_F32_ROWS")) {
+            const uint32_t rows = (uint32_t) atoi(s);
+            const char * at = strchr(s, '@');
+            const uint32_t from = at ? (uint32_t) atoi(at + 1) : 1u;
+            if ((rows != 1 && rows != 2 && rows != 4) || from < 1 || from > 8) {
+                fprintf(stderr, "ggml_vulkan: GGML_ARIFI_Q6K_F32_ROWS=%s not understood "
+                                "(<1|2|4>[@<1..8>]), using the default %u at every width\n", s, rm_kq);
+            } else {
+                q6k_f32_rows_wide = rows;
+                q6k_f32_rows_from = from;
+                q6k_f32_rows_src  = "GGML_ARIFI_Q6K_F32_ROWS";
+            }
+        }
+        // i is the NUM_COLS-1 loop index. Both the workgroup denominator and spec constant 1 take
+        // this value: they must move together or the dispatch grid stops matching the kernel.
+        const auto q6k_f32_rows = [rm_kq, q6k_f32_rows_wide, q6k_f32_rows_from](uint32_t i) {
+            return (i + 1 >= q6k_f32_rows_from) ? q6k_f32_rows_wide : rm_kq;
+        };
         {
             static bool once = false;
             if (!once) {
@@ -7530,6 +7570,16 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 // line, so its liveness could only be proven by effect. A default-flip must print.
                 fprintf(stderr, "ggml_vulkan: iq3 mat-vec n=7 rows: %u (%s) [GGML_ARIFI_IQ3_N7_ROWS]\n",
                         iq3_n7_rows, iq3_n7_src);
+                // arifi lane-258 / R74: a shape knob must print, or its liveness can only be proven
+                // by effect (CHECK-R61 F6).
+                if (q6k_f32_rows_from > 8) {
+                    fprintf(stderr, "ggml_vulkan: q6_k f32 mat-vec rows: %u at every width (%s) "
+                                    "[GGML_ARIFI_Q6K_F32_ROWS]\n", rm_kq, q6k_f32_rows_src);
+                } else {
+                    fprintf(stderr, "ggml_vulkan: q6_k f32 mat-vec rows: %u at n>=%u, %u below (%s) "
+                                    "[GGML_ARIFI_Q6K_F32_ROWS]\n",
+                            q6k_f32_rows_wide, q6k_f32_rows_from, rm_kq, q6k_f32_rows_src);
+                }
             }
         }
 
@@ -7556,7 +7606,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_f32_f32", arr_dmmv_q3_k_f32_f32_len[reduc16], arr_dmmv_q3_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_f32_f32", arr_dmmv_q4_k_f32_f32_len[reduc16], arr_dmmv_q4_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_f32_f32", arr_dmmv_q5_k_f32_f32_len[reduc16], arr_dmmv_q5_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1, q5k_b_hoist_for_cols(i+1)}, 1, true, use_subgroups16, force_subgroup_size16);
-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_f32_f32", arr_dmmv_q6_k_f32_f32_len[reduc16], arr_dmmv_q6_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1, q6k_direct_scales, q6k_xfold}, 1, true, use_subgroups16, force_subgroup_size16);
+            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_f32_f32", arr_dmmv_q6_k_f32_f32_len[reduc16], arr_dmmv_q6_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q6k_f32_rows(i), 1, 1}, {wg_size_subgroup16, q6k_f32_rows(i), i+1, q6k_direct_scales, q6k_xfold}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ1_S][i],   "mul_mat_vec_iq1_s_f32_f32",   arr_dmmv_iq1_s_f32_f32_len[reduc16],   arr_dmmv_iq1_s_f32_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ1_M][i],   "mul_mat_vec_iq1_m_f32_f32",   arr_dmmv_iq1_m_f32_f32_len[reduc16],   arr_dmmv_iq1_m_f32_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ2_XXS][i], "mul_mat_vec_iq2_xxs_f32_f32", arr_dmmv_iq2_xxs_f32_f32_len[reduc16], arr_dmmv_iq2_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
@@ -7622,7 +7672,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_f16_f32", arr_dmmv_q3_k_f16_f32_len[reduc16], arr_dmmv_q3_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_f16_f32", arr_dmmv_q4_k_f16_f32_len[reduc16], arr_dmmv_q4_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_f16_f32", arr_dmmv_q5_k_f16_f32_len[reduc16], arr_dmmv_q5_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1, q5k_b_hoist_for_cols(i+1)}, 1, true, use_subgroups16, force_subgroup_size16);
-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_f16_f32", arr_dmmv_q6_k_f16_f32_len[reduc16], arr_dmmv_q6_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1, q6k_direct_scales, q6k_xfold}, 1, true, use_subgroups16, force_subgroup_size16);
+            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_f16_f32", arr_dmmv_q6_k_f16_f32_len[reduc16], arr_dmmv_q6_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q6k_f32_rows(i), 1, 1}, {wg_size_subgroup16, q6k_f32_rows(i), i+1, q6k_direct_scales, q6k_xfold}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ1_S][i],   "mul_mat_vec_iq1_s_f16_f32",   arr_dmmv_iq1_s_f16_f32_len[reduc16],   arr_dmmv_iq1_s_f16_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ1_M][i],   "mul_mat_vec_iq1_m_f16_f32",   arr_dmmv_iq1_m_f16_f32_len[reduc16],   arr_dmmv_iq1_m_f16_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ2_XXS][i], "mul_mat_vec_iq2_xxs_f16_f32", arr_dmmv_iq2_xxs_f16_f32_len[reduc16], arr_dmmv_iq2_xxs_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
