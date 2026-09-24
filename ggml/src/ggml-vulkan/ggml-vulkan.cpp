@@ -9839,7 +9839,7 @@ static vk_device ggml_vk_get_device(size_t idx) {
                     device->q5k_mmvq_route ? "route (n=5..8, k<=8192)" : "legacy", q5k_src,
                     q5k_v2_asked ? " (GGML_ARIFI_Q5K_MMVQ=v2 is UNIMPLEMENTED - running legacy)" : "");
             fprintf(stderr, "ggml_vulkan: q6_k mmvq route: %s (%s)\n",
-                    device->q6k_mmvq_route ? "route (MUL_MAT only, n=7..8; n=6 at 5120x6144 when the n=6 pipeline is rows 1)" : "legacy", q6k_src);
+                    device->q6k_mmvq_route ? "route (MUL_MAT only, n=7..8; n=6 at 5120x6144 on RDNA3 when the n=6 pipeline is rows 1)" : "legacy", q6k_src);
         }
 
         ggml_vk_load_shaders(device);
