@@ -12425,8 +12425,10 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
     // last at EVERY measured shape: n == 7 and n == 8.
     //
     // WHY THIS NOW SHIPS DEFAULT ON (R71b, President law: a PPL-gated, never-slower-here gain
-    // ships ON; the elegance of the explanation is not a criterion). n=7,8 won 36/36 paired rounds
-    // across every timed shape and every occurrence pick, worst single round 1.003. R71 held the
+    // ships ON; the elegance of the explanation is not a criterion). n=7,8 won 58/60 paired rounds
+    // across five shapes, worst round 0.9894; 1024x5120 n=8 is a tie (1.0087). (This line read
+    // "36/36, worst 1.003" until lane-258 / R74 corrected it to the CHECK-R73 record: the 36/36
+    // counted three shapes, and the R71b G2 shapes were added afterwards.) R71 held the
     // default OFF because the qualifying widths are a non-contiguous island the row geometry does
     // not explain -- the f32 shader runs rm_kq = 2 rows at every width (:7555) while the MMVQ one
     // runs rm_int_n(rm_kq_int=1, i) = 1 row at NUM_COLS <= 4 and 4 at >= 5 (:7666), which predicts
