@@ -1295,6 +1295,11 @@ struct vk_device_struct {
     // the q8_1 MMVQ pipelines the static 4-row shape. 4 = the inherited RDNA3 rule, untouched.
     // Probed once here for the same reason as mmvq_a_hoist: pipeline creation is entered lazily.
     uint32_t mmvq_wide_rows_from;
+    // arifi lane-271 / R85: Q4_K q8_1 MMVQ at NUM_COLS >= 5 only. q4k_w5_overlap = spec constant 4
+    // of mul_mat_vecq.comp (0 = shipped nest, 1 = next-slice prefetch, 3 = 4+1 column split);
+    // q4k_w5_rows = rows per workgroup (0 = the inherited rm_int_n value). Both 0 by default.
+    uint32_t q4k_w5_overlap;
+    uint32_t q4k_w5_rows;
 
     bool subgroup_size_control;
     uint32_t subgroup_min_size;

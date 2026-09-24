@@ -3356,6 +3356,10 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         // ggml_vk_get_device); this is only where it is applied per pipeline.
         const uint32_t mmvq_a_hoist     = device->mmvq_a_hoist;
         const uint32_t mmvq_a_hoist_iq1 = device->mmvq_a_hoist_iq1;
+        // arifi lane-271 / R85: Q4_K rows per workgroup at NUM_COLS >= 5 (i >= 4); 0 = inherited.
+        auto const q4k_rows = [&](uint32_t i) {
+            return (i >= 4 && device->q4k_w5_rows != 0) ? device->q4k_w5_rows : rm_int_n(1*rm_kq_int, i);
+        };
 
         // Per-(type, NUM_COLS) narrowing, phase 2. The legacy-block family -- Q4_0, Q4_1, Q5_0,
         // Q5_1, Q8_0, MXFP4 -- goes back to the inherited nest at NUM_COLS >= 6.
@@ -3768,7 +3772,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
 
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_K][i], "mul_mat_vec_q2_k_q8_1_f32", arr_dmmv_q2_k_q8_1_f32_len[reduc], arr_dmmv_q2_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_q8_1_f32", arr_dmmv_q3_k_q8_1_f32_len[reduc], arr_dmmv_q3_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_q8_1_f32", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_q8_1_f32", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q4k_rows(i), 1, 1}, {wg_size_subgroup_int, q4k_rows(i), i+1, mmvq_a_hoist, i >= 4 ? device->q4k_w5_overlap : 0u}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_q8_1_f32", arr_dmmv_q5_k_q8_1_f32_len[reduc], arr_dmmv_q5_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_q8_1_f32", arr_dmmv_q6_k_q8_1_f32_len[reduc], arr_dmmv_q6_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q6k_mmvq_rows(i), 1, 1}, {wg_size_subgroup_int, q6k_mmvq_rows(i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
 
@@ -5909,6 +5913,24 @@ vk_device ggml_vk_get_device(size_t idx) {
             }
             fprintf(stderr, "ggml_vulkan: mmvq wide rows_from: %u (%s)\n",
                     device->mmvq_wide_rows_from, wide_src);
+
+            // arifi lane-271 / R85: q4_K width>=5 overlap arms (diagnostic until the decider ships a
+            // cell). GGML_ARIFI_Q4K_W5_OVERLAP=0|1|3, GGML_ARIFI_Q4K_W5_ROWS=1|2|4. Unset = 0 = shipped.
+            device->q4k_w5_overlap = 0;
+            device->q4k_w5_rows = 0;
+            if (const char * s = getenv("GGML_ARIFI_Q4K_W5_OVERLAP")) {
+                if (strcmp(s, "1") == 0 || strcmp(s, "3") == 0) {
+                    device->q4k_w5_overlap = (uint32_t) atoi(s);
+                }
+            }
+            if (const char * s = getenv("GGML_ARIFI_Q4K_W5_ROWS")) {
+                if (strcmp(s, "1") == 0 || strcmp(s, "2") == 0 || strcmp(s, "4") == 0) {
+                    device->q4k_w5_rows = (uint32_t) atoi(s);
+                }
+            }
+            fprintf(stderr, "ggml_vulkan: q4_k w5 overlap: %u rows: %u (%s)\n",
+                    device->q4k_w5_overlap, device->q4k_w5_rows,
+                    (getenv("GGML_ARIFI_Q4K_W5_OVERLAP") || getenv("GGML_ARIFI_Q4K_W5_ROWS")) ? "env" : "default");
 
             // stderr, for the same reason as the q6_k line: llama-server drops ggml INFO. Names the
             // SOURCE as well as the state -- a pairing log must prove probe vs override.

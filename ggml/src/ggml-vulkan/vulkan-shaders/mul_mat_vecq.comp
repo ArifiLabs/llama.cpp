@@ -39,6 +39,12 @@ vec2 cache_b_ds;
 // Default 0 on purpose: a create site that omits the constant keeps the inherited nest rather
 // than silently opting in. The host (ggml-vulkan.cpp) supplies the value per pipeline.
 layout (constant_id = 3) const uint ARIFI_MMVQ_A_HOIST = 0;
+// arifi lane-271 / R85: Q4_K load/compute overlap arms at NUM_COLS >= 5 (host passes 0 elsewhere).
+// 0 = the hoisted nest above; 1 = software pipelining (the NEXT k-slice's A and B are loaded
+// before the current slice's dots); 3 = the columns split 4 + (NUM_COLS-4) into two scheduling
+// regions over the same hoisted A. Every arm adds the same terms in the same order to each
+// temp[j][n], so all three are bit-identical.
+layout (constant_id = 4) const uint ARIFI_MMVQ_OVERLAP = 0;
 
 #include "mul_mat_vecq_funcs.glsl"
 
@@ -97,6 +103,32 @@ void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const
             }
         }
 
+#if defined(DATA_A_Q4_K)
+        if (ARIFI_MMVQ_OVERLAP == 3 && NUM_COLS > 4) {
+            [[unroll]] for (uint j = 0; j < 4; ++j) {
+                cache_b_block(j, col, b_qs_idx);
+                [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
+                    if (n < num_rows) {
+                        temp[j][n] += mmvq_dot_a(a_dec[n]);
+                    }
+                }
+            }
+            // A push-constant branch the compiler cannot fold: a basic-block edge, so the tail
+            // columns' B loads cannot be scheduled into the 4-column region. p.ncols > 0 whenever
+            // iter() runs, so the branch is always taken.
+            if (p.ncols != 0u) {
+                [[unroll]] for (uint j = 4; j < NUM_COLS; ++j) {
+                    cache_b_block(j, col, b_qs_idx);
+                    [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
+                        if (n < num_rows) {
+                            temp[j][n] += mmvq_dot_a(a_dec[n]);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+#endif
         [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
             cache_b_block(j, col, b_qs_idx);
 
@@ -121,6 +153,63 @@ void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const
     }
 }
 
+#if defined(DATA_A_Q4_K)
+// R85 arm 1: one k-slice's operands, held in registers across the previous slice's dots.
+struct pf_slice_t {
+    mmvq_a_t a[NUM_ROWS];
+    int32_t  bq[NUM_COLS][K_PER_ITER / 4];
+    vec2     bd[NUM_COLS];
+};
+
+void pf_load(out pf_slice_t s, const uint first_row, const uint num_rows, const uint col, const uint b_qs_idx) {
+    uint ibi = first_row*p.ncols;
+    [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
+        const uint a_block_idx = (ibi + col)/QUANT_K_Q8_1 + a_offset;
+        ibi += p.ncols;
+        if (n < num_rows) {
+            s.a[n] = mmvq_load_a(a_block_idx, b_qs_idx);
+        }
+    }
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        cache_b_block(j, col, b_qs_idx);
+        [[unroll]] for (uint q = 0; q < K_PER_ITER / 4; ++q) {
+            s.bq[j][q] = cache_b_qs[q];
+        }
+        s.bd[j] = cache_b_ds;
+    }
+}
+
+// Compute slice `cur` while the next slice's loads are in flight. On the last slice the "next"
+// load re-reads the current column (always in bounds) instead of branching, so the loads stay
+// in one scheduling region.
+void pf_iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], inout pf_slice_t cur, const uint first_row, const uint num_rows,
+             const uint col, const uint b_qs_idx, const bool has_next, const uint col_stride) {
+    pf_slice_t nxt;
+    pf_load(nxt, first_row, num_rows, has_next ? col + col_stride : col, b_qs_idx);
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        [[unroll]] for (uint q = 0; q < K_PER_ITER / 4; ++q) {
+            cache_b_qs[q] = cur.bq[j][q];
+        }
+        cache_b_ds = cur.bd[j];
+        [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
+            if (n < num_rows) {
+                temp[j][n] += mmvq_dot_a(cur.a[n]);
+            }
+        }
+    }
+    // Element-wise: glslang refuses `=` on structs holding spec-constant-sized arrays.
+    [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
+        cur.a[n] = nxt.a[n];
+    }
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        [[unroll]] for (uint q = 0; q < K_PER_ITER / 4; ++q) {
+            cur.bq[j][q] = nxt.bq[j][q];
+        }
+        cur.bd[j] = nxt.bd[j];
+    }
+}
+#endif
+
 void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
     const uint tid = gl_LocalInvocationID.x;
 
@@ -144,6 +233,36 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
 
     const uint b_qs_idx = tid % (32 / K_PER_ITER);
     uint col = tid * K_PER_ITER;
+
+#if defined(DATA_A_Q4_K)
+    if (ARIFI_MMVQ_OVERLAP == 1 && ARIFI_MMVQ_A_HOIST != 0 && NUM_COLS > 1) {
+        // Same 4 / 2 / 1 unroll as the shipped loop below; only the load placement moves.
+        pf_slice_t cur;
+        if (num_iters > 0) {
+            pf_load(cur, first_row, num_rows, col, b_qs_idx);
+        }
+        while (num_iters >= 4) {
+            [[unroll]] for (uint k = 0; k < 4; ++k) {
+                pf_iter(temp, cur, first_row, num_rows, col, b_qs_idx, k < 3 || num_iters > 4, col_stride);
+                col += col_stride;
+            }
+            num_iters -= 4;
+        }
+        if (num_iters >= 2) {
+            pf_iter(temp, cur, first_row, num_rows, col, b_qs_idx, true, col_stride);
+            col += col_stride;
+            pf_iter(temp, cur, first_row, num_rows, col, b_qs_idx, num_iters > 2, col_stride);
+            col += col_stride;
+            num_iters -= 2;
+        }
+        if (num_iters > 0) {
+            pf_iter(temp, cur, first_row, num_rows, col, b_qs_idx, false, col_stride);
+        }
+        reduce_result(temp, d_offset, first_row, num_rows, tid);
+        return;
+    }
+#endif
+
     while (num_iters >= 4) {
         // Manually partially unroll the loop
         [[unroll]] for (uint k = 0; k < 4; ++k) {
