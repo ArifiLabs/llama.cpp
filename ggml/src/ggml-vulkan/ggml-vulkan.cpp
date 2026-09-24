@@ -7631,14 +7631,14 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         // shape those cells were measured on (R74 `mmvqrow1`); rm_int_n gives 4 there and loses.
         // RDNA3 only: off RDNA3 rm_int_n is already 1 row, which would admit unmeasured devices.
         device->q6k_mmvq_n6_rows1 = is_rdna3 && q6k_mmvq_rows(5) == 1;
-        // arifi lane-277 / R87: rows per workgroup of the iq3_s NUM_COLS == 6 pipeline ONLY (iq3_xxs
-        // is not touched: served iq3_xxs got faster 5->6 in R84). DEFAULT 2 on RDNA3 (device probe),
+        // arifi lane-277 / R87: rows per workgroup of the iq3_s NUM_COLS == 6 f32-B pipeline ONLY
+        // (iq3_xxs untouched: served iq3_xxs got faster 5->6 in R84; the f16-B pipeline has no n=6
+        // eval/perf row, so it keeps the inherited shape). DEFAULT 2 on RDNA3 (device probe),
         // inherited rm_iq elsewhere. Basis (780M): isolated decider 6/6 rounds on all five served
-        // GSQ iq3_s shapes, +20% to +41% at n=6, n=5/n=7 null; rows=1 LOSES on 4/5 although it is
-        // the only arm that drops VGPRs below n=5's (161 vs 165; rows=2 = 178, rows=4 = 180; scratch 0
-        // in all) -- so the lever is the rows geometry, not occupancy and not spill. Served GSQ:
-        // iq3_s marg(5->6) +47.2 -> +23.8 ms per step. Same partial products, same summation order:
-        // OP_DUMP sha identical across rows 4/2/1.
+        // GSQ iq3_s shapes, +20% to +41% at n=6, n=5/n=7 null. Not spill (scratch 0 in every arm);
+        // occupancy is not needed for the win (rows=2 = 178 VGPRs, same class as rows=4's 180). The
+        // ISA-level cause is unresolved. Served GSQ: iq3_s n=6 op time 139.8 -> 116.7 ms per step.
+        // Same partial products, same summation order: OP_DUMP sha identical across rows 4/2/1.
         // GGML_ARIFI_IQ3S_N6_ROWS=1|2|4 overrides on any device.
         // "red" = planted defect for the eval-reach proof: the workgroup denominator stays rm_iq but
         // the shader is told 2 rows, so half of the n=6 rows are never written. Never a served arm.
@@ -7806,7 +7806,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ2_XS][i],  "mul_mat_vec_iq2_xs_f16_f32",  arr_dmmv_iq2_xs_f16_f32_len[reduc16],  arr_dmmv_iq2_xs_f16_f32_data[reduc16],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ2_S][i],   "mul_mat_vec_iq2_s_f16_f32",   arr_dmmv_iq2_s_f16_f32_len[reduc16],   arr_dmmv_iq2_s_f16_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ3_XXS][i], "mul_mat_vec_iq3_xxs_f16_f32", arr_dmmv_iq3_xxs_f16_f32_len[reduc16], arr_dmmv_iq3_xxs_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {iq3_rows(i), 1, 1}, {wg_size_subgroup16, iq3_rows(i), i+1, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ3_S][i],   "mul_mat_vec_iq3_s_f16_f32",   arr_dmmv_iq3_s_f16_f32_len[reduc16],   arr_dmmv_iq3_s_f16_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {iq3s_rows(i), 1, 1}, {wg_size_subgroup16, iq3s_spec_rows(i), i+1, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ3_S][i],   "mul_mat_vec_iq3_s_f16_f32",   arr_dmmv_iq3_s_f16_f32_len[reduc16],   arr_dmmv_iq3_s_f16_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {iq3_rows(i), 1, 1}, {wg_size_subgroup16, iq3_rows(i), i+1, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ4_XS][i],  "mul_mat_vec_iq4_xs_f16_f32",  arr_dmmv_iq4_xs_f16_f32_len[reduc16],  arr_dmmv_iq4_xs_f16_f32_data[reduc16],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ4_NL][i],  "mul_mat_vec_iq4_nl_f16_f32",  arr_dmmv_iq4_nl_f16_f32_len[reduc16],  arr_dmmv_iq4_nl_f16_f32_data[reduc16],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_MXFP4][i],   "mul_mat_vec_mxfp4_f16_f32",   OCP_DMMV_LEN(arr_dmmv_mxfp4_f16_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_mxfp4_f16_f32, reduc16), "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
