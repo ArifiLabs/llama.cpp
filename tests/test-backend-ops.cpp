@@ -10937,6 +10937,13 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         }
     }
 
+    // ArifiLabs lane-277 / R87: eval twin of the perf rows for the other three served iq3_s shapes.
+    for (int n : {5, 6, 7}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_IQ3_S, GGML_TYPE_F32, 10240, n, 5120, { 1, 1 }, { 1, 1 }));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_IQ3_S, GGML_TYPE_F32,  5120, n, 6144, { 1, 1 }, { 1, 1 }));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_IQ3_S, GGML_TYPE_F32,  6144, n, 5120, { 1, 1 }, { 1, 1 }));
+    }
+
     // The SYCL backend picks between one and two output rows per subgroup by row count when there
     // are two destination columns (Q4_K_MMVQ_ROW_PAIR_MIN_NROWS in ggml-sycl/mmvq.cpp). Cover both
     // sides of that boundary, including an odd row count above it for the row-pair tail.
@@ -12614,6 +12621,15 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
             // microbench reads cleanly. It is NOT this file's served lm_head (that one is Q4_K).
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, bs,  5120, {1, 1}, {1, 1}));
         }
+    }
+
+    // ArifiLabs lane-277 / R87: the other three served iq3_s shapes of the GSQ-RCO file (R84
+    // 31-top-ops.txt) at the verify widths 5..7; 17408x5120 and 5120x17408 are covered above.
+    // Eval twin in make_test_cases_eval. Filter: -p "type_a=iq3_s".
+    for (int bs : {5, 6, 7}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_IQ3_S, GGML_TYPE_F32, 10240, bs, 5120, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_IQ3_S, GGML_TYPE_F32,  5120, bs, 6144, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_IQ3_S, GGML_TYPE_F32,  6144, bs, 5120, {1, 1}, {1, 1}));
     }
 
     // ArifiLabs lane-256 / R71b: the two SERVED q6_K shapes the R71 decider could not reach.
