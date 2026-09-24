@@ -574,6 +574,84 @@ FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
 }
 #endif
 
+#if defined(DATA_A_IQ4_XS)
+// arifi lane-262 / R75: IQ4_XS on the q8_1 integer-dot framework. Structural template = MXFP4's
+// mmvq (the in-tree LUT-based 4-bit type already on this path, :177) for the nibble->LUT->pack32
+// step, and Q4_K's (:421) for the superblock indexing. Arithmetic copied from the CPU/CUDA
+// references in this tree, not re-derived:
+//   ggml/src/ggml-cpu/arch/x86/quants.c ggml_vec_dot_iq4_xs_q8_K -- ls per 32-weight sub-block =
+//     ((scales_l[ib32/2] >> 4*(ib32%2)) & 0xf) | (((scales_h >> 2*ib32) & 3) << 4), dl = d*(ls-32)
+//   ggml/src/ggml-cuda/vecdotq.cuh vec_dot_iq4_xs_q8_1 -- sumi = int-dot of LUT values with the
+//     q8_1 quants, result = d * (ls-32) * ds.x * sumi. There is NO ds.y (min/sum) term: the
+//     kvalues_iq4nl table is a signed LUT with no zero-point, so nothing multiplies the q8_1 sum.
+//
+// SUMMATION ORDER (documented per the brief): four dotPacked4x8EXT partial sums accumulated into a
+// single int32 q_sum in ascending byte order, then ONE float multiply by (ds.x * dl). The f32
+// shader instead accumulates a 16-term float fma chain per sub-block and then fma's by dl, so the
+// two paths are NOT bit-identical by construction -- the integer path is exact up to the final
+// multiply, the f32 one rounds every term.
+//
+// LAYOUT. In this framework `ib` is a 32-WIDE block index (a_offset is scaled by
+// QUANT_K/QUANT_K_Q8_1 in mul_mat_vecq.comp), while block_iq4_xs is a 256-weight superblock:
+// ib_k = ib/8 is the superblock, ib32 = ib%8 the sub-block inside it. Within sub-block ib32 the 16
+// qs bytes at packed32 words [4*ib32 .. 4*ib32+3] hold weights 0..15 in their LOW nibbles and
+// weights 16..31 in their HIGH nibbles (the order mul_mat_vec_iq4_xs.comp uses: y1_idx low,
+// y2_idx = y1_idx+16 high). K_PER_ITER is 16, so iqs == 0 is the low half and iqs == 1 the high
+// half -- exactly the 16 activations cache_b_block() loads at b_qs_idx.
+//
+// NOT get_dm(): the shared get_dm() arm at :15 lists DATA_A_IQ4_XS and returns data_a[ib].d, which
+// indexes a 32-wide block into a 256-wide struct. That arm is dead for every other path; it would
+// compile clean here and read the wrong superblock, so this type reads d itself below.
+i32vec4 repack4(uint ib, uint iqs) {
+    const uint ib_k    = ib / 8;
+    const uint qs_idx  = (ib % 8) * 4;
+    const uint shift   = iqs * 4;   // 0 = low nibbles (weights 0..15), 4 = high (weights 16..31)
+
+    const u8vec4 n0 = unpack8((data_a_packed32[ib_k].qs[qs_idx    ] >> shift) & 0x0F0F0F0F);
+    const u8vec4 n1 = unpack8((data_a_packed32[ib_k].qs[qs_idx + 1] >> shift) & 0x0F0F0F0F);
+    const u8vec4 n2 = unpack8((data_a_packed32[ib_k].qs[qs_idx + 2] >> shift) & 0x0F0F0F0F);
+    const u8vec4 n3 = unpack8((data_a_packed32[ib_k].qs[qs_idx + 3] >> shift) & 0x0F0F0F0F);
+
+    return i32vec4(pack32(i8vec4(kvalues_iq4nl_i8[n0.x], kvalues_iq4nl_i8[n0.y], kvalues_iq4nl_i8[n0.z], kvalues_iq4nl_i8[n0.w])),
+                   pack32(i8vec4(kvalues_iq4nl_i8[n1.x], kvalues_iq4nl_i8[n1.y], kvalues_iq4nl_i8[n1.z], kvalues_iq4nl_i8[n1.w])),
+                   pack32(i8vec4(kvalues_iq4nl_i8[n2.x], kvalues_iq4nl_i8[n2.y], kvalues_iq4nl_i8[n2.z], kvalues_iq4nl_i8[n2.w])),
+                   pack32(i8vec4(kvalues_iq4nl_i8[n3.x], kvalues_iq4nl_i8[n3.y], kvalues_iq4nl_i8[n3.z], kvalues_iq4nl_i8[n3.w])));
+}
+
+FLOAT_TYPE get_dl(uint ib) {
+    const uint ib_k = ib / 8;
+    const uint ib32 = ib % 8;
+
+    const uint sl = (data_a_packed32[ib_k].scales_l >> (4 * ib32)) & 0xF;
+    const uint sh = (data_a[ib_k].scales_h         >> (2 * ib32)) & 3;
+
+    return FLOAT_TYPE(data_a[ib_k].d) * FLOAT_TYPE(int(sl | (sh << 4)) - 32);
+}
+
+struct mmvq_a_t {
+    i32vec4    qs;
+    FLOAT_TYPE dl;
+};
+
+mmvq_a_t mmvq_load_a(const uint ib_a, const uint iqs) {
+    mmvq_a_t a;
+    a.qs = repack4(ib_a, iqs);
+    a.dl = get_dl(ib_a);
+    return a;
+}
+
+FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
+    int32_t q_sum = 0;
+
+    q_sum += dotPacked4x8EXT(a.qs.x, cache_b_qs[0]);
+    q_sum += dotPacked4x8EXT(a.qs.y, cache_b_qs[1]);
+    q_sum += dotPacked4x8EXT(a.qs.z, cache_b_qs[2]);
+    q_sum += dotPacked4x8EXT(a.qs.w, cache_b_qs[3]);
+
+    return FLOAT_TYPE(float(cache_b_ds.x) * float(a.dl) * float(q_sum));
+}
+#endif
+
 #if defined(DATA_A_IQ1_S)
 void repack8(uint ib, uint iqs, out i32vec4 out0, out i32vec4 out1) {
     const uint ib32 = iqs / 32;

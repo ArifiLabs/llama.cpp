@@ -2145,12 +2145,22 @@ const int8_t kvalues_iq4nl_const[16] = {
 
 shared FLOAT_TYPE kvalues_iq4nl[16];
 
+#if defined(MMQ)
+// arifi lane-262 / R75: the q8_1 integer-dot path needs the LUT as int8, not FLOAT_TYPE -- the
+// values are packed straight into an i8vec4 and fed to dotPacked4x8EXT. Same table, same order
+// (kvalues_iq4nl_const), so the two arrays never disagree; this one only exists in MMQ shaders.
+shared int8_t kvalues_iq4nl_i8[16];
+#endif
+
 #define NEEDS_INIT_IQ_SHMEM
 void init_iq_shmem(uvec3 wgsize)
 {
     // copy the table into shared memory and sync
     for (uint i = gl_LocalInvocationIndex.x; i < kvalues_iq4nl.length(); i += wgsize.x) {
         kvalues_iq4nl[i] = FLOAT_TYPE(kvalues_iq4nl_const[i]);
+#if defined(MMQ)
+        kvalues_iq4nl_i8[i] = kvalues_iq4nl_const[i];
+#endif
     }
     barrier();
 }
