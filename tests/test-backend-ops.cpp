@@ -10924,6 +10924,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32,   5120, n,  6144, {1, 1}, {1, 1}));
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32,   1024, n,  5120, {1, 1}, {1, 1}));
     }
+    // arifi lane-262 / R75: iq4_xs at every SERVED shape (R77 census), n = 1..8, so the route's
+    // correctness gate and planted RED reach the exact (m, n, k) cells the admit ships -- the
+    // generic eval shapes never dispatch them. 17407 = row tail at the 4-row n>=5 geometry.
+    for (int n : {1, 2, 3, 4, 5, 6, 7, 8}) {
+        for (auto mk : std::vector<std::pair<int64_t, int64_t>>{{17408, 5120}, {5120, 17408}, {5120, 6144},
+                                                                 {10240, 5120}, {6144, 5120}, {12288, 5120}, {1024, 5120}}) {
+            test_cases.emplace_back(new test_mul_mat(GGML_TYPE_IQ4_XS, GGML_TYPE_F32, mk.first, n, mk.second, {1, 1}, {1, 1}));
+        }
+        if (n == 5 || n == 8) {
+            test_cases.emplace_back(new test_mul_mat(GGML_TYPE_IQ4_XS, GGML_TYPE_F32, 17407, n, 5120, {1, 1}, {1, 1}));
+        }
+    }
     // Row tail: stride_d not a multiple of NUM_ROWS (rm_kq = 2 on the 780M) exercises the
     // `num_rows = p.stride_d - first_row` path in main(), where the hoisted activation tile is
     // reused across FEWER rows than the pipeline was specialized for.
@@ -12428,7 +12440,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     // type (down is Q4_K on 20 layers, Q6_K on 21). bs 1 = decode, 3 = DFlash2 n-max-2 verify, <= 8 is
     // the mul_mat_vec_id width gate. `-p "n_mats=256"` narrows perf to these rows.
     for (int bs : {1, 2, 3, 4, 8}) {
-        for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_Q6_K}) {
+        // arifi lane-262 / R75: IQ4_XS rides along -- the only MUL_MAT_ID perf rows it has, so the
+        // `_id` mirror of the q8_1 route can be timed at all (a synthetic MoE shape: neither served
+        // 27B file carries an iq4_xs `_exps` tensor).
+        for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ4_XS}) {
             test_cases.emplace_back(new test_mul_mat_id(type_a, GGML_TYPE_F32, 256, 8, false,  512, bs, 2048));
             test_cases.emplace_back(new test_mul_mat_id(type_a, GGML_TYPE_F32, 256, 8, false, 2048, bs,  512));
         }
