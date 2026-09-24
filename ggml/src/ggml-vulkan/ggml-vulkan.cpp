@@ -1506,6 +1506,7 @@ struct vk_device_struct {
     // at every width), 1 = the measured admit. DEFAULT 0 ON EVERY DEVICE -- the win is real but
     // UNCLEARED, see ggml_vk_should_use_mmvq_impl.
     uint32_t q6k_mmvq_route;
+    bool q6k_mmvq_n6_rows1 = false;  // lane-270 / R74b: set in ggml_vk_load_shaders
     // arifi lane-253 / R65: the NUM_COLS index (i = NUM_COLS-1) at and above which rm_int_n() hands
     // the q8_1 MMVQ pipelines the static 4-row shape. 4 = the inherited RDNA3 rule, untouched.
     // Probed once here for the same reason as mmvq_a_hoist: pipeline creation is entered lazily.
@@ -7562,29 +7563,52 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         //   GGML_ARIFI_Q6K_MMVQ_ROWS=<rows>       rows in {1,2,4} at every NUM_COLS
         //   GGML_ARIFI_Q6K_MMVQ_ROWS=<rows>@<n>   those rows at NUM_COLS >= n, the inherited
         //                                         rm_int_n(rm_kq_int, i) below
+        //   GGML_ARIFI_Q6K_MMVQ_ROWS=<rows>@n<n>  those rows at NUM_COLS == n ONLY (lane-270 / R74b,
+        //                                         CHECK-R74 finding 2: `1@6` is a threshold and also
+        //                                         hits n=7,8, where rows 1 loses 0.647 / 0.559)
+        //   GGML_ARIFI_Q6K_MMVQ_ROWS=inherit      rm_int_n at every width (R74's `mmvq` arm)
         //
-        // DEFAULT: rm_int_n(1*rm_kq_int, i), i.e. 1 row up to NUM_COLS 4 and 4 from NUM_COLS 5 on
-        // RDNA3 -- byte-for-byte the inherited shape. BIT-IDENTICAL for the same reason as above.
+        // DEFAULT (lane-270 / R74b): RDNA3 = 1 row at NUM_COLS 6 EXACTLY, rm_int_n everywhere else;
+        // every other device = rm_int_n everywhere. The n=6 q8_1 pipeline is dispatched only by the
+        // route's two n=6 cells below (ggml_vk_should_use_mmvq_impl) and by the `=1` diagnostic, so
+        // this reshapes nothing the tree served before. Bit-identical across rows (R74 sha proof).
         uint32_t q6k_mmvq_rows_wide = 0;   // 0 = unset, keep rm_int_n
         uint32_t q6k_mmvq_rows_from = 9;
+        bool     q6k_mmvq_rows_exact = false;
         const char * q6k_mmvq_rows_src = "device-probe (rm_int_n, upstream shape)";
+        if (is_rdna3) {
+            q6k_mmvq_rows_wide  = 1;
+            q6k_mmvq_rows_from  = 6;
+            q6k_mmvq_rows_exact = true;
+            q6k_mmvq_rows_src   = "device-probe (RDNA3: R74b n=6 cells)";
+        }
         if (const char * s = getenv("GGML_ARIFI_Q6K_MMVQ_ROWS")) {
             const uint32_t rows = (uint32_t) atoi(s);
             const char * at = strchr(s, '@');
-            const uint32_t from = at ? (uint32_t) atoi(at + 1) : 1u;
-            if ((rows != 1 && rows != 2 && rows != 4) || from < 1 || from > 8) {
+            const bool exact = at && at[1] == 'n';
+            const uint32_t from = at ? (uint32_t) atoi(at + (exact ? 2 : 1)) : 1u;
+            if (strcmp(s, "inherit") == 0) {
+                q6k_mmvq_rows_wide = 0;
+                q6k_mmvq_rows_from = 9;
+                q6k_mmvq_rows_exact = false;
+                q6k_mmvq_rows_src  = "GGML_ARIFI_Q6K_MMVQ_ROWS=inherit";
+            } else if ((rows != 1 && rows != 2 && rows != 4) || from < 1 || from > 8) {
                 fprintf(stderr, "ggml_vulkan: GGML_ARIFI_Q6K_MMVQ_ROWS=%s not understood "
-                                "(<1|2|4>[@<1..8>]), keeping the inherited rm_int_n shape\n", s);
+                                "(<1|2|4>[@<1..8>|@n<1..8>] or inherit), keeping %s\n", s, q6k_mmvq_rows_src);
             } else {
                 q6k_mmvq_rows_wide = rows;
                 q6k_mmvq_rows_from = from;
+                q6k_mmvq_rows_exact = exact;
                 q6k_mmvq_rows_src  = "GGML_ARIFI_Q6K_MMVQ_ROWS";
             }
         }
-        const auto q6k_mmvq_rows = [&rm_int_n, rm_kq_int, q6k_mmvq_rows_wide, q6k_mmvq_rows_from](uint32_t i) {
-            return (q6k_mmvq_rows_wide && i + 1 >= q6k_mmvq_rows_from) ? q6k_mmvq_rows_wide
-                                                                      : rm_int_n(1 * rm_kq_int, i);
+        const auto q6k_mmvq_rows = [&rm_int_n, rm_kq_int, q6k_mmvq_rows_wide, q6k_mmvq_rows_from, q6k_mmvq_rows_exact](uint32_t i) {
+            const bool hit = q6k_mmvq_rows_exact ? i + 1 == q6k_mmvq_rows_from : i + 1 >= q6k_mmvq_rows_from;
+            return (q6k_mmvq_rows_wide && hit) ? q6k_mmvq_rows_wide : rm_int_n(1 * rm_kq_int, i);
         };
+        // The route admits its n=6 cells only when the n=6 pipeline it would dispatch is the rows-1
+        // shape those cells were measured on (R74 `mmvqrow1`); rm_int_n gives 4 there and loses.
+        device->q6k_mmvq_n6_rows1 = q6k_mmvq_rows(5) == 1;
         {
             static bool once = false;
             if (!once) {
@@ -7615,6 +7639,10 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 if (q6k_mmvq_rows_from > 8) {
                     fprintf(stderr, "ggml_vulkan: q6_k mmvq mat-vec rows: rm_int_n (%s) "
                                     "[GGML_ARIFI_Q6K_MMVQ_ROWS]\n", q6k_mmvq_rows_src);
+                } else if (q6k_mmvq_rows_exact) {
+                    fprintf(stderr, "ggml_vulkan: q6_k mmvq mat-vec rows: %u at n==%u only, rm_int_n "
+                                    "elsewhere (%s) [GGML_ARIFI_Q6K_MMVQ_ROWS]\n",
+                            q6k_mmvq_rows_wide, q6k_mmvq_rows_from, q6k_mmvq_rows_src);
                 } else {
                     fprintf(stderr, "ggml_vulkan: q6_k mmvq mat-vec rows: %u at n>=%u, rm_int_n "
                                     "below (%s) [GGML_ARIFI_Q6K_MMVQ_ROWS]\n",
@@ -9810,7 +9838,7 @@ static vk_device ggml_vk_get_device(size_t idx) {
                     device->q5k_mmvq_route ? "route (n=5..8, k<=8192)" : "legacy", q5k_src,
                     q5k_v2_asked ? " (GGML_ARIFI_Q5K_MMVQ=v2 is UNIMPLEMENTED - running legacy)" : "");
             fprintf(stderr, "ggml_vulkan: q6_k mmvq route: %s (%s)\n",
-                    device->q6k_mmvq_route ? "route (MUL_MAT only, n=7..8)" : "legacy", q6k_src);
+                    device->q6k_mmvq_route ? "route (MUL_MAT only, n=7..8; n=6 at 248320x5120 + 5120x6144 when the n=6 pipeline is rows 1)" : "legacy", q6k_src);
         }
 
         ggml_vk_load_shaders(device);
@@ -12537,6 +12565,15 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
     // nothing. GGML_ARIFI_Q6K_MMVQ=1 still reaches `_id`; only `route` is fenced.
     if (src0_type == GGML_TYPE_Q6_K && !mmvq_q6) {
         if (device->q6k_mmvq_route != 0 && !is_id && device->vendor_id == VK_VENDOR_ID_AMD) {
+            // arifi lane-270 / R74b: two exact n=6 cells, measured on the rows-1 n=6 pipeline
+            // (r74-evidence/21-paired.txt `mmvqrow1`: 248320x5120 1.0557 6/6, 5120x6144 1.0355 6/6;
+            // re-confirmed on the route as coded in r74b-evidence). Every other measured n=6 shape
+            // LOSES or ties on that arm (17408x5120 0.959, 5120x17408 0.928, 1024x5120 1.003), so the
+            // fence is (m, k) equality, not a range -- nothing between the cells is measured.
+            if (n == 6 && device->q6k_mmvq_n6_rows1 &&
+                ((m == 248320 && k == 5120) || (m == 5120 && k == 6144))) {
+                return true;
+            }
             return n == 7 || n == 8;
         }
         return false;
