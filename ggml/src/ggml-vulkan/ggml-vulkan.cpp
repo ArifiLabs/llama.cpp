@@ -5937,12 +5937,12 @@ vk_device ggml_vk_get_device(size_t idx) {
             }
             // arifi lane-262 / R75: GGML_ARIFI_IQ4XS_MMVQ=<legacy|route|all>. Exact strings only
             // (the R71b 0/1 trap: an unknown value keeps the probe, it never parses as "on").
-            // `all` is the decider's arm, not a shipping value. DEFAULT: `route` on AMD (the only
-            // vendor measured), `legacy` elsewhere -- the admit itself is AMD-fenced as well.
-            // GGML_ARIFI_IQ4XS_MMVQ=legacy restores the pre-R75 route on one binary.
+            // `all` is the decider's arm, not a shipping value. DEFAULT: `legacy` everywhere -- the
+            // 6-cell admit passed timing and PPL but FAILED greedy identity (3/12 pairs differ,
+            // r75-evidence/56-greedy-verdict.txt). `route` stays selectable for A/B.
             const char * iq4xs_env = getenv("GGML_ARIFI_IQ4XS_MMVQ");
-            const char * iq4xs_src = "device-probe";
-            device->iq4xs_mmvq_route = (uint32_t) (device->vendor_id == VK_VENDOR_ID_AMD);
+            const char * iq4xs_src = "default";
+            device->iq4xs_mmvq_route = 0u;
             if (iq4xs_env != nullptr && strcmp(iq4xs_env, "route") == 0) {
                 device->iq4xs_mmvq_route = 1u;
                 iq4xs_src = "GGML_ARIFI_IQ4XS_MMVQ=route";
