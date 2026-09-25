@@ -1142,30 +1142,33 @@ enum vk_test_fault_stage {
     VK_TEST_FAULT_AFTER_BDA   = 4,
 };
 
-static std::atomic<int> vk_test_fault_stage_active { VK_TEST_FAULT_NONE };
-static std::atomic<int> vk_test_fault_mapped       { 0 };
+// W1 b11178: `inline`, not `static`. After the f172be756 split this header is included by several TUs
+// (ggml-vulkan.cpp sets the seam, ggml-vulkan-buffers.cpp fires it); `static` gave each TU its own
+// copy and heapres "mid-plan failure" went RED. One definition program-wide (C++17 inline variable).
+inline std::atomic<int> vk_test_fault_stage_active { VK_TEST_FAULT_NONE };
+inline std::atomic<int> vk_test_fault_mapped       { 0 };
 
 // R46b B7a-R3 (finding 2): witness that device->device.getBufferAddress() REALLY ran. The stage-4
 // fault fires after the `if (device->buffer_device_address)` block whether or not that block was
 // entered, so without this witness a device with no BDA support reports "after getBufferAddress"
 // green while never touching BDA.
-static std::atomic<int> vk_test_fault_bda { 0 };
+inline std::atomic<int> vk_test_fault_bda { 0 };
 
 // R46b B7a-R3 (finding 1): ordering witness for ~vk_buffer_struct(). Sampled at the instant the
 // DRIVER memory is freed; the ledger must still be counting the buffer's bytes at that point.
 // Armed only around the one destruction the probe is measuring, because device/instance teardown
 // destroys buffers of its own that would otherwise clobber the sample.
-static std::atomic<int>      vk_test_destroy_witness_armed { 0 };
-static std::atomic<uint64_t> vk_test_reserved_at_driver_free { 0 };
+inline std::atomic<int>      vk_test_destroy_witness_armed { 0 };
+inline std::atomic<uint64_t> vk_test_reserved_at_driver_free { 0 };
 
 // R46b B7b: counts every vkAllocateMemory THIS process asked for, incremented immediately before
 // the call at all three call sites. A NULL return from a refused load proves nothing about "failed
 // before the first driver allocation"; this counter does.
-static std::atomic<uint64_t> vk_test_driver_alloc_calls { 0 };
+inline std::atomic<uint64_t> vk_test_driver_alloc_calls { 0 };
 
 // R46b B7b: let the first `vk_test_fault_skip` buffers through before the fault fires. A batch
 // transaction can only be tested by failing PART WAY through it.
-static std::atomic<int> vk_test_fault_skip { 0 };
+inline std::atomic<int> vk_test_fault_skip { 0 };
 
 #define VK_TEST_FAULT(stage)                                                              \
     do {                                                                                  \
