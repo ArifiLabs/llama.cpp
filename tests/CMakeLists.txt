@@ -323,17 +323,6 @@ if (NOT LLAMA_SANITIZE_ADDRESS AND NOT GGML_SCHED_NO_REALLOC)
   # TODO: repair known memory leaks
   llama_build_and_test(test-opt.cpp)
 endif()
-if (GGML_VULKAN AND TARGET ggml-vulkan)
-    # R46b B7a: enables the "heapres" mode (Vulkan heap reservation ledger).
-    target_compile_definitions(test-backend-ops PRIVATE GGML_USE_VULKAN)
-    # R46b B7a-R2 (finding 2): the ledger/fault seam inside ggml-vulkan.cpp is compiled ONLY when
-    # this definition is set, and it is set only from here - i.e. only when LLAMA_BUILD_TESTS is on
-    # and the tests subdirectory is added. A production build of ggml-vulkan therefore contains no
-    # ggml_vk_heapres_* symbol and no fault-injection point at all.
-    target_compile_definitions(ggml-vulkan PRIVATE GGML_VK_INTERNAL_TESTS)
-    add_test(NAME test-backend-ops-heapres COMMAND $<TARGET_FILE:test-backend-ops> heapres)
-    set_property(TEST test-backend-ops-heapres PROPERTY LABELS main)
-endif()
 if (NOT LLAMA_USE_SYSTEM_GGML)
     llama_build(test-moe-cache.cpp)
     if (GGML_CUDA)
@@ -359,6 +348,17 @@ llama_build_and_test(test-moe-cache-fit.cpp)
 
 # TODO: make this test (and others) not link `libllama` as it is not needed [TAG_TESTS_LLAMA_LINK]
 llama_build(test-backend-ops.cpp)
+if (GGML_VULKAN AND TARGET ggml-vulkan)
+    # R46b B7a: enables the "heapres" mode (Vulkan heap reservation ledger).
+    target_compile_definitions(test-backend-ops PRIVATE GGML_USE_VULKAN)
+    # R46b B7a-R2 (finding 2): the ledger/fault seam inside ggml-vulkan.cpp is compiled ONLY when
+    # this definition is set, and it is set only from here - i.e. only when LLAMA_BUILD_TESTS is on
+    # and the tests subdirectory is added. A production build of ggml-vulkan therefore contains no
+    # ggml_vk_heapres_* symbol and no fault-injection point at all.
+    target_compile_definitions(ggml-vulkan PRIVATE GGML_VK_INTERNAL_TESTS)
+    add_test(NAME test-backend-ops-heapres COMMAND $<TARGET_FILE:test-backend-ops> heapres)
+    set_property(TEST test-backend-ops-heapres PROPERTY LABELS main)
+endif()
 
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")
