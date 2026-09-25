@@ -2545,8 +2545,8 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
             // the allocator rehomed the "inplace" zero into compute memory - the write never
             // touched the cache, which is exactly the observed no-op.
             static const bool rs_za = getenv("LLAMA_RS_ZERO_AUDIT") != nullptr;
-            if (rs_za && mr) {
-                ggml_cgraph * gf = gf_res_prev->get_gf();
+            if (rs_za && mr && gf_res_prev_active) {
+                ggml_cgraph * gf = gf_res_prev_active->get_gf();  // upstream 2f3fd0252: the executed graph
                 for (int i = 0; i < ggml_graph_n_nodes(gf); ++i) {
                     ggml_tensor * n = ggml_graph_node(gf, i);
                     if (strncmp(n->name, "rs_zero_tap_", 12) == 0) {

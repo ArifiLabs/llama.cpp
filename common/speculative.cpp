@@ -2488,9 +2488,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 }
                 const int n_chain = n_cap[seq_one];
 
-                // deferred rows at or past n_past hold candidates the verify
-                // rejected; the committed prefix ends at n_past - 1. Drop them.
-                drop_deferred_from(seq_one, dp.n_past);
+                // deferred rows at or past pos0 hold candidates the verify
+                // rejected; the committed prefix ends at pos0 - 1. Drop them.
+                drop_deferred_from(seq_one, dp.pos0);
 
                 // rows of other sequences cannot join a single-sequence chain
                 // batch; decode all remaining rows standalone in that case
@@ -2516,7 +2516,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 defer.embd.clear();
 
                 for (int j = 0; j < n_chain; ++j) {
-                    common_batch_add(batch, j == 0 ? dp.id_last : 0, dp.n_past + j, { seq_one }, true);
+                    common_batch_add(batch, j == 0 ? dp.id_last : 0, dp.pos0 + j, { seq_one }, true);
                     if (j == 0) {
                         std::memcpy(batch.embd + (size_t) n_catchup * n_embd, pending_h[seq_one].data(), row_bytes);
                     } else {
@@ -2612,7 +2612,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         if (any_drafting && !defer.tok.empty()) {
             for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
                 if (dparams[seq_id].drafting) {
-                    drop_deferred_from(seq_id, dparams[seq_id].n_past);
+                    drop_deferred_from(seq_id, dparams[seq_id].pos0);
                 }
             }
         }
