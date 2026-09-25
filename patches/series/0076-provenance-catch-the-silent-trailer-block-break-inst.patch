@@ -1,4 +1,4 @@
-From 68e47b9fccd3bd61895404dae945327a5455cc3c Mon Sep 17 00:00:00 2001
+From 8024f23d79a2f48d3064a8270801e4105d1b9235 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 01:37:22 -0400
 Subject: [PATCH] provenance: catch the silent trailer-block break instead of
@@ -43,7 +43,7 @@ Measured-effect: tooling and documentation only, no engine behaviour changed. Ho
 
 diff --git a/.githooks/commit-msg b/.githooks/commit-msg
 new file mode 100644
-index 000000000..e6cbb9a06
+index 0000000000..e6cbb9a069
 --- /dev/null
 +++ b/.githooks/commit-msg
 @@ -0,0 +1,55 @@
@@ -104,7 +104,7 @@ index 000000000..e6cbb9a06
 +exit 0
 diff --git a/CONTRIBUTING/COMMIT-TRAILERS.md b/CONTRIBUTING/COMMIT-TRAILERS.md
 new file mode 100644
-index 000000000..102ac5b4c
+index 0000000000..102ac5b4c7
 --- /dev/null
 +++ b/CONTRIBUTING/COMMIT-TRAILERS.md
 @@ -0,0 +1,72 @@
@@ -181,7 +181,7 @@ index 000000000..102ac5b4c
 +byte-identical tree, and rewriting messages to satisfy a parser would invalidate that verification
 +for no gain in the information itself. New commits are expected to parse.
 diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
-index 6ff45ff92..726ee4fc5 100644
+index 6ff45ff923..726ee4fc59 100644
 --- a/tools/arifi-sync/arifi_sync.py
 +++ b/tools/arifi-sync/arifi_sync.py
 @@ -146,6 +146,18 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:

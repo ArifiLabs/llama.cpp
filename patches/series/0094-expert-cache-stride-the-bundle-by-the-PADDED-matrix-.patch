@@ -1,4 +1,4 @@
-From 3e9c41c50dffbb921476b54944825219a4b68418 Mon Sep 17 00:00:00 2001
+From 0c0cd9a57d8257aa71e3da5e74b9054db5e4c21a Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 30 Jul 2026 01:50:14 -0400
 Subject: [PATCH] expert cache: stride the bundle by the PADDED matrix size --
@@ -46,7 +46,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  3 files changed, 37 insertions(+), 7 deletions(-)
 
 diff --git a/powerinfer/moe_sparse_pipeline/expert_cache.cpp b/powerinfer/moe_sparse_pipeline/expert_cache.cpp
-index d379c7c41..2de706d3f 100644
+index d379c7c417..2de706d3fc 100644
 --- a/powerinfer/moe_sparse_pipeline/expert_cache.cpp
 +++ b/powerinfer/moe_sparse_pipeline/expert_cache.cpp
 @@ -20,9 +20,21 @@ ExpertCache::ExpertCache(
@@ -113,7 +113,7 @@ index d379c7c41..2de706d3f 100644
          Matrix *victim = lru.evict().get_owner_ptr(&Matrix::lru_node);
  
 diff --git a/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/expert_cache.hpp b/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/expert_cache.hpp
-index 03301c1ba..b4c65074d 100644
+index 03301c1ba9..b4c65074d6 100644
 --- a/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/expert_cache.hpp
 +++ b/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/expert_cache.hpp
 @@ -82,6 +82,11 @@ private:
@@ -129,10 +129,10 @@ index 03301c1ba..b4c65074d 100644
      bool debug_print = false;
  
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 6c2a19b63..f0cc6b0a0 100644
+index 0cecd111b5..397c365455 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -1857,8 +1857,18 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+@@ -1915,8 +1915,18 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
              const size_t pi_row_size     = ggml_row_size(GGML_TYPE_Q4_0, hparams.n_embd);
              const size_t pi_matrix_bytes = pi_row_size * hparams.n_ff_exp;
  

@@ -1,4 +1,4 @@
-From b44ed2c156df4e6a445c98e17797a9a0a93438a8 Mon Sep 17 00:00:00 2001
+From 7d42a59217a0ee6bf03ce399f868b1ca9355e17c Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:18 -0400
 Subject: [PATCH] 
@@ -10,7 +10,7 @@ Subject: [PATCH]
  2 files changed, 124 insertions(+), 16 deletions(-)
 
 diff --git a/ggml/src/ggml-common.h b/ggml/src/ggml-common.h
-index c1fd483db..1cfa1def1 100644
+index c1fd483db2..1cfa1def17 100644
 --- a/ggml/src/ggml-common.h
 +++ b/ggml/src/ggml-common.h
 @@ -317,30 +317,95 @@ typedef struct {
@@ -124,7 +124,7 @@ index c1fd483db..1cfa1def1 100644
  //
  // Super-block quantization structures
 diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
-index bd3db57f3..61c429349 100644
+index 35b0b8c417..b05121b2bf 100644
 --- a/ggml/src/ggml.c
 +++ b/ggml/src/ggml.c
 @@ -866,6 +866,14 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
@@ -176,7 +176,7 @@ index bd3db57f3..61c429349 100644
  
  static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
  
-@@ -6520,6 +6530,38 @@ struct ggml_tensor * ggml_gated_delta_net(
+@@ -6571,6 +6581,38 @@ struct ggml_tensor * ggml_gated_delta_net(
      return result;
  }
  
@@ -215,7 +215,7 @@ index bd3db57f3..61c429349 100644
  // ggml_lightning_indexer
  
  struct ggml_tensor * ggml_lightning_indexer(
-@@ -8396,6 +8438,7 @@ size_t ggml_quantize_chunk(
+@@ -8475,6 +8517,7 @@ size_t ggml_quantize_chunk(
          case GGML_TYPE_IQ4_XS:  result = quantize_iq4_xs (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_TURBO3_0: result = quantize_turbo3_0(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_TURBO4_0: result = quantize_turbo4_0(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;

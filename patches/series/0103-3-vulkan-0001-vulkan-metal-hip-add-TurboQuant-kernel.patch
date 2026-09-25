@@ -1,36 +1,40 @@
-From 272997fe5a9076e40f4f4de94fca60c2b70e151b Mon Sep 17 00:00:00 2001
+From 58179605c79d575d873fd90427cd0c249dbe0ad5 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:35 -0400
 Subject: [PATCH] 
  3-vulkan/0001-vulkan-metal-hip-add-TurboQuant-kernel-support.patch
 
+Conflict-resolved: S2: fa_types.glsl - kept upstream #include ggml_type_ids.glsl AND the FA_TYPE_* numeric block (fork turbo/TQ K/V ids have no upstream id; fork shader code + arifi_sync_check use FA_TYPE_*; same numbers as GGML_TYPE_*); fork case labels appended to upstream's GGML_TYPE_* switches (fa_types, flash_attn_dequant K/V); generator load_vec list gone upstream - is_arifi_mm_quant narrowed to types with a mul_mm DATA_A_ block (q2_0_g128, rocmfp4_fast); rocmfp4/rocmfpx_* never had mat-mat pipelines, their dead per-type SPIR-V is no longer compiled
+Conflict-resolved: S3: flash_attn.comp - upstream kcol/vcol row index kept inside our #if !defined(DATA_A_TURBO3_0) guard (5 regions, wrap rule)
+Conflict-resolved: S4 split (f172be756): pipeline_turbo_wht member re-homed into vk_device_struct in ggml-vulkan-types.h; ggml_vk_turbo_wht dispatcher kept above ggml_vk_silu_back (now non-static upstream)
 ---
- ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  67 ++-
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h      |   1 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  66 ++-
  .../vulkan-shaders/copy_from_quant.comp       |  36 ++
  .../vulkan-shaders/copy_to_quant.comp         | 550 +++++++++++++++++-
  .../vulkan-shaders/dequant_funcs.glsl         |  75 +++
  .../vulkan-shaders/dequant_funcs_cm2.glsl     |  29 +
  .../vulkan-shaders/dequant_tq4_1s.comp        |  65 +++
  .../vulkan-shaders/dequant_turbo3_0.comp      |  36 ++
- .../ggml-vulkan/vulkan-shaders/fa_types.glsl  |  12 +
+ .../ggml-vulkan/vulkan-shaders/fa_types.glsl  |  25 +
  .../vulkan-shaders/flash_attn.comp            |  14 +
  .../vulkan-shaders/flash_attn_cm1.comp        |   8 +
  .../vulkan-shaders/flash_attn_dequant.glsl    |  69 +++
  .../vulkan-shaders/mul_mat_vec_tq4_1s.comp    | 119 ++++
  .../ggml-vulkan/vulkan-shaders/turbo_wht.comp |  67 +++
  .../src/ggml-vulkan/vulkan-shaders/types.glsl |  64 ++
- .../vulkan-shaders/vulkan-shaders-gen.cpp     | 137 ++++-
- 15 files changed, 1342 insertions(+), 6 deletions(-)
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     | 138 ++++-
+ 16 files changed, 1356 insertions(+), 6 deletions(-)
  create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/dequant_tq4_1s.comp
  create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/dequant_turbo3_0.comp
  create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq4_1s.comp
  create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/turbo_wht.comp
 
-diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 28ae58f21..2ed683d7a 100644
---- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-+++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -1098,6 +1098,7 @@ struct vk_device_struct {
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index 252359bf89..69aaa5db11 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -967,6 +967,7 @@ struct vk_device_struct {
      vk_pipeline pipeline_snake_bf16;
      vk_pipeline pipeline_pool1d_f32;
      vk_pipeline pipeline_pool2d_f32;
@@ -38,7 +42,11 @@ index 28ae58f21..2ed683d7a 100644
      vk_pipeline pipeline_rwkv_wkv6_f32;
      vk_pipeline pipeline_rwkv_wkv7_f32;
      vk_pipeline pipeline_gated_linear_attn_f32;
-@@ -4609,6 +4610,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 7f630e76f3..214670bdc9 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -2090,6 +2090,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
              const bool f32acc = fa.first.f32acc;
              const uint32_t fa_sgs = fa.first.subgroup_size;
              const bool fa_ds = fa.first.subgroup_size == 0;
@@ -47,7 +55,7 @@ index 28ae58f21..2ed683d7a 100644
  
              const bool bf16_kv = fa.first.k_type == GGML_TYPE_BF16;
  
-@@ -5991,6 +5994,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -3691,6 +3693,9 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      ggml_vk_create_pipeline(device, device->pipeline_pool1d_f32, "pool1d_f32", pool1d_f32_len, pool1d_f32_data, "main", 2, sizeof(vk_op_pool1d_push_constants), {512, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_pool2d_f32, "pool2d_f32", pool2d_f32_len, pool2d_f32_data, "main", 2, sizeof(vk_op_pool2d_push_constants), {512, 1, 1}, {}, 1);
  
@@ -57,7 +65,7 @@ index 28ae58f21..2ed683d7a 100644
      ggml_vk_create_pipeline(device, device->pipeline_rwkv_wkv6_f32, "rwkv_wkv6_f32", rwkv_wkv6_f32_len, rwkv_wkv6_f32_data, "main", 7, sizeof(vk_op_rwkv_wkv6_push_constants), {1, 1, 1}, {device->subgroup_size}, 1);
  
      ggml_vk_create_pipeline(device, device->pipeline_rwkv_wkv7_f32, "rwkv_wkv7_f32", rwkv_wkv7_f32_len, rwkv_wkv7_f32_data, "main", 8, sizeof(vk_op_rwkv_wkv7_push_constants), {1, 1, 1}, {device->subgroup_size}, 1);
-@@ -11019,7 +11025,12 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
+@@ -8104,7 +8109,12 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
      uint32_t workgroups_y = (uint32_t)neq2;
      uint32_t workgroups_z = (uint32_t)neq3;
  
@@ -71,7 +79,7 @@ index 28ae58f21..2ed683d7a 100644
  
      // dequant K/V once into an f16 scratch, reordered KV layout so FA can read without a stride
      auto is_dense_kv_cache = [](const ggml_tensor * t) {
-@@ -12524,7 +12535,10 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
+@@ -9675,7 +9685,10 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
      case GGML_OP_SET_ROWS:
          {
              uint32_t ne = ggml_nelements(src0);
@@ -83,7 +91,7 @@ index 28ae58f21..2ed683d7a 100644
                  // quants run 32 threads each doing QUANT_K elements
                  ne = CEIL_DIV(ne, 32 * ggml_blck_size(dst->type));
              } else {
-@@ -13455,6 +13469,34 @@ static void ggml_vk_set_rows(ggml_backend_vk_context * ctx, vk_context& subctx,
+@@ -10658,6 +10671,34 @@ void ggml_vk_set_rows(ggml_backend_vk_context * ctx, vk_context& subctx, const g
      });
  }
  
@@ -115,10 +123,10 @@ index 28ae58f21..2ed683d7a 100644
 +    ggml_vk_sync_buffers(ctx, subctx);
 +}
 +
- static void ggml_vk_silu_back(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+ void ggml_vk_silu_back(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
      ggml_vk_op_f32<vk_op_push_constants>(ctx, subctx, src0, src1, nullptr, nullptr, dst, GGML_OP_SILU_BACK, { (uint32_t)ggml_nelements(src0), 0, 0.0f, 0.0f, 0.0f, 0.0f });
  }
-@@ -15994,6 +16036,10 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
+@@ -12450,6 +12491,10 @@ bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, in
      case GGML_OP_SET_ROWS:
          ggml_vk_set_rows(ctx, compute_ctx, src0, src1, node);
  
@@ -129,7 +137,7 @@ index 28ae58f21..2ed683d7a 100644
          break;
      case GGML_OP_SILU_BACK:
          ggml_vk_silu_back(ctx, compute_ctx, src0, src1, node);
-@@ -18794,6 +18840,15 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -15462,6 +15507,15 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      case GGML_TYPE_Q4_0:
                      case GGML_TYPE_IQ4_NL:
                          return true;
@@ -145,7 +153,7 @@ index 28ae58f21..2ed683d7a 100644
                      default:
                          return false;
                      }
-@@ -18853,6 +18908,9 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -15522,6 +15576,9 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
              {
                  if ((op->src[0]->type != GGML_TYPE_F32 && op->src[0]->type != GGML_TYPE_F16) ||
                      (op->src[1]->type != GGML_TYPE_I32 && op->src[1]->type != GGML_TYPE_I64)) {
@@ -155,7 +163,7 @@ index 28ae58f21..2ed683d7a 100644
                      return false;
                  }
                  switch (op->type) {
-@@ -18868,6 +18926,9 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -15537,6 +15594,9 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                      case GGML_TYPE_Q5_1:
                      case GGML_TYPE_Q8_0:
                      case GGML_TYPE_IQ4_NL:
@@ -165,7 +173,7 @@ index 28ae58f21..2ed683d7a 100644
                          return true;
                      default:
                          return false;
-@@ -19117,6 +19178,8 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+@@ -15811,6 +15871,8 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
              return ggml_is_contiguous(op->src[0]) && op->src[0]->type == GGML_TYPE_F32;
          case GGML_OP_POOL_2D:
              return ggml_is_contiguous(op->src[0]) && op->src[0]->type == GGML_TYPE_F32;
@@ -175,7 +183,7 @@ index 28ae58f21..2ed683d7a 100644
          case GGML_OP_RWKV_WKV7:
              return true; // all inputs are contiguous, see ggml.c
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/copy_from_quant.comp b/ggml/src/ggml-vulkan/vulkan-shaders/copy_from_quant.comp
-index 6a6921474..812401ee6 100644
+index 6a69214747..812401ee6e 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/copy_from_quant.comp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/copy_from_quant.comp
 @@ -30,6 +30,41 @@ void main() {
@@ -227,7 +235,7 @@ index 6a6921474..812401ee6 100644
 +#endif
  }
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp b/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
-index 6025e15dc..83e744fd6 100644
+index 6025e15dcb..83e744fd67 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
 @@ -1,8 +1,14 @@
@@ -803,10 +811,10 @@ index 6025e15dc..83e744fd6 100644
  void main() {
  #ifdef NEEDS_INIT_IQ_SHMEM
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
-index 0152a7ff0..d52c29bfd 100644
+index dc12fba72d..67e7e24ceb 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
-@@ -764,3 +764,78 @@ vec2 get_dm(uint ib, uint a_offset) {
+@@ -779,3 +779,78 @@ vec2 get_dm(uint ib, uint a_offset) {
      return vec2(1, 0);
  }
  #endif
@@ -886,10 +894,10 @@ index 0152a7ff0..d52c29bfd 100644
 +}
 +#endif
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl
-index c4674de49..b5e058c05 100644
+index 5e9fe78beb..9befee6a11 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl
-@@ -1398,6 +1398,33 @@ f16vec4 dequantFuncNVFP4_v(const in decodeBufNVFP4 bl, const in uint blockCoords
+@@ -1425,6 +1425,33 @@ f16vec4 dequantFuncNVFP4_v(const in decodeBufNVFP4 bl, const in uint blockCoords
  }
  #endif
  
@@ -923,7 +931,7 @@ index c4674de49..b5e058c05 100644
  #if defined(DATA_A_Q1_0)
  #define dequantFuncA dequantFuncQ1_0
  #define dequantFuncA_v dequantFuncQ1_0_v
-@@ -1476,6 +1503,8 @@ f16vec4 dequantFuncNVFP4_v(const in decodeBufNVFP4 bl, const in uint blockCoords
+@@ -1505,6 +1532,8 @@ f16vec4 dequantFuncNVFP4_v(const in decodeBufNVFP4 bl, const in uint blockCoords
  #elif defined(DATA_A_NVFP4)
  #define dequantFuncA dequantFuncNVFP4
  #define dequantFuncA_v dequantFuncNVFP4_v
@@ -934,7 +942,7 @@ index c4674de49..b5e058c05 100644
  #endif
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_tq4_1s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_tq4_1s.comp
 new file mode 100644
-index 000000000..fc497631f
+index 0000000000..fc497631ff
 --- /dev/null
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_tq4_1s.comp
 @@ -0,0 +1,65 @@
@@ -1005,7 +1013,7 @@ index 000000000..fc497631f
 +}
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_turbo3_0.comp b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_turbo3_0.comp
 new file mode 100644
-index 000000000..c12dd5f8e
+index 0000000000..c12dd5f8e9
 --- /dev/null
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_turbo3_0.comp
 @@ -0,0 +1,36 @@
@@ -1046,13 +1054,25 @@ index 000000000..c12dd5f8e
 +    data_b[ib * 128 + j] = D_TYPE(centroids[idx] * norm);
 +}
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/fa_types.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/fa_types.glsl
-index 6f414ded1..665c8c3e8 100644
+index 1e732a9a29..26eca5cfab 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/fa_types.glsl
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/fa_types.glsl
-@@ -12,6 +12,13 @@
- #define FA_TYPE_Q8_0  8u
- #define FA_TYPE_IQ4_NL 20u
- #define FA_TYPE_BF16 30u
+@@ -3,6 +3,26 @@
+ 
+ #include "ggml_type_ids.glsl"
+ 
++// arifi: FA_TYPE_* kept beside upstream's GGML_TYPE_* ids (ggml_type_ids.glsl) - the fork K/V types
++// (turbo/TQ) have no upstream id, fork shader code uses these names, and arifi_sync_check.py
++// checks every FA_TYPE_* value against ggml.h. Same numbers, so the two spellings mix freely.
++#define FA_TYPE_F32   0u
++#define FA_TYPE_F16   1u
++#define FA_TYPE_Q4_0  2u
++#define FA_TYPE_Q4_1  3u
++#define FA_TYPE_Q5_0  6u
++#define FA_TYPE_Q5_1  7u
++#define FA_TYPE_Q8_0  8u
++#define FA_TYPE_IQ4_NL 20u
++#define FA_TYPE_BF16 30u
 +#define FA_TYPE_Q1_0 41u
 +#define FA_TYPE_Q2_0 42u
 +#define FA_TYPE_TURBO2_0 43u
@@ -1060,13 +1080,14 @@ index 6f414ded1..665c8c3e8 100644
 +#define FA_TYPE_TQ3_1S 45u
 +#define FA_TYPE_TQ4_1S 46u
 +#define FA_TYPE_TURBO4_0 47u
- 
++
  // Number of matrix elements per buffer block, derived from the K/V type spec
  // constant. F32 is treated as a vec4 "block" of 4 floats. F16 uses block size 1
-@@ -27,6 +34,11 @@ uint fa_block_elems(uint ty) {
-         case FA_TYPE_Q8_0: return uint(QUANT_K_Q8_0);
-         case FA_TYPE_IQ4_NL: return uint(QUANT_K_IQ4_NL);
-         case FA_TYPE_BF16: return 1u;
+ // and bypasses the dequant path entirely. Quants follow their ggml block sizes.
+@@ -17,6 +37,11 @@ uint fa_block_elems(uint ty) {
+         case GGML_TYPE_Q8_0: return uint(QUANT_K_Q8_0);
+         case GGML_TYPE_IQ4_NL: return uint(QUANT_K_IQ4_NL);
+         case GGML_TYPE_BF16: return 1u;
 +        case FA_TYPE_Q1_0: return uint(QUANT_K_Q1_0); // cm2-only, harmless elsewhere
 +        case FA_TYPE_Q2_0: return uint(QUANT_K_Q2_0); // GGML_TYPE_Q2_0
 +        case FA_TYPE_TURBO2_0: return uint(QUANT_K_TURBO2_0); // GGML_TYPE_TURBO2_0
@@ -1076,7 +1097,7 @@ index 6f414ded1..665c8c3e8 100644
      }
  }
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn.comp b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn.comp
-index 0c1b6d067..5d37405d0 100644
+index 107d44aaa8..84c1eeb958 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn.comp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn.comp
 @@ -2,8 +2,10 @@
@@ -1103,58 +1124,58 @@ index 0c1b6d067..5d37405d0 100644
  layout (binding = 3) readonly buffer M {float16_t data_m[];};
  
  // If SubGroupSize is set to 0 then only use shmem reductions
-@@ -265,7 +269,9 @@ void main() {
+@@ -268,7 +272,9 @@ void main() {
                              uint iqs = (coord % BLOCK_SIZE_K);
                              K_Tf = dequantize4(ib, iqs, k_offset, BINDING_IDX_K);
                          } else {
 +#if !defined(DATA_A_TURBO3_0)
-                             K_Tf = FLOAT_TYPEV4(data_kv4[k_offset / 4 + (j * Bc + c) * k_stride / 4 + d]);
+                             K_Tf = FLOAT_TYPEV4(data_kv4[k_offset / 4 + kcol * k_stride / 4 + d]);
 +#endif
                          }
                      }
  
-@@ -318,7 +324,9 @@ void main() {
+@@ -323,7 +329,9 @@ void main() {
                          uint iqs = (coord % BLOCK_SIZE_K);
                          K_Tf = dequantize4(ib, iqs, k_offset, BINDING_IDX_K);
                      } else {
 +#if !defined(DATA_A_TURBO3_0)
-                         K_Tf = FLOAT_TYPEV4(data_kv4[k_offset / 4 + (j * Bc + c * cols_per_iter + col_tid) * k_stride / 4 + d * D_split + d_tid]);
+                         K_Tf = FLOAT_TYPEV4(data_kv4[k_offset / 4 + kcol * k_stride / 4 + d * D_split + d_tid]);
 +#endif
                      }
                      [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
                          Sf[r][c] = dot_product(Q_cache[r], K_Tf, Sf[r][c]);
-@@ -341,7 +349,9 @@ void main() {
+@@ -348,7 +356,9 @@ void main() {
                          uint iqs = (coord % BLOCK_SIZE_K);
                          K_Tf = dequantize4(ib, iqs, k_offset, BINDING_IDX_K);
                      } else {
 +#if !defined(DATA_A_TURBO3_0)
-                         K_Tf = FLOAT_TYPEV4(data_kv4[k_offset / 4 + (j * Bc + c * cols_per_iter + col_tid) * k_stride / 4 + d * D_split + d_tid]);
+                         K_Tf = FLOAT_TYPEV4(data_kv4[k_offset / 4 + kcol * k_stride / 4 + d * D_split + d_tid]);
 +#endif
                      }
                      [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
                          Sf[r][c] = dot_product(Qf[tile_row(r) * qf_stride + d * D_split + d_tid], K_Tf, Sf[r][c]);
-@@ -496,7 +506,9 @@ void main() {
+@@ -504,7 +514,9 @@ void main() {
                              uint iqs = (coord % BLOCK_SIZE_V);
                              V_Tf = dequantize4(ib, iqs, v_offset, BINDING_IDX_V);
                          } else {
 +#if !defined(DATA_A_TURBO3_0)
-                             V_Tf = FLOAT_TYPEV4(data_vv4[v_offset / 4 + (j * Bc + c) * v_stride / 4 + d]);
+                             V_Tf = FLOAT_TYPEV4(data_vv4[v_offset / 4 + vcol * v_stride / 4 + d]);
 +#endif
                          }
                      }
  
-@@ -527,7 +539,9 @@ void main() {
+@@ -537,7 +549,9 @@ void main() {
                      uint iqs = (coord % BLOCK_SIZE_V);
                      Vf = dequantize4(ib, iqs, v_offset, BINDING_IDX_V);
                  } else {
 +#if !defined(DATA_A_TURBO3_0)
-                     Vf = FLOAT_TYPEV4(data_vv4[v_offset / 4 + (j * Bc + c * cols_per_iter + col_tid) * v_stride / 4 + d * D_split + d_tid]);
+                     Vf = FLOAT_TYPEV4(data_vv4[v_offset / 4 + vcol * v_stride / 4 + d * D_split + d_tid]);
 +#endif
                  }
                  [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
                      Of[r][d] += FLOAT_TYPEV4(Pf[r] * Vf);
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp
-index 057ed739a..f589439d9 100644
+index aa9dd624be..ce48869866 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp
 @@ -2,9 +2,11 @@
@@ -1169,7 +1190,7 @@ index 057ed739a..f589439d9 100644
  
  #if defined(BFLOAT16)
  #extension GL_EXT_bfloat16 : enable
-@@ -295,13 +297,17 @@ void main() {
+@@ -308,13 +310,17 @@ void main() {
              }
  
              if (stage_k) {
@@ -1187,7 +1208,7 @@ index 057ed739a..f589439d9 100644
                  uint coord = (gl_SubgroupID * MatBc) * kvsh_stride + d * 16 / 4;
                  coopMatLoad(KMat, kvsh, coord, kvsh_stride, gl_CooperativeMatrixLayoutRowMajor);
              }
-@@ -485,10 +491,12 @@ void main() {
+@@ -501,10 +507,12 @@ void main() {
                          const uint v_tile_offset = v_offset / 4 + v_tile_row * v_stride / 4 + hsv_offset / 4;
                          coopMatLoad(QMat, data_vv4, v_tile_offset, v_stride / 4, gl_CooperativeMatrixLayoutRowMajor);
                      } else {
@@ -1201,7 +1222,7 @@ index 057ed739a..f589439d9 100644
                          coopMatLoad(QMat, kvsh, v_tile_offset, kvsh_stride, gl_CooperativeMatrixLayoutRowMajor);
                      }
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_dequant.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_dequant.glsl
-index 8ba4725f3..dcdcc8e2b 100644
+index 4fcf7c1f4f..db320689b3 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_dequant.glsl
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_dequant.glsl
 @@ -12,6 +12,7 @@
@@ -1293,9 +1314,9 @@ index 8ba4725f3..dcdcc8e2b 100644
      if (binding_idx == BINDING_IDX_K) {
          switch (FaTypeK) {
 @@ -129,6 +192,9 @@ FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
-             case FA_TYPE_Q8_0: FA_DEQUANT4_Q8_0(k_packed_q8_0)
-             case FA_TYPE_IQ4_NL: FA_DEQUANT4_IQ4_NL(k_packed_iq4_nl)
-             case FA_TYPE_BF16: FA_DEQUANT4_BF16(k_packed_bf16)
+             case GGML_TYPE_Q8_0: FA_DEQUANT4_Q8_0(k_packed_q8_0)
+             case GGML_TYPE_IQ4_NL: FA_DEQUANT4_IQ4_NL(k_packed_iq4_nl)
+             case GGML_TYPE_BF16: FA_DEQUANT4_BF16(k_packed_bf16)
 +            case FA_TYPE_TURBO2_0: FA_DEQUANT4_TURBO2_0(k_packed_turbo2_0)
 +            case FA_TYPE_TURBO3_0: FA_DEQUANT4_TURBO3_0(k_packed_turbo3_0)
 +            case FA_TYPE_TURBO4_0: FA_DEQUANT4_TURBO4_0(k_packed_turbo4_0)
@@ -1303,9 +1324,9 @@ index 8ba4725f3..dcdcc8e2b 100644
      } else {
          switch (FaTypeV) {
 @@ -140,6 +206,9 @@ FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
-             case FA_TYPE_Q8_0: FA_DEQUANT4_Q8_0(v_packed_q8_0)
-             case FA_TYPE_IQ4_NL: FA_DEQUANT4_IQ4_NL(v_packed_iq4_nl)
-             case FA_TYPE_BF16: FA_DEQUANT4_BF16(v_packed_bf16)
+             case GGML_TYPE_Q8_0: FA_DEQUANT4_Q8_0(v_packed_q8_0)
+             case GGML_TYPE_IQ4_NL: FA_DEQUANT4_IQ4_NL(v_packed_iq4_nl)
+             case GGML_TYPE_BF16: FA_DEQUANT4_BF16(v_packed_bf16)
 +            case FA_TYPE_TURBO2_0: FA_DEQUANT4_TURBO2_0(v_packed_turbo2_0)
 +            case FA_TYPE_TURBO3_0: FA_DEQUANT4_TURBO3_0(v_packed_turbo3_0)
 +            case FA_TYPE_TURBO4_0: FA_DEQUANT4_TURBO4_0(v_packed_turbo4_0)
@@ -1314,7 +1335,7 @@ index 8ba4725f3..dcdcc8e2b 100644
      return FLOAT_TYPEV4(0);
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq4_1s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq4_1s.comp
 new file mode 100644
-index 000000000..334788aa7
+index 0000000000..334788aa79
 --- /dev/null
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq4_1s.comp
 @@ -0,0 +1,119 @@
@@ -1439,7 +1460,7 @@ index 000000000..334788aa7
 +}
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/turbo_wht.comp b/ggml/src/ggml-vulkan/vulkan-shaders/turbo_wht.comp
 new file mode 100644
-index 000000000..914875eba
+index 0000000000..914875eba7
 --- /dev/null
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/turbo_wht.comp
 @@ -0,0 +1,67 @@
@@ -1511,7 +1532,7 @@ index 000000000..914875eba
 +    data_d[base + tid] = x[tid] * INV_SQRT_128 * ss;
 +}
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
-index dc951cdc7..20ec1f180 100644
+index 3f4f63f2df..6e959e1d9b 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
 @@ -6,6 +6,7 @@
@@ -1522,7 +1543,7 @@ index dc951cdc7..20ec1f180 100644
  
  #ifdef USE_OCP_FP4
  #extension GL_EXT_float_e2m1 : require
-@@ -1820,6 +1821,69 @@ struct block_nvfp4_packed32
+@@ -1885,6 +1886,69 @@ struct block_nvfp4_packed32
  #define A_TYPE_PACKED32 block_nvfp4_packed32
  #endif
  
@@ -1593,7 +1614,7 @@ index dc951cdc7..20ec1f180 100644
  const int8_t kvalues_iq4nl_const[16] = {
      int8_t(-127), int8_t(-104), int8_t(-83), int8_t(-65), int8_t(-49), int8_t(-35), int8_t(-22), int8_t(-10),
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index 8d27bd29c..3576dc0af 100644
+index fe376313d1..9891e7e6a1 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 @@ -52,6 +52,12 @@ const std::vector<std::string> type_names = {
@@ -1609,18 +1630,19 @@ index 8d27bd29c..3576dc0af 100644
      "q4_0",
      "q4_1",
      "q5_0",
-@@ -586,7 +592,7 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
-         std::string load_vec_quant = "2";
-         if ((tname == "q1_0") || (tname == "q4_0") || (tname == "q4_1") || (tname == "q5_1") || (tname == "iq1_s") || (tname == "iq1_m") || (tname == "iq2_xxs") || (tname == "iq2_xs") || (tname == "iq2_s"))
-             load_vec_quant = "8";
--        else if ((tname == "q2_0") || (tname == "q2_0_g128") || (tname == "q5_0") || (tname == "q8_0") || (tname == "q2_k") || (tname == "q4_k") || (tname == "q5_k") || (tname == "iq3_xxs") || (tname == "iq3_s") || (tname == "iq4_xs") || (tname == "iq4_nl") || (tname == "mxfp4") || (tname == "nvfp4"))
-+        else if ((tname == "q2_0") || (tname == "q2_0_g128") || (tname == "rocmfp4") || (tname == "rocmfp4_fast") || (tname == "rocmfpx_fp2") || (tname == "rocmfpx_fp3") || (tname == "rocmfpx_fp6") || (tname == "rocmfpx_fp8") || (tname == "q5_0") || (tname == "q8_0") || (tname == "q2_k") || (tname == "q4_k") || (tname == "q5_k") || (tname == "iq3_xxs") || (tname == "iq3_s") || (tname == "iq4_xs") || (tname == "iq4_nl") || (tname == "mxfp4") || (tname == "nvfp4"))
-             load_vec_quant = "4";
+@@ -261,7 +267,8 @@ std::string lut_load_vec_a(const std::string& type_name) {
+ // arifi: fork quant types keep per-type mul_mm compilation (DATA_A_X), as before the
+ // unified A-type shader (91f6a6cf3); none of them is in the MmTypeA branch of mul_mm_funcs.glsl
+ bool is_arifi_mm_quant(const std::string& type_name) {
+-    return type_name == "q2_0_g128" || string_starts_with(type_name, "rocmfp");
++    // only types with a DATA_A_ block in mul_mm_funcs.glsl; rocmfp4/rocmfpx_* never had mat-mat pipelines
++    return type_name == "q2_0_g128" || type_name == "rocmfp4_fast";
+ }
  
-         if (tname == "bf16") {
-@@ -629,6 +635,40 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
+ static const char path_separator = '/';
+@@ -694,6 +701,40 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
+             string_to_spv(shader_name + "_quant_f32" + dot2_sfx, source_name, merge_maps(merge_maps(base_dict, quant_float_type_dict), {{"MULMAT_QUANT", "1"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f32}, {"B_TYPE_SCALAR", "float"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
          }
- #endif
      }
 +
 +    // TurboQuant weight types, ROTATED matmul.
@@ -1659,7 +1681,7 @@ index 8d27bd29c..3576dc0af 100644
  }
  
  void process_shaders() {
-@@ -705,6 +745,19 @@ void process_shaders() {
+@@ -770,6 +811,19 @@ void process_shaders() {
              string_to_spv("flash_attn_f32_f16", "flash_attn.comp",
                  merge_maps(fa_base_dict, {{"Q_TYPE", "float"}, {"D_TYPE", "float"}, {"D_TYPEV4", "vec4"}, {"MMQ", "1"}, {"FA_MMQ_MIXED", "1"}}), fp16, false, false, f16acc, "_int8");
  #endif
@@ -1679,7 +1701,7 @@ index 8d27bd29c..3576dc0af 100644
          }
      }
  
-@@ -796,6 +849,11 @@ void process_shaders() {
+@@ -861,6 +915,11 @@ void process_shaders() {
          string_to_spv("get_rows_" + tname + "_f32", shader, merge_maps(base_dict, {{"TEMP_TYPE", "FLOAT_TYPE"}, {data_a_key, "1"}, {"B_TYPE", "int"}, {"D_TYPE", "float"}}));
      }
  
@@ -1691,7 +1713,7 @@ index 8d27bd29c..3576dc0af 100644
      string_to_spv("get_rows_i32", "get_rows.comp", {{"TEMP_TYPE", "uint"}, {"A_TYPE", "uint"}, {"B_TYPE", "int"}, {"D_TYPE", "uint"}});
  
      string_to_spv("mul_mat_vec_p021_f16_f32_subgroup_add", "mul_mat_vec_p021.comp", {{"A_TYPE", "float16_t"}, {"A_TYPEV4", "f16vec4"}, {"B_TYPE", "float"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}, {"USE_SUBGROUP_ADD", "1"}});
-@@ -838,14 +896,89 @@ void process_shaders() {
+@@ -907,14 +966,89 @@ void process_shaders() {
          string_to_spv("cpy_f32_" + t, "copy_to_quant.comp", {{"DATA_A_" + to_uppercase(t), "1"}, {"S_TYPE", "float"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
          string_to_spv("cpy_" + t + "_f32", "copy_from_quant.comp", {{"DATA_A_" + to_uppercase(t), "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
      }

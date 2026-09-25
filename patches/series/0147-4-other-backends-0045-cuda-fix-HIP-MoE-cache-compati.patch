@@ -1,16 +1,17 @@
-From c9c6cf39a7eb5761dea5564dfec6792105487d23 Mon Sep 17 00:00:00 2001
+From b4984db5beb13b2e73124ea02aa463d40b9daf8b Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:56:56 -0400
 Subject: [PATCH] 
  4-other-backends/0045-cuda-fix-HIP-MoE-cache-compatibility-and-q8_1-sums.patch
 
+Conflict-resolved: auto: same-point-insertion(upstream block then ours) in ggml/src/ggml-cuda/vendors/hip.h
 ---
  ggml/src/ggml-cuda/quantize.cu   |  6 +++---
  ggml/src/ggml-cuda/vendors/hip.h | 15 +++++++++++++++
  2 files changed, 18 insertions(+), 3 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/quantize.cu b/ggml/src/ggml-cuda/quantize.cu
-index bcc772395..7f4d2ba3b 100644
+index bcc7723957..7f4d2ba3b6 100644
 --- a/ggml/src/ggml-cuda/quantize.cu
 +++ b/ggml/src/ggml-cuda/quantize.cu
 @@ -83,21 +83,21 @@ static __global__ void quantize_q8_1(
@@ -39,7 +40,7 @@ index bcc772395..7f4d2ba3b 100644
  
  __device__ __forceinline__ uint8_t compute_e8m0_scale(float amax) {
 diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
-index 8c367f82a..146cdf715 100644
+index 46831c90b3..d96242c3d4 100644
 --- a/ggml/src/ggml-cuda/vendors/hip.h
 +++ b/ggml/src/ggml-cuda/vendors/hip.h
 @@ -76,6 +76,12 @@
@@ -55,17 +56,17 @@ index 8c367f82a..146cdf715 100644
  #define cudaErrorMemoryAllocation hipErrorOutOfMemory
  #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
  #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled
-@@ -93,6 +99,9 @@
- #define cudaGetDeviceProperties hipGetDeviceProperties
- #define cudaGetErrorString hipGetErrorString
- #define cudaGetLastError hipGetLastError
+@@ -97,6 +103,9 @@
+ #define cudaHostAllocPortable hipHostMallocPortable
+ #define cudaHostAllocMapped hipHostMallocMapped
+ #define cudaHostGetDevicePointer hipHostGetDevicePointer
 +#ifndef cudaPeekAtLastError
 +#define cudaPeekAtLastError hipPeekAtLastError
 +#endif
  #define cudaHostRegister hipHostRegister
  #define cudaHostRegisterPortable hipHostRegisterPortable
  #define cudaHostRegisterReadOnly hipHostRegisterReadOnly
-@@ -116,6 +125,12 @@
+@@ -120,6 +129,12 @@
  #define cudaMemGetInfo hipMemGetInfo
  #define cudaOccupancyMaxPotentialBlockSize hipOccupancyMaxPotentialBlockSize
  #define cudaSetDevice hipSetDevice

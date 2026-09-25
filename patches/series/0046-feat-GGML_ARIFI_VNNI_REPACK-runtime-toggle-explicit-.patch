@@ -1,4 +1,4 @@
-From 9bf54af26083b1c423dce73019247d6aefc12256 Mon Sep 17 00:00:00 2001
+From 590ba38cd45bcdd854512e48a7f46bea54c812c9 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 24 Jul 2026 14:14:28 -0400
 Subject: [PATCH] feat: GGML_ARIFI_VNNI_REPACK runtime toggle + explicit
@@ -56,12 +56,13 @@ Carve-out ordering preserved: the new tripwire returns nullptr, exactly as the
 PowerInfer carve-out does, so their relative order carries no behaviour.
 
 Origin: ArifiLabs/vnni-repack
+Conflict-resolved: auto: same-point-insertion(upstream block then ours) in ggml/src/ggml-cpu/repack.cpp
 ---
  ggml/src/ggml-cpu/repack.cpp | 67 ++++++++++++++++++++++++++++--------
  1 file changed, 53 insertions(+), 14 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
-index c4b4bb495..c314da0e0 100644
+index fe1a3099c4..4e06346468 100644
 --- a/ggml/src/ggml-cpu/repack.cpp
 +++ b/ggml/src/ggml-cpu/repack.cpp
 @@ -15,6 +15,7 @@
@@ -72,7 +73,7 @@ index c4b4bb495..c314da0e0 100644
  
  #include "repack.h"
  
-@@ -5133,7 +5134,37 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
+@@ -5133,6 +5134,21 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
  
  }  // namespace ggml::cpu::repack
  
@@ -92,6 +93,12 @@ index c4b4bb495..c314da0e0 100644
 +}
 +
  static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(const struct ggml_tensor * cur) {
+     // instance for Q1_0
+     static const ggml::cpu::repack::tensor_traits<block_q1_0, 4, 4, GGML_TYPE_Q8_0> q1_0_4x4_q8_0;
+@@ -5141,6 +5157,21 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+     // instance for Q2_0
+     static const ggml::cpu::repack::tensor_traits<block_q2_0, 8, 4, GGML_TYPE_Q8_0> q2_0_4x8_q8_0;
+ 
 +    // lane-110C g64/g128 tripwire — PHASE2c-g128-type-architecture.md:175 binds these VNNI paths
 +    // to canonical g64 Q2_0 only. Every kernel behind the Q2_0 arm below is hard-wired to
 +    // QK2_0 == 64 (block_q2_0x4 == block<2,4>, sized from QK_0<2>()), while GGML_TYPE_Q2_0_G128
@@ -110,7 +117,7 @@ index c4b4bb495..c314da0e0 100644
      // lane-110 M3 graft tag:repack-carveout — fork parity (smallthinker ggml-cpu-aarch64.cpp:6288-6299):
      // the expert bundle must hold PLAIN Q4_0 bytes and the streaming kernels read plain Q4_0,
      // so expert tensors must NOT be runtime-repacked in either bundle-gen or streaming mode.
-@@ -5350,25 +5381,33 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+@@ -5355,25 +5386,33 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
              #endif
          }
      } else if (cur->type == GGML_TYPE_Q1_0) {

@@ -1,4 +1,4 @@
-From 3b039c683354a8dd69dcf94bd1a4ac27ea97143f Mon Sep 17 00:00:00 2001
+From 06980aa5fb47314f3c9398cd7e106d2095fcc8b8 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 04:44:21 -0400
 Subject: [PATCH] vulkan: fix f16 promotion in q2_0_g128 copy_to_quant
@@ -10,7 +10,7 @@ Measured-effect: build fix only
  1 file changed, 3 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp b/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
-index 9490e9185..6025e15dc 100644
+index 9490e91852..6025e15dcb 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
 @@ -244,7 +244,8 @@ void quantize(uint dst_idx, uint src_idx)

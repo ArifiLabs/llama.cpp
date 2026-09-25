@@ -1,4 +1,4 @@
-From e5b4c84e1c024e5db8a390b95e8d6581f96853e7 Mon Sep 17 00:00:00 2001
+From 9f4d5285c833a5ff3cadfb962c47ff2d33f381f6 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:31:04 -0400
 Subject: [PATCH] powerinfer: expert-bundle loader + GENERATE_EXPERT_BUNDLE
@@ -12,7 +12,7 @@ Measured-effect: First disk-streamed sparse inference on Windows proven on this 
  1 file changed, 64 insertions(+)
 
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index b837e2765..6ec0e782b 100644
+index 6fdde70ce0..c7310ee1e7 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
 @@ -1,4 +1,7 @@
@@ -23,7 +23,7 @@ index b837e2765..6ec0e782b 100644
  
  #include "llama-arch.h"
  #include "llama-ext.h"
-@@ -1835,6 +1838,67 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+@@ -1893,6 +1896,67 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
          }
      }
  

@@ -1,4 +1,4 @@
-From fb5b90a3c500483be05336ad09f7d34a3d33b670 Mon Sep 17 00:00:00 2001
+From 5eda84c8bcdff027d7f80a14092ee50618ca3e31 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:56:28 -0400
 Subject: [PATCH] 4-other-backends/0024-cuda-fuse-cached-MoE-SwiGLU-rows.patch
@@ -9,7 +9,7 @@ Subject: [PATCH] 4-other-backends/0024-cuda-fuse-cached-MoE-SwiGLU-rows.patch
  2 files changed, 589 insertions(+), 171 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/mmvq.cuh b/ggml/src/ggml-cuda/mmvq.cuh
-index 8b7863e85..162ddaefd 100644
+index 8b7863e858..162ddaefd8 100644
 --- a/ggml/src/ggml-cuda/mmvq.cuh
 +++ b/ggml/src/ggml-cuda/mmvq.cuh
 @@ -25,3 +25,13 @@ void ggml_cuda_moe_cache_mmv(
@@ -27,7 +27,7 @@ index 8b7863e85..162ddaefd 100644
 +    float up_min, float up_max, float gate_min, float gate_max,
 +    cudaStream_t stream);
 diff --git a/ggml/src/ggml-cuda/moe-cache.cu b/ggml/src/ggml-cuda/moe-cache.cu
-index 4fe9b04bc..8c6669ff3 100644
+index 4fe9b04bc1..8c6669ff33 100644
 --- a/ggml/src/ggml-cuda/moe-cache.cu
 +++ b/ggml/src/ggml-cuda/moe-cache.cu
 @@ -24,6 +24,7 @@ void ggml_moe_cache_register(const void * owner) {

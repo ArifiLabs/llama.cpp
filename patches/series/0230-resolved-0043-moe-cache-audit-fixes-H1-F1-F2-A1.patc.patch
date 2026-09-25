@@ -1,0 +1,226 @@
+From 5d3cee1abbd5d06ee7a3ee127bc4f55978b0bd41 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:30:05 -0400
+Subject: [PATCH] resolved/0043-moe-cache-audit-fixes-H1-F1-F2-A1.patch
+
+---
+ common/common.cpp                 | 27 +++++++++++++++++-
+ common/fit.cpp                    | 46 ++++++++++++++++++++++++++-----
+ src/llama-ext.h                   |  3 ++
+ src/llama-model.cpp               | 10 +++++++
+ tools/llama-bench/llama-bench.cpp | 11 +++++++-
+ 5 files changed, 88 insertions(+), 9 deletions(-)
+
+diff --git a/common/common.cpp b/common/common.cpp
+index bda5566aef..e433765cb0 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -1323,7 +1323,17 @@ common_init_result::common_init_result(common_params & params, bool model_only)
+             /*.shares_model =*/ !has_draft, // an MTP context runs on the weights of the main model
+         };
+ 
+-        common_fit_params(params.model.path.c_str(), &mparams, &cparams,
++        // Snapshot the pre-fit state so a failed fit can be rolled back to a
++        // documented fallback instead of continuing with an unproven placement.
++        const llama_model_params mparams_before = mparams;
++        const llama_context_params cparams_before = cparams;
++        const std::vector<float> tensor_split_before(
++                params.tensor_split, params.tensor_split + llama_max_devices());
++        const std::vector<llama_model_tensor_buft_override> tbo_before =
++            params.tensor_buft_overrides;
++
++        const common_params_fit_status fit_status = common_fit_params(
++            params.model.path.c_str(), &mparams, &cparams,
+             params.tensor_split,
+             params.tensor_buft_overrides.data(),
+             &params.moe_cache,
+@@ -1331,6 +1341,21 @@ common_init_result::common_init_result(common_params & params, bool model_only)
+             params.fit_params_min_ctx,
+             has_draft || spec_mtp ? &extra : nullptr,
+             params.verbosity >= LOG_LEVEL_DEBUG ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_ERROR);
++        if (fit_status == COMMON_PARAMS_FIT_STATUS_ERROR) {
++            throw std::runtime_error(
++                "failed to fit parameters to device memory (hard error); retry with -fit off");
++        }
++        if (fit_status != COMMON_PARAMS_FIT_STATUS_SUCCESS) {
++            COM_ERR("%s", "fit could not prove a viable placement; restoring the pre-fit parameters\n");
++            mparams = mparams_before;
++            cparams = cparams_before;
++            std::copy(tensor_split_before.begin(), tensor_split_before.end(), params.tensor_split);
++            params.tensor_buft_overrides = tbo_before;
++            // Re-point at the restored arrays (the override vector may have moved).
++            mparams.tensor_split = params.tensor_split;
++            mparams.tensor_buft_overrides = params.tensor_buft_overrides.empty()
++                ? nullptr : params.tensor_buft_overrides.data();
++        }
+     }
+ 
+     if (params.moe_cache.mode_explicit || params.moe_cache.fit_selected) {
+diff --git a/common/fit.cpp b/common/fit.cpp
+index 24f153f9c7..319d2d38cd 100644
+--- a/common/fit.cpp
++++ b/common/fit.cpp
+@@ -1303,15 +1303,38 @@ static void common_params_fit_impl(
+                 pattern_strings.clear();
+                 pattern_strings.reserve(total_layers);
+ 
++                // Per-layer routed-expert bytes from tensor metadata. Evicting
++                // layers in ascending footprint order makes the search minimize
++                // the bytes evicted, not just the number of prefix layers.
++                std::vector<int64_t> layer_bytes(total_layers, 0);
++                for (const llama_moe_tensor_info & tensor : moe_tensors) {
++                    if (tensor.layer >= 0 && tensor.layer < total_layers &&
++                        tensor.n_expert > 0 && tensor.expert_size > 0 &&
++                        (uint64_t)tensor.n_expert <= INT64_MAX / (int64_t)tensor.expert_size) {
++                        layer_bytes[tensor.layer] +=
++                            (int64_t)tensor.n_expert * (int64_t)tensor.expert_size;
++                    }
++                }
++                std::vector<int> order(total_layers);
++                for (int i = 0; i < total_layers; i++) {
++                    order[i] = i;
++                }
++                std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
++                    return layer_bytes[a] != layer_bytes[b]
++                        ? layer_bytes[a] < layer_bytes[b] : a < b;
++                });
++
+                 int lo = 0, hi = total_layers;
+                 int best_n_evict = -1;
++                int64_t best_evicted_bytes = 0;
+                 dmds_t best_memory;
+                 common_moe_cache_fit_result best_cache_fit;
+ 
+                 while (lo <= hi) {
+-                    int mid = lo + (hi - lo) / 2;
++                    const int mid = lo + (hi - lo) / 2;
+ 
+-                    // Build candidate: all layers on main GPU, first 'mid' layers' experts to CPU
++                    // Build candidate: all layers on main GPU, the 'mid'
++                    // smallest-footprint layers' experts moved to CPU
+                     std::vector<float> candidate_split(llama_max_devices(), 0.0f);
+                     std::vector<llama_model_tensor_buft_override> candidate_overrides(ntbo, {nullptr, nullptr});
+                     llama_model_params candidate = *mparams;
+@@ -1324,11 +1347,11 @@ static void common_params_fit_impl(
+                     }
+                     candidate.tensor_split = candidate_split.data();
+ 
+-                    // Per-layer overrides: evict first 'mid' layers' experts to CPU
++                    // Per-layer overrides: evict the chosen layers' experts to CPU
+                     pattern_strings.clear();
+                     int n_overrides = 0;
+                     for (int i = 0; i < mid && n_overrides < (int)ntbo - 1; i++) {
+-                        pattern_strings.push_back(llm_ffn_exps_block_regex(i));
++                        pattern_strings.push_back(llm_ffn_exps_block_regex(order[i]));
+                         candidate_overrides[n_overrides++] = {pattern_strings.back().c_str(), ggml_backend_cpu_buffer_type()};
+                     }
+                     candidate_overrides[n_overrides] = {nullptr, nullptr};
+@@ -1358,6 +1381,10 @@ static void common_params_fit_impl(
+                                 moe_cache, moe_tensors, devs, candidate_memory, margins);
+                         if (cf.feasible) {
+                             best_n_evict = mid;
++                            best_evicted_bytes = 0;
++                            for (int i = 0; i < mid; i++) {
++                                best_evicted_bytes += layer_bytes[order[i]];
++                            }
+                             best_memory = std::move(candidate_memory);
+                             best_cache_fit = cf;
+                             hi = mid - 1;  // Try fewer evictions
+@@ -1383,7 +1410,7 @@ static void common_params_fit_impl(
+                     pattern_strings.clear();
+                     int n_overrides = 0;
+                     for (int i = 0; i < best_n_evict && n_overrides < (int)ntbo - 1; i++) {
+-                        pattern_strings.push_back(llm_ffn_exps_block_regex(i));
++                        pattern_strings.push_back(llm_ffn_exps_block_regex(order[i]));
+                         tensor_buft_overrides[n_overrides++] = {pattern_strings.back().c_str(), ggml_backend_cpu_buffer_type()};
+                     }
+                     tensor_buft_overrides[n_overrides] = {nullptr, nullptr};
+@@ -1396,10 +1423,15 @@ static void common_params_fit_impl(
+                         ? 100.0 * (double)std::min(best_cache_fit.cache_bytes, best_cache_fit.expert_bytes) /
+                             (double)best_cache_fit.expert_bytes
+                         : 0.0;
++                    const int64_t kept_bytes = best_cache_fit.expert_bytes > (size_t)best_evicted_bytes
++                        ? (int64_t)best_cache_fit.expert_bytes - best_evicted_bytes : 0;
+                     LOG_INF("%s: MoE cache soft mode selected partial-eviction placement: %d/%d layers keep experts GPU-resident, "
+-                            "%zu MiB projected cache capacity for %zu MiB of routed expert weights (up to %.1f%% coverage)\n",
++                            "%zu MiB of %zu MiB routed expert bytes evicted (%zu MiB kept), "
++                            "%zu MiB projected cache capacity (up to %.1f%% coverage)\n",
+                             __func__, n_kept, total_layers,
+-                            best_cache_fit.cache_bytes / MiB, best_cache_fit.expert_bytes / MiB, coverage);
++                            best_evicted_bytes / MiB, best_cache_fit.expert_bytes / MiB,
++                            kept_bytes / MiB,
++                            best_cache_fit.cache_bytes / MiB, coverage);
+                     for (const common_moe_cache_fit_device & device : best_cache_fit.devices) {
+                         LOG_INF("%s: MoE cache fit CUDA%d leaves %zu MiB after reserve; minimum complete pool set is %zu MiB\n",
+                                 __func__, device.physical_device, device.cache_bytes / MiB,
+diff --git a/src/llama-ext.h b/src/llama-ext.h
+index 618cc980c3..5ac8447cfd 100644
+--- a/src/llama-ext.h
++++ b/src/llama-ext.h
+@@ -92,6 +92,9 @@ struct llama_moe_tensor_info {
+     int64_t n_input;
+     int64_t n_output;
+     int64_t n_expert;
++    // Transformer block index parsed from the tensor name ("blk.<N>..."),
++    // or -1 when the layer cannot be determined.
++    int64_t layer;
+ };
+ 
+ LLAMA_API size_t llama_model_get_moe_tensor_info(
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 12288b3cd5..2db9995061 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -3440,6 +3440,15 @@ size_t llama_model_get_moe_tensor_info(
+             continue;
+         }
+ 
++        int64_t layer = -1;
++        if (name.compare(0, 4, "blk.") == 0) {
++            char * end = nullptr;
++            const long parsed = strtol(name.c_str() + 4, &end, 10);
++            if (end != name.c_str() + 4) {
++                layer = parsed;
++            }
++        }
++
+         if (info && count < capacity) {
+             info[count] = {
+                 tensor->type,
+@@ -3447,6 +3456,7 @@ size_t llama_model_get_moe_tensor_info(
+                 tensor->ne[0],
+                 tensor->ne[1],
+                 tensor->ne[2],
++                layer,
+             };
+         }
+         count++;
+diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
+index b753ebc377..329d4c934b 100644
+--- a/tools/llama-bench/llama-bench.cpp
++++ b/tools/llama-bench/llama-bench.cpp
+@@ -2588,7 +2588,8 @@ int llama_bench(int argc, char ** argv) {
+             cparams.n_ctx = std::max(cparams.n_ctx, n_ctx_needed);
+             common_moe_cache_params fit_moe_cache = common_moe_cache_from_bench_mode(inst.moe_cache);
+ 
+-            common_fit_params(inst.model.c_str(), &mparams, &cparams,
++            const common_params_fit_status fit_status = common_fit_params(
++                inst.model.c_str(), &mparams, &cparams,
+                 fit_tensor_split.data(),
+                 fit_overrides.data(),
+                 &fit_moe_cache,
+@@ -2596,6 +2597,14 @@ int llama_bench(int argc, char ** argv) {
+                 inst.fit_min_ctx,
+                 nullptr,
+                 params.verbose ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_ERROR);
++            if (fit_status != COMMON_PARAMS_FIT_STATUS_SUCCESS) {
++                // Never report PP/TG numbers for a failed fit. The logger is
++                // suppressed by default, so print an unconditional diagnostic.
++                fprintf(stderr,
++                    "%s: error: failed to fit parameters for benchmark %d/%zu (status=%d); skipping this case\n",
++                    __func__, params_idx, params_count, (int) fit_status);
++                continue;
++            }
+             cache_fit_selected = fit_moe_cache.fit_selected;
+        }
+ 

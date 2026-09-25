@@ -1,4 +1,4 @@
-From 43f2d29b15a0e9276d7c39b4498e9cbfc626b4b9 Mon Sep 17 00:00:00 2001
+From 518d06764b3bec89208ad0041353574efb78d5ad Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 24 Jul 2026 20:50:13 -0400
 Subject: [PATCH] ggml-cpu: GGML_ARIFI_VNNI_REPACK defaults to OFF (diverging
@@ -25,7 +25,7 @@ Measured-effect: default-only change; neither kernel is touched. An unset enviro
  2 files changed, 23 insertions(+), 10 deletions(-)
 
 diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
-index f6a4701f5..42322711c 100644
+index f6a4701f54..42322711c7 100644
 --- a/docs/OPTIONS-REGISTRY.md
 +++ b/docs/OPTIONS-REGISTRY.md
 @@ -21,7 +21,7 @@ safe measurement posture.
@@ -38,7 +38,7 @@ index f6a4701f5..42322711c 100644
  | `LANE110_PREFETCH_CAP` | implementation default, currently `3*n_expert_used` | Limits standalone expert prefetch aggressiveness. | Sweep under cache pressure after establishing the baseline. | Recorded server sequences: default approximately `[5.07/9.03/9.58/12.01]`; cap `1` `[5.13/9.88/10.29/11.22]`; cap `96` `[5.79/11.73/12.19/11.26]`. Default retained because apparent ramp differences require controlled retest. |
  | `--ctx-checkpoints 0` | `0` | Disables server prompt rewind/checkpoints. | Keep off unless a workload demonstrably requires rewind semantics. | Largest historical gain: stock rewind `39.9/68.4/280`; ON_DEVICE checkpoint `84.8/128.8/341.6`; disabled approximately `101/150/372` across short/medium/long prefill. |
 diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
-index 0f3f33d78..58f9d986b 100644
+index e4720c0f62..26b1f84bc1 100644
 --- a/ggml/src/ggml-cpu/repack.cpp
 +++ b/ggml/src/ggml-cpu/repack.cpp
 @@ -5135,16 +5135,29 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
@@ -78,7 +78,7 @@ index 0f3f33d78..58f9d986b 100644
      }();
      return enabled;
  }
-@@ -5381,8 +5394,8 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+@@ -5386,8 +5399,8 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
              #endif
          }
      } else if (cur->type == GGML_TYPE_Q1_0) {

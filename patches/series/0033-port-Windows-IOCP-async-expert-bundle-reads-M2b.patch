@@ -1,4 +1,4 @@
-From b117c4856f24782f3f99710d1907e041b8482f2b Mon Sep 17 00:00:00 2001
+From c7fc3356144927141a1469a071f8427ea8927e57 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 24 Jul 2026 04:19:47 -0400
 Subject: [PATCH] port: Windows IOCP async expert-bundle reads (M2b)
@@ -34,7 +34,7 @@ Origin: ArifiLabs/iocp-async
  3 files changed, 203 insertions(+), 33 deletions(-)
 
 diff --git a/powerinfer/moe_sparse_pipeline/expert_cache.cpp b/powerinfer/moe_sparse_pipeline/expert_cache.cpp
-index 114f77c1f..9a53c5aa9 100644
+index 114f77c1ff..9a53c5aa96 100644
 --- a/powerinfer/moe_sparse_pipeline/expert_cache.cpp
 +++ b/powerinfer/moe_sparse_pipeline/expert_cache.cpp
 @@ -101,6 +101,59 @@ void ExpertCache::io_worker_main() {
@@ -106,7 +106,7 @@ index 114f77c1f..9a53c5aa9 100644
  
  void ExpertCache::allocate_buffer(Matrix &matrix) {
 diff --git a/powerinfer/moe_sparse_pipeline/iou.cpp b/powerinfer/moe_sparse_pipeline/iou.cpp
-index c1b36da6e..0b3a60887 100644
+index c1b36da6e7..0b3a608876 100644
 --- a/powerinfer/moe_sparse_pipeline/iou.cpp
 +++ b/powerinfer/moe_sparse_pipeline/iou.cpp
 @@ -1,6 +1,5 @@
@@ -302,7 +302,7 @@ index c1b36da6e..0b3a60887 100644
  }
  
 diff --git a/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/iou.hpp b/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/iou.hpp
-index b184af597..9cc5e72ac 100644
+index b184af597d..9cc5e72acb 100644
 --- a/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/iou.hpp
 +++ b/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/iou.hpp
 @@ -3,20 +3,17 @@

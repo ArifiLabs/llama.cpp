@@ -1,4 +1,4 @@
-From 73f4467725016798d6ddcdce63b76baf75367797 Mon Sep 17 00:00:00 2001
+From 5cc1488b5b949c5c213eb93079beb8e3902d90ba Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:21 -0400
 Subject: [PATCH] 
@@ -11,7 +11,7 @@ Subject: [PATCH]
  3 files changed, 762 insertions(+), 12 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index 87d929916..869ee9deb 100644
+index 40e887f1fc..d15cf6dd9e 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -8,6 +8,7 @@
@@ -74,7 +74,7 @@ index 87d929916..869ee9deb 100644
  };
  
  const struct ggml_type_traits_cpu * ggml_get_type_traits_cpu(enum ggml_type type) {
-@@ -1811,6 +1843,7 @@ UseGgmlGemm2:;
+@@ -1819,6 +1851,7 @@ UseGgmlGemm2:;
  // ggml_compute_forward_mul_mat_id
  
  #define MMID_MATRIX_ROW(row_id, i1) matrix_rows[(row_id)*ids->ne[0]*ids->ne[1] + (i1)]
@@ -82,7 +82,7 @@ index 87d929916..869ee9deb 100644
  
  struct mmid_row_mapping {
      int32_t i1;
-@@ -1888,9 +1921,16 @@ static void * incr_ptr_aligned(void ** p, size_t size, size_t align) {
+@@ -1896,9 +1929,16 @@ static void * incr_ptr_aligned(void ** p, size_t size, size_t align) {
      return ptr;
  }
  
@@ -101,7 +101,7 @@ index 87d929916..869ee9deb 100644
  
      const struct ggml_tensor * src0 = dst->src[0];
      const struct ggml_tensor * src1 = dst->src[1];
-@@ -1922,6 +1962,22 @@ static void ggml_compute_forward_mul_mat_id(
+@@ -1930,6 +1970,22 @@ static void ggml_compute_forward_mul_mat_id(
      const int n_ids = ids->ne[0]; // n_expert_used
      const int n_as  = ne02;       // n_expert
  
@@ -124,7 +124,7 @@ index 87d929916..869ee9deb 100644
      void * wdata_cur = params->wdata;
  
      if (src1->type != vec_dot_type) {
-@@ -1987,20 +2043,85 @@ static void ggml_compute_forward_mul_mat_id(
+@@ -1995,20 +2051,85 @@ static void ggml_compute_forward_mul_mat_id(
      }
  
      if (ith == 0) {
@@ -210,7 +210,7 @@ index 87d929916..869ee9deb 100644
      }
  
      // reset current_chunk
-@@ -2078,8 +2199,46 @@ static void ggml_compute_forward_mul_mat_id(
+@@ -2086,8 +2207,46 @@ static void ggml_compute_forward_mul_mat_id(
              current_chunk = atomic_fetch_add_explicit(current_chunk_ctr, 1, memory_order_relaxed);
          }
      }
@@ -257,7 +257,7 @@ index 87d929916..869ee9deb 100644
  /////////////////////////////////
  
  static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
-@@ -2434,6 +2593,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
+@@ -2442,6 +2601,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
              {
                  ggml_compute_forward_gated_delta_net(params, tensor);
              } break;
@@ -268,7 +268,7 @@ index 87d929916..869ee9deb 100644
          case GGML_OP_LIGHTNING_INDEXER:
              {
                  ggml_compute_forward_lightning_indexer(params, tensor);
-@@ -2664,6 +2827,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
+@@ -2672,6 +2835,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
          case GGML_OP_COUNT_EQUAL:
          case GGML_OP_SOLVE_TRI:
          case GGML_OP_GATED_DELTA_NET:
@@ -276,7 +276,7 @@ index 87d929916..869ee9deb 100644
          case GGML_OP_DSV4_HC_COMB:
          case GGML_OP_DSV4_HC_PRE:
          case GGML_OP_DSV4_HC_POST:
-@@ -2676,6 +2840,10 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
+@@ -2684,6 +2848,10 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
              {
                  n_tasks = 1;
              } break;
@@ -287,7 +287,7 @@ index 87d929916..869ee9deb 100644
          case GGML_OP_UNARY:
              switch (ggml_get_unary_op(node)) {
                  case GGML_UNARY_OP_ABS:
-@@ -2808,7 +2976,6 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
+@@ -2816,7 +2984,6 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
          case GGML_OP_FLASH_ATTN_BACK:
          case GGML_OP_SSM_CONV:
          case GGML_OP_SSM_SCAN:
@@ -295,7 +295,7 @@ index 87d929916..869ee9deb 100644
              {
                  n_tasks = n_threads;
              } break;
-@@ -3427,10 +3594,10 @@ struct ggml_cplan ggml_graph_plan(
+@@ -3435,10 +3602,10 @@ struct ggml_cplan ggml_graph_plan(
                          const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0);
                          cur = per_thread * sizeof(float) * n_tasks;
                      } break;
@@ -309,7 +309,7 @@ index 87d929916..869ee9deb 100644
  
          // -- PowerInfer (lane-110 M3 graft) site3-workspace
                  // -- PowerInfer
-@@ -3477,6 +3644,10 @@ struct ggml_cplan ggml_graph_plan(
+@@ -3485,6 +3652,10 @@ struct ggml_cplan ggml_graph_plan(
                          const int64_t ne10 = node->src[1]->ne[0];
                          cur += sizeof(float)*ne10*n_tasks;
                      } break;
@@ -320,7 +320,7 @@ index 87d929916..869ee9deb 100644
                  default:
                      break;
              }
-@@ -3487,6 +3658,7 @@ struct ggml_cplan ggml_graph_plan(
+@@ -3495,6 +3666,7 @@ struct ggml_cplan ggml_graph_plan(
  
      if (work_size > 0) {
          work_size += CACHE_LINE_SIZE*(n_threads);
@@ -328,7 +328,7 @@ index 87d929916..869ee9deb 100644
      }
  
      cplan.threadpool = threadpool;
-@@ -3502,6 +3674,317 @@ struct ggml_cplan ggml_graph_plan(
+@@ -3510,6 +3682,317 @@ struct ggml_cplan ggml_graph_plan(
  // Returns the number of nodes skipped by fusion (>=1), or 0 if no fusion was applied.
  static bool ggml_cpu_disable_fusion = false;  // initialized once in ggml_cpu_init(), read-only afterwards
  
@@ -646,7 +646,7 @@ index 87d929916..869ee9deb 100644
  static int ggml_cpu_try_fuse_ops(
          const struct ggml_cgraph * cgraph,
          const int node_n,
-@@ -3514,6 +3997,13 @@ static int ggml_cpu_try_fuse_ops(
+@@ -3522,6 +4005,13 @@ static int ggml_cpu_try_fuse_ops(
  
      struct ggml_tensor * node = cgraph->nodes[node_n];
  
@@ -660,7 +660,7 @@ index 87d929916..869ee9deb 100644
      if (node->op == GGML_OP_RMS_NORM) {
          // RMS_NORM + MUL fusion
          const enum ggml_op fuse_ops[] = { GGML_OP_RMS_NORM, GGML_OP_MUL };
-@@ -3911,6 +4401,145 @@ enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct g
+@@ -3919,6 +4409,145 @@ enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct g
      return ggml_graph_compute(cgraph, &cplan);
  }
  
@@ -806,7 +806,7 @@ index 87d929916..869ee9deb 100644
  void ggml_cpu_fp32_to_fp32(const float * x, float * y, int64_t n) {
      memcpy(y, x, n * sizeof(float));
  }
-@@ -4366,7 +4995,6 @@ void ggml_cpu_init(void) {
+@@ -4374,7 +5003,6 @@ void ggml_cpu_init(void) {
              const char * env = getenv("GGML_CPU_DISABLE_FUSION");
              ggml_cpu_disable_fusion = (env != NULL && atoi(env) == 1);
          }
@@ -815,7 +815,7 @@ index 87d929916..869ee9deb 100644
      }
  
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 0be71dab7..b2e147145 100644
+index 428f3ab2b9..69ec62971e 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -16,6 +16,10 @@
@@ -928,7 +928,7 @@ index 0be71dab7..b2e147145 100644
          case GGML_TYPE_IQ2_XXS:
          case GGML_TYPE_IQ2_XS:
          case GGML_TYPE_IQ3_XXS:
-@@ -11486,6 +11509,104 @@ void ggml_compute_forward_dsv4_hc_post(
+@@ -11514,6 +11537,104 @@ void ggml_compute_forward_dsv4_hc_post(
      }
  }
  
@@ -1034,10 +1034,10 @@ index 0be71dab7..b2e147145 100644
  
  static void ggml_compute_forward_rwkv_wkv7_f32(
 diff --git a/ggml/src/ggml-cpu/ops.h b/ggml/src/ggml-cpu/ops.h
-index f67ea70c1..aef3dc458 100644
+index 3b2f2da83f..9df1c73140 100644
 --- a/ggml/src/ggml-cpu/ops.h
 +++ b/ggml/src/ggml-cpu/ops.h
-@@ -105,6 +105,7 @@ void ggml_compute_forward_rwkv_wkv7(const struct ggml_compute_params * params, s
+@@ -104,6 +104,7 @@ void ggml_compute_forward_rwkv_wkv7(const struct ggml_compute_params * params, s
  void ggml_compute_forward_solve_tri(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_gla(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_gated_delta_net(const struct ggml_compute_params * params, struct ggml_tensor * dst);

@@ -1,4 +1,4 @@
-From a2fa737a6daa658383942d4110be3314086d86cb Mon Sep 17 00:00:00 2001
+From d65eb11c4b93af68114dd3c85cb7c34d991225e9 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 24 Jul 2026 14:10:18 -0400
 Subject: [PATCH] port: x86 AVX512-VNNI repack GEMV/GEMM for Q1_0 and Q2_0
@@ -35,6 +35,8 @@ not exist when this was written. Explicit guarding lands in the next commit.
 
 Taken-from: PrismML-Eng/llama.cpp@9fcaed763
 Origin: ArifiLabs/vnni-repack
+Conflict-resolved: auto: affix(one side only added lines around the base, other side edited it) in ggml/src/ggml-cpu/arch-fallback.h
+Conflict-resolved: S5: VNNI Q1_0/Q2_0 repack re-applied on upstream's Q1_0 layout (8034c1d1f) - repack.h/.cpp regions to HEAD, our q2_0 hunks re-anchored; arch-fallback rebuilt per section (x86 drops q1_0 4x8 aliases, others gain q2_0 aliases); delta hash-identical to the commit's own diff
 ---
  ggml/src/ggml-cpu/arch-fallback.h     |  16 +-
  ggml/src/ggml-cpu/arch/x86/repack.cpp | 308 ++++++++++++++++++++++++++
@@ -43,26 +45,26 @@ Origin: ArifiLabs/vnni-repack
  4 files changed, 556 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/arch-fallback.h b/ggml/src/ggml-cpu/arch-fallback.h
-index 9a6f4856b..82e48bb2f 100644
+index 609210ba6e..0e3fc024fb 100644
 --- a/ggml/src/ggml-cpu/arch-fallback.h
 +++ b/ggml/src/ggml-cpu/arch-fallback.h
-@@ -57,6 +57,7 @@
- #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
+@@ -41,6 +41,7 @@
+ #define ggml_quantize_mat_q8_K_4x8_generic ggml_quantize_mat_q8_K_4x8
  #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
  #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
 +#define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
- #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
- #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
- #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
-@@ -75,6 +76,7 @@
- #define ggml_gemm_q8_0_4x8_q8_0_generic ggml_gemm_q8_0_4x8_q8_0
+ #define ggml_gemv_q4_0_4x4_q8_0_generic ggml_gemv_q4_0_4x4_q8_0
+ #define ggml_gemv_q4_0_4x8_q8_0_generic ggml_gemv_q4_0_4x8_q8_0
+ #define ggml_gemv_q4_0_8x8_q8_0_generic ggml_gemv_q4_0_8x8_q8_0
+@@ -59,6 +60,7 @@
+ #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
  #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
  #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
 +#define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
- #elif defined(__aarch64__) || defined(__arm__) || defined(_M_ARM) || defined(_M_ARM64)
- // repack.cpp
- #define ggml_quantize_mat_q8_K_4x4_generic ggml_quantize_mat_q8_K_4x4
-@@ -82,9 +84,11 @@
+ #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
+ #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
+ #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
+@@ -82,16 +84,17 @@
  #define ggml_gemv_iq4_nl_8x8_q8_0_generic ggml_gemv_iq4_nl_8x8_q8_0
  #define ggml_gemv_mxfp4_8x8_q8_0_generic ggml_gemv_mxfp4_8x8_q8_0
  #define ggml_gemv_q2_K_8x8_q8_K_generic ggml_gemv_q2_K_8x8_q8_K
@@ -74,102 +76,103 @@ index 9a6f4856b..82e48bb2f 100644
  #elif defined(__x86_64__) || defined(__i386__) || defined(_M_IX86) || defined(_M_X64)
  // quants.c
  // repack.cpp
-@@ -102,7 +106,6 @@
- #define ggml_gemv_q8_0_4x4_q8_0_generic ggml_gemv_q8_0_4x4_q8_0
- #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
+ #define ggml_quantize_mat_q8_0_4x4_generic ggml_quantize_mat_q8_0_4x4
+ #define ggml_quantize_mat_q8_K_4x4_generic ggml_quantize_mat_q8_K_4x4
  #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
 -#define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
+ #define ggml_gemv_q4_0_4x4_q8_0_generic ggml_gemv_q4_0_4x4_q8_0
+ #define ggml_gemv_q4_0_4x8_q8_0_generic ggml_gemv_q4_0_4x8_q8_0
+ #define ggml_gemv_q4_K_8x4_q8_K_generic ggml_gemv_q4_K_8x4_q8_K
+@@ -104,7 +107,6 @@
+ #define ggml_gemv_q8_0_4x4_q8_0_generic ggml_gemv_q8_0_4x4_q8_0
+ #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
+ #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
+-#define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
  #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
  #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
  #define ggml_gemm_q4_K_8x4_q8_K_generic ggml_gemm_q4_K_8x4_q8_K
-@@ -115,7 +118,6 @@
- #define ggml_gemm_q8_0_4x4_q8_0_generic ggml_gemm_q8_0_4x4_q8_0
- #define ggml_gemm_q8_0_4x8_q8_0_generic ggml_gemm_q8_0_4x8_q8_0
- #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
--#define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
- #elif defined(__POWERPC__) || defined(__powerpc__)
- // ref: https://github.com/ggml-org/llama.cpp/pull/14146#issuecomment-2972561679
- // quants.c
-@@ -149,6 +151,7 @@
- #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
+@@ -133,6 +135,7 @@
+ #define ggml_quantize_mat_q8_K_4x8_generic ggml_quantize_mat_q8_K_4x8
  #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
  #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
 +#define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
- #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
- #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
- #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
-@@ -167,6 +170,7 @@
- #define ggml_gemm_q8_0_4x8_q8_0_generic ggml_gemm_q8_0_4x8_q8_0
+ #define ggml_gemv_q4_0_4x4_q8_0_generic ggml_gemv_q4_0_4x4_q8_0
+ #define ggml_gemv_q4_0_4x8_q8_0_generic ggml_gemv_q4_0_4x8_q8_0
+ #define ggml_gemv_q4_0_8x8_q8_0_generic ggml_gemv_q4_0_8x8_q8_0
+@@ -151,6 +154,7 @@
+ #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
  #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
  #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
 +#define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
- #elif defined(__loongarch64)
- // quants.c
- #define quantize_row_q8_K_generic quantize_row_q8_K
-@@ -200,6 +204,7 @@
- #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
- #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
- #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
-+#define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
  #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
  #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
  #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
-@@ -218,6 +223,7 @@
- #define ggml_gemm_q8_0_4x8_q8_0_generic ggml_gemm_q8_0_4x8_q8_0
- #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
- #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
-+#define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
- #elif defined(__riscv)
- // quants.c
- #define ggml_vec_dot_nvfp4_q8_0_generic ggml_vec_dot_nvfp4_q8_0
-@@ -245,6 +251,7 @@
- #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
+@@ -184,6 +188,7 @@
+ #define ggml_quantize_mat_q8_K_4x8_generic ggml_quantize_mat_q8_K_4x8
  #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
  #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
 +#define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
+ #define ggml_gemv_q4_0_4x4_q8_0_generic ggml_gemv_q4_0_4x4_q8_0
+ #define ggml_gemv_q4_0_4x8_q8_0_generic ggml_gemv_q4_0_4x8_q8_0
+ #define ggml_gemv_q4_0_8x8_q8_0_generic ggml_gemv_q4_0_8x8_q8_0
+@@ -202,6 +207,7 @@
+ #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
+ #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
+ #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
++#define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
+ #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
+ #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
+ #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
+@@ -230,6 +236,7 @@
+ #define ggml_quantize_mat_q8_K_4x8_generic ggml_quantize_mat_q8_K_4x8
+ #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
+ #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
++#define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
+ #define ggml_gemv_q4_0_4x4_q8_0_generic ggml_gemv_q4_0_4x4_q8_0
+ #define ggml_gemv_q4_0_4x8_q8_0_generic ggml_gemv_q4_0_4x8_q8_0
+ #define ggml_gemv_q2_K_8x8_q8_K_generic ggml_gemv_q2_K_8x8_q8_K
+@@ -247,6 +254,7 @@
+ #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
+ #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
+ #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
++#define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
  #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
  #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
  #define ggml_gemm_q2_K_8x8_q8_K_generic ggml_gemm_q2_K_8x8_q8_K
-@@ -262,6 +269,7 @@
- #define ggml_gemm_q8_0_4x8_q8_0_generic ggml_gemm_q8_0_4x8_q8_0
- #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
- #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
-+#define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
- #elif defined(__s390x__)
- // quants.c
- #define quantize_row_q8_K_generic quantize_row_q8_K
-@@ -301,6 +309,7 @@
- #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
+@@ -283,6 +291,7 @@
+ #define ggml_quantize_mat_q8_K_4x8_generic ggml_quantize_mat_q8_K_4x8
  #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
  #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
 +#define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
- #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
- #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
- #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
-@@ -319,6 +328,7 @@
- #define ggml_gemm_q8_0_4x8_q8_0_generic ggml_gemm_q8_0_4x8_q8_0
+ #define ggml_gemv_q4_0_4x8_q8_0_generic ggml_gemv_q4_0_4x8_q8_0
+ #define ggml_gemv_q4_0_8x8_q8_0_generic ggml_gemv_q4_0_8x8_q8_0
+ #define ggml_gemv_q2_K_8x8_q8_K_generic ggml_gemv_q2_K_8x8_q8_K
+@@ -300,6 +309,7 @@
+ #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
  #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
  #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
 +#define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
- #elif defined(__wasm__)
- // quants.c
- #define ggml_vec_dot_tq1_0_q8_K_generic ggml_vec_dot_tq1_0_q8_K
-@@ -359,6 +369,7 @@
- #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
+ #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
+ #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
+ #define ggml_gemm_q2_K_8x8_q8_K_generic ggml_gemm_q2_K_8x8_q8_K
+@@ -339,6 +349,7 @@
+ #define ggml_quantize_mat_q8_K_4x8_generic ggml_quantize_mat_q8_K_4x8
  #define ggml_gemv_q1_0_4x4_q8_0_generic ggml_gemv_q1_0_4x4_q8_0
  #define ggml_gemv_q1_0_4x8_q8_0_generic ggml_gemv_q1_0_4x8_q8_0
 +#define ggml_gemv_q2_0_4x8_q8_0_generic ggml_gemv_q2_0_4x8_q8_0
- #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
- #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
- #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
-@@ -377,4 +388,5 @@
- #define ggml_gemm_q8_0_4x8_q8_0_generic ggml_gemm_q8_0_4x8_q8_0
+ #define ggml_gemv_q4_0_4x4_q8_0_generic ggml_gemv_q4_0_4x4_q8_0
+ #define ggml_gemv_q4_0_4x8_q8_0_generic ggml_gemv_q4_0_4x8_q8_0
+ #define ggml_gemv_q4_0_8x8_q8_0_generic ggml_gemv_q4_0_8x8_q8_0
+@@ -357,6 +368,7 @@
+ #define ggml_gemv_q8_0_4x8_q8_0_generic ggml_gemv_q8_0_4x8_q8_0
  #define ggml_gemm_q1_0_4x4_q8_0_generic ggml_gemm_q1_0_4x4_q8_0
  #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
 +#define ggml_gemm_q2_0_4x8_q8_0_generic ggml_gemm_q2_0_4x8_q8_0
- #endif
+ #define ggml_gemm_q4_0_4x4_q8_0_generic ggml_gemm_q4_0_4x4_q8_0
+ #define ggml_gemm_q4_0_4x8_q8_0_generic ggml_gemm_q4_0_4x8_q8_0
+ #define ggml_gemm_q4_0_8x8_q8_0_generic ggml_gemm_q4_0_8x8_q8_0
 diff --git a/ggml/src/ggml-cpu/arch/x86/repack.cpp b/ggml/src/ggml-cpu/arch/x86/repack.cpp
-index af1cebad1..480f1b1fe 100644
+index af1cebad13..480f1b1feb 100644
 --- a/ggml/src/ggml-cpu/arch/x86/repack.cpp
 +++ b/ggml/src/ggml-cpu/arch/x86/repack.cpp
 @@ -6405,3 +6405,311 @@ void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
@@ -485,7 +488,7 @@ index af1cebad1..480f1b1fe 100644
 +    ggml_gemm_q2_0_4x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
 +}
 diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
-index c6583f05e..c4b4bb495 100644
+index 9772ad1b85..fe1a3099c4 100644
 --- a/ggml/src/ggml-cpu/repack.cpp
 +++ b/ggml/src/ggml-cpu/repack.cpp
 @@ -1492,6 +1492,71 @@ void ggml_gemv_q1_0_4x8_q8_0_generic(int                        n,
@@ -715,7 +718,7 @@ index c6583f05e..c4b4bb495 100644
  static block_q8_0x16 make_block_q8_0x16(block_q8_0 * in, unsigned int blck_size_interleave) {
      block_q8_0x16 out;
  
-@@ -4315,6 +4514,10 @@ template <> int repack<block_q1_0, 8, 4>(struct ggml_tensor * t, const void * da
+@@ -4246,6 +4445,10 @@ template <> int repack<block_q1_0, 8, 4>(struct ggml_tensor * t, const void * da
      return repack_q1_0_to_q1_0_4_bl(t, 8, data, data_size);
  }
  
@@ -723,10 +726,10 @@ index c6583f05e..c4b4bb495 100644
 +    return repack_q2_0_to_q2_0_4_bl(t, 8, data, data_size);
 +}
 +
- #if defined __riscv_zvfh
- template <> int repack<block_q4_0, 1, 16>(struct ggml_tensor * t, const void * data, size_t data_size) {
-     return repack_q4_0_to_q4_0_16_bl(t, 1, data, data_size);
-@@ -4420,6 +4623,10 @@ template <> void gemv<block_q1_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t
+ template <> int repack<block_q4_0, 4, 4>(struct ggml_tensor * t, const void * data, size_t data_size) {
+     return repack_q4_0_to_q4_0_4_bl(t, 4, data, data_size);
+ }
+@@ -4349,6 +4552,10 @@ template <> void gemv<block_q1_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t
      ggml_gemv_q1_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
  }
  
@@ -734,10 +737,10 @@ index c6583f05e..c4b4bb495 100644
 +    ggml_gemv_q2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
 +}
 +
- #if defined __riscv_zvfh
- template <> void gemv<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
-     ggml_gemv_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
-@@ -4525,6 +4732,10 @@ template <> void gemm<block_q1_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t
+ template <> void gemv<block_q4_0, 4, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+     ggml_gemv_q4_0_4x4_q8_0(n, s, bs, vx, vy, nr, nc);
+ }
+@@ -4454,6 +4661,10 @@ template <> void gemm<block_q1_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t
      ggml_gemm_q1_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
  }
  
@@ -745,20 +748,20 @@ index c6583f05e..c4b4bb495 100644
 +    ggml_gemm_q2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
 +}
 +
- #if defined __riscv_zvfh
- template <> void gemm<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
-     ggml_gemm_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
-@@ -4975,6 +5186,9 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+ template <> void gemm<block_q4_0, 4, 4, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+     ggml_gemm_q4_0_4x4_q8_0(n, s, bs, vx, vy, nr, nc);
+ }
+@@ -4927,6 +5138,9 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
      static const ggml::cpu::repack::tensor_traits<block_q1_0, 4, 4, GGML_TYPE_Q8_0> q1_0_4x4_q8_0;
      static const ggml::cpu::repack::tensor_traits<block_q1_0, 8, 4, GGML_TYPE_Q8_0> q1_0_4x8_q8_0;
  
 +    // instance for Q2_0
 +    static const ggml::cpu::repack::tensor_traits<block_q2_0, 8, 4, GGML_TYPE_Q8_0> q2_0_4x8_q8_0;
 +
-     // instances for RISC-V
-     //
-     // These implement outer-product style matrix multiplication kernels with
-@@ -5136,6 +5350,11 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+     // lane-110 M3 graft tag:repack-carveout — fork parity (smallthinker ggml-cpu-aarch64.cpp:6288-6299):
+     // the expert bundle must hold PLAIN Q4_0 bytes and the streaming kernels read plain Q4_0,
+     // so expert tensors must NOT be runtime-repacked in either bundle-gen or streaming mode.
+@@ -5141,6 +5355,11 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
              #endif
          }
      } else if (cur->type == GGML_TYPE_Q1_0) {
@@ -770,7 +773,7 @@ index c6583f05e..c4b4bb495 100644
          if (ggml_cpu_has_neon() && ggml_cpu_has_matmul_int8()) {
              if (cur->ne[1] % 4 == 0) {
                  return &q1_0_4x8_q8_0;
-@@ -5146,6 +5365,12 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+@@ -5151,6 +5370,12 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
                  return &q1_0_4x4_q8_0;
              }
          }
@@ -784,7 +787,7 @@ index c6583f05e..c4b4bb495 100644
  
      return nullptr;
 diff --git a/ggml/src/ggml-cpu/repack.h b/ggml/src/ggml-cpu/repack.h
-index 3ccf719c3..5bc48b649 100644
+index fc6715c39c..3f3222121c 100644
 --- a/ggml/src/ggml-cpu/repack.h
 +++ b/ggml/src/ggml-cpu/repack.h
 @@ -14,6 +14,9 @@ template <int K> constexpr int QK_0() {
@@ -797,51 +800,51 @@ index 3ccf719c3..5bc48b649 100644
      if constexpr (K == 4) {
          return QK4_0;
      }
-@@ -36,6 +39,7 @@ static_assert(sizeof(block<8, 4>) == 4 * sizeof(ggml_half) + QK8_0 * 4, "wrong b
- static_assert(sizeof(block<8, 8>) == 8 * sizeof(ggml_half) + QK8_0 * 8, "wrong block<8,8> size/padding");
- static_assert(sizeof(block<8, 16>) == 16 * sizeof(ggml_half) + QK8_0 * 16, "wrong block<8,16> size/padding");
+@@ -30,6 +33,7 @@ template <int K, int N> struct block {
+ 
+ // control size
  static_assert(sizeof(block<1, 4>) == 4 * sizeof(ggml_half) + QK1_0 / 2, "wrong block<1,4> size/padding");
 +static_assert(sizeof(block<2, 4>) == 4 * sizeof(ggml_half) + QK2_0, "wrong block<2,4> size/padding");
+ static_assert(sizeof(block<4, 4>) == 4 * sizeof(ggml_half) + QK8_0 * 2, "wrong block<4,4> size/padding");
+ static_assert(sizeof(block<4, 8>) == 8 * sizeof(ggml_half) + QK8_0 * 4, "wrong block<4,8> size/padding");
+ static_assert(sizeof(block<4, 16>) == 16 * sizeof(ggml_half) + QK8_0 * 8, "wrong block<4,16> size/padding");
+@@ -38,6 +42,7 @@ static_assert(sizeof(block<8, 8>) == 8 * sizeof(ggml_half) + QK8_0 * 8, "wrong b
+ static_assert(sizeof(block<8, 16>) == 16 * sizeof(ggml_half) + QK8_0 * 16, "wrong block<8,16> size/padding");
  
- using block_q4_0x4 = block<4, 4>;
- using block_q4_0x8 = block<4, 8>;
-@@ -44,6 +48,7 @@ using block_q8_0x4 = block<8, 4>;
- using block_q8_0x8 = block<8, 8>;
- using block_q8_0x16 = block<8, 16>;
  using block_q1_0x4 = block<1, 4>;
 +using block_q2_0x4 = block<2, 4>;
- 
- struct block_q4_Kx8 {
-     ggml_half d[8];      // super-block scale for quantized scales
-@@ -164,6 +169,7 @@ void ggml_gemv_q8_0_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
- void ggml_gemv_q8_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ using block_q4_0x4 = block<4, 4>;
+ using block_q4_0x8 = block<4, 8>;
+ using block_q4_0x16 = block<4, 16>;
+@@ -148,6 +153,7 @@ void ggml_quantize_mat_q8_K_4x4(const float * GGML_RESTRICT x, void * GGML_RESTR
+ void ggml_quantize_mat_q8_K_4x8(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
  void ggml_gemv_q1_0_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
  void ggml_gemv_q1_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
 +void ggml_gemv_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
- void ggml_gemm_q4_0_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
- void ggml_gemm_q4_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
- void ggml_gemm_q4_0_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
-@@ -182,6 +188,7 @@ void ggml_gemm_q8_0_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
- void ggml_gemm_q8_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemv_q4_0_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemv_q4_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemv_q4_0_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+@@ -166,6 +172,7 @@ void ggml_gemv_q8_0_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+ void ggml_gemv_q8_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
  void ggml_gemm_q1_0_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
  void ggml_gemm_q1_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
 +void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
- #if defined __riscv_zvfh
- void ggml_quantize_mat_q8_0_4x1(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
- void ggml_quantize_mat_q8_K_4x1(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
-@@ -220,6 +227,7 @@ void ggml_gemv_q8_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs,
- void ggml_gemv_q8_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q4_0_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q4_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q4_0_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+@@ -204,6 +211,7 @@ void ggml_quantize_mat_q8_K_4x4_generic(const float * GGML_RESTRICT x, void * GG
+ void ggml_quantize_mat_q8_K_4x8_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
  void ggml_gemv_q1_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
  void ggml_gemv_q1_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
 +void ggml_gemv_q2_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
- void ggml_gemm_q4_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
- void ggml_gemm_q4_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
- void ggml_gemm_q4_0_8x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
-@@ -238,6 +246,7 @@ void ggml_gemm_q8_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs,
- void ggml_gemm_q8_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemv_q4_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemv_q4_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemv_q4_0_8x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+@@ -222,6 +230,7 @@ void ggml_gemv_q8_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs,
+ void ggml_gemv_q8_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
  void ggml_gemm_q1_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
  void ggml_gemm_q1_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
 +void ggml_gemm_q2_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
- #if defined __riscv_zvfh
- void ggml_quantize_mat_q8_0_4x1_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
- void ggml_quantize_mat_q8_K_4x1_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k);
+ void ggml_gemm_q4_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q4_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);
+ void ggml_gemm_q4_0_8x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc);

@@ -1,0 +1,1179 @@
+From 91eb46d0ceb71fb6c7b1aa8457d47101896e8358 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:57:36 -0400
+Subject: [PATCH] 
+ 5-models-server/0037-merge-fix-post-merge-build-and-crash-issues.patch
+
+Conflict-resolved: auto: same-point-insertion(upstream block then ours) in src/llama-context.cpp
+---
+ common/common.cpp               |  18 ++
+ common/fit.cpp                  | 240 +++++++++++++++++++++
+ src/llama-arch.cpp              |  10 +-
+ src/llama-context.cpp           | 127 ++++++++++-
+ src/llama-graph.cpp             | 370 ++++++++++++++++++++++++++++++++
+ src/llama-kv-cache.cpp          |  22 +-
+ src/llama-kv-cache.h            |   4 +
+ src/llama-model.cpp             |  35 +++
+ src/models/deepseek4.cpp        |   4 +
+ tools/server/server-context.cpp |  96 +++++++++
+ 10 files changed, 918 insertions(+), 8 deletions(-)
+
+diff --git a/common/common.cpp b/common/common.cpp
+index 2b6c297416..2fa3b50f76 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -1758,6 +1758,24 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+     cparams.type_k = params.cache_type_k;
+     cparams.type_v = params.cache_type_v;
+ 
++<<<<<<< ours
++=======
++    if (params.moe_cache.mode_explicit) {
++        switch (params.moe_cache.mode) {
++            case COMMON_MOE_CACHE_MODE_OFF:
++                cparams.moe_cache_mode = LLAMA_MOE_CACHE_MODE_OFF;
++                break;
++            case COMMON_MOE_CACHE_MODE_AUTO:
++                cparams.moe_cache_mode = LLAMA_MOE_CACHE_MODE_AUTO;
++                break;
++            case COMMON_MOE_CACHE_MODE_ON:
++                cparams.moe_cache_mode = LLAMA_MOE_CACHE_MODE_ON;
++                break;
++        }
++    }
++    cparams.moe_cache_budget_mib = params.moe_cache.budget_mib;
++
++>>>>>>> theirs
+     return cparams;
+ }
+ 
+diff --git a/common/fit.cpp b/common/fit.cpp
+index faa595f84f..feac87d14e 100644
+--- a/common/fit.cpp
++++ b/common/fit.cpp
+@@ -27,6 +27,246 @@ class common_params_fit_exception : public std::runtime_error {
+     using std::runtime_error::runtime_error;
+ };
+ 
++<<<<<<< ours
++=======
++const char * common_moe_cache_tensor_override_pattern() {
++    return "blk\\.\\d+\\.ffn_(up|down|gate_up|gate)_(ch|)exps";
++}
++
++struct common_moe_cache_fit_pool {
++    ggml_type type = GGML_TYPE_COUNT;
++    size_t expert_size = 0;
++    size_t pool_bytes = 0;
++    size_t tensor_bytes = 0;
++    size_t scratch_bytes = 0;
++};
++
++common_moe_cache_fit_result common_moe_cache_plan_fit(
++        const std::vector<common_moe_cache_fit_device_input> & device_inputs,
++        const std::vector<common_moe_cache_fit_shape_input> & shapes,
++        size_t reserve_bytes,
++        size_t budget_bytes,
++        int min_devices) {
++    common_moe_cache_fit_result result;
++
++    for (const common_moe_cache_fit_device_input & input : device_inputs) {
++        if (input.physical_device < 0 || input.free_bytes < 0 || input.used_bytes > INT64_MAX) {
++            result.reason = "device memory accounting overflowed";
++            return result;
++        }
++
++        size_t device_index = result.devices.size();
++        for (size_t candidate = 0; candidate < result.devices.size(); candidate++) {
++            if (result.devices[candidate].physical_device == input.physical_device) {
++                device_index = candidate;
++                break;
++            }
++        }
++        if (device_index == result.devices.size()) {
++            common_moe_cache_fit_device device;
++            device.physical_device = input.physical_device;
++            device.compute_capability = input.compute_capability;
++            device.free_bytes = input.free_bytes;
++            result.devices.push_back(device);
++        }
++
++        common_moe_cache_fit_device & device = result.devices[device_index];
++        device.free_bytes = std::min(device.free_bytes, input.free_bytes);
++        device.compute_capability = std::min(device.compute_capability, input.compute_capability);
++        if ((int64_t)input.used_bytes > INT64_MAX - device.used_bytes) {
++            result.reason = "device memory accounting overflowed";
++            return result;
++        }
++        device.used_bytes += (int64_t)input.used_bytes;
++    }
++    if (result.devices.empty()) {
++        result.reason = "no selected device satisfies the cache hardware policy";
++        return result;
++    }
++
++    for (common_moe_cache_fit_device & device : result.devices) {
++        const int64_t projected_free = device.free_bytes - device.used_bytes;
++        if (projected_free <= 0 || (uint64_t)projected_free <= reserve_bytes) {
++            continue;
++        }
++        device.cache_bytes = (size_t)projected_free - reserve_bytes;
++        if (budget_bytes > 0) {
++            device.cache_bytes = std::min(device.cache_bytes, budget_bytes);
++        }
++    }
++
++    std::vector<common_moe_cache_fit_pool> pools;
++    for (const common_moe_cache_fit_shape_input & shape : shapes) {
++        if (shape.tensor_bytes == 0 || shape.tensor_bytes > SIZE_MAX - result.expert_bytes) {
++            result.reason = "the routed expert tensor inventory overflowed";
++            return result;
++        }
++        result.expert_bytes += shape.tensor_bytes;
++        if (!shape.cacheable) {
++            continue;
++        }
++        bool found = false;
++        for (common_moe_cache_fit_pool & pool : pools) {
++            if (pool.type == shape.type && pool.expert_size == shape.expert_size) {
++                pool.pool_bytes = std::max(pool.pool_bytes, shape.pool_bytes);
++                pool.tensor_bytes += shape.tensor_bytes;
++                pool.scratch_bytes = std::max(pool.scratch_bytes, shape.scratch_bytes);
++                found = true;
++                break;
++            }
++        }
++        if (!found) {
++            pools.push_back({shape.type, shape.expert_size, shape.pool_bytes,
++                    shape.tensor_bytes, shape.scratch_bytes});
++        }
++    }
++
++    size_t scratch_bytes = 0;
++    size_t supported_bytes = 0;
++    for (const common_moe_cache_fit_pool & pool : pools) {
++        if (pool.tensor_bytes < pool.pool_bytes) {
++            continue;
++        }
++        supported_bytes += pool.tensor_bytes;
++        scratch_bytes = std::max(scratch_bytes, pool.scratch_bytes);
++    }
++    if (supported_bytes == 0) {
++        result.reason = "no routed expert shape is cacheable";
++        return result;
++    }
++    if (supported_bytes != result.expert_bytes) {
++        result.reason = "some routed expert weights would remain permanently uncached";
++        return result;
++    }
++
++    result.minimum_device_bytes = scratch_bytes;
++    for (const common_moe_cache_fit_pool & pool : pools) {
++        if (pool.tensor_bytes < pool.pool_bytes) {
++            continue;
++        }
++        if (pool.pool_bytes > SIZE_MAX - result.minimum_device_bytes) {
++            result.reason = "the minimum cache pool inventory overflowed";
++            return result;
++        }
++        result.minimum_device_bytes += pool.pool_bytes;
++    }
++
++    int useful_devices = 0;
++    for (const common_moe_cache_fit_device & device : result.devices) {
++        if (device.cache_bytes < result.minimum_device_bytes) {
++            continue;
++        }
++        useful_devices++;
++        if (device.cache_bytes > SIZE_MAX - result.cache_bytes) {
++            result.cache_bytes = SIZE_MAX;
++        } else {
++            result.cache_bytes += device.cache_bytes;
++        }
++    }
++    if (useful_devices < min_devices) {
++        result.reason = "too few devices can hold the minimum expert pools";
++        return result;
++    }
++
++    result.feasible = true;
++    result.reason = "cache pools are feasible";
++    return result;
++}
++
++static common_moe_cache_fit_result common_moe_cache_evaluate_fit(
++        const common_moe_cache_params * params,
++        const std::vector<llama_moe_tensor_info> & tensors,
++        const std::vector<ggml_backend_dev_t> & devices,
++        const std::vector<llama_device_memory_data> & memory,
++        const std::vector<int64_t> & margins) {
++    common_moe_cache_fit_result result;
++    if (!params || params->mode == COMMON_MOE_CACHE_MODE_OFF) {
++        result.reason = "disabled";
++        return result;
++    }
++    if (!ggml_moe_cache.query_config || !ggml_moe_cache.query_device ||
++        !ggml_moe_cache.query_shape) {
++        result.reason = "no cache provider is loaded";
++        return result;
++    }
++
++    int automatic = -1;
++    if (params->mode_explicit) {
++        automatic = params->mode == COMMON_MOE_CACHE_MODE_AUTO ? 1 : 0;
++    }
++    ggml_moe_cache_config config = {};
++    if (!ggml_moe_cache.query_config(automatic, params->budget_mib, &config)) {
++        result.reason = "the cache provider is disabled";
++        return result;
++    }
++    if (tensors.empty()) {
++        result.reason = "the model has no routed expert weight tensors";
++        return result;
++    }
++    if (memory.size() != devices.size() + 1 || margins.size() != devices.size()) {
++        result.reason = "the fitted device inventory changed";
++        return result;
++    }
++
++    std::vector<common_moe_cache_fit_device_input> device_inputs;
++    size_t min_expert_bytes = 0;
++    for (size_t index = 0; index < devices.size(); index++) {
++        ggml_moe_cache_device_caps caps = {};
++        if (!ggml_moe_cache.query_device(devices[index], &config, &caps)) {
++            continue;
++        }
++        if (margins[index] < 0 || memory[index].free < margins[index]) {
++            result.reason = "the fitted device margin exceeds free memory";
++            return result;
++        }
++        device_inputs.push_back({caps.physical_device, caps.compute_capability,
++                memory[index].free - margins[index], memory[index].mb.total()});
++        min_expert_bytes = std::max(min_expert_bytes, caps.min_expert_bytes);
++    }
++
++    std::vector<common_moe_cache_fit_shape_input> shape_inputs;
++    shape_inputs.reserve(tensors.size());
++    for (const llama_moe_tensor_info & tensor : tensors) {
++        if (tensor.n_expert <= 0 || tensor.expert_size == 0 ||
++            (uint64_t)tensor.n_expert > SIZE_MAX / tensor.expert_size) {
++            result.reason = "the model has an invalid routed expert tensor size";
++            return result;
++        }
++        const size_t tensor_bytes = (size_t)tensor.n_expert * tensor.expert_size;
++        ggml_moe_cache_shape_caps caps = {};
++        const bool cacheable = tensor.expert_size >= min_expert_bytes &&
++            ggml_moe_cache.query_shape(tensor.type, tensor.n_input, tensor.n_output,
++                    tensor.n_expert, tensor.expert_size, &caps);
++        shape_inputs.push_back({tensor.type, tensor.expert_size, tensor_bytes,
++                caps.scratch_bytes, caps.pool_bytes, cacheable});
++    }
++
++    return common_moe_cache_plan_fit(
++            device_inputs, shape_inputs, config.reserve_bytes, config.budget_bytes, config.min_devices);
++}
++
++struct common_fit_logger_guard {
++    ggml_log_callback original_callback;
++    void * original_user_data;
++    ggml_log_level min_level;
++
++    explicit common_fit_logger_guard(ggml_log_level min_level) : min_level(min_level) {
++        llama_log_get(&original_callback, &original_user_data);
++        llama_log_set(callback, this);
++    }
++
++    ~common_fit_logger_guard() {
++        llama_log_set(original_callback, original_user_data);
++    }
++
++    static void callback(ggml_log_level level, const char * text, void * user_data) {
++        const common_fit_logger_guard * guard = (const common_fit_logger_guard *) user_data;
++        const ggml_log_level level_eff = level >= guard->min_level ? level : GGML_LOG_LEVEL_DEBUG;
++        guard->original_callback(level_eff, text, guard->original_user_data);
++    }
++};
++
++>>>>>>> theirs
+ static std::vector<llama_device_memory_data> common_get_device_memory_data_impl(
+         const char * path_model,
+         const llama_model_params * mparams,
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index ee33cdae75..985813423c 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -1138,7 +1138,10 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
+         case LLM_ARCH_QWEN35MOE:
+         case LLM_ARCH_QWEN4EXP:
+         case LLM_ARCH_DEEPSEEK4:
++<<<<<<< ours
+         case LLM_ARCH_MINIMAX_01:
++=======
++>>>>>>> theirs
+             return true;
+         default:
+             return false;
+@@ -1164,11 +1167,14 @@ bool llm_arch_supports_rs_rollback(const llm_arch & arch) {
+         case LLM_ARCH_QWEN35MOE:
+         case LLM_ARCH_QWEN4EXP:
+         case LLM_ARCH_DEEPSEEK4:
+-        case LLM_ARCH_NEMOTRON_H:
+-        case LLM_ARCH_NEMOTRON_H_MOE:
+         case LLM_ARCH_LFM2:
+         case LLM_ARCH_LFM2MOE:
+         case LLM_ARCH_BAILINGMOE3:
++<<<<<<< ours
++        case LLM_ARCH_NEMOTRON_H:
++        case LLM_ARCH_NEMOTRON_H_MOE:
++=======
++>>>>>>> theirs
+             return true;
+         default:
+             return false;
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 12ac6f1af2..25ab836ae7 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -21,6 +21,9 @@
+ #include "llama-sampler.h"
+ #include "llama.h"
+ 
++#include "../ggml/src/ggml-backend-moe-cache.h"
++
++#include <algorithm>
+ #include <cinttypes>
+ #include <cmath>
+ #include <cstring>
+@@ -120,6 +123,8 @@ llama_context::llama_context(
+ 
+     cparams.n_threads               = params.n_threads;
+     cparams.n_threads_batch         = params.n_threads_batch;
++    cparams.moe_cache_mode          = params.moe_cache_mode;
++    cparams.moe_cache_budget_mib    = params.moe_cache_budget_mib;
+     cparams.yarn_ext_factor         = params.yarn_ext_factor  >= 0.0f ? params.yarn_ext_factor  : hparams.yarn_ext_factor;
+     cparams.yarn_attn_factor        = params.yarn_attn_factor >= 0.0f ? params.yarn_attn_factor : hparams.yarn_attn_factor;
+     cparams.yarn_beta_fast          = params.yarn_beta_fast   >= 0.0f ? params.yarn_beta_fast   : hparams.yarn_beta_fast;
+@@ -626,6 +631,99 @@ static int llama_graph_n_input_tensors(ggml_cgraph * gf) {
+     return (int) users.size();
+ }
+ 
++static bool llama_model_has_cacheable_moe_weights(
++        const llama_model & model, llama_moe_cache_mode mode, size_t budget_mib,
++        const std::vector<ggml_backend_t> & backends) {
++    // Probe the provider that owns the model's backends; fall back to the
++    // thread's active provider (first registered).
++    ggml_moe_cache_api api = ggml_moe_cache_active();
++    for (ggml_backend_t backend : backends) {
++        if (!backend) {
++            continue;
++        }
++        const ggml_moe_cache_api owned =
++            ggml_moe_cache_get(ggml_backend_dev_backend_reg(ggml_backend_get_device(backend)));
++        if (owned.owner) {
++            api = owned;
++            break;
++        }
++    }
++    if (mode == LLAMA_MOE_CACHE_MODE_OFF) {
++        LLAMA_LOG_INFO("%s: MoE cache disabled (mode=off)\n", __func__);
++        return false;
++    }
++    if (!api.query_config || !api.query_device || !api.query_shape) {
++        LLAMA_LOG_INFO("%s: MoE cache disabled (no provider registered)\n", __func__);
++        return false;
++    }
++
++    ggml_moe_cache_config config = {};
++    const int automatic = mode == LLAMA_MOE_CACHE_MODE_UNSPECIFIED
++        ? -1 : mode == LLAMA_MOE_CACHE_MODE_AUTO;
++    if (!api.query_config(automatic, budget_mib, &config)) {
++        LLAMA_LOG_INFO("%s: MoE cache disabled (provider query_config returned false)\n", __func__);
++        return false;
++    }
++
++    std::vector<int32_t> physical_devices;
++    size_t min_expert_bytes = 0;
++    for (ggml_backend_t backend : backends) {
++        if (!backend) {
++            continue;
++        }
++        ggml_moe_cache_device_caps caps = {};
++        if (!api.query_device(
++                    ggml_backend_get_device(backend), &config, &caps) ||
++            std::find(physical_devices.begin(), physical_devices.end(),
++                    caps.physical_device) != physical_devices.end()) {
++            continue;
++        }
++        physical_devices.push_back(caps.physical_device);
++        min_expert_bytes = std::max(min_expert_bytes, caps.min_expert_bytes);
++    }
++    if ((int) physical_devices.size() < config.min_devices) {
++        LLAMA_LOG_INFO("%s: MoE cache disabled (eligible devices=%d, need=%d, min_cc=%d)\n",
++                __func__, (int) physical_devices.size(), config.min_devices,
++                config.min_compute_capability);
++        return false;
++    }
++
++    for (const auto & entry : model.tensors_by_name) {
++        const std::string & name = entry.first;
++        const ggml_tensor * tensor = entry.second;
++        if (!tensor || (name.find("_exps") == std::string::npos &&
++                        name.find("_chexps") == std::string::npos) ||
++            ggml_n_dims(tensor) != 3 || tensor->ne[0] <= 0 ||
++            tensor->ne[1] <= 0 || tensor->ne[2] <= 0 ||
++            tensor->nb[2] < min_expert_bytes) {
++            continue;
++        }
++
++        ggml_backend_buffer_t buffer = tensor->view_src
++            ? tensor->view_src->buffer : tensor->buffer;
++        if (!buffer || !ggml_backend_buffer_is_host(buffer) ||
++            ggml_backend_buffer_get_usage(buffer) != GGML_BACKEND_BUFFER_USAGE_WEIGHTS) {
++            continue;
++        }
++
++        ggml_moe_cache_shape_caps shape = {};
++        if (api.query_shape(
++                    tensor->type, tensor->ne[0], tensor->ne[1], tensor->ne[2],
++                    tensor->nb[2], &shape)) {
++            const size_t slab_bytes = std::max(
++                    shape.pool_bytes, config.minimum_slab_bytes);
++            if (config.budget_bytes > 0 &&
++                (shape.scratch_bytes > config.budget_bytes ||
++                 slab_bytes > config.budget_bytes - shape.scratch_bytes)) {
++                continue;
++            }
++            return true;
++        }
++    }
++    LLAMA_LOG_INFO("%s: MoE cache disabled (no cacheable expert tensors found)\n", __func__);
++    return false;
++}
++
+ void llama_context::sched_reserve() {
+     if (!sched_need_reserve) {
+         return;
+@@ -652,7 +750,26 @@ void llama_context::sched_reserve() {
+     gf_res_reserve.reset(new llm_graph_result(max_nodes));
+     gf_res_prev_active = nullptr;
+ 
++    const bool moe_cache_eligible = llama_model_has_cacheable_moe_weights(
++            model, (llama_moe_cache_mode)cparams.moe_cache_mode,
++            cparams.moe_cache_budget_mib, backend_ptrs);
++    const ggml_moe_cache_mode moe_cache_mode = moe_cache_eligible
++        ? (ggml_moe_cache_mode)cparams.moe_cache_mode : GGML_MOE_CACHE_MODE_OFF;
++    const char * moe_cache_requested = "provider";
++    switch (cparams.moe_cache_mode) {
++        case LLAMA_MOE_CACHE_MODE_OFF:  moe_cache_requested = "off";  break;
++        case LLAMA_MOE_CACHE_MODE_AUTO: moe_cache_requested = "auto"; break;
++        case LLAMA_MOE_CACHE_MODE_ON:   moe_cache_requested = "on";   break;
++        case LLAMA_MOE_CACHE_MODE_UNSPECIFIED: break;
++    }
++    LLAMA_LOG_INFO("%s: MoE cache requested=%s resolved=%s\n",
++            __func__, moe_cache_requested,
++            moe_cache_eligible ? moe_cache_requested : "off");
++
+     sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, cparams.pipeline_parallel, cparams.op_offload));
++    ggml_backend_sched_set_moe_cache(
++            sched.get(), moe_cache_mode,
++            cparams.moe_cache_budget_mib);
+ 
+     llama_memory_context_ptr mctx;
+     if (memory) {
+@@ -746,6 +863,9 @@ void llama_context::sched_reserve() {
+                 LLAMA_LOG_WARN("%s: compute buffer allocation failed, retrying without pipeline parallelism\n", __func__);
+                 cparams.pipeline_parallel = false;
+                 sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, false, cparams.op_offload));
++                ggml_backend_sched_set_moe_cache(
++                        sched.get(), moe_cache_mode,
++                        cparams.moe_cache_budget_mib);
+                 gf = graph_reserve(n_tokens, n_seqs, n_outputs_pp, mctx.get());
+             }
+             if (!gf) {
+@@ -2484,7 +2604,6 @@ void llama_context::output_reorder() {
+ //
+ 
+ uint32_t llama_context::graph_max_nodes(uint32_t n_tokens) const {
+-<<<<<<< ours
+     uint32_t res;
+     if (model.arch == LLM_ARCH_KIMI_K3) {
+         // the n_tokens*40 budget below is exhausted at ubatch 3840
+@@ -2514,10 +2633,6 @@ uint32_t llama_context::graph_max_nodes(uint32_t n_tokens) const {
+         for (const auto & lora : model.loras) {
+             res += lora->get_n_nodes();
+         }
+-=======
+-    if (model.arch == LLM_ARCH_QWEN3NEXT || model.arch == LLM_ARCH_KIMI_LINEAR || model.arch == LLM_ARCH_QWEN35 || model.arch == LLM_ARCH_QWEN35MOE || model.arch == LLM_ARCH_DEEPSEEK4) {
+-        return std::max<uint32_t>(n_tokens * 40, 32u * model.n_tensors());
+->>>>>>> theirs
+     }
+ 
+     uint32_t n_sampling_nodes = 0;
+@@ -3850,6 +3965,8 @@ llama_context_params llama_context_default_params() {
+         /*.cb_eval_user_data           =*/ nullptr,
+         /*.type_k                      =*/ GGML_TYPE_F16,
+         /*.type_v                      =*/ GGML_TYPE_F16,
++        /*.moe_cache_mode              =*/ LLAMA_MOE_CACHE_MODE_UNSPECIFIED,
++        /*.moe_cache_budget_mib        =*/ 0,
+         /*.abort_callback              =*/ nullptr,
+         /*.abort_callback_data         =*/ nullptr,
+         /*.embeddings                  =*/ false,
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index eef45244b4..e4cfac44c9 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -1085,6 +1085,376 @@ bool llm_graph_input_attn_kv_iswa::can_reuse(const llm_graph_params & params) {
+     return res;
+ }
+ 
++
++void llm_graph_input_attn_k_iswa::set_input(const llama_ubatch * ubatch) {
++    // base tensors may not be allocated if there are no non-SWA attention layers
++    if (self_k_idxs && self_k_idxs->buffer) {
++        mctx->get_base()->set_input_k_idxs(self_k_idxs, ubatch);
++    }
++
++    // the kq mask guards on its own buffer: shared cells leave idxs unbacked while the mask stays live
++    if (self_kq_mask && self_kq_mask->buffer) {
++        mctx->get_base()->set_input_kq_mask(self_kq_mask, ubatch, cparams.causal_attn);
++    }
++
++    // swa tensors may not be allocated if there are no SWA attention layers
++    if (self_k_idxs_swa && self_k_idxs_swa->buffer) {
++        mctx->get_swa()->set_input_k_idxs(self_k_idxs_swa, ubatch);
++    }
++
++    if (self_kq_mask_swa && self_kq_mask_swa->buffer) {
++        mctx->get_swa()->set_input_kq_mask(self_kq_mask_swa, ubatch, cparams.causal_attn);
++    }
++
++    if (self_k_rot && self_k_rot->buffer) {
++        mctx->get_base()->set_input_k_rot(self_k_rot);
++    }
++
++    if (self_k_rot_swa && self_k_rot_swa->buffer) {
++        mctx->get_swa()->set_input_k_rot(self_k_rot_swa);
++    }
++}
++
++bool llm_graph_input_attn_k_iswa::can_reuse(const llm_graph_params & params) {
++    const auto * mctx = static_cast<const llama_kv_cache_iswa_context *>(params.mctx);
++
++    this->mctx = mctx;
++
++    bool res = true;
++
++    // base tensors may not be allocated if there are no non-SWA attention layers
++    if (self_k_idxs && self_k_idxs->buffer) {
++        res &= self_k_idxs->ne[0] == params.ubatch.n_tokens;
++    }
++
++    if (self_kq_mask && self_kq_mask->buffer) {
++        res &= can_reuse_kq_mask(self_kq_mask, mctx->get_base(), params.ubatch, params.cparams);
++    }
++
++    // swa tensors may not be allocated if there are no SWA attention layers
++    if (self_k_idxs_swa && self_k_idxs_swa->buffer) {
++        res &= self_k_idxs_swa->ne[0] == params.ubatch.n_tokens;
++    }
++
++    if (self_kq_mask_swa && self_kq_mask_swa->buffer) {
++        res &= can_reuse_kq_mask(self_kq_mask_swa, mctx->get_swa(), params.ubatch, params.cparams);
++    }
++
++    return res;
++}
++
++static void dsv4_set_i64(ggml_tensor * dst, const std::vector<int64_t> & src) {
++    if (!dst || !dst->buffer) {
++        return;
++    }
++
++    GGML_ASSERT(dst->ne[0] == (int64_t) src.size());
++    ggml_backend_tensor_set(dst, src.data(), 0, src.size()*ggml_element_size(dst));
++}
++
++static void dsv4_set_i32(ggml_tensor * dst, const std::vector<int32_t> & src) {
++    if (!dst || !dst->buffer) {
++        return;
++    }
++
++    GGML_ASSERT(dst->ne[0] == (int64_t) src.size());
++    ggml_backend_tensor_set(dst, src.data(), 0, src.size()*ggml_element_size(dst));
++}
++
++static void dsv4_set_kq_mask(
++        ggml_tensor * dst,
++        const llama_kv_cache_dsv4_context::comp_plan & plan,
++        uint32_t n_tokens,
++        int64_t n_stream) {
++    if (!dst || !dst->buffer) {
++        return;
++    }
++
++    GGML_ASSERT(dst->type == GGML_TYPE_F32 || dst->type == GGML_TYPE_F16);
++    GGML_ASSERT(n_stream > 0);
++    GGML_ASSERT(n_tokens%n_stream == 0);
++    GGML_ASSERT(dst->ne[0] == plan.n_kv);
++    GGML_ASSERT(dst->ne[1] == (int64_t) n_tokens/n_stream);
++    GGML_ASSERT(dst->ne[2] == 1);
++    GGML_ASSERT(dst->ne[3] == n_stream);
++    GGML_ASSERT((int64_t) plan.n_visible.size() == (int64_t) n_tokens);
++    GGML_ASSERT(ggml_backend_buffer_is_host(dst->buffer));
++
++    if (dst->type == GGML_TYPE_F32) {
++        float * data = (float *) dst->data;
++
++        for (int64_t i = 0; i < (int64_t) n_tokens; ++i) {
++            const int32_t n_visible = plan.n_visible[i];
++
++            for (int64_t j = 0; j < dst->ne[0]; ++j) {
++                data[i*dst->ne[0] + j] = j < n_visible ? 0.0f : -INFINITY;
++            }
++        }
++    } else if (dst->type == GGML_TYPE_F16) {
++        ggml_fp16_t * data = (ggml_fp16_t *) dst->data;
++        const ggml_fp16_t fp16_ninf = llama_cast<ggml_fp16_t>(-INFINITY);
++        const ggml_fp16_t fp16_zero = llama_cast<ggml_fp16_t>(0.0f);
++
++        for (int64_t i = 0; i < (int64_t) n_tokens; ++i) {
++            const int32_t n_visible = plan.n_visible[i];
++
++            for (int64_t j = 0; j < dst->ne[0]; ++j) {
++                data[i*dst->ne[0] + j] = j < n_visible ? fp16_zero : fp16_ninf;
++            }
++        }
++    }
++}
++
++static ggml_tensor * dsv4_build_raw_kq_mask(
++        ggml_context * ctx,
++        const llama_kv_cache_dsv4_raw_context * mctx,
++        const llama_ubatch & ubatch,
++        const llama_cparams & cparams,
++        int64_t n_stream) {
++    const auto n_kv     = mctx->get_n_kv();
++    const auto n_tokens = ubatch.n_tokens;
++
++    GGML_ASSERT(n_stream > 0);
++    GGML_ASSERT(n_tokens%n_stream == 0);
++
++    const auto type = cparams.flash_attn ? GGML_TYPE_F16 : GGML_TYPE_F32;
++
++    ggml_tensor * res = ggml_new_tensor_4d(ctx, type, n_kv, n_tokens/n_stream, 1, n_stream);
++    ggml_set_input(res);
++    ggml_set_name(res, "attn_inp_kq_mask");
++
++    return res;
++}
++
++static bool dsv4_can_reuse_raw_kq_mask(
++        ggml_tensor * kq_mask,
++        const llama_kv_cache_dsv4_raw_context * mctx,
++        const llama_ubatch & ubatch,
++        int64_t n_stream) {
++    const auto n_kv     = mctx->get_n_kv();
++    const auto n_tokens = ubatch.n_tokens;
++
++    GGML_ASSERT(n_stream > 0);
++
++    bool res = true;
++
++    res &= (kq_mask->ne[0] == n_kv);
++    res &= (kq_mask->ne[1] == n_tokens/n_stream);
++    res &= (kq_mask->ne[2] == 1);
++    res &= (kq_mask->ne[3] == n_stream);
++
++    return res;
++}
++
++static std::string dsv4_plan_positions(const std::vector<int32_t> & values) {
++    std::ostringstream ss;
++    ss << "[";
++    for (size_t i = 0; i < values.size(); ++i) {
++        if (i > 0) {
++            ss << ", ";
++        }
++        ss << values[i];
++    }
++    ss << "]";
++    return ss.str();
++}
++
++static bool dsv4_compress_debug() {
++    static const bool debug = []() {
++        const char * env = getenv("LLAMA_DSV4_COMPRESS_DEBUG");
++        return env && atoi(env) > 0;
++    }();
++
++    return debug;
++}
++
++static void dsv4_set_comp_inputs(
++        const llm_graph_input_dsv4::comp_input & inp,
++        const llama_kv_cache_dsv4_context::comp_plan & plan,
++        const char * name,
++        bool debug,
++        uint32_t n_tokens,
++        int64_t n_stream) {
++    dsv4_set_i32(inp.state_pos, plan.state_pos);
++    dsv4_set_i32(inp.state_persist_src_idxs, plan.state_persist_src_idxs);
++    dsv4_set_i32(inp.state_persist_dst_idxs, plan.state_persist_dst_idxs);
++    dsv4_set_i32(inp.state_restore_src_idxs, plan.state_restore_src_idxs);
++    dsv4_set_i32(inp.state_restore_dst_idxs, plan.state_restore_dst_idxs);
++    dsv4_set_i32(inp.state_snapshot_src_idxs, plan.state_snapshot_src_idxs);
++    dsv4_set_i32(inp.state_snapshot_dst_idxs, plan.state_snapshot_dst_idxs);
++    dsv4_set_i32(inp.state_read_idxs, plan.state_read_idxs);
++    dsv4_set_i64(inp.state_write_idxs, plan.state_write_idxs);
++    dsv4_set_i32(inp.state_write_pos, plan.state_write_pos);
++    dsv4_set_kq_mask(inp.kq_mask, plan, n_tokens, n_stream);
++
++    if (debug || dsv4_compress_debug()) {
++        LLAMA_LOG_INFO("%s: %s n_tokens=%u, n_stream=%d, state_persist_dst=%s, state_write_pos=%s\n",
++                __func__, name, n_tokens, (int) n_stream,
++                dsv4_plan_positions(plan.state_persist_dst_idxs).c_str(),
++                dsv4_plan_positions(plan.state_write_pos).c_str());
++    }
++}
++
++static bool dsv4_can_reuse_tensor_1d(ggml_tensor * t, int64_t ne0) {
++    return (t == nullptr && ne0 == 0) || (t != nullptr && t->ne[0] == ne0);
++}
++
++static bool dsv4_can_reuse_kq_mask(
++        ggml_tensor * t,
++        const llama_kv_cache_dsv4_context::comp_plan & plan,
++        uint32_t n_tokens,
++        int64_t n_stream) {
++    if (plan.n_kv == 0) {
++        return t == nullptr;
++    }
++
++    GGML_ASSERT(n_stream > 0);
++
++    return t != nullptr &&
++           t->ne[0] == plan.n_kv &&
++           t->ne[1] == (int64_t) n_tokens/n_stream &&
++           t->ne[2] == 1 &&
++           t->ne[3] == n_stream;
++}
++
++static bool dsv4_can_reuse_comp_input(
++        const llm_graph_input_dsv4::comp_input & inp,
++        const llama_kv_cache_dsv4_context::comp_plan & plan,
++        uint32_t n_tokens,
++        int64_t n_stream) {
++    bool res = true;
++    res &= dsv4_can_reuse_tensor_1d(inp.state_pos, plan.state_pos.size());
++    res &= dsv4_can_reuse_tensor_1d(inp.state_persist_src_idxs, plan.state_persist_src_idxs.size());
++    res &= dsv4_can_reuse_tensor_1d(inp.state_persist_dst_idxs, plan.state_persist_dst_idxs.size());
++    res &= dsv4_can_reuse_tensor_1d(inp.state_restore_src_idxs, plan.state_restore_src_idxs.size());
++    res &= dsv4_can_reuse_tensor_1d(inp.state_restore_dst_idxs, plan.state_restore_dst_idxs.size());
++    res &= dsv4_can_reuse_tensor_1d(inp.state_snapshot_src_idxs, plan.state_snapshot_src_idxs.size());
++    res &= dsv4_can_reuse_tensor_1d(inp.state_snapshot_dst_idxs, plan.state_snapshot_dst_idxs.size());
++    res &= dsv4_can_reuse_tensor_1d(inp.state_read_idxs, plan.state_read_idxs.size());
++    res &= dsv4_can_reuse_tensor_1d(inp.state_write_idxs, plan.state_write_idxs.size());
++    res &= dsv4_can_reuse_tensor_1d(inp.state_write_pos, plan.state_write_pos.size());
++    res &= dsv4_can_reuse_kq_mask(inp.kq_mask, plan, n_tokens, n_stream);
++
++    return res;
++}
++
++static ggml_tensor * dsv4_build_input_1d(
++        ggml_context * ctx,
++        ggml_type type,
++        int64_t ne0,
++        const std::string & name) {
++    if (ne0 == 0) {
++        return nullptr;
++    }
++
++    ggml_tensor * res = ggml_new_tensor_1d(ctx, type, ne0);
++    ggml_set_input(res);
++    ggml_set_name(res, name.c_str());
++
++    return res;
++}
++
++static void dsv4_build_comp_inputs(
++        ggml_context * ctx,
++        llm_graph_input_dsv4::comp_input & inp,
++        const llama_kv_cache_dsv4_context::comp_plan & plan,
++        const char * name,
++        const llama_cparams & cparams,
++        int64_t n_stream) {
++    inp.state_pos = dsv4_build_input_1d(ctx, GGML_TYPE_I32, plan.state_pos.size(), std::string("dsv4_") + name + "_state_pos");
++    inp.state_persist_src_idxs = dsv4_build_input_1d(ctx, GGML_TYPE_I32, plan.state_persist_src_idxs.size(), std::string("dsv4_") + name + "_state_persist_src_idxs");
++    inp.state_persist_dst_idxs = dsv4_build_input_1d(ctx, GGML_TYPE_I32, plan.state_persist_dst_idxs.size(), std::string("dsv4_") + name + "_state_persist_dst_idxs");
++    inp.state_restore_src_idxs = dsv4_build_input_1d(ctx, GGML_TYPE_I32, plan.state_restore_src_idxs.size(), std::string("dsv4_") + name + "_state_restore_src_idxs");
++    inp.state_restore_dst_idxs = dsv4_build_input_1d(ctx, GGML_TYPE_I32, plan.state_restore_dst_idxs.size(), std::string("dsv4_") + name + "_state_restore_dst_idxs");
++    inp.state_snapshot_src_idxs = dsv4_build_input_1d(ctx, GGML_TYPE_I32, plan.state_snapshot_src_idxs.size(), std::string("dsv4_") + name + "_state_snapshot_src_idxs");
++    inp.state_snapshot_dst_idxs = dsv4_build_input_1d(ctx, GGML_TYPE_I32, plan.state_snapshot_dst_idxs.size(), std::string("dsv4_") + name + "_state_snapshot_dst_idxs");
++    inp.state_read_idxs = dsv4_build_input_1d(ctx, GGML_TYPE_I32, plan.state_read_idxs.size(), std::string("dsv4_") + name + "_state_read_idxs");
++    inp.state_write_idxs = dsv4_build_input_1d(ctx, GGML_TYPE_I64, plan.state_write_idxs.size(), std::string("dsv4_") + name + "_state_write_idxs");
++    inp.state_write_pos = dsv4_build_input_1d(ctx, GGML_TYPE_I32, plan.state_write_pos.size(), std::string("dsv4_") + name + "_state_write_pos");
++
++    if (plan.n_kv > 0) {
++        const int64_t n_tokens = (int64_t) plan.n_visible.size();
++
++        GGML_ASSERT(n_stream > 0);
++        GGML_ASSERT(n_tokens%n_stream == 0);
++
++        inp.kq_mask = ggml_new_tensor_4d(ctx, (strcmp(name, "lid") != 0 && cparams.flash_attn) || (strcmp(name, "lid") == 0 && cparams.fused_lid) ? GGML_TYPE_F16 : GGML_TYPE_F32, plan.n_kv, n_tokens/n_stream, 1, n_stream);
++        ggml_set_input(inp.kq_mask);
++        ggml_set_name(inp.kq_mask, (std::string("dsv4_") + name + "_kq_mask").c_str());
++    }
++}
++
++void llm_graph_input_dsv4_raw::set_input(const llama_ubatch * ubatch) {
++    if (self_k_idxs && self_k_idxs->buffer) {
++        mctx->set_input_k_idxs(self_k_idxs);
++    }
++
++    if (self_kq_mask && self_kq_mask->buffer) {
++        mctx->set_input_kq_mask(self_kq_mask, ubatch, cparams.causal_attn);
++    }
++
++    if (self_k_rot) {
++        mctx->set_input_k_rot(self_k_rot);
++    }
++}
++
++void llm_graph_input_dsv4::set_input(const llama_ubatch * ubatch) {
++    const auto & plan_csa = mctx->get_csa_plan(*ubatch);
++    const auto & plan_hca = mctx->get_hca_plan(*ubatch);
++    const auto & plan_lid = mctx->get_lid_plan(*ubatch);
++    const int64_t n_stream = plan_csa.n_stream;
++
++    inp_raw->mctx = mctx->get_raw();
++    inp_raw->set_input(ubatch);
++
++    dsv4_set_comp_inputs(inp_csa, plan_csa, "csa", debug > 0, ubatch->n_tokens, n_stream);
++    dsv4_set_comp_inputs(inp_hca, plan_hca, "hca", debug > 0, ubatch->n_tokens, n_stream);
++    dsv4_set_comp_inputs(inp_lid, plan_lid, "lid", debug > 0, ubatch->n_tokens, n_stream);
++
++    if (inp_csa.k_rot && inp_csa.k_rot->buffer) {
++        mctx->get_csa()->set_input_k_rot(inp_csa.k_rot);
++    }
++
++    if (inp_hca.k_rot && inp_hca.k_rot->buffer) {
++        mctx->get_hca()->set_input_k_rot(inp_hca.k_rot);
++    }
++
++    if (inp_lid.k_rot && inp_lid.k_rot->buffer) {
++        mctx->get_lid()->set_input_k_rot(inp_lid.k_rot);
++    }
++}
++
++bool llm_graph_input_dsv4::can_reuse(const llm_graph_params & params) {
++    const auto * mctx = static_cast<const llama_kv_cache_dsv4_context *>(params.mctx);
++
++    this->mctx = mctx;
++    inp_raw->mctx = mctx->get_raw();
++
++    bool res = true;
++
++    const auto & plan_csa = mctx->get_csa_plan(params.ubatch);
++    const auto & plan_hca = mctx->get_hca_plan(params.ubatch);
++    const auto & plan_lid = mctx->get_lid_plan(params.ubatch);
++    const int64_t n_stream = plan_csa.n_stream;
++
++    const auto * raw_ctx = mctx->get_raw();
++    inp_raw->mctx = raw_ctx;
++
++    if (inp_raw->self_k_idxs && inp_raw->self_k_idxs->buffer) {
++        res &= inp_raw->self_k_idxs->ne[0] == raw_ctx->get_n_write();
++    }
++    if (inp_raw->self_kq_mask && inp_raw->self_kq_mask->buffer) {
++        res &= dsv4_can_reuse_raw_kq_mask(inp_raw->self_kq_mask, raw_ctx, params.ubatch, n_stream);
++    }
++
++    res &= dsv4_can_reuse_comp_input(inp_csa, plan_csa, params.ubatch.n_tokens, n_stream);
++    res &= dsv4_can_reuse_comp_input(inp_hca, plan_hca, params.ubatch.n_tokens, n_stream);
++    res &= dsv4_can_reuse_comp_input(inp_lid, plan_lid, params.ubatch.n_tokens, n_stream);
++
++    return res;
++}
++
++
+ void llm_graph_input_attn_cross::set_input(const llama_ubatch * ubatch) {
+     GGML_ASSERT(cross_kq_mask);
+ 
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index f3a97fcfb9..a06e606d90 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -416,6 +416,9 @@ llama_kv_cache::llama_kv_cache(
+ 
+         std::vector<ggml_tensor *> k_stream;
+         std::vector<ggml_tensor *> v_stream;
++        std::vector<ggml_tensor *> k_idx_stream;
++
++        ggml_tensor * k_idx = nullptr;
+ 
+         for (uint32_t s = 0; s < n_stream; ++s) {
+             k_stream.push_back(has_k ? ggml_view_2d(ctx, k, n_embd_k_gqa_eff, kv_size, k->nb[1], s*k->nb[2]) : nullptr);
+@@ -634,7 +637,7 @@ void llama_kv_cache::clear(bool data) {
+         }
+ 
+         // Re-initialize turbo rotation matrices after buffer clear (clear zeroes everything)
+-        if (turbo_rotation != nullptr && turbo_rotation->buffer != nullptr) {
++        if (turbo_rotation != nullptr && turbo_rotation->buffer != nullptr && !model.hparams.no_alloc) {
+             #include "turbo-rotation-data.h"
+             ggml_backend_tensor_set(turbo_rotation, TURBO_ROTATION_R, 0, 128 * 128 * sizeof(float));
+             ggml_backend_tensor_set(turbo_rotation_inv, TURBO_ROTATION_RT, 0, 128 * 128 * sizeof(float));
+@@ -1601,6 +1604,23 @@ ggml_tensor * llama_kv_cache::get_v(ggml_context * ctx, int32_t il, uint32_t n_k
+             ggml_row_size(v->type, kv_size*n_embd_v_gqa)*sinfo.s0);
+ }
+ 
++ggml_tensor * llama_kv_cache::get_k_idx(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const {
++    const int32_t ikv = map_layer_ids.at(il);
++    auto * k_idx = layers[ikv].k_idx;
++    GGML_ASSERT(k_idx);
++
++    const uint64_t kv_size = get_size();
++    const int64_t  n_idx   = k_idx->ne[0];
++    const uint32_t ns      = sinfo.s1 - sinfo.s0 + 1;
++
++    return ggml_view_4d(ctx, k_idx,
++            n_idx, 1, n_kv, ns,
++            ggml_row_size(k_idx->type, n_idx),
++            ggml_row_size(k_idx->type, n_idx),
++            ggml_row_size(k_idx->type, n_idx*kv_size),
++            ggml_row_size(k_idx->type, n_idx*kv_size)*sinfo.s0);
++}
++
+ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggml_tensor * k_idxs, int32_t il, const slot_info & sinfo) const {
+     GGML_UNUSED(sinfo);
+ 
+diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
+index 1f01c9a416..910d3b719a 100644
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -193,6 +193,7 @@ public:
+     // get views of the current state of the cache
+     ggml_tensor * get_k(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const;
+     ggml_tensor * get_v(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const;
++    ggml_tensor * get_k_idx(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const;
+ 
+     // TurboQuant: get rotation matrices (stored as row-major C arrays)
+     // turbo_rotation = R (forward rotation, for Q pre-rotate-queries)
+@@ -268,9 +269,11 @@ private:
+ 
+         ggml_tensor * k;
+         ggml_tensor * v;
++        ggml_tensor * k_idx;
+ 
+         std::vector<ggml_tensor *> k_stream;
+         std::vector<ggml_tensor *> v_stream;
++        std::vector<ggml_tensor *> k_idx_stream;
+     };
+ 
+     bool v_trans = true;  // the value tensor is transposed
+@@ -418,6 +421,7 @@ public:
+     // get views of the current state of the cache
+     ggml_tensor * get_k(ggml_context * ctx, int32_t il) const;
+     ggml_tensor * get_v(ggml_context * ctx, int32_t il) const;
++    ggml_tensor * get_k_idx(ggml_context * ctx, int32_t il) const;
+ 
+     // TurboQuant rotation accessors
+     ggml_tensor * get_turbo_rotation() const;
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index e93fbcd5e9..8c4798d989 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -2597,6 +2597,10 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+         case LLM_ARCH_DEEPSEEK4:
+             {
+ <<<<<<< ours
++<<<<<<< ours
++=======
++
++>>>>>>> theirs
+                 GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
+ 
+                 if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
+@@ -2637,6 +2641,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+                             nullptr,
+                             nullptr);
+                 }
++<<<<<<< ours
+             } break;
+         case LLM_ARCH_DFLASH:
+             {
+@@ -2680,6 +2685,36 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+                         nullptr,
+                         nullptr);
+             } break;
++>>>>>>> theirs
++=======
++            } break;
++        case LLM_ARCH_DFLASH:
++            {
++                // DSV4 DSpark stages store a single MLA-style K per position (window = the draft ring)
++                if (hparams.dsv4_hc_mult > 0) {
++                    GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);
++
++                    res = new llama_kv_cache_iswa(
++                            *this,
++                            params.type_k,
++                            params.type_v,
++                            !cparams.flash_attn,
++                            cparams.offload_kqv,
++                            params.swa_full,
++                            cparams.kv_unified,
++                            cparams.n_ctx_seq,
++                            cparams.n_seq_max,
++                            cparams.n_ubatch,
++                            1,
++                            nullptr,
++                            nullptr,
++                            nullptr,
++                            nullptr);
++                    break;
++                }
++            }
++            [[fallthrough]];
++
+ >>>>>>> theirs
+         // Models that need standard caching should rely on recurrent/hybrid
+         // checks
+diff --git a/src/models/deepseek4.cpp b/src/models/deepseek4.cpp
+index 6bf9d34449..17a4d8a846 100644
+--- a/src/models/deepseek4.cpp
++++ b/src/models/deepseek4.cpp
+@@ -117,9 +117,13 @@ void llama_model_deepseek4::load_arch_tensors(llama_model_loader & ml) {
+         layer.wq_b          = create_tensor(tn(LLM_TENSOR_ATTN_Q_B,      "weight", i), {q_lora_rank, n_head * n_embd_head}, flags);
+         layer.wkv           = create_tensor(tn(LLM_TENSOR_ATTN_KV,       "weight", i), {n_embd, n_embd_head}, flags);
+         layer.attn_kv_norm  = create_tensor(tn(LLM_TENSOR_ATTN_KV_NORM,  "weight", i), {n_embd_head}, flags);
++<<<<<<< ours
+         // for wo_a, the shape in the file is (n_head * n_embd_head / o_groups, o_lora_rank*o_groups)
+         // so we reshape here, to avoid reshaping the tensor in the graph
+         layer.wo_a          = create_tensor(tn(LLM_TENSOR_ATTN_OUT_A,    "weight", i), {n_head * n_embd_head / o_groups, o_lora_rank, o_groups}, flags | TENSOR_ALLOW_RESHAPE);
++=======
++        layer.wo_a          = create_tensor(tn(LLM_TENSOR_ATTN_OUT_A,    "weight", i), {n_head * n_embd_head / o_groups, o_lora_rank * o_groups}, flags);
++>>>>>>> theirs
+         layer.wo_b          = create_tensor(tn(LLM_TENSOR_ATTN_OUT_B,    "weight", i), {o_groups * o_lora_rank, n_embd}, flags);
+ 
+         layer.hc_attn_fn    = create_tensor(tn(LLM_TENSOR_HC_ATTN_FN,    "weight", i), {hc_dim, hc_mix_dim}, flags);
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 1044584f13..1fe32e925d 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -41,6 +41,7 @@ constexpr int HTTP_POLLING_SECONDS = 1;
+ static common_speculative_output_limits server_output_limits(const common_params & params) {
+     if (params.embedding ||
+             (params.pooling_type != LLAMA_POOLING_TYPE_UNSPECIFIED && params.pooling_type != LLAMA_POOLING_TYPE_NONE)) {
++<<<<<<< ours
+         return { params.n_batch, 1 };
+     }
+ 
+@@ -55,6 +56,86 @@ static common_speculative_output_limits server_output_limits(const common_params
+     }
+ 
+     const uint32_t n_outputs_per_seq = 1 + n_max;
++=======
++        return n_batch;
++    }
++
++    const uint32_t n_outputs_per_seq = 1 + common_speculative_n_max(&params.speculative);
++
++    const uint64_t n_outputs = (uint64_t) params.n_parallel * n_outputs_per_seq;
++
++    return std::max<uint32_t>(1, std::min<uint64_t>(n_batch, n_outputs));
++}
++
++static bool server_prepare_shared_draft_devices(common_params & params) {
++    const auto & types = params.speculative.types;
++    const bool has_shared_draft =
++        std::find(types.begin(), types.end(), COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH) != types.end() ||
++        std::find(types.begin(), types.end(), COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK) != types.end();
++    if (!has_shared_draft || !params.speculative.draft.devices.empty()) {
++        return false;
++    }
++
++    std::vector<ggml_backend_dev_t> devices;
++    ggml_backend_dev_t configured_primary = nullptr;
++    if (!params.devices.empty()) {
++        for (size_t i = 0; i < params.devices.size(); i++) {
++            ggml_backend_dev_t device = params.devices[i];
++            if (device == nullptr) {
++                break;
++            }
++            if (params.split_mode == LLAMA_SPLIT_MODE_NONE &&
++                params.main_gpu >= 0 && (size_t)params.main_gpu == i) {
++                configured_primary = device;
++            }
++            const enum ggml_backend_dev_type type = ggml_backend_dev_type(device);
++            if (type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU) {
++                devices.push_back(device);
++            }
++        }
++    } else {
++        for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
++            ggml_backend_dev_t device = ggml_backend_dev_get(i);
++            const enum ggml_backend_dev_type type = ggml_backend_dev_type(device);
++            if (type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU) {
++                devices.push_back(device);
++            }
++        }
++    }
++
++    if (devices.empty()) {
++        return false;
++    }
++
++    size_t target_primary = SIZE_MAX;
++    if (params.split_mode == LLAMA_SPLIT_MODE_NONE && params.main_gpu >= 0) {
++        if (configured_primary) {
++            const auto found = std::find(devices.begin(), devices.end(), configured_primary);
++            if (found != devices.end()) {
++                target_primary = found - devices.begin();
++            }
++        } else if (params.devices.empty() && (size_t)params.main_gpu < devices.size()) {
++            target_primary = params.main_gpu;
++        }
++    }
++
++    size_t draft_primary = 0;
++    size_t draft_free = 0;
++    bool found_draft = false;
++    for (size_t i = 0; i < devices.size(); i++) {
++        if (devices.size() > 1 && i == target_primary) {
++            continue;
++        }
++        size_t free = 0;
++        size_t total = 0;
++        ggml_backend_dev_memory(devices[i], &free, &total);
++        if (!found_draft || free > draft_free) {
++            draft_primary = i;
++            draft_free = free;
++            found_draft = true;
++        }
++    }
++>>>>>>> theirs
+ 
+     const uint64_t n_outputs = (uint64_t) params.n_parallel * n_outputs_per_seq;
+ >>>>>>> theirs
+@@ -1033,6 +1114,21 @@ private:
+                                         params_base.speculative.types.end(),
+                                         COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end();
+         const bool has_spec = has_draft || spec_mtp;
++<<<<<<< ours
++=======
++        const bool auto_draft_devices = server_prepare_shared_draft_devices(params_base);
++
++        auto make_params_dft = [&]() {
++            common_params params_dft = common_base_params_to_speculative(params_base);
++            if (auto_draft_devices) {
++                params_dft.main_gpu = 0;
++                params_dft.split_mode = LLAMA_SPLIT_MODE_LAYER;
++                std::fill(std::begin(params_dft.tensor_split), std::end(params_dft.tensor_split), 0.0f);
++                params_dft.tensor_split[0] = 1.0f;
++            }
++            return params_dft;
++        };
++>>>>>>> theirs
+ 
+         if (callback_state) {
+             std::vector<std::string> stages = {"text_model"};

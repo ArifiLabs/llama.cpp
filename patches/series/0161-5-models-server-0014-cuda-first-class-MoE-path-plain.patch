@@ -1,15 +1,16 @@
-From 07020aa30f5ba442d3b3f6037c935c8b26bac9d2 Mon Sep 17 00:00:00 2001
+From a0a40906e304d437c0dc8faeb935ec3f7b824f45 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:22 -0400
 Subject: [PATCH] 
  5-models-server/0014-cuda-first-class-MoE-path-plain-f16-FA-hygiene-on-GB.patch
 
+Conflict-resolved: auto: affix(one side only added lines around the base, other side edited it) in src/llama-graph.cpp
 ---
  src/llama-graph.cpp | 61 ++++++++++++++++++++++++++++++++++++---------
  1 file changed, 49 insertions(+), 12 deletions(-)
 
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index 1e447a840..4fc77ab63 100644
+index 8f618a0323..c3ce08eb3d 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
 @@ -21,12 +21,48 @@
@@ -61,7 +62,7 @@ index 1e447a840..4fc77ab63 100644
  // dedup helpers
  
  static ggml_tensor * build_attn_inp_kq_mask(
-@@ -2273,18 +2309,19 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
+@@ -2325,18 +2361,19 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
              GGML_ABORT("fatal error");
      }
  
@@ -90,6 +91,6 @@ index 1e447a840..4fc77ab63 100644
 +    } else {
 +        experts = build_lora_mm_id(down_exps, cur, selected_experts, down_exps_s); // [n_embd, n_expert_used, n_tokens]
 +    }
-     cb(experts, "ffn_moe_down", il);
- 
-     if (down_exps_s) {
+     if (arch == LLM_ARCH_MISTRAL4) {
+         // src1 can exceed F16 range
+         ggml_prec_set_src(experts, GGML_PREC_F32, 1);

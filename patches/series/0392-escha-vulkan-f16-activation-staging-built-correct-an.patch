@@ -1,0 +1,316 @@
+From 992fe54f771af4ab0f566b2a9b07cc19a0204c05 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 14:02:11 -0400
+Subject: [PATCH] escha vulkan: f16 activation staging - built, correct, and
+ refuted; the real prefill win was the build
+
+F16 STAGING, the lever the occupancy finding named. Shared memory halves at every rung (C16 8192 ->
+4096 bytes) with f16 storage but the Hadamard butterfly kept in f32 registers - only the single
+cross-subgroup step passes through f16, and acc[] stays f32 throughout. Correct on all 30 gate cases
+in both arms. Measured, each arm a fresh process with its env printed from inside:
+    staging off   pp512 22.57 / 22.42
+    staging on    pp512 22.22 / 22.33
+Flat. Halving shared memory did not buy occupancy here, so the occupancy ceiling is not set by the
+staging array. Kept behind GGML_VK_ESCHA_F16_STAGE with the numbers at the switch.
+
+THE ACTUAL WIN, found by accident. Prefill in BOTH arms measured ~22.4 against ~16.9 earlier the
+same day. A binary saved before the cooperative-matrix reconfigure, run alternated against the
+current one in one session, isolates it:
+    pre-reconfigure   pp512 16.52 / 16.54
+    current           pp512 25.41 / 24.87
++51% prefill from a build configuration defect. This build directory had been configured without
+shader-extension detection and was missing SEVEN capabilities the GPU has: BFLOAT16, COOPMAT,
+COOPMAT2, COOPMAT2_DECODE_VECTOR, FLOAT_E2M1, FLOAT_E4M3, INTEGER_DOT. Filed as F-137.
+
+Scope measured rather than assumed: the estate engine of record is CLEAN. Huihui on
+models/engines/arifi-b10524-union against the reconfigured fork engine reads 78.49 vs 77.57/79.80 -
+equal. The defect was confined to this build directory, so nothing the President runs was affected.
+
+The uncomfortable part, recorded because it changes how the rest of the day reads: every kernel A/B
+before the reconfigure ran on the handicapped build. The verdicts survive - both arms always shared
+one binary - but every absolute prefill number earlier in this lane is understated by roughly half.
+
+TWO CONTAMINATION TRAPS PAID FOR, both of which produced confident wrong readings first:
+- A build can silently omit a whole code path. The coopmat arm "gave nothing" twice before anyone
+  noticed it had never been compiled in. Only an engagement probe that prints whether the arm ran
+  caught it, and that probe stays.
+- Environment set with $env: in one shell call persists into later calls in the same session. Two
+  A/Bs were run with a stale variable pinning both arms to the same path. Benchmark arms now get a
+  fresh process each and print the variable they claim to be testing.
+
+Origin: ArifiLabs (native)
+Conflict-resolved: S4 split (f172be756): auto_split - our hunks re-homed into ggml-vulkan-types.h; wrap/same-point regions merged in place (fixS4_446.py)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h      |  1 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 31 ++++++++-
+ .../ggml-vulkan/vulkan-shaders/escha_mm.comp  | 67 ++++++++++++++++---
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     | 12 ++++
+ 4 files changed, 98 insertions(+), 13 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index 744a1e499b..1d6de2682a 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -955,6 +955,7 @@ struct vk_device_struct {
+     vk_pipeline pipeline_escha_mm_mc[2]; // same, multi-column (ESCHA_MM_COLS per workgroup)
+     // Column ladder (seat-40), indexed [rung][K]. Rung r serves ESCHA_COL_RUNGS[r] columns.
+     vk_pipeline pipeline_escha_mm_col[6][2];
++    vk_pipeline pipeline_escha_mm_col_f16s[6][2];
+     // KHR cooperative-matrix C=16 arm, f16 operands with an f32 accumulator.
+     vk_pipeline pipeline_escha_mm_cm[2];
+     vk_pipeline pipeline_escha_mm_lut[2];   // table-generator arm (seat-40)
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 99f6a3c9ba..1a3b450560 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -3775,6 +3775,18 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[4][1], "escha_mm_k3_c32_f32", escha_mm_k3_c32_f32_len, escha_mm_k3_c32_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[5][0], "escha_mm_k2_c64_f32", escha_mm_k2_c64_f32_len, escha_mm_k2_c64_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col[5][1], "escha_mm_k3_c64_f32", escha_mm_k3_c64_f32_len, escha_mm_k3_c64_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[0][0], "escha_mm_k2_c2_f16s", escha_mm_k2_c2_f16s_len, escha_mm_k2_c2_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[0][1], "escha_mm_k3_c2_f16s", escha_mm_k3_c2_f16s_len, escha_mm_k3_c2_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[1][0], "escha_mm_k2_c4_f16s", escha_mm_k2_c4_f16s_len, escha_mm_k2_c4_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[1][1], "escha_mm_k3_c4_f16s", escha_mm_k3_c4_f16s_len, escha_mm_k3_c4_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[2][0], "escha_mm_k2_c8_f16s", escha_mm_k2_c8_f16s_len, escha_mm_k2_c8_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[2][1], "escha_mm_k3_c8_f16s", escha_mm_k3_c8_f16s_len, escha_mm_k3_c8_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[3][0], "escha_mm_k2_c16_f16s", escha_mm_k2_c16_f16s_len, escha_mm_k2_c16_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[3][1], "escha_mm_k3_c16_f16s", escha_mm_k3_c16_f16s_len, escha_mm_k3_c16_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[4][0], "escha_mm_k2_c32_f16s", escha_mm_k2_c32_f16s_len, escha_mm_k2_c32_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[4][1], "escha_mm_k3_c32_f16s", escha_mm_k3_c32_f16s_len, escha_mm_k3_c32_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[5][0], "escha_mm_k2_c64_f16s", escha_mm_k2_c64_f16s_len, escha_mm_k2_c64_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_col_f16s[5][1], "escha_mm_k3_c64_f16s", escha_mm_k3_c64_f16s_len, escha_mm_k3_c64_f16s_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+ #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+     // Escha's cooperative arm maps one 128-output workgroup to eight 16x16x16
+     // subgroup tiles.  It has an explicit 32/64-lane layout, so require the
+@@ -7617,6 +7629,12 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+     }
+     const bool use_mc = rung >= 0;
+ 
++    // F16 staging is opt-in until the ESCHA_MM backend sweep proves the error budget on this GPU.
++    // Its shared-memory cost is half the f32 arm: C * 128 * 2 rather than C * 128 * 4 bytes.
++    static const bool want_f16_stage = getenv("GGML_VK_ESCHA_F16_STAGE") != nullptr;
++    const bool use_f16_stage = use_mc && want_f16_stage &&
++                               ctx->device->pipeline_escha_mm_col_f16s[rung][kidx] != nullptr;
++
+     // Occupancy arm (seat-40) - REFUTED BY MEASUREMENT, OFF BY DEFAULT.
+     // The reasoning was that 128 threads is two waves at warp 64, too few to hide code-fetch
+     // latency behind the generator's ALU work, and that 256 threads over two adjacent output
+@@ -7650,14 +7668,15 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+     // in lane-164 evidence before changing this default or claiming a speedup.
+ #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+     static const bool no_coopmat = getenv("GGML_VK_ESCHA_NO_COOPMAT") != nullptr;
+-    const bool use_cm = use_mc && rung == 3 && !no_coopmat &&
++    const bool use_cm = use_mc && !use_f16_stage && rung == 3 && !no_coopmat &&
+                         ctx->device->coopmat_support_16x16x16_f32acc &&
+                         ctx->device->subgroup_size_control &&
+                         (ctx->device->subgroup_size == 32 || ctx->device->subgroup_size == 64) &&
+                         ctx->device->pipeline_escha_mm_cm[kidx] != nullptr;
+ #endif
+ 
+-    vk_pipeline pipeline = use_mc  ? ctx->device->pipeline_escha_mm_col[rung][kidx]
++    vk_pipeline pipeline = use_f16_stage ? ctx->device->pipeline_escha_mm_col_f16s[rung][kidx]
++                         : use_mc  ? ctx->device->pipeline_escha_mm_col[rung][kidx]
+                          : use_b2  ? ctx->device->pipeline_escha_mm_b2[kidx]
+                          : use_lut ? ctx->device->pipeline_escha_mm_lut[kidx]
+                                    : ctx->device->pipeline_escha_mm[kidx];
+@@ -7685,6 +7704,14 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+         }
+     }
+ #endif
++    {
++        static bool announced = false;
++        if (!announced && use_mc) {
++            announced = true;
++            GGML_LOG_INFO("escha_mm: f16 staging %s (rung=%d cols=%u)\n",
++                use_f16_stage ? "ACTIVE" : "inactive", rung, ESCHA_COL_RUNGS[rung]);
++        }
++    }
+     const uint32_t cols_per_wg = use_mc ? ESCHA_COL_RUNGS[rung] : 1;
+     const uint32_t out_per_wg  = use_b2 ? 256u : 128u;
+     GGML_ASSERT(pipeline != nullptr);
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+index 60389ad375..b76a413da9 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+@@ -108,7 +108,19 @@ layout (binding = 3) writeonly buffer D { float data_d[]; };  // y [n_out, ncols
+ layout (binding = 4) readonly buffer L { uint data_l[]; };   // 32768 uints = 65536 f16 values
+ #endif
+ 
++#ifndef ESCHA_F16_STAGE
++#define ESCHA_F16_STAGE 0
++#endif
++
++#if ESCHA_F16_STAGE
++shared float16_t sh[NB][NC][128];
++#define ESCHA_SH_STORE(v) float16_t(v)
++#define ESCHA_SH_LOAD(v)  float(v)
++#else
+ shared float sh[NB][NC][128];
++#define ESCHA_SH_STORE(v) (v)
++#define ESCHA_SH_LOAD(v)  (v)
++#endif
+ 
+ // The cooperative-matrix arm is deliberately C=16 only: the KHR shape selected
+ // by the host is 16x16x16, so a smaller ladder rung would merely burn inactive
+@@ -332,6 +344,38 @@ uint shr64_32(uint lo, uint hi, uint s) {
+ #endif
+ 
+ void hadamard128(uint hb, uint tid) {
++#if ESCHA_F16_STAGE
++    // Keep the butterfly in f32 registers. The shared f16 array is only the
++    // cross-subgroup exchange and tile-loop representation.
++    float a[NC];
++    [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
++        a[cj] = float(sh[hb][cj][tid]);
++    }
++
++    [[unroll]] for (uint step = 1u; step < 128u; step <<= 1u) {
++        if (step < gl_SubgroupSize) {
++            [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
++                const float o = subgroupShuffleXor(a[cj], step);
++                a[cj] = ((tid & step) == 0u) ? (a[cj] + o) : (o - a[cj]);
++            }
++        } else {
++            [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
++                sh[hb][cj][tid] = float16_t(a[cj]);
++            }
++            barrier();
++            [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
++                const float o = float(sh[hb][cj][tid ^ step]);
++                a[cj] = ((tid & step) == 0u) ? (a[cj] + o) : (o - a[cj]);
++            }
++            barrier();
++        }
++    }
++
++    [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
++        sh[hb][cj][tid] = float16_t(a[cj]);
++    }
++    barrier();
++#else
+     [[unroll]] for (uint step = 1u; step < 128u; step <<= 1u) {
+ #if ESCHA_SG_HADAMARD
+         if (step < gl_SubgroupSize) {          // uniform branch: partner is in my subgroup
+@@ -358,6 +402,7 @@ void hadamard128(uint hb, uint tid) {
+ #if ESCHA_SG_HADAMARD
+     barrier();                                 // the tile loop reads every lane's slot
+ #endif
++#endif
+ }
+ 
+ #if ESCHA_COOPMAT
+@@ -388,7 +433,7 @@ void main() {
+         const float rin = data_c[gi];
+         [[unroll]] for (uint cj = 0u; cj < 16u; ++cj) {
+             const uint cc = min(col0 + cj, p.ncols - 1u);
+-            sh[0][cj][tid] = data_b[cc * p.n_in + gi] * rin;
++            sh[0][cj][tid] = ESCHA_SH_STORE(data_b[cc * p.n_in + gi] * rin);
+         }
+         barrier();
+         hadamard128(0u, tid);
+@@ -441,7 +486,7 @@ void main() {
+             [[unroll]] for (uint i = tid; i < 256u; i += 128u) {
+                 const uint row = i >> 4u;
+                 const uint cj  = i & 15u;
+-                cm_input[i] = float16_t(sh[0][cj][t * 16u + row]);
++                cm_input[i] = float16_t(ESCHA_SH_LOAD(sh[0][cj][t * 16u + row]));
+             }
+             barrier();
+ 
+@@ -464,7 +509,7 @@ void main() {
+     barrier();
+ 
+     [[unroll]] for (uint cj = 0u; cj < 16u; ++cj) {
+-        sh[0][cj][tid] = cm_output[cj * 128u + tid];
++        sh[0][cj][tid] = ESCHA_SH_STORE(cm_output[cj * 128u + tid]);
+     }
+     barrier();
+     hadamard128(0u, tid);
+@@ -475,7 +520,7 @@ void main() {
+     [[unroll]] for (uint cj = 0u; cj < 16u; ++cj) {
+         const uint cc = col0 + cj;
+         if (cc < p.ncols) {
+-            data_d[cc * p.n_out + oc] = sh[0][cj][tid] * (INV_SQRT128 * INV_SQRT128) * rout + bias;
++            data_d[cc * p.n_out + oc] = ESCHA_SH_LOAD(sh[0][cj][tid]) * (INV_SQRT128 * INV_SQRT128) * rout + bias;
+         }
+     }
+ }
+@@ -506,7 +551,7 @@ void main() {
+         [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+             // clamp the tail: those lanes recompute a duplicate column that is never stored
+             const uint cc = min(col0 + cj, p.ncols - 1u);
+-            sh[hb][cj][tid] = data_b[cc * p.n_in + gi] * rin;
++            sh[hb][cj][tid] = ESCHA_SH_STORE(data_b[cc * p.n_in + gi] * rin);
+         }
+         barrier();
+         hadamard128(hb, tid);
+@@ -532,8 +577,8 @@ void main() {
+                     const vec2 ww  = escha_F2((word >> (2u*ca)) & 0xFFFFu,
+                                               (word >> (2u*cb)) & 0xFFFFu);
+                     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+-                        acc[cj] += sh[hb][cj][t*16u + rowa] * ww.x
+-                                 + sh[hb][cj][t*16u + rowb] * ww.y;
++                        acc[cj] += ESCHA_SH_LOAD(sh[hb][cj][t*16u + rowa]) * ww.x
++                                 + ESCHA_SH_LOAD(sh[hb][cj][t*16u + rowb]) * ww.y;
+                     }
+                 }
+ #else
+@@ -542,7 +587,7 @@ void main() {
+                     const uint  row = 2u*b + (1u - (c & 1u)) + 8u*(1u - ((c >> 1u) & 1u));
+                     const float w   = escha_F((word >> (2u*c)) & 0xFFFFu); // decoded ONCE for all NC columns
+                     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+-                        acc[cj] += sh[hb][cj][t*16u + row] * w;
++                        acc[cj] += ESCHA_SH_LOAD(sh[hb][cj][t*16u + row]) * w;
+                     }
+                 }
+ #endif
+@@ -564,7 +609,7 @@ void main() {
+                     const uint  win = (c < 4u) ? (pp >> (3u*c)) : (rr >> (3u*(c - 4u)));
+                     const float w   = escha_F(win & 0xFFFFu);              // decoded ONCE for all NC columns
+                     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+-                        acc[cj] += sh[hb][cj][t*16u + row] * w;
++                        acc[cj] += ESCHA_SH_LOAD(sh[hb][cj][t*16u + row]) * w;
+                     }
+                 }
+ #endif
+@@ -575,7 +620,7 @@ void main() {
+ 
+     // output-side transform + scales + bias; both 1/sqrt(128) factors fold here
+     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+-        sh[hb][cj][tid] = acc[cj];
++        sh[hb][cj][tid] = ESCHA_SH_STORE(acc[cj]);
+     }
+     barrier();
+     hadamard128(hb, tid);
+@@ -585,7 +630,7 @@ void main() {
+     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+         const uint cc = col0 + cj;
+         if (cc < p.ncols) {   // tail guard: never store outside the real column range
+-            data_d[cc * p.n_out + oc] = sh[hb][cj][tid] * (INV_SQRT128 * INV_SQRT128) * rout + bias;
++            data_d[cc * p.n_out + oc] = ESCHA_SH_LOAD(sh[hb][cj][tid]) * (INV_SQRT128 * INV_SQRT128) * rout + bias;
+         }
+     }
+ }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index 0ad8a28129..a69630e9e9 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -1326,6 +1326,18 @@ void process_shaders() {
+     string_to_spv("escha_mm_k3_c32_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "32"}});
+     string_to_spv("escha_mm_k2_c64_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "64"}});
+     string_to_spv("escha_mm_k3_c64_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "64"}});
++    string_to_spv("escha_mm_k2_c2_f16s",  "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "2"},  {"ESCHA_F16_STAGE", "1"}});
++    string_to_spv("escha_mm_k3_c2_f16s",  "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "2"},  {"ESCHA_F16_STAGE", "1"}});
++    string_to_spv("escha_mm_k2_c4_f16s",  "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "4"},  {"ESCHA_F16_STAGE", "1"}});
++    string_to_spv("escha_mm_k3_c4_f16s",  "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "4"},  {"ESCHA_F16_STAGE", "1"}});
++    string_to_spv("escha_mm_k2_c8_f16s",  "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "8"},  {"ESCHA_F16_STAGE", "1"}});
++    string_to_spv("escha_mm_k3_c8_f16s",  "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "8"},  {"ESCHA_F16_STAGE", "1"}});
++    string_to_spv("escha_mm_k2_c16_f16s", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "16"}, {"ESCHA_F16_STAGE", "1"}});
++    string_to_spv("escha_mm_k3_c16_f16s", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "16"}, {"ESCHA_F16_STAGE", "1"}});
++    string_to_spv("escha_mm_k2_c32_f16s", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "32"}, {"ESCHA_F16_STAGE", "1"}});
++    string_to_spv("escha_mm_k3_c32_f16s", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "32"}, {"ESCHA_F16_STAGE", "1"}});
++    string_to_spv("escha_mm_k2_c64_f16s", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "64"}, {"ESCHA_F16_STAGE", "1"}});
++    string_to_spv("escha_mm_k3_c64_f16s", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "64"}, {"ESCHA_F16_STAGE", "1"}});
+ #if defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+     // KHR cooperative matrix arm: its native N dimension is 16, so only the
+     // widest Escha column rung maps without wasting matrix lanes. `coopmat`

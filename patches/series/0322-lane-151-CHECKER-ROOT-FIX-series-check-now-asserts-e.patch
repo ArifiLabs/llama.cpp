@@ -1,0 +1,56 @@
+From 891c58f0d021b6052ebace1abc60239333b8b7dd Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 03:05:59 -0400
+Subject: [PATCH] lane-151 CHECKER ROOT FIX: series check now asserts every
+ patch is a COMMITTED BLOB, not just a file on disk. The byte-compare ran
+ against the working directory, so untracked patches made it green while a
+ fresh clone would die at git am - the defect that hid 33 missing patches
+ twice. Help text corrected to match what the code does
+
+---
+ tools/arifi-sync/arifi_sync.py | 25 ++++++++++++++++++++++++-
+ 1 file changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
+index 62fee4eb4f..48de493441 100644
+--- a/tools/arifi-sync/arifi_sync.py
++++ b/tools/arifi-sync/arifi_sync.py
+@@ -11,7 +11,7 @@ Subcommands
+     status        one-shot overview: base, series, provenance, currency, recipe
+     provenance    audit Taken-from:/Origin:/Measured-effect: over the whole series
+     series regen  regenerate patches/series from git (the series is NEVER hand-edited)
+-    series check  integrity: regenerate to a temp dir and byte-compare against what is committed
++    series check  integrity: regenerate to a temp dir, byte-compare, and prove every patch is COMMITTED
+     series replay replay the series onto a ref with git am; on failure name patch + file + hunk
+     currency      fetch every source and report drift against the reviewed pins
+     recipe diff   recover the build recipe by DIFFING CMakeCache against the committed snapshot
+@@ -500,6 +500,29 @@ def cmd_series_check(repo: str, cfg: dict, args) -> int:
+             return 1
+         say("PASS: %d patches byte-identical to a fresh generation from git." % len(want))
+ 
++        # The comparison above is against the WORKING DIRECTORY, which is not the same thing as
++        # "committed" no matter what the help text used to say. An untracked patch file satisfies
++        # every check above and then does not exist in a fresh clone, so `git am` dies on it.
++        # That defect shipped twice (lane-147, then again inside lane-151's own regen), so the
++        # committed-ness is now asserted separately and by name. Added lane-151, 2026-08-18.
++        step("Tracked check: every patch in the series is a committed blob at %s" % args.ref)
++        tracked = set()
++        out = gout(repo, "ls-tree", "-r", "--name-only", args.ref, "--", cfg["series_dir"]).splitlines()
++        prefix = cfg["series_dir"].replace("\\", "/").rstrip("/") + "/"
++        for line in out:
++            line = line.strip().replace("\\", "/")
++            if line.startswith(prefix):
++                tracked.add(line[len(prefix):])
++        untracked = [f for f in want if f not in tracked]
++        if untracked:
++            say("FAIL: %d patch(es) exist on disk but are NOT COMMITTED at %s:" % (len(untracked), args.ref))
++            for f in untracked:
++                say("  %s" % f)
++            say("\nA fresh clone would die at the first of these. Fix with:")
++            say("  git add %s && git commit" % cfg["series_dir"])
++            return 1
++        say("PASS: all %d patches are committed blobs, not just files on disk." % len(want))
++
+         step("Replay check: git am the committed series onto %s" % base[:9])
+         return _replay(repo, cfg, base, committed, expect_ref=args.ref)
+     finally:

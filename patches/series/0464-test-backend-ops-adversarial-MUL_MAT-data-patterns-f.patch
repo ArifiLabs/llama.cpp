@@ -1,0 +1,249 @@
+From 64b0e3c35bba0005a5f2d4af027f059a4cebea90 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 5 Sep 2026 15:42:35 -0400
+Subject: [PATCH] test-backend-ops: adversarial MUL_MAT data patterns for the
+ ROCmFP4 MMVQ widths
+
+The Vulkan selector routes GGML_TYPE_Q4_0_ROCMFP4_FAST through the integer-dot
+q8_1 MMVQ shader at exactly n=3 and n=5 (lane-209 r10, f68a4bd25). n=2 was
+removed from that set because it produced a deterministic first-token EOG in a
+served cache-history replay while the f32 arm on the same prompt and seed did
+not. The same shader math is still live at the two retained widths, and lane-209
+closed with that stated as an open numerical question: the plain cache-history
+reproducer cannot reach n=3, so nothing had exercised it adversarially.
+
+The shapes were never the problem; the DATA was. Every other MUL_MAT case fills
+both operands from uniform[-1,1], which has a narrow per-row dynamic range,
+never a degenerate block scale, and never sits on a quantization code boundary
+- so it cannot reach the regime where quantizing the ACTIVATIONS to q8_1
+diverges from the f32 dequant path. Six patterns do reach it: a 9-decade block
+range, f32 denormals, exact sign alternation, all-zero rows, an E2M1 code sweep,
+and a per-block scale swept over 31 octaves. Each runs at n=1..5 on the seat
+row (k=5120) and on a ragged 9-block row (k=288), plus the exact 17408x5120 seat
+shape at n=1/3/5.
+
+Two properties make these usable as a gate rather than as decoration:
+
+- The values are deterministic in (pattern, row, index), with no random engine
+  and no thread dependence, so the MMVQ arm and a GGML_VK_DISABLE_MMVQ=1 f32 arm
+  see byte-identical inputs. Running the set twice therefore separates "this
+  input is hard for a 4-bit format" (both arms move together) from "the MMVQ
+  path diverges" (one arm moves), and the ON-vs-OFF differential doubles as the
+  DISPATCH RECEIPT: if the arms are identical at every width, MMVQ never ran and
+  the comparison proves nothing. That distinction is the whole point - r7's
+  selector already once asked for a pipeline nothing dispatched.
+- err() prints nmse, max_abs and max_rel on EVERY case, not only when a bar is
+  crossed, so a PASS is auditable instead of silent.
+
+The top of the range is not arbitrary. CHECKED ggml-common.h: block_q8_1 carries
+d AND s = d*sum(qs) as ggml_half, and sum(qs) reaches 32*127 = 4064, so a
+src1 block max above about 2045 overflows f16 and the MMVQ path returns inf
+regardless of the kernel. That is a structural ceiling of q8_1 activation
+quantization shared by every MMVQ type, not a ROCmFP4 defect, so the patterns
+stay an order of magnitude inside it rather than manufacturing a FAIL that says
+nothing about the shader under test.
+
+max_nmse_err() is 1.0 for now, which catches NaN, inf-sign mismatch and gross
+breakage but little else. A tighter bar cannot be written before the first run
+without inventing a number: nobody has measured what a 4-bit format does to a
+9-decade block. It is calibrated from the f32 arm - the path that shipped before
+this lane and is not under test - and never from the MMVQ arm's own numbers.
+
+Origin: ArifiLabs (native)
+Measured-effect: none - test coverage only
+Conflict-resolved: auto: affix(one side only added lines around the base, other side edited it) in tests/test-backend-ops.cpp
+---
+ tests/test-backend-ops.cpp | 173 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 173 insertions(+)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 018938dd8f..72b0676524 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -5510,6 +5510,147 @@ struct test_mul_mat : public test_case {
+     }
+ };
+ 
++// ArifiLabs lane-206: adversarial data patterns for MUL_MAT.
++//
++// Every other MUL_MAT case fills both operands from uniform[-1,1]. That distribution cannot reach
++// the regimes where a quantized-activation (q8_1) mat-vec kernel diverges from the f32 dequant
++// path: it has a narrow per-row dynamic range, never a degenerate scale, and never sits on a
++// quantization code boundary. These patterns do.
++enum adv_pattern {
++    ADV_EXTREME_RANGE,      // magnitudes spanning ~1e-15..1e15 within a single row
++    ADV_DENORMAL,           // f32 denormals mixed with normals
++    ADV_SIGN_ALTERNATING,   // exact +-1, so every partial sum cancels
++    ADV_ZERO_ROWS,          // every other row all zeros -> a zero block scale
++    ADV_FP4_CODE_SWEEP,     // cycles the E2M1 magnitudes, so every code and both signs are hit
++    ADV_MIXED_BLOCK_SCALE,  // per-32-block scale swept over 2^-20..2^19
++};
++
++static const char * adv_pattern_name(adv_pattern p) {
++    switch (p) {
++        case ADV_EXTREME_RANGE:     return "extreme_range";
++        case ADV_DENORMAL:          return "denormal";
++        case ADV_SIGN_ALTERNATING:  return "sign_alternating";
++        case ADV_ZERO_ROWS:         return "zero_rows";
++        case ADV_FP4_CODE_SWEEP:    return "fp4_code_sweep";
++        case ADV_MIXED_BLOCK_SCALE: return "mixed_block_scale";
++    }
++    return "?";
++}
++
++// Deterministic by (pattern, row, index): the two arms of an MMVQ-vs-f32 comparison must see
++// byte-identical inputs, so this must not depend on a random engine or on thread scheduling.
++static float adv_value(adv_pattern p, int64_t row, int64_t i) {
++    const int64_t j    = row * 1315423911LL + i;      // a cheap, stable per-element mix
++    const float   sign = (j & 1) ? -1.0f : 1.0f;
++    switch (p) {
++        case ADV_EXTREME_RANGE: {
++            // 1e-6 .. 1e3, so a single 32-value block spans 9 decades against the 2 decades a
++            // uniform[-1,1] block spans. The TOP of the range is not arbitrary: the MMVQ path
++            // quantizes src1 to block_q8_1, whose `d` AND `s = d*sum(qs)` are both ggml_half
++            // (CHECKED ggml-common.h). sum(qs) reaches 32*127 = 4064, so a block max above about
++            // 2045 makes `s` overflow f16 and the path returns inf REGARDLESS of the kernel. That
++            // is a structural ceiling of q8_1 activation quantization, shared by every MMVQ type,
++            // not a ROCmFP4 defect - so probing past it would only manufacture a FAIL that says
++            // nothing about the shader under test. 1e3 sits an order of magnitude inside it.
++            const int e = (int)(j % 10) - 6;
++            return sign * std::pow(10.0f, (float) e);
++        }
++        case ADV_DENORMAL: {
++            // FLT_TRUE_MIN is 1.4e-45; 1e-40 is comfortably denormal. Two in three elements are
++            // denormal so that a flush-to-zero difference between the two paths would show up.
++            if (j % 3 == 0) return sign * 1.0f;
++            return sign * 1e-40f * (float)(1 + (j % 7));
++        }
++        case ADV_SIGN_ALTERNATING:
++            return sign;
++        case ADV_ZERO_ROWS:
++            return (row % 2) ? 0.0f : sign * (1.0f + (float)(j % 5));
++        case ADV_FP4_CODE_SWEEP: {
++            static const float e2m1[8] = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f};
++            return sign * e2m1[j % 8];
++        }
++        case ADV_MIXED_BLOCK_SCALE: {
++            // one scale OCTAVE per 32-value block, 2^-24 .. 2^7, so neighbouring blocks differ by
++            // up to 31 octaves while no single block exceeds the q8_1 f16 `s` ceiling noted above.
++            const int e = (int)((i / 32) % 32) - 24;
++            return sign * std::ldexp(1.0f + (float)(j % 3), e);
++        }
++    }
++    return 0.0f;
++}
++
++// Fills a CONTIGUOUS f32 or quantized tensor from an adversarial pattern. Deliberately narrower
++// than init_tensor_uniform: it handles only what these cases build, so it cannot change the
++// initialization of any existing test.
++static void init_tensor_adversarial(ggml_tensor * tensor, adv_pattern p) {
++    GGML_ASSERT(ggml_is_contiguous(tensor));
++    const int64_t nrows = ggml_nrows(tensor);
++    const int64_t ncols = tensor->ne[0];
++    std::vector<float> data((size_t)(nrows * ncols));
++    for (int64_t r = 0; r < nrows; r++) {
++        for (int64_t i = 0; i < ncols; i++) {
++            data[(size_t)(r * ncols + i)] = adv_value(p, r, i);
++        }
++    }
++
++    if (tensor->type == GGML_TYPE_F32) {
++        ggml_backend_tensor_set(tensor, data.data(), 0, data.size() * sizeof(float));
++        return;
++    }
++    GGML_ASSERT(ggml_is_quantized(tensor->type));
++    GGML_ASSERT(ncols % ggml_blck_size(tensor->type) == 0);
++    std::vector<uint8_t> dataq(ggml_row_size(tensor->type, data.size()));
++    const size_t blck   = ggml_blck_size(tensor->type);
++    const size_t nblock = data.size() / blck;
++    // no imatrix: the pattern IS the importance statement, and an imatrix would smooth it away
++    ggml_quantize_chunk(tensor->type, data.data(), dataq.data(), 0, nblock, blck, nullptr);
++    ggml_backend_tensor_set(tensor, dataq.data(), 0, dataq.size());
++}
++
++// MUL_MAT over adversarial data, reporting max abs / max rel error on EVERY case rather than only
++// when the nmse bar is crossed. The numbers are the deliverable here; the pass/fail is secondary.
++struct test_mul_mat_adversarial : public test_mul_mat {
++    const adv_pattern pattern;
++
++    test_mul_mat_adversarial(ggml_type type_a, adv_pattern pattern,
++            int64_t m = 1024, int64_t n = 3, int64_t k = 5120)
++        : test_mul_mat(type_a, GGML_TYPE_F32, m, n, k, {1, 1}, {1, 1}), pattern(pattern) {}
++
++    std::string vars() override {
++        return test_mul_mat::vars() + ",adv=" + adv_pattern_name(pattern);
++    }
++
++    // Adversarial inputs are, by construction, hard for a 4-bit format: an extreme-range row
++    // quantizes to a block scale that cannot represent its own small elements, so a LARGE nmse
++    // against the f32 reference is the expected, correct behaviour of the FORMAT and says nothing
++    // about the kernel. What must not differ is the two Vulkan arms, which is read off the printed
++    // numbers by running the set twice. The bar here therefore only catches gross breakage.
++    double max_nmse_err() override {
++        return 1.0;
++    }
++
++    double err(const float * a, const float * b, size_t n) override {
++        double max_abs = 0.0;
++        double max_rel = 0.0;
++        for (size_t i = 0; i < n; i++) {
++            const double d   = std::fabs((double) a[i] - (double) b[i]);
++            const double den = std::max(std::fabs((double) a[i]), std::fabs((double) b[i]));
++            max_abs = std::max(max_abs, d);
++            if (den > 0.0) {
++                max_rel = std::max(max_rel, d / den);
++            }
++        }
++        const double e = nmse(a, b, n);
++        printf("[ADV %s] nmse=%.6e max_abs=%.6e max_rel=%.6e ", adv_pattern_name(pattern), e, max_abs, max_rel);
++        return e;
++    }
++
++    void initialize_tensors(ggml_context * ctx) override {
++        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
++            init_tensor_adversarial(t, pattern);
++        }
++    }
++};
+ // GGML_HINT_SRC0_IS_HADAMARD
+ struct test_mul_mat_hadamard : public test_mul_mat {
+     test_mul_mat_hadamard(ggml_type type_a = GGML_TYPE_F32, ggml_type type_b = GGML_TYPE_F32,
+@@ -10763,6 +10904,38 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 32, 509, 2112, {1, 1}, {1, 1}));
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 32, 509, 2112, {1, 1}, {1, 1}));
+ 
++    // ArifiLabs lane-206: ADVERSARIAL numerical coverage for the ROCmFP4-FAST q8_1 MMVQ mat-vec.
++    //
++    // The Vulkan selector routes GGML_TYPE_Q4_0_ROCMFP4_FAST through the integer-dot q8_1 MMVQ
++    // shader at exactly n=3 and n=5 and through the f32 dequant shader everywhere else. n=2 was
++    // removed from MMVQ because it produced a deterministic first-token EOG in a served
++    // cache-history replay while the f32 arm on the same prompt and seed did not (lane-209 r10).
++    // The same shader math is still live at n=3 and n=5, and the uniform[-1,1] inputs every other
++    // MUL_MAT case uses cannot reach the regime that breaks: the divergence is in the q8_1
++    // quantization of the ACTIVATIONS, which only bites when a row's dynamic range is wide, when
++    // its scale is degenerate, or when the values sit on the FP4 code boundaries.
++    //
++    // So these cases hold the shapes fixed at the real 27B ffn row and vary the DATA instead.
++    // Run the same set twice, once with GGML_VK_DISABLE_MMVQ=1, to separate "this input is hard
++    // for FP4" (both arms move together) from "the MMVQ path diverges" (only one arm moves).
++    // Every case prints its own nmse / max_abs / max_rel, so a PASS is auditable and not just a
++    // silent OK.
++    for (adv_pattern p : {ADV_EXTREME_RANGE, ADV_DENORMAL, ADV_SIGN_ALTERNATING,
++                          ADV_ZERO_ROWS, ADV_FP4_CODE_SWEEP, ADV_MIXED_BLOCK_SCALE}) {
++        // n=1 is the f32-shader control, n=3 is the DFlash2 n-max-2 verify width, n=5 the other
++        // retained MMVQ width, n=2 and n=4 are the widths r10 moved back to f32 and must stay clean.
++        for (int64_t n : {1, 2, 3, 4, 5}) {
++            // k=5120 is the seat row; k=288 is 9 blocks of 32, an odd block count that leaves a
++            // ragged tail under the shader's K_PER_ITER=8 grouping.
++            test_cases.emplace_back(new test_mul_mat_adversarial(GGML_TYPE_Q4_0_ROCMFP4_FAST, p, 1024, n, 5120));
++            test_cases.emplace_back(new test_mul_mat_adversarial(GGML_TYPE_Q4_0_ROCMFP4_FAST, p,  512, n,  288));
++        }
++    }
++    // the exact seat shape, at the two retained MMVQ widths and their f32 control
++    for (int64_t n : {1, 3, 5}) {
++        test_cases.emplace_back(new test_mul_mat_adversarial(GGML_TYPE_Q4_0_ROCMFP4_FAST, ADV_EXTREME_RANGE, 17408, n, 5120));
++    }
++
+ #if 0
+     {
+         // Test paths in OpenCL

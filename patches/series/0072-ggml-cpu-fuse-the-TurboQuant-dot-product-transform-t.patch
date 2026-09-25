@@ -1,4 +1,4 @@
-From 8f7895381a7c386c5b5f03ab5deede89e40d9438 Mon Sep 17 00:00:00 2001
+From efb03325ef4938982d47b7a0979e0a02b2abdf02 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 01:07:42 -0400
 Subject: [PATCH] ggml-cpu: fuse the TurboQuant dot product - transform the
@@ -35,7 +35,7 @@ work and is named as still-owed rather than implied to be done. Contended box: i
  3 files changed, 105 insertions(+), 33 deletions(-)
 
 diff --git a/ggml/src/ggml-arifi-turbo-weights.c b/ggml/src/ggml-arifi-turbo-weights.c
-index d0ffc37c2..90880f979 100644
+index d0ffc37c2a..90880f979f 100644
 --- a/ggml/src/ggml-arifi-turbo-weights.c
 +++ b/ggml/src/ggml-arifi-turbo-weights.c
 @@ -389,3 +389,12 @@ size_t quantize_tq4_1s(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst
@@ -52,7 +52,7 @@ index d0ffc37c2..90880f979 100644
 +const float * arifi_tq3_centroids(void) { return TQ3_0_CENTROIDS; }
 +const float * arifi_tq4_centroids(void) { return TQ4_0_CENTROIDS; }
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index bc11918e4..87d929916 100644
+index a87deed1e7..40e887f1fc 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -383,43 +383,103 @@ static void ggml_vec_dot_rocmfpx_fp8_q8_0(int n, float * GGML_RESTRICT s, size_t
@@ -209,7 +209,7 @@ index bc11918e4..87d929916 100644
  #endif
  
 diff --git a/ggml/src/ggml-quants.h b/ggml/src/ggml-quants.h
-index ed7fcf0dc..f4e5e0046 100644
+index ed7fcf0dca..f4e5e00467 100644
 --- a/ggml/src/ggml-quants.h
 +++ b/ggml/src/ggml-quants.h
 @@ -120,6 +120,9 @@ GGML_API void   quantize_row_tq4_1s_ref(const float * GGML_RESTRICT x, block_tq4

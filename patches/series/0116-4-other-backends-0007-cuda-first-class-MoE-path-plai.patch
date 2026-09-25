@@ -1,4 +1,4 @@
-From 310ae94006cb4ac04acaa0e224877a9cd0ce1ced Mon Sep 17 00:00:00 2001
+From e3887560f98978027bb19eba8871eff07b481e1c Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:56:05 -0400
 Subject: [PATCH] 
@@ -9,7 +9,7 @@ Subject: [PATCH]
  1 file changed, 9 insertions(+), 10 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/fattn-vec.cuh b/ggml/src/ggml-cuda/fattn-vec.cuh
-index 1e0465ecb..d26503763 100644
+index 451ac53347..6ce4f50d4f 100644
 --- a/ggml/src/ggml-cuda/fattn-vec.cuh
 +++ b/ggml/src/ggml-cuda/fattn-vec.cuh
 @@ -17,7 +17,9 @@ static constexpr __device__ int ggml_cuda_fattn_vec_get_nthreads_device() {
@@ -23,7 +23,7 @@ index 1e0465ecb..d26503763 100644
  static __global__ void flash_attn_ext_vec(
          const char * Q_ptr,
          const char * K_ptr,
-@@ -424,12 +426,10 @@ static __global__ void flash_attn_ext_vec(
+@@ -422,12 +424,10 @@ static __global__ void flash_attn_ext_vec(
              }
  
              // Sparse V: skip V dequant if all attention weights for this position are negligible.
@@ -40,7 +40,7 @@ index 1e0465ecb..d26503763 100644
                  bool dominated = true;
  #pragma unroll
                  for (int j = 0; j < ncols; ++j) {
-@@ -472,9 +472,8 @@ static __global__ void flash_attn_ext_vec(
+@@ -470,9 +470,8 @@ static __global__ void flash_attn_ext_vec(
                  }
              }
  

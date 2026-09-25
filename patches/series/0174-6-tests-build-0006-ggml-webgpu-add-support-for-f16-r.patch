@@ -1,0 +1,28 @@
+From 961be3ed31e9b3c8a8c54149deeb854e04c0fe9d Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:57:53 -0400
+Subject: [PATCH] 
+ 6-tests-build/0006-ggml-webgpu-add-support-for-f16-repeat-26307.patch
+
+---
+ tests/test-llama-archs.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/tests/test-llama-archs.cpp b/tests/test-llama-archs.cpp
+index 5a8a196c1f..9d891c3f1a 100644
+--- a/tests/test-llama-archs.cpp
++++ b/tests/test-llama-archs.cpp
+@@ -640,6 +640,13 @@ static bool arch_supported(const llm_arch arch) {
+             arch == LLM_ARCH_HY_V4) {
+         return false;
+     }
++<<<<<<< ours
++    if (arch == LLM_ARCH_DEEPSEEK32 || arch == LLM_ARCH_GLM_DSA || arch == LLM_ARCH_MINIMAX_01) {
++=======
++    if (arch == LLM_ARCH_DEEPSEEK32 || arch == LLM_ARCH_GLM_DSA || arch == LLM_ARCH_MINIMAX_M3) {
++>>>>>>> theirs
++        return false;
++    }
+ #endif // GGML_USE_WEBGPU
+ 
+     // FIXME: jamba produces incorrect output (~0.55 NMSE vs CPU) on the HIP

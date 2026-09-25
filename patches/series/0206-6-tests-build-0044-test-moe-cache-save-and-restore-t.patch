@@ -1,0 +1,58 @@
+From cbf7302e802d8f452f445a9d8c2a0450c1039fc5 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:58:45 -0400
+Subject: [PATCH] 
+ 6-tests-build/0044-test-moe-cache-save-and-restore-the-CUDA-device-arou.patch
+
+---
+ tests/test-moe-cache.cpp | 30 ++++++++++++++++++++++++------
+ 1 file changed, 24 insertions(+), 6 deletions(-)
+
+diff --git a/tests/test-moe-cache.cpp b/tests/test-moe-cache.cpp
+index 1d90c3c3b6..4909d0011d 100644
+--- a/tests/test-moe-cache.cpp
++++ b/tests/test-moe-cache.cpp
+@@ -2540,19 +2540,37 @@ static bool run_shared_budget(
+     // the two disagree. Match the cache's query so the reserve leaves the
+     // expected remainder on every device class.
+     {
+-        const long physical = cuda_physical_device(cuda->device);
+-        const cudaError_t err = cudaSetDevice(physical >= 0 ? (int) physical : 0);
++        int prev_device = 0;
++        cudaError_t err = cudaGetDevice(&prev_device);
+         if (err != cudaSuccess) {
+-            fprintf(stderr, "cache-shared-budget: cudaSetDevice failed: %s\n",
++            fprintf(stderr, "cache-shared-budget: cudaGetDevice failed: %s\n",
+                     cudaGetErrorString(err));
+             return false;
+         }
+-        const cudaError_t error = cudaMemGetInfo(&free_bytes, &total_bytes);
+-        if (error != cudaSuccess) {
++        // Restore the device afterwards: run_route_override runs next and
++        // exercises routing across two devices, so the current device must
++        // not leak out of this test. Fall back to the current device rather
++        // than device 0 when the physical device is not reported.
++        const long physical = cuda_physical_device(cuda->device);
++        const int target = physical >= 0 ? (int) physical : prev_device;
++        if (target != prev_device) {
++            err = cudaSetDevice(target);
++            if (err != cudaSuccess) {
++                fprintf(stderr, "cache-shared-budget: cudaSetDevice failed: %s\n",
++                        cudaGetErrorString(err));
++                return false;
++            }
++        }
++        err = cudaMemGetInfo(&free_bytes, &total_bytes);
++        if (err != cudaSuccess) {
+             fprintf(stderr, "cache-shared-budget: cudaMemGetInfo failed: %s\n",
+-                    cudaGetErrorString(error));
++                    cudaGetErrorString(err));
++            cudaSetDevice(prev_device);
+             return false;
+         }
++        if (target != prev_device) {
++            cudaSetDevice(prev_device);
++        }
+     }
+ #else
+     ggml_backend_dev_memory(cuda->device, &free_bytes, &total_bytes);

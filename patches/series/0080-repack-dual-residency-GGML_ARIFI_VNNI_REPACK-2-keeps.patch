@@ -1,4 +1,4 @@
-From 46aca7c0cd724d4c97a335cdefe1650fcb62901a Mon Sep 17 00:00:00 2001
+From d2574a07193c76bd6110128c45afdab82e52641a Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 03:06:09 -0400
 Subject: [PATCH] repack: dual residency - GGML_ARIFI_VNNI_REPACK=2 keeps
@@ -55,12 +55,13 @@ Measured-effect: correctness and placement only; the SPEED claim is deliberately
   check that the predicate selects the same tensor set. Divergence from mode 0 is never larger
   than mode 1's over the common prefix; on the 4-tensor control model all three modes are
   token-identical. Evidence: trial-evidence/110/dual-residency/
+Conflict-resolved: auto: affix(one side only added lines around the base, other side edited it) in ggml/src/ggml-cpu/repack.cpp
 ---
  ggml/src/ggml-cpu/repack.cpp | 249 ++++++++++++++++++++++++++++++++++-
  1 file changed, 244 insertions(+), 5 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
-index 58f9d986b..ec1ed5040 100644
+index 26b1f84bc1..9ff53c0372 100644
 --- a/ggml/src/ggml-cpu/repack.cpp
 +++ b/ggml/src/ggml-cpu/repack.cpp
 @@ -17,6 +17,12 @@
@@ -213,10 +214,10 @@ index 58f9d986b..ec1ed5040 100644
 +// other.
 +static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(const struct ggml_tensor * cur,
 +                                                                           bool for_dual = false) {
-     // lane-110C g64/g128 tripwire — PHASE2c-g128-type-architecture.md:175 binds these VNNI paths
-     // to canonical g64 Q2_0 only. Every kernel behind the Q2_0 arm below is hard-wired to
-     // QK2_0 == 64 (block_q2_0x4 == block<2,4>, sized from QK_0<2>()), while GGML_TYPE_Q2_0_G128
-@@ -5396,7 +5508,7 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+     // instance for Q1_0
+     static const ggml::cpu::repack::tensor_traits<block_q1_0, 4, 4, GGML_TYPE_Q8_0> q1_0_4x4_q8_0;
+     static const ggml::cpu::repack::tensor_traits<block_q1_0, 8, 4, GGML_TYPE_Q8_0> q1_0_4x8_q8_0;
+@@ -5401,7 +5513,7 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
      } else if (cur->type == GGML_TYPE_Q1_0) {
          // lane-110C: gated by GGML_ARIFI_VNNI_REPACK, DEFAULT OFF (only "1" enables). OFF => fall
          // through to the terminal return nullptr, i.e. no repack buffer and per-row vec_dot.
@@ -225,7 +226,7 @@ index 58f9d986b..ec1ed5040 100644
              if (ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
                  if (cur->ne[1] % 4 == 0) {
                      return &q1_0_4x8_q8_0;
-@@ -5416,7 +5528,7 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+@@ -5421,7 +5533,7 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
      } else if (cur->type == GGML_TYPE_Q2_0) {
          // lane-110C: g64 ONLY — GGML_TYPE_Q2_0_G128 was already excluded by the tripwire at the
          // top of this function, so this arm can only ever see canonical 64-value-block Q2_0.
@@ -234,7 +235,7 @@ index 58f9d986b..ec1ed5040 100644
              if (ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
                  if (cur->ne[1] % 4 == 0) {
                      return &q2_0_4x8_q8_0;
-@@ -5428,6 +5540,108 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+@@ -5433,6 +5545,108 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
      return nullptr;
  }
  
@@ -343,7 +344,7 @@ index 58f9d986b..ec1ed5040 100644
  static enum ggml_status ggml_backend_cpu_repack_buffer_init_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor) {
      tensor->extra = (void *) const_cast<ggml::cpu::tensor_traits *>(ggml_repack_get_optimal_repack_type(tensor));
  
-@@ -5517,6 +5731,31 @@ class extra_buffer_type : ggml::cpu::extra_buffer_type {
+@@ -5522,6 +5736,31 @@ class extra_buffer_type : ggml::cpu::extra_buffer_type {
              if (op->src[0]->buffer && op->src[0]->buffer->buft == ggml_backend_cpu_repack_buffer_type()) {
                  return (ggml::cpu::tensor_traits *) op->src[0]->extra;
              }

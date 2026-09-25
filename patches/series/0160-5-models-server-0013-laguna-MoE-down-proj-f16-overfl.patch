@@ -1,20 +1,22 @@
-From a4bd003d3e58da8e463ef31575bb43ffc1392b18 Mon Sep 17 00:00:00 2001
+From 9870e2edee50360f8977cbe6363ebb4d6aa1a3f7 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:57:21 -0400
 Subject: [PATCH] 
  5-models-server/0013-laguna-MoE-down-proj-f16-overflow-guard-CUDA-GQA-rat.patch
 
+Conflict-resolved: auto: affix(one side only added lines around the base, other side edited it) in src/llama-graph.cpp
+Conflict-resolved: hand: dflash.cpp R55 risk-5 - upstream 633733d0a Gemma4 DSpark (post norms, out_scale, rope_freqs, shared_kv when wv absent) kept; ours kept: Laguna attn-gate load after sinks, Laguna kv_inp input_layernorm; V takes shared_kv ? Kcur : wv(kv_inp)
 ---
  common/speculative.cpp | 123 +++++++++++++++++++++++++++++++----------
  src/llama-graph.cpp    |  13 ++++-
- src/models/dflash.cpp  |  91 ++++++++++++++++++++++++++----
- 3 files changed, 187 insertions(+), 40 deletions(-)
+ src/models/dflash.cpp  |  89 ++++++++++++++++++++++++++---
+ 3 files changed, 187 insertions(+), 38 deletions(-)
 
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 8fe9ee080..483f1495e 100644
+index f6cdc07214..16ba5c3e06 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
-@@ -940,6 +940,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -938,6 +938,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
  
      const int32_t * target_layer_ids   = nullptr; // model_dft's extract layer indices
      uint32_t        target_layer_ids_n = 0;
@@ -22,7 +24,7 @@ index 8fe9ee080..483f1495e 100644
  
      common_speculative_impl_draft_dflash(const common_params_speculative & params, uint32_t n_seq,
              common_speculative_type type = COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH)
-@@ -1071,13 +1072,30 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1069,13 +1070,30 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
          }
  
          // turn on extraction of the target layers' input embeddings
@@ -57,7 +59,7 @@ index 8fe9ee080..483f1495e 100644
      }
  
      ~common_speculative_impl_draft_dflash() override {
-@@ -1166,7 +1184,9 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1170,7 +1188,9 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                  // injects them into the K/V cache at the target positions
                  batch_inject.n_tokens = n_chunk;
                  for (uint32_t k = 0; k < target_layer_ids_n; ++k) {
@@ -68,7 +70,7 @@ index 8fe9ee080..483f1495e 100644
                      if (!layer) {
                          GGML_ABORT("DFlash: target layer %d input not extracted.", target_layer_ids[k]);
                      }
-@@ -1177,6 +1197,67 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -1181,6 +1201,67 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                      }
                  }
  
@@ -136,7 +138,7 @@ index 8fe9ee080..483f1495e 100644
                  for (int32_t i = 0; i < n_chunk; ++i) {
                      const llama_pos p = batch_in.pos[i_batch_beg[seq_id] + offset + i];
                      batch_inject.pos[i] = p;
-@@ -2634,34 +2715,20 @@ common_speculative * common_speculative_init(common_params_speculative & params,
+@@ -2649,34 +2730,20 @@ common_speculative * common_speculative_init(common_params_speculative & params,
      {
          uint32_t enabled_configs = common_get_enabled_speculative_configs(params.types);
  
@@ -181,10 +183,10 @@ index 8fe9ee080..483f1495e 100644
          // when adding a new type - update here the logic above
          static_assert(COMMON_SPECULATIVE_TYPE_COUNT == 11);
 diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
-index a302948f3..1e447a840 100644
+index e3763f4339..8f618a0323 100644
 --- a/src/llama-graph.cpp
 +++ b/src/llama-graph.cpp
-@@ -2273,7 +2273,18 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
+@@ -2325,7 +2325,18 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
              GGML_ABORT("fatal error");
      }
  
@@ -201,14 +203,14 @@ index a302948f3..1e447a840 100644
 +    ggml_tensor * cur_s = ggml_div(ctx0, ggml_scale(ctx0, cur, f16_safe), col_l2);
 +    experts = build_lora_mm_id(down_exps, cur_s, selected_experts, down_exps_s); // [n_embd, n_expert_used, n_tokens]
 +    experts = ggml_scale(ctx0, ggml_mul(ctx0, experts, col_l2), 1.0f/f16_safe);
-     cb(experts, "ffn_moe_down", il);
- 
-     if (down_exps_s) {
+     if (arch == LLM_ARCH_MISTRAL4) {
+         // src1 can exceed F16 range
+         ggml_prec_set_src(experts, GGML_PREC_F32, 1);
 diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
-index ccbf7df96..a1a3cccd3 100644
+index 23fa7120c1..9251d4a994 100644
 --- a/src/models/dflash.cpp
 +++ b/src/models/dflash.cpp
-@@ -87,11 +87,16 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
+@@ -100,11 +100,16 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
          hparams.rope_freq_base_train_swa  = hparams.rope_freq_base_train;
          hparams.rope_freq_scale_train_swa = hparams.rope_freq_scale_train;
      }
@@ -226,7 +228,7 @@ index ccbf7df96..a1a3cccd3 100644
      LLAMA_LOAD_LOCALS;
  
      const int64_t n_embd_inp = hparams.n_embd_inp_enc();
-@@ -205,6 +210,10 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
+@@ -218,6 +223,10 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
              layer.ffn_up_shexp   = create_tensor(tn(LLM_TENSOR_FFN_UP_SHEXP,   "weight", i), {n_embd,                     n_ff_exp * n_expert_shared}, 0);
          }
          return;
@@ -237,12 +239,10 @@ index ccbf7df96..a1a3cccd3 100644
      }
  
      for (int i = 0; i < n_layer; ++i) {
-@@ -220,8 +229,21 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
-         layer.attn_q_norm = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), { n_embd_head_k }, 0);
-         layer.attn_k_norm = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), { n_embd_head_k }, 0);
+@@ -240,6 +249,21 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
  
--        // optional per-head attention sinks (e.g. Nemotron DSpark)
--        layer.attn_sinks = create_tensor(tn(LLM_TENSOR_ATTN_SINKS, "weight", i), { n_head }, TENSOR_NOT_REQUIRED);
+         // optional per-head attention sinks (e.g. Nemotron DSpark)
+         layer.attn_sinks = create_tensor(tn(LLM_TENSOR_ATTN_SINKS, "weight", i), { n_head }, TENSOR_NOT_REQUIRED);
 +        // Optional attention output gate (Laguna drafters). Per-head or
 +        // per-element, distinguished by the stored width, same as the Laguna
 +        // target arch. Absent on generic DFlash drafters.
@@ -261,7 +261,7 @@ index ccbf7df96..a1a3cccd3 100644
  
          layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), { n_embd }, 0);
          layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), { n_embd, n_ff }, 0);
-@@ -274,8 +296,24 @@ ggml_tensor * llama_model_dflash::graph<true>::build_inp_embd_enc() const {
+@@ -277,8 +301,24 @@ ggml_tensor * llama_model_dflash::graph<true>::build_inp_embd_enc() const {
  // DFlash Encoder: processes target model features through feature fusion layer
  template <>
  llama_model_dflash::graph<true>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
@@ -286,7 +286,7 @@ index ccbf7df96..a1a3cccd3 100644
      cur = build_lora_mm(model.fc, cur, model.fc_s);
      cb(cur, "fc_out", -1);
  
-@@ -613,6 +651,7 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -616,6 +656,7 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
  
          res->add_input(std::move(inp));
  
@@ -294,12 +294,11 @@ index ccbf7df96..a1a3cccd3 100644
          // fuse the target features through the encoder
          ggml_tensor * inp_g = build_lora_mm(model.fc, inp_target, model.fc_s);
          inp_g = build_norm(inp_g, model.output_norm_enc, NULL, LLM_NORM_RMS, -1);
-@@ -621,8 +660,16 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -624,9 +665,17 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
          for (int il = 0; il < n_layer; ++il) {
              const auto & layer = model.layers[il];
  
 -            ggml_tensor * Kcur = build_lora_mm(layer.wk, inp_g, layer.wk_s);
--            ggml_tensor * Vcur = build_lora_mm(layer.wv, inp_g, layer.wv_s);
 +            // Laguna draft layers project context K/V from the input_layernorm
 +            // output, matching the query path (generic DFlash projects raw).
 +            ggml_tensor * kv_inp = inp_g;
@@ -309,11 +308,13 @@ index ccbf7df96..a1a3cccd3 100644
 +            }
 +
 +            ggml_tensor * Kcur = build_lora_mm(layer.wk, kv_inp, layer.wk_s);
-+            ggml_tensor * Vcur = build_lora_mm(layer.wv, kv_inp, layer.wv_s);
+             const bool shared_kv = layer.wv == nullptr;
+-            ggml_tensor * Vcur = shared_kv ? Kcur : build_lora_mm(layer.wv, inp_g, layer.wv_s);
++            ggml_tensor * Vcur = shared_kv ? Kcur : build_lora_mm(layer.wv, kv_inp, layer.wv_s);
  
              Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
              Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
-@@ -721,14 +768,36 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
+@@ -735,14 +784,36 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
          cb(Kcur, "Kcur", il);
          cb(Vcur, "Vcur", il);
  
@@ -355,4 +356,4 @@ index ccbf7df96..a1a3cccd3 100644
 +            cur = build_lora_mm(layer.wo, cur);
          }
  
-         ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpL);
+         if (layer.attn_post_norm) {

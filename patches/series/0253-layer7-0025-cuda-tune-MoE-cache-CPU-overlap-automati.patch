@@ -1,0 +1,23 @@
+From 1003100ac0910c6b95cfc243a2382972aa29ef2f Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 20:52:41 -0400
+Subject: [PATCH] 
+ layer7/0025-cuda-tune-MoE-cache-CPU-overlap-automatically.patch
+
+---
+ ggml/src/ggml-backend-moe-cache.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/ggml/src/ggml-backend-moe-cache.h b/ggml/src/ggml-backend-moe-cache.h
+index 5797a724ac..4cab8391eb 100644
+--- a/ggml/src/ggml-backend-moe-cache.h
++++ b/ggml/src/ggml-backend-moe-cache.h
+@@ -16,6 +16,8 @@ struct ggml_moe_cache_config {
+     int32_t max_batch;
+     int32_t min_compute_capability;
+     int32_t min_devices;
++    // -1 selects the provider policy; 0..8 is a fixed total per node.
++    int32_t overlap_cpu_rows;
+ };
+ 
+ struct ggml_moe_cache_device_caps {

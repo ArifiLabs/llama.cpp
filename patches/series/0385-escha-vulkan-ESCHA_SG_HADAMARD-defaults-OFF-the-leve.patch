@@ -1,0 +1,53 @@
+From 66493e606739f728065ebad7c75311083b739065 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 03:33:07 -0400
+Subject: [PATCH] escha vulkan: ESCHA_SG_HADAMARD defaults OFF - the lever is
+ refuted by measurement
+
+One lever at a time, llama-bench b=ub=p=512 on the 27B Escha model:
+  neither  pp512  6.66  tg32 1.55
+  SG only  pp512  6.48  tg32 1.52   <- worse than doing nothing
+  RTE only pp512 15.03  tg32 3.21   <- the entire win
+  both     pp512 14.58  tg32 3.22   <- SG costs ~3% of prefill on top of RTE
+
+The barrier-count reasoning behind the lever was sound and the code does what it
+claims; the kernel is simply ALU-bound on the per-weight generator, not
+barrier-bound, so removing barriers buys nothing and the shuffle path costs a
+little. Kept behind the switch: at subgroup 32, or on a device with a cheaper
+generator, the ratio could invert. Re-measure before flipping it back on.
+
+Receipts: lane-evidence/2026-08-20-lane-164-escha-native/BENCH-escha-b512-*.txt
+
+Origin: ArifiLabs (native)
+Measured-effect: SG lever OFF by default; no speed change vs the shipped RTE-only configuration, and ~3% of prefill recovered versus having it on
+---
+ ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+index 0ed74b3f3b..8af9a8f575 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+@@ -149,8 +149,21 @@ uint shr64_32(uint lo, uint hi, uint s) {
+ // subgroupShuffleXor(a, step) the partner at tid^step. That is a DEVICE FACT for a 1-D 128-thread
+ // workgroup, not a spec guarantee -- the same assumption lane-163/165 shipped and validated here.
+ // ESCHA_SG_HADAMARD=0 restores the all-shared butterfly if a device ever disagrees.
++//
++// DEFAULT IS 0 BECAUSE MEASUREMENT SAYS SO (seat-38, 2026-08-21). The barrier-count reasoning was
++// sound and the lever still does what it claims -- it just does not buy anything here, because the
++// kernel is ALU-bound on the per-weight generator, not barrier-bound. llama-bench b=ub=p=512 on
++// the 27B Escha model, one lever at a time:
++//     neither lever   pp512  6.66   tg32 1.55
++//     SG only         pp512  6.48   tg32 1.52   <- slightly WORSE than doing nothing
++//     RTE only        pp512 15.03   tg32 3.21   <- the entire win
++//     both            pp512 14.58   tg32 3.22   <- SG costs ~3% of prefill on top of RTE
++// Receipts: research/local-inference/lane-evidence/2026-08-20-lane-164-escha-native/
++//   BENCH-escha-b512-{SG-only,RTE-only,BOTH-levers}.txt
++// The code stays behind the switch: on a device where the generator is cheaper, or at subgroup 32
++// with a different barrier ratio, this may well win. Re-measure before flipping it back on.
+ #ifndef ESCHA_SG_HADAMARD
+-#define ESCHA_SG_HADAMARD 1
++#define ESCHA_SG_HADAMARD 0
+ #endif
+ 
+ void hadamard128(uint tid) {

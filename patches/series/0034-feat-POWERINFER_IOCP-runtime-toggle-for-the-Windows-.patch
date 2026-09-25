@@ -1,4 +1,4 @@
-From a578f05dd1f1a6557b89a250b95e77513863f141 Mon Sep 17 00:00:00 2001
+From 2467e263aafa71b60d7b69b055ebec31113f1a38 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 24 Jul 2026 04:43:22 -0400
 Subject: [PATCH] feat: POWERINFER_IOCP runtime toggle for the Windows
@@ -45,7 +45,7 @@ Origin: ArifiLabs/iocp-async
  4 files changed, 63 insertions(+), 11 deletions(-)
 
 diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
-index fba7cfd87..3a5b5451c 100644
+index fba7cfd87c..3a5b5451c5 100644
 --- a/docs/OPTIONS-REGISTRY.md
 +++ b/docs/OPTIONS-REGISTRY.md
 @@ -20,6 +20,7 @@ safe measurement posture.
@@ -57,7 +57,7 @@ index fba7cfd87..3a5b5451c 100644
  | `LANE110_PREFETCH_CAP` | implementation default, currently `3*n_expert_used` | Limits standalone expert prefetch aggressiveness. | Sweep under cache pressure after establishing the baseline. | Recorded server sequences: default approximately `[5.07/9.03/9.58/12.01]`; cap `1` `[5.13/9.88/10.29/11.22]`; cap `96` `[5.79/11.73/12.19/11.26]`. Default retained because apparent ramp differences require controlled retest. |
  | `--ctx-checkpoints 0` | `0` | Disables server prompt rewind/checkpoints. | Keep off unless a workload demonstrably requires rewind semantics. | Largest historical gain: stock rewind `39.9/68.4/280`; ON_DEVICE checkpoint `84.8/128.8/341.6`; disabled approximately `101/150/372` across short/medium/long prefill. |
 diff --git a/powerinfer/moe_sparse_pipeline/expert_cache.cpp b/powerinfer/moe_sparse_pipeline/expert_cache.cpp
-index 9a53c5aa9..d379c7c41 100644
+index 9a53c5aa96..d379c7c417 100644
 --- a/powerinfer/moe_sparse_pipeline/expert_cache.cpp
 +++ b/powerinfer/moe_sparse_pipeline/expert_cache.cpp
 @@ -102,9 +102,12 @@ void ExpertCache::io_worker_main() {
@@ -96,7 +96,7 @@ index 9a53c5aa9..d379c7c41 100644
  
  void ExpertCache::allocate_buffer(Matrix &matrix) {
 diff --git a/powerinfer/moe_sparse_pipeline/iou.cpp b/powerinfer/moe_sparse_pipeline/iou.cpp
-index 0b3a60887..cbf5f62db 100644
+index 0b3a608876..cbf5f62dbb 100644
 --- a/powerinfer/moe_sparse_pipeline/iou.cpp
 +++ b/powerinfer/moe_sparse_pipeline/iou.cpp
 @@ -9,6 +9,7 @@
@@ -193,7 +193,7 @@ index 0b3a60887..cbf5f62db 100644
          return;
      }
 diff --git a/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/iou.hpp b/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/iou.hpp
-index 9cc5e72ac..bb848d9f4 100644
+index 9cc5e72acb..bb848d9f4b 100644
 --- a/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/iou.hpp
 +++ b/powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/iou.hpp
 @@ -8,6 +8,11 @@

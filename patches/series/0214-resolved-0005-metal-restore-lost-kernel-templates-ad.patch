@@ -1,0 +1,24 @@
+From c3b9f960759069d3624ae33b1bf8af0b974307fa Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 15 Aug 2026 20:11:42 -0400
+Subject: [PATCH] 
+ resolved/0005-metal-restore-lost-kernel-templates-add-offline-shad.patch
+
+Assisted-by: Codex
+---
+ ggml/src/ggml-metal/ggml-metal.metal | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
+index b6931ee0cb..85f6bb1b8c 100644
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -12314,7 +12314,7 @@ kernel void kernel_set_rows_turbo4(
+     }
+ }
+ 
+-template<typename T, typename TI>
++template<typename TS, typename TI, typename TD>
+ kernel void kernel_set_rows_f(
+         constant ggml_metal_kargs_set_rows & args,
+         device const  void * src0,

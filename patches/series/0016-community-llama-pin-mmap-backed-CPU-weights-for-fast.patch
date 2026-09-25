@@ -1,4 +1,4 @@
-From 6a022922ff477c188ab179620cacb9e12419ced4 Mon Sep 17 00:00:00 2001
+From 02149696b15fdc197fad42d30d77388b9439f76c Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 20:58:50 -0400
 Subject: [PATCH] community: llama : pin mmap-backed CPU weights for faster H2D
@@ -14,10 +14,10 @@ Measured-effect: inert on GPU-resident unified memory (ki-prefetch-experts-condi
  3 files changed, 59 insertions(+), 1 deletion(-)
 
 diff --git a/src/llama-mmap.cpp b/src/llama-mmap.cpp
-index 4d183cbc9..96c3a45fc 100644
+index 715a6e3548..b2bab51b88 100644
 --- a/src/llama-mmap.cpp
 +++ b/src/llama-mmap.cpp
-@@ -664,13 +664,47 @@ struct llama_mmap::impl {
+@@ -665,13 +665,47 @@ struct llama_mmap::impl {
  
  llama_mmap::llama_mmap(struct llama_file * file, size_t prefetch, bool numa,
          const ranges & lazy_ranges) : pimpl(std::make_unique<impl>(file, prefetch, numa, lazy_ranges)) {}
@@ -67,7 +67,7 @@ index 4d183cbc9..96c3a45fc 100644
  const bool llama_mmap::SUPPORTED  = true;
  #else
 diff --git a/src/llama-mmap.h b/src/llama-mmap.h
-index cc28c8a73..5a36db884 100644
+index cc28c8a73f..5a36db884e 100644
 --- a/src/llama-mmap.h
 +++ b/src/llama-mmap.h
 @@ -55,11 +55,19 @@ struct llama_mmap {
@@ -91,10 +91,10 @@ index cc28c8a73..5a36db884 100644
  
  struct llama_mlock {
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
-index 91bb5e7cc..c18a28a83 100644
+index 43c396f15a..ca9c0627c3 100644
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
-@@ -1770,6 +1770,15 @@ bool llama_model_loader::load_all_data(
+@@ -1777,6 +1777,15 @@ bool llama_model_loader::load_all_data(
      if (size_done >= size_data) {
          // unmap offloaded tensors and metadata
          if (use_mmap) {
@@ -110,7 +110,7 @@ index 91bb5e7cc..c18a28a83 100644
              for (uint32_t idx = 0; idx < mappings.size(); idx++) {
                  const auto & mmap_used = mmaps_used.at(idx);
                  auto & mapping = mappings.at(idx);
-@@ -1777,6 +1786,13 @@ bool llama_model_loader::load_all_data(
+@@ -1784,6 +1793,13 @@ bool llama_model_loader::load_all_data(
                  if (mmap_used.second != 0) {
                      mapping->unmap_fragment(mmap_used.second, mapping->size());
                  }

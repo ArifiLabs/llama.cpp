@@ -1,0 +1,718 @@
+From c2b438cfa1b001909714e896ab9eeba4f4704938 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 08:18:58 -0400
+Subject: [PATCH] feat(vulkan): MMVQ A-side decode hoist behind spec constant
+ (R48b)
+
+The MMVQ mat-vec nest re-runs the entire weight decode inside the column
+loop: mmvq_dot_product() does repack4() plus the scale reads before it
+touches a B word, and neither of its arguments depends on the column, so
+the decode is repeated NUM_COLS times per (row, k-slice).
+
+Split every type arm of mul_mat_vecq_funcs.glsl into mmvq_load_a() (the A
+decode) and mmvq_dot_a() (the dots against the cached B block plus the
+scale apply); mmvq_dot_product() is now their composition, so the
+inherited entry point is unchanged. iter() gains a second nest behind
+specialization constant 3 that decodes A once per row per k-slice into
+registers and then loops the columns doing only the B load and the dot.
+
+Both nests call the same pair in the same order, so results are
+bit-identical by construction. The shader default is 0 (inherited nest);
+the host probes ON for AMD and OFF elsewhere, GGML_ARIFI_MMVQ_A_HOIST
+overrides in both directions on one binary, IQ1_S/IQ1_M are gated off by
+default on register grounds and move with GGML_ARIFI_MMVQ_A_HOIST_IQ1.
+NUM_COLS == 1 folds to the inherited nest at pipeline-compile time.
+
+Correctness only. test-backend-ops MUL_MAT on Vulkan0 under
+GGML_VK_FORCE_MMVQ=1: q4_K 71/71 and sx8 108/108, in both the probe-ON
+and the forced-OFF arm, 0 FAIL. No perf run; the ON-vs-OFF pairing and
+the planted reds are owed to HQ.
+
+Origin: fork-authored (ArifiLabs lane-235 R48b MMVQ A-hoist, Opus 5 MEDIUM kernel-maker)
+Measured-effect: UNMEASURED - correctness only; pairing owed to HQ chain134
+Lane: lane-235
+Conflict-resolved: S6 strict auto_merge - wrap/same-point regions merged in place (fixS6_605.py)
+---
+ OPUS-R48B-MMVQ-A-HOIST-PROMPT.md              |  10 +
+ OPUS-R48B-MMVQ-A-HOIST-REPORT.md              | 552 ++++++++++++++++++
+ OPUS-R48B-RESUME-PROMPT.md                    |  14 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  80 ++-
+ .../vulkan-shaders/mul_mat_vecq.comp          |  50 +-
+ .../vulkan-shaders/mul_mat_vecq_funcs.glsl    | 313 ++++++----
+ tests/test-backend-ops.cpp                    |  28 +
+ 7 files changed, 928 insertions(+), 119 deletions(-)
+ create mode 100644 OPUS-R48B-MMVQ-A-HOIST-PROMPT.md
+ create mode 100644 OPUS-R48B-MMVQ-A-HOIST-REPORT.md
+ create mode 100644 OPUS-R48B-RESUME-PROMPT.md
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 955f6deb37..63509c2adf 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -3271,6 +3271,52 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             }
+         }
+ 
++        // arifi lane-235 / R48b: MMVQ A-side HOIST (specialization constant 3 of mul_mat_vecq.comp).
++        // 1 = decode each row's weight block once per (row, k-slice) into registers and then loop the
++        // columns doing only the B load and the integer dot; 0 = upstream's nest, which re-runs the
++        // whole A decode inside the column loop, once per column. Both paths call the same
++        // mmvq_load_a() / mmvq_dot_a() pair, so the result is bit-identical and this is a scheduling
++        // change only -- the same standing the q6_k direct-scales row above has.
++        //
++        // Device-probed default: ON for AMD (where the per-width step at NUM_COLS 4->5 was measured,
++        // lane-198) and OFF elsewhere, because no other vendor has been measured here.
++        // GGML_ARIFI_MMVQ_A_HOIST=0|1 overrides in either direction, so ONE binary serves both arms
++        // of an A/B (runtime-switch law).
++        const char * mmvq_a_hoist_src = "device-probe";
++        const uint32_t mmvq_a_hoist = [&device, &mmvq_a_hoist_src] {
++            const char * s = getenv("GGML_ARIFI_MMVQ_A_HOIST");
++            if (s != nullptr && (s[0] == '0' || s[0] == '1')) {
++                mmvq_a_hoist_src = "GGML_ARIFI_MMVQ_A_HOIST";
++                return (uint32_t) (s[0] == '1');
++            }
++            return (uint32_t) (device->vendor_id == VK_VENDOR_ID_AMD);
++        }();
++        // IQ1_S and IQ1_M carry the largest A state of any MMVQ type -- 10 and 12 registers per row
++        // against 5-6 for the K-quants -- and they run the most rows per workgroup (rm_iq_int = 4 or
++        // 8). Their default is OFF for that reason alone; the arithmetic is identical either way and
++        // GGML_ARIFI_MMVQ_A_HOIST_IQ1=1 turns them on for a pairing. Gated in the HOST, not by an
++        // #ifdef: the shader keeps both paths so no rebuild is needed to move this.
++        const uint32_t mmvq_a_hoist_iq1 = [&mmvq_a_hoist] {
++            const char * s = getenv("GGML_ARIFI_MMVQ_A_HOIST_IQ1");
++            if (s != nullptr && (s[0] == '0' || s[0] == '1')) {
++                // Never above the global switch: GGML_ARIFI_MMVQ_A_HOIST=0 turns everything off.
++                return (s[0] == '1' && mmvq_a_hoist != 0) ? 1u : 0u;
++            }
++            return 0u;
++        }();
++        {
++            static bool once_hoist = false;
++            if (!once_hoist) {
++                once_hoist = true;
++                // stderr for the same reason as the q6_k line above: llama-server drops ggml INFO.
++                // Names the SOURCE as well as the state, the standard the RDNA3 mmv-id rows
++                // receipt sets: a pairing log must prove probe vs override, not just ON vs OFF.
++                fprintf(stderr, "ggml_vulkan: mmvq A-side hoist: %s (%s) (iq1: %s)\n",
++                        mmvq_a_hoist ? "ON" : "OFF", mmvq_a_hoist_src,
++                        mmvq_a_hoist_iq1 ? "ON" : "OFF");
++            }
++        }
++
+         for (uint32_t i = 0; i < mul_mat_vec_max_cols; ++i) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_F32 ][i], "mul_mat_vec_f32_f32_f32",  arr_dmmv_f32_f32_f32_len[reduc],  arr_dmmv_f32_f32_f32_data[reduc],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1, 1, 1}, {wg_size_subgroup, 1, i+1}, 1, false, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_F16 ][i], "mul_mat_vec_f16_f32_f32",  arr_dmmv_f16_f32_f32_len[reduc],  arr_dmmv_f16_f32_f32_data[reduc],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2, 1, 1}, {wg_size_subgroup, 2, i+1}, 1, false, use_subgroups, force_subgroup_size);
+@@ -3384,33 +3430,33 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+                 const uint32_t subgroup_size_int = (device->vendor_id == VK_VENDOR_ID_INTEL && device->subgroup_size_control) ? device->subgroup_min_size : device->subgroup_size;
+                 const uint32_t wg_size_subgroup_int = (w == DMMV_WG_SIZE_SUBGROUP) ? subgroup_size_int : (subgroup_size_int * 4);
+ 
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_0][i], "mul_mat_vec_q2_0_q8_1_f32", arr_dmmv_q2_0_q8_1_f32_len[reduc], arr_dmmv_q2_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_kq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_0_G128][i], "mul_mat_vec_q2_0_g128_q8_1_f32", arr_dmmv_q2_0_g128_q8_1_f32_len[reduc], arr_dmmv_q2_0_g128_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(rm_g128_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(rm_g128_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_0][i], "mul_mat_vec_q4_0_q8_1_f32", arr_dmmv_q4_0_q8_1_f32_len[reduc], arr_dmmv_q4_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_1][i], "mul_mat_vec_q4_1_q8_1_f32", arr_dmmv_q4_1_q8_1_f32_len[reduc], arr_dmmv_q4_1_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_0][i], "mul_mat_vec_q5_0_q8_1_f32", arr_dmmv_q5_0_q8_1_f32_len[reduc], arr_dmmv_q5_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_1][i], "mul_mat_vec_q5_1_q8_1_f32", arr_dmmv_q5_1_q8_1_f32_len[reduc], arr_dmmv_q5_1_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q8_0][i], "mul_mat_vec_q8_0_q8_1_f32", arr_dmmv_q8_0_q8_1_f32_len[reduc], arr_dmmv_q8_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_0][i], "mul_mat_vec_q2_0_q8_1_f32", arr_dmmv_q2_0_q8_1_f32_len[reduc], arr_dmmv_q2_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_0_G128][i], "mul_mat_vec_q2_0_g128_q8_1_f32", arr_dmmv_q2_0_g128_q8_1_f32_len[reduc], arr_dmmv_q2_0_g128_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(rm_g128_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(rm_g128_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_0][i], "mul_mat_vec_q4_0_q8_1_f32", arr_dmmv_q4_0_q8_1_f32_len[reduc], arr_dmmv_q4_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_1][i], "mul_mat_vec_q4_1_q8_1_f32", arr_dmmv_q4_1_q8_1_f32_len[reduc], arr_dmmv_q4_1_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_0][i], "mul_mat_vec_q5_0_q8_1_f32", arr_dmmv_q5_0_q8_1_f32_len[reduc], arr_dmmv_q5_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_1][i], "mul_mat_vec_q5_1_q8_1_f32", arr_dmmv_q5_1_q8_1_f32_len[reduc], arr_dmmv_q5_1_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q8_0][i], "mul_mat_vec_q8_0_q8_1_f32", arr_dmmv_q8_0_q8_1_f32_len[reduc], arr_dmmv_q8_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+ 
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_MXFP4][i], "mul_mat_vec_mxfp4_q8_1_f32", arr_dmmv_mxfp4_q8_1_f32_len[reduc], arr_dmmv_mxfp4_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_MXFP4][i], "mul_mat_vec_mxfp4_q8_1_f32", arr_dmmv_mxfp4_q8_1_f32_len[reduc], arr_dmmv_mxfp4_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+ 
+                 // arifi lane-230 / R46: S-X8 integer-dot mat-vec. Same rows and workgroup as the
+                 // S-X8 float mat-vec above, and the same no-subgroup-pin treatment -- only the
+                 // plain reduction variant is generated, so this must not ask for subgroups.
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_SX8][i], "mul_mat_vec_sx8_q8_1_f32", mul_mat_vec_sx8_q8_1_f32_len, mul_mat_vec_sx8_q8_1_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {sx8_num_rows, 1, 1}, {sx8_wg_size, sx8_num_rows, i+1}, 1, true, false, 0);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_SX8][i], "mul_mat_vec_sx8_q8_1_f32", mul_mat_vec_sx8_q8_1_f32_len, mul_mat_vec_sx8_q8_1_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {sx8_num_rows, 1, 1}, {sx8_wg_size, sx8_num_rows, i+1, mmvq_a_hoist}, 1, true, false, 0);
+ 
+                 // arifi lane-209: the q8_1 selector (ggml_vk_get_dequantize_mul_mat_vec) already listed ROCMFP4_FAST, but no pipeline was ever
+                 // created for it, so quantize_y fell back to the f32 shader at every width. Taken-from rocmfpx/main :4867.
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_0_ROCMFP4_FAST][i], "mul_mat_vec_rocmfp4_fast_q8_1_f32", arr_dmmv_rocmfp4_fast_q8_1_f32_len[reduc], arr_dmmv_rocmfp4_fast_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_0_ROCMFP4_FAST][i], "mul_mat_vec_rocmfp4_fast_q8_1_f32", arr_dmmv_rocmfp4_fast_q8_1_f32_len[reduc], arr_dmmv_rocmfp4_fast_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_stdq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+ 
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_K][i], "mul_mat_vec_q2_k_q8_1_f32", arr_dmmv_q2_k_q8_1_f32_len[reduc], arr_dmmv_q2_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_kq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_q8_1_f32", arr_dmmv_q3_k_q8_1_f32_len[reduc], arr_dmmv_q3_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_q8_1_f32", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_q8_1_f32", arr_dmmv_q5_k_q8_1_f32_len[reduc], arr_dmmv_q5_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_q8_1_f32", arr_dmmv_q6_k_q8_1_f32_len[reduc], arr_dmmv_q6_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_K][i], "mul_mat_vec_q2_k_q8_1_f32", arr_dmmv_q2_k_q8_1_f32_len[reduc], arr_dmmv_q2_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_q8_1_f32", arr_dmmv_q3_k_q8_1_f32_len[reduc], arr_dmmv_q3_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_q8_1_f32", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_q8_1_f32", arr_dmmv_q5_k_q8_1_f32_len[reduc], arr_dmmv_q5_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_q8_1_f32", arr_dmmv_q6_k_q8_1_f32_len[reduc], arr_dmmv_q6_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+ 
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_IQ1_S][i], "mul_mat_vec_iq1_s_q8_1_f32", arr_dmmv_iq1_s_q8_1_f32_len[reduc], arr_dmmv_iq1_s_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1*rm_iq_int(i), 1, 1}, {wg_size_subgroup_int, 1*rm_iq_int(i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_IQ1_M][i], "mul_mat_vec_iq1_m_q8_1_f32", arr_dmmv_iq1_m_q8_1_f32_len[reduc], arr_dmmv_iq1_m_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1*rm_iq_int(i), 1, 1}, {wg_size_subgroup_int, 1*rm_iq_int(i), i+1}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_IQ1_S][i], "mul_mat_vec_iq1_s_q8_1_f32", arr_dmmv_iq1_s_q8_1_f32_len[reduc], arr_dmmv_iq1_s_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1*rm_iq_int(i), 1, 1}, {wg_size_subgroup_int, 1*rm_iq_int(i), i+1, mmvq_a_hoist_iq1}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_IQ1_M][i], "mul_mat_vec_iq1_m_q8_1_f32", arr_dmmv_iq1_m_q8_1_f32_len[reduc], arr_dmmv_iq1_m_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1*rm_iq_int(i), 1, 1}, {wg_size_subgroup_int, 1*rm_iq_int(i), i+1, mmvq_a_hoist_iq1}, 1, true, use_subgroups, subgroup_size_int);
+                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_IQ4_XS][i], "mul_mat_vec_iq4_xs_q8_1_f32", arr_dmmv_iq4_xs_q8_1_f32_len[reduc], arr_dmmv_iq4_xs_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);
+ 
+             }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp
+index 92b844f8cd..a210c899ad 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp
+@@ -32,10 +32,18 @@ uint a_offset, b_offset, d_offset;
+ int32_t cache_b_qs[K_PER_ITER / 4];
+ vec2 cache_b_ds;
+ 
++// arifi lane-235 / R48b: MMVQ A-side hoist. 0 = the inherited nest, which re-runs the whole
++// weight decode inside the column loop; 1 = decode each row once per (row, k-slice) into
++// registers, then loop the columns doing only the B load and the integer dot. Both arms call
++// the same mmvq_load_a() / mmvq_dot_a() pair in the same order, so results are bit-identical.
++// Default 0 on purpose: a create site that omits the constant keeps the inherited nest rather
++// than silently opting in. The host (ggml-vulkan.cpp) supplies the value per pipeline.
++layout (constant_id = 3) const uint ARIFI_MMVQ_A_HOIST = 0;
++
+ #include "mul_mat_vecq_funcs.glsl"
+ 
+-void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const uint num_rows, const uint col, const uint b_qs_idx) {
+-    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++// The B-side load, factored out verbatim so both nests call it at the identical point.
++void cache_b_block(const uint j, const uint col, const uint b_qs_idx) {
+         // Preload data_b block
+         const uint b_block_idx = (j*p.batch_stride_b + col) / QUANT_K_Q8_1 + b_offset;
+         const uint b_block_idx_outer = b_block_idx / 4;
+@@ -68,13 +76,47 @@ void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const
+ #error unimplemented
+ #endif
+ #endif
++}
++
++void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const uint num_rows, const uint col, const uint b_qs_idx) {
++    // NUM_COLS == 1 has no redundancy to remove, so it folds to the inherited nest at
++    // pipeline-compile time -- both of these are specialization constants.
++    if (ARIFI_MMVQ_A_HOIST != 0 && NUM_COLS > 1) {
++        // Static trip over NUM_ROWS with an `n < num_rows` guard, not a runtime trip over
++        // num_rows: a_dec then has a compile-time extent and every index is constant after
++        // unrolling, which is what lets the array live in registers instead of scratch.
++        mmvq_a_t a_dec[NUM_ROWS];
+ 
+         uint ibi = first_row*p.ncols;
+-        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
++        [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
+             const uint a_block_idx = (ibi + col)/QUANT_K_Q8_1 + a_offset;
+             ibi += p.ncols;
+ 
+-            temp[j][n] += mmvq_dot_product(a_block_idx, b_qs_idx);
++            if (n < num_rows) {
++                a_dec[n] = mmvq_load_a(a_block_idx, b_qs_idx);
++            }
++        }
++
++        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++            cache_b_block(j, col, b_qs_idx);
++
++            [[unroll]] for (uint n = 0; n < NUM_ROWS; ++n) {
++                if (n < num_rows) {
++                    temp[j][n] += mmvq_dot_a(a_dec[n]);
++                }
++            }
++        }
++    } else {
++        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++            cache_b_block(j, col, b_qs_idx);
++
++            uint ibi = first_row*p.ncols;
++            [[unroll]] for (uint n = 0; n < num_rows; ++n) {
++                const uint a_block_idx = (ibi + col)/QUANT_K_Q8_1 + a_offset;
++                ibi += p.ncols;
++
++                temp[j][n] += mmvq_dot_product(a_block_idx, b_qs_idx);
++            }
+         }
+     }
+ }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl
+index d3fe8bf903..fdba1d9081 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl
+@@ -203,47 +203,80 @@ FLOAT_TYPE mul_q8_1(const int32_t q_sum, const float da, const vec2 dsb, const i
+ #if defined(DATA_A_ROCMFP4_FAST)
+ // arifi lane-209 (taken-from rocmfpx/main): the FP4 LUT values are exact ints, so d_a * d_b * int-dot is the
+ // same product the f32 dequant path forms (dequant_funcs.glsl DATA_A_ROCMFP4_FAST), no 0.5 factor.
+-FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+-    const i32vec2 data_a_qs = repack(ib_a, iqs);
++struct mmvq_a_t {
++    i32vec2    qs;
++    FLOAT_TYPE d;
++};
++
++mmvq_a_t mmvq_load_a(const uint ib_a, const uint iqs) {
++    mmvq_a_t a;
++    a.qs = repack(ib_a, iqs);
++    a.d  = FLOAT_TYPE(ue4m3_to_fp32(data_a[ib_a].e));
++    return a;
++}
+ 
+-    const int32_t q_sum = dotPacked4x8EXT(data_a_qs.x, cache_b_qs[0]) +
+-                          dotPacked4x8EXT(data_a_qs.y, cache_b_qs[1]);
++FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
++    const int32_t q_sum = dotPacked4x8EXT(a.qs.x, cache_b_qs[0]) +
++                          dotPacked4x8EXT(a.qs.y, cache_b_qs[1]);
+ 
+-    const FLOAT_TYPE d = FLOAT_TYPE(ue4m3_to_fp32(data_a[ib_a].e));
+-    return FLOAT_TYPE(cache_b_ds.x * float(q_sum) * d);
++    return FLOAT_TYPE(cache_b_ds.x * float(q_sum) * a.d);
+ }
+ #elif defined(DATA_A_Q2_0) || defined(DATA_A_Q2_0_G128)
+-FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
++struct mmvq_a_t {
++    i32vec4    qs;
++    FLOAT_TYPE dm;
++};
++
++mmvq_a_t mmvq_load_a(const uint ib_a, const uint iqs) {
++    mmvq_a_t a;
++    a.qs = repack4(ib_a, iqs);
++    a.dm = get_dm(ib_a);
++    return a;
++}
++
++FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
+     int32_t q_sum = 0;
+-    const i32vec4 qs_a = repack4(ib_a, iqs);
+-    q_sum += dotPacked4x8EXT(qs_a.x, cache_b_qs[0]);
+-    q_sum += dotPacked4x8EXT(qs_a.y, cache_b_qs[1]);
+-    q_sum += dotPacked4x8EXT(qs_a.z, cache_b_qs[2]);
+-    q_sum += dotPacked4x8EXT(qs_a.w, cache_b_qs[3]);
++    q_sum += dotPacked4x8EXT(a.qs.x, cache_b_qs[0]);
++    q_sum += dotPacked4x8EXT(a.qs.y, cache_b_qs[1]);
++    q_sum += dotPacked4x8EXT(a.qs.z, cache_b_qs[2]);
++    q_sum += dotPacked4x8EXT(a.qs.w, cache_b_qs[3]);
+ 
+     // 16 quants per call => divide sums by 32/16 = 2
+-    return mul_q8_1(q_sum, get_dm(ib_a), cache_b_ds, 2);
++    return mul_q8_1(q_sum, a.dm, cache_b_ds, 2);
+ }
+ #elif defined(DATA_A_QUANT_LEGACY) || defined(DATA_A_MXFP4)
+-FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+-    int32_t q_sum = 0;
++#if defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1)
++#define MMVQ_DM_TYPE FLOAT_TYPEV2
++#else
++#define MMVQ_DM_TYPE FLOAT_TYPE
++#endif
++
++struct mmvq_a_t {
++    i32vec2      qs;
++    MMVQ_DM_TYPE dm;
++};
++
++mmvq_a_t mmvq_load_a(const uint ib_a, const uint iqs) {
++    mmvq_a_t a;
+ #if QUANT_R == 2
+-    const i32vec2 data_a_qs = repack(ib_a, iqs);
+-    q_sum += dotPacked4x8EXT(data_a_qs.x,
+-                             cache_b_qs[0]);
+-    q_sum += dotPacked4x8EXT(data_a_qs.y,
+-                             cache_b_qs[1]);
++    a.qs = repack(ib_a, iqs);
+ #else
+-    int32_t data_a_qs = repack(ib_a, iqs * 2);
+-    q_sum += dotPacked4x8EXT(data_a_qs,
++    a.qs.x = repack(ib_a, iqs * 2);
++    a.qs.y = repack(ib_a, iqs * 2 + 1);
++#endif
++    a.dm = get_dm(ib_a);
++    return a;
++}
++
++FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
++    int32_t q_sum = 0;
++    q_sum += dotPacked4x8EXT(a.qs.x,
+                              cache_b_qs[0]);
+-    data_a_qs = repack(ib_a, iqs * 2 + 1);
+-    q_sum += dotPacked4x8EXT(data_a_qs,
++    q_sum += dotPacked4x8EXT(a.qs.y,
+                              cache_b_qs[1]);
+-#endif
+ 
+     // 2 quants per call => divide sums by 8/2 = 4
+-    return mul_q8_1(q_sum, get_dm(ib_a), cache_b_ds, 4);
++    return mul_q8_1(q_sum, a.dm, cache_b_ds, 4);
+ }
+ #endif
+ 
+@@ -269,28 +302,39 @@ uint8_t get_scale(uint ib, uint iqs) {
+     return data_a[ib_k].scales[iqs_k / 4];
+ }
+ 
+-FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
++struct mmvq_a_t {
++    i32vec4 qs;
++    uint8_t scale;
++    vec2    dm;
++    int32_t scale_m;
++};
++
++mmvq_a_t mmvq_load_a(const uint ib_a, const uint iqs) {
++    mmvq_a_t a;
++    a.qs      = repack4(ib_a, iqs * 4);
++    a.scale   = get_scale(ib_a, iqs * 4);
++    a.dm      = vec2(get_dm(ib_a));
++    a.scale_m = int32_t(a.scale >> 4) * 0x01010101; // Duplicate 8-bit value across 32-bits.
++    return a;
++}
++
++FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
+     int32_t sum_d = 0;
+     int32_t sum_m = 0;
+ 
+-    const i32vec4 qs_a = repack4(ib_a, iqs * 4);
+-    const uint8_t scale = get_scale(ib_a, iqs * 4);
+-    const vec2 dm = vec2(get_dm(ib_a));
+-    const int32_t scale_m = int32_t(scale >> 4) * 0x01010101; // Duplicate 8-bit value across 32-bits.
++    sum_d += dotPacked4x8EXT(a.qs.x, cache_b_qs[0]) * (a.scale & 0xF);
++    sum_m += dotPacked4x8EXT(a.scale_m, cache_b_qs[0]);
+ 
+-    sum_d += dotPacked4x8EXT(qs_a.x, cache_b_qs[0]) * (scale & 0xF);
+-    sum_m += dotPacked4x8EXT(scale_m, cache_b_qs[0]);
++    sum_d += dotPacked4x8EXT(a.qs.y, cache_b_qs[1]) * (a.scale & 0xF);
++    sum_m += dotPacked4x8EXT(a.scale_m, cache_b_qs[1]);
+ 
+-    sum_d += dotPacked4x8EXT(qs_a.y, cache_b_qs[1]) * (scale & 0xF);
+-    sum_m += dotPacked4x8EXT(scale_m, cache_b_qs[1]);
++    sum_d += dotPacked4x8EXT(a.qs.z, cache_b_qs[2]) * (a.scale & 0xF);
++    sum_m += dotPacked4x8EXT(a.scale_m, cache_b_qs[2]);
+ 
+-    sum_d += dotPacked4x8EXT(qs_a.z, cache_b_qs[2]) * (scale & 0xF);
+-    sum_m += dotPacked4x8EXT(scale_m, cache_b_qs[2]);
++    sum_d += dotPacked4x8EXT(a.qs.w, cache_b_qs[3]) * (a.scale & 0xF);
++    sum_m += dotPacked4x8EXT(a.scale_m, cache_b_qs[3]);
+ 
+-    sum_d += dotPacked4x8EXT(qs_a.w, cache_b_qs[3]) * (scale & 0xF);
+-    sum_m += dotPacked4x8EXT(scale_m, cache_b_qs[3]);
+-
+-    return FLOAT_TYPE(float(cache_b_ds.x) * (float(dm.x) * float(sum_d) - float(dm.y) * float(sum_m)));
++    return FLOAT_TYPE(float(cache_b_ds.x) * (float(a.dm.x) * float(sum_d) - float(a.dm.y) * float(sum_m)));
+ }
+ #endif
+ 
+@@ -350,18 +394,27 @@ float get_d_scale(uint ib, uint iqs) {
+     return float(data_a[ib_k].d) * float(scale - 32);
+ }
+ 
+-FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+-    int32_t q_sum = 0;
++struct mmvq_a_t {
++    i32vec4 qs;
++    float   d_scale;
++};
+ 
+-    const i32vec4 qs_a = repack4(ib_a, iqs * 4);
+-    const float d_scale = get_d_scale(ib_a, iqs * 4);
++mmvq_a_t mmvq_load_a(const uint ib_a, const uint iqs) {
++    mmvq_a_t a;
++    a.qs      = repack4(ib_a, iqs * 4);
++    a.d_scale = get_d_scale(ib_a, iqs * 4);
++    return a;
++}
+ 
+-    q_sum += dotPacked4x8EXT(qs_a.x, cache_b_qs[0]);
+-    q_sum += dotPacked4x8EXT(qs_a.y, cache_b_qs[1]);
+-    q_sum += dotPacked4x8EXT(qs_a.z, cache_b_qs[2]);
+-    q_sum += dotPacked4x8EXT(qs_a.w, cache_b_qs[3]);
++FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
++    int32_t q_sum = 0;
+ 
+-    return FLOAT_TYPE(float(cache_b_ds.x) * d_scale * float(q_sum));
++    q_sum += dotPacked4x8EXT(a.qs.x, cache_b_qs[0]);
++    q_sum += dotPacked4x8EXT(a.qs.y, cache_b_qs[1]);
++    q_sum += dotPacked4x8EXT(a.qs.z, cache_b_qs[2]);
++    q_sum += dotPacked4x8EXT(a.qs.w, cache_b_qs[3]);
++
++    return FLOAT_TYPE(float(cache_b_ds.x) * a.d_scale * float(q_sum));
+ }
+ #endif
+ 
+@@ -420,18 +473,27 @@ vec2 get_dm_scale(uint ib, uint iqs) {
+     return FLOAT_TYPEV2(data_a_packed32[ib_k].dm) * FLOAT_TYPEV2(scale_dm);
+ }
+ 
+-FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+-    int32_t q_sum = 0;
++struct mmvq_a_t {
++    i32vec4 qs;
++    vec2    dm_scale;
++};
++
++mmvq_a_t mmvq_load_a(const uint ib_a, const uint iqs) {
++    mmvq_a_t a;
++    a.qs       = repack4(ib_a, iqs * 4);
++    a.dm_scale = get_dm_scale(ib_a, iqs * 4);
++    return a;
++}
+ 
+-    const i32vec4 qs_a = repack4(ib_a, iqs * 4);
+-    const vec2 dm_scale = get_dm_scale(ib_a, iqs * 4);
++FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
++    int32_t q_sum = 0;
+ 
+-    q_sum += dotPacked4x8EXT(qs_a.x, cache_b_qs[0]);
+-    q_sum += dotPacked4x8EXT(qs_a.y, cache_b_qs[1]);
+-    q_sum += dotPacked4x8EXT(qs_a.z, cache_b_qs[2]);
+-    q_sum += dotPacked4x8EXT(qs_a.w, cache_b_qs[3]);
++    q_sum += dotPacked4x8EXT(a.qs.x, cache_b_qs[0]);
++    q_sum += dotPacked4x8EXT(a.qs.y, cache_b_qs[1]);
++    q_sum += dotPacked4x8EXT(a.qs.z, cache_b_qs[2]);
++    q_sum += dotPacked4x8EXT(a.qs.w, cache_b_qs[3]);
+ 
+-    return FLOAT_TYPE(float(cache_b_ds.x) * float(dm_scale.x) * float(q_sum) - float(dm_scale.y) * float(cache_b_ds.y / 2));
++    return FLOAT_TYPE(float(cache_b_ds.x) * float(a.dm_scale.x) * float(q_sum) - float(a.dm_scale.y) * float(cache_b_ds.y / 2));
+ }
+ #endif
+ 
+@@ -488,18 +550,27 @@ float get_d_scale(uint ib, uint iqs) {
+     return float(data_a[ib_k].d) * float(data_a[ib_k].scales[iqs_k / 4]);
+ }
+ 
+-FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+-    int32_t q_sum = 0;
++struct mmvq_a_t {
++    i32vec4 qs;
++    float   d_scale;
++};
+ 
+-    const i32vec4 qs_a = repack4(ib_a, iqs * 4);
+-    const float d_scale = get_d_scale(ib_a, iqs * 4);
++mmvq_a_t mmvq_load_a(const uint ib_a, const uint iqs) {
++    mmvq_a_t a;
++    a.qs      = repack4(ib_a, iqs * 4);
++    a.d_scale = get_d_scale(ib_a, iqs * 4);
++    return a;
++}
++
++FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
++    int32_t q_sum = 0;
+ 
+-    q_sum += dotPacked4x8EXT(qs_a.x, cache_b_qs[0]);
+-    q_sum += dotPacked4x8EXT(qs_a.y, cache_b_qs[1]);
+-    q_sum += dotPacked4x8EXT(qs_a.z, cache_b_qs[2]);
+-    q_sum += dotPacked4x8EXT(qs_a.w, cache_b_qs[3]);
++    q_sum += dotPacked4x8EXT(a.qs.x, cache_b_qs[0]);
++    q_sum += dotPacked4x8EXT(a.qs.y, cache_b_qs[1]);
++    q_sum += dotPacked4x8EXT(a.qs.z, cache_b_qs[2]);
++    q_sum += dotPacked4x8EXT(a.qs.w, cache_b_qs[3]);
+ 
+-    return FLOAT_TYPE(float(cache_b_ds.x) * float(d_scale) * float(q_sum));
++    return FLOAT_TYPE(float(cache_b_ds.x) * float(a.d_scale) * float(q_sum));
+ }
+ #endif
+ 
+@@ -572,33 +643,46 @@ vec2 get_dm(uint ib, uint iqs) {
+     return FLOAT_TYPEV2(dl, dl * (delta - 1));
+ }
+ 
+-FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+-    int32_t q_sum = 0;
++struct mmvq_a_t {
++    i32vec4 qs0;
++    i32vec4 qs1;
++    vec2    dm;
++};
+ 
++mmvq_a_t mmvq_load_a(const uint ib_a, const uint iqs) {
+     const uint ib_k = ib_a / 8;
+     const uint iqs_k = (ib_a % 8) * 32 + iqs * 32;
+ 
+-    i32vec4 qs_a0;
+-    i32vec4 qs_a1;
+-    repack8(ib_k, iqs_k, qs_a0, qs_a1);
++    mmvq_a_t a;
++    repack8(ib_k, iqs_k, a.qs0, a.qs1);
++    a.dm = get_dm(ib_k, iqs_k);
++    return a;
++}
+ 
+-    const vec2 dm = get_dm(ib_k, iqs_k);
++FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
++    int32_t q_sum = 0;
+ 
+-    q_sum += dotPacked4x8EXT(qs_a0.x, cache_b_qs[0]);
+-    q_sum += dotPacked4x8EXT(qs_a0.y, cache_b_qs[1]);
+-    q_sum += dotPacked4x8EXT(qs_a0.z, cache_b_qs[2]);
+-    q_sum += dotPacked4x8EXT(qs_a0.w, cache_b_qs[3]);
+-    q_sum += dotPacked4x8EXT(qs_a1.x, cache_b_qs[4]);
+-    q_sum += dotPacked4x8EXT(qs_a1.y, cache_b_qs[5]);
+-    q_sum += dotPacked4x8EXT(qs_a1.z, cache_b_qs[6]);
+-    q_sum += dotPacked4x8EXT(qs_a1.w, cache_b_qs[7]);
++    q_sum += dotPacked4x8EXT(a.qs0.x, cache_b_qs[0]);
++    q_sum += dotPacked4x8EXT(a.qs0.y, cache_b_qs[1]);
++    q_sum += dotPacked4x8EXT(a.qs0.z, cache_b_qs[2]);
++    q_sum += dotPacked4x8EXT(a.qs0.w, cache_b_qs[3]);
++    q_sum += dotPacked4x8EXT(a.qs1.x, cache_b_qs[4]);
++    q_sum += dotPacked4x8EXT(a.qs1.y, cache_b_qs[5]);
++    q_sum += dotPacked4x8EXT(a.qs1.z, cache_b_qs[6]);
++    q_sum += dotPacked4x8EXT(a.qs1.w, cache_b_qs[7]);
+ 
+-    return FLOAT_TYPE(float(cache_b_ds.x) * float(dm.x) * float(q_sum) + float(dm.y) * float(cache_b_ds.y));
++    return FLOAT_TYPE(float(cache_b_ds.x) * float(a.dm.x) * float(q_sum) + float(a.dm.y) * float(cache_b_ds.y));
+ }
+ #endif
+ 
+ #if defined(DATA_A_IQ1_M)
+-FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
++struct mmvq_a_t {
++    int32_t grid[4];
++    float   dl[4];
++    float   delta[4];
++};
++
++mmvq_a_t mmvq_load_a(const uint ib_a, const uint iqs) {
+     const uint ib_k = ib_a / 8;
+     const uint iqs_k = (ib_a % 8) * 32 + iqs * 32;
+ 
+@@ -612,27 +696,34 @@ FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+     const uint qs32 = data_a_packed32[ib_k].qs[ib32];
+     const uint qh16 = data_a_packed16[ib_k].qh[ib32];
+ 
+-    float sum = 0;
+     const uint sc = data_a[ib_k].scales[ib64];
++
++    mmvq_a_t a;
+     [[unroll]] for (int l = 0; l < 4; ++l) {
+         const uint ib16 = 2 * ib32 + l / 2;
+-        const float dl = d * (2 * bitfieldExtract(sc, 3 * int(ib16 & 3), 3) + 1);
++        a.dl[l] = d * (2 * bitfieldExtract(sc, 3 * int(ib16 & 3), 3) + 1);
+         const uint qh = qh16 >> (4 * l);
+         const uint qs = (qs32 >> (8 * l)) & 0xFF;
+-        const float delta = ((qh & 8) != 0) ? -IQ1M_DELTA : IQ1M_DELTA;
++        a.delta[l] = ((qh & 8) != 0) ? -IQ1M_DELTA : IQ1M_DELTA;
+ 
+-        const int32_t grid = int32_t(iq1s_grid_gpu[qs | ((qh & 7) << 8)]);
++        a.grid[l] = int32_t(iq1s_grid_gpu[qs | ((qh & 7) << 8)]);
++    }
++    return a;
++}
+ 
++FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
++    float sum = 0;
++    [[unroll]] for (int l = 0; l < 4; ++l) {
+         int32_t q_sum = 0;
+-        q_sum += dotPacked4x8EXT((grid >> 0) & 0x0F0F0F0F, cache_b_qs[2 * l + 0]);
+-        q_sum += dotPacked4x8EXT((grid >> 4) & 0x0F0F0F0F, cache_b_qs[2 * l + 1]);
++        q_sum += dotPacked4x8EXT((a.grid[l] >> 0) & 0x0F0F0F0F, cache_b_qs[2 * l + 0]);
++        q_sum += dotPacked4x8EXT((a.grid[l] >> 4) & 0x0F0F0F0F, cache_b_qs[2 * l + 1]);
+ 
+         int32_t y_sum = 0;
+         y_sum += dotPacked4x8EXT(int(0x01010101), cache_b_qs[2 * l + 0]);
+         y_sum += dotPacked4x8EXT(int(0x01010101), cache_b_qs[2 * l + 1]);
+ 
+         // the -1 cancels out the bias in iq1s_grid_gpu
+-        sum += dl * (q_sum + y_sum * (delta - 1));
++        sum += a.dl[l] * (q_sum + y_sum * (a.delta[l] - 1));
+     }
+     sum *= float(cache_b_ds.x);
+ 
+@@ -662,33 +753,59 @@ FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+ // Decode constants stay in sx8_range() / sx8_levels4() (types.glsl), shared with the
+ // float mat-vec and dequant_sx8 -- the F-110 single-home rule. A planted error there
+ // must turn every S-X8 path red at once, which is the only way the oracle proves it ran.
+-FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
++struct mmvq_a_t {
++    int32_t lv[8];     // the four sub-blocks' two packed level words each
++    float   rlo[4];
++    float   step[4];
++};
++
++mmvq_a_t mmvq_load_a(const uint ib_a, const uint iqs) {
+     const float dlo = float(data_a[ib_a].dmin);
+     const float dhi = float(data_a[ib_a].dmax);
+     const uint  cfg = uint(data_a[ib_a].config);
+ 
+-    float acc = 0.0;
++    mmvq_a_t a;
+ 
+     [[unroll]] for (uint sb = 0; sb < 4u; ++sb) {
+         float rlo, step;
+         sx8_range(dlo, dhi, (cfg >> (sb * 2u)) & 3u, rlo, step);
++        a.rlo[sb]  = rlo;
++        a.step[sb] = step;
++
++        [[unroll]] for (uint g = 0; g < 2u; ++g) {
++            const uint qh_pair = uint(data_a[ib_a].qh[sb * 4u + g * 2u])
++                               | (uint(data_a[ib_a].qh[sb * 4u + g * 2u + 1u]) << 8u);
++            a.lv[sb * 2u + g] = int32_t(sx8_levels4(qh_pair, uint(data_a[ib_a].ql[sb * 2u + g])));
++        }
++    }
++
++    return a;
++}
++
++FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
++    float acc = 0.0;
+ 
++    [[unroll]] for (uint sb = 0; sb < 4u; ++sb) {
+         int32_t lq = 0;   // sum of level * quant over the 8 weights
+         int32_t sq = 0;   // sum of quant          over the 8 weights
+ 
+         [[unroll]] for (uint g = 0; g < 2u; ++g) {
+-            const uint qh_pair = uint(data_a[ib_a].qh[sb * 4u + g * 2u])
+-                               | (uint(data_a[ib_a].qh[sb * 4u + g * 2u + 1u]) << 8u);
+-            const int32_t lv = int32_t(sx8_levels4(qh_pair, uint(data_a[ib_a].ql[sb * 2u + g])));
+             const int32_t bq = cache_b_qs[sb * 2u + g];
+ 
+-            lq += dotPacked4x8EXT(lv, bq);
++            lq += dotPacked4x8EXT(a.lv[sb * 2u + g], bq);
+             sq += dotPacked4x8EXT(0x01010101, bq);
+         }
+ 
+-        acc += step * float(lq) + rlo * float(sq);
++        acc += a.step[sb] * float(lq) + a.rlo[sb] * float(sq);
+     }
+ 
+     return FLOAT_TYPE(float(cache_b_ds.x) * acc);
+ }
+ #endif
++
++// arifi lane-235 / R48b: the inherited entry point, now a composition of the two halves. The
++// OFF arm of mul_mat_vecq.comp calls this; the ON arm calls mmvq_load_a() once per (row,
++// k-slice) and mmvq_dot_a() once per column. Both run the same expressions in the same order.
++FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
++    return mmvq_dot_a(mmvq_load_a(ib_a, iqs));
++}
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index cf483d2719..6600cfad37 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -10816,6 +10816,34 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         }
+     }
+ 
++    // ArifiLabs lane-235 / R48b: the A-side hoist restructures the Vulkan MMVQ mat-vec nest for
++    // EVERY type that has a q8_1 integer-dot pipeline, so every one of them needs the real 27B
++    // mat-vec shapes at every served width, not just the two types the block above covers.
++    //
++    // The type list is exactly the set with a mul_mat_vec_<t>_q8_1_f32 pipeline
++    // (ggml-vulkan.cpp, the GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT block). n = 1..8 covers the
++    // NUM_COLS spec-constant range (mul_mat_vec_max_cols = 8) including the NUM_COLS == 7 tail.
++    //
++    // These rows only REACH the changed shader with GGML_VK_FORCE_MMVQ=1: ggml_vk_should_use_mmvq()
++    // refuses Q6_K on non-Intel, needs GGML_ARIFI_SX8_MMVQ=1 for S-X8, gates ROCMFP4_FAST to
++    // n = 3 and 5, and drops Q4_K at n >= 5 and Q5_K at every n > 1 on AMD. Without the force most
++    // of this sweep silently measures the f32 dequant shader instead.
++    for (ggml_type type_a : {
++            GGML_TYPE_Q2_0, GGML_TYPE_Q2_0_G128,
++            GGML_TYPE_Q4_0, GGML_TYPE_Q4_1, GGML_TYPE_Q5_0, GGML_TYPE_Q5_1, GGML_TYPE_Q8_0,
++            GGML_TYPE_MXFP4, GGML_TYPE_Q4_0_ROCMFP4_FAST,
++            GGML_TYPE_Q2_K, GGML_TYPE_Q3_K, GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K,
++            GGML_TYPE_IQ1_S, GGML_TYPE_IQ1_M,
++            GGML_TYPE_SX8 }) {
++        for (int n = 1; n <= 8; ++n) {
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, n,  5120, { 1, 1 }, { 1, 1 }));
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, n, 17408, { 1, 1 }, { 1, 1 }));
++            // The embed/output shape. 17 types x 8 widths at 248320x5120 is the expensive third of
++            // this sweep on a one-pool box; narrow it with -p "m=248320" when that matters.
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, n,  5120, { 1, 1 }, { 1, 1 }));
++        }
++    }
++
+     // The SYCL backend picks between one and two output rows per subgroup by row count when there
+     // are two destination columns (Q4_K_MMVQ_ROW_PAIR_MIN_NROWS in ggml-sycl/mmvq.cpp). Cover both
+     // sides of that boundary, including an odd row count above it for the row-pair tail.

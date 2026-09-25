@@ -1,0 +1,1145 @@
+From 6c46ac5f0104794c25c13d1518cf0313b0c0d3e6 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 16 Aug 2026 20:37:47 -0400
+Subject: [PATCH] ROCmFPX on Vulkan: the shader half, ported. NOT YET WORKING -
+ it segfaults in execution.
+
+Our fork has never had ROCmFPX on any GPU backend. CHECKED before this commit: a grep for rocmfp under ggml/src/ggml-vulkan was EMPTY on every branch we own, so the ROCmFP4/ROCmFPX weight formats were CPU-only here. charlie12345/ROCmFPX has carried Vulkan pipelines for FP2/FP3/FP4/FP4_FAST/FP6/FP8 the whole time. That is not a regression, it is work nobody did.
+
+WHAT IS IN:
+- 6 dequant shaders copied verbatim from rocmfpx/HEAD: rocmfp4, rocmfp4_fast, rocmfpx_fp2, fp3, fp6, fp8.
+- types.glsl: their block structs, DATA_A_* selectors and the ROCMFPX_FAMILY predicate.
+- dequant_funcs.glsl: 9 dequantize()/dequantize4() blocks lifted verbatim.
+- dequant_funcs_cm2.glsl: 6 coopmat2 decode functions, plus the dequantFuncA binding chain, which lives apart from the bodies in upstream layout and had to be written.
+- vulkan-shaders-gen.cpp: the 6 type names registered so the generator emits them.
+- ggml-vulkan.cpp: our own Q2_0_G128 wiring mirrored across all 6 ROCmFP types - dequant, get_rows, mat-vec pipelines, and the type recognition switches. Mirroring our own precedent beats hand-porting their 412 lines against a backend 10,450 commits newer than theirs.
+
+THE TRAP, and it would have been silent: ROCmFPX UE4M3 scale is NOT NVFP4 UE4M3. ROCmFPX decodes with exponent bias 119 and subnormal step 1/1024; NVFP4 uses 120 and 1/512. That is a factor of two on every scale. One shared lookup table would have doubled or halved every weight with no error anywhere. They get their own table.
+
+DELIBERATE EXCLUSIONS, both because the shader does not exist rather than because we chose less:
+- copy-to-quant. There is no GPU quantizer for these formats in their tree either. Decoding is the point.
+- the q8_1 integer-dot mat-vec variants. Their own generator excludes ROCmFP from q8_1.
+
+BUILD: green. 348 ROCmFP SPIR-V variants compiled in; the CLI binary grew 94.6 to 99.2 MB.
+
+WHAT WORKS: the backend is intact. CHECKED - the new binary runs qwen2.5-0.5b-TQ4_1S fully on the 780M at 158.9 t/s prefill, 39.7 t/s generation.
+
+WHAT DOES NOT: the ROCmFP4 Ornith 9B file SEGFAULTS during execution when fully offloaded. It used to abort at GGML_ASSERT(dmmv != nullptr) in pipeline lookup; the mat-vec pipelines are wired now and it gets past that, which is progress and nothing more. The crash is undiagnosed. Committed anyway so the port is durable and the next step starts from evidence, not from memory.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Conflict-resolved: S2: this commit's ROCmFP case labels went into the old mat-mat and mat-mat-id getter switches, which upstream 91f6a6cf3 removed (pipeline map; absent pipeline = nullptr = dequant+f16 fallback, the outcome 4c5b247b8 later forced by hand); nothing to carry
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 108 +++++++++
+ .../vulkan-shaders/dequant_funcs.glsl         | 172 ++++++++++++++
+ .../vulkan-shaders/dequant_funcs_cm2.glsl     | 191 +++++++++++++++
+ .../vulkan-shaders/dequant_rocmfp4.comp       |  33 +++
+ .../vulkan-shaders/dequant_rocmfp4_fast.comp  |  31 +++
+ .../vulkan-shaders/dequant_rocmfpx_fp2.comp   |  37 +++
+ .../vulkan-shaders/dequant_rocmfpx_fp3.comp   |  46 ++++
+ .../vulkan-shaders/dequant_rocmfpx_fp6.comp   |  33 +++
+ .../vulkan-shaders/dequant_rocmfpx_fp8.comp   |  31 +++
+ .../src/ggml-vulkan/vulkan-shaders/types.glsl | 217 ++++++++++++++++++
+ 10 files changed, 899 insertions(+)
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfp4.comp
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfp4_fast.comp
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp2.comp
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp3.comp
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp6.comp
+ create mode 100644 ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp8.comp
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 08c7dd8944..d4163ff668 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -3013,6 +3013,12 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q1_0][i], "mul_mat_vec_q1_0_f32_f32", arr_dmmv_q1_0_f32_f32_len[reduc], arr_dmmv_q1_0_f32_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q2_0][i], "mul_mat_vec_q2_0_f32_f32", arr_dmmv_q2_0_f32_f32_len[reduc], arr_dmmv_q2_0_f32_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q2_0_G128][i], "mul_mat_vec_q2_0_g128_f32_f32", arr_dmmv_q2_0_g128_f32_f32_len[reduc], arr_dmmv_q2_0_g128_f32_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q4_0_ROCMFP4][i], "mul_mat_vec_rocmfp4_f32_f32", arr_dmmv_rocmfp4_f32_f32_len[reduc], arr_dmmv_rocmfp4_f32_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q4_0_ROCMFP4_FAST][i], "mul_mat_vec_rocmfp4_fast_f32_f32", arr_dmmv_rocmfp4_fast_f32_f32_len[reduc], arr_dmmv_rocmfp4_fast_f32_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q2_0_ROCMFPX][i], "mul_mat_vec_rocmfpx_fp2_f32_f32", arr_dmmv_rocmfpx_fp2_f32_f32_len[reduc], arr_dmmv_rocmfpx_fp2_f32_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q3_0_ROCMFPX][i], "mul_mat_vec_rocmfpx_fp3_f32_f32", arr_dmmv_rocmfpx_fp3_f32_f32_len[reduc], arr_dmmv_rocmfpx_fp3_f32_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q6_0_ROCMFPX][i], "mul_mat_vec_rocmfpx_fp6_f32_f32", arr_dmmv_rocmfpx_fp6_f32_f32_len[reduc], arr_dmmv_rocmfpx_fp6_f32_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q8_0_ROCMFPX][i], "mul_mat_vec_rocmfpx_fp8_f32_f32", arr_dmmv_rocmfpx_fp8_f32_f32_len[reduc], arr_dmmv_rocmfpx_fp8_f32_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q4_0][i], "mul_mat_vec_q4_0_f32_f32", arr_dmmv_q4_0_f32_f32_len[reduc], arr_dmmv_q4_0_f32_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q4_1][i], "mul_mat_vec_q4_1_f32_f32", arr_dmmv_q4_1_f32_f32_len[reduc], arr_dmmv_q4_1_f32_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q5_0][i], "mul_mat_vec_q5_0_f32_f32", arr_dmmv_q5_0_f32_f32_len[reduc], arr_dmmv_q5_0_f32_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
+@@ -3045,6 +3051,12 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q1_0][i], "mul_mat_vec_q1_0_f16_f32", arr_dmmv_q1_0_f16_f32_len[reduc], arr_dmmv_q1_0_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q2_0][i], "mul_mat_vec_q2_0_f16_f32", arr_dmmv_q2_0_f16_f32_len[reduc], arr_dmmv_q2_0_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q2_0_G128][i], "mul_mat_vec_q2_0_g128_f16_f32", arr_dmmv_q2_0_g128_f16_f32_len[reduc], arr_dmmv_q2_0_g128_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q4_0_ROCMFP4][i], "mul_mat_vec_rocmfp4_f16_f32", arr_dmmv_rocmfp4_f16_f32_len[reduc], arr_dmmv_rocmfp4_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q4_0_ROCMFP4_FAST][i], "mul_mat_vec_rocmfp4_fast_f16_f32", arr_dmmv_rocmfp4_fast_f16_f32_len[reduc], arr_dmmv_rocmfp4_fast_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q2_0_ROCMFPX][i], "mul_mat_vec_rocmfpx_fp2_f16_f32", arr_dmmv_rocmfpx_fp2_f16_f32_len[reduc], arr_dmmv_rocmfpx_fp2_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q3_0_ROCMFPX][i], "mul_mat_vec_rocmfpx_fp3_f16_f32", arr_dmmv_rocmfpx_fp3_f16_f32_len[reduc], arr_dmmv_rocmfpx_fp3_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q6_0_ROCMFPX][i], "mul_mat_vec_rocmfpx_fp6_f16_f32", arr_dmmv_rocmfpx_fp6_f16_f32_len[reduc], arr_dmmv_rocmfpx_fp6_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q8_0_ROCMFPX][i], "mul_mat_vec_rocmfpx_fp8_f16_f32", arr_dmmv_rocmfpx_fp8_f16_f32_len[reduc], arr_dmmv_rocmfpx_fp8_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q4_0][i], "mul_mat_vec_q4_0_f16_f32", arr_dmmv_q4_0_f16_f32_len[reduc], arr_dmmv_q4_0_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q4_1][i], "mul_mat_vec_q4_1_f16_f32", arr_dmmv_q4_1_f16_f32_len[reduc], arr_dmmv_q4_1_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q5_0][i], "mul_mat_vec_q5_0_f16_f32", arr_dmmv_q5_0_f16_f32_len[reduc], arr_dmmv_q5_0_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq, i+1}, 1, true, use_subgroups, force_subgroup_size);
+@@ -3106,6 +3118,12 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q1_0], "mul_mat_vec_id_q1_0_f32",       arr_dmmv_id_q1_0_f32_f32_len[reduc],    arr_dmmv_id_q1_0_f32_f32_data[reduc],    "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq}, 1, true, use_subgroups, force_subgroup_size);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q2_0], "mul_mat_vec_id_q2_0_f32",       arr_dmmv_id_q2_0_f32_f32_len[reduc],    arr_dmmv_id_q2_0_f32_f32_data[reduc],    "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq}, 1, true, use_subgroups, force_subgroup_size);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q2_0_G128], "mul_mat_vec_id_q2_0_g128_f32", arr_dmmv_id_q2_0_g128_f32_f32_len[reduc], arr_dmmv_id_q2_0_g128_f32_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq}, 1, true, use_subgroups, force_subgroup_size);
++        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q4_0_ROCMFP4], "mul_mat_vec_id_rocmfp4_f32", arr_dmmv_id_rocmfp4_f32_f32_len[reduc], arr_dmmv_id_rocmfp4_f32_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq}, 1, true, use_subgroups, force_subgroup_size);
++        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q4_0_ROCMFP4_FAST], "mul_mat_vec_id_rocmfp4_fast_f32", arr_dmmv_id_rocmfp4_fast_f32_f32_len[reduc], arr_dmmv_id_rocmfp4_fast_f32_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq}, 1, true, use_subgroups, force_subgroup_size);
++        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q2_0_ROCMFPX], "mul_mat_vec_id_rocmfpx_fp2_f32", arr_dmmv_id_rocmfpx_fp2_f32_f32_len[reduc], arr_dmmv_id_rocmfpx_fp2_f32_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq}, 1, true, use_subgroups, force_subgroup_size);
++        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q3_0_ROCMFPX], "mul_mat_vec_id_rocmfpx_fp3_f32", arr_dmmv_id_rocmfpx_fp3_f32_f32_len[reduc], arr_dmmv_id_rocmfpx_fp3_f32_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq}, 1, true, use_subgroups, force_subgroup_size);
++        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q6_0_ROCMFPX], "mul_mat_vec_id_rocmfpx_fp6_f32", arr_dmmv_id_rocmfpx_fp6_f32_f32_len[reduc], arr_dmmv_id_rocmfpx_fp6_f32_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq}, 1, true, use_subgroups, force_subgroup_size);
++        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q8_0_ROCMFPX], "mul_mat_vec_id_rocmfpx_fp8_f32", arr_dmmv_id_rocmfpx_fp8_f32_f32_len[reduc], arr_dmmv_id_rocmfpx_fp8_f32_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq}, 1, true, use_subgroups, force_subgroup_size);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q4_0], "mul_mat_vec_id_q4_0_f32",       arr_dmmv_id_q4_0_f32_f32_len[reduc],    arr_dmmv_id_q4_0_f32_f32_data[reduc],    "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq}, 1, true, use_subgroups, force_subgroup_size);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q4_1], "mul_mat_vec_id_q4_1_f32",       arr_dmmv_id_q4_1_f32_f32_len[reduc],    arr_dmmv_id_q4_1_f32_f32_data[reduc],    "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq}, 1, true, use_subgroups, force_subgroup_size);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q5_0], "mul_mat_vec_id_q5_0_f32",       arr_dmmv_id_q5_0_f32_f32_len[reduc],    arr_dmmv_id_q5_0_f32_f32_data[reduc],    "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {2*rm_stdq, 1, 1}, {wg_size_subgroup, 2*rm_stdq}, 1, true, use_subgroups, force_subgroup_size);
+@@ -3186,6 +3204,12 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_Q1_0], "dequant_q1_0", dequant_q1_0_len, dequant_q1_0_data, "main", 2, 5 * sizeof(uint32_t), {256 * 8, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_Q2_0], "dequant_q2_0", dequant_q2_0_len, dequant_q2_0_data, "main", 2, 5 * sizeof(uint32_t), {256 * 4, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_Q2_0_G128], "dequant_q2_0_g128", dequant_q2_0_g128_len, dequant_q2_0_g128_data, "main", 2, 5 * sizeof(uint32_t), {256 * 4, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_Q4_0_ROCMFP4], "dequant_rocmfp4", dequant_rocmfp4_len, dequant_rocmfp4_data, "main", 2, 5 * sizeof(uint32_t), {256 * 4, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_Q4_0_ROCMFP4_FAST], "dequant_rocmfp4_fast", dequant_rocmfp4_fast_len, dequant_rocmfp4_fast_data, "main", 2, 5 * sizeof(uint32_t), {256 * 4, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_Q2_0_ROCMFPX], "dequant_rocmfpx_fp2", dequant_rocmfpx_fp2_len, dequant_rocmfpx_fp2_data, "main", 2, 5 * sizeof(uint32_t), {256 * 4, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_Q3_0_ROCMFPX], "dequant_rocmfpx_fp3", dequant_rocmfpx_fp3_len, dequant_rocmfpx_fp3_data, "main", 2, 5 * sizeof(uint32_t), {256 * 4, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_Q6_0_ROCMFPX], "dequant_rocmfpx_fp6", dequant_rocmfpx_fp6_len, dequant_rocmfpx_fp6_data, "main", 2, 5 * sizeof(uint32_t), {256 * 4, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_Q8_0_ROCMFPX], "dequant_rocmfpx_fp8", dequant_rocmfpx_fp8_len, dequant_rocmfpx_fp8_data, "main", 2, 5 * sizeof(uint32_t), {256 * 4, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_Q4_0], "dequant_q4_0", dequant_q4_0_len, dequant_q4_0_data, "main", 2, 5 * sizeof(uint32_t), {256 * 16, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_Q4_1], "dequant_q4_1", dequant_q4_1_len, dequant_q4_1_data, "main", 2, 5 * sizeof(uint32_t), {256 * 16, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_Q5_0], "dequant_q5_0", dequant_q5_0_len, dequant_q5_0_data, "main", 2, 5 * sizeof(uint32_t), {256 * 16, 1, 1}, {}, 1);
+@@ -3229,6 +3253,12 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     ggml_vk_create_pipeline(device, device->pipeline_get_rows[GGML_TYPE_Q1_0], "get_rows_q1_0", get_rows_q1_0_len, get_rows_q1_0_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_get_rows[GGML_TYPE_Q2_0], "get_rows_q2_0", get_rows_q2_0_len, get_rows_q2_0_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_get_rows[GGML_TYPE_Q2_0_G128], "get_rows_q2_0_g128", get_rows_q2_0_g128_len, get_rows_q2_0_g128_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_get_rows[GGML_TYPE_Q4_0_ROCMFP4], "get_rows_rocmfp4", get_rows_rocmfp4_len, get_rows_rocmfp4_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_get_rows[GGML_TYPE_Q4_0_ROCMFP4_FAST], "get_rows_rocmfp4_fast", get_rows_rocmfp4_fast_len, get_rows_rocmfp4_fast_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_get_rows[GGML_TYPE_Q2_0_ROCMFPX], "get_rows_rocmfpx_fp2", get_rows_rocmfpx_fp2_len, get_rows_rocmfpx_fp2_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_get_rows[GGML_TYPE_Q3_0_ROCMFPX], "get_rows_rocmfpx_fp3", get_rows_rocmfpx_fp3_len, get_rows_rocmfpx_fp3_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_get_rows[GGML_TYPE_Q6_0_ROCMFPX], "get_rows_rocmfpx_fp6", get_rows_rocmfpx_fp6_len, get_rows_rocmfpx_fp6_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_get_rows[GGML_TYPE_Q8_0_ROCMFPX], "get_rows_rocmfpx_fp8", get_rows_rocmfpx_fp8_len, get_rows_rocmfpx_fp8_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_get_rows[GGML_TYPE_Q4_0], "get_rows_q4_0", get_rows_q4_0_len, get_rows_q4_0_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_get_rows[GGML_TYPE_Q4_1], "get_rows_q4_1", get_rows_q4_1_len, get_rows_q4_1_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_get_rows[GGML_TYPE_Q5_0], "get_rows_q5_0", get_rows_q5_0_len, get_rows_q5_0_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
+@@ -3261,6 +3291,12 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     ggml_vk_create_pipeline(device, device->pipeline_get_rows_f32[GGML_TYPE_Q1_0], "get_rows_q1_0_f32", get_rows_q1_0_f32_len, get_rows_q1_0_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_get_rows_f32[GGML_TYPE_Q2_0], "get_rows_q2_0_f32", get_rows_q2_0_f32_len, get_rows_q2_0_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_get_rows_f32[GGML_TYPE_Q2_0_G128], "get_rows_q2_0_g128_f32", get_rows_q2_0_g128_f32_len, get_rows_q2_0_g128_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_get_rows_f32[GGML_TYPE_Q4_0_ROCMFP4], "get_rows_rocmfp4_f32", get_rows_rocmfp4_f32_len, get_rows_rocmfp4_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_get_rows_f32[GGML_TYPE_Q4_0_ROCMFP4_FAST], "get_rows_rocmfp4_fast_f32", get_rows_rocmfp4_fast_f32_len, get_rows_rocmfp4_fast_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_get_rows_f32[GGML_TYPE_Q2_0_ROCMFPX], "get_rows_rocmfpx_fp2_f32", get_rows_rocmfpx_fp2_f32_len, get_rows_rocmfpx_fp2_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_get_rows_f32[GGML_TYPE_Q3_0_ROCMFPX], "get_rows_rocmfpx_fp3_f32", get_rows_rocmfpx_fp3_f32_len, get_rows_rocmfpx_fp3_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_get_rows_f32[GGML_TYPE_Q6_0_ROCMFPX], "get_rows_rocmfpx_fp6_f32", get_rows_rocmfpx_fp6_f32_len, get_rows_rocmfpx_fp6_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_get_rows_f32[GGML_TYPE_Q8_0_ROCMFPX], "get_rows_rocmfpx_fp8_f32", get_rows_rocmfpx_fp8_f32_len, get_rows_rocmfpx_fp8_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_get_rows_f32[GGML_TYPE_Q4_0], "get_rows_q4_0_f32", get_rows_q4_0_f32_len, get_rows_q4_0_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_get_rows_f32[GGML_TYPE_Q4_1], "get_rows_q4_1_f32", get_rows_q4_1_f32_len, get_rows_q4_1_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_get_rows_f32[GGML_TYPE_Q5_0], "get_rows_q5_0_f32", get_rows_q5_0_f32_len, get_rows_q5_0_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {1024, 1, 1}, {}, 1);
+@@ -5589,6 +5625,12 @@ vk_pipeline ggml_vk_get_to_fp16(ggml_backend_vk_context * ctx, ggml_type type) {
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
+         case GGML_TYPE_Q2_0_G128:
++        case GGML_TYPE_Q4_0_ROCMFP4:
++        case GGML_TYPE_Q4_0_ROCMFP4_FAST:
++        case GGML_TYPE_Q2_0_ROCMFPX:
++        case GGML_TYPE_Q3_0_ROCMFPX:
++        case GGML_TYPE_Q6_0_ROCMFPX:
++        case GGML_TYPE_Q8_0_ROCMFPX:
+         case GGML_TYPE_Q4_0:
+         case GGML_TYPE_Q4_1:
+         case GGML_TYPE_Q5_0:
+@@ -5631,6 +5673,12 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context *
+         switch (a_type) {
+             case GGML_TYPE_Q2_0:
+             case GGML_TYPE_Q2_0_G128:
++            case GGML_TYPE_Q4_0_ROCMFP4:
++            case GGML_TYPE_Q4_0_ROCMFP4_FAST:
++            case GGML_TYPE_Q2_0_ROCMFPX:
++            case GGML_TYPE_Q3_0_ROCMFPX:
++            case GGML_TYPE_Q6_0_ROCMFPX:
++            case GGML_TYPE_Q8_0_ROCMFPX:
+             case GGML_TYPE_Q4_0:
+             case GGML_TYPE_Q4_1:
+             case GGML_TYPE_Q5_0:
+@@ -5658,6 +5706,12 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context *
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
+         case GGML_TYPE_Q2_0_G128:
++        case GGML_TYPE_Q4_0_ROCMFP4:
++        case GGML_TYPE_Q4_0_ROCMFP4_FAST:
++        case GGML_TYPE_Q2_0_ROCMFPX:
++        case GGML_TYPE_Q3_0_ROCMFPX:
++        case GGML_TYPE_Q6_0_ROCMFPX:
++        case GGML_TYPE_Q8_0_ROCMFPX:
+         case GGML_TYPE_Q4_0:
+         case GGML_TYPE_Q4_1:
+         case GGML_TYPE_Q5_0:
+@@ -5731,6 +5785,12 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
+         switch (a_type) {
+             case GGML_TYPE_Q2_0:
+             case GGML_TYPE_Q2_0_G128:
++            case GGML_TYPE_Q4_0_ROCMFP4:
++            case GGML_TYPE_Q4_0_ROCMFP4_FAST:
++            case GGML_TYPE_Q2_0_ROCMFPX:
++            case GGML_TYPE_Q3_0_ROCMFPX:
++            case GGML_TYPE_Q6_0_ROCMFPX:
++            case GGML_TYPE_Q8_0_ROCMFPX:
+             case GGML_TYPE_Q4_0:
+             case GGML_TYPE_Q4_1:
+             case GGML_TYPE_Q5_0:
+@@ -5758,6 +5818,12 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
+         case GGML_TYPE_Q2_0_G128:
++        case GGML_TYPE_Q4_0_ROCMFP4:
++        case GGML_TYPE_Q4_0_ROCMFP4_FAST:
++        case GGML_TYPE_Q2_0_ROCMFPX:
++        case GGML_TYPE_Q3_0_ROCMFPX:
++        case GGML_TYPE_Q6_0_ROCMFPX:
++        case GGML_TYPE_Q8_0_ROCMFPX:
+         case GGML_TYPE_Q4_0:
+         case GGML_TYPE_Q4_1:
+         case GGML_TYPE_Q5_0:
+@@ -6250,6 +6316,12 @@ vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const ggml_t
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
+         case GGML_TYPE_Q2_0_G128:
++        case GGML_TYPE_Q4_0_ROCMFP4:
++        case GGML_TYPE_Q4_0_ROCMFP4_FAST:
++        case GGML_TYPE_Q2_0_ROCMFPX:
++        case GGML_TYPE_Q3_0_ROCMFPX:
++        case GGML_TYPE_Q6_0_ROCMFPX:
++        case GGML_TYPE_Q8_0_ROCMFPX:
+         case GGML_TYPE_Q4_0:
+         case GGML_TYPE_Q4_1:
+         case GGML_TYPE_Q5_0:
+@@ -6267,6 +6339,12 @@ vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const ggml_t
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
+         case GGML_TYPE_Q2_0_G128:
++        case GGML_TYPE_Q4_0_ROCMFP4:
++        case GGML_TYPE_Q4_0_ROCMFP4_FAST:
++        case GGML_TYPE_Q2_0_ROCMFPX:
++        case GGML_TYPE_Q3_0_ROCMFPX:
++        case GGML_TYPE_Q6_0_ROCMFPX:
++        case GGML_TYPE_Q8_0_ROCMFPX:
+         case GGML_TYPE_Q4_0:
+         case GGML_TYPE_Q4_1:
+         case GGML_TYPE_Q5_0:
+@@ -15602,6 +15680,12 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_Q1_0:
+                     case GGML_TYPE_Q2_0:
+                     case GGML_TYPE_Q2_0_G128:
++                    case GGML_TYPE_Q4_0_ROCMFP4:
++                    case GGML_TYPE_Q4_0_ROCMFP4_FAST:
++                    case GGML_TYPE_Q2_0_ROCMFPX:
++                    case GGML_TYPE_Q3_0_ROCMFPX:
++                    case GGML_TYPE_Q6_0_ROCMFPX:
++                    case GGML_TYPE_Q8_0_ROCMFPX:
+                     case GGML_TYPE_Q4_0:
+                     case GGML_TYPE_Q4_1:
+                     case GGML_TYPE_Q5_0:
+@@ -15719,6 +15803,12 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_Q1_0:
+                     case GGML_TYPE_Q2_0:
+                     case GGML_TYPE_Q2_0_G128:
++                    case GGML_TYPE_Q4_0_ROCMFP4:
++                    case GGML_TYPE_Q4_0_ROCMFP4_FAST:
++                    case GGML_TYPE_Q2_0_ROCMFPX:
++                    case GGML_TYPE_Q3_0_ROCMFPX:
++                    case GGML_TYPE_Q6_0_ROCMFPX:
++                    case GGML_TYPE_Q8_0_ROCMFPX:
+                     case GGML_TYPE_Q4_0:
+                     case GGML_TYPE_Q4_1:
+                     case GGML_TYPE_Q5_0:
+@@ -15769,6 +15859,12 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_Q1_0:
+                     case GGML_TYPE_Q2_0:
+                     case GGML_TYPE_Q2_0_G128:
++                    case GGML_TYPE_Q4_0_ROCMFP4:
++                    case GGML_TYPE_Q4_0_ROCMFP4_FAST:
++                    case GGML_TYPE_Q2_0_ROCMFPX:
++                    case GGML_TYPE_Q3_0_ROCMFPX:
++                    case GGML_TYPE_Q6_0_ROCMFPX:
++                    case GGML_TYPE_Q8_0_ROCMFPX:
+                     case GGML_TYPE_Q4_0:
+                     case GGML_TYPE_Q4_1:
+                     case GGML_TYPE_Q5_0:
+@@ -15798,6 +15894,12 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_Q1_0:
+                     case GGML_TYPE_Q2_0:
+                     case GGML_TYPE_Q2_0_G128:
++                    case GGML_TYPE_Q4_0_ROCMFP4:
++                    case GGML_TYPE_Q4_0_ROCMFP4_FAST:
++                    case GGML_TYPE_Q2_0_ROCMFPX:
++                    case GGML_TYPE_Q3_0_ROCMFPX:
++                    case GGML_TYPE_Q6_0_ROCMFPX:
++                    case GGML_TYPE_Q8_0_ROCMFPX:
+                     case GGML_TYPE_Q4_0:
+                     case GGML_TYPE_Q4_1:
+                     case GGML_TYPE_Q5_0:
+@@ -15817,6 +15919,12 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_Q1_0:
+                     case GGML_TYPE_Q2_0:
+                     case GGML_TYPE_Q2_0_G128:
++                    case GGML_TYPE_Q4_0_ROCMFP4:
++                    case GGML_TYPE_Q4_0_ROCMFP4_FAST:
++                    case GGML_TYPE_Q2_0_ROCMFPX:
++                    case GGML_TYPE_Q3_0_ROCMFPX:
++                    case GGML_TYPE_Q6_0_ROCMFPX:
++                    case GGML_TYPE_Q8_0_ROCMFPX:
+                     case GGML_TYPE_Q4_0:
+                     case GGML_TYPE_Q4_1:
+                     case GGML_TYPE_Q5_0:
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
+index d197d067d3..f550f92937 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
+@@ -905,3 +905,175 @@ vec2 get_dm(uint ib, uint a_offset) {
+     return vec2(1, 0);
+ }
+ #endif
++
++// ---------------------------------------------------------------------------
++// ROCmFP4 / ROCmFPX dequantize entries, adopted VERBATIM from
++// charlie12345/ROCmFPX@rocmfpx/HEAD:ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl.
++// ---------------------------------------------------------------------------
++#if defined(DATA_A_ROCMFP4)
++vec2 dequantize(uint ib, uint iqs, uint a_offset) {
++    const uint vui = uint(data_a[a_offset + ib].qs[iqs]);
++    const float d0 = ue4m3_to_fp32(data_a[a_offset + ib].e[0]);
++    const float d1 = ue4m3_to_fp32(data_a[a_offset + ib].e[1]);
++    return vec2(float(kvalues_rocmfp4[vui & 0xF]) * d0,
++                float(kvalues_rocmfp4[vui >> 4]) * d1);
++}
++vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
++    const uint vui0 = uint(data_a[a_offset + ib].qs[iqs]);
++    const uint vui1 = uint(data_a[a_offset + ib].qs[iqs + 1]);
++    const float d0 = ue4m3_to_fp32(data_a[a_offset + ib].e[0]);
++    const float d1 = ue4m3_to_fp32(data_a[a_offset + ib].e[1]);
++    return vec4(float(kvalues_rocmfp4[vui0 & 0xF]) * d0,
++                float(kvalues_rocmfp4[vui0 >> 4]) * d1,
++                float(kvalues_rocmfp4[vui1 & 0xF]) * d0,
++                float(kvalues_rocmfp4[vui1 >> 4]) * d1);
++}
++#endif
++
++#if defined(DATA_A_ROCMFP4_FAST)
++vec2 dequantize(uint ib, uint iqs, uint a_offset) {
++    const uint vui = uint(data_a[a_offset + ib].qs[iqs]);
++    const float d = ue4m3_to_fp32(data_a[a_offset + ib].e);
++    return vec2(float(kvalues_rocmfp4[vui & 0xF]) * d,
++                float(kvalues_rocmfp4[vui >> 4]) * d);
++}
++vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
++    const uint vui0 = uint(data_a[a_offset + ib].qs[iqs]);
++    const uint vui1 = uint(data_a[a_offset + ib].qs[iqs + 1]);
++    const float d = ue4m3_to_fp32(data_a[a_offset + ib].e);
++    return vec4(float(kvalues_rocmfp4[vui0 & 0xF]) * d,
++                float(kvalues_rocmfp4[vui0 >> 4]) * d,
++                float(kvalues_rocmfp4[vui1 & 0xF]) * d,
++                float(kvalues_rocmfp4[vui1 >> 4]) * d);
++}
++#endif
++
++#if defined(DATA_A_ROCMFPX_FP2)
++int rocmfpx_fp2_decode_code(uint code) {
++    return int(kvalues_rocmfpx_fp2_const[code & 3u]);
++}
++
++float rocmfpx_fp2_dequant(uint ib, uint idx, uint a_offset) {
++    const uint packed = uint(data_a[a_offset + ib].qs[idx >> 2u]);
++    const uint code = (packed >> (2u * (idx & 3u))) & 3u;
++    const float d = ue4m3_to_fp32(data_a[a_offset + ib].e[idx >= 16u ? 1u : 0u]);
++    return float(rocmfpx_fp2_decode_code(code)) * d;
++}
++
++vec2 dequantize(uint ib, uint iqs, uint a_offset) {
++    return vec2(rocmfpx_fp2_dequant(ib, iqs + 0u, a_offset),
++                rocmfpx_fp2_dequant(ib, iqs + 1u, a_offset));
++}
++
++vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
++    return vec4(rocmfpx_fp2_dequant(ib, iqs + 0u, a_offset),
++                rocmfpx_fp2_dequant(ib, iqs + 1u, a_offset),
++                rocmfpx_fp2_dequant(ib, iqs + 2u, a_offset),
++                rocmfpx_fp2_dequant(ib, iqs + 3u, a_offset));
++}
++#endif
++
++#if defined(DATA_A_ROCMFPX_FP3)
++uint rocmfpx_fp3_get_bits(uint ib, uint bit_pos, uint a_offset) {
++    uint code = 0u;
++    [[unroll]] for (uint bit = 0u; bit < 3u; ++bit) {
++        const uint src_bit = bit_pos + bit;
++        code |= ((uint(data_a[a_offset + ib].qs[src_bit >> 3u]) >> (src_bit & 7u)) & 1u) << bit;
++    }
++    return code;
++}
++
++int rocmfpx_fp3_decode_code(uint code) {
++    return int(kvalues_rocmfpx_fp3_const[code & 7u]);
++}
++
++float rocmfpx_fp3_dequant(uint ib, uint idx, uint a_offset) {
++    const float d = ue4m3_to_fp32(data_a[a_offset + ib].e[idx >= 16u ? 1u : 0u]);
++    return float(rocmfpx_fp3_decode_code(rocmfpx_fp3_get_bits(ib, idx * 3u, a_offset))) * d;
++}
++
++int32_t rocmfpx_fp3_pack4_window(uint ib, uint idx, uint a_offset) {
++    const uint bit_pos = idx * 3u;
++    const uint byte_pos = bit_pos >> 3u;
++    const uint sh = bit_pos & 7u;
++    uint bits = uint(data_a[a_offset + ib].qs[byte_pos]) |
++                (uint(data_a[a_offset + ib].qs[byte_pos + 1u]) << 8);
++    if (sh > 4u) {
++        bits |= uint(data_a[a_offset + ib].qs[byte_pos + 2u]) << 16;
++    }
++    bits = (bits >> sh) & 0xFFFu;
++    return pack32(i8vec4(kvalues_rocmfpx_fp3_const[ bits        & 7u],
++                         kvalues_rocmfpx_fp3_const[(bits >> 3) & 7u],
++                         kvalues_rocmfpx_fp3_const[(bits >> 6) & 7u],
++                         kvalues_rocmfpx_fp3_const[(bits >> 9) & 7u]));
++}
++
++vec4 rocmfpx_fp3_dequant4(uint ib, uint idx, uint a_offset) {
++    const vec4 q = vec4(unpack8(rocmfpx_fp3_pack4_window(ib, idx, a_offset)));
++    return q * vec4(ue4m3_to_fp32(data_a[a_offset + ib].e[(idx + 0u) >= 16u ? 1u : 0u]),
++                    ue4m3_to_fp32(data_a[a_offset + ib].e[(idx + 1u) >= 16u ? 1u : 0u]),
++                    ue4m3_to_fp32(data_a[a_offset + ib].e[(idx + 2u) >= 16u ? 1u : 0u]),
++                    ue4m3_to_fp32(data_a[a_offset + ib].e[(idx + 3u) >= 16u ? 1u : 0u]));
++}
++
++vec2 dequantize(uint ib, uint iqs, uint a_offset) {
++    return vec2(rocmfpx_fp3_dequant(ib, iqs + 0u, a_offset),
++                rocmfpx_fp3_dequant(ib, iqs + 1u, a_offset));
++}
++
++vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
++    return rocmfpx_fp3_dequant4(ib, iqs, a_offset);
++}
++#endif
++
++#if defined(DATA_A_ROCMFPX_FP6)
++float rocmfpx_fp6_dequant(uint ib, uint idx, uint a_offset) {
++    const float d = ue4m3_to_fp32(data_a[a_offset + ib].e[idx >= 16u ? 1u : 0u]);
++    return float(int(data_a[a_offset + ib].qs[idx])) * d;
++}
++
++vec2 dequantize(uint ib, uint iqs, uint a_offset) {
++    return vec2(rocmfpx_fp6_dequant(ib, iqs + 0u, a_offset),
++                rocmfpx_fp6_dequant(ib, iqs + 1u, a_offset));
++}
++
++vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
++    return vec4(rocmfpx_fp6_dequant(ib, iqs + 0u, a_offset),
++                rocmfpx_fp6_dequant(ib, iqs + 1u, a_offset),
++                rocmfpx_fp6_dequant(ib, iqs + 2u, a_offset),
++                rocmfpx_fp6_dequant(ib, iqs + 3u, a_offset));
++}
++#endif
++
++#if defined(DATA_A_ROCMFPX_FP8)
++vec2 dequantize(uint ib, uint iqs, uint a_offset) {
++    const float d = ue4m3_to_fp32(data_a[a_offset + ib].e);
++    return vec2(float(int(data_a[a_offset + ib].qs[iqs + 0u])) * d,
++                float(int(data_a[a_offset + ib].qs[iqs + 1u])) * d);
++}
++vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
++    const float d = ue4m3_to_fp32(data_a[a_offset + ib].e);
++    return vec4(float(int(data_a[a_offset + ib].qs[iqs + 0u])) * d,
++                float(int(data_a[a_offset + ib].qs[iqs + 1u])) * d,
++                float(int(data_a[a_offset + ib].qs[iqs + 2u])) * d,
++                float(int(data_a[a_offset + ib].qs[iqs + 3u])) * d);
++}
++#endif
++
++#if defined(DATA_A_ROCMFP4)
++vec2 get_dm(uint ib, uint a_offset) {
++    return vec2(1, 0);
++}
++#endif
++
++#if defined(DATA_A_ROCMFP4_FAST)
++vec2 get_dm(uint ib, uint a_offset) {
++    return vec2(1, 0);
++}
++#endif
++
++#if defined(DATA_A_ROCMFPX_FAMILY)
++vec2 get_dm(uint ib, uint a_offset) {
++    return vec2(1, 0);
++}
++#endif
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl
+index 9befee6a11..41d2195a66 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl
+@@ -1537,3 +1537,194 @@ float16_t dequantFuncTURBO3_0(const in decodeBufTURBO3_0 bl, const in uint block
+ #elif defined(DATA_A_F32)
+ #define dequantFuncA dequantFuncF32
+ #endif
++
++// ROCmFP4 / ROCmFPX coopmat2 dequant functions, adopted VERBATIM from
++// charlie12345/ROCmFPX@rocmfpx/HEAD:ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs_cm2.glsl.
++#if defined(DATA_A_ROCMFP4)
++layout(buffer_reference, std430, buffer_reference_align = 1) buffer decodeBufROCMFP4 {
++   block_rocmfp4 block;
++};
++
++float16_t dequantFuncROCMFP4(const in decodeBufROCMFP4 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
++{
++    const uint idx = coordInBlock[1];
++    const uint iqs = idx & 0xF;
++    const uint shift = (idx & 0x10) >> 2;
++    const uint sub = idx >> 4;
++    const float d = ue4m3_to_fp32(bl.block.e[sub]);
++    uint32_t qs = bl.block.qs[iqs];
++    qs >>= shift;
++    qs &= 0xF;
++    float16_t ret = float16_t(float(kvalues_rocmfp4[qs]) * d);
++    return ret;
++}
++#endif
++
++#if defined(DATA_A_ROCMFP4_FAST)
++layout(buffer_reference, std430, buffer_reference_align = 1) buffer decodeBufROCMFP4Fast {
++   block_rocmfp4_fast block;
++};
++
++float16_t dequantFuncROCMFP4Fast(const in decodeBufROCMFP4Fast bl, const in uint blockCoords[2], const in uint coordInBlock[2])
++{
++    const uint idx = coordInBlock[1];
++    const uint iqs = idx & 0xF;
++    const uint shift = (idx & 0x10) >> 2;
++    const float d = ue4m3_to_fp32(bl.block.e);
++    uint32_t qs = bl.block.qs[iqs];
++    qs >>= shift;
++    qs &= 0xF;
++    float16_t ret = float16_t(float(kvalues_rocmfp4[qs]) * d);
++    return ret;
++}
++#endif
++
++#if defined(DATA_A_ROCMFPX_FP2)
++layout(buffer_reference, std430, buffer_reference_align = 1) buffer decodeBufROCMFPXFP2 {
++   block_rocmfpx_fp2 block;
++};
++
++int rocmfpx_cm2_fp2_decode(uint code)
++{
++    return int(kvalues_rocmfpx_fp2_const[code & 3u]);
++}
++
++float16_t dequantFuncROCMFPXFP2(const in decodeBufROCMFPXFP2 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
++{
++    const uint idx = coordInBlock[1];
++    const uint packed = uint(bl.block.qs[idx >> 2u]);
++    const uint code = (packed >> (2u * (idx & 3u))) & 3u;
++    const float d = ue4m3_to_fp32(bl.block.e[idx >= 16u ? 1u : 0u]);
++    return float16_t(float(rocmfpx_cm2_fp2_decode(code)) * d);
++}
++
++f16vec4 dequantFuncROCMFPXFP2_v(const in decodeBufROCMFPXFP2 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
++{
++    const uint idx = coordInBlock[1];
++    const uint packed = uint(bl.block.qs[idx >> 2u]);
++    const vec4 q = vec4(rocmfpx_cm2_fp2_decode( packed        & 3u),
++                        rocmfpx_cm2_fp2_decode((packed >> 2u) & 3u),
++                        rocmfpx_cm2_fp2_decode((packed >> 4u) & 3u),
++                        rocmfpx_cm2_fp2_decode((packed >> 6u) & 3u));
++    return f16vec4(q * vec4(ue4m3_to_fp32(bl.block.e[(idx + 0u) >= 16u ? 1u : 0u]),
++                            ue4m3_to_fp32(bl.block.e[(idx + 1u) >= 16u ? 1u : 0u]),
++                            ue4m3_to_fp32(bl.block.e[(idx + 2u) >= 16u ? 1u : 0u]),
++                            ue4m3_to_fp32(bl.block.e[(idx + 3u) >= 16u ? 1u : 0u])));
++}
++#endif
++
++#if defined(DATA_A_ROCMFPX_FP3)
++layout(buffer_reference, std430, buffer_reference_align = 1) buffer decodeBufROCMFPXFP3 {
++   block_rocmfpx_fp3 block;
++};
++
++uint rocmfpx_cm2_fp3_get_bits(const in decodeBufROCMFPXFP3 bl, uint bit_pos)
++{
++    uint code = 0u;
++    [[unroll]] for (uint bit = 0u; bit < 3u; ++bit) {
++        const uint src_bit = bit_pos + bit;
++        code |= ((uint(bl.block.qs[src_bit >> 3u]) >> (src_bit & 7u)) & 1u) << bit;
++    }
++    return code;
++}
++
++int rocmfpx_cm2_fp3_decode(uint code)
++{
++    return int(kvalues_rocmfpx_fp3_const[code & 7u]);
++}
++
++float16_t dequantFuncROCMFPXFP3(const in decodeBufROCMFPXFP3 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
++{
++    const uint idx = coordInBlock[1];
++    const float d = ue4m3_to_fp32(bl.block.e[idx >= 16u ? 1u : 0u]);
++    return float16_t(float(rocmfpx_cm2_fp3_decode(rocmfpx_cm2_fp3_get_bits(bl, idx * 3u))) * d);
++}
++
++int32_t rocmfpx_cm2_fp3_pack4_window(const in decodeBufROCMFPXFP3 bl, uint idx)
++{
++    const uint bit_pos = idx * 3u;
++    const uint byte_pos = bit_pos >> 3u;
++    const uint sh = bit_pos & 7u;
++    uint bits = uint(bl.block.qs[byte_pos]) |
++                (uint(bl.block.qs[byte_pos + 1u]) << 8);
++    if (sh > 4u) {
++        bits |= uint(bl.block.qs[byte_pos + 2u]) << 16;
++    }
++    bits = (bits >> sh) & 0xFFFu;
++    return pack32(i8vec4(kvalues_rocmfpx_fp3_const[ bits        & 7u],
++                         kvalues_rocmfpx_fp3_const[(bits >> 3) & 7u],
++                         kvalues_rocmfpx_fp3_const[(bits >> 6) & 7u],
++                         kvalues_rocmfpx_fp3_const[(bits >> 9) & 7u]));
++}
++
++f16vec4 dequantFuncROCMFPXFP3_v(const in decodeBufROCMFPXFP3 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
++{
++    const uint idx = coordInBlock[1];
++    const vec4 q = vec4(unpack8(rocmfpx_cm2_fp3_pack4_window(bl, idx)));
++    return f16vec4(q * vec4(ue4m3_to_fp32(bl.block.e[(idx + 0u) >= 16u ? 1u : 0u]),
++                            ue4m3_to_fp32(bl.block.e[(idx + 1u) >= 16u ? 1u : 0u]),
++                            ue4m3_to_fp32(bl.block.e[(idx + 2u) >= 16u ? 1u : 0u]),
++                            ue4m3_to_fp32(bl.block.e[(idx + 3u) >= 16u ? 1u : 0u])));
++}
++#endif
++
++#if defined(DATA_A_ROCMFPX_FP6)
++layout(buffer_reference, std430, buffer_reference_align = 1) buffer decodeBufROCMFPXFP6 {
++   block_rocmfpx_fp6 block;
++};
++
++float16_t dequantFuncROCMFPXFP6(const in decodeBufROCMFPXFP6 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
++{
++    const uint idx = coordInBlock[1];
++    const float d = ue4m3_to_fp32(bl.block.e[idx >= 16u ? 1u : 0u]);
++    return float16_t(float(int(bl.block.qs[idx])) * d);
++}
++
++f16vec4 dequantFuncROCMFPXFP6_v(const in decodeBufROCMFPXFP6 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
++{
++    const uint idx = coordInBlock[1];
++    return f16vec4(float16_t(float(int(bl.block.qs[idx + 0u])) * ue4m3_to_fp32(bl.block.e[(idx + 0u) >= 16u ? 1u : 0u])),
++                   float16_t(float(int(bl.block.qs[idx + 1u])) * ue4m3_to_fp32(bl.block.e[(idx + 1u) >= 16u ? 1u : 0u])),
++                   float16_t(float(int(bl.block.qs[idx + 2u])) * ue4m3_to_fp32(bl.block.e[(idx + 2u) >= 16u ? 1u : 0u])),
++                   float16_t(float(int(bl.block.qs[idx + 3u])) * ue4m3_to_fp32(bl.block.e[(idx + 3u) >= 16u ? 1u : 0u])));
++}
++#endif
++
++#if defined(DATA_A_ROCMFPX_FP8)
++layout(buffer_reference, std430, buffer_reference_align = 1) buffer decodeBufROCMFPXFP8 {
++   block_rocmfpx_fp8 block;
++};
++
++float16_t dequantFuncROCMFPXFP8(const in decodeBufROCMFPXFP8 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
++{
++    const uint idx = coordInBlock[1];
++    const float d = ue4m3_to_fp32(bl.block.e);
++    return float16_t(float(int(bl.block.qs[idx])) * d);
++}
++
++f16vec4 dequantFuncROCMFPXFP8_v(const in decodeBufROCMFPXFP8 bl, const in uint blockCoords[2], const in uint coordInBlock[2])
++{
++    const uint idx = coordInBlock[1];
++    const float d = ue4m3_to_fp32(bl.block.e);
++    return f16vec4(vec4(float(int(bl.block.qs[idx + 0u])),
++                        float(int(bl.block.qs[idx + 1u])),
++                        float(int(bl.block.qs[idx + 2u])),
++                        float(int(bl.block.qs[idx + 3u]))) * d);
++}
++#endif
++
++// dequantFuncA bindings for the ROCmFP family. The bodies are above; this chain is what
++// mul_mm_cm2.comp actually calls, and it lives apart from them in upstream's layout.
++#if defined(DATA_A_ROCMFP4)
++#define dequantFuncA dequantFuncROCMFP4
++#elif defined(DATA_A_ROCMFP4_FAST)
++#define dequantFuncA dequantFuncROCMFP4Fast
++#elif defined(DATA_A_ROCMFPX_FP2)
++#define dequantFuncA dequantFuncROCMFPXFP2
++#elif defined(DATA_A_ROCMFPX_FP3)
++#define dequantFuncA dequantFuncROCMFPXFP3
++#elif defined(DATA_A_ROCMFPX_FP6)
++#define dequantFuncA dequantFuncROCMFPXFP6
++#elif defined(DATA_A_ROCMFPX_FP8)
++#define dequantFuncA dequantFuncROCMFPXFP8
++#endif
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfp4.comp b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfp4.comp
+new file mode 100644
+index 0000000000..46cc1bd7dc
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfp4.comp
+@@ -0,0 +1,33 @@
++#version 450
++
++#include "dequant_head.glsl"
++
++layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
++
++layout (binding = 0) readonly buffer A {block_rocmfp4 data_a[];};
++layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
++
++void main() {
++    const uint i = gl_WorkGroupID.x * 4 + gl_LocalInvocationID.x / 64;
++
++    init_iq_shmem(gl_WorkGroupSize);
++
++    const uint tid = gl_LocalInvocationID.x % 64;
++    const uint il  = tid/32;
++    const uint ir  = tid%32;
++    const uint ib = 32*i + ir;
++    if (ib >= p.nel / 32) {
++        return;
++    }
++
++    const uint q_idx = 8*il;
++    const uint b_idx = 1024*i + 32*ir + q_idx;
++
++    const float d0 = ue4m3_to_fp32(data_a[ib].e[0]);
++    const float d1 = ue4m3_to_fp32(data_a[ib].e[1]);
++
++    [[unroll]] for (uint l = 0; l < 8; ++l) {
++        data_b[b_idx + l +  0] = D_TYPE(d0 * float(kvalues_rocmfp4[data_a[ib].qs[q_idx + l] & 0xF]));
++        data_b[b_idx + l + 16] = D_TYPE(d1 * float(kvalues_rocmfp4[data_a[ib].qs[q_idx + l] >>  4]));
++    }
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfp4_fast.comp b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfp4_fast.comp
+new file mode 100644
+index 0000000000..360ff679f3
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfp4_fast.comp
+@@ -0,0 +1,31 @@
++#version 450
++
++#include "dequant_head.glsl"
++
++layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
++
++layout (binding = 0) readonly buffer A {block_rocmfp4_fast data_a[];};
++layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
++
++void main() {
++    const uint i = gl_WorkGroupID.x * 4 + gl_LocalInvocationID.x / 64;
++
++    init_iq_shmem(gl_WorkGroupSize);
++
++    const uint tid = gl_LocalInvocationID.x % 64;
++    const uint il  = tid/32;
++    const uint ir  = tid%32;
++    const uint ib = 32*i + ir;
++    if (ib >= p.nel / 32) {
++        return;
++    }
++
++    const uint q_idx = 8*il;
++    const uint b_idx = 1024*i + 32*ir + q_idx;
++    const float d = ue4m3_to_fp32(data_a[ib].e);
++
++    [[unroll]] for (uint l = 0; l < 8; ++l) {
++        data_b[b_idx + l +  0] = D_TYPE(d * float(kvalues_rocmfp4[data_a[ib].qs[q_idx + l] & 0xF]));
++        data_b[b_idx + l + 16] = D_TYPE(d * float(kvalues_rocmfp4[data_a[ib].qs[q_idx + l] >>  4]));
++    }
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp2.comp b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp2.comp
+new file mode 100644
+index 0000000000..a916555f29
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp2.comp
+@@ -0,0 +1,37 @@
++#version 450
++
++#include "dequant_head.glsl"
++
++layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
++
++layout (binding = 0) readonly buffer A {block_rocmfpx_fp2 data_a[];};
++layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
++
++int rocmfpx_fp2_decode_code(uint code) {
++    return int(kvalues_rocmfpx_fp2_const[code & 3u]);
++}
++
++void main() {
++    const uint i = gl_WorkGroupID.x * 4 + gl_LocalInvocationID.x / 64;
++
++    init_iq_shmem(gl_WorkGroupSize);
++
++    const uint tid = gl_LocalInvocationID.x % 64;
++    const uint il  = tid/32;
++    const uint ir  = tid%32;
++    const uint ib = 32*i + ir;
++    if (ib >= p.nel / 32) {
++        return;
++    }
++
++    const uint b_idx = 1024*i + 32*ir + 16*il;
++    const uint q_idx = 16*il;
++    const float d = ue4m3_to_fp32(data_a[ib].e[il]);
++
++    [[unroll]] for (uint l = 0; l < 16; ++l) {
++        const uint idx = q_idx + l;
++        const uint packed = uint(data_a[ib].qs[idx >> 2u]);
++        const uint code = (packed >> (2u * (idx & 3u))) & 3u;
++        data_b[b_idx + l] = D_TYPE(d * float(rocmfpx_fp2_decode_code(code)));
++    }
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp3.comp b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp3.comp
+new file mode 100644
+index 0000000000..e3aab966d7
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp3.comp
+@@ -0,0 +1,46 @@
++#version 450
++
++#include "dequant_head.glsl"
++
++layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
++
++layout (binding = 0) readonly buffer A {block_rocmfpx_fp3 data_a[];};
++layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
++
++uint rocmfpx_fp3_get_bits(uint ib, uint bit_pos) {
++    uint code = 0u;
++    [[unroll]] for (uint bit = 0u; bit < 3u; ++bit) {
++        const uint src_bit = bit_pos + bit;
++        code |= ((uint(data_a[ib].qs[src_bit >> 3u]) >> (src_bit & 7u)) & 1u) << bit;
++    }
++    return code;
++}
++
++int rocmfpx_fp3_decode_code(uint code) {
++    const uint mag_code = code & 3u;
++    const int mag = mag_code == 3u ? 4 : int(mag_code);
++    return (code & 4u) != 0u ? -mag : mag;
++}
++
++void main() {
++    const uint i = gl_WorkGroupID.x * 4 + gl_LocalInvocationID.x / 64;
++
++    init_iq_shmem(gl_WorkGroupSize);
++
++    const uint tid = gl_LocalInvocationID.x % 64;
++    const uint il  = tid/32;
++    const uint ir  = tid%32;
++    const uint ib = 32*i + ir;
++    if (ib >= p.nel / 32) {
++        return;
++    }
++
++    const uint b_idx = 1024*i + 32*ir + 16*il;
++    const uint q_idx = 16*il;
++    const float d = ue4m3_to_fp32(data_a[ib].e[il]);
++
++    [[unroll]] for (uint l = 0; l < 16; ++l) {
++        const uint idx = q_idx + l;
++        data_b[b_idx + l] = D_TYPE(d * float(rocmfpx_fp3_decode_code(rocmfpx_fp3_get_bits(ib, idx * 3u))));
++    }
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp6.comp b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp6.comp
+new file mode 100644
+index 0000000000..dc40a09853
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp6.comp
+@@ -0,0 +1,33 @@
++#version 450
++
++#include "dequant_head.glsl"
++
++layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
++
++layout (binding = 0) readonly buffer A {block_rocmfpx_fp6 data_a[];};
++layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
++
++void main() {
++    const uint i = gl_WorkGroupID.x * 4 + gl_LocalInvocationID.x / 64;
++
++#ifdef NEEDS_INIT_IQ_SHMEM
++    init_iq_shmem(gl_WorkGroupSize);
++#endif
++
++    const uint tid = gl_LocalInvocationID.x % 64;
++    const uint il  = tid/32;
++    const uint ir  = tid%32;
++    const uint ib = 32*i + ir;
++    if (ib >= p.nel / 32) {
++        return;
++    }
++
++    const uint b_idx = 1024*i + 32*ir + 16*il;
++    const uint q_idx = 16*il;
++    const float d = ue4m3_to_fp32(data_a[ib].e[il]);
++
++    [[unroll]] for (uint l = 0; l < 16; ++l) {
++        const uint idx = q_idx + l;
++        data_b[b_idx + l] = D_TYPE(d * float(int(data_a[ib].qs[idx])));
++    }
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp8.comp b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp8.comp
+new file mode 100644
+index 0000000000..7052de5424
+--- /dev/null
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp8.comp
+@@ -0,0 +1,31 @@
++#version 450
++
++#include "dequant_head.glsl"
++
++layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
++
++layout (binding = 0) readonly buffer A {block_rocmfpx_fp8 data_a[];};
++layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
++
++void main() {
++    const uint i = gl_WorkGroupID.x * 4 + gl_LocalInvocationID.x / 64;
++
++    init_iq_shmem(gl_WorkGroupSize);
++
++    const uint tid = gl_LocalInvocationID.x % 64;
++    const uint il  = tid/32;
++    const uint ir  = tid%32;
++    const uint ib = 32*i + ir;
++    if (ib >= p.nel / 32) {
++        return;
++    }
++
++    const uint b_idx = 1024*i + 32*ir + 16*il;
++    const uint q_idx = 16*il;
++    const float d = ue4m3_to_fp32(data_a[ib].e);
++
++    [[unroll]] for (uint l = 0; l < 16; l += 2) {
++        data_b[b_idx + l    ] = D_TYPE(d * float(data_a[ib].qs[q_idx + l    ]));
++        data_b[b_idx + l + 1] = D_TYPE(d * float(data_a[ib].qs[q_idx + l + 1]));
++    }
++}
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
+index 23adfc787a..6d199dd883 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
+@@ -1849,6 +1849,113 @@ struct block_mxfp4
+     uint8_t qs[QUANT_K_MXFP4/2];
+ };
+ 
++
++// ---------------------------------------------------------------------------
++#ifndef ARIFI_ROCMFP_TYPES_INCLUDED
++#define ARIFI_ROCMFP_TYPES_INCLUDED
++// ROCmFP4 / ROCmFPX weight formats. Adopted VERBATIM from charlie12345/ROCmFPX
++// so its GGUFs decode byte-for-byte. ggml type ids 100-104 and 107 per
++// docs/TYPE-ID-ALLOCATION.md.
++// ---------------------------------------------------------------------------
++#define QUANT_K_ROCMFP4 32
++#define QUANT_R_ROCMFP4 2
++
++struct block_rocmfp4
++{
++    uint8_t qs[QUANT_K_ROCMFP4/2];
++    uint8_t e[2];
++};
++
++struct block_rocmfp4_fast
++{
++    uint8_t qs[QUANT_K_ROCMFP4/2];
++    uint8_t e;
++};
++
++#if defined(DATA_A_ROCMFP4)
++#define QUANT_K QUANT_K_ROCMFP4
++#define QUANT_R QUANT_R_ROCMFP4
++#define QUANT_AUXF 1
++#define A_TYPE block_rocmfp4
++#endif
++
++#if defined(DATA_A_ROCMFP4_FAST)
++#define QUANT_K QUANT_K_ROCMFP4
++#define QUANT_R QUANT_R_ROCMFP4
++#define QUANT_AUXF 1
++#define A_TYPE block_rocmfp4_fast
++#endif
++
++#define QUANT_K_ROCMFPX_FP2 32
++#define QUANT_R_ROCMFPX_FP2 1
++#define QUANT_K_ROCMFPX_FP8 32
++#define QUANT_R_ROCMFPX_FP8 1
++
++struct block_rocmfpx_fp2
++{
++    uint8_t qs[8];
++    uint8_t e[2];
++};
++
++struct block_rocmfpx_fp3
++{
++    uint8_t qs[12];
++    uint8_t e[2];
++};
++
++struct block_rocmfpx_fp6
++{
++    int8_t qs[32];
++    uint8_t e[2];
++};
++
++struct block_rocmfpx_fp6_packed16
++{
++    int16_t qs[16];
++    uint16_t e;
++};
++
++struct block_rocmfpx_fp8
++{
++    int8_t qs[QUANT_K_ROCMFPX_FP8];
++    uint8_t e;
++};
++
++#if defined(DATA_A_ROCMFPX_FP2)
++#define QUANT_K QUANT_K_ROCMFPX_FP2
++#define QUANT_R QUANT_R_ROCMFPX_FP2
++#define QUANT_AUXF 1
++#define A_TYPE block_rocmfpx_fp2
++#endif
++
++#if defined(DATA_A_ROCMFPX_FP3)
++#define QUANT_K QUANT_K_ROCMFPX_FP8
++#define QUANT_R QUANT_R_ROCMFPX_FP8
++#define QUANT_AUXF 1
++#define A_TYPE block_rocmfpx_fp3
++#endif
++
++#if defined(DATA_A_ROCMFPX_FP6)
++#define QUANT_K QUANT_K_ROCMFPX_FP8
++#define QUANT_R QUANT_R_ROCMFPX_FP8
++#define QUANT_AUXF 1
++#define A_TYPE block_rocmfpx_fp6
++#define A_TYPE_PACKED16 block_rocmfpx_fp6_packed16
++#endif
++
++#if defined(DATA_A_ROCMFPX_FP8)
++#define QUANT_K QUANT_K_ROCMFPX_FP8
++#define QUANT_R QUANT_R_ROCMFPX_FP8
++#define QUANT_AUXF 1
++#define A_TYPE block_rocmfpx_fp8
++#endif
++
++#if defined(DATA_A_ROCMFPX_FP2) || defined(DATA_A_ROCMFPX_FP3) || defined(DATA_A_ROCMFPX_FP6) || defined(DATA_A_ROCMFPX_FP8)
++#define DATA_A_ROCMFPX_FAMILY
++#endif
++
++#endif // ARIFI_ROCMFP_TYPES_INCLUDED
++
+ #if defined(DATA_A_MXFP4)
+ #define QUANT_K QUANT_K_MXFP4
+ #define QUANT_R QUANT_R_MXFP4
+@@ -2121,3 +2228,113 @@ float ue4m3_to_fp32(uint8_t x) {
+ #endif
+ 
+ #endif // !defined(GGML_TYPES_COMP)
++
++#ifndef ARIFI_ROCMFP_TABLES_INCLUDED
++#define ARIFI_ROCMFP_TABLES_INCLUDED
++#if defined(DATA_A_ROCMFP4) || defined(DATA_A_ROCMFP4_FAST)
++const int8_t kvalues_rocmfp4_const[16] = {
++    int8_t(0), int8_t(1), int8_t(2), int8_t(3), int8_t(4), int8_t(6), int8_t(8), int8_t(10),
++    int8_t(0), int8_t(-1), int8_t(-2), int8_t(-3), int8_t(-4), int8_t(-6), int8_t(-8), int8_t(-10),
++};
++
++shared int8_t kvalues_rocmfp4[16];
++shared float rocmfp4_ue4m3_fp32_lut[128];
++
++// ROCmFPX's UE4M3 is NOT NVFP4's: bias 119 and subnormal step 1/1024, against NVFP4's 120 and
++// 1/512. That is a factor of two on every scale, which is why this table is separate.
++float rocmfp4_ue4m3_to_fp32_build(uint u) {
++    if (u == 0u || u == 127u) {
++        return 0.0;
++    }
++    const uint exp = (u >> 3) & 15u;
++    const uint man = u & 7u;
++    if (exp == 0u) {
++        return float(man) * (1.0 / 1024.0);
++    }
++    const uint bits = (exp + 119u) << 23 | (man << 20);
++    return uintBitsToFloat(bits);
++}
++#endif
++
++#if defined(DATA_A_ROCMFPX_FAMILY)
++shared float rocmfpx_ue4m3_fp32_lut[128];
++
++float rocmfpx_ue4m3_to_fp32_build(uint u) {
++    if (u == 0u || u == 127u) {
++        return 0.0;
++    }
++    const uint exp = (u >> 3) & 15u;
++    const uint man = u & 7u;
++    if (exp == 0u) {
++        return float(man) * (1.0 / 1024.0);
++    }
++    const uint bits = (exp + 119u) << 23 | (man << 20);
++    return uintBitsToFloat(bits);
++}
++
++const int8_t kvalues_rocmfpx_fp2_const[4] = {
++    int8_t(-4), int8_t(-1), int8_t(1), int8_t(4)
++};
++
++const int8_t kvalues_rocmfpx_fp3_const[8] = {
++    int8_t(0), int8_t(1), int8_t(2), int8_t(4),
++    int8_t(0), int8_t(-1), int8_t(-2), int8_t(-4)
++};
++
++const int8_t kvalues_rocmfpx_fp6_const[64] = {
++    int8_t(0), int8_t(1), int8_t(2), int8_t(3), int8_t(4), int8_t(5), int8_t(6), int8_t(7),
++    int8_t(8), int8_t(9), int8_t(10), int8_t(11), int8_t(12), int8_t(13), int8_t(14), int8_t(15),
++    int8_t(16), int8_t(17), int8_t(18), int8_t(19), int8_t(20), int8_t(21), int8_t(22), int8_t(23),
++    int8_t(24), int8_t(25), int8_t(26), int8_t(27), int8_t(28), int8_t(29), int8_t(30), int8_t(31),
++    int8_t(-32), int8_t(-1), int8_t(-2), int8_t(-3), int8_t(-4), int8_t(-5), int8_t(-6), int8_t(-7),
++    int8_t(-8), int8_t(-9), int8_t(-10), int8_t(-11), int8_t(-12), int8_t(-13), int8_t(-14), int8_t(-15),
++    int8_t(-16), int8_t(-17), int8_t(-18), int8_t(-19), int8_t(-20), int8_t(-21), int8_t(-22), int8_t(-23),
++    int8_t(-24), int8_t(-25), int8_t(-26), int8_t(-27), int8_t(-28), int8_t(-29), int8_t(-30), int8_t(-31)
++};
++
++uint rocmfpx_fp6_code_at(uint q0, uint q1, uint q2, uint q3, uint q4, uint q5, uint bit_pos) {
++    const uint reg_idx = bit_pos >> 5;
++    const uint shift = bit_pos & 31u;
++    const uint low  = reg_idx == 0u ? q0 : reg_idx == 1u ? q1 : reg_idx == 2u ? q2 :
++                      reg_idx == 3u ? q3 : reg_idx == 4u ? q4 : q5;
++    const uint high = reg_idx == 0u ? q1 : reg_idx == 1u ? q2 : reg_idx == 2u ? q3 :
++                      reg_idx == 3u ? q4 : reg_idx == 4u ? q5 : 0u;
++    uint bits = low >> shift;
++    if (shift > 26u) {
++        bits |= high << (32u - shift);
++    }
++    return bits & 0x3Fu;
++}
++#endif
++
++#if defined(DATA_A_ROCMFP4) || defined(DATA_A_ROCMFP4_FAST)
++float ue4m3_to_fp32(uint8_t x) {
++    return rocmfp4_ue4m3_fp32_lut[min(uint(x), 127u)];
++}
++#elif defined(DATA_A_ROCMFPX_FAMILY)
++float ue4m3_to_fp32(uint8_t x) {
++    return rocmfpx_ue4m3_fp32_lut[min(uint(x), 127u)];
++}
++#endif
++
++#if defined(DATA_A_ROCMFP4) || defined(DATA_A_ROCMFP4_FAST) || defined(DATA_A_ROCMFPX_FAMILY)
++#define NEEDS_INIT_IQ_SHMEM
++void init_iq_shmem(uvec3 wgsize)
++{
++#if defined(DATA_A_ROCMFP4) || defined(DATA_A_ROCMFP4_FAST)
++    for (uint i = gl_LocalInvocationIndex.x; i < kvalues_rocmfp4.length(); i += wgsize.x) {
++        kvalues_rocmfp4[i] = kvalues_rocmfp4_const[i];
++    }
++    for (uint i = gl_LocalInvocationIndex.x; i < rocmfp4_ue4m3_fp32_lut.length(); i += wgsize.x) {
++        rocmfp4_ue4m3_fp32_lut[i] = rocmfp4_ue4m3_to_fp32_build(i);
++    }
++#endif
++#if defined(DATA_A_ROCMFPX_FAMILY)
++    for (uint i = gl_LocalInvocationIndex.x; i < rocmfpx_ue4m3_fp32_lut.length(); i += wgsize.x) {
++        rocmfpx_ue4m3_fp32_lut[i] = rocmfpx_ue4m3_to_fp32_build(i);
++    }
++#endif
++    barrier();
++}
++#endif
++#endif // ARIFI_ROCMFP_TABLES_INCLUDED

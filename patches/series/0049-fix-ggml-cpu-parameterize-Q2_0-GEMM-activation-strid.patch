@@ -1,4 +1,4 @@
-From 56ac77b01303c1475dcc39a0e37126169e837542 Mon Sep 17 00:00:00 2001
+From 5e0e1a10127be491db3a17d539265aff79450ffb Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 24 Jul 2026 17:40:08 -0400
 Subject: [PATCH] fix(ggml-cpu): parameterize Q2_0 GEMM activation stride by
@@ -45,7 +45,7 @@ Origin: ArifiLabs/vnni-repack
  2 files changed, 4 insertions(+), 4 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/arch/x86/repack.cpp b/ggml/src/ggml-cpu/arch/x86/repack.cpp
-index 480f1b1fe..aa1b119d9 100644
+index 480f1b1feb..aa1b119d96 100644
 --- a/ggml/src/ggml-cpu/arch/x86/repack.cpp
 +++ b/ggml/src/ggml-cpu/arch/x86/repack.cpp
 @@ -6661,7 +6661,7 @@ void ggml_gemm_q2_0_4x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
@@ -67,7 +67,7 @@ index 480f1b1fe..aa1b119d9 100644
                          __m512i w01, w23;
                          __q2_0_expand_x4((const uint8_t *) b_ptr[l].qs + 32 * k, &w01, &w23);
 diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
-index c314da0e0..0f3f33d78 100644
+index 4e06346468..e4720c0f62 100644
 --- a/ggml/src/ggml-cpu/repack.cpp
 +++ b/ggml/src/ggml-cpu/repack.cpp
 @@ -2764,7 +2764,7 @@ void ggml_gemm_q2_0_4x8_q8_0_generic(int                        n,

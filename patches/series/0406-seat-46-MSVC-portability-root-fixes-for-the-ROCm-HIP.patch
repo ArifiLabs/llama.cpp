@@ -1,0 +1,136 @@
+From dc2fd361d665de70326e2f4641b6ad1b49a2db6f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 28 Aug 2026 23:57:20 -0400
+Subject: [PATCH] seat-46: MSVC portability root-fixes for the ROCm/HIP build
+ (6 latent bugs: -fPIC on Windows, _MSC_VER fp16 macro parens, math.h/unistd.h
+ guards, ssize_t->streamsize, dllimport on static lib) - build-rocm GREEN
+ gfx1103, Vulkan build confirmed no-op
+
+---
+ powerinfer/CMakeLists.txt                        | 7 +++++++
+ powerinfer/cmake/Arch.cmake                      | 7 ++++++-
+ powerinfer/include/powerinfer-api.h              | 7 ++++++-
+ powerinfer/libaz/az/core/cpu_affinity.cpp        | 4 +++-
+ powerinfer/libaz/az/core/fp16.h                  | 6 +++++-
+ powerinfer/moe_sparse_pipeline/expert_bundle.cpp | 4 ++--
+ 6 files changed, 29 insertions(+), 6 deletions(-)
+
+diff --git a/powerinfer/CMakeLists.txt b/powerinfer/CMakeLists.txt
+index 870470c765..5959c3a0c7 100644
+--- a/powerinfer/CMakeLists.txt
++++ b/powerinfer/CMakeLists.txt
+@@ -26,6 +26,13 @@ endif()
+ 
+ add_compile_definitions(POWERINFER_BUILD)
+ 
++# POWERINFER_API only means dllexport/dllimport when powerinfer really is a DLL.
++# MinGW tolerates dllimport on a static symbol; lld-link/MSVC does not, so the
++# ROCm/clang static build needs the attribute gone on both sides of the header.
++if (BUILD_SHARED_LIBS AND POWERINFER_BUILD_SHARED)
++    add_compile_definitions(POWERINFER_SHARED)
++endif()
++
+ # lane-110 Windows port: mingw/GCC emits 32B-aligned vmovdqa ymm spills at frame slots the 16B Windows ABI doesn't 32-align → SIGSEGV in every
+ # hand-AVX TU (verified gdb-bt-4/6). Cap vector width to 128b so no aligned ymm spill is emitted.
+ add_compile_options(-mprefer-vector-width=128)
+diff --git a/powerinfer/cmake/Arch.cmake b/powerinfer/cmake/Arch.cmake
+index 2476515014..503d86bb7d 100644
+--- a/powerinfer/cmake/Arch.cmake
++++ b/powerinfer/cmake/Arch.cmake
+@@ -154,6 +154,11 @@ endif()
+ add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:${ARCH_FLAGS}>")
+ add_compile_options("$<$<COMPILE_LANGUAGE:C>:${ARCH_FLAGS}>")
+ 
+-list(APPEND OTHER_FLAGS -fPIC)
++# -fPIC is a no-op on Windows (all PE code is position-independent) and ROCm's
++# clang rejects it outright for the x86_64-pc-windows-msvc target. MinGW only
++# warns, which is why the Vulkan build never hit this.
++if (NOT WIN32)
++    list(APPEND OTHER_FLAGS -fPIC)
++endif()
+ add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:${OTHER_FLAGS}>")
+ add_compile_options("$<$<COMPILE_LANGUAGE:C>:${OTHER_FLAGS}>")
+\ No newline at end of file
+diff --git a/powerinfer/include/powerinfer-api.h b/powerinfer/include/powerinfer-api.h
+index bf871ef6b3..7bd0204111 100644
+--- a/powerinfer/include/powerinfer-api.h
++++ b/powerinfer/include/powerinfer-api.h
+@@ -1,11 +1,16 @@
+ #pragma once
+ 
+-#    if defined(_WIN32) && !defined(__MINGW32__)
++#    if defined(_WIN32) && !defined(__MINGW32__) && defined(POWERINFER_SHARED)
+ #        ifdef POWERINFER_BUILD
+ #            define POWERINFER_API __declspec(dllexport)
+ #        else
+ #            define POWERINFER_API __declspec(dllimport)
+ #        endif
++#    elif defined(_WIN32)
++// Static (or MinGW) Windows build: no import/export attribute at all. ELF
++// visibility is meaningless on PE and clang warns on it, which is fatal under
++// powerinfer's -Werror.
++#        define POWERINFER_API
+ #    else
+ #        define POWERINFER_API __attribute__ ((visibility ("default")))
+ #    endif
+diff --git a/powerinfer/libaz/az/core/cpu_affinity.cpp b/powerinfer/libaz/az/core/cpu_affinity.cpp
+index 346733a6d4..891c7e3a3f 100644
+--- a/powerinfer/libaz/az/core/cpu_affinity.cpp
++++ b/powerinfer/libaz/az/core/cpu_affinity.cpp
+@@ -6,7 +6,9 @@
+ #include <filesystem>
+ #include <fstream>
+ #include <thread>  // lane-110 Windows port: hardware_concurrency
+-#include <unistd.h>
++#if !defined(_WIN32) || defined(__MINGW32__)
++#include <unistd.h>  // MSVC-targeting toolchains (ROCm clang) have no unistd.h
++#endif
+ 
+ namespace az {
+ 
+diff --git a/powerinfer/libaz/az/core/fp16.h b/powerinfer/libaz/az/core/fp16.h
+index 073bdf704a..b96d1bb1b9 100644
+--- a/powerinfer/libaz/az/core/fp16.h
++++ b/powerinfer/libaz/az/core/fp16.h
+@@ -5,6 +5,7 @@
+ #pragma once
+ 
+ #include "az/core/intrinsics.hpp"
++#include "math.h"
+ #include "stdint.h"
+ 
+ #if defined(__cplusplus)
+@@ -77,7 +78,10 @@ typedef struct az_fp16 az_fp16_t;
+ 
+ #ifdef _MSC_VER
+ #define AZ_COMPUTE_FP16_TO_FP32(x) _mm_cvtss_f32(_mm_cvtph_ps(_mm_cvtsi32_si128((x).value)))
+-#define AZ_COMPUTE_FP32_TO_FP16(x) ((az_fp16_t){.value = _mm_extract_epi16(_mm_cvtps_ph(_mm_set_ss((x), 0), 0)})
++// Parentheses were misplaced here (_mm_set_ss got the cvtps_ph rounding arg and
++// _mm_extract_epi16 got no index), so this branch never compiled. It is dead on
++// MinGW/GCC; ROCm's clang defines _MSC_VER and takes it. Shape follows ggml-impl.h.
++#define AZ_COMPUTE_FP32_TO_FP16(x) ((az_fp16_t){.value = (uint16_t)_mm_extract_epi16(_mm_cvtps_ph(_mm_set_ss(x), 0), 0)})
+ #else
+ #define AZ_COMPUTE_FP16_TO_FP32(x) _cvtsh_ss((x).value)
+ #define AZ_COMPUTE_FP32_TO_FP16(x) ((az_fp16_t){.value = _cvtss_sh((x), 0)})
+diff --git a/powerinfer/moe_sparse_pipeline/expert_bundle.cpp b/powerinfer/moe_sparse_pipeline/expert_bundle.cpp
+index fd31fefcb3..c5d0d5e62d 100644
+--- a/powerinfer/moe_sparse_pipeline/expert_bundle.cpp
++++ b/powerinfer/moe_sparse_pipeline/expert_bundle.cpp
+@@ -19,7 +19,7 @@ void ExpertBundleBuilder::append(const void *data, size_t ne0, size_t ne1,bool r
+     {
+         buf.resize(size);
+         repack_q4_0_to_q4_0_4_bl(buf.data(), ne0, ne1, 4, data, size);
+-        file.write(buf.data(), static_cast<ssize_t>(buf.size()));
++        file.write(buf.data(), static_cast<std::streamsize>(buf.size()));
+     }
+     else
+     file.write(static_cast<const char*>(data),size);
+@@ -41,7 +41,7 @@ void ExpertBundleBuilder::append_zero(size_t ne0, size_t ne1) {
+     }
+ 
+     buf.resize(size, 0);
+-    file.write(buf.data(), static_cast<ssize_t>(buf.size()));
++    file.write(buf.data(), static_cast<std::streamsize>(buf.size()));
+ 
+     current_offset += buf.size();
+ }

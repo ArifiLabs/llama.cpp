@@ -1,4 +1,4 @@
-From 3c6322b8146d09d327016bf96f5f314301e9ca6d Mon Sep 17 00:00:00 2001
+From eca4b73c22994c3208ede040ec03bd77a4001098 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 07:10:22 -0400
 Subject: [PATCH] port: M-RoPE embedded-batch position guard
@@ -14,12 +14,12 @@ Origin: ArifiLabs lane-110
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/src/llama-batch.cpp b/src/llama-batch.cpp
-index 2b98a552f..bb3027119 100644
+index 89a1f3f37c..c10ac5cec4 100644
 --- a/src/llama-batch.cpp
 +++ b/src/llama-batch.cpp
-@@ -261,7 +261,7 @@ bool llama_batch_allocr::init(
+@@ -293,7 +293,7 @@ bool llama_batch_allocr::init(
  
-             const llama_pos p0 = memory ? memory->seq_pos_max(s) : -1;
+             const llama_pos p0 = mem ? mem->seq_pos_max(s) : -1;
  
 -            if (batch.token) {
 +            if (batch.token && !batch.embd) {

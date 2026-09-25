@@ -1,4 +1,4 @@
-From ea05afd414c70a60bf0a2e2a2e4d8b4c70f1bcfc Mon Sep 17 00:00:00 2001
+From 1af80c3e2e3f820b283f76b019736ea2f013a242 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:56 -0400
 Subject: [PATCH] 
@@ -10,10 +10,10 @@ Subject: [PATCH]
  2 files changed, 25 insertions(+), 16 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 0e0301bf2..1bf29828c 100644
+index 30f18ca83f..6cb642db32 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -5597,8 +5597,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -3195,8 +3195,9 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      // mat-vec pipelines: the butterfly pairs lanes through a 32-entry shared
      // array, so it is only correct when the workgroup is exactly the block size
      // (RADV on gfx1151 reports warp size 64, so this must not be widened).
@@ -26,7 +26,7 @@ index 0e0301bf2..1bf29828c 100644
      ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_TQ3_1S],  "dequant_tq3_1s",  dequant_tq3_1s_len,  dequant_tq3_1s_data,  "main", 2, 5 * sizeof(uint32_t), {256 * 32, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_TQ4_1S],  "dequant_tq4_1s",  dequant_tq4_1s_len,  dequant_tq4_1s_data,  "main", 2, 5 * sizeof(uint32_t), {256 * 32, 1, 1}, {}, 1);
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/tq_rotate_act.comp b/ggml/src/ggml-vulkan/vulkan-shaders/tq_rotate_act.comp
-index ee73550dc..b48481a12 100644
+index ee73550dce..b48481a121 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/tq_rotate_act.comp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/tq_rotate_act.comp
 @@ -17,24 +17,32 @@

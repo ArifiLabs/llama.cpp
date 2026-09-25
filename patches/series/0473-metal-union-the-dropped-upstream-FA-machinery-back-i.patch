@@ -1,0 +1,686 @@
+From 42ce1f0e9bac5fde255a0e22d6004505b16ce318 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 6 Sep 2026 03:46:31 -0400
+Subject: [PATCH] metal: union the dropped upstream FA machinery back in - the
+ tree did not compile
+
+The 2026-08-29 policy ("in a conflicting hunk of an off-rig backend file the fork
+side wins, upstream's change is DROPPED") was reversed by the President on
+2026-09-06: a public engine that claims to ingest everything cannot silently lag
+upstream on CUDA/Metal/SYCL. This is the first repair under the new rule, and the
+Metal tree turns out not to be a matter of policy at all - it does not build.
+
+CHECKED at 697027562, five function DEFINITIONS are absent while their callers,
+their declarations, or both survive:
+
+  ggml_metal_op_flash_attn_ext_use_kv_f16      called by extra_pad (upstream form)
+  ggml_metal_op_flash_attn_ext_v_is_view_of_k  called by extra_kv_f16
+  ggml_metal_op_flash_attn_ext_kv_f16_k_size   called by extra_kv_f16
+  ggml_metal_op_flash_attn_ext_extra_kv_f16    DECLARED in ggml-metal-ops.h and
+                                               CALLED from ggml-metal.cpp:240
+  ggml_metal_op_flash_attn_ext_n_kv_max_sparse CALLED from extra_idx:3346
+
+and ggml_metal_library_get_pipeline_flash_attn_ext_kv_f16 is declared in
+ggml-metal-device.h with no definition in ggml-metal-device.cpp. Both FA pipeline
+getters are declared in that header with (use_kv_f16, ns10, ns20) and defined
+without them, and the vec call site passes 9 of the 12 arguments its own
+definition takes. The sparse dispatch at 3604-3952 reads use_sparse,
+n_kv_max_sparse, n_kv_max_padded and bid_idx, none of which is declared in that
+scope. Nothing here is a judgement call; this is a half-applied merge on the one
+backend the estate cannot compile, which is why nothing caught it.
+
+RESOLUTION - hand union, upstream's form carrying our mechanism. The FA op
+function is rebuilt from upstream b10819 6a1a922d2 with every ArifiLabs mechanism
+re-inserted, so no line of either side is lost:
+
+  ours, carried     asymmetric K/V type assertion (turbo / q8_0 mixed pairs)
+  ours, carried     TurboFlash two-pass dispatch, byte-identical, same insertion
+                    point, still returning early
+  ours, carried     TurboQuant +128-float threadgroup block cache in FATTN_SMEM
+  ours, carried     asymmetric k%s_v%s pipeline naming in both getters
+  theirs, restored  KV-F16 dequant pass and its nb*_attn stride threading
+  theirs, restored  MLA v_is_view_of_k (dequantized V is a view of dequantized K)
+  theirs, restored  sparse index-list path, whose callers already survived
+  theirs, restored  fa_vec_pick tuning (nqptg) - ggml-metal-tuning.cpp is 3856
+                    lines of tuned table at the tip with ZERO call sites
+  theirs, restored  qne_suffix in the vec pipeline name - without it two
+                    different (nqpsg, ne) tunings hash to the SAME cached
+                    pipeline, because neither value appears elsewhere in the key
+
+R13 collision #7 recorded the Metal sparse-FA as "structurally exclusive with our
+TurboFlash at this insertion point". CHECKED: they are not. TurboFlash gates on
+V = turbo3 with single-token decode; the sparse path's own type switch admits only
+F16/BF16/F32/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0. The gates are disjoint, so both paths
+coexist and the default for a model without our types is exactly upstream's
+behaviour. #7 is closed as a union, not as a keep-ours.
+
+Loss control: brace/paren balance is identical to BOTH parents (2, -5), which is
+the R13B control - a file matching neither parent is the signal. Every identifier
+in the rebuilt function resolves within the function or the Metal tree.
+
+NOT VERIFIED, and it cannot be here: this estate has no Metal toolchain. This is
+union-by-mechanism-read; compile verification is PENDING the first run of the
+macos-latest job in .github/workflows/arifi-backends-matrix.yml. It is not
+benched and no performance claim is made.
+
+Origin: upstream llama.cpp b10819 (6a1a922d2), PR #27390 + PR #13435, unioned with ArifiLabs TurboFlash / TurboQuant / asymmetric-KV
+WI: WI-1698
+Lane: lane-210
+Conflict-resolved: auto: same-point-insertion(upstream block then ours) in ggml/src/ggml-metal/ggml-metal-ops.cpp
+Conflict-resolved: hand: ggml-metal-ops.cpp FA-vec union - HEAD already carries upstream b11178 FA-vec (family-keyed fa_vec_pick without device_id per ee3ecce05, fa_vec_smem lambda per cdc06426e, smem fallback) plus the TurboQuant +128 floats (S7 stop 126); took HEAD in all three regions, union intent preserved (Mac compile owed)
+---
+ ggml/src/ggml-metal/ggml-metal-device.cpp |  69 ++++-
+ ggml/src/ggml-metal/ggml-metal-ops.cpp    | 343 +++++++++++++++++++---
+ 2 files changed, 355 insertions(+), 57 deletions(-)
+
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
+index df6b154365..b957f9a3aa 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -1,6 +1,7 @@
+ #include "ggml-metal-device.h"
+ 
+ #include "ggml-metal-impl.h"
++#include "ggml-metal-tuning.h"
+ 
+ #include "ggml-impl.h"
+ 
+@@ -1787,6 +1788,26 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_p
+     return res;
+ }
+ 
++// upstream b10819 (PR #27390): dequantize the quantized KV cache to F16 before the F16 FA kernels.
++// The definition was lost in the b10819 base move while the declaration in ggml-metal-device.h and
++// the call in ggml-metal-ops.cpp survived, so the Metal backend did not link. Restored verbatim.
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_kv_f16(
++        ggml_metal_library_t lib,
++        const ggml_tensor * op) {
++    assert(op->op == GGML_OP_FLASH_ATTN_EXT);
++
++    char base[256];
++
++    snprintf(base, 256, "kernel_flash_attn_ext_kv_%s_f16", ggml_type_name(op->src[1]->type));
++
++    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, base);
++    if (!res.pipeline) {
++        res = ggml_metal_library_compile_pipeline(lib, base, base, nullptr);
++    }
++
++    return res;
++}
++
+ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_blk(
+         ggml_metal_library_t lib,
+         const struct ggml_tensor * op,
+@@ -1838,7 +1859,10 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext(
+         bool    has_bias,
+         bool    has_scap,
+         bool    has_kvpad,
+-        int32_t nsg) {
++        int32_t nsg,
++        bool    use_kv_f16,
++        int32_t ns10,
++        int32_t ns20) {
+     assert(op->op == GGML_OP_FLASH_ATTN_EXT);
+ 
+     char base[256];
+@@ -1847,19 +1871,25 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext(
+     const int32_t dk = (int32_t) op->src[1]->ne[0];
+     const int32_t dv = (int32_t) op->src[2]->ne[0];
+ 
+-    const int32_t ns10 = op->src[1]->nb[1]/op->src[1]->nb[0];
+-    const int32_t ns20 = op->src[2]->nb[1]/op->src[2]->nb[0];
+-
+     // do bounds checks for the mask?
+     const bool bc_mask = op->src[3] && (op->src[3]->ne[1] % 8 != 0);
+ 
++    // UNION (R17, lane-210): the ArifiLabs asymmetric K/V pipeline naming, over upstream b10819's
++    // use_kv_f16 type selection. When the KV cache is pre-dequantized to F16 both operands are f16,
++    // so both name slots read "f16"; otherwise each slot keeps its own type, which is what makes the
++    // turbo/q8_0 mixed pairs addressable. ns10/ns20 now arrive from the caller (upstream b10819 form,
++    // and the signature this fork's own ggml-metal-device.h already declared) instead of being
++    // recomputed here, because the F16 path changes the strides the caller passes.
++    const char * type_k = use_kv_f16 ? "f16" : ggml_type_name(op->src[1]->type);
++    const char * type_v = use_kv_f16 ? "f16" : ggml_type_name(op->src[2]->type);
++
+     // Asymmetric K/V: always encode both K and V types in the pipeline name.
+     // Symmetric case: ktype == vtype, so the name just has the type twice.
+     // This avoids ambiguity if a type name contains underscores (e.g. q4_0).
+     snprintf(base, 256, "kernel_%s_k%s_v%s_dk%d_dv%d",
+             "flash_attn_ext",
+-            ggml_type_name(op->src[1]->type),
+-            ggml_type_name(op->src[2]->type),
++            type_k,
++            type_v,
+             dk,
+             dv);
+ 
+@@ -1932,7 +1962,10 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_v
+         int32_t nqpsg,
+         int32_t ne,
+         int32_t nsg,
+-        int32_t nwg) {
++        int32_t nwg,
++        bool    use_kv_f16,
++        int32_t ns10,
++        int32_t ns20) {
+     assert(op->op == GGML_OP_FLASH_ATTN_EXT);
+ 
+     char base[256];
+@@ -1941,17 +1974,27 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_v
+     const int32_t dk = (int32_t) op->src[1]->ne[0];
+     const int32_t dv = (int32_t) op->src[2]->ne[0];
+ 
+-    const int32_t ns10 = op->src[1]->nb[1]/op->src[1]->nb[0];
+-    const int32_t ns20 = op->src[2]->nb[1]/op->src[2]->nb[0];
++    // UNION (R17, lane-210): ArifiLabs asymmetric K/V naming over upstream b10819's use_kv_f16
++    // selection and its qne_suffix. The suffix is not cosmetic - without it two different
++    // (nqpsg, ne) tunings hash to the SAME cached pipeline name, because neither nqpsg nor ne
++    // appears anywhere else in the key.
++    const char * type_k = use_kv_f16 ? "f16" : ggml_type_name(op->src[1]->type);
++    const char * type_v = use_kv_f16 ? "f16" : ggml_type_name(op->src[2]->type);
++
++    char qne_suffix[16] = {0};
++    if (!(nqpsg == 1 && ne == ggml_metal_tuning::fa_vec_baseline_ne(dk, dv))) {
++        snprintf(qne_suffix, sizeof(qne_suffix), "_q%d_ne%d", nqpsg, ne);
++    }
+ 
+     // Asymmetric K/V: always encode both K and V types in the pipeline name.
+     // Uses k/v prefix to avoid ambiguity with type names containing underscores.
+-    snprintf(base, 256, "kernel_%s_k%s_v%s_dk%d_dv%d",
++    snprintf(base, 256, "kernel_%s_k%s_v%s_dk%d_dv%d%s",
+             "flash_attn_ext_vec",
+-            ggml_type_name(op->src[1]->type),
+-            ggml_type_name(op->src[2]->type),
++            type_k,
++            type_v,
+             dk,
+-            dv);
++            dv,
++            qne_suffix);
+ 
+ 
+     snprintf(name, 256, "%s_mask=%d_sink=%d_bias=%d_scap=%d_kvpad=%d_sparse=%d_ns10=%d_ns20=%d_nsg=%d_nwg=%d",
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+index e555935c47..a413693af7 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -8,6 +8,7 @@
+ #include "ggml-metal-common.h"
+ #include "ggml-metal-device.h"
+ #include "ggml-metal-fusion.h"
++#include "ggml-metal-tuning.h"
+ 
+ #include <cassert>
+ #include <algorithm>
+@@ -3323,6 +3324,108 @@ static bool ggml_metal_op_flash_attn_ext_use_turbo_flash(const ggml_tensor * op)
+     return false;
+ }
+ 
++static bool ggml_metal_op_flash_attn_ext_use_kv_f16(const ggml_tensor * op) {
++    assert(op->op == GGML_OP_FLASH_ATTN_EXT);
++
++    // depending on compute/bandwidth ratio, dequant to f16 kv is not always beneficial
++    // ref: https://github.com/ggml-org/llama.cpp/pull/27390#issuecomment-5355152767
++    // TODO: tune per device
++    if (op->src[0]->ne[1] < 32) {
++        return false;
++    }
++
++    switch (op->src[1]->type) {
++        case GGML_TYPE_Q4_0:
++        case GGML_TYPE_Q4_1:
++        case GGML_TYPE_Q5_0:
++        case GGML_TYPE_Q5_1:
++        case GGML_TYPE_Q8_0:
++            return true;
++        default:
++            return false;
++    }
++}
++
++// returns the n_kv_max hint if the sparse path is available for this op, or 0 otherwise
++// the mask (src[3]) remains the single source of truth: finite entries are the valid KV positions,
++// n_kv_max is only an upper bound on their number per mask row, used to size the index lists
++static int ggml_metal_op_flash_attn_ext_n_kv_max_sparse(const ggml_tensor * op) {
++    assert(op->op == GGML_OP_FLASH_ATTN_EXT);
++
++    int32_t n_kv_max = 0;
++    memcpy(&n_kv_max, ((const int32_t *) op->op_params) + 4, sizeof(n_kv_max));
++
++    if (n_kv_max <= 0) {
++        return 0;
++    }
++
++    // the sparse indices are gathered from the mask
++    if (!op->src[3]) {
++        return 0;
++    }
++
++    // bound the size of the index lists
++    if (n_kv_max > 4096) {
++        return 0;
++    }
++
++    // vec kernel instantiations exist for these (type, dk, dv) combinations only
++    const int64_t dk = op->src[1]->ne[0];
++    const int64_t dv = op->src[2]->ne[0];
++
++    const bool dk_dv_ok = (dk == 32  && dv == 32)  ||
++                          (dk == 64  && dv == 64)  ||
++                          (dk == 96  && dv == 96)  ||
++                          (dk == 128 && dv == 128) ||
++                          (dk == 192 && dv == 128) ||
++                          (dk == 192 && dv == 192) ||
++                          (dk == 256 && dv == 256) ||
++                          (dk == 320 && dv == 256) ||
++                          (dk == 512 && dv == 512) ||
++                          (dk == 576 && dv == 512);
++
++    if (!dk_dv_ok) {
++        return 0;
++    }
++
++    switch (op->src[1]->type) {
++        case GGML_TYPE_F16:
++        case GGML_TYPE_BF16:
++        case GGML_TYPE_F32:
++        case GGML_TYPE_Q4_0:
++        case GGML_TYPE_Q4_1:
++        case GGML_TYPE_Q5_0:
++        case GGML_TYPE_Q5_1:
++        case GGML_TYPE_Q8_0:
++            break;
++        default:
++            return 0;
++    }
++
++    return n_kv_max;
++}
++
++// in some models (e.g. MLA-based), V is a view of K (the first ne20 elements of each K row);
++// the dequantized V is then a view of the dequantized K and does not need its own dequant or scratch
++// - ref: https://github.com/ggml-org/llama.cpp/pull/13435
++static bool ggml_metal_op_flash_attn_ext_v_is_view_of_k(const ggml_tensor * op) {
++    assert(op->op == GGML_OP_FLASH_ATTN_EXT);
++
++    const ggml_tensor * K = op->src[1];
++    const ggml_tensor * V = op->src[2];
++
++    return V->view_src && (V->view_src == K || (V->view_src == K->view_src && V->view_offs == K->view_offs));
++}
++
++// size of the F16 dequantized K tensor; the dequantized V tensor follows it in the same scratch buffer
++static size_t ggml_metal_op_flash_attn_ext_kv_f16_k_size(const ggml_tensor * op) {
++    assert(op->op == GGML_OP_FLASH_ATTN_EXT);
++
++    GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
++
++    return GGML_PAD(sizeof(ggml_fp16_t)*(size_t) ne10*ne11*ne12*ne13, 16);
++}
++
+ size_t ggml_metal_op_flash_attn_ext_extra_pad(const ggml_tensor * op) {
+     assert(op->op == GGML_OP_FLASH_ATTN_EXT);
+ 
+@@ -3338,6 +3441,18 @@ size_t ggml_metal_op_flash_attn_ext_extra_pad(const ggml_tensor * op) {
+     size_t res = 0;
+ 
+     const bool has_mask = op->src[3] != nullptr;
++    const bool use_kv_f16 = ggml_metal_op_flash_attn_ext_use_kv_f16(op);
++
++    // when the KV is dequantized to F16, the pad kernel copies the tail chunk from the F16 scratch buffer
++    // note: when V is a view of K, the dequantized V is read from the dequantized K with K's row stride
++    const bool v_is_view_of_k = use_kv_f16 && ggml_metal_op_flash_attn_ext_v_is_view_of_k(op);
++    uint64_t nb11_pad = nb11;
++    uint64_t nb21_pad = nb21;
++
++    if (use_kv_f16) {
++        nb11_pad = sizeof(ggml_fp16_t)*ne10;
++        nb21_pad = sizeof(ggml_fp16_t)*(v_is_view_of_k ? ne10 : ne20);
++    }
+ 
+     // note: the non-vec kernel requires more extra memory, so always reserve for it
+     GGML_ASSERT(OP_FLASH_ATTN_EXT_NCPSG >= OP_FLASH_ATTN_EXT_VEC_NCPSG);
+@@ -3350,8 +3465,8 @@ size_t ggml_metal_op_flash_attn_ext_extra_pad(const ggml_tensor * op) {
+ 
+         if (has_kvpad) {
+             res += OP_FLASH_ATTN_EXT_VEC_NCPSG*(
+-                nb11*ne12*ne13 +
+-                nb21*ne22*ne23 +
++                nb11_pad*ne12*ne13 +
++                nb21_pad*ne22*ne23 +
+                 (has_mask ? ggml_type_size(GGML_TYPE_F16)*ne31*ne32*ne33 : 0));
+         }
+     } else {
+@@ -3360,8 +3475,8 @@ size_t ggml_metal_op_flash_attn_ext_extra_pad(const ggml_tensor * op) {
+ 
+         if (has_kvpad) {
+             res += OP_FLASH_ATTN_EXT_NCPSG*(
+-                nb11*ne12*ne13 +
+-                nb21*ne22*ne23 +
++                nb11_pad*ne12*ne13 +
++                nb21_pad*ne22*ne23 +
+                 (has_mask ? ggml_type_size(GGML_TYPE_F16)*ne31*ne32*ne33 : 0));
+         }
+     }
+@@ -3451,6 +3566,29 @@ size_t ggml_metal_op_flash_attn_ext_extra_tmp(const ggml_tensor * op) {
+     return res;
+ }
+ 
++size_t ggml_metal_op_flash_attn_ext_extra_kv_f16(const ggml_tensor * op) {
++    assert(op->op == GGML_OP_FLASH_ATTN_EXT);
++
++    // note: always reserve the temp buffer to avoid graph reallocations
++    //if (!ggml_metal_op_flash_attn_ext_use_kv_f16(op)) {
++    //    return 0;
++    //}
++
++    GGML_TENSOR_LOCALS( int32_t, ne2, op->src[2], ne);
++
++    const size_t k_size = ggml_metal_op_flash_attn_ext_kv_f16_k_size(op);
++
++    // when V is a view of K, the dequantized V is a view of the dequantized K
++    const bool v_is_view_of_k = ggml_metal_op_flash_attn_ext_v_is_view_of_k(op);
++    if (v_is_view_of_k) {
++        return k_size;
++    }
++
++    const size_t v_size = GGML_PAD(sizeof(ggml_fp16_t)*(size_t) ne20*ne21*ne22*ne23, 16);
++
++    return k_size + v_size;
++}
++
+ // size of the sparse index lists: one list of KV indices per mask row,
+ // padded with -1 up to a multiple of OP_FLASH_ATTN_EXT_VEC_NCPSG
+ size_t ggml_metal_op_flash_attn_ext_extra_idx(const ggml_tensor * op) {
+@@ -3716,6 +3854,120 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+     }
+     // ==================== End TurboFlash ====================
+ 
++    ggml_metal_buffer_id bid_kv_f16 = bid_tmp;
++    bid_kv_f16.offs += ggml_metal_op_flash_attn_ext_extra_tmp(op);
++
++    // sparse path: gather the finite mask entries into index lists and run the vec kernels over them
++    const int n_kv_max_sparse = ggml_metal_op_flash_attn_ext_n_kv_max_sparse(op);
++    const bool use_sparse = n_kv_max_sparse > 0;
++    const int n_kv_max_padded = use_sparse ? GGML_PAD(n_kv_max_sparse, OP_FLASH_ATTN_EXT_VEC_NCPSG) : 0;
++
++    // the vec kernels dequantize the KV inline; no need for the F16 dequant pass in the sparse path
++    const bool use_kv_f16 = !use_sparse && ggml_metal_op_flash_attn_ext_use_kv_f16(op);
++
++    ggml_metal_buffer_id bid_idx = bid_kv_f16;
++    bid_idx.offs += ggml_metal_op_flash_attn_ext_extra_kv_f16(op);
++
++    ggml_metal_buffer_id bid_k = bid_src1;
++    ggml_metal_buffer_id bid_v = bid_src2;
++
++    uint64_t nb10_attn = nb10;
++    uint64_t nb11_attn = nb11;
++    uint64_t nb12_attn = nb12;
++    uint64_t nb13_attn = nb13;
++    uint64_t nb20_attn = nb20;
++    uint64_t nb21_attn = nb21;
++    uint64_t nb22_attn = nb22;
++    uint64_t nb23_attn = nb23;
++
++    if (use_kv_f16) {
++        assert(ggml_metal_op_flash_attn_ext_extra_kv_f16(op) != 0);
++
++        const bool v_is_view_of_k = ggml_metal_op_flash_attn_ext_v_is_view_of_k(op);
++
++        const int64_t nblocks1_64 = (ne10/ggml_blck_size(op->src[1]->type))*(int64_t) ne11*ne12*ne13;
++        GGML_ASSERT(nblocks1_64 <= INT32_MAX);
++        const int32_t nblocks1 = nblocks1_64;
++
++        ggml_metal_buffer_id bid_v_f16 = bid_kv_f16;
++        bid_v_f16.offs += ggml_metal_op_flash_attn_ext_kv_f16_k_size(op);
++
++        auto pipeline0 = ggml_metal_library_get_pipeline_flash_attn_ext_kv_f16(lib, op);
++        const int nth = std::min(ggml_metal_pipeline_max_theads_per_threadgroup(pipeline0), 256);
++
++        // K
++        ggml_metal_kargs_flash_attn_ext_kv_f16 args_k = {
++            /*.ne0    =*/ ne10,
++            /*.ne1    =*/ ne11,
++            /*.ne2    =*/ ne12,
++            /*.ne3    =*/ ne13,
++            /*.nb0    =*/ nb10,
++            /*.nb1    =*/ nb11,
++            /*.nb2    =*/ nb12,
++            /*.nb3    =*/ nb13,
++            /*.nblocks =*/ nblocks1,
++        };
++
++        ggml_metal_encoder_set_pipeline(enc, pipeline0);
++        ggml_metal_encoder_set_bytes   (enc, &args_k, sizeof(args_k), 0);
++        ggml_metal_encoder_set_buffer  (enc, bid_src1,        1);
++        ggml_metal_encoder_set_buffer  (enc, bid_kv_f16, 2);
++
++        ggml_metal_encoder_dispatch_threadgroups(enc, (nblocks1 + nth - 1)/nth, 1, 1, nth, 1, 1);
++
++        // V (skip when V is a view of K: the dequantized V is a view of the dequantized K)
++        if (!v_is_view_of_k) {
++            const int64_t nblocks2_64 = (ne20/ggml_blck_size(op->src[2]->type))*(int64_t) ne21*ne22*ne23;
++            GGML_ASSERT(nblocks2_64 <= INT32_MAX);
++            const int32_t nblocks2 = nblocks2_64;
++
++            ggml_metal_kargs_flash_attn_ext_kv_f16 args_v = {
++                /*.ne0    =*/ ne20,
++                /*.ne1    =*/ ne21,
++                /*.ne2    =*/ ne22,
++                /*.ne3    =*/ ne23,
++                /*.nb0    =*/ nb20,
++                /*.nb1    =*/ nb21,
++                /*.nb2    =*/ nb22,
++                /*.nb3    =*/ nb23,
++                /*.nblocks =*/ nblocks2,
++            };
++
++            ggml_metal_encoder_set_pipeline(enc, pipeline0);
++            ggml_metal_encoder_set_bytes   (enc, &args_v, sizeof(args_v), 0);
++            ggml_metal_encoder_set_buffer  (enc, bid_src2,        1);
++            ggml_metal_encoder_set_buffer  (enc, bid_v_f16,       2);
++
++            ggml_metal_encoder_dispatch_threadgroups(enc, (nblocks2 + nth - 1)/nth, 1, 1, nth, 1, 1);
++        }
++
++        // the pad and attention kernels read the dequantized KV
++        ggml_metal_op_concurrency_reset(ctx);
++
++        bid_k = bid_kv_f16;
++        bid_v = v_is_view_of_k ? bid_k : bid_v_f16;
++
++        // contiguous F16 layout of the dequantized K
++        nb10_attn = sizeof(ggml_fp16_t);
++        nb11_attn = nb10_attn*ne10;
++        nb12_attn = nb11_attn*ne11;
++        nb13_attn = nb12_attn*ne12;
++
++        // if V is a view of K, the dequantized V is read from the dequantized K with K's strides
++        if (v_is_view_of_k) {
++            nb20_attn = nb10_attn;
++            nb21_attn = nb11_attn;
++            nb22_attn = nb12_attn;
++            nb23_attn = nb13_attn;
++        } else {
++            // contiguous F16 layout of the dequantized V
++            nb20_attn = sizeof(ggml_fp16_t);
++            nb21_attn = nb20_attn*ne20;
++            nb22_attn = nb21_attn*ne21;
++            nb23_attn = nb22_attn*ne22;
++        }
++    }
++
+     if (!use_sparse && !ggml_metal_op_flash_attn_ext_use_vec(op)) {
+         // half8x8 kernel
+         const int nqptg = OP_FLASH_ATTN_EXT_NQPSG; // queries per threadgroup
+@@ -3736,12 +3988,12 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+                 /*.ne11    =*/ne11,
+                 /*.ne_12_2 =*/ne12,
+                 /*.ne_12_3 =*/ne13,
+-                /*.nb11    =*/nb11,
+-                /*.nb12    =*/nb12,
+-                /*.nb13    =*/nb13,
+-                /*.nb21    =*/nb21,
+-                /*.nb22    =*/nb22,
+-                /*.nb23    =*/nb23,
++                /*.nb11    =*/nb11_attn,
++                /*.nb12    =*/nb12_attn,
++                /*.nb13    =*/nb13_attn,
++                /*.nb21    =*/nb21_attn,
++                /*.nb22    =*/nb22_attn,
++                /*.nb23    =*/nb23_attn,
+                 /*.ne31    =*/ne31,
+                 /*.ne32    =*/ne32,
+                 /*.ne33    =*/ne33,
+@@ -3754,8 +4006,8 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+ 
+             ggml_metal_encoder_set_pipeline(enc, pipeline0);
+             ggml_metal_encoder_set_bytes   (enc, &args0, sizeof(args0), 0);
+-            ggml_metal_encoder_set_buffer  (enc, bid_src1, 1);
+-            ggml_metal_encoder_set_buffer  (enc, bid_src2, 2);
++            ggml_metal_encoder_set_buffer  (enc, bid_k,    1);
++            ggml_metal_encoder_set_buffer  (enc, bid_v,    2);
+             ggml_metal_encoder_set_buffer  (enc, bid_src3, 3);
+             ggml_metal_encoder_set_buffer  (enc, bid_pad,  4);
+ 
+@@ -3800,7 +4052,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+             ggml_metal_op_concurrency_reset(ctx);
+         }
+ 
+-        const int is_q = ggml_is_quantized(op->src[1]->type) ? 1 : 0;
++        const int is_q = !use_kv_f16 && ggml_is_quantized(op->src[1]->type) ? 1 : 0;
+ 
+         // shared memory layout (halfs unless noted):
+         //   queries/attn/result: Q*(DK + 2*PAD2(DV,64) + 4*C)
+@@ -3817,6 +4069,9 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+ 
+         const size_t smem = fa_smem(nsg);
+ 
++        const int32_t ns10 = nb11_attn/nb10_attn;
++        const int32_t ns20 = nb21_attn/nb20_attn;
++
+         ggml_metal_kargs_flash_attn_ext args = {
+             /*.ne01          =*/ ne01,
+             /*.ne02          =*/ ne02,
+@@ -3827,14 +4082,14 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+             /*.ne11          =*/ ne11,
+             /*.ne_12_2       =*/ ne12,
+             /*.ne_12_3       =*/ ne13,
+-            /*.ns10          =*/ int32_t(nb11/nb10),
+-            /*.nb11          =*/ nb11,
+-            /*.nb12          =*/ nb12,
+-            /*.nb13          =*/ nb13,
+-            /*.ns20          =*/ int32_t(nb21/nb20),
+-            /*.nb21          =*/ nb21,
+-            /*.nb22          =*/ nb22,
+-            /*.nb23          =*/ nb23,
++            /*.ns10          =*/ ns10,
++            /*.nb11          =*/ nb11_attn,
++            /*.nb12          =*/ nb12_attn,
++            /*.nb13          =*/ nb13_attn,
++            /*.ns20          =*/ ns20,
++            /*.nb21          =*/ nb21_attn,
++            /*.nb22          =*/ nb22_attn,
++            /*.nb23          =*/ nb23_attn,
+             /*.ne31          =*/ ne31,
+             /*.ne32          =*/ ne32,
+             /*.ne33          =*/ ne33,
+@@ -3852,13 +4107,13 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+             /*.logit_softcap =*/ logit_softcap,
+         };
+ 
+-        auto pipeline = ggml_metal_library_get_pipeline_flash_attn_ext(lib, op, has_mask, has_sinks, has_bias, has_scap, has_kvpad, nsg);
++        auto pipeline = ggml_metal_library_get_pipeline_flash_attn_ext(lib, op, has_mask, has_sinks, has_bias, has_scap, has_kvpad, nsg, use_kv_f16, ns10, ns20);
+ 
+         ggml_metal_encoder_set_pipeline(enc, pipeline);
+         ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+         ggml_metal_encoder_set_buffer  (enc, bid_src0, 1);
+-        ggml_metal_encoder_set_buffer  (enc, bid_src1, 2);
+-        ggml_metal_encoder_set_buffer  (enc, bid_src2, 3);
++        ggml_metal_encoder_set_buffer  (enc, bid_k,    2);
++        ggml_metal_encoder_set_buffer  (enc, bid_v,    3);
+         ggml_metal_encoder_set_buffer  (enc, bid_src3, 4);
+         ggml_metal_encoder_set_buffer  (enc, bid_src4, 5);
+         ggml_metal_encoder_set_buffer  (enc, bid_pad,  6);
+@@ -3885,7 +4140,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+         const int nhptg = 1;                           // heads per threadgroup
+ 
+         GGML_ASSERT(nqptg <= 32);
+-        GGML_ASSERT(nqptg  % 1  == 0);
++        GGML_ASSERT(nqptg == 1 || nqptg == 2 || nqptg == 4);  // only instantiated Q values
+         GGML_ASSERT(ncpsg  % 32 == 0);
+ 
+         bool need_sync = false;
+@@ -3931,12 +4186,12 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+                 /*.ne11    =*/ne11,
+                 /*.ne_12_2 =*/ne12,
+                 /*.ne_12_3 =*/ne13,
+-                /*.nb11    =*/nb11,
+-                /*.nb12    =*/nb12,
+-                /*.nb13    =*/nb13,
+-                /*.nb21    =*/nb21,
+-                /*.nb22    =*/nb22,
+-                /*.nb23    =*/nb23,
++                /*.nb11    =*/nb11_attn,
++                /*.nb12    =*/nb12_attn,
++                /*.nb13    =*/nb13_attn,
++                /*.nb21    =*/nb21_attn,
++                /*.nb22    =*/nb22_attn,
++                /*.nb23    =*/nb23_attn,
+                 /*.ne31    =*/ne31,
+                 /*.ne32    =*/ne32,
+                 /*.ne33    =*/ne33,
+@@ -3949,8 +4204,8 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+ 
+             ggml_metal_encoder_set_pipeline(enc, pipeline0);
+             ggml_metal_encoder_set_bytes   (enc, &args0, sizeof(args0), 0);
+-            ggml_metal_encoder_set_buffer  (enc, bid_src1, 1);
+-            ggml_metal_encoder_set_buffer  (enc, bid_src2, 2);
++            ggml_metal_encoder_set_buffer  (enc, bid_k,    1);
++            ggml_metal_encoder_set_buffer  (enc, bid_v,    2);
+             ggml_metal_encoder_set_buffer  (enc, bid_src3, 3);
+             ggml_metal_encoder_set_buffer  (enc, bid_pad,  4);
+ 
+@@ -4035,14 +4290,14 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+             /*.ne11          =*/ use_sparse ? n_kv_max_padded : ne11,
+             /*.ne_12_2       =*/ ne12,
+             /*.ne_12_3       =*/ ne13,
+-            /*.ns10          =*/ int32_t(nb11/nb10),
+-            /*.nb11          =*/ nb11,
+-            /*.nb12          =*/ nb12,
+-            /*.nb13          =*/ nb13,
+-            /*.ns20          =*/ int32_t(nb21/nb20),
+-            /*.nb21          =*/ nb21,
+-            /*.nb22          =*/ nb22,
+-            /*.nb23          =*/ nb23,
++            /*.ns10          =*/ ns10,
++            /*.nb11          =*/ nb11_attn,
++            /*.nb12          =*/ nb12_attn,
++            /*.nb13          =*/ nb13_attn,
++            /*.ns20          =*/ ns20,
++            /*.nb21          =*/ nb21_attn,
++            /*.nb22          =*/ nb22_attn,
++            /*.nb23          =*/ nb23_attn,
+             /*.ne31          =*/ ne31,
+             /*.ne32          =*/ ne32,
+             /*.ne33          =*/ ne33,
+@@ -4061,15 +4316,15 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+             /*.n_kv_max_padded =*/ n_kv_max_padded,
+         };
+ 
+-        auto pipeline = ggml_metal_library_get_pipeline_flash_attn_ext_vec(lib, op, has_mask, has_sinks, has_bias, has_scap, has_kvpad, nsg, nwg);
++        auto pipeline = ggml_metal_library_get_pipeline_flash_attn_ext_vec(lib, op, has_mask, has_sinks, has_bias, has_scap, has_kvpad, use_sparse, nqptg, cfg.NE, nsg, nwg, use_kv_f16, ns10, ns20);
+ 
+         GGML_ASSERT(nsg*32 <= ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
+ 
+         ggml_metal_encoder_set_pipeline(enc, pipeline);
+         ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+         ggml_metal_encoder_set_buffer  (enc, bid_src0, 1);
+-        ggml_metal_encoder_set_buffer  (enc, bid_src1, 2);
+-        ggml_metal_encoder_set_buffer  (enc, bid_src2, 3);
++        ggml_metal_encoder_set_buffer  (enc, bid_k,    2);
++        ggml_metal_encoder_set_buffer  (enc, bid_v,    3);
+         ggml_metal_encoder_set_buffer  (enc, bid_src3, 4);
+         ggml_metal_encoder_set_buffer  (enc, bid_src4, 5);
+         ggml_metal_encoder_set_buffer  (enc, use_sparse ? bid_idx : bid_src0, 8);

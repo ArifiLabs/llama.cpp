@@ -1,25 +1,27 @@
-From d88e8cb6bed2632abdf8abb5b2bbe6b10cb601f2 Mon Sep 17 00:00:00 2001
+From 84f20e818135ab26436e51152b1dd36bcff2f5ba Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:56:07 -0400
 Subject: [PATCH] 
  4-other-backends/0008-hip-add-mixed-f16-bf16-q8_0-fattn-vec-instances-to-t.patch
 
+Conflict-resolved: S1: HIP mixed f16/bf16-q8_0 vec instances re-expressed on upstream 5a4d0feca's GGML_CUDA_FA_QUANTS (appended to the default list before ggml_cuda_fattn_vec_instances, same as CUDA) instead of the dropped hand list
 ---
- ggml/src/ggml-hip/CMakeLists.txt | 4 ++++
- 1 file changed, 4 insertions(+)
+ ggml/src/ggml-hip/CMakeLists.txt | 5 +++++
+ 1 file changed, 5 insertions(+)
 
 diff --git a/ggml/src/ggml-hip/CMakeLists.txt b/ggml/src/ggml-hip/CMakeLists.txt
-index 41ae71b4b..60384fa8e 100644
+index 1172e1fdf7..b1d8e1811a 100644
 --- a/ggml/src/ggml-hip/CMakeLists.txt
 +++ b/ggml/src/ggml-hip/CMakeLists.txt
-@@ -82,6 +82,10 @@ else()
-         ../ggml-cuda/template-instances/fattn-vec-instance-q4_0-q4_0.cu
-         ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-q8_0.cu
-         ../ggml-cuda/template-instances/fattn-vec-instance-bf16-bf16.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-f16-q8_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-f16.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-bf16-q8_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-bf16.cu
-         ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cu
-         ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-q8_0.cu
-         ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo3_0.cu
+@@ -72,6 +72,11 @@ list(APPEND GGML_SOURCES_ROCM ${SRCS})
+ file(GLOB   SRCS "../ggml-cuda/template-instances/mmf*.cu")
+ list(APPEND GGML_SOURCES_ROCM ${SRCS})
+ 
++# arifi: mixed f16/bf16 + q8_0 KV cache vec instances stay in the default build
++string(TOLOWER "${GGML_CUDA_FA_QUANTS}" GGML_CUDA_FA_QUANTS_LC)
++if (NOT GGML_CUDA_FA_ALL_QUANTS AND NOT GGML_CUDA_FA_QUANTS_LC STREQUAL "all")
++    set(GGML_CUDA_FA_QUANTS "${GGML_CUDA_FA_QUANTS};f16-q8_0;q8_0-f16;bf16-q8_0;q8_0-bf16")
++endif()
+ ggml_cuda_fattn_vec_instances(${CMAKE_CURRENT_SOURCE_DIR}/../ggml-cuda SRCS)
+ list(APPEND GGML_SOURCES_ROCM ${SRCS})
+ # arifi: TurboQuant KV cache vec instances (always compiled, outside GGML_CUDA_FA_QUANTS)

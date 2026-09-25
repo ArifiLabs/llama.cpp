@@ -1,18 +1,19 @@
-From dbcf8548b8359a748e2bacc14c0e3c16021c2e1e Mon Sep 17 00:00:00 2001
+From a67726d61a7512ac10c8f1f192cc8423dad38d4d Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:56:09 -0400
 Subject: [PATCH] 
  4-other-backends/0009-cuda-revert-GQA-ratio-dispatch-to-comparison-form-fi.patch
 
+Conflict-resolved: auto: affix(one side only added lines around the base, other side edited it) in ggml/src/ggml-cuda/fattn.cu
 ---
  ggml/src/ggml-cuda/fattn.cu | 12 ++++++------
  1 file changed, 6 insertions(+), 6 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/fattn.cu b/ggml/src/ggml-cuda/fattn.cu
-index 0e42242d0..3b4f0dd20 100644
+index a9890652a4..ae306f4b4e 100644
 --- a/ggml/src/ggml-cuda/fattn.cu
 +++ b/ggml/src/ggml-cuda/fattn.cu
-@@ -199,18 +199,18 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
+@@ -223,18 +223,18 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
  
      // On Volta the GQA optimizations aren't as impactful vs. minimizing wasted compute:
      if (cc == GGML_CUDA_CC_VOLTA) {
@@ -34,7 +35,7 @@ index 0e42242d0..3b4f0dd20 100644
                  ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 2>(ctx, dst);
                  return;
              }
-@@ -222,17 +222,17 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
+@@ -264,17 +264,17 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
          }
      }
  

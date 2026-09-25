@@ -1,4 +1,4 @@
-From 5864d15fa5ccff41db287a0f3829a21c00561adb Mon Sep 17 00:00:00 2001
+From 26a5befebcf1e17879542ee1ffa0ee89ea263c32 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:56:18 -0400
 Subject: [PATCH] 4-other-backends/0018-cuda-bound-MoE-MMV-tail-row-reads.patch
@@ -8,10 +8,10 @@ Subject: [PATCH] 4-other-backends/0018-cuda-bound-MoE-MMV-tail-row-reads.patch
  1 file changed, 6 insertions(+), 4 deletions(-)
 
 diff --git a/ggml/src/ggml-cuda/mmvq.cu b/ggml/src/ggml-cuda/mmvq.cu
-index 32fc5e7d8..ed6c4dcfb 100644
+index 279fc3e9fa..4e1031c41a 100644
 --- a/ggml/src/ggml-cuda/mmvq.cu
 +++ b/ggml/src/ggml-cuda/mmvq.cu
-@@ -860,10 +860,12 @@ static __global__ void mul_mat_vec_q_moe(
+@@ -923,10 +923,12 @@ static __global__ void mul_mat_vec_q_moe(
  
  #pragma unroll
          for (int i = 0; i < c_rows_per_block; ++i) {

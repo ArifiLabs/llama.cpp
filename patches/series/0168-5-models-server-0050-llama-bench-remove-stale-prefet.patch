@@ -1,0 +1,36 @@
+From 6bc432494b05f4ad422a4f3fcb5d75b02eecff2e Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:57:44 -0400
+Subject: [PATCH] 
+ 5-models-server/0050-llama-bench-remove-stale-prefetch-weights-documentat.patch
+
+Conflict-resolved: S1: chat.cpp hunk was only literal marker text in init_deepseek_v3_2 (moved upstream to common/parsers/deepseek.cpp, already in arifi/main final form since the 260a9ed02 re-home); took upstream chat.cpp, llama-bench hunks replay unchanged
+---
+ tools/llama-bench/README.md       | 1 -
+ tools/llama-bench/llama-bench.cpp | 1 -
+ 2 files changed, 2 deletions(-)
+
+diff --git a/tools/llama-bench/README.md b/tools/llama-bench/README.md
+index e086813846..8adc56514d 100644
+--- a/tools/llama-bench/README.md
++++ b/tools/llama-bench/README.md
+@@ -75,7 +75,6 @@ test parameters:
+   -ot --override-tensor <tensor name pattern>=<buffer type>;...
+                                             (default: disabled)
+   -nopo, --no-op-offload <0|1>              (default: 0)
+-  -pw, --prefetch-weights <0|1>             (default: 0)
+   --no-host <0|1>                           (default: 0)
+ 
+ Multiple values can be given for each parameter by separating them with ','
+diff --git a/tools/llama-bench/llama-bench.cpp b/tools/llama-bench/llama-bench.cpp
+index d72c9cb550..3ce9d52387 100644
+--- a/tools/llama-bench/llama-bench.cpp
++++ b/tools/llama-bench/llama-bench.cpp
+@@ -482,7 +482,6 @@ static void print_usage(int /* argc */, char ** argv) {
+     printf("  -ot --override-tensor <tensor name pattern>=<buffer type>;...\n");
+     printf("                                                    (default: disabled)\n");
+     printf("  -nopo, --no-op-offload <0|1>                      (default: 0)\n");
+-    printf("  -pw, --prefetch-weights <0|1>                     (default: %s)\n", join(cmd_params_defaults.prefetch_weights, ",").c_str());
+     printf("  --no-host <0|1>                                   (default: %s)\n", join(cmd_params_defaults.no_host, ",").c_str());
+     printf("\n");
+     printf(

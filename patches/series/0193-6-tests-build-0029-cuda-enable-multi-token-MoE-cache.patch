@@ -1,0 +1,42 @@
+From e049aa5dc9fcc03ffeb21de98974fcc4d22103e1 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:58:24 -0400
+Subject: [PATCH] 
+ 6-tests-build/0029-cuda-enable-multi-token-MoE-cache-in-forced-modes.patch
+
+---
+ tests/test-moe-cache.cpp | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/tests/test-moe-cache.cpp b/tests/test-moe-cache.cpp
+index a9e0350230..014bb9dfc9 100644
+--- a/tests/test-moe-cache.cpp
++++ b/tests/test-moe-cache.cpp
+@@ -468,7 +468,7 @@ static bool run_capability_queries(
+     ok &= config.min_compute_capability == 700;
+     ok &= config.min_expert_bytes == 1024u * 1024;
+     ok &= config.min_expert_explicit == 0;
+-    ok &= config.max_batch == 1;
++    ok &= config.max_batch == 8;
+     ok &= config.overlap_cpu_rows == -1;
+     ok &= ggml_moe_cache.query_device(cuda_device, &config, &device) == 1;
+     ok &= device.min_expert_bytes == (device.compute_capability >= 800
+@@ -759,15 +759,15 @@ static bool run_multi_token_scenario(
+                     clamped_fused_graph, clamped_fused_reference);
+         ok = ok && run_scenario(
+                 "cache-multi-token", nullptr, cuda, cpu,
+-                graph, reference, capture, "8", "act-dedup=");
++                graph, reference, capture, nullptr, "act-dedup=");
+         ok = ok && run_scenario(
+                 "cache-fused-multi-token", nullptr, cuda, cpu,
+                 fused_graph, fused_reference, capture,
+-                "8", "fusion-nodes=");
++                nullptr, "fusion-nodes=");
+         ok = ok && run_scenario(
+                 "cache-fused-clamped-multi-token", nullptr, cuda, cpu,
+                 clamped_fused_graph, clamped_fused_reference, capture,
+-                "8", "fusion-nodes=");
++                nullptr, "fusion-nodes=");
+     }
+ 
+     free_graph(clamped_fused_graph);

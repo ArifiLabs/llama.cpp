@@ -1,4 +1,4 @@
-From 667ee75c4d3793c3b130d56cf578ee9703ec20a2 Mon Sep 17 00:00:00 2001
+From 672273b1e0d6f9076c61569e98d89a2fb7f04caa Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Sat, 25 Jul 2026 01:38:06 -0400
 Subject: [PATCH] ggml: ROCmFP4/ROCmFPX weight formats behind
@@ -75,7 +75,7 @@ Measured-effect: OFF (default) is a no-op on every existing path - no code outsi
  create mode 100644 ggml/rocmfpx/test_rocmfpx.c
 
 diff --git a/ggml/CMakeLists.txt b/ggml/CMakeLists.txt
-index d76ed8ab0..c9fd6c508 100644
+index 752dabbb63..3a8b9f5be9 100644
 --- a/ggml/CMakeLists.txt
 +++ b/ggml/CMakeLists.txt
 @@ -132,6 +132,17 @@ option(GGML_GPROF                  "ggml: enable gprof"
@@ -97,7 +97,7 @@ index d76ed8ab0..c9fd6c508 100644
  option(GGML_SANITIZE_THREAD    "ggml: enable thread sanitizer"    OFF)
  option(GGML_SANITIZE_ADDRESS   "ggml: enable address sanitizer"   OFF)
 diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
-index 0edf1e70f..c75d899c7 100644
+index 420418a480..9bf7bfe027 100644
 --- a/ggml/include/ggml.h
 +++ b/ggml/include/ggml.h
 @@ -436,10 +436,10 @@ extern "C" {
@@ -144,8 +144,8 @@ index 0edf1e70f..c75d899c7 100644
 +        GGML_TYPE_COUNT   = 256,
      };
  
-     // precision
-@@ -496,6 +517,16 @@ extern "C" {
+     // [TAG_GGML_PREC]
+@@ -507,6 +528,16 @@ extern "C" {
          GGML_FTYPE_MOSTLY_NVFP4   = 26, // except 1d tensors
          GGML_FTYPE_MOSTLY_Q1_0    = 27, // except 1d tensors
          GGML_FTYPE_MOSTLY_Q2_0    = 28, // except 1d tensors
@@ -164,7 +164,7 @@ index 0edf1e70f..c75d899c7 100644
      // available tensor operations:
 diff --git a/ggml/rocmfp4/README.md b/ggml/rocmfp4/README.md
 new file mode 100644
-index 000000000..39bb79302
+index 0000000000..39bb79302c
 --- /dev/null
 +++ b/ggml/rocmfp4/README.md
 @@ -0,0 +1,1020 @@
@@ -1190,7 +1190,7 @@ index 000000000..39bb79302
 +  regression gate.
 diff --git a/ggml/rocmfp4/rocmfp4.c b/ggml/rocmfp4/rocmfp4.c
 new file mode 100644
-index 000000000..bccefcec1
+index 0000000000..bccefcec15
 --- /dev/null
 +++ b/ggml/rocmfp4/rocmfp4.c
 @@ -0,0 +1,797 @@
@@ -1993,7 +1993,7 @@ index 000000000..bccefcec1
 +}
 diff --git a/ggml/rocmfp4/rocmfp4.h b/ggml/rocmfp4/rocmfp4.h
 new file mode 100644
-index 000000000..9756f6ad4
+index 0000000000..9756f6ad4c
 --- /dev/null
 +++ b/ggml/rocmfp4/rocmfp4.h
 @@ -0,0 +1,58 @@
@@ -2057,7 +2057,7 @@ index 000000000..9756f6ad4
 +#endif
 diff --git a/ggml/rocmfpx/README.md b/ggml/rocmfpx/README.md
 new file mode 100644
-index 000000000..8d5d53c91
+index 0000000000..8d5d53c911
 --- /dev/null
 +++ b/ggml/rocmfpx/README.md
 @@ -0,0 +1,109 @@
@@ -2172,7 +2172,7 @@ index 000000000..8d5d53c91
 +```
 diff --git a/ggml/rocmfpx/rocmfp2_reference.c b/ggml/rocmfpx/rocmfp2_reference.c
 new file mode 100644
-index 000000000..87881cf64
+index 0000000000..87881cf64d
 --- /dev/null
 +++ b/ggml/rocmfpx/rocmfp2_reference.c
 @@ -0,0 +1,483 @@
@@ -2661,7 +2661,7 @@ index 000000000..87881cf64
 +}
 diff --git a/ggml/rocmfpx/rocmfp2_reference.h b/ggml/rocmfpx/rocmfp2_reference.h
 new file mode 100644
-index 000000000..2bc72579b
+index 0000000000..2bc72579b3
 --- /dev/null
 +++ b/ggml/rocmfpx/rocmfp2_reference.h
 @@ -0,0 +1,151 @@
@@ -2818,7 +2818,7 @@ index 000000000..2bc72579b
 +#endif
 diff --git a/ggml/rocmfpx/rocmfpx.c b/ggml/rocmfpx/rocmfpx.c
 new file mode 100644
-index 000000000..5aa075ef8
+index 0000000000..5aa075ef87
 --- /dev/null
 +++ b/ggml/rocmfpx/rocmfpx.c
 @@ -0,0 +1,1354 @@
@@ -4178,7 +4178,7 @@ index 000000000..5aa075ef8
 +}
 diff --git a/ggml/rocmfpx/rocmfpx.h b/ggml/rocmfpx/rocmfpx.h
 new file mode 100644
-index 000000000..579d7e448
+index 0000000000..579d7e448b
 --- /dev/null
 +++ b/ggml/rocmfpx/rocmfpx.h
 @@ -0,0 +1,104 @@
@@ -4288,7 +4288,7 @@ index 000000000..579d7e448
 +#endif
 diff --git a/ggml/rocmfpx/test_rocmfp2_reference.c b/ggml/rocmfpx/test_rocmfp2_reference.c
 new file mode 100644
-index 000000000..96201fc1e
+index 0000000000..96201fc1e5
 --- /dev/null
 +++ b/ggml/rocmfpx/test_rocmfp2_reference.c
 @@ -0,0 +1,565 @@
@@ -4859,7 +4859,7 @@ index 000000000..96201fc1e
 +}
 diff --git a/ggml/rocmfpx/test_rocmfpx.c b/ggml/rocmfpx/test_rocmfpx.c
 new file mode 100644
-index 000000000..daf58ccc3
+index 0000000000..daf58ccc3d
 --- /dev/null
 +++ b/ggml/rocmfpx/test_rocmfpx.c
 @@ -0,0 +1,177 @@
@@ -5041,7 +5041,7 @@ index 000000000..daf58ccc3
 +    return 0;
 +}
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 947732000..90e2f7861 100644
+index 9477320002..90e2f78615 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
 @@ -213,6 +213,17 @@ set_target_properties(ggml-base PROPERTIES
@@ -5063,7 +5063,7 @@ index 947732000..90e2f7861 100644
  
  target_include_directories(ggml-base PRIVATE . ${CMAKE_CURRENT_BINARY_DIR})
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index e61a1a59b..a7b63d4c6 100644
+index 590825e94a..2a36e880cd 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -16,6 +16,11 @@
@@ -5296,7 +5296,7 @@ index e61a1a59b..a7b63d4c6 100644
          .from_float               = quantize_row_q4_1,
          .vec_dot                  = ggml_vec_dot_q4_1_q8_1,
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index bf36d4b97..e1ce57c2d 100644
+index e00b4dd3b8..f167ec1415 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -671,6 +671,14 @@ void ggml_compute_forward_add(
@@ -5407,7 +5407,7 @@ index bf36d4b97..e1ce57c2d 100644
          case GGML_TYPE_Q4_1:
          case GGML_TYPE_Q5_0:
 diff --git a/ggml/src/ggml-quants.c b/ggml/src/ggml-quants.c
-index d647000ba..7ef0f1484 100644
+index 27d52afd8d..d1c11f1d36 100644
 --- a/ggml/src/ggml-quants.c
 +++ b/ggml/src/ggml-quants.c
 @@ -6,6 +6,11 @@
@@ -5422,7 +5422,7 @@ index d647000ba..7ef0f1484 100644
  #include <math.h>
  #include <string.h>
  #include <assert.h>
-@@ -5612,6 +5617,54 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
+@@ -5583,6 +5588,54 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
              {
                  VALIDATE_ROW_DATA_D_F16_IMPL(block_q4_0, data, nb);
              } break;
@@ -5478,7 +5478,7 @@ index d647000ba..7ef0f1484 100644
              {
                  VALIDATE_ROW_DATA_DM_F16_IMPL(block_q4_1, data, nb, d, m);
 diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
-index 2602fbdfd..d61d3b5df 100644
+index 7c9cbd36f8..091229137e 100644
 --- a/ggml/src/ggml.c
 +++ b/ggml/src/ggml.c
 @@ -11,6 +11,11 @@
@@ -5600,7 +5600,7 @@ index 2602fbdfd..d61d3b5df 100644
          case GGML_FTYPE_MOSTLY_Q5_0:          wtype = GGML_TYPE_Q5_0;  break;
          case GGML_FTYPE_MOSTLY_Q5_1:          wtype = GGML_TYPE_Q5_1;  break;
          case GGML_FTYPE_MOSTLY_Q8_0:          wtype = GGML_TYPE_Q8_0;  break;
-@@ -8219,6 +8310,27 @@ size_t ggml_quantize_chunk(
+@@ -8298,6 +8389,27 @@ size_t ggml_quantize_chunk(
          case GGML_TYPE_Q1_0:    result = quantize_q1_0   (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_Q2_0_G128: result = quantize_q2_0_g128(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
          case GGML_TYPE_Q2_0:    result = quantize_q2_0   (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;

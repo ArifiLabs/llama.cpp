@@ -1,0 +1,71 @@
+From 7c243e7c31d4755209d815145222e7fa9f92d2f0 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 5 Sep 2026 15:09:01 -0400
+Subject: [PATCH] docs: scope the power-plan claim to the runs that banked a
+ receipt, and fix two counts
+
+Three corrections found by review after fbfd45ae3, all in the same class: a
+claim stated more broadly than the evidence behind it.
+
+The b10680 section asserted that EVERY serve figure in it was taken under the
+Balanced power plan. CHECKED across the whole lane-209 evidence tree: the
+concat-transpose and q6_k runs banked per-launch hardware guard files recording
+the plan; the iq4_xs, iq3_s and ROCmFP4-FAST runs did not - their harness pins
+the machine's configuration but never writes the active plan into a receipt, and
+neither the lane's law list nor lane209.py names one. Balanced is what the box
+was set to and is not something this changelog can point at a file to prove, so
+the preamble now says exactly that and names writing the plan into every guard
+file as owed. This file's own rule 3, and F-12 behind it, is the reason the
+distinction is drawn rather than smoothed: an undeclared plan cost this project
+eight days of numbers.
+
+The location table omitted 616b877b8 and da218bab7, so a reader tracing the
+superseded every-width build from the BEFORE/AFTER table landed nowhere. Both
+are now listed with what they are.
+
+PENDING-ROWS.md said "these five are ordered" above six bullets. da218bab7 is a
+comment-only correction, not a link in the gate-narrowing chain; it is now
+listed separately and the ordering claim covers only the five it is true of.
+
+Origin: lane-209 public trail (HQ seat-52, R9), review pass
+Measured-effect: UNMEASURED
+---
+ CHANGELOG.md | 18 +++++++++++++++---
+ 1 file changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 719d00d124..8e7d38a961 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -37,8 +37,18 @@ Unless an entry says otherwise, every measurement was taken on:
+ 
+ Five Vulkan mat-vec / mat-mat mechanisms, one server bug fix, one drafting controller, and one
+ change that measured neutral and is shipped anyway. Every serve figure below was taken with
+-`llama-server` on **RIG-A** under the **Balanced** power plan, one binary per arm or one binary with
+-the arms selected by an environment variable, and a fresh server per arm.
++`llama-server` on **RIG-A**, one binary per arm or one binary with the arms selected by an
++environment variable, and a fresh server per arm.
++
++**On the power plan, which this file requires every performance claim to declare.** The
++concat-transpose and `q6_k` entries were taken under **Balanced**, and their runs banked a
++per-launch hardware guard file recording it. The `iq4_xs`, `iq3_s` and ROCmFP4-FAST entries were
++taken by a harness that pins the machine's configuration but **does not write the active power plan
++into its receipts** — so for those, Balanced is what the box was set to and **not** something this
++changelog can point at a file to prove. That distinction is drawn rather than smoothed over because
++of F-12: a "performance" plan on this APU measured 11.2 tok/s against Balanced's 29.0 on
++GPU-resident decode, and cost this project eight days of numbers. Writing the plan into every
++guard file is owed.
+ 
+ **Read the summary table with its columns, not across them.** Three of these runs sit in different
+ measurement epochs — the box took an AMD driver update (to `32.0.31041.1004`) and a reboot on
+@@ -295,7 +305,9 @@ to prevent.
+ | `6c7d9275f`, `8a4044a82` — adaptive drafting, replay fix | on their working branch | awaiting integration |
+ | `e3220bed0` — ROCmFP4-FAST mat-mat + mat-vec hoist | on its working branch | awaiting integration |
+ | `1884a620a`, `aa9f0e2aa` — `iq4_xs` and `iq3_s` mat-vec | on their working branch | measured wins, awaiting integration |
+-| `60f57787f` … `f68a4bd25` — ROCmFP4-FAST MMVQ | on its working branch | **held there deliberately** — see the residual above |
++| `616b877b8` — the every-width `iq3_s` split | on its working branch | **superseded by `aa9f0e2aa`** and kept as history; it is the measured 7–9% loss listed above |
++| `60f57787f`, `ab04258bf`, `294dfdbdd`, `8e2acfd21`, `f68a4bd25` — ROCmFP4-FAST MMVQ | on its working branch | **held there deliberately** — see the residual above. The five narrow the width gate in order, each on what the one before ruled out, so a subset of them is a different and untested change rather than a smaller one |
++| `da218bab7` — comment correction | on its working branch | comment-only; no behaviour |
+ | `4bbebd619` — `q6_k` direct scales | on its working branch | awaiting integration |
+ 
+ None of them, including the one that landed, is yet a file in

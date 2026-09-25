@@ -1,74 +1,76 @@
-From d077413126caadfff8ae01425916a957173ed7d0 Mon Sep 17 00:00:00 2001
+From 87f6b48628bd4e12e6c5c65ea42d4ac74fa4b25f Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:58 -0400
 Subject: [PATCH] 
  3-vulkan/0018-vulkan-register-the-TQ-rotated-mul_mm_id-pipelines.patch
 
+Conflict-resolved: S2: TQ3_1S/TQ4_1S rotated mul_mm_id pipelines re-registered on upstream's pipeline map - FOR_EACH_ARIFI_MM_ID_F32B_TYPE run at the four subgroup/fp32 id sites (all f32-B) plus an f32-B-only X_CM1_ID_F32B for coopmat1; never coopmat2; the pipeline set equals the S1 CREATE_MM2/CREATE_MM lines (f32 B, f16acc+f32acc), no f16-B TQ pipeline is created
 ---
- ggml/src/ggml-vulkan/ggml-vulkan.cpp | 25 +++++++++++++++++++++++++
- 1 file changed, 25 insertions(+)
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 1bf29828c..ff90b5210 100644
+index 6cb642db32..db063b7b49 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -4912,6 +4912,11 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
-         CREATE_MM2(GGML_TYPE_IQ3_S,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ3_S],   matmul_id_subgroup_iq3_s_f32,   mmq_wg_denoms, warptile_mmq, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id);
-         CREATE_MM2(GGML_TYPE_IQ4_XS,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ4_XS],  matmul_id_subgroup_iq4_xs_f32,  mmq_wg_denoms, warptile_mmq, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id);
-         CREATE_MM2(GGML_TYPE_IQ4_NL,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ4_NL],  matmul_id_subgroup_iq4_nl_f32,  mmq_wg_denoms, warptile_mmq, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id);
-+        // TurboQuant, ROTATED matmul. Correct ONLY against an activation pre-rotated by
-+        // pipeline_tq_rotate_act; the A-side loads produce centroid*scale with no inverse
-+        // WHT. coopmat2 is excluded above on purpose.
-+        CREATE_MM2(GGML_TYPE_TQ3_1S,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_TQ3_1S],  matmul_id_subgroup_tq3_1s_f32,  mmq_wg_denoms, warptile_mmq, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id);
-+        CREATE_MM2(GGML_TYPE_TQ4_1S,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_TQ4_1S],  matmul_id_subgroup_tq4_1s_f32,  mmq_wg_denoms, warptile_mmq, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id);
+@@ -2199,6 +2199,12 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+ // every FOR_EACH_LUT_TYPE* creation site also runs this list
+ #define FOR_EACH_ARIFI_MM_TYPE(X) \
+     X(GGML_TYPE_Q2_0_G128, q2_0_g128)
++// arifi: TurboQuant TQ3_1S/TQ4_1S ROTATED mul_mm_id - f32 B only (the activation is pre-rotated in f32 by
++// pipeline_tq_rotate_act), never coopmat2 (no dequant_funcs_cm2 entry); SPIR-V from the explicit tq stanza
++// in vulkan-shaders-gen.cpp. Correct ONLY against a pre-rotated activation.
++#define FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X) \
++    X(GGML_TYPE_TQ3_1S, tq3_1s) \
++    X(GGML_TYPE_TQ4_1S, tq4_1s)
+ #define FOR_EACH_LUT_TYPE(X) \
+     FOR_EACH_LUT_TYPE_NONFP4(X)  \
+     FOR_EACH_LUT_FP4_TYPE(X)
+@@ -2542,6 +2548,15 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         }
+         FOR_EACH_LUT_TYPE_NONFP4(X_CM1_ID)
+         FOR_EACH_ARIFI_MM_TYPE(X_CM1_ID)
++#define X_CM1_ID_F32B(TYPE, tstr) \
++        if (device->coopmat_acc_f16_support) { \
++            cm1_create({TYPE, GGML_TYPE_F32, true, true},  tc_mmq_id, "matmul_id_subgroup_" #tstr "_f32_f16acc", matmul_id_subgroup_##tstr##_f32_f16acc_cm1_len, matmul_id_subgroup_##tstr##_f32_f16acc_cm1_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count); \
++        } \
++        if (device->coopmat_acc_f32_support) { \
++            cm1_create({TYPE, GGML_TYPE_F32, true, false}, tc_mmq_id, "matmul_id_subgroup_" #tstr "_f32",        matmul_id_subgroup_##tstr##_f32_cm1_len,        matmul_id_subgroup_##tstr##_f32_cm1_data,        sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count); \
++        }
++        FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X_CM1_ID_F32B)
++#undef X_CM1_ID_F32B
  #if defined(GGML_VULKAN_FLOAT_E2M1_GLSLC_SUPPORT) && defined(GGML_VULKAN_FLOAT_E4M3_GLSLC_SUPPORT)
          if (device->ocp_fp4) {
-             CREATE_MM2(GGML_TYPE_MXFP4,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_MXFP4],   matmul_id_subgroup_mxfp4_f32_ocp,   mmq_wg_denoms, warptile_mmq, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id);
-@@ -5055,6 +5060,11 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
-             CREATE_MM2(GGML_TYPE_IQ3_S,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ3_S],   matmul_id_subgroup_iq3_s_f32,   mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-             CREATE_MM2(GGML_TYPE_IQ4_XS,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ4_XS],  matmul_id_subgroup_iq4_xs_f32,  mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-             CREATE_MM2(GGML_TYPE_IQ4_NL,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ4_NL],  matmul_id_subgroup_iq4_nl_f32,  mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-+            // TurboQuant, ROTATED matmul. Correct ONLY against an activation pre-rotated by
-+            // pipeline_tq_rotate_act; the A-side loads produce centroid*scale with no inverse
-+            // WHT. coopmat2 is excluded above on purpose.
-+            CREATE_MM2(GGML_TYPE_TQ3_1S,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_TQ3_1S],  matmul_id_subgroup_tq3_1s_f32,  mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-+            CREATE_MM2(GGML_TYPE_TQ4_1S,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_TQ4_1S],  matmul_id_subgroup_tq4_1s_f32,  mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-             CREATE_MM2(GGML_TYPE_MXFP4,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_MXFP4],   matmul_id_subgroup_mxfp4_f32,   mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-             CREATE_MM2(GGML_TYPE_NVFP4,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_NVFP4],   matmul_id_subgroup_nvfp4_f32,   mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
- 
-@@ -5105,6 +5115,11 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
-             CREATE_MM2(GGML_TYPE_IQ3_S,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ3_S],   matmul_id_iq3_s_f32,   mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
-             CREATE_MM2(GGML_TYPE_IQ4_XS,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ4_XS],  matmul_id_iq4_xs_f32,  mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
-             CREATE_MM2(GGML_TYPE_IQ4_NL,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ4_NL],  matmul_id_iq4_nl_f32,  mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
-+            // TurboQuant, ROTATED matmul. Correct ONLY against an activation pre-rotated by
-+            // pipeline_tq_rotate_act; the A-side loads produce centroid*scale with no inverse
-+            // WHT. coopmat2 is excluded above on purpose.
-+            CREATE_MM2(GGML_TYPE_TQ3_1S,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_TQ3_1S],  matmul_id_tq3_1s_f32,  mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
-+            CREATE_MM2(GGML_TYPE_TQ4_1S,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_TQ4_1S],  matmul_id_tq4_1s_f32,  mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
-             CREATE_MM2(GGML_TYPE_MXFP4,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_MXFP4],   matmul_id_mxfp4_f32,   mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
-             CREATE_MM2(GGML_TYPE_NVFP4,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_NVFP4],   matmul_id_nvfp4_f32,   mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
- 
-@@ -5237,6 +5252,11 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
-             CREATE_MM(GGML_TYPE_IQ3_S,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ3_S].f32acc,   matmul_id_subgroup_iq3_s_f32,   , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-             CREATE_MM(GGML_TYPE_IQ4_XS,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ4_XS].f32acc,  matmul_id_subgroup_iq4_xs_f32,  , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-             CREATE_MM(GGML_TYPE_IQ4_NL,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ4_NL].f32acc,  matmul_id_subgroup_iq4_nl_f32,  , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-+            // TurboQuant, ROTATED matmul. Correct ONLY against an activation pre-rotated by
-+            // pipeline_tq_rotate_act; the A-side loads produce centroid*scale with no inverse
-+            // WHT. coopmat2 is excluded above on purpose.
-+            CREATE_MM(GGML_TYPE_TQ3_1S,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_TQ3_1S].f32acc,  matmul_id_subgroup_tq3_1s_f32,  , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-+            CREATE_MM(GGML_TYPE_TQ4_1S,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_TQ4_1S].f32acc,  matmul_id_subgroup_tq4_1s_f32,  , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-             CREATE_MM(GGML_TYPE_MXFP4,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_MXFP4].f32acc,   matmul_id_subgroup_mxfp4_f32,   , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-             CREATE_MM(GGML_TYPE_NVFP4,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_NVFP4].f32acc,   matmul_id_subgroup_nvfp4_f32,   , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, mul_mat_subgroup_size);
-         } else {
-@@ -5268,6 +5288,11 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
-             CREATE_MM(GGML_TYPE_IQ3_S,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ3_S].f32acc,   matmul_id_iq3_s_f32,   , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
-             CREATE_MM(GGML_TYPE_IQ4_XS,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ4_XS].f32acc,  matmul_id_iq4_xs_f32,  , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
-             CREATE_MM(GGML_TYPE_IQ4_NL,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_IQ4_NL].f32acc,  matmul_id_iq4_nl_f32,  , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
-+            // TurboQuant, ROTATED matmul. Correct ONLY against an activation pre-rotated by
-+            // pipeline_tq_rotate_act; the A-side loads produce centroid*scale with no inverse
-+            // WHT. coopmat2 is excluded above on purpose.
-+            CREATE_MM(GGML_TYPE_TQ3_1S,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_TQ3_1S].f32acc,  matmul_id_tq3_1s_f32,  , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
-+            CREATE_MM(GGML_TYPE_TQ4_1S,  pipeline_dequant_mul_mat_mat_id[GGML_TYPE_TQ4_1S].f32acc,  matmul_id_tq4_1s_f32,  , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
-             CREATE_MM(GGML_TYPE_MXFP4,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_MXFP4].f32acc,   matmul_id_mxfp4_f32,   , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
-             CREATE_MM(GGML_TYPE_NVFP4,   pipeline_dequant_mul_mat_mat_id[GGML_TYPE_NVFP4].f32acc,   matmul_id_nvfp4_f32,   , mmq_wg_denoms, warptile_mmqid, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
+ #define X_CM1_ID_OCP(TYPE, tstr) \
+@@ -2677,6 +2692,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+                 sg_create({TYPE, GGML_TYPE_F32, true, false}, tc_mmqid, "matmul_id_subgroup_" #tstr "_f32",        SPV_DOT2(matmul_id_subgroup_##tstr##_f32),        sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count, mul_mat_subgroup_size);
+                 FOR_EACH_LUT_TYPE(X_SG_ID_SUB)
+                 FOR_EACH_ARIFI_MM_TYPE(X_SG_ID_SUB)
++                FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X_SG_ID_SUB)
+ #undef X_SG_ID_SUB
+ #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+                 if (device->integer_dot_product) {
+@@ -2716,6 +2732,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+                 sg_create({TYPE, GGML_TYPE_F32, true, false}, tc_mmqid, "matmul_id_" #tstr "_f32",        SPV_DOT2(matmul_id_##tstr##_f32),        sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count);
+                 FOR_EACH_LUT_TYPE(X_SG_ID)
+                 FOR_EACH_ARIFI_MM_TYPE(X_SG_ID)
++                FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X_SG_ID)
+ #undef X_SG_ID
+ #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+                 if (device->integer_dot_product) {
+@@ -2791,6 +2808,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+                 sg_create({TYPE, GGML_TYPE_F32, true, false}, tc_mmqid, "matmul_id_subgroup_" #tstr "_f32", matmul_id_subgroup_##tstr##_f32_fp32_len, matmul_id_subgroup_##tstr##_f32_fp32_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count, mul_mat_subgroup_size);
+                 FOR_EACH_LUT_TYPE(X_SG_ID_SUB_FP32)
+                 FOR_EACH_ARIFI_MM_TYPE(X_SG_ID_SUB_FP32)
++                FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X_SG_ID_SUB_FP32)
+ #undef X_SG_ID_SUB_FP32
+             } else {
+                 sg_create({GGML_TYPE_F32, GGML_TYPE_F32, true, false}, tc_mm, "matmul_id_f32_f32", matmul_id_f32_f32_fp32_len, matmul_id_f32_f32_fp32_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count);
+@@ -2804,6 +2822,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+                 sg_create({TYPE, GGML_TYPE_F32, true, false}, tc_mmqid, "matmul_id_" #tstr "_f32", matmul_id_##tstr##_f32_fp32_len, matmul_id_##tstr##_f32_fp32_data, sizeof(vk_mat_mat_id_push_constants), mul_mat_id_param_count);
+                 FOR_EACH_LUT_TYPE(X_SG_ID_FP32)
+                 FOR_EACH_ARIFI_MM_TYPE(X_SG_ID_FP32)
++                FOR_EACH_ARIFI_MM_ID_F32B_TYPE(X_SG_ID_FP32)
+ #undef X_SG_ID_FP32
+             }
          }

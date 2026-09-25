@@ -1,4 +1,4 @@
-From 3aae71a4573baafd612c3a9f386414a07f70036f Mon Sep 17 00:00:00 2001
+From 42fe2dd9a150fa861c37fa7fc320c467ccf2864a Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 05:23:32 -0400
 Subject: [PATCH] loader: g128 include + get_next_tensor ctx arg
@@ -10,7 +10,7 @@ Measured-effect: build fix only
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
-index deea1a785..0e46dcb20 100644
+index 70c2b0b482..d5dcb7bd3e 100644
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
 @@ -1,6 +1,7 @@
@@ -21,7 +21,7 @@ index deea1a785..0e46dcb20 100644
  #include "ggml.h"
  #include "gguf.h"
  #include "llama-hparams.h"
-@@ -859,7 +860,7 @@ llama_model_loader::llama_model_loader(
+@@ -866,7 +867,7 @@ llama_model_loader::llama_model_loader(
      // Save tensor offsets only after the optional g128 remap: llama_tensor_weight
      // then validates the actual runtime payload length, not the legacy Q2_0 length.
      for (size_t file_idx = 0; file_idx < contexts.size(); ++file_idx) {

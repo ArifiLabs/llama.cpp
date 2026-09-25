@@ -1,4 +1,4 @@
-From edcf89be5d3c2d6e2bdbd0f7ae985fc67b4ec805 Mon Sep 17 00:00:00 2001
+From 47be182e19a6ddf7f22549e08cf9520a588a7bde Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 21:50:18 -0400
 Subject: [PATCH] rows-per-workgroup on g128: a null, and F-10 confirmed on a
@@ -45,7 +45,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  3 files changed, 43 insertions(+), 1 deletion(-)
 
 diff --git a/docs/FINDINGS.md b/docs/FINDINGS.md
-index 41f9aec7f..667f057b8 100644
+index 41f9aec7f5..667f057b8a 100644
 --- a/docs/FINDINGS.md
 +++ b/docs/FINDINGS.md
 @@ -408,6 +408,22 @@ gguf_init_from_reader: failed to read tensor data
@@ -72,7 +72,7 @@ index 41f9aec7f..667f057b8 100644
  `gguf_init` learns to consult the format key before it sizes anything, or the key is read in a
  pre-pass. Both widen a hot, security-relevant path — offset validation is what stops a malformed
 diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
-index 9e70e27ac..f45d17904 100644
+index 9e70e27ac8..f45d179047 100644
 --- a/docs/OPTIONS-REGISTRY.md
 +++ b/docs/OPTIONS-REGISTRY.md
 @@ -38,6 +38,7 @@ safe measurement posture.
@@ -84,10 +84,10 @@ index 9e70e27ac..f45d17904 100644
  | `LANE110_PREFETCH_CAP` | implementation default, currently `3*n_expert_used` | Limits standalone expert prefetch aggressiveness. | Sweep under cache pressure after establishing the baseline. | Recorded server sequences: default approximately `[5.07/9.03/9.58/12.01]`; cap `1` `[5.13/9.88/10.29/11.22]`; cap `96` `[5.79/11.73/12.19/11.26]`. Default retained because apparent ramp differences require controlled retest. |
  | `--ctx-checkpoints 0` | `0` | Disables server prompt rewind/checkpoints. | Keep off unless a workload demonstrably requires rewind semantics. | Largest historical gain: stock rewind `39.9/68.4/280`; ON_DEVICE checkpoint `84.8/128.8/341.6`; disabled approximately `101/150/372` across short/medium/long prefill. |
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index a95eab556..28ae58f21 100644
+index 3dc5fb508d..7f630e76f3 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -5311,6 +5311,31 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -2905,6 +2905,31 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      auto const &rm_id = [&](uint32_t rows) { return is_rdna3 ? 4u : rows; };
      uint32_t rm_iq = 2 * rm_kq;
  
@@ -117,9 +117,9 @@ index a95eab556..28ae58f21 100644
 +    }
 +
      const bool use_subgroups = device->subgroup_arithmetic;
-     // Ensure a subgroup size >= 16 is available
-     const bool use_subgroups16 = use_subgroups && subgroup_min_size_16;
-@@ -5408,7 +5433,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     // The Imagination proprietary compiler rejects the subgroup-only dequant mul_mat_vec
+     // shaders that require a subgroup size >= 16; fall back to shared-memory reduction.
+@@ -3008,7 +3033,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                  const uint32_t wg_size_subgroup_int = (w == DMMV_WG_SIZE_SUBGROUP) ? subgroup_size_int : (subgroup_size_int * 4);
  
                  ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_0][i], "mul_mat_vec_q2_0_q8_1_f32", arr_dmmv_q2_0_q8_1_f32_len[reduc], arr_dmmv_q2_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_kq_int, i), i+1}, 1, true, use_subgroups, subgroup_size_int);

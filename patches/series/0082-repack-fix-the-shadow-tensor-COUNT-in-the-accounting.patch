@@ -1,4 +1,4 @@
-From 222946b67fb0be9605829b48a29335ff8f9e830c Mon Sep 17 00:00:00 2001
+From 7afc0e8a126f2b332edbae9e1838b3eb2fc57663 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 03:47:02 -0400
 Subject: [PATCH] repack: fix the shadow tensor COUNT in the accounting line,
@@ -29,7 +29,7 @@ Measured-effect: none on any code path - the changed line is a log format string
  3 files changed, 6 insertions(+), 4 deletions(-)
 
 diff --git a/docs/FINDINGS.md b/docs/FINDINGS.md
-index 2ee262fdc..049e05e9b 100644
+index 2ee262fdcf..049e05e9b8 100644
 --- a/docs/FINDINGS.md
 +++ b/docs/FINDINGS.md
 @@ -232,8 +232,9 @@ Three ways out, none free, all recorded rather than assumed:
@@ -45,7 +45,7 @@ index 2ee262fdc..049e05e9b 100644
     Quality: unchanged, and tested at the layer where it can actually be tested. With
     `--no-op-offload` — which pins mode 2's prefill to the CPU exactly like mode 1's, isolating the
 diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
-index 0961d00a1..3788602bf 100644
+index 0961d00a1c..3788602bf8 100644
 --- a/docs/OPTIONS-REGISTRY.md
 +++ b/docs/OPTIONS-REGISTRY.md
 @@ -25,7 +25,7 @@ safe measurement posture.
@@ -58,10 +58,10 @@ index 0961d00a1..3788602bf 100644
  | `MAX_N_CACHED` | implementation-selected; document the chosen value in a run record | Bounds hot-expert RAM cache capacity. | Increase only after measuring cache pressure, RAM headroom, and bundle I/O behavior. | No independently accepted ON/OFF benchmark is recorded. Treat as a measured tuning variable, not a presumed gain. |
  | `POWERINFER_IOCP` | **ON** when unset (Windows only; any value other than an exact `0` keeps IOCP). `POWERINFER_IOCP=0` selects the pre-M2b synchronous path. | Scope: the Windows expert-bundle read path only (`powerinfer/moe_sparse_pipeline/iou.cpp` + the `io_worker_main` Windows branch); it is inert on Linux, which keeps vendored `io_uring` unconditionally. ON issues bounded IOCP async positioned reads (ring of `io_queue_depth`=512) so storage latency overlaps the token path; OFF issues blocking `ReadFile`+`OVERLAPPED` positioned reads, one at a time. | Flip to `0` to recover from a suspected streaming deadlock, an IOCP assert, or to A/B the read path without a recompile. Only meaningful with `EXPERT_BUNDLE_PATH` set — with no bundle there is no expert IO and the flag does nothing. | **Direction UNRESOLVED — neither a gain nor a regression is established.** Same-binary A/B, 2026-07-24 (llama-server, 21B + bundle-21b, `-ngl 0 -b 8 -ub 8`, 4× n64 ignore_eos, fresh server per arm, env flip only — no HEAD confound): **OFF `3.77 / 3.60 / 5.94 / 3.94`** (mean `4.31`) vs **ON `2.42 / 8.74 / 5.20 / 6.28`** (mean `5.66`). The `+31%` mean gap is **noise, not signal, and must not be quoted**: within-arm spread on ON alone (`2.42→8.74` = `6.32`) exceeds the between-arm gap (`1.35`), and with n=1 per cell the ON mean swings `4.63`–`6.74` depending on which single roll is dropped — straddling the OFF mean. Both arms ran memory-starved (`2.4–4.0 GB` free during), and two confounds favour ON anyway (it ran second with a warmer page cache, and launched with `1.2 GB` more headroom). This is the terminal verdict at this RAM; a real measurement needs sustained headroom and repeated rolls per cell. Sol's `10–40%` cold-regime figure is an audit *estimate*, never measured here (`RESULTS-sparse-runs-on-windows.md:286`; codex job `task-mrwgwtze-hw1o8t.log`) — do not cite it as a result. Correctness ON is proven: streaming engaged (working set `4.77 GB` vs an `11.4 GB` model file, identical in both arms), coherent output, zero IOCP errors, clean shutdown. Ring-full (`n_inflight ≥ 512`) and `ERROR_IO_PENDING` branches remain **unexercised**. |
 diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
-index 6335ad98f..a53549c4c 100644
+index 90b540260f..6f7ec7aa92 100644
 --- a/ggml/src/ggml-cpu/repack.cpp
 +++ b/ggml/src/ggml-cpu/repack.cpp
-@@ -5657,8 +5657,9 @@ static const ggml::cpu::tensor_traits * ggml_arifi_dual_shadow_ensure(const stru
+@@ -5662,8 +5662,9 @@ static const ggml::cpu::tensor_traits * ggml_arifi_dual_shadow_ensure(const stru
      GGML_LOG_DEBUG("%s: CPU_REPACK_DUAL shadow for %s (%zu bytes, total %.2f MiB)\n", __func__,
                     src0->name, size, g_arifi_dual_bytes / 1024.0 / 1024.0);
      if (before == 0 || (before >> 26) != (g_arifi_dual_bytes >> 26)) {

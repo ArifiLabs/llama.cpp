@@ -1,4 +1,4 @@
-From b7a23f11315d252cfb656c61d4f7d733d541be64 Mon Sep 17 00:00:00 2001
+From ab0332a9e86aa81ddfd36d6eefda60be78ed3b8d Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:12 -0400
 Subject: [PATCH] ours/1163cb34939fe4a9cb07aec034c5954144497ae9.patch
@@ -8,7 +8,7 @@ Subject: [PATCH] ours/1163cb34939fe4a9cb07aec034c5954144497ae9.patch
  1 file changed, 251 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index b645fe853..062361ee5 100644
+index 7b146b7e00..cf6f649813 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -12,6 +12,93 @@
@@ -284,7 +284,7 @@ index b645fe853..062361ee5 100644
  
      ggml_backend_sched_eval_callback callback_eval;
      void * callback_eval_user_data;
-@@ -1760,6 +1916,34 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1752,6 +1908,34 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
      GGML_ASSERT(sched);
      struct ggml_backend_sched_split * splits = sched->splits;
  
@@ -319,7 +319,7 @@ index b645fe853..062361ee5 100644
      ggml_tensor * prev_ids_tensor = nullptr;
      std::vector<int32_t> ids;
      std::vector<ggml_bitset_t> used_ids;
-@@ -2064,6 +2248,22 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -2060,6 +2244,22 @@ ggml_backend_sched_t ggml_backend_sched_new(
          }
      }
  
@@ -342,7 +342,7 @@ index b645fe853..062361ee5 100644
      sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
      sched->op_offload = op_offload;
  
-@@ -2081,10 +2281,59 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -2077,10 +2277,59 @@ ggml_backend_sched_t ggml_backend_sched_new(
      return sched;
  }
  

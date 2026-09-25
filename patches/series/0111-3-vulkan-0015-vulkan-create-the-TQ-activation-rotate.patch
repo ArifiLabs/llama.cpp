@@ -1,18 +1,20 @@
-From b9dc4aa2781dd62d0b2c0a14771d98ae7ecedb1d Mon Sep 17 00:00:00 2001
+From e310fe9ee88bbf1d90db272af28d2f62a89305c3 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:55:53 -0400
 Subject: [PATCH] 
  3-vulkan/0015-vulkan-create-the-TQ-activation-rotate-pipeline.patch
 
+Conflict-resolved: S4 split (f172be756): auto_split - our hunks re-homed into ggml-vulkan-types.h; wrap/same-point regions merged in place (fixS4_122.py)
 ---
- ggml/src/ggml-vulkan/ggml-vulkan.cpp | 12 ++++++++++++
- 1 file changed, 12 insertions(+)
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h | 5 +++++
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp     | 7 +++++++
+ 2 files changed, 12 insertions(+)
 
-diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index c44b0119e..0e0301bf2 100644
---- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-+++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -951,6 +951,11 @@ struct vk_device_struct {
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index 69aaa5db11..52e72d993c 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -806,6 +806,11 @@ struct vk_device_struct {
      vk_pipeline pipeline_dequant_mul_mat_vec_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
      vk_pipeline pipeline_dequant_mul_mat_vec_id_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
  
@@ -24,7 +26,11 @@ index c44b0119e..0e0301bf2 100644
      vk_pipeline pipeline_mul_mat_vec_p021_f16_f32[p021_max_gqa_ratio];
      vk_pipeline pipeline_mul_mat_vec_nc_f16_f32;
      vk_pipeline pipeline_get_rows[GGML_TYPE_COUNT];
-@@ -5588,6 +5593,13 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index c2ca86a848..30f18ca83f 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -3191,6 +3191,13 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
      ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_IQ4_NL],  "dequant_iq4_nl",  dequant_iq4_nl_len,  dequant_iq4_nl_data,  "main", 2, 5 * sizeof(uint32_t), {256 * 16, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_MXFP4],   "dequant_mxfp4",   dequant_mxfp4_len,   dequant_mxfp4_data,   "main", 2, 5 * sizeof(uint32_t), {256 * 16, 1, 1}, {}, 1);
      ggml_vk_create_pipeline(device, device->pipeline_dequant[GGML_TYPE_NVFP4],   "dequant_nvfp4",   dequant_nvfp4_len,   dequant_nvfp4_data,   "main", 2, 5 * sizeof(uint32_t), {256 * 16, 1, 1}, {}, 1);

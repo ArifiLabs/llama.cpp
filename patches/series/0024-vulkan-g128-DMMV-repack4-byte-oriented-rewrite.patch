@@ -1,4 +1,4 @@
-From 79773a3eecef0b4982591f475b0fe4cd989fc5d3 Mon Sep 17 00:00:00 2001
+From 30933f2ed55715a3ab822d202993d4263c65d7a1 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 05:11:35 -0400
 Subject: [PATCH] vulkan: g128 DMMV repack4 byte-oriented rewrite
@@ -10,7 +10,7 @@ Measured-effect: build fix only
  1 file changed, 7 insertions(+), 3 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl
-index 51fac2aa1..420eb8edd 100644
+index fc53f62706..26067d2ea0 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl
 @@ -65,9 +65,13 @@ uint unpack_q2_0_g128(uint bits) {

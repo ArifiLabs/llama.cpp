@@ -1,0 +1,647 @@
+From cdd7270be4039ac16c8911e66efa9d77db5ef3f5 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 19 Aug 2026 02:23:47 -0400
+Subject: [PATCH] feat(kv-cache): bind calibration to exact model
+
+Taken-from: prisml/prism-v6@b075a360c
+Origin: ArifiLabs LL-031 hardening of the prisml calibration format
+Measured-effect: UNMEASURED (native toolchain execution denied in managed seat)
+---
+ common/CMakeLists.txt                   |   1 +
+ common/common.cpp                       |  15 +++
+ common/common.h                         |   1 +
+ common/kv-mean-center.cpp               | 126 ++++++++++++++++++++++++
+ common/kv-mean-center.h                 |  12 +++
+ docs/kv-mean-center.md                  |   8 +-
+ include/llama.h                         |   3 +
+ src/llama-context.cpp                   |   5 +-
+ src/llama-kv-cache.cpp                  |  94 +++++++++++++-----
+ src/llama-kv-cache.h                    |   5 +-
+ tests/test-kv-mean-center.cpp           |  53 +++++++++-
+ tools/kv-mean-center/README.md          |  10 +-
+ tools/kv-mean-center/kv-mean-center.cpp |  15 ++-
+ 13 files changed, 308 insertions(+), 40 deletions(-)
+
+diff --git a/common/CMakeLists.txt b/common/CMakeLists.txt
+index caf0ef1f52..79d858a9d8 100644
+--- a/common/CMakeLists.txt
++++ b/common/CMakeLists.txt
+@@ -133,6 +133,7 @@ if (GGML_ARIFI_KV_MEANCENTER)
+     target_sources(${TARGET} PRIVATE
+         kv-mean-center.cpp
+         kv-mean-center.h)
++    target_link_libraries(${TARGET} PRIVATE vendor::hash)
+ endif()
+ 
+ set_target_properties(${TARGET} PROPERTIES
+diff --git a/common/common.cpp b/common/common.cpp
+index 0aef5e22df..8e43ab1209 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -6,6 +6,9 @@
+ #include "fit.h"
+ #include "log.h"
+ #include "llama.h"
++#ifdef GGML_ARIFI_KV_MEANCENTER
++#include "kv-mean-center.h"
++#endif
+ #include "sampling.h"
+ #include "speculative.h"
+ #include "unicode.h"
+@@ -1381,6 +1384,17 @@ common_init_result::common_init_result(common_params & params, bool model_only)
+ 
+     pimpl->model.reset(model);
+ 
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    if (!params.kv_mean_center_path.empty()) {
++        if (!common_kv_mean_center_model_sha256(
++                    params.model.path, model, params.kv_mean_center_model_sha256)) {
++            COM_ERR("failed to bind K-cache calibration to model '%s'\n", params.model.path.c_str());
++            return;
++        }
++        cparams.kv_mean_center_model_sha256 = params.kv_mean_center_model_sha256.c_str();
++    }
++#endif
++
+     if (model_only) {
+         return;
+     }
+@@ -1820,6 +1834,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+     // note: params (and therefore params.kv_mean_center_path) is kept alive by the caller for
+     // at least as long as it takes to call llama_init_from_model() with the returned cparams
+     cparams.path_kv_mean_center = params.kv_mean_center_path.empty() ? nullptr : params.kv_mean_center_path.c_str();
++    cparams.kv_mean_center_model_sha256 = nullptr;
+ #endif
+ 
+     return cparams;
+diff --git a/common/common.h b/common/common.h
+index d9ef11b381..82eb5a6cb7 100644
+--- a/common/common.h
++++ b/common/common.h
+@@ -615,6 +615,7 @@ struct common_params {
+     // path to a K-cache mean-centering bias file (GGUF), or empty to disable.
+     // only takes effect when cache_type_k == GGML_TYPE_Q4_0; see docs/kv-mean-center.md
+     std::string kv_mean_center_path = "";
++    std::string kv_mean_center_model_sha256 = "";
+ #endif
+ 
+     common_conversation_mode conversation_mode = COMMON_CONVERSATION_MODE_AUTO;
+diff --git a/common/kv-mean-center.cpp b/common/kv-mean-center.cpp
+index cc214f688a..0a1065c22f 100644
+--- a/common/kv-mean-center.cpp
++++ b/common/kv-mean-center.cpp
+@@ -4,13 +4,137 @@
+ 
+ #include "ggml.h"
+ #include "gguf.h"
++#include "llama.h"
+ 
++extern "C" {
++#include "hash/sha256/sha256.h"
++}
++
++#include <array>
++#include <cerrno>
++#include <cstdlib>
+ #include <cstring>
++#include <fstream>
++#include <limits>
++
++static std::string kv_mean_center_hex(const unsigned char * digest, size_t len) {
++    static const char hex[] = "0123456789abcdef";
++    std::string out;
++    out.reserve(2*len);
++    for (size_t i = 0; i < len; ++i) {
++        out += hex[digest[i] >> 4];
++        out += hex[digest[i] & 0x0f];
++    }
++    return out;
++}
++
++static void kv_mean_center_hash_u64(sha256_t & sha, uint64_t value) {
++    unsigned char little_endian[8];
++    for (size_t i = 0; i < sizeof(little_endian); ++i) {
++        little_endian[i] = (unsigned char) ((value >> (8*i)) & 0xff);
++    }
++    sha256_update(&sha, little_endian, sizeof(little_endian));
++}
++
++bool common_kv_mean_center_model_sha256(
++        const std::string & model_path,
++        const llama_model * model,
++        std::string & model_sha256) {
++    model_sha256.clear();
++    if (model_path.empty() || model == nullptr) {
++        LOG_ERR("%s: model path and loaded model are required for exact calibration binding\n", __func__);
++        return false;
++    }
++
++    uint32_t split_count = 1;
++    std::array<char, 32> split_count_buf{};
++    const int32_t n_split_count = llama_model_meta_val_str(
++            model, "split.count", split_count_buf.data(), split_count_buf.size());
++    if (n_split_count >= 0) {
++        char * end = nullptr;
++        errno = 0;
++        const unsigned long parsed = std::strtoul(split_count_buf.data(), &end, 10);
++        if (errno != 0 || end == split_count_buf.data() || *end != '\0' || parsed == 0 ||
++                parsed > std::numeric_limits<uint32_t>::max()) {
++            LOG_ERR("%s: malformed split.count metadata '%s' in %s\n",
++                    __func__, split_count_buf.data(), model_path.c_str());
++            return false;
++        }
++        split_count = (uint32_t) parsed;
++    }
++
++    std::vector<std::string> paths;
++    if (split_count == 1) {
++        paths.push_back(model_path);
++    } else {
++        std::vector<char> prefix(32768, '\0');
++        if (llama_split_prefix(prefix.data(), prefix.size(), model_path.c_str(), 0, split_count) <= 0) {
++            LOG_ERR("%s: cannot derive the %u-part model prefix from %s\n",
++                    __func__, split_count, model_path.c_str());
++            return false;
++        }
++        paths.reserve(split_count);
++        for (uint32_t i = 0; i < split_count; ++i) {
++            std::vector<char> path(32768, '\0');
++            if (llama_split_path(path.data(), path.size(), prefix.data(), i, split_count) <= 0) {
++                LOG_ERR("%s: cannot derive split %u / %u from %s\n",
++                        __func__, i + 1, split_count, model_path.c_str());
++                return false;
++            }
++            paths.emplace_back(path.data());
++        }
++    }
++
++    sha256_t sha;
++    sha256_init(&sha);
++    static const unsigned char domain[] = "arifilabs.kv-mean-center.model-files.v1";
++    sha256_update(&sha, domain, sizeof(domain));
++    kv_mean_center_hash_u64(sha, paths.size());
++
++    std::vector<unsigned char> buf(8*1024*1024);
++    for (const auto & path : paths) {
++        std::ifstream in(path, std::ios::binary | std::ios::ate);
++        if (!in) {
++            LOG_ERR("%s: cannot open model file %s for calibration identity\n", __func__, path.c_str());
++            return false;
++        }
++        const std::streamoff end = in.tellg();
++        if (end < 0) {
++            LOG_ERR("%s: cannot determine model file size for %s\n", __func__, path.c_str());
++            return false;
++        }
++        kv_mean_center_hash_u64(sha, (uint64_t) end);
++        in.seekg(0, std::ios::beg);
++        while (in) {
++            in.read((char *) buf.data(), buf.size());
++            const std::streamsize got = in.gcount();
++            if (got > 0) {
++                sha256_update(&sha, buf.data(), (size_t) got);
++            }
++        }
++        if (!in.eof()) {
++            LOG_ERR("%s: failed while hashing model file %s\n", __func__, path.c_str());
++            return false;
++        }
++    }
++
++    unsigned char digest[SHA256_DIGEST_SIZE];
++    sha256_final(&sha, digest);
++    model_sha256 = kv_mean_center_hex(digest, sizeof(digest));
++    LOG_INF("%s: exact model identity %s over %zu GGUF file(s)\n",
++            __func__, model_sha256.c_str(), paths.size());
++    return true;
++}
+ 
+ bool common_kv_mean_center_write(
+         const std::string & fname,
+         const std::vector<common_kv_mean_center_layer> & layers,
++        const std::string & model_sha256,
+         bool k_rot) {
++    if (model_sha256.size() != 64 || model_sha256.find_first_not_of("0123456789abcdef") != std::string::npos) {
++        LOG_ERR("%s: exact 64-character lowercase model SHA-256 is required\n", __func__);
++        return false;
++    }
+     size_t n_with_bias = 0;
+     for (const auto & layer : layers) {
+         if (!layer.bias.empty()) {
+@@ -47,6 +171,8 @@ bool common_kv_mean_center_write(
+     }
+ 
+     gguf_set_val_str(ctx_gguf, "general.type", "kv-mean-center");
++    gguf_set_val_u32(ctx_gguf, "kv_mean_center.schema_version", 1);
++    gguf_set_val_str(ctx_gguf, "kv_mean_center.model_sha256", model_sha256.c_str());
+     gguf_set_val_bool(ctx_gguf, "kv_mean_center.k_rot", k_rot);
+ 
+     for (const auto & layer : layers) {
+diff --git a/common/kv-mean-center.h b/common/kv-mean-center.h
+index 9da7ffd2e3..bf0a3e0f55 100644
+--- a/common/kv-mean-center.h
++++ b/common/kv-mean-center.h
+@@ -4,6 +4,8 @@
+ #include <string>
+ #include <vector>
+ 
++struct llama_model;
++
+ // Shared GGUF file format for the K-cache mean-centering bias vectors produced by
+ // tools/kv-mean-center and consumed by llama_kv_cache::load_kv_mean_center() (see
+ // docs/kv-mean-center.md).
+@@ -27,4 +29,14 @@ struct common_kv_mean_center_layer {
+ bool common_kv_mean_center_write(
+         const std::string & fname,
+         const std::vector<common_kv_mean_center_layer> & layers,
++        const std::string & model_sha256,
+         bool k_rot = false);
++
++// Compute an exact, order-sensitive SHA-256 identity over every GGUF file that makes up
++// `model`. The digest is domain-separated and includes each file length before its bytes,
++// so split-model boundaries cannot alias. Returns false loudly on an unreadable or
++// unresolvable model source.
++bool common_kv_mean_center_model_sha256(
++        const std::string & model_path,
++        const llama_model * model,
++        std::string & model_sha256);
+diff --git a/docs/kv-mean-center.md b/docs/kv-mean-center.md
+index 4aca538153..d57e448804 100644
+--- a/docs/kv-mean-center.md
++++ b/docs/kv-mean-center.md
+@@ -67,12 +67,18 @@ attention).
+ 
+ ## Bias file format
+ 
+-The bias file is a small GGUF file with one F32 1-D tensor per layer that has a bias, named
++The bias file is a small GGUF file with exactly one F32 1-D tensor per cache layer, named
+ `kv_bar.blk.<il>.k`, holding `n_embd_head_k(il) * n_head_kv(il)` values laid out as
+ `[n_embd_head_k, n_head_kv]` (channel-fastest). This matches the in-memory layout of the K tensor
+ at the point it is written into the cache, so the file can be loaded directly as a small
+ broadcastable bias tensor per layer.
+ 
++The artifact is per-model, not merely per-architecture or per-quant. It records a
++domain-separated SHA-256 over every byte of every GGUF split. When `--kv-mean-center` is used,
++startup recomputes that identity and refuses a missing, malformed, wrong-model, partial, or
++extra-layer calibration. There is no silent uncentered fallback. Exact hashing adds one
++sequential read of the model files to centered-context startup; OFF/default runs do not hash.
++
+ ## Calibration
+ 
+ `tools/kv-mean-center` computes the bias by running a plain text calibration corpus through the
+diff --git a/include/llama.h b/include/llama.h
+index 923d842540..19b460b207 100644
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -450,6 +450,9 @@ extern "C" {
+         // which softmax is invariant to). currently only supported when type_k == GGML_TYPE_Q4_0.
+         // see tools/kv-mean-center to generate this file and docs/kv-mean-center.md for details.
+         const char * path_kv_mean_center;
++        // exact domain-separated SHA-256 over all source GGUF bytes. Required whenever
++        // path_kv_mean_center is set; the loader refuses a missing or mismatched identity.
++        const char * kv_mean_center_model_sha256;
+ #endif
+ 
+         // Abort callback
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 367474c98f..f4d0437ac5 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -441,7 +441,9 @@ llama_context::llama_context(
+                         "(not recurrent-only or MLA/DSA memory types)");
+             }
+             for (auto * kv : kvs) {
+-                if (!kv->load_kv_mean_center(params.path_kv_mean_center)) {
++                if (!kv->load_kv_mean_center(
++                            params.path_kv_mean_center,
++                            params.kv_mean_center_model_sha256)) {
+                     throw std::runtime_error("failed to load K-cache mean-centering bias file");
+                 }
+             }
+@@ -4005,6 +4007,7 @@ llama_context_params llama_context_default_params() {
+         /*.moe_cache_budget_mib        =*/ 0,
+ #ifdef GGML_ARIFI_KV_MEANCENTER
+         /*.path_kv_mean_center         =*/ nullptr,
++        /*.kv_mean_center_model_sha256 =*/ nullptr,
+ #endif
+         /*.abort_callback              =*/ nullptr,
+         /*.abort_callback_data         =*/ nullptr,
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index 1b6d45962c..6b9a7260b3 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -1742,7 +1742,10 @@ ggml_tensor * llama_kv_cache::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggm
+ }
+ 
+ #ifdef GGML_ARIFI_KV_MEANCENTER
+-bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
++bool llama_kv_cache::load_kv_mean_center(
++        const char * path,
++        const char * expected_model_sha256,
++        bool require_q4_0) {
+     GGML_ASSERT(path != nullptr);
+     GGML_ASSERT(k_bar.empty() && "K-cache mean-centering already loaded");
+ 
+@@ -1759,6 +1762,51 @@ bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
+         return false;
+     }
+ 
++    const auto fail_metadata = [&](const char * message) {
++        LLAMA_LOG_ERROR("%s: calibration file %s %s\n", __func__, path, message);
++        gguf_free(ctx_gguf);
++        ggml_free(ctx_data);
++        return false;
++    };
++
++    if (expected_model_sha256 == nullptr || strlen(expected_model_sha256) != 64 ||
++            strspn(expected_model_sha256, "0123456789abcdef") != 64) {
++        return fail_metadata("cannot be used without an exact lowercase model SHA-256 binding");
++    }
++
++    const int64_t idx_type = gguf_find_key(ctx_gguf, "general.type");
++    if (idx_type < 0 || gguf_get_kv_type(ctx_gguf, idx_type) != GGUF_TYPE_STRING ||
++            strcmp(gguf_get_val_str(ctx_gguf, idx_type), "kv-mean-center") != 0) {
++        return fail_metadata("is not a typed K-cache mean-centering artifact");
++    }
++
++    const int64_t idx_schema = gguf_find_key(ctx_gguf, "kv_mean_center.schema_version");
++    if (idx_schema < 0 || gguf_get_kv_type(ctx_gguf, idx_schema) != GGUF_TYPE_UINT32 ||
++            gguf_get_val_u32(ctx_gguf, idx_schema) != 1) {
++        return fail_metadata("has a missing, malformed, or unsupported schema version");
++    }
++
++    const int64_t idx_model_sha256 = gguf_find_key(ctx_gguf, "kv_mean_center.model_sha256");
++    if (idx_model_sha256 < 0 || gguf_get_kv_type(ctx_gguf, idx_model_sha256) != GGUF_TYPE_STRING) {
++        return fail_metadata("does not contain the required exact model SHA-256");
++    }
++    const char * calibrated_model_sha256 = gguf_get_val_str(ctx_gguf, idx_model_sha256);
++    if (strcmp(calibrated_model_sha256, expected_model_sha256) != 0) {
++        LLAMA_LOG_ERROR("%s: calibration file %s belongs to model %s, but the loaded model is %s; refusing mismatched calibration\n",
++                __func__, path, calibrated_model_sha256, expected_model_sha256);
++        gguf_free(ctx_gguf);
++        ggml_free(ctx_data);
++        return false;
++    }
++
++    if ((size_t) gguf_get_n_tensors(ctx_gguf) != layers.size()) {
++        LLAMA_LOG_ERROR("%s: calibration file %s contains %" PRId64 " tensor(s), but this cache requires %zu; refusing incomplete or extra coverage\n",
++                __func__, path, gguf_get_n_tensors(ctx_gguf), layers.size());
++        gguf_free(ctx_gguf);
++        ggml_free(ctx_data);
++        return false;
++    }
++
+     // validate the cache type first, so an unsupported cache type gets its actionable error
+     // even when the bias file's basis would also mismatch
+     if (require_q4_0) {
+@@ -1779,30 +1827,20 @@ bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
+     // improving it (see tools/kv-mean-center/README.md), so refuse it outright.
+     {
+         const int64_t idx_k_rot = gguf_find_key(ctx_gguf, "kv_mean_center.k_rot");
+-        if (idx_k_rot >= 0) {
+-            if (gguf_get_kv_type(ctx_gguf, idx_k_rot) != GGUF_TYPE_BOOL) {
+-                LLAMA_LOG_ERROR("%s: bias file %s has a non-boolean kv_mean_center.k_rot key - malformed file\n",
+-                        __func__, path);
+-                gguf_free(ctx_gguf);
+-                ggml_free(ctx_data);
+-                return false;
+-            }
+-            const bool bias_k_rot = gguf_get_val_bool(ctx_gguf, idx_k_rot);
+-            if (bias_k_rot != attn_rot_k) {
+-                LLAMA_LOG_ERROR("%s: bias file %s was calibrated with the K-cache rotation %s, but it is %s "
+-                        "for this context - recalibrate with matching cache settings "
+-                        "(or set LLAMA_ATTN_ROT_DISABLE=1 consistently in both)\n",
+-                        __func__, path,
+-                        bias_k_rot  ? "active" : "inactive",
+-                        attn_rot_k ? "active" : "inactive");
+-                gguf_free(ctx_gguf);
+-                ggml_free(ctx_data);
+-                return false;
+-            }
+-        } else {
+-            LLAMA_LOG_WARN("%s: bias file %s does not record its calibration basis (kv_mean_center.k_rot); "
+-                    "K-cache rotation is %s for this context - a basis mismatch degrades quality\n",
+-                    __func__, path, attn_rot_k ? "active" : "inactive");
++        if (idx_k_rot < 0 || gguf_get_kv_type(ctx_gguf, idx_k_rot) != GGUF_TYPE_BOOL) {
++            return fail_metadata("does not contain a valid K-cache rotation basis");
++        }
++        const bool bias_k_rot = gguf_get_val_bool(ctx_gguf, idx_k_rot);
++        if (bias_k_rot != attn_rot_k) {
++            LLAMA_LOG_ERROR("%s: bias file %s was calibrated with the K-cache rotation %s, but it is %s "
++                    "for this context - recalibrate with matching cache settings "
++                    "(or set LLAMA_ATTN_ROT_DISABLE=1 consistently in both)\n",
++                    __func__, path,
++                    bias_k_rot  ? "active" : "inactive",
++                    attn_rot_k ? "active" : "inactive");
++            gguf_free(ctx_gguf);
++            ggml_free(ctx_data);
++            return false;
+         }
+     }
+ 
+@@ -1843,8 +1881,10 @@ bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
+ 
+         ggml_tensor * src = ggml_get_tensor(ctx_data, name.c_str());
+         if (!src) {
+-            // no bias provided for this layer - leave it uncentered
+-            continue;
++            LLAMA_LOG_ERROR("%s: calibration file %s is missing required tensor %s; refusing partial centering\n",
++                    __func__, path, name.c_str());
++            ok = false;
++            break;
+         }
+ 
+         if (src->type != GGML_TYPE_F32) {
+diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
+index 3c73db75a8..c02810af42 100644
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -216,7 +216,10 @@ public:
+     // validate the softmax-invariance argument without confounding it with quantization error.
+     //
+     // returns false (and logs an error) on failure; the cache is left with centering disabled.
+-    bool load_kv_mean_center(const char * path, bool require_q4_0 = true);
++    bool load_kv_mean_center(
++            const char * path,
++            const char * expected_model_sha256,
++            bool require_q4_0 = true);
+ #endif
+ 
+     //
+diff --git a/tests/test-kv-mean-center.cpp b/tests/test-kv-mean-center.cpp
+index 880415b6a9..ecddb6f3d1 100644
+--- a/tests/test-kv-mean-center.cpp
++++ b/tests/test-kv-mean-center.cpp
+@@ -38,6 +38,8 @@ static const uint32_t k_n_head  = 2;
+ static const uint32_t k_n_ff    = 384;
+ static const uint32_t k_n_layer = 2;
+ static const uint32_t k_n_ctx   = 128;
++static const char * k_model_sha256 = "1111111111111111111111111111111111111111111111111111111111111111";
++static const char * k_wrong_model_sha256 = "2222222222222222222222222222222222222222222222222222222222222222";
+ 
+ // deterministic pseudo-random weight initializer (same technique as test-llama-archs.cpp)
+ static void set_tensor_data(struct ggml_tensor * tensor, void * userdata) {
+@@ -97,7 +99,11 @@ static llama_model_ptr build_model(struct gguf_context * gguf_ctx, size_t seed)
+ 
+ // builds a context on top of an existing model; returns nullptr if llama_init_from_model rejects
+ // the configuration (e.g. the --kv-mean-center / GGML_TYPE_Q4_0 gate)
+-static llama_context_ptr build_context(llama_model * model, ggml_type type_k, const char * path_kv_mean_center = nullptr) {
++static llama_context_ptr build_context(
++        llama_model * model,
++        ggml_type type_k,
++        const char * path_kv_mean_center = nullptr,
++        const char * model_sha256 = k_model_sha256) {
+     llama_context_params ctx_params = llama_context_default_params();
+     ctx_params.n_ctx               = 0; // from model
+     ctx_params.n_batch             = 32;
+@@ -106,6 +112,7 @@ static llama_context_ptr build_context(llama_model * model, ggml_type type_k, co
+     ctx_params.n_threads_batch     = 2;
+     ctx_params.type_k              = type_k;
+     ctx_params.path_kv_mean_center = path_kv_mean_center;
++    ctx_params.kv_mean_center_model_sha256 = path_kv_mean_center ? model_sha256 : nullptr;
+ 
+     // quantized K cache types in this codebase are exercised together with flash attention
+     if (ggml_is_quantized(type_k)) {
+@@ -232,7 +239,7 @@ static void test_q4_0_gate() {
+     // this synthetic model has a 64-wide K head, so a Q4_0 K cache activates the Hadamard
+     // rotation; the bias must be marked as measured in the rotated basis to be accepted there
+     const std::string tmp_path = "test-kv-mean-center-gate.gguf";
+-    TEST_ASSERT(common_kv_mean_center_write(tmp_path, layers, /*k_rot=*/true));
++    TEST_ASSERT(common_kv_mean_center_write(tmp_path, layers, k_model_sha256, /*k_rot=*/true));
+ 
+     // F16 K cache + --kv-mean-center must be rejected outright (llama_init_from_model returns
+     // nullptr), matching this codebase's convention for other cache-type-gated mismatches (e.g.
+@@ -240,7 +247,7 @@ static void test_q4_0_gate() {
+     // the rotation is off, so k_rot=false matches) so this exercises the cache-type gate
+     // specifically, not the basis check
+     const std::string tmp_path_unrot = "test-kv-mean-center-gate-unrot.gguf";
+-    TEST_ASSERT(common_kv_mean_center_write(tmp_path_unrot, layers, /*k_rot=*/false));
++    TEST_ASSERT(common_kv_mean_center_write(tmp_path_unrot, layers, k_model_sha256, /*k_rot=*/false));
+     llama_context_ptr ctx_bad = build_context(model.get(), GGML_TYPE_F16, tmp_path_unrot.c_str());
+     TEST_ASSERT(ctx_bad == nullptr);
+ 
+@@ -266,6 +273,40 @@ static void test_q4_0_gate() {
+     LOG_INF("%s: OK\n", __func__);
+ }
+ 
++// LL-031 refusal contract: absent, wrong-model, and incomplete calibrations are all fatal at
++// context load. None may fall back to an uncentered cache.
++static void test_loud_refusals() {
++    gguf_context_ptr gguf_ctx = build_llama_gguf_ctx();
++    llama_model_ptr  model    = build_model(gguf_ctx.get(), /*seed=*/ 4040);
++
++    TEST_ASSERT(build_context(
++            model.get(), GGML_TYPE_Q4_0, "definitely-missing-kv-mean-center.gguf") == nullptr);
++
++    const uint32_t n_embd_head = k_n_embd / k_n_head;
++    std::vector<common_kv_mean_center_layer> complete;
++    for (uint32_t il = 0; il < k_n_layer; ++il) {
++        common_kv_mean_center_layer layer;
++        layer.il = (int32_t) il;
++        layer.bias.assign(n_embd_head * k_n_head, 0.125f);
++        complete.push_back(std::move(layer));
++    }
++
++    const std::string wrong_path = "test-kv-mean-center-wrong-model.gguf";
++    TEST_ASSERT(common_kv_mean_center_write(
++            wrong_path, complete, k_wrong_model_sha256, /*k_rot=*/true));
++    TEST_ASSERT(build_context(model.get(), GGML_TYPE_Q4_0, wrong_path.c_str()) == nullptr);
++    remove(wrong_path.c_str());
++
++    const std::string partial_path = "test-kv-mean-center-partial.gguf";
++    complete.pop_back();
++    TEST_ASSERT(common_kv_mean_center_write(
++            partial_path, complete, k_model_sha256, /*k_rot=*/true));
++    TEST_ASSERT(build_context(model.get(), GGML_TYPE_Q4_0, partial_path.c_str()) == nullptr);
++    remove(partial_path.c_str());
++
++    LOG_INF("%s: OK\n", __func__);
++}
++
+ // (b) softmax-invariance: verify the actual math claim using an unquantized F32 K cache, so the
+ // comparison isn't confounded by real Q4_0 quantization error.
+ static void test_softmax_invariance() {
+@@ -300,7 +341,7 @@ static void test_softmax_invariance() {
+     // itself, so a fixed name is fine
+     const std::string tmp_path = "test-kv-mean-center-bias.gguf";
+ 
+-    TEST_ASSERT(common_kv_mean_center_write(tmp_path, layers));
++    TEST_ASSERT(common_kv_mean_center_write(tmp_path, layers, k_model_sha256));
+ 
+     // centered: same model, fresh F32-K-cache context, bias applied through the exact same
+     // cpy_k() code path -- bypassing the public --kv-mean-center gate (require_q4_0 = false)
+@@ -310,7 +351,8 @@ static void test_softmax_invariance() {
+ 
+     auto * kv = dynamic_cast<llama_kv_cache *>(llama_get_memory(ctx_centered.get()));
+     TEST_ASSERT(kv != nullptr);
+-    TEST_ASSERT(kv->load_kv_mean_center(tmp_path.c_str(), /*require_q4_0=*/false));
++    TEST_ASSERT(kv->load_kv_mean_center(
++            tmp_path.c_str(), k_model_sha256, /*require_q4_0=*/false));
+ 
+     const std::vector<float> logits_centered = decode_and_get_logits(ctx_centered.get(), tokens);
+ 
+@@ -332,6 +374,7 @@ static void test_softmax_invariance() {
+ int main() {
+     test_regression_safety();
+     test_q4_0_gate();
++    test_loud_refusals();
+     test_softmax_invariance();
+ 
+     return 0;
+diff --git a/tools/kv-mean-center/README.md b/tools/kv-mean-center/README.md
+index afdd7add01..4139835b61 100644
+--- a/tools/kv-mean-center/README.md
++++ b/tools/kv-mean-center/README.md
+@@ -49,8 +49,9 @@ self-generated text measures the same bias as an external corpus: in an A/B test
+ corpus and a standard multi-domain calibration set produced biases agreeing to within the
+ calibration sampling noise (cosine similarity above 0.95 on every layer).
+ 
+-The output is a small GGUF file with one F32 tensor per layer, named `kv_bar.blk.<il>.k`. Load it
+-at inference time with:
++The output is a small GGUF file with one F32 tensor per layer, named `kv_bar.blk.<il>.k`. It also
++contains an exact, domain-separated SHA-256 over all source GGUF splits. Load it at inference
++time with:
+ 
+ ```
+ ./llama-cli -m model.gguf -ctk q4_0 --kv-mean-center kv-mean-center.gguf -p "..."
+@@ -59,6 +60,11 @@ at inference time with:
+ `--kv-mean-center` requires `--cache-type-k q4_0`; loading fails with a clear error otherwise
+ (centering is currently only implemented/validated for `GGML_TYPE_Q4_0`).
+ 
++The runtime hashes the loaded model files and refuses the artifact if the identity differs, if
++any required layer is absent, or if metadata is missing/malformed. A requested calibration never
++falls back to an uncentered cache. The exact identity check costs one sequential model-file read
++at centered-context startup; the default/OFF path has no hashing cost.
++
+ ## Interaction with the Hadamard K-cache rotation: calibrate with matching cache settings
+ 
+ This fork's optional Hadamard rotation is active for quantized K caches whose head dimension is a
+diff --git a/tools/kv-mean-center/kv-mean-center.cpp b/tools/kv-mean-center/kv-mean-center.cpp
+index 1ec4244230..aedffe989c 100644
+--- a/tools/kv-mean-center/kv-mean-center.cpp
++++ b/tools/kv-mean-center/kv-mean-center.cpp
+@@ -292,12 +292,21 @@ int main(int argc, char ** argv) {
+         return 1;
+     }
+ 
+-    if (!common_kv_mean_center_write(params.out_file, layers, g_collector.saw_k_rot())) {
++    std::string model_sha256;
++    if (!common_kv_mean_center_model_sha256(params.model.path, model, model_sha256)) {
++        LOG_ERR("%s: refusing to emit an unbound calibration artifact\n", __func__);
+         return 1;
+     }
+ 
+-    LOG_INF("%s: wrote K-cache mean-centering bias for %zu layer(s) to %s (measured with K rotation %s)\n",
+-            __func__, layers.size(), params.out_file.c_str(), g_collector.saw_k_rot() ? "active" : "inactive");
++    if (!common_kv_mean_center_write(
++                params.out_file, layers, model_sha256, g_collector.saw_k_rot())) {
++        return 1;
++    }
++
++    LOG_INF("%s: wrote K-cache mean-centering bias for %zu layer(s) to %s "
++            "(model %s; measured with K rotation %s)\n",
++            __func__, layers.size(), params.out_file.c_str(), model_sha256.c_str(),
++            g_collector.saw_k_rot() ? "active" : "inactive");
+ 
+     llama_backend_free();
+ 

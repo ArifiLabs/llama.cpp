@@ -1,0 +1,1746 @@
+From 865814017dee6ed6352f59d237477c269538391c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 19 Aug 2026 02:13:35 -0400
+Subject: [PATCH] feat(kv-cache): port flag-gated mean centering
+
+Taken-from: prisml/prism-v6@b075a360c
+Origin: ported from prisml/prism-v6 commits dea384100..b075a360c
+Measured-effect: UNMEASURED
+Conflict-resolved: auto: same-point-insertion(upstream block then ours) in tests/CMakeLists.txt
+---
+ CMakeLists.txt                            |   5 +
+ common/CMakeLists.txt                     |   6 +
+ common/arg.cpp                            |  23 +-
+ common/common.cpp                         |   6 +
+ common/common.h                           |   9 +
+ common/kv-mean-center.cpp                 |  76 +++++
+ common/kv-mean-center.h                   |  30 ++
+ docs/kv-mean-center.md                    | 103 +++++++
+ include/llama.h                           |  10 +
+ src/CMakeLists.txt                        |   3 +
+ src/llama-context.cpp                     |  48 +++
+ src/llama-graph.cpp                       |   7 +
+ src/llama-kv-cache.cpp                    | 207 +++++++++++++
+ src/llama-kv-cache.h                      |  30 ++
+ tests/CMakeLists.txt                      |   3 +
+ tests/test-kv-mean-center.cpp             | 338 ++++++++++++++++++++++
+ tools/CMakeLists.txt                      |   3 +
+ tools/kv-mean-center/CMakeLists.txt       |   8 +
+ tools/kv-mean-center/README.md            |  93 ++++++
+ tools/kv-mean-center/kv-mean-center.cpp   | 305 +++++++++++++++++++
+ tools/kv-mean-center/make-calib-corpus.sh | 126 ++++++++
+ 21 files changed, 1437 insertions(+), 2 deletions(-)
+ create mode 100644 common/kv-mean-center.cpp
+ create mode 100644 common/kv-mean-center.h
+ create mode 100644 docs/kv-mean-center.md
+ create mode 100644 tests/test-kv-mean-center.cpp
+ create mode 100644 tools/kv-mean-center/CMakeLists.txt
+ create mode 100644 tools/kv-mean-center/README.md
+ create mode 100644 tools/kv-mean-center/kv-mean-center.cpp
+ create mode 100644 tools/kv-mean-center/make-calib-corpus.sh
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f1db51e0c1..a6c0210baf 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -145,6 +145,11 @@ option(LLAMA_OPENSSL    "llama: use openssl to support HTTPS" ON)
+ option(LLAMA_SUBPROCESS "llama-common: use subprocess, required by server tools and server router mode" ${LLAMA_SUBPROCESS_DEFAULT})
+ option(LLAMA_LLGUIDANCE "llama-common: include LLGuidance library for structured output in common utils" OFF)
+ 
++# ArifiLabs opt-in K-cache mean-centering. The complete feature surface, including the public
++# context parameter and calibration tool, is absent from an OFF build so the shipped default
++# stays byte-compatible with the pre-port engine.
++option(GGML_ARIFI_KV_MEANCENTER "llama: per-model K-cache mean-centering calibration and runtime path" OFF)
++
+ 
+ # Required for relocatable CMake package
+ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/build-info.cmake)
+diff --git a/common/CMakeLists.txt b/common/CMakeLists.txt
+index 39255076db..caf0ef1f52 100644
+--- a/common/CMakeLists.txt
++++ b/common/CMakeLists.txt
+@@ -129,6 +129,12 @@ add_library(${TARGET}
+     jinja/caps.h
+     )
+ 
++if (GGML_ARIFI_KV_MEANCENTER)
++    target_sources(${TARGET} PRIVATE
++        kv-mean-center.cpp
++        kv-mean-center.h)
++endif()
++
+ set_target_properties(${TARGET} PROPERTIES
+     VERSION ${LLAMA_VERSION_BASE}
+     SOVERSION ${LLAMA_VERSION_MAJOR}
+diff --git a/common/arg.cpp b/common/arg.cpp
+index 37a5aceb3a..e857718513 100644
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -1778,7 +1778,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+         [](common_params & params, int value) {
+             params.n_chunks = value;
+         }
+-    ).set_examples({LLAMA_EXAMPLE_IMATRIX, LLAMA_EXAMPLE_PERPLEXITY, LLAMA_EXAMPLE_RETRIEVAL}));
++    ).set_examples({LLAMA_EXAMPLE_IMATRIX, LLAMA_EXAMPLE_PERPLEXITY, LLAMA_EXAMPLE_RETRIEVAL
++#ifdef GGML_ARIFI_KV_MEANCENTER
++                    , LLAMA_EXAMPLE_KV_MEAN_CENTER
++#endif
++    }));
+     add_opt(common_arg({ "-fa", "--flash-attn" }, "[on|off|auto]",
+                        string_format("set Flash Attention use ('on', 'off', or 'auto', default: '%s')",
+                                      llama_flash_attn_type_name(params.flash_attn_type)),
+@@ -2487,6 +2491,17 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+             params.cache_type_v = kv_cache_type_from_str(value);
+         }
+     ).set_env("LLAMA_ARG_CACHE_TYPE_V"));
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    add_opt(common_arg(
++        {"--kv-mean-center"}, "FNAME",
++        "path to a K-cache mean-centering bias file (GGUF), generated with tools/kv-mean-center\n"
++        "subtracts a fixed per-(head,channel) bias from K before it is quantized into the cache;\n"
++        "requires --cache-type-k q4_0 (see docs/kv-mean-center.md)",
++        [](common_params & params, const std::string & value) {
++            params.kv_mean_center_path = value;
++        }
++    ).set_env("LLAMA_ARG_KV_MEAN_CENTER"));
++#endif
+     add_opt(common_arg(
+         {"--hellaswag"},
+         "compute HellaSwag score over random tasks from datafile supplied with -f",
+@@ -3211,7 +3226,11 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+             params.out_file = value;
+         }
+     ).set_examples({LLAMA_EXAMPLE_IMATRIX, LLAMA_EXAMPLE_CVECTOR_GENERATOR, LLAMA_EXAMPLE_EXPORT_LORA, LLAMA_EXAMPLE_TTS, LLAMA_EXAMPLE_FINETUNE,
+-                    LLAMA_EXAMPLE_RESULTS, LLAMA_EXAMPLE_EXPORT_GRAPH_OPS, LLAMA_EXAMPLE_CLI}));
++                    LLAMA_EXAMPLE_RESULTS, LLAMA_EXAMPLE_EXPORT_GRAPH_OPS, LLAMA_EXAMPLE_CLI
++#ifdef GGML_ARIFI_KV_MEANCENTER
++                    , LLAMA_EXAMPLE_KV_MEAN_CENTER
++#endif
++    }));
+     add_opt(common_arg(
+         {"-ofreq", "--output-frequency"}, "N",
+         string_format("output the imatrix every N iterations (default: %d)", params.n_out_freq),
+diff --git a/common/common.cpp b/common/common.cpp
+index 8eae970af4..0aef5e22df 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -1816,6 +1816,12 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+     }
+     cparams.moe_cache_budget_mib = params.moe_cache.budget_mib;
+ 
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    // note: params (and therefore params.kv_mean_center_path) is kept alive by the caller for
++    // at least as long as it takes to call llama_init_from_model() with the returned cparams
++    cparams.path_kv_mean_center = params.kv_mean_center_path.empty() ? nullptr : params.kv_mean_center_path.c_str();
++#endif
++
+     return cparams;
+ }
+ 
+diff --git a/common/common.h b/common/common.h
+index 905f03f7a3..d9ef11b381 100644
+--- a/common/common.h
++++ b/common/common.h
+@@ -108,6 +108,9 @@ enum llama_example {
+     LLAMA_EXAMPLE_EXPORT_GRAPH_OPS,
+     LLAMA_EXAMPLE_DOWNLOAD,
+     LLAMA_EXAMPLE_TOKENIZE,
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    LLAMA_EXAMPLE_KV_MEAN_CENTER,
++#endif
+ 
+     LLAMA_EXAMPLE_COUNT,
+ };
+@@ -608,6 +611,12 @@ struct common_params {
+     ggml_type cache_type_k = GGML_TYPE_F16; // KV cache data type for the K
+     ggml_type cache_type_v = GGML_TYPE_F16; // KV cache data type for the V
+ 
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    // path to a K-cache mean-centering bias file (GGUF), or empty to disable.
++    // only takes effect when cache_type_k == GGML_TYPE_Q4_0; see docs/kv-mean-center.md
++    std::string kv_mean_center_path = "";
++#endif
++
+     common_conversation_mode conversation_mode = COMMON_CONVERSATION_MODE_AUTO;
+ 
+     // multimodal models (see tools/mtmd)
+diff --git a/common/kv-mean-center.cpp b/common/kv-mean-center.cpp
+new file mode 100644
+index 0000000000..cc214f688a
+--- /dev/null
++++ b/common/kv-mean-center.cpp
+@@ -0,0 +1,76 @@
++#include "kv-mean-center.h"
++
++#include "log.h"
++
++#include "ggml.h"
++#include "gguf.h"
++
++#include <cstring>
++
++bool common_kv_mean_center_write(
++        const std::string & fname,
++        const std::vector<common_kv_mean_center_layer> & layers,
++        bool k_rot) {
++    size_t n_with_bias = 0;
++    for (const auto & layer : layers) {
++        if (!layer.bias.empty()) {
++            n_with_bias++;
++        }
++    }
++
++    if (n_with_bias == 0) {
++        LOG_ERR("%s: no layers with bias data to write\n", __func__);
++        return false;
++    }
++
++    size_t data_size = 0;
++    for (const auto & layer : layers) {
++        if (!layer.bias.empty()) {
++            data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float)*layer.bias.size(), GGML_MEM_ALIGN);
++        }
++    }
++
++    struct ggml_init_params params = {
++        /*.mem_size   =*/ data_size,
++        /*.mem_buffer =*/ NULL,
++        /*.no_alloc   =*/ false,
++    };
++
++    struct ggml_context  * ctx      = ggml_init(params);
++    struct gguf_context   * ctx_gguf = gguf_init_empty();
++
++    if (!ctx || !ctx_gguf) {
++        LOG_ERR("%s: failed to allocate ggml/gguf context\n", __func__);
++        if (ctx)      ggml_free(ctx);
++        if (ctx_gguf) gguf_free(ctx_gguf);
++        return false;
++    }
++
++    gguf_set_val_str(ctx_gguf, "general.type", "kv-mean-center");
++    gguf_set_val_bool(ctx_gguf, "kv_mean_center.k_rot", k_rot);
++
++    for (const auto & layer : layers) {
++        if (layer.bias.empty()) {
++            continue;
++        }
++
++        const std::string name = "kv_bar.blk." + std::to_string(layer.il) + ".k";
++
++        ggml_tensor * t = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, (int64_t) layer.bias.size());
++        ggml_set_name(t, name.c_str());
++
++        memcpy(t->data, layer.bias.data(), layer.bias.size()*sizeof(float));
++
++        gguf_add_tensor(ctx_gguf, t);
++    }
++
++    const bool ok = gguf_write_to_file(ctx_gguf, fname.c_str(), false);
++    if (!ok) {
++        LOG_ERR("%s: failed to write %s\n", __func__, fname.c_str());
++    }
++
++    gguf_free(ctx_gguf);
++    ggml_free(ctx);
++
++    return ok;
++}
+diff --git a/common/kv-mean-center.h b/common/kv-mean-center.h
+new file mode 100644
+index 0000000000..9da7ffd2e3
+--- /dev/null
++++ b/common/kv-mean-center.h
+@@ -0,0 +1,30 @@
++#pragma once
++
++#include <cstdint>
++#include <string>
++#include <vector>
++
++// Shared GGUF file format for the K-cache mean-centering bias vectors produced by
++// tools/kv-mean-center and consumed by llama_kv_cache::load_kv_mean_center() (see
++// docs/kv-mean-center.md).
++//
++// The file stores one F32 tensor per model layer that has a bias, named
++// "kv_bar.blk.<il>.k", holding n_embd_head_k(il) * n_head_kv(il) values laid out as
++// [n_embd_head_k, n_head_kv] (channel-fastest), matching the memory layout of the K
++// tensor at the point it is written into the cache.
++
++// per-layer entry to write; `bias` empty means "no bias for this layer" (skipped on write)
++struct common_kv_mean_center_layer {
++    int32_t            il = -1;
++    std::vector<float> bias; // length n_embd_head_k(il) * n_head_kv(il)
++};
++
++// write a K-cache mean-centering bias file in GGUF format.
++// `k_rot` records whether the bias was measured with the Hadamard K-cache rotation active
++// (stored as the "kv_mean_center.k_rot" KV); the loader refuses a bias whose basis does not
++// match the inference-time rotation state.
++// returns false (and logs an error) on failure.
++bool common_kv_mean_center_write(
++        const std::string & fname,
++        const std::vector<common_kv_mean_center_layer> & layers,
++        bool k_rot = false);
+diff --git a/docs/kv-mean-center.md b/docs/kv-mean-center.md
+new file mode 100644
+index 0000000000..4aca538153
+--- /dev/null
++++ b/docs/kv-mean-center.md
+@@ -0,0 +1,103 @@
++# K-cache mean-centering
++
++This feature is compiled only with `-DGGML_ARIFI_KV_MEANCENTER=ON`; the build default is OFF.
++When compiled, `--kv-mean-center` is an optional, opt-in feature that subtracts a fixed, precomputed
++per-(kv-head, channel) bias from the K vector at the moment it is written into the KV cache,
++in order to improve quantization fidelity for `GGML_TYPE_Q4_0` K caches.
++
++This is currently scoped to `GGML_TYPE_Q4_0` only.
++
++## The idea
++
++`GGML_TYPE_Q4_0` is a symmetric (zero-point-free) block quantizer: each block is represented as
++`value ~= scale * q`, where `q` is a signed low-bit integer and there is no bias/zero-point term.
++If a given (kv-head, channel) position's real K activations have a nonzero mean across tokens,
++symmetric quantization wastes some of its dynamic range encoding that constant bias, which
++increases quantization error for that channel.
++
++The fix: measure a per-(kv-head, channel) bias `k_bar` ahead of time (see
++[Calibration](#calibration) below), and subtract it from the K vector for every token, right
++before `Q4_0` quantization happens as part of writing it into the cache. Nothing else in
++attention needs to change.
++
++### Why this is safe (softmax-invariance)
++
++For a fixed query row `q` attending over cached keys `k_0 ... k_n` (all in one layer/head), if
++every cached key is centered by the same `k_bar` before being quantized and stored, the true dot
++product decomposes as:
++
++```
++q . k_i = q . (k_i - k_bar) + q . k_bar = q . k_i_stored + q . k_bar
++```
++
++The `q . k_bar` term does not depend on `i` (the key's position) -- it is added identically to
++every logit in that query's row. Softmax is invariant to a constant additive shift applied to
++every logit in the same row (`softmax(x + c) == softmax(x)`), so the attention weights, and
++therefore the rest of the model's output, are unaffected. This means the technique is exactly
++correctness-preserving in infinite precision, and in practice the only observable difference is
++ordinary floating point rounding (see `tests/test-kv-mean-center.cpp`, which checks this directly
++against an unquantized F32 K cache). This is also why it is a zero decode-time-cost win: one
++subtract at the point of cache write, nothing else changes.
++
++The actual benefit is purely on quantization fidelity: centering the residual around zero before
++`Q4_0`'s symmetric quantizer reduces per-channel quantization error for channels that have a real,
++consistent activation bias. Quantifying that improvement on a production-scale model (e.g. via a
++logit-KLD comparison against an uncentered `Q4_0` baseline) is a natural follow-up; this repo does
++not ship a measured number for a specific trained model.
++
++## Usage
++
++1. Generate a bias file with `tools/kv-mean-center` (see its
++   [README](../tools/kv-mean-center/README.md) for details):
++
++   ```
++   ./llama-kv-mean-center -m model.gguf -f calibration-data.txt -o kv-mean-center.gguf
++   ```
++
++2. Load it at inference time, together with a `Q4_0` K cache:
++
++   ```
++   ./llama-cli -m model.gguf -ctk q4_0 --kv-mean-center kv-mean-center.gguf -p "..."
++   ```
++
++`--kv-mean-center` requires `--cache-type-k q4_0`. If the K cache type is anything else, context
++creation fails with a clear error rather than silently doing nothing, matching this codebase's
++existing convention for other cache-type-gated options (e.g. quantized V cache requiring flash
++attention).
++
++## Bias file format
++
++The bias file is a small GGUF file with one F32 1-D tensor per layer that has a bias, named
++`kv_bar.blk.<il>.k`, holding `n_embd_head_k(il) * n_head_kv(il)` values laid out as
++`[n_embd_head_k, n_head_kv]` (channel-fastest). This matches the in-memory layout of the K tensor
++at the point it is written into the cache, so the file can be loaded directly as a small
++broadcastable bias tensor per layer.
++
++## Calibration
++
++`tools/kv-mean-center` computes the bias by running a plain text calibration corpus through the
++model and averaging the K tensor right before it would be written into the cache (via the
++`k_cache_in` tag added to `llm_graph_context::build_attn()`, read through the same backend
++scheduler eval-callback mechanism `llama-imatrix` uses to capture activations). See
++[tools/kv-mean-center/README.md](../tools/kv-mean-center/README.md) for usage.
++
++## Scope and limitations
++
++- Only `GGML_TYPE_Q4_0` is supported; other K cache types are rejected. Generalizing the mechanism
++  to other quantization types is future work.
++- Every standard-attention KV cache layout is supported: the plain cache, the base/SWA pair of
++  sliding-window models, and the attention sub-cache of hybrid (recurrent + attention) models,
++  with or without SWA. Recurrent-only and MLA/DSA memory types are not.
++- The calibration hook (`k_cache_in`) is currently only wired into the standard
++  dense/GQA attention path (`llm_graph_context::build_attn(llm_graph_input_attn_kv *, ...)`),
++  which covers the large majority of architectures. MLA and other specialized attention variants
++  are not covered yet.
++- The bias lives in the basis the calibration run's K cache used. With this fork's optional
++  Hadamard K rotation (automatic for quantized K caches whose head dimension is a multiple of 64,
++  unless `LLAMA_ATTN_ROT_DISABLE=1`), that means: calibrate with the same `--cache-type-k` and
++  rotation settings you serve with, e.g. `-ctk q4_0` for the common case. Applying a bias in the
++  wrong basis remains exactly safe for attention logits (the invariance argument above is
++  basis-independent) but measurably degrades quantization quality instead of improving it, so the
++  calibration tool records its basis in the file (`kv_mean_center.k_rot`) and the loader rejects
++  a mismatch. In the matching basis the two features compose; see tools/kv-mean-center/README.md
++  for measured numbers.
+diff --git a/include/llama.h b/include/llama.h
+index b262d18cd3..923d842540 100644
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -442,6 +442,16 @@ extern "C" {
+         enum llama_moe_cache_mode moe_cache_mode; // runtime MoE expert cache mode
+         size_t moe_cache_budget_mib;               // 0 uses the provider's available-memory budget
+ 
++#ifdef GGML_ARIFI_KV_MEANCENTER
++        // optional path to a per-layer K-cache mean-centering bias file (GGUF), or NULL to disable.
++        // the bias is subtracted from the K vector for each (kv-head, channel) right before it is
++        // written into the K cache, which improves quantization fidelity for GGML_TYPE_Q4_0 without
++        // changing attention results (the same constant is added to every logit in a query's row,
++        // which softmax is invariant to). currently only supported when type_k == GGML_TYPE_Q4_0.
++        // see tools/kv-mean-center to generate this file and docs/kv-mean-center.md for details.
++        const char * path_kv_mean_center;
++#endif
++
+         // Abort callback
+         // if it returns true, execution of llama_decode() will be aborted
+         // currently works only with CPU execution
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index eca1b6beb4..7bc9c3e915 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -64,6 +64,9 @@ set_source_files_properties(${LLAMA_CORE_SOURCES} ../include/llama.h unicode.h
+ 
+ configure_file(llama-version.h.in ${CMAKE_CURRENT_BINARY_DIR}/llama-version.h @ONLY)
+ 
++if (GGML_ARIFI_KV_MEANCENTER)
++    target_compile_definitions(llama PUBLIC GGML_ARIFI_KV_MEANCENTER)
++endif()
+ target_include_directories(llama PRIVATE . ${CMAKE_CURRENT_BINARY_DIR})
+ target_include_directories(llama PUBLIC ../include)
+ target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 25ab836ae7..367474c98f 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -15,6 +15,12 @@
+ #include "llama-batch.h"
+ #include "llama-io.h"
+ #include "llama-memory.h"
++#ifdef GGML_ARIFI_KV_MEANCENTER
++#include "llama-kv-cache.h"
++#include "llama-kv-cache-iswa.h"
++#include "llama-memory-hybrid.h"
++#include "llama-memory-hybrid-iswa.h"
++#endif
+ #include "llama-mmap.h"
+ #include "llama-model.h"
+ #include "llama-ext.h"
+@@ -411,6 +417,36 @@ llama_context::llama_context(
+         };
+ 
+         memory.reset(model.create_memory(params_mem, cparams));
++
++#ifdef GGML_ARIFI_KV_MEANCENTER
++        if (params.path_kv_mean_center != nullptr) {
++            // collect every standard llama_kv_cache the memory module keeps for attention
++            // layers. hybrid (recurrent + attention) models keep one for their attention
++            // sublayers; SWA variants keep a base/SWA pair. bias tensors are matched by
++            // model layer id, so layers absent from a given cache are simply skipped.
++            std::vector<llama_kv_cache *> kvs;
++            if (auto * kv = dynamic_cast<llama_kv_cache *>(memory.get())) {
++                kvs.push_back(kv);
++            } else if (auto * kv_iswa = dynamic_cast<llama_kv_cache_iswa *>(memory.get())) {
++                kvs.push_back(kv_iswa->get_base());
++                kvs.push_back(kv_iswa->get_swa());
++            } else if (auto * hyb = dynamic_cast<llama_memory_hybrid *>(memory.get())) {
++                kvs.push_back(hyb->get_mem_attn());
++            } else if (auto * hyb_iswa = dynamic_cast<llama_memory_hybrid_iswa *>(memory.get())) {
++                kvs.push_back(hyb_iswa->get_mem_attn()->get_base());
++                kvs.push_back(hyb_iswa->get_mem_attn()->get_swa());
++            }
++            if (kvs.empty()) {
++                throw std::runtime_error("path_kv_mean_center is only supported for standard KV caches "
++                        "(not recurrent-only or MLA/DSA memory types)");
++            }
++            for (auto * kv : kvs) {
++                if (!kv->load_kv_mean_center(params.path_kv_mean_center)) {
++                    throw std::runtime_error("failed to load K-cache mean-centering bias file");
++                }
++            }
++        }
++#endif
+     }
+ 
+     // init backends
+@@ -3967,6 +4003,9 @@ llama_context_params llama_context_default_params() {
+         /*.type_v                      =*/ GGML_TYPE_F16,
+         /*.moe_cache_mode              =*/ LLAMA_MOE_CACHE_MODE_UNSPECIFIED,
+         /*.moe_cache_budget_mib        =*/ 0,
++#ifdef GGML_ARIFI_KV_MEANCENTER
++        /*.path_kv_mean_center         =*/ nullptr,
++#endif
+         /*.abort_callback              =*/ nullptr,
+         /*.abort_callback_data         =*/ nullptr,
+         /*.embeddings                  =*/ false,
+@@ -4083,6 +4122,15 @@ llama_context * llama_init_from_model(
+         }
+     }
+ 
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    if (params.path_kv_mean_center != nullptr && params.type_k != GGML_TYPE_Q4_0) {
++        LLAMA_LOG_ERROR("%s: path_kv_mean_center requires the K cache type to be Q4_0 (got %s)\n",
++                __func__, ggml_type_name(params.type_k));
++        return nullptr;
++    }
++#endif
++
++
+     if (params.pooling_type != LLAMA_POOLING_TYPE_UNSPECIFIED &&
+         params.pooling_type != model->hparams.pooling_type) {
+         //user-specified pooling-type is different from the model default
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index 2cca244e1f..f0edc93c13 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -2989,6 +2989,13 @@ ggml_tensor * llm_graph_context::build_attn(
+         const auto & k_idxs = inp->get_k_idxs();
+         const auto & v_idxs = inp->get_v_idxs();
+ 
++#ifdef GGML_ARIFI_KV_MEANCENTER
++        // hook point for KV cache calibration tooling (e.g. tools/kv-mean-center): this is
++        // exactly the K tensor that cpy_k() writes into the cache, after any RoPE/rotation
++        // the architecture applies upstream
++        cb(k_cur, "k_cache_in", il);
++#endif
++
+         ggml_build_forward_expand(gf, mctx_cur->cpy_k(ctx0, k_cur, k_idxs, il));
+         ggml_build_forward_expand(gf, mctx_cur->cpy_v(ctx0, v_cur, v_idxs, il));
+     }
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index a4c53fc253..1b6d45962c 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -1,5 +1,8 @@
+ #include "llama-kv-cache.h"
+ 
++#ifdef GGML_ARIFI_KV_MEANCENTER
++#include "gguf.h"
++#endif
+ #include "llama-impl.h"
+ #include "llama-io.h"
+ #include "llama-model.h"
+@@ -7,12 +10,18 @@
+ 
+ #include <algorithm>
+ #include <cassert>
++#ifdef GGML_ARIFI_KV_MEANCENTER
++#include <cinttypes>
++#endif
+ #include <cmath>
+ #include <cstring>
+ #include <limits>
+ #include <map>
+ #include <stdexcept>
+ #include <unordered_map>
++#ifdef GGML_ARIFI_KV_MEANCENTER
++#include <string>
++#endif
+ 
+ static bool ggml_is_power_of_2(int n) {
+     return (n & (n - 1)) == 0;
+@@ -1599,6 +1608,20 @@ ggml_tensor * llama_kv_cache::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggm
+ 
+     ggml_tensor * k = layers[ikv].k;
+ 
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    // optional per-(head,channel) mean-centering: subtract a fixed bias from the K vector
++    // before it is written into the cache. this is exactly softmax-invariant (the same
++    // constant is added to every logit of a query's row, which softmax does not see), so
++    // nothing else in attention needs to change. see load_kv_mean_center().
++    if (!k_bar.empty() && k_bar[ikv] != nullptr) {
++        ggml_tensor * bias = k_bar[ikv];
++        if (bias->type != k_cur->type) {
++            bias = ggml_cast(ctx, bias, k_cur->type);
++        }
++        k_cur = ggml_sub(ctx, k_cur, bias);
++    }
++#endif
++
+     int64_t n_embd_head = k_cur->ne[0];
+     const int64_t n_head      = k_cur->ne[1];
+     const int64_t n_tokens    = k_cur->ne[2];
+@@ -1718,6 +1741,190 @@ ggml_tensor * llama_kv_cache::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggm
+     return ggml_set_rows(ctx, v_view, v_cur, v_idxs);
+ }
+ 
++#ifdef GGML_ARIFI_KV_MEANCENTER
++bool llama_kv_cache::load_kv_mean_center(const char * path, bool require_q4_0) {
++    GGML_ASSERT(path != nullptr);
++    GGML_ASSERT(k_bar.empty() && "K-cache mean-centering already loaded");
++
++    ggml_context * ctx_data = nullptr;
++
++    struct gguf_init_params gguf_params = {
++        /*.no_alloc =*/ false,
++        /*.ctx      =*/ &ctx_data,
++    };
++
++    struct gguf_context * ctx_gguf = gguf_init_from_file(path, gguf_params);
++    if (!ctx_gguf) {
++        LLAMA_LOG_ERROR("%s: failed to load K-cache mean-centering bias file from %s\n", __func__, path);
++        return false;
++    }
++
++    // validate the cache type first, so an unsupported cache type gets its actionable error
++    // even when the bias file's basis would also mismatch
++    if (require_q4_0) {
++        for (const auto & layer : layers) {
++            if (layer.k->type != GGML_TYPE_Q4_0) {
++                LLAMA_LOG_ERROR("%s: K-cache mean-centering requires K cache type %s, but layer %d has type %s\n",
++                        __func__, ggml_type_name(GGML_TYPE_Q4_0), layer.il, ggml_type_name(layer.k->type));
++                gguf_free(ctx_gguf);
++                ggml_free(ctx_data);
++                return false;
++            }
++        }
++    }
++
++    // the bias is only valid in the basis it was measured in: a bias calibrated with the
++    // Hadamard K-cache rotation active must be applied with the rotation active, and vice
++    // versa. a mismatched basis measurably degrades quantization quality instead of
++    // improving it (see tools/kv-mean-center/README.md), so refuse it outright.
++    {
++        const int64_t idx_k_rot = gguf_find_key(ctx_gguf, "kv_mean_center.k_rot");
++        if (idx_k_rot >= 0) {
++            if (gguf_get_kv_type(ctx_gguf, idx_k_rot) != GGUF_TYPE_BOOL) {
++                LLAMA_LOG_ERROR("%s: bias file %s has a non-boolean kv_mean_center.k_rot key - malformed file\n",
++                        __func__, path);
++                gguf_free(ctx_gguf);
++                ggml_free(ctx_data);
++                return false;
++            }
++            const bool bias_k_rot = gguf_get_val_bool(ctx_gguf, idx_k_rot);
++            if (bias_k_rot != attn_rot_k) {
++                LLAMA_LOG_ERROR("%s: bias file %s was calibrated with the K-cache rotation %s, but it is %s "
++                        "for this context - recalibrate with matching cache settings "
++                        "(or set LLAMA_ATTN_ROT_DISABLE=1 consistently in both)\n",
++                        __func__, path,
++                        bias_k_rot  ? "active" : "inactive",
++                        attn_rot_k ? "active" : "inactive");
++                gguf_free(ctx_gguf);
++                ggml_free(ctx_data);
++                return false;
++            }
++        } else {
++            LLAMA_LOG_WARN("%s: bias file %s does not record its calibration basis (kv_mean_center.k_rot); "
++                    "K-cache rotation is %s for this context - a basis mismatch degrades quality\n",
++                    __func__, path, attn_rot_k ? "active" : "inactive");
++        }
++    }
++
++    k_bar.resize(layers.size(), nullptr);
++
++    // one ggml context (+ backend buffer) per unique buffer type, so each bias tensor ends up
++    // on the same device as the K cache tensor it is subtracted against (see cpy_k())
++    std::map<ggml_backend_buffer_type_t, ggml_context *> ctx_map;
++
++    auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
++        auto it = ctx_map.find(buft);
++        if (it != ctx_map.end()) {
++            return it->second;
++        }
++
++        ggml_init_params params = {
++            /*.mem_size   =*/ layers.size()*ggml_tensor_overhead(),
++            /*.mem_buffer =*/ NULL,
++            /*.no_alloc   =*/ true,
++        };
++
++        ggml_context * res = ggml_init(params);
++        if (res) {
++            ctx_map.emplace(buft, res);
++            k_bar_ctxs.emplace_back(res);
++        }
++
++        return res;
++    };
++
++    bool ok = true;
++    size_t n_centered = 0;
++
++    for (size_t ikv = 0; ikv < layers.size() && ok; ++ikv) {
++        const int32_t il = layers[ikv].il;
++
++        const std::string name = "kv_bar.blk." + std::to_string(il) + ".k";
++
++        ggml_tensor * src = ggml_get_tensor(ctx_data, name.c_str());
++        if (!src) {
++            // no bias provided for this layer - leave it uncentered
++            continue;
++        }
++
++        if (src->type != GGML_TYPE_F32) {
++            LLAMA_LOG_ERROR("%s: bias tensor %s must be F32 (got %s)\n",
++                    __func__, name.c_str(), ggml_type_name(src->type));
++            ok = false;
++            break;
++        }
++
++        const int64_t n_embd_head = hparams.n_embd_head_k(il);
++        const int64_t n_head_kv   = hparams.n_head_kv(il);
++
++        if (ggml_nelements(src) != n_embd_head*n_head_kv) {
++            LLAMA_LOG_ERROR("%s: bias tensor %s has %" PRId64 " elements, expected %" PRId64 " (n_embd_head_k * n_head_kv)\n",
++                    __func__, name.c_str(), ggml_nelements(src), n_embd_head*n_head_kv);
++            ok = false;
++            break;
++        }
++
++        ggml_backend_buffer_type_t buft = ggml_backend_dev_buffer_type(model.dev_layer(il));
++
++        ggml_context * ctx = ctx_for_buft(buft);
++        if (!ctx) {
++            LLAMA_LOG_ERROR("%s: failed to allocate context for K-cache mean-centering bias (layer %d)\n", __func__, il);
++            ok = false;
++            break;
++        }
++
++        ggml_tensor * bias = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd_head, n_head_kv);
++        ggml_format_name(bias, "kv_bar_l%d", il);
++
++        k_bar[ikv] = bias;
++        n_centered++;
++    }
++
++    if (ok) {
++        for (auto & [buft, ctx] : ctx_map) {
++            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
++            if (!buf) {
++                LLAMA_LOG_ERROR("%s: failed to allocate buffer for K-cache mean-centering bias\n", __func__);
++                ok = false;
++                break;
++            }
++            k_bar_bufs.emplace_back(buf);
++        }
++    }
++
++    if (ok) {
++        for (size_t ikv = 0; ikv < layers.size(); ++ikv) {
++            if (!k_bar[ikv]) {
++                continue;
++            }
++
++            const int32_t il = layers[ikv].il;
++            const std::string name = "kv_bar.blk." + std::to_string(il) + ".k";
++
++            ggml_tensor * src = ggml_get_tensor(ctx_data, name.c_str());
++            ggml_backend_tensor_set(k_bar[ikv], src->data, 0, ggml_nbytes(k_bar[ikv]));
++        }
++    }
++
++    gguf_free(ctx_gguf);
++    ggml_free(ctx_data);
++
++    if (!ok) {
++        // roll back so cpy_k() never observes a half-initialized k_bar
++        k_bar.clear();
++        k_bar_bufs.clear();
++        k_bar_ctxs.clear();
++
++        return false;
++    }
++
++    LLAMA_LOG_INFO("%s: loaded K-cache mean-centering bias for %zu / %zu layer(s) from %s\n",
++            __func__, n_centered, layers.size(), path);
++
++    return true;
++}
++#endif
++
+ ggml_tensor * llama_kv_cache::build_input_k_idxs(ggml_context * ctx, const llama_ubatch & ubatch) const {
+     const uint32_t n_tokens = ubatch.n_tokens;
+ 
+diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
+index f1f732443b..3c73db75a8 100644
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -200,6 +200,25 @@ public:
+     ggml_tensor * cpy_k(ggml_context * ctx, ggml_tensor * k_cur, ggml_tensor * k_idxs, int32_t il, const slot_info & sinfo) const;
+     ggml_tensor * cpy_v(ggml_context * ctx, ggml_tensor * v_cur, ggml_tensor * v_idxs, int32_t il, const slot_info & sinfo) const;
+ 
++    //
++    // K-cache mean-centering (see docs/kv-mean-center.md)
++    //
++
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    // load a per-layer bias file (GGUF, tensors named "kv_bar.blk.<il>.k") and enable
++    // mean-centering for every layer it covers: the bias is subtracted from the K vector
++    // right before it is written into the cache in cpy_k().
++    //
++    // when require_q4_0 is true (the default, used by the --kv-mean-center CLI flag), loading
++    // fails for any layer whose K cache type is not GGML_TYPE_Q4_0, since that is the only case
++    // this feature is intended/validated for. require_q4_0 = false is used by tests to exercise
++    // the exact same subtraction code path against an unquantized (e.g. F32) K cache, in order to
++    // validate the softmax-invariance argument without confounding it with quantization error.
++    //
++    // returns false (and logs an error) on failure; the cache is left with centering disabled.
++    bool load_kv_mean_center(const char * path, bool require_q4_0 = true);
++#endif
++
+     //
+     // preparation API
+     //
+@@ -326,6 +345,17 @@ private:
+     // model layer id -> KV cache layer id
+     std::unordered_map<int32_t, int32_t> map_layer_ids;
+ 
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    // K-cache mean-centering bias (see load_kv_mean_center()):
++    //   k_bar[ikv] is indexed like `layers` and is nullptr for layers without a bias, or if
++    //   centering was never enabled (k_bar.empty() in that case).
++    //   each tensor is F32, shaped [n_embd_head_k(il), n_head_kv(il)] so it broadcasts against
++    //   the [n_embd_head, n_head, n_tokens] k_cur tensor seen in cpy_k().
++    std::vector<ggml_tensor *> k_bar;
++    std::vector<ggml_context_ptr> k_bar_ctxs;
++    std::vector<ggml_backend_buffer_ptr> k_bar_bufs;
++#endif
++
+     size_t total_size() const;
+ 
+     size_t size_k_bytes() const;
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 4cbe9e9481..e8500ad1f3 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -261,6 +261,9 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
+     set_tests_properties(test-save-load-state PROPERTIES FIXTURES_REQUIRED generate-models)
+ 
+     llama_build(test-fusion.cpp)
++    if (GGML_ARIFI_KV_MEANCENTER)
++        llama_build_and_test(test-kv-mean-center.cpp)
++    endif()
+ endif()
+ 
+ llama_build_and_test(test-chat-peg-parser.cpp peg-parser/simple-tokenize.cpp)
+diff --git a/tests/test-kv-mean-center.cpp b/tests/test-kv-mean-center.cpp
+new file mode 100644
+index 0000000000..880415b6a9
+--- /dev/null
++++ b/tests/test-kv-mean-center.cpp
+@@ -0,0 +1,338 @@
++// Tests for K-cache mean-centering (see docs/kv-mean-center.md):
++//
++//  (a) regression safety: with centering disabled (the default / no bias file loaded), behavior
++//      is unaffected by the feature's presence, including when the K cache type is the one the
++//      feature targets (GGML_TYPE_Q4_0).
++//  (b) softmax-invariance: subtracting a fixed nonzero bias from every cached K vector before
++//      it is written into the cache does not change the model's output logits, up to ordinary
++//      fp32 rounding. This is tested against an *unquantized* (F32) K cache so that the
++//      comparison isn't confounded by actual quantization error -- this test is a pure math
++//      check of the softmax-invariance argument, not a quantization-fidelity measurement.
++//
++// Uses the same tiny-synthetic-model machinery as test-llama-archs.cpp (llama_model_saver +
++// llama_model_init_from_user with a deterministic random tensor initializer), trimmed down to
++// just the plain LLM_ARCH_LLAMA case.
++
++#include "common.h"
++#include "kv-mean-center.h"
++#include "log.h"
++#include "llama.h"
++#include "llama-cpp.h"
++
++// TODO: replace with #include "llama-ext.h" in the future
++#include "../src/llama-arch.h"
++#include "../src/llama-kv-cache.h"
++#include "../src/llama-model-saver.h"
++
++#include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <random>
++#include <stdexcept>
++#include <string>
++#include <vector>
++
++static const uint32_t k_n_vocab = 128;
++static const uint32_t k_n_embd  = 256;
++static const uint32_t k_n_head  = 2;
++static const uint32_t k_n_ff    = 384;
++static const uint32_t k_n_layer = 2;
++static const uint32_t k_n_ctx   = 128;
++
++// deterministic pseudo-random weight initializer (same technique as test-llama-archs.cpp)
++static void set_tensor_data(struct ggml_tensor * tensor, void * userdata) {
++    std::hash<std::string> hasher;
++    std::mt19937 gen(hasher(tensor->name) + *(const size_t *) userdata);
++    std::normal_distribution<float> dis(0.0f, 1.0e-2f);
++
++    const int64_t ne = ggml_nelements(tensor);
++    GGML_ASSERT(tensor->type == GGML_TYPE_F32);
++    std::vector<float> tmp(ne);
++    for (int64_t i = 0; i < ne; i++) {
++        tmp[i] = dis(gen);
++    }
++    ggml_backend_tensor_set(tensor, tmp.data(), 0, ggml_nbytes(tensor));
++}
++
++// minimal metadata for a tiny 2-layer LLM_ARCH_LLAMA model (trimmed from test-llama-archs.cpp's
++// generic per-arch metadata builder, dropping everything that only applies to other archs)
++static gguf_context_ptr build_llama_gguf_ctx() {
++    gguf_context_ptr ret(gguf_init_empty());
++    llama_model_saver ms(LLM_ARCH_LLAMA, ret.get());
++
++    const uint32_t n_embd_head = k_n_embd / k_n_head;
++
++    ms.add_kv(LLM_KV_GENERAL_ARCHITECTURE,      llm_arch_name(LLM_ARCH_LLAMA));
++    ms.add_kv(LLM_KV_VOCAB_SIZE,                k_n_vocab);
++    ms.add_kv(LLM_KV_CONTEXT_LENGTH,            k_n_ctx);
++    ms.add_kv(LLM_KV_EMBEDDING_LENGTH,          k_n_embd);
++    ms.add_kv(LLM_KV_BLOCK_COUNT,               k_n_layer);
++    ms.add_kv(LLM_KV_FEED_FORWARD_LENGTH,       k_n_ff);
++    ms.add_kv(LLM_KV_USE_PARALLEL_RESIDUAL,     false);
++    ms.add_kv(LLM_KV_ATTENTION_HEAD_COUNT,      k_n_head);
++    ms.add_kv(LLM_KV_ATTENTION_HEAD_COUNT_KV,   k_n_head);
++    ms.add_kv(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, 1e-5f);
++    ms.add_kv(LLM_KV_ROPE_DIMENSION_SECTIONS, std::vector<uint32_t>({n_embd_head/4, n_embd_head/4, n_embd_head/4, n_embd_head/4}));
++    ms.add_kv(LLM_KV_TOKENIZER_MODEL,           "no_vocab");
++
++    return ret;
++}
++
++static bool silent_model_load_progress(float /*progress*/, void * /*user_data*/) {
++    return true;
++}
++
++static llama_model_ptr build_model(struct gguf_context * gguf_ctx, size_t seed) {
++    llama_model_params model_params = llama_model_default_params();
++    model_params.progress_callback = silent_model_load_progress;
++
++    size_t tmp = seed;
++    llama_model_ptr model(llama_model_init_from_user(gguf_ctx, set_tensor_data, &tmp, model_params));
++    if (!model) {
++        throw std::runtime_error("failed to create tiny llama model");
++    }
++
++    return model;
++}
++
++// builds a context on top of an existing model; returns nullptr if llama_init_from_model rejects
++// the configuration (e.g. the --kv-mean-center / GGML_TYPE_Q4_0 gate)
++static llama_context_ptr build_context(llama_model * model, ggml_type type_k, const char * path_kv_mean_center = nullptr) {
++    llama_context_params ctx_params = llama_context_default_params();
++    ctx_params.n_ctx               = 0; // from model
++    ctx_params.n_batch             = 32;
++    ctx_params.n_ubatch            = 32;
++    ctx_params.n_threads           = 2;
++    ctx_params.n_threads_batch     = 2;
++    ctx_params.type_k              = type_k;
++    ctx_params.path_kv_mean_center = path_kv_mean_center;
++
++    // quantized K cache types in this codebase are exercised together with flash attention
++    if (ggml_is_quantized(type_k)) {
++        ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
++    }
++
++    return llama_context_ptr(llama_init_from_model(model, ctx_params));
++}
++
++static std::vector<llama_token> make_tokens(uint32_t n_tokens, uint32_t n_vocab, size_t seed) {
++    std::mt19937 gen(seed);
++    std::uniform_int_distribution<> dis(0, (int) n_vocab - 1);
++    std::vector<llama_token> tokens;
++    tokens.reserve(n_tokens);
++    for (uint32_t i = 0; i < n_tokens; i++) {
++        tokens.push_back(dis(gen));
++    }
++    return tokens;
++}
++
++static std::vector<float> decode_and_get_logits(llama_context * ctx, const std::vector<llama_token> & tokens) {
++    const uint32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(llama_get_model(ctx)));
++
++    llama_batch batch = llama_batch_init((int32_t) tokens.size(), 0, 1);
++    for (size_t i = 0; i < tokens.size(); i++) {
++        common_batch_add(batch, tokens[i], (llama_pos) i, { 0 }, true);
++    }
++
++    if (llama_decode(ctx, batch)) {
++        llama_batch_free(batch);
++        throw std::runtime_error("llama_decode failed");
++    }
++
++    std::vector<float> logits;
++    logits.reserve(tokens.size() * n_vocab);
++    for (size_t i = 0; i < tokens.size(); i++) {
++        const float * li = llama_get_logits_ith(ctx, (int32_t) i);
++        logits.insert(logits.end(), li, li + n_vocab);
++    }
++
++    llama_batch_free(batch);
++
++    return logits;
++}
++
++// normalized mean squared error = mse(a, b) / mse(a, 0), as used elsewhere in the test suite
++// (e.g. tests/test-llama-archs.cpp)
++static double nmse(const std::vector<float> & a, const std::vector<float> & b) {
++    GGML_ASSERT(a.size() == b.size());
++    double mse_a_b = 0.0;
++    double mse_a_0 = 0.0;
++
++    for (size_t i = 0; i < a.size(); i++) {
++        const double d = (double) a[i] - (double) b[i];
++        mse_a_b += d*d;
++        mse_a_0 += (double) a[i] * (double) a[i];
++    }
++
++    return mse_a_b / mse_a_0;
++}
++
++#define TEST_ASSERT(cond) \
++    do { \
++        if (!(cond)) { \
++            fprintf(stderr, "%s:%d: assertion failed: %s\n", __FILE__, __LINE__, #cond); \
++            abort(); \
++        } \
++    } while (0)
++
++// (a) regression safety: centering never engages unless a bias file is explicitly loaded, and
++// its mere availability as a (dormant) code path does not perturb anything -- not even for a
++// Q4_0 K cache, which is the type the feature is scoped to.
++static void test_regression_safety() {
++    gguf_context_ptr gguf_ctx = build_llama_gguf_ctx();
++    llama_model_ptr  model    = build_model(gguf_ctx.get(), /*seed=*/ 1234);
++
++    const std::vector<llama_token> tokens = make_tokens(16, k_n_vocab, /*seed=*/ 42);
++
++    // two independent contexts, identical configuration, no bias file: outputs must be
++    // bit-for-bit identical
++    llama_context_ptr ctx1 = build_context(model.get(), GGML_TYPE_F16);
++    TEST_ASSERT(ctx1 != nullptr);
++    const std::vector<float> logits1 = decode_and_get_logits(ctx1.get(), tokens);
++
++    llama_context_ptr ctx2 = build_context(model.get(), GGML_TYPE_F16);
++    TEST_ASSERT(ctx2 != nullptr);
++    const std::vector<float> logits2 = decode_and_get_logits(ctx2.get(), tokens);
++
++    TEST_ASSERT(logits1.size() == logits2.size());
++    for (size_t i = 0; i < logits1.size(); i++) {
++        TEST_ASSERT(logits1[i] == logits2[i]);
++    }
++
++    // smoke check: a Q4_0 K cache (the type this feature targets) with no bias file loaded
++    // must decode normally and produce finite output -- cpy_k()'s new code path must be a
++    // true no-op when centering was never enabled (k_bar.empty())
++    llama_context_ptr ctx3 = build_context(model.get(), GGML_TYPE_Q4_0);
++    TEST_ASSERT(ctx3 != nullptr);
++    const std::vector<float> logits3 = decode_and_get_logits(ctx3.get(), tokens);
++    for (float v : logits3) {
++        TEST_ASSERT(std::isfinite(v));
++    }
++
++    LOG_INF("%s: OK\n", __func__);
++}
++
++// (a2) the public, CLI-facing entry point (llama_context_params::path_kv_mean_center, as set by
++// --kv-mean-center) must hard-reject any K cache type other than GGML_TYPE_Q4_0, and must
++// succeed end-to-end (including a real decode) when the type matches.
++static void test_q4_0_gate() {
++    gguf_context_ptr gguf_ctx = build_llama_gguf_ctx();
++    llama_model_ptr  model    = build_model(gguf_ctx.get(), /*seed=*/ 2024);
++
++    const uint32_t n_embd_head = k_n_embd / k_n_head;
++
++    std::vector<common_kv_mean_center_layer> layers;
++    for (uint32_t il = 0; il < k_n_layer; il++) {
++        common_kv_mean_center_layer layer;
++        layer.il = (int32_t) il;
++        layer.bias.assign(n_embd_head * k_n_head, 0.25f);
++        layers.push_back(std::move(layer));
++    }
++
++    // this synthetic model has a 64-wide K head, so a Q4_0 K cache activates the Hadamard
++    // rotation; the bias must be marked as measured in the rotated basis to be accepted there
++    const std::string tmp_path = "test-kv-mean-center-gate.gguf";
++    TEST_ASSERT(common_kv_mean_center_write(tmp_path, layers, /*k_rot=*/true));
++
++    // F16 K cache + --kv-mean-center must be rejected outright (llama_init_from_model returns
++    // nullptr), matching this codebase's convention for other cache-type-gated mismatches (e.g.
++    // "V cache quantization requires flash_attn"). use a basis-matching file (F16 cache means
++    // the rotation is off, so k_rot=false matches) so this exercises the cache-type gate
++    // specifically, not the basis check
++    const std::string tmp_path_unrot = "test-kv-mean-center-gate-unrot.gguf";
++    TEST_ASSERT(common_kv_mean_center_write(tmp_path_unrot, layers, /*k_rot=*/false));
++    llama_context_ptr ctx_bad = build_context(model.get(), GGML_TYPE_F16, tmp_path_unrot.c_str());
++    TEST_ASSERT(ctx_bad == nullptr);
++
++    // a bias measured in the unrotated basis must be rejected by a rotated (Q4_0) K cache:
++    // a basis mismatch degrades quantization quality instead of improving it
++    llama_context_ptr ctx_mismatch = build_context(model.get(), GGML_TYPE_Q4_0, tmp_path_unrot.c_str());
++    TEST_ASSERT(ctx_mismatch == nullptr);
++    remove(tmp_path_unrot.c_str());
++
++    // Q4_0 K cache + --kv-mean-center must succeed end-to-end, through the real public entry
++    // point (not the require_q4_0=false test seam used in test_softmax_invariance)
++    llama_context_ptr ctx_good = build_context(model.get(), GGML_TYPE_Q4_0, tmp_path.c_str());
++    TEST_ASSERT(ctx_good != nullptr);
++
++    const std::vector<llama_token> tokens = make_tokens(16, k_n_vocab, /*seed=*/ 3);
++    const std::vector<float> logits = decode_and_get_logits(ctx_good.get(), tokens);
++    for (float v : logits) {
++        TEST_ASSERT(std::isfinite(v));
++    }
++
++    remove(tmp_path.c_str());
++
++    LOG_INF("%s: OK\n", __func__);
++}
++
++// (b) softmax-invariance: verify the actual math claim using an unquantized F32 K cache, so the
++// comparison isn't confounded by real Q4_0 quantization error.
++static void test_softmax_invariance() {
++    gguf_context_ptr gguf_ctx = build_llama_gguf_ctx();
++    llama_model_ptr  model    = build_model(gguf_ctx.get(), /*seed=*/ 5678);
++
++    const std::vector<llama_token> tokens = make_tokens(16, k_n_vocab, /*seed=*/ 7);
++
++    // baseline: F32 K cache, no bias
++    llama_context_ptr ctx_base = build_context(model.get(), GGML_TYPE_F32);
++    TEST_ASSERT(ctx_base != nullptr);
++    const std::vector<float> logits_base = decode_and_get_logits(ctx_base.get(), tokens);
++
++    // synthesize a nonzero per-layer bias file
++    const uint32_t n_embd_head = k_n_embd / k_n_head;
++
++    std::mt19937 gen(99);
++    std::uniform_real_distribution<float> dis(-0.5f, 0.5f);
++
++    std::vector<common_kv_mean_center_layer> layers;
++    for (uint32_t il = 0; il < k_n_layer; il++) {
++        common_kv_mean_center_layer layer;
++        layer.il = (int32_t) il;
++        layer.bias.resize(n_embd_head * k_n_head);
++        for (float & v : layer.bias) {
++            v = dis(gen);
++        }
++        layers.push_back(std::move(layer));
++    }
++
++    // scratch file in the test's working directory; this test is not run concurrently with
++    // itself, so a fixed name is fine
++    const std::string tmp_path = "test-kv-mean-center-bias.gguf";
++
++    TEST_ASSERT(common_kv_mean_center_write(tmp_path, layers));
++
++    // centered: same model, fresh F32-K-cache context, bias applied through the exact same
++    // cpy_k() code path -- bypassing the public --kv-mean-center gate (require_q4_0 = false)
++    // since this test is specifically about validating the math on an unquantized cache
++    llama_context_ptr ctx_centered = build_context(model.get(), GGML_TYPE_F32);
++    TEST_ASSERT(ctx_centered != nullptr);
++
++    auto * kv = dynamic_cast<llama_kv_cache *>(llama_get_memory(ctx_centered.get()));
++    TEST_ASSERT(kv != nullptr);
++    TEST_ASSERT(kv->load_kv_mean_center(tmp_path.c_str(), /*require_q4_0=*/false));
++
++    const std::vector<float> logits_centered = decode_and_get_logits(ctx_centered.get(), tokens);
++
++    remove(tmp_path.c_str());
++
++    TEST_ASSERT(logits_base.size() == logits_centered.size());
++
++    const double err = nmse(logits_base, logits_centered);
++    LOG_INF("%s: nmse(baseline, centered) = %g\n", __func__, err);
++
++    // this is a pure fp32-rounding check (no quantization involved on either side), so the
++    // tolerance is tight; a real bug (e.g. the bias leaking into attention asymmetrically)
++    // would show up many orders of magnitude larger than fp32 noise
++    TEST_ASSERT(err < 1e-8);
++
++    LOG_INF("%s: OK\n", __func__);
++}
++
++int main() {
++    test_regression_safety();
++    test_q4_0_gate();
++    test_softmax_invariance();
++
++    return 0;
++}
+diff --git a/tools/CMakeLists.txt b/tools/CMakeLists.txt
+index c8ad1db436..0005b369a0 100644
+--- a/tools/CMakeLists.txt
++++ b/tools/CMakeLists.txt
+@@ -17,6 +17,9 @@ else()
+     add_subdirectory(batched-bench)
+     add_subdirectory(gguf-split)
+     add_subdirectory(imatrix)
++    if (GGML_ARIFI_KV_MEANCENTER)
++        add_subdirectory(kv-mean-center)
++    endif()
+     add_subdirectory(llama-bench)
+     add_subdirectory(completion)
+     add_subdirectory(perplexity)
+diff --git a/tools/kv-mean-center/CMakeLists.txt b/tools/kv-mean-center/CMakeLists.txt
+new file mode 100644
+index 0000000000..75ca6871bc
+--- /dev/null
++++ b/tools/kv-mean-center/CMakeLists.txt
+@@ -0,0 +1,8 @@
++set(TARGET llama-kv-mean-center)
++add_executable(${TARGET} kv-mean-center.cpp)
++target_link_libraries(${TARGET} PRIVATE llama-common llama ${CMAKE_THREAD_LIBS_INIT})
++target_compile_features(${TARGET} PRIVATE cxx_std_17)
++
++if(LLAMA_TOOLS_INSTALL)
++    install(TARGETS ${TARGET} RUNTIME)
++endif()
+diff --git a/tools/kv-mean-center/README.md b/tools/kv-mean-center/README.md
+new file mode 100644
+index 0000000000..afdd7add01
+--- /dev/null
++++ b/tools/kv-mean-center/README.md
+@@ -0,0 +1,93 @@
++# llama.cpp/tools/kv-mean-center
++
++Build with `-DGGML_ARIFI_KV_MEANCENTER=ON`. The repository default is OFF.
++
++Compute a per-layer, per-(kv-head, channel) K-cache mean-centering bias from a text calibration
++corpus, for use with the `--kv-mean-center` flag (`GGML_TYPE_Q4_0` K cache only).
++
++See [docs/kv-mean-center.md](../../docs/kv-mean-center.md) for the full description of the
++feature. In short: `GGML_TYPE_Q4_0` is a symmetric quantizer, so a K channel with a real,
++consistent nonzero mean across tokens wastes some of its dynamic range encoding that constant
++bias. Subtracting a fixed per-(head, channel) bias before quantization removes that waste; because
++the same bias is subtracted from every cached key, it shifts every attention logit in a query's row
++by the same constant, which softmax is invariant to. Nothing else about attention changes.
++
++This tool measures that bias by running calibration text through the model and averaging the K
++values right before they would be written into the cache.
++
++## Usage
++
++```
++./llama-kv-mean-center \
++    -m model.gguf -f calibration-data.txt -o kv-mean-center.gguf \
++    [-c 512] [--chunks N] [-ngl 99]
++```
++
++* `-m | --model` the model to calibrate against (mandatory).
++* `-f | --file` a plain text calibration corpus (mandatory). A few hundred KB of representative
++  text is enough to get a stable per-channel mean; the same kind of corpus used for `llama-imatrix`
++  works well here too.
++* `-o | --output-file` where to write the bias file (default: `kv-mean-center.gguf`).
++* `-c | --ctx-size` chunk size in tokens (default: 512). Each chunk is scored independently with a
++  cleared cache, matching `llama-imatrix`'s chunking.
++* `--chunks` maximum number of chunks to process (default: all available).
++* `-ngl | --n-gpu-layers` offload layers to GPU for faster calibration.
++
++If you do not have a calibration corpus at hand, `make-calib-corpus.sh` generates one from the
++model itself, so no external data file is needed:
++
++```
++./tools/kv-mean-center/make-calib-corpus.sh \
++    -s ./llama-server -m model.gguf -o calib-corpus.txt
++```
++
++It starts a temporary `llama-server`, generates one response per built-in seed prompt (a mix of
++expository, narrative, technical, code and dialogue prompts) with thinking disabled, and refuses
++to write a corpus that looks degenerate (checked via gzip compression ratio). The per-channel K
++mean is dominated by model-intrinsic channel structure rather than corpus content, so
++self-generated text measures the same bias as an external corpus: in an A/B test, a self-generated
++corpus and a standard multi-domain calibration set produced biases agreeing to within the
++calibration sampling noise (cosine similarity above 0.95 on every layer).
++
++The output is a small GGUF file with one F32 tensor per layer, named `kv_bar.blk.<il>.k`. Load it
++at inference time with:
++
++```
++./llama-cli -m model.gguf -ctk q4_0 --kv-mean-center kv-mean-center.gguf -p "..."
++```
++
++`--kv-mean-center` requires `--cache-type-k q4_0`; loading fails with a clear error otherwise
++(centering is currently only implemented/validated for `GGML_TYPE_Q4_0`).
++
++## Interaction with the Hadamard K-cache rotation: calibrate with matching cache settings
++
++This fork's optional Hadamard rotation is active for quantized K caches whose head dimension is a
++multiple of 64 (unless `LLAMA_ATTN_ROT_DISABLE=1`). The bias measured by this tool lives in
++whatever basis the calibration run's K cache used: the collector taps the exact tensor `cpy_k()`
++writes, after any rotation. Since the rotation is gated on the K cache being quantized, a
++calibration run with the default F16 cache measures the unrotated basis, and that bias must not be
++applied to a rotated (quantized) cache: measured end to end the mismatch is worse than either
++feature alone, because the subtracted vector no longer matches the channel means of the basis
++being quantized.
++
++**Rule: calibrate with the same `--cache-type-k` (and `LLAMA_ATTN_ROT_DISABLE`, if any) that you
++will serve with.** For the common case that is:
++
++```
++./llama-kv-mean-center -m model.gguf -f calib.txt -o kv-mean-center.gguf -ctk q4_0 [-fa on]
++```
++
++The tool records the calibration basis in the output file (`kv_mean_center.k_rot`) and the loader
++refuses a bias whose basis does not match the inference-time rotation state, so a mismatch fails
++fast instead of silently degrading quality. Measured on a hybrid-attention model, Q4_0 K cache,
++logit KL divergence vs an F16-cache baseline over 12x512-token held-out chunks:
++
++| configuration | mean KLD |
++| --- | --- |
++| rotation alone (uncentered) | 0.00144 |
++| centering alone (rotation disabled, matched basis) | 0.00149 |
++| rotation + pre-rotation bias (the mismatch, now rejected) | 0.0020-0.0021 |
++| rotation + rotated-basis bias (calibrated with `-ctk q4_0`) | **0.00111** |
++
++The two features compose once the basis matches, and the composed configuration is the best of
++the four.
+diff --git a/tools/kv-mean-center/kv-mean-center.cpp b/tools/kv-mean-center/kv-mean-center.cpp
+new file mode 100644
+index 0000000000..1ec4244230
+--- /dev/null
++++ b/tools/kv-mean-center/kv-mean-center.cpp
+@@ -0,0 +1,305 @@
++// Computes a per-(kv-head, channel) mean-centering bias for the K cache, by running a plain
++// text calibration corpus through the model and averaging the K tensor that is about to be
++// written into the cache (see the "k_cache_in" tag added in llm_graph_context::build_attn(),
++// src/llama-graph.cpp). The result is written as a GGUF file consumable by
++// llama_kv_cache::load_kv_mean_center() via the --kv-mean-center CLI flag.
++//
++// See docs/kv-mean-center.md for the full picture (what the bias is used for, why it is
++// exactly safe to apply, and the current GGML_TYPE_Q4_0-only scope).
++
++#include "arg.h"
++#include "common.h"
++#include "kv-mean-center.h"
++#include "log.h"
++#include "llama.h"
++
++#include <algorithm>
++#include <cstdlib>
++#include <cstring>
++#include <mutex>
++#include <string>
++#include <unordered_map>
++#include <vector>
++
++// Accumulates sum(K) and a token count per model layer, from every tensor named
++// "k_cache_in-<il>" seen during graph evaluation. The mean (sum / count) is the bias we write out.
++class kv_mean_collector {
++public:
++    bool collect(struct ggml_tensor * t, bool ask);
++
++    std::vector<common_kv_mean_center_layer> finalize() const;
++
++    bool saw_k_rot() const { return m_saw_k_rot; }
++
++private:
++    std::mutex m_mutex;
++    std::vector<uint8_t> m_host_buf;
++    std::vector<float>   m_f32_buf; // scratch space for F16/BF16 -> F32 conversion
++
++    std::unordered_map<int32_t, std::vector<double>> m_sum;   // il -> [n_embd_head * n_head]
++    std::unordered_map<int32_t, int64_t>              m_count; // il -> total tokens seen
++
++    // whether the captured K tensors were produced with the Hadamard K-cache rotation
++    // active, detected from the graph itself: the rotation is a mul_mat against the
++    // "attn_inp_k_rot" input, so it shows up in the ancestry of "k_cache_in-<il>".
++    // recorded in the output file so the loader can reject a basis mismatch.
++    bool m_saw_k_rot = false;
++};
++
++// look for the "attn_inp_k_rot" input within a few links of the captured tensor. matched as a
++// substring: views append a suffix ("attn_inp_k_rot (reshaped)") and the backend scheduler
++// decorates split inputs with a backend prefix and split index ("MTL0#attn_inp_k_rot#0")
++static bool tensor_has_k_rot_ancestor(const struct ggml_tensor * t, int depth = 8) {
++    if (t == nullptr || depth < 0) {
++        return false;
++    }
++    if (strstr(t->name, "attn_inp_k_rot") != nullptr) {
++        return true;
++    }
++    for (int i = 0; i < GGML_MAX_SRC; ++i) {
++        if (t->src[i] && tensor_has_k_rot_ancestor(t->src[i], depth - 1)) {
++            return true;
++        }
++    }
++    return false;
++}
++
++// "k_cache_in-<il>" -> il, as formatted by llm_graph_context::cb() (ggml_format_name("%s-%d", ...))
++static bool parse_k_cache_in_layer(const char * name, int32_t & il) {
++    static const char prefix[] = "k_cache_in-";
++    const size_t n = sizeof(prefix) - 1;
++
++    if (strncmp(name, prefix, n) != 0) {
++        return false;
++    }
++
++    char * end = nullptr;
++    const long v = strtol(name + n, &end, 10);
++    if (end == name + n || *end != '\0') {
++        return false;
++    }
++
++    il = (int32_t) v;
++    return true;
++}
++
++bool kv_mean_collector::collect(struct ggml_tensor * t, bool ask) {
++    int32_t il = -1;
++    if (!parse_k_cache_in_layer(t->name, il)) {
++        return false;
++    }
++
++    if (ask) {
++        // yes, we want the actual data for this tensor once it's computed
++        return true;
++    }
++
++    std::lock_guard<std::mutex> lock(m_mutex);
++
++    if (!m_saw_k_rot && tensor_has_k_rot_ancestor(t)) {
++        m_saw_k_rot = true;
++    }
++
++    // cpy_k() can be fed an F32, F16, or BF16 Kcur depending on backend/compute settings.
++    GGML_ASSERT(t->type == GGML_TYPE_F32 || t->type == GGML_TYPE_F16 || t->type == GGML_TYPE_BF16);
++    GGML_ASSERT(ggml_is_contiguous(t));
++
++    const bool is_host = ggml_backend_buffer_is_host(t->buffer);
++
++    const uint8_t * data;
++    if (is_host) {
++        data = (const uint8_t *) t->data;
++    } else {
++        m_host_buf.resize(ggml_nbytes(t));
++        ggml_backend_tensor_get(t, m_host_buf.data(), 0, ggml_nbytes(t));
++        data = m_host_buf.data();
++    }
++
++    // k_cache_in is tagged right before cpy_k(), so it still has the pre-merge shape:
++    // [n_embd_head, n_head, n_tokens]
++    const int64_t n_embd_head = t->ne[0];
++    const int64_t n_head      = t->ne[1];
++    const int64_t n_tokens    = t->ne[2];
++    const int64_t n_elem      = n_embd_head*n_head*n_tokens;
++
++    auto & sum = m_sum[il];
++    if (sum.empty()) {
++        sum.assign(n_embd_head*n_head, 0.0);
++    }
++    GGML_ASSERT(sum.size() == (size_t) (n_embd_head*n_head));
++
++    // the raw bytes are only directly reinterpretable as float* for F32; F16/BF16 need to be
++    // converted to F32 first, otherwise the mean below is computed over garbage
++    const float * f;
++    if (t->type == GGML_TYPE_F32) {
++        f = (const float *) data;
++    } else {
++        m_f32_buf.resize(n_elem);
++        if (t->type == GGML_TYPE_F16) {
++            ggml_fp16_to_fp32_row((const ggml_fp16_t *) data, m_f32_buf.data(), n_elem);
++        } else {
++            ggml_bf16_to_fp32_row((const ggml_bf16_t *) data, m_f32_buf.data(), n_elem);
++        }
++        f = m_f32_buf.data();
++    }
++
++    for (int64_t i2 = 0; i2 < n_tokens; ++i2) {
++        for (int64_t i1 = 0; i1 < n_head; ++i1) {
++            for (int64_t i0 = 0; i0 < n_embd_head; ++i0) {
++                sum[i1*n_embd_head + i0] += f[(i2*n_head + i1)*n_embd_head + i0];
++            }
++        }
++    }
++
++    m_count[il] += n_tokens;
++
++    return true;
++}
++
++std::vector<common_kv_mean_center_layer> kv_mean_collector::finalize() const {
++    std::vector<common_kv_mean_center_layer> out;
++
++    for (const auto & kv : m_sum) {
++        const int32_t il    = kv.first;
++        const auto &  sum   = kv.second;
++        const int64_t count = m_count.at(il);
++
++        if (count == 0) {
++            continue;
++        }
++
++        common_kv_mean_center_layer layer;
++        layer.il = il;
++        layer.bias.resize(sum.size());
++        for (size_t i = 0; i < sum.size(); ++i) {
++            layer.bias[i] = (float) (sum[i] / (double) count);
++        }
++
++        out.push_back(std::move(layer));
++    }
++
++    std::sort(out.begin(), out.end(), [](const common_kv_mean_center_layer & a, const common_kv_mean_center_layer & b) {
++        return a.il < b.il;
++    });
++
++    return out;
++}
++
++static kv_mean_collector g_collector;
++
++static bool kv_mean_center_cb_eval(struct ggml_tensor * t, bool ask, void * user_data) {
++    GGML_UNUSED(user_data);
++    return g_collector.collect(t, ask);
++}
++
++static void print_usage(int, char ** argv) {
++    LOG("\nexample usage:\n");
++    LOG("\n    %s -m model.gguf -f calibration-data.txt -o kv-mean-center.gguf [-c 512] [--chunks N]\n", argv[0]);
++    LOG("\n");
++    LOG("Computes a per-layer K-cache mean-centering bias file for use with --kv-mean-center\n");
++    LOG("(which requires --cache-type-k q4_0). See docs/kv-mean-center.md.\n\n");
++}
++
++int main(int argc, char ** argv) {
++    common_params params;
++
++    params.out_file = "kv-mean-center.gguf";
++    params.n_ctx    = 512;
++    params.escape   = false;
++
++    common_init();
++
++    if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_KV_MEAN_CENTER, print_usage)) {
++        return 1;
++    }
++
++    if (params.prompt.empty()) {
++        LOG_ERR("%s: no calibration text provided (use -f FNAME)\n", __func__);
++        return 1;
++    }
++
++    llama_backend_init();
++    llama_numa_init(params.numa);
++
++    // pass the callback to the backend scheduler; it fires for every node during graph
++    // computation, and we pick out the ones tagged "k_cache_in-<il>"
++    params.cb_eval           = kv_mean_center_cb_eval;
++    params.cb_eval_user_data = nullptr;
++    params.warmup            = false;
++
++    common_init_result_ptr llama_init = common_init_from_params(params);
++
++    llama_model   * model = llama_init->model();
++    llama_context * ctx   = llama_init->context();
++
++    if (model == nullptr || ctx == nullptr) {
++        LOG_ERR("%s: failed to init\n", __func__);
++        return 1;
++    }
++
++    const llama_vocab * vocab = llama_model_get_vocab(model);
++    const bool add_bos = llama_vocab_get_add_bos(vocab);
++
++    LOG_INF("%s: tokenizing the calibration text ...\n", __func__);
++    std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, add_bos, params.parse_special);
++
++    const int32_t n_ctx   = params.n_ctx;
++    const int32_t n_batch = std::min(params.n_batch, n_ctx);
++
++    if ((int32_t) tokens.size() < n_ctx) {
++        LOG_ERR("%s: calibration text tokenizes to only %zu tokens, need at least n_ctx=%d\n",
++                __func__, tokens.size(), n_ctx);
++        return 1;
++    }
++
++    const int n_chunk_max = (int) tokens.size() / n_ctx;
++    const int n_chunk = params.n_chunks < 0 ? n_chunk_max : std::min(params.n_chunks, n_chunk_max);
++
++    LOG_INF("%s: collecting K-cache statistics over %d chunk(s) of %d tokens\n", __func__, n_chunk, n_ctx);
++
++    llama_batch batch = llama_batch_init(n_batch, 0, 1);
++
++    for (int i = 0; i < n_chunk; ++i) {
++        const int start = i*n_ctx;
++
++        // each chunk is scored independently, with a fresh cache
++        llama_memory_clear(llama_get_memory(ctx), true);
++
++        for (int j = 0; j < n_ctx; j += n_batch) {
++            const int n_tok = std::min(n_batch, n_ctx - j);
++
++            common_batch_clear(batch);
++            for (int k = 0; k < n_tok; ++k) {
++                common_batch_add(batch, tokens[start + j + k], j + k, { 0 }, false);
++            }
++
++            if (llama_decode(ctx, batch)) {
++                LOG_ERR("%s: failed to decode chunk %d\n", __func__, i);
++                llama_batch_free(batch);
++                return 1;
++            }
++        }
++
++        LOG_INF("%s: processed chunk %d / %d\n", __func__, i + 1, n_chunk);
++    }
++
++    llama_batch_free(batch);
++
++    auto layers = g_collector.finalize();
++    if (layers.empty()) {
++        LOG_ERR("%s: no K-cache activity was captured; this model may not use the standard "
++                "attention KV-cache path that k_cache_in is tagged on\n", __func__);
++        return 1;
++    }
++
++    if (!common_kv_mean_center_write(params.out_file, layers, g_collector.saw_k_rot())) {
++        return 1;
++    }
++
++    LOG_INF("%s: wrote K-cache mean-centering bias for %zu layer(s) to %s (measured with K rotation %s)\n",
++            __func__, layers.size(), params.out_file.c_str(), g_collector.saw_k_rot() ? "active" : "inactive");
++
++    llama_backend_free();
++
++    return 0;
++}
+diff --git a/tools/kv-mean-center/make-calib-corpus.sh b/tools/kv-mean-center/make-calib-corpus.sh
+new file mode 100644
+index 0000000000..35bb0e4b67
+--- /dev/null
++++ b/tools/kv-mean-center/make-calib-corpus.sh
+@@ -0,0 +1,126 @@
++#!/usr/bin/env bash
++# Generate a self-contained calibration corpus for llama-kv-mean-center using the
++# model's own chat-templated output, so no external calibration file is needed.
++#
++# Usage:
++#   make-calib-corpus.sh -s <llama-server binary> -m <model.gguf> -o <corpus.txt>
++#                        [-n <tokens per prompt, default 600>] [-p <port, default 8901>]
++#                        [-g <n-gpu-layers, passed through to llama-server>]
++#
++# Requires: curl, jq, gzip. Starts a temporary llama-server on the given port,
++# generates one response per built-in seed prompt with thinking disabled,
++# concatenates the responses, and checks the result is not degenerate (gzip
++# compression ratio).
++set -euo pipefail
++
++# Print the header comment block (everything between the shebang and the first
++# non-comment line) as the help text.
++usage() { awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"; }
++
++NTOK=600
++PORT=8901
++SERVER_BIN=""
++MODEL=""
++OUT=""
++NGL=""
++
++while getopts "s:m:o:n:p:g:h" opt; do
++  case $opt in
++    s) SERVER_BIN=$OPTARG ;;
++    m) MODEL=$OPTARG ;;
++    o) OUT=$OPTARG ;;
++    n) NTOK=$OPTARG ;;
++    p) PORT=$OPTARG ;;
++    g) NGL=$OPTARG ;;
++    h) usage; exit 0 ;;
++    *) usage >&2; exit 1 ;;
++  esac
++done
++
++if [ -z "$SERVER_BIN" ] || [ -z "$MODEL" ] || [ -z "$OUT" ]; then
++  echo "error: -s, -m and -o are required (see -h)" >&2
++  exit 1
++fi
++command -v curl >/dev/null || { echo "error: curl not found" >&2; exit 1; }
++command -v jq   >/dev/null || { echo "error: jq not found" >&2; exit 1; }
++command -v gzip >/dev/null || { echo "error: gzip not found" >&2; exit 1; }
++
++# Diverse seed prompts: expository, narrative, technical, code, dialogue, instructional.
++PROMPTS=(
++  "Explain how a hash map works internally, including collision handling."
++  "Write a short story about a lighthouse keeper who finds a message in a bottle."
++  "Describe the water cycle for a middle-school science class."
++  "Write a Python function that merges two sorted lists, with comments."
++  "Summarize the causes and consequences of the Industrial Revolution."
++  "Explain the difference between TCP and UDP and when to use each."
++  "Write a dialogue between a customer and a barista ordering an unusual drink."
++  "Describe how photosynthesis converts light energy into chemical energy."
++  "Give step-by-step instructions for making fresh pasta from scratch."
++  "Explain what a stock index is and how index funds work."
++  "Write a product review for a fictional pair of noise-cancelling headphones."
++  "Explain recursion with two concrete examples, one numeric and one on trees."
++  "Describe the rules of chess to someone who has never played."
++  "Write a persuasive paragraph arguing for more urban green spaces."
++  "Explain how vaccines train the immune system."
++  "Write a SQL tutorial snippet covering JOINs with a small example schema."
++  "Describe a day in the life of a marine biologist studying coral reefs."
++  "Explain the doppler effect and give everyday examples."
++  "Write a cover letter for a junior software engineering position."
++  "Explain how compilers optimize loops, mentioning unrolling and vectorization."
++  "Describe the history and cultural significance of tea in East Asia."
++  "Write a troubleshooting guide for a home Wi-Fi connection that keeps dropping."
++  "Explain probability with coin flips and dice, including expected value."
++  "Write a scene where two old friends meet by chance at a train station."
++)
++
++SERVER_PID=""
++cleanup() {
++  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
++    kill "$SERVER_PID" 2>/dev/null || true
++    wait "$SERVER_PID" 2>/dev/null || true
++  fi
++}
++trap cleanup EXIT
++
++echo "starting llama-server on port $PORT ..." >&2
++# NGL is optional; when unset the server's own --n-gpu-layers default applies.
++"$SERVER_BIN" -m "$MODEL" ${NGL:+-ngl "$NGL"} --port "$PORT" >/dev/null 2>&1 &
++SERVER_PID=$!
++
++for _ in $(seq 1 120); do
++  if curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then break; fi
++  if ! kill -0 "$SERVER_PID" 2>/dev/null; then echo "error: server exited during startup" >&2; exit 1; fi
++  sleep 2
++done
++curl -sf "http://127.0.0.1:$PORT/health" >/dev/null || { echo "error: server not ready after 240s" >&2; exit 1; }
++
++: > "$OUT"
++i=0
++for p in "${PROMPTS[@]}"; do
++  i=$((i+1))
++  echo "[$i/${#PROMPTS[@]}] $p" >&2
++  # chat_template_kwargs disables thinking where the template supports it; harmless otherwise.
++  jq -n --arg p "$p" --argjson n "$NTOK" \
++    '{messages:[{role:"user",content:$p}],max_tokens:$n,temperature:0.9,top_p:0.95,chat_template_kwargs:{enable_thinking:false}}' \
++  | curl -s "http://127.0.0.1:$PORT/v1/chat/completions" -H 'Content-Type: application/json' -d @- \
++  | jq -r '.choices[0].message | ((.content // "") + (if (.reasoning_content // "") != "" and (.content // "") == "" then .reasoning_content else "" end))' >> "$OUT"
++  printf '\n\n' >> "$OUT"
++done
++
++RAW=$(wc -c < "$OUT")
++GZ=$(gzip -c "$OUT" | wc -c)
++RATIO=$(awk -v r="$RAW" -v g="$GZ" 'BEGIN { printf "%.2f", r / g }')
++echo "corpus: $RAW bytes, gzip ratio $RATIO" >&2
++
++if [ "$RAW" -lt 20000 ]; then
++  echo "error: corpus too small ($RAW bytes); is the model generating?" >&2
++  exit 1
++fi
++# Natural prose lands around 2.2-3.0; much higher means repetitive/degenerate output,
++# which under-excites K channels and gives a poor mean estimate.
++if awk -v x="$RATIO" 'BEGIN { exit !(x > 4.0) }'; then
++  echo "error: corpus looks degenerate (gzip ratio $RATIO > 4.0); raise temperature or check the model" >&2
++  exit 1
++fi
++
++echo "wrote $OUT" >&2

@@ -1,0 +1,35 @@
+From 3ecc017f181449a6d36f95592d0c156ad71c9cac Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 29 Aug 2026 02:53:38 -0400
+Subject: [PATCH] b10680 bump repair: common/fit.cpp still called
+ llm_ffn_exps_block_regex(idx), which b10680 renamed to
+ llm_ffn_block_regex(idx, ffn_regex) - the fork's moe_cache code auto-merged
+ past the rename and the build failed. Same body, LLM_FFN_EXPS_REGEX passed
+ explicitly, so behaviour is identical.
+
+---
+ common/fit.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/common/fit.cpp b/common/fit.cpp
+index 8e5e243e7d..29c9773b12 100644
+--- a/common/fit.cpp
++++ b/common/fit.cpp
+@@ -1367,7 +1367,7 @@ static void common_params_fit_impl(
+                     pattern_strings.clear();
+                     int n_overrides = 0;
+                     for (int i = 0; i < mid && n_overrides < (int)ntbo - 1; i++) {
+-                        pattern_strings.push_back(llm_ffn_exps_block_regex(order[i]));
++                        pattern_strings.push_back(llm_ffn_block_regex(order[i], LLM_FFN_EXPS_REGEX));
+                         candidate_overrides[n_overrides++] = {pattern_strings.back().c_str(), ggml_backend_cpu_buffer_type()};
+                     }
+                     candidate_overrides[n_overrides] = {nullptr, nullptr};
+@@ -1426,7 +1426,7 @@ static void common_params_fit_impl(
+                     pattern_strings.clear();
+                     int n_overrides = 0;
+                     for (int i = 0; i < best_n_evict && n_overrides < (int)ntbo - 1; i++) {
+-                        pattern_strings.push_back(llm_ffn_exps_block_regex(order[i]));
++                        pattern_strings.push_back(llm_ffn_block_regex(order[i], LLM_FFN_EXPS_REGEX));
+                         tensor_buft_overrides[n_overrides++] = {pattern_strings.back().c_str(), ggml_backend_cpu_buffer_type()};
+                     }
+                     tensor_buft_overrides[n_overrides] = {nullptr, nullptr};

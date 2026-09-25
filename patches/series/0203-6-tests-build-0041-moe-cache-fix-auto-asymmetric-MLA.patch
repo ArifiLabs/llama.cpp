@@ -1,0 +1,23 @@
+From 6845f5eefcbba35db5edef646e27e396c3108c49 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:58:40 -0400
+Subject: [PATCH] 
+ 6-tests-build/0041-moe-cache-fix-auto-asymmetric-MLA-guard-and-test-ski.patch
+
+---
+ tests/test-moe-cache.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/test-moe-cache.cpp b/tests/test-moe-cache.cpp
+index 8bb0440550..d0f7f6719b 100644
+--- a/tests/test-moe-cache.cpp
++++ b/tests/test-moe-cache.cpp
+@@ -2915,7 +2915,7 @@ int main() {
+     ggml_backend_dev_t cuda_device = find_cuda_device();
+     if (!cuda_device) {
+         printf("SKIP: CUDA backend unavailable\n");
+-        return 0;
++        return 77; // ctest interprets 77 as SKIP_RETURN_CODE
+     }
+     ggml_backend_reg_t cuda_reg =
+         ggml_backend_dev_backend_reg(cuda_device);

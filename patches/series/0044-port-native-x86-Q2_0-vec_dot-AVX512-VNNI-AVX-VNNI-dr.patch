@@ -1,4 +1,4 @@
-From 38232d775feb0a74a8dd3bf82ceb523af1e89deb Mon Sep 17 00:00:00 2001
+From 9196f0b03182ff77befde60ed30c8b29a86e1f34 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 24 Jul 2026 14:08:05 -0400
 Subject: [PATCH] port: native x86 Q2_0 vec_dot (AVX512-VNNI / AVX-VNNI), drop
@@ -43,7 +43,7 @@ Origin: ArifiLabs/vnni-repack
  2 files changed, 84 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/src/ggml-cpu/arch-fallback.h b/ggml/src/ggml-cpu/arch-fallback.h
-index f1e7adf2c..9a6f4856b 100644
+index 4dbd1982ba..609210ba6e 100644
 --- a/ggml/src/ggml-cpu/arch-fallback.h
 +++ b/ggml/src/ggml-cpu/arch-fallback.h
 @@ -87,7 +87,6 @@
@@ -55,7 +55,7 @@ index f1e7adf2c..9a6f4856b 100644
  #define ggml_quantize_mat_q8_0_4x4_generic ggml_quantize_mat_q8_0_4x4
  #define ggml_quantize_mat_q8_K_4x4_generic ggml_quantize_mat_q8_K_4x4
 diff --git a/ggml/src/ggml-cpu/arch/x86/quants.c b/ggml/src/ggml-cpu/arch/x86/quants.c
-index ea54cfe44..dbe83a6f3 100644
+index ea54cfe44c..dbe83a6f34 100644
 --- a/ggml/src/ggml-cpu/arch/x86/quants.c
 +++ b/ggml/src/ggml-cpu/arch/x86/quants.c
 @@ -552,6 +552,90 @@ static inline __m128i get_scale_shuffle(int i) {

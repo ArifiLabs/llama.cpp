@@ -1,0 +1,79 @@
+From 7ad1fae5a43f0c0fd39ec586eba6f58db13d8cbf Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 04:10:30 -0400
+Subject: [PATCH] lane-152 GOAL 2 batch 2: three lfm2 pre-tokenizer hashes that
+ only rocmfpx had - and the reason they must be pre-computed
+
+rocmfpx@95bb4c798 is TWO faults in one commit, and only half of it is ours to take.
+
+HALF ONE - the missing laguna hash - is a DUPLICATE, and it is SHOWN duplicated rather than assumed: our conversion/base.py already carries `972da7b59cec44d1f0a490a86c96df53859e486e481563e5dddac155013d87ac -> laguna` with the same poolside/Laguna-XS.2 ref, because upstream fixed it independently before our new base b10481. Nothing taken.
+
+HALF TWO is real and is taken. rocmfpx carries FIVE lfm2 tokenizer hashes; we carry TWO (169bf0296 LFM2.5-350M, 9e4547143 LFM2.5-8B-A1B). The three we lacked are added to conversion/base.py:
+
+  1695bc99c...  LiquidAI/LFM2.5-1.2B-Instruct
+  5d5192db3...  LiquidAI/LFM2.5-8B-A1B (a second tokenizer revision)
+  87ab4b153...  reaperdoesntknow/LFM2.5-8B-A1B-Opus-Distil (a community fork)
+
+Without them a conversion of any of those three exits with "pre-tokenizer not recognized", which is a real capability gap, not cosmetics - the whole point of the hash table is that an unknown hash is a hard stop, by design, so nobody silently converts with the wrong pre-tokenizer.
+
+They go into pre_computed_hashes in convert_hf_to_gguf_update.py, NOT into the models list, and that placement is the transferable part of rocmfpx's finding: get_existing_models() keys by res name, so ONE models-list entry can only ever round-trip ONE hash for that name. Following the CI workflow's own advice ("run convert_hf_to_gguf_update.py and commit") would therefore delete the others silently. The comment recording that is added beside them so the next regeneration does not re-lose them. This is the same mechanism upstream already uses for chatglm-bpe (2 hashes), glm4 (3) and falcon-h1 (4).
+
+NOT RUN, and named rather than implied: the "Check Pre-Tokenizer Hashes" workflow was not executed here. Both edited files were checked with ast.parse only. The hashes are transcribed from rocmfpx's tree, not recomputed from the tokenizers - recomputing means downloading five HuggingFace tokenizers, which this lane did not do.
+
+Taken-from: rocmfpx@95bb4c798ee8c571e6b34ba4dd0ce15f4c2b9232
+Origin: half taken. The laguna half was already true here via upstream in base b10481; the three
+  missing lfm2 hashes were added to conversion/base.py (our tree's converter is the refactored
+  conversion/ package, not the single convert_hf_to_gguf.py the source patches), and all four
+  lfm2 variants now sit in pre_computed_hashes so a regeneration cannot drop them.
+Measured-effect: UNMEASURED - no conversion of an LFM2.5 model was run, and the pre-tokenizer
+  workflow was not executed. Syntax-checked with ast.parse, nothing more.
+Conflict-resolved: S1: models list - kept upstream spark2_5 entry, then our three lfm2 pre-tokenizer hashes
+---
+ conversion/base.py           | 9 +++++++++
+ convert_hf_to_gguf_update.py | 7 ++++++-
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/conversion/base.py b/conversion/base.py
+index 9fba5a86b0..9948ad1ad7 100644
+--- a/conversion/base.py
++++ b/conversion/base.py
+@@ -1825,6 +1825,15 @@ class TextModel(ModelBase):
+         if chkhsh == "169bf0296a13c4d9b7672313f749eb36501d931022de052aad6e36f2bf34dd51":
+             # ref: https://huggingface.co/LiquidAI/LFM2.5-350M
+             res = "lfm2"
++        if chkhsh == "1695bc99c38f06ed8a7ab6d3e066ff571f9c5f8759e6eeba60afd0f221e2e858":
++            # ref: https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct
++            res = "lfm2"
++        if chkhsh == "5d5192db33764da7bf8147f23ca2c0f4e74fb549a2ecb9dc39eff533a5a267cc":
++            # ref: https://huggingface.co/LiquidAI/LFM2.5-8B-A1B
++            res = "lfm2"
++        if chkhsh == "87ab4b1536216e11d7a9b700bf6f8266d2742f26f436e8b557385f39cc891750":
++            # ref: https://huggingface.co/reaperdoesntknow/LFM2.5-8B-A1B-Opus-Distil
++            res = "lfm2"
+         if chkhsh == "2085e1638f6c377a0aa4ead21b27bb4cb941bf800df86ed391011769c1758dfb":
+             # ref: https://huggingface.co/LGAI-EXAONE/EXAONE-4.0-32B
+             res = "exaone4"
+diff --git a/convert_hf_to_gguf_update.py b/convert_hf_to_gguf_update.py
+index 24b9bc0757..10d30dc4e0 100755
+--- a/convert_hf_to_gguf_update.py
++++ b/convert_hf_to_gguf_update.py
+@@ -190,13 +190,18 @@ pre_computed_hashes = [
+     # jina-v2-de variants
+     {"name": "jina-v2-de", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/aari1995/German_Semantic_V3", "chkhsh": "b3d1dd861f1d4c5c0d2569ce36baf3f90fe8a102db3de50dd71ff860d91be3df"},
+     {"name": "gpt-2", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/evilfreelancer/ruGPT3XL", "chkhsh": "0fe1cf6eda062318a1af7270f3331a85c539a01778ff948e24388e949c5282f4"},
+-    # lfm2 variants
++    # lfm2 variants. They MUST live here rather than in the models list above:
++    # get_existing_models() keys by res name, so a single models-list entry can only ever
++    # round-trip ONE hash per name, and regenerating this file silently drops the rest.
+     {"name": "lfm2", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/LiquidAI/LFM2.5-8B-A1B", "chkhsh": "9e454714343b69b99b71795c1d27a68c2a1d15dab111f4d353109f966af29da7"},
+     # hrm-text (DFM Mimir) is SPM-style BPE: normalizer maps ' ' -> '▁', merges
+     # over the whole text (fix_mistral_regex inserts a tekken regex that is a
+     # no-op here); the gemma4 pre (escape ws, split on newlines only) matches it.
+     {"name": "gemma4", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/danish-foundation-models/DFM-Mimir", "chkhsh": "846deafc5b0fa786186fa4ae6c7b49903cf2f1d1895bdb80b9120d60be135252"},
+     {"name": "spark2_5", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/XHToken/Spark-X2.5-1.7B", "chkhsh": "0a766d034107bc736a3f2dc4968fd62e54a3570f1454443e0c5a4cc6bd7941ed"},
++    {"name": "lfm2", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct", "chkhsh": "1695bc99c38f06ed8a7ab6d3e066ff571f9c5f8759e6eeba60afd0f221e2e858"},
++    {"name": "lfm2", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/LiquidAI/LFM2.5-8B-A1B", "chkhsh": "5d5192db33764da7bf8147f23ca2c0f4e74fb549a2ecb9dc39eff533a5a267cc"},
++    {"name": "lfm2", "tokt": TOKENIZER_TYPE.BPE, "repo": "https://huggingface.co/reaperdoesntknow/LFM2.5-8B-A1B-Opus-Distil", "chkhsh": "87ab4b1536216e11d7a9b700bf6f8266d2742f26f436e8b557385f39cc891750"},
+ ]
+ 
+ 

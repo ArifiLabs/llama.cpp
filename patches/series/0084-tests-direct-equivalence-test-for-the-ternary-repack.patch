@@ -1,4 +1,4 @@
-From be8dc6239ed2d2d2e7d801ad39b9ba479cb0b595 Mon Sep 17 00:00:00 2001
+From 44aa767aab9e4c50b8b2b85415dcd8b8cd4eb19b Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 14:29:01 -0400
 Subject: [PATCH] tests: direct equivalence test for the ternary repack kernels
@@ -32,12 +32,12 @@ Assisted-by: Claude Opus 5
  create mode 100644 tests/test-ternary-repack.cpp
 
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
-index c46377c76..59eb51e7c 100644
+index 9b3a4fcc4b..2c443416aa 100644
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
-@@ -198,6 +198,14 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
+@@ -194,6 +194,14 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
  
-     llama_build_and_test(test-llama-archs.cpp)
+     llama_build(test-llama-archs.cpp)
  
 +    # Ternary repack kernels. No model can reach the _generic variants (the dispatch gates Q2_0 and
 +    # Q2_0_G128 on AVX512-VNNI only), so they are called directly here.
@@ -52,7 +52,7 @@ index c46377c76..59eb51e7c 100644
  
 diff --git a/tests/test-ternary-repack.cpp b/tests/test-ternary-repack.cpp
 new file mode 100644
-index 000000000..1ed863bee
+index 0000000000..1ed863beec
 --- /dev/null
 +++ b/tests/test-ternary-repack.cpp
 @@ -0,0 +1,314 @@

@@ -1,0 +1,676 @@
+From c0f6d3c08aa0dd16ce4a7de7a7f5e77007b2db2e Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 15 Sep 2026 17:00:51 -0400
+Subject: [PATCH] feat(vulkan): choose the host-split memory type by
+ measurement, not by index order
+
+The beyond-reservation weight bytes of the 27B S-X8 load are placed in Vulkan
+memory type 1 for one reason: the UMA placement chain reaches heap 1 in its
+third required-flag pass and the candidate walk returns types in ascending
+index. Type 3 - the same heap, the same HOST_COHERENT guarantee, plus
+HOST_CACHED - is equally eligible and is already served on this box for the
+staging buffers. Nothing has ever measured the two against each other.
+
+Enumeration first (r58-evidence/10-memtypes.txt): every storage buffer reports
+memoryTypeBits=0xf, so of 16 enumerated memory types only 0-3 are eligible and
+exactly TWO of them lie beyond the reservation. That is the whole lever, and
+this commit makes it selectable and measurable.
+
+- test-backend-ops memtype: GPU read GB/s per memory type, timed as an f16
+  mat-vec on the ordinary backend so it cannot drift from the served path,
+  with the CPU memcpy of the same span beside it. HQ runs it quiet.
+- GGML_VK_HOST_SPLIT_MEMTYPE=legacy|<index>|auto and GGML_VK_HOST_SPLIT_CACHED
+  reorder ONLY the host-split candidates of a plan; device-local candidates
+  keep their exact position, so a load that fits device memory places exactly
+  as before. Default legacy: nothing changes until HQ picks a winner.
+- One ungated stderr line per host-split buffer naming type, heap, flags, bytes.
+
+Corrects the lane brief on receipt evidence: output.weight and the DFlash2
+recurrent cache are DEVICE-LOCAL, not host-split; heap 0 is 21.07 GiB, not the
+16 GiB BIOS carve.
+
+Origin: fork-authored (ArifiLabs lane-244 R58 UMA memory-type placement, Opus 5 MEDIUM maker)
+Measured-effect: UNMEASURED by the maker - placement only, bit-identical (every eligible heap-1 type is HOST_COHERENT, so no flush/invalidate obligation changes); HQ probes every memory type quiet and serves the winner (target: S-X8 27B plain 56 -> ~73 GB/s effective)
+Lane: lane-244
+Conflict-resolved: S4 split (f172be756): auto_split - our hunks re-homed into ggml-vulkan-buffers.cpp; wrap/same-point regions merged in place (fixS4_632.py)
+Conflict-resolved: auto: affix(one side only added lines around the base, other side edited it) in tests/test-backend-ops.cpp
+---
+ OPUS-R58-UMA-MEMTYPE-BANDWIDTH-REPORT.md     |  177 +++
+ docs/OPTIONS-REGISTRY.md                     |    3 +
+ ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp |  222 ++++
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp         |   70 ++
+ r58-build.cmd                                |    6 +
+ r58-evidence/10-memtypes.txt                 |  143 +++
+ r58-evidence/20-build.txt                    | 1121 ++++++++++++++++++
+ r58-evidence/vulkaninfo-memprops-raw.txt     |  847 +++++++++++++
+ tests/test-backend-ops.cpp                   |  225 ++++
+ 9 files changed, 2814 insertions(+)
+ create mode 100644 OPUS-R58-UMA-MEMTYPE-BANDWIDTH-REPORT.md
+ create mode 100644 r58-build.cmd
+ create mode 100644 r58-evidence/10-memtypes.txt
+ create mode 100644 r58-evidence/20-build.txt
+ create mode 100644 r58-evidence/vulkaninfo-memprops-raw.txt
+
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index d00c66ccb0..7b7c46685b 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -72,6 +72,9 @@ safe measurement posture.
+ | `GGML_VK_STAGING_RESERVE` | **unset = the device-probed default, which is `suballocation_block_size` (1 GiB unless `GGML_VK_SUBALLOCATION_BLOCK_SIZE` or the device's max allocation size lowers it).** Decimal bytes; `0` disables the reserve; an unparsable value keeps the default rather than becoming 0. Read at device creation, never compiled in. Added 2026-09-14 (lane-230/R46b B7c). | Scope: one reservation in the B7a per-device heap ledger, taken on the heap that `sync_staging` really allocates from (`HOST_VISIBLE\|HOST_COHERENT\|HOST_CACHED`, falling back to `HOST_VISIBLE\|HOST_COHERENT`), charged during `ggml_vk_get_device()` **before any bulk weight buffer can be planned or admitted**, and released exactly once in `~vk_device_struct`. It allocates nothing: it is a floor in the ledger that upload staging, prealloc scratch and compute buffers can still spend and weights cannot. The default is a real requirement, not a guess - a bulk weight buffer is capped at `suballocation_block_size`, one tensor lives inside one such buffer, and `sync_staging` is sized to one copy, so that block size is the largest single upload chunk this device can be asked to stage. | Leave unset. Lower it on a device whose host-visible heap is small enough that 1 GiB of floor refuses a load that used to fit; `0` restores pre-B7c admission exactly. | **Mechanism, not a performance claim: nothing here was timed and no model was loaded.** The reserve is charged before admission (`test-backend-ops heapres`, "the reserve is already charged before any bulk admission", probe reports 1073741824 B on heap 1 of 11311906816 B on the 780M) and releases exactly once (`heapres`, "a second release stole nothing"). **It reduces the bytes a load may take on that heap** - the R46b B7c report's positive HQ cell (27B Q4_K_XL still fits without a split) is what proves the default is safe on this rig, and it has not been run. |
+ | `GGML_VK_HOST_SPLIT_MAX` | **unset = the derived bound: free bytes on the heaps carrying this batch's host candidates, after the staging reserve and every live reservation.** Decimal bytes; `0` forbids any host placement; an unparsable value keeps the derived bound. Read per plan, never compiled in. Added 2026-09-14 (lane-230/R46b B7c). | Scope: `vk_heap_ledger::reserve_plan()` - the total bytes ONE load's bulk weight buffers may place on memory types that are **not** `DEVICE_LOCAL`. Candidate ORDER is untouched, so a load that fits device memory picks exactly what it picked before B7c, including one taken under `GGML_VK_PLACEMENT=bulk-large-heap`, whose `DEVICE_LOCAL`-on-the-largest-heap attempt still comes first. That policy is **not** a device-only chain - it prepends its attempt and falls through to the stock chain, so its host FALLBACK is now bounded like every other host placement, which is the R47d failure mode bounded on purpose. Spill selection is plan-order first-fit: device candidates are tried first for every buffer, so the buffers that spill are the suffix of plan order, and the walk backtracks only when a prefix choice makes the remainder infeasible. One stderr line, ungated, when a split is admitted: `bounded host split admitted: N B of M B placed on host-visible memory (bound B B, staging reserve S B on heap H)`. | Leave unset to keep the R47d P2 shape (bulk weights on the host heap) bounded by the ledger and the staging reserve. Set a smaller number to force weights back onto the device, `0` to refuse a load that cannot be placed device-local at all. | **Mechanism, not a performance claim.** Boundary behaviour is covered exactly (`heapres`: admitted at the bound, refused one byte past it, nothing charged on refusal, bound 0 forbids the split). **Named limit:** on a device with ONE host-visible heap the derived default is not tighter than the per-heap ledger check it sits beside - the teeth of the default are the staging reserve, and the tightening is operator-driven through this variable. |
+ | Host-split buffer IDENTITY and the plan-order dump (R51) | **Code, not an environment variable. No new environment variable was added, and that absence is the finding** — an ordering policy was the commission and it was REFUTED, not implemented. Always on, zero cost: `plan_begin` gained a `names` parameter (`ggml_backend_buffer_type_i`, `GGML_BACKEND_API_VERSION` 3 → 4), which `ggml-alloc.c` fills with each buffer's first tensor **that actually contributes bytes** (`alloc_range::first_alloc` — a range can open on a view, which would misname the whole buffer). Added 2026-09-15 (lane-240/R51). | Scope: two receipts and nothing else. (i) One stderr line beside the existing B7c line, ungated, only when a split is admitted: `host split placed N buffer(s) on host-visible memory: <name> <bytes> B, ...` (512-char cap, `(unnamed)` for a NULL **or empty** name — the F-175 156893184 B checkpoint buffers are unnamed and used to print as a bare size). (ii) Under the existing `GGML_VK_ALLOC_TRACE`, one line per plan entry naming the WHOLE batch, not just what moved. Names are advisory: `reserve_plan()` never reads them, so **placement is byte-for-byte what B7c decided** and outputs are bit-identical. | Nothing to operate. Read the receipt when a load splits; set `GGML_VK_ALLOC_TRACE=1` when you need to know whether a buffer you expected was even in the batch. | **Mechanism and diagnostic only — no placement change, no performance claim, and it exists because it REFUTED the lane's own commission.** The commission was to place the cheapest-to-read weight on the host mapping first (`token_embd.weight` is gathered one row per token; a layer weight is read in full every token). **That lever does not exist:** `token_embd.weight` is never in a Vulkan plan at any `-ngl`, because `llama-model.cpp:1519` pins `dev_input` to the CPU unconditionally. The 1.19 GB non-layer tensor that IS in the device batch is **`output.weight` (1191936000 B, entry 1 of 25)**, read in FULL for every token's logits and so no cheaper to displace than the layer weights already chosen. Receipt: the complete 25-entry plan for the 27B S-X8 file in `r51-evidence/30-planorder.txt` — entry 0 `output_norm.weight`, entry 1 `output.weight`, no `token_embd` at any index. Storage is UNTIED in this file (`output.weight`, `output_norm.weight` and `token_embd.weight` all present separately), so tying is not what hides it. Cells: the 27B S-X8 load places the same 2967950592 B on the same three buffers as before (`30-sx8-default.txt`), generated text sha `04312f94162fc4d31633` identical across all arms, `GGML_VK_HOST_SPLIT_MAX=0` still refuses (`30-sx8-splitmax0.txt`, rc=1), Q4_K_XL still loads with no split line (`30-q4kxl.txt`, rc=0), `test-alloc` and `GET_ROWS -b Vulkan0` 0 FAIL. |
++| `GGML_VK_HOST_SPLIT_MEMTYPE` | **unset = `legacy`, which changes no byte of today's placement.** Accepts `legacy`, a decimal memory **type index**, or `auto`. `auto` reads the probe receipt named by `GGML_VK_MEMTYPE_PROBE_FILE` and takes the fastest **non-`DEVICE_LOCAL`** row in it. Anything unparsable, an index out of range, a missing or rowless receipt file: one stderr line and the legacy order stands — it never fails a load. Parsed once per process. Added 2026-09-15 (lane-244/R58). | Scope: the **order of the host-split candidates inside one plan**, in `ggml_backend_vk_buffer_type_plan_begin()`, and nothing else. `DEVICE_LOCAL` candidates keep their exact position, so a load that fits device memory picks precisely what it picked before; a named type that is not a candidate for a buffer leaves that buffer's order untouched. The bound (`GGML_VK_HOST_SPLIT_MAX`), the staging reserve and every ledger check are unchanged and still decide capacity. One stderr line **per host-split buffer**, ungated: `host-split buffer i: N B -> memtype T heap H flags=... (pref=...)`. | Leave unset until HQ has probed. Then set the index the probe crowned, or `auto` with the receipt file. | **UNMEASURED by the maker — placement only, and bit-identical by construction:** every eligible heap-1 type on this box carries `HOST_COHERENT`, so no flush/invalidate obligation changes and the same shader reads the same bytes. **What the enumeration establishes (`r58-evidence/10-memtypes.txt`):** every storage buffer reports `memoryTypeBits=0xf`, so beyond the reservation exactly **two** types are usable — **1** (`HOST_VISIBLE\|HOST_COHERENT`) and **3** (the same plus `HOST_CACHED`) — and today's split lands in type 1 **by ascending index order alone**, never by a measurement. Type 3 is already served on this box for staging (7 allocations, 27,695,584 B), so the driver demonstrably supports it. The number this lane exists to move: S-X8 27B plain decode reads ~56 GB/s effective against ~73 GB/s for the device-local Q4_K_XL line. |
++| `GGML_VK_HOST_SPLIT_CACHED` | **unset = no opinion (legacy order).** `0` prefers a host-split type **without** `HOST_CACHED`, `1` prefers one **with** it. Ignored whenever `GGML_VK_HOST_SPLIT_MEMTYPE` names an explicit index — that is the more specific instrument. Anything but `0`/`1`: one stderr line, ignored. Added 2026-09-15 (lane-244/R58). | Scope: identical to the row above — the same reorder, selected by the `HOST_CACHED` bit instead of by index. Exists because the enumeration found a genuine cached/uncached pair on this box; on a device offering only one host-visible type it is a no-op and says so by leaving the order alone. | The portable way to ask the question the index asks on this box. Use `=1` against `=0` as a two-arm pairing out of one binary. | **UNMEASURED.** On the 780M `=0` selects type 1 (today's behaviour) and `=1` selects type 3. Which is faster for GPU-side weight reads through GART is exactly the open question — snooped/cached can cost coherence traffic or can win on the read path, and nothing on this rig has measured it. |
++| `GGML_VK_MEMTYPE_PROBE_FILE` | **unset = `auto` is unavailable** (it prints one stderr line and falls back to `legacy`). A path to the receipt written by `test-backend-ops memtype`. Added 2026-09-15 (lane-244/R58). | Scope: read only when `GGML_VK_HOST_SPLIT_MEMTYPE=auto`, once per process. The receipt line is emitted and parsed by the same translation unit (`VK_MEMTYPE_PROBE_LINE_FMT` / `_SCAN` in `ggml-vulkan.cpp`) so writer and reader cannot drift: `ggml_vulkan memtype-probe v1: type=T heap=H flags=0xF bytes=B gpu_read_gbs=X cpu_memcpy_gbs=Y`. Rows whose flags carry `DEVICE_LOCAL` are reference numbers and are never selected. | Only with `auto`. | **Instrument, no performance claim.** The probe itself (`test-backend-ops memtype [--bytes N] [--rounds R] [--types 1,3]`) times an f16 mat-vec over `N` bytes pinned into one memory type — the same shader path a plain decode token runs — plus the CPU memcpy of the same span. **HQ runs it quiet; the maker never ran it.** |
+ | `--spec-draft-adaptive` | **OFF.** CLI flag; sizes each draft from a per-sequence EMA of accepted tokens instead of a fixed `--spec-draft-n-max`, which becomes a safety ceiling rather than a tuning parameter. Backing off is averaged (alpha 0.25, ~4-step memory); probing upward is additive. Reset on `begin()` — a new prompt or a reused server slot — never mid-generation. | Scope: `common/speculative.cpp` draft-length selection. Sits in the `else` of this fork's existing DFlash2 adaptive selector, so a controller already armed keeps precedence; the MTP sites keep their own adaptive precedence. Speculation stays distribution-preserving, so the flag can move throughput and **cannot** move output. | Turn it on where content type varies within a session and no single fixed depth is right — its author's motivating measurement is that the correct depth is *opposite* for prose and for JSON. Sweep it against your own fixed depth before adopting. | **UNMEASURED ON RIG-A — no A/B for this flag exists on this hardware, and none should be quoted.** The measured table in the source commit was taken on a **Radeon 8060S** by the upstream author (three drafter configurations × prose/json × fixed-vs-adaptive, 300 greedy tokens on a Qwen3.8-27B ROCmFP4-FAST target). Those are **upstream-reported numbers for a different GPU** and are deliberately not restated here as results of this fork. Default OFF for that reason alone: the mechanism is sound and the evidence for it is somebody else's box. |
+ | `GGML_ARIFI_FA_DEQUANT_KV` | **Device default when unset, which is ON on every device** (upstream behaviour). `1` forces the f16 dequant-KV scratch copy ON, `0` forces the in-place quantized-KV read. Added 2026-09-06 (lane-212/R19), default flipped to ON 2026-09-07 (lane-220/R27). | Scope: Vulkan flash attention with a quantized K and V, prefill only (`neq1 >= 64`); decode never reaches it. One stderr receipt line `ggml_vulkan: FA dequant-KV scratch: ON\|OFF (device default\|GGML_ARIFI_FA_DEQUANT_KV)` binds every A/B log to the path it ran. Bit-identical either way - the same FA math with f32 accumulation, only the KV read strategy differs. A device that measures the scratch copy as a cost flips its own default at `fa_deq_device_default`, with its number. | Leave it unset. Set `0` to reproduce the pre-R27 AMD RDNA3 arm on the same binary, or on a device where the scratch copy is measurably a cost. | **The knob and the receipt are the result; the magnitude is NOT.** R19D measured `+8.08%` clean prefill on one binary and R27 flipped the default on it. The R18 wave recomputed the same banked rounds on 2026-09-08 and **it does not reproduce**: gate OFF vs ON on one binary reads decode `+0.49%` CI95 `[-1.62%, +2.59%]` and prefill `+0.85%` `[+0.36%, +1.33%]`; the DFlash2 arm reads decode `-0.91%` `[-1.93%, +0.12%]`. Do not quote `+8.08%`. Evidence: `research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/R18-KERNEL-WAVE-REPORT.md`, `.../r19-seat-prefill/R19D-ENGAGEMENT-LEGS.md`. |
+ | `LLAMA_DFLASH_FUSED_INJECT` | **OFF when unset on this fork - the LEGACY encode+decode path. This DIVERGES from upstream 662a0b012, deliberately.** `1` selects the fused injection (upstream shape). Added 2026-09-06 (lane-212/R18), default set to legacy 2026-09-08 (lane-225/R38). The C API default (`llama_cparams::dflash_fused_inject`) stays **fused**, because the legacy shape is a caller contract - the caller must `llama_encode` the chunk first - so only `common/speculative.cpp`, which owns both halves, defaults it off. | Scope: the DFlash2 drafter's K/V injection only. Fused = one `llama_decode` per chunk with the encoder (fc + rms norm) in-graph. Legacy = `llama_encode` the chunk through `graph<true>`, read the encoded rows back through `llama_get_embeddings_nextn`, feed them to the injection decode at the draft width. Nothing removed: `graph<true>`, the fused embd branch and the legacy host path all stay compiled. One receipt line per process names the arm. | Set `1` to restore upstream behaviour, and on any box that has not measured this pair. The default here is a **conservative choice on a sub-floor number, not a measured win** - see the cost cell before treating it as a recommendation. | **DOCUMENTED-TAKE, no gain, and the default flip is under the floor.** Seat DFlash2 decode `-0.98%` CI95 `[-1.16%, -0.80%]` fused vs legacy; U-IQ4XS `+0.05%` `[-0.56%, +0.67%]`; U-Q3KXL `-0.87%` `[-2.50%, +0.77%]`. Against this box's own build floor - the R18 wave's INERT controls, where both arms ran identical code, moved decode by up to **+3.71%** and prefill by up to **-8.28%**, both excluding zero, so **none of these three clears it** and the direction is all the flip rests on. Quality: F-141 both arms on the seat, `test-quantize-fns` identical to the bank. Evidence: `.../r18-kernel-wave/r15c2-dflash-encoder-fusion`. |
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp b/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp
+index 4afe0ef1dd..c4439e0ac1 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp
+@@ -96,6 +96,135 @@ static const char * ggml_vk_plan_entry_name(const char * const * names, size_t i
+ // now receives each buffer's first tensor name, the host-placement receipt says WHICH buffers went
+ // to the host mapping instead of only how many bytes, and GGML_VK_ALLOC_TRACE dumps the whole plan.
+ //
++// R58 lane-244 ---------------------------------------------------------------------------------
++// WHICH MEMORY TYPE the beyond-reservation (host-split) weight bytes come from.
++//
++// Enumeration on this box (r58-evidence/10-memtypes.txt, and the R51 alloc trace
++// r51-evidence/30-planorder.txt): every storage buffer we create reports memoryTypeBits=0xf, so
++// only memory types 0-3 are eligible at all. Two of those four live on the non-DEVICE_LOCAL heap
++// 1: type 1 (HOST_VISIBLE|HOST_COHERENT) and type 3 (the same plus HOST_CACHED). The UMA placement
++// chain reaches heap 1 only in its third required-flag pass ({HV|HC}), and
++// ggml_vk_find_memory_properties() returns candidates in ASCENDING TYPE INDEX, so type 1 wins by
++// enumeration order alone - it has never been chosen by a measurement. These switches let a
++// measured choice replace that accident.
++//
++// GGML_VK_HOST_SPLIT_MEMTYPE = legacy (default, nothing changes) | <index> | auto
++// GGML_VK_HOST_SPLIT_CACHED  = 0 | 1   (prefer a host-split type without / with HOST_CACHED)
++// GGML_VK_MEMTYPE_PROBE_FILE = receipt file `auto` reads (written by `test-backend-ops memtype`)
++//
++// Both only ever REORDER the host-split candidates of a plan. Device-local candidates keep their
++// exact position, so a load that fits device memory picks precisely what it picked before, and a
++// preference that cannot be satisfied falls through to the legacy order instead of failing the
++// load (same principle as the bulk-large-heap fallback below).
++#define VK_HOST_SPLIT_LEGACY (-1)
++#define VK_HOST_SPLIT_AUTO   (-2)
++
++// The ONE definition of the probe receipt line: ggml_vk_memtype_probe_line() writes it and
++// ggml_vk_host_split_auto_type() parses it. Two hand-kept copies in different translation units
++// would drift and `auto` would silently stop finding the winner.
++#define VK_MEMTYPE_PROBE_LINE_PREFIX "ggml_vulkan memtype-probe v1:"
++#define VK_MEMTYPE_PROBE_LINE_FMT \
++    VK_MEMTYPE_PROBE_LINE_PREFIX " type=%u heap=%u flags=0x%x bytes=%llu gpu_read_gbs=%.3f cpu_memcpy_gbs=%.3f\n"
++#define VK_MEMTYPE_PROBE_LINE_SCAN \
++    VK_MEMTYPE_PROBE_LINE_PREFIX " type=%u heap=%u flags=0x%x bytes=%llu gpu_read_gbs=%lf cpu_memcpy_gbs=%lf"
++
++// Reads the probe receipt and returns the FASTEST non-DEVICE_LOCAL memory type in it, or
++// VK_HOST_SPLIT_LEGACY when the file is absent, unreadable or carries no such row. Refusing the
++// load instead would turn a missing receipt into a broken engine.
++static int ggml_vk_host_split_auto_type() {
++    const char * path = getenv("GGML_VK_MEMTYPE_PROBE_FILE");
++    if (path == nullptr || *path == '\0') {
++        fprintf(stderr, "ggml_vulkan: GGML_VK_HOST_SPLIT_MEMTYPE=auto but GGML_VK_MEMTYPE_PROBE_FILE "
++                        "is unset; falling back to the legacy placement order\n");
++        return VK_HOST_SPLIT_LEGACY;
++    }
++    FILE * f = fopen(path, "r");
++    if (f == nullptr) {
++        fprintf(stderr, "ggml_vulkan: GGML_VK_MEMTYPE_PROBE_FILE '%s' cannot be read; falling back to "
++                        "the legacy placement order\n", path);
++        return VK_HOST_SPLIT_LEGACY;
++    }
++    int    best_type = VK_HOST_SPLIT_LEGACY;
++    double best_gbs  = -1.0;
++    char   line[512];
++    while (fgets(line, sizeof(line), f) != nullptr) {
++        unsigned int       type = 0, heap = 0, flags = 0;
++        unsigned long long bytes = 0;
++        double             gpu_gbs = 0.0, cpu_gbs = 0.0;
++        if (sscanf(line, VK_MEMTYPE_PROBE_LINE_SCAN, &type, &heap, &flags, &bytes, &gpu_gbs, &cpu_gbs) != 6) {
++            continue;
++        }
++        // Only the beyond-reservation types are candidates: a DEVICE_LOCAL row in the receipt is
++        // the reference number, not something the host split may be pointed at.
++        if (flags & (unsigned int) VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
++            continue;
++        }
++        if (gpu_gbs > best_gbs) {
++            best_gbs  = gpu_gbs;
++            best_type = (int) type;
++        }
++    }
++    fclose(f);
++    if (best_type == VK_HOST_SPLIT_LEGACY) {
++        fprintf(stderr, "ggml_vulkan: GGML_VK_MEMTYPE_PROBE_FILE '%s' has no host-visible probe row; "
++                        "falling back to the legacy placement order\n", path);
++    } else {
++        fprintf(stderr, "ggml_vulkan: host-split memory type auto -> %d (%.3f GB/s in %s)\n",
++                best_type, best_gbs, path);
++    }
++    return best_type;
++}
++
++// Parsed ONCE per process. getenv() on a per-buffer path would be called thousands of times in a
++// load, and `auto` would re-read and re-print the receipt file for every buffer.
++static int ggml_vk_host_split_memtype() {
++    static const int pref = [] {
++        const char * s = getenv("GGML_VK_HOST_SPLIT_MEMTYPE");
++        if (s == nullptr || *s == '\0' || strcmp(s, "legacy") == 0) {
++            return (int) VK_HOST_SPLIT_LEGACY;
++        }
++        if (strcmp(s, "auto") == 0) {
++            return ggml_vk_host_split_auto_type();
++        }
++        char * end = nullptr;
++        errno = 0;
++        const long v = strtol(s, &end, 10);
++        if (errno != 0 || end == s || *end != '\0' || v < 0 || v >= (long) VK_MAX_MEMORY_TYPES) {
++            fprintf(stderr, "ggml_vulkan: GGML_VK_HOST_SPLIT_MEMTYPE='%s' is not legacy|auto|<index>; "
++                            "keeping the legacy placement order\n", s);
++            return (int) VK_HOST_SPLIT_LEGACY;
++        }
++        return (int) v;
++    }();
++    return pref;
++}
++
++// -1 = unset (no opinion), 0 = prefer a host-split type WITHOUT HOST_CACHED, 1 = prefer one WITH
++// it. Only consulted when GGML_VK_HOST_SPLIT_MEMTYPE names no explicit index.
++static int ggml_vk_host_split_cached() {
++    static const int want = [] {
++        const char * s = getenv("GGML_VK_HOST_SPLIT_CACHED");
++        if (s == nullptr || *s == '\0') {
++            return -1;
++        }
++        if (strcmp(s, "0") == 0) {
++            return 0;
++        }
++        if (strcmp(s, "1") == 0) {
++            return 1;
++        }
++        fprintf(stderr, "ggml_vulkan: GGML_VK_HOST_SPLIT_CACHED='%s' is not 0|1; ignored\n", s);
++        return -1;
++    }();
++    return want;
++}
++
++// R58 lane-244: PROBE-ONLY memory type pin, written solely by ggml_vk_memtype_force() (the
++// bandwidth probe in test-backend-ops). While set, ggml_vk_find_memory_properties() admits exactly
++// one memory type index, so a probe allocation comes from that type or does not happen at all.
++// Nothing in a model load ever writes this; it is -1 for the whole life of a served process.
++static std::atomic<int> vk_memtype_forced{-1};
++
+ // The reserve is sized from a real requirement, not a guess: a bulk weight buffer is capped at
+ // suballocation_block_size (ggml_backend_vk_buffer_type_get_max_size), one tensor lives inside one
+ // such buffer, and sync_staging is sized to one copy - so the block size is the largest single
+@@ -154,8 +283,16 @@ static void ggml_vk_reserve_staging(vk_device & device) {
+ static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDeviceMemoryProperties* mem_props, vk::MemoryRequirements* mem_req, vk::MemoryPropertyFlags flags, const vk_heap_ledger * ledger, uint32_t only_heap = UINT32_MAX) {
+     std::vector<uint32_t> indices;
+ 
++    // R58 lane-244: the probe pin. Production leaves it at -1 and this loop is byte-for-byte the
++    // one that shipped. It lives HERE because this predicate is the single seam both the direct
++    // candidate walk in ggml_vk_create_buffer() and the batch planner's candidate build call.
++    const int forced = vk_memtype_forced.load(std::memory_order_relaxed);
++
+     for (uint32_t i = 0; i < mem_props->memoryTypeCount; ++i) {
+         vk::MemoryType memory_type = mem_props->memoryTypes[i];
++        if (forced >= 0 && (int) i != forced) {
++            continue;
++        }
+         if (only_heap != UINT32_MAX && memory_type.heapIndex != only_heap) {
+             continue;
+         }
+@@ -1503,6 +1640,62 @@ struct vk_buffer_plan {
+     bool                              used_maintenance4 = false;
+ };
+ 
++// R58 lane-244: move the PREFERRED host-split candidate ahead of every other host-split candidate,
++// leaving every device-local candidate exactly where the placement policy put it. A load that fits
++// device memory therefore still chooses precisely what it chose before.
++//
++// The host-split candidates are NOT assumed contiguous. They are contiguous under the UMA chain
++// only because that chain reaches the host heap in its last pass; under GGML_VK_PREFER_HOST_MEMORY
++// the policy puts them FIRST, and a rotate over the raw range would then shift device-local
++// candidates. So the reorder happens inside the list of host-split POSITIONS: the same positions
++// keep holding host-split candidates, only which one sits in which.
++static void ggml_vk_host_split_prefer(std::vector<vk_plan_candidate> & cand,
++                                      const std::vector<vk::MemoryPropertyFlags> & type_flags,
++                                      int pref_type, int want_cached) {
++    std::vector<size_t> pos;
++    for (size_t k = 0; k < cand.size(); ++k) {
++        if (cand[k].host_split) {
++            pos.push_back(k);
++        }
++    }
++    if (pos.size() < 2) {
++        return;   // nothing to prefer between; legacy order stands
++    }
++
++    size_t winner = pos.size();
++    for (size_t p = 0; p < pos.size(); ++p) {
++        const vk_plan_candidate & c = cand[pos[p]];
++        if (pref_type >= 0) {
++            if ((int) c.type == pref_type) {
++                winner = p;
++                break;
++            }
++        } else if (want_cached >= 0) {
++            const bool cached = (type_flags[c.type] & vk::MemoryPropertyFlagBits::eHostCached) ==
++                                vk::MemoryPropertyFlagBits::eHostCached;
++            if (cached == (want_cached == 1)) {
++                winner = p;
++                break;
++            }
++        }
++    }
++    if (winner == pos.size() || winner == 0) {
++        return;   // the preference is unavailable, or already first: legacy order stands
++    }
++
++    std::vector<vk_plan_candidate> host;
++    host.reserve(pos.size());
++    host.push_back(cand[pos[winner]]);
++    for (size_t p = 0; p < pos.size(); ++p) {
++        if (p != winner) {
++            host.push_back(cand[pos[p]]);
++        }
++    }
++    for (size_t p = 0; p < pos.size(); ++p) {
++        cand[pos[p]] = host[p];
++    }
++}
++
+ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
+         ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status) {
+     ggml_backend_vk_buffer_type_context * ctx = (ggml_backend_vk_buffer_type_context *) buft->context;
+@@ -1516,6 +1709,10 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
+         return NULL;
+     }
+ 
++    // R58 lane-244: read once per plan, not per candidate.
++    const int host_split_pref         = ggml_vk_host_split_memtype();
++    const int host_split_want_cached  = host_split_pref >= 0 ? -1 : ggml_vk_host_split_cached();
++
+     std::unique_ptr<vk_buffer_plan> plan;
+     std::vector<std::vector<vk_plan_candidate>> cands;
+     std::vector<vk::MemoryPropertyFlags> type_flags;
+@@ -1593,6 +1790,13 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
+                 }
+             }
+ 
++            // R58 lane-244: the ONLY thing either switch does. Host-split candidates are reordered
++            // among themselves; device-local candidates, and therefore every placement of a load
++            // that fits device memory, are untouched.
++            if (host_split_pref != VK_HOST_SPLIT_LEGACY || host_split_want_cached >= 0) {
++                ggml_vk_host_split_prefer(cands[i], type_flags, host_split_pref, host_split_want_cached);
++            }
++
+             plan->entries[i].size  = sizes[i];
+             plan->entries[i].bytes = mem_req.size;
+         }
+@@ -1692,6 +1896,24 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
+         }
+         fprintf(stderr, "ggml_vulkan: host split placed %zu buffer(s) on host-visible memory: %s\n",
+                 n_moved, moved.c_str());
++        // R58 lane-244: one line per host-split buffer naming the memory TYPE it was placed in.
++        // The split bytes are the ones this lane is about, so which type carries them has to be
++        // on stderr of every served run, not only of a traced one.
++        std::string pref_label = "legacy";
++        if (host_split_pref != VK_HOST_SPLIT_LEGACY) {
++            pref_label = "memtype=" + std::to_string(host_split_pref);
++        } else if (host_split_want_cached >= 0) {
++            pref_label = host_split_want_cached == 1 ? "cached=1" : "cached=0";
++        }
++        for (size_t i = 0; i < plan->entries.size(); ++i) {
++            const vk_buffer_plan_entry & e = plan->entries[i];
++            if (e.flags & vk::MemoryPropertyFlagBits::eDeviceLocal) {
++                continue;
++            }
++            fprintf(stderr, "ggml_vulkan: host-split buffer %zu: %llu B -> memtype %u heap %u flags=%s (pref=%s)\n",
++                    i, (unsigned long long) e.bytes, e.type, e.heap,
++                    to_string(e.flags).c_str(), pref_label.c_str());
++        }
+     }
+ 
+     *status = GGML_BACKEND_PLAN_FEASIBLE;
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index c822239a1c..1fcaaa9a5a 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -18771,6 +18771,76 @@ static std::vector<ggml_backend_buffer_type_plan_t> & vk_plan_probe_held() {
+     return held;
+ }
+ 
++// ---------------------------------------------------------------------------------------------
++// R58 lane-244 — memory-type bandwidth probe support.
++//
++// The probe itself lives in tests/test-backend-ops.cpp (`memtype` mode) and drives ordinary ggml
++// graphs through the ordinary backend, so what it times is the SAME shader path a served decode
++// uses. Only three things cannot be reached from there, and they are these hooks: what memory
++// types exist, which of them a storage buffer of a given size may even be placed in, and the pin
++// that makes a placement land in one chosen type.
++// ---------------------------------------------------------------------------------------------
++
++// -1 restores production behaviour. Set only by the probe.
++GGML_BACKEND_API void ggml_vk_memtype_force(int type_index) {
++    vk_memtype_forced.store(type_index, std::memory_order_relaxed);
++}
++
++// Fills the caller's arrays with this device's memory types. Returns the count, or -1 with no
++// Vulkan device. `heap_sizes` is indexed by TYPE (the size of that type's heap), so the probe
++// never has to join two tables.
++GGML_BACKEND_API int ggml_vk_memtype_enumerate(uint32_t * types, uint32_t * heaps, uint32_t * flags,
++                                               uint64_t * heap_sizes, int max_types) {
++    ggml_vk_instance_init();
++    if (vk_instance.device_indices.empty()) {
++        return -1;
++    }
++    vk_device device = ggml_vk_get_device(0);
++    const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
++
++    int n = 0;
++    for (uint32_t t = 0; t < mem_props.memoryTypeCount && n < max_types; ++t, ++n) {
++        const uint32_t h = mem_props.memoryTypes[t].heapIndex;
++        types[n]      = t;
++        heaps[n]      = h;
++        flags[n]      = (uint32_t) (VkMemoryPropertyFlags) mem_props.memoryTypes[t].propertyFlags;
++        heap_sizes[n] = mem_props.memoryHeaps[h].size;
++    }
++    return n;
++}
++
++// The eligibility answer, measured rather than assumed: `type_bits` is VkMemoryRequirements::
++// memoryTypeBits for a REAL storage buffer of `size` created with our usage flags. On this box it
++// reads 0xf, i.e. only memory types 0-3 can ever hold our weights - so a probe that iterated all
++// 16 enumerated types would be probing 12 placements that cannot happen.
++GGML_BACKEND_API int ggml_vk_memtype_buffer_info(uint64_t size, uint32_t * type_bits,
++                                                 uint64_t * max_buffer_size, uint64_t * max_chunk) {
++    ggml_vk_instance_init();
++    if (vk_instance.device_indices.empty()) {
++        return -1;
++    }
++    vk_device device = ggml_vk_get_device(0);
++
++    vk::MemoryRequirements mem_req;
++    bool used_m4 = false;
++    if (!ggml_vk_buffer_memory_requirements(device, (size_t) size, mem_req, used_m4)) {
++        return -1;
++    }
++    *type_bits       = mem_req.memoryTypeBits;
++    *max_buffer_size = device->max_buffer_size;
++    *max_chunk       = std::min<uint64_t>(device->suballocation_block_size, device->max_buffer_size);
++    return 0;
++}
++
++// The canonical probe receipt line. Written here and parsed here (ggml_vk_host_split_auto_type()),
++// so the writer and the `auto` reader cannot drift apart across translation units.
++GGML_BACKEND_API void ggml_vk_memtype_probe_line(uint32_t type, uint32_t heap, uint32_t flags,
++                                                 uint64_t bytes, double gpu_read_gbs, double cpu_memcpy_gbs) {
++    printf(VK_MEMTYPE_PROBE_LINE_FMT, type, heap, flags, (unsigned long long) bytes,
++           gpu_read_gbs, cpu_memcpy_gbs);
++    fflush(stdout);
++}
++
+ GGML_BACKEND_API int ggml_vk_plan_probe_limits(uint64_t * max_chunk, uint64_t * total_heap,
+                                                uint64_t * reserved_now, int * used_maintenance4) {
+     ggml_vk_instance_init();
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 4cf41545df..83aa29d8fd 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -14054,7 +14054,20 @@ static void show_test_coverage() {
+ // Device-free, model-free, timing-free: it drives the same ledger and the same RAII guard that
+ // ggml_vk_create_buffer() uses. Declared here rather than in a public header because this is an
+ // internal test seam, not backend API.
++// R58 lane-244: Vulkan's own ceiling on memory types (VK_MAX_MEMORY_TYPES). Spelled locally so
++// this test needs no Vulkan headers of its own.
++#define VK_MAX_MEMORY_TYPES_LOCAL 32
++
+ extern "C" {
++    // R58 lane-244: memory-type bandwidth probe seam (see ggml-vulkan.cpp).
++    void     ggml_vk_memtype_force(int type_index);
++    int      ggml_vk_memtype_enumerate(uint32_t * types, uint32_t * heaps, uint32_t * flags,
++                                       uint64_t * heap_sizes, int max_types);
++    int      ggml_vk_memtype_buffer_info(uint64_t size, uint32_t * type_bits,
++                                         uint64_t * max_buffer_size, uint64_t * max_chunk);
++    void     ggml_vk_memtype_probe_line(uint32_t type, uint32_t heap, uint32_t flags,
++                                        uint64_t bytes, double gpu_read_gbs, double cpu_memcpy_gbs);
++
+     bool     ggml_vk_heapres_reserve(uint32_t heap, uint64_t bytes, uint64_t budget);
+     bool     ggml_vk_heapres_release(uint32_t heap, uint64_t bytes);
+     bool     ggml_vk_heapres_would_fit(uint32_t heap, uint64_t bytes, uint64_t budget);
+@@ -14964,6 +14977,194 @@ static void heapres_plan_production_tests() {
+     heapres_check(after_reserved == reserved_now, "batch planning left no bytes reserved");
+ }
+ 
++// ---------------------------------------------------------------------------------------------
++// R58 lane-244 — MEMORY TYPE BANDWIDTH PROBE (`test-backend-ops memtype`).
++//
++// One number in GB/s per Vulkan memory type: how fast the GPU READS weights placed in that type.
++// This is the bandwidth-envelope program's row-1 "attainable bus" probe and its row-2 per-region
++// probe in one tool, and it is the measurement the host-split placement question turns on - on
++// this box the beyond-reservation bytes can live in memory type 1 (HOST_VISIBLE|HOST_COHERENT) or
++// type 3 (the same plus HOST_CACHED), and today's choice between them is made by enumeration
++// order, never by a measurement.
++//
++// What is timed: an f16 mat-vec (MUL_MAT with n=1) over `bytes` of weights, i.e. exactly the
++// shader path a plain decode token runs, built as an ordinary ggml graph on the ordinary Vulkan
++// backend. Placement is pinned with ggml_vk_memtype_force() so every buffer of that graph lands
++// in the type under test. Weights are split into chunks of at most the backend's own maximum
++// buffer size - a single multi-GiB tensor would be refused by the driver, so the receipt prints
++// the chunking it used.
++//
++// The maker never runs this: HQ runs it in a quiet window, one type at a time.
++// ---------------------------------------------------------------------------------------------
++static int memtype_probe_run(uint32_t type, uint32_t heap, uint32_t flags,
++                             uint64_t want_bytes, uint64_t max_chunk, int rounds) {
++    ggml_backend_dev_t dev = nullptr;
++    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
++        ggml_backend_dev_t d = ggml_backend_dev_get(i);
++        if (strncmp(ggml_backend_dev_name(d), "Vulkan", 6) == 0) {
++            dev = d;
++            break;
++        }
++    }
++    if (dev == nullptr) {
++        printf("memtype: no Vulkan device, skipping\n");
++        return 1;
++    }
++
++    // One row of the mat-vec. 4096 is a real hidden size and keeps every chunk a whole number of
++    // rows, so no chunk is a ragged shape the shader would treat differently from the others.
++    const int64_t K = 4096;
++    const uint64_t row_bytes   = (uint64_t) K * sizeof(ggml_fp16_t);
++    uint64_t       chunk_bytes = (max_chunk / row_bytes) * row_bytes;
++    if (chunk_bytes == 0) {
++        printf("memtype %u: max chunk %llu B is smaller than one %lld-wide f16 row, skipping\n",
++               type, (unsigned long long) max_chunk, (long long) K);
++        return 1;
++    }
++    if (chunk_bytes > want_bytes) {
++        chunk_bytes = (want_bytes / row_bytes) * row_bytes;
++    }
++    if (chunk_bytes == 0) {
++        printf("memtype %u: requested %llu B is smaller than one row, skipping\n",
++               type, (unsigned long long) want_bytes);
++        return 1;
++    }
++    const int64_t  rows_per_chunk = (int64_t) (chunk_bytes / row_bytes);
++    const int      n_chunks       = (int) std::max<uint64_t>(1, want_bytes / chunk_bytes);
++    const uint64_t total_bytes    = (uint64_t) n_chunks * chunk_bytes;
++
++    printf("memtype %u: heap %u flags 0x%x, %d chunk(s) x %llu B = %llu B, %lld rows/chunk, %d rounds\n",
++           type, heap, flags, n_chunks, (unsigned long long) chunk_bytes,
++           (unsigned long long) total_bytes, (long long) rows_per_chunk, rounds);
++    fflush(stdout);
++
++    // The pin covers every allocation made between here and the restore below.
++    ggml_vk_memtype_force((int) type);
++
++    ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
++    if (backend == nullptr) {
++        ggml_vk_memtype_force(-1);
++        printf("memtype %u: backend init failed\n", type);
++        return 1;
++    }
++
++    struct ggml_init_params ip = {
++        /* .mem_size   = */ ggml_tensor_overhead() * (size_t) (2 * n_chunks + 8) + ggml_graph_overhead(),
++        /* .mem_buffer = */ NULL,
++        /* .no_alloc   = */ true,
++    };
++    ggml_context * ctx = ggml_init(ip);
++    ggml_tensor * v = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, K, 1);
++    ggml_cgraph * gf = ggml_new_graph(ctx);
++    std::vector<ggml_tensor *> W((size_t) n_chunks);
++    for (int c = 0; c < n_chunks; c++) {
++        W[(size_t) c] = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, K, rows_per_chunk);
++        ggml_build_forward_expand(gf, ggml_mul_mat(ctx, W[(size_t) c], v));
++    }
++
++    ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_dev_buffer_type(dev));
++    if (buf == nullptr) {
++        ggml_free(ctx);
++        ggml_backend_free(backend);
++        ggml_vk_memtype_force(-1);
++        // REFUSED is a result, not a failure: a type whose heap cannot hold the span is exactly
++        // what the enumeration verdict is about.
++        printf("memtype %u: REFUSED - no room for %llu B in this type\n",
++               type, (unsigned long long) total_bytes);
++        return 0;
++    }
++
++    // Host-side fill pattern, reused for every chunk. It doubles as the CPU memcpy source, so the
++    // CPU number is the memcpy of the SAME span the GPU then reads.
++    std::vector<uint8_t> host_a((size_t) chunk_bytes, 0x3c);   // 0x3c3c = 1.0585938 in f16
++    std::vector<uint8_t> host_b((size_t) chunk_bytes);
++    for (int c = 0; c < n_chunks; c++) {
++        ggml_backend_tensor_set(W[(size_t) c], host_a.data(), 0, (size_t) chunk_bytes);
++    }
++    std::vector<float> ones((size_t) K, 1.0f);
++    ggml_backend_tensor_set(v, ones.data(), 0, (size_t) K * sizeof(float));
++
++    double cpu_best = 0.0;
++    for (int r = 0; r < rounds; r++) {
++        const int64_t t0 = ggml_time_us();
++        for (int c = 0; c < n_chunks; c++) {
++            memcpy(host_b.data(), host_a.data(), (size_t) chunk_bytes);
++        }
++        const int64_t t1 = ggml_time_us();
++        const double gbs = (double) total_bytes / ((double) (t1 - t0) * 1e-6) / 1e9;
++        cpu_best = std::max(cpu_best, gbs);
++    }
++
++    // One discarded warm-up: the first compute compiles pipelines and fills descriptor pools, and
++    // timing that would report the compile, not the bus.
++    ggml_backend_graph_compute(backend, gf);
++
++    double gpu_best = 0.0;
++    for (int r = 0; r < rounds; r++) {
++        const int64_t t0 = ggml_time_us();
++        ggml_backend_graph_compute(backend, gf);
++        const int64_t t1 = ggml_time_us();
++        const double gbs = (double) total_bytes / ((double) (t1 - t0) * 1e-6) / 1e9;
++        gpu_best = std::max(gpu_best, gbs);
++    }
++
++    ggml_backend_buffer_free(buf);
++    ggml_free(ctx);
++    ggml_backend_free(backend);
++    ggml_vk_memtype_force(-1);
++
++    ggml_vk_memtype_probe_line(type, heap, flags, total_bytes, gpu_best, cpu_best);
++    return 0;
++}
++
++static int memtype_main(uint64_t want_bytes, int rounds, const char * types_csv) {
++    ggml_time_init();
++
++    uint32_t types[VK_MAX_MEMORY_TYPES_LOCAL];
++    uint32_t heaps[VK_MAX_MEMORY_TYPES_LOCAL];
++    uint32_t flags[VK_MAX_MEMORY_TYPES_LOCAL];
++    uint64_t heap_sizes[VK_MAX_MEMORY_TYPES_LOCAL];
++
++    const int n = ggml_vk_memtype_enumerate(types, heaps, flags, heap_sizes, VK_MAX_MEMORY_TYPES_LOCAL);
++    if (n < 0) {
++        printf("memtype: no Vulkan device\n");
++        return 1;
++    }
++
++    uint32_t type_bits = 0;
++    uint64_t max_buffer_size = 0, max_chunk = 0;
++    if (ggml_vk_memtype_buffer_info(1024 * 1024, &type_bits, &max_buffer_size, &max_chunk) != 0) {
++        printf("memtype: buffer requirements unavailable\n");
++        return 1;
++    }
++    printf("memtype: %d types, storage-buffer memoryTypeBits=0x%x, max_buffer_size=%llu B, max_chunk=%llu B\n",
++           n, type_bits, (unsigned long long) max_buffer_size, (unsigned long long) max_chunk);
++
++    for (int i = 0; i < n; i++) {
++        // Eligibility is measured, not assumed: a type outside memoryTypeBits can never hold one
++        // of our storage buffers, so probing it would time a placement that cannot happen.
++        if (!(type_bits & (1u << types[i]))) {
++            printf("memtype %u: ineligible for storage buffers (outside memoryTypeBits), skipped\n", types[i]);
++            continue;
++        }
++        if (types_csv != nullptr) {
++            char want[32];
++            snprintf(want, sizeof(want), "%u", types[i]);
++            bool listed = false;
++            for (const char * p = strstr(types_csv, want); p != nullptr; p = strstr(p + 1, want)) {
++                const bool lb = (p == types_csv) || (p[-1] == ',');
++                const bool rb = (p[strlen(want)] == '\0') || (p[strlen(want)] == ',');
++                if (lb && rb) { listed = true; break; }
++            }
++            if (!listed) {
++                continue;
++            }
++        }
++        memtype_probe_run(types[i], heaps[i], flags[i], want_bytes, max_chunk, rounds);
++    }
++    return 0;
++}
++
+ static int heapres_main() {
+     heapres_ledger_tests();
+     heapres_plan_ledger_tests();
+@@ -14985,6 +15186,7 @@ static void usage(char ** argv) {
+     printf("  sx8ref   S-X8 mat-vec against an independent double-precision reference\n");
+ #ifdef GGML_USE_VULKAN
+     printf("  heapres  Vulkan per-heap reservation ledger + post-allocation cleanup\n");
++    printf("      - memtype [--bytes N] [--rounds R] [--types 1,3] (GPU read GB/s per Vulkan memory type)\n");
+ #endif
+     printf("\n");
+     printf("Options:\n");
+@@ -15062,6 +15264,29 @@ int main(int argc, char ** argv) {
+             // R46b B7a: returns before any backend/device enumeration. The ledger half needs no
+             // device; the fault half acquires a Vulkan device itself and skips loudly without one.
+             return heapres_main();
++        } else if (strcmp(argv[i], "memtype") == 0) {
++            // R58 lane-244. Optional: --bytes <N> (default 4 GiB), --rounds <R> (default 3),
++            // --types <csv of memory type indices> (default: every eligible type).
++            uint64_t     bytes     = 4ull * 1024 * 1024 * 1024;
++            int          rounds    = 3;
++            const char * types_csv = nullptr;
++            for (int j = i + 1; j < argc; j++) {
++                if (strcmp(argv[j], "--bytes") == 0 && j + 1 < argc) {
++                    bytes = strtoull(argv[++j], nullptr, 10);
++                } else if (strcmp(argv[j], "--rounds") == 0 && j + 1 < argc) {
++                    rounds = atoi(argv[++j]);
++                } else if (strcmp(argv[j], "--types") == 0 && j + 1 < argc) {
++                    types_csv = argv[++j];
++                } else {
++                    usage(argv);
++                    return 1;
++                }
++            }
++            if (bytes == 0 || rounds <= 0) {
++                usage(argv);
++                return 1;
++            }
++            return memtype_main(bytes, rounds, types_csv);
+ #endif
+         } else if (strcmp(argv[i], "--list-ops") == 0) {
+             list_all_ops();

@@ -1,0 +1,38 @@
+From e73bc52e81215e657099e219812e5087d501496a Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:58:04 -0400
+Subject: [PATCH] 
+ 6-tests-build/0015-vulkan-add-mul_mat_vec_id-for-the-TurboQuant-weight-.patch
+
+Conflict-resolved: auto: same-point-insertion(upstream block then ours) in tests/test-backend-ops.cpp
+---
+ tests/test-backend-ops.cpp | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 737b826355..60e215659f 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -10622,6 +10622,22 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_Q8_0, GGML_TYPE_F32, 8,   2, false, 512,  n, 256,  1e5f));
+     }
+ 
++    // TurboQuant MUL_MAT_ID. TQ3_1S/TQ4_1S are in all_types but not base_types, so the
++    // two cases above are their only MUL_MAT_ID coverage and the rich sweep below never
++    // reaches them. Cover both sides of the n <= 8 threshold that
++    // ggml_vk_use_mul_mat_vec_id() splits on (mul_mat_vec_id vs mul_mm_id), several
++    // n_used counts, and broadcast -- which exercises the expert-index wrap that a
++    // single non-broadcast case never touches.
++    for (ggml_type type_a : {GGML_TYPE_TQ3_1S, GGML_TYPE_TQ4_1S}) {
++        for (int n_used : {1, 2, 4}) {
++            for (bool b : {false, true}) {
++                for (int n : {1, 4, 8, 9, 17, 32}) {
++                    test_cases.emplace_back(new test_mul_mat_id(type_a, GGML_TYPE_F32, 4, n_used, b, 512, n, 256));
++                }
++            }
++        }
++    }
++
+     for (ggml_type type_a : base_types) {
+         for (ggml_type type_b : {GGML_TYPE_F32 /*, GGML_TYPE_F16 */}) {
+             for (int n_mats : {4, 8}) {

@@ -1,0 +1,42 @@
+From 636558ae8d0699867d781bfbce568f6d977f0df1 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 12:06:41 -0400
+Subject: [PATCH] fix(vulkan): restore the admit-width receipt line the base
+ check discarded
+
+r57-basecheck.cmd reverted ggml-vulkan.cpp to 280b1553f to prove the full sweep's one
+failure was not this lane's doing, then restored it with `git checkout HEAD --` - which
+restores the COMMITTED version, and this line had only ever existed in the working tree.
+So every decider log and both 20-* receipts cite a line that was not in the tree they
+were nominally taken from. Re-added here; the 20-* inertness receipts are re-taken on
+this commit's binary.
+
+The line is emitted only when GGML_ARIFI_MMV_MAX_COLS is set, so the default's stderr is
+byte-identical to the inherited build and the switch stays fully inert unset.
+
+Origin: fork-authored (ArifiLabs lane-248 R57 q4_K cheaper dot, Opus 5 MEDIUM kernel-maker)
+Measured-effect: one stderr line, emitted only when the switch is set; no default moves, no route change
+Lane: lane-248
+Cherry-picked-from: ac28f7dfe (SOURCE PATHS ONLY, ArifiLabs lane-254 R66 integration)
+Recut-onto: 1b6185951 (ArifiLabs lane-254 R66c, from ee9dc1899)
+Conflict-resolved: S4 split (f172be756): auto_split - our hunks re-homed into ggml-vulkan-types.h; wrap/same-point regions merged in place (fixS4_642.py)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index 433ef888b3..f591ec23f9 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -405,6 +405,11 @@ static uint32_t ggml_vk_mmv_max_cols() {
+         }
+         int x = atoi(s);
+         x = std::max(0, std::min(x, (int) mul_mat_vec_max_cols));
++        // Receipt line, emitted ONLY when the variable is set: its presence identifies a forced
++        // arm in a paired sweep and its absence the inherited one, which is what lets a receipt
++        // prove which route a cell took. Unconditional logging would be a behavioural change at
++        // the default, which this switch must not have.
++        GGML_LOG_INFO("ggml_vulkan: mat-vec admit width: %d (GGML_ARIFI_MMV_MAX_COLS)\n", x);
+         return (uint32_t) x;
+     }();
+     return v;

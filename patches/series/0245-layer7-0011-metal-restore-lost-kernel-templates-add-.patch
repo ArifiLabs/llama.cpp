@@ -1,0 +1,69 @@
+From a03eaa89db806493624f5fd0fd23555835659a6e Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 20:52:26 -0400
+Subject: [PATCH] 
+ layer7/0011-metal-restore-lost-kernel-templates-add-offline-shad.patch
+
+---
+ .github/workflows/build-apple.yml | 27 +++++++++++++++++++++++++--
+ 1 file changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/.github/workflows/build-apple.yml b/.github/workflows/build-apple.yml
+index c23f40f146..eca88590bb 100644
+--- a/.github/workflows/build-apple.yml
++++ b/.github/workflows/build-apple.yml
+@@ -22,8 +22,7 @@ on:
+     types: [opened, synchronize, reopened]
+     paths: [
+       '.github/workflows/build-apple.yml',
+-      'ggml/src/ggml-metal/**',
+-      'ggml/src/ggml-rpc/**'
++      'ggml/src/ggml-metal/**'
+     ]
+ 
+ concurrency:
+@@ -210,6 +209,14 @@ jobs:
+         id: checkout
+         uses: actions/checkout@v6
+ 
++      # TODO: this likely does not do anything - if yes, remove it
++      - name: ccache
++        uses: ggml-org/ccache-action@v1.2.21
++        with:
++          key: apple-tvos
++          evict-old-files: 1d
++          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
++
+       - name: Build
+         id: cmake_build
+         run: |
+@@ -235,6 +242,14 @@ jobs:
+         id: checkout
+         uses: actions/checkout@v6
+ 
++      # TODO: this likely does not do anything - if yes, remove it
++      - name: ccache
++        uses: ggml-org/ccache-action@v1.2.21
++        with:
++          key: apple-visionos
++          evict-old-files: 1d
++          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
++
+       - name: Build
+         id: cmake_build
+         run: |
+@@ -265,6 +280,14 @@ jobs:
+         id: checkout
+         uses: actions/checkout@v6
+ 
++      # TODO: this likely does not do anything - if yes, remove it
++      - name: ccache
++        uses: ggml-org/ccache-action@v1.2.21
++        with:
++          key: apple-swift
++          evict-old-files: 1d
++          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
++
+       - name: Download xcframework artifact
+         uses: actions/download-artifact@v7
+         with:

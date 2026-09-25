@@ -1,0 +1,1953 @@
+From 635df85aaa700f36f667710009bcfcd681bc1595 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 13 Sep 2026 22:41:19 -0400
+Subject: [PATCH] feat(backend): preflight Vulkan buffer-type batches
+
+Conflict-resolved: S4 split (f172be756): R46b B7b plan block moved to the end of ggml-vulkan-buffers.cpp beside the placement layer it calls (static, forward-declared above the moved buffer-type interface, which gains plan_begin/plan_alloc_buffer/plan_free); ledger/placement hunks re-homed into ggml-vulkan-types.h / ggml-vulkan-buffers.cpp
+---
+ CHECK-R46-B7B-R2-SOL-LOW.md                   |  22 +
+ CHECK-R46-B7B-R3-SOL-LOW.md                   |  19 +
+ CHECK-R46-B7B-R4-SOL-LOW.md                   |  21 +
+ CHECK-R46-B7B-WHOLE-LOAD-SOL-LOW.md           |  24 +
+ OPUS-R46-B7B-R2-PROMPT.md                     |  19 +
+ OPUS-R46-B7B-R2-REPORT.md                     | 255 ++++++++++
+ OPUS-R46-B7B-R3-TEXT-PROMPT.md                |  10 +
+ OPUS-R46-B7B-R3-TEXT-REPORT.md                | 157 ++++++
+ OPUS-R46-B7B-R4-LABEL-PROMPT.md               |  11 +
+ OPUS-R46-B7B-WHOLE-LOAD-PROMPT.md             |  23 +
+ OPUS-R46-B7B-WHOLE-LOAD-REPORT.md             | 373 +++++++++++++++
+ ggml/src/ggml-alloc.c                         | 100 +++-
+ ggml/src/ggml-backend-impl.h                  |  50 +-
+ ggml/src/ggml-backend.cpp                     |  31 ++
+ ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp  | 452 +++++++++++++++---
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h      | 207 +++++++-
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 126 +++++
+ r46b-b7b-r2-evidence/01-build-restored.rc     |   1 +
+ r46b-b7b-r2-evidence/02-heapres-restored.rc   |   1 +
+ r46b-b7b-r2-evidence/03-build-r2.rc           |   1 +
+ r46b-b7b-r2-evidence/04-test-alloc.rc         |   1 +
+ r46b-b7b-r2-evidence/05-heapres-r2.rc         |   1 +
+ r46b-b7b-r2-evidence/06-build-red-e2.rc       |   1 +
+ r46b-b7b-r2-evidence/07-test-alloc-red-e2.rc  |   1 +
+ r46b-b7b-r2-evidence/08-build-final.rc        |   1 +
+ r46b-b7b-r2-evidence/09-test-alloc-final.rc   |   1 +
+ r46b-b7b-r2-evidence/10-heapres-final.rc      |   1 +
+ r46b-b7b-r2-evidence/11-build-all.rc          |   1 +
+ r46b-b7b-r2-evidence/12-build-llama.rc        |   1 +
+ r46b-b7b-r2-evidence/13-ctest.rc              |   1 +
+ r46b-b7b-r2-evidence/14-ctest-heapres.rc      |   1 +
+ r46b-b7b-r2-evidence/15-abi-version-audit.txt |  38 ++
+ .../16-hashes-and-diffstat.txt                |  29 ++
+ r46b-b7b-r2-evidence/20-build-red-a.rc        |   1 +
+ r46b-b7b-r2-evidence/21-test-red-a.rc         |   1 +
+ r46b-b7b-r2-evidence/22-build-red-b.rc        |   1 +
+ r46b-b7b-r2-evidence/23-test-red-b.rc         |   1 +
+ r46b-b7b-r2-evidence/24-build-red-c.rc        |   1 +
+ r46b-b7b-r2-evidence/25-test-red-c.rc         |   1 +
+ r46b-b7b-r2-evidence/26-build-red-e.rc        |   1 +
+ r46b-b7b-r2-evidence/27-test-red-e.rc         |   1 +
+ r46b-b7b-r2-evidence/28-build-red-f.rc        |   1 +
+ r46b-b7b-r2-evidence/29-test-red-f.rc         |   1 +
+ .../30-red-revert-identity.txt                |  12 +
+ .../31-build-precheck-assert.rc               |   1 +
+ .../32-heapres-precheck-assert.rc             |   1 +
+ r46b-b7b-r2-evidence/33-build-final.rc        |   1 +
+ r46b-b7b-r2-evidence/34-heapres-final.rc      |   1 +
+ r46b-b7b-r2-evidence/35-test-alloc-final.rc   |   1 +
+ r46b-b7b-r2-evidence/36-backendops-add.rc     |   1 +
+ r46b-b7b-r4-evidence/02-build-corrected.rc    |   1 +
+ r46b-b7b-r4-evidence/03-heapres-corrected.rc  |   1 +
+ tests/test-alloc.cpp                          | 137 ++++++
+ tests/test-backend-ops.cpp                    | 419 ++++++++++++++++
+ 54 files changed, 2488 insertions(+), 79 deletions(-)
+ create mode 100644 CHECK-R46-B7B-R2-SOL-LOW.md
+ create mode 100644 CHECK-R46-B7B-R3-SOL-LOW.md
+ create mode 100644 CHECK-R46-B7B-R4-SOL-LOW.md
+ create mode 100644 CHECK-R46-B7B-WHOLE-LOAD-SOL-LOW.md
+ create mode 100644 OPUS-R46-B7B-R2-PROMPT.md
+ create mode 100644 OPUS-R46-B7B-R2-REPORT.md
+ create mode 100644 OPUS-R46-B7B-R3-TEXT-PROMPT.md
+ create mode 100644 OPUS-R46-B7B-R3-TEXT-REPORT.md
+ create mode 100644 OPUS-R46-B7B-R4-LABEL-PROMPT.md
+ create mode 100644 OPUS-R46-B7B-WHOLE-LOAD-PROMPT.md
+ create mode 100644 OPUS-R46-B7B-WHOLE-LOAD-REPORT.md
+ create mode 100644 r46b-b7b-r2-evidence/01-build-restored.rc
+ create mode 100644 r46b-b7b-r2-evidence/02-heapres-restored.rc
+ create mode 100644 r46b-b7b-r2-evidence/03-build-r2.rc
+ create mode 100644 r46b-b7b-r2-evidence/04-test-alloc.rc
+ create mode 100644 r46b-b7b-r2-evidence/05-heapres-r2.rc
+ create mode 100644 r46b-b7b-r2-evidence/06-build-red-e2.rc
+ create mode 100644 r46b-b7b-r2-evidence/07-test-alloc-red-e2.rc
+ create mode 100644 r46b-b7b-r2-evidence/08-build-final.rc
+ create mode 100644 r46b-b7b-r2-evidence/09-test-alloc-final.rc
+ create mode 100644 r46b-b7b-r2-evidence/10-heapres-final.rc
+ create mode 100644 r46b-b7b-r2-evidence/11-build-all.rc
+ create mode 100644 r46b-b7b-r2-evidence/12-build-llama.rc
+ create mode 100644 r46b-b7b-r2-evidence/13-ctest.rc
+ create mode 100644 r46b-b7b-r2-evidence/14-ctest-heapres.rc
+ create mode 100644 r46b-b7b-r2-evidence/15-abi-version-audit.txt
+ create mode 100644 r46b-b7b-r2-evidence/16-hashes-and-diffstat.txt
+ create mode 100644 r46b-b7b-r2-evidence/20-build-red-a.rc
+ create mode 100644 r46b-b7b-r2-evidence/21-test-red-a.rc
+ create mode 100644 r46b-b7b-r2-evidence/22-build-red-b.rc
+ create mode 100644 r46b-b7b-r2-evidence/23-test-red-b.rc
+ create mode 100644 r46b-b7b-r2-evidence/24-build-red-c.rc
+ create mode 100644 r46b-b7b-r2-evidence/25-test-red-c.rc
+ create mode 100644 r46b-b7b-r2-evidence/26-build-red-e.rc
+ create mode 100644 r46b-b7b-r2-evidence/27-test-red-e.rc
+ create mode 100644 r46b-b7b-r2-evidence/28-build-red-f.rc
+ create mode 100644 r46b-b7b-r2-evidence/29-test-red-f.rc
+ create mode 100644 r46b-b7b-r2-evidence/30-red-revert-identity.txt
+ create mode 100644 r46b-b7b-r2-evidence/31-build-precheck-assert.rc
+ create mode 100644 r46b-b7b-r2-evidence/32-heapres-precheck-assert.rc
+ create mode 100644 r46b-b7b-r2-evidence/33-build-final.rc
+ create mode 100644 r46b-b7b-r2-evidence/34-heapres-final.rc
+ create mode 100644 r46b-b7b-r2-evidence/35-test-alloc-final.rc
+ create mode 100644 r46b-b7b-r2-evidence/36-backendops-add.rc
+ create mode 100644 r46b-b7b-r4-evidence/02-build-corrected.rc
+ create mode 100644 r46b-b7b-r4-evidence/03-heapres-corrected.rc
+
+diff --git a/ggml/src/ggml-alloc.c b/ggml/src/ggml-alloc.c
+index a71838eafc..ea8c7afe3b 100644
+--- a/ggml/src/ggml-alloc.c
++++ b/ggml/src/ggml-alloc.c
+@@ -1124,12 +1124,25 @@ static void free_buffers(ggml_backend_buffer_t ** buffers, const size_t * n_buff
+     free(*buffers);
+ }
+ 
++// R46b B7b: one buffer this call's batch intends to allocate, decided in the counting pass before
++// any allocation happens.
++struct alloc_range {
++    struct ggml_tensor * first;
++    struct ggml_tensor * last;
++    size_t               size;
++};
++
+ static bool alloc_tensor_range(struct ggml_context * ctx,
+         struct ggml_tensor * first, struct ggml_tensor * last,
+         ggml_backend_buffer_type_t buft, size_t size,
++        ggml_backend_buffer_type_plan_t plan, size_t plan_index,
+         ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
+ 
+-    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, size);
++    // R46b B7b: with a plan, this consumes the reservation the plan already made for entry
++    // plan_index instead of making a fresh one. Without a plan the call is exactly as before.
++    ggml_backend_buffer_t buffer = plan != NULL
++        ? ggml_backend_buft_plan_alloc_buffer(buft, plan, plan_index)
++        : ggml_backend_buft_alloc_buffer(buft, size);
+     if (buffer == NULL) {
+         GGML_LOG_ERROR("%s: failed to allocate %s buffer of size %zu\n", __func__, ggml_backend_buft_name(buft), size);
+         free_buffers(buffers, n_buffers);
+@@ -1176,6 +1189,12 @@ static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
+     size_t n_buffers = 0;
+     *nbytes_total = 0;
+ 
++    // R46b B7b pass 1: decide the COMPLETE set of buffers before allocating any of them. The split
++    // arithmetic and the *nbytes_total accumulation are byte-identical to the previous single-pass
++    // version; only the allocation moved out of the loop.
++    struct alloc_range * ranges = NULL;
++    size_t n_ranges = 0;
++
+     size_t cur_buf_size = 0;
+     struct ggml_tensor * first = ggml_get_first_tensor(ctx);
+     for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+@@ -1185,10 +1204,16 @@ static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
+         }
+ 
+         if (cur_buf_size > 0 && (cur_buf_size + this_size) > max_size) {
+-            // allocate tensors in the current buffer
+-            if (!no_alloc && !alloc_tensor_range(ctx, first, t, buft, cur_buf_size, &buffers, &n_buffers)) {
++            struct alloc_range * grown = realloc(ranges, sizeof(struct alloc_range) * (n_ranges + 1));
++            if (grown == NULL) {
++                free(ranges);
+                 return NULL;
+             }
++            ranges = grown;
++            ranges[n_ranges].first = first;
++            ranges[n_ranges].last  = t;
++            ranges[n_ranges].size  = cur_buf_size;
++            n_ranges++;
+             first = t;
+             *nbytes_total += cur_buf_size;
+             cur_buf_size = this_size;
+@@ -1197,18 +1222,81 @@ static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
+         }
+     }
+ 
+-    // allocate remaining tensors
++    // remaining tensors
+     if (cur_buf_size > 0) {
+-        *nbytes_total += cur_buf_size;
+-        if (!no_alloc && !alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
++        struct alloc_range * grown = realloc(ranges, sizeof(struct alloc_range) * (n_ranges + 1));
++        if (grown == NULL) {
++            free(ranges);
+             return NULL;
+         }
++        ranges = grown;
++        ranges[n_ranges].first = first;
++        ranges[n_ranges].last  = NULL;
++        ranges[n_ranges].size  = cur_buf_size;
++        n_ranges++;
++        *nbytes_total += cur_buf_size;
+     }
+ 
+     if (no_alloc) {
++        free(ranges);
+         return NULL;
+     }
+ 
++    // R46b B7b pass 2: hand this call's whole batch of buffers to the backend first. A backend that
++    // can decide feasibility refuses the batch here, BEFORE the first driver allocation, instead of
++    // leaving a partially placed batch behind. The unit is exactly this one (buft, ctx) call;
++    // planning ACROSS the buffer-type groups of a model load is still open (ggml-backend-impl.h).
++    //
++    // R46b B7b-R2 (check finding 5): a MULTI-buffer set is never allowed to fall through into the
++    // unplanned path on an undecided answer. INDETERMINATE means the backend did not finish
++    // deciding, so allocating anyway would start placing part of a set whose completion is unknown.
++    // For n_ranges > 1 that is refused before the first driver allocation. A single-buffer
++    // allocation (n_ranges == 1) has no partial state to leave behind and keeps its previous
++    // behaviour exactly, as does a buffer type that does not implement planning (UNSUPPORTED).
++    ggml_backend_buffer_type_plan_t plan = NULL;
++    if (n_ranges > 0) {
++        size_t * sizes = malloc(sizeof(size_t) * n_ranges);
++        if (sizes == NULL) {
++            free(ranges);
++            return NULL;
++        }
++        for (size_t i = 0; i < n_ranges; i++) {
++            sizes[i] = ranges[i].size;
++        }
++        enum ggml_backend_plan_status status = GGML_BACKEND_PLAN_UNSUPPORTED;
++        plan = ggml_backend_buft_plan_begin(buft, sizes, n_ranges, &status);
++        free(sizes);
++        if (status == GGML_BACKEND_PLAN_INFEASIBLE) {
++            GGML_LOG_ERROR("%s: %s cannot place all %zu buffers of this allocation (%zu bytes total); "
++                           "failing before any allocation\n",
++                           __func__, ggml_backend_buft_name(buft), n_ranges, *nbytes_total);
++            free(ranges);
++            return NULL;
++        }
++        if (status == GGML_BACKEND_PLAN_INDETERMINATE && n_ranges > 1) {
++            GGML_LOG_ERROR("%s: %s could not decide placement for all %zu buffers of this allocation "
++                           "(%zu bytes total); refusing before any allocation rather than placing "
++                           "part of the set\n",
++                           __func__, ggml_backend_buft_name(buft), n_ranges, *nbytes_total);
++            free(ranges);
++            return NULL;
++        }
++    }
++
++    for (size_t i = 0; i < n_ranges; i++) {
++        // alloc_tensor_range frees the buffers it already built on failure; plan_free then returns
++        // every reservation this plan still owns and never charged to a live buffer.
++        if (!alloc_tensor_range(ctx, ranges[i].first, ranges[i].last, buft, ranges[i].size,
++                                plan, i, &buffers, &n_buffers)) {
++            ggml_backend_buft_plan_free(buft, plan);
++            free(ranges);
++            return NULL;
++        }
++    }
++    free(ranges);
++    // Every entry was consumed on this path, so this releases nothing and only frees the plan.
++    ggml_backend_buft_plan_free(buft, plan);
++
+     if (n_buffers == 0) {
+ #ifndef NDEBUG
+         GGML_LOG_DEBUG("%s: all tensors in the context are already allocated\n", __func__);
+diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
+index ef05905cf9..3a6d571149 100644
+--- a/ggml/src/ggml-backend-impl.h
++++ b/ggml/src/ggml-backend-impl.h
+@@ -8,12 +8,41 @@
+ extern "C" {
+ #endif
+ 
+-    #define GGML_BACKEND_API_VERSION 2
++    // R46b B7b-R2: bumped 2 -> 3 because ggml_backend_buffer_type_i grew three trailing hooks below.
++    // A dynamically loaded backend built against the old (smaller) layout must not be interpreted
++    // with the new one: ggml-backend-reg.cpp compares this value for strict equality, so an old DSO
++    // is now refused at load instead of having plan_begin read off the end of its smaller object.
++    #define GGML_BACKEND_API_VERSION 3
+ 
+     //
+     // Backend buffer type
+     //
+ 
++    // R46b B7b — per-buffer-type batch allocation planning.
++    //
++    // A multi-buffer placement (ggml_backend_alloc_ctx_tensors_from_buft) knows the complete set of
++    // buffers it intends to allocate before it allocates the first one. A backend that implements
++    // these three optional hooks is handed that whole batch up front, so it can decide feasibility
++    // and reserve capacity for ALL of it atomically instead of discovering halfway through the
++    // batch that the remainder does not fit. The plan object is backend-defined and opaque.
++    //
++    // SCOPE — read this before calling it whole-load or whole-model planning. The unit is ONE
++    // (buffer type, context) batch, which is one call of ggml_backend_alloc_ctx_tensors_from_buft().
++    // Loader-wide, cross-buffer-type planning REMAINS OPEN: llama_model::load_tensors() calls that
++    // function once per ml.ctx_map entry and each completed call has already allocated before the
++    // next group's sizes are known, so no transaction spans the groups. Closing that needs a loader
++    // owner that collects every group's sizes first; this interface is the prerequisite substrate
++    // for it, not its completion.
++    struct ggml_backend_buffer_type_plan;
++    typedef struct ggml_backend_buffer_type_plan * ggml_backend_buffer_type_plan_t;
++
++    enum ggml_backend_plan_status {
++        GGML_BACKEND_PLAN_FEASIBLE      = 0, // a complete assignment exists and is now reserved
++        GGML_BACKEND_PLAN_INFEASIBLE    = 1, // no complete assignment exists; the load must not start
++        GGML_BACKEND_PLAN_INDETERMINATE = 2, // the backend did not finish deciding; caller policy
++        GGML_BACKEND_PLAN_UNSUPPORTED   = 3, // this buffer type does not implement planning
++    };
++
+     struct ggml_backend_buffer_type_i {
+         const char *          (*get_name)      (ggml_backend_buffer_type_t buft);
+         // allocate a buffer of this type
+@@ -26,6 +55,20 @@ extern "C" {
+         size_t                (*get_alloc_size)(ggml_backend_buffer_type_t buft, const struct ggml_tensor * tensor);
+         // (optional) check if tensor data is in host memory and uses standard ggml tensor layout (defaults to false)
+         bool                  (*is_host)       (ggml_backend_buffer_type_t buft);
++
++        // (optional) R46b B7b. Reserve capacity for the complete batch `sizes[0..n)` atomically.
++        // Returns a plan on FEASIBLE and NULL otherwise; *status always says which case it was.
++        // INDETERMINATE reports only that this backend did not finish deciding; what happens next
++        // is the CALLER's policy, and ggml_backend_alloc_ctx_tensors_from_buft() in ggml-alloc.c is
++        // the one that defines it (see the comment at its plan_begin call site).
++        // Appended at the end of the struct on purpose: every existing backend leaves these NULL
++        // and keeps its current unplanned behaviour.
++        ggml_backend_buffer_type_plan_t (*plan_begin)(ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status);
++        // (optional, required with plan_begin) allocate entry `i`, consuming its reservation.
++        ggml_backend_buffer_t           (*plan_alloc_buffer)(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i);
++        // (optional, required with plan_begin) release every UNCONSUMED reservation and free the
++        // plan. Buffers already built keep exactly their own charges.
++        void                            (*plan_free)(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan);
+     };
+ 
+     struct ggml_backend_buffer_type {
+@@ -34,6 +77,11 @@ extern "C" {
+         void * context;
+     };
+ 
++    // R46b B7b plan wrappers (internal: the plan type is backend-private, not public API).
++    GGML_API ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin       (ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status);
++    GGML_API ggml_backend_buffer_t           ggml_backend_buft_plan_alloc_buffer(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i);
++    GGML_API void                            ggml_backend_buft_plan_free        (ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan);
++
+     // [TAG_ALLOC_SIZE_EXPAND]
+     // returns true for ops that may require additional memory for fleeting data on some backends,
+     // i.e. the backend buffer type's get_alloc_size may return more than ggml_nbytes for the output tensor
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 880c0cce48..af95d87ba8 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -133,6 +133,37 @@ ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t
+     return buft->iface.alloc_buffer(buft, size);
+ }
+ 
++// R46b B7b — per-buffer-type batch allocation planning (scope: see ggml-backend-impl.h). A buffer
++// type that does not implement plan_begin is UNSUPPORTED and every caller falls back to the
++// per-buffer path, unchanged.
++ggml_backend_buffer_type_plan_t ggml_backend_buft_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status) {
++    GGML_ASSERT(buft);
++    GGML_ASSERT(status);
++    if (buft->iface.plan_begin == NULL) {
++        *status = GGML_BACKEND_PLAN_UNSUPPORTED;
++        return NULL;
++    }
++    // plan_alloc_buffer and plan_free are not optional once plan_begin exists.
++    GGML_ASSERT(buft->iface.plan_alloc_buffer && buft->iface.plan_free);
++    *status = GGML_BACKEND_PLAN_INDETERMINATE;
++    ggml_backend_buffer_type_plan_t plan = buft->iface.plan_begin(buft, sizes, n, status);
++    GGML_ASSERT((plan != NULL) == (*status == GGML_BACKEND_PLAN_FEASIBLE));
++    return plan;
++}
++
++ggml_backend_buffer_t ggml_backend_buft_plan_alloc_buffer(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i) {
++    GGML_ASSERT(buft && plan);
++    return buft->iface.plan_alloc_buffer(buft, plan, i);
++}
++
++void ggml_backend_buft_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan) {
++    if (plan == NULL) {
++        return;
++    }
++    GGML_ASSERT(buft);
++    buft->iface.plan_free(buft, plan);
++}
++
+ size_t ggml_backend_buft_get_alignment(ggml_backend_buffer_type_t buft) {
+     GGML_ASSERT(buft);
+     return buft->iface.get_alignment(buft);
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp b/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp
+index d697145bd3..08bea6d508 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp
+@@ -1,5 +1,9 @@
+ #include "ggml-vulkan-common.h"
+ 
++// R46b B7b: per-buffer-type batch allocation planning (defined at the end of this file).
++static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status);
++static ggml_backend_buffer_t ggml_backend_vk_buffer_type_plan_alloc_buffer(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i);
++static void ggml_backend_vk_buffer_type_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan);
+ ggml_backend_buffer_type_i ggml_backend_vk_buffer_type_interface = {
+     /* .get_name         = */ ggml_backend_vk_buffer_type_name,
+     /* .alloc_buffer     = */ ggml_backend_vk_buffer_type_alloc_buffer,
+@@ -7,6 +11,9 @@ ggml_backend_buffer_type_i ggml_backend_vk_buffer_type_interface = {
+     /* .get_max_size     = */ ggml_backend_vk_buffer_type_get_max_size,
+     /* .get_alloc_size   = */ ggml_backend_vk_buffer_type_get_alloc_size,
+     /* .is_host          = */ NULL,
++    /* .plan_begin       = */ ggml_backend_vk_buffer_type_plan_begin,
++    /* .plan_alloc_buffer= */ ggml_backend_vk_buffer_type_plan_alloc_buffer,
++    /* .plan_free        = */ ggml_backend_vk_buffer_type_plan_free,
+ };
+ 
+ // lane-230 / R46b commit E: GGML_VK_PLACEMENT=bulk-large-heap, an OPT-IN explicit placement
+@@ -46,7 +53,11 @@ static uint32_t ggml_vk_largest_heap(const vk::PhysicalDeviceMemoryProperties &
+ // R46b B7a-R2 (finding 3): `ledger` is the ledger of the device these memory properties came from.
+ // Heap indices are only meaningful together with their device, so the ledger is passed in rather
+ // than looked up from a process-wide table keyed by heap index alone.
+-static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDeviceMemoryProperties* mem_props, vk::MemoryRequirements* mem_req, vk::MemoryPropertyFlags flags, const vk_heap_ledger & ledger, uint32_t only_heap = UINT32_MAX) {
++// R46b B7b: `ledger` is nullable. The batch planner passes nullptr because it decides capacity
++// itself, atomically for the whole batch, inside vk_heap_ledger::reserve_plan(); it still needs the
++// memoryTypeBits / required-flags / only_heap predicate to be the SAME one the allocator uses, and
++// sharing this function is what keeps the plan describing the path that actually allocates.
++static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDeviceMemoryProperties* mem_props, vk::MemoryRequirements* mem_req, vk::MemoryPropertyFlags flags, const vk_heap_ledger * ledger, uint32_t only_heap = UINT32_MAX) {
+     std::vector<uint32_t> indices;
+ 
+     for (uint32_t i = 0; i < mem_props->memoryTypeCount; ++i) {
+@@ -59,8 +70,9 @@ static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDe
+         // bulk-large-heap policy keep their exact behavior while capacity remains.
+         if ((mem_req->memoryTypeBits & ((uint64_t)1 << i)) &&
+             (flags & memory_type.propertyFlags) == flags &&
+-            ledger.would_fit(memory_type.heapIndex, mem_req->size,
+-                             mem_props->memoryHeaps[memory_type.heapIndex].size)) {
++            (ledger == nullptr ||
++             ledger->would_fit(memory_type.heapIndex, mem_req->size,
++                               mem_props->memoryHeaps[memory_type.heapIndex].size))) {
+             indices.push_back(i);
+         }
+     }
+@@ -305,8 +317,66 @@ void vk_alloc_trace_record_copy(vk_context & subctx, const char * tag, const ggm
+     subctx->trace_ops.push_back(ss.str());
+ }
+ 
+-static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::initializer_list<vk::MemoryPropertyFlags> & req_flags_list,
+-                                       void *import_ptr = nullptr, uint32_t only_heap = UINT32_MAX) {
++// R46b B7b: the buffer usage flags every device buffer of this backend is created with. Shared by
++// the allocator and by the planner's requirement query, so the planner measures the same buffer
++// shape the allocator will build.
++static vk::BufferUsageFlags ggml_vk_buffer_usage_flags(vk_device & device) {
++    vk::BufferUsageFlags usage_flags = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst;
++    if (device->buffer_device_address) {
++        usage_flags |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
++    }
++    return usage_flags;
++}
++
++// R46b B7b: the REAL Vulkan requirements (size, alignment, memoryTypeBits) for a buffer this
++// backend would create at `size`. This is what the plan reserves against - the requested tensor
++// byte count is not the number the driver charges.
++//
++// No device memory is allocated here on either path. With VK_KHR_maintenance4 no VkBuffer object
++// is created at all; otherwise one is created and destroyed immediately, and a VkBuffer is not
++// memory. The driver-allocation witness proves no vkAllocateMemory happens in this function.
++static bool ggml_vk_buffer_memory_requirements(vk_device & device, size_t size,
++                                               vk::MemoryRequirements & out, bool & used_maintenance4) {
++    vk::BufferCreateInfo bci{
++        vk::BufferCreateFlags(),
++        size,
++        ggml_vk_buffer_usage_flags(device),
++        vk::SharingMode::eExclusive,
++        0,
++        nullptr,
++    };
++
++    used_maintenance4 = device->maintenance4;
++    try {
++        if (device->maintenance4) {
++            const vk::DeviceBufferMemoryRequirements info { &bci };
++            out = device->device.getBufferMemoryRequirementsKHR(info).memoryRequirements;
++            return true;
++        }
++        vk::Buffer probe = device->device.createBuffer(bci);
++        out = device->device.getBufferMemoryRequirements(probe);
++        device->device.destroyBuffer(probe);
++        return true;
++    } catch (const vk::SystemError &) {
++        return false;   // could not measure: decide nothing
++    }
++}
++
++// R46b B7b: a placement decided ahead of time by the batch planner. `reservation` already
++// holds `bytes` charged against the device ledger, so this path must not search and must not
++// charge again - it adopts the existing reservation and allocates the type the plan chose.
++struct vk_planned_placement {
++    uint32_t              type        = 0;
++    uint64_t              bytes       = 0;
++    vk_heap_reservation * reservation = nullptr;
++};
++
++// The req_flags_list parameter is a std::vector rather than an initializer_list so the placement
++// policy chain can be built once and consumed by both the allocator and the planner (R46b B7b).
++// Every existing `{a, b}` call site converts unchanged.
++static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vector<vk::MemoryPropertyFlags> & req_flags_list,
++                                       void *import_ptr = nullptr, uint32_t only_heap = UINT32_MAX,
++                                       const vk_planned_placement * planned = nullptr) {
+     VK_LOG_DEBUG("ggml_vk_create_buffer(" << device->name << ", " << size << ", " << to_string(req_flags_list.begin()[0]) << ", " << to_string(req_flags_list.begin()[req_flags_list.size()-1]) << ")");
+     if (size > device->max_buffer_size) {
+         throw vk::OutOfDeviceMemoryError("Requested buffer size exceeds device buffer size limit");
+@@ -328,10 +398,9 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
+     // The ledger must never report free bytes the driver still holds.
+     vk_heap_reservation reservation;
+ 
+-    vk::BufferUsageFlags usage_flags = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst;
++    vk::BufferUsageFlags usage_flags = ggml_vk_buffer_usage_flags(device);
+     vk::MemoryAllocateFlags mem_flags {};
+     if (device->buffer_device_address) {
+-        usage_flags |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
+         mem_flags |= vk::MemoryAllocateFlagBits::eDeviceAddress;
+     }
+ 
+@@ -430,6 +499,7 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
+             import_info.handleType = vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT;
+             import_info.pHostPointer = import_ptr;
+             import_info.setPNext(&mem_flags_info);
++            VK_TEST_NOTE_DRIVER_ALLOC();
+             buf->device_memory = device->device.allocateMemory({ size, memory_type_idx, &import_info });
+             if (alloc_trace) {
+                 vk_alloc_trace_record_alloc(device, buf->buffer, alloc_id, size, mem_req, memory_type_idx,
+@@ -441,11 +511,35 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
+                                     std::to_string(memory_type_idx) + " result=" + e.code().message() + " what=" + e.what());
+             }
+         }
++    } else if (planned) {
++        // R46b B7b: the batch plan already chose this memory type and already charged its
++        // bytes to the device ledger. Adopt that charge (no second charge, no second search) and
++        // ask the driver for exactly the planned type.
++        if (mem_req.size > planned->bytes) {
++            // Fail closed: the driver now wants more than the plan reserved, so the plan's
++            // feasibility answer no longer covers this buffer.
++            throw vk::OutOfDeviceMemoryError("planned reservation is smaller than the actual memory requirement");
++        }
++        reservation = std::move(*planned->reservation);
++        const uint32_t cand_heap = mem_props.memoryTypes[planned->type].heapIndex;
++        if (alloc_trace) {
++            std::stringstream ss;
++            ss << "alloc id=" << alloc_id << " state=planned"
++               << " type=" << planned->type << " heap=" << cand_heap
++               << " requirement=" << mem_req.size << " reserved_by_plan=" << planned->bytes;
++            vk_alloc_trace_line(ss.str());
++        }
++        VK_TEST_NOTE_DRIVER_ALLOC();
++        buf->device_memory = device->device.allocateMemory({ mem_req.size, planned->type, &mem_flags_info });
++        buf->memory_property_flags = mem_props.memoryTypes[planned->type].propertyFlags;
++        if (alloc_trace) {
++            vk_alloc_trace_record_alloc(device, buf->buffer, alloc_id, size, mem_req, planned->type, cand_heap);
++        }
+     } else {
+         for (auto it = req_flags_list.begin(); it != req_flags_list.end(); it++) {
+             const auto & req_flags = *it;
+ 
+-            const std::vector<uint32_t> memory_type_indices = ggml_vk_find_memory_properties(&mem_props, &mem_req, req_flags, device->heap_ledger, only_heap);
++            const std::vector<uint32_t> memory_type_indices = ggml_vk_find_memory_properties(&mem_props, &mem_req, req_flags, &device->heap_ledger, only_heap);
+ 
+             if (memory_type_indices.empty()) {
+                 if (alloc_trace) {
+@@ -486,6 +580,7 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
+                     continue;
+                 }
+                 try {
++                    VK_TEST_NOTE_DRIVER_ALLOC();
+                     buf->device_memory = device->device.allocateMemory({ mem_req.size, *mtype_it, &mem_flags_info });
+                     buf->memory_property_flags = mem_props.memoryTypes[*mtype_it].propertyFlags;
+                     if (alloc_trace) {
+@@ -582,74 +677,100 @@ vk_buffer ggml_vk_create_buffer_check(vk_device& device, size_t size, vk::Memory
+     }
+ }
+ 
++// R46b B7b: ONE attempt of the device placement policy. `only_heap != UINT32_MAX` restricts the
++// attempt to that heap (the bulk-large-heap policy).
++struct vk_alloc_attempt {
++    std::vector<vk::MemoryPropertyFlags> req_flags_list;
++    uint32_t                             only_heap = UINT32_MAX;
++};
++
++// R46b B7b: the ONE definition of the device placement policy chain, in attempt order.
++// ggml_vk_create_buffer_device() walks it, and the batch planner walks the same list, so the
++// plan's feasibility answer necessarily describes the path that actually allocates. Two hand-kept
++// copies of this chain would drift and the plan would start describing a placement nobody performs.
++static std::vector<vk_alloc_attempt> ggml_vk_placement_attempts(vk_device & device, bool bulk) {
++    const auto DL = vk::MemoryPropertyFlagBits::eDeviceLocal;
++    const auto HV = vk::MemoryPropertyFlagBits::eHostVisible;
++    const auto HC = vk::MemoryPropertyFlagBits::eHostCoherent;
++
++    std::vector<vk_alloc_attempt> attempts;
++
++    // lane-230 / R46b commit E: bulk weight buffers, policy ON. DEVICE_LOCAL on the largest heap
++    // and nothing else. A failure here is NOT fatal: the stock chain below is tried next, because
++    // a policy that turns a working load into a hard failure is worse than the placement it is
++    // trying to fix.
++    if (bulk && ggml_vk_placement_bulk_large_heap()) {
++        const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
++        attempts.push_back({ { DL }, ggml_vk_largest_heap(mem_props) });
++    }
++
++    if (device->prefer_host_memory) {
++        attempts.push_back({ { HV | HC, DL }, UINT32_MAX });
++    } else if (device->uma) {
++        // On UMA, prefer host-visible memory so direct tensor borrowing works.
++        // If unavailable, fall back to device-local memory.
++        attempts.push_back({ { DL | HV | HC, DL, HV | HC }, UINT32_MAX });
++    } else if (device->disable_host_visible_vidmem) {
++        if (device->allow_sysmem_fallback) {
++            attempts.push_back({ { DL, HV | HC }, UINT32_MAX });
++        } else {
++            attempts.push_back({ { DL }, UINT32_MAX });
++        }
++    } else {
++        // use rebar if available, otherwise fallback to device only visible memory
++        if (device->allow_sysmem_fallback) {
++            attempts.push_back({ { DL | HV | HC, DL, HV | HC }, UINT32_MAX });
++        } else {
++            attempts.push_back({ { DL | HV | HC, DL }, UINT32_MAX });
++        }
++    }
++
++    return attempts;
++}
++
++// stderr, not GGML_LOG_INFO, and NOT gated on GGML_VK_ALLOC_TRACE: the paired performance cells for
++// this policy run with tracing off and still have to prove which heap the run used.
++static void ggml_vk_placement_bulk_receipt(vk_device & device, uint32_t heap) {
++    static std::mutex receipt_mutex;
++    static std::set<uint32_t> receipted;
++    bool first = false;
++    {
++        std::lock_guard<std::mutex> guard(receipt_mutex);
++        first = receipted.insert(heap).second;
++    }
++    if (first) {
++        const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
++        fprintf(stderr, "ggml_vulkan: placement policy bulk-large-heap: bulk weights -> heap %u "
++                        "(size=%llu B, DEVICE_LOCAL only, every other heap excluded)\n",
++                heap, (unsigned long long) mem_props.memoryHeaps[heap].size);
++    }
++}
++
+ static vk_buffer ggml_vk_create_buffer_device(vk_device& device, size_t size, bool bulk = false) {
+-    vk_buffer buf;
+-    try {
+-        // lane-230 / R46b commit E: bulk weight buffers, policy ON. DEVICE_LOCAL on the largest
+-        // heap and nothing else. A failure here is NOT fatal: fall through to the stock chain
+-        // below, because a policy that turns a working load into a hard failure is worse than the
+-        // placement it is trying to fix.
+-        if (bulk && ggml_vk_placement_bulk_large_heap()) {
+-            const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
+-            const uint32_t heap = ggml_vk_largest_heap(mem_props);
+-            // stderr, not GGML_LOG_INFO, and NOT gated on GGML_VK_ALLOC_TRACE: the paired
+-            // performance cells for this policy run with tracing off and still have to prove which
+-            // heap the run used.
+-            static std::mutex receipt_mutex;
+-            static std::set<uint32_t> receipted;
+-            bool first = false;
+-            {
+-                std::lock_guard<std::mutex> guard(receipt_mutex);
+-                first = receipted.insert(heap).second;
+-            }
+-            if (first) {
+-                fprintf(stderr, "ggml_vulkan: placement policy bulk-large-heap: bulk weights -> heap %u "
+-                                "(size=%llu B, DEVICE_LOCAL only, every other heap excluded)\n",
+-                        heap, (unsigned long long) mem_props.memoryHeaps[heap].size);
+-            }
+-            try {
+-                return ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal}, nullptr, heap);
+-            } catch (const vk::SystemError& e) {
++    const std::vector<vk_alloc_attempt> attempts = ggml_vk_placement_attempts(device, bulk);
++    GGML_ASSERT(!attempts.empty());
++
++    if (attempts[0].only_heap != UINT32_MAX) {
++        ggml_vk_placement_bulk_receipt(device, attempts[0].only_heap);
++    }
++
++    for (size_t a = 0; a < attempts.size(); ++a) {
++        try {
++            return ggml_vk_create_buffer(device, size, attempts[a].req_flags_list, nullptr, attempts[a].only_heap);
++        } catch (const vk::SystemError& e) {
++            if (a + 1 < attempts.size()) {
+                 fprintf(stderr, "ggml_vulkan: placement policy bulk-large-heap: heap %u refused %llu B (%s); "
+                                 "falling back to the default placement chain for this buffer\n",
+-                        heap, (unsigned long long) size, e.what());
+-            }
+-        }
+-
+-        if (device->prefer_host_memory) {
+-            buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+-                                                       vk::MemoryPropertyFlagBits::eDeviceLocal});
+-        } else if (device->uma) {
+-            // On UMA, prefer host-visible memory so direct tensor borrowing works.
+-            // If unavailable, fall back to device-local memory.
+-            buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal | vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+-                                                       vk::MemoryPropertyFlagBits::eDeviceLocal,
+-                                                       vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent});
+-        } else if (device->disable_host_visible_vidmem) {
+-            if (device->allow_sysmem_fallback) {
+-                buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal,
+-                                                           vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent});
+-            } else {
+-                buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal});
+-            }
+-        } else {
+-            // use rebar if available, otherwise fallback to device only visible memory
+-            if (device->allow_sysmem_fallback) {
+-                buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal | vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+-                                                           vk::MemoryPropertyFlagBits::eDeviceLocal,
+-                                                           vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent});
+-            } else {
+-                buf = ggml_vk_create_buffer(device, size, {vk::MemoryPropertyFlagBits::eDeviceLocal | vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+-                                                           vk::MemoryPropertyFlagBits::eDeviceLocal});
++                        attempts[a].only_heap, (unsigned long long) size, e.what());
++                continue;
+             }
++            std::cerr << "ggml_vulkan: Device memory allocation of size " << size << " failed." << std::endl;
++            std::cerr << "ggml_vulkan: " << e.what() << std::endl;
++            throw;
+         }
+-    } catch (const vk::SystemError& e) {
+-        std::cerr << "ggml_vulkan: Device memory allocation of size " << size << " failed." << std::endl;
+-        std::cerr << "ggml_vulkan: " << e.what() << std::endl;
+-        throw e;
+     }
+ 
+-    return buf;
++    GGML_ABORT("ggml_vulkan: placement policy produced no attempts");
+ }
+ 
+ void ggml_vk_destroy_buffer(vk_buffer& buf) {
+@@ -1259,3 +1380,196 @@ vk_buffer ggml_vk_buffer_from_host_ptr(vk_device & device, void * ptr, size_t si
+     return buf;
+ }
+ 
++// ---------------------------------------------------------------------------------------------
++// R46b B7b — PER-BUFFER-TYPE BATCH allocation planning for the Vulkan buffer type.
++//
++// ggml_backend_alloc_ctx_tensors_from_buft() knows the complete set of buffers ONE placement call
++// intends to allocate before it allocates any of them. plan_begin() is handed that batch, measures
++// each buffer's REAL Vulkan memory requirement, builds each buffer's candidate memory types in the
++// placement policy's own order, and asks the device ledger for a COMPLETE assignment - reserved
++// atomically or not at all. A batch that cannot fit fails here, before the first driver allocation,
++// instead of stopping halfway with tensors already on the device.
++//
++// The unit is that one (buffer type, context) batch. A model load is several such batches and
++// nothing here spans them - loader-wide planning remains open (scope: see ggml-backend-impl.h).
++// ---------------------------------------------------------------------------------------------
++
++struct vk_buffer_plan_entry {
++    size_t                  size     = 0;   // requested bytes for this buffer
++    uint32_t                type     = 0;   // memory TYPE index the plan chose
++    uint32_t                heap     = 0;   // the heap that type lives on; the budget is the heap's
++    uint64_t                bytes    = 0;   // real VkMemoryRequirements::size reserved for it
++    vk::MemoryPropertyFlags flags;          // that type's property flags
++    bool                    consumed = false;
++};
++
++struct vk_buffer_plan {
++    vk_device                         device;
++    std::vector<vk_buffer_plan_entry> entries;
++    bool                              used_maintenance4 = false;
++};
++
++static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
++        ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, enum ggml_backend_plan_status * status) {
++    ggml_backend_vk_buffer_type_context * ctx = (ggml_backend_vk_buffer_type_context *) buft->context;
++    vk_device & device = ctx->device;
++
++    // Default is INDETERMINATE: anything this function cannot decide is reported as undecided
++    // rather than as a refusal it did not prove. What follows from that is the caller's policy,
++    // not this backend's (ggml-alloc.c defines it).
++    *status = GGML_BACKEND_PLAN_INDETERMINATE;
++    if (n == 0) {
++        return NULL;
++    }
++
++    std::unique_ptr<vk_buffer_plan> plan;
++    std::vector<std::vector<vk_plan_candidate>> cands;
++    std::vector<vk::MemoryPropertyFlags> type_flags;
++    uint64_t budgets[VK_MAX_MEMORY_HEAPS] = {};
++    uint32_t n_heaps = 0;
++
++    try {
++        const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
++        n_heaps = std::min<uint32_t>(mem_props.memoryHeapCount, VK_MAX_MEMORY_HEAPS);
++        if (n_heaps == 0) {
++            return NULL;
++        }
++        for (uint32_t h = 0; h < n_heaps; ++h) {
++            budgets[h] = mem_props.memoryHeaps[h].size;
++        }
++
++        // The SAME policy chain the bulk allocation path walks, with the same bulk flag that
++        // ggml_backend_vk_buffer_type_alloc_buffer() passes.
++        const std::vector<vk_alloc_attempt> attempts = ggml_vk_placement_attempts(device, /* bulk */ true);
++
++        // The planned path calls ggml_vk_create_buffer() directly, so the bulk-large-heap policy
++        // receipt would never be printed for a planned load. That stderr line has to appear for the
++        // policy's paired cells, which run with tracing off.
++        if (!attempts.empty() && attempts[0].only_heap != UINT32_MAX) {
++            ggml_vk_placement_bulk_receipt(device, attempts[0].only_heap);
++        }
++
++        plan = std::unique_ptr<vk_buffer_plan>(new vk_buffer_plan());
++        plan->device = device;
++        plan->entries.resize(n);
++        cands.resize(n);
++        type_flags.resize(mem_props.memoryTypeCount);
++        for (uint32_t t = 0; t < mem_props.memoryTypeCount; ++t) {
++            type_flags[t] = mem_props.memoryTypes[t].propertyFlags;
++        }
++
++        for (size_t i = 0; i < n; ++i) {
++            if (sizes[i] == 0) {
++                return NULL;   // nothing to place; INDETERMINATE, the caller decides what follows
++            }
++            if (sizes[i] > device->max_buffer_size) {
++                // ggml_vk_create_buffer() throws on this, so no assignment of the whole set exists.
++                *status = GGML_BACKEND_PLAN_INFEASIBLE;
++                return NULL;
++            }
++
++            vk::MemoryRequirements mem_req;
++            bool used_m4 = false;
++            if (!ggml_vk_buffer_memory_requirements(device, sizes[i], mem_req, used_m4)) {
++                return NULL;
++            }
++            plan->used_maintenance4 = used_m4;
++
++            // Candidates in policy order: attempt by attempt, required-flag set by required-flag
++            // set, deduplicated so a type that satisfies two attempts keeps its FIRST (preferred)
++            // position. Capacity is deliberately not tested here - reserve_plan() decides it for
++            // the whole set at once, under the ledger lock.
++            std::set<uint32_t> seen;
++            for (const auto & att : attempts) {
++                for (const auto & flags : att.req_flags_list) {
++                    for (uint32_t t : ggml_vk_find_memory_properties(&mem_props, &mem_req, flags, nullptr, att.only_heap)) {
++                        if (seen.insert(t).second) {
++                            vk_plan_candidate cand;
++                            cand.type  = t;
++                            cand.heap  = mem_props.memoryTypes[t].heapIndex;
++                            cand.bytes = mem_req.size;
++                            cands[i].push_back(cand);
++                        }
++                    }
++                }
++            }
++
++            plan->entries[i].size  = sizes[i];
++            plan->entries[i].bytes = mem_req.size;
++        }
++    } catch (const std::exception &) {
++        return NULL;   // measurement failed; decide nothing
++    }
++
++    // From here on nothing can throw, so a committed reservation always reaches the plan object.
++    std::vector<size_t> choice;
++    const vk_plan_result res = device->heap_ledger.reserve_plan(cands, budgets, n_heaps, choice);
++    if (res == VK_PLAN_INFEASIBLE) {
++        *status = GGML_BACKEND_PLAN_INFEASIBLE;
++        return NULL;
++    }
++    if (res != VK_PLAN_FEASIBLE) {
++        return NULL;   // search bound hit: INDETERMINATE, decided nothing; caller policy follows
++    }
++
++    for (size_t i = 0; i < n; ++i) {
++        const vk_plan_candidate & c = cands[i][choice[i]];
++        plan->entries[i].type  = c.type;
++        plan->entries[i].heap  = c.heap;
++        plan->entries[i].bytes = c.bytes;
++        plan->entries[i].flags = type_flags[c.type];
++    }
++
++    *status = GGML_BACKEND_PLAN_FEASIBLE;
++    return reinterpret_cast<ggml_backend_buffer_type_plan_t>(plan.release());
++}
++
++static ggml_backend_buffer_t ggml_backend_vk_buffer_type_plan_alloc_buffer(
++        ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan_handle, size_t i) {
++    ggml_backend_vk_buffer_type_context * ctx = (ggml_backend_vk_buffer_type_context *) buft->context;
++    vk_buffer_plan * plan = reinterpret_cast<vk_buffer_plan *>(plan_handle);
++
++    GGML_ASSERT(i < plan->entries.size());
++    vk_buffer_plan_entry & e = plan->entries[i];
++    GGML_ASSERT(!e.consumed);
++
++    // Adopt the plan's charge FIRST (noexcept, ledger untouched) and mark the entry consumed
++    // immediately. The bytes are therefore owned by exactly one thing at every instant: the plan
++    // before this line, the reservation after it. No window, no double charge.
++    vk_heap_reservation reservation;
++    reservation.adopt(&plan->device->heap_ledger, e.heap, e.bytes);
++    e.consumed = true;
++
++    vk_planned_placement placement;
++    placement.type        = e.type;
++    placement.bytes       = e.bytes;
++    placement.reservation = &reservation;
++
++    vk_buffer dev_buffer = nullptr;
++    try {
++        dev_buffer = ggml_vk_create_buffer(plan->device, e.size, { e.flags }, nullptr, UINT32_MAX, &placement);
++    } catch (const vk::SystemError &) {
++        // The reservation (whether still here or moved into the failed create) releases the
++        // adopted bytes exactly once as the stack unwinds.
++        return nullptr;
++    }
++
++    ggml_backend_vk_buffer_context * bufctx = new ggml_backend_vk_buffer_context(ctx->device, std::move(dev_buffer), ctx->name);
++
++    return ggml_backend_buffer_init(buft, ggml_backend_vk_buffer_interface, bufctx, e.size);
++}
++
++static void ggml_backend_vk_buffer_type_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan_handle) {
++    UNUSED(buft);
++    vk_buffer_plan * plan = reinterpret_cast<vk_buffer_plan *>(plan_handle);
++
++    // Only UNCONSUMED entries are released here. A buffer that was built owns its own charge and
++    // releases it from ~vk_buffer_struct; releasing it here as well would underflow the ledger.
++    for (auto & e : plan->entries) {
++        if (!e.consumed) {
++            plan->device->heap_ledger.release(e.heap, e.bytes);
++            e.consumed = true;
++        }
++    }
++    delete plan;
++}
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index 08e5010538..9bdc7377b1 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -764,8 +764,9 @@ class vk_memory_logger;
+ // memory channel, bank or link; two memory types that report the same heapIndex share one counter
+ // because Vulkan says they draw on the same pool, and nothing here infers hardware topology.
+ //
+-// Budget in B7a == the heap's reported size. No env knob, no headroom factor, no whole-model plan:
+-// those are B7b/B7c and are NOT implemented here.
++// Budget in B7a == the heap's reported size. No env knob, no headroom factor, and no planning at
++// all: B7b adds per-buffer-type batch planning on top of this ledger, and loader-wide planning is
++// still open. Neither is implemented here.
+ //
+ // ponytail: this counts the same bytes the R47a trace's heap_live already counts, deliberately.
+ // They are not the same number (heap_live drops at ggml_vk_destroy_buffer and never sees a buffer
+@@ -776,6 +777,30 @@ class vk_memory_logger;
+ #define VK_MAX_MEMORY_HEAPS 16
+ #endif
+ 
++// R46b B7b: one placement option for one planned buffer. `type` is a Vulkan memory TYPE index and
++// `heap` is the heap that type lives on - they are deliberately separate fields, because several
++// types share one heap and the budget belongs to the heap, never to the type.
++struct vk_plan_candidate {
++    uint32_t type  = 0;
++    uint32_t heap  = 0;
++    uint64_t bytes = 0;   // real VkMemoryRequirements::size for this buffer, not the requested size
++};
++
++// Bound on the backtracking search. Hitting it means "did not finish deciding", which is reported
++// as INDETERMINATE and never as a refusal: "I did not finish" and "no assignment exists" are
++// different facts and the planner must not conflate them. What the CALLER then does is caller
++// policy, not this backend's to assert (ggml-alloc.c refuses a multi-buffer batch on INDETERMINATE
++// and lets a single-buffer one fall through). Same reasoning as the bulk-large-heap policy
++// fallback: a planner that reports a refusal it did not actually prove is worse than one that
++// admits it stopped searching.
++#define VK_PLAN_MAX_SEARCH_NODES 1000000
++
++enum vk_plan_result {
++    VK_PLAN_FEASIBLE      = 0,
++    VK_PLAN_INFEASIBLE    = 1,
++    VK_PLAN_INDETERMINATE = 2,
++};
++
+ class vk_heap_ledger {
+ public:
+     // Admit `bytes` against `heap` if reserved + bytes <= budget. The subtraction form is
+@@ -825,6 +850,151 @@ public:
+         return reserved_bytes[heap];
+     }
+ 
++    // R46b B7b — BATCH reservation: the complete set of buffers handed to THIS call, all or nothing.
++    //
++    // `cands[i]` is the ordered candidate list for planned buffer i, in the placement policy's own
++    // preference order. Searches for a COMPLETE assignment (every buffer in the batch placed) and
++    // commits all of it, or commits nothing. Search and commit both happen under the one ledger
++    // mutex, so two concurrent plans on the same device can never both be admitted against the same
++    // bytes, and a single-buffer reserve() cannot slip in between deciding and charging.
++    //
++    // The atomicity is over the batch, NOT over a whole model load: the caller hands one
++    // (buffer type, context) group per call (scope: see ggml-backend-impl.h).
++    //
++    // Greedy first-choice is not enough: a buffer whose only option is heap H must be able to push
++    // an earlier buffer off H onto its second choice. The walk therefore backtracks.
++    //
++    // Returns VK_PLAN_FEASIBLE (out_choice[i] = index into cands[i]), VK_PLAN_INFEASIBLE (no
++    // complete assignment exists) or VK_PLAN_INDETERMINATE (search bound hit; decide nothing).
++    vk_plan_result reserve_plan(const std::vector<std::vector<vk_plan_candidate>> & cands,
++                                const uint64_t * budgets, size_t n_budgets,
++                                std::vector<size_t> & out_choice) {
++        const size_t n = cands.size();
++        out_choice.assign(n, 0);
++        if (n == 0) {
++            return VK_PLAN_FEASIBLE;
++        }
++
++        // Symmetry breaking. A real load hands us dozens of buffers with identical requirements and
++        // identical candidate lists; those are interchangeable, so any feasible assignment can be
++        // permuted into one where their choices never decrease. Restricting the walk to that
++        // canonical order collapses what is otherwise a combinatorial explosion (35 identical
++        // buffers over 2 heaps is 2^35 arrangements of the same few real outcomes) without
++        // discarding any distinct outcome.
++        std::vector<bool> same_as_prev(n, false);
++        for (size_t k = 1; k < n; ++k) {
++            if (cands[k].size() != cands[k - 1].size()) {
++                continue;
++            }
++            bool same = true;
++            for (size_t c = 0; c < cands[k].size() && same; ++c) {
++                same = cands[k][c].heap == cands[k - 1][c].heap && cands[k][c].bytes == cands[k - 1][c].bytes;
++            }
++            same_as_prev[k] = same;
++        }
++
++        std::lock_guard<std::mutex> guard(mutex);
++
++        // Necessary condition, decided in O(n) with no search at all: every item must land on SOME
++        // heap, so if the total requirement exceeds the total FREE capacity across all heaps, no
++        // complete assignment can exist. This is genuine infeasibility, not a guess.
++        //
++        // It matters because it covers the overwhelmingly common case - the model is simply bigger
++        // than memory - which is exactly the shape the exhaustive walk is worst at: dozens of
++        // differently sized buffers are not interchangeable, so the symmetry break above cannot
++        // collapse them and the walk would hit its bound and answer INDETERMINATE - an undecided
++        // answer on exactly the case that is in fact decidable in O(n). Answering it here keeps the
++        // common "model is bigger than memory" shape a proven refusal instead of an admission that
++        // the planner gave up.
++        {
++            uint64_t free_total = 0;
++            for (uint32_t h = 0; h < VK_MAX_MEMORY_HEAPS && h < n_budgets; ++h) {
++                if (reserved_bytes[h] >= budgets[h]) {
++                    continue;
++                }
++                const uint64_t heap_free = budgets[h] - reserved_bytes[h];
++                free_total = heap_free > UINT64_MAX - free_total ? UINT64_MAX : free_total + heap_free;
++            }
++
++            uint64_t need = 0;
++            for (const auto & item : cands) {
++                // the smallest this item can possibly consume anywhere
++                uint64_t least = 0;
++                for (size_t c = 0; c < item.size(); ++c) {
++                    if (c == 0 || item[c].bytes < least) {
++                        least = item[c].bytes;
++                    }
++                }
++                if (least > UINT64_MAX - need) {
++                    return VK_PLAN_INFEASIBLE;   // the total wraps: far past any real budget
++                }
++                need += least;
++            }
++
++            if (need > free_total) {
++                return VK_PLAN_INFEASIBLE;
++            }
++        }
++
++        uint64_t delta[VK_MAX_MEMORY_HEAPS] = {};
++        std::vector<size_t> next(n, 0);
++        uint64_t nodes = 0;
++        size_t   i     = 0;
++
++        while (i < n) {
++            if (++nodes > VK_PLAN_MAX_SEARCH_NODES) {
++                return VK_PLAN_INDETERMINATE;
++            }
++
++            bool placed = false;
++            for (size_t c = next[i]; c < cands[i].size(); ++c) {
++                const vk_plan_candidate & cand = cands[i][c];
++                if (cand.heap >= VK_MAX_MEMORY_HEAPS || cand.heap >= n_budgets) {
++                    continue;   // fail closed on an out-of-range heap, exactly like reserve()
++                }
++                const uint64_t budget = budgets[cand.heap];
++                // Subtraction form only: no sum is ever formed, so nothing can wrap. Already-live
++                // reservations from other buffers are charged first, then this plan's own delta.
++                if (reserved_bytes[cand.heap] > budget) {
++                    continue;
++                }
++                const uint64_t after_live = budget - reserved_bytes[cand.heap];
++                if (delta[cand.heap] > after_live) {
++                    continue;
++                }
++                if (cand.bytes > after_live - delta[cand.heap]) {
++                    continue;
++                }
++                delta[cand.heap] += cand.bytes;
++                out_choice[i] = c;
++                next[i]       = c + 1;   // resume after this choice if we ever backtrack into it
++                placed        = true;
++                break;
++            }
++
++            if (placed) {
++                i++;
++                if (i < n) {
++                    // Interchangeable with its predecessor: start where the predecessor landed.
++                    next[i] = same_as_prev[i] ? out_choice[i - 1] : 0;
++                }
++                continue;
++            }
++            if (i == 0) {
++                return VK_PLAN_INFEASIBLE;
++            }
++            i--;
++            const vk_plan_candidate & undo = cands[i][out_choice[i]];
++            delta[undo.heap] -= undo.bytes;
++        }
++
++        // Every delta was validated against its budget above, so this cannot overflow.
++        for (uint32_t h = 0; h < VK_MAX_MEMORY_HEAPS; ++h) {
++            reserved_bytes[h] += delta[h];
++        }
++        return VK_PLAN_FEASIBLE;
++    }
++
+ #ifdef GGML_VK_INTERNAL_TESTS
+     // R46b B7a-R2 (finding 2): reset() and total_reserved() exist ONLY in an internal-test build.
+     // A production-linked build has no way to zero a live ledger, and the internal-test build only
+@@ -880,12 +1050,24 @@ static std::atomic<int> vk_test_fault_bda { 0 };
+ static std::atomic<int>      vk_test_destroy_witness_armed { 0 };
+ static std::atomic<uint64_t> vk_test_reserved_at_driver_free { 0 };
+ 
++// R46b B7b: counts every vkAllocateMemory THIS process asked for, incremented immediately before
++// the call at all three call sites. A NULL return from a refused load proves nothing about "failed
++// before the first driver allocation"; this counter does.
++static std::atomic<uint64_t> vk_test_driver_alloc_calls { 0 };
++
++// R46b B7b: let the first `vk_test_fault_skip` buffers through before the fault fires. A batch
++// transaction can only be tested by failing PART WAY through it.
++static std::atomic<int> vk_test_fault_skip { 0 };
++
+ #define VK_TEST_FAULT(stage)                                                              \
+     do {                                                                                  \
+         if (vk_test_fault_stage_active.load(std::memory_order_relaxed) == (int) (stage)) { \
+-            throw vk::DeviceLostError("R46b B7a-R2 injected fault");                       \
++            if (vk_test_fault_skip.fetch_sub(1, std::memory_order_relaxed) <= 0) {         \
++                throw vk::DeviceLostError("R46b B7a-R2 injected fault");                   \
++            }                                                                              \
+         }                                                                                 \
+     } while (0)
++#define VK_TEST_NOTE_DRIVER_ALLOC() vk_test_driver_alloc_calls.fetch_add(1, std::memory_order_relaxed)
+ #define VK_TEST_NOTE_MAPPED() vk_test_fault_mapped.store(1, std::memory_order_relaxed)
+ #define VK_TEST_NOTE_BDA()    vk_test_fault_bda.store(1, std::memory_order_relaxed)
+ #define VK_TEST_NOTE_DRIVER_FREE(dev)                                                     \
+@@ -897,6 +1079,7 @@ static std::atomic<uint64_t> vk_test_reserved_at_driver_free { 0 };
+     } while (0)
+ #else
+ #define VK_TEST_FAULT(stage)          do { } while (0)
++#define VK_TEST_NOTE_DRIVER_ALLOC()   do { } while (0)
+ #define VK_TEST_NOTE_MAPPED()         do { } while (0)
+ #define VK_TEST_NOTE_BDA()            do { } while (0)
+ #define VK_TEST_NOTE_DRIVER_FREE(dev) do { } while (0)
+@@ -961,6 +1144,11 @@ struct vk_device_struct {
+     bool multi_add;
+     bool shader_int64;
+     bool buffer_device_address;
++
++    // R46b B7b: VK_KHR_maintenance4 is enabled for this device. It provides
++    // getBufferMemoryRequirementsKHR(VkDeviceBufferMemoryRequirements), which answers the batch
++    // planner's "what would this buffer actually require" question with no VkBuffer object at all.
++    bool maintenance4 = false;
+     bool vulkan_memory_model;
+ 
+     bool add_rms_fusion;
+@@ -1356,6 +1544,19 @@ struct vk_heap_reservation {
+         return true;
+     }
+ 
++    // R46b B7b: take ownership of bytes a batch plan ALREADY charged to this ledger. It does
++    // not touch the ledger - the plan made the charge - so there is no double charge; it only moves
++    // who is responsible for the single matching release. noexcept, and the first thing the planned
++    // allocation path does, so no window exists where the plan has stopped owning the bytes and no
++    // reservation owns them yet.
++    void adopt(vk_heap_ledger * l, uint32_t h, uint64_t b) noexcept {
++        release();
++        ledger = l;
++        heap   = h;
++        bytes  = b;
++        held   = true;
++    }
++
+     bool release() {
+         if (!held) {
+             return false;
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 409972bae6..1628098d01 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -4961,6 +4961,9 @@ vk_device ggml_vk_get_device(size_t idx) {
+             last_struct = (VkBaseOutStructure *)&maint4_features;
+             device_extensions.push_back("VK_KHR_maintenance4");
+         }
++        // R46b B7b: record it, the batch planner asks for buffer memory requirements without
++        // creating a VkBuffer when this is available.
++        device->maintenance4 = maintenance4_support;
+ 
+         VkPhysicalDeviceShaderIntegerDotProductFeaturesKHR shader_integer_dot_product_features {};
+         shader_integer_dot_product_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES_KHR;
+@@ -18282,6 +18285,7 @@ GGML_BACKEND_API int ggml_vk_heapres_fault_probe(int      stage,
+     *bda_supported   = device->buffer_device_address ? 1 : 0;
+     vk_test_fault_bda.store(0, std::memory_order_relaxed);
+     vk_test_fault_mapped.store(0, std::memory_order_relaxed);
++    vk_test_fault_skip.store(0, std::memory_order_relaxed);   // R46b B7b: fault on the FIRST buffer
+     vk_test_fault_stage_active.store(stage, std::memory_order_relaxed);
+ 
+     try {
+@@ -18344,5 +18348,127 @@ GGML_BACKEND_API int ggml_vk_heapres_destroy_order_probe(uint64_t   size,
+     return 0;
+ }
+ 
++// ---------------------------------------------------------------------------------------------
++// R46b B7b — per-buffer-type batch planning seam.
++// ---------------------------------------------------------------------------------------------
++
++// Every vkAllocateMemory this process has asked for. The production-path negative test asserts this
++// is UNCHANGED across a refused load: "returned NULL" is not the same claim as "did not allocate".
++GGML_BACKEND_API uint64_t ggml_vk_plan_driver_alloc_calls(void) {
++    return vk_test_driver_alloc_calls.load(std::memory_order_relaxed);
++}
++
++// Fault on the (skip+1)-th buffer of a load instead of the first.
++GGML_BACKEND_API void ggml_vk_plan_set_fault(int stage, int skip) {
++    vk_test_fault_skip.store(skip, std::memory_order_relaxed);
++    vk_test_fault_stage_active.store(stage, std::memory_order_relaxed);
++}
++
++// reserve_plan() driven against the TEST's own ledger. Candidates are flattened: item i owns
++// cand_heaps[off .. off+cand_counts[i]) with the matching cand_bytes. Returns vk_plan_result.
++GGML_BACKEND_API int ggml_vk_heapres_plan_search(const uint32_t * cand_heaps, const uint64_t * cand_bytes,
++                                                 const int * cand_counts, int n_items,
++                                                 const uint64_t * budgets, int n_heaps,
++                                                 int * out_choice) {
++    std::vector<std::vector<vk_plan_candidate>> cands((size_t) n_items);
++    size_t off = 0;
++    for (int i = 0; i < n_items; i++) {
++        for (int c = 0; c < cand_counts[i]; c++, off++) {
++            vk_plan_candidate cand;
++            cand.type  = (uint32_t) off;   // distinct type per candidate; the heap is what matters
++            cand.heap  = cand_heaps[off];
++            cand.bytes = cand_bytes[off];
++            cands[(size_t) i].push_back(cand);
++        }
++    }
++
++    std::vector<size_t> choice;
++    const vk_plan_result res = vk_heapres_test_ledger().reserve_plan(cands, budgets, (size_t) n_heaps, choice);
++    if (res == VK_PLAN_FEASIBLE && out_choice) {
++        for (int i = 0; i < n_items; i++) {
++            out_choice[i] = (int) choice[(size_t) i];
++        }
++    }
++    return (int) res;
++}
++
++// Live plans held open by the probe, so two plans can compete for one device's capacity.
++static std::vector<ggml_backend_buffer_type_plan_t> & vk_plan_probe_held() {
++    static std::vector<ggml_backend_buffer_type_plan_t> held;
++    return held;
++}
++
++GGML_BACKEND_API int ggml_vk_plan_probe_limits(uint64_t * max_chunk, uint64_t * total_heap,
++                                               uint64_t * reserved_now, int * used_maintenance4) {
++    ggml_vk_instance_init();
++    if (vk_instance.device_indices.empty()) {
++        return -1;
++    }
++    vk_device device = ggml_vk_get_device(0);
++
++    const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
++    uint64_t total = 0;
++    for (uint32_t h = 0; h < mem_props.memoryHeapCount && h < VK_MAX_MEMORY_HEAPS; ++h) {
++        total += mem_props.memoryHeaps[h].size;
++    }
++
++    *max_chunk         = std::min<uint64_t>(device->suballocation_block_size, device->max_buffer_size);
++    *total_heap        = total;
++    *reserved_now      = device->heap_ledger.total_reserved();
++    *used_maintenance4 = device->maintenance4 ? 1 : 0;
++    return 0;
++}
++
++// Opens a plan through the REAL buffer-type interface and keeps it open. Returns a handle or -1.
++GGML_BACKEND_API int ggml_vk_plan_probe_begin(const uint64_t * sizes, int n, int * status) {
++    ggml_vk_instance_init();
++    if (vk_instance.device_indices.empty()) {
++        return -1;
++    }
++    ggml_backend_buffer_type_t buft = ggml_backend_vk_buffer_type(0);
++
++    std::vector<size_t> s((size_t) n);
++    for (int i = 0; i < n; i++) {
++        s[(size_t) i] = (size_t) sizes[i];
++    }
++
++    enum ggml_backend_plan_status st = GGML_BACKEND_PLAN_UNSUPPORTED;
++    ggml_backend_buffer_type_plan_t plan = ggml_backend_buft_plan_begin(buft, s.data(), (size_t) n, &st);
++    *status = (int) st;
++    if (plan == NULL) {
++        return -1;
++    }
++    vk_plan_probe_held().push_back(plan);
++    return (int) vk_plan_probe_held().size() - 1;
++}
++
++GGML_BACKEND_API void ggml_vk_plan_probe_free_all(void) {
++    ggml_backend_buffer_type_t buft = ggml_backend_vk_buffer_type(0);
++    for (auto & plan : vk_plan_probe_held()) {
++        if (plan != NULL) {
++            ggml_backend_buft_plan_free(buft, plan);
++        }
++    }
++    vk_plan_probe_held().clear();
++}
++
++GGML_BACKEND_API void ggml_vk_plan_probe_free_one(int handle) {
++    ggml_backend_buffer_type_t buft = ggml_backend_vk_buffer_type(0);
++    auto & held = vk_plan_probe_held();
++    if (handle < 0 || (size_t) handle >= held.size() || held[(size_t) handle] == NULL) {
++        return;
++    }
++    ggml_backend_buft_plan_free(buft, held[(size_t) handle]);
++    held[(size_t) handle] = NULL;
++}
++
++GGML_BACKEND_API uint64_t ggml_vk_plan_device_reserved(void) {
++    ggml_vk_instance_init();
++    if (vk_instance.device_indices.empty()) {
++        return 0;
++    }
++    return ggml_vk_get_device(0)->heap_ledger.total_reserved();
++}
++
+ }  // extern "C"
+ #endif // GGML_VK_INTERNAL_TESTS
+diff --git a/tests/test-alloc.cpp b/tests/test-alloc.cpp
+index 8f1a98aa03..9e17c7177a 100644
+--- a/tests/test-alloc.cpp
++++ b/tests/test-alloc.cpp
+@@ -17,6 +17,13 @@ uint8_t * const alloc_base = (uint8_t *) 16;
+ struct dummy_backend_context {
+     size_t max_buffer_size = 64;
+     size_t alignment       = 8;
++    // R46b B7b-R2: batch planning seam. `plan_status` is what plan_begin answers; the counters
++    // record what the caller in ggml-alloc.c did with that answer.
++    ggml_backend_plan_status plan_status      = GGML_BACKEND_PLAN_FEASIBLE;
++    size_t                   alloc_calls      = 0;   // every buffer allocation, planned or not
++    size_t                   plan_begin_calls = 0;
++    size_t                   plan_free_calls  = 0;
++    size_t                   plan_n           = 0;   // buffers in the last plan_begin
+ 
+     ggml_backend_buffer_i              buffer_interface;
+     ggml_backend_device                device;
+@@ -40,6 +47,7 @@ static const char * dummy_backend_buffer_type_get_name(ggml_backend_buffer_type_
+ 
+ static ggml_backend_buffer_t dummy_backend_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+     dummy_backend_context * ctx    = (dummy_backend_context *) buft->context;
++    ctx->alloc_calls++;
+     ggml_backend_buffer_t & buffer = ctx->buffers.emplace_back();
+     buffer                         = ggml_backend_buffer_init(buft, ctx->buffer_interface, ctx, size);
+     return buffer;
+@@ -59,6 +67,39 @@ static bool dummy_backend_buffer_type_is_host(ggml_backend_buffer_type_t) {
+     return true;
+ }
+ 
++// R46b B7b-R2 batch planning hooks. The plan holds nothing but the sizes it was handed; this
++// backend has no capacity to reserve. Its only job is to answer with a configured status so the
++// CALLER's contract in ggml_backend_alloc_ctx_tensors_from_buft() can be tested.
++struct ggml_backend_buffer_type_plan {
++    std::vector<size_t> sizes;
++};
++
++static ggml_backend_buffer_type_plan_t dummy_backend_buffer_type_plan_begin(
++        ggml_backend_buffer_type_t buft, const size_t * sizes, size_t n, ggml_backend_plan_status * status) {
++    dummy_backend_context * ctx = (dummy_backend_context *) buft->context;
++    ctx->plan_begin_calls++;
++    ctx->plan_n = n;
++    *status     = ctx->plan_status;
++    if (ctx->plan_status != GGML_BACKEND_PLAN_FEASIBLE) {
++        return nullptr;
++    }
++    ggml_backend_buffer_type_plan_t plan = new ggml_backend_buffer_type_plan;
++    plan->sizes.assign(sizes, sizes + n);
++    return plan;
++}
++
++static ggml_backend_buffer_t dummy_backend_buffer_type_plan_alloc_buffer(
++        ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i) {
++    GGML_ASSERT(i < plan->sizes.size());
++    return dummy_backend_buffer_type_alloc_buffer(buft, plan->sizes[i]);
++}
++
++static void dummy_backend_buffer_type_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan) {
++    dummy_backend_context * ctx = (dummy_backend_context *) buft->context;
++    ctx->plan_free_calls++;
++    delete plan;
++}
++
+ // ggml_backend_buffer interface
+ 
+ static void dummy_backend_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+@@ -615,6 +656,101 @@ static void test_reallocation() {
+     }
+ }
+ 
++//
++// R46b B7b-R2 (check finding 5): the batch plan contract at the production caller,
++// ggml_backend_alloc_ctx_tensors_from_buft(). One call = one (buffer type, context) batch.
++//
++// A MULTI-buffer set must never start allocating on an undecided answer, because that places part
++// of a set whose completion is unknown. A SINGLE-buffer allocation has no partial state to leave
++// behind and must keep its previous behaviour exactly, undecided answer or not.
++
++static void plan_wire(dummy_backend & b) {
++    b.buffer_type.iface.plan_begin        = dummy_backend_buffer_type_plan_begin;
++    b.buffer_type.iface.plan_alloc_buffer = dummy_backend_buffer_type_plan_alloc_buffer;
++    b.buffer_type.iface.plan_free         = dummy_backend_buffer_type_plan_free;
++}
++
++// `n` tensors of `size_bytes` with max_buffer_size == size_bytes, so the loader's own split
++// arithmetic produces exactly `n` buffers.
++static ggml_context_ptr plan_make_ctx(int n, size_t size_bytes) {
++    ggml_init_params params{};
++    params.mem_size = ggml_tensor_overhead() * (size_t) (n + 2);
++    params.no_alloc = true;
++    ggml_context_ptr ctx = ggml_context_ptr(ggml_init(params));
++    for (int i = 0; i < n; i++) {
++        make_input_with_size(ctx.get(), size_bytes);
++    }
++    return ctx;
++}
++
++static void test_plan_indeterminate_never_partially_allocates() {
++    const size_t chunk = 64;
++
++    // 1. multi-buffer + INDETERMINATE: refused, and NOT ONE buffer was allocated
++    {
++        dummy_backend backend = dummy_backend_init(chunk);
++        plan_wire(backend);
++        backend.context->plan_status = GGML_BACKEND_PLAN_INDETERMINATE;
++
++        ggml_context_ptr ctx = plan_make_ctx(3, chunk);
++        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), &backend.buffer_type);
++        GGML_ASSERT(buf == nullptr);
++        GGML_ASSERT(backend.context->plan_begin_calls == 1);
++        GGML_ASSERT(backend.context->plan_n == 3);
++        GGML_ASSERT(backend.context->alloc_calls == 0);
++        GGML_ASSERT(backend.context->buffers.empty());
++    }
++
++    // 2. single buffer + INDETERMINATE: unchanged behaviour, it allocates
++    {
++        dummy_backend backend = dummy_backend_init(chunk);
++        plan_wire(backend);
++        backend.context->plan_status = GGML_BACKEND_PLAN_INDETERMINATE;
++
++        ggml_context_ptr ctx = plan_make_ctx(1, chunk);
++        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), &backend.buffer_type);
++        GGML_ASSERT(buf != nullptr);
++        GGML_ASSERT(backend.context->plan_n == 1);
++        GGML_ASSERT(backend.context->alloc_calls == 1);
++        ggml_backend_buffer_free(buf);
++    }
++
++    // 3. multi-buffer + INFEASIBLE: refused before the first allocation
++    {
++        dummy_backend backend = dummy_backend_init(chunk);
++        plan_wire(backend);
++        backend.context->plan_status = GGML_BACKEND_PLAN_INFEASIBLE;
++
++        ggml_context_ptr ctx = plan_make_ctx(3, chunk);
++        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), &backend.buffer_type);
++        GGML_ASSERT(buf == nullptr);
++        GGML_ASSERT(backend.context->alloc_calls == 0);
++    }
++
++    // 4. multi-buffer + FEASIBLE: every buffer comes from the plan, and the plan is freed once
++    {
++        dummy_backend backend = dummy_backend_init(chunk);
++        plan_wire(backend);
++        backend.context->plan_status = GGML_BACKEND_PLAN_FEASIBLE;
++
++        ggml_context_ptr ctx = plan_make_ctx(3, chunk);
++        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), &backend.buffer_type);
++        GGML_ASSERT(buf != nullptr);
++        GGML_ASSERT(backend.context->alloc_calls == 3);
++        GGML_ASSERT(backend.context->plan_free_calls == 1);
++    }
++
++    // 5. a buffer type WITHOUT the hooks is UNSUPPORTED and allocates exactly as before
++    {
++        dummy_backend backend = dummy_backend_init(chunk);
++        ggml_context_ptr ctx = plan_make_ctx(3, chunk);
++        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), &backend.buffer_type);
++        GGML_ASSERT(buf != nullptr);
++        GGML_ASSERT(backend.context->plan_begin_calls == 0);
++        GGML_ASSERT(backend.context->alloc_calls == 3);
++    }
++}
++
+ static void test_backend_graph_optimize(ggml_backend_t, ggml_cgraph * graph, ggml_backend_graph_optimize_params * params) {
+     GGML_ASSERT(graph->n_nodes == 3);
+     params->add_alloc_dep(params->user_data, graph->nodes[0], graph->nodes[2]);
+@@ -672,5 +808,6 @@ int main() {
+     run("test_buffer_size_zero", test_buffer_size_zero);
+     run("test_reallocation", test_reallocation);
+     run("test_graph_optimize_alloc_dep", test_graph_optimize_alloc_dep);
++    run("test_plan_indeterminate_never_partially_allocates", test_plan_indeterminate_never_partially_allocates);
+     return 0;
+ }
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index fca6928dc3..53c4884905 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -13887,8 +13887,29 @@ extern "C" {
+                                                  uint64_t * reserved_before, uint64_t * reserved_alive,
+                                                  uint64_t * reserved_at_driver_free,
+                                                  uint64_t * reserved_after);
++    // R46b B7b — per-buffer-type batch planning.
++    uint64_t ggml_vk_plan_driver_alloc_calls(void);
++    void     ggml_vk_plan_set_fault(int stage, int skip);
++    int      ggml_vk_heapres_plan_search(const uint32_t * cand_heaps, const uint64_t * cand_bytes,
++                                         const int * cand_counts, int n_items,
++                                         const uint64_t * budgets, int n_heaps, int * out_choice);
++    int      ggml_vk_plan_probe_limits(uint64_t * max_chunk, uint64_t * total_heap,
++                                       uint64_t * reserved_now, int * used_maintenance4);
++    int      ggml_vk_plan_probe_begin(const uint64_t * sizes, int n, int * status);
++    void     ggml_vk_plan_probe_free_all(void);
++    void     ggml_vk_plan_probe_free_one(int handle);
++    uint64_t ggml_vk_plan_device_reserved(void);
++    // production buffer type, the one a model load allocates weights from
++    ggml_backend_buffer_type_t ggml_backend_vk_buffer_type(size_t dev_num);
+ }
+ 
++// mirrors enum ggml_backend_plan_status (ggml-backend-impl.h), which is not a public header
++enum {
++    HEAPRES_PLAN_FEASIBLE      = 0,
++    HEAPRES_PLAN_INFEASIBLE    = 1,
++    HEAPRES_PLAN_INDETERMINATE = 2,
++};
++
+ static int heapres_failures = 0;
+ 
+ static void heapres_check(bool ok, const char * what) {
+@@ -14159,9 +14180,407 @@ static void heapres_fault_tests() {
+     }
+ }
+ 
++// ---------------------------------------------------------------------------------------------
++// R46b B7b — per-buffer-type batch allocation planning.
++//
++// Half 1 drives vk_heap_ledger::reserve_plan() on the TEST's ledger: candidate backtracking,
++// shared heap types, separate heaps, overflow, atomicity, the search bound.
++// Half 2 drives the PRODUCTION caller, ggml_backend_alloc_ctx_tensors_from_buft(), the same
++// function a model load allocates its weight buffers through - once per (buffer type, context)
++// group. The unit under test is therefore ONE such batch, never a whole model load.
++//
++// R46b B7b-R4: the five printed labels and check strings below (half 1's banner, and half 2's
++// banner, skip line and two checks) previously read "whole-load"/"whole load" and were inaccurate.
++// R4 corrected them and updated the matching quotations in OPUS-R46-B7B-R2-REPORT.md. Read them as
++// follows: half 1's banner names a SYNTHETIC ledger exercise that allocates nothing at all, and
++// half 2's strings name the one batch that case allocates - never a whole model load.
++// OPUS-R46-B7B-R3-TEXT-REPORT.md §5 is historical on this point.
++// ---------------------------------------------------------------------------------------------
++
++static int heapres_plan_search(const std::vector<std::vector<std::pair<uint32_t, uint64_t>>> & items,
++                               const std::vector<uint64_t> & budgets,
++                               std::vector<int> & choice) {
++    std::vector<uint32_t> heaps;
++    std::vector<uint64_t> bytes;
++    std::vector<int>      counts;
++    for (const auto & item : items) {
++        counts.push_back((int) item.size());
++        for (const auto & c : item) {
++            heaps.push_back(c.first);
++            bytes.push_back(c.second);
++        }
++    }
++    choice.assign(items.size(), -1);
++    return ggml_vk_heapres_plan_search(heaps.data(), bytes.data(), counts.data(), (int) items.size(),
++                                       budgets.data(), (int) budgets.size(), choice.data());
++}
++
++static void heapres_plan_ledger_tests() {
++    const uint64_t MiB = 1024ull * 1024ull;
++    printf("Vulkan per-buffer-type batch plan reservation (R46b B7b prerequisite)\n");
++
++    std::vector<int> choice;
++
++    // 1. Backtracking. Greedy would put item 0 on heap 0 (its first choice) and then item 1, whose
++    //    ONLY option is heap 0, would have nowhere to go - even though a complete assignment
++    //    exists. The search must undo item 0 and move it to heap 1.
++    ggml_vk_heapres_reset();
++    {
++        const int res = heapres_plan_search({ { {0, 100 * MiB}, {1, 100 * MiB} },
++                                              { {0, 100 * MiB} } },
++                                            { 100 * MiB, 100 * MiB }, choice);
++        heapres_check(res == HEAPRES_PLAN_FEASIBLE, "backtracking: a complete assignment was found");
++        heapres_check(choice[0] == 1, "backtracking: item 0 gave up its first choice");
++        heapres_check(choice[1] == 0, "backtracking: item 1 got the heap it needed");
++        heapres_check(ggml_vk_heapres_reserved(0) == 100 * MiB && ggml_vk_heapres_reserved(1) == 100 * MiB,
++                      "backtracking: both heaps charged exactly once");
++    }
++
++    // 2. Impossible plan: nothing is charged, so the load can be refused with the ledger intact.
++    ggml_vk_heapres_reset();
++    {
++        const int res = heapres_plan_search({ { {0, 100 * MiB} }, { {0, 100 * MiB} } },
++                                            { 150 * MiB }, choice);
++        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "impossible plan refused");
++        heapres_check(ggml_vk_heapres_reserved(0) == 0, "impossible plan charged nothing (all or nothing)");
++    }
++
++    // 3. Shared heap types: two DIFFERENT memory types that live on ONE heap share that heap's
++    //    budget. The plan must not treat a type index as if it had its own capacity.
++    ggml_vk_heapres_reset();
++    {
++        // heapres_plan_search gives every candidate a distinct type index; both point at heap 3.
++        const int res = heapres_plan_search({ { {3, 40 * MiB} }, { {3, 40 * MiB} } },
++                                            { 0, 0, 0, 64 * MiB }, choice);
++        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "shared heap: two types cannot each spend the heap");
++        heapres_check(ggml_vk_heapres_reserved(3) == 0, "shared heap: refusal charged nothing");
++    }
++
++    // 4. Separate heaps stay independent.
++    ggml_vk_heapres_reset();
++    {
++        const int res = heapres_plan_search({ { {0, 40 * MiB} }, { {1, 40 * MiB} } },
++                                            { 64 * MiB, 64 * MiB }, choice);
++        heapres_check(res == HEAPRES_PLAN_FEASIBLE, "separate heaps: both placed");
++        heapres_check(ggml_vk_heapres_reserved(0) == 40 * MiB && ggml_vk_heapres_reserved(1) == 40 * MiB,
++                      "separate heaps: each heap charged its own item only");
++    }
++
++    // 5. Already-live reservations are respected: a plan cannot spend bytes another buffer holds.
++    ggml_vk_heapres_reset();
++    heapres_check(ggml_vk_heapres_reserve(0, 60 * MiB, 100 * MiB), "live reservation taken first");
++    {
++        const int res = heapres_plan_search({ { {0, 60 * MiB} } }, { 100 * MiB }, choice);
++        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "plan refused against a live reservation");
++        heapres_check(ggml_vk_heapres_reserved(0) == 60 * MiB, "refusal left the live reservation alone");
++    }
++
++    // 6. Overflow fails closed, both directions.
++    ggml_vk_heapres_reset();
++    {
++        const int res = heapres_plan_search({ { {0, UINT64_MAX} } }, { 1 * MiB }, choice);
++        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "UINT64_MAX item against a small budget refused");
++        heapres_check(ggml_vk_heapres_reserved(0) == 0, "overflow attempt charged nothing");
++    }
++    ggml_vk_heapres_reset();
++    heapres_check(ggml_vk_heapres_reserve(0, UINT64_MAX - 1, UINT64_MAX), "heap 0 filled to UINT64_MAX-1");
++    {
++        const int res = heapres_plan_search({ { {0, 2} } }, { UINT64_MAX }, choice);
++        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "2 more refused instead of wrapping");
++        heapres_check(ggml_vk_heapres_reserved(0) == UINT64_MAX - 1, "wrap attempt left the counter intact");
++    }
++
++    // 7. Out-of-range heap fails closed rather than indexing past the ledger.
++    ggml_vk_heapres_reset();
++    {
++        const int res = heapres_plan_search({ { {4096, 1} } }, { 1 * MiB }, choice);
++        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "out-of-range heap candidate refused");
++    }
++
++    // 8. Search bound: 30 free items followed by one that can never be placed makes the exhaustive
++    //    walk enormous. The PLANNER must answer INDETERMINATE (decide nothing, charge nothing), not
++    //    a refusal: "I did not finish deciding" and "no assignment exists" are different facts and
++    //    the ledger must not conflate them.
++    //
++    //    R46b B7b-R2 (check finding 5): what the CALLER does with INDETERMINATE is a separate
++    //    policy and is not "allocate unplanned" for a multi-buffer set - ggml-alloc.c refuses
++    //    that case before the first allocation rather than placing part of a set it cannot complete
++    //    (see test-alloc.cpp: test_plan_indeterminate_never_partially_allocates). A single-buffer
++    //    allocation still falls through unchanged.
++    ggml_vk_heapres_reset();
++    {
++        std::vector<std::vector<std::pair<uint32_t, uint64_t>>> items;
++        for (int i = 0; i < 30; i++) {
++            // distinct sizes, so these items are NOT interchangeable and the symmetry break below
++            // cannot collapse them - this is the genuine worst case
++            items.push_back({ {0, (uint64_t) (i + 1)}, {1, (uint64_t) (i + 1)} });
++        }
++        items.push_back({ {2, 1} });   // heap 2 has zero budget: unplaceable
++        const int res = heapres_plan_search(items, { 1 * MiB, 1 * MiB, 0 }, choice);
++        heapres_check(res == HEAPRES_PLAN_INDETERMINATE, "search bound reported INDETERMINATE, not a refusal");
++        heapres_check(ggml_vk_heapres_reserved(0) == 0 && ggml_vk_heapres_reserved(1) == 0,
++                      "abandoned search charged nothing");
++    }
++
++    // 9. The same shape with INTERCHANGEABLE items must still be DECIDED. A real load hands the
++    //    planner dozens of identical weight buffers; without symmetry breaking that is the same
++    //    combinatorial explosion as case 8 and the feature would never decide anything on a real
++    //    model. (Found by the production test below, not by inspection.)
++    ggml_vk_heapres_reset();
++    {
++        std::vector<std::vector<std::pair<uint32_t, uint64_t>>> items;
++        for (int i = 0; i < 40; i++) {
++            items.push_back({ {0, 1 * MiB}, {1, 1 * MiB} });
++        }
++        const int res = heapres_plan_search(items, { 8 * MiB, 8 * MiB }, choice);
++        heapres_check(res == HEAPRES_PLAN_INFEASIBLE,
++                      "40 interchangeable items over 2 heaps: decided, not abandoned");
++        heapres_check(ggml_vk_heapres_reserved(0) == 0 && ggml_vk_heapres_reserved(1) == 0,
++                      "interchangeable refusal charged nothing");
++    }
++    ggml_vk_heapres_reset();
++    {
++        std::vector<std::vector<std::pair<uint32_t, uint64_t>>> items;
++        for (int i = 0; i < 12; i++) {
++            items.push_back({ {0, 1 * MiB}, {1, 1 * MiB} });
++        }
++        const int res = heapres_plan_search(items, { 8 * MiB, 8 * MiB }, choice);
++        heapres_check(res == HEAPRES_PLAN_FEASIBLE,
++                      "12 interchangeable items spill onto the second heap");
++        heapres_check(ggml_vk_heapres_reserved(0) == 8 * MiB && ggml_vk_heapres_reserved(1) == 4 * MiB,
++                      "interchangeable spill charged 8MiB + 4MiB, exactly once each");
++    }
++
++    // 10. The real model-load shape: many buffers of DIFFERENT sizes that together do not fit.
++    //     Symmetry breaking cannot help here (nothing is interchangeable), so without the
++    //     total-capacity precheck this walk hits its bound and answers INDETERMINATE - which now
++    //     turns the commonest real case (model bigger than memory) into a refusal with no
++    //     explanation instead of a decided, reported infeasibility. It must be DECIDED.
++    ggml_vk_heapres_reset();
++    {
++        std::vector<std::vector<std::pair<uint32_t, uint64_t>>> items;
++        for (int i = 0; i < 30; i++) {
++            const uint64_t bytes = (uint64_t) (i + 1) * MiB;   // 1..30 MiB, all distinct
++            items.push_back({ {0, bytes}, {1, bytes} });
++        }
++        const int res = heapres_plan_search(items, { 64 * MiB, 64 * MiB }, choice);   // 128 < 465
++        heapres_check(res == HEAPRES_PLAN_INFEASIBLE,
++                      "unequal buffers past total capacity: DECIDED, not abandoned");
++        heapres_check(ggml_vk_heapres_reserved(0) == 0 && ggml_vk_heapres_reserved(1) == 0,
++                      "capacity refusal charged nothing");
++    }
++    // ... and the same unequal shape that DOES fit must still be planned, not refused.
++    ggml_vk_heapres_reset();
++    {
++        std::vector<std::vector<std::pair<uint32_t, uint64_t>>> items;
++        for (int i = 0; i < 8; i++) {
++            const uint64_t bytes = (uint64_t) (i + 1) * MiB;   // 36 MiB total
++            items.push_back({ {0, bytes}, {1, bytes} });
++        }
++        const int res = heapres_plan_search(items, { 24 * MiB, 24 * MiB }, choice);
++        heapres_check(res == HEAPRES_PLAN_FEASIBLE, "unequal buffers that fit are planned");
++        heapres_check(ggml_vk_heapres_reserved(0) + ggml_vk_heapres_reserved(1) == 36 * MiB,
++                      "unequal plan charged its total exactly once");
++    }
++
++    ggml_vk_heapres_reset();
++}
++
++// Builds `n` meta tensors and lets the loader's own split arithmetic turn them into buffers.
++//
++// `vary` controls the SHAPE of the resulting buffer set, and the distinction matters:
++//   vary == false - every tensor is exactly `chunk`, so every buffer is identical. Interchangeable,
++//                   which is the easy case for the planner.
++//   vary == true  - the sizes cycle, so the buffers come out UNEQUAL. That is what a real model
++//                   load looks like (tensors are packed until the next one would overflow the
++//                   buffer), and unequal buffers are exactly the case a symmetry break cannot help
++//                   with. A corpus of same-size buffers would hide that.
++static ggml_context * heapres_plan_make_ctx(uint64_t chunk, int n, bool vary) {
++    struct ggml_init_params params = {
++        /* .mem_size   = */ ggml_tensor_overhead() * (size_t) (n + 2),
++        /* .mem_buffer = */ NULL,
++        /* .no_alloc   = */ true,
++    };
++    ggml_context * ctx = ggml_init(params);
++    if (ctx == NULL) {
++        return NULL;
++    }
++    for (int i = 0; i < n; i++) {
++        uint64_t bytes = chunk;
++        if (vary) {
++            switch (i % 3) {
++                case 1:  bytes = chunk * 3 / 4; break;
++                case 2:  bytes = chunk / 2;     break;
++                default: bytes = chunk;         break;
++            }
++        }
++        ggml_new_tensor_1d(ctx, GGML_TYPE_F32, (int64_t) (bytes / sizeof(float)));
++    }
++    return ctx;
++}
++
++static void heapres_plan_production_tests() {
++    printf("Vulkan per-buffer-type batch planning, production path (R46b B7b prerequisite)\n");
++
++    const uint64_t MiB = 1024ull * 1024ull;
++
++    uint64_t max_chunk = 0, total_heap = 0, reserved_now = 0;
++    int      used_m4 = 0;
++    if (ggml_vk_plan_probe_limits(&max_chunk, &total_heap, &reserved_now, &used_m4) != 0) {
++        printf("  SKIPPED: no Vulkan device, per-buffer-type batch planning NOT covered by this run\n");
++        return;
++    }
++    printf("    buffer chunk=%llu B, all heaps=%llu B, requirements via %s\n",
++           (unsigned long long) max_chunk, (unsigned long long) total_heap,
++           used_m4 ? "VK_KHR_maintenance4 (no VkBuffer created)" : "a temporary VkBuffer");
++
++    ggml_backend_buffer_type_t buft = ggml_backend_vk_buffer_type(0);
++    heapres_check(buft != NULL, "production Vulkan buffer type available");
++    if (buft == NULL || max_chunk == 0) {
++        return;
++    }
++
++    // 1. An impossible COMPLETE plan must fail before the FIRST driver allocation. A NULL return
++    //    does not prove that; the vkAllocateMemory counter does.
++    //
++    //    The buffers here are deliberately UNEQUAL (vary = true), which is the real model-load
++    //    shape and the one the backtracking walk is worst at. An equal-size corpus would pass this
++    //    test through the symmetry break and never exercise the path a real model takes.
++    {
++        uint64_t n64 = (total_heap / max_chunk) * 2 + 8;
++        if (n64 > 2048) {
++            n64 = 2048;   // still far past capacity on any heap layout this rig reports
++        }
++        const int n = (int) n64;
++        ggml_context * ctx = heapres_plan_make_ctx(max_chunk, n, /* vary */ true);
++        heapres_check(ctx != NULL, "impossible load: context built");
++        if (ctx != NULL) {
++            const uint64_t allocs_before   = ggml_vk_plan_driver_alloc_calls();
++            const uint64_t reserved_before = ggml_vk_plan_device_reserved();
++            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
++            heapres_check(buf == NULL, "impossible load: refused");
++            heapres_check(ggml_vk_plan_driver_alloc_calls() == allocs_before,
++                          "impossible load: NOT ONE vkAllocateMemory was issued");
++            heapres_check(ggml_vk_plan_device_reserved() == reserved_before,
++                          "impossible load: the device ledger is untouched");
++            ggml_backend_buffer_free(buf);
++            ggml_free(ctx);
++
++            // R46b B7b-R2: refusing is not enough - the planner must have DECIDED that this set is
++            // infeasible, not merely run out of search budget. The two answers refuse the same load
++            // today but they are different facts: "no complete assignment exists" is reportable and
++            // stable, "I gave up" is neither, and the O(n) total-capacity precheck is what turns the
++            // commonest real shape (model bigger than memory, all buffers unequal) into the former.
++            std::vector<uint64_t> unequal((size_t) n, max_chunk);
++            for (size_t i = 0; i < unequal.size(); i++) {
++                switch (i % 3) {
++                    case 1:  unequal[i] = max_chunk * 3 / 4; break;
++                    case 2:  unequal[i] = max_chunk / 2;     break;
++                    default: unequal[i] = max_chunk;         break;
++                }
++            }
++            int status_impossible = -1;
++            ggml_vk_plan_probe_begin(unequal.data(), (int) unequal.size(), &status_impossible);
++            heapres_check(status_impossible == HEAPRES_PLAN_INFEASIBLE,
++                          "impossible load: DECIDED infeasible, not abandoned at the search bound");
++            ggml_vk_plan_probe_free_all();
++        }
++    }
++
++    // 2. A load that fits is charged exactly once per buffer and gives all of it back.
++    {
++        const int n = 2;
++        // equal sizes here on purpose: this is the one assertion that checks exact byte arithmetic
++        ggml_context * ctx = heapres_plan_make_ctx(max_chunk, n, /* vary */ false);
++        heapres_check(ctx != NULL, "feasible load: context built");
++        if (ctx != NULL) {
++            const uint64_t reserved_before = ggml_vk_plan_device_reserved();
++            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
++            heapres_check(buf != NULL, "feasible load: allocated");
++            if (buf != NULL) {
++                const uint64_t live = ggml_vk_plan_device_reserved() - reserved_before;
++                // exactly n buffers' worth: a double charge would be ~2n, a lost charge ~0
++                heapres_check(live >= (uint64_t) n * max_chunk && live < (uint64_t) n * max_chunk + 16 * MiB,
++                              "feasible load: charged exactly once per buffer, no double charge");
++                ggml_backend_buffer_free(buf);
++            }
++            heapres_check(ggml_vk_plan_device_reserved() == reserved_before,
++                          "feasible load: destruction released every byte exactly once");
++            ggml_free(ctx);
++        }
++    }
++
++    // 3. Mid-plan failure. Buffer 0 is built, buffer 1 fails inside the production allocator. The
++    //    load must leave NOTHING behind: the built buffer's own charge, the failed buffer's
++    //    adopted charge and the untouched entries' reservations must all be back.
++    {
++        const int n = 5;
++        // unequal buffers again: the rollback has to work on the real load shape, not just on a
++        // set the planner finds easy
++        ggml_context * ctx = heapres_plan_make_ctx(max_chunk, n, /* vary */ true);
++        heapres_check(ctx != NULL, "mid-plan failure: context built");
++        if (ctx != NULL) {
++            const uint64_t reserved_before = ggml_vk_plan_device_reserved();
++            const uint64_t allocs_before   = ggml_vk_plan_driver_alloc_calls();
++            ggml_vk_plan_set_fault(1 /* after allocateMemory */, 1 /* let buffer 0 through */);
++            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
++            ggml_vk_plan_set_fault(0, 0);
++            heapres_check(buf == NULL, "mid-batch failure: the whole batch failed, not just one buffer");
++            heapres_check(ggml_vk_plan_driver_alloc_calls() >= allocs_before + 2,
++                          "mid-plan failure: the failure really happened part way through");
++            heapres_check(ggml_vk_plan_device_reserved() == reserved_before,
++                          "mid-plan failure: every reservation rolled back, consumed and unconsumed");
++            ggml_backend_buffer_free(buf);
++            ggml_free(ctx);
++        }
++    }
++
++    // 4. Competing plans on ONE device cannot both pass against the same capacity. plan_begin
++    //    allocates no driver memory at all, so this is a pure capacity test.
++    {
++        uint64_t n64 = (total_heap / max_chunk) * 3 / 4;
++        if (n64 < 2) {
++            n64 = 2;
++        }
++        if (n64 > 2048) {
++            n64 = 2048;
++        }
++        const int n = (int) n64;
++        std::vector<uint64_t> sizes((size_t) n, max_chunk);
++
++        const uint64_t allocs_before = ggml_vk_plan_driver_alloc_calls();
++        int status_a = -1, status_b = -1, status_b2 = -1;
++
++        const int a = ggml_vk_plan_probe_begin(sizes.data(), n, &status_a);
++        heapres_check(status_a == HEAPRES_PLAN_FEASIBLE, "competing plans: plan A took three quarters of capacity");
++        ggml_vk_plan_probe_begin(sizes.data(), n, &status_b);
++        heapres_check(status_b == HEAPRES_PLAN_INFEASIBLE,
++                      "competing plans: plan B refused against plan A's reservations");
++        ggml_vk_plan_probe_free_one(a);
++        ggml_vk_plan_probe_begin(sizes.data(), n, &status_b2);
++        heapres_check(status_b2 == HEAPRES_PLAN_FEASIBLE,
++                      "competing plans: plan B fits once plan A is released");
++        heapres_check(ggml_vk_plan_driver_alloc_calls() == allocs_before,
++                      "competing plans: planning allocated no driver memory");
++
++        const uint64_t reserved_with_b = ggml_vk_plan_device_reserved();
++        ggml_vk_plan_probe_free_all();
++        heapres_check(reserved_with_b > ggml_vk_plan_device_reserved(),
++                      "competing plans: an open plan really held capacity");
++    }
++
++    // 5. Everything above must leave the device ledger exactly where a fresh device starts.
++    uint64_t after_chunk = 0, after_total = 0, after_reserved = 0;
++    int      after_m4 = 0;
++    ggml_vk_plan_probe_limits(&after_chunk, &after_total, &after_reserved, &after_m4);
++    heapres_check(after_reserved == reserved_now, "batch planning left no bytes reserved");
++}
++
+ static int heapres_main() {
+     heapres_ledger_tests();
++    heapres_plan_ledger_tests();
+     heapres_fault_tests();
++    heapres_plan_production_tests();
+     printf("%s: %s\n", "heapres", heapres_failures == 0 ? "all tests passed" : "FAILURES");
+     return heapres_failures == 0 ? 0 : 1;
+ }

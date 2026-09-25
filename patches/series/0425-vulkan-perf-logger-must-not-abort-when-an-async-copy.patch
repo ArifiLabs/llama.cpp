@@ -1,0 +1,32 @@
+From 563dba74fbfe165ef4c7cc6c0def4c991cd763a6 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 31 Aug 2026 12:55:52 -0400
+Subject: [PATCH] vulkan: perf logger must not abort when an async copy left a
+ compute context alive
+
+An async tensor copy (the on-device spec-checkpoint path a drafter uses) can leave ctx->compute_ctx alive between graphs. Without the logger this is harmless - the next graph locks the same context. With the logger the entry assert aborted the process, so no drafted line could be profiled at all. Flush the pending context instead.
+
+Assisted-by: Claude Opus 5
+Lane: lane-185
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 5ba362b23c..9731c50143 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -14852,6 +14852,13 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
+         std::fill(ctx->query_nodes.begin(), ctx->query_nodes.end(), nullptr);
+         std::fill(ctx->query_node_idx.begin(), ctx->query_node_idx.end(), 0);
+ 
++        // An async tensor copy (for example the on-device spec-checkpoint path a drafter
++        // uses) can leave a compute context alive between graphs. The logger needs its
++        // own command buffer for the timestamps, so flush that work instead of aborting.
++        if (!ctx->compute_ctx.expired()) {
++            ggml_vk_synchronize(ctx);
++        }
++
+         GGML_ASSERT(ctx->compute_ctx.expired());
+         compute_ctx = ggml_vk_get_compute_ctx(ctx);
+         ctx->query_idx = 0;

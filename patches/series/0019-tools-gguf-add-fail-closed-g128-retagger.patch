@@ -1,4 +1,4 @@
-From 889a258849d49b1560caea5d8500941801439005 Mon Sep 17 00:00:00 2001
+From 3e8caafa18a8faa555b95228097f6ada2bde7da6 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 00:08:37 -0400
 Subject: [PATCH] tools(gguf): add fail-closed g128 retagger
@@ -14,7 +14,7 @@ Measured-effect: tooling only (no runtime engine change)
  create mode 100644 tools/gguf-retag-g128/retag_g128.py
 
 diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
-index 07c1e480a..16dbad91f 100644
+index 07c1e480ae..16dbad91f2 100644
 --- a/docs/OPTIONS-REGISTRY.md
 +++ b/docs/OPTIONS-REGISTRY.md
 @@ -61,3 +61,19 @@ the embed helper immune to DLL shadowing, so UI-ON builds link cleanly.
@@ -39,7 +39,7 @@ index 07c1e480a..16dbad91f 100644
 +declares its required geometry, while an absent key keeps normal g64 behavior.
 diff --git a/tools/gguf-retag-g128/README.md b/tools/gguf-retag-g128/README.md
 new file mode 100644
-index 000000000..3760a2635
+index 0000000000..3760a26353
 --- /dev/null
 +++ b/tools/gguf-retag-g128/README.md
 @@ -0,0 +1,99 @@
@@ -144,7 +144,7 @@ index 000000000..3760a2635
 +reinterpret an ambiguous model.
 diff --git a/tools/gguf-retag-g128/retag_g128.py b/tools/gguf-retag-g128/retag_g128.py
 new file mode 100644
-index 000000000..e5f95f2d1
+index 0000000000..e5f95f2d1c
 --- /dev/null
 +++ b/tools/gguf-retag-g128/retag_g128.py
 @@ -0,0 +1,499 @@

@@ -1,0 +1,26 @@
+From a6f090b3078a7327ffd45db241f643f9acb15ec4 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 19:58:01 -0400
+Subject: [PATCH] 
+ 6-tests-build/0013-vulkan-reject-MUL_MAT_ID-for-the-TurboQuant-weight-t.patch
+
+---
+ tests/test-backend-ops.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index b950a5713c..737b826355 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -10603,6 +10603,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+ 
+     for (ggml_type type_a : all_types) {
+         test_cases.emplace_back(new test_mul_mat_id(type_a, GGML_TYPE_F32, 4, 2, false, 64, 16, 3*ggml_blck_size(type_a)));
++        // n=1 as well as n=16: ggml_vk_use_mul_mat_vec_id() selects the mat-vec path only
++        // when src2->ne[1] <= 8, so the n=16 case above exercises mul_mm_id and never touches
++        // the decode path. A backend that claims MUL_MAT_ID support without a mul_mat_vec_id
++        // pipeline for the type passes at n=16 and asserts on a null pipeline at n=1.
++        test_cases.emplace_back(new test_mul_mat_id(type_a, GGML_TYPE_F32, 4, 2, false, 64, 1, 3*ggml_blck_size(type_a)));
+     }
+ 
+     // Test IQP panel path for all grid IQ types

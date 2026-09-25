@@ -1,0 +1,78 @@
+From 35785f3246907a8b22a77a97dcf5bb9faef448b2 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 1 Sep 2026 09:26:43 -0400
+Subject: [PATCH] lane-195: LEG 0 - the regression leg the branch was missing,
+ plus the sinks condition stated
+
+Segment support was added by editing the HOT LOOP of the shipped kernel: acc_f16 replaced three
+inline v->type == GGML_TYPE_F16 tests, the hoisted type traits were removed, and the k/v broadcast
+indices moved to per-segment computation. Every one of those edits sits on the path a real model
+takes with an F16 V and NO segments - and until now that path had not been run once. LEG 1's
+monolithic arm is F32, and LEG 3 never exercises n_seg == 0 at all, so neither covered it.
+test-backend-ops cannot cover it either: it skips the CPU backend it uses as its own reference, so a
+CPU-only run is a 0-executed green and was refused as evidence.
+
+LEG 0 runs n_seg == 0 with F16 K/V against the same independent in-file reference LEG 3 uses:
+nmse 1.86e-06 .. 4.53e-06 against tol 1e-4, agreeing on all 6. That magnitude is the F16 accumulator,
+and it independently confirms the diagnosis of the LEG 1 defect recorded in the previous commit.
+
+Also documented the sinks 'first kv-chunk' condition, which is load-bearing and non-obvious with
+segments: it must fire ONCE for the whole segment sequence, and does, because it sits outside the
+segment loop and segmented nodes are only ever dispatched un-chunked.
+---
+ ggml/src/ggml-cpu/ops.cpp  |  8 +++++++-
+ tests/test-fa-segments.cpp | 22 ++++++++++++++++++++++
+ 2 files changed, 29 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+index ddc27b01e1..877c18afe4 100644
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -9002,7 +9002,13 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
+             }
+         }
+ 
+-        // sinks - apply only on the first kv-chunk
++        // sinks - apply only on the first kv-chunk.
++        //
++        // ARIFI lane-195: with segments this must fire ONCE for the whole segment sequence, not
++        // once per segment - and it does, because it sits outside the segment loop and the sequence
++        // is driven by segs[0], whose ic_start is the one tested here. Segmented nodes are only ever
++        // dispatched un-chunked (ic_start == 0), which the two refusals in
++        // ggml_compute_forward_flash_attn_ext_f16 guarantee. Load-bearing, so stated.
+         if (sinks && ic_start == 0) {
+             const float s = ((float *)((char *) sinks->data))[h];
+ 
+diff --git a/tests/test-fa-segments.cpp b/tests/test-fa-segments.cpp
+index 71685c8d20..21cc24c683 100644
+--- a/tests/test-fa-segments.cpp
++++ b/tests/test-fa-segments.cpp
+@@ -298,6 +298,28 @@ int main() {
+         {257, 129, 65, 63 },
+     };
+ 
++    // LEG 0 is the REGRESSION leg, and it is first on purpose. The segment support was added by
++    // editing the hot loop of the shipped kernel: `acc_f16` replaced three inline `v->type ==
++    // GGML_TYPE_F16` tests, the hoisted type traits were removed, and the k/v broadcast indices
++    // moved to per-segment computation. Every one of those edits is on the path a real model takes
++    // with an F16 V and NO segments — so that path is exercised here, against the same independent
++    // reference LEG 3 uses. test-backend-ops cannot do this job: it skips the CPU backend it uses
++    // as its own reference, so a CPU-only run of it is a 0-executed green.
++    printf("LEG 0 - REGRESSION: n_seg == 0 with F16 K/V (the shipped path) vs the independent reference.\n");
++    printf("        MUST AGREE: this is the path every model takes when the tail is off.\n");
++    for (const auto & s : splits) {
++        fa_case c;
++        c.kv = s.kv; c.body = s.kv; c.seg0 = 0; c.seg1 = 0;   // no segments at all
++        c.body_type = GGML_TYPE_F16; c.ring_type = GGML_TYPE_F16;
++        fa_data d = make_data(c);
++        char name[128];
++        snprintf(name, sizeof(name), "f16 monolithic kv=%lld (no segments)", (long long) s.kv);
++        // F16 K/V and an F16 accumulator: tolerance is set by half precision, not by this lane
++        report("LEG0", name, nmse(run_case(c, d, false), reference(c, d)), 1e-4, true);
++    }
++
++    printf("\n");
++
+     // LEG 1/2 run in F32. That is not cosmetic: with an F16 V and no segments the CPU kernel keeps
+     // an F16 accumulator, while any segmented node is forced to F32 (a mixed-dtype window cannot
+     // carry an accumulator whose type flips mid-row). Comparing those two arms measures the

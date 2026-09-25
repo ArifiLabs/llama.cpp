@@ -1,4 +1,4 @@
-From c77c324abdeeaab62af3d4acf98fa75b69906dd7 Mon Sep 17 00:00:00 2001
+From 17ac2969befe10133c8777f3f12c3631b33aedc1 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 01:04:16 -0400
 Subject: [PATCH] ggml-cpu/x86: use the row-stride parameter in repack GEMV
@@ -32,7 +32,7 @@ activation-quantisation token. F-085 judge PASS on the g128 ternary regression m
  1 file changed, 5 insertions(+), 12 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/arch/x86/repack.cpp b/ggml/src/ggml-cpu/arch/x86/repack.cpp
-index 8e7937948..be7dcf74d 100644
+index 8e79379482..be7dcf74de 100644
 --- a/ggml/src/ggml-cpu/arch/x86/repack.cpp
 +++ b/ggml/src/ggml-cpu/arch/x86/repack.cpp
 @@ -553,7 +553,6 @@ static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t

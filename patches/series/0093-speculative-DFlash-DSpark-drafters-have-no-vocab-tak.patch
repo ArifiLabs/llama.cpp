@@ -1,4 +1,4 @@
-From 3d5aaa619e4e58b51da1c1cd36c6e626013d3d61 Mon Sep 17 00:00:00 2001
+From f19a3d829e03c18c93e4a8c5cba20c2d1f231bf5 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 30 Jul 2026 01:17:51 -0400
 Subject: [PATCH] speculative: DFlash/DSpark drafters have no vocab -- take the
@@ -53,10 +53,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 36 insertions(+), 1 deletion(-)
 
 diff --git a/common/speculative.cpp b/common/speculative.cpp
-index 851a47b9a..8989fe283 100644
+index 6fdfa4dc33..dfd674486e 100644
 --- a/common/speculative.cpp
 +++ b/common/speculative.cpp
-@@ -980,6 +980,34 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+@@ -978,6 +978,34 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
          selector_top_k = llama_model_dflash_selector_top_k(model_dft);
          is_dflash2     = selector_top_k > 0;
          mask_token_id = llama_vocab_mask(llama_model_get_vocab(model_dft));
@@ -92,7 +92,7 @@ index 851a47b9a..8989fe283 100644
          if (is_dspark && this->params.p_min > 0.0f) {
              char buf[16] = {};
 diff --git a/powerinfer/moe_sparse_pipeline/expert_bundle.cpp b/powerinfer/moe_sparse_pipeline/expert_bundle.cpp
-index 23385eae4..fd31fefcb 100644
+index 23385eae47..fd31fefcb3 100644
 --- a/powerinfer/moe_sparse_pipeline/expert_bundle.cpp
 +++ b/powerinfer/moe_sparse_pipeline/expert_bundle.cpp
 @@ -24,7 +24,14 @@ void ExpertBundleBuilder::append(const void *data, size_t ne0, size_t ne1,bool r

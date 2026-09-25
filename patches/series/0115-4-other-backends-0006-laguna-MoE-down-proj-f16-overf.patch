@@ -1,22 +1,26 @@
-From 03c278de60dff96e7dd857b4718bc91fafa503ce Mon Sep 17 00:00:00 2001
+From 15305fe1dfba5cd4ca386dda9584f82cc8172a07 Mon Sep 17 00:00:00 2001
 From: m <m@l>
 Date: Sat, 15 Aug 2026 19:56:03 -0400
 Subject: [PATCH] 
  4-other-backends/0006-laguna-MoE-down-proj-f16-overflow-guard-CUDA-GQA-rat.patch
 
+Conflict-resolved: S1: upstream 5a4d0feca replaced the hand fattn-vec instance lists with ggml_cuda_fattn_vec_instances/GGML_CUDA_FA_QUANTS + runtime f16 fallback; ported ours onto it: mixed f16/bf16-q8_0 appended to the CUDA default FA_QUANTS, 21 turbo vec instances always compiled (CUDA+HIP) with GGML_CUDA_FA_TURBO* guards defined 1 and cases added to ggml_cuda_get_fattn_vec_case; dropped our K!=V allowlist (upstream removed the restriction); turbo V syncwarp skip kept via ggml_cuda_syncwarp
+Conflict-resolved: S3: laguna patch vs upstream S3 range - CUDA fattn: upstream amd_wmma GQA block kept, this commit's %8 edit on the next line; Metal device.cpp: upstream amax pipelines then our TQ-rotated pipelines; device.m: this commit's single-device desc kept plus upstream fusion-info init (dev->finfo); ops.cpp: fusion.h include (this commit drops tuning.h), our TQ-rotated/else mul_mm_id split with upstream's amax buffer (index 6) added to the non-TQ branch, TurboFlash gate replaces the sparse/kv-f16 helpers; SYCL: upstream TQ1_0 guards kept, this commit's TQ2_0 guard removal kept
+Conflict-resolved: S5: laguna stale-base CUDA/Metal vs upstream - CUDA FA launch = upstream ggml_cuda_kernel_launch; device.m eGPU check takes upstream's x86 condition on our block, family-log block ours; Metal FC offset COLLISION resolved: upstream FC_NORM..FC_DSV4_HC keep 1700-2000, our FC_TURBO_WHT/FLASH_P1/P2 move to 2100/2200/2300 (Mac compile owed)
+Conflict-resolved: hand: ggml-metal-ops.cpp FA-vec - stale-base revert regions (nqptg constant, FATTN_SMEM macro, smem fallback) take upstream b11178 (cdc06426e sparse FA clean-up, ee3ecce05 family-keyed tuning); fork intent re-applied: +128 floats TurboQuant block cache inside fa_vec_smem (Mac compile owed)
 ---
- ggml/src/ggml-cuda/CMakeLists.txt             |    30 +-
+ ggml/src/ggml-cuda/CMakeLists.txt             |    31 +-
  ggml/src/ggml-cuda/common.cuh                 |    15 +-
  ggml/src/ggml-cuda/convert.cu                 |    85 +
  ggml/src/ggml-cuda/dequantize.cuh             |   102 +
  ggml/src/ggml-cuda/dsv4-hc.cu                 |   154 +-
- ggml/src/ggml-cuda/fattn-common.cuh           |   504 +-
+ ggml/src/ggml-cuda/fattn-common.cuh           |   500 +-
  ggml/src/ggml-cuda/fattn-mma-f16.cuh          |   264 +-
  ggml/src/ggml-cuda/fattn-mma-turbo.cuh        |   118 +
  ggml/src/ggml-cuda/fattn-tile.cu              |     7 +
  ggml/src/ggml-cuda/fattn-tile.cuh             |    21 +-
  ggml/src/ggml-cuda/fattn-vec.cuh              |   372 +-
- ggml/src/ggml-cuda/fattn.cu                   |   267 +-
+ ggml/src/ggml-cuda/fattn.cu                   |   251 +-
  ggml/src/ggml-cuda/getrows.cu                 |    10 +
  ggml/src/ggml-cuda/ggml-cuda.cu               |   109 +-
  ggml/src/ggml-cuda/mmvq-tq.cu                 |   568 +
@@ -68,12 +72,12 @@ Subject: [PATCH]
  ggml/src/ggml-cuda/turbo-wht.cuh              |     5 +
  ggml/src/ggml-cuda/vendors/hip.h              |    33 +-
  ggml/src/ggml-cuda/vendors/musa.h             |     3 +
- ggml/src/ggml-hip/CMakeLists.txt              |    25 +-
+ ggml/src/ggml-hip/CMakeLists.txt              |    25 +
  ggml/src/ggml-metal/ggml-metal-device.cpp     |   222 +-
  ggml/src/ggml-metal/ggml-metal-device.h       |     4 +
- ggml/src/ggml-metal/ggml-metal-device.m       |   914 +-
- ggml/src/ggml-metal/ggml-metal-impl.h         |    50 +
- ggml/src/ggml-metal/ggml-metal-ops.cpp        |   951 +-
+ ggml/src/ggml-metal/ggml-metal-device.m       |   928 +-
+ ggml/src/ggml-metal/ggml-metal-impl.h         |    51 +
+ ggml/src/ggml-metal/ggml-metal-ops.cpp        |   932 +-
  ggml/src/ggml-metal/ggml-metal-ops.h          |     1 +
  ggml/src/ggml-metal/ggml-metal.metal          | 14012 ++++++++++++++++
  ggml/src/ggml-metal/turbo-matrices.h          |  8207 +++++++++
@@ -84,7 +88,7 @@ Subject: [PATCH]
  ggml/src/ggml-sycl/fattn-common.hpp           |   329 +
  ggml/src/ggml-sycl/fattn-vec.hpp              |   204 +-
  ggml/src/ggml-sycl/fattn.cpp                  |   110 +-
- ggml/src/ggml-sycl/ggml-sycl.cpp              |    56 +-
+ ggml/src/ggml-sycl/ggml-sycl.cpp              |    53 +-
  ggml/src/ggml-sycl/mmvq.cpp                   |   101 +-
  ggml/src/ggml-sycl/set_rows.cpp               |   373 +
  .../fattn-vec-instance-f16-turbo2_0.cpp       |     8 +
@@ -111,7 +115,7 @@ Subject: [PATCH]
  ggml/src/ggml-sycl/turbo-quant.hpp            |   158 +
  ggml/src/ggml-sycl/turbo-wht.cpp              |   252 +
  ggml/src/ggml-sycl/turbo-wht.hpp              |     5 +
- 106 files changed, 29625 insertions(+), 1268 deletions(-)
+ 106 files changed, 29623 insertions(+), 1244 deletions(-)
  create mode 100644 ggml/src/ggml-cuda/fattn-mma-turbo.cuh
  create mode 100644 ggml/src/ggml-cuda/mmvq-tq.cu
  create mode 100644 ggml/src/ggml-cuda/mmvq-tq.cuh
@@ -185,44 +189,47 @@ Subject: [PATCH]
  create mode 100644 ggml/src/ggml-sycl/turbo-wht.hpp
 
 diff --git a/ggml/src/ggml-cuda/CMakeLists.txt b/ggml/src/ggml-cuda/CMakeLists.txt
-index 10828ad81..e593c4a28 100644
+index 2254090cba..ec0fe0c7b4 100644
 --- a/ggml/src/ggml-cuda/CMakeLists.txt
 +++ b/ggml/src/ggml-cuda/CMakeLists.txt
-@@ -121,7 +121,32 @@ if (CUDAToolkit_FOUND)
-             template-instances/fattn-vec-instance-f16-f16.cu
-             template-instances/fattn-vec-instance-q4_0-q4_0.cu
-             template-instances/fattn-vec-instance-q8_0-q8_0.cu
--            template-instances/fattn-vec-instance-bf16-bf16.cu)
-+            template-instances/fattn-vec-instance-f16-q8_0.cu
-+            template-instances/fattn-vec-instance-q8_0-f16.cu
-+            template-instances/fattn-vec-instance-bf16-q8_0.cu
-+            template-instances/fattn-vec-instance-q8_0-bf16.cu
-+            template-instances/fattn-vec-instance-bf16-bf16.cu
-+            template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cu
-+            template-instances/fattn-vec-instance-turbo3_0-q8_0.cu
-+            template-instances/fattn-vec-instance-q8_0-turbo3_0.cu
-+            template-instances/fattn-vec-instance-f16-turbo3_0.cu
-+            template-instances/fattn-vec-instance-turbo3_0-f16.cu
-+            template-instances/fattn-vec-instance-turbo2_0-turbo2_0.cu
-+            template-instances/fattn-vec-instance-turbo2_0-q8_0.cu
-+            template-instances/fattn-vec-instance-q8_0-turbo2_0.cu
-+            template-instances/fattn-vec-instance-f16-turbo2_0.cu
-+            template-instances/fattn-vec-instance-turbo2_0-f16.cu
-+            template-instances/fattn-vec-instance-turbo3_0-turbo2_0.cu
-+            template-instances/fattn-vec-instance-turbo2_0-turbo3_0.cu
-+            template-instances/fattn-vec-instance-turbo4_0-turbo4_0.cu
-+            template-instances/fattn-vec-instance-turbo4_0-q8_0.cu
-+            template-instances/fattn-vec-instance-q8_0-turbo4_0.cu
-+            template-instances/fattn-vec-instance-f16-turbo4_0.cu
-+            template-instances/fattn-vec-instance-turbo4_0-f16.cu
-+            template-instances/fattn-vec-instance-turbo4_0-turbo3_0.cu
-+            template-instances/fattn-vec-instance-turbo3_0-turbo4_0.cu
-+            template-instances/fattn-vec-instance-turbo4_0-turbo2_0.cu
-+            template-instances/fattn-vec-instance-turbo2_0-turbo4_0.cu)
-     endif()
+@@ -112,8 +112,36 @@ if (CUDAToolkit_FOUND)
+     file(GLOB   SRCS "template-instances/mmf*.cu")
+     list(APPEND GGML_SOURCES_CUDA ${SRCS})
+ 
++    # arifi: mixed f16/bf16 + q8_0 KV cache vec instances stay in the default build
++    string(TOLOWER "${GGML_CUDA_FA_QUANTS}" GGML_CUDA_FA_QUANTS_LC)
++    if (NOT GGML_CUDA_FA_ALL_QUANTS AND NOT GGML_CUDA_FA_QUANTS_LC STREQUAL "all")
++        set(GGML_CUDA_FA_QUANTS "${GGML_CUDA_FA_QUANTS};f16-q8_0;q8_0-f16;bf16-q8_0;q8_0-bf16")
++    endif()
+     ggml_cuda_fattn_vec_instances(${CMAKE_CURRENT_SOURCE_DIR} SRCS)
+     list(APPEND GGML_SOURCES_CUDA ${SRCS})
++    # arifi: TurboQuant KV cache vec instances (always compiled, outside GGML_CUDA_FA_QUANTS)
++    list(APPEND GGML_SOURCES_CUDA
++        template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cu
++        template-instances/fattn-vec-instance-turbo3_0-q8_0.cu
++        template-instances/fattn-vec-instance-q8_0-turbo3_0.cu
++        template-instances/fattn-vec-instance-f16-turbo3_0.cu
++        template-instances/fattn-vec-instance-turbo3_0-f16.cu
++        template-instances/fattn-vec-instance-turbo2_0-turbo2_0.cu
++        template-instances/fattn-vec-instance-turbo2_0-q8_0.cu
++        template-instances/fattn-vec-instance-q8_0-turbo2_0.cu
++        template-instances/fattn-vec-instance-f16-turbo2_0.cu
++        template-instances/fattn-vec-instance-turbo2_0-f16.cu
++        template-instances/fattn-vec-instance-turbo3_0-turbo2_0.cu
++        template-instances/fattn-vec-instance-turbo2_0-turbo3_0.cu
++        template-instances/fattn-vec-instance-turbo4_0-turbo4_0.cu
++        template-instances/fattn-vec-instance-turbo4_0-q8_0.cu
++        template-instances/fattn-vec-instance-q8_0-turbo4_0.cu
++        template-instances/fattn-vec-instance-f16-turbo4_0.cu
++        template-instances/fattn-vec-instance-turbo4_0-f16.cu
++        template-instances/fattn-vec-instance-turbo4_0-turbo3_0.cu
++        template-instances/fattn-vec-instance-turbo3_0-turbo4_0.cu
++        template-instances/fattn-vec-instance-turbo4_0-turbo2_0.cu
++        template-instances/fattn-vec-instance-turbo2_0-turbo4_0.cu)
  
      ggml_add_backend_library(ggml-cuda
-@@ -205,7 +230,8 @@ if (CUDAToolkit_FOUND)
+                              ${GGML_HEADERS_CUDA}
+@@ -196,7 +224,8 @@ if (CUDAToolkit_FOUND)
          # - speed (nvcc's default)
          # - balance
          # - size
@@ -233,10 +240,10 @@ index 10828ad81..e593c4a28 100644
  
      if (GGML_FATAL_WARNINGS)
 diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
-index 9918c0394..b18214ddc 100644
+index 5363dd001c..b52e0387d4 100644
 --- a/ggml/src/ggml-cuda/common.cuh
 +++ b/ggml/src/ggml-cuda/common.cuh
-@@ -259,7 +259,7 @@ static const char * cu_get_error_str(CUresult err) {
+@@ -268,7 +268,7 @@ static const char * cu_get_error_str(CUresult err) {
  #define FP16_AVAILABLE
  #endif // defined(GGML_USE_HIP) || defined(GGML_USE_MUSA) || __CUDA_ARCH__ >= GGML_CUDA_CC_PASCAL
  
@@ -245,7 +252,7 @@ index 9918c0394..b18214ddc 100644
  #define FAST_FP16_AVAILABLE
  #endif // defined(FP16_AVAILABLE) && __CUDA_ARCH__ != 610
  
-@@ -303,13 +303,13 @@ static bool fp16_available(const int cc) {
+@@ -312,13 +312,13 @@ static bool fp16_available(const int cc) {
  
  static bool fast_fp16_available(const int cc) {
      return GGML_CUDA_CC_IS_AMD(cc) ||
@@ -261,7 +268,7 @@ index 9918c0394..b18214ddc 100644
          (GGML_CUDA_CC_IS_MTHREADS(cc) && cc >= GGML_CUDA_CC_QY2);
  }
  
-@@ -841,12 +841,12 @@ static __device__ __forceinline__ float ggml_cuda_e8m0_to_fp32(uint8_t x) {
+@@ -847,12 +847,12 @@ static __device__ __forceinline__ float ggml_cuda_e8m0_to_fp32(uint8_t x) {
  static __device__ __forceinline__ float ggml_cuda_ue4m3_to_fp32(uint8_t x) {
  #if defined(GGML_USE_HIP) && defined(CDNA3) && defined(FP8_AVAILABLE) && HIP_VERSION >= 60200000
      // ROCm does not support fp8 in software on devices with fp8 hardware,
@@ -276,7 +283,7 @@ index 9918c0394..b18214ddc 100644
      const uint32_t bits = x * (x != 0x7F && x != 0xFF); // Convert NaN to 0.0f to match CPU implementation.
      const __nv_fp8_e4m3 xf = *reinterpret_cast<const __nv_fp8_e4m3 *>(&bits);
      return static_cast<float>(xf) / 2;
-@@ -1157,6 +1157,11 @@ struct ggml_cuda_device_info {
+@@ -1187,6 +1187,11 @@ struct ggml_cuda_device_info {
  
      cuda_device_info devices[GGML_CUDA_MAX_DEVICES] = {};
  
@@ -289,7 +296,7 @@ index 9918c0394..b18214ddc 100644
  };
  
 diff --git a/ggml/src/ggml-cuda/convert.cu b/ggml/src/ggml-cuda/convert.cu
-index 360c614a4..9c1b861c3 100644
+index 0619f4760e..cdcdb53d8d 100644
 --- a/ggml/src/ggml-cuda/convert.cu
 +++ b/ggml/src/ggml-cuda/convert.cu
 @@ -1,5 +1,6 @@
@@ -350,7 +357,7 @@ index 360c614a4..9c1b861c3 100644
  static void dequantize_block_q8_0_f16_cuda(const void * __restrict__ vx, half * __restrict__ y, const int64_t k, cudaStream_t stream) {
      const int num_blocks = (k + CUDA_Q8_0_NE_ALIGN - 1) / CUDA_Q8_0_NE_ALIGN;
      if (k % CUDA_Q8_0_NE_ALIGN == 0) {
-@@ -563,6 +608,16 @@ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
+@@ -595,6 +640,16 @@ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
              return dequantize_row_mxfp4_cuda;
          case GGML_TYPE_NVFP4:
              return dequantize_row_nvfp4_cuda;
@@ -367,7 +374,7 @@ index 360c614a4..9c1b861c3 100644
          case GGML_TYPE_F32:
              return convert_unary_cont_cuda<float>;
          case GGML_TYPE_BF16:
-@@ -620,6 +675,16 @@ to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
+@@ -652,6 +707,16 @@ to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
              return dequantize_row_mxfp4_cuda;
          case GGML_TYPE_NVFP4:
              return dequantize_row_nvfp4_cuda;
@@ -384,7 +391,7 @@ index 360c614a4..9c1b861c3 100644
          case GGML_TYPE_F16:
              return convert_unary_cont_cuda<half>;
          case GGML_TYPE_BF16:
-@@ -647,6 +712,16 @@ to_fp16_nc_cuda_t ggml_get_to_fp16_nc_cuda(ggml_type type) {
+@@ -679,6 +744,16 @@ to_fp16_nc_cuda_t ggml_get_to_fp16_nc_cuda(ggml_type type) {
              return dequantize_block_cuda<QK5_1, QR5_1, dequantize_q5_1>;
          case GGML_TYPE_Q8_0:
              return dequantize_block_cuda<QK8_0, QR8_0, dequantize_q8_0>;
@@ -401,7 +408,7 @@ index 360c614a4..9c1b861c3 100644
          case GGML_TYPE_BF16:
              return convert_unary_cuda<nv_bfloat16>;
          default:
-@@ -697,6 +772,16 @@ to_fp32_nc_cuda_t ggml_get_to_fp32_nc_cuda(ggml_type type) {
+@@ -729,6 +804,16 @@ to_fp32_nc_cuda_t ggml_get_to_fp32_nc_cuda(ggml_type type) {
              return dequantize_block_cuda<QK5_1, QR5_1, dequantize_q5_1>;
          case GGML_TYPE_Q8_0:
              return dequantize_block_cuda<QK8_0, QR8_0, dequantize_q8_0>;
@@ -419,7 +426,7 @@ index 360c614a4..9c1b861c3 100644
              return convert_unary_cuda<nv_bfloat16, float>;
          default:
 diff --git a/ggml/src/ggml-cuda/dequantize.cuh b/ggml/src/ggml-cuda/dequantize.cuh
-index 651524be7..c74a3910d 100644
+index 651524be7b..c74a3910d4 100644
 --- a/ggml/src/ggml-cuda/dequantize.cuh
 +++ b/ggml/src/ggml-cuda/dequantize.cuh
 @@ -1,5 +1,6 @@
@@ -535,7 +542,7 @@ index 651524be7..c74a3910d 100644
 +    v.y = buf[iqs + 1];
 +}
 diff --git a/ggml/src/ggml-cuda/dsv4-hc.cu b/ggml/src/ggml-cuda/dsv4-hc.cu
-index c4b19a787..4eb73b6a3 100644
+index ca1d2dc8a4..0b67416719 100644
 --- a/ggml/src/ggml-cuda/dsv4-hc.cu
 +++ b/ggml/src/ggml-cuda/dsv4-hc.cu
 @@ -3,36 +3,18 @@
@@ -706,7 +713,7 @@ index c4b19a787..4eb73b6a3 100644
      }
  }
  
-@@ -209,9 +210,9 @@ void ggml_cuda_op_dsv4_hc_comb(ggml_backend_cuda_context & ctx, ggml_tensor * ds
+@@ -222,9 +223,9 @@ void ggml_cuda_op_dsv4_hc_comb(ggml_backend_cuda_context & ctx, ggml_tensor * ds
      const float eps = ggml_get_op_params_f32(dst, 0);
      const int32_t n_iter = ggml_get_op_params_i32(dst, 1);
  
@@ -718,7 +725,7 @@ index c4b19a787..4eb73b6a3 100644
      const ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(grid_dims, block_dims, 0, ctx.stream());
  
      ggml_cuda_kernel_launch(dsv4_hc_comb_f32, launch_params,
-@@ -223,7 +224,6 @@ void ggml_cuda_op_dsv4_hc_comb(ggml_backend_cuda_context & ctx, ggml_tensor * ds
+@@ -236,7 +237,6 @@ void ggml_cuda_op_dsv4_hc_comb(ggml_backend_cuda_context & ctx, ggml_tensor * ds
              nbd0 / sizeof(float), nbd1 / sizeof(float), nbd2 / sizeof(float),
              eps, n_iter);
  }
@@ -727,7 +734,7 @@ index c4b19a787..4eb73b6a3 100644
      const ggml_tensor * x       = dst->src[0];
      const ggml_tensor * weights = dst->src[1];
 diff --git a/ggml/src/ggml-cuda/fattn-common.cuh b/ggml/src/ggml-cuda/fattn-common.cuh
-index 7442bc22a..dd62b7269 100644
+index 6d1ce52dbc..d61fac3ac3 100644
 --- a/ggml/src/ggml-cuda/fattn-common.cuh
 +++ b/ggml/src/ggml-cuda/fattn-common.cuh
 @@ -3,6 +3,7 @@
@@ -1359,7 +1366,7 @@ index 7442bc22a..dd62b7269 100644
          }
      }
  
-@@ -1114,7 +1527,6 @@ void launch_fattn(
+@@ -1118,7 +1531,6 @@ void launch_fattn(
  
          const int ne_KV_max = blocks_num_KV_max.x*blocks_num_KV_max.y;
          const int iter_k = K->ne[1] / FATTN_KQ_STRIDE;
@@ -1367,18 +1374,7 @@ index 7442bc22a..dd62b7269 100644
          KV_max.alloc(ne_KV_max);
          ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(blocks_num_KV_max, block_dim_KV_max, 0, main_stream);
          ggml_cuda_kernel_launch(flash_attn_mask_to_KV_max<ncols1>, launch_params,
-@@ -1221,9 +1633,7 @@ void launch_fattn(
-     const uint3 ne01 = init_fastdiv_values(Q->ne[1]);
- 
-     GGML_ASSERT(block_dim.x % warp_size == 0);
--
--        ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(blocks_num, block_dim, nbytes_shared, main_stream);
--        ggml_cuda_kernel_launch(fattn_kernel, launch_params,
-+    fattn_kernel<<<blocks_num, block_dim, nbytes_shared, main_stream>>>(
-         (const char *) Q->data,
-         K_data,
-         V_data,
-@@ -1253,9 +1663,9 @@ void launch_fattn(
+@@ -1266,9 +1678,9 @@ void launch_fattn(
              const dim3 block_dim_combine(DV, 1, 1);
              const dim3 blocks_num_combine = {(unsigned)ntiles_dst, ncols1, ncols2};
  
@@ -1391,7 +1387,7 @@ index 7442bc22a..dd62b7269 100644
                   Q->ne[1], Q->ne[2], K->ne[2], nblocks_sk,
                   gqa_ratio, bpt, fd0, fd1, fd2);
          } else if (ntiles_dst % blocks_num.x != 0) {
-@@ -1270,9 +1680,9 @@ void launch_fattn(
+@@ -1283,9 +1695,9 @@ void launch_fattn(
              const dim3 block_dim_combine(DV, 1, 1);
              const dim3 blocks_num_combine = {blocks_num.x, ncols1, ncols2};
  
@@ -1404,7 +1400,7 @@ index 7442bc22a..dd62b7269 100644
                   Q->ne[1], Q->ne[2], gqa_ratio, total_work,
                   fd_k_j_z_ne12, fd_k_j_z, fd_k_j, fd_k);
          }
-@@ -1281,9 +1691,9 @@ void launch_fattn(
+@@ -1294,9 +1706,9 @@ void launch_fattn(
          const dim3 blocks_num_combine(Q->ne[1], Q->ne[2], Q->ne[3]);
          const size_t nbytes_shared_combine = parallel_blocks*sizeof(float2);
  
@@ -1418,7 +1414,7 @@ index 7442bc22a..dd62b7269 100644
      CUDA_CHECK(cudaGetLastError());
  }
 diff --git a/ggml/src/ggml-cuda/fattn-mma-f16.cuh b/ggml/src/ggml-cuda/fattn-mma-f16.cuh
-index 126a4c452..a0bcf539d 100644
+index abb99a354a..535d6481fd 100644
 --- a/ggml/src/ggml-cuda/fattn-mma-f16.cuh
 +++ b/ggml/src/ggml-cuda/fattn-mma-f16.cuh
 @@ -1,3 +1,5 @@
@@ -1427,7 +1423,7 @@ index 126a4c452..a0bcf539d 100644
  #include "common.cuh"
  #include "cp-async.cuh"
  #include "mma.cuh"
-@@ -85,6 +87,11 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
+@@ -84,6 +86,11 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
      GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 32, 128, 2,  32, 160, 128, 128, 1, false);
      GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 64, 256, 1,  32, 160, 128, 128, 1, false);
  
@@ -1439,7 +1435,7 @@ index 126a4c452..a0bcf539d 100644
      return fattn_mma_config(32, 1, 0, 0, 0, 0, 0, false);
  }
  
-@@ -107,6 +114,11 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
+@@ -106,6 +113,11 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
      GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 32, 128, 2,  32, 160, 128, 128, 1, false);
      GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 64, 256, 1,  32, 160, 128, 128, 1, false);
  
@@ -1451,7 +1447,7 @@ index 126a4c452..a0bcf539d 100644
      return ggml_cuda_fattn_mma_get_config_ampere(DKQ, DV, ncols);
  }
  
-@@ -121,6 +133,11 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
+@@ -120,6 +132,11 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
      GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 32, 128, 2,  32, 160, 128,  64, 1, false);
      GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 64, 256, 1,  32, 160, 128,  64, 1, false);
  
@@ -1463,7 +1459,7 @@ index 126a4c452..a0bcf539d 100644
      // TODO tune specifically for Volta
      return ggml_cuda_fattn_mma_get_config_ampere(DKQ, DV, ncols);
  }
-@@ -174,7 +191,16 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
+@@ -173,7 +190,16 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
      GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 32, 128, 2,  32, 160, 128, 128, 1, true);
      GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 64, 128, 2,  32, 160, 128, 128, 1, true);
  
@@ -1481,7 +1477,7 @@ index 126a4c452..a0bcf539d 100644
  }
  
  static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_config_cdna(const int DKQ, const int DV, const int ncols) {
-@@ -226,6 +252,11 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
+@@ -225,6 +251,11 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
      GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 32, 256, 1,  64, 160, 128, 128, 1, true);
      GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 64, 256, 1,  64, 160, 128, 128, 1, true);
  
@@ -1493,7 +1489,7 @@ index 126a4c452..a0bcf539d 100644
      return fattn_mma_config(32, 1, 0, 0, 0, 0, 0, false);
  }
  
-@@ -476,6 +507,145 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
+@@ -492,6 +523,145 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
      }
  }
  
@@ -1639,7 +1635,7 @@ index 126a4c452..a0bcf539d 100644
  template<int ncols1, int nwarps, int nbatch_fa, bool use_cp_async, bool oob_check, bool use_sparse>
  static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
          const half * const __restrict__ mask_h, half * const __restrict__ tile_mask,
-@@ -565,7 +735,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
+@@ -581,7 +751,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
  
  template<int DKQ, int DV, int ncols1, int ncols2, int nwarps,
      bool use_logit_softcap, bool V_is_K_view, bool use_sparse, bool needs_fixup, bool is_fixup, bool last_iter, bool oob_check,
@@ -1649,7 +1645,7 @@ index 126a4c452..a0bcf539d 100644
  static __device__ __forceinline__ void flash_attn_ext_f16_iter(
          const float2 * const __restrict__ Q_f2,
          const half2  * const __restrict__ K_h2,
-@@ -603,7 +774,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+@@ -619,7 +790,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
      constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2(DKQ, DV, ncols);
      constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2(DKQ, DV, ncols);
      constexpr bool Q_in_reg        = ggml_cuda_fattn_mma_get_Q_in_reg (DKQ, DV, ncols);
@@ -1660,9 +1656,9 @@ index 126a4c452..a0bcf539d 100644
 +    constexpr bool is_turbo_kv     = (type_K != GGML_TYPE_F16 || type_V != GGML_TYPE_F16);
 +    constexpr int  nstages         = is_turbo_kv ? 0 : ggml_cuda_fattn_mma_get_nstages  (DKQ, DV, ncols1, ncols2, use_sparse);
  
-     // swizzle the tile stride for K and V based on the batch size.
-     constexpr int stride_tile_K = ggml_cuda_fattn_smem_swizzle::tile_stride(nbatch_K2);
-@@ -644,7 +819,27 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+     constexpr bool swz = ggml_cuda_fattn_mma_get_swizzled(DKQ, DV, ncols1, ncols2);
+     constexpr int stride_tile_K = ggml_cuda_fattn_mma_get_stride_tile(nbatch_K2, swz);
+@@ -658,7 +833,27 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
      for (int k0_start = (DKQ/2-1) - (DKQ/2-1) % nbatch_K2; k0_start >= 0; k0_start -= nbatch_K2) {
          const int k0_stop = k0_start + nbatch_K2 < DKQ/2 ? k0_start + nbatch_K2 : DKQ/2;
  
@@ -1690,8 +1686,8 @@ index 126a4c452..a0bcf539d 100644
 +        } else if constexpr (nstages <= 1) {
              const int k0_diff = k0_stop - k0_start;
              constexpr bool use_cp_async = nstages == 1;
-             flash_attn_ext_f16_load_tile<stride_tile_K, swz_K, nwarps, nbatch_fa, use_cp_async, oob_check, use_sparse>
-@@ -996,7 +1191,28 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+             flash_attn_ext_f16_load_tile<stride_tile_K, swz, nwarps, nbatch_fa, use_cp_async, oob_check, use_sparse>
+@@ -1010,7 +1205,28 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
          static_assert(DV % (2*nbatch_V2) == 0, "bad loop size");
          const int i0_stop = i0_start + 2*nbatch_V2;
  
@@ -1721,7 +1717,7 @@ index 126a4c452..a0bcf539d 100644
              const int i0_diff = i0_stop - i0_start;
              if (!V_is_K_view || i0_stop > 2*nbatch_K2) {
                  constexpr bool use_cp_async = nstages == 1;
-@@ -1154,7 +1370,8 @@ template<int DV, int ncols> struct mma_tile_sizes {
+@@ -1195,7 +1411,8 @@ template<int DKQ, int ncols> struct mma_tile_sizes {
  };
  #endif // defined(TURING_MMA_AVAILABLE)
  
@@ -1731,7 +1727,7 @@ index 126a4c452..a0bcf539d 100644
  static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
          const float2 * const __restrict__ Q_f2,
          const half2  * const __restrict__ K_h2,
-@@ -1200,7 +1417,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+@@ -1241,7 +1458,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
      constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2     (DKQ, DV, ncols);
      constexpr int  nbatch_combine  = ggml_cuda_fattn_mma_get_nbatch_combine(DKQ, DV, ncols);
      constexpr bool Q_in_reg        = ggml_cuda_fattn_mma_get_Q_in_reg      (DKQ, DV, ncols);
@@ -1742,7 +1738,7 @@ index 126a4c452..a0bcf539d 100644
  
      if (cols_per_warp > ncols) {
          NO_DEVICE_CODE;
-@@ -1322,7 +1541,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+@@ -1363,7 +1582,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
              constexpr int  k_VKQ_sup = nbatch_fa;
              flash_attn_ext_f16_iter
                  <DKQ, DV, ncols1, ncols2, nwarps, use_logit_softcap, V_is_K_view, use_sparse, needs_fixup, is_fixup, last_iter, oob_check,
@@ -1751,7 +1747,7 @@ index 126a4c452..a0bcf539d 100644
                  (Q_f2, K_h2, V_h2, mask_h, indices, dstk, dstk_fixup, scale, slope, logit_softcap,
                   ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C,
                   KQ_max, KQ_rowsum, jt, kb0, k_VKQ_sup);
-@@ -1331,7 +1550,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+@@ -1372,7 +1591,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
          const     int  k_VKQ_sup = ne11 - kb0*nbatch_fa;
          flash_attn_ext_f16_iter
              <DKQ, DV, ncols1, ncols2, nwarps, use_logit_softcap, V_is_K_view, use_sparse, needs_fixup, is_fixup, last_iter, oob_check,
@@ -1760,7 +1756,7 @@ index 126a4c452..a0bcf539d 100644
              (Q_f2, K_h2, V_h2, mask_h, indices, dstk, dstk_fixup, scale, slope, logit_softcap,
               ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C,
               KQ_max, KQ_rowsum, jt, kb0, k_VKQ_sup);
-@@ -1342,7 +1561,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+@@ -1383,7 +1602,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
              constexpr int  k_VKQ_sup = nbatch_fa;
              flash_attn_ext_f16_iter
                  <DKQ, DV, ncols1, ncols2, nwarps, use_logit_softcap, V_is_K_view, use_sparse, needs_fixup, is_fixup, last_iter, oob_check,
@@ -1769,7 +1765,7 @@ index 126a4c452..a0bcf539d 100644
                  (Q_f2, K_h2, V_h2, mask_h, indices, dstk, dstk_fixup, scale, slope, logit_softcap,
                   ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C,
                   KQ_max, KQ_rowsum, jt, kb0, k_VKQ_sup);
-@@ -1351,7 +1570,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+@@ -1392,7 +1611,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
          constexpr int  k_VKQ_sup = nbatch_fa;
          flash_attn_ext_f16_iter
              <DKQ, DV, ncols1, ncols2, nwarps, use_logit_softcap, V_is_K_view, use_sparse, needs_fixup, is_fixup, last_iter, oob_check,
@@ -1778,8 +1774,8 @@ index 126a4c452..a0bcf539d 100644
              (Q_f2, K_h2, V_h2, mask_h, indices, dstk, dstk_fixup, scale, slope, logit_softcap,
               ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C,
               KQ_max, KQ_rowsum, jt, kb0, k_VKQ_sup);
-@@ -1761,7 +1980,8 @@ static constexpr __host__ __device__ bool ggml_cuda_flash_attn_ext_mma_f16_may_u
-            (DKQ == 576 && DV == 512 && ncols1 == 1 && ncols2 == 16);
+@@ -1802,7 +2021,8 @@ static constexpr __host__ __device__ bool ggml_cuda_flash_attn_ext_mma_f16_may_u
+            (DKQ == 256 && DV == 256 && ncols1 == 8 && ncols2 == 8);
  }
  
 -template<int DKQ, int DV, int ncols1, int ncols2, bool use_logit_softcap, bool V_is_K_view, bool use_sparse>
@@ -1788,7 +1784,7 @@ index 126a4c452..a0bcf539d 100644
  __launch_bounds__(ggml_cuda_fattn_mma_get_nthreads(DKQ, DV, ncols1*ncols2), ggml_cuda_fattn_mma_get_occupancy(DKQ, DV, ncols1*ncols2))
  static __global__ void flash_attn_ext_f16(
          const char * Q_ptr,
-@@ -1847,12 +2067,17 @@ static __global__ void flash_attn_ext_f16(
+@@ -1889,12 +2109,17 @@ static __global__ void flash_attn_ext_f16(
  
      const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
  
@@ -1808,7 +1804,7 @@ index 126a4c452..a0bcf539d 100644
  
      const int iter_k     = (ne11      + (nbatch_fa - 1)) / nbatch_fa;
      const int iter_j     = (ne01.z    + (ncols1    - 1)) / ncols1;
-@@ -1897,12 +2122,12 @@ static __global__ void flash_attn_ext_f16(
+@@ -1945,12 +2170,12 @@ static __global__ void flash_attn_ext_f16(
          constexpr bool is_fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
          if (kb0_start == 0) {
              constexpr bool needs_fixup = false; // CUDA block is working on an entire tile.
@@ -1823,7 +1819,7 @@ index 126a4c452..a0bcf539d 100644
                  (Q_f2, K_h2, V_h2, mask_h, indices, sinks_f, dstk, dst_meta, scale, slope, logit_softcap,
                   ne01, ne02, gqa_ratio, ne11, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, zt_gqa, kb0_start, kb0_stop);
          }
-@@ -1944,7 +2169,7 @@ static __global__ void flash_attn_ext_f16(
+@@ -1994,7 +2219,7 @@ static __global__ void flash_attn_ext_f16(
  
      constexpr bool is_fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
      constexpr bool needs_fixup = false;
@@ -1832,7 +1828,7 @@ index 126a4c452..a0bcf539d 100644
          (Q_f2, K_h2, V_h2, mask_h, indices, sinks_f, dstk, dst_meta, scale, slope, logit_softcap,
           ne01, ne02, gqa_ratio, ne11, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, zt_gqa, kb0_start, kb0_stop);
  #else
-@@ -2134,3 +2359,8 @@ extern DECL_FATTN_MMA_F16_CASE(576, 512,  8,  4);
+@@ -2181,3 +2406,8 @@ extern DECL_FATTN_MMA_F16_CASE(576, 512,  8,  4);
  extern DECL_FATTN_MMA_F16_CASE(576, 512, 16,  4);
  extern DECL_FATTN_MMA_F16_CASE(576, 512,  1, 32);
  extern DECL_FATTN_MMA_F16_CASE(576, 512,  2, 32);
@@ -1843,7 +1839,7 @@ index 126a4c452..a0bcf539d 100644
 +extern DECL_FATTN_MMA_F16_CASE(640, 512, 4, 16);
 diff --git a/ggml/src/ggml-cuda/fattn-mma-turbo.cuh b/ggml/src/ggml-cuda/fattn-mma-turbo.cuh
 new file mode 100644
-index 000000000..f727e22ff
+index 0000000000..f727e22ff8
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/fattn-mma-turbo.cuh
 @@ -0,0 +1,118 @@
@@ -1966,7 +1962,7 @@ index 000000000..f727e22ff
 +DECL_FATTN_MMA_TURBO_ALL(128, 128, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 +DECL_FATTN_MMA_TURBO_ALL(256, 256, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/fattn-tile.cu b/ggml/src/ggml-cuda/fattn-tile.cu
-index e563729a2..b1f07888f 100644
+index e563729a2e..b1f07888f7 100644
 --- a/ggml/src/ggml-cuda/fattn-tile.cu
 +++ b/ggml/src/ggml-cuda/fattn-tile.cu
 @@ -49,10 +49,17 @@ void ggml_cuda_flash_attn_ext_tile(ggml_backend_cuda_context & ctx, ggml_tensor
@@ -1988,7 +1984,7 @@ index e563729a2..b1f07888f 100644
              GGML_ABORT("Unsupported head size");
          } break;
 diff --git a/ggml/src/ggml-cuda/fattn-tile.cuh b/ggml/src/ggml-cuda/fattn-tile.cuh
-index 8981ab804..1103cff22 100644
+index 8981ab804c..1103cff227 100644
 --- a/ggml/src/ggml-cuda/fattn-tile.cuh
 +++ b/ggml/src/ggml-cuda/fattn-tile.cuh
 @@ -84,6 +84,10 @@ static constexpr __host__ __device__ uint32_t ggml_cuda_fattn_tile_get_config_nv
@@ -2052,7 +2048,7 @@ index 8981ab804..1103cff22 100644
  extern DECL_FATTN_TILE_CASE(576, 512);
 +extern DECL_FATTN_TILE_CASE(640, 512);
 diff --git a/ggml/src/ggml-cuda/fattn-vec.cuh b/ggml/src/ggml-cuda/fattn-vec.cuh
-index 519b36b9f..1e0465ecb 100644
+index 57a2855659..451ac53347 100644
 --- a/ggml/src/ggml-cuda/fattn-vec.cuh
 +++ b/ggml/src/ggml-cuda/fattn-vec.cuh
 @@ -17,7 +17,7 @@ static constexpr __device__ int ggml_cuda_fattn_vec_get_nthreads_device() {
@@ -2213,16 +2209,16 @@ index 519b36b9f..1e0465ecb 100644
  
  #ifdef V_DOT2_F32_F16_AVAILABLE
              const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale, KQ_max_scale);
-@@ -318,7 +404,7 @@ static __global__ void flash_attn_ext_vec(
+@@ -317,7 +403,7 @@ static __global__ void flash_attn_ext_vec(
+ #endif // V_DOT2_F32_F16_AVAILABLE
          }
  
- #ifndef GGML_USE_HIP
--        __syncwarp();
-+        if constexpr (!V_is_turbo) { __syncwarp(); }
- #endif // GGML_USE_HIP
+-        ggml_cuda_syncwarp();
++        if constexpr (!V_is_turbo) { ggml_cuda_syncwarp(); }
  
  #pragma unroll
-@@ -329,8 +415,29 @@ static __global__ void flash_attn_ext_vec(
+         for (int k0 = 0; k0 < WARP_SIZE; k0 += V_cols_per_iter) {
+@@ -327,8 +413,29 @@ static __global__ void flash_attn_ext_vec(
              half2 KQ_k[ncols];
  #pragma unroll
              for (int j = 0; j < ncols; ++j) {
@@ -2253,7 +2249,7 @@ index 519b36b9f..1e0465ecb 100644
  #pragma unroll
              for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
                  half2 tmp[V_rows_per_thread/2];
-@@ -358,19 +465,142 @@ static __global__ void flash_attn_ext_vec(
+@@ -356,19 +463,142 @@ static __global__ void flash_attn_ext_vec(
              float KQ_k[ncols];
  #pragma unroll
              for (int j = 0; j < ncols; ++j) {
@@ -2404,7 +2400,7 @@ index 519b36b9f..1e0465ecb 100644
                      }
                  }
              }
-@@ -390,10 +620,10 @@ static __global__ void flash_attn_ext_vec(
+@@ -388,10 +618,10 @@ static __global__ void flash_attn_ext_vec(
              }
  
              const float kqmax_new_j = fmaxf(sink, KQ_max[j]);
@@ -2417,7 +2413,7 @@ index 519b36b9f..1e0465ecb 100644
  
  #ifdef V_DOT2_F32_F16_AVAILABLE
              const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale, KQ_max_scale);
-@@ -439,7 +669,7 @@ static __global__ void flash_attn_ext_vec(
+@@ -437,7 +667,7 @@ static __global__ void flash_attn_ext_vec(
  
          float kqmax_new = KQ_max_shared[j_VKQ][threadIdx.x];
          kqmax_new = warp_reduce_max(kqmax_new);
@@ -2426,7 +2422,7 @@ index 519b36b9f..1e0465ecb 100644
          KQ_max[j_VKQ] = kqmax_new;
  
  #ifdef V_DOT2_F32_F16_AVAILABLE
-@@ -609,3 +839,99 @@ EXTERN_DECL_FATTN_VEC_CASES(256, GGML_TYPE_Q5_0)
+@@ -607,3 +837,99 @@ EXTERN_DECL_FATTN_VEC_CASES(256, GGML_TYPE_Q5_0)
  EXTERN_DECL_FATTN_VEC_CASES(256, GGML_TYPE_Q5_1)
  EXTERN_DECL_FATTN_VEC_CASES(256, GGML_TYPE_Q8_0)
  EXTERN_DECL_FATTN_VEC_CASES(256, GGML_TYPE_BF16)
@@ -2527,7 +2523,7 @@ index 519b36b9f..1e0465ecb 100644
 +extern DECL_FATTN_VEC_CASE(128, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO4_0);
 +extern DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO4_0);
 diff --git a/ggml/src/ggml-cuda/fattn.cu b/ggml/src/ggml-cuda/fattn.cu
-index ae217fbd9..0e42242d0 100644
+index d1fcf58cb1..a9890652a4 100644
 --- a/ggml/src/ggml-cuda/fattn.cu
 +++ b/ggml/src/ggml-cuda/fattn.cu
 @@ -1,6 +1,7 @@
@@ -2538,7 +2534,7 @@ index ae217fbd9..0e42242d0 100644
  #include "fattn-tile.cuh"
  #include "fattn-vec.cuh"
  #include "fattn.cuh"
-@@ -221,17 +222,17 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
+@@ -263,17 +264,17 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
          }
      }
  
@@ -2559,7 +2555,7 @@ index ae217fbd9..0e42242d0 100644
          ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<DKQ, DV, 2>(ctx, dst);
          return;
      }
-@@ -243,6 +244,90 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
+@@ -285,6 +286,90 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
      }
  }
  
@@ -2650,7 +2646,7 @@ index ae217fbd9..0e42242d0 100644
  static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
      const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
      const ggml_tensor * KQV  = dst;
-@@ -368,6 +453,17 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
+@@ -410,6 +495,17 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
                  ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512,  4>(ctx, dst);
              }
          } break;
@@ -2668,69 +2664,69 @@ index ae217fbd9..0e42242d0 100644
          default:
              GGML_ABORT("fatal error");
              break;
-@@ -455,8 +551,59 @@ static void ggml_cuda_flash_attn_ext_vec(ggml_backend_cuda_context & ctx, ggml_t
-     FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q4_0, GGML_TYPE_Q4_0)
-     FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q8_0, GGML_TYPE_Q8_0)
-     FATTN_VEC_CASES_ALL_D(GGML_TYPE_BF16, GGML_TYPE_BF16)
-+
-+    // Mixed f16/bf16 + q8_0 KV cache types (default build)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_F16,  GGML_TYPE_Q8_0)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q8_0, GGML_TYPE_F16)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_BF16, GGML_TYPE_Q8_0)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q8_0, GGML_TYPE_BF16)
- #endif // GGML_CUDA_FA_ALL_QUANTS
+@@ -430,6 +526,29 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
+     FATTN_VEC_CASE(128, type_K_case, type_V_case)       \
+     FATTN_VEC_CASE(256, type_K_case, type_V_case)       \
  
-+    // TurboQuant3 KV cache types (always enabled)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO3_0)
++// arifi: TurboQuant KV cache vec instances are always compiled (see ggml-cuda/CMakeLists.txt)
++#define GGML_CUDA_FA_TURBO3_0_TURBO3_0 1
++#define GGML_CUDA_FA_TURBO3_0_Q8_0 1
++#define GGML_CUDA_FA_Q8_0_TURBO3_0 1
++#define GGML_CUDA_FA_F16_TURBO3_0 1
++#define GGML_CUDA_FA_TURBO3_0_F16 1
++#define GGML_CUDA_FA_TURBO2_0_TURBO2_0 1
++#define GGML_CUDA_FA_TURBO2_0_Q8_0 1
++#define GGML_CUDA_FA_Q8_0_TURBO2_0 1
++#define GGML_CUDA_FA_F16_TURBO2_0 1
++#define GGML_CUDA_FA_TURBO2_0_F16 1
++#define GGML_CUDA_FA_TURBO3_0_TURBO2_0 1
++#define GGML_CUDA_FA_TURBO2_0_TURBO3_0 1
++#define GGML_CUDA_FA_TURBO4_0_TURBO4_0 1
++#define GGML_CUDA_FA_TURBO4_0_Q8_0 1
++#define GGML_CUDA_FA_Q8_0_TURBO4_0 1
++#define GGML_CUDA_FA_F16_TURBO4_0 1
++#define GGML_CUDA_FA_TURBO4_0_F16 1
++#define GGML_CUDA_FA_TURBO4_0_TURBO3_0 1
++#define GGML_CUDA_FA_TURBO3_0_TURBO4_0 1
++#define GGML_CUDA_FA_TURBO4_0_TURBO2_0 1
++#define GGML_CUDA_FA_TURBO2_0_TURBO4_0 1
 +
-+    // Mixed turbo3/q8_0 KV cache types
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO3_0, GGML_TYPE_Q8_0)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q8_0,     GGML_TYPE_TURBO3_0)
+ typedef void (* fattn_vec_case_t)(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
+ 
+ // Vector kernel for the given head size and K/V types, nullptr if its template instance was not compiled:
+@@ -490,6 +609,29 @@ static fattn_vec_case_t ggml_cuda_get_fattn_vec_case(const int64_t head_size, co
+     FATTN_VEC_CASES_ALL_D(Q8_0, BF16)
+     FATTN_VEC_CASES_ALL_D(BF16, BF16)
+ 
++    // arifi: TurboQuant KV cache types
++    FATTN_VEC_CASES_ALL_D(TURBO3_0, TURBO3_0)
++    FATTN_VEC_CASES_ALL_D(TURBO3_0, Q8_0)
++    FATTN_VEC_CASES_ALL_D(Q8_0, TURBO3_0)
++    FATTN_VEC_CASES_ALL_D(F16, TURBO3_0)
++    FATTN_VEC_CASES_ALL_D(TURBO3_0, F16)
++    FATTN_VEC_CASES_ALL_D(TURBO2_0, TURBO2_0)
++    FATTN_VEC_CASES_ALL_D(TURBO2_0, Q8_0)
++    FATTN_VEC_CASES_ALL_D(Q8_0, TURBO2_0)
++    FATTN_VEC_CASES_ALL_D(F16, TURBO2_0)
++    FATTN_VEC_CASES_ALL_D(TURBO2_0, F16)
++    FATTN_VEC_CASES_ALL_D(TURBO3_0, TURBO2_0)
++    FATTN_VEC_CASES_ALL_D(TURBO2_0, TURBO3_0)
++    FATTN_VEC_CASES_ALL_D(TURBO4_0, TURBO4_0)
++    FATTN_VEC_CASES_ALL_D(TURBO4_0, Q8_0)
++    FATTN_VEC_CASES_ALL_D(Q8_0, TURBO4_0)
++    FATTN_VEC_CASES_ALL_D(F16, TURBO4_0)
++    FATTN_VEC_CASES_ALL_D(TURBO4_0, F16)
++    FATTN_VEC_CASES_ALL_D(TURBO4_0, TURBO3_0)
++    FATTN_VEC_CASES_ALL_D(TURBO3_0, TURBO4_0)
++    FATTN_VEC_CASES_ALL_D(TURBO4_0, TURBO2_0)
++    FATTN_VEC_CASES_ALL_D(TURBO2_0, TURBO4_0)
 +
-+    // Mixed f16/turbo3 KV cache types
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_F16,      GGML_TYPE_TURBO3_0)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO3_0, GGML_TYPE_F16)
-+
-+    // TurboQuant2 KV cache types (always enabled)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0)
-+
-+    // Mixed turbo2/q8_0 KV cache types
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO2_0, GGML_TYPE_Q8_0)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q8_0,     GGML_TYPE_TURBO2_0)
-+
-+    // Mixed f16/turbo2 KV cache types
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_F16,      GGML_TYPE_TURBO2_0)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO2_0, GGML_TYPE_F16)
-+
-+    // Mixed turbo3/turbo2 KV cache types
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO2_0)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO3_0)
-+
-+    // TurboQuant4 KV cache types (always enabled)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO4_0, GGML_TYPE_TURBO4_0)
-+
-+    // Mixed turbo4/q8_0 KV cache types
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO4_0, GGML_TYPE_Q8_0)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q8_0,     GGML_TYPE_TURBO4_0)
-+
-+    // Mixed f16/turbo4 KV cache types
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_F16,      GGML_TYPE_TURBO4_0)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO4_0, GGML_TYPE_F16)
-+
-+    // Mixed turbo4/turbo3 KV cache types
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO4_0, GGML_TYPE_TURBO3_0)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO4_0)
-+
-+    // Mixed turbo4/turbo2 KV cache types
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO4_0, GGML_TYPE_TURBO2_0)
-+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO4_0)
-+
-     GGML_ABORT("fatal error");
+     return nullptr;
  }
  
-@@ -483,6 +630,12 @@ static bool ggml_cuda_fattn_kv_type_supported(ggml_type type) {
+@@ -533,6 +675,12 @@ static bool ggml_cuda_fattn_kv_type_supported(const ggml_type type) {
+         case GGML_TYPE_Q5_1:
          case GGML_TYPE_Q8_0:
-         case GGML_TYPE_BF16:
              return true;
 +        case GGML_TYPE_TURBO2_0:
 +        case GGML_TYPE_TURBO3_0:
@@ -2741,7 +2737,7 @@ index ae217fbd9..0e42242d0 100644
          default:
              return false;
      }
-@@ -561,6 +714,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+@@ -611,6 +759,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
              }
              break;
          case 576:
@@ -2749,25 +2745,7 @@ index ae217fbd9..0e42242d0 100644
              if (V->ne[0] != 512) {
                  return BEST_FATTN_KERNEL_NONE;
              }
-@@ -574,7 +728,16 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
- 
- #ifndef GGML_CUDA_FA_ALL_QUANTS
-     if (K->type != V->type) {
--        return BEST_FATTN_KERNEL_NONE;
-+        // Allow mixed KV types for combinations that have FA template instances compiled in:
-+        // - turbo2/3/4 + q8_0 (turbo cache work)
-+        // - f16/bf16 + q8_0 (common K=f16, V=q8_0 setup)
-+        auto is_kv_compat = [](ggml_type t) {
-+            return t == GGML_TYPE_TURBO2_0 || t == GGML_TYPE_TURBO3_0 || t == GGML_TYPE_TURBO4_0
-+                || t == GGML_TYPE_Q8_0 || t == GGML_TYPE_F16 || t == GGML_TYPE_BF16;
-+        };
-+        if (!is_kv_compat(K->type) || !is_kv_compat(V->type)) {
-+            return BEST_FATTN_KERNEL_NONE;
-+        }
-     }
- #endif // GGML_CUDA_FA_ALL_QUANTS
- 
-@@ -582,6 +745,17 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+@@ -626,6 +775,17 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
          return BEST_FATTN_KERNEL_NONE;
      }
  
@@ -2785,7 +2763,7 @@ index ae217fbd9..0e42242d0 100644
      if (mask && mask->ne[2] != 1) {
          return BEST_FATTN_KERNEL_NONE;
      }
-@@ -590,6 +764,22 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+@@ -634,6 +794,22 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
      // 192 satisfies % 64 == 0 but has no vec instance (DKQ != DV); force it onto the MMA path.
      const bool can_use_vector_kernel = Q->ne[0] <= 256 && Q->ne[0] % 64 == 0 && Q->ne[0] != 192 && K->ne[1] % FATTN_KQ_STRIDE == 0;
  
@@ -2808,7 +2786,7 @@ index ae217fbd9..0e42242d0 100644
      // If Turing tensor cores are available, use them:
      if (turing_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72) {
          if (can_use_vector_kernel) {
-@@ -615,7 +805,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+@@ -664,7 +840,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
          return BEST_FATTN_KERNEL_MMA_F16;
      }
  
@@ -2817,7 +2795,7 @@ index ae217fbd9..0e42242d0 100644
      int gqa_ratio_eff = 1;
      while (gqa_ratio % (2*gqa_ratio_eff) == 0 && gqa_ratio_eff < ncols2_max) {
          gqa_ratio_eff *= 2;
-@@ -631,6 +821,32 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+@@ -680,6 +856,32 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
          return BEST_FATTN_KERNEL_MMA_F16;
      }
  
@@ -2850,15 +2828,15 @@ index ae217fbd9..0e42242d0 100644
      // AMD MFMA needs a certain minimum batch size to outscale the tile kernel for large head sizes.
      if ((amd_mfma_available(cc) && Q->ne[0] <= 256) && Q->ne[0] != 40 && Q->ne[0] != 72) {
          if ((Q->ne[0] <= 64 && Q->ne[1] * gqa_ratio_eff > 8)) {
-@@ -668,6 +884,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+@@ -718,6 +920,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
  
  size_t ggml_cuda_flash_attn_ext_get_alloc_size(int device, const ggml_tensor * dst) {
      GGML_ASSERT(dst->op == GGML_OP_FLASH_ATTN_EXT);
 +    GGML_UNUSED(device);
  
+     const ggml_tensor * Q = dst->src[0];
      const ggml_tensor * K = dst->src[1];
-     const ggml_tensor * V = dst->src[2];
-@@ -702,6 +919,46 @@ size_t ggml_cuda_flash_attn_ext_get_alloc_size(int device, const ggml_tensor * d
+@@ -754,6 +957,46 @@ size_t ggml_cuda_flash_attn_ext_get_alloc_size(int device, const ggml_tensor * d
  
  void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
      ggml_cuda_set_device(ctx.device);
@@ -2906,7 +2884,7 @@ index ae217fbd9..0e42242d0 100644
          case BEST_FATTN_KERNEL_NONE:
              GGML_ABORT("fatal error");
 diff --git a/ggml/src/ggml-cuda/getrows.cu b/ggml/src/ggml-cuda/getrows.cu
-index 6b36b8fbc..d1832f192 100644
+index 6b36b8fbc1..d1832f1925 100644
 --- a/ggml/src/ggml-cuda/getrows.cu
 +++ b/ggml/src/ggml-cuda/getrows.cu
 @@ -404,6 +404,16 @@ static void ggml_cuda_get_rows_switch_src0_type(
@@ -2927,10 +2905,10 @@ index 6b36b8fbc..d1832f192 100644
              GGML_ABORT("%s: unsupported src0 type: %s\n", __func__, ggml_type_name(src0_type));
              break;
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 45e9537f0..595b045cb 100644
+index e76ff3128f..b4f4bfb8c9 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -63,6 +63,8 @@
+@@ -64,6 +64,8 @@
  #include "ggml-cuda/dsv4-hc.cuh"
  #include "ggml-cuda/set.cuh"
  #include "ggml-cuda/set-rows.cuh"
@@ -2939,7 +2917,7 @@ index 45e9537f0..595b045cb 100644
  #include "ggml-cuda/pad_reflect_1d.cuh"
  #include "ggml-cuda/solve_tri.cuh"
  #include "ggml-cuda/tri.cuh"
-@@ -117,6 +119,8 @@ static int ggml_cuda_get_physical_device(int device) {
+@@ -118,6 +120,8 @@ static int ggml_cuda_get_physical_device(int device) {
  
  // this is faster on Windows
  // probably because the Windows CUDA libraries forget to make this check before invoking the drivers
@@ -2948,7 +2926,7 @@ index 45e9537f0..595b045cb 100644
  void ggml_cuda_set_device(int device) {
      // translate the (possibly virtual) device id to the physical CUDA device that backs it
      const int physical_device = ggml_cuda_get_physical_device(device);
-@@ -402,6 +406,7 @@ static ggml_cuda_device_info ggml_cuda_init() {
+@@ -394,6 +398,7 @@ static ggml_cuda_device_info ggml_cuda_init() {
                  CUDA_CHECK(cudaDeviceCanAccessPeer(&can_access_peer, id, id_other));
                  if (can_access_peer) {
                      CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
@@ -2956,7 +2934,7 @@ index 45e9537f0..595b045cb 100644
                  }
              }
          }
-@@ -784,10 +789,49 @@ static void ggml_backend_cuda_buffer_memset_tensor(ggml_backend_buffer_t buffer,
+@@ -776,10 +781,49 @@ static void ggml_backend_cuda_buffer_memset_tensor(ggml_backend_buffer_t buffer,
      CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
  }
  
@@ -3006,7 +2984,7 @@ index 45e9537f0..595b045cb 100644
      CUDA_CHECK(cudaMemcpyAsync((char *) tensor->data + offset, data, size, cudaMemcpyHostToDevice, cudaStreamPerThread));
      CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
  }
-@@ -830,6 +874,8 @@ static bool ggml_backend_cuda_buffer_cpy_tensor(ggml_backend_buffer_t buffer, co
+@@ -822,6 +866,8 @@ static bool ggml_backend_cuda_buffer_cpy_tensor(ggml_backend_buffer_t buffer, co
          const int dst_physical = ggml_cuda_get_physical_device(dst_ctx->device);
          if (src_physical == dst_physical) {
              CUDA_CHECK(cudaMemcpyAsync(dst->data, src->data, ggml_nbytes(src), cudaMemcpyDeviceToDevice, cudaStreamPerThread));
@@ -3015,7 +2993,7 @@ index 45e9537f0..595b045cb 100644
          } else {
  #ifdef GGML_CUDA_NO_PEER_COPY
              return false;
-@@ -849,8 +895,7 @@ static void ggml_backend_cuda_buffer_clear(ggml_backend_buffer_t buffer, uint8_t
+@@ -841,8 +887,7 @@ static void ggml_backend_cuda_buffer_clear(ggml_backend_buffer_t buffer, uint8_t
      ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
  
      ggml_cuda_set_device(ctx->device);
@@ -3025,7 +3003,7 @@ index 45e9537f0..595b045cb 100644
  }
  
  static const ggml_backend_buffer_i ggml_backend_cuda_buffer_interface = {
-@@ -917,6 +962,13 @@ static size_t ggml_backend_cuda_buffer_type_get_alloc_size(ggml_backend_buffer_t
+@@ -909,6 +954,13 @@ static size_t ggml_backend_cuda_buffer_type_get_alloc_size(ggml_backend_buffer_t
      int64_t ne0 = tensor->ne[0];
  
      // [TAG_ALLOC_SIZE_EXPAND]
@@ -3103,7 +3081,7 @@ index 45e9537f0..595b045cb 100644
          case GGML_OP_SET:
              ggml_cuda_op_set(ctx, dst);
              break;
-@@ -2511,6 +2585,8 @@ static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_src, ggml_
+@@ -2514,6 +2588,8 @@ static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_src, ggml_
          const int dst_physical = ggml_cuda_get_physical_device(cuda_ctx_dst->device);
          if (src_physical == dst_physical) {
              CUDA_CHECK(cudaMemcpyAsync(dst->data, src->data, ggml_nbytes(dst), cudaMemcpyDeviceToDevice, cuda_ctx_src->stream()));
@@ -3112,7 +3090,7 @@ index 45e9537f0..595b045cb 100644
          } else {
  #ifdef GGML_CUDA_NO_PEER_COPY
              return false;
-@@ -2563,9 +2639,10 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
+@@ -2566,9 +2642,10 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
          }
  
          // [TAG_MUL_MAT_ID_CUDA_GRAPHS]
@@ -3124,7 +3102,7 @@ index 45e9537f0..595b045cb 100644
                  // the mul_mat_id fallback path synchronizes the stream, so we cannot use CUDA graphs
                  // ref: https://github.com/ggml-org/llama.cpp/pull/18958
                  use_cuda_graph = false;
-@@ -5167,6 +5244,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -5259,6 +5336,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                      case GGML_TYPE_IQ4_NL:
                      case GGML_TYPE_IQ4_XS:
                      case GGML_TYPE_BF16:
@@ -3133,7 +3111,7 @@ index 45e9537f0..595b045cb 100644
                          return true;
                      default:
                          return false;
-@@ -5201,6 +5280,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -5293,6 +5372,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                      case GGML_TYPE_IQ1_S:
                      case GGML_TYPE_IQ1_M:
                      case GGML_TYPE_IQ4_XS:
@@ -3142,7 +3120,7 @@ index 45e9537f0..595b045cb 100644
                          return true;
                      case GGML_TYPE_IQ4_NL:
                      case GGML_TYPE_MXFP4:
-@@ -5217,11 +5298,20 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -5309,11 +5390,20 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
              } break;
          case GGML_OP_SET_ROWS:
              {
@@ -3164,7 +3142,7 @@ index 45e9537f0..595b045cb 100644
                                 op->src[0]->type == GGML_TYPE_F32
                             ) || (
                                 op->type == GGML_TYPE_F16 && op->src[0]->type == GGML_TYPE_F16
-@@ -5387,6 +5477,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -5476,6 +5566,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
          case GGML_OP_CLAMP:
          case GGML_OP_LOG:
              return true;
@@ -3174,7 +3152,7 @@ index 45e9537f0..595b045cb 100644
          case GGML_OP_ADD:
          case GGML_OP_SUB:
          case GGML_OP_MUL:
-@@ -5552,7 +5645,7 @@ static ggml_backend_event_t ggml_backend_cuda_device_event_new(ggml_backend_dev_
+@@ -5643,7 +5736,7 @@ static ggml_backend_event_t ggml_backend_cuda_device_event_new(ggml_backend_dev_
      ggml_cuda_set_device(dev_ctx->device);
  
      cudaEvent_t event;
@@ -3185,7 +3163,7 @@ index 45e9537f0..595b045cb 100644
          /* .device  = */ dev,
 diff --git a/ggml/src/ggml-cuda/mmvq-tq.cu b/ggml/src/ggml-cuda/mmvq-tq.cu
 new file mode 100644
-index 000000000..967036b4d
+index 0000000000..967036b4d5
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/mmvq-tq.cu
 @@ -0,0 +1,568 @@
@@ -3759,7 +3737,7 @@ index 000000000..967036b4d
 +}
 diff --git a/ggml/src/ggml-cuda/mmvq-tq.cuh b/ggml/src/ggml-cuda/mmvq-tq.cuh
 new file mode 100644
-index 000000000..1083f5ef4
+index 0000000000..1083f5ef42
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/mmvq-tq.cuh
 @@ -0,0 +1,17 @@
@@ -3781,7 +3759,7 @@ index 000000000..1083f5ef4
 +// Load-time conversion: TQ4_1S → q8_0 in VRAM (dequant + requantize)
 +void ggml_cuda_convert_tq4_1s_to_q8_0(const void * src_tq4, void * dst_q8, int64_t n_elements, cudaStream_t stream);
 diff --git a/ggml/src/ggml-cuda/set-rows.cu b/ggml/src/ggml-cuda/set-rows.cu
-index 465997065..314267889 100644
+index 4659970651..3142678890 100644
 --- a/ggml/src/ggml-cuda/set-rows.cu
 +++ b/ggml/src/ggml-cuda/set-rows.cu
 @@ -1,5 +1,6 @@
@@ -4745,7 +4723,7 @@ index 465997065..314267889 100644
          set_rows_cuda(
              src0_d, src1_d, (half*)dst->data,
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_1-ncols2_16.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_1-ncols2_16.cu
-index b2661b931..b572da280 100644
+index b2661b9316..b572da280d 100644
 --- a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_1-ncols2_16.cu
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_1-ncols2_16.cu
 @@ -4,3 +4,4 @@
@@ -4754,7 +4732,7 @@ index b2661b931..b572da280 100644
  DECL_FATTN_MMA_F16_CASE(576, 512, 1, 16);
 +DECL_FATTN_MMA_F16_CASE(640, 512, 1, 16);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_2-ncols2_16.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_2-ncols2_16.cu
-index fd41e71b1..c868bfbd6 100644
+index fd41e71b14..c868bfbd61 100644
 --- a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_2-ncols2_16.cu
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_2-ncols2_16.cu
 @@ -4,3 +4,4 @@
@@ -4763,7 +4741,7 @@ index fd41e71b1..c868bfbd6 100644
  DECL_FATTN_MMA_F16_CASE(576, 512, 2, 16);
 +DECL_FATTN_MMA_F16_CASE(640, 512, 2, 16);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_4-ncols2_16.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_4-ncols2_16.cu
-index cc41fa52f..221a566ea 100644
+index cc41fa52f1..221a566ead 100644
 --- a/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_4-ncols2_16.cu
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-f16-instance-ncols1_4-ncols2_16.cu
 @@ -4,3 +4,4 @@
@@ -4773,7 +4751,7 @@ index cc41fa52f..221a566ea 100644
 +DECL_FATTN_MMA_F16_CASE(640, 512, 4, 16);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_1-ncols2_8.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_1-ncols2_8.cu
 new file mode 100644
-index 000000000..125c434e8
+index 0000000000..125c434e87
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_1-ncols2_8.cu
 @@ -0,0 +1,9 @@
@@ -4788,7 +4766,7 @@ index 000000000..125c434e8
 +DECL_FATTN_MMA_TURBO_CASE(128, 128, 1, 8, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_2-ncols2_4.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_2-ncols2_4.cu
 new file mode 100644
-index 000000000..848ab338d
+index 0000000000..848ab338d8
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_2-ncols2_4.cu
 @@ -0,0 +1,9 @@
@@ -4803,7 +4781,7 @@ index 000000000..848ab338d
 +DECL_FATTN_MMA_TURBO_CASE(128, 128, 2, 4, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_2-ncols2_8.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_2-ncols2_8.cu
 new file mode 100644
-index 000000000..30859abce
+index 0000000000..30859abcea
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_2-ncols2_8.cu
 @@ -0,0 +1,9 @@
@@ -4818,7 +4796,7 @@ index 000000000..30859abce
 +DECL_FATTN_MMA_TURBO_CASE(128, 128, 2, 8, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_4-ncols2_2.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_4-ncols2_2.cu
 new file mode 100644
-index 000000000..0ba26f42b
+index 0000000000..0ba26f42b8
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_4-ncols2_2.cu
 @@ -0,0 +1,9 @@
@@ -4833,7 +4811,7 @@ index 000000000..0ba26f42b
 +DECL_FATTN_MMA_TURBO_CASE(128, 128, 4, 2, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_4-ncols2_4.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_4-ncols2_4.cu
 new file mode 100644
-index 000000000..dcf8a5d71
+index 0000000000..dcf8a5d716
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_4-ncols2_4.cu
 @@ -0,0 +1,9 @@
@@ -4848,7 +4826,7 @@ index 000000000..dcf8a5d71
 +DECL_FATTN_MMA_TURBO_CASE(128, 128, 4, 4, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_4-ncols2_8.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_4-ncols2_8.cu
 new file mode 100644
-index 000000000..f419a2a2e
+index 0000000000..f419a2a2e6
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_4-ncols2_8.cu
 @@ -0,0 +1,9 @@
@@ -4863,7 +4841,7 @@ index 000000000..f419a2a2e
 +DECL_FATTN_MMA_TURBO_CASE(128, 128, 4, 8, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_8-ncols2_1.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_8-ncols2_1.cu
 new file mode 100644
-index 000000000..401add615
+index 0000000000..401add615a
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq128-ncols1_8-ncols2_1.cu
 @@ -0,0 +1,9 @@
@@ -4878,7 +4856,7 @@ index 000000000..401add615
 +DECL_FATTN_MMA_TURBO_CASE(128, 128, 8, 1, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_1-ncols2_8.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_1-ncols2_8.cu
 new file mode 100644
-index 000000000..3950e95a2
+index 0000000000..3950e95a2a
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_1-ncols2_8.cu
 @@ -0,0 +1,9 @@
@@ -4893,7 +4871,7 @@ index 000000000..3950e95a2
 +DECL_FATTN_MMA_TURBO_CASE(256, 256, 1, 8, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_2-ncols2_4.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_2-ncols2_4.cu
 new file mode 100644
-index 000000000..e9d24ebab
+index 0000000000..e9d24ebabd
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_2-ncols2_4.cu
 @@ -0,0 +1,9 @@
@@ -4908,7 +4886,7 @@ index 000000000..e9d24ebab
 +DECL_FATTN_MMA_TURBO_CASE(256, 256, 2, 4, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_2-ncols2_8.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_2-ncols2_8.cu
 new file mode 100644
-index 000000000..e985b7334
+index 0000000000..e985b7334e
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_2-ncols2_8.cu
 @@ -0,0 +1,9 @@
@@ -4923,7 +4901,7 @@ index 000000000..e985b7334
 +DECL_FATTN_MMA_TURBO_CASE(256, 256, 2, 8, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_4-ncols2_2.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_4-ncols2_2.cu
 new file mode 100644
-index 000000000..5c77cc217
+index 0000000000..5c77cc2173
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_4-ncols2_2.cu
 @@ -0,0 +1,9 @@
@@ -4938,7 +4916,7 @@ index 000000000..5c77cc217
 +DECL_FATTN_MMA_TURBO_CASE(256, 256, 4, 2, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_4-ncols2_4.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_4-ncols2_4.cu
 new file mode 100644
-index 000000000..41cf95217
+index 0000000000..41cf95217f
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_4-ncols2_4.cu
 @@ -0,0 +1,9 @@
@@ -4953,7 +4931,7 @@ index 000000000..41cf95217
 +DECL_FATTN_MMA_TURBO_CASE(256, 256, 4, 4, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_4-ncols2_8.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_4-ncols2_8.cu
 new file mode 100644
-index 000000000..69b08b6f5
+index 0000000000..69b08b6f5d
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_4-ncols2_8.cu
 @@ -0,0 +1,9 @@
@@ -4968,7 +4946,7 @@ index 000000000..69b08b6f5
 +DECL_FATTN_MMA_TURBO_CASE(256, 256, 4, 8, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_8-ncols2_1.cu b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_8-ncols2_1.cu
 new file mode 100644
-index 000000000..31b8f5580
+index 0000000000..31b8f5580f
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-mma-turbo-instance-dkq256-ncols1_8-ncols2_1.cu
 @@ -0,0 +1,9 @@
@@ -4983,7 +4961,7 @@ index 000000000..31b8f5580
 +DECL_FATTN_MMA_TURBO_CASE(256, 256, 8, 1, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-tile-instance-dkq640-dv512.cu b/ggml/src/ggml-cuda/template-instances/fattn-tile-instance-dkq640-dv512.cu
 new file mode 100644
-index 000000000..c68a841ad
+index 0000000000..c68a841ad4
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-tile-instance-dkq640-dv512.cu
 @@ -0,0 +1,5 @@
@@ -4994,7 +4972,7 @@ index 000000000..c68a841ad
 +DECL_FATTN_TILE_CASE(640, 512);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-f16-turbo2_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-f16-turbo2_0.cu
 new file mode 100644
-index 000000000..7f39d08ac
+index 0000000000..7f39d08ac6
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-f16-turbo2_0.cu
 @@ -0,0 +1,7 @@
@@ -5007,7 +4985,7 @@ index 000000000..7f39d08ac
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_F16, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-f16-turbo3_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-f16-turbo3_0.cu
 new file mode 100644
-index 000000000..eb94cd3c8
+index 0000000000..eb94cd3c85
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-f16-turbo3_0.cu
 @@ -0,0 +1,7 @@
@@ -5020,7 +4998,7 @@ index 000000000..eb94cd3c8
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_F16, GGML_TYPE_TURBO3_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-f16-turbo4_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-f16-turbo4_0.cu
 new file mode 100644
-index 000000000..ab9ed678d
+index 0000000000..ab9ed678dd
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-f16-turbo4_0.cu
 @@ -0,0 +1,7 @@
@@ -5033,7 +5011,7 @@ index 000000000..ab9ed678d
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_F16, GGML_TYPE_TURBO4_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo2_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo2_0.cu
 new file mode 100644
-index 000000000..3630d871a
+index 0000000000..3630d871af
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo2_0.cu
 @@ -0,0 +1,7 @@
@@ -5046,7 +5024,7 @@ index 000000000..3630d871a
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_Q8_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo3_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo3_0.cu
 new file mode 100644
-index 000000000..c8a4d9f89
+index 0000000000..c8a4d9f899
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo3_0.cu
 @@ -0,0 +1,7 @@
@@ -5059,7 +5037,7 @@ index 000000000..c8a4d9f89
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_Q8_0, GGML_TYPE_TURBO3_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo4_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo4_0.cu
 new file mode 100644
-index 000000000..1646ef05d
+index 0000000000..1646ef05dd
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo4_0.cu
 @@ -0,0 +1,7 @@
@@ -5072,7 +5050,7 @@ index 000000000..1646ef05d
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_Q8_0, GGML_TYPE_TURBO4_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-f16.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-f16.cu
 new file mode 100644
-index 000000000..83ac361f6
+index 0000000000..83ac361f6f
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-f16.cu
 @@ -0,0 +1,7 @@
@@ -5085,7 +5063,7 @@ index 000000000..83ac361f6
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO2_0, GGML_TYPE_F16);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-q8_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-q8_0.cu
 new file mode 100644
-index 000000000..c9cd1afa8
+index 0000000000..c9cd1afa8e
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-q8_0.cu
 @@ -0,0 +1,7 @@
@@ -5098,7 +5076,7 @@ index 000000000..c9cd1afa8
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO2_0, GGML_TYPE_Q8_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo2_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo2_0.cu
 new file mode 100644
-index 000000000..f68422d39
+index 0000000000..f68422d398
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo2_0.cu
 @@ -0,0 +1,7 @@
@@ -5111,7 +5089,7 @@ index 000000000..f68422d39
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo3_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo3_0.cu
 new file mode 100644
-index 000000000..334ad2098
+index 0000000000..334ad2098b
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo3_0.cu
 @@ -0,0 +1,7 @@
@@ -5124,7 +5102,7 @@ index 000000000..334ad2098
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO3_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo4_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo4_0.cu
 new file mode 100644
-index 000000000..56177a4ca
+index 0000000000..56177a4cae
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo4_0.cu
 @@ -0,0 +1,7 @@
@@ -5137,7 +5115,7 @@ index 000000000..56177a4ca
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO4_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-f16.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-f16.cu
 new file mode 100644
-index 000000000..138a2213a
+index 0000000000..138a2213a6
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-f16.cu
 @@ -0,0 +1,7 @@
@@ -5150,7 +5128,7 @@ index 000000000..138a2213a
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO3_0, GGML_TYPE_F16);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-q8_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-q8_0.cu
 new file mode 100644
-index 000000000..601e4da41
+index 0000000000..601e4da41d
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-q8_0.cu
 @@ -0,0 +1,7 @@
@@ -5163,7 +5141,7 @@ index 000000000..601e4da41
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO3_0, GGML_TYPE_Q8_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo2_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo2_0.cu
 new file mode 100644
-index 000000000..f8a593253
+index 0000000000..f8a5932537
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo2_0.cu
 @@ -0,0 +1,7 @@
@@ -5176,7 +5154,7 @@ index 000000000..f8a593253
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cu
 new file mode 100644
-index 000000000..0322a3b0d
+index 0000000000..0322a3b0d0
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cu
 @@ -0,0 +1,7 @@
@@ -5189,7 +5167,7 @@ index 000000000..0322a3b0d
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO3_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo4_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo4_0.cu
 new file mode 100644
-index 000000000..063400671
+index 0000000000..0634006716
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo4_0.cu
 @@ -0,0 +1,7 @@
@@ -5202,7 +5180,7 @@ index 000000000..063400671
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO4_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-f16.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-f16.cu
 new file mode 100644
-index 000000000..6d86335be
+index 0000000000..6d86335bea
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-f16.cu
 @@ -0,0 +1,7 @@
@@ -5215,7 +5193,7 @@ index 000000000..6d86335be
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO4_0, GGML_TYPE_F16);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-q8_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-q8_0.cu
 new file mode 100644
-index 000000000..7e1e4c743
+index 0000000000..7e1e4c7434
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-q8_0.cu
 @@ -0,0 +1,7 @@
@@ -5228,7 +5206,7 @@ index 000000000..7e1e4c743
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO4_0, GGML_TYPE_Q8_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo2_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo2_0.cu
 new file mode 100644
-index 000000000..a0cffecf8
+index 0000000000..a0cffecf86
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo2_0.cu
 @@ -0,0 +1,7 @@
@@ -5241,7 +5219,7 @@ index 000000000..a0cffecf8
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO4_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo3_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo3_0.cu
 new file mode 100644
-index 000000000..54e93bd9c
+index 0000000000..54e93bd9cd
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo3_0.cu
 @@ -0,0 +1,7 @@
@@ -5254,7 +5232,7 @@ index 000000000..54e93bd9c
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO4_0, GGML_TYPE_TURBO3_0);
 diff --git a/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo4_0.cu b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo4_0.cu
 new file mode 100644
-index 000000000..b49c68329
+index 0000000000..b49c683291
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo4_0.cu
 @@ -0,0 +1,7 @@
@@ -5267,7 +5245,7 @@ index 000000000..b49c68329
 +DECL_FATTN_VEC_CASE(256, GGML_TYPE_TURBO4_0, GGML_TYPE_TURBO4_0);
 diff --git a/ggml/src/ggml-cuda/turbo-innerq.cu b/ggml/src/ggml-cuda/turbo-innerq.cu
 new file mode 100644
-index 000000000..af8b7f3f8
+index 0000000000..af8b7f3f8e
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/turbo-innerq.cu
 @@ -0,0 +1,32 @@
@@ -5305,7 +5283,7 @@ index 000000000..af8b7f3f8
 +}
 diff --git a/ggml/src/ggml-cuda/turbo-innerq.cuh b/ggml/src/ggml-cuda/turbo-innerq.cuh
 new file mode 100644
-index 000000000..7727a5b5f
+index 0000000000..7727a5b5fc
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/turbo-innerq.cuh
 @@ -0,0 +1,34 @@
@@ -5345,7 +5323,7 @@ index 000000000..7727a5b5f
 +TURBO_IQ_API void turbo_innerq_mark_tensor_updated(void);
 diff --git a/ggml/src/ggml-cuda/turbo-quant.cuh b/ggml/src/ggml-cuda/turbo-quant.cuh
 new file mode 100644
-index 000000000..defff6e82
+index 0000000000..defff6e826
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/turbo-quant.cuh
 @@ -0,0 +1,453 @@
@@ -5804,7 +5782,7 @@ index 000000000..defff6e82
 +};
 diff --git a/ggml/src/ggml-cuda/turbo-wht.cu b/ggml/src/ggml-cuda/turbo-wht.cu
 new file mode 100644
-index 000000000..65805f148
+index 0000000000..65805f148e
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/turbo-wht.cu
 @@ -0,0 +1,189 @@
@@ -5999,7 +5977,7 @@ index 000000000..65805f148
 +}
 diff --git a/ggml/src/ggml-cuda/turbo-wht.cuh b/ggml/src/ggml-cuda/turbo-wht.cuh
 new file mode 100644
-index 000000000..3038a1ab0
+index 0000000000..3038a1ab08
 --- /dev/null
 +++ b/ggml/src/ggml-cuda/turbo-wht.cuh
 @@ -0,0 +1,5 @@
@@ -6009,7 +5987,7 @@ index 000000000..3038a1ab0
 +
 +void ggml_cuda_turbo_wht(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
-index 9aa558f3f..8c367f82a 100644
+index 0a2f2829e5..46831c90b3 100644
 --- a/ggml/src/ggml-cuda/vendors/hip.h
 +++ b/ggml/src/ggml-cuda/vendors/hip.h
 @@ -29,11 +29,30 @@
@@ -6054,7 +6032,7 @@ index 9aa558f3f..8c367f82a 100644
  #define cudaEventCreateWithFlags hipEventCreateWithFlags
  #define cudaEventDisableTiming hipEventDisableTiming
  #define cudaEventRecord hipEventRecord
-@@ -118,6 +138,10 @@
+@@ -122,6 +142,10 @@
  #define cudaStreamPerThread hipStreamPerThread
  #define cudaStreamSynchronize hipStreamSynchronize
  #define cudaStreamWaitEvent hipStreamWaitEvent
@@ -6065,7 +6043,7 @@ index 9aa558f3f..8c367f82a 100644
  #define cudaGraphExec_t hipGraphExec_t
  #define cudaGraphNode_t hipGraphNode_t
  #define cudaKernelNodeParams hipKernelNodeParams
-@@ -130,6 +154,9 @@
+@@ -134,6 +158,9 @@
  #define cudaGraphNodeTypeKernel hipGraphNodeTypeKernel
  #define cudaGraphInstantiate hipGraphInstantiate
  #define cudaStreamEndCapture hipStreamEndCapture
@@ -6076,10 +6054,10 @@ index 9aa558f3f..8c367f82a 100644
  #define cudaGraphKernelNodeSetParams hipGraphKernelNodeSetParams
  #define cudaErrorInvalidDeviceFunction hipErrorInvalidDeviceFunction
 diff --git a/ggml/src/ggml-cuda/vendors/musa.h b/ggml/src/ggml-cuda/vendors/musa.h
-index 6d725c7ec..ab648bcf6 100644
+index 4243caab44..ed1d900872 100644
 --- a/ggml/src/ggml-cuda/vendors/musa.h
 +++ b/ggml/src/ggml-cuda/vendors/musa.h
-@@ -48,6 +48,7 @@
+@@ -49,6 +49,7 @@
  #define cudaErrorMemoryAllocation musaErrorMemoryAllocation
  #define cudaErrorPeerAccessAlreadyEnabled musaErrorPeerAccessAlreadyEnabled
  #define cudaErrorPeerAccessNotEnabled musaErrorPeerAccessNotEnabled
@@ -6087,7 +6065,7 @@ index 6d725c7ec..ab648bcf6 100644
  #define cudaEventCreateWithFlags musaEventCreateWithFlags
  #define cudaEventDisableTiming musaEventDisableTiming
  #define cudaEventRecord musaEventRecord
-@@ -77,7 +78,9 @@
+@@ -78,7 +79,9 @@
  #define cudaMemcpyDeviceToDevice musaMemcpyDeviceToDevice
  #define cudaMemcpyDeviceToHost musaMemcpyDeviceToHost
  #define cudaMemcpyHostToDevice musaMemcpyHostToDevice
@@ -6098,7 +6076,7 @@ index 6d725c7ec..ab648bcf6 100644
  #define cudaMemsetAsync musaMemsetAsync
  #define cudaMemGetInfo musaMemGetInfo
 diff --git a/ggml/src/ggml-hip/CMakeLists.txt b/ggml/src/ggml-hip/CMakeLists.txt
-index 47f16f56c..41ae71b4b 100644
+index a6a6b7271c..1172e1fdf7 100644
 --- a/ggml/src/ggml-hip/CMakeLists.txt
 +++ b/ggml/src/ggml-hip/CMakeLists.txt
 @@ -62,6 +62,8 @@ list(APPEND GGML_HEADERS_ROCM "../../include/ggml-cuda.h")
@@ -6110,38 +6088,38 @@ index 47f16f56c..41ae71b4b 100644
  list(APPEND GGML_SOURCES_ROCM ${SRCS})
  file(GLOB   SRCS "../ggml-cuda/template-instances/fattn-mma*.cu")
  list(APPEND GGML_SOURCES_ROCM ${SRCS})
-@@ -79,7 +81,28 @@ else()
-         ../ggml-cuda/template-instances/fattn-vec-instance-f16-f16.cu
-         ../ggml-cuda/template-instances/fattn-vec-instance-q4_0-q4_0.cu
-         ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-q8_0.cu
--        ../ggml-cuda/template-instances/fattn-vec-instance-bf16-bf16.cu)
-+        ../ggml-cuda/template-instances/fattn-vec-instance-bf16-bf16.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-q8_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo3_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-f16-turbo3_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-f16.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo2_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-q8_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo2_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-f16-turbo2_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-f16.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo2_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo3_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo4_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-q8_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo4_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-f16-turbo4_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-f16.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo3_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo4_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo2_0.cu
-+        ../ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo4_0.cu)
- endif()
+@@ -72,6 +74,29 @@ list(APPEND GGML_SOURCES_ROCM ${SRCS})
+ 
+ ggml_cuda_fattn_vec_instances(${CMAKE_CURRENT_SOURCE_DIR}/../ggml-cuda SRCS)
+ list(APPEND GGML_SOURCES_ROCM ${SRCS})
++# arifi: TurboQuant KV cache vec instances (always compiled, outside GGML_CUDA_FA_QUANTS)
++list(APPEND GGML_SOURCES_ROCM
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-q8_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo3_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-f16-turbo3_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-f16.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo2_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-q8_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo2_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-f16-turbo2_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-f16.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo2_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo3_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo4_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-q8_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-q8_0-turbo4_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-f16-turbo4_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-f16.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo3_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo3_0-turbo4_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo4_0-turbo2_0.cu
++    ../ggml-cuda/template-instances/fattn-vec-instance-turbo2_0-turbo4_0.cu)
  
  ggml_add_backend_library(ggml-hip
+                          ${GGML_HEADERS_ROCM}
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index c296d17b1..2401c858e 100644
+index dc6b695eb0..ddece6e64f 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
 @@ -1,7 +1,6 @@
@@ -6165,7 +6143,7 @@ index c296d17b1..2401c858e 100644
  
      return devs.back().get();
  }
-@@ -573,7 +572,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_conv_batched
+@@ -605,7 +604,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_conv_batched
      return res;
  }
  
@@ -6174,7 +6152,7 @@ index c296d17b1..2401c858e 100644
      GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
  
      char base[256];
-@@ -581,7 +580,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_scan(ggml_me
+@@ -613,7 +612,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_scan(ggml_me
  
      const int nsg = (ne00 + 31)/32;
  
@@ -6183,7 +6161,7 @@ index c296d17b1..2401c858e 100644
      snprintf(name, 256, "%s_nsg=%d", base, nsg);
  
      ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
-@@ -599,27 +598,6 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_scan(ggml_me
+@@ -631,27 +630,6 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_scan(ggml_me
      return res;
  }
  
@@ -6211,7 +6189,7 @@ index c296d17b1..2401c858e 100644
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rwkv(ggml_metal_library_t lib, const ggml_tensor * op) {
      char base[256];
      char name[256];
-@@ -726,6 +704,23 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_solve_tri(ggml_m
+@@ -758,6 +736,23 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_solve_tri(ggml_m
      return res;
  }
  
@@ -6235,7 +6213,7 @@ index c296d17b1..2401c858e 100644
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_ext(ggml_metal_library_t lib, const ggml_tensor * op, int nsg, int nxpsg, int r1ptg) {
      char base[256];
      char name[256];
-@@ -894,6 +889,18 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+@@ -928,6 +923,18 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
                  nr0 = N_R0_Q8_0;
                  smem = 32*sizeof(float)*N_R0_Q8_0;
              } break;
@@ -6254,7 +6232,7 @@ index c296d17b1..2401c858e 100644
          case GGML_TYPE_MXFP4:
              {
                  nsg = N_SG_MXFP4;
-@@ -1017,6 +1024,92 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+@@ -1129,6 +1136,92 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_amax(g
      return res;
  }
  
@@ -6347,7 +6325,7 @@ index c296d17b1..2401c858e 100644
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_map0(ggml_metal_library_t lib, int ne02, int ne20) {
      char base[256];
      char name[256];
-@@ -1029,8 +1122,15 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_map0(g
+@@ -1141,8 +1234,15 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_map0(g
          res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
      }
  
@@ -6363,7 +6341,7 @@ index c296d17b1..2401c858e 100644
  
      return res;
  }
-@@ -1129,6 +1229,18 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
+@@ -1247,6 +1347,18 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
                  nr0 = N_R0_Q8_0;
                  smem = 32*sizeof(float)*N_R0_Q8_0;
              } break;
@@ -6382,7 +6360,7 @@ index c296d17b1..2401c858e 100644
          case GGML_TYPE_MXFP4:
              {
                  nsg = N_SG_MXFP4;
-@@ -1450,23 +1562,6 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_p
+@@ -1655,23 +1767,6 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_p
      return res;
  }
  
@@ -6406,7 +6384,7 @@ index c296d17b1..2401c858e 100644
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_blk(
          ggml_metal_library_t lib,
          const struct ggml_tensor * op,
-@@ -1518,10 +1613,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext(
+@@ -1723,10 +1818,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext(
          bool    has_bias,
          bool    has_scap,
          bool    has_kvpad,
@@ -6418,7 +6396,7 @@ index c296d17b1..2401c858e 100644
      assert(op->op == GGML_OP_FLASH_ATTN_EXT);
  
      char base[256];
-@@ -1530,17 +1622,23 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext(
+@@ -1735,17 +1827,23 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext(
      const int32_t dk = (int32_t) op->src[1]->ne[0];
      const int32_t dv = (int32_t) op->src[2]->ne[0];
  
@@ -6445,7 +6423,7 @@ index c296d17b1..2401c858e 100644
      snprintf(name, 256, "%s_mask=%d_sinks=%d_bias=%d_scap=%d_kvpad=%d_bcm=%d_ns10=%d_ns20=%d_nsg=%d",
              base,
              has_mask,
-@@ -1609,10 +1707,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_v
+@@ -1814,10 +1912,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_v
          int32_t nqpsg,
          int32_t ne,
          int32_t nsg,
@@ -6457,7 +6435,7 @@ index c296d17b1..2401c858e 100644
      assert(op->op == GGML_OP_FLASH_ATTN_EXT);
  
      char base[256];
-@@ -1621,19 +1716,18 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_v
+@@ -1826,19 +1921,18 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_flash_attn_ext_v
      const int32_t dk = (int32_t) op->src[1]->ne[0];
      const int32_t dv = (int32_t) op->src[2]->ne[0];
  
@@ -6487,7 +6465,7 @@ index c296d17b1..2401c858e 100644
      snprintf(name, 256, "%s_mask=%d_sink=%d_bias=%d_scap=%d_kvpad=%d_sparse=%d_ns10=%d_ns20=%d_nsg=%d_nwg=%d",
              base,
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
-index 31fc07d44..4d4832add 100644
+index 1bdaecc737..2961ec5f97 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
 +++ b/ggml/src/ggml-metal/ggml-metal-device.h
 @@ -134,8 +134,12 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_scan_
@@ -6502,12 +6480,12 @@ index 31fc07d44..4d4832add 100644
 +struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq3_rotate_act   (ggml_metal_library_t lib, bool inverse);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv            (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_map0    (ggml_metal_library_t lib, int ne02, int ne20);
- struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id         (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_amax(ggml_metal_library_t lib);
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index e20a4e891..2aac8fad2 100644
+index 81ea7f9d7a..ef6ccbfabd 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -99,63 +99,8 @@ int ggml_metal_pipeline_max_theads_per_threadgroup(struct ggml_metal_pipeline_wi
+@@ -100,63 +100,8 @@ int ggml_metal_pipeline_max_theads_per_threadgroup(struct ggml_metal_pipeline_wi
      return pipeline.pipeline->obj.maxTotalThreadsPerThreadgroup;
  }
  
@@ -6572,7 +6550,7 @@ index e20a4e891..2aac8fad2 100644
  
      // kernels from a second metallib, resolved ahead of the combined library
      NSSet<NSString *> * override_fns;
-@@ -166,19 +111,9 @@ struct ggml_metal_library {
+@@ -167,19 +112,9 @@ struct ggml_metal_library {
      NSLock * lock;
  };
  
@@ -6595,7 +6573,7 @@ index e20a4e891..2aac8fad2 100644
  
  // note: defined below, after struct ggml_metal_device
  static void ggml_metal_device_disable_tensor(ggml_metal_device_t dev);
-@@ -198,188 +133,173 @@ static bool ggml_metal_library_parse_quoted_include(NSString * line, NSString **
+@@ -199,188 +134,173 @@ static bool ggml_metal_library_parse_quoted_include(NSString * line, NSString **
      NSScanner * scanner = [NSScanner scannerWithString:line];
      scanner.charactersToBeSkipped = [NSCharacterSet whitespaceCharacterSet];
  
@@ -6920,7 +6898,7 @@ index e20a4e891..2aac8fad2 100644
      }
  
      free(err_per_lib);
-@@ -432,54 +352,12 @@ ggml_metal_library_t ggml_metal_library_init(ggml_metal_device_t dev) {
+@@ -433,54 +353,12 @@ ggml_metal_library_t ggml_metal_library_init(ggml_metal_device_t dev) {
      id<MTLDevice> device = ggml_metal_device_get_obj(dev);
  
      ggml_metal_library_t res = calloc(1, sizeof(struct ggml_metal_library));
@@ -6977,7 +6955,7 @@ index e20a4e891..2aac8fad2 100644
      return res;
  #else
  #ifdef SWIFT_PACKAGE
-@@ -644,11 +522,10 @@ ggml_metal_library_t ggml_metal_library_init_from_source(ggml_metal_device_t dev
+@@ -645,11 +523,10 @@ ggml_metal_library_t ggml_metal_library_init_from_source(ggml_metal_device_t dev
          return NULL;
      }
  
@@ -6993,7 +6971,7 @@ index e20a4e891..2aac8fad2 100644
  
      return res;
  }
-@@ -658,14 +535,8 @@ void ggml_metal_library_free(ggml_metal_library_t lib) {
+@@ -659,14 +536,8 @@ void ggml_metal_library_free(ggml_metal_library_t lib) {
          return;
      }
  
@@ -7010,7 +6988,7 @@ index e20a4e891..2aac8fad2 100644
      }
  
      if (lib->override_fns) {
-@@ -751,9 +622,9 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_
+@@ -752,9 +623,9 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_
  
          id<MTLFunction> mtl_function;
          if (!cv) {
@@ -7022,7 +7000,7 @@ index e20a4e891..2aac8fad2 100644
          }
          if (!mtl_function) {
              [lib->lock unlock];
-@@ -838,9 +709,7 @@ void ggml_metal_encoder_free(ggml_metal_encoder_t encoder) {
+@@ -839,9 +710,7 @@ void ggml_metal_encoder_free(ggml_metal_encoder_t encoder) {
  }
  
  void ggml_metal_encoder_debug_group_push(ggml_metal_encoder_t encoder, const char * name) {
@@ -7033,7 +7011,7 @@ index e20a4e891..2aac8fad2 100644
  }
  
  void ggml_metal_encoder_debug_group_pop (ggml_metal_encoder_t encoder) {
-@@ -1071,273 +940,274 @@ static enum ggml_metal_device_id ggml_metal_device_id_parse(const char * name) {
+@@ -1075,282 +944,281 @@ static enum ggml_metal_device_id ggml_metal_device_id_parse(const char * name) {
      }
      const char * suffix = name + sizeof(prefix) - 1;
  
@@ -7371,7 +7349,7 @@ index e20a4e891..2aac8fad2 100644
  
 -                dev->props.use_shared_buffers = dev->props.has_unified_memory;
 +            dev->props.use_shared_buffers = dev->props.has_unified_memory;
- #if TARGET_OS_OSX
+ #if TARGET_OS_OSX && TARGET_CPU_X86_64
 -                // In case of eGPU, shared memory may be preferable.
 -                dev->props.use_shared_buffers |= [dev->mtl_device location] == MTLDeviceLocationExternal;
 +            // In case of eGPU, shared memory may be preferable.
@@ -7412,6 +7390,19 @@ index e20a4e891..2aac8fad2 100644
 +                dev->props.max_working_set_size   = dev->mtl_device.recommendedMaxWorkingSetSize;
 +            } else {
 +                dev->props.max_working_set_size   = dev->mtl_device.maxBufferLength;
++            }
+ 
+-                {
+-                    const char * val = getenv("GGML_METAL_FUSION_DEBUG");
+-                    dev->finfo = ggml_metal_fusion_info_init(
+-                            getenv("GGML_METAL_FUSION_DISABLE") == nil,
+-                            val ? atoi(val) : 0);
+-                }
++            {
++                const char * val = getenv("GGML_METAL_FUSION_DEBUG");
++                dev->finfo = ggml_metal_fusion_info_init(
++                        getenv("GGML_METAL_FUSION_DISABLE") == nil,
++                        val ? atoi(val) : 0);
 +            }
  
 -                snprintf(dev->props.name, sizeof(dev->props.name), "%s%d", "MTL", device);
@@ -7471,6 +7462,7 @@ index e20a4e891..2aac8fad2 100644
                      }
 +                }
  
+-#if TARGET_CPU_X86_64
 -                    for (int i = MTLGPUFamilyCommon1 + 5; i >= MTLGPUFamilyCommon1; --i) {
 -                        if ([dev->mtl_device supportsFamily:i]) {
 -                            GGML_LOG_INFO("%s: GPU family: MTLGPUFamilyCommon%d (%d)\n", __func__, i - (int) MTLGPUFamilyCommon1 + 1, i);
@@ -7481,6 +7473,7 @@ index e20a4e891..2aac8fad2 100644
 +                        GGML_LOG_INFO("%s: GPU family: MTLGPUFamilyCommon%d (%d)\n", __func__, i - (int) MTLGPUFamilyCommon1 + 1, i);
 +                        break;
                      }
+-#endif
 +                }
  
 -                    for (int i = MTLGPUFamilyMetal3_GGML + 5; i >= MTLGPUFamilyMetal3_GGML; --i) {
@@ -7523,7 +7516,7 @@ index e20a4e891..2aac8fad2 100644
          }
      }
  
-@@ -1665,7 +1535,24 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1682,7 +1550,24 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
          case GGML_OP_ROPE_BACK:
              return true;
          case GGML_OP_IM2COL:
@@ -7549,7 +7542,7 @@ index e20a4e891..2aac8fad2 100644
          case GGML_OP_CONV_2D:
              return ggml_is_contiguous(op->src[0]) &&
                     op->src[1]->type == GGML_TYPE_F32 &&
-@@ -1719,7 +1606,23 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1742,7 +1627,23 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                  return false;
              }
              if (op->src[1]->type != op->src[2]->type) {
@@ -7574,7 +7567,7 @@ index e20a4e891..2aac8fad2 100644
              }
              switch (op->src[1]->type) {
                  case GGML_TYPE_F32:
-@@ -1729,6 +1632,9 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1752,6 +1653,9 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                  case GGML_TYPE_Q4_1:
                  case GGML_TYPE_Q5_0:
                  case GGML_TYPE_Q5_1:
@@ -7584,7 +7577,7 @@ index e20a4e891..2aac8fad2 100644
                      break;
                  case GGML_TYPE_BF16:
                      if (!has_bfloat) {
-@@ -1814,6 +1720,8 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1834,6 +1738,8 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
              return true;
          case GGML_OP_GATED_DELTA_NET:
              return has_simdgroup_reduction && op->src[2]->ne[0] % 32 == 0;
@@ -7593,7 +7586,7 @@ index e20a4e891..2aac8fad2 100644
          case GGML_OP_SOLVE_TRI:
              return has_simdgroup_reduction && op->src[0]->type == GGML_TYPE_F32;
          case GGML_OP_MUL_MAT:
-@@ -1845,6 +1753,9 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1871,6 +1777,9 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                             case GGML_TYPE_IQ4_NL:
                             case GGML_TYPE_TQ2_0:
                             case GGML_TYPE_I32:
@@ -7603,7 +7596,7 @@ index e20a4e891..2aac8fad2 100644
                                  return true;
                             default:
                                  return false;
-@@ -1873,6 +1784,8 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1899,6 +1808,8 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                      case GGML_TYPE_Q5_1:
                      case GGML_TYPE_Q8_0:
                      case GGML_TYPE_TQ2_0:
@@ -7612,7 +7605,7 @@ index e20a4e891..2aac8fad2 100644
                          switch (op->type) {
                              case GGML_TYPE_F32:
                              case GGML_TYPE_F16:
-@@ -1909,6 +1822,9 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1936,6 +1847,9 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                      case GGML_TYPE_Q5_1:
                      case GGML_TYPE_IQ4_NL:
                      case GGML_TYPE_TQ2_0:
@@ -7623,10 +7616,10 @@ index e20a4e891..2aac8fad2 100644
                      default:
                          return false;
 diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
-index 30e40f527..180883dff 100644
+index 490dd83a15..ad4c400fe4 100644
 --- a/ggml/src/ggml-metal/ggml-metal-impl.h
 +++ b/ggml/src/ggml-metal/ggml-metal-impl.h
-@@ -87,8 +87,16 @@
+@@ -96,8 +96,16 @@
  #define N_R0_IQ4_XS 2
  #define N_SG_IQ4_XS 2
  
@@ -7643,17 +7636,18 @@ index 30e40f527..180883dff 100644
  
  // function constants offsets
  #define FC_FLASH_ATTN_EXT_PAD          100
-@@ -107,6 +115,9 @@
- #define FC_SUM_ROWS                    1400
- #define FC_UPSCALE                     1500
- #define FC_GATED_DELTA_NET             1600
-+#define FC_TURBO_WHT                   1700
-+#define FC_TURBO_FLASH_P1              1800
-+#define FC_TURBO_FLASH_P2              1900
+@@ -120,6 +128,10 @@
+ #define FC_TOPK_MOE                    1800
+ #define FC_MOE_REDUCE                  1900
+ #define FC_DSV4_HC                     2000
++// ArifiLabs TurboQuant (fork): offsets moved past upstream's 1700-2000 block (W1 b11178)
++#define FC_TURBO_WHT                   2100
++#define FC_TURBO_FLASH_P1              2200
++#define FC_TURBO_FLASH_P2              2300
  
  // op-specific constants
  #define OP_FLASH_ATTN_EXT_NQPSG 8
-@@ -461,6 +472,40 @@ typedef struct {
+@@ -474,6 +486,40 @@ typedef struct {
      int32_t  n_kv_max_padded;
  } ggml_metal_kargs_flash_attn_ext_vec;
  
@@ -7694,8 +7688,8 @@ index 30e40f527..180883dff 100644
  typedef struct {
      int32_t  ne30;
      int32_t  ne31;
-@@ -980,6 +1025,11 @@ typedef struct {
-     uint64_t nb3;
+@@ -1002,6 +1048,11 @@ typedef struct {
+     uint64_t nb_out; // 0 => snapshots are appended after the attn scores (unfused)
  } ggml_metal_kargs_gated_delta_net;
  
 +typedef struct {
@@ -7707,18 +7701,18 @@ index 30e40f527..180883dff 100644
      int32_t  ne00;
      int32_t  ne01;
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 3db8bca43..36cafece2 100644
+index 54d5b98083..e0e257908d 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -7,7 +7,6 @@
- #include "ggml-metal-impl.h"
+@@ -8,7 +8,6 @@
  #include "ggml-metal-common.h"
  #include "ggml-metal-device.h"
+ #include "ggml-metal-fusion.h"
 -#include "ggml-metal-tuning.h"
  
  #include <cassert>
  #include <algorithm>
-@@ -173,6 +172,26 @@ static bool ggml_metal_op_concurrency_add(ggml_metal_op_t ctx, const ggml_tensor
+@@ -180,6 +179,26 @@ static bool ggml_metal_op_concurrency_add(ggml_metal_op_t ctx, const ggml_tensor
      return ggml_mem_ranges_add(ctx->mem_ranges, node);
  }
  
@@ -7745,7 +7739,7 @@ index 3db8bca43..36cafece2 100644
  static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
      struct ggml_tensor * node = ctx->node(idx);
  
-@@ -210,6 +229,15 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
+@@ -217,6 +236,15 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
  
      int n_fuse = 1;
  
@@ -7761,7 +7755,7 @@ index 3db8bca43..36cafece2 100644
      // check if the current node can run concurrently with other nodes before it
      // the condition is that:
      //  - the current node cannot write to any previous src or dst ranges
-@@ -352,6 +380,10 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
+@@ -368,6 +396,10 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
              {
                  n_fuse = ggml_metal_op_gated_delta_net(ctx, idx);
              } break;
@@ -7772,7 +7766,7 @@ index 3db8bca43..36cafece2 100644
          case GGML_OP_SOLVE_TRI:
              {
                  n_fuse = ggml_metal_op_solve_tri(ctx, idx);
-@@ -1693,7 +1725,6 @@ int ggml_metal_op_ssm_scan(ggml_metal_op_t ctx, int idx) {
+@@ -1740,7 +1772,6 @@ int ggml_metal_op_ssm_scan(ggml_metal_op_t ctx, int idx) {
  
      ggml_metal_library_t lib = ctx->lib;
      ggml_metal_encoder_t enc = ctx->enc;
@@ -7780,7 +7774,7 @@ index 3db8bca43..36cafece2 100644
  
      GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
      GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
-@@ -1739,8 +1770,6 @@ int ggml_metal_op_ssm_scan(ggml_metal_op_t ctx, int idx) {
+@@ -1786,8 +1817,6 @@ int ggml_metal_op_ssm_scan(ggml_metal_op_t ctx, int idx) {
          /*.n_head       =*/ n_head,
          /*.n_group      =*/ n_group,
          /*.n_seq_tokens =*/ n_seq_tokens,
@@ -7789,7 +7783,7 @@ index 3db8bca43..36cafece2 100644
          /*.n_seqs       =*/ n_seqs,
          /*.K            =*/ K,
          /*.s_off        =*/ ggml_nelements(op->src[1]) * sizeof(float),
-@@ -1770,53 +1799,26 @@ int ggml_metal_op_ssm_scan(ggml_metal_op_t ctx, int idx) {
+@@ -1817,53 +1846,26 @@ int ggml_metal_op_ssm_scan(ggml_metal_op_t ctx, int idx) {
          /*.nb0          =*/ nb0,
      };
  
@@ -7858,8 +7852,8 @@ index 3db8bca43..36cafece2 100644
  
      return 1;
  }
-@@ -1937,6 +1939,39 @@ int ggml_metal_op_gated_delta_net(ggml_metal_op_t ctx, int idx) {
-     return 1;
+@@ -2013,6 +2015,39 @@ int ggml_metal_op_gated_delta_net(ggml_metal_op_t ctx, int idx) {
+     return n_fuse;
  }
  
 +int ggml_metal_op_turbo_wht(ggml_metal_op_t ctx, int idx) {
@@ -7898,7 +7892,7 @@ index 3db8bca43..36cafece2 100644
  int ggml_metal_op_solve_tri(ggml_metal_op_t ctx, int idx) {
      ggml_tensor * op = ctx->node(idx);
  
-@@ -2480,52 +2515,107 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+@@ -2541,52 +2576,107 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
          ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3);
  
          ggml_metal_encoder_dispatch_threadgroups(enc, ((ne01 + r0ptg - 1)/r0ptg), ((ne11 + r1ptg - 1)/r1ptg), ne12*ne13, 32, nsg, 1);
@@ -8044,7 +8038,7 @@ index 3db8bca43..36cafece2 100644
      } else {
          auto pipeline = ggml_metal_library_get_pipeline_mul_mv(lib, op);
  
-@@ -2568,7 +2658,9 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+@@ -2629,7 +2719,9 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
          if (op->src[0]->type == GGML_TYPE_F32 ||
              op->src[0]->type == GGML_TYPE_F16 ||
              op->src[0]->type == GGML_TYPE_BF16 ||
@@ -8055,7 +8049,7 @@ index 3db8bca43..36cafece2 100644
              ggml_metal_encoder_dispatch_threadgroups(enc, ((ne01 + nr0 - 1)/(nr0)), ((ne11 + nr1 - 1)/nr1), ne12*ne13, 32, nsg, 1);
          } else {
              ggml_metal_encoder_dispatch_threadgroups(enc, ((ne01 + nr0*nsg - 1)/(nr0*nsg)), ((ne11 + nr1 - 1)/nr1), ne12*ne13, 32, nsg, 1);
-@@ -2628,8 +2720,11 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
+@@ -2698,8 +2790,11 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
  
      const uint32_t r2 = 1;
      const uint32_t r3 = 1;
@@ -8068,8 +8062,8 @@ index 3db8bca43..36cafece2 100644
          // some Metal matrix data types require aligned pointers
          // ref: https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf (Table 2.5)
          //switch (op->src[0]->type) {
-@@ -2681,40 +2776,96 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
-         ggml_metal_op_concurrency_reset(ctx);
+@@ -2795,41 +2890,97 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
+         }
  
          {
 -            auto pipeline = ggml_metal_library_get_pipeline_mul_mm_id(lib, op);
@@ -8104,6 +8098,7 @@ index 3db8bca43..36cafece2 100644
 -            ggml_metal_encoder_set_buffer  (enc, bid_tpe,  3);
 -            ggml_metal_encoder_set_buffer  (enc, bid_ids,  4);
 -            ggml_metal_encoder_set_buffer  (enc, bid_dst,  5);
+-            ggml_metal_encoder_set_buffer  (enc, bid_amax, 6);
 +                auto pipeline_rot = ggml_metal_library_get_pipeline_tq3_rotate_act(lib, false);
 +                ggml_metal_encoder_set_pipeline(enc, pipeline_rot);
 +                ggml_metal_encoder_set_buffer  (enc, bid_src1, 0);
@@ -8187,6 +8182,7 @@ index 3db8bca43..36cafece2 100644
 +                ggml_metal_encoder_set_buffer  (enc, bid_tpe,  3);
 +                ggml_metal_encoder_set_buffer  (enc, bid_ids,  4);
 +                ggml_metal_encoder_set_buffer  (enc, bid_dst,  5);
++                ggml_metal_encoder_set_buffer  (enc, bid_amax, 6);
 +
 +                const size_t smem = pipeline.smem;
 +                ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
@@ -8195,7 +8191,7 @@ index 3db8bca43..36cafece2 100644
          }
      } else {
          auto pipeline = ggml_metal_library_get_pipeline_mul_mv_id(lib, op);
-@@ -2767,7 +2918,9 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
+@@ -2882,7 +3033,9 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
          if (op->src[0]->type == GGML_TYPE_F32 ||
              op->src[0]->type == GGML_TYPE_F16 ||
              op->src[0]->type == GGML_TYPE_BF16 ||
@@ -8206,7 +8202,7 @@ index 3db8bca43..36cafece2 100644
              ggml_metal_encoder_dispatch_threadgroups(enc, (ne01 + nr0 - 1)/(nr0), (_ne1 + nr1 - 1)/nr1, ne123, 32, nsg, 1);
          } else {
              ggml_metal_encoder_dispatch_threadgroups(enc, (ne01 + nr0*nsg - 1)/(nr0*nsg), (_ne1 + nr1 - 1)/nr1, ne123, 32, nsg, 1);
-@@ -2830,111 +2983,55 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
+@@ -2945,112 +3098,55 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
      const int64_t ne01 = op->src[0]->ne[1]; // batch size
  
      // use vec kernel if the batch size is small and if the head size is supported
@@ -8281,6 +8277,7 @@ index 3db8bca43..36cafece2 100644
 -    const bool dk_dv_ok = (dk == 32  && dv == 32)  ||
 -                          (dk == 64  && dv == 64)  ||
 -                          (dk == 96  && dv == 96)  ||
+-                          (dk == 96  && dv == 64)  ||
 -                          (dk == 128 && dv == 128) ||
 -                          (dk == 192 && dv == 128) ||
 -                          (dk == 192 && dv == 192) ||
@@ -8354,7 +8351,7 @@ index 3db8bca43..36cafece2 100644
  }
  
  size_t ggml_metal_op_flash_attn_ext_extra_pad(const ggml_tensor * op) {
-@@ -2952,18 +3049,6 @@ size_t ggml_metal_op_flash_attn_ext_extra_pad(const ggml_tensor * op) {
+@@ -3068,18 +3164,6 @@ size_t ggml_metal_op_flash_attn_ext_extra_pad(const ggml_tensor * op) {
      size_t res = 0;
  
      const bool has_mask = op->src[3] != nullptr;
@@ -8373,7 +8370,7 @@ index 3db8bca43..36cafece2 100644
  
      // note: the non-vec kernel requires more extra memory, so always reserve for it
      GGML_ASSERT(OP_FLASH_ATTN_EXT_NCPSG >= OP_FLASH_ATTN_EXT_VEC_NCPSG);
-@@ -2976,8 +3061,8 @@ size_t ggml_metal_op_flash_attn_ext_extra_pad(const ggml_tensor * op) {
+@@ -3092,8 +3176,8 @@ size_t ggml_metal_op_flash_attn_ext_extra_pad(const ggml_tensor * op) {
  
          if (has_kvpad) {
              res += OP_FLASH_ATTN_EXT_VEC_NCPSG*(
@@ -8384,7 +8381,7 @@ index 3db8bca43..36cafece2 100644
                  (has_mask ? ggml_type_size(GGML_TYPE_F16)*ne31*ne32*ne33 : 0));
          }
      } else {
-@@ -2986,8 +3071,8 @@ size_t ggml_metal_op_flash_attn_ext_extra_pad(const ggml_tensor * op) {
+@@ -3102,8 +3186,8 @@ size_t ggml_metal_op_flash_attn_ext_extra_pad(const ggml_tensor * op) {
  
          if (has_kvpad) {
              res += OP_FLASH_ATTN_EXT_NCPSG*(
@@ -8395,7 +8392,7 @@ index 3db8bca43..36cafece2 100644
                  (has_mask ? ggml_type_size(GGML_TYPE_F16)*ne31*ne32*ne33 : 0));
          }
      }
-@@ -3060,30 +3145,21 @@ size_t ggml_metal_op_flash_attn_ext_extra_tmp(const ggml_tensor * op) {
+@@ -3176,30 +3260,21 @@ size_t ggml_metal_op_flash_attn_ext_extra_tmp(const ggml_tensor * op) {
          res += ggml_type_size(GGML_TYPE_F32)*(ne01_max*ne02*ne03*nwg*(ne20 + 2));
      }
  
@@ -8439,7 +8436,7 @@ index 3db8bca43..36cafece2 100644
  }
  
  // size of the sparse index lists: one list of KV indices per mask row,
-@@ -3126,7 +3202,22 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3242,7 +3317,22 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
      GGML_ASSERT(ne00 % 4 == 0);
  
      GGML_ASSERT(op->src[0]->type == GGML_TYPE_F32);
@@ -8463,7 +8460,7 @@ index 3db8bca43..36cafece2 100644
  
      //GGML_ASSERT(ggml_are_same_shape (src1, src2));
      GGML_ASSERT(ne11 == ne21);
-@@ -3178,119 +3269,163 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3294,119 +3384,163 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
      ggml_metal_buffer_id bid_tmp = bid_blk;
      bid_tmp.offs += ggml_metal_op_flash_attn_ext_extra_blk(op);
  
@@ -8733,7 +8730,7 @@ index 3db8bca43..36cafece2 100644
  
      if (!use_sparse && !ggml_metal_op_flash_attn_ext_use_vec(op)) {
          // half8x8 kernel
-@@ -3312,12 +3447,12 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3428,12 +3562,12 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
                  /*.ne11    =*/ne11,
                  /*.ne_12_2 =*/ne12,
                  /*.ne_12_3 =*/ne13,
@@ -8752,7 +8749,7 @@ index 3db8bca43..36cafece2 100644
                  /*.ne31    =*/ne31,
                  /*.ne32    =*/ne32,
                  /*.ne33    =*/ne33,
-@@ -3330,8 +3465,8 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3446,8 +3580,8 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
  
              ggml_metal_encoder_set_pipeline(enc, pipeline0);
              ggml_metal_encoder_set_bytes   (enc, &args0, sizeof(args0), 0);
@@ -8763,18 +8760,18 @@ index 3db8bca43..36cafece2 100644
              ggml_metal_encoder_set_buffer  (enc, bid_src3, 3);
              ggml_metal_encoder_set_buffer  (enc, bid_pad,  4);
  
-@@ -3376,7 +3511,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3492,7 +3626,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
              ggml_metal_op_concurrency_reset(ctx);
          }
  
 -        const int is_q = !use_kv_f16 && ggml_is_quantized(op->src[1]->type) ? 1 : 0;
 +        const int is_q = ggml_is_quantized(op->src[1]->type) ? 1 : 0;
  
-         // 2*(2*ncpsg)
-         // ncpsg soft_max values + ncpsg mask values
-@@ -3407,9 +3542,6 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+         // shared memory layout (halfs unless noted):
+         //   queries/attn/result: Q*(DK + 2*PAD2(DV,64) + 4*C)
+@@ -3509,9 +3643,6 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
  
-         const size_t smem = FATTN_SMEM(nsg);
+         const size_t smem = fa_smem(nsg);
  
 -        const int32_t ns10 = nb11_attn/nb10_attn;
 -        const int32_t ns20 = nb21_attn/nb20_attn;
@@ -8782,7 +8779,7 @@ index 3db8bca43..36cafece2 100644
          ggml_metal_kargs_flash_attn_ext args = {
              /*.ne01          =*/ ne01,
              /*.ne02          =*/ ne02,
-@@ -3420,14 +3552,14 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3522,14 +3653,14 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
              /*.ne11          =*/ ne11,
              /*.ne_12_2       =*/ ne12,
              /*.ne_12_3       =*/ ne13,
@@ -8805,7 +8802,7 @@ index 3db8bca43..36cafece2 100644
              /*.ne31          =*/ ne31,
              /*.ne32          =*/ ne32,
              /*.ne33          =*/ ne33,
-@@ -3445,13 +3577,13 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3547,13 +3678,13 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
              /*.logit_softcap =*/ logit_softcap,
          };
  
@@ -8822,24 +8819,7 @@ index 3db8bca43..36cafece2 100644
          ggml_metal_encoder_set_buffer  (enc, bid_src3, 4);
          ggml_metal_encoder_set_buffer  (enc, bid_src4, 5);
          ggml_metal_encoder_set_buffer  (enc, bid_pad,  6);
-@@ -3464,23 +3596,12 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
- #undef FATTN_SMEM
-     } else {
-         // half4x4 kernel
--        // sparse: the index lists are per query row, so a threadgroup can share KV with Q == 1 only
--        auto cfg = use_sparse
--                ? ggml_metal_tuning::fa_vec_baseline_cfg((int) ne00, (int) ne20)
--                : ggml_metal_tuning::fa_vec_pick(
--                          props_dev->device_id,
--                          props_dev->gpu_family,
--                          (int) op->src[1]->type,
--                          (int) ne00, (int) ne20,   // dk, dv (ne00 == dk for FA)
--                          ne11, ne01);
--
--        int nqptg = cfg.Q; // queries per threadgroup
--
-+        const int nqptg = OP_FLASH_ATTN_EXT_VEC_NQPSG; // queries per threadgroup
-         const int ncpsg = OP_FLASH_ATTN_EXT_VEC_NCPSG; // cache values per simdgroup !! sync with kernel template arguments !!
+@@ -3580,7 +3711,7 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
          const int nhptg = 1;                           // heads per threadgroup
  
          GGML_ASSERT(nqptg <= 32);
@@ -8848,7 +8828,7 @@ index 3db8bca43..36cafece2 100644
          GGML_ASSERT(ncpsg  % 32 == 0);
  
          bool need_sync = false;
-@@ -3526,12 +3647,12 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3626,12 +3757,12 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
                  /*.ne11    =*/ne11,
                  /*.ne_12_2 =*/ne12,
                  /*.ne_12_3 =*/ne13,
@@ -8867,7 +8847,7 @@ index 3db8bca43..36cafece2 100644
                  /*.ne31    =*/ne31,
                  /*.ne32    =*/ne32,
                  /*.ne33    =*/ne33,
-@@ -3544,8 +3665,8 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3644,8 +3775,8 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
  
              ggml_metal_encoder_set_pipeline(enc, pipeline0);
              ggml_metal_encoder_set_bytes   (enc, &args0, sizeof(args0), 0);
@@ -8878,33 +8858,17 @@ index 3db8bca43..36cafece2 100644
              ggml_metal_encoder_set_buffer  (enc, bid_src3, 3);
              ggml_metal_encoder_set_buffer  (enc, bid_pad,  4);
  
-@@ -3571,7 +3692,8 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
-         // ne20*(nsg)
-         // each simdgroup has a full f32 head vector in shared mem to accumulate results
-         //
--#define FATTN_SMEM(nsg) (GGML_PAD(((GGML_PAD(ne00, 128) + 4*ncpsg + 2*GGML_PAD(ne20, 128))*(nsg)*nqptg)*(sizeof(float)/2), 16))
-+// Extra 128 floats (512 bytes) for TurboQuant pre-dequantized block cache in threadgroup memory
-+#define FATTN_SMEM(nsg) (GGML_PAD(((GGML_PAD(ne00, 128) + 4*ncpsg + 2*GGML_PAD(ne20, 128))*(nsg))*(sizeof(float)/2) + 128*sizeof(float), 16))
+@@ -3674,7 +3805,8 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+ 
+         auto fa_vec_smem = [&](int64_t nsg, int32_t nqptg) -> size_t {
+             const size_t smem_half = (size_t) (dk_pad + 4*ncpsg + 2*dv_pad)*nqptg*nsg;
+-            return GGML_PAD(smem_half*sizeof(ggml_fp16_t) + (use_sparse ? (size_t) nsg*ncpsg*sizeof(int) : 0), 16);
++            // arifi: extra 128 floats (512 bytes) for the TurboQuant pre-dequantized block cache in threadgroup memory
++            return GGML_PAD(smem_half*sizeof(ggml_fp16_t) + (use_sparse ? (size_t) nsg*ncpsg*sizeof(int) : 0) + 128*sizeof(float), 16);
+         };
  
          int64_t nsg = 1;
- 
-@@ -3606,15 +3728,6 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
-             }
-         }
- 
--        // fall back to baseline (Q=1) if the tuned config exceeds threadgroup memory
--        if ((size_t) FATTN_SMEM(nsg) > props_dev->max_theadgroup_memory_size) {
--            cfg   = ggml_metal_tuning::fa_vec_baseline_cfg((int) ne00, (int) ne20);
--            nqptg = cfg.Q;  // = 1
--        }
--
--        const int32_t ns10 = nb11_attn/nb10_attn;
--        const int32_t ns20 = nb21_attn/nb20_attn;
--
-         ggml_metal_kargs_flash_attn_ext_vec args = {
-             /*.ne01          =*/ ne01,
-             /*.ne02          =*/ ne02,
-@@ -3625,14 +3738,14 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3729,14 +3861,14 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
              /*.ne11          =*/ use_sparse ? n_kv_max_padded : ne11,
              /*.ne_12_2       =*/ ne12,
              /*.ne_12_3       =*/ ne13,
@@ -8927,7 +8891,7 @@ index 3db8bca43..36cafece2 100644
              /*.ne31          =*/ ne31,
              /*.ne32          =*/ ne32,
              /*.ne33          =*/ ne33,
-@@ -3651,15 +3764,15 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3755,15 +3887,15 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
              /*.n_kv_max_padded =*/ n_kv_max_padded,
          };
  
@@ -8947,10 +8911,10 @@ index 3db8bca43..36cafece2 100644
          ggml_metal_encoder_set_buffer  (enc, bid_src4, 5);
          ggml_metal_encoder_set_buffer  (enc, use_sparse ? bid_idx : bid_src0, 8);
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.h b/ggml/src/ggml-metal/ggml-metal-ops.h
-index f8fe50b46..dacea0fb6 100644
+index 583d1156bf..5500193aa3 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.h
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.h
-@@ -63,6 +63,7 @@ int ggml_metal_op_ssm_conv          (ggml_metal_op_t ctx, int idx);
+@@ -65,6 +65,7 @@ int ggml_metal_op_ssm_conv          (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_ssm_scan          (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_rwkv              (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_gated_delta_net   (ggml_metal_op_t ctx, int idx);
@@ -8960,7 +8924,7 @@ index f8fe50b46..dacea0fb6 100644
  int ggml_metal_op_cpy               (ggml_metal_op_t ctx, int idx);
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
 new file mode 100644
-index 000000000..71548f9ca
+index 0000000000..71548f9ca4
 --- /dev/null
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -0,0 +1,14012 @@
@@ -22978,7 +22942,7 @@ index 000000000..71548f9ca
 +}
 diff --git a/ggml/src/ggml-metal/turbo-matrices.h b/ggml/src/ggml-metal/turbo-matrices.h
 new file mode 100644
-index 000000000..3574911bb
+index 0000000000..3574911bb5
 --- /dev/null
 +++ b/ggml/src/ggml-metal/turbo-matrices.h
 @@ -0,0 +1,8207 @@
@@ -31191,7 +31155,7 @@ index 000000000..3574911bb
 +};
 diff --git a/ggml/src/ggml-metal/turbo-wht.h b/ggml/src/ggml-metal/turbo-wht.h
 new file mode 100644
-index 000000000..68cdd90b2
+index 0000000000..68cdd90b2a
 --- /dev/null
 +++ b/ggml/src/ggml-metal/turbo-wht.h
 @@ -0,0 +1,49 @@
@@ -31245,10 +31209,10 @@ index 000000000..68cdd90b2
 +    for (int i = 0; i < 128; i++) x[i] *= s1[i];
 +}
 diff --git a/ggml/src/ggml-sycl/CMakeLists.txt b/ggml/src/ggml-sycl/CMakeLists.txt
-index a8d9c0d80..ebef58fb3 100644
+index d2196f74d5..742ac99400 100644
 --- a/ggml/src/ggml-sycl/CMakeLists.txt
 +++ b/ggml/src/ggml-sycl/CMakeLists.txt
-@@ -162,8 +162,24 @@ if (GGML_SYCL_F16)
+@@ -168,8 +168,24 @@ if (GGML_SYCL_F16)
      add_compile_definitions(GGML_SYCL_F16)
  endif()
  
@@ -31275,7 +31239,7 @@ index a8d9c0d80..ebef58fb3 100644
          target_link_options(ggml-sycl PRIVATE -Xs -ze-intel-greater-than-4GB-buffer-required)
      else()
 diff --git a/ggml/src/ggml-sycl/common.hpp b/ggml/src/ggml-sycl/common.hpp
-index 355dd442b..f3f9bd58d 100644
+index dc6cdd3df4..4426f4fb2e 100644
 --- a/ggml/src/ggml-sycl/common.hpp
 +++ b/ggml/src/ggml-sycl/common.hpp
 @@ -98,7 +98,7 @@ extern int g_ggml_sycl_memtrace_step;
@@ -31288,7 +31252,7 @@ index 355dd442b..f3f9bd58d 100644
  #endif
  
 diff --git a/ggml/src/ggml-sycl/convert.cpp b/ggml/src/ggml-sycl/convert.cpp
-index b660b56ab..f1e9b3f6a 100644
+index b660b56ab3..f1e9b3f6ae 100644
 --- a/ggml/src/ggml-sycl/convert.cpp
 +++ b/ggml/src/ggml-sycl/convert.cpp
 @@ -1,6 +1,7 @@
@@ -31401,7 +31365,7 @@ index b660b56ab..f1e9b3f6a 100644
              return convert_unary_sycl<sycl::half>;
  #ifdef GGML_SYCL_HAS_BF16
 diff --git a/ggml/src/ggml-sycl/fattn-common.hpp b/ggml/src/ggml-sycl/fattn-common.hpp
-index 82813f7a9..6a53996b4 100644
+index 82813f7a99..6a53996b44 100644
 --- a/ggml/src/ggml-sycl/fattn-common.hpp
 +++ b/ggml/src/ggml-sycl/fattn-common.hpp
 @@ -7,12 +7,14 @@
@@ -31768,7 +31732,7 @@ index 82813f7a9..6a53996b4 100644
          static_assert(type_V == -1, "bad type");
          return nullptr;
 diff --git a/ggml/src/ggml-sycl/fattn-vec.hpp b/ggml/src/ggml-sycl/fattn-vec.hpp
-index 53ad0eaee..cac0d1fd9 100644
+index 53ad0eaee4..cac0d1fd90 100644
 --- a/ggml/src/ggml-sycl/fattn-vec.hpp
 +++ b/ggml/src/ggml-sycl/fattn-vec.hpp
 @@ -76,21 +76,12 @@ static void flash_attn_ext_vec(const char* __restrict__ Q,
@@ -32044,7 +32008,7 @@ index 53ad0eaee..cac0d1fd9 100644
 +
  #endif // GGML_SYCL_FATTN_VEC_HPP
 diff --git a/ggml/src/ggml-sycl/fattn.cpp b/ggml/src/ggml-sycl/fattn.cpp
-index 394cda593..a1550b788 100644
+index 394cda593f..a1550b7882 100644
 --- a/ggml/src/ggml-sycl/fattn.cpp
 +++ b/ggml/src/ggml-sycl/fattn.cpp
 @@ -90,6 +90,84 @@ static void ggml_sycl_flash_attn_ext_vec(ggml_backend_sycl_context & ctx, ggml_t
@@ -32191,7 +32155,7 @@ index 394cda593..a1550b788 100644
  }
  
 diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
-index bfe6f1016..b2c90e2ef 100644
+index e13ec85251..41f777d5c0 100644
 --- a/ggml/src/ggml-sycl/ggml-sycl.cpp
 +++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
 @@ -88,6 +88,7 @@
@@ -32202,7 +32166,7 @@ index bfe6f1016..b2c90e2ef 100644
  
  static bool g_sycl_loaded = false;
  int g_ggml_sycl_debug = 0;
-@@ -963,16 +964,16 @@ ggml_backend_sycl_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft,
+@@ -984,16 +985,16 @@ ggml_backend_sycl_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft,
  
      void * dev_ptr;
      if (use_usm_system) {
@@ -32222,7 +32186,7 @@ index bfe6f1016..b2c90e2ef 100644
            return nullptr;
          }
      }
-@@ -1226,7 +1227,7 @@ ggml_backend_sycl_split_buffer_init_tensor(ggml_backend_buffer_t buffer,
+@@ -1260,7 +1261,7 @@ ggml_backend_sycl_split_buffer_init_tensor(ggml_backend_buffer_t buffer,
          SYCL_CHECK(CHECK_TRY_ERROR(buf = (char *)ggml_sycl_malloc_device(size, *stream, GGML_SYCL_MEM_BUFFER)));
          if (!buf) {
              char err_buf[1024];
@@ -32231,7 +32195,7 @@ index bfe6f1016..b2c90e2ef 100644
              throw std::runtime_error(err_buf);
          }
          // set padding to 0 to avoid possible NaN values
-@@ -1705,7 +1706,7 @@ struct ggml_sycl_pool_leg : public ggml_sycl_pool {
+@@ -1764,7 +1765,7 @@ struct ggml_sycl_pool_leg : public ggml_sycl_pool {
  
          SYCL_CHECK(CHECK_TRY_ERROR(ptr = (void *)ggml_sycl_malloc_device(look_ahead_size, *qptr, GGML_SYCL_MEM_POOL_LEG)));
          if (!ptr) {
@@ -32240,7 +32204,7 @@ index bfe6f1016..b2c90e2ef 100644
              return nullptr;
          }
  
-@@ -1717,7 +1718,7 @@ struct ggml_sycl_pool_leg : public ggml_sycl_pool {
+@@ -1776,7 +1777,7 @@ struct ggml_sycl_pool_leg : public ggml_sycl_pool {
                  (uint32_t)(max_size/1024/1024), (uint32_t)(g_sycl_pool_size[id]/1024/1024), (uint32_t)(size/1024/1024));
  #endif
  
@@ -32249,7 +32213,7 @@ index bfe6f1016..b2c90e2ef 100644
          return ptr;
      }
  
-@@ -1905,7 +1906,7 @@ struct ggml_sycl_pool_host : public ggml_sycl_pool {
+@@ -1964,7 +1965,7 @@ struct ggml_sycl_pool_host : public ggml_sycl_pool {
  
              SYCL_CHECK(CHECK_TRY_ERROR(ptr = (void *) sycl::malloc_host(size, *qptr)));
              if (!ptr) {
@@ -32258,7 +32222,7 @@ index bfe6f1016..b2c90e2ef 100644
                  return nullptr;
              }
              pool_size += size;
-@@ -2981,9 +2982,9 @@ inline void ggml_sycl_op_mul_mat_sycl(
+@@ -3040,9 +3041,9 @@ inline void ggml_sycl_op_mul_mat_sycl(
          const float * src1_ddf1_i = src1->type == GGML_TYPE_F32 ? (const float *) src1_ddf_i : src1_ddq_as_f32.get();
  
          {
@@ -32269,7 +32233,7 @@ index bfe6f1016..b2c90e2ef 100644
              if (g_ggml_sycl_enable_dnn && !use_mkl_direct) {
                  DnnlGemmWrapper::row_gemm(ctx, row_diff, src1_ncols, ne10, src0_ddf_i,
                                            DnnlGemmWrapper::to_dt<float>(), src1_ddf1_i, DnnlGemmWrapper::to_dt<float>(),
-@@ -3720,9 +3721,7 @@ static void ggml_sycl_mul_mat_batched_sycl(ggml_backend_sycl_context & ctx, cons
+@@ -3788,9 +3789,7 @@ static void ggml_sycl_mul_mat_batched_sycl(ggml_backend_sycl_context & ctx, cons
      float *            dst_ddf  = static_cast<float *>(dst->data);
  
      const sycl::half * src1_f16       = static_cast<const sycl::half *>(src1->data);
@@ -32279,7 +32243,7 @@ index bfe6f1016..b2c90e2ef 100644
      const size_t       type_size_src1 = ggml_type_size(src1->type);
  
      bool is_src0_cont_2 = ggml_is_contiguous_2(src0);
-@@ -3739,7 +3738,6 @@ static void ggml_sycl_mul_mat_batched_sycl(ggml_backend_sycl_context & ctx, cons
+@@ -3807,7 +3806,6 @@ static void ggml_sycl_mul_mat_batched_sycl(ggml_backend_sycl_context & ctx, cons
          scope_op_debug_print    scope_dbg_print(__func__, "/to_fp16_nc_sycl", dst, /*num_src=*/2,
                                                  " : converting src1 to fp16");
  
@@ -32287,7 +32251,7 @@ index bfe6f1016..b2c90e2ef 100644
          // iterate tensor dims and find the slowest moving dim and stride
          int last_dim=0;
          int last_str=0;
-@@ -3759,6 +3757,7 @@ static void ggml_sycl_mul_mat_batched_sycl(ggml_backend_sycl_context & ctx, cons
+@@ -3827,6 +3825,7 @@ static void ggml_sycl_mul_mat_batched_sycl(ggml_backend_sycl_context & ctx, cons
              }
  
          }
@@ -32295,7 +32259,7 @@ index bfe6f1016..b2c90e2ef 100644
          // oneDNN handles strided data and does not need overhead of ggml_get_to_fp16_nc_sycl
          const int64_t ne_src1 = src1->nb[last_str] * src1->ne[last_dim] / type_size_src1;
          src1_f16_alloc.alloc(ne_src1);
-@@ -3998,7 +3997,6 @@ inline bool ggml_sycl_supports_reorder_mmvq(enum ggml_type type) {
+@@ -4066,7 +4065,6 @@ inline bool ggml_sycl_supports_reorder_mmvq(enum ggml_type type) {
          case GGML_TYPE_Q1_0:
          case GGML_TYPE_Q4_0:
          case GGML_TYPE_Q8_0:
@@ -32303,7 +32267,7 @@ index bfe6f1016..b2c90e2ef 100644
          case GGML_TYPE_Q3_K:
          case GGML_TYPE_Q4_K:
          case GGML_TYPE_Q5_K:
-@@ -4012,10 +4010,8 @@ inline bool ggml_sycl_supports_reorder_mmvq(enum ggml_type type) {
+@@ -4080,10 +4078,8 @@ inline bool ggml_sycl_supports_reorder_mmvq(enum ggml_type type) {
  static bool ggml_sycl_supports_reorder_esimd(enum ggml_type type) {
  #ifdef GGML_SYCL_DMMV_HAS_ESIMD
      switch (type) {
@@ -32314,7 +32278,7 @@ index bfe6f1016..b2c90e2ef 100644
          case GGML_TYPE_Q6_K:
              return true;
          default:
-@@ -5628,6 +5624,9 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
+@@ -5814,6 +5810,9 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
          case GGML_OP_FLASH_ATTN_EXT:
              ggml_sycl_flash_attn_ext(ctx, dst);
              break;
@@ -32324,47 +32288,45 @@ index bfe6f1016..b2c90e2ef 100644
          default:
              return false;
      }
-@@ -6242,11 +6241,6 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
-                     a->ne[0] > 128 && a->ne[2] == 1 && src0_type == GGML_TYPE_F16) {
+@@ -6478,7 +6477,7 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
                      return false;
                  }
--
--                if (src0_type == GGML_TYPE_TQ2_0) {
--                    return false;
--                }
--
-                 return true;
-             }
-         case GGML_OP_OUT_PROD:
-@@ -6297,7 +6291,8 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+ 
+-                if (src0_type == GGML_TYPE_TQ2_0 || src0_type == GGML_TYPE_TQ1_0) {
++                if (src0_type == GGML_TYPE_TQ1_0) {
+                     return false;
+                 }
+ 
+@@ -6538,7 +6537,11 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
  
          case GGML_OP_SET_ROWS:
              {
--                if (op->type == GGML_TYPE_TQ2_0) {
+-                if (op->type == GGML_TYPE_TQ2_0 || op->type == GGML_TYPE_TQ1_0) {
++                if (op->type == GGML_TYPE_TQ1_0) {
++                    return false;
++                }
 +                if ((op->type == GGML_TYPE_TURBO2_0 || op->type == GGML_TYPE_TURBO3_0 || op->type == GGML_TYPE_TURBO4_0)
 +                    && op->src[0]->ne[0] % 128 != 0) {
                      return false;
                  }
                  auto res = (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 ||
-@@ -6418,16 +6413,11 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
-                         src1_type == GGML_TYPE_IQ3_XXS ||
+@@ -6661,14 +6664,12 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
                          src1_type == GGML_TYPE_IQ3_S ||
                          src1_type == GGML_TYPE_IQ1_S ||
--                        src1_type == GGML_TYPE_IQ1_M ||
--                        src1_type == GGML_TYPE_TQ2_0) {
-+                        src1_type == GGML_TYPE_IQ1_M) {
+                         src1_type == GGML_TYPE_IQ1_M ||
+-                        src1_type == GGML_TYPE_TQ2_0 ||
+                         src1_type == GGML_TYPE_TQ1_0) {
                          return false;
                      }
                  }
  
--                if (src0_type == GGML_TYPE_TQ2_0 || src1_type == GGML_TYPE_TQ2_0) {
--                    return false;
--                }
--
-                 return true;
-             }
-         case GGML_OP_REPEAT_BACK:
-@@ -6489,6 +6479,8 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+-                if (src0_type == GGML_TYPE_TQ2_0 || src1_type == GGML_TYPE_TQ2_0 ||
+-                    src0_type == GGML_TYPE_TQ1_0 || src1_type == GGML_TYPE_TQ1_0) {
++                if (src0_type == GGML_TYPE_TQ1_0 || src1_type == GGML_TYPE_TQ1_0) {
+                     return false;
+                 }
+ 
+@@ -6733,6 +6734,8 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
          }
          case GGML_OP_ROPE:
          case GGML_OP_ROPE_BACK:
@@ -32373,7 +32335,7 @@ index bfe6f1016..b2c90e2ef 100644
          case GGML_OP_IM2COL:
          case GGML_OP_IM2COL_3D:
          case GGML_OP_UPSCALE:
-@@ -6567,6 +6559,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+@@ -6811,6 +6814,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
              return op->src[0]->ne[0] <= SYCL_SOLVE_TRI_MAX_N && op->src[1]->ne[0] <= SYCL_SOLVE_TRI_MAX_K;
          case GGML_OP_FLASH_ATTN_EXT:
              return ggml_sycl_flash_attn_ext_supported(device, op);
@@ -32393,7 +32355,7 @@ index bfe6f1016..b2c90e2ef 100644
              return false;
      }
 diff --git a/ggml/src/ggml-sycl/mmvq.cpp b/ggml/src/ggml-sycl/mmvq.cpp
-index 933bc77d2..05526b21b 100644
+index 7e4f22dd18..11f371b058 100644
 --- a/ggml/src/ggml-sycl/mmvq.cpp
 +++ b/ggml/src/ggml-sycl/mmvq.cpp
 @@ -769,10 +769,15 @@ static void reorder_mul_mat_vec_q4_0_q8_1_sycl(const void * vx, const void * vy,
@@ -32575,7 +32537,7 @@ index 933bc77d2..05526b21b 100644
          cgh.parallel_for(sycl::nd_range<3>(block_nums * block_dims, block_dims),
                           [=](sycl::nd_item<3> nd_item) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
 diff --git a/ggml/src/ggml-sycl/set_rows.cpp b/ggml/src/ggml-sycl/set_rows.cpp
-index c73ad8dc2..47f07b5c3 100644
+index c73ad8dc2e..47f07b5c37 100644
 --- a/ggml/src/ggml-sycl/set_rows.cpp
 +++ b/ggml/src/ggml-sycl/set_rows.cpp
 @@ -1,5 +1,6 @@
@@ -32988,7 +32950,7 @@ index c73ad8dc2..47f07b5c3 100644
      // dispatch on the index type (src1) and the source value type (src0)
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-f16-turbo2_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-f16-turbo2_0.cpp
 new file mode 100644
-index 000000000..572e7988f
+index 0000000000..572e7988fd
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-f16-turbo2_0.cpp
 @@ -0,0 +1,8 @@
@@ -33002,7 +32964,7 @@ index 000000000..572e7988f
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_F16, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-f16-turbo3_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-f16-turbo3_0.cpp
 new file mode 100644
-index 000000000..60dfd8014
+index 0000000000..60dfd80143
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-f16-turbo3_0.cpp
 @@ -0,0 +1,8 @@
@@ -33016,7 +32978,7 @@ index 000000000..60dfd8014
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_F16, GGML_TYPE_TURBO3_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-f16-turbo4_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-f16-turbo4_0.cpp
 new file mode 100644
-index 000000000..dda408da6
+index 0000000000..dda408da6d
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-f16-turbo4_0.cpp
 @@ -0,0 +1,8 @@
@@ -33030,7 +32992,7 @@ index 000000000..dda408da6
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_F16, GGML_TYPE_TURBO4_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-q8_0-turbo2_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-q8_0-turbo2_0.cpp
 new file mode 100644
-index 000000000..c126eac8e
+index 0000000000..c126eac8e1
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-q8_0-turbo2_0.cpp
 @@ -0,0 +1,8 @@
@@ -33044,7 +33006,7 @@ index 000000000..c126eac8e
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_Q8_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-q8_0-turbo3_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-q8_0-turbo3_0.cpp
 new file mode 100644
-index 000000000..60b53ad99
+index 0000000000..60b53ad99a
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-q8_0-turbo3_0.cpp
 @@ -0,0 +1,8 @@
@@ -33058,7 +33020,7 @@ index 000000000..60b53ad99
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_Q8_0, GGML_TYPE_TURBO3_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-q8_0-turbo4_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-q8_0-turbo4_0.cpp
 new file mode 100644
-index 000000000..b99062c6e
+index 0000000000..b99062c6e9
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-q8_0-turbo4_0.cpp
 @@ -0,0 +1,8 @@
@@ -33072,7 +33034,7 @@ index 000000000..b99062c6e
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_Q8_0, GGML_TYPE_TURBO4_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-f16.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-f16.cpp
 new file mode 100644
-index 000000000..3fdac4226
+index 0000000000..3fdac42265
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-f16.cpp
 @@ -0,0 +1,8 @@
@@ -33086,7 +33048,7 @@ index 000000000..3fdac4226
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO2_0, GGML_TYPE_F16);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-q8_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-q8_0.cpp
 new file mode 100644
-index 000000000..6c68db648
+index 0000000000..6c68db6486
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-q8_0.cpp
 @@ -0,0 +1,8 @@
@@ -33100,7 +33062,7 @@ index 000000000..6c68db648
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO2_0, GGML_TYPE_Q8_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-turbo2_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-turbo2_0.cpp
 new file mode 100644
-index 000000000..14df6a0b0
+index 0000000000..14df6a0b0f
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-turbo2_0.cpp
 @@ -0,0 +1,8 @@
@@ -33114,7 +33076,7 @@ index 000000000..14df6a0b0
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-turbo3_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-turbo3_0.cpp
 new file mode 100644
-index 000000000..f1d8ca91a
+index 0000000000..f1d8ca91a1
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-turbo3_0.cpp
 @@ -0,0 +1,8 @@
@@ -33128,7 +33090,7 @@ index 000000000..f1d8ca91a
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO3_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-turbo4_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-turbo4_0.cpp
 new file mode 100644
-index 000000000..1951a2194
+index 0000000000..1951a2194f
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo2_0-turbo4_0.cpp
 @@ -0,0 +1,8 @@
@@ -33142,7 +33104,7 @@ index 000000000..1951a2194
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO4_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-f16.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-f16.cpp
 new file mode 100644
-index 000000000..fc46266eb
+index 0000000000..fc46266eb4
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-f16.cpp
 @@ -0,0 +1,8 @@
@@ -33156,7 +33118,7 @@ index 000000000..fc46266eb
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO3_0, GGML_TYPE_F16);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-q8_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-q8_0.cpp
 new file mode 100644
-index 000000000..f5a7ad50a
+index 0000000000..f5a7ad50a6
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-q8_0.cpp
 @@ -0,0 +1,8 @@
@@ -33170,7 +33132,7 @@ index 000000000..f5a7ad50a
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO3_0, GGML_TYPE_Q8_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-turbo2_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-turbo2_0.cpp
 new file mode 100644
-index 000000000..4d13145a9
+index 0000000000..4d13145a96
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-turbo2_0.cpp
 @@ -0,0 +1,8 @@
@@ -33184,7 +33146,7 @@ index 000000000..4d13145a9
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cpp
 new file mode 100644
-index 000000000..97249ccaf
+index 0000000000..97249ccafb
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-turbo3_0.cpp
 @@ -0,0 +1,8 @@
@@ -33198,7 +33160,7 @@ index 000000000..97249ccaf
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO3_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-turbo4_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-turbo4_0.cpp
 new file mode 100644
-index 000000000..a70f7bda4
+index 0000000000..a70f7bda41
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo3_0-turbo4_0.cpp
 @@ -0,0 +1,8 @@
@@ -33212,7 +33174,7 @@ index 000000000..a70f7bda4
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO4_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-f16.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-f16.cpp
 new file mode 100644
-index 000000000..30ec802e8
+index 0000000000..30ec802e8c
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-f16.cpp
 @@ -0,0 +1,8 @@
@@ -33226,7 +33188,7 @@ index 000000000..30ec802e8
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO4_0, GGML_TYPE_F16);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-q8_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-q8_0.cpp
 new file mode 100644
-index 000000000..65f9a220e
+index 0000000000..65f9a220ef
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-q8_0.cpp
 @@ -0,0 +1,8 @@
@@ -33240,7 +33202,7 @@ index 000000000..65f9a220e
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO4_0, GGML_TYPE_Q8_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-turbo2_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-turbo2_0.cpp
 new file mode 100644
-index 000000000..5468b1cb0
+index 0000000000..5468b1cb02
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-turbo2_0.cpp
 @@ -0,0 +1,8 @@
@@ -33254,7 +33216,7 @@ index 000000000..5468b1cb0
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO4_0, GGML_TYPE_TURBO2_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-turbo3_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-turbo3_0.cpp
 new file mode 100644
-index 000000000..7fe88785d
+index 0000000000..7fe88785db
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-turbo3_0.cpp
 @@ -0,0 +1,8 @@
@@ -33268,7 +33230,7 @@ index 000000000..7fe88785d
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO4_0, GGML_TYPE_TURBO3_0);
 diff --git a/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-turbo4_0.cpp b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-turbo4_0.cpp
 new file mode 100644
-index 000000000..0b021f94e
+index 0000000000..0b021f94e8
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/template-instances/fattn-vec-instance-turbo4_0-turbo4_0.cpp
 @@ -0,0 +1,8 @@
@@ -33282,7 +33244,7 @@ index 000000000..0b021f94e
 +DECL_FATTN_VEC_CASE(512, GGML_TYPE_TURBO4_0, GGML_TYPE_TURBO4_0);
 diff --git a/ggml/src/ggml-sycl/turbo-quant.hpp b/ggml/src/ggml-sycl/turbo-quant.hpp
 new file mode 100644
-index 000000000..e217310f0
+index 0000000000..e217310f09
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/turbo-quant.hpp
 @@ -0,0 +1,158 @@
@@ -33446,7 +33408,7 @@ index 000000000..e217310f0
 +
 diff --git a/ggml/src/ggml-sycl/turbo-wht.cpp b/ggml/src/ggml-sycl/turbo-wht.cpp
 new file mode 100644
-index 000000000..f19cb03e4
+index 0000000000..f19cb03e45
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/turbo-wht.cpp
 @@ -0,0 +1,252 @@
@@ -33704,7 +33666,7 @@ index 000000000..f19cb03e4
 +}
 diff --git a/ggml/src/ggml-sycl/turbo-wht.hpp b/ggml/src/ggml-sycl/turbo-wht.hpp
 new file mode 100644
-index 000000000..c26701982
+index 0000000000..c267019825
 --- /dev/null
 +++ b/ggml/src/ggml-sycl/turbo-wht.hpp
 @@ -0,0 +1,5 @@

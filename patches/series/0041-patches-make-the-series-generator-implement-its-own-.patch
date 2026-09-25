@@ -1,4 +1,4 @@
-From 57cddcfd3348d753f0585bf902acd5d55d45d77e Mon Sep 17 00:00:00 2001
+From 3fcab81346e040543611c816d77cd7ddc7aa0b20 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 24 Jul 2026 20:42:06 -0400
 Subject: [PATCH] patches: make the series generator implement its own
@@ -32,7 +32,7 @@ Measured-effect: tooling and generated-artifact rules only; no engine behaviour 
 
 diff --git a/.gitattributes b/.gitattributes
 new file mode 100644
-index 000000000..8c563c5e4
+index 0000000000..8c563c5e4a
 --- /dev/null
 +++ b/.gitattributes
 @@ -0,0 +1,15 @@
@@ -52,7 +52,7 @@ index 000000000..8c563c5e4
 +# text in diffs instead of reporting "Binary files differ".
 +patches/** -text diff
 diff --git a/README.md b/README.md
-index d7ccec7b7..f84216ce3 100644
+index d7ccec7b7f..f84216ce37 100644
 --- a/README.md
 +++ b/README.md
 @@ -28,15 +28,21 @@ currency review.
@@ -93,7 +93,7 @@ index d7ccec7b7..f84216ce3 100644
  What that does **not** mean:
  
 diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
-index 239cdae09..6c44215ff 100644
+index 239cdae093..6c44215fff 100644
 --- a/tools/arifi-sync/arifi_sync.py
 +++ b/tools/arifi-sync/arifi_sync.py
 @@ -209,17 +209,49 @@ def gates_in_commit(repo: str, sha: str) -> list:

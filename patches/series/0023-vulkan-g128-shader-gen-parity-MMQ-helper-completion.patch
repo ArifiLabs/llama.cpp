@@ -1,4 +1,4 @@
-From eaaceefa32c5b43dd6746eea966466efabfa5a4a Mon Sep 17 00:00:00 2001
+From d54b61152ba1aa7cb92397232fe836d95d5d37ea Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 05:00:07 -0400
 Subject: [PATCH] vulkan: g128 shader-gen parity + MMQ helper completion
@@ -12,10 +12,10 @@ Measured-effect: build fix only
  3 files changed, 15 insertions(+), 4 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 4d32fad22..a95eab556 100644
+index b9be1d6eb7..3dc5fb508d 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -4093,7 +4093,7 @@ static bool ggml_vk_matmul_int_shmem_support(const vk_device& device, const std:
+@@ -1496,7 +1496,7 @@ static bool ggml_vk_matmul_int_shmem_support(const vk_device& device, const std:
      uint32_t block_a_size = 0;
      switch (src0_type) {
          case GGML_TYPE_Q2_0:    block_a_size = std430_size({{32, 4}, {fp_size,  fp_align}});                  break; // qs[8] + dm
@@ -25,7 +25,7 @@ index 4d32fad22..a95eab556 100644
          case GGML_TYPE_Q4_1:    block_a_size = std430_size({{16, 4}, {fp2_size, fp2_align}});                 break; // qs[16/4] + dm(vec2)
          case GGML_TYPE_Q5_0:    block_a_size = std430_size({{16, 4}, {4, 4}, {fp_size,  fp_align}});          break; // qs[16/4] + qh + dm
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_funcs.glsl
-index 0026127c0..789fa9ff4 100644
+index 5a670bb4b6..b34eca3210 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_funcs.glsl
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_funcs.glsl
 @@ -58,6 +58,19 @@ void block_a_to_shmem(const uint buf_ib, const uint ib, const uint iqs) {
@@ -49,10 +49,10 @@ index 0026127c0..789fa9ff4 100644
  #endif
  
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index c4154717b..8d27bd29c 100644
+index 719053b222..fe376313d1 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-@@ -235,7 +235,7 @@ bool is_quantized_type(const std::string& type_name) {
+@@ -236,7 +236,7 @@ bool is_quantized_type(const std::string& type_name) {
  }
  
  bool is_legacy_quant(const std::string& type_name) {
@@ -61,7 +61,7 @@ index c4154717b..8d27bd29c 100644
  }
  
  bool is_k_quant(const std::string& type_name) {
-@@ -846,8 +846,6 @@ void process_shaders() {
+@@ -915,8 +915,6 @@ void process_shaders() {
          }
      }
  

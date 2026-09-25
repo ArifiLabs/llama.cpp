@@ -1,0 +1,309 @@
+From f1f77b876310b178963684c176f2b84135a3a01c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 11 Sep 2026 08:38:44 -0400
+Subject: [PATCH] vulkan: the R47d 780M S-X8 mat-vec shape lookup as a
+ device-probed default (R46b commit D)
+
+R47d (lane-232) paired rows 1/2/4/8 against workgroups 64/128/256 over the four real 27B S-X8
+decode shapes at n=1..8, two rounds each. The optimum is NOT one global pair: at n=1 the two FFN
+orientations want rows=4/wg=256 while the 248320x5120 embed/output pair wants rows=8/wg=64, and
+4096x14336 wants rows=1/wg=256. One pipeline-creation constant cannot express that, so this builds
+one S-X8 f32 mat-vec pipeline per measured (rows, workgroup) variant per NUM_COLS and selects it at
+dispatch from an exact (m, k, n) lookup - 31 cells, every one of them >= 0.97 of the probed default
+in BOTH rounds. 17408x5120 at n=7 is absent on purpose: the sweep's winner there IS the default.
+
+The rule ships only on the device class the sweep speaks for - subgroup width 64 with a 32 KiB
+maxComputeSharedMemorySize, the SUBGROUP workgroup class, f32 activations - and only for those
+exact cells. f16, q8_1 and the mat-vec-id path do NOT inherit an f32 timing result. Every
+unmeasured shape, every n > 8 and every other device keep today's probed default, and a variant
+whose own tmpsh[NUM_COLS][NUM_ROWS][BLOCK_SIZE] does not fit at its NUM_COLS is never built.
+GGML_VK_SX8_MMV_ROWS / GGML_VK_SX8_MMV_WG still override, and setting either switches the lookup
+off WHOLE for the run: a run that kept the measured table on the cells a sweep arm does not name
+would be a mixed arm, and every receipt read off it would lie. A stderr receipt at pipeline
+creation names the rule, ON or OFF, with the probed default and the device's own probe values.
+
+STATED, because it is the acceptance surface: R47d measured lane-232's base, arifi/main 766cb9528,
+which does not carry R46's n <= 3 whole-block decode. R46 replaces the decode math and the
+row-blocking loop below n <= 3 and leaves the reduction shape untouched, so the shared-memory
+arithmetic still holds - but the n=1/2/3 OPTIMA are UNVERIFIED on this kernel until they are
+re-measured on the rebased stage. HQ owns that rerun.
+
+Also fixes the R46 checker's F6: vulkan-shaders-gen.cpp claimed ANY workgroup size is correct for
+mul_mat_vec_sx8.comp after R46. That is true only at NUM_COLS <= 3, where the whole-block path
+runs; at NUM_COLS >= 4 the per-position kernel is kept verbatim and still derives its weight
+position from tid & 31, so the multiple-of-32 invariant the host enforces is still load-bearing.
+
+Origin: ArifiLabs (native)
+Conflict-resolved: S4 split (f172be756): auto_split - our hunks re-homed into ggml-vulkan-types.h; wrap/same-point regions merged in place (fixS4_585.py)
+---
+ docs/OPTIONS-REGISTRY.md                      |  2 +
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h      | 89 +++++++++++++++++++
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 74 ++++++++++++++-
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     |  7 +-
+ 4 files changed, 167 insertions(+), 5 deletions(-)
+
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index b6e6a874ff..ae637dfd50 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -56,6 +56,8 @@ safe measurement posture.
+ | `GGML_VK_Q6K_DIRECT_SCALES` | **ON when unset — this row inverts the usual shape of this registry, read it before assuming.** Specialization constant 3; default `1` = read scales directly from the block. **`GGML_VK_Q6K_DIRECT_SCALES=0` restores upstream's shared-memory staging path byte for byte.** One binary serves both arms; the host prints the resolved mode on stderr at pipeline creation. Added 2026-09-05. | Scope: `mul_mat_vec_q6_k.comp` only. Upstream stages all 16 int8 scales of the superblock into a double-buffered shared tile and pays a `barrier()` **per row, inside the row loop** — the only `q*_k` mat-vec that does; `q4_k` and `q5_k` unpack in registers with no barrier. The exchange moves no data between threads: the 16 threads share one block, each writes its own scale and each reads only four bytes of that same block, off the cache line the staging already fetched. Direct reads yield identical values in identical fma order, so the result is **bit-identical by construction** and measured so. | **Leave it at the default and do not quote it as a speed lever.** Set `0` to A/B the two paths on other hardware, or to fall back if a driver mishandles the specialization constant. It is a plausible win where barriers are costlier or shared memory is scarcer than on gfx1103 — **unmeasured there**. | **MEASURED NEUTRAL on RIG-A. No speed win is claimed and none may be quoted.** Seat line (Huihui UD-Q4_K_XL + DFlash2 Q4_K_M drafter at `--spec-draft-n-max 2`, so verify width 3), one binary, arms env-gated, **6 position-balanced interleaved launches per phase**, Balanced power plan, 32+16 GB asymmetric RAM: op level, `q6_k` rows read a median ON/OFF ratio **0.9796** against **its own control of 78 untouched op rows at median 1.0061, p10–p90 [0.9479, 1.0636]** (one binary, env-gated); the two-binary diagnostic read **0.9880** against **0.9990, p10–p90 [0.9520, 1.0527]** — **no `q6_k` row separates from the control band in either pairing.** Serve level **TIED on all six cells** — prefill and decode reported separately at three prompt lengths, every arm range overlapping. Identity: **byte-identical output, one distinct sha256 per prompt across 6 serve launches (18 completions)**. Correctness `test-backend-ops -o MUL_MAT` **1394/1394, 0 FAIL, both arms**.<br>**Kept on the distributable-engine ground, not on a measured gain:** strictly less work — one fewer workgroup barrier per row per superblock and no shared tile — for a bit-identical result.<br>**What it did NOT fix, stated:** `q6_K` mat-vec runs **~35% below `q5_K`** at the identical shape (`m=17408 n=3 k=5120`: **41.0 vs 63.8 GB/s**, ratio 0.643), every `q6_K` row in a 39.2–41.6 band. The per-row barrier was the leading mechanism for that deficit and is now **FALSIFIED**; the deficit is **OPEN**. Correction to the motivating claim: `q4_K` at that same shape is **60.6 GB/s, not 72.5** — the deficit survives on the `q5_K` comparison only. See [`FINDINGS.md`](FINDINGS.md) F-14. |
+ | ROCmFP4-FAST `q8_1` MMVQ width gate | **Code, not an environment variable. No new environment variable was added for this mechanism** — the pre-existing `GGML_VK_DISABLE_MMVQ=1` is the only runtime lever, and it is upstream's, applying to every MMVQ type rather than this one (its own measured effect on `Q2_0_G128` is in the `GGML_ARIFI_G128_MMV_ROWS` row above). `ggml_vk_should_use_mmvq` returns true for `GGML_TYPE_Q4_0_ROCMFP4_FAST` on AMD at **`n == 3` and `n == 5` only**; every other width takes the f32 dequant shader. | Scope: the `q8_1` integer-dot mat-vec and mat-vec-id pipelines for `Q4_0_ROCMFP4_FAST`. Before the port the selector **listed** the type and `should_use_mmvq` **returned true**, but no line ever created the pipeline — so activations were quantized on every mat-vec, the lookup returned null, and the backend fell back to f32 in silence, paying the quantize cost for nothing. The port creates the pipelines and adds the repack and dot product (ue4m3 scale, exact-int LUT so `d_a * d_b * int-dot` forms the same product the f32 path does). | **Do not enable it more widely, and do not put this on a default branch yet.** Width 3 is the verify width of a depth-2 draft, which is where the gain is. Width 1 is a measured tie; width 4 is a tie; width 2 is the width that changed a sampled token; above 5 the port loses. | **MEASURED WIN, INTEGRATION BLOCKED.** Ladder, RIG-A, `m=17408 k=5120`, 3-round medians, epoch E2: `n=1` ×0.991, `n=2` ×1.192, **`n=3` ×1.361**, `n=4` ×1.018, **`n=5` ×1.310**, `n=8` ×1.025. Epoch E1 read ×0.998 / ×1.183 / ×1.335 / ×1.015 / ×1.316 / ×1.040 — **the gains reproduce across a driver change**. The discriminator is the control arm: under `GGML_VK_DISABLE_MMVQ=1` both arms take the identical f32 shader and every row flattens to **×0.991–1.007**, so this is the port and not build drift. Ungated at `n=8` the port read **×0.796**, which is why the gate has an upper bound at all.<br>**Serve, epoch E2** (julianmb Qwen3.8-27B-ROCmFP4-FAST 14.56 GB, DFlash2 depth 2, palindrome, 16 rounds/slot): drafted decode **7.498 → 9.518 t/s mean, +2.0199 [1.3212, 2.7186], 8/8 cells positive = +27%**; median 7.461 → 9.282. Plain **5.084 → 5.086, +0.0016 [−0.0168, +0.0199] = tied**. Prefill tied. Rolled **32/40 → 33/40**. **Zero empty completions in 64 rounds.** F-141 **0/8** on all three slots; `test-backend-ops` **10 MUL_MAT + 2 MUL_MAT_ID cases, 0 FAIL**.<br>**BLOCKING RESIDUAL, and it is why widths 2 and 4 are excluded:** an earlier build of this port made the model emit an empty completion — first token end-of-generation — deterministically on one prompt on this file. Three hypotheses were falsified before the cause was isolated to **width 2** (the n=1 dispatch gate did not remove it; a slot-swap proved the empties follow the **binary**, not the slot; forcing f32 for the whole run removed them). The same shader arithmetic is **still live at widths 3 and 5**, and the reproducer is a plain sequence that cannot reach them. Owed before default-branch integration: an adversarial drafted-mode cache-history corpus reaching width 3, or an MMVQ-vs-f32 logits comparison, or a tightened backend error gate. See [`FINDINGS.md`](FINDINGS.md) F-13. |
+ | `GGML_ARIFI_SX8_MMVQ` | **OFF when unset.** Only an exact `1` admits `GGML_TYPE_SX8` in `ggml_vk_should_use_mmvq()`; unset and every other value leave every width on the f32 dequant mat-vec. Added 2026-09-10 (lane-230/R46 commit C). | Scope: the `q8_1` integer-dot `mul_mat_vec` pipeline for `GGML_TYPE_SX8` and nothing else. The pipeline is created unconditionally beside the `Q8_0` row and the `b_type == Q8_1` selector switch lists the type; this env var is the only thing that makes `quantize_y` true, so with it unset the pipeline is compiled and never dispatched. The `_id` mirror is deliberately NOT admitted (declared with an `ARIFI-SYNC-SET ... EXCEPT SX8=` marker): no id `q8_1` pipeline is generated for S-X8, so admitting it there would select a null pipeline. | **Only on the 248320x5120 embed/output shape, and only while investigating.** That is where B2's `n <= 3` whole-block gate hands wide batches back to the per-position kernel and this path is worth +38 to +97%. Do not enable it for a general serve: the FFN shapes lose. | **MEASURED, MIXED, so it ships OFF.** RIG-A, `test-backend-ops`, 3 interleaved rounds per arm in one quiet hold, base = the unchanged kernel, candidate = commit C on top of the gated commit B2 (`32-paired-c.txt`, 96 cells, raw timings in `32-paired-c.json`). **Against the SHIPPED kernel it loses at `n=7` on three of four primary 27B shapes** - `-28.37%` (4096x14336), `-26.13%` (17408x5120), `-13.29%` (5120x17408) - **raw rounds non-overlapping**, so repeatable, not noise. The PREREG promotion bar (>5% median at `n=1..4`, no >3% repeatable regression on any primary shape) is also missed at `n=4`, 4096x14336: `-6.85%` against B2 (DERIVED, cross-session). **Where it wins it wins large**: 248320x5120 `+38.00 / +45.73 / +46.43 / +51.79%` at `n=1..4` against the unchanged kernel, `+94.85%` at `n=6`. A per-width admit was REFUSED as overfitting - the winning region is one shape at two widths. The `n=7` cliff is **non-monotonic** (`+13.69 / -13.88 / +17.68%` at `n=6/7/8` on 5120x17408 against B2), which points at a `NUM_COLS == 7` tail defect in the mmvq framework rather than a tuning loss; that is where a narrowed admit must start. Routing was proven by a **planted-RED in commit C's dot product only**: with the env unset every `sx8` MUL_MAT case is green, with `=1` ten of twelve go red and the two `mul_mm` cases stay green. Evidence: `research/local-inference/lane-evidence/2026-09-10-lane-230-r46-sx8-mmv/`. |
++| `GGML_VK_SX8_MMV_ROWS` / `GGML_VK_SX8_MMV_WG` | **unset = the probed default** (workgroup = the device subgroup width when it is a multiple of 32, else 32; rows = 2). Read once at pipeline creation. Added 2026-09-11 (lane-232/R47a), extended 2026-09-11 (lane-230/R46b commit D). | Scope: every S-X8 `mul_mat_vec` pipeline, f32/f16/q8_1/id alike. An override is taken WHOLE or refused WHOLE against this device's real limits: workgroup a positive multiple of 32, within `maxComputeWorkGroupInvocations`, and `NUM_COLS * rows * wg * 4` within `maxComputeSharedMemorySize` at the WIDEST `NUM_COLS`. **Setting either variable also switches the R46b shape-tuned lookup OFF for the whole run** — a run that kept the measured table on the cells the arm does not name would be a mixed arm. A stderr receipt names APPLIED or REFUSED once per distinct pair. | Sweep instrument. Use it to pair rows 1/2/4/8 against workgroups 64/128/256 out of one binary, or to pin the pre-R46b behaviour for an A/B. Not a serve setting. | On the 780M (subgroup 64, 32 KiB shared) `rows=8/wg=256` is REFUSED by shared memory and the run keeps the default; `rows=4/wg=256` and `rows=8/wg=128` sit exactly on the 32,768-byte limit, are admitted, and measured 12/12 GREEN on `MUL_MAT` (`research/local-inference/lane-evidence/2026-09-11-lane-232-r47a-alloc-instrument/33-boundary-rows4-wg256.txt`, `34-boundary-rows8-wg128.txt`). |
++| S-X8 mat-vec shape tuning (R47d lookup) | **Code, not an environment variable. ON by device probe** — subgroup width 64 with `maxComputeSharedMemorySize == 32768`, the SUBGROUP workgroup class, f32 activations, and only for the exact (m, k, n) cells the table names. Added 2026-09-11 (lane-230/R46b commit D). | Scope: `GGML_TYPE_SX8` `mul_mat_vec` with f32 activations. 31 measured cells over the four real 27B S-X8 decode shapes at n=1..8; the n=1 FFN orientations take rows=4/wg=256 and the 248320x5120 output takes rows=8/wg=64, which is why one global pair cannot express it. Every other shape, every n>8, the f16/q8_1/id paths and every other device keep the probed default. A stderr receipt at pipeline creation names ON/OFF and the probed default. | Nothing to operate. To measure against it, set `GGML_VK_SX8_MMV_ROWS`/`_WG` (which turns the lookup off whole). | **MEASURED on lane-232's base, which does NOT carry R46's `n <= 3` whole-block decode.** Every selected cell read >= 0.97 of the probed default in BOTH rounds, best cells +12.18% (248320x5120 n=2) and +10.76% (n=6); source `research/local-inference/lane-evidence/2026-09-11-lane-232-r47a-alloc-instrument/R47D-TRACES-SWEEP.md`, "Sweep selection". R46 replaces the decode math and row-blocking loop at `n <= 3` and leaves the reduction shape untouched, so the shared-memory arithmetic still holds, but **the n=1/2/3 optima are UNVERIFIED on the rebased kernel** until they are re-measured on the R46b stage. No held-out deployment guarantee is claimed. |
+ | `--spec-draft-adaptive` | **OFF.** CLI flag; sizes each draft from a per-sequence EMA of accepted tokens instead of a fixed `--spec-draft-n-max`, which becomes a safety ceiling rather than a tuning parameter. Backing off is averaged (alpha 0.25, ~4-step memory); probing upward is additive. Reset on `begin()` — a new prompt or a reused server slot — never mid-generation. | Scope: `common/speculative.cpp` draft-length selection. Sits in the `else` of this fork's existing DFlash2 adaptive selector, so a controller already armed keeps precedence; the MTP sites keep their own adaptive precedence. Speculation stays distribution-preserving, so the flag can move throughput and **cannot** move output. | Turn it on where content type varies within a session and no single fixed depth is right — its author's motivating measurement is that the correct depth is *opposite* for prose and for JSON. Sweep it against your own fixed depth before adopting. | **UNMEASURED ON RIG-A — no A/B for this flag exists on this hardware, and none should be quoted.** The measured table in the source commit was taken on a **Radeon 8060S** by the upstream author (three drafter configurations × prose/json × fixed-vs-adaptive, 300 greedy tokens on a Qwen3.8-27B ROCmFP4-FAST target). Those are **upstream-reported numbers for a different GPU** and are deliberately not restated here as results of this fork. Default OFF for that reason alone: the mechanism is sound and the evidence for it is somebody else's box. |
+ | `GGML_ARIFI_FA_DEQUANT_KV` | **Device default when unset, which is ON on every device** (upstream behaviour). `1` forces the f16 dequant-KV scratch copy ON, `0` forces the in-place quantized-KV read. Added 2026-09-06 (lane-212/R19), default flipped to ON 2026-09-07 (lane-220/R27). | Scope: Vulkan flash attention with a quantized K and V, prefill only (`neq1 >= 64`); decode never reaches it. One stderr receipt line `ggml_vulkan: FA dequant-KV scratch: ON\|OFF (device default\|GGML_ARIFI_FA_DEQUANT_KV)` binds every A/B log to the path it ran. Bit-identical either way - the same FA math with f32 accumulation, only the KV read strategy differs. A device that measures the scratch copy as a cost flips its own default at `fa_deq_device_default`, with its number. | Leave it unset. Set `0` to reproduce the pre-R27 AMD RDNA3 arm on the same binary, or on a device where the scratch copy is measurably a cost. | **The knob and the receipt are the result; the magnitude is NOT.** R19D measured `+8.08%` clean prefill on one binary and R27 flipped the default on it. The R18 wave recomputed the same banked rounds on 2026-09-08 and **it does not reproduce**: gate OFF vs ON on one binary reads decode `+0.49%` CI95 `[-1.62%, +2.59%]` and prefill `+0.85%` `[+0.36%, +1.33%]`; the DFlash2 arm reads decode `-0.91%` `[-1.93%, +0.12%]`. Do not quote `+8.08%`. Evidence: `research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/R18-KERNEL-WAVE-REPORT.md`, `.../r19-seat-prefill/R19D-ENGAGEMENT-LEGS.md`. |
+ | `LLAMA_DFLASH_FUSED_INJECT` | **OFF when unset on this fork - the LEGACY encode+decode path. This DIVERGES from upstream 662a0b012, deliberately.** `1` selects the fused injection (upstream shape). Added 2026-09-06 (lane-212/R18), default set to legacy 2026-09-08 (lane-225/R38). The C API default (`llama_cparams::dflash_fused_inject`) stays **fused**, because the legacy shape is a caller contract - the caller must `llama_encode` the chunk first - so only `common/speculative.cpp`, which owns both halves, defaults it off. | Scope: the DFlash2 drafter's K/V injection only. Fused = one `llama_decode` per chunk with the encoder (fc + rms norm) in-graph. Legacy = `llama_encode` the chunk through `graph<true>`, read the encoded rows back through `llama_get_embeddings_nextn`, feed them to the injection decode at the draft width. Nothing removed: `graph<true>`, the fused embd branch and the legacy host path all stay compiled. One receipt line per process names the arm. | Set `1` to restore upstream behaviour, and on any box that has not measured this pair. The default here is a **conservative choice on a sub-floor number, not a measured win** - see the cost cell before treating it as a recommendation. | **DOCUMENTED-TAKE, no gain, and the default flip is under the floor.** Seat DFlash2 decode `-0.98%` CI95 `[-1.16%, -0.80%]` fused vs legacy; U-IQ4XS `+0.05%` `[-0.56%, +0.67%]`; U-Q3KXL `-0.87%` `[-2.50%, +0.77%]`. Against this box's own build floor - the R18 wave's INERT controls, where both arms ran identical code, moved decode by up to **+3.71%** and prefill by up to **-8.28%**, both excluding zero, so **none of these three clears it** and the direction is all the flip rests on. Quality: F-141 both arms on the seat, `test-quantize-fns` identical to the bank. Evidence: `.../r18-kernel-wave/r15c2-dflash-encoder-fusion`. |
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index 28b6624d61..a8dadf8f01 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -385,6 +385,89 @@ static constexpr uint32_t mul_mat_vec_max_cols = 8;
+ 
+ static constexpr uint32_t p021_max_gqa_ratio = 8;
+ 
++// lane-230 / R46b commit D: the R47d S-X8 mat-vec sweep (lane-232) as a DEVICE-PROBED DEFAULT.
++//
++// R47d paired rows 1/2/4/8 against workgroups 64/128/256 over the four real 27B S-X8 decode
++// shapes at n=1..8, two rounds each, and the optimum is NOT one global pair: the n=1 FFN
++// orientations want rows=4/wg=256 while the 248320x5120 output wants rows=8/wg=64. So the rule is
++// an exact (m, k, n) lookup with its own pipeline per cell, selected at dispatch. Every selected
++// cell measured >= 0.97 of the probed default in BOTH rounds; rows=8/wg=256 was REFUSED by shared
++// memory and never enters the table. Unmeasured shapes, n > 8 and every other device keep the
++// probed default. Evidence: research/local-inference/lane-evidence/2026-09-11-lane-232-r47a-alloc-
++// instrument/R47D-TRACES-SWEEP.md, section "Sweep selection".
++//
++// The sweep ran on lane-232's base (arifi/main 766cb9528), which does NOT carry R46's n <= 3
++// whole-block decode. R46 replaces the decode math and the row-blocking loop below n <= 3 and
++// leaves the reduction shape (tmpsh[NUM_COLS][NUM_ROWS][BLOCK_SIZE]) untouched, so the shared
++// memory arithmetic still holds, but the n=1/2/3 OPTIMA are UNVERIFIED on this kernel until they
++// are re-measured on the rebased stage.
++enum vk_sx8_mmv_tune_variant {
++    SX8_TUNE_ROWS1_WG256 = 0,
++    SX8_TUNE_ROWS4_WG64,
++    SX8_TUNE_ROWS4_WG128,
++    SX8_TUNE_ROWS4_WG256,
++    SX8_TUNE_ROWS8_WG64,
++    SX8_TUNE_ROWS8_WG128,
++    SX8_TUNE_VARIANT_COUNT,
++};
++
++static constexpr uint32_t vk_sx8_mmv_tune_rows[SX8_TUNE_VARIANT_COUNT] = { 1,   4,  4,   4,   8,  8   };
++static constexpr uint32_t vk_sx8_mmv_tune_wg  [SX8_TUNE_VARIANT_COUNT] = { 256, 64, 128, 256, 64, 128 };
++
++struct vk_sx8_mmv_tune_cell {
++    uint32_t m;
++    uint32_t k;
++    uint32_t n;
++    uint32_t variant;
++};
++
++// m is the output row count (ne20), k the row length (ne00) - the same orientation the R47d table
++// prints as "m x k". 17408x5120 at n=7 is absent on purpose: the sweep's own winner there IS the
++// probed default, so no variant pipeline is built for it.
++static constexpr vk_sx8_mmv_tune_cell vk_sx8_mmv_tune_table[] = {
++    {   4096, 14336, 1, SX8_TUNE_ROWS1_WG256 },
++    {   4096, 14336, 2, SX8_TUNE_ROWS4_WG256 },
++    {   4096, 14336, 3, SX8_TUNE_ROWS4_WG256 },
++    {   4096, 14336, 4, SX8_TUNE_ROWS4_WG256 },
++    {   4096, 14336, 5, SX8_TUNE_ROWS4_WG128 },
++    {   4096, 14336, 6, SX8_TUNE_ROWS4_WG128 },
++    {   4096, 14336, 7, SX8_TUNE_ROWS4_WG64  },
++    {   4096, 14336, 8, SX8_TUNE_ROWS4_WG128 },
++    {   5120, 17408, 1, SX8_TUNE_ROWS4_WG256 },
++    {   5120, 17408, 2, SX8_TUNE_ROWS4_WG256 },
++    {   5120, 17408, 3, SX8_TUNE_ROWS4_WG256 },
++    {   5120, 17408, 4, SX8_TUNE_ROWS4_WG128 },
++    {   5120, 17408, 5, SX8_TUNE_ROWS4_WG256 },
++    {   5120, 17408, 6, SX8_TUNE_ROWS4_WG128 },
++    {   5120, 17408, 7, SX8_TUNE_ROWS4_WG64  },
++    {   5120, 17408, 8, SX8_TUNE_ROWS4_WG256 },
++    {  17408,  5120, 1, SX8_TUNE_ROWS4_WG256 },
++    {  17408,  5120, 2, SX8_TUNE_ROWS4_WG256 },
++    {  17408,  5120, 3, SX8_TUNE_ROWS4_WG256 },
++    {  17408,  5120, 4, SX8_TUNE_ROWS8_WG128 },
++    {  17408,  5120, 5, SX8_TUNE_ROWS4_WG128 },
++    {  17408,  5120, 6, SX8_TUNE_ROWS4_WG64  },
++    {  17408,  5120, 8, SX8_TUNE_ROWS4_WG64  },
++    { 248320,  5120, 1, SX8_TUNE_ROWS8_WG64  },
++    { 248320,  5120, 2, SX8_TUNE_ROWS4_WG64  },
++    { 248320,  5120, 3, SX8_TUNE_ROWS4_WG64  },
++    { 248320,  5120, 4, SX8_TUNE_ROWS8_WG64  },
++    { 248320,  5120, 5, SX8_TUNE_ROWS4_WG64  },
++    { 248320,  5120, 6, SX8_TUNE_ROWS4_WG64  },
++    { 248320,  5120, 7, SX8_TUNE_ROWS4_WG64  },
++    { 248320,  5120, 8, SX8_TUNE_ROWS4_WG64  },
++};
++
++// -1 = no measured cell, keep the probed default.
++static int ggml_vk_sx8_mmv_tune_lookup(uint32_t m, uint32_t k, uint32_t n) {
++    for (const auto & cell : vk_sx8_mmv_tune_table) {
++        if (cell.m == m && cell.k == k && cell.n == n) {
++            return (int) cell.variant;
++        }
++    }
++    return -1;
++}
++
+ enum vk_device_architecture {
+     OTHER,
+     AMD_GCN,
+@@ -804,6 +887,12 @@ struct vk_device_struct {
+ 
+     vk_pipeline pipeline_dequant[GGML_TYPE_COUNT];
+     vk_pipeline pipeline_dequant_transpose[GGML_TYPE_COUNT]; // fused dequant+transpose for FA quant-KV
++    // lane-230 / R46b commit D: one S-X8 f32 mat-vec pipeline per measured (rows, workgroup)
++    // variant per NUM_COLS, built only on a device the R47d sweep speaks for and only for the
++    // (variant, n) pairs the lookup table names. Everything else stays null and is never selected.
++    bool sx8_mmv_tuned = false;
++    vk_pipeline pipeline_dequant_mul_mat_vec_sx8_tuned[SX8_TUNE_VARIANT_COUNT][mul_mat_vec_max_cols];
++
+     vk_pipeline pipeline_dequant_mul_mat_vec_f32_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
+     vk_pipeline pipeline_dequant_mul_mat_vec_f16_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
+     vk_pipeline pipeline_dequant_mul_mat_vec_id_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 1093448e70..378a5085ef 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1746,7 +1746,10 @@ static bool ggml_vk_fa_scalar_uses_mmq(const vk_device& device, ggml_type k_type
+ // workgroup-size class, applied or refused, on stderr - llama-server drops ggml INFO records at
+ // the default verbosity, so the sweep's effective values have to reach the same channel the perf
+ // logger uses.
+-static void ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size, uint32_t & num_rows) {
++// Returns true when either environment variable was SET, applied or refused. The R46b tuned
++// lookup is bypassed WHOLE in that case: a sweep arm that kept the measured table on the cells the
++// arm does not name would be a mixed arm, and every receipt read off it would lie.
++static bool ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size, uint32_t & num_rows) {
+     static const uint32_t wg_req = [] {
+         const char * s = getenv("GGML_VK_SX8_MMV_WG");
+         return s != nullptr ? (uint32_t) strtoul(s, nullptr, 10) : 0u;
+@@ -1757,7 +1760,7 @@ static void ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size
+     }();
+ 
+     if (wg_req == 0 && rows_req == 0) {
+-        return;
++        return false;
+     }
+ 
+     const uint32_t wg   = (wg_req   != 0) ? wg_req   : wg_size;
+@@ -1796,7 +1799,7 @@ static void ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size
+                             "keeping probed wg=%u rows=%u\n",
+                     wg, rows, (unsigned long long) shmem, refusal, wg_size, num_rows);
+         }
+-        return;
++        return true;
+     }
+ 
+     if (first) {
+@@ -1806,6 +1809,7 @@ static void ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size
+ 
+     wg_size  = wg;
+     num_rows = rows;
++    return true;
+ }
+ 
+ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -3220,7 +3224,29 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         //   - it must fit maxComputeWorkGroupInvocations (local_size_x IS the workgroup), and
+         //   - the shared reduction array tmpsh[NUM_COLS][NUM_ROWS][BLOCK_SIZE] must fit
+         //     maxComputeSharedMemorySize at the WIDEST NUM_COLS this loop creates, not at n=1.
+-        ggml_vk_apply_sx8_mmv_override(device, sx8_wg_size, sx8_num_rows);
++        const bool sx8_override_set = ggml_vk_apply_sx8_mmv_override(device, sx8_wg_size, sx8_num_rows);
++
++        // lane-230 / R46b commit D: the R47d lookup ships as the DEFAULT on the device class it was
++        // measured on - subgroup width 64 with 32 KiB of compute shared memory, which is what the
++        // 780M reports - and only in the SUBGROUP workgroup class, the only class this device ever
++        // dispatches S-X8 through. Any environment override switches the whole lookup off.
++        const bool sx8_tuned_here = !sx8_override_set &&
++                                    w == DMMV_WG_SIZE_SUBGROUP &&
++                                    device->subgroup_size == 64 &&
++                                    device->properties.limits.maxComputeSharedMemorySize == 32768;
++        if (w == DMMV_WG_SIZE_SUBGROUP) {
++            device->sx8_mmv_tuned = sx8_tuned_here;
++            static bool tune_receipt = false;
++            if (!tune_receipt) {
++                tune_receipt = true;
++                fprintf(stderr, "ggml_vulkan: S-X8 mat-vec shape tuning: %s (R47d 780M lookup, %zu measured m/k/n cells; "
++                                "probed default wg=%u rows=%u; subgroup=%u shared=%u B)\n",
++                        sx8_tuned_here ? "ON" : "OFF",
++                        sizeof(vk_sx8_mmv_tune_table) / sizeof(vk_sx8_mmv_tune_table[0]),
++                        sx8_wg_size, sx8_num_rows,
++                        device->subgroup_size, device->properties.limits.maxComputeSharedMemorySize);
++            }
++        }
+ 
+         // arifi lane-209 R7: q6_k mat-vec DIRECT SCALES (specialization constant 3 of
+         // mul_mat_vec_q6_k.comp). 1 = read the four scales this thread needs straight out of the
+@@ -3288,6 +3314,31 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             // S-X8 v4.3, type-id 57 (lane-224). One shader, no subgroup fast/legacy split.
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_SX8][i],      "mul_mat_vec_sx8_f32_f32",     mul_mat_vec_sx8_f32_f32_len, mul_mat_vec_sx8_f32_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {sx8_num_rows, 1, 1}, {sx8_wg_size, sx8_num_rows, i+1}, 1, true, false, 0);
+ 
++            // lane-230 / R46b commit D: the shape-tuned S-X8 variants for THIS NUM_COLS. A variant
++            // is built only if some cell in the table asks for it at this n, and only if its own
++            // reduction array fits at this n - the guard is per-n here, not at the widest NUM_COLS,
++            // because each pipeline is fixed to one NUM_COLS.
++            if (sx8_tuned_here) {
++                for (uint32_t v = 0; v < SX8_TUNE_VARIANT_COUNT; ++v) {
++                    bool wanted = false;
++                    for (const auto & cell : vk_sx8_mmv_tune_table) {
++                        if (cell.variant == v && cell.n == i + 1) {
++                            wanted = true;
++                            break;
++                        }
++                    }
++                    const uint32_t v_rows = vk_sx8_mmv_tune_rows[v];
++                    const uint32_t v_wg   = vk_sx8_mmv_tune_wg[v];
++                    const uint64_t v_shmem = (uint64_t) (i + 1) * v_rows * v_wg * 4;
++                    if (!wanted ||
++                        v_wg > device->properties.limits.maxComputeWorkGroupInvocations ||
++                        v_shmem > device->properties.limits.maxComputeSharedMemorySize) {
++                        continue;
++                    }
++                    ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_sx8_tuned[v][i], "mul_mat_vec_sx8_f32_f32", mul_mat_vec_sx8_f32_f32_len, mul_mat_vec_sx8_f32_f32_data, "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {v_rows, 1, 1}, {v_wg, v_rows, i+1}, 1, true, false, 0);
++                }
++            }
++
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_F32 ][i], "mul_mat_vec_f32_f16_f32",  arr_dmmv_f32_f16_f32_len[reduc],  arr_dmmv_f32_f16_f32_data[reduc],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1, 1, 1}, {wg_size_subgroup, 1, i+1}, 1, false, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_F16 ][i], "mul_mat_vec_f16_f16_f32",  arr_dmmv_f16_f16_f32_len[reduc],  arr_dmmv_f16_f16_f32_data[reduc],  "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2, 1, 1}, {wg_size_subgroup, 2, i+1}, 1, false, use_subgroups, force_subgroup_size);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_BF16][i], "mul_mat_vec_bf16_f16_f32", arr_dmmv_bf16_f16_f32_len[reduc], arr_dmmv_bf16_f16_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {2, 1, 1}, {wg_size_subgroup, 2, i+1}, 1, false, use_subgroups, force_subgroup_size);
+@@ -6119,6 +6170,21 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context *
+         return ctx->device->pipeline_dequant_mul_mat_vec_q8_1_f32[dmmv_wg][a_type][num_cols-1];
+     }
+ 
++    // lane-230 / R46b commit D: the R47d shape lookup. f32 activations only - the sweep measured
++    // the f32 kernel, and the report is explicit that f16, q8_1 and the mat-vec-id path do not
++    // inherit an f32 timing result without their own receipts. A cell with no table entry, or a
++    // variant whose pipeline was not built on this device, falls through to the probed default.
++    if (a_type == GGML_TYPE_SX8 && b_type == GGML_TYPE_F32 &&
++        ctx->device->sx8_mmv_tuned && dmmv_wg == DMMV_WG_SIZE_SUBGROUP) {
++        const int variant = ggml_vk_sx8_mmv_tune_lookup(m, k, num_cols);
++        if (variant >= 0) {
++            vk_pipeline tuned = ctx->device->pipeline_dequant_mul_mat_vec_sx8_tuned[variant][num_cols-1];
++            if (tuned) {
++                return tuned;
++            }
++        }
++    }
++
+     return b_type == GGML_TYPE_F32 ? ctx->device->pipeline_dequant_mul_mat_vec_f32_f32[dmmv_wg][a_type][num_cols-1] : ctx->device->pipeline_dequant_mul_mat_vec_f16_f32[dmmv_wg][a_type][num_cols-1];
+ }
+ 
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index 703305df1c..6b5df0c2b4 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -1177,7 +1177,12 @@ void process_shaders() {
+     // tid & 31 and strides whole blocks by BLOCK_SIZE/32, so any workgroup size that
+     // is a multiple of 32 is correct" -- was TRUE until R46 and is now FALSE. One
+     // thread owns one whole 32-weight BLOCK and strides blocks by BLOCK_SIZE, so the
+-    // multiple-of-32 condition is gone with it: ANY workgroup size is correct.
++    // multiple-of-32 condition is gone with it -- but ONLY at NUM_COLS <= 3, where that
++    // block path runs. CORRECTED lane-230 / R46b (checker F6): at NUM_COLS >= 4 the
++    // per-position kernel is kept verbatim and still derives its weight position from
++    // tid & 31, so the workgroup must STILL be a multiple of 32. The host enforces that
++    // invariant for every S-X8 mat-vec pipeline (ggml_vk_apply_sx8_mmv_override), and the
++    // R46b shape-tuned variants only ever pick workgroups of 64/128/256.
+     string_to_spv("mul_mat_vec_sx8_f32_f32", "mul_mat_vec_sx8.comp",
+         merge_maps(base_dict, {{"DATA_A_SX8", "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
+     string_to_spv("mul_mat_vec_sx8_f16_f32", "mul_mat_vec_sx8.comp",

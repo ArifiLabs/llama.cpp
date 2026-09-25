@@ -1,0 +1,181 @@
+From acbab1a4c9440a57156956f068aef1facb3aaadf Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 31 Aug 2026 05:49:42 -0400
+Subject: [PATCH] q2_0_g128: the tie predicate is exact on both sides, not a
+ reciprocal
+
+SET_ROWS(type_src=f16, type_dst=q2_0_g128) failed test-backend-ops on Vulkan at ERR 1.7e-5 to 4.1e-5 against a 1e-7 tolerance, on 3 of 24 cases. Every f32-source case passed, which rules out block indexing, amax reduction order, fp16 d storage and dequant: what is left is the value -> level map, at ties.
+
+Both sides were wrong, in the same place. quantize_row_q2_0_g128_ref (ggml/src/ggml-quants.c:144) chose the level with roundf(x * (1.0f/d)). fp32 division is correctly rounded but 1/d still rounds DOWN for 4427 of the 31743 finite positive f16 scales, and then the exact tie x = d/2 evaluates to 0.5 - 2^-25 and roundf returns 0 instead of +-1. The Vulkan shader (copy_to_quant.comp:378-379) carried the same expression plus its own reciprocal error, so the two disagreed on a different subset again. lane-149 fixed the GLSL round() tie DIRECTION (F-109) and cut the failures 8 -> 3 without reaching this, the cause.
+
+f16 sources land on exact ties constantly (11-bit mantissas); f32 sources essentially never. That is the whole f16-only signature.
+
+Fix: both sides now use the exact predicate |x| >= d/2, written 2*|x| >= d. Multiply-by-2 and compare are correctly rounded on CPU and on Vulkan, so the two are bit-identical by construction rather than by luck, and no reciprocal is computed at all. Dequant is untouched: existing artifacts read as before.
+
+test-ternary-repack gains the regression: sweep EVERY f16 scale (not a sample - the defect is scale-dependent and a random draw misses it 86% of the time) and require |x| = d/2 to encode as +-1. Canary: with the old expression restored the new test reports 8854 wrong codes = 4427 x 2, matching the arithmetic prediction exactly.
+
+Gates on Vulkan0 (AMD Radeon 780M, RADV GFX1103): SET_ROWS q2_0_g128 24 cases 3 FAIL -> 0 FAIL, 367 SET_ROWS cases total 0 FAIL nothing else moved; CPY q2_0_g128 7 cases 0 -> 0, 294 CPY cases total 0 FAIL nothing moved; test-ternary-repack 31743 scales checked 0 wrong codes; test-quantize-fns q2_0_g128 0.008678 / 0.141111 before AND after - the pre-existing generic 2-bit threshold miss, unmoved by this change (q2_0_rocmfpx and q3_0_rocmfpx miss it the same way).
+
+Blast radius: q2_0_g128 is not in kv_cache_types (common/arg.cpp:307), and Vulkan is the only GPU backend carrying the type, so no production path writes it through SET_ROWS today. The shared quantize() also serves the CPY pipelines, and the CPU reference is what every q2_0_g128 artifact is written with, so the fix ships.
+
+Prior-Art: F-109, F-116, F-125, F-151
+WI: WI-2060
+Lane: lane-179
+---
+ ggml/src/ggml-quants.c                        | 20 +++++--
+ .../vulkan-shaders/copy_to_quant.comp         | 23 ++++----
+ tests/test-ternary-repack.cpp                 | 54 +++++++++++++++++++
+ 3 files changed, 85 insertions(+), 12 deletions(-)
+
+diff --git a/ggml/src/ggml-quants.c b/ggml/src/ggml-quants.c
+index 21c021af8c..21ac193e73 100644
+--- a/ggml/src/ggml-quants.c
++++ b/ggml/src/ggml-quants.c
+@@ -130,8 +130,7 @@ void quantize_row_q2_0_g128_ref(const float * GGML_RESTRICT x, block_q2_0_g128 *
+             }
+         }
+ 
+-        const float d  = amax;
+-        const float id = d > 0.0f ? 1.0f / d : 0.0f;
++        const float d = amax;
+ 
+         y[i].d = GGML_FP32_TO_FP16(d);
+ 
+@@ -140,8 +139,23 @@ void quantize_row_q2_0_g128_ref(const float * GGML_RESTRICT x, block_q2_0_g128 *
+         }
+ 
+         // Encode {-1, 0, +1, +2} as {0, 1, 2, 3}, four values per byte.
++        //
++        // The level predicate is the EXACT one, |x| >= d/2, written as 2*|x| >= d: fp32 multiply
++        // by 2 and compare are correctly rounded on every backend, so this is bit-identical on
++        // CPU and GPU by construction. The old form, roundf(x * (1.0f/d)), was not: fp32 division
++        // is correctly rounded but 1/d still rounds DOWN for 4427 of the 31743 finite positive
++        // f16 scales, and then an exact tie x = d/2 evaluates to 0.5 - 2^-25 and roundf returns
++        // 0 instead of +-1. f16 sources land on exact ties constantly (11-bit mantissas), f32
++        // sources essentially never -- which is exactly why only type_src=f16 SET_ROWS cases
++        // failed test-backend-ops. lane-179; the Vulkan shader (copy_to_quant.comp) carries the
++        // same predicate and the same note. |x| <= amax = d, so level +2 is unreachable.
+         for (int j = 0; j < qk; ++j) {
+-            int q = (int) roundf(x[i*qk + j] * id) + 1;
++            const float xj = x[i*qk + j];
++
++            int q = 1;
++            if (d > 0.0f && fabsf(xj) * 2.0f >= d) {
++                q += xj < 0.0f ? -1 : 1;
++            }
+             q = MAX(0, MIN(3, q));
+ 
+             y[i].qs[j / 4] |= (uint8_t) q << (2 * (j % 4));
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp b/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
+index a5c75fb997..aae2b4d4e7 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp
+@@ -360,8 +360,7 @@ void quantize(uint dst_idx, uint src_idx)
+         amax = max(amax, abs(v));
+     }
+ 
+-    const float d  = amax;
+-    const float id = d > 0.0 ? 1.0/d : 0.0;
++    const float d = amax;
+ 
+     data_q[dst_idx].d = float16_t(d);
+ 
+@@ -370,13 +369,19 @@ void quantize(uint dst_idx, uint src_idx)
+     }
+ 
+     [[unroll]] for (int j = 0; j < QUANT_K_Q2_0_G128; ++j) {
+-        // GLSL round() breaks ties in an IMPLEMENTATION-CHOSEN direction (GLSL spec 8.3); the CPU
+-        // reference (quantize_row_q2_0_g128_ref, ggml-quants.c) uses roundf = half AWAY from zero.
+-        // f16 sources land on exact .5 ties often enough that the two disagreed on real cases —
+-        // 8 SET_ROWS(f16 -> q2_0_g128) failures, ERR up to 5.1e-4, found the moment lane-149 added
+-        // q2_0_g128 to all_types (F-109). Same expression as quantize_q2_0() above.
+-        const float x = float(data_s[src_idx + j]) * id;
+-        int q = int(x >= 0.0 ? floor(x + 0.5) : ceil(x - 0.5)) + 1;
++        // EXACT level predicate |x| >= d/2, written as 2*|x| >= d, matching
++        // quantize_row_q2_0_g128_ref (ggml-quants.c) expression for expression. Multiply-by-2 and
++        // compare are correctly rounded here and on the CPU, so the two agree bit-for-bit for every
++        // input. The reciprocal form both sides used before was NOT reproducible across backends:
++        // 1/d rounds down for 4427 of the 31743 finite positive f16 scales, turning an exact tie
++        // x = d/2 into 0.5 - 2^-25 and rounding it to 0. lane-149 fixed the GLSL round() tie
++        // direction (F-109) and cut the failures 8 -> 3 without reaching this, the real cause.
++        // |x| <= amax = d, so level +2 is unreachable; the clamp is belt and braces.
++        const float v = float(data_s[src_idx + j]);
++        int q = 1;
++        if (d > 0.0 && abs(v) * 2.0 >= d) {
++            q += v < 0.0 ? -1 : 1;
++        }
+         q = clamp(q, 0, 3);
+         data_q[dst_idx].qs[j / 4] |= uint8_t(q << ((j % 4) * 2));
+     }
+diff --git a/tests/test-ternary-repack.cpp b/tests/test-ternary-repack.cpp
+index 1ed863beec..34aba356ea 100644
+--- a/tests/test-ternary-repack.cpp
++++ b/tests/test-ternary-repack.cpp
+@@ -254,6 +254,58 @@ static void run_group(const char * label, kernel_fn gemv, kernel_fn gemv_generic
+     }
+ }
+ 
++// lane-179 regression: the q2_0_g128 quantizer must resolve the exact tie |x| = d/2 AWAY from
++// zero, for EVERY scale d. It did not: the old form roundf(x * (1.0f/d)) rounds the tie to 0
++// whenever fl(1/d) rounds down, which happens for 4427 of the 31743 finite positive f16 scales.
++// f16 sources hit exact ties constantly, so this showed up as SET_ROWS(f16 -> q2_0_g128) failures
++// on Vulkan against the CPU reference - both sides were wrong, in different places.
++//
++// Sweeping every f16 scale (not sampling) is the point: the defect is scale-dependent and a
++// random draw misses it 86% of the time.
++static void test_g128_quantize_ties(void) {
++    printf("\nq2_0_g128 quantizer: |x| = d/2 must encode as +-1, at every f16 scale\n");
++
++    int checked = 0;
++    int bad     = 0;
++
++    for (uint32_t bits = 1; bits < 0x7C00u; ++bits) {
++        ggml_fp16_t h;
++        memcpy(&h, &bits, sizeof(h));
++        const float d = ggml_fp16_to_fp32(h);
++        if (!(d > 0.0f) || !std::isfinite(d)) {
++            continue;
++        }
++
++        // amax = d, so x = +-d/2 sits exactly on the level boundary. The rest is zero.
++        std::vector<float> x(QK2_0_G128, 0.0f);
++        x[0] = d;
++        x[1] = -d;
++        x[2] = d * 0.5f;
++        x[3] = -(d * 0.5f);
++
++        block_q2_0_g128 blk;
++        quantize_row_q2_0_g128(x.data(), &blk, QK2_0_G128);
++
++        // codes 0..3 decode to -1..2; qs packs four per byte, low pair first.
++        const int want[4] = { 2, 0, 2, 0 };
++        for (int j = 0; j < 4; ++j) {
++            const int got = (blk.qs[j / 4] >> (2 * (j % 4))) & 0x03;
++            if (got != want[j]) {
++                if (bad < 3) {
++                    printf("  MISMATCH d=%.9g x[%d]=%.9g got code %d want %d\n", d, j, x[j], got, want[j]);
++                }
++                ++bad;
++            }
++        }
++        ++checked;
++    }
++
++    printf("  %d scales checked, %d wrong codes\n", checked, bad);
++    if (checked == 0 || bad != 0) {
++        ++failures;
++    }
++}
++
+ int main(void) {
+     // Populates ggml_table_f32_f16, which GGML_CPU_FP16_TO_FP32 reads. Without it every block
+     // scale decodes as zero and every kernel returns zero, which reads exactly like a broken
+@@ -279,6 +331,8 @@ int main(void) {
+     // stride is silent wrong math, not a crash - so a test that could not see it would be worse
+     // than no test. The buffer is deliberately oversized: at g64 the kernel walks 2x the blocks
+     // and would otherwise read past the g128 allocation.
++    test_g128_quantize_ties();
++
+     printf("\nnegative control: g128 data through the g64 kernel must NOT match\n");
+     {
+         const int nb = 2, n = nb * QK2_0_G128, nc = 4;

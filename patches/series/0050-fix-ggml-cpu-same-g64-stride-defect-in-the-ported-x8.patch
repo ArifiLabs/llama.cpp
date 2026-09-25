@@ -1,4 +1,4 @@
-From a01ed569b6e6d29aaf4009e368323f695a3fccb5 Mon Sep 17 00:00:00 2001
+From 723a68af53c08a8cb954d24ac500ce4cb218bbae Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Fri, 24 Jul 2026 17:40:44 -0400
 Subject: [PATCH] fix(ggml-cpu): same g64 stride defect in the ported x86 Q2_0
@@ -53,7 +53,7 @@ Origin: ArifiLabs/vnni-repack
  1 file changed, 4 insertions(+), 4 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/arch/x86/quants.c b/ggml/src/ggml-cpu/arch/x86/quants.c
-index dbe83a6f3..5d927bf66 100644
+index dbe83a6f34..5d927bf666 100644
 --- a/ggml/src/ggml-cpu/arch/x86/quants.c
 +++ b/ggml/src/ggml-cpu/arch/x86/quants.c
 @@ -585,8 +585,8 @@ void ggml_vec_dot_q2_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi

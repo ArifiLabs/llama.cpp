@@ -1,4 +1,4 @@
-From c16526b3b1feb6c803e913ad4490a7eaff865d5b Mon Sep 17 00:00:00 2001
+From 055efbf0d7eed084f22a0a87b44febfd17f51513 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 29 Jul 2026 00:10:29 -0400
 Subject: [PATCH] fix(ggml-cpu/x86): don't pass __m256i by value across the
@@ -35,7 +35,7 @@ repack divergence, not this change. Control: q4_K unaffected before and after.
  1 file changed, 34 insertions(+), 20 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/arch/x86/repack.cpp b/ggml/src/ggml-cpu/arch/x86/repack.cpp
-index aa1b119d9..8e7937948 100644
+index aa1b119d96..8e79379482 100644
 --- a/ggml/src/ggml-cpu/arch/x86/repack.cpp
 +++ b/ggml/src/ggml-cpu/arch/x86/repack.cpp
 @@ -517,9 +517,33 @@ void ggml_quantize_mat_q8_K_4x8(const float * GGML_RESTRICT x, void * GGML_RESTR

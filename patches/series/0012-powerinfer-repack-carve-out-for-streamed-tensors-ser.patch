@@ -1,4 +1,4 @@
-From 87dd24346704e5267980c5636aab747ea8408bad Mon Sep 17 00:00:00 2001
+From 3344b1a75309473967acd035ddf5c8a420b93f3f Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:31:10 -0400
 Subject: [PATCH] powerinfer: repack carve-out for streamed tensors [series
@@ -7,18 +7,19 @@ Subject: [PATCH] powerinfer: repack carve-out for streamed tensors [series
 Taken-from: Tiiny-AI/PowerInfer@8bd56d69906c9d2dba4d3bf6899763401e01a9a4
 Origin: ArifiLabs lane-110
 Measured-effect: Fixes garbage output from AARCH64 repack of streamed experts (RESULTS rung2).
+Conflict-resolved: auto: same-point-insertion(upstream block then ours) in ggml/src/ggml-cpu/repack.cpp
 ---
  ggml/src/ggml-cpu/repack.cpp | 16 ++++++++++++++++
  1 file changed, 16 insertions(+)
 
 diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
-index 9689ca3ce..61293d47a 100644
+index d56db98023..d5fd78f1f4 100644
 --- a/ggml/src/ggml-cpu/repack.cpp
 +++ b/ggml/src/ggml-cpu/repack.cpp
-@@ -4526,6 +4526,22 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
- }  // namespace ggml::cpu::repack
+@@ -4927,6 +4927,22 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+     static const ggml::cpu::repack::tensor_traits<block_q1_0, 4, 4, GGML_TYPE_Q8_0> q1_0_4x4_q8_0;
+     static const ggml::cpu::repack::tensor_traits<block_q1_0, 8, 4, GGML_TYPE_Q8_0> q1_0_4x8_q8_0;
  
- static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(const struct ggml_tensor * cur) {
 +    // lane-110 M3 graft tag:repack-carveout — fork parity (smallthinker ggml-cpu-aarch64.cpp:6288-6299):
 +    // the expert bundle must hold PLAIN Q4_0 bytes and the streaming kernels read plain Q4_0,
 +    // so expert tensors must NOT be runtime-repacked in either bundle-gen or streaming mode.

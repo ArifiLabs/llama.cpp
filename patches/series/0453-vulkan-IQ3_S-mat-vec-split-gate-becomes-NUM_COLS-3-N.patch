@@ -1,0 +1,142 @@
+From 67516781fde9a843d59a5f6c9a58ea68bf659dc7 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 02:02:22 -0400
+Subject: [PATCH] vulkan: IQ3_S mat-vec split gate becomes (NUM_COLS == 3 ||
+ NUM_COLS > 4); the stock widths keep the upstream body bit for bit
+
+lane-209 rank 4, third build (r4c = the shipped kernel). The >= 2 gate of 616b877b8 applied zuijdwijk
+211abf6a9's two moves (16 invocations per superblock, sum[] removed) at every width and measured a 7-9%
+LOSS at n=2 and n=4 on the 780M (r4b/TBO-17408.txt: x0.907 / x0.925). So the non-split widths now take the
+upstream body verbatim under a spec constant that folds at pipeline creation, and only n=3 and n>4 carry
+the split.
+
+Measured, test-backend-ops perf, iq3_s 17408x5120, 3-round medians, engine-r5 vs engine-r4c
+(lane-209 r4c/TBO-17408.txt): n=1 x1.002, n=2 x0.993, n=3 x1.355 (964.9 -> 711.9 us, 39.7 -> 53.8 GB/s),
+n=4 x1.000, n=5 x1.472, n=8 x4.803. Correctness MUL_MAT 13 OK / 0 FAIL, MUL_MAT_ID OK.
+
+n=3 is the DFlash2 n-max 2 verify width: serve A/B on U-Q3KXL (iq3_s 26.6% by bytes), engine-r5 vs
+engine-r4c, same file, 16 rounds per slot, presence 0 on raw completions: DFlash2 decode 8.367 -> 9.268 t/s,
+cell-wise +0.820 t/s CI95 [+0.622, +1.018], 8/8 cells positive. Plain (n=1 = the stock body by construction)
+is identical, the control that the untouched widths did not move. F-141 0/8 on every slot, rolled/40 35 = 35.
+
+Taken-from: LaurentZuijdwijk/llama.cpp 211abf6a9 (via lane-166/matvec-vgpr-fix, never merged), gate widened.
+Report: board/programs/local-inference/lanes/2026-09-02-lane-209-kernel-attacks-REPORT.md
+---
+ .../vulkan-shaders/mul_mat_vec_iq3_s.comp     | 93 +++++++++++++------
+ 1 file changed, 66 insertions(+), 27 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+index 063dd6b225..e8f6eb69a2 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+@@ -10,14 +10,17 @@ FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+ // Taken-from: LaurentZuijdwijk/llama.cpp 211abf6a9 "vulkan: handle larger batch sizes (>4)
+ // efficiently for IQ3_S mat-vec when NUM_COLS > 4. 5x perf at n=8" (ported by lane-166 as
+ // lane-166/matvec-vgpr-fix, gated to NUM_COLS > 4: 4.15x at n=5, 3.05x at n=8 on the 780M).
+-// arifi lane-209 extends the gate to NUM_COLS >= 2: the lane-204 census put the n=3 DFlash2-verify
+-// rows of this shader at 38-45 GB/s against 81 best on the same map (U-Q3KXL 45 ms, U-IQ4XS 22 ms
+-// per verify graph). With 8 invocations per superblock the [[unroll]]ed l=4 x NUM_COLS B slab is
+-// live per row; 16 invocations halve it. n=1 keeps the stock 8/4 shape.
++// arifi lane-209 adds NUM_COLS == 3 (the DFlash2 n-max 2 VERIFY width): the lane-204 census put the
++// n=3 rows of this shader at 38-45 GB/s against 81 best on the same map (U-Q3KXL 45 ms, U-IQ4XS
++// 22 ms per verify graph). With 8 invocations per superblock the [[unroll]]ed l=4 x NUM_COLS B slab
++// is live per row; 16 invocations halve it. Measured on the 780M (test-backend-ops perf, 17408x5120,
++// 3-round medians, lane-209 r4/TBO-17408.txt): n=3 963 -> 736 us (x1.31), n=5 x1.46, n=8 x4.64,
++// n=1 / n=2 unchanged, but n=4 1174 -> 1427 us (x0.82) - so n=4 keeps the stock 8/4 shape and the
++// gate is the union of zuijdwijk's (> 4) and the one width that measured a win below it.
+ // NO DIVISION BY A SPECIALIZATION CONSTANT AT GLOBAL SCOPE (lane-166: the AMD proprietary driver
+ // folds OpSpecConstantOp UDiv at pipeline creation and raised STATUS_INTEGER_DIVIDE_BY_ZERO).
+ // Selects give the same constants with no divide.
+-const bool ARIFI_TPB16 = NUM_COLS >= 2;
++const bool ARIFI_TPB16 = (NUM_COLS == 3) || (NUM_COLS > 4);
+ const uint TPB         = ARIFI_TPB16 ? 16u : 8u;
+ const uint NL          = ARIFI_TPB16 ?  2u : 4u;   // == 32 / TPB
+ const uint TPB_OVER_8  = ARIFI_TPB16 ?  2u : 1u;   // == TPB / 8
+@@ -33,29 +36,65 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+         const uint scale = (data_a[ibi].scales[ib32/2] >> (4 * (ib32 & 1))) & 0xF;
+         const float dscale = d * (1 + 2 * scale);
+         const uint qh = data_a[ibi].qh[ib32];
+-        [[unroll]] for (uint ll = 0; ll < NL; ++ll) {
+-            const uint l = l0 + ll;
+-            const u8vec2 qs = unpack8(uint32_t(data_a_packed16[ibi].qs[4 * ib32 + l])).xy; // vec4 used due to #12147
+-            const uint sign = data_a[ibi].signs[4 * ib32 + l];
+-            const vec4 grid0 = vec4(unpack8(iq3s_grid[qs.x | ((qh << (8 - 2*l)) & 0x100)]));
+-            const vec4 grid1 = vec4(unpack8(iq3s_grid[qs.y | ((qh << (7 - 2*l)) & 0x100)]));
+-
++        if (ARIFI_TPB16) {
++            // the split widths: zuijdwijk's two moves together (16 invocations, no sum[] array)
++            [[unroll]] for (uint ll = 0; ll < NL; ++ll) {
++                const uint l = l0 + ll;
++                const u8vec2 qs = unpack8(uint32_t(data_a_packed16[ibi].qs[4 * ib32 + l])).xy; // vec4 used due to #12147
++                const uint sign = data_a[ibi].signs[4 * ib32 + l];
++                const vec4 grid0 = vec4(unpack8(iq3s_grid[qs.x | ((qh << (8 - 2*l)) & 0x100)]));
++                const vec4 grid1 = vec4(unpack8(iq3s_grid[qs.y | ((qh << (7 - 2*l)) & 0x100)]));
++
++                [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++                    const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
++                    const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
++
++                    const FLOAT_TYPE sum =
++                          fma(FLOAT_TYPE(b0.x), FLOAT_TYPE((sign &   1) != 0 ? -grid0.x : grid0.x),
++                          fma(FLOAT_TYPE(b0.y), FLOAT_TYPE((sign &   2) != 0 ? -grid0.y : grid0.y),
++                          fma(FLOAT_TYPE(b0.z), FLOAT_TYPE((sign &   4) != 0 ? -grid0.z : grid0.z),
++                          fma(FLOAT_TYPE(b0.w), FLOAT_TYPE((sign &   8) != 0 ? -grid0.w : grid0.w),
++                          fma(FLOAT_TYPE(b4.x), FLOAT_TYPE((sign &  16) != 0 ? -grid1.x : grid1.x),
++                          fma(FLOAT_TYPE(b4.y), FLOAT_TYPE((sign &  32) != 0 ? -grid1.y : grid1.y),
++                          fma(FLOAT_TYPE(b4.z), FLOAT_TYPE((sign &  64) != 0 ? -grid1.z : grid1.z),
++                          fma(FLOAT_TYPE(b4.w), FLOAT_TYPE((sign & 128) != 0 ? -grid1.w : grid1.w),
++                          FLOAT_TYPE(0.0)))))))));
++
++                    temp[j][n] = fma(dscale, sum, temp[j][n]);
++                }
++            }
++        } else {
++            // the stock widths: the upstream body VERBATIM (sum[NUM_COLS] array, l = 0..3). The union-gate build
++            // that applied the no-sum[] form here measured n=2 x0.907 / n=4 x0.925 vs stock on the 780M
++            // (lane-209 r4b/TBO-17408.txt), so the stock widths keep the stock code, bit for bit.
++            FLOAT_TYPE sum[NUM_COLS];
++            [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++                sum[j] = 0.0;
++            }
++            [[unroll]] for (uint l = 0; l < 4; ++l) {
++                const u8vec2 qs = unpack8(uint32_t(data_a_packed16[ibi].qs[4 * ib32 + l])).xy; // vec4 used due to #12147
++                const uint sign = data_a[ibi].signs[4 * ib32 + l];
++                const vec4 grid0 = vec4(unpack8(iq3s_grid[qs.x | ((qh << (8 - 2*l)) & 0x100)]));
++                const vec4 grid1 = vec4(unpack8(iq3s_grid[qs.y | ((qh << (7 - 2*l)) & 0x100)]));
++
++                [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++                    const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
++                    const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
++
++                    sum[j] =
++                          fma(FLOAT_TYPE(b0.x), FLOAT_TYPE((sign &   1) != 0 ? -grid0.x : grid0.x),
++                          fma(FLOAT_TYPE(b0.y), FLOAT_TYPE((sign &   2) != 0 ? -grid0.y : grid0.y),
++                          fma(FLOAT_TYPE(b0.z), FLOAT_TYPE((sign &   4) != 0 ? -grid0.z : grid0.z),
++                          fma(FLOAT_TYPE(b0.w), FLOAT_TYPE((sign &   8) != 0 ? -grid0.w : grid0.w),
++                          fma(FLOAT_TYPE(b4.x), FLOAT_TYPE((sign &  16) != 0 ? -grid1.x : grid1.x),
++                          fma(FLOAT_TYPE(b4.y), FLOAT_TYPE((sign &  32) != 0 ? -grid1.y : grid1.y),
++                          fma(FLOAT_TYPE(b4.z), FLOAT_TYPE((sign &  64) != 0 ? -grid1.z : grid1.z),
++                          fma(FLOAT_TYPE(b4.w), FLOAT_TYPE((sign & 128) != 0 ? -grid1.w : grid1.w),
++                          sum[j]))))))));
++                }
++            }
+             [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+-                const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+-                const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
+-
+-                const FLOAT_TYPE sum =
+-                      fma(FLOAT_TYPE(b0.x), FLOAT_TYPE((sign &   1) != 0 ? -grid0.x : grid0.x),
+-                      fma(FLOAT_TYPE(b0.y), FLOAT_TYPE((sign &   2) != 0 ? -grid0.y : grid0.y),
+-                      fma(FLOAT_TYPE(b0.z), FLOAT_TYPE((sign &   4) != 0 ? -grid0.z : grid0.z),
+-                      fma(FLOAT_TYPE(b0.w), FLOAT_TYPE((sign &   8) != 0 ? -grid0.w : grid0.w),
+-                      fma(FLOAT_TYPE(b4.x), FLOAT_TYPE((sign &  16) != 0 ? -grid1.x : grid1.x),
+-                      fma(FLOAT_TYPE(b4.y), FLOAT_TYPE((sign &  32) != 0 ? -grid1.y : grid1.y),
+-                      fma(FLOAT_TYPE(b4.z), FLOAT_TYPE((sign &  64) != 0 ? -grid1.z : grid1.z),
+-                      fma(FLOAT_TYPE(b4.w), FLOAT_TYPE((sign & 128) != 0 ? -grid1.w : grid1.w),
+-                      FLOAT_TYPE(0.0)))))))));
+-
+-                temp[j][n] = fma(dscale, sum, temp[j][n]);
++                temp[j][n] = fma(dscale, sum[j], temp[j][n]);
+             }
+         }
+         ibi += num_blocks_per_row;

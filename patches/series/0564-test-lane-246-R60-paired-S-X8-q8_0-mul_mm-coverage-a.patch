@@ -1,0 +1,105 @@
+From cddff4b4814402ad28b2a6d43aae7e580e863fbd Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 12:06:33 -0400
+Subject: [PATCH] test(lane-246 R60): paired S-X8/q8_0 mul_mm coverage across
+ the small-n band, and the two refutations it produced
+
+The brief commissioned two S-X8 prefill fixes. Both premises are refuted by receipts
+taken in this tree; no switch is added and OPTIONS-REGISTRY gets no row.
+
+Coverage added (eval + perf, same commit): the 4B prefill FFN shapes m=9216 k=2560
+(ffn_gate/ffn_up) and m=2560 k=9216 (ffn_down) for SX8 and q8_0 at n=32/64/128/256/512.
+R52b left the whole band between the mat-vec cutoff (n>8) and n=512 uncovered for S-X8
+on any shape a model actually runs, and every prior S-X8-vs-q8_0 prefill pairing was
+taken ACROSS TWO PROCESSES, which cannot separate a kernel effect from a run-level one.
+
+Refutation 1 (deliverable 1, the small-n tile decode). Within one binary, one process,
+6 interleaved rounds, the sx8/q8_0 ratio is FLAT in n, not decreasing:
+m=9216 k=2560 reads 0.944/1.034/1.021/1.010/0.980 at n=32..512 - a tie bracketing zero;
+m=2560 k=9216 reads 1.117/1.140/1.129/1.157 at n=32..256, non-overlapping but flat.
+A decode cost that failed to amortise over few columns would shrink as n grows. It does
+not, and per-tile decode work scales with n exactly as the MACs do, so it cannot. The
+real S-X8 deficit is SHAPE-dependent (low m, high k), not width-dependent, so a smaller
+tile for n<=128, a shared-memory decode reuse, or an MMVQ route table by n all attack a
+cause that is not there.
+
+Refutation 2 (deliverable 2, the elementwise dtype path). r60-evidence/10-dtypes.txt:
+every non-S-X8 tensor carries the SAME type in both files - all 177 F32 norm/scale
+tensors are F32 in both, all 152 shared q8_0 tensors are q8_0 in both, zero shape
+mismatches. The only four differing classes are ffn_down/gate/up and token_embd, which
+are the S-X8 tensors themselves. There is no f32-vs-f16 norm difference to convert, so
+neither a loader-side conversion nor a fast f32 elementwise variant has a cause to fix.
+
+What the elementwise 2x actually is: a run-level factor. In the cooled ABBA receipts the
+byte-identical q8_0 attention matmuls are themselves 13-15% slower in the S-X8 process,
+and some ops are FASTER there (SCALE 58.7 vs 66.9 us, MUL_MAT q8_0 m=32 55.4 vs 59.8 us)
+- which no placement story survives. r60-evidence/31-alloc-placement-SUMMARY.txt closes
+the placement door directly: both 4B files allocate into the identical memtype/heap
+classes (14 allocs memtype 0 heap 0, 10 memtype 2 heap 2, 8 memtype 3 heap 1), zero bytes
+in the slow uncached memtype 1, no spill. This confirms the read already written into
+chain139-seat60-memtype.ps1:88-89, "a clock/state difference, not a kernel one". Settling
+it needs loaded-model timing with clock telemetry in a quiet window, which is HQ ground.
+
+No PPL cell is owed: no change here alters a byte of output.
+
+Receipts: r60-evidence/ - 10-dtypes.txt, 20-mulmat-correctness.txt (2150/2150 pass, rc=0),
+21-perf-smalln-r0..r5.txt (rc=0 each), 22-perf-smalln-TABLE.txt,
+30-alloctrace-4b-{SX8,Q8}.txt (rc=0), 31-alloc-placement-SUMMARY.txt.
+
+Origin: fork-authored (ArifiLabs lane-246 R60 S-X8 prefill)
+Measured-effect: op-level perf-mode only (rows in receipts); served pp128 UNMEASURED in this lane - HQ pairs quiet
+Lane: lane-246
+Cherry-picked-from: 356c33aca (SOURCE PATHS ONLY, ArifiLabs lane-254 R66 integration)
+Recut-onto: 1b6185951 (ArifiLabs lane-254 R66c, from 0d52b430d)
+---
+ tests/test-backend-ops.cpp | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 83aa29d8fd..a5af5be1c6 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -11172,6 +11172,21 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, 512, 5120, {1, 1}, {1, 1}));
+     }
+ 
++    // ArifiLabs lane-246 / R60: the 4B prefill FFN shapes across the SMALL-n band, as CORRECTNESS
++    // cases. R52b's row is n = 512 on the 27B shape only, so every n between the mat-vec cutoff
++    // (n > mul_mat_vec_max_cols = 8) and 512 was uncovered for S-X8 on a shape any model actually
++    // runs. m = 9216, k = 2560 is Qwen3.5-4B ffn_gate/ffn_up; m = 2560, k = 9216 is ffn_down --
++    // the two rows that dominate the 4B pp128 profile. q8_0 is the paired control at the same
++    // shapes because it is the type S-X8 is compared against. The n sweep is the point: a decode
++    // cost that fails to amortise would show as an n-dependent gap, and without these rows no
++    // receipt could tell an n-dependent kernel effect from a run-level one.
++    for (int n : {32, 64, 128, 256, 512}) {
++        for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0}) {
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 9216, n, 2560, {1, 1}, {1, 1}));
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 2560, n, 9216, {1, 1}, {1, 1}));
++        }
++    }
++
+     // ArifiLabs lane-236 / R48c: Q6_K mat-vec at the three real 27B decode shapes, n = 1..8, as
+     // CORRECTNESS cases. Q6_K is 19.7% of the interactive Q4_K_XL 27B bytes (3.19 GiB, 56 tensors)
+     // and mul_mat_vec_q6_k.comp gained a second specialization constant (activation hoist +
+@@ -12499,6 +12514,21 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+         test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, 512, 5120, {1, 1}, {1, 1}));
+     }
+ 
++    // ArifiLabs lane-246 / R60: the 4B prefill FFN shapes across the SMALL-n band, as PERF rows.
++    // These are the discriminator the lane was opened on. The chain139 cooled ABBA profile read
++    // S-X8 mul_mm at m=9216 n=128 k=2560 as 15-27% slower than the q8_0 row -- but that pairing is
++    // ACROSS TWO PROCESSES, and the byte-identical q8_0 attention rows are themselves 13-15%
++    // slower in the S-X8 process, so the cross-run pairing cannot separate a kernel effect from a
++    // run-level one. Timing both types at both shapes at n = 32..512 inside ONE binary and ONE
++    // process removes that confound: any residual n-dependent gap here is the tile decode, and a
++    // flat gap is not. The eval list carries the same rows as CORRECTNESS cases.
++    for (int n : {32, 64, 128, 256, 512}) {
++        for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0}) {
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 9216, n, 2560, {1, 1}, {1, 1}));
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 2560, n, 9216, {1, 1}, {1, 1}));
++        }
++    }
++
+     // ArifiLabs lane-234 / R48: the real 27B Q5_K decode shapes as PERF rows, the target of the
+     // R48 activation-hoist pairing. Q5_K carries 33.5% of the interactive Q4_K_XL 27B file by
+     // bytes (5.41 GiB, 141 tensors) and 31% of the measured decode graph, at only 84% of this

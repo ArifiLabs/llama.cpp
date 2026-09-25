@@ -1,0 +1,24 @@
+From 24750cb537bdf5ae0e052fd08c1d58e9c38b9004 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 29 Aug 2026 02:57:03 -0400
+Subject: [PATCH] b10680 bump repair 2: my hunk-1 union in the 3aa479a04
+ (support DFlash2) resolution kept selector_top_k from BOTH sides - duplicate
+ member, build FAILED. One copy kept. The union trap the runbook already
+ names, this time on a declaration rather than a shared block terminator.
+
+---
+ common/speculative.cpp | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index d6d622a443..68aec6070e 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -943,7 +943,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+     bool    is_dflash2     = false;
+     bool    is_mrope       = false;
+     int32_t selector_top_k = 0;
+-    int32_t selector_top_k = 0;
+     std::vector<std::mt19937> selector_rng;
+     std::vector<bool> selector_reset;
+ 

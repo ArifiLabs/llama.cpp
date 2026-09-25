@@ -1,4 +1,4 @@
-From 7fa458f85eda7242ce5d79b51bcbf269e5148008 Mon Sep 17 00:00:00 2001
+From 0a2627c479d6e608c9df0d14a59e44931c06372c Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 22 Jul 2026 19:30:47 -0400
 Subject: [PATCH] powerinfer: add MoE pipeline + fused-sparse ggml ops [series
@@ -13,10 +13,10 @@ Measured-effect: Enables the streamed-MoE op set; no runtime change until wired.
  2 files changed, 275 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
-index b88b7e54a..bb78c2233 100644
+index 224bdef927..c10dba3dbb 100644
 --- a/ggml/include/ggml.h
 +++ b/ggml/include/ggml.h
-@@ -590,6 +590,16 @@ extern "C" {
+@@ -601,6 +601,16 @@ extern "C" {
  
          GGML_OP_GLU,
  
@@ -33,7 +33,7 @@ index b88b7e54a..bb78c2233 100644
          GGML_OP_COUNT,
      };
  
-@@ -2958,6 +2968,64 @@ extern "C" {
+@@ -3017,6 +3027,64 @@ extern "C" {
      GGML_API void                          ggml_threadpool_params_init   (struct ggml_threadpool_params * p, int n_threads);
      GGML_API bool                          ggml_threadpool_params_match  (const struct ggml_threadpool_params * p0, const struct ggml_threadpool_params * p1);
  
@@ -99,7 +99,7 @@ index b88b7e54a..bb78c2233 100644
  }
  #endif
 diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
-index 6257cdbe5..9ce99e456 100644
+index cdc10a7597..03a065c426 100644
 --- a/ggml/src/ggml.c
 +++ b/ggml/src/ggml.c
 @@ -1099,9 +1099,18 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
@@ -142,7 +142,7 @@ index 6257cdbe5..9ce99e456 100644
  
  static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
  
-@@ -7515,6 +7533,193 @@ struct ggml_cgraph * ggml_graph_dup(struct ggml_context * ctx, struct ggml_cgrap
+@@ -7594,6 +7612,193 @@ struct ggml_cgraph * ggml_graph_dup(struct ggml_context * ctx, struct ggml_cgrap
      return result;
  }
  

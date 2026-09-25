@@ -1,0 +1,163 @@
+From d55298b75455302b4f770bec7a4392eda4bdf705 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 29 Aug 2026 18:34:44 -0400
+Subject: [PATCH] attribution wave 2 (seat-48): zuijdwijk is a LIVE take
+ source, not a dormant remote - promote it, and record the G7 trailer debt
+ instead of amending
+
+HQ verdicts on the seat-48 needs-word list. G7 ruled: NO amending, append-only doctrine bars history rewrite. G11-residual ruled: run the content diff.
+
+G11 REFUTES MY OWN ROW FROM THIS MORNING. zuijdwijk was registered hours ago as 'no code known to be carried', on a Taken-from sweep over arifi/main. Two lane-166 commits carry Taken-from: LaurentZuijdwijk/llama.cpp in full - e146c1175 (matvec NUM_COLS>4 VGPR spill, from 211abf6a9) and c1440b85d (coopmat LDS stride pad, from f97c0e6fe). The sweep read the mainline; the takes were on unmerged branches. A source-registration sweep that only reads the mainline misses every take still in flight - that is the lesson, and it is written into the row rather than quietly corrected. Promoted into sources.json remotes, pinned f97c0e6fe (the later of the two we read and ported), BEHIND by 54 and honestly so.
+
+CONTENT DIFF RUN, arifi/main is CLEAN: patch-id intersection of all 78 zuijdwijk non-upstream commits against all 478 of d7bd3bfca..arifi/main = ZERO verbatim matches. Distinctive-symbol scan (GGML_*/LLAMA_*/--long-opt tokens those 78 add, minus everything already in upstream/master) leaves 46 tokens in our tree, and all 46 are ROCmFPX symbols reaching us via charlie12345/ROCmFPX - a licensed registered source that is also zuijdwijk's own upstream on its qwen4exp-rocmfpx branch. Shared ancestry, not zuijdwijk-originated. Audit assumption 2 was the one named hole in its own coverage; it is now closed for the published branch.
+
+G7: tools/arifi-sync/pending-trailers.json - a DEBT RECORD, not a grant. 550e20479 and 601e3d7a6 classified FORK-NATIVE with evidence (upstream cf2270e4d covers RDNA1/RDNA2 only, so the RDNA3 row cannot be taken from it); f3e13bc94 classified TAKE, and checked rather than assumed - PR #25362 is NOT in upstream/master, so the source must be cited as an UNMERGED pull request, not a sha a reader cannot resolve. On merge-back: paste the trailers, delete the row.
+
+G8 CLOSED as record: the B/C matvec arms ARE committed - lane-166/matvec-vgpr-fix (e146c1175) and lane-166/lds-stride-pad (c1440b85d), one commit each ahead of arifi/main, both fully trailered. The audit's 'ZERO commits ahead' is refuted; it read the branches before they landed. Read-only, no checkout switch.
+
+D1: PUBLISH-DISCLOSURE-DRAFT.md banked as a DRAFT - nothing published, nothing pushed. Leads with FAIL 27, not 315, and says why the old number was real and an artifact.
+
+Origin: ArifiLabs (native)
+---
+ PUBLISH-DISCLOSURE-DRAFT.md            | 131 +++++++++++++++++++++++++
+ licenses/README.md                     |  29 ++++--
+ tools/arifi-sync/pending-trailers.json |  42 ++++++++
+ tools/arifi-sync/sources.json          |  19 ++--
+ 4 files changed, 203 insertions(+), 18 deletions(-)
+ create mode 100644 PUBLISH-DISCLOSURE-DRAFT.md
+ create mode 100644 tools/arifi-sync/pending-trailers.json
+
+diff --git a/licenses/README.md b/licenses/README.md
+index c386c5c3b7..6120a80a0c 100644
+--- a/licenses/README.md
++++ b/licenses/README.md
+@@ -16,7 +16,7 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
+ | `prisml-MIT.txt` | `git show refs/remotes/prisml/prism:LICENSE` (PrismML-Eng/llama.cpp) | PrismML MIT. **Retained 2026-08-18 (lane-151) — see the correction below.** |
+ | `ciru-MIT.txt` | `git show refs/remotes/ciru/main:LICENSE` (ciru-ai/ROCmFPX) | ciru MIT. Registered source, no code carried yet; retained ahead of any ingest so the notice can never lag the code. |
+ | `thecodacus-MIT.txt` | `https://github.com/thecodacus/llama.cpp` `LICENSE` at its public head — no remote is configured here, and none is needed (see the correction below) | thecodacus MIT. **Retained 2026-08-18 on the President's correction, in `19fd8719b`. Row added 2026-08-29 (gap G10)** — its provenance-of-copy had been recorded only in the prose below, never in this table. |
+-| `zuijdwijk-MIT.txt` | `git show refs/remotes/zuijdwijk/master:LICENSE` (LaurentZuijdwijk/llama.cpp) | zuijdwijk MIT (llama.cpp lineage, "The ggml authors"). **Retained 2026-08-29 (gap G11)** — the remote was configured and fetched but registered nowhere. Registered source, **no code known to be carried**; retained ahead of any ingest on the `ciru` precedent so the notice can never lag the code. See the residual hole named below. |
++| `zuijdwijk-MIT.txt` | `git show refs/remotes/zuijdwijk/master:LICENSE` (LaurentZuijdwijk/llama.cpp) | zuijdwijk MIT (llama.cpp lineage, "The ggml authors"). **Retained 2026-08-29 (gap G11)** — the remote was configured and fetched but registered nowhere. **CODE IS CARRIED** (`e146c1175`, `c1440b85d` on lane-166 branches, both trailered `Taken-from: LaurentZuijdwijk/llama.cpp`); tracked source in `sources.json` `remotes`, pinned `f97c0e6fe`. |
+ | `buun-MIT.txt` | `git show refs/remotes/buun/master:LICENSE` (spiritbuun/buun-llama-cpp) | buun MIT. **Retained 2026-08-27; this was a GAP** — series patch `0394` ingested buun's DFlash2 controller on 2026-08-21 with no notice row, so the notice lagged the code by six days. Byte-identical to the upstream MIT text apart from LF termination. |
+ 
+ `../LICENSE` is also the verbatim copy of upstream llama.cpp’s MIT license.
+@@ -96,16 +96,27 @@ A 2026-07-22 project decision authorizes their inclusion with maximal attributio
+ does not authorize inventing a license text. Therefore this directory still contains no fabricated
+ `thecodacus-*` license file, and never will.
+ 
+-### Residual hole, named 2026-08-29 (gap G11) — `zuijdwijk`
++### `zuijdwijk` — an unregistered source that turned out to be a live one (gap G11, closed same day)
+ 
+ `zuijdwijk` (`LaurentZuijdwijk/llama.cpp`) was a configured, fetched remote that appeared in **no**
+-governed artifact: not `sources.json`, not this file, not any `Taken-from:` value. It is now
+-registered and its MIT notice retained. **Retaining the notice closes the notice obligation; it does
+-not close the unknown-take question.** The remote carries `vulkan/strix-halo-port-2`,
+-`vulkan/qwen4exp-rocmfpx` and `vulkan/iq3s-mmv-register-spill` — branches on *exactly* this rig's
+-work area — and the audit's own coverage note says a subject-level or untrailered take would not be
+-caught by a `Taken-from` sweep, while D7 proves untrailered takes exist on this branch. **No content
+-diff of `zuijdwijk` against this tree has been run.** That diff is OWED before publication.
++governed artifact: not `sources.json`, not this file, not any `Taken-from:` value on `arifi/main`.
++It was first registered here as "no code known to be carried". **That was wrong within hours, and
++the way it was wrong is the lesson:** two lane-166 commits carry `Taken-from:
++LaurentZuijdwijk/llama.cpp` in full — `e146c1175` (matvec `NUM_COLS>4` VGPR spill, from `211abf6a9`)
++and `c1440b85d` (coopmat LDS stride pad, from `f97c0e6fe`). The sweep that said "no code carried"
++read `arifi/main`, and **the takes were on unmerged branches.** A source-registration sweep that
++only reads the mainline misses every take still in flight. It is now a tracked source in
++`sources.json` `remotes`, pinned `f97c0e6fe`.
++
++**The content diff the audit called owed has been run, and `arifi/main` is clean.** Patch-id
++intersection of all 78 `zuijdwijk` non-upstream commits against all 478 commits of
++`d7bd3bfca..arifi/main`: **zero** verbatim matches. A distinctive-symbol scan (every `GGML_*` /
++`LLAMA_*` / `--long-opt` token those 78 commits add, minus everything already in `upstream/master`)
++leaves 46 tokens present in our tree — and all 46 are **ROCmFPX** symbols, reaching us through
++`charlie12345/ROCmFPX`, a licensed and registered source which is also `zuijdwijk`'s own upstream on
++its `qwen4exp-rocmfpx` branch. Shared ancestry, not zuijdwijk-originated content. **Nothing
++unattributed from this source is on the published branch**, and the notice was retained before the
++takes ever merge.
+ 
+ `turbomerge` was the other unregistered remote and is a different thing entirely: it is a local path
+ inside our own `src/`, authored by this estate (`hq`, `m`), a fork-owned merge workspace. It is
+diff --git a/tools/arifi-sync/pending-trailers.json b/tools/arifi-sync/pending-trailers.json
+new file mode 100644
+index 0000000000..08077bb5e0
+--- /dev/null
++++ b/tools/arifi-sync/pending-trailers.json
+@@ -0,0 +1,42 @@
++{
++  "purpose": "Trailer text OWED by commits that carry none, recorded here because the fix may not be an amend. HQ ruling 2026-08-29 (gap G7 of registers/2026-08-29-release-attribution-audit.md): append-only doctrine bars rewriting history, so an untrailered commit on an unmerged branch is NOT amended. Its trailers are recorded here and carried as trailer text when that work reaches arifi/main as a NEW commit. Same shape as native-grandfather.json: keyed by sha, prior keys kept as sha_pre_rebase if a base move rewrites them (see UPDATE-RUNBOOK 2.2.1).",
++  "recorded": "2026-08-29",
++  "recorded_by": "HQ seat-48 attribution gap-fix worker, on HQ's G7 ruling",
++  "law": "This file is a DEBT RECORD, not a grant. A row here does not make its commit compliant; it makes the debt legible so the merge-back cannot silently drop it. On merge-back: paste the trailers, then delete the row.",
++  "commits": [
++    {
++      "sha": "550e20479",
++      "branch": "lane-166/rdna3-wave32",
++      "subject": "vulkan: add RDNA3 to the subgroup-size config table (wave32) + surface the resolved subgroup size",
++      "classification": "FORK-NATIVE",
++      "evidence": "Upstream cf2270e4d (vulkan: subgroup size tuning, #12087) added gpu_pipeline_configs covering RDNA1 and RDNA2 only. The RDNA3 row is ours - upstream has no such entry, so there is nothing to take from. The upstream commit is cited as the CONTEXT for the omission, not as a source.",
++      "owed_trailers": {
++        "Origin": "ArifiLabs (native) - RDNA3 was absent from upstream's subgroup-size table, so get_subgroup_size() returned 0 and the backend was configured for wave64 on a part whose native compute mode is wave32.",
++        "Measured-effect": "AMD Radeon 780M (gfx1103), subgroupSize 64 / min 32 / max 64, subgroupSizeControl true. Banner before: \"warp size: 64\". After: \"warp size: 32\"."
++      }
++    },
++    {
++      "sha": "601e3d7a6",
++      "branch": "lane-166/khr-coopmat-decode",
++      "subject": "vulkan: runtime dispatch threshold for the matvec/GEMM fork (GGML_VK_MMV_MAX_COLS)",
++      "classification": "FORK-NATIVE",
++      "evidence": "Splits an existing compile-time bound (mul_mat_vec_max_cols) out as a clamped runtime env value so the matvec-vs-coopmat dispatch can be A/B'd on ONE binary. Original; no upstream or third-party equivalent is cited in the body or exists under that name.",
++      "owed_trailers": {
++        "Origin": "ArifiLabs (native) - the compile-time bound was also the runtime dispatch decision at three call sites, which put the VK_KHR_cooperative_matrix pipelines out of reach for 2-8 token rows (the drafted-verify batch widths) by software rather than by hardware.",
++        "Measured-effect": "UNMEASURED - default unset = 8 = unchanged behaviour; the knob lowers only, because raising would index the pipeline arrays out of bounds. It is an instrument, not a lever."
++      }
++    },
++    {
++      "sha": "f3e13bc94",
++      "branch": "lane-166/nontemporal-weights",
++      "subject": "lane-166 kernel2: port upstream PR #25362 - SPIR-V NonTemporal (SLC=1) hints on weight-buffer loads, env-gated GGML_VK_NONTEMPORAL_WEIGHTS",
++      "classification": "TAKE - and this is the one the audit called a take by any reading",
++      "evidence": "The subject names the source itself. Checked: #25362 is NOT in refs/remotes/upstream/master, i.e. an UNMERGED upstream pull request, so the source must be cited as a PR and not as an upstream commit. That distinction matters - a reader cannot resolve it with git log.",
++      "owed_trailers": {
++        "Taken-from": "ggml-org/llama.cpp#25362 (UNMERGED pull request - not in upstream/master at this fetch; cite the PR, not a sha)",
++        "Origin": "Ported and env-gated as GGML_VK_NONTEMPORAL_WEIGHTS so base and treatment are the SAME BINARY, plus a one-shot ENGAGEMENT RECEIPT at INFO so a TIED result cannot be mistaken for a no-op (the wave32 lesson).",
++        "Measured-effect": "UNMEASURED, and expected not to transfer: the PR's proven chain is Mesa-only (NonTemporal -> NIR -> ACO -> SLC) and this rig is DRIVER_ID_AMD_PROPRIETARY 26.7.1 (LLPC). Correctness gate + measurement owed before any verdict."
++      }
++    }
++  ]
++}
+diff --git a/tools/arifi-sync/sources.json b/tools/arifi-sync/sources.json
+index c6688cc097..76482b2242 100644
+--- a/tools/arifi-sync/sources.json
++++ b/tools/arifi-sync/sources.json
+@@ -309,6 +309,15 @@
+       "role": "speed/cache lineage: VBR dynamic KV retiering, MTP-vocab sampling, swap-fit accounting; DFlash2-for-3.8 in progress",
+       "track_tags": false,
+       "pin_review": "NEVER REVIEWED. Pinned at first registration 2026-08-20 (President ruling 2026-08-19/20: 'ingest all features so we are robust and keep the fork up to date... part of our arifilabs llama.cpp fork we serve to the public even if we settle on an option that fits us better' — the greedy-currency program extended to this source). First review + ingestion wave = a chartered lane; UMA-VBR context spill is the estate's own experiment on top. Intel: board/hq/2026-08-19-chat-drop-buun-llama-cpp.md."
++    },
++    "zuijdwijk": {
++      "url": "https://github.com/LaurentZuijdwijk/llama.cpp",
++      "ref": "zuijdwijk/master",
++      "pin": "f97c0e6fe",
++      "pin_review_2026_08_29_seat48": "PROMOTED FROM other_remotes TO A TRACKED SOURCE, and the promotion is a REFUTATION of this worker's own earlier row. Hours earlier this remote was registered as 'no code known to be carried', on the strength of a Taken-from sweep over arifi/main. That sweep was right about arifi/main and WRONG ABOUT THE FORK: two lane-166 branch commits carry 'Taken-from: LaurentZuijdwijk/llama.cpp' in full - e146c1175 (matvec NUM_COLS>4 VGPR spill, from 211abf6a9) and c1440b85d (coopmat LDS stride pad, from f97c0e6fe). zuijdwijk is a LIVE TAKE SOURCE. Audit assumption 2 ('assumes no code was taken from zuijdwijk') is REFUTED - not by a content diff, but because the audit's range was arifi/main and the takes are on unmerged branches. A source-registration sweep that only reads the mainline misses every take still in flight. PIN at f97c0e6fe = the later of the two commits we have actually read and ported (211abf6a9 is its ancestor), so the pin means 'reviewed to here', which is what a pin is for. BEHIND BY 54 non-merge commits at this fetch and that is expected, not a defect - same posture as the prisml and ciru rows. CONTENT DIFF RUN 2026-08-29, and it is CLEAN for the published branch: patch-id intersection of all 78 zuijdwijk non-upstream commits against all 478 commits of d7bd3bfca..arifi/main = ZERO verbatim matches. A distinctive-symbol scan (GGML_*/LLAMA_*/--long-opt tokens added by those 78, minus everything already in upstream/master) leaves 46 tokens present in our tree, and ALL 46 are ROCmFPX symbols reaching us through charlie12345/ROCmFPX - a licensed, registered source and zuijdwijk's own upstream on its qwen4exp-rocmfpx branch - not zuijdwijk-originated content. NOTHING UNATTRIBUTED FROM THIS SOURCE IS ON arifi/main. OWED: the two takes sit on lane-166 branches; at merge-back the notice obligation is already met (licenses/zuijdwijk-MIT.txt, retained 2026-08-29) and the trailers already exist on the commits.",
++      "role": "third-party llama.cpp fork (authors Marshall, Daniel Han, Laurent Zuijdwijk): RDNA3/strix-halo Vulkan kernel work, qwen4exp arch, a ROCmFPX merge - our exact rig area",
++      "license": "MIT - licenses/zuijdwijk-MIT.txt",
++      "track_tags": false
+     }
+   },
+   "local_checkouts": {
+@@ -363,15 +372,7 @@
+     "note_no_host": "--no-host is REQUIRED whenever a CPU_REPACK path is under test. Without it make_cpu_buft_list() puts the device host buffer type ahead of the CPU extra buffer types and the repack path never engages, so both A/B arms silently test the same code."
+   },
+   "other_remotes": {
+-    "_comment": "Configured git remotes that are DELIBERATELY NOT in `remotes` above, so `arifi_sync currency` neither fetches nor drift-reports them. Registered here 2026-08-29 (gap G11) because they were configured and fetched while appearing in NO governed artifact. DISPOSITION IS OWED FROM THE PRESIDENT: track them (move into `remotes` with a reviewed pin) or `git remote remove` them. A fork about to be published should not ship remotes no register accounts for.",
+-    "zuijdwijk": {
+-      "url": "https://github.com/LaurentZuijdwijk/llama.cpp",
+-      "kind": "third-party fork (llama.cpp lineage)",
+-      "license": "MIT - retained verbatim at licenses/zuijdwijk-MIT.txt 2026-08-29, ahead of any ingest, on the ciru precedent",
+-      "code_carried": "NONE KNOWN. No `Taken-from:` value on any of the 477 commits names it.",
+-      "residual_hole": "Retaining the notice closes the NOTICE obligation, not the UNKNOWN-TAKE question. This remote carries vulkan/strix-halo-port-2, vulkan/qwen4exp-rocmfpx and vulkan/iq3s-mmv-register-spill - branches in exactly this rig's work area - and D7 of the audit proves untrailered takes exist on arifi/main, which a Taken-from sweep cannot catch. A CONTENT DIFF OF THIS REMOTE AGAINST THE TREE HAS NOT BEEN RUN. Owed before publication.",
+-      "fetched_refs": "zuijdwijk/master (c28d538df) + 3 vulkan/* branches"
+-    },
++    "_comment": "Configured git remotes that are DELIBERATELY NOT in `remotes` above. zuijdwijk WAS listed here and was PROMOTED into `remotes` the same day, once two lane-166 commits were found citing it - see its pin_review, so `arifi_sync currency` neither fetches nor drift-reports them. Registered here 2026-08-29 (gap G11) because they were configured and fetched while appearing in NO governed artifact. DISPOSITION IS OWED FROM THE PRESIDENT: track them (move into `remotes` with a reviewed pin) or `git remote remove` them. A fork about to be published should not ship remotes no register accounts for.",
+     "turbomerge": {
+       "url": "C:/ArifiLabs/research/local-inference/src/_turbo-merge",
+       "kind": "OURS - a fork-owned local merge workspace inside our own src/, not a third-party source",

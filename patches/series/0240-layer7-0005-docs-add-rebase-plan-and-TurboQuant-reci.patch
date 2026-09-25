@@ -1,0 +1,34 @@
+From a9f8dab7fa631cff411dd8f264a4f33473e8a6b6 Mon Sep 17 00:00:00 2001
+From: m <m@l>
+Date: Sat, 15 Aug 2026 20:52:18 -0400
+Subject: [PATCH] layer7/0005-docs-add-rebase-plan-and-TurboQuant-recipes.patch
+
+---
+ docs/speculative.md            | 1 +
+ gguf-py/gguf/tensor_mapping.py | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/docs/speculative.md b/docs/speculative.md
+index ffb1e34c7f..1ad37e7dc3 100644
+--- a/docs/speculative.md
++++ b/docs/speculative.md
+@@ -78,6 +78,7 @@ See:
+ 
+ - #22105
+ 
++
+ ### DSpark (`draft-dspark`)
+ 
+ DSpark extends DFlash with a semi-autoregressive _Markov head_: the draft still emits a whole
+diff --git a/gguf-py/gguf/tensor_mapping.py b/gguf-py/gguf/tensor_mapping.py
+index d2dfeece59..794d4e1b3b 100644
+--- a/gguf-py/gguf/tensor_mapping.py
++++ b/gguf-py/gguf/tensor_mapping.py
+@@ -1381,6 +1381,7 @@ class TensorNameMap:
+             "encoder.fc", # dflash (transformers MuseGlimmerAssistant)
+         ),
+ 
++
+         MODEL_TENSOR.DSPARK_MARKOV_W1: (
+             "model.markov_head.markov_w1", # dspark
+         ),
