@@ -200,6 +200,19 @@ static bool llama_kv_tail_broken_env() {
     return cached != 0;
 }
 
+// lane-285 legacy door: LLAMA_KV_TAIL_HIWATER=1 restores lane-192's high-water trust rule and its
+// session latches on seq_cp/keep/add/div/state_read, byte-for-byte (the RED arm of OW-014).
+static bool llama_kv_tail_hiwater() {
+    static int cached = -1;
+
+    if (cached < 0) {
+        const char * s = getenv("LLAMA_KV_TAIL_HIWATER");
+        cached = (s && atoi(s) != 0) ? 1 : 0;
+    }
+
+    return cached != 0;
+}
+
 // LL-121: the body types the tail is validated against, as an EXPLICIT table.
 // An exact body (f16/bf16/f32) is refused on purpose - a tail beside an exact body buys
 // nothing and would only cost memory, so asking for it is a configuration mistake.
@@ -546,6 +559,7 @@ llama_kv_cache::llama_kv_cache(
                 LLAMA_LOG_WARN("%s: KV precision tail OFF - %s\n", __func__, refuse);
             } else if (want > 0) {
                 tail_n = want;
+                tail_owner.assign(want, -1);
                 // lane-194: NAME THE COMPOSE TYPE. Without this there is no way to tell from a log
                 // which compose actually ran, and the F16 request silently falls back to F32 on a
                 // non-q4_0 body (llama_kv_tail_f16_compose / tail_compose's ct). A fidelity row taken
@@ -795,6 +809,7 @@ void llama_kv_cache::clear(bool data) {
     tail_broken   = 0;
     tail_degraded = 0;
     tail_bypass   = 0;
+    std::fill(tail_owner.begin(), tail_owner.end(), -1);
 
     for (uint32_t s = 0; s < n_stream; ++s) {
         v_cells[s].reset();
@@ -823,10 +838,8 @@ void llama_kv_cache::clear(bool data) {
 }
 
 bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
-    // lane-188: seq_rm needs NO hook. It only FREES cells - it never moves one. Any refill
-    // that lands out of order is caught where it actually matters, by the monotonic-write
-    // detector in set_input_k_idxs. seq_add/seq_div/seq_cp/seq_keep and defrag DO move cells
-    // without a write, so those keep their tail_break().
+    // lane-188: seq_rm needs NO hook. It only FREES cells - it never rewrites one. A refill
+    // records its own ring owner in set_input_k_idxs (lane-285).
 
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
@@ -911,8 +924,11 @@ bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
 }
 
 void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) {
-    // lane-188: the precision-tail ring is positional, so any cell surgery invalidates it.
-    tail_break("seq_cp");
+    // lane-285: the tail requires n_stream == 1, where seq_cp only adds a seq id to cell
+    // metadata - no cell data moves, so every ring owner stays true.
+    if (llama_kv_tail_hiwater()) {
+        tail_break("seq_cp");
+    }
 
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
@@ -1006,8 +1022,10 @@ void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, ll
 }
 
 void llama_kv_cache::seq_keep(llama_seq_id seq_id) {
-    // lane-188: the precision-tail ring is positional, so any cell surgery invalidates it.
-    tail_break("seq_keep");
+    // lane-285: metadata only (frees cells, never rewrites one) - the ring stays true.
+    if (llama_kv_tail_hiwater()) {
+        tail_break("seq_keep");
+    }
 
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
@@ -1036,8 +1054,8 @@ void llama_kv_cache::seq_keep(llama_seq_id seq_id) {
 }
 
 void llama_kv_cache::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, llama_pos shift) {
-    // lane-188: the precision-tail ring is positional, so any cell surgery invalidates it.
-    tail_break("seq_add");
+    // the K-shift re-ropes body K; the ring is not re-roped.
+    tail_forget("seq_add");
 
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
@@ -1089,8 +1107,8 @@ void llama_kv_cache::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, ll
 }
 
 void llama_kv_cache::seq_div(llama_seq_id seq_id, llama_pos p0, llama_pos p1, int d) {
-    // lane-188: the precision-tail ring is positional, so any cell surgery invalidates it.
-    tail_break("seq_div");
+    // the K-shift re-ropes body K; the ring is not re-roped.
+    tail_forget("seq_div");
 
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
@@ -1786,14 +1804,134 @@ void llama_kv_cache::tail_break(const char * why) const {
 // Steady append: tail_hi == n_kv, lo == n_kv - tail_n, the full ring is valid - identical to
 // lane-188. After a prefix-cache rewind tail_hi runs AHEAD of n_kv for a few ubatches and the
 // exact tail is that much shorter, then it heals by itself. Nothing latches.
-int64_t llama_kv_cache::tail_valid(int64_t n_kv) const {
+//
+// lane-285 (OW-014): that rule silently assumes every write lands at or above tail_hi - tail_n.
+// A unified multi-sequence cache (llama-server's DEFAULT: 4 slots, kv_unified) refills holes a
+// seq_rm freed BELOW that line, aliasing onto another sequence's cell the rule still trusts, and
+// the read then serves the wrong token's K/V as "exact". The trust decision is now exact: walk
+// down from n_kv while each cell's ring entry is owned by that very slot (or the cell is empty,
+// hence masked). Suffix rewinds give the same figures as lane-192; holes give the right ones.
+static int64_t llama_kv_tail_hiwater_valid(int64_t n_kv, int64_t tail_hi, int64_t tail_n) {
+    const int64_t lo = std::max<int64_t>(0, tail_hi - tail_n);
+
+    return std::max<int64_t>(0, std::min<int64_t>(n_kv - lo, tail_n));
+}
+
+int64_t llama_kv_cache::tail_valid(int64_t n_kv, const slot_info * sinfo) const {
     if (!tail_on() || tail_broken > 0) {
         return 0;
     }
 
-    const int64_t lo = std::max<int64_t>(0, tail_hi - (int64_t) tail_n);
+    if (llama_kv_tail_hiwater()) {
+        return llama_kv_tail_hiwater_valid(n_kv, tail_hi, tail_n);
+    }
 
-    return std::max<int64_t>(0, std::min<int64_t>(n_kv - lo, (int64_t) tail_n));
+    return tail_owner_valid(n_kv, sinfo);
+}
+
+int64_t llama_kv_cache::tail_owner_valid(int64_t n_kv, const slot_info * sinfo) const {
+    const int64_t tn = tail_n;
+
+    // ponytail: copies tail_n owners per call; cache per graph build if it ever shows in a profile
+    std::vector<int64_t> own = tail_owner;
+    if (sinfo != nullptr && !sinfo->idxs.empty()) {
+        for (const auto idx : sinfo->idxs[0]) {
+            own[idx % tn] = idx;
+        }
+    }
+
+    const auto & cells = v_cells[0];
+
+    int64_t n = 0;
+    for (int64_t s = n_kv - 1; s >= 0 && n < tn; --s, ++n) {
+        if (own[s % tn] != s && !cells.is_empty(s)) {
+            break;
+        }
+    }
+
+    return n;
+}
+
+void llama_kv_cache::tail_forget(const char * why) const {
+    if (!tail_on()) {
+        return;
+    }
+
+    if (llama_kv_tail_hiwater()) {
+        tail_break(why);
+        return;
+    }
+
+    if (tail_forgotten == 0) {
+        LLAMA_LOG_WARN("%s: KV precision tail RESET (%s): body cells were rewritten without a ring "
+                       "write, so every ring entry is dropped. The tail heals as new cells are "
+                       "written; the session is NOT disabled.\n", __func__, why);
+    }
+
+    std::fill(tail_owner.begin(), tail_owner.end(), -1);
+    tail_forgotten++;
+}
+
+void llama_kv_cache::tail_audit() const {
+    if (!tail_on() || layers.empty() || layers[0].k_tail == nullptr || tail_broken > 0) {
+        return;
+    }
+
+    const auto & cells = v_cells[0];
+    const int64_t n_kv = cells.used_max_p1();
+    if (n_kv == 0) {
+        return;
+    }
+
+    ggml_tensor * k = layers[0].k;
+    ggml_tensor * r = layers[0].k_tail;
+    const int64_t ne0 = r->ne[0];
+
+    const auto * tt = ggml_get_type_traits(k->type);
+    if (tt->to_float == nullptr) {
+        return;
+    }
+
+    std::vector<uint8_t>     kb(ggml_row_size(k->type, ne0));
+    std::vector<ggml_fp16_t> rb(ne0);
+    std::vector<float>       a(ne0), b(ne0);
+
+    const int64_t n_own = tail_owner_valid(n_kv, nullptr);
+    const int64_t n_hi  = llama_kv_tail_hiwater_valid(n_kv, tail_hi, tail_n);
+    const int64_t lo    = n_kv - std::max(n_own, n_hi);
+
+    // q4_0 rel. error on a K row is ~0.1; a different token's row is ~1. 0.35 splits them.
+    const double thr = 0.35;
+    int64_t own_rows = 0, own_bad = 0, hi_rows = 0, hi_bad = 0;
+    double  own_max = 0.0, hi_max = 0.0;
+
+    for (int64_t s = lo; s < n_kv; ++s) {
+        if (cells.is_empty(s)) {
+            continue;
+        }
+
+        ggml_backend_tensor_get(k, kb.data(), s*k->nb[1], kb.size());
+        ggml_backend_tensor_get(r, rb.data(), (s % tail_n)*r->nb[1], ne0*sizeof(ggml_fp16_t));
+        tt->to_float(kb.data(), a.data(), ne0);
+        ggml_fp16_to_fp32_row(rb.data(), b.data(), ne0);
+
+        double d2 = 0.0, b2 = 0.0;
+        for (int64_t j = 0; j < ne0; ++j) {
+            d2 += (double) (a[j] - b[j])*(a[j] - b[j]);
+            b2 += (double) b[j]*b[j];
+        }
+        const double rel = std::sqrt(d2/std::max(b2, 1e-12));
+        const bool   bad = rel > thr;
+
+        if (s >= n_kv - n_own) { own_rows++; own_bad += bad; own_max = std::max(own_max, rel); }
+        if (s >= n_kv - n_hi)  { hi_rows++;  hi_bad  += bad; hi_max  = std::max(hi_max,  rel); }
+    }
+
+    LLAMA_LOG_WARN("tail_audit: n_kv %lld | owner rule: %lld rows, %lld mismatched (max rel %.3f) | "
+                   "high-water rule: %lld rows, %lld mismatched (max rel %.3f) | active=%s\n",
+                   (long long) n_kv, (long long) own_rows, (long long) own_bad, own_max,
+                   (long long) hi_rows, (long long) hi_bad, hi_max,
+                   llama_kv_tail_hiwater() ? "high-water" : "owner");
 }
 
 ggml_tensor * llama_kv_cache::tail_pending_k(int32_t il) const {
@@ -1821,7 +1959,7 @@ ggml_tensor * llama_kv_cache::tail_pending_v(int32_t il) const {
 ggml_tensor * llama_kv_cache::tail_compose(
         ggml_context * ctx, ggml_tensor * body, ggml_tensor * ring,
         int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il,
-        ggml_tensor ** perq_pend) const {
+        const slot_info & sinfo, ggml_tensor ** perq_pend) const {
     GGML_UNUSED(il);
 
     const int64_t n_head_kv = body->ne[1];
@@ -1833,7 +1971,7 @@ ggml_tensor * llama_kv_cache::tail_compose(
     // lane-192: the exact segment is the part of the ring a rewind has NOT aliased over.
     // In steady append this is min(tail_n, n_kv) - lane-188's value, unchanged.
     const int64_t n_full = std::min<int64_t>(tail_n, n_kv);
-    const int64_t n_tail = std::min<int64_t>(tail_valid(n_kv), n_full);
+    const int64_t n_tail = std::min<int64_t>(tail_valid(n_kv, &sinfo), n_full);
     const int64_t split  = n_kv - n_tail;
     const int64_t rot    = tail_n > 0 ? split % (int64_t) tail_n : 0;
 
@@ -2064,7 +2202,7 @@ ggml_tensor * llama_kv_cache::get_k(ggml_context * ctx, int32_t il, uint32_t n_k
     ggml_tensor * ring = tail_pend_k[ikv];
     tail_pend_k[ikv] = nullptr;
 
-    return tail_compose(ctx, view, ring, n_kv, n_embd_k_gqa, head_k_eff, il, tail_perq_k);
+    return tail_compose(ctx, view, ring, n_kv, n_embd_k_gqa, head_k_eff, il, sinfo, tail_perq_k);
 }
 
 ggml_tensor * llama_kv_cache::get_v(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const {
@@ -2120,7 +2258,7 @@ ggml_tensor * llama_kv_cache::get_v(ggml_context * ctx, int32_t il, uint32_t n_k
         ggml_tensor * ring = tail_pend_v[ikv];
         tail_pend_v[ikv] = nullptr;
 
-        return tail_compose(ctx, view, ring, n_kv, n_embd_v_gqa, head_v_eff, il, tail_perq_v);
+        return tail_compose(ctx, view, ring, n_kv, n_embd_v_gqa, head_v_eff, il, sinfo, tail_perq_v);
     }
 
     // note: v->nb[1] > v->nb[2]
@@ -2664,6 +2802,7 @@ void llama_kv_cache::set_input_k_idxs(ggml_tensor * dst, const llama_ubatch * ub
             }
 
             ring[i]   = idx % (int64_t) tail_n;
+            tail_owner[ring[i]] = idx;
 
             if (llama_kv_tail_broken_env()) {
                 // negative control: store each cell half a ring away from where the read path
@@ -3395,7 +3534,8 @@ void llama_kv_cache::state_write(llama_io_write_i & io, llama_seq_id seq_id, lla
 }
 
 void llama_kv_cache::state_read(llama_io_read_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) {
-    tail_break("state_read");
+    // restored body cells were never written through the ring
+    tail_forget("state_read");
 
     state_read_sinfo(io, seq_id, flags, nullptr, nullptr);
 }
@@ -4085,7 +4225,7 @@ ggml_tensor * llama_kv_cache_context::tail_pending_v(int32_t il) const {
 }
 
 int64_t llama_kv_cache_context::tail_valid() const {
-    return kv->tail_valid(n_kv);
+    return kv->tail_valid(n_kv, &sinfos[i_cur]);
 }
 
 ggml_tensor * llama_kv_cache_context::build_input_k_idxs(ggml_context * ctx, const llama_ubatch & ubatch) const {

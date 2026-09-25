@@ -2454,6 +2454,25 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
         n_tokens_prev  += ubatch.n_tokens;
     } while (mctx->next());
 
+    // lane-285 OW-014: KV precision-tail content audit (debug door, default off). Runs only after
+    // the backend has finished every ubatch, so the ring/body readback cannot see in-flight data.
+    {
+        static const bool tail_audit = [] {
+            const char * s = getenv("LLAMA_KV_TAIL_AUDIT");
+            return s && atoi(s) != 0;
+        }();
+        if (tail_audit) {
+            const llama_kv_cache * kv = dynamic_cast<const llama_kv_cache *>(memory.get());
+            if (const auto * hyb = dynamic_cast<const llama_memory_hybrid *>(memory.get())) {
+                kv = hyb->get_mem_attn();
+            }
+            if (kv != nullptr) {
+                ggml_backend_sched_synchronize(sched.get());
+                kv->tail_audit();
+            }
+        }
+    }
+
     // set to total number of outputs in the batch, for use in llama_get_logits_ith
     n_outputs = n_outputs_all;
 

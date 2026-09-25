@@ -212,27 +212,35 @@ public:
     // Opt-in: LLAMA_KV_TAIL=<cells>. Unset/0 => tail_n == 0 => every function below is a
     // no-op that adds ZERO graph nodes and allocates ZERO bytes (the shipped path).
     //
-    // CEILING: the ring is POSITIONAL, and lane-192 made that precise instead of fatal.
-    // A ring entry is the newest write for its own slot unless a LATER slot aliased onto it
-    // (s' == s mod tail_n). lane-188 read any non-sequential write as a permanent break, which
-    // made the feature unusable under llama-server's prefix cache (lane-191: 4/4 launches).
-    // tail_valid() computes how much of the window is actually trustworthy, so a rewind costs
-    // exact CELLS for a few ubatches instead of the whole session. Ops that MOVE a cell
-    // (seq_cp/keep/add/div, defrag, state_read) still tail_break() - they invalidate the ring
-    // in a way no positional rule can repair.
+    // TRUST (lane-285 / OW-014): ring entry i is trusted for slot s only if tail_owner[i] == s,
+    // i.e. s was the LAST slot written to entry i and its body cell has not been rewritten
+    // behind the ring's back since. This is exact under any write order - rewinds, holes in a
+    // unified multi-sequence cache, restores. lane-192's high-water rule (s + tail_n >= tail_hi)
+    // was exact only for suffix rewinds: a write into a hole below tail_hi - tail_n clobbers an
+    // entry it still trusted. Ops that rewrite body cells without a ring write (seq_add/div
+    // K-shift, state_read) forget the owners and heal as new cells land; metadata-only ops
+    // (seq_cp/seq_keep, n_stream == 1) touch nothing. LLAMA_KV_TAIL_HIWATER=1 = lane-192 rule.
     bool          tail_on()  const { return tail_n > 0; }
-    // how many of the newest n_kv cells still have a trustworthy ring entry (0 .. tail_n)
-    int64_t       tail_valid(int64_t n_kv) const;
+    // how many of the newest n_kv cells still have a trustworthy ring entry (0 .. tail_n).
+    // sinfo = the ubatch about to be written (its cells count as owned), or nullptr.
+    int64_t       tail_valid(int64_t n_kv, const slot_info * sinfo) const;
+    // the owner rule alone, whatever LLAMA_KV_TAIL_HIWATER says (the audit's counterfactual).
+    int64_t       tail_owner_valid(int64_t n_kv, const slot_info * sinfo) const;
+    // LLAMA_KV_TAIL_AUDIT=1: after a synchronized decode, read layer 0's ring and body back and
+    // count trusted rows whose ring disagrees with the body, under BOTH trust rules.
+    void          tail_audit() const;
     // lane-196: perq_pend (tail_perq_k / tail_perq_v, nullable) receives the raw ring segment
     // views in per-query mode, in which case the BARE body view [0, split) is returned instead of
     // a composed window.
     ggml_tensor * tail_compose(ggml_context * ctx, ggml_tensor * body, ggml_tensor * ring,
                                int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il,
-                               ggml_tensor ** perq_pend = nullptr) const;
+                               const slot_info & sinfo, ggml_tensor ** perq_pend = nullptr) const;
     // lane-196: attach the stashed per-query ring segments to this layer's FA node (no-op when
     // nothing is stashed).
     void          fa_attach_segments(ggml_context * ctx, ggml_tensor * fa) const;
     void          tail_break(const char * why) const;
+    // body cells were rewritten without a ring write: drop every owner (legacy: tail_break)
+    void          tail_forget(const char * why) const;
     // ring_content_probe: 0 = never broken, >0 = number of invalidating events seen.
     uint64_t      tail_broken_count() const { return tail_broken; }
     // lane-192 FIDELITY RECEIPT. Zero breaks no longer proves the ring was USED: a rewind now
@@ -418,6 +426,9 @@ private:
     // This is the whole positional invariant. Ring entry (s % tail_n) still holds slot s iff
     // s + tail_n >= tail_hi, because only a slot that aliases onto it can have overwritten it.
     mutable int64_t  tail_hi     = 0;
+    // lane-285: the slot whose data ring entry i holds (-1 = none). tail_n entries, host-side.
+    mutable std::vector<int64_t> tail_owner;
+    mutable uint64_t tail_forgotten = 0;
     mutable uint64_t tail_broken = 0;
     mutable uint64_t tail_degraded = 0;
     mutable uint64_t tail_bypass   = 0;
