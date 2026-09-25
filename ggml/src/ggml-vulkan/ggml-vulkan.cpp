@@ -17759,7 +17759,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                     // and the size guard must apply.
                     // WI-1722 gave S-X8 a mul_mat_id q8_1 (integer MMQ) pipeline, and it
                     // DELIBERATELY STAYS in this list anyway: have_rotated below reads
-                    // pipeline_dequant_mul_mat_mat_id, the f16 array, and the q8_1 route
+                    // the f32-B mul_mm_id map entries, and the q8_1 route
                     // does not exist on every device (integer_dot_product off, the _int
                     // shmem probe failing, or the no-fp16 shader branch which creates no
                     // id-MMQ at all). Removing the type would re-open the GGML_ABORT this
@@ -17772,8 +17772,13 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                         // does not apply to it. It needs the pipelines to exist on this
                         // device (they are not created for coopmat2) and a dim01-contiguous
                         // src0, which is what ggml_vk_mul_mat_id_q_f16() gates tq_rotate on.
-                        const auto & tq_mmp = device->pipeline_dequant_mul_mat_mat_id[src0_type];
-                        const bool have_rotated = !tq_mmp.f16acc->is_empty() || !tq_mmp.f32acc->is_empty();
+                        // W1 b11178: the per-type arrays are gone (91f6a6cf3); ask the pipeline map for any
+                        // f32-B mul_mm_id entry of this type, either accumulator.
+                        auto has_mm_id = [&](bool f16acc) {
+                            auto it = device->pipeline_matmul.find(vk_matmul_pipeline_key{src0_type, GGML_TYPE_F32, true, f16acc});
+                            return it != device->pipeline_matmul.end() && !it->second.empty();
+                        };
+                        const bool have_rotated = has_mm_id(true) || has_mm_id(false);
                         if (!have_rotated || !ggml_vk_dim01_contiguous(op->src[0])) {
                             const uint64_t x_sz_f16 = sizeof(ggml_fp16_t) * ggml_nelements(op->src[0]);
                             if (x_sz_f16 > device->properties.limits.maxStorageBufferRange) {

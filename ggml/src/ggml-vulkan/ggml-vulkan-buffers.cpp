@@ -119,14 +119,7 @@ static const char * ggml_vk_plan_entry_name(const char * const * names, size_t i
 #define VK_HOST_SPLIT_LEGACY (-1)
 #define VK_HOST_SPLIT_AUTO   (-2)
 
-// The ONE definition of the probe receipt line: ggml_vk_memtype_probe_line() writes it and
-// ggml_vk_host_split_auto_type() parses it. Two hand-kept copies in different translation units
-// would drift and `auto` would silently stop finding the winner.
-#define VK_MEMTYPE_PROBE_LINE_PREFIX "ggml_vulkan memtype-probe v1:"
-#define VK_MEMTYPE_PROBE_LINE_FMT \
-    VK_MEMTYPE_PROBE_LINE_PREFIX " type=%u heap=%u flags=0x%x bytes=%llu gpu_read_gbs=%.3f cpu_memcpy_gbs=%.3f\n"
-#define VK_MEMTYPE_PROBE_LINE_SCAN \
-    VK_MEMTYPE_PROBE_LINE_PREFIX " type=%u heap=%u flags=0x%x bytes=%llu gpu_read_gbs=%lf cpu_memcpy_gbs=%lf"
+// VK_MEMTYPE_PROBE_LINE_* (the ONE probe receipt line definition) live in ggml-vulkan-common.h.
 
 // Reads the probe receipt and returns the FASTEST non-DEVICE_LOCAL memory type in it, or
 // VK_HOST_SPLIT_LEGACY when the file is absent, unreadable or carries no such row. Refusing the
@@ -223,7 +216,7 @@ static int ggml_vk_host_split_cached() {
 // bandwidth probe in test-backend-ops). While set, ggml_vk_find_memory_properties() admits exactly
 // one memory type index, so a probe allocation comes from that type or does not happen at all.
 // Nothing in a model load ever writes this; it is -1 for the whole life of a served process.
-static std::atomic<int> vk_memtype_forced{-1};
+std::atomic<int> vk_memtype_forced{-1};
 
 // The reserve is sized from a real requirement, not a guess: a bulk weight buffer is capped at
 // suballocation_block_size (ggml_backend_vk_buffer_type_get_max_size), one tensor lives inside one
@@ -235,7 +228,7 @@ static uint64_t ggml_vk_staging_reserve_bytes(vk_device & device) {
 }
 
 // Charged during device creation, before the buffer type can plan or allocate anything.
-static void ggml_vk_reserve_staging(vk_device & device) {
+void ggml_vk_reserve_staging(vk_device & device) {
     const uint64_t want = ggml_vk_staging_reserve_bytes(device);
     if (want == 0) {
         return;
@@ -566,8 +559,8 @@ static vk::BufferUsageFlags ggml_vk_buffer_usage_flags(vk_device & device) {
 // No device memory is allocated here on either path. With VK_KHR_maintenance4 no VkBuffer object
 // is created at all; otherwise one is created and destroyed immediately, and a VkBuffer is not
 // memory. The driver-allocation witness proves no vkAllocateMemory happens in this function.
-static bool ggml_vk_buffer_memory_requirements(vk_device & device, size_t size,
-                                               vk::MemoryRequirements & out, bool & used_maintenance4) {
+bool ggml_vk_buffer_memory_requirements(vk_device & device, size_t size,
+                                        vk::MemoryRequirements & out, bool & used_maintenance4) {
     vk::BufferCreateInfo bci{
         vk::BufferCreateFlags(),
         size,
@@ -605,9 +598,8 @@ struct vk_planned_placement {
 // The req_flags_list parameter is a std::vector rather than an initializer_list so the placement
 // policy chain can be built once and consumed by both the allocator and the planner (R46b B7b).
 // Every existing `{a, b}` call site converts unchanged.
-static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vector<vk::MemoryPropertyFlags> & req_flags_list,
-                                       void *import_ptr = nullptr, uint32_t only_heap = UINT32_MAX,
-                                       const vk_planned_placement * planned = nullptr) {
+vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vector<vk::MemoryPropertyFlags> & req_flags_list,
+                                void *import_ptr, uint32_t only_heap, const vk_planned_placement * planned) {
     VK_LOG_DEBUG("ggml_vk_create_buffer(" << device->name << ", " << size << ", " << to_string(req_flags_list.begin()[0]) << ", " << to_string(req_flags_list.begin()[req_flags_list.size()-1]) << ")");
     if (size > device->max_buffer_size) {
         throw vk::OutOfDeviceMemoryError("Requested buffer size exceeds device buffer size limit");
@@ -977,7 +969,7 @@ static void ggml_vk_placement_bulk_receipt(vk_device & device, uint32_t heap) {
     }
 }
 
-static vk_buffer ggml_vk_create_buffer_device(vk_device& device, size_t size, bool bulk = false) {
+vk_buffer ggml_vk_create_buffer_device(vk_device& device, size_t size, bool bulk) {
     const std::vector<vk_alloc_attempt> attempts = ggml_vk_placement_attempts(device, bulk);
     GGML_ASSERT(!attempts.empty());
 

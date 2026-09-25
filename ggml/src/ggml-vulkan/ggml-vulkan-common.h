@@ -39,7 +39,25 @@ bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, const vk_
 
 // buffers
 vk_buffer ggml_vk_create_buffer_check(vk_device& device, size_t size, vk::MemoryPropertyFlags req_flags, vk::MemoryPropertyFlags fallback_flags = vk::MemoryPropertyFlags(0));
-vk_buffer ggml_vk_create_buffer_device(vk_device& device, size_t size);
+// ArifiLabs fork buffer layer (defined in ggml-vulkan-buffers.cpp, called from ggml-vulkan.cpp)
+// R46b commit E: `bulk` marks the grouped weight/tensor blocks (GGML_VK_PLACEMENT=bulk-large-heap).
+vk_buffer ggml_vk_create_buffer_device(vk_device& device, size_t size, bool bulk = false);
+struct vk_planned_placement;
+vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vector<vk::MemoryPropertyFlags> & req_flags_list,
+                                void *import_ptr = nullptr, uint32_t only_heap = UINT32_MAX,
+                                const vk_planned_placement * planned = nullptr);
+void ggml_vk_reserve_staging(vk_device & device);                // R46b B7c
+bool ggml_vk_buffer_memory_requirements(vk_device & device, size_t size,
+                                        vk::MemoryRequirements & out, bool & used_maintenance4);
+extern std::atomic<int> vk_memtype_forced;                        // R58 lane-244 probe-only pin
+// The ONE definition of the probe receipt line: ggml_vk_memtype_probe_line() writes it and
+// ggml_vk_host_split_auto_type() parses it. Two hand-kept copies in different translation units
+// would drift and `auto` would silently stop finding the winner.
+#define VK_MEMTYPE_PROBE_LINE_PREFIX "ggml_vulkan memtype-probe v1:"
+#define VK_MEMTYPE_PROBE_LINE_FMT \
+    VK_MEMTYPE_PROBE_LINE_PREFIX " type=%u heap=%u flags=0x%x bytes=%llu gpu_read_gbs=%.3f cpu_memcpy_gbs=%.3f\n"
+#define VK_MEMTYPE_PROBE_LINE_SCAN \
+    VK_MEMTYPE_PROBE_LINE_PREFIX " type=%u heap=%u flags=0x%x bytes=%llu gpu_read_gbs=%lf cpu_memcpy_gbs=%lf"
 void ggml_vk_destroy_buffer(vk_buffer& buf);
 void * ggml_vk_host_malloc(vk_device& device, size_t size);
 void ggml_vk_host_free(vk_device& device, void* ptr);
