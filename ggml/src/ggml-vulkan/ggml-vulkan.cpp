@@ -1620,6 +1620,7 @@ static bool ggml_vk_matmul_cm1_int_shmem_support(const vk_device& device, const 
     bool kscales2 = false;    // two scale sets per block
     bool has_dm   = false;    // d+m as vec2 + b-side sum
     bool has_kvalues = false;
+    // ARIFI-SYNC-SOLO: coopmat1 integer-dot MMQ shared-memory capability probe (upstream 70c4e1582), same reason as ggml_vk_matmul_shmem_support; its type set equals the mul_mmq_cm1 name list in vulkan-shaders-gen.cpp.
     switch (src0_type) {
         case GGML_TYPE_Q4_0: case GGML_TYPE_Q5_0: case GGML_TYPE_Q8_0:
             break;

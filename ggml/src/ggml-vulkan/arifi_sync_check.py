@@ -520,8 +520,9 @@ def main():
                              # +2 regions / +1 set: lane-194's cpy.quant_to_f16 pair (the FIFTH
                              # hand-synced pair) - the quant->F16 switch in
                              # ggml_vk_get_cpy_pipeline and its partner in supports_op.
-                             ("marked type lists", n_regions, 16), ("SETs", n_sets, 5),  # 16: W1 b11178 - the two getter-switch
-                             # ARIFI-SYNC-SOLO markers left with the switches (upstream 91f6a6cf3 pipeline map)
+                             ("marked type lists", n_regions, 17), ("SETs", n_sets, 5),  # 16: W1 b11178 - the two getter-switch
+                             # ARIFI-SYNC-SOLO markers left with the switches (upstream 91f6a6cf3 pipeline map);
+                             # 17: + SOLO on upstream 70c4e1582's coopmat1 int-MMQ shmem probe (W1 S7)
                              ("FA K/V types", n_kv, 12), ("scalar mirrors", n_scalar, len(SCALARS)),
                              ("LUT pairs", len(PAIRS), 52)):  # +3: mul_mat_vec_tq_sg.comp (lane-163)
         if got != want:
