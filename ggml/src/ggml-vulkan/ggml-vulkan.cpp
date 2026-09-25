@@ -5902,6 +5902,14 @@ vk_device ggml_vk_get_device(size_t idx) {
             }
             const bool q5k_v2_asked = q5k_env != nullptr && strcmp(q5k_env, "v2") == 0;
 
+            // arifi lane-279 / OW-028, President YES 2026-09-24: the ROCmFP4-FAST MMVQ route ships
+            // DEFAULT ON for FP4-format files. It keys on the type in ggml_vk_should_use_mmvq_impl,
+            // so no other format moves. GGML_ARIFI_ROCMFP4_MMVQ=0 restores the f32 dequant route;
+            // =1 (the pre-OW-028 opt-in value) still means ON.
+            const char * rocmfp4_env = getenv("GGML_ARIFI_ROCMFP4_MMVQ");
+            device->rocmfp4_mmvq_route = !(rocmfp4_env != nullptr && rocmfp4_env[0] == '0');
+            const std::string rocmfp4_src = rocmfp4_env != nullptr ? std::string("GGML_ARIFI_ROCMFP4_MMVQ=") + rocmfp4_env : "default, FP4 formats";
+
             // arifi lane-256 / R71: GGML_ARIFI_Q6K_MMVQ gains two NAMED values on top of the R48c
             // diagnostic 0/1 it already had, and the old values keep their old meaning exactly:
             //   "route"          -> the measured admit in ggml_vk_should_use_mmvq_impl
@@ -6037,6 +6045,10 @@ vk_device ggml_vk_get_device(size_t idx) {
             fprintf(stderr, "ggml_vulkan: q5_k mmvq route: %s (%s)%s\n",
                     device->q5k_mmvq_route ? "route (n=5..8, k<=8192)" : "legacy", q5k_src,
                     q5k_v2_asked ? " (GGML_ARIFI_Q5K_MMVQ=v2 is UNIMPLEMENTED - running legacy)" : "");
+            if (device->vendor_id == VK_VENDOR_ID_AMD) {
+                fprintf(stderr, "ggml_vulkan: fp4 mmvq route: %s (%s)\n",
+                        device->rocmfp4_mmvq_route ? "route (q4_0_rocmfp4_fast, n=3,5)" : "legacy (f32 dequant)", rocmfp4_src.c_str());
+            }
             fprintf(stderr, "ggml_vulkan: q6_k mmvq route: %s (%s)\n",
                     device->q6k_mmvq_route ? "route (MUL_MAT only, n=7..8; n=6 at 5120x6144 on RDNA3 when the n=6 pipeline is rows 1)" : "legacy", q6k_src);
             fprintf(stderr, "ggml_vulkan: iq4_xs mmvq route: %s (%s)\n",
@@ -8070,12 +8082,16 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
     //
     // So: the evidence is good and the coverage is thin, and this session is the maker. Flipping
     // the default is an independent checker's call, and costs one line when it is made.
-    if (device->vendor_id == VK_VENDOR_ID_AMD && src0_type == GGML_TYPE_Q4_0_ROCMFP4_FAST) {
-        static const char * rocmfp4_mmvq_env = getenv("GGML_ARIFI_ROCMFP4_MMVQ");
-        static const bool   rocmfp4_mmvq     = rocmfp4_mmvq_env && rocmfp4_mmvq_env[0] == '1';
-        if (!rocmfp4_mmvq) {
-            return false;
-        }
+    //
+    // arifi lane-279 / OW-028: the paragraph above is SUPERSEDED as the default by the President's
+    // YES of 2026-09-24 -- a ruling, not new evidence. R86d stage 3 measured served greedy output
+    // ON vs OFF DIFFERS on 2/6 prompts (ON vs ON control 6/6 identical), and that synonym-class
+    // divergence is accepted for FP4-file users and documented in docs/OPTIONS-REGISTRY.md. The
+    // F-13 items (width-3 cache-history corpus, MMVQ-vs-f32 logits compare) stay OPEN, non-blocking.
+    // Default ON; GGML_ARIFI_ROCMFP4_MMVQ=0 restores the f32 dequant route (device->rocmfp4_mmvq_route).
+    if (device->vendor_id == VK_VENDOR_ID_AMD && src0_type == GGML_TYPE_Q4_0_ROCMFP4_FAST &&
+        !device->rocmfp4_mmvq_route) {
+        return false;
     }
 
     // arifi lane-209 rank 8: keep ROCmFP4 MMVQ off the n=1 decode path.  This check must remain

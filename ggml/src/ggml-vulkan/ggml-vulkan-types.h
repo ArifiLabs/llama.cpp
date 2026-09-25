@@ -1286,6 +1286,9 @@ struct vk_device_struct {
     // default), 1 = route (admit Q5_K to the A-hoisted q8_1 MMVQ path at n=5..8, k <= 8192).
     // Probed once at device creation next to mmvq_a_hoist, for the same reason.
     uint32_t q5k_mmvq_route;
+    // arifi lane-279 / OW-028: Q4_0_ROCMFP4_FAST q8_1 MMVQ at n=3/5 on AMD. Default ON, opt-out
+    // GGML_ARIFI_ROCMFP4_MMVQ=0. Probed once at device creation, printed with the route lines.
+    bool rocmfp4_mmvq_route = false;
     // arifi lane-256 / R71: the Q6_K q8_1 MMVQ admit. 0 = legacy (the shipped f32 dequant route
     // at every width), 1 = the measured admit. DEFAULT 0 ON EVERY DEVICE -- the win is real but
     // UNCLEARED, see ggml_vk_should_use_mmvq_impl.
