@@ -5983,6 +5983,18 @@ vk_device ggml_vk_get_device(size_t idx) {
                 device->iq4xs_mv_upstream = mv != nullptr && strcmp(mv, "upstream") == 0;
                 const char * body = getenv("GGML_ARIFI_IQ4XS_MMVQ_BODY");
                 device->iq4xs_mmvq_body_upstream = body != nullptr && strcmp(body, "upstream") == 0;
+                const char * mn = getenv("GGML_ARIFI_CM1_INT_MIN_N");
+                if (mn != nullptr && *mn) {
+                    device->cm1_int_min_n = (uint32_t) atoi(mn);
+                }
+                const char * fb = getenv("GGML_ARIFI_CM1_F16B");
+                if (fb != nullptr && strcmp(fb, "upstream") == 0) {
+                    device->cm1_f16b_mode = 1u;
+                } else if (fb != nullptr && strcmp(fb, "never") == 0) {
+                    device->cm1_f16b_mode = 2u;
+                }
+                fprintf(stderr, "ggml_vulkan: coopmat1 int8 MMQ min n: %u, f16-B conversion: %s (lane-296 GGML_ARIFI_CM1_INT_MIN_N / GGML_ARIFI_CM1_F16B)\n",
+                               device->cm1_int_min_n, device->cm1_f16b_mode == 1u ? "upstream" : device->cm1_f16b_mode == 2u ? "never" : "auto");
             }
             // arifi lane-253 / R65: rows-per-workgroup on the PLAIN q8_1 MMVQ path. Upstream's
             // RDNA3 rule hands every type the static 4-row shape at NUM_COLS >= 5 (i >= 4) and 1-4
@@ -7677,14 +7689,24 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
 
     // Check for mmq first
     const std::vector<vk_matmul_pipeline_pair>* mmp_map = quantize_y ? ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, GGML_TYPE_Q8_1, (ggml_prec)dst->op_params[0]) : nullptr;
+    // arifi lane-296 N12: the int8 coopmat1 MMQ wins prefill but loses n=9..16 on the 780M; below the
+    // switch width the f16/f32-B coopmat1 quant kernel runs instead.
+    if (ctx->device->coopmat_int_support && ne11 < ctx->device->cm1_int_min_n) {
+        mmp_map = nullptr;
+    }
     if (mmp_map == nullptr) {
         quantize_y = false;
     }
 
+    // arifi lane-296 N11: force the f16 B conversion only where a {type,F16} pipeline exists. f32-B-only
+    // types (S-X8, Q2_0_G128, rocmfp4_fast) otherwise miss the lookup and fall to a full A dequant.
+    const bool cm1_f16b = ctx->device->cm1_f16b_mode == 1u ||
+                          (ctx->device->cm1_f16b_mode == 0u &&
+                           ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, f16_type, (ggml_prec)dst->op_params[0]) != nullptr);
     const bool y_non_contig = (ctx->device->coopmat2 && src1->type == GGML_TYPE_F32) ||
                               // coopmat1: force f32->f16 conversion so the f16 B-type quant pipeline is
                               // used, but only when the int8 MMQ path above is not taken.
-                              (ctx->device->coopmat_support && !ctx->device->coopmat2 && !quantize_y &&
+                              (ctx->device->coopmat_support && !ctx->device->coopmat2 && !quantize_y && cm1_f16b &&
                                ggml_is_quantized(src0->type) && src1->type == GGML_TYPE_F32) ||
                               (src0->type == GGML_TYPE_BF16 && src1->type != GGML_TYPE_BF16) ||
                               !ggml_vk_dim01_contiguous(src1);

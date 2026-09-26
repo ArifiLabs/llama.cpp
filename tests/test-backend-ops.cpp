@@ -12604,6 +12604,15 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
         }
     }
 
+    // ArifiLabs lane-296 N12: the mat-mat width ladder between verify (9..16) and prefill (512) at the two
+    // 27B FFN shapes, to place the int8 coopmat1 MMQ crossover (GGML_ARIFI_CM1_INT_MIN_N).
+    for (int bs : {24, 32, 48, 64, 128, 256, 512}) {
+        for (ggml_type type_a : {GGML_TYPE_IQ4_XS, GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, bs,  5120, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  5120, bs, 17408, {1, 1}, {1, 1}));
+        }
+    }
+
     // ArifiLabs lane-249 / R61: the 27B GSQ-RCO iquant types on the shapes that file ACTUALLY
     // serves them at, at every NUM_COLS the spec constant reaches.
     //
