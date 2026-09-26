@@ -5983,9 +5983,24 @@ vk_device ggml_vk_get_device(size_t idx) {
                 device->iq4xs_mv_upstream = mv != nullptr && strcmp(mv, "upstream") == 0;
                 const char * body = getenv("GGML_ARIFI_IQ4XS_MMVQ_BODY");
                 device->iq4xs_mmvq_body_upstream = body != nullptr && strcmp(body, "upstream") == 0;
+                // N12 device-probe (RDNA3, run3 H ladder): int8 coopmat1 MMQ from n=48 (first width where it
+                // beats f32-B on all 8 served type x shape cells), plus the IQ4_XS/Q6_K ffn_down exception.
+                // An explicit GGML_ARIFI_CM1_INT_MIN_N turns the exception off unless _SMALLN=down is also set.
+                const bool cm1_rdna3 = device->vendor_id == VK_VENDOR_ID_AMD && device->architecture == AMD_RDNA3;
+                device->cm1_int_min_n = cm1_rdna3 ? 48u : 0u;
+                device->cm1_int_smalln_down = cm1_rdna3;
+                const char * cm1_src = cm1_rdna3 ? "device-probe (RDNA3)" : "default";
                 const char * mn = getenv("GGML_ARIFI_CM1_INT_MIN_N");
                 if (mn != nullptr && *mn) {
                     device->cm1_int_min_n = (uint32_t) atoi(mn);
+                    device->cm1_int_smalln_down = false;
+                    cm1_src = "GGML_ARIFI_CM1_INT_MIN_N";
+                }
+                const char * sd = getenv("GGML_ARIFI_CM1_INT_SMALLN");
+                if (sd != nullptr && strcmp(sd, "down") == 0) {
+                    device->cm1_int_smalln_down = true;
+                } else if (sd != nullptr && strcmp(sd, "off") == 0) {
+                    device->cm1_int_smalln_down = false;
                 }
                 const char * fb = getenv("GGML_ARIFI_CM1_F16B");
                 if (fb != nullptr && strcmp(fb, "upstream") == 0) {
@@ -5993,8 +6008,9 @@ vk_device ggml_vk_get_device(size_t idx) {
                 } else if (fb != nullptr && strcmp(fb, "never") == 0) {
                     device->cm1_f16b_mode = 2u;
                 }
-                fprintf(stderr, "ggml_vulkan: coopmat1 int8 MMQ min n: %u, f16-B conversion: %s (lane-296 GGML_ARIFI_CM1_INT_MIN_N / GGML_ARIFI_CM1_F16B)\n",
-                               device->cm1_int_min_n, device->cm1_f16b_mode == 1u ? "upstream" : device->cm1_f16b_mode == 2u ? "never" : "auto");
+                fprintf(stderr, "ggml_vulkan: coopmat1 int8 MMQ min n: %u (%s), small-n ffn_down int8 (iq4_xs/q6_k): %s, f16-B conversion: %s (lane-296 GGML_ARIFI_CM1_INT_MIN_N / _INT_SMALLN / GGML_ARIFI_CM1_F16B)\n",
+                               device->cm1_int_min_n, cm1_src, device->cm1_int_smalln_down ? "ON" : "OFF",
+                               device->cm1_f16b_mode == 1u ? "upstream" : device->cm1_f16b_mode == 2u ? "never" : "auto");
             }
             // arifi lane-253 / R65: rows-per-workgroup on the PLAIN q8_1 MMVQ path. Upstream's
             // RDNA3 rule hands every type the static 4-row shape at NUM_COLS >= 5 (i >= 4) and 1-4
@@ -7689,9 +7705,12 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
 
     // Check for mmq first
     const std::vector<vk_matmul_pipeline_pair>* mmp_map = quantize_y ? ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, GGML_TYPE_Q8_1, (ggml_prec)dst->op_params[0]) : nullptr;
-    // arifi lane-296 N12: the int8 coopmat1 MMQ wins prefill but loses n=9..16 on the 780M; below the
-    // switch width the f16/f32-B coopmat1 quant kernel runs instead.
-    if (ctx->device->coopmat_int_support && ne11 < ctx->device->cm1_int_min_n) {
+    // arifi lane-296 N12: the int8 coopmat1 MMQ wins prefill but loses n=9..32 on the 780M (small tile);
+    // below the switch width the r86i f32-B coopmat1 quant kernel runs instead. Exception (run3 H):
+    // IQ4_XS and Q6_K at the long-k ffn_down shape (k >= 2m) keep int8, 1.05-2.0x over f32-B at n=9..32.
+    const bool cm1_int_down = ctx->device->cm1_int_smalln_down &&
+                              (src0->type == GGML_TYPE_IQ4_XS || src0->type == GGML_TYPE_Q6_K) && ne10 >= 2 * ne01;
+    if (ctx->device->coopmat_int_support && ne11 < ctx->device->cm1_int_min_n && !cm1_int_down) {
         mmp_map = nullptr;
     }
     if (mmp_map == nullptr) {
@@ -7700,8 +7719,9 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
 
     // arifi lane-296 N11: force the f16 B conversion only where a {type,F16} pipeline exists. f32-B-only
     // types (S-X8, Q2_0_G128, rocmfp4_fast) otherwise miss the lookup and fall to a full A dequant.
+    // auto also keeps f32-B below the int8 switch width: f16-B lost 0.37-0.75x at 5120x17408 n=9..16.
     const bool cm1_f16b = ctx->device->cm1_f16b_mode == 1u ||
-                          (ctx->device->cm1_f16b_mode == 0u &&
+                          (ctx->device->cm1_f16b_mode == 0u && ne11 >= ctx->device->cm1_int_min_n &&
                            ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, f16_type, (ggml_prec)dst->op_params[0]) != nullptr);
     const bool y_non_contig = (ctx->device->coopmat2 && src1->type == GGML_TYPE_F32) ||
                               // coopmat1: force f32->f16 conversion so the f16 B-type quant pipeline is

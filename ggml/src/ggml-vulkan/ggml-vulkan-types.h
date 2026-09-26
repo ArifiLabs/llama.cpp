@@ -1306,8 +1306,10 @@ struct vk_device_struct {
     bool iq4xs_mmvq_body_upstream = false;
     // arifi lane-296 N12: upstream int8 coopmat1 MMQ only when ne11 >= this (0 = always, upstream).
     uint32_t cm1_int_min_n = 0;
+    // arifi lane-296 N12: below cm1_int_min_n, IQ4_XS/Q6_K with k >= 2m still take the int8 route.
+    bool cm1_int_smalln_down = false;
     // arifi lane-296 N11: coopmat1 f32->f16 B conversion. 0 = auto (only when a {type,F16} pipeline
-    // exists), 1 = upstream (always), 2 = never (r86i f32-B kernel).
+    // exists and ne11 >= cm1_int_min_n), 1 = upstream (always), 2 = never (r86i f32-B kernel).
     uint32_t cm1_f16b_mode = 0;
     // arifi lane-253 / R65: the NUM_COLS index (i = NUM_COLS-1) at and above which rm_int_n() hands
     // the q8_1 MMVQ pipelines the static 4-row shape. 4 = the inherited RDNA3 rule, untouched.
