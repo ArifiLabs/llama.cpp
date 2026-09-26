@@ -1300,7 +1300,10 @@ struct vk_device_struct {
     // arifi lane-262 / R75: the IQ4_XS q8_1 MMVQ arm. 0 = legacy (mul_mat_vec_iq4_xs f32 dequant
     // at every width), 1 = route (the measured admit in ggml_vk_should_use_mmvq_impl; opt-in, greedy gate FAILED),
     // 2 = all (decider diagnostic: MMVQ at every n and k, MUL_MAT and MUL_MAT_ID).
-    uint32_t iq4xs_mmvq_route;
+    uint32_t iq4xs_mmvq_route;  // lane-296: 3 = upstream (fall through to upstream's generic rule)
+    // arifi lane-296: W1 collision arms. true = upstream df750f76b f32 mat-vec / b1ff4ca23 MMVQ body.
+    bool iq4xs_mv_upstream = false;
+    bool iq4xs_mmvq_body_upstream = false;
     // arifi lane-253 / R65: the NUM_COLS index (i = NUM_COLS-1) at and above which rm_int_n() hands
     // the q8_1 MMVQ pipelines the static 4-row shape. 4 = the inherited RDNA3 rule, untouched.
     // Probed once here for the same reason as mmvq_a_hoist: pipeline creation is entered lazily.

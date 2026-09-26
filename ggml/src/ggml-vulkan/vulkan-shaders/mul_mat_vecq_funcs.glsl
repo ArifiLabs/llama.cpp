@@ -574,7 +574,42 @@ FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
 }
 #endif
 
-#if defined(DATA_A_IQ4_XS)
+#if defined(DATA_A_IQ4_XS) && defined(ARIFI_IQ4XS_UPSTREAM)
+// arifi lane-296: upstream b1ff4ca23's IQ4_XS mmvq_dot_product, split into the load/dot halves this
+// framework calls. Same integer sum and the same final expression, so it is bit-identical to upstream.
+struct mmvq_a_t {
+    i32vec4 qs0;
+    i32vec4 qs1;
+    float   d;
+};
+
+mmvq_a_t mmvq_load_a(const uint ib_a, const uint iqs) {
+    const uint ib = ib_a / 8;
+    const uint ib32 = ib_a % 8;
+
+    mmvq_a_t a;
+    [[unroll]] for (uint j = 0; j < 4; ++j) {
+        const i32vec2 v = iq4nl_to_i8x8(data_a_packed32[ib].qs[4 * ib32 + j]);
+        a.qs0[j] = v.x;
+        a.qs1[j] = v.y;
+    }
+
+    const uint sl = (data_a_packed32[ib].scales_l >> (4 * ib32)) & 0xF;
+    const uint sh = (data_a_packed32[ib].scales_h >> (2 * ib32)) & 3;
+    a.d = float(data_a[ib].d) * float(int(sl | (sh << 4)) - 32);
+    return a;
+}
+
+FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
+    int32_t q_sum = 0;
+    [[unroll]] for (uint j = 0; j < 4; ++j) {
+        q_sum += dotPacked4x8EXT(a.qs0[j], cache_b_qs[j]);
+        q_sum += dotPacked4x8EXT(a.qs1[j], cache_b_qs[j + 4]);
+    }
+
+    return FLOAT_TYPE(float(cache_b_ds.x) * a.d * float(q_sum));
+}
+#elif defined(DATA_A_IQ4_XS)
 // arifi lane-262 / R75: IQ4_XS on the q8_1 integer-dot framework. Structural template = MXFP4's
 // mmvq (the in-tree LUT-based 4-bit type already on this path, :177) for the nibble->LUT->pack32
 // step, and Q4_K's (:421) for the superblock indexing. Arithmetic copied from the CPU/CUDA

@@ -967,7 +967,30 @@ void process_shaders() {
             string_to_spv("mul_mat_vec_id_" + tname + "_q8_1_f32_subgroup", "mul_mat_vecq.comp", merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}, {"USE_SUBGROUP_ADD", "1"}}));
             string_to_spv("mul_mat_vec_id_" + tname + "_q8_1_f32_subgroup_no_shmem", "mul_mat_vecq.comp", merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}, {"USE_SUBGROUP_ADD_NO_SHMEM", "1"}}));
         }
+        // arifi lane-296: upstream b1ff4ca23's IQ4_XS q8_1 MMVQ body (K_PER_ITER 32) beside R75's,
+        // selected at pipeline creation by GGML_ARIFI_IQ4XS_MMVQ_BODY (W1 collision three-arm).
+        if (tname == "iq4_xs") {
+            for (const std::string sfx : {"", "_subgroup", "_subgroup_no_shmem"}) {
+                std::map<std::string, std::string> d = merge_maps(base_dict, {{data_a_key, "1"}, {"ARIFI_IQ4XS_UPSTREAM", "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}});
+                if (sfx == "_subgroup") d["USE_SUBGROUP_ADD"] = "1";
+                if (sfx == "_subgroup_no_shmem") d["USE_SUBGROUP_ADD_NO_SHMEM"] = "1";
+                string_to_spv("mul_mat_vec_iq4_xs_up_q8_1_f32" + sfx, "mul_mat_vecq.comp", d);
+            }
+        }
 #endif
+        // arifi lane-296: upstream df750f76b's IQ4_XS f32 mat-vec (8 threads per superblock) beside
+        // lane-209's, selected at pipeline creation by GGML_ARIFI_IQ4XS_MV (W1 collision three-arm).
+        if (tname == "iq4_xs") {
+            for (const std::string bt : {"f32", "f16"}) {
+                const std::map<std::string, std::string> bd = bt == "f32"
+                    ? std::map<std::string, std::string>{{"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}}
+                    : std::map<std::string, std::string>{{"B_TYPE", "float16_t"}, {"B_TYPEV2", "f16vec2"}, {"B_TYPEV4", "f16vec4"}};
+                const auto d = merge_maps(merge_maps(base_dict, bd), {{data_a_key, "1"}, {"D_TYPE", "float"}});
+                string_to_spv("mul_mat_vec_iq4_xs_up_" + bt + "_f32", "mul_mat_vec_iq4_xs_up.comp", d);
+                string_to_spv("mul_mat_vec_iq4_xs_up_" + bt + "_f32_subgroup", "mul_mat_vec_iq4_xs_up.comp", merge_maps(d, {{"USE_SUBGROUP_ADD", "1"}}));
+                string_to_spv("mul_mat_vec_iq4_xs_up_" + bt + "_f32_subgroup_no_shmem", "mul_mat_vec_iq4_xs_up.comp", merge_maps(d, {{"USE_SUBGROUP_ADD_NO_SHMEM", "1"}}));
+            }
+        }
 
         // Dequant shaders
         if (tname != "f16" && tname != "bf16") {
@@ -1759,6 +1782,17 @@ void write_output_files() {
             src << "const uint64_t arr_dmmv_id_" << tname << "_" << btype << "_f32_len[3] =  {mul_mat_vec_id_" << tname << "_" << btype << "_f32_len,  mul_mat_vec_id_" << tname << "_" << btype << "_f32_subgroup_len, mul_mat_vec_id_"  << tname << "_" << btype << "_f32_subgroup_no_shmem_len};\n";
         }
     }
+    }
+
+    // arifi lane-296: the upstream IQ4_XS variants generated above (MUL_MAT only).
+    for (const std::string& btype : btypes) {
+        const std::string n = "iq4_xs_up_" + btype + "_f32";
+        hdr << "extern const void * arr_dmmv_"   << n << "_data[3];\n";
+        hdr << "extern const uint64_t arr_dmmv_" << n << "_len[3];\n";
+        if (basename(input_filepath) == "mul_mat_vec.comp") {
+            src << "const void * arr_dmmv_"   << n << "_data[3] = {mul_mat_vec_" << n << "_data, mul_mat_vec_" << n << "_subgroup_data, mul_mat_vec_" << n << "_subgroup_no_shmem_data};\n";
+            src << "const uint64_t arr_dmmv_" << n << "_len[3] = {mul_mat_vec_" << n << "_len, mul_mat_vec_" << n << "_subgroup_len, mul_mat_vec_" << n << "_subgroup_no_shmem_len};\n";
+        }
     }
 
 #if defined(GGML_VULKAN_FLOAT_E2M1_GLSLC_SUPPORT) && defined(GGML_VULKAN_FLOAT_E4M3_GLSLC_SUPPORT)
