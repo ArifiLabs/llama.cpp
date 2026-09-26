@@ -2700,6 +2700,13 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             for (const auto & [type, name, len, data] : std::initializer_list<std::tuple<ggml_type, const char *, size_t, const void *>>{
                     {GGML_TYPE_Q8_0, "matmul_q8_0_q8_1", matmul_q8_0_q8_1_len, matmul_q8_0_q8_1_data},
                     {GGML_TYPE_SX8,  "matmul_sx8_q8_1",  matmul_sx8_q8_1_len,  matmul_sx8_q8_1_data}}) {
+                // lane-296: upstream 70c4e1582 registers Q8_0 x Q8_1 on RDNA3/4 below with its int8
+                // coopmat1 kernel. Registering the same key here first would shadow it (first lazy
+                // claim wins) with a different tile list, so Q8_0 is left to upstream there.
+                if (type == GGML_TYPE_Q8_0 && device->coopmat_int_support &&
+                    (device->architecture == vk_device_architecture::AMD_RDNA3 || device->architecture == vk_device_architecture::AMD_RDNA4)) {
+                    continue;
+                }
                 auto tc = filter_tc(tc_mmq_int_cm, type, false, true);
                 if (!tc.empty()) create_mm_pipelines({type, GGML_TYPE_Q8_1, false, false}, tc, name, len, data, sizeof(vk_mat_mat_push_constants), 3, identity, false, false, 0, false);
             }
