@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **615**, all non-merge, applied in filename order.
+- Patches: **616**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 615 commit messages, same provenance trailers. Verified, not
+same file contents, same 616 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -694,6 +694,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 613 | `0613-arifi-sync-base-move-b10825-9e0e22059-b11178-f9af9be.patch` | arifi-fork-base | `e52a5b5d2` | - | - | arifi-sync: base move b10825/9e0e22059 -> b11178/f9af9be21 (R55 read, W1 execution); 688/688 fork commits replayed via staged milestones S1..S7, hand stops carry Conflict-resolved trailers |
 | 614 | `0614-arifi-sync-re-key-provenance-ledgers-after-the-b1082.patch` | arifi-fork-base | `80e47f738` | - | - | arifi-sync: re-key provenance ledgers after the b10825 -> b11178 move (UPDATE-RUNBOOK 2.2.1) + G7 rows for 14 untrailered commits |
 | 615 | `0615-OW-028-lane-279-ROCmFP4-FAST-q8_1-MMVQ-route-DEFAULT.patch` | arifi-fork-base | `d525d6670` | - | - | OW-028 (lane-279): ROCmFP4-FAST q8_1 MMVQ route DEFAULT ON for FP4-format files |
+| 616 | `0616-W1-split-fixup-Vulkan-test-fault-seam-atomics-are-in.patch` | arifi-fork-base | `9678f7da1` | - | - | W1 split fixup: Vulkan test-fault seam atomics are inline, not static (heapres mid-plan failure RED -> one definition) |
 
 ## Measured effect, per patch
 
@@ -1388,6 +1389,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0613-arifi-sync-base-move-b10825-9e0e22059-b11178-f9af9be.patch` | UNMEASURED - register only |
 | `0614-arifi-sync-re-key-provenance-ledgers-after-the-b1082.patch` | UNMEASURED - register only |
 | `0615-OW-028-lane-279-ROCmFP4-FAST-q8_1-MMVQ-route-DEFAULT.patch` | see the lane-279 gates in the body; W1 re-runs the ROCmFP4 cells on b11178 |
+| `0616-W1-split-fixup-Vulkan-test-fault-seam-atomics-are-in.patch` | UNMEASURED - test seam only; heapres re-run owed in the W1 battery |
 
 ## Unclassified
 
@@ -1893,4 +1895,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `e52a5b5d2` arifi-sync: base move b10825/9e0e22059 -> b11178/f9af9be21 (R55 read, W1 execution); 688/688 fork commits replayed via staged milestones S1..S7, hand stops carry Conflict-resolved trailers
 - `80e47f738` arifi-sync: re-key provenance ledgers after the b10825 -> b11178 move (UPDATE-RUNBOOK 2.2.1) + G7 rows for 14 untrailered commits
 - `d525d6670` OW-028 (lane-279): ROCmFP4-FAST q8_1 MMVQ route DEFAULT ON for FP4-format files
+- `9678f7da1` W1 split fixup: Vulkan test-fault seam atomics are inline, not static (heapres mid-plan failure RED -> one definition)
 
