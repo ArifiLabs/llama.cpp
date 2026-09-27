@@ -5298,8 +5298,10 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
 // lane-110C VNNI-repack slot — charter ask #3 ("all options compiled in, runtime-toggled").
 //
 // DEFAULT OFF. Only an exact "1" enables the slot; unset, "0", or anything else leaves it
-// disabled, so Q1_0 and Q2_0 both fall through to the terminal return nullptr and back to
-// per-row vec_dot. This DIVERGES DELIBERATELY from PrismML's upstream default (ON) and is
+// disabled, so the x86 AVX512-VNNI Q1_0 arm and the Q2_0 arms fall through to the terminal
+// return nullptr and back to per-row vec_dot. Exception (lane-296 C019): upstream's ARM NEON
+// Q1_0 arms (8034c1d1f) are NOT behind this gate - they stay default ON as upstream ships
+// them and yield only to dual residency (mode 2). This DIVERGES DELIBERATELY from PrismML's upstream default (ON) and is
 // measured, not preferred: on this fork's default Vulkan-enabled build, weights that land in
 // the CPU_REPACK buffer stop being eligible for large-batch GPU offload, and prompt processing
 // regresses -77.1% / -88.1% across the two g64 measurement models. The decode win (+20.1% /
