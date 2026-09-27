@@ -5984,11 +5984,12 @@ vk_device ggml_vk_get_device(size_t idx) {
                 const char * body = getenv("GGML_ARIFI_IQ4XS_MMVQ_BODY");
                 device->iq4xs_mmvq_body_upstream = body != nullptr && strcmp(body, "upstream") == 0;
                 // N12 device-probe (RDNA3, run3 H ladder): int8 coopmat1 MMQ from n=48 (first width where it
-                // beats f32-B on all 8 served type x shape cells), plus the IQ4_XS/Q6_K ffn_down exception.
-                // An explicit GGML_ARIFI_CM1_INT_MIN_N turns the exception off unless _SMALLN=down is also set.
+                // beats f32-B on all 8 served type x shape cells). The IQ4_XS/Q6_K ffn_down small-n int8
+                // exception won kernel cells but loses served -ub 32 (run8 q4kxl 0.920x vs 0.977x, run9 GSQ
+                // 0.928x vs 0.958x of r86i), so it defaults OFF; GGML_ARIFI_CM1_INT_SMALLN=down restores it.
                 const bool cm1_rdna3 = device->vendor_id == VK_VENDOR_ID_AMD && device->architecture == AMD_RDNA3;
                 device->cm1_int_min_n = cm1_rdna3 ? 48u : 0u;
-                device->cm1_int_smalln_down = cm1_rdna3;
+                device->cm1_int_smalln_down = false;
                 const char * cm1_src = cm1_rdna3 ? "device-probe (RDNA3)" : "default";
                 const char * mn = getenv("GGML_ARIFI_CM1_INT_MIN_N");
                 if (mn != nullptr && *mn) {
