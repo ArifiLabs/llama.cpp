@@ -17248,6 +17248,24 @@ void ggml_vk_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * graph, 
                 match_pattern(rope_view_set_rows_pattern, j)) {
                 continue;
             }
+            // ARIFI lane-296 V023: never hoist a UNARY away from the MUL it fuses with while that MUL's
+            // other operand is still pending - the MUL cannot follow, so the pair splits and the fusion is lost.
+            if (graph->nodes[j]->op == GGML_OP_UNARY && ggml_vk_unary_mul_op_index(ggml_get_unary_op(graph->nodes[j])) >= 0) {
+                bool strands_mul = false;
+                for (int k = j + 1; k < std::min(j + 15, graph->n_nodes); ++k) {
+                    ggml_tensor * mul = graph->nodes[k];
+                    if (mul->op != GGML_OP_MUL || (mul->src[0] != graph->nodes[j] && mul->src[1] != graph->nodes[j])) {
+                        continue;
+                    }
+                    ggml_tensor * other = (mul->src[0] == graph->nodes[j]) ? mul->src[1] : mul->src[0];
+                    strands_mul = ggml_vk_can_fuse_unary_mul(graph, j, k) &&
+                                  !(other->op == GGML_OP_NONE || used_node_set.find(other) != used_node_set.end());
+                    break;
+                }
+                if (strands_mul) {
+                    continue;
+                }
+            }
             bool ok = true;
             for (int c = first_unused; c < j; ++c) {
                 if (!used[c] &&
