@@ -580,7 +580,24 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
 
             cur_b = build_norm(cur_b, layer.attn_norm, nullptr, LLM_NORM_RMS, il);
 
-            ggml_tensor * Qfull_b = build_lora_mm(layer.wq, cur_b, layer.wq_s);
+            // lane-296 C071: a fused-QKV GGUF (create_tensor_qkv) leaves wq/wk/wv null; slice the fused
+            // product like build_qkv(reshape = false) does, but over `width` rows, not the graph's n_tokens
+            ggml_tensor * Qfull_b, * K_b, * V_b;
+            if (layer.wqkv) {
+                ggml_tensor * qkv_b = build_lora_mm(layer.wqkv, cur_b, layer.wqkv_s);
+                if (layer.wqkv_b) {
+                    qkv_b = ggml_add(ctx0, qkv_b, layer.wqkv_b);
+                }
+                const int64_t n_q = n_embd_head * 2 * n_head;
+                const int64_t n_k = n_embd_head * n_head_kv;
+                Qfull_b = ggml_cont(ctx0, ggml_view_2d(ctx0, qkv_b, n_q, width, qkv_b->nb[1], 0));
+                K_b     = ggml_cont(ctx0, ggml_view_2d(ctx0, qkv_b, n_k, width, qkv_b->nb[1], ggml_row_size(qkv_b->type, n_q)));
+                V_b     = ggml_cont(ctx0, ggml_view_2d(ctx0, qkv_b, n_k, width, qkv_b->nb[1], ggml_row_size(qkv_b->type, n_q + n_k)));
+            } else {
+                Qfull_b = build_lora_mm(layer.wq, cur_b, layer.wq_s);
+                K_b     = build_lora_mm(layer.wk, cur_b, layer.wk_s);
+                V_b     = build_lora_mm(layer.wv, cur_b, layer.wv_s);
+            }
 
             ggml_tensor * Q_b = ggml_view_3d(ctx0, Qfull_b,
                     n_embd_head, n_head, width,
@@ -596,11 +613,9 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
                     ggml_element_size(Qfull_b) * n_embd_head);
             gate_b = ggml_cont_2d(ctx0, gate_b, n_embd_head * n_head, width);
 
-            ggml_tensor * K_b = build_lora_mm(layer.wk, cur_b, layer.wk_s);
             K_b = ggml_reshape_3d(ctx0, K_b, n_embd_head, n_head_kv, width);
             K_b = build_norm(K_b, layer.attn_k_norm, nullptr, LLM_NORM_RMS, il);
 
-            ggml_tensor * V_b = build_lora_mm(layer.wv, cur_b, layer.wv_s);
             V_b = ggml_reshape_3d(ctx0, V_b, n_embd_head, n_head_kv, width);
 
             // M-RoPE positions are section-major: [dim0 x n_tokens, dim1 x n_tokens, ...]
