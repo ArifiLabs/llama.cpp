@@ -29,7 +29,7 @@ static uint32_t alloc_r45(const ckpt_list & checkpoints, uint32_t & next, uint32
     return server_ckpt_storage_alloc(checkpoints, next, n_ring);
 }
 
-// a faithful copy of the list bookkeeping in server-context.cpp create_checkpoint()
+// create_checkpoint()'s list bookkeeping, through the SAME function the server calls
 struct sim_slot {
     ckpt_list checkpoints;
     uint32_t  next = 0;
@@ -40,24 +40,12 @@ struct sim_slot {
     alloc_fn alloc = alloc_r45;
 
     uint32_t create(int id_task, int64_t n_tokens, bool anchor = false) {
-        // evict checkpoints within min-step of a previous one, unless created by this task or an anchor
-        int64_t last = -1;
-        for (auto it = checkpoints.begin(); it != checkpoints.end(); ) {
-            if (!it->anchor && it->id_task != id_task && last >= 0 && it->n_tokens <= last + checkpoint_min_step) {
-                it = checkpoints.erase(it);
-                continue;
-            }
-            last = it->n_tokens;
-            ++it;
-        }
-
-        while (checkpoints.size() >= (size_t) n_ctx_checkpoints) {
-            checkpoints.erase(checkpoints.begin());
-        }
+        const bool superseded_anchor = server_ckpt_list_make_room(
+            checkpoints, id_task, n_tokens, n_ctx_checkpoints, checkpoint_min_step);
 
         auto & cur = checkpoints.emplace_back();
         cur.id_task = id_task;
-        cur.anchor  = anchor;
+        cur.anchor  = anchor || superseded_anchor;
         cur.n_tokens = n_tokens;
         cur.pos_min  = (llama_pos) n_tokens;
         cur.pos_max  = (llama_pos) n_tokens;
@@ -210,6 +198,24 @@ int main() {
     check(sched_invalidation(alloc_r45, 200, &dup), "GREEN r45 invalidation ids stay distinct");
     check(sched_capacity(alloc_r45, 200, &dup), "GREEN r45 capacity churn ids stay distinct");
     check(sched_capacity(alloc_r44, 200, &dup), "GREEN r44 capacity churn (premise holds here)");
+
+    // --- C077 (lane-296): upstream's same-n_tokens supersede must not drop a tool-call anchor ---
+    {
+        sim_slot s;
+        s.n_ctx_checkpoints = 4;
+        s.checkpoint_min_step = 8192;
+        s.create(1, 100);
+        s.create(2, 500, /*anchor =*/ true);
+        s.create(3, 500);                         // same restore point, plain save
+        bool anchored = false;
+        for (const auto & c : s.checkpoints) { anchored = anchored || (c.n_tokens == 500 && c.anchor); }
+        check(anchored && s.checkpoints.size() == 2, "GREEN C077 supersede keeps the anchor flag");
+        // fill to capacity with other tasks' saves: the anchor must survive min-step thinning
+        for (int i = 4; i <= 12; ++i) { s.create(i, 500 + i); }
+        anchored = false;
+        for (const auto & c : s.checkpoints) { anchored = anchored || (c.n_tokens == 500 && c.anchor); }
+        check(anchored, "GREEN C077 carried anchor survives thinning");
+    }
 
     // --- two sequences: separate slots keep separate counters and lists ---
     {

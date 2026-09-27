@@ -2851,52 +2851,25 @@ private:
     void create_checkpoint(server_slot & slot, const int64_t n_tokens_cur, llama_pos pos_min, llama_pos pos_max, bool anchor = false) {
         const int id_task = slot.task->id;
 
-        // evict checkpoints within min-step of a previous checkpoint, unless they were
-        // created by the current task (or are tool-call anchors)
-        // only when the list is full, otherwise short prompts keep just the oldest checkpoint
-        int64_t last = -1;
-        for (auto it = slot.prompt.checkpoints.begin();
-                slot.prompt.checkpoints.size() + 1 >= (size_t) params_base.n_ctx_checkpoints &&
-                it != slot.prompt.checkpoints.end(); ) {
-            if (!it->anchor && it->id_task != id_task && last >= 0 && it->n_tokens <= last + params_base.checkpoint_min_step) {
-                SLT_TRC(slot, "erasing context checkpoint too close to an earlier one (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", size = %.3f MiB)\n",
-                        it->pos_min, it->pos_max, it->n_tokens, (float) it->size() / 1024 / 1024);
-
-                it = slot.prompt.checkpoints.erase(it);
-                continue;
-            }
-
-            last = it->n_tokens;
-            ++it;
-        }
-
-        while (slot.prompt.checkpoints.size() >= (size_t) params_base.n_ctx_checkpoints) {
-            // make room for the new checkpoint, if needed
-            const auto & cur = slot.prompt.checkpoints.front();
-
-            SLT_WRN(slot, "erasing old context checkpoint (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", size = %.3f MiB)\n",
-                    cur.pos_min, cur.pos_max, cur.n_tokens, (float) cur.size() / 1024 / 1024);
-
-            slot.prompt.checkpoints.erase(slot.prompt.checkpoints.begin());
-        }
-
-        // replace an existing checkpoint at the same n_tokens instead of appending a duplicate
-        {
-            const int64_t n_tokens_new = slot.prompt.n_tokens() - n_tokens_cur;
-            for (auto it = slot.prompt.checkpoints.begin(); it != slot.prompt.checkpoints.end(); ) {
-                if (it->n_tokens == n_tokens_new) {
-                    SLT_TRC(slot, "superseding context checkpoint at n_tokens = %" PRId64 "\n", it->n_tokens);
-                    it = slot.prompt.checkpoints.erase(it);
+        // thin (list full; current task and anchors exempt), evict from the front, supersede the same
+        // n_tokens - one copy shared with test-ctx-checkpoint-storage (server-ckpt-storage.h)
+        const bool superseded_anchor = server_ckpt_list_make_room(
+            slot.prompt.checkpoints, id_task, slot.prompt.n_tokens() - n_tokens_cur,
+            params_base.n_ctx_checkpoints, params_base.checkpoint_min_step,
+            [&](const char * why, const common_prompt_checkpoint & c) {
+                if (why[0] == 'f') {
+                    SLT_WRN(slot, "erasing old context checkpoint (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", size = %.3f MiB)\n",
+                            c.pos_min, c.pos_max, c.n_tokens, (float) c.size() / 1024 / 1024);
                 } else {
-                    ++it;
+                    SLT_TRC(slot, "erasing context checkpoint (%s, pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", anchor = %d)\n",
+                            why, c.pos_min, c.pos_max, c.n_tokens, (int) c.anchor);
                 }
-            }
-        }
+            });
 
         auto & cur = slot.prompt.checkpoints.emplace_back();
 
         cur.id_task = id_task;
-        cur.anchor  = anchor;
+        cur.anchor  = anchor || superseded_anchor;
 
         // [TAG_CHECKPOINTS_FIX_POS_MIN]
         // TODO: here we incorrectly deterimne that the saved checkpoint data covers the [pos_min, pos_max] range

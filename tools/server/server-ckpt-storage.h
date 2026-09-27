@@ -18,7 +18,57 @@
 #include "common.h"
 
 #include <cstdint>
+#include <functional>
 #include <list>
+
+// The list bookkeeping create_checkpoint() runs before it appends a new checkpoint at n_tokens_new.
+// One copy, shared by the server and test-ctx-checkpoint-storage (lane-296 C077: the test's private
+// copy had drifted from the server).
+//   1. when the list is full, evict entries within min_step of an earlier one, except entries of
+//      id_task and tool-call anchors (R31/M15);
+//   2. evict from the front until there is room;
+//   3. supersede an existing entry at the same n_tokens (upstream 5d806aa25) instead of appending a
+//      duplicate.
+// Returns true when step 3 removed an anchor: the caller carries the flag into the new entry, which
+// is the same restore point, so the tool-call anchor survives the supersede (C077).
+inline bool server_ckpt_list_make_room(
+        std::list<common_prompt_checkpoint> & checkpoints,
+        int id_task,
+        int64_t n_tokens_new,
+        int n_ctx_checkpoints,
+        int64_t min_step,
+        const std::function<void(const char * why, const common_prompt_checkpoint &)> & on_erase = nullptr) {
+    auto note = [&](const char * why, const common_prompt_checkpoint & c) { if (on_erase) { on_erase(why, c); } };
+
+    int64_t last = -1;
+    for (auto it = checkpoints.begin();
+            checkpoints.size() + 1 >= (size_t) n_ctx_checkpoints && it != checkpoints.end(); ) {
+        if (!it->anchor && it->id_task != id_task && last >= 0 && it->n_tokens <= last + min_step) {
+            note("thin", *it);
+            it = checkpoints.erase(it);
+            continue;
+        }
+        last = it->n_tokens;
+        ++it;
+    }
+
+    while (!checkpoints.empty() && checkpoints.size() >= (size_t) n_ctx_checkpoints) {
+        note("full", checkpoints.front());
+        checkpoints.erase(checkpoints.begin());
+    }
+
+    bool anchor = false;
+    for (auto it = checkpoints.begin(); it != checkpoints.end(); ) {
+        if (it->n_tokens == n_tokens_new) {
+            note("supersede", *it);
+            anchor = anchor || it->anchor;
+            it = checkpoints.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return anchor;
+}
 
 // Returns a storage id in [1, n_ring] that no live ON_DEVICE checkpoint in `checkpoints` owns,
 // advancing `next` past every id it tried. Returns 0 when no id is free: the ring is larger than
