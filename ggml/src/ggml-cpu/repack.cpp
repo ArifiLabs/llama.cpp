@@ -5556,14 +5556,16 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
             #endif
         }
     } else if (cur->type == GGML_TYPE_Q1_0) {
-        // lane-110C: gated by GGML_ARIFI_VNNI_REPACK, DEFAULT OFF (only "1" enables). OFF => fall
-        // through to the terminal return nullptr, i.e. no repack buffer and per-row vec_dot.
-        if (for_dual ? ggml_arifi_vnni_repack_dual_enabled() : ggml_arifi_vnni_repack_enabled()) {
-            if (ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
-                if (cur->ne[1] % 4 == 0) {
-                    return &q1_0_4x8_q8_0;
-                }
+        // lane-110C: the x86 AVX512-VNNI arm is gated by GGML_ARIFI_VNNI_REPACK, DEFAULT OFF (only "1"
+        // enables). lane-296 C019: the ARM NEON arms are upstream's (8034c1d1f) and stay DEFAULT ON as
+        // upstream ships them; they yield only to dual residency (mode 2 repacks a shadow instead).
+        const bool gate = for_dual ? ggml_arifi_vnni_repack_dual_enabled() : ggml_arifi_vnni_repack_enabled();
+        if (gate && ggml_cpu_has_avx512() && ggml_cpu_has_avx512_vnni()) {
+            if (cur->ne[1] % 4 == 0) {
+                return &q1_0_4x8_q8_0;
             }
+        }
+        if (for_dual ? gate : !ggml_arifi_vnni_repack_dual_enabled()) {
             if (ggml_cpu_has_neon() && ggml_cpu_has_matmul_int8()) {
                 if (cur->ne[1] % 4 == 0) {
                     return &q1_0_4x8_q8_0;
