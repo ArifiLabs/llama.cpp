@@ -18,7 +18,7 @@
       "decided_by": "lane-296 collision maker (Opus 5.5), pending HQ Sol re-check",
       "owed": "no",
       "lane296_b1_close": {
-        "ours": "MEASURED (run15 ev15/CB-R-*, llama-bench -p 2048 -ub 512 + GGML_VK_PERF_LOGGER, ABBA): CONCAT 48/graph ON 2.17-2.25 ms/op vs OFF 2.38-2.58 ms/op (one OFF outlier 3.46); pp2048 ON 61.98/57.45 vs OFF 61.50/62.12 t/s. Served plain ON vs OFF (s15-concat-R, 4x4 counterbalanced, SEAT=OFF FIX=ON): decode 4.186 vs 4.178 t/s NO_DIFFERENCE, long-fill prefill 62.86 vs 62.01 t/s. CONCAT 195/195 0 FAIL both arms (ev15/CORR-CONCAT-R-*).",
+        "ours": "MEASURED (run15 ev15/CB-R-*, llama-bench -p 2048 -ub 512 + GGML_VK_PERF_LOGGER, ABBA): CONCAT 48 dispatches per logged graph (perf logger) ON 2.17-2.25 ms/op vs OFF 2.38-2.58 ms/op (one OFF outlier 3.46); pp2048 ON 61.98/57.45 vs OFF 61.50/62.12 t/s. Served plain ON vs OFF (s15-concat-R, 4x4 counterbalanced, SEAT=OFF FIX=ON): decode 4.186 vs 4.178 t/s NO_DIFFERENCE, long-fill prefill 62.86 vs 62.01 t/s. CONCAT 195/195 0 FAIL both arms (ev15/CORR-CONCAT-R-*).",
         "union": "MEASURED (ev15/CB-U8-*): CONCAT ON 1.65-2.21 ms/op vs OFF 2.34-2.46 ms/op; pp2048 ON 77.22/77.38 vs OFF 76.73/77.11 t/s. Served plain (s15-concat-U8): decode 3.893 vs 3.880 t/s NO_DIFFERENCE, long-fill prefill 63.52 vs 62.19 t/s. CONCAT 195/195 both arms; ON vs OFF greedy byte-identical Q4_K_XL p1-p3 (ev15/CG-*). The win reproduces on both binaries; U8 pp2048 is +25% over r86i (upstream prefill gains).",
         "three_numbers": "pp2048 t/s r86i ~61.7 / vanilla b11178 not in this leg (no transpose path; mechanism fork-only) / U8 ~77.3",
         "receipts": [
@@ -28,7 +28,7 @@
           "research/local-inference/lane-evidence/2026-09-02-lane-209/lane296-s15-concat-U8/SEAT/AB.json",
           "op receipts: run17 cache/lane296/ev17/OPDEF-{R,U8}-r{1,2}.txt + OPSW-* (2 rounds, r3 HQ-VOID), run23 stage g cache/lane296/ev19/OPT-{R,U8,V}-r{1..4}.txt ABBA + OPTSW-* (4 rounds); readers cache/lane296/b1dump.py, b1g_read.py (multiline-safe)"
         ],
-        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408. Plus sx8 17408x512x5120 on R and the mmvq A-hoist OFF/ON pairing."
+        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408; switch cells the line-based run19 generator missed (multiline rescan): q5_K 5120x3x17408, q5_K 1024x7x5120, iq3_s 5120x1x17408. Plus sx8 17408x512x5120 on R, the mmvq A-hoist OFF/ON pairing, and the 248320x5120 head cells (q4_K n=4..6 R/U8 + split off; iq3 n=7 R/U8). All in cache/lane296/gpu-run24.sh (~30 min, NOT launched), reader cache/lane296/b24_read.py."
       }
     },
     {
@@ -273,7 +273,7 @@
       ],
       "decided_utc": "2026-09-27T15:30:00Z",
       "decided_by": "lane-296 collision maker (Opus 5.5), pending HQ Sol re-check",
-      "owed": "partial: op re-pair leg (lane296_b1_close.open)",
+      "owed": "partial: op re-pair leg gpu-run24 (lane296_b1_close.open)",
       "lane296_b1_close": {
         "ours": "MEASURED op ladder 17408x5120 n=1..8 (run17): R 1288/1286/1279/1345/1432/1517/1448/1480 us.",
         "union": "MEASURED same cells: U8 1284/1258/1265/1328/1384/1551/1481/1468 us; U8/R median 0.991 [0.967, 1.023]. Stage g 5120x8x17408 (4 rounds ABBA): R 1394.9 / V 1528.6 / U8 1398.7 us (U8/V 0.915). n=6 and n=7 read U8 +2.2%/+2.3% on 2 rounds only = in the re-pair leg (OPEN, see lane296_b1_close.open). Served U-IQ4XS A/B not re-run (off the daily-dense line; op ladder carries the decider).",
@@ -283,7 +283,7 @@
           "cache/lane296/ev19/OPT-*",
           "op receipts: run17 cache/lane296/ev17/OPDEF-{R,U8}-r{1,2}.txt + OPSW-* (2 rounds, r3 HQ-VOID), run23 stage g cache/lane296/ev19/OPT-{R,U8,V}-r{1..4}.txt ABBA + OPTSW-* (4 rounds); readers cache/lane296/b1dump.py, b1g_read.py (multiline-safe)"
         ],
-        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408. Plus sx8 17408x512x5120 on R and the mmvq A-hoist OFF/ON pairing."
+        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408; switch cells the line-based run19 generator missed (multiline rescan): q5_K 5120x3x17408, q5_K 1024x7x5120, iq3_s 5120x1x17408. Plus sx8 17408x512x5120 on R, the mmvq A-hoist OFF/ON pairing, and the 248320x5120 head cells (q4_K n=4..6 R/U8 + split off; iq3 n=7 R/U8). All in cache/lane296/gpu-run24.sh (~30 min, NOT launched), reader cache/lane296/b24_read.py."
       }
     },
     {
@@ -330,7 +330,7 @@
           "research/local-inference/lane-evidence/2026-09-02-lane-209/lane296-s15-fadq-U8/SEAT/AB.json",
           "op receipts: run17 cache/lane296/ev17/OPDEF-{R,U8}-r{1,2}.txt + OPSW-* (2 rounds, r3 HQ-VOID), run23 stage g cache/lane296/ev19/OPT-{R,U8,V}-r{1..4}.txt ABBA + OPTSW-* (4 rounds); readers cache/lane296/b1dump.py, b1g_read.py (multiline-safe)"
         ],
-        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408. Plus sx8 17408x512x5120 on R and the mmvq A-hoist OFF/ON pairing."
+        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408; switch cells the line-based run19 generator missed (multiline rescan): q5_K 5120x3x17408, q5_K 1024x7x5120, iq3_s 5120x1x17408. Plus sx8 17408x512x5120 on R, the mmvq A-hoist OFF/ON pairing, and the 248320x5120 head cells (q4_K n=4..6 R/U8 + split off; iq3 n=7 R/U8). All in cache/lane296/gpu-run24.sh (~30 min, NOT launched), reader cache/lane296/b24_read.py."
       }
     },
     {
@@ -362,7 +362,7 @@
           "cache/lane296/b5i_read.py",
           "op receipts: run17 cache/lane296/ev17/OPDEF-{R,U8}-r{1,2}.txt + OPSW-* (2 rounds, r3 HQ-VOID), run23 stage g cache/lane296/ev19/OPT-{R,U8,V}-r{1..4}.txt ABBA + OPTSW-* (4 rounds); readers cache/lane296/b1dump.py, b1g_read.py (multiline-safe)"
         ],
-        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408. Plus sx8 17408x512x5120 on R and the mmvq A-hoist OFF/ON pairing."
+        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408; switch cells the line-based run19 generator missed (multiline rescan): q5_K 5120x3x17408, q5_K 1024x7x5120, iq3_s 5120x1x17408. Plus sx8 17408x512x5120 on R, the mmvq A-hoist OFF/ON pairing, and the 248320x5120 head cells (q4_K n=4..6 R/U8 + split off; iq3 n=7 R/U8). All in cache/lane296/gpu-run24.sh (~30 min, NOT launched), reader cache/lane296/b24_read.py."
       }
     },
     {
@@ -452,7 +452,7 @@
       ],
       "decided_utc": "2026-09-27T15:30:00Z",
       "decided_by": "lane-296 collision maker (Opus 5.5), pending HQ Sol re-check",
-      "owed": "partial: op re-pair leg (lane296_b1_close.open)",
+      "owed": "partial: op re-pair leg gpu-run24 (lane296_b1_close.open)",
       "lane296_b1_close": {
         "ours": "MEASURED q5_K n<=3, 18 cells (run17): R at default, receipt line 'q5_k mat-vec activation-hoist: ON (n<=3)' on both binaries.",
         "union": "MEASURED: U8/R median 1.001 [0.981, 1.049] over the 18 cells; U8 default/hoist-off median 1.004 [0.981, 1.072] (run17), 0.997 [0.980, 1.017] over 8 cells (run23 g, 4 rounds) = the gated default is neutral, as registered ('wash' at n<=3). One cell open: q5_K 5120x1x17408 (see lane296_b1_close.open).",
@@ -462,7 +462,7 @@
           "cache/lane296/ev19/OPTSW-GGML_ARIFI_Q5K_B_HOIST-*",
           "op receipts: run17 cache/lane296/ev17/OPDEF-{R,U8}-r{1,2}.txt + OPSW-* (2 rounds, r3 HQ-VOID), run23 stage g cache/lane296/ev19/OPT-{R,U8,V}-r{1..4}.txt ABBA + OPTSW-* (4 rounds); readers cache/lane296/b1dump.py, b1g_read.py (multiline-safe)"
         ],
-        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408. Plus sx8 17408x512x5120 on R and the mmvq A-hoist OFF/ON pairing."
+        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408; switch cells the line-based run19 generator missed (multiline rescan): q5_K 5120x3x17408, q5_K 1024x7x5120, iq3_s 5120x1x17408. Plus sx8 17408x512x5120 on R, the mmvq A-hoist OFF/ON pairing, and the 248320x5120 head cells (q4_K n=4..6 R/U8 + split off; iq3 n=7 R/U8). All in cache/lane296/gpu-run24.sh (~30 min, NOT launched), reader cache/lane296/b24_read.py."
       }
     },
     {
@@ -481,7 +481,7 @@
       ],
       "decided_utc": "2026-09-27T15:30:00Z",
       "decided_by": "lane-296 collision maker (Opus 5.5), pending HQ Sol re-check",
-      "owed": "partial: op re-pair leg (lane296_b1_close.open)",
+      "owed": "partial: op re-pair leg gpu-run24 (lane296_b1_close.open)",
       "lane296_b1_close": {
         "ours": "MEASURED at default (receipt line 'mmvq A-side hoist: ON (device-probe) (iq1: OFF) (route: r48b)' identical on R and U8): R MMVQ cells run17.",
         "union": "MEASURED at default: U8/R medians q4_K n4-6 0.999 (20 cells), q5_K 0.997 (16), q6_K 1.002 (24), sx8 0.993 (16) (run17). OPEN: the registered decider is hoist OFF vs ON under forced MMVQ; that pairing was not re-run on either binary (short leg, see lane296_b1_close.open).",
@@ -491,7 +491,7 @@
           "cache/lane296/ev19/OPT-*",
           "op receipts: run17 cache/lane296/ev17/OPDEF-{R,U8}-r{1,2}.txt + OPSW-* (2 rounds, r3 HQ-VOID), run23 stage g cache/lane296/ev19/OPT-{R,U8,V}-r{1..4}.txt ABBA + OPTSW-* (4 rounds); readers cache/lane296/b1dump.py, b1g_read.py (multiline-safe)"
         ],
-        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408. Plus sx8 17408x512x5120 on R and the mmvq A-hoist OFF/ON pairing."
+        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408; switch cells the line-based run19 generator missed (multiline rescan): q5_K 5120x3x17408, q5_K 1024x7x5120, iq3_s 5120x1x17408. Plus sx8 17408x512x5120 on R, the mmvq A-hoist OFF/ON pairing, and the 248320x5120 head cells (q4_K n=4..6 R/U8 + split off; iq3 n=7 R/U8). All in cache/lane296/gpu-run24.sh (~30 min, NOT launched), reader cache/lane296/b24_read.py."
       }
     },
     {
@@ -510,7 +510,7 @@
       ],
       "decided_utc": "2026-09-27T15:30:00Z",
       "decided_by": "lane-296 collision maker (Opus 5.5), pending HQ Sol re-check",
-      "owed": "partial: op re-pair leg (lane296_b1_close.open)",
+      "owed": "partial: op re-pair leg gpu-run24 (lane296_b1_close.open)",
       "lane296_b1_close": {
         "ours": "NOT MEASURED at the decider shape: run17 carried OPDEF-sx8mm on U8 only. OPEN (short leg, see lane296_b1_close.open). Default-path sx8 mat-vec n=1..8 R measured (run17, 16 cells).",
         "union": "MEASURED 17408x512x5120 (run17 OPSW-sx8mm, 2 rounds): packed default/off 0.986, MMQ-under-coopmat default/off 0.988 (receipt lines identical R vs U8: packed ON, MMQ-under-coopmat OFF). sx8 mat-vec U8/R median 0.993 [0.952, 1.036] (16 cells).",
@@ -520,7 +520,7 @@
           "cache/lane296/ev17/OPSW-sx8mm-*",
           "op receipts: run17 cache/lane296/ev17/OPDEF-{R,U8}-r{1,2}.txt + OPSW-* (2 rounds, r3 HQ-VOID), run23 stage g cache/lane296/ev19/OPT-{R,U8,V}-r{1..4}.txt ABBA + OPTSW-* (4 rounds); readers cache/lane296/b1dump.py, b1g_read.py (multiline-safe)"
         ],
-        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408. Plus sx8 17408x512x5120 on R and the mmvq A-hoist OFF/ON pairing."
+        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408; switch cells the line-based run19 generator missed (multiline rescan): q5_K 5120x3x17408, q5_K 1024x7x5120, iq3_s 5120x1x17408. Plus sx8 17408x512x5120 on R, the mmvq A-hoist OFF/ON pairing, and the 248320x5120 head cells (q4_K n=4..6 R/U8 + split off; iq3 n=7 R/U8). All in cache/lane296/gpu-run24.sh (~30 min, NOT launched), reader cache/lane296/b24_read.py."
       }
     },
     {
@@ -611,7 +611,7 @@
       ],
       "decided_utc": "2026-09-27T15:30:00Z",
       "decided_by": "lane-296 collision maker (Opus 5.5), pending HQ Sol re-check",
-      "owed": "no",
+      "owed": "partial: op re-pair leg gpu-run24 (lane296_b1_close.open)",
       "lane296_b1_close": {
         "ours": "MEASURED 17408x5120 n=5..8 (run17): R 1683/1705/1773/1801 us.",
         "union": "MEASURED: U8 1678/1700/1755/1814 us (U8/R median 0.997 [0.990, 1.007]); route-off (GGML_ARIFI_Q5K_MMVQ=legacy) 1767/1909/1993/2186 = legacy/default 1.053/1.123/1.136/1.205 (registered shipped 1.056/1.120/1.075/1.152) = the win holds on U8. Stage g: 1024x5x5120 R 112.3 / V 633.1 / U8 110.8; 1024x6 115.8 / 164.5 / 115.5; 10240x4 941.8 / 1037.6 / 954.5. FINDING (pre-existing, R and U8 alike): at m=1024 n=5,6 the route LOSES to legacy on both runs (stage g default 110.9/115.1 vs legacy 100.9/105.5 us, 4/4 rounds; run17 111.3/115.8 vs 102.1/108.7) = the admission (n=5..8, k<=8192) lacks an m floor; OWED lane-298 (gate fix + re-measure).",
@@ -621,7 +621,7 @@
           "cache/lane296/ev19/OPTSW-GGML_ARIFI_Q5K_MMVQ-*",
           "op receipts: run17 cache/lane296/ev17/OPDEF-{R,U8}-r{1,2}.txt + OPSW-* (2 rounds, r3 HQ-VOID), run23 stage g cache/lane296/ev19/OPT-{R,U8,V}-r{1..4}.txt ABBA + OPTSW-* (4 rounds); readers cache/lane296/b1dump.py, b1g_read.py (multiline-safe)"
         ],
-        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408. Plus sx8 17408x512x5120 on R and the mmvq A-hoist OFF/ON pairing."
+        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408; switch cells the line-based run19 generator missed (multiline rescan): q5_K 5120x3x17408, q5_K 1024x7x5120, iq3_s 5120x1x17408. Plus sx8 17408x512x5120 on R, the mmvq A-hoist OFF/ON pairing, and the 248320x5120 head cells (q4_K n=4..6 R/U8 + split off; iq3 n=7 R/U8). All in cache/lane296/gpu-run24.sh (~30 min, NOT launched), reader cache/lane296/b24_read.py."
       }
     },
     {
@@ -640,17 +640,17 @@
       ],
       "decided_utc": "2026-09-27T15:30:00Z",
       "decided_by": "lane-296 collision maker (Opus 5.5), pending HQ Sol re-check",
-      "owed": "partial: op re-pair leg (lane296_b1_close.open)",
+      "owed": "partial: op re-pair leg gpu-run24 (lane296_b1_close.open)",
       "lane296_b1_close": {
         "ours": "MEASURED iq3 n=7 cells (run17): R 101/966/1668/1584 us (iq3_s 1024/10240/17408x5120, 5120x17408).",
-        "union": "MEASURED: U8 101/959/1648/1587 us; U8/R median 0.997 [0.980, 1.007] over 12 n=7 cells; N7_ROWS off arm 2036/20288/34597/39268 us (the n=7 rows lever is load-bearing on U8, default/off median 0.398). Sign hoist v2 default/legacy median 1.000 over 96 cells (run17), 1.001 (run23 g) = wall-clock neutral on gfx1103, as registered. Open cells: iq3_xxs 5120x6x17408, 10240x3x5120, 1024x2x5120 (see lane296_b1_close.open).",
+        "union": "MEASURED: U8 101/959/1648/1587 us; U8/R median 0.997 [0.980, 1.007] over 12 n=7 cells; N7_ROWS=4 arm (= the registered legacy value that carries the n=7 register-spill cliff, registered 22.1x at 248320) 2036/20288/34597/39268 us = default/off median 0.398, the cliff fix holds on U8. The 248320 n=7 decider cell R vs U8 is OPEN (gpu-run24 stage d). Sign hoist v2 default/legacy median 1.000 over 96 cells (run17), 1.001 (run23 g) = wall-clock neutral on gfx1103, as registered. Open cells: iq3_xxs 5120x6x17408, 10240x3x5120, 1024x2x5120 (see lane296_b1_close.open).",
         "three_numbers": "iq3_xxs 6144x2x5120 us (stage g) r86i 324.1 / vanilla 324.5 / U8 325.1",
         "receipts": [
           "cache/lane296/ev17/OPSW-iq3-*",
           "cache/lane296/ev19/OPTSW-GGML_ARIFI_IQ3_*",
           "op receipts: run17 cache/lane296/ev17/OPDEF-{R,U8}-r{1,2}.txt + OPSW-* (2 rounds, r3 HQ-VOID), run23 stage g cache/lane296/ev19/OPT-{R,U8,V}-r{1..4}.txt ABBA + OPTSW-* (4 rounds); readers cache/lane296/b1dump.py, b1g_read.py (multiline-safe)"
         ],
-        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408. Plus sx8 17408x512x5120 on R and the mmvq A-hoist OFF/ON pairing."
+        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408; switch cells the line-based run19 generator missed (multiline rescan): q5_K 5120x3x17408, q5_K 1024x7x5120, iq3_s 5120x1x17408. Plus sx8 17408x512x5120 on R, the mmvq A-hoist OFF/ON pairing, and the 248320x5120 head cells (q4_K n=4..6 R/U8 + split off; iq3 n=7 R/U8). All in cache/lane296/gpu-run24.sh (~30 min, NOT launched), reader cache/lane296/b24_read.py."
       }
     },
     {
@@ -679,7 +679,7 @@
           "cache/lane296/ev19/OPTSW-GGML_ARIFI_Q6K_MMVQ-*",
           "op receipts: run17 cache/lane296/ev17/OPDEF-{R,U8}-r{1,2}.txt + OPSW-* (2 rounds, r3 HQ-VOID), run23 stage g cache/lane296/ev19/OPT-{R,U8,V}-r{1..4}.txt ABBA + OPTSW-* (4 rounds); readers cache/lane296/b1dump.py, b1g_read.py (multiline-safe)"
         ],
-        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408. Plus sx8 17408x512x5120 on R and the mmvq A-hoist OFF/ON pairing."
+        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408; switch cells the line-based run19 generator missed (multiline rescan): q5_K 5120x3x17408, q5_K 1024x7x5120, iq3_s 5120x1x17408. Plus sx8 17408x512x5120 on R, the mmvq A-hoist OFF/ON pairing, and the 248320x5120 head cells (q4_K n=4..6 R/U8 + split off; iq3 n=7 R/U8). All in cache/lane296/gpu-run24.sh (~30 min, NOT launched), reader cache/lane296/b24_read.py."
       }
     },
     {
@@ -698,17 +698,17 @@
       ],
       "decided_utc": "2026-09-27T15:30:00Z",
       "decided_by": "lane-296 collision maker (Opus 5.5), pending HQ Sol re-check",
-      "owed": "no",
+      "owed": "partial: op re-pair leg gpu-run24 (lane296_b1_close.open)",
       "lane296_b1_close": {
         "ours": "MEASURED q4_K n=4..6, 20 cells (run17); 1024x5x5120 R 92, 1024x6 R 93 us.",
-        "union": "MEASURED: U8/R median 0.999 [0.955, 1.011]; 1024x5 U8 92 vs split-off 96, 1024x6 93 vs 100 (default/off 0.947 [0.928, 0.965]) = the win holds. The 248320x5120 head cell is not in either perf list (shape absent in both binaries' test-backend-ops); the route trace is registered.",
+        "union": "MEASURED: U8/R median 0.999 [0.955, 1.011]; 1024x5 U8 92 vs split-off 96, 1024x6 93 vs 100 (default/off 0.947 [0.928, 0.965]) = the win holds. The 248320x5120 head cell (where the split mainly fires) IS in the perf list: run17 measured only the U8 split-off arm there (ev17/OPSW-q4kw5-*); default U8 and R arms at 248320 n=4..6 never ran = OPEN, in gpu-run24 stage d.",
         "three_numbers": "q4_K 1024x6x5120 us r86i 93 / vanilla not in vanilla's perf list / U8 93",
         "receipts": [
           "cache/lane296/ev17/OPSW-q4kw5-*",
           "cache/lane296/ev17/OPDEF-*",
           "op receipts: run17 cache/lane296/ev17/OPDEF-{R,U8}-r{1,2}.txt + OPSW-* (2 rounds, r3 HQ-VOID), run23 stage g cache/lane296/ev19/OPT-{R,U8,V}-r{1..4}.txt ABBA + OPTSW-* (4 rounds); readers cache/lane296/b1dump.py, b1g_read.py (multiline-safe)"
         ],
-        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408. Plus sx8 17408x512x5120 on R and the mmvq A-hoist OFF/ON pairing."
+        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408; switch cells the line-based run19 generator missed (multiline rescan): q5_K 5120x3x17408, q5_K 1024x7x5120, iq3_s 5120x1x17408. Plus sx8 17408x512x5120 on R, the mmvq A-hoist OFF/ON pairing, and the 248320x5120 head cells (q4_K n=4..6 R/U8 + split off; iq3 n=7 R/U8). All in cache/lane296/gpu-run24.sh (~30 min, NOT launched), reader cache/lane296/b24_read.py."
       }
     },
     {
@@ -727,7 +727,7 @@
       ],
       "decided_utc": "2026-09-27T15:30:00Z",
       "decided_by": "lane-296 collision maker (Opus 5.5), pending HQ Sol re-check",
-      "owed": "partial: op re-pair leg (lane296_b1_close.open)",
+      "owed": "partial: op re-pair leg gpu-run24 (lane296_b1_close.open)",
       "lane296_b1_close": {
         "ours": "MEASURED iq3_s n=6 (run17): 1024/10240/17408x5120 R 86/805/1400, 5120x17408 R 1213 us.",
         "union": "MEASURED: U8 86/792/1419/1278 us; rows-4 off arm 107/1012/1795/1958 us = default/off median 0.796 [0.653, 0.822] = the win holds (registered +20-41%). U8/R median 0.993; 5120x6x17408 reads U8 +5.4% vs R on run17 (2 rounds) = in the re-pair leg. Stage g N6_ROWS default/off median 0.981.",
@@ -737,7 +737,7 @@
           "cache/lane296/ev19/OPTSW-GGML_ARIFI_IQ3S_N6_ROWS-*",
           "op receipts: run17 cache/lane296/ev17/OPDEF-{R,U8}-r{1,2}.txt + OPSW-* (2 rounds, r3 HQ-VOID), run23 stage g cache/lane296/ev19/OPT-{R,U8,V}-r{1..4}.txt ABBA + OPTSW-* (4 rounds); readers cache/lane296/b1dump.py, b1g_read.py (multiline-safe)"
         ],
-        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408. Plus sx8 17408x512x5120 on R and the mmvq A-hoist OFF/ON pairing."
+        "open": "lane-296 run23 close 2026-09-28: OPEN op cells (need one short re-pair leg, HQ word): iq3_xxs 5120x6x17408 U8 vs R paired 1.034/1.037/1.132/1.008 (bimodal, R rounds 1438/1434/1267/1286 us); iq3_xxs 10240x3x5120 U8 vs V 1.031/1.034/1.135/0.992; iq3_xxs 1024x2x5120 U8 vs V 1.003/1.004/1.090/1.019; q5_K 5120x1x17408 U8 vs R run17 1.032/1.036, run23 g 0.997/1.012/1.040/1.008 (R 1569.8 / V 1583.3 / U8 1604.1 us; q5_K mat-vec shader unchanged e86ca0289a..16f0ae402b, host or base move); iq4_xs 17408x5120 n=6,7; iq3_s 5120x6x17408; switch cells the line-based run19 generator missed (multiline rescan): q5_K 5120x3x17408, q5_K 1024x7x5120, iq3_s 5120x1x17408. Plus sx8 17408x512x5120 on R, the mmvq A-hoist OFF/ON pairing, and the 248320x5120 head cells (q4_K n=4..6 R/U8 + split off; iq3 n=7 R/U8). All in cache/lane296/gpu-run24.sh (~30 min, NOT launched), reader cache/lane296/b24_read.py."
       }
     },
     {
