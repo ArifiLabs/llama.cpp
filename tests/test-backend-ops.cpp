@@ -1629,6 +1629,9 @@ struct test_case {
             }
 
             double err = ud->tc->err(f1.data(), f2.data(), f1.size());
+            if (getenv("ARIFI_PRINT_ERR")) {
+                printf("[%s] ERR_VS_CPU=%.6e ", ggml_op_desc(t1), err);
+            }
             if (err > ud->tc->max_err(ud->backend1)) {
                 printf("[%s] ERR = %.9f > %.9f ", ggml_op_desc(t1), err, ud->tc->max_err(ud->backend1));
                 //for (int i = 0; i < (int) f1.size(); i++) {
@@ -9789,6 +9792,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
             test_cases.emplace_back(new test_unary_mul(op, type, { 128, 2, 2, 2 }, false, "strided_dim1"));
             test_cases.emplace_back(new test_unary_mul(op, type, { 128, 2, 2, 2 }, false, "packed", "reuse"));
         }
+    }
+    // SILU*MUL at the 27B FFN width (n_ff=17408): decode, verify and prefill token counts
+    for (int64_t n_tokens : { 1, 5, 512 }) {
+        test_cases.emplace_back(new test_unary_mul(GGML_UNARY_OP_SILU, GGML_TYPE_F32, { 17408, n_tokens, 1, 1 }));
     }
 
     // SNAKE activation fusion: x + sin(a*x)^2 * inv_b
