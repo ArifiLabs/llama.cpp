@@ -248,6 +248,30 @@ class SeriesRegenTest(unittest.TestCase):
         self.assertNotIn("PASS: every commit carries provenance.", out,
                          "an exempted commit must never produce the unqualified PASS line")
 
+    def test_a_no_provenance_commit_clears_only_with_a_ledger_origin(self):
+        """NO PROVENANCE AT ALL is the hard failure. An exemption row clears it only when it is
+        classified `no-provenance` AND records the origin itself; a bare row does not."""
+        self.r.write("np.txt", "1\n")
+        git(self.r.path, "add", "--", "np.txt")
+        git(self.r.path, "commit", "-q", "-m", "feat: landed without trailers\n")
+        sha = git(self.r.path, "rev-parse", "HEAD")
+        rc, out = self._provenance(strict=False)
+        self.assertEqual(1, rc)
+        self.assertIn("NO PROVENANCE AT ALL", out)
+        row = {"sha": sha, "subject": "feat: landed without trailers",
+               "classification": ["no-provenance", "no-measured-effect"], "reason": "test fixture"}
+        commit_json(self.r.path, "tools/arifi-sync/trailer-exemptions.json",
+                    {"commits": [row]}, trailers=True)
+        rc, _ = self._provenance()
+        self.assertEqual(1, rc, "a row without an origin must not clear the hard failure")
+        row["origin"] = "ArifiLabs (native) - test"
+        commit_json(self.r.path, "tools/arifi-sync/trailer-exemptions.json",
+                    {"commits": [row]}, trailers=True)
+        rc, out = self._provenance()
+        self.assertEqual(0, rc, out)
+        self.assertIn("ledger origin: ArifiLabs (native) - test", out)
+        self.assertNotIn("PASS: every commit carries provenance.", out)
+
     def test_preflight_runs_before_any_deletion_even_on_a_fresh_directory(self):
         """The series directory is empty, so a count-based assertion cannot distinguish the
         old order from the new one. This asserts the pre-flight fires at all."""
