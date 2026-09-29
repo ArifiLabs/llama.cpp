@@ -19,7 +19,7 @@ Evidence: `night/ev10/summary.txt` (R3 legs, 16 chunks, c512, seed 1), `night/ev
   (op error 1.4e-4 vs 7.7e-3 against f64, CHECKED; in-graph witness CHECKED). Its S-X8 PPL is 7.431166 (bar 7.4163):
   FAIL. That the gap is instrument sensitivity rather than a real quality loss is CONSISTENT with the numbers
   (B5 - A +0.0205 at 1.7 SE; B1 - B3 +0.0209 at 3.4 SE with equal op error) but ASSUMED until the 64-chunk paired
-  check (`ev14/`, running) lands.
+  check (`ev14/`, running) lands. **Stage 8: it landed on the REAL side (+0.0121 at 2.7 SE over 64 chunks), see section 10.**
 
 ## 2. Tensor map (CHECKED, `night/gguf_map.py`, raw GGUF header)
 
@@ -228,6 +228,47 @@ instrument noise; B5 - A >= +0.012 at > 2 SE = a real effect outside the `ssm_ou
 Ship candidate A as the floor for S-X8: quality at or better than r86i on all three lines, int8 kept on 79% of the
 Q8_0 FLOPs. Keep goal B open until a variant with a named mechanism lands `ssm_out` on int8 at the bar. Nothing is
 merged or pushed; HQ takes the merge word to the President.
+
+## 10. Stage 8 (Opus 5.5 HIGH, 17:1x-17:4x): exact `ssm_out` scores worse. Why? (derivation: `night/INT8-MATH.md` section 6)
+
+- **The 64-chunk check says the gap is real** (CHECKED, ev14): B5 6.5511 vs A 6.5390, +0.0121 at 2.7 SE. It is a broad
+  shift: trimmed mean equals the mean, and the top 3 chunks carry 35%. Section 8's "instrument, not math" reading is
+  WITHDRAWN.
+- **H-B (a correction fitted to the float path): FALSIFIED.** No PCA companion is loaded in these legs (CHECKED).
+- **H-A (the float path is biased): FALSIFIED.** Its 7.7e-3 error is random: global slope within 2.6e-4 of 1, and
+  under 0.1% of the error lies along the output (CHECKED, op probe).
+- **Its source is NAMED: f16 accumulation** on the coopmat1 float path. With f32 accumulation the same path gives
+  2.66e-4. This covers every quant type, S-X8 FFN included (CHECKED, knob `GGML_ARIFI_F32ACC`, commit `3e85f0cb6e`).
+- So "int8 on vs off" swaps two error sources: 8-bit activations (int8) against f16 accumulation (float).
+  Separating them is chain `night/gpu-int8goal-s8.sh` (evidence `night/ev15s8/`, reader `night/s8_read.py`):
+
+| leg | config | what it decides |
+|---|---|---|
+| c64 | A + `ssm_out` f32 accumulation (exact `ssm_out`, no int8) | c64 near B5: exactness itself costs PPL (H-C/H-D). c64 near A and B5 - c64 >= 2 SE: the int8 path has an in-graph effect |
+| d64 | CANDIDATE: int8 on every Q8_0 role (`ssm_out` two digits) + f32 accumulation on every float path | the deliverable, if chunk-16 <= 7.4163 and d64 <= r64 |
+| x16 | int8 off + f32 accumulation everywhere (exact-arithmetic model) | H-D: PPL vs off 7.408170 and Mean KLD vs r86i |
+| d-q4, d-gsq | candidate on Q4_K_XL and GSQ, 16 chunks, KL vs r86i | no-harm, only if d64 chunk-16 <= 7.4163 |
+| r64 | r86i engine, 64 chunks | pairs the candidate and A against r86i |
+
+2-chunk smoke of the exact-arithmetic model (CHECKED, `ev15s8/smoke-all.*`): 4.2685 / 6.0557. For comparison, off
+reads 4.3127 / 6.0863, A 4.3048 / 6.0800 and B5 4.3343 / 6.1022. Exact scored LOWER than every arm on both chunks.
+Two chunks prove nothing, so the direction is ASSUMED. If it holds, the lever for "int8 on every layer at r86i quality"
+is to remove f16 accumulation from the float paths.
+
+Three numbers per line (r86i / vanilla b11178 / candidate d): PENDING the chain. Filled cells so far:
+
+| line | metric | r86i | vanilla b11178 | candidate d |
+|---|---|---|---|---|
+| S-X8 | PPL 16ch | 7.4163 | N/A (type 57 fork-only) | d64 chunk 16: PENDING |
+| S-X8 | PPL 64ch | r64: PENDING | N/A | d64: PENDING (A 6.5390, B5 6.5511) |
+| Q4_K_XL | PPL 16ch | 7.4918 | 7.473680 | d-q4: PENDING (runs only if S-X8 holds) |
+| GSQ | PPL 16ch | 7.5549 | 7.533470 | d-gsq: PENDING (runs only if S-X8 holds) |
+
+Owed after the chain:
+- KL of off / A / B5 / d against the exact model. This needs an x base file (2 GB for 16 chunks; disk 12 GB free).
+- The op error of `attn_qkv`, `attn_gate` and `attn_q` under plain int8. Only `ssm_out`, `attn_output` and
+  `ssm_alpha` were captured.
+- The timed price of f32 accumulation on the S-X8 FFN (HELD).
 
 Update 16:3x (int8 goal maker): the floor stays the default. B5 (`GGML_ARIFI_Q8_0_CM1=on GGML_ARIFI_Q8_0_CM1_2D=
 ssm_out`, commit `1a88a9c09b`) is the accurate int8 path for `ssm_out` (50x below the float error, CHECKED at op

@@ -181,3 +181,60 @@ Per-chunk ln PPL recovered from the running PPL column; pairs share the same 16 
   lies outside what the witnesses covered, and two cheap checks are owed: (a) a multi-node replay that writes NEW x
   between the two computes (stale buffer across graph computes); (b) a capture without the first-dispatch filter,
   taking the LAST of the four ubatches of a decode.
+
+## 6. Stage 8 (Opus 5.5 HIGH, 17:1x-17:4x): why the exact `ssm_out` scores worse
+
+Input from HQ (CHECKED, `ev14/`, 64 chunks, same text and seed): A 6.5390, B5 6.5511, B5 - A = +0.0121, paired SE
+0.0046, +2.7 SE, B5 worse in 37/64 chunks. The 64-chunk check came out on the "real effect" side of its
+pre-registration. The reading "the 16-chunk gap is instrument noise" in sections 4c and 5 is therefore WITHDRAWN.
+
+### 6a. Shape of the gap (CHECKED, `night/p64_dist.py ev14/b564.txt ev14/a64.txt`)
+
+Per-chunk ln-PPL deltas: mean +0.00185 (SE 0.00070), median +0.00113, 10%-trimmed mean +0.00174. The top 3 chunks carry
+35% of the sum; without them +0.077 of +0.118 remains. Quartiles -0.0020 / +0.0011 / +0.0061. **A broad shift, not a
+few outlier chunks.**
+
+### 6b. Hypotheses: prediction written before the run, number, verdict
+
+| # | hypothesis | falsified if (written before) | number | verdict |
+|---|---|---|---|---|
+| H-B | a correction in the file was fitted to the float path | the PCA companion is not loaded in the A / B5 legs | no `<model>.sx8pca.gguf` beside the model (the folder holds only the .gguf); no `GGML_ARIFI_SX8_PCA_FILE` in the ev14 chain; no PCA load line in `a64.err` / `b564.err`; loader `src/llama-model-loader.cpp:862-877` | **FALSIFIED** (CHECKED). Whether the S-X8 quantizer itself saw float-path activations was not read; a per-op RANDOM noise (H-A below) cannot be fitted anyway (ASSUMED). |
+| H-A | the float path is biased in a direction the model likes | systematic if the global slope \|1-beta\| >= 5e-3 (most of the 7.7e-3); random if < 1e-3 | \|1-beta\| = 0.6e-4 to 2.6e-4 against rel 7.7e-3 to 7.9e-3; error share along the output 0.000-0.001; cos(error, output) -0.004 to -0.034; per-row constant-shift share <= 0.7% (table 6c) | **FALSIFIED** (CHECKED). The float-path error is random noise. A consistent shrink exists but is 0.006-0.026% of the output, 30-100x under the noise. |
+| H-A' | source of the 7.7e-3 | if f32 accumulation leaves the error near 7.7e-3, the source is elsewhere | f32 accumulation on the same path: 2.66e-4 (L0), 2.80e-4 (L62), `attn_output` L31 3.64e-4. f16-activation rounding alone (host sim): 1.88e-4 | **NAMED: f16 accumulation** (CHECKED). `ggml_vk_get_mul_mat_mat_f16acc` (`ggml-vulkan.cpp:7366-7380`) picks the f16-accumulator coopmat1 pipeline for EVERY quant type on the float path when `coopmat_acc_f16_support` and prec = DEFAULT. On S-X8 that includes the S-X8 FFN and output matmuls (role log of the `F32ACC=all` smoke, CHECKED). |
+| H-C | exactness on one layer exposes the others' errors | c64 (A + `ssm_out` f32 accumulation, no int8 on `ssm_out`) within 2 SE of A, and B5 - c64 >= 2 SE | chain `night/gpu-int8goal-s8.sh`, leg c64 | PENDING |
+| H-D | PPL on this text does not measure fidelity | exact-arithmetic model (int8 off, f32 accumulation everywhere) scores ABOVE off 7.408170 at 16 chunks | leg x16; 2-chunk smoke: 4.2685 / 6.0557 vs off 4.3127 / 6.0863, A 4.3048 / 6.0800, B5 4.3343 / 6.1022 | PENDING; the smoke points AGAINST H-D (exact scores lower on both chunks; 2 chunks only, ASSUMED direction) |
+
+### 6c. Bias decomposition of one multiplication (CHECKED, `ev12/s8-*.txt`, probe BIAS line, 256 rows x 512 tokens, f64 reference)
+
+| case | path | rel error | 1 - beta | error share along output | cos(error, output) |
+|---|---|---|---|---|---|
+| ssm_out L0 | float (f16 acc) | 7.66e-3 | +2.6e-4 | 0.001 | -0.034 |
+| ssm_out L16 | float (f16 acc) | 7.92e-3 | +7.0e-5 | 0.000 | -0.009 |
+| ssm_out L32 | float (f16 acc) | 7.93e-3 | +5.7e-5 | 0.000 | -0.007 |
+| ssm_out L48 | float (f16 acc) | 7.85e-3 | +1.4e-4 | 0.000 | -0.018 |
+| ssm_out L62 | float (f16 acc) | 7.85e-3 | +1.2e-4 | 0.000 | -0.015 |
+| attn_output L31 | float (f16 acc) | 8.79e-3 | +3.4e-5 | 0.000 | -0.004 |
+| ssm_out L0 | float, f32 acc (`GGML_ARIFI_F32ACC`) | 2.66e-4 | +1.3e-5 | 0.002 | -0.049 |
+| ssm_out L62 | float, f32 acc | 2.80e-4 | +2.4e-5 | 0.008 | -0.087 |
+| attn_output L31 | float, f32 acc | 3.64e-4 | +1.8e-5 | 0.002 | -0.049 |
+| ssm_out L0 | B5 two int8 digits | 1.38e-4 | +3.5e-7 | 0.000 | -0.003 |
+| ssm_out L62 | B5 two int8 digits | 4.53e-5 | +2.8e-7 | 0.000 | -0.006 |
+
+Engagement: the f32-accumulation role log reads `role ssm_out (q8_0): float path f32 accumulation` (CHECKED). A first
+build carried a self-initialised `prec` (`ggml_prec prec = prec;`, my sed), which sent EVERY float matmul to f32
+accumulation; those runs are kept as `ev12/s8bad-*` and agree with the fixed knob's f32 rows to 5 digits. The fixed
+knob, unset, reproduces the stage-7 float value 7.6590e-03 exactly (CHECKED, `ev12/s8head-off-ssm_out-0.txt` from
+HEAD sources and `ev12/s8-off-ssm_out-0.txt` from 3e85f0cb6e).
+
+### 6d. What this changes (ASSUMED until the chain lands; each line is tested by a named leg)
+
+- The float path is not a neutral reference. It adds about 0.8% RANDOM noise to the output of every float matmul,
+  across all weight types (f16 accumulation). The int8 path accumulates in f32. So "int8 on / off" swaps TWO error
+  sources at once: activation rounding (int8) against accumulation rounding (float).
+- If c64 lands near B5, the extra PPL comes from removing the float noise on `ssm_out`, not from int8.
+  Otherwise B5's int8 path carries an in-graph effect, and the two checks owed from section 5 come next.
+- If x16 scores below off (as the 2-chunk smoke suggests), exact arithmetic IMPROVES this model's PPL. Then the
+  lever for "int8 on every layer at r86i quality" is to remove f16 accumulation from the float paths (S-X8 FFN).
+  Making int8 less exact is not that lever. Leg d64 is exactly that candidate: B5 + `GGML_ARIFI_F32ACC=all`.
+- Speed: f32 accumulation on the S-X8 FFN is not free on RDNA3 coopmat1 (ASSUMED). The smoke's 22.7 s per 2-chunk
+  pass is an INDICATION only; the served timing stays HELD.
