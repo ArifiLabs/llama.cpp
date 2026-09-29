@@ -126,6 +126,11 @@ cmake -S . -B build-vulkan -G Ninja \
 cmake --build build-vulkan --target llama-server -j 6
 ```
 
+To compile this fork's own weight formats as well (the configuration every published number was
+measured on), add `-DGGML_ARIFI_ROCMFPX_FORMATS=ON -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON`; the README's
+Build section says what each one enables. Vulkan shader generation is memory-hungry: on a machine
+whose GPU shares system RAM, `-j 2` is what we use.
+
 The web UI is **ON** by default in local builds and is built from source. For a minimal or
 bench-proof build add `-DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF
 -DLLAMA_USE_PREBUILT_WEBUI=OFF`. The UI touches no decode path, so a UI-ON server binary is
@@ -142,11 +147,13 @@ ships one) = `0xC0000139`. The Windows loader searches the executable's own dire
 `PATH`, so copying the DLLs **of the toolchain that built the binary** next to it ends both failures:
 
 ```powershell
-$tc = Split-Path (Get-Command g++).Source      # the compiler that ran the build
-foreach ($b in 'build-vulkan\bin', 'build-cpu\bin') {
-  if (Test-Path $b) {
+foreach ($b in 'build-vulkan', 'build-cpu') {
+  if (Test-Path "$b\CMakeCache.txt") {
+    # the compiler that ran THIS build, as CMake recorded it
+    $cxx = (Select-String -Path "$b\CMakeCache.txt" -Pattern '^CMAKE_CXX_COMPILER:').Line.Split('=', 2)[1]
+    $tc = Split-Path $cxx
     foreach ($d in 'libstdc++-6', 'libgcc_s_seh-1', 'libwinpthread-1', 'libgomp-1', 'libdl') {
-      if (Test-Path "$tc\$d.dll") { Copy-Item "$tc\$d.dll" $b -Force }
+      if (Test-Path "$tc\$d.dll") { Copy-Item "$tc\$d.dll" "$b\bin" -Force }
     }
   }
 }

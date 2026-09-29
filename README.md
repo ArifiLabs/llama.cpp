@@ -362,8 +362,9 @@ transfer; numbers do not. If you are on other hardware, read
 ### Build
 
 Windows / MinGW-w64 / Vulkan. **This is the only configuration any number in this repository was
-measured on** (source: the internal `UPDATE-RUNBOOK.md`, not published; the same flags are in
-[`docs/BUILDING.md`](docs/BUILDING.md)):
+measured on** (source: the internal `UPDATE-RUNBOOK.md`, not published). The step-by-step
+version, with the static-runtime and web-UI flags and the runtime-DLL step, is
+[`docs/BUILDING.md`](docs/BUILDING.md) §3–§4.5; follow that page on a new machine:
 
 ```powershell
 cmake -S . -B build-vulkan -G Ninja `
