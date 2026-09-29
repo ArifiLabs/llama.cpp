@@ -1,0 +1,196 @@
+From ccee3468439fb674951e1dd0f7ba60b7f2aa3d4d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 13:15:28 -0400
+Subject: [PATCH] checker fixes: choose_index restored verbatim (inverted
+ tie-break + 2 drifted constants, encoder-only); tq3 numeric block gives
+ TQ3_4S real proof and pins every dot mapping; drop redundant GGML_API redecl
+
+---
+ ggml/src/ggml-arifi-turbo-weights.c | 39 +++++++++----
+ ggml/src/ggml-cpu/ggml-cpu.c        |  8 +--
+ tests/test-quantize-fns.cpp         | 88 +++++++++++++++++++++++++++++
+ 3 files changed, 119 insertions(+), 16 deletions(-)
+
+diff --git a/ggml/src/ggml-arifi-turbo-weights.c b/ggml/src/ggml-arifi-turbo-weights.c
+index 294eeb52c..22dffab8a 100644
+--- a/ggml/src/ggml-arifi-turbo-weights.c
++++ b/ggml/src/ggml-arifi-turbo-weights.c
+@@ -78,17 +78,31 @@ static void tq3_0_rht_inverse(float * buf) {
+     for (int i = 0; i < TQ_BLOCK_SIZE; i++) buf[i] *= TQ_INV_SQRT32 * TQ3_0_SIGNS[i];
+ }
+ 
+-/* Nearest centroid for TQ3 (8 centroids) */
++/* Decision boundaries: midpoints between adjacent TQ3_0_CENTROIDS. Copied VERBATIM from
++ * the originator (tq3 ggml-quants.c TQ3_0_BOUNDARIES); do not re-derive them by rounding
++ * the midpoints yourself - two of these differ from a half-up rounding in the 6th decimal. */
++static const float TQ3_0_BOUNDARIES[7] = {
++    -1.644041f, -1.015870f, -0.493924f, -0.008701f,
++     0.477664f,  1.001362f,  1.633223f
++};
++
++/* Nearest centroid for TQ3 (8 centroids).
++ *
++ * The linear `>` scan is the originator's, kept verbatim rather than rewritten as a binary
++ * search on `<`. The two are NOT equivalent: `v > B` sends an exact boundary hit to the LOWER
++ * index, `v < B` sends it to the HIGHER one. An earlier version of this function had both the
++ * inverted tie-break and two drifted constants, and measured 21 differing indices per 20M
++ * N(0,1) samples - encoder-only (no decode path calls this, so reading tq3-authored files was
++ * never affected), but one flipped index shifts the fitted scale, and therefore the stored
++ * E3M5 byte, for its whole 8-element group. */
+ static int tq3_0_choose_index(float val) {
+-    /* Binary search on midpoints of TQ3_0_CENTROIDS */
+-    if (val < -1.644041f) return 0;
+-    if (val < -1.015870f) return 1;
+-    if (val < -0.493925f) return 2;
+-    if (val < -0.008701f) return 3;
+-    if (val <  0.477664f) return 4;
+-    if (val <  1.001363f) return 5;
+-    if (val <  1.633223f) return 6;
+-    return 7;
++    int idx = 0;
++    for (int b = 0; b < 7; ++b) {
++        if (val > TQ3_0_BOUNDARIES[b]) {
++            idx = b + 1;
++        }
++    }
++    return idx;
+ }
+ 
+ /* Nearest centroid for TQ4 (16 centroids) */
+@@ -587,7 +601,10 @@ size_t quantize_tq3_0(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst,
+ /* TQ3_4S plus one shift per half of 16, encoded signed-u8 against a quantum of
+  * max(group scale)/8. Note the asymmetry the source carries and this preserves:
+  * the shift is FITTED over halves of 16 but APPLIED with h = g/2, i.e. per group
+- * pair - which is the same partition, and the round-trip test pins it. */
++ * pair - which is the same partition. Pinned by the tq3 numeric block in
++ * tests/test-quantize-fns.cpp, which checks vec_dot against dequantize-then-dot for
++ * every type in this family (the generic harness cannot: it skips the CPU backend,
++ * and its fixed data is outside the E3M5 scale range these types can encode). */
+ 
+ void quantize_row_tq3_4se_ref(const float * GGML_RESTRICT x, block_tq3_4se * GGML_RESTRICT y, int64_t k) {
+     assert(k % QK_TQ3_0 == 0);
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index f4984ae7b..545430551 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -402,11 +402,9 @@ const float * arifi_tq3_centroids(void);
+ const float * arifi_tq4_centroids(void);
+ void quantize_row_tq3_1s_ref(const float * GGML_RESTRICT x, block_tq3_1s * GGML_RESTRICT y, int64_t k);
+ void quantize_row_tq4_1s_ref(const float * GGML_RESTRICT x, block_tq4_1s * GGML_RESTRICT y, int64_t k);
+-float arifi_tq3_4s_decode_scale(uint8_t byte);
+-void quantize_row_tq3_4s_ref(const float * GGML_RESTRICT x, block_tq3_4s * GGML_RESTRICT y, int64_t k);
+-void quantize_row_tq3_0_ref(const float * GGML_RESTRICT x, block_tq3_0 * GGML_RESTRICT y, int64_t k);
+-void quantize_row_tq3_4se_ref(const float * GGML_RESTRICT x, block_tq3_4se * GGML_RESTRICT y, int64_t k);
+-void quantize_row_tq3_1s_shift_ref(const float * GGML_RESTRICT x, block_tq3_1s_shift * GGML_RESTRICT y, int64_t k);
++// The tq3-family entry points are declared GGML_API in ggml-quants.h, which is included
++// above. Do NOT re-declare them here: a plain redeclaration of a GGML_API symbol gives it
++// inconsistent dllimport linkage on MSVC.
+ 
+ // TurboQuant weight formats: fused dot product against a q8_0 activation row.
+ //
+diff --git a/tests/test-quantize-fns.cpp b/tests/test-quantize-fns.cpp
+index 9f04b2d79..2fd144a13 100644
+--- a/tests/test-quantize-fns.cpp
++++ b/tests/test-quantize-fns.cpp
+@@ -111,6 +111,91 @@ static float dot_product_error(const ggml_type_traits * qfns, const ggml_type_tr
+     return fabsf(result - dot_ref) / test_size;
+ }
+ 
++#ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
++// tq3 family (ids 48..51): the numeric coverage the generic harness above cannot give them.
++//
++// Two reasons it cannot. (1) TQ3_4S and TQ3_4SE carry their group scales as E3M5 mini-floats
++// capped at 0.4921875, and the generic harness feeds every type a fixed 0.1 + 2*cos(i) whose
++// post-rotation per-group RMS is ~1.4 - roughly 3x above what the format can encode, so the
++// clamp, not the codec, would be under test. Real weights sit far below it: 192,000 scale
++// bytes decoded from real TQ3_4S tensors use exponent fields 0..4 with ZERO saturation.
++// (2) test-backend-ops cannot cover them either - it compares a backend against CPU, and CPU
++// is its own reference, so for a CPU-only type nothing executes.
++//
++// So: generate data at a realistic WEIGHT magnitude and check two things per type.
++//   round-trip - quantize then dequantize, RMS error against the input.
++//   dot consistency - vec_dot(w, q8_0(a)) against dequantize(w) . dequantize(q8_0(a)).
++// The second is the important one. The fused dot in ggml-cpu.c does NOT dequantize: it moves
++// the Hadamard transform onto the activation and applies each type's scale/offset per group.
++// If any group->scale or group->offset mapping disagreed with that type's dequantizer, this
++// check would catch it and nothing else in the tree would. It is immune to the scale clamp,
++// because both sides read the same stored weights.
++static int test_tq3_family(bool verbose) {
++    const ggml_type types[] = {
++        GGML_TYPE_TQ3_4S, GGML_TYPE_TQ3_0, GGML_TYPE_TQ3_4SE, GGML_TYPE_TQ3_1S_SHIFT,
++    };
++    const size_t n = 4096;
++    int num_failed = 0;
++
++    // Realistic LLM weight magnitude, not the harness's +/-2.
++    std::vector<float> w(n), a(n);
++    for (size_t i = 0; i < n; i++) {
++        w[i] = 0.02f * cosf((float) i);
++        a[i] = 0.50f * cosf((float) i + 1.0f);
++    }
++
++    for (ggml_type type : types) {
++        const auto * qfns     = ggml_get_type_traits(type);
++        const auto * qfns_cpu = ggml_get_type_traits_cpu(type);
++        if (qfns->blck_size == 0 || !qfns_cpu->from_float || !qfns->to_float) {
++            printf("  %-13s tq3 block: skipped (not compiled in)\n", ggml_type_name(type));
++            continue;
++        }
++
++        std::vector<uint8_t> qw(n * ggml_type_size(type) / ggml_blck_size(type));
++        std::vector<float>   dw(n);
++        qfns_cpu->from_float(w.data(), qw.data(), n);
++        qfns->to_float(qw.data(), dw.data(), n);
++
++        double se = 0.0;
++        for (size_t i = 0; i < n; i++) { const double d = w[i] - dw[i]; se += d * d; }
++        const float rt_err = (float) sqrt(se / n);
++        // 3-bit payload on data with RMS ~0.0141: a correct codec lands near 0.001.
++        bool failed = !(rt_err < 0.004f);
++        num_failed += failed;
++        if (failed || verbose) {
++            printf("  %-13s tq3 round-trip RMSE:          %s (%f)\n",
++                   ggml_type_name(type), RESULT_STR[failed], rt_err);
++        }
++
++        // Dot consistency: fused vec_dot vs dequantize-then-dot, same stored weights.
++        const auto * vdot = ggml_get_type_traits_cpu(qfns_cpu->vec_dot_type);
++        const auto * vtr  = ggml_get_type_traits(qfns_cpu->vec_dot_type);
++        std::vector<uint8_t> qa(n * ggml_type_size(qfns_cpu->vec_dot_type) /
++                                    ggml_blck_size(qfns_cpu->vec_dot_type));
++        std::vector<float>   da(n);
++        vdot->from_float(a.data(), qa.data(), n);
++        vtr->to_float(qa.data(), da.data(), n);
++
++        float fused = INFINITY;
++        qfns_cpu->vec_dot(n, &fused, 0, qw.data(), 0, qa.data(), 0, 1);
++
++        double ref = 0.0;
++        for (size_t i = 0; i < n; i++) { ref += (double) dw[i] * (double) da[i]; }
++
++        // Same computation, reassociated - this is a consistency bound, not an accuracy one.
++        const float dot_err = fabsf(fused - (float) ref) / n;
++        failed = !(dot_err < 1e-6f);
++        num_failed += failed;
++        if (failed || verbose) {
++            printf("  %-13s tq3 vec_dot vs dequant-dot:   %s (fused=%f ref=%f err=%g)\n",
++                   ggml_type_name(type), RESULT_STR[failed], fused, (float) ref, dot_err);
++        }
++    }
++    return num_failed;
++}
++#endif // GGML_ARIFI_TURBO_WEIGHT_QUANTS
++
+ static int test_vec_dot_f32(bool verbose) {
+     const auto * f32 = ggml_get_type_traits_cpu(GGML_TYPE_F32);
+     int num_failed = 0;
+@@ -268,6 +353,9 @@ int main(int argc, char * argv[]) {
+ 
+     num_failed += test_vec_dot_f32(verbose);
+     num_failed += test_vec_dot_q(verbose);
++#ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
++    num_failed += test_tq3_family(verbose);
++#endif
+ 
+     if (num_failed || verbose) {
+         printf("%d tests failed\n", num_failed);

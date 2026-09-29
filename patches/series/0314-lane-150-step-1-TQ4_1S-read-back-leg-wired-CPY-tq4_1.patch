@@ -1,0 +1,63 @@
+From 72f80dce55225556abdf8288f705db05916f8b23 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 18 Aug 2026 00:39:42 -0400
+Subject: [PATCH] lane-150 step 1: TQ4_1S read-back leg wired - CPY(tq4_1s,f32)
+ now EXECUTES, 291/291 -> 293/293
+
+copy_from_quant.comp has carried a complete DATA_A_TQ4_1S inverse-WHT branch all along; vulkan-shaders-gen.cpp never emitted the variant. Three one-line wirings: generator loop, pipeline_cpy_quant_f32 creation, and BOTH hand-synced CPY lists (dispatch :9317 and supports_op :18714). arifi-sync-check stays green. Declined 519 -> 517, executed 291 -> 293: exact +2.
+
+Lane: lane-150
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp                       | 6 ++++++
+ ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp | 7 ++++++-
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 03b5818ee..6cf80431a 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -5849,6 +5849,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_TURBO2_0], "cpy_turbo2_0_f32", cpy_turbo2_0_f32_len, cpy_turbo2_0_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_TURBO2_0), 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_TURBO3_0], "cpy_turbo3_0_f32", cpy_turbo3_0_f32_len, cpy_turbo3_0_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_TURBO3_0), 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_TURBO4_0], "cpy_turbo4_0_f32", cpy_turbo4_0_f32_len, cpy_turbo4_0_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_TURBO4_0), 1, 1}, {}, 1);
++    // lane-150: the TQ4_1S read-back leg. Without it, ggml_cpy(tq4_1s, f32) declines and every
++    // TQ4_1S write-path test case dies in supports_op before anything runs.
++    ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_TQ4_1S], "cpy_tq4_1s_f32", cpy_tq4_1s_f32_len, cpy_tq4_1s_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_TQ4_1S), 1, 1}, {}, 1);
+ 
+     auto get_suffix = [](bool src0_f16, bool src1_f16, bool dst_f16) {
+         std::string s;
+@@ -9469,6 +9472,8 @@ static vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const
+         case GGML_TYPE_TURBO2_0:
+         case GGML_TYPE_TURBO3_0:
+         case GGML_TYPE_TURBO4_0:
++        // lane-150: TQ4_1S read-back. Same pair, same rule.
++        case GGML_TYPE_TQ4_1S:
+         case GGML_TYPE_IQ4_NL:
+             return ctx->device->pipeline_cpy_quant_f32[src->type];
+         default:
+@@ -19363,6 +19368,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_TURBO2_0:
+                     case GGML_TYPE_TURBO3_0:
+                     case GGML_TYPE_TURBO4_0:
++                    case GGML_TYPE_TQ4_1S:
+                         return device->pipeline_cpy_quant_f32[src0_type] != nullptr;
+                     default:
+                         break;
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index fab3d7caf..faa7dee54 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -899,7 +899,12 @@ void process_shaders() {
+     // turbo copy-from-quant only; copy-to-quant (cpy_f32_turbo*_0) omitted because the non-SET_ROWS quantize() path lacks the WHT transform.
+     // turbo2_0/turbo4_0 added by lane-148: their absence made test_set_rows_turbo4's read-back leg
+     // decline, so SET_ROWS_TURBO4 printed "0/0 tests passed / Backend Vulkan0: OK".
+-    for (std::string t : {"turbo2_0", "turbo3_0", "turbo4_0"}) {
++    // tq4_1s added by lane-150, same shape and same reason: copy_from_quant.comp has carried a
++    // complete DATA_A_TQ4_1S branch (inverse WHT + sign pattern) since the type landed, and this
++    // generator never emitted the variant — so the read-back leg of test_set_rows_tq4_1s declined
++    // and SET_ROWS_TQ4_1S ran 17 cases / 0 executed. Copy-to-quant (cpy_f32_tq4_1s) stays omitted
++    // for the same reason as turbo: the non-SET_ROWS quantize() path has no WHT.
++    for (std::string t : {"turbo2_0", "turbo3_0", "turbo4_0", "tq4_1s"}) {
+         string_to_spv("cpy_" + t + "_f32", "copy_from_quant.comp", {{"DATA_A_" + to_uppercase(t), "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
+     }
+ 

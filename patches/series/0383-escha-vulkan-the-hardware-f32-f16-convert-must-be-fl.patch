@@ -1,0 +1,69 @@
+From bda43d706782065aad781c26d58451ebac3c0aba Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 03:04:51 -0400
+Subject: [PATCH] escha vulkan: the hardware f32->f16 convert must be
+ float16_t, NOT packHalf2x16 (RTZ)
+
+1ee8e9ad7 took the fast path through packHalf2x16 on the premise that AMD lowers it to a single V_CVT_F16_F32. It does not: it lowers to V_CVT_PKRTZ_F16_F32, round-toward-zero BY NAME, and GLSL specifies packHalf2x16 rounding as implementation-defined. The exhaustive 65,536-codeword sweep caught it failing 134,230 of 524,288 words (25.6%), every single mismatch one ulp DOWN - the signature of truncation, not noise.
+
+An explicit float16_t(s) cast lowers to V_CVT_F16_F32, honours the hardware RTE default, and is bit-exact on all 524,288 words against the July rung-1 golden. The intended 15-instructions-to-1 saving stands; only the spelling was wrong. The software routine stays behind ESCHA_HW_RTE=0 because Terra-66 measured that glslc emits no float-control execution modes, which is what makes the rounding mode a device fact rather than a spec guarantee.
+
+Gates on this build: exhaustive sweep bit-exact GREEN (planted one-ulp RED caught, F-043 both halves); test-backend-ops -o ESCHA_MM 10/10 on Vulkan0; probe_sweep.py worst whole-tensor correlation +0.9358 over 25 projections, unchanged. Receipts: research/local-inference/lane-evidence/2026-08-20-lane-164-escha-native/rte-sweep/
+
+Origin: ArifiLabs (native)
+Lane: lane-164
+Measured-effect: CORRECTNESS ONLY at this commit - removes a one-ulp truncation error affecting 25.6% of codewords that 1ee8e9ad7 would have shipped; speed deltas for this lever alone are measured next and reported separately.
+---
+ .../ggml-vulkan/vulkan-shaders/escha_mm.comp  | 24 ++++++++++++-------
+ 1 file changed, 16 insertions(+), 8 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+index 7202908f3..0ed74b3f3 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+@@ -3,6 +3,7 @@
+ #extension GL_EXT_control_flow_attributes : require
+ #extension GL_KHR_shader_subgroup_basic : require
+ #extension GL_KHR_shader_subgroup_shuffle : require
++#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+ 
+ // ArifiLabs Escha-W2 fused linear mat-vec (lane-164).
+ //
+@@ -93,14 +94,21 @@ uint f32_to_f16_rte(float f) {
+ //
+ // PERF (HQ seat-38, 2026-08-21): this runs ONCE PER WEIGHT PER TOKEN and it dominated the kernel.
+ // The software f32_to_f16_rte above is ~15 instructions with three branches; the rest of the
+-// generator is five. AMD implements f32->f16 as a single V_CVT_F16_F32, which packHalf2x16 lowers
+-// to, so the fast path replaces ~15 instructions with one. Kept behind a define because the whole
+-// reason the software routine exists is Terra-66's finding that glslc does not emit float-control
+-// execution modes -- so the hardware rounding mode is a DEVICE FACT to be proven, never assumed.
++// generator is five. A hardware f32->f16 convert replaces those ~15 with one.
+ //
+-// ESCHA_HW_RTE=0 restores the software path. Do not flip the default back on taste: the fast path
+-// is only legitimate while the exhaustive 65,536-codeword sweep against the CPU reference is GREEN
+-// on this device (harness: trial-evidence/escha-decoder/rung1/run_sweep.py, the July rung-1 tool).
++// WHICH hardware convert matters, and this was MEASURED, not reasoned:
++//   * packHalf2x16 is WRONG here. Its rounding is implementation-defined and AMD lowers it to
++//     V_CVT_PKRTZ_F16_F32 -- round-toward-zero BY NAME. The exhaustive sweep caught it failing
++//     134,230 of 524,288 codewords (25.6%), every single one rounding DOWN by one ulp.
++//   * float16_t(s) is CORRECT. It lowers to V_CVT_F16_F32, which honours the hardware round mode
++//     (RTE default), and is bit-exact on all 524,288 words against the July rung-1 golden.
++// Both facts are receipts, not inference:
++//   research/local-inference/lane-evidence/2026-08-20-lane-164-escha-native/rte-sweep/
++//
++// The software routine stays because Terra-66 measured that glslc does not emit float-control
++// execution modes, so the rounding mode is a DEVICE FACT. ESCHA_HW_RTE=0 restores it. Do not flip
++// the default on taste, and do not "simplify" the cast below back to packHalf2x16: re-run the
++// sweep on any device or driver change, because that is the only thing keeping this honest.
+ #ifndef ESCHA_HW_RTE
+ #define ESCHA_HW_RTE 1
+ #endif
+@@ -110,7 +118,7 @@ float escha_F(uint xw) {
+     const vec2 h = unpackHalf2x16(q);
+     const float s = h.x + h.y;                     // exact operands; correctly-rounded f32 add
+ #if ESCHA_HW_RTE
+-    return unpackHalf2x16(packHalf2x16(vec2(s, 0.0))).x;   // one hardware convert
++    return float(float16_t(s));                    // one hardware V_CVT_F16_F32, RTE-proven
+ #else
+     return unpackHalf2x16(f32_to_f16_rte(s)).x;    // value of the f16-rounded sum
+ #endif

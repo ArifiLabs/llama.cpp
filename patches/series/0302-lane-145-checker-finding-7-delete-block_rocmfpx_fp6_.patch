@@ -1,0 +1,39 @@
+From 0ff44aef758458a217dc1242b51662af7812a044 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 18:51:56 -0400
+Subject: [PATCH] lane-145 checker finding 7: delete block_rocmfpx_fp6_packed16
+ + its A_TYPE_PACKED16 define (26B block has no valid uint16 view; nothing
+ reads it). Re-verified 60/60 MUL_MAT, 24/24 GET_ROWS, 12/12 MUL_MAT_ID.
+
+---
+ ggml/src/ggml-vulkan/vulkan-shaders/types.glsl | 9 ++-------
+ 1 file changed, 2 insertions(+), 7 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
+index eedd110d0..57b6065f2 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
+@@ -1846,12 +1846,6 @@ struct block_rocmfpx_fp6
+     uint8_t e[2];
+ };
+ 
+-struct block_rocmfpx_fp6_packed16
+-{
+-    uint16_t qs[12];
+-    uint16_t e;
+-};
+-
+ struct block_rocmfpx_fp8
+ {
+     int8_t qs[QUANT_K_ROCMFPX_FP8];
+@@ -1876,8 +1870,9 @@ struct block_rocmfpx_fp8
+ #define QUANT_K QUANT_K_ROCMFPX_FP8
+ #define QUANT_R QUANT_R_ROCMFPX_FP8
+ #define QUANT_AUXF 1
++// No A_TYPE_PACKED16: the 26-byte block has no valid uint16 view (odd stride), nothing
++// reads data_a_packed16 for fp6, and no other ROCmFPX type declares one.
+ #define A_TYPE block_rocmfpx_fp6
+-#define A_TYPE_PACKED16 block_rocmfpx_fp6_packed16
+ #endif
+ 
+ #if defined(DATA_A_ROCMFPX_FP8)

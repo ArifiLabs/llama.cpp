@@ -1,0 +1,43 @@
+From 1ffd9834a2d7b2ea125374bbd9a20fc10998ddc3 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 19:21:19 -0400
+Subject: [PATCH] test-backend-ops: cover the CPY types supports_op names that
+ all_types omits
+
+Q2_0_G128 and the three TURBO types are named by the Vulkan supports_op CPY
+switches but were never in all_types, so no case ever exercised them. That is how
+the ROCmFP SET_ROWS/CPY abort stayed invisible until a real graph hit it.
+
+Adding them immediately paid for itself twice: f32->turbo3_0 is the sibling of the
+ROCmFP lie (copy-to-quant is deliberately not generated for TURBO3_0, yet
+supports_op claimed it), and turbo3_0->f32 FAILS numerically on Vulkan
+(ERR 8.4e-5 > 1e-6). The numeric FAIL is PRE-EXISTING and out of this lane's
+fence - proven by rebuilding at the parent of the supports_op fix and re-running
+the same single case: same FAIL, same magnitude. Evidence
+lane-evidence/2026-08-17-lane-146-setrows-proofs/D1-turbo3-cpy-FAIL-is-PREEXISTING.txt
+
+Assisted-by: Claude Opus 5
+---
+ tests/test-backend-ops.cpp | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index efde1609b..ad92cf814 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -9605,6 +9605,15 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     // quant block count not a multiple of the kernel block size
+     test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_Q4_0, {96, 1, 1, 1}));
+     test_cases.emplace_back(new test_cpy(GGML_TYPE_Q4_0, GGML_TYPE_F32, {96, 1, 1, 1}));
++
++    // Types the Vulkan supports_op names for CPY that all_types does not carry. Without a case
++    // here, a backend that claims one of them with no pipeline behind it stays invisible until a
++    // real graph aborts: that is how the ROCmFP SET_ROWS/CPY abort hid. TURBO3_0 is the live one
++    // (its copy-to-quant shader is deliberately not generated, only copy-from-quant).
++    for (ggml_type type : {GGML_TYPE_Q2_0_G128, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO4_0}) {
++        test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, type, {256, 4, 4, 4}));
++        test_cases.emplace_back(new test_cpy(type, GGML_TYPE_F32, {256, 4, 4, 4}));
++    }
+     test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_I32, {256, 2, 3, 4}));
+     test_cases.emplace_back(new test_cpy(GGML_TYPE_F32, GGML_TYPE_I32, {256, 2, 3, 4}, {-1,-1,-1,-1}, {1, 0, 2, 3}));
+     test_cases.emplace_back(new test_cpy(GGML_TYPE_I32, GGML_TYPE_F32, {256, 2, 3, 4}));

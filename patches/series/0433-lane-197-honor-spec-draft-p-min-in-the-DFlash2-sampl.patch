@@ -1,0 +1,54 @@
+From 0d98d0b50a444c07b47ba44ac156fb68baf800e5 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 1 Sep 2026 13:06:51 -0400
+Subject: [PATCH] lane-197: honor --spec-draft-p-min in the DFlash2 sampled
+ selector path - the gate was greedy-branch-only, so the seated serve line
+ (temp 0.7) ignored the flag entirely; hoisted to the shared site, greedy
+ duplicate removed, flag-unset path untouched (p_min defaults 0.0)
+
+---
+ common/speculative.cpp | 24 ++++++++++++++----------
+ 1 file changed, 14 insertions(+), 10 deletions(-)
+
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index c5bdd02a2..3bacd5909 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -1595,6 +1595,20 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+                     const float * row = lattice + (size_t) (beg + i) * n_embd_dec;
+                     const float * scores = row + selector_top_k + (size_t) predecessor * selector_top_k;
+ 
++                    // selector confidence gate: softmax(scores) at the argmax, i.e. 1 / sum(exp(s_k - s_max)).
++                    // hoisted above the temperature branch so --spec-draft-p-min also gates sampled drafting;
++                    // before this, the sampled path (the common temp > 0 serve case) ignored the flag entirely.
++                    if (params.p_min > 0.0f) {
++                        const float s_max = *std::max_element(scores, scores + selector_top_k);
++                        float p_sum = 0.0f;
++                        for (int32_t k = 0; k < selector_top_k; ++k) {
++                            p_sum += std::exp(scores[k] - s_max);
++                        }
++                        if (1.0f / p_sum < params.p_min) {
++                            break;
++                        }
++                    }
++
+                     if (dp.temperature > 0.0f) {
+                         common_speculative_token_dist dist;
+                         dist.ids.resize(selector_top_k);
+@@ -1622,16 +1636,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+                     } else {
+                         predecessor = (int32_t) std::distance(scores,
+                                 std::max_element(scores, scores + selector_top_k));
+-                        if (params.p_min > 0.0f) {
+-                            // softmax(scores) at the argmax, i.e. 1 / sum(exp(s_k - s_max))
+-                            float p_sum = 0.0f;
+-                            for (int32_t k = 0; k < selector_top_k; ++k) {
+-                                p_sum += std::exp(scores[k] - scores[predecessor]);
+-                            }
+-                            if (1.0f / p_sum < params.p_min) {
+-                                break;
+-                            }
+-                        }
+                         const llama_token id = (llama_token) row[predecessor];
+                         if (mask_token_id != LLAMA_TOKEN_NULL && id == mask_token_id) {
+                             LOG_WRN("%s: DFlash2 selector produced its mask token at draft position %d; truncating draft\n",

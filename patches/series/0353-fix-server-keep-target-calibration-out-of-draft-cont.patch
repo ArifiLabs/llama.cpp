@@ -1,0 +1,56 @@
+From 399ed0da2c8a3a1f629f2247c62b97aa8fef516a Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 19 Aug 2026 02:25:23 -0400
+Subject: [PATCH] fix(server): keep target calibration out of draft contexts
+
+Taken-from: prisml/prism@4dd165625
+Origin: ported at the fork's centralized speculative-parameter boundary
+Measured-effect: UNMEASURED (native toolchain execution denied in managed seat)
+---
+ common/speculative.cpp    |  7 +++++++
+ tests/test-arg-parser.cpp | 14 ++++++++++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index 483f1495e..94485cfc8 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -2581,6 +2581,13 @@ common_params common_base_params_to_speculative(const common_params & params) {
+         result.model                 = params_spec.mparams;
+         result.n_gpu_layers          = params_spec.n_gpu_layers;
+         result.tensor_buft_overrides = params_spec.tensor_buft_overrides;
++#ifdef GGML_ARIFI_KV_MEANCENTER
++        // 4dd165625: a calibration is bound to the target model's exact bytes and K geometry.
++        // The fork centralizes draft-param derivation here, so clear it once rather than at
++        // the two server call sites used by the source branch.
++        result.kv_mean_center_path.clear();
++        result.kv_mean_center_model_sha256.clear();
++#endif
+ 
+         if (params_spec.cpuparams.n_threads > 0) {
+             result.cpuparams.n_threads       = params_spec.cpuparams.n_threads;
+diff --git a/tests/test-arg-parser.cpp b/tests/test-arg-parser.cpp
+index 1f4e581a6..fc56fc53d 100644
+--- a/tests/test-arg-parser.cpp
++++ b/tests/test-arg-parser.cpp
+@@ -102,6 +102,20 @@ static void test(void) {
+         assert(draft.n_outputs_max_per_seq == 1);
+     }
+ 
++#ifdef GGML_ARIFI_KV_MEANCENTER
++    {
++        common_params base;
++        base.kv_mean_center_path = "target-only.gguf";
++        base.kv_mean_center_model_sha256 =
++                "1111111111111111111111111111111111111111111111111111111111111111";
++        base.speculative.draft.mparams.path = "draft.gguf";
++
++        const auto draft = common_base_params_to_speculative(base);
++        assert(draft.kv_mean_center_path.empty());
++        assert(draft.kv_mean_center_model_sha256.empty());
++    }
++#endif
++
+     printf("test-arg-parser: make sure there is no duplicated arguments in any examples\n\n");
+     for (int ex = 0; ex < LLAMA_EXAMPLE_COUNT; ex++) {
+         try {

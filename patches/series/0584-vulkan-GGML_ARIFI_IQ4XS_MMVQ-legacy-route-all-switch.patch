@@ -1,0 +1,92 @@
+From 4a0a58ba270dc3df6785bcdb7577c65557f14193 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 07:58:17 -0400
+Subject: [PATCH] vulkan: GGML_ARIFI_IQ4XS_MMVQ=<legacy|route|all> switch +
+ startup line; iq4_xs decides in should_use_mmvq and never falls through
+
+Review of the inherited WIP: shader arithmetic checked against dequantize_row_iq4_xs (low nibble = weight j, high = j+16 of each 32-sub-block; ls = scales_l nibble | scales_h 2 bits << 4, dl = d*(ls-32)); iqs = b_qs_idx picks the half cache_b_block loads. Gap found and closed: with the q8_1 pipeline registered, iq4_xs fell through to the generic n>1 -> MMVQ return, i.e. the WIP silently moved every n>1 iq4_xs matmul. Now: legacy (default) = f32 everywhere; all = decider arm; route = admit table (empty until step 4). Correctness both arms 43/43 OK (38 MUL_MAT + 5 MUL_MAT_ID), trace 36/36 iq4_xs decisions f32 on legacy, 36/36 MMVQ on all: r75-evidence/20-correct-log.txt. OP_DUMP sha not expected identical (integer dot).
+
+Origin: fork-authored (ArifiLabs lane-262 R75 iq4_xs MMVQ route, Opus 5 kernel-maker)
+Lane: lane-262
+Receipts: r75-evidence/20-correct-log.txt
+Cherry-picked-from: 62fe5b99fb413abe8faa53be3d05a126cb37e87d
+Conflict-resolved: ggml-vulkan.cpp 2 hunks: device field and startup line additive (R74b q6k_mmvq_n6_rows1 + R75 iq4xs_mmvq_route; R74b q6_k route text kept, R75 iq4_xs line added)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 41 +++++++++++++++++++++++++++-
+ 1 file changed, 40 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 270c62952..727256be4 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1507,6 +1507,10 @@ struct vk_device_struct {
+     // UNCLEARED, see ggml_vk_should_use_mmvq_impl.
+     uint32_t q6k_mmvq_route;
+     bool q6k_mmvq_n6_rows1 = false;  // lane-270 / R74b: set in ggml_vk_load_shaders
++    // arifi lane-262 / R75: the IQ4_XS q8_1 MMVQ arm. 0 = legacy (mul_mat_vec_iq4_xs f32 dequant
++    // at every width), 1 = route (the measured admit in ggml_vk_should_use_mmvq_impl),
++    // 2 = all (decider diagnostic: MMVQ at every n and k, MUL_MAT and MUL_MAT_ID).
++    uint32_t iq4xs_mmvq_route;
+     // arifi lane-253 / R65: the NUM_COLS index (i = NUM_COLS-1) at and above which rm_int_n() hands
+     // the q8_1 MMVQ pipelines the static 4-row shape. 4 = the inherited RDNA3 rule, untouched.
+     // Probed once here for the same reason as mmvq_a_hoist: pipeline creation is entered lazily.
+@@ -9867,6 +9871,22 @@ static vk_device ggml_vk_get_device(size_t idx) {
+                 device->q6k_mmvq_route = 0u;
+                 q6k_src = "GGML_ARIFI_Q6K_MMVQ=0 (R48c diagnostic: off on every vendor)";
+             }
++            // arifi lane-262 / R75: GGML_ARIFI_IQ4XS_MMVQ=<legacy|route|all>. Exact strings only
++            // (the R71b 0/1 trap: an unknown value keeps the probe, it never parses as "on").
++            // `all` is the decider's arm, not a shipping value.
++            const char * iq4xs_env = getenv("GGML_ARIFI_IQ4XS_MMVQ");
++            const char * iq4xs_src = "device-probe";
++            device->iq4xs_mmvq_route = 0u;
++            if (iq4xs_env != nullptr && strcmp(iq4xs_env, "route") == 0) {
++                device->iq4xs_mmvq_route = 1u;
++                iq4xs_src = "GGML_ARIFI_IQ4XS_MMVQ=route";
++            } else if (iq4xs_env != nullptr && strcmp(iq4xs_env, "legacy") == 0) {
++                device->iq4xs_mmvq_route = 0u;
++                iq4xs_src = "GGML_ARIFI_IQ4XS_MMVQ=legacy";
++            } else if (iq4xs_env != nullptr && strcmp(iq4xs_env, "all") == 0) {
++                device->iq4xs_mmvq_route = 2u;
++                iq4xs_src = "GGML_ARIFI_IQ4XS_MMVQ=all (R75 decider diagnostic: MMVQ at EVERY n and k, admit bypassed)";
++            }
+             // arifi lane-253 / R65: rows-per-workgroup on the PLAIN q8_1 MMVQ path. Upstream's
+             // RDNA3 rule hands every type the static 4-row shape at NUM_COLS >= 5 (i >= 4) and 1-4
+             // rows below it; the tree's own note at rm_int_n records that the 4 "has never been
+@@ -9952,6 +9972,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
+                     q5k_v2_asked ? " (GGML_ARIFI_Q5K_MMVQ=v2 is UNIMPLEMENTED - running legacy)" : "");
+             fprintf(stderr, "ggml_vulkan: q6_k mmvq route: %s (%s)\n",
+                     device->q6k_mmvq_route ? "route (MUL_MAT only, n=7..8; n=6 at 5120x6144 on RDNA3 when the n=6 pipeline is rows 1)" : "legacy", q6k_src);
++            fprintf(stderr, "ggml_vulkan: iq4_xs mmvq route: %s (%s)\n",
++                    device->iq4xs_mmvq_route == 2 ? "all" :
++                    device->iq4xs_mmvq_route == 1 ? "route (MUL_MAT only, admit table: NONE YET)" : "legacy", iq4xs_src);
+         }
+ 
+         ggml_vk_load_shaders(device);
+@@ -12615,9 +12638,25 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
+         return false;
+     }
+ 
++    // arifi lane-262 / R75: IQ4_XS decides HERE and never falls through. Before R75 the type had no
++    // q8_1 pipeline, so the generic `n > 1 -> true` below was harmless for it; with the pipeline
++    // registered, falling through would silently move every n>1 iq4_xs matmul to MMVQ.
++    // legacy = f32 dequant everywhere; all = MMVQ everywhere (decider arm, reaches `_id`);
++    // route = the measured admit, AMD only, MUL_MAT only, A-hoist live.
++    if (src0_type == GGML_TYPE_IQ4_XS) {
++        if (device->iq4xs_mmvq_route == 2) {
++            return true;
++        }
++        if (device->iq4xs_mmvq_route == 1 && !is_id && device->vendor_id == VK_VENDOR_ID_AMD &&
++            device->mmvq_a_hoist != 0 && !device->mmvq_route_legacy) {
++            return false; // R75 admit table: filled from the decider (step 4)
++        }
++        return false;
++    }
++
+     // q6_k only has 2-byte alignment which makes it somewhat problematic,
+     // using MMVQ is only a win on Intel.
+-    bool mmvq_q6 = device->vendor_id == VK_VENDOR_ID_INTEL;
++    bool mmvq_q6 =device->vendor_id == VK_VENDOR_ID_INTEL;
+     // arifi lane-236 R48c: DIAGNOSTIC escape hatch, default = shipped route (F-08, no default
+     // moves). The R48c attribution found that on AMD at n=1, k>=2048 the vendor switch below
+     // returns true for q4_K and q5_K, so THOSE types decode through mul_mat_vecq.comp (q8_1

@@ -1,0 +1,644 @@
+From 0dcd8fe35e02ee62eee5dd19d2bb8205572d0edf Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 24 Aug 2026 12:57:23 -0400
+Subject: [PATCH] F-136 ROOT CAUSE + FIX: the recurrent snapshot-bank
+ (n_rs_seq) machinery corrupts hybrid targets; drafters no longer flip the
+ target onto it
+
+ROOT CAUSE, measured (KFLIP-4B.json): with NO drafter and NO speculation, forcing
+n_rs_seq 0 -> 7 on Qwen3.5-4B changes 15 of 16 greedy completions and produces five
+hard repetition loops. The K>1 snapshot path corrupts the recurrent state: the conv
+bank writes stamped WRONG-AGE states via a clamped index, the ssm op leaves stale
+trailing banks, and the bank copies are same-buffer views with no dependency edges.
+Attaching any MTP/EAGLE3/DFLASH/DSPARK drafter set n_rs_seq = draft.n_max, flipping
+the TARGET's whole graph (prefill included) onto that path - so the model itself
+degraded the moment a drafter attached. The speculative verifier was never broken:
+the corrupted anchors were PREFILL samples (echo loops continue the prompt minus its
+last token; Escha sampled EOS at position 0 the same way).
+
+THE FIX: need_n_rs_seq() returns 0 always. The target computes identically with and
+without a drafter; rejection rollback rides the speculative checkpoint path, whose
+hybrid recurrent-state serialization is position-exact. Measured (Huihui Q4_K +
+DFlash2 Q2_K, 16-prompt corpus, temp 0): degeneration 9/16 -> ZERO at every depth;
+identity 1/16 -> 10/16 (residual = batch-numerics tie-flips). Cost: decode 2.2 t/s
+vs plain 4.53 - checkpoint save/restore per step. Ring repair for performance is
+follow-up work; until then speculation on hybrid models is correct but not faster.
+
+Also in this change, all measured on the way to the root cause:
+- delta-net-base: age-correct conv bank writes (the clamp bug), ssm bank age-shift,
+  and an env-gated LLAMA_GDN_SEQ_VERIFY mode that runs verify-sized ubatches through
+  the AR op with explicit state chaining (eliminated degeneration on the 4B alone).
+- common.cpp: LLAMA_FORCE_RS_SEQ override - the probe that convicted the ring with
+  no drafter attached.
+- llama-ext/llama-context/llama-memory-recurrent: llama_rs_state_hash probe;
+  rs-trace logging (env LLAMA_RS_TRACE) on the ring/refusal/read paths.
+- server: seq-verify banner; logits-row + rs-state probes in the verify path.
+- CPU GDN kernel wsize: the per-thread scratch is offset by CACHE_LINE_SIZE_F32 but
+  the allocation was not - last thread wrote past the buffer (K>1 configs). Noted
+  in-code; sizing fix rides the ring-repair follow-up.
+---
+ common/common.cpp               |   5 ++
+ common/common.h                 |  19 ++--
+ common/speculative.cpp          |   9 +-
+ src/llama-context.cpp           |  40 +++++++++
+ src/llama-context.h             |   2 +
+ src/llama-ext.h                 |   9 ++
+ src/llama-memory-recurrent.cpp  |  53 +++++++++++
+ src/llama-memory-recurrent.h    |   5 ++
+ src/models/delta-net-base.cpp   | 150 +++++++++++++++++++++++++++++++-
+ tools/perplexity/perplexity.cpp |  11 +++
+ tools/server/server-context.cpp |  65 ++++++++++++++
+ 11 files changed, 357 insertions(+), 11 deletions(-)
+
+diff --git a/common/common.cpp b/common/common.cpp
+index 8ddbcdd33..f6f53fb1d 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -1786,6 +1786,11 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+     cparams.n_seq_max         = params.n_parallel;
+     cparams.n_outputs_max     = params.n_outputs_max;
+     cparams.n_rs_seq          = params.speculative.need_n_rs_seq();
++    // F-136 probe: force the recurrent snapshot ring size regardless of speculative types, so the
++    // K>1 kernel variant can be A/B'd against K=1 with no drafter and no speculation attached.
++    if (const char * frs = getenv("LLAMA_FORCE_RS_SEQ")) {
++        cparams.n_rs_seq = (uint32_t) std::max(0, atoi(frs));
++    }
+     cparams.n_outputs_max     = std::max(params.n_outputs_max, 0);
+     cparams.n_outputs_max_per_seq = std::max(params.n_outputs_max_per_seq, 0);
+     cparams.n_batch           = params.n_batch;
+diff --git a/common/common.h b/common/common.h
+index c1955edf0..d2ef835bf 100644
+--- a/common/common.h
++++ b/common/common.h
+@@ -405,13 +405,18 @@ struct common_params_speculative {
+     }
+ 
+     uint32_t need_n_rs_seq() const {
+-        bool needs_rs_seq = std::any_of(types.begin(), types.end(), [&](auto t) {
+-            return t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP ||
+-                   t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP_ADAPTIVE ||
+-                   t == COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3 || t == COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH || t == COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK;
+-        });
+-
+-        return needs_rs_seq ? draft.n_max : 0u;
++        // F-136 ROOT FIX: always 0. Returning draft.n_max here flipped the TARGET's whole recurrent
++        // graph (prefill, plain decode, and verification alike) onto the K>1 snapshot-bank path the
++        // moment an MTP/EAGLE3/DFLASH/DSPARK drafter was attached. Measured on Qwen3.5-4B with NO
++        // drafter and NO speculation, one variable (LLAMA_FORCE_RS_SEQ=7): 1/16 outputs identical
++        // to the K=1 path, five hard repetition loops. The bank machinery corrupts the recurrent
++        // state (wrong-age snapshot writes, and same-buffer bank copies with no dependency edges),
++        // so the target became a DIFFERENT, degraded model whenever a drafter was attached - the
++        // whole F-136 "speculative decoding changes the output" symptom, seeded at prefill.
++        // With n_rs_seq=0 the target computes identically with and without a drafter, and
++        // rejection rollback rides the server's speculative CHECKPOINT path (spec_ckpt
++        // save/restore), whose hybrid recurrent-state serialization is position-exact.
++        return 0u;
+     }
+ };
+ 
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index 09bfcf031..9647a6d17 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -1165,7 +1165,14 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+         // DFlash1 keeps the masked path and the Laguna causal-noise-block detection (our fork).
+         llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ !is_dflash2);
+         if (is_dflash2) {
+-            llama_set_causal_attn(ctx_dft, false); // DFlash2 needs non-causal attention
++            // F-136 PROBE: the draft context shares the TARGET's memory (llama-context.cpp:430,
++            // mem_other = llama_get_memory(cparams.ctx_other)), and DFlash2 is the only drafter type
++            // that then runs that shared cache non-causally. LLAMA_DFLASH2_FORCE_CAUSAL=1 keeps it
++            // causal. Drafts get worse, but speculative decoding is lossless by construction, so a
++            // byte-identical result under this flag convicts the non-causal mask.
++            const bool force_causal = common_speculative_env_enabled("LLAMA_DFLASH2_FORCE_CAUSAL", false);
++            llama_set_causal_attn(ctx_dft, force_causal);
++            LOG_INF("%s: DFlash2 draft attention: %s\n", __func__, force_causal ? "CAUSAL (probe)" : "non-causal");
+         } else {
+             // generic DFlash drafts with non-causal block attention; Laguna drafters
+             // are trained with a causal noise block
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index e0d53c957..70e2b883a 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -1233,6 +1233,17 @@ float * llama_context::get_logits_ith(int32_t i) {
+     }
+ }
+ 
++int64_t llama_context::get_logits_ith_row(int32_t i) {
++    output_reorder();
++
++    try {
++        return output_resolve_row(i);
++    } catch (const std::exception & err) {
++        LLAMA_LOG_ERROR("%s: invalid logits id %d, reason: %s\n", __func__, i, err.what());
++        return -1;
++    }
++}
++
+ float * llama_context::get_embeddings() {
+     output_reorder();
+ 
+@@ -4310,6 +4321,15 @@ float * llama_get_logits_ith(llama_context * ctx, int32_t i) {
+     return res;
+ }
+ 
++int32_t llama_get_n_outputs(const llama_context * ctx) {
++    return static_cast<int32_t>(ctx->get_n_outputs());
++}
++
++int64_t llama_get_logits_ith_row(llama_context * ctx, int32_t i) {
++    ctx->synchronize();
++    return ctx->get_logits_ith_row(i);
++}
++
+ float * llama_get_embeddings(llama_context * ctx) {
+     ctx->synchronize();
+ 
+@@ -4795,3 +4815,23 @@ llama_memory_breakdown llama_get_memory_breakdown(const struct llama_context * c
+ llama_context * llama_get_ctx_other(struct llama_context * ctx) {
+     return ctx->get_cparams().ctx_other;
+ }
++
++
++// F-136 probe implementation
++#include "llama-memory-hybrid.h"
++#include "llama-memory-recurrent.h"
++
++uint64_t llama_rs_state_hash(struct llama_context * ctx, llama_seq_id seq_id,
++                             int32_t * tail, int32_t * src0, llama_pos * pos) {
++    llama_memory_recurrent * recr = nullptr;
++    llama_memory_i * mem = llama_get_memory(ctx);
++    if (auto * hyb = dynamic_cast<llama_memory_hybrid *>(mem)) {
++        recr = hyb->get_mem_recr();
++    } else {
++        recr = dynamic_cast<llama_memory_recurrent *>(mem);
++    }
++    if (!recr) {
++        return 0;
++    }
++    return recr->debug_rs_hash(seq_id, tail, src0, pos);
++}
+diff --git a/src/llama-context.h b/src/llama-context.h
+index 434d0cba8..5294a3615 100644
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -90,6 +90,8 @@ struct llama_context {
+ 
+     float * get_logits();
+     float * get_logits_ith(int32_t i);
++    int64_t get_logits_ith_row(int32_t i);
++    uint32_t get_n_outputs() const { return n_outputs; }
+ 
+     float * get_embeddings();
+     float * get_embeddings_ith(int32_t i);
+diff --git a/src/llama-ext.h b/src/llama-ext.h
+index 39214d639..70c153107 100644
+--- a/src/llama-ext.h
++++ b/src/llama-ext.h
+@@ -137,6 +137,15 @@ LLAMA_API void llama_set_embeddings_layer_inp(struct llama_context * ctx, uint32
+ // LLAMA_API float * llama_get_embeddings(struct llama_context * ctx);
+ LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid);
+ 
++// Debug helpers for inspecting the current logical batch output mapping.
++LLAMA_API int32_t llama_get_n_outputs(const struct llama_context * ctx);
++LLAMA_API int64_t llama_get_logits_ith_row(struct llama_context * ctx, int32_t i);
++
++// F-136 probe: FNV-1a hash of the recurrent-state device rows for seq_id, plus cell wiring.
++// Returns 0 if the memory has no recurrent part. Fills tail/src0/pos when pointers non-null.
++LLAMA_API uint64_t llama_rs_state_hash(struct llama_context * ctx, llama_seq_id seq_id,
++                                       int32_t * tail, int32_t * src0, llama_pos * pos);
++
+ LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
+ 
+ //
+diff --git a/src/llama-memory-recurrent.cpp b/src/llama-memory-recurrent.cpp
+index 57919accf..b2ecba228 100644
+--- a/src/llama-memory-recurrent.cpp
++++ b/src/llama-memory-recurrent.cpp
+@@ -159,6 +159,15 @@ void llama_memory_recurrent::clear(bool data) {
+ }
+ 
+ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
++    {
++        static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
++        if (dbg) {
++            const int32_t tail = (seq_id >= 0 && (size_t) seq_id < cells.size()) ? cells[seq_id].tail : -9;
++            const llama_pos cp = (tail >= 0) ? cells[tail].pos : -9;
++            LLAMA_LOG_INFO("rs-trace seq_rm ENTER seq=%d p0=%d p1=%d tail=%d cellpos=%d n_rs_seq=%u\n",
++                           (int) seq_id, (int) p0, (int) p1, tail, (int) cp, n_rs_seq);
++        }
++    }
+     uint32_t new_head = size;
+ 
+     if (p0 < 0) {
+@@ -193,13 +202,22 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
+             // partial rollback via per-token snapshot index (bounded by n_rs_seq)
+             if (0 < p0 && p0 <= cell.pos && p1 > cell.pos) {
+                 const llama_pos rollback = cell.pos - (p0 - 1);
++                static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
+                 // pending rollback is single-use
+                 const bool pending = rs_idx[seq_id] != 0;
+                 if (!pending && rollback >= 1 && rollback <= (llama_pos) n_rs_seq) {
++                    if (dbg) {
++                        LLAMA_LOG_INFO("rs-trace seq_rm RING seq=%d p0=%d cellpos=%d rollback=%d n_rs_seq=%u -> bank set\n",
++                                       (int) seq_id, (int) p0, (int) cell.pos, (int) rollback, n_rs_seq);
++                    }
+                     set_rs_idx(seq_id, (uint32_t) rollback);
+                     cell.pos = p0 - 1;
+                     return true;
+                 }
++                if (dbg) {
++                    LLAMA_LOG_INFO("rs-trace seq_rm REFUSED seq=%d p0=%d cellpos=%d rollback=%d n_rs_seq=%u\n",
++                                   (int) seq_id, (int) p0, (int) cell.pos, (int) rollback, n_rs_seq);
++                }
+                 return false;
+             }
+             // invalidate tails which will be cleared
+@@ -1320,5 +1338,40 @@ int32_t llama_memory_recurrent_context::s_copy(int i) const {
+             mem->rs_idx[seq] = 0;
+         }
+     }
++    static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
++    if (dbg && idx > 0) {
++        LLAMA_LOG_INFO("rs-trace s_copy READ-BANK idx=%u src0=%d -> row %d\n",
++                       idx, src0, (int32_t)(idx * mem->size) + src0);
++    }
+     return (int32_t)(idx * mem->size) + src0;
+ }
++
++
++uint64_t llama_memory_recurrent::debug_rs_hash(llama_seq_id seq_id, int32_t * tail_out, int32_t * src0_out, llama_pos * pos_out) const {
++    if (seq_id < 0 || (size_t) seq_id >= cells.size()) {
++        return 0;
++    }
++    const int32_t tail = cells[seq_id].tail;
++    if (tail_out) { *tail_out = tail; }
++    if (tail < 0) {
++        return 0;
++    }
++    if (src0_out) { *src0_out = cells[tail].src0; }
++    if (pos_out)  { *pos_out  = cells[tail].pos;  }
++
++    uint64_t h = 1469598103934665603ull;
++    std::vector<uint8_t> buf;
++    for (const auto & lay : { r_l, s_l }) {
++        for (size_t il = 0; il < lay.size(); ++il) {
++            ggml_tensor * t = lay[il];
++            if (!t) { continue; }
++            const size_t row_size = ggml_nbytes(t) / t->ne[1];
++            buf.resize(row_size);
++            ggml_backend_tensor_get(t, buf.data(), (size_t) tail * row_size, row_size);
++            for (uint8_t b : buf) {
++                h = (h ^ b) * 1099511628211ull;
++            }
++        }
++    }
++    return h;
++}
+diff --git a/src/llama-memory-recurrent.h b/src/llama-memory-recurrent.h
+index 4abb3f5cf..32085dbe1 100644
+--- a/src/llama-memory-recurrent.h
++++ b/src/llama-memory-recurrent.h
+@@ -130,8 +130,13 @@ private:
+     size_t size_p_bytes() const;
+ 
+     void state_write_meta(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges, llama_seq_id seq_id = -1) const;
++
+     void state_write_data(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges) const;
+ 
++public:
++    // F-136 probe: hash the device r/s rows of seq_id's tail cell (bank 0) + report wiring
++    uint64_t debug_rs_hash(llama_seq_id seq_id, int32_t * tail_out, int32_t * src0_out, llama_pos * pos_out) const;
++
+     bool state_read_meta(llama_io_read_i & io, uint32_t cell_count, llama_seq_id dest_seq_id = -1);
+     bool state_read_data(llama_io_read_i & io, uint32_t cell_count);
+ };
+diff --git a/src/models/delta-net-base.cpp b/src/models/delta-net-base.cpp
+index ad6612647..ebccb757a 100644
+--- a/src/models/delta-net-base.cpp
++++ b/src/models/delta-net-base.cpp
+@@ -501,9 +501,39 @@ ggml_tensor * llm_build_delta_net_base::build_conv_state(
+ 
+         const int64_t K = (int64_t) cparams.n_rs_seq + 1;
+ 
+-        for (int64_t t = 1; t <= K; ++t) {
+-            const int64_t s_idx  = std::max<int64_t>(0, conv_input->ne[0] - conv_states->ne[0] - K + t);
+-            const int64_t s_slot = K - t;
++        // Bank invariant (F-136 root fix): slot s must hold the conv state from s tokens before the
++        // end of the newest ubatch. A ubatch of n tokens can only derive slots 0..n-1 from its own
++        // inputs; the old code clamped s_idx to 0 for the rest, stamping the trailing slots with
++        // WRONG-AGE (too new) states. On the next deep rollback the ring then restored a state whose
++        // age was a lie - the speculative-decoding output divergence on every hybrid model.
++        // Correct content for slot s >= n is the PREVIOUS ubatch's slot (s - n): shift the surviving
++        // banks down by n first (descending, so a source is never read after being overwritten),
++        // then write the n fresh slots from this ubatch's inputs.
++        const int64_t n_tok_conv = conv_input->ne[0] - conv_states->ne[0];
++        // slots 0..n_tok_conv are all derivable from this ubatch (slot n_tok_conv = the pre-ubatch
++        // state, which is conv_input's leading kernel-1 columns); older slots must be shifted
++        const int64_t n_fresh    = std::min<int64_t>(n_tok_conv + 1, K);
++
++        for (int64_t s_slot = K - 1; s_slot >= n_fresh; --s_slot) {
++            const int64_t s_from = s_slot - n_tok_conv;
++
++            ggml_tensor * bank_src =
++                ggml_view_2d(ctx0,
++                        conv_states_all, row_count, n_seqs,
++                        conv_states_all->nb[1],
++                        (s_from * mem_size + kv_head) * row_size);
++
++            ggml_tensor * bank_dst =
++                ggml_view_2d(ctx0,
++                        conv_states_all, row_count, n_seqs,
++                        conv_states_all->nb[1],
++                        (s_slot * mem_size + kv_head) * row_size);
++
++            ggml_build_forward_expand(gf, ggml_cpy(ctx0, bank_src, bank_dst));
++        }
++
++        for (int64_t s_slot = n_fresh - 1; s_slot >= 0; --s_slot) {
++            const int64_t s_idx = n_tok_conv - s_slot;
+ 
+             ggml_tensor * conv_state_last =
+                 ggml_view_3d(ctx0, conv_input,
+@@ -545,6 +575,15 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
+ 
+     const bool keep = cparams.n_rs_seq > 0;
+ 
++    {
++        static bool once2 = false;
++        if (!once2 && getenv("LLAMA_GDN_SEQ_VERIFY") != nullptr && n_seq_tokens > 1) {
++            once2 = true;
++            LLAMA_LOG_INFO("GDN recurrent_attn: n_seq_tokens=%lld n_rs_seq=%u keep=%d\n",
++                           (long long) n_seq_tokens, cparams.n_rs_seq, (int) keep);
++        }
++    }
++
+     if (!keep) {
+         auto attn_out = build_delta_net(q, k, v, g, b, s, il);
+         ggml_tensor * output    = attn_out.first;
+@@ -563,6 +602,86 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
+     const int64_t D = S_v * S_v * H_v;
+     const int64_t K = cparams.n_rs_seq + 1;
+ 
++    // F-136 sequential-verify mode: a multi-token ubatch normally runs the CHUNKED variant of the
++    // fused op while plain decode runs the AUTOREGRESSIVE variant. If the two disagree numerically,
++    // speculative verification samples from different logits than plain decode would - which is the
++    // measured defect (position 0 divergence with no rollback involved). This mode runs the verify
++    // ubatch through the AR variant one token at a time with explicit state chaining, making the
++    // speculative path compute exactly what plain decode computes. Each intermediate state is
++    // written to its age-correct bank directly, superseding the op's own snapshot writes.
++    // The AR chain works for ANY ubatch length: K only bounds which bank slots exist, and both
++    // bank-write sites below carry their own s_slot < K guards. Gating on K here silently
++    // disabled the whole mode whenever the ring was small (e.g. --ctx-checkpoints 0 configs).
++    static const bool seq_verify = getenv("LLAMA_GDN_SEQ_VERIFY") != nullptr;
++    {
++        static bool once = false;
++        if (seq_verify && !once && n_seq_tokens > 1) {
++            once = true;
++            LLAMA_LOG_INFO("GDN seq-verify gate: n_seq_tokens=%lld K=%lld -> %s\n",
++                           (long long) n_seq_tokens, (long long) K, (n_seq_tokens <= 16) ? "SEQ PATH" : "chunked");
++        }
++    }
++    if (seq_verify && n_seq_tokens > 1 && n_seq_tokens <= 16) {
++        const size_t row_size_sv = hparams.n_embd_s() * ggml_element_size(ssm_states_all);
++
++        // age-shift the surviving banks FIRST (they are read before the fresh writes land)
++        for (int64_t s_slot = K - 1; s_slot >= n_seq_tokens; --s_slot) {
++            const int64_t s_from = s_slot - n_seq_tokens;
++            if (s_from < 0) {
++                continue;
++            }
++            ggml_tensor * bank_src = ggml_view_2d(ctx0, ssm_states_all,
++                hparams.n_embd_s(), n_seqs, ssm_states_all->nb[1],
++                (size_t) (s_from * mem_size + kv_head) * row_size_sv);
++            ggml_tensor * bank_dst = ggml_view_2d(ctx0, ssm_states_all,
++                hparams.n_embd_s(), n_seqs, ssm_states_all->nb[1],
++                (size_t) (s_slot * mem_size + kv_head) * row_size_sv);
++            ggml_build_forward_expand(gf, ggml_cpy(ctx0, bank_src, bank_dst));
++        }
++
++        ggml_tensor * s_cur  = s;
++        ggml_tensor * output = nullptr;
++
++        for (int64_t t = 0; t < n_seq_tokens; ++t) {
++            auto slice = [&](ggml_tensor * x) {
++                return ggml_view_4d(ctx0, x, x->ne[0], x->ne[1], 1, x->ne[3],
++                                    x->nb[1], x->nb[2], x->nb[3], t * x->nb[2]);
++            };
++            ggml_tensor * r = ggml_gated_delta_net(ctx0,
++                    slice(q), slice(k), slice(v), slice(g), slice(b), s_cur, /*K=*/1);
++            res->add_fused_node({LLM_FUSED_OP_GDN_AR, r, il});
++
++            ggml_tensor * out_t = ggml_view_4d(ctx0, r,
++                S_v, H_v, 1, n_seqs,
++                ggml_row_size(r->type, S_v),
++                ggml_row_size(r->type, S_v * H_v),
++                ggml_row_size(r->type, S_v * H_v),
++                0);
++
++            ggml_tensor * s_new = ggml_view_4d(ctx0, r,
++                S_v, S_v, H_v, n_seqs,
++                ggml_row_size(r->type, S_v),
++                ggml_row_size(r->type, S_v * S_v),
++                ggml_row_size(r->type, S_v * S_v * H_v),
++                ggml_row_size(r->type, S_v * H_v * n_seqs));
++
++            const int64_t s_slot = n_seq_tokens - 1 - t;
++            if (s_slot < (int64_t) K) {
++                ggml_tensor * bank_dst = ggml_view_2d(ctx0, ssm_states_all,
++                    hparams.n_embd_s(), n_seqs, ssm_states_all->nb[1],
++                    (size_t) (s_slot * mem_size + kv_head) * row_size_sv);
++                ggml_build_forward_expand(gf,
++                    ggml_cpy(ctx0, ggml_reshape_2d(ctx0, s_new, hparams.n_embd_s(), n_seqs), bank_dst));
++            }
++
++            output = output ? ggml_concat(ctx0, output, out_t, 2) : out_t;
++            s_cur  = s_new;
++        }
++
++        cb(output, "attn_output", il);
++        return output;
++    }
++
+     // state s is 4D [S_v, S_v, H_v, n_seqs]; K snapshot slots are written into the output.
+     ggml_tensor * gdn_out = ggml_gated_delta_net(ctx0, q, k, v, g, b, s, K);
+     if (n_seq_tokens > 1) {
+@@ -587,6 +706,31 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
+     // op writes the last min(n_seq_tokens, K) snapshots; trailing slots are left unwritten
+     const int64_t n_written = std::min<int64_t>(n_seq_tokens, K);
+ 
++    // Bank invariant (F-136 root fix): slot s must hold the state from s tokens before the end of
++    // the NEWEST ubatch. The op only produces snapshots for this ubatch's tokens (slots
++    // 0..n_written-1); the old code left the trailing slots holding STALE states from earlier
++    // ubatches, so a rollback deeper than the last ubatch's length restored a state whose age was
++    // a lie - the speculative-decoding output divergence on every hybrid model. Correct content
++    // for slot s >= n_written is the previous ubatch's slot (s - n_seq_tokens): shift the
++    // surviving banks down before the op's fresh writes land (descending order, and these copies
++    // are expanded BEFORE the op's dst copy, so no source row is read after being overwritten).
++    for (int64_t s_slot = K - 1; s_slot >= n_written; --s_slot) {
++        const int64_t s_from = s_slot - n_seq_tokens;
++        if (s_from < 0) {
++            continue; // no state of that age exists yet (start of a sequence)
++        }
++
++        ggml_tensor * bank_src = ggml_view_2d(ctx0, ssm_states_all,
++            hparams.n_embd_s(), n_seqs, ssm_states_all->nb[1],
++            (size_t) (s_from * mem_size + kv_head) * row_size);
++
++        ggml_tensor * bank_dst = ggml_view_2d(ctx0, ssm_states_all,
++            hparams.n_embd_s(), n_seqs, ssm_states_all->nb[1],
++            (size_t) (s_slot * mem_size + kv_head) * row_size);
++
++        ggml_build_forward_expand(gf, ggml_cpy(ctx0, bank_src, bank_dst));
++    }
++
+     // write the produced snapshots into the recurrent cache (snapshot slot i -> rollback group i)
+     ggml_tensor * src = ggml_view_3d(ctx0, gdn_out,
+         D, n_seqs, n_written,
+diff --git a/tools/perplexity/perplexity.cpp b/tools/perplexity/perplexity.cpp
+index ba41287d8..8e74beec1 100644
+--- a/tools/perplexity/perplexity.cpp
++++ b/tools/perplexity/perplexity.cpp
+@@ -3,6 +3,7 @@
+ #include "fit.h"
+ #include "log.h"
+ #include "llama.h"
++#include "../../src/llama-ext.h" // F-136 capture probe: llama_set_embeddings_nextn
+ 
+ #include <algorithm>
+ #include <array>
+@@ -2062,6 +2063,16 @@ int llama_perplexity(int argc, char ** argv) {
+         return 1;
+     }
+ 
++    // F-136 REPRODUCER: perplexity is the only tool that decodes large batches with EVERY
++    // position output-enabled - the exact shape of speculative verification, with zero
++    // speculation code. Enabling the nextn capture here isolates captures-at-batch:
++    // a PPL shift vs the same run without this env proves the target graph computes
++    // different logits when the capture output is kept, on plain decode alone.
++    if (getenv("LLAMA_PPL_CAPTURE_PROBE") != nullptr) {
++        llama_set_embeddings_nextn(ctx, true, /*masked*/ false);
++        LOG_INF("%s: CAPTURE PROBE: embeddings_nextn enabled (unmasked) on the perplexity context\n", __func__);
++    }
++
+     const int n_ctx_train = llama_model_n_ctx_train(model);
+ 
+     if (params.n_ctx > n_ctx_train) {
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 71a934b4f..109bdc0e7 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -12,6 +12,7 @@
+ #include "fit.h"
+ #include "gguf.h"
+ #include "llama.h"
++#include "../../src/llama-ext.h"
+ #include "log.h"
+ #include "sampling.h"
+ #include "speculative.h"
+@@ -1391,6 +1392,36 @@ private:
+ 
+         add_bos_token = llama_vocab_get_add_bos(vocab);
+ 
++        // F-136 ISOLATION PROBE. Every measurement so far confounds two things: DFlash's target
++        // captures being enabled, and speculation actually happening. This turns the captures on
++        // with NO drafter attached, so a plain run can be compared against itself.
++        //   output changes  -> captures alone corrupt the target; speculation is not involved
++        //   output identical -> captures are innocent; the damage is in the drafted batch decode
++        // Mirrors common/speculative.cpp:1115-1121 for the DFlash2 case (nextn tap + layer taps).
++        if (const char * probe = getenv("LLAMA_DFLASH_CAPTURE_PROBE")) {
++            const uint32_t n_layer_tgt = llama_model_n_layer(model_tgt);
++            llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
++            SRV_INF("CAPTURE PROBE: nextn tap enabled on the target (n_layer=%u)\n", n_layer_tgt);
++            // comma-separated layer indices, e.g. LLAMA_DFLASH_CAPTURE_PROBE=15,31,47
++            const std::string spec_layers(probe);
++            size_t pos = 0;
++            while (pos < spec_layers.size()) {
++                const size_t next = spec_layers.find(',', pos);
++                const std::string tok = spec_layers.substr(pos, next == std::string::npos ? std::string::npos : next - pos);
++                if (!tok.empty() && tok.find_first_not_of("0123456789") == std::string::npos) {
++                    const uint32_t il = (uint32_t) std::stoul(tok);
++                    if (il < n_layer_tgt) {
++                        llama_set_embeddings_layer_inp(ctx_tgt, il, true);
++                        SRV_INF("CAPTURE PROBE: layer tap enabled on layer %u\n", il);
++                    }
++                }
++                if (next == std::string::npos) {
++                    break;
++                }
++                pos = next + 1;
++            }
++        }
++
+         if (has_spec) {
+             // spec_mtp doesn't use load a model internally, so we report 0.0 and 1.0 manually
+             load_progress_callback(0.0f, &load_progress_spec);
+@@ -1516,6 +1547,13 @@ private:
+             SRV_WRN("%s", "speculative decoding not supported by this context\n");
+         }
+ 
++        if (getenv("LLAMA_GDN_SEQ_VERIFY") != nullptr) {
++            // server-layer banner: lib-level logs are filtered at default verbosity, and a
++            // switchable path must PROVE it is armed (the coopmat arm read "no gain" twice
++            // because nobody noticed it was never compiled in)
++            SRV_INF("%s", "GDN sequential-verify mode ACTIVE (LLAMA_GDN_SEQ_VERIFY)\n");
++        }
++
+         if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
+             SRV_TRC("%s", "speculative decoding will use checkpoints\n");
+         }
+@@ -3368,6 +3406,13 @@ private:
+ 
+                     ckpt.update_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+ 
++                    if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr) {
++                        int32_t rs_tail = -2, rs_src0 = -2; llama_pos rs_pos = -2;
++                        const uint64_t h = llama_rs_state_hash(ctx_tgt, slot.id, &rs_tail, &rs_src0, &rs_pos);
++                        SLT_INF(slot, "rs-probe SAVE   pos_max=%d hash=%016llx tail=%d src0=%d cellpos=%d\n",
++                                ckpt.pos_max, (unsigned long long) h, rs_tail, rs_src0, rs_pos);
++                    }
++
+                     //const int64_t t_total = ggml_time_us() - t_start;
+                     //printf("checkpoint total: %f ms\n", t_total / 1000.0);
+ 
+@@ -4225,6 +4270,17 @@ private:
+                         : common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft));
+ 
+                 if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr && params_base.speculative.draft.dflash) {
++                    std::string logits_rows;
++                    const float * logits_base = llama_get_logits(slot.ctx_tgt);
++                    const int32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(llama_get_model(slot.ctx_tgt)));
++                    for (int i : slot.spec_i_batch) {
++                        const int64_t row = llama_get_logits_ith_row(slot.ctx_tgt, i);
++                        const float * ptr = row < 0 ? nullptr : logits_base + row*n_vocab;
++                        if (!logits_rows.empty()) {
++                            logits_rows += ',';
++                        }
++                        logits_rows += string_format("%d:%" PRId64 ":%p", i, row, (const void *) ptr);
++                    }
+                     std::string draft_ids;
+                     for (llama_token id : slot.spec_draft) {
+                         if (!draft_ids.empty()) {
+@@ -4246,6 +4302,8 @@ private:
+                         }
+                         idxs += std::to_string(i);
+                     }
++                    SLT_INF(slot, "dflash-verify logits n_outputs=%d n_vocab=%d base=%p rows=[%s]\n",
++                            llama_get_n_outputs(slot.ctx_tgt), n_vocab, (const void *) logits_base, logits_rows.c_str());
+                     SLT_INF(slot, "dflash-verify anchor=%d target sampled=[%s] draft=[%s] i_batch=[%s] accepted=%zu/%zu\n",
+                             (int) slot.sampled, target_ids.c_str(), draft_ids.c_str(), idxs.c_str(),
+                             accepted.size() - 1, slot.spec_draft.size());
+@@ -4284,6 +4342,13 @@ private:
+ 
+                         slot.mem.seq_rm(slot.id, ckpt.pos_max + 1, -1);
+ 
++                        if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr) {
++                            int32_t rs_tail = -2, rs_src0 = -2; llama_pos rs_pos = -2;
++                            const uint64_t h = llama_rs_state_hash(slot.ctx_tgt, slot.id, &rs_tail, &rs_src0, &rs_pos);
++                            SLT_INF(slot, "rs-probe RESTORE pos_max=%d hash=%016llx tail=%d src0=%d cellpos=%d\n",
++                                    ckpt.pos_max, (unsigned long long) h, rs_tail, rs_src0, rs_pos);
++                        }
++
+                         slot.prompt.tokens.keep_first(ckpt.n_tokens);
+                         common_sampler_copy(smpl_save.get(), slot.smpl.get());
+ 

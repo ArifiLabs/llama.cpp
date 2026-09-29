@@ -1,0 +1,83 @@
+From dc11a5d033c9f77be62d3832b011430e04ba62fa Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 07:56:32 -0400
+Subject: [PATCH] vulkan q6_K: GGML_ARIFI_Q6K_MMVQ_ROWS, the q6_K-scoped
+ integer-dot rows knob
+
+GGML_ARIFI_MMVQ_WIDE_ROWS_FROM feeds rm_int_n, which every q8_1 mat-vec pipeline takes (q4_K included, a closed lever), so it can measure a rows arm but never ship one for q6_K alone. This adds the same lever at the one q6_K q8_1 creation site, defaulting to the inherited rm_int_n shape, with a startup line. Equality proof: the scoped knob at rows 1 reproduces the WIDE_ROWS_FROM=8 VGPR series 111/130/137/144/151/159/154/156 byte-for-byte (8/8 EXECUTED cases), so step 0 transfers to the shippable knob. The decider script now times the scoped knob.
+
+Origin: CHECK-R71 finding 5 (the thing measured has to be the thing shipped)
+Measured-effect: none (defaults to the shipped shape)
+Lane: lane-258
+Cherry-picked-from: afebfa212acc98ba0976faa0c308bda31257f2a1
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 42 +++++++++++++++++++++++++++-
+ 1 file changed, 41 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index cdaf8e771..3e68a5dd0 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -7553,6 +7553,38 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         const auto q6k_f32_rows = [rm_kq, q6k_f32_rows_wide, q6k_f32_rows_from](uint32_t i) {
+             return (i + 1 >= q6k_f32_rows_from) ? q6k_f32_rows_wide : rm_kq;
+         };
++        // arifi lane-258 / R74: the same lever for the q6_K *integer-dot* (q8_1 MMVQ) mat-vec, and
++        // q6_K ONLY. rm_int_n() feeds every q8_1 pipeline in the tree -- Q2_0 through Q5_K and
++        // S-X8 (:7695-7711) -- so GGML_ARIFI_MMVQ_WIDE_ROWS_FROM can measure a rows arm but can
++        // never SHIP one for q6_K alone; it would also move q4_K, whose width knee is a CLOSED
++        // lever. CHECK-R71 finding 5: the thing measured has to be the thing shipped.
++        //
++        //   GGML_ARIFI_Q6K_MMVQ_ROWS=<rows>       rows in {1,2,4} at every NUM_COLS
++        //   GGML_ARIFI_Q6K_MMVQ_ROWS=<rows>@<n>   those rows at NUM_COLS >= n, the inherited
++        //                                         rm_int_n(rm_kq_int, i) below
++        //
++        // DEFAULT: rm_int_n(1*rm_kq_int, i), i.e. 1 row up to NUM_COLS 4 and 4 from NUM_COLS 5 on
++        // RDNA3 -- byte-for-byte the inherited shape. BIT-IDENTICAL for the same reason as above.
++        uint32_t q6k_mmvq_rows_wide = 0;   // 0 = unset, keep rm_int_n
++        uint32_t q6k_mmvq_rows_from = 9;
++        const char * q6k_mmvq_rows_src = "device-probe (rm_int_n, upstream shape)";
++        if (const char * s = getenv("GGML_ARIFI_Q6K_MMVQ_ROWS")) {
++            const uint32_t rows = (uint32_t) atoi(s);
++            const char * at = strchr(s, '@');
++            const uint32_t from = at ? (uint32_t) atoi(at + 1) : 1u;
++            if ((rows != 1 && rows != 2 && rows != 4) || from < 1 || from > 8) {
++                fprintf(stderr, "ggml_vulkan: GGML_ARIFI_Q6K_MMVQ_ROWS=%s not understood "
++                                "(<1|2|4>[@<1..8>]), keeping the inherited rm_int_n shape\n", s);
++            } else {
++                q6k_mmvq_rows_wide = rows;
++                q6k_mmvq_rows_from = from;
++                q6k_mmvq_rows_src  = "GGML_ARIFI_Q6K_MMVQ_ROWS";
++            }
++        }
++        const auto q6k_mmvq_rows = [&rm_int_n, rm_kq_int, q6k_mmvq_rows_wide, q6k_mmvq_rows_from](uint32_t i) {
++            return (q6k_mmvq_rows_wide && i + 1 >= q6k_mmvq_rows_from) ? q6k_mmvq_rows_wide
++                                                                      : rm_int_n(1 * rm_kq_int, i);
++        };
+         {
+             static bool once = false;
+             if (!once) {
+@@ -7580,6 +7612,14 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+                                     "[GGML_ARIFI_Q6K_F32_ROWS]\n",
+                             q6k_f32_rows_wide, q6k_f32_rows_from, rm_kq, q6k_f32_rows_src);
+                 }
++                if (q6k_mmvq_rows_from > 8) {
++                    fprintf(stderr, "ggml_vulkan: q6_k mmvq mat-vec rows: rm_int_n (%s) "
++                                    "[GGML_ARIFI_Q6K_MMVQ_ROWS]\n", q6k_mmvq_rows_src);
++                } else {
++                    fprintf(stderr, "ggml_vulkan: q6_k mmvq mat-vec rows: %u at n>=%u, rm_int_n "
++                                    "below (%s) [GGML_ARIFI_Q6K_MMVQ_ROWS]\n",
++                            q6k_mmvq_rows_wide, q6k_mmvq_rows_from, q6k_mmvq_rows_src);
++                }
+             }
+         }
+ 
+@@ -7717,7 +7757,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_q8_1_f32", arr_dmmv_q3_k_q8_1_f32_len[reduc], arr_dmmv_q3_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_q8_1_f32", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_q8_1_f32", arr_dmmv_q5_k_q8_1_f32_len[reduc], arr_dmmv_q5_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_q8_1_f32", arr_dmmv_q6_k_q8_1_f32_len[reduc], arr_dmmv_q6_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_q8_1_f32", arr_dmmv_q6_k_q8_1_f32_len[reduc], arr_dmmv_q6_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q6k_mmvq_rows(i), 1, 1}, {wg_size_subgroup_int, q6k_mmvq_rows(i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+ 
+                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_IQ1_S][i], "mul_mat_vec_iq1_s_q8_1_f32", arr_dmmv_iq1_s_q8_1_f32_len[reduc], arr_dmmv_iq1_s_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1*rm_iq_int(i), 1, 1}, {wg_size_subgroup_int, 1*rm_iq_int(i), i+1, mmvq_a_hoist_iq1}, 1, true, use_subgroups, subgroup_size_int);
+                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_IQ1_M][i], "mul_mat_vec_iq1_m_q8_1_f32", arr_dmmv_iq1_m_q8_1_f32_len[reduc], arr_dmmv_iq1_m_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {1*rm_iq_int(i), 1, 1}, {wg_size_subgroup_int, 1*rm_iq_int(i), i+1, mmvq_a_hoist_iq1}, 1, true, use_subgroups, subgroup_size_int);

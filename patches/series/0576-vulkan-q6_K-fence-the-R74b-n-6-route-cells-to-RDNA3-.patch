@@ -1,0 +1,29 @@
+From 4a6f2f7e91221669933b700edb83f7ee22b90995 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 07:56:37 -0400
+Subject: [PATCH] vulkan q6_K: fence the R74b n=6 route cells to RDNA3 (off
+ RDNA3 rm_int_n is already 1 row)
+
+Source-only, pre-build. 91ff7fa5b and this commit carry the default PENDING the R74b decider; the ship commit is the decision record.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Lane: lane-270
+Cherry-picked-from: 4d62cf3028dc7e0a82234a0668d8fc867585790a
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 6170adc9f..1164521ca 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -7608,7 +7608,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         };
+         // The route admits its n=6 cells only when the n=6 pipeline it would dispatch is the rows-1
+         // shape those cells were measured on (R74 `mmvqrow1`); rm_int_n gives 4 there and loses.
+-        device->q6k_mmvq_n6_rows1 = q6k_mmvq_rows(5) == 1;
++        // RDNA3 only: off RDNA3 rm_int_n is already 1 row, which would admit unmeasured devices.
++        device->q6k_mmvq_n6_rows1 = is_rdna3 && q6k_mmvq_rows(5) == 1;
+         {
+             static bool once = false;
+             if (!once) {

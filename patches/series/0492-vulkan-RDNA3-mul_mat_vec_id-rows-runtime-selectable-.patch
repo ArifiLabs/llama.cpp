@@ -1,0 +1,77 @@
+From b5457629e44d528dc4025b38fd9f3960d116dcfa Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 8 Sep 2026 09:14:50 -0400
+Subject: [PATCH] vulkan: RDNA3 mul_mat_vec_id rows runtime-selectable
+ (GGML_ARIFI_MMV_ID_ROWS) + Ornith expert-shape perf rows
+
+Runtime-switch law: the device probe (is_rdna3) stays the selector, GGML_ARIFI_MMV_ID_ROWS = 1|2|4|8 overrides it on RDNA3 only, and every other device keeps the generic per-type rows and ignores the env. Unset or invalid = upstream's 4, so NO DEFAULT MOVES. One GGML_LOG_INFO receipt line names the rows and their source, so a served arm is provable from its log rather than its command line.
+
+tests/test-backend-ops.cpp: perf rows at the Ornith-1.5 35B-A3B expert shape (qwen35moe, 256 experts, 8 used, gate/up 512x2048, down 2048x512, Q4_K + Q6_K, bs 1,2,3,4,8) so the row ladder is measured at the shape the MoE arm actually dispatches. -p "n_mats=256" narrows perf to them.
+
+Origin: upstream 2cdae802e (vulkan: tune mat-vec rows for batched inference on Strix Halo)
+Origin: R15 s2.2 / R15-C3 (lane-209 r15-kernel-hunt, Opus 5 + Fable 5.1 R15B)
+Origin: ArifiLabs lane-212 R18 kernel wave, candidate r15c3-rm-id-moe
+Measured-effect: DOCUMENTED-TAKE. 20 op rows, 3 rounds each: x0.979 to x1.031 against the upstream default of 4 - no setting separates from the ladder's own spread. Correctness 80/80 per setting, TBOID GREEN. No serve cell ran (no MoE file that fits this box was staged).
+Cherry-picked-from: 5c2ee09bfeac1e59b6dcb42ef01e22ff81542c34 (lane-212/r15c3-rm-id-moe-2026-09-06, b10819 base)
+Lane: lane-225
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 23 ++++++++++++++++++++++-
+ tests/test-backend-ops.cpp           | 11 +++++++++++
+ 2 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 0586454fe..e9f5929ba 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -5455,7 +5455,28 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     const bool is_rdna3 = device->vendor_id == VK_VENDOR_ID_AMD && device->architecture == AMD_RDNA3;
+     auto const &rm_int_n = [&](uint32_t rows, uint32_t i) { return (is_rdna3 && i >= 4) ? 4u : rows; };
+     // RDNA3: Static 4 rows for all types bench faster than the default
+-    auto const &rm_id = [&](uint32_t rows) { return is_rdna3 ? 4u : rows; };
++    //
++    // arifi R18 / R15-C3 (upstream 2cdae802e, benched on a Strix Halo): the 4 above is applied to every
++    // q8_1 mul_mat_vec_id pipeline on every RDNA3 device with no width gate, and it has never been
++    // measured on gfx1103 (subgroup 64, 64 KB LDS): 4 rows raises the per-workgroup B live set 2-4x
++    // over the shipped rm_kq_int, which is the shape that spilled in lane-166. Runtime-switch law:
++    // the device probe (is_rdna3) stays the selector, GGML_ARIFI_MMV_ID_ROWS = 1|2|4|8 overrides it
++    // on RDNA3 only, and every other device keeps the generic per-type rows and ignores the env.
++    // Unset or invalid = upstream's 4, so no default moves (F-08). One receipt line so a served arm
++    // is provable from its log, not from its command line (R19D).
++    uint32_t rm_id_rdna3 = 4;
++    const char * rm_id_src = "default";
++    if (const char * e = getenv("GGML_ARIFI_MMV_ID_ROWS")) {
++        const int v = atoi(e);
++        if (v == 1 || v == 2 || v == 4 || v == 8) {
++            rm_id_rdna3 = (uint32_t) v;
++            rm_id_src = "GGML_ARIFI_MMV_ID_ROWS";
++        }
++    }
++    if (is_rdna3) {
++        GGML_LOG_INFO("ggml_vulkan: RDNA3 mul_mat_vec_id rows = %u (%s)\n", rm_id_rdna3, rm_id_src);
++    }
++    auto const &rm_id = [&](uint32_t rows) { return is_rdna3 ? rm_id_rdna3 : rows; };
+     uint32_t rm_iq = 2 * rm_kq;
+ 
+     // Rows per workgroup for the g128 ternary mul_mat_vec, made runtime-selectable.
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 52339e7ad..d7e8ec229 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -11895,6 +11895,17 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+         }
+     }
+ 
++    // arifi R18 / R15-C3: Ornith-1.5 35B-A3B expert shape (qwen35moe, 256 experts, 8 used, n_embd 2048,
++    // n_ff_exp 512): gate/up = 512 rows x k 2048, down = 2048 rows x k 512. Q4_K is the file's expert
++    // type (down is Q4_K on 20 layers, Q6_K on 21). bs 1 = decode, 3 = DFlash2 n-max-2 verify, <= 8 is
++    // the mul_mat_vec_id width gate. `-p "n_mats=256"` narrows perf to these rows.
++    for (int bs : {1, 2, 3, 4, 8}) {
++        for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_Q6_K}) {
++            test_cases.emplace_back(new test_mul_mat_id(type_a, GGML_TYPE_F32, 256, 8, false,  512, bs, 2048));
++            test_cases.emplace_back(new test_mul_mat_id(type_a, GGML_TYPE_F32, 256, 8, false, 2048, bs,  512));
++        }
++    }
++
+ 
+     // gpt-oss-20b
+     for (int bs : {1, 4, 8, 512}) {

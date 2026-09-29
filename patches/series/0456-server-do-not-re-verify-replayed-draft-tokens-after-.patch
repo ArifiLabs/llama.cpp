@@ -1,0 +1,72 @@
+From 5c5e9278eaf778d7fbebc4d2c2e6135615d494e1 Mon Sep 17 00:00:00 2001
+From: Marshall <assistant@llama.cpp>
+Date: Tue, 25 Aug 2026 09:18:46 +0100
+Subject: [PATCH] server: do not re-verify replayed draft tokens after a
+ checkpoint restore
+
+On a partial draft acceptance the slot restores the pre-round state and
+re-decodes the accepted tokens to rebuild it. That replay went through the same
+verification as a fresh draft. On backends where logits change with batch shape
+or memory layout - Vulkan does - the re-verification can reject a token the
+original verification accepted; the rejection restores the same checkpoint and
+replays again, and the slot loops on one position without emitting anything.
+
+Accept the replayed tokens without re-verifying and sample only the
+continuation from the final position. The replayed prefix was already accepted
+by the verification that triggered the restore; the replay exists to rebuild
+state, not to re-decide.
+
+On backends with batch-shape invariant logits the re-verification always
+agreed, so behaviour there is unchanged.
+
+Assisted-by: Claude Opus 5
+
+(cherry picked from commit aeca255734bef622ed53365cc3b3349e2515e1b8)
+
+Taken-from: github.com/LaurentZuijdwijk/llama.cpp@aeca25573
+Ported-by: lane-202 (WI-2520-2539, HQ seat-49) - resolved onto the fork's three-way accept (synthetic-acceptance path keeps its own replay handling and stays first; the replay-skip branch is second; dists / plain unchanged)
+Lane: lane-202
+---
+ tools/server/server-context.cpp | 28 +++++++++++++++++++++-------
+ 1 file changed, 21 insertions(+), 7 deletions(-)
+
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index a7803da64..2cffa2dc8 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -4368,14 +4368,28 @@ private:
+                 const bool can_rollback =
+                     ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_PART ||
+                     (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && n_draft <= llama_n_rs_seq(ctx_tgt));
+-                auto accepted = !synth_probs.empty()
+-                    ? server_sample_and_accept_synth(
++                std::vector<llama_token> accepted;
++                if (!synth_probs.empty()) {
++                    // benchmark-only synthetic acceptance keeps its own replay handling
++                    accepted = server_sample_and_accept_synth(
+                             slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft,
+-                            synth_probs, slot.spec_synth_rng, slot.spec_is_replay)
+-                    : (can_rollback && slot.task->params.sampling.temp > 0.0f &&
+-                       slot.spec_dists.size() == slot.spec_draft.size()
+-                        ? common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft, slot.spec_dists)
+-                        : common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft));
++                            synth_probs, slot.spec_synth_rng, slot.spec_is_replay);
++                } else if (slot.spec_is_replay) {
++                    // replayed tokens were accepted before the restore. Re-verifying them can
++                    // disagree when logits depend on batch shape, and each disagreement restores
++                    // the same checkpoint again, so the slot stops making progress.
++                    accepted = slot.spec_draft;
++                    for (const llama_token id : accepted) {
++                        common_sampler_accept(slot.smpl.get(), id, true);
++                    }
++                    accepted.push_back(common_sampler_sample(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch.back()));
++                    common_sampler_accept(slot.smpl.get(), accepted.back(), true);
++                } else if (can_rollback && slot.task->params.sampling.temp > 0.0f &&
++                           slot.spec_dists.size() == slot.spec_draft.size()) {
++                    accepted = common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft, slot.spec_dists);
++                } else {
++                    accepted = common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft);
++                }
+ 
+                 if (getenv("LLAMA_DFLASH_VERIFY_TRACE") != nullptr && params_base.speculative.draft.dflash) {
+                     std::string logits_rows;

@@ -1,0 +1,51 @@
+From d9e093ac2f531d78c7bff13a1b798e7314a662c6 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 06:55:23 -0400
+Subject: [PATCH] vulkan: keep the ROCmFP4-FAST q8_1 MMVQ path to n=2..5 only
+
+lane-209 rank 7, after its serve A/B. The port pays at the batched widths and is a measured TIE at n=1
+(test-backend-ops 17408x5120, 3-round medians, r4c/TBO-17408.txt: n=1 x0.998, n=2 x1.183, n=3 x1.335,
+n=4 x1.015, n=5 x1.316).
+
+n=1 is also the only width where the int-dot path was observed to change a sampled token. In the rank-7
+serve A/B (r7/FP4/AB.json, julianmb ROCmFP4-FAST, 64 rounds) the MMVQ arm returned predicted_n=1 with
+text_len=0 on prompt cell 3 in BOTH replicates of the plain line, while the f32 arm produced 72 tokens and
+finish_reason=stop on the same prompt and the same seed, twice. Those two rounds are the only empty rounds
+in the whole A/B. Presence penalty is 0 on that endpoint, so this is not the F-154 harness class.
+
+test-backend-ops passes the type (13 MUL_MAT cases, 0 FAIL, MUL_MAT_ID OK), so the divergence sits inside the
+op's NMSE gate and is not a correctness bug by that test's standard. A width that buys nothing measured is
+still not worth a token-0 flip, so the gate now excludes n=1 as well as the wide end.
+
+The drafted win is unaffected: DFlash2 n-max 2 verifies at n=3, and the A/B measured 7.508 -> 9.506 t/s,
+cell-wise +1.9158 [+1.6511, +2.1805], 8/8 cells positive, F-141 GREEN 0/8 on every slot, rolled/40 32 -> 36.
+
+Re-take with this gate is the next step and the adoption ruling waits for it.
+
+Report: board/programs/local-inference/lanes/2026-09-02-lane-209-kernel-attacks-REPORT.md
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index b6d0ceadc..ab4175eb7 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -10097,9 +10097,14 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
+         if (src0_type == GGML_TYPE_Q4_K && n >= 5) {
+             return false;
+         }
+-        // arifi lane-209 (same box, test-backend-ops 17408x5120, r4b/TBO-17408.txt): the rocmfp4_fast q8_1 MMVQ
+-        // port beats the f32 shader at n=2..5 (x1.21 / x1.36 / x1.03 / x1.33) and loses at n=8 (x0.80); n=1 is a tie.
+-        if (src0_type == GGML_TYPE_Q4_0_ROCMFP4_FAST && n > 5) {
++        // arifi lane-209 (same box, test-backend-ops 17408x5120, r4c/TBO-17408.txt): the rocmfp4_fast q8_1 MMVQ
++        // port beats the f32 shader at n=2..5 (x1.18 / x1.34 / x1.02 / x1.32) and loses above it; n=1 is a TIE
++        // (x0.998). n=1 is also the only width where the int-dot path was observed to change a sampled token:
++        // the lane-209 rank-7 serve A/B (r7/FP4/AB.json) returned predicted_n=1 / text_len=0 on prompt cell 3 in
++        // BOTH replicates of the plain arm, where the f32 arm produced 72 tokens on the same prompt and seed.
++        // test-backend-ops passes the type (13 cases, 0 FAIL) so the divergence is inside the op's NMSE gate -
++        // but a width that buys nothing measured is not worth a token-0 flip, so MMVQ is kept to n=2..5 only.
++        if (src0_type == GGML_TYPE_Q4_0_ROCMFP4_FAST && (n < 2 || n > 5)) {
+             return false;
+         }
+     }

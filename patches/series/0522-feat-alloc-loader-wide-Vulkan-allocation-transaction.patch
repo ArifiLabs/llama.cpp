@@ -1,0 +1,955 @@
+From f91efd30bd5fc32b5f7185774eb6092c9cae807f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 01:24:19 -0400
+Subject: [PATCH] feat(alloc): loader-wide Vulkan allocation transaction (R46b
+ B7b)
+
+Gather every buffer-type/context group in llama_model::load_tensors before the
+first driver allocation, reserve the whole set atomically, roll back on
+failure. Independent review PASS. HQ load cells: 27B Q4_K_XL loads (rc 0);
+84 GB model refused with 'cannot place all' before any allocation (rc 1).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ ggml/include/ggml-alloc.h |  47 +++++
+ ggml/src/ggml-alloc.c     | 378 ++++++++++++++++++++++++++++++++++----
+ src/llama-model.cpp       |  78 ++++++--
+ tests/test-alloc.cpp      | 290 +++++++++++++++++++++++++++++
+ 4 files changed, 737 insertions(+), 56 deletions(-)
+
+diff --git a/ggml/include/ggml-alloc.h b/ggml/include/ggml-alloc.h
+index a7926a21a..a0c4c3db3 100644
+--- a/ggml/include/ggml-alloc.h
++++ b/ggml/include/ggml-alloc.h
+@@ -81,6 +81,53 @@ GGML_API size_t                       ggml_backend_alloc_ctx_tensors_from_buft_s
+ GGML_API struct ggml_backend_buffer * ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft);
+ GGML_API struct ggml_backend_buffer * ggml_backend_alloc_ctx_tensors(struct ggml_context * ctx, ggml_backend_t backend);
+ 
++// R46b B7b — loader-wide allocation transaction across several (context, buffer type) groups.
++//
++// ggml_backend_alloc_ctx_tensors_from_buft() is a transaction over ONE group: it decides the whole
++// set of buffers for one (ctx, buft) pair before allocating any of them. A model load issues many
++// such calls, and each completed call has already allocated before the next group's sizes are even
++// known. This object is the owner that spans them:
++//
++//   init()   -> add(ctx, buft) for every group the load intends to allocate   (census, no allocation)
++//   commit()                                                                  (reserve, no allocation)
++//   alloc(ctx, buft) per group                                                (consume reservations)
++//   free()                                                                    (release what was not consumed)
++//
++// commit() opens one backend batch plan per buffer type, covering every group of that buffer type
++// concatenated in add() order. If ANY buffer type cannot place its whole share, commit() releases
++// every plan it opened and returns false, so the load fails before the first plan-owned driver
++// allocation - no earlier group has been placed. Buffer types that do not implement planning answer
++// UNSUPPORTED and keep their current unplanned behaviour exactly, which is what leaves CPU and every
++// non-planning backend in a mixed-backend load semantically unchanged.
++//
++// free() must be called on every path, including exceptions in the caller's pass 2; it releases the
++// reservations of every group that was never consumed, exactly once. Buffers already returned by
++// alloc() are owned by the caller and are not touched.
++//
++// Group ownership states: censused (after add), reserved (after commit), consumed (after a
++// successful alloc), released (after free). A group's reservation is charged exactly once by
++// commit() and discharged exactly once - either by alloc() adopting it into a buffer, or by free().
++//
++// SCOPE: this is the model TENSOR load boundary. KV cache and compute buffers are allocated later,
++// during context construction, and are not part of this transaction.
++struct ggml_backend_alloc_plan;
++typedef struct ggml_backend_alloc_plan * ggml_backend_alloc_plan_t;
++
++// returns NULL on allocation failure
++GGML_API ggml_backend_alloc_plan_t ggml_backend_alloc_plan_init(void);
++// census one group. Returns true if the group joined the transaction. False means it did not (a
++// buffer type that cannot be planned by this path, or a context with nothing left to allocate) or
++// that the transaction failed; either way ggml_backend_alloc_plan_alloc() still handles the group.
++GGML_API bool                         ggml_backend_alloc_plan_add(ggml_backend_alloc_plan_t plan, struct ggml_context * ctx, ggml_backend_buffer_type_t buft);
++// decide and reserve every censused group atomically. False = the load must not start.
++GGML_API bool                         ggml_backend_alloc_plan_commit(ggml_backend_alloc_plan_t plan);
++// allocate one group, consuming its reservation. Groups that never joined the transaction fall
++// through to ggml_backend_alloc_ctx_tensors_from_buft(). NULL on failure, exactly as that function.
++GGML_API struct ggml_backend_buffer * ggml_backend_alloc_plan_alloc(ggml_backend_alloc_plan_t plan, struct ggml_context * ctx, ggml_backend_buffer_type_t buft);
++// release every unconsumed reservation and destroy the transaction. Safe on NULL and on a
++// transaction that was never committed.
++GGML_API void                         ggml_backend_alloc_plan_free(ggml_backend_alloc_plan_t plan);
++
+ #ifdef  __cplusplus
+ }
+ #endif
+diff --git a/ggml/src/ggml-alloc.c b/ggml/src/ggml-alloc.c
+index ea8c7afe3..4aacb84fe 100644
+--- a/ggml/src/ggml-alloc.c
++++ b/ggml/src/ggml-alloc.c
+@@ -6,6 +6,7 @@
+ #include <assert.h>
+ #include <limits.h>
+ #include <stdarg.h>
++#include <stdint.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -1178,22 +1179,25 @@ static bool alloc_tensor_range(struct ggml_context * ctx,
+     return true;
+ }
+ 
+-static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
+-        struct ggml_context * ctx, ggml_backend_buffer_type_t buft, size_t * nbytes_total, bool no_alloc) {
++// R46b B7b pass 1: decide the COMPLETE set of buffers before allocating any of them. The split
++// arithmetic and the *nbytes_total accumulation are byte-identical to the original single-pass
++// version; only the allocation moved out of the loop.
++//
++// R46b B7b loader: lifted out of the impl so the loader-wide transaction can census a group without
++// allocating it, and can re-census the same group at allocation time to check nothing moved.
++// Returns false only on allocation failure of the range array; an empty context is `true` with
++// *out_n_ranges == 0.
++static bool ggml_backend_alloc_ctx_ranges(
++        struct ggml_context * ctx, ggml_backend_buffer_type_t buft,
++        struct alloc_range ** out_ranges, size_t * out_n_ranges, size_t * nbytes_total) {
+     GGML_ASSERT(ggml_get_no_alloc(ctx) == true);
+ 
+     size_t alignment = ggml_backend_buft_get_alignment(buft);
+     size_t max_size = ggml_backend_buft_get_max_size(buft);
+ 
+-    ggml_backend_buffer_t * buffers = NULL;
+-    size_t n_buffers = 0;
+-    *nbytes_total = 0;
+-
+-    // R46b B7b pass 1: decide the COMPLETE set of buffers before allocating any of them. The split
+-    // arithmetic and the *nbytes_total accumulation are byte-identical to the previous single-pass
+-    // version; only the allocation moved out of the loop.
+     struct alloc_range * ranges = NULL;
+     size_t n_ranges = 0;
++    *nbytes_total = 0;
+ 
+     size_t cur_buf_size = 0;
+     struct ggml_tensor * first = ggml_get_first_tensor(ctx);
+@@ -1207,7 +1211,7 @@ static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
+             struct alloc_range * grown = realloc(ranges, sizeof(struct alloc_range) * (n_ranges + 1));
+             if (grown == NULL) {
+                 free(ranges);
+-                return NULL;
++                return false;
+             }
+             ranges = grown;
+             ranges[n_ranges].first = first;
+@@ -1237,6 +1241,61 @@ static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
+         *nbytes_total += cur_buf_size;
+     }
+ 
++    *out_ranges   = ranges;
++    *out_n_ranges = n_ranges;
++    return true;
++}
++
++// R46b B7b loader: pass 2 for one group, lifted out of the impl so both the single-group entry point
++// and the loader-wide transaction build their buffers through exactly one code path.
++// `plan_base` maps entry `i` of THIS group to entry `plan_base + i` of `plan`, which is what lets one
++// buffer type's plan cover several contexts. Without it the second context of a buffer type would
++// consume the first context's reservations.
++static ggml_backend_buffer_t ggml_backend_alloc_ctx_ranges_alloc(
++        struct ggml_context * ctx, ggml_backend_buffer_type_t buft,
++        const struct alloc_range * ranges, size_t n_ranges,
++        ggml_backend_buffer_type_plan_t plan, size_t plan_base) {
++    ggml_backend_buffer_t * buffers = NULL;
++    size_t n_buffers = 0;
++
++    for (size_t i = 0; i < n_ranges; i++) {
++        // alloc_tensor_range frees the buffers it already built on failure. Entries it had already
++        // consumed were adopted into those buffers and are released by freeing them; entries never
++        // consumed stay owned by the plan and are released when the plan is freed. Each reservation
++        // is therefore discharged exactly once on every path.
++        if (!alloc_tensor_range(ctx, ranges[i].first, ranges[i].last, buft, ranges[i].size,
++                                plan, plan_base + i, &buffers, &n_buffers)) {
++            return NULL;
++        }
++    }
++
++    if (n_buffers == 0) {
++#ifndef NDEBUG
++        GGML_LOG_DEBUG("%s: all tensors in the context are already allocated\n", __func__);
++#endif
++        GGML_ASSERT(!buffers);
++        return NULL;
++    }
++
++    ggml_backend_buffer_t buffer;
++    if (n_buffers == 1) {
++        buffer = buffers[0];
++    } else {
++        buffer = ggml_backend_multi_buffer_alloc_buffer(buffers, n_buffers);
++    }
++    free(buffers);
++    return buffer;
++}
++
++static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
++        struct ggml_context * ctx, ggml_backend_buffer_type_t buft, size_t * nbytes_total, bool no_alloc) {
++    struct alloc_range * ranges = NULL;
++    size_t n_ranges = 0;
++
++    if (!ggml_backend_alloc_ctx_ranges(ctx, buft, &ranges, &n_ranges, nbytes_total)) {
++        return NULL;
++    }
++
+     if (no_alloc) {
+         free(ranges);
+         return NULL;
+@@ -1283,37 +1342,12 @@ static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
+         }
+     }
+ 
+-    for (size_t i = 0; i < n_ranges; i++) {
+-        // alloc_tensor_range frees the buffers it already built on failure; plan_free then returns
+-        // every reservation this plan still owns and never charged to a live buffer.
+-        if (!alloc_tensor_range(ctx, ranges[i].first, ranges[i].last, buft, ranges[i].size,
+-                                plan, i, &buffers, &n_buffers)) {
+-            ggml_backend_buft_plan_free(buft, plan);
+-            free(ranges);
+-            return NULL;
+-        }
+-    }
++    ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_ranges_alloc(ctx, buft, ranges, n_ranges, plan, /*plan_base =*/ 0);
+     free(ranges);
+-    // Every entry was consumed on this path, so this releases nothing and only frees the plan.
++    // On the success path every entry was consumed, so this releases nothing and only frees the
++    // plan. On failure it returns every reservation the plan still owns and never charged to a live
++    // buffer.
+     ggml_backend_buft_plan_free(buft, plan);
+-
+-    if (n_buffers == 0) {
+-#ifndef NDEBUG
+-        GGML_LOG_DEBUG("%s: all tensors in the context are already allocated\n", __func__);
+-#endif
+-        GGML_ASSERT(!buffers);
+-        return NULL;
+-    }
+-
+-    ggml_backend_buffer_t buffer;
+-    if (n_buffers == 1) {
+-        buffer = buffers[0];
+-    } else {
+-        buffer = ggml_backend_multi_buffer_alloc_buffer(buffers, n_buffers);
+-    }
+-    if (buffers) {
+-        free(buffers); // can be NULL if context is empty or no_alloc
+-    }
+     return buffer;
+ }
+ 
+@@ -1335,3 +1369,269 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
+ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors(struct ggml_context * ctx, ggml_backend_t backend) {
+     return ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_get_default_buffer_type(backend));
+ }
++
++// ---------------------------------------------------------------------------------------------
++// R46b B7b — loader-wide allocation transaction. See ggml-alloc.h for the contract.
++// ---------------------------------------------------------------------------------------------
++
++// Ownership state of one (ctx, buft) group inside the transaction. Every transition below is a
++// plain field assignment that happens AFTER the operation it records succeeded, so an allocation
++// failure or a caller exception can never leave a group claiming an ownership it does not hold.
++enum alloc_plan_group_state {
++    ALLOC_PLAN_GROUP_CENSUSED = 0, // sizes known, nothing reserved
++    ALLOC_PLAN_GROUP_RESERVED = 1, // this group's slice of its buffer type's plan is reserved
++    ALLOC_PLAN_GROUP_CONSUMED = 2, // every entry was adopted into a buffer owned by the caller
++};
++
++struct alloc_plan_group {
++    struct ggml_context *       ctx;
++    ggml_backend_buffer_type_t  buft;
++    struct alloc_range *        ranges;
++    size_t                      n_ranges;
++    size_t                      nbytes_total;
++    size_t                      buft_index;  // index into ggml_backend_alloc_plan::bufts
++    size_t                      plan_base;   // this group's first entry in that buffer type's plan
++    enum alloc_plan_group_state state;
++};
++
++// One buffer type's share of the transaction: every group of that buffer type, concatenated.
++struct alloc_plan_buft {
++    ggml_backend_buffer_type_t      buft;
++    ggml_backend_buffer_type_plan_t plan;      // NULL when this buffer type is not planned
++    size_t                          n_entries;
++    size_t                          nbytes_total;
++};
++
++struct ggml_backend_alloc_plan {
++    struct alloc_plan_group * groups;
++    size_t                    n_groups;
++    struct alloc_plan_buft *  bufts;
++    size_t                    n_bufts;
++    bool                      committed;
++    bool                      failed;   // a census or arithmetic failure; commit() must refuse
++};
++
++ggml_backend_alloc_plan_t ggml_backend_alloc_plan_init(void) {
++    struct ggml_backend_alloc_plan * plan = calloc(1, sizeof(struct ggml_backend_alloc_plan));
++    return plan;
++}
++
++// buffer types are identified by pointer. Two different buffer types on the same device stay
++// separate plans on purpose: each reserves against that device's ledger in turn, so the second sees
++// the first's reservations and cannot over-admit. Device identity, memory type index and heap index
++// stay entirely inside the backend - this layer never interprets any of them.
++static size_t ggml_backend_alloc_plan_buft_slot(struct ggml_backend_alloc_plan * plan, ggml_backend_buffer_type_t buft) {
++    for (size_t i = 0; i < plan->n_bufts; i++) {
++        if (plan->bufts[i].buft == buft) {
++            return i;
++        }
++    }
++    struct alloc_plan_buft * grown = realloc(plan->bufts, sizeof(struct alloc_plan_buft) * (plan->n_bufts + 1));
++    if (grown == NULL) {
++        return SIZE_MAX;
++    }
++    plan->bufts = grown;
++    plan->bufts[plan->n_bufts].buft         = buft;
++    plan->bufts[plan->n_bufts].plan         = NULL;
++    plan->bufts[plan->n_bufts].n_entries    = 0;
++    plan->bufts[plan->n_bufts].nbytes_total = 0;
++    return plan->n_bufts++;
++}
++
++bool ggml_backend_alloc_plan_add(ggml_backend_alloc_plan_t plan, struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
++    if (plan == NULL || plan->committed) {
++        return false;
++    }
++    // a meta buffer type takes a different allocation path entirely and is never planned here
++    if (ggml_backend_buft_is_meta(buft)) {
++        return false;
++    }
++
++    struct alloc_range * ranges = NULL;
++    size_t n_ranges = 0;
++    size_t nbytes_total = 0;
++    if (!ggml_backend_alloc_ctx_ranges(ctx, buft, &ranges, &n_ranges, &nbytes_total)) {
++        plan->failed = true;
++        return false;
++    }
++    if (n_ranges == 0) {
++        // nothing left to allocate in this context: no reservation to make, and the allocation path
++        // must keep returning NULL for it exactly as before
++        free(ranges);
++        return false;
++    }
++
++    const size_t slot = ggml_backend_alloc_plan_buft_slot(plan, buft);
++    if (slot == SIZE_MAX) {
++        free(ranges);
++        plan->failed = true;
++        return false;
++    }
++
++    struct alloc_plan_group * grown = realloc(plan->groups, sizeof(struct alloc_plan_group) * (plan->n_groups + 1));
++    if (grown == NULL) {
++        free(ranges);
++        plan->failed = true;
++        return false;
++    }
++    plan->groups = grown;
++
++    struct alloc_plan_group * g = &plan->groups[plan->n_groups];
++    g->ctx          = ctx;
++    g->buft         = buft;
++    g->ranges       = ranges;
++    g->n_ranges     = n_ranges;
++    g->nbytes_total = nbytes_total;
++    g->buft_index   = slot;
++    g->plan_base    = 0;  // assigned by commit()
++    g->state        = ALLOC_PLAN_GROUP_CENSUSED;
++    plan->n_groups++;
++    return true;
++}
++
++// release every plan opened so far. Called on the commit failure path and by free().
++static void ggml_backend_alloc_plan_release_plans(struct ggml_backend_alloc_plan * plan) {
++    for (size_t i = 0; i < plan->n_bufts; i++) {
++        if (plan->bufts[i].plan != NULL) {
++            ggml_backend_buft_plan_free(plan->bufts[i].buft, plan->bufts[i].plan);
++            plan->bufts[i].plan = NULL;  // never freed twice
++        }
++    }
++}
++
++bool ggml_backend_alloc_plan_commit(ggml_backend_alloc_plan_t plan) {
++    if (plan == NULL || plan->failed || plan->committed) {
++        return false;
++    }
++    plan->committed = true;
++
++    // lay every group out inside its buffer type's plan, in add() order
++    for (size_t i = 0; i < plan->n_groups; i++) {
++        struct alloc_plan_group * g = &plan->groups[i];
++        struct alloc_plan_buft  * b = &plan->bufts[g->buft_index];
++        if (g->n_ranges > SIZE_MAX - b->n_entries || g->nbytes_total > SIZE_MAX - b->nbytes_total) {
++            // the request overflows what can even be counted; refuse rather than wrap into a small
++            // total that a backend would happily admit
++            GGML_LOG_ERROR("%s: allocation request for %s overflows size_t; refusing before any allocation\n",
++                           __func__, ggml_backend_buft_name(g->buft));
++            return false;
++        }
++        g->plan_base    = b->n_entries;
++        b->n_entries   += g->n_ranges;
++        b->nbytes_total += g->nbytes_total;
++    }
++
++    for (size_t i = 0; i < plan->n_bufts; i++) {
++        struct alloc_plan_buft * b = &plan->bufts[i];
++        if (b->n_entries == 0) {
++            continue;
++        }
++
++        size_t * sizes = malloc(sizeof(size_t) * b->n_entries);
++        if (sizes == NULL) {
++            ggml_backend_alloc_plan_release_plans(plan);
++            return false;
++        }
++        size_t n = 0;
++        for (size_t j = 0; j < plan->n_groups; j++) {
++            const struct alloc_plan_group * g = &plan->groups[j];
++            if (g->buft_index != i) {
++                continue;
++            }
++            GGML_ASSERT(g->plan_base == n);
++            for (size_t k = 0; k < g->n_ranges; k++) {
++                sizes[n++] = g->ranges[k].size;
++            }
++        }
++        GGML_ASSERT(n == b->n_entries);
++
++        enum ggml_backend_plan_status status = GGML_BACKEND_PLAN_UNSUPPORTED;
++        b->plan = ggml_backend_buft_plan_begin(b->buft, sizes, b->n_entries, &status);
++        free(sizes);
++
++        if (status == GGML_BACKEND_PLAN_INFEASIBLE) {
++            GGML_LOG_ERROR("%s: %s cannot place all %zu buffers this load needs (%zu bytes total); "
++                           "failing the whole load before any allocation\n",
++                           __func__, ggml_backend_buft_name(b->buft), b->n_entries, b->nbytes_total);
++            ggml_backend_alloc_plan_release_plans(plan);
++            return false;
++        }
++        if (status == GGML_BACKEND_PLAN_INDETERMINATE && b->n_entries > 1) {
++            GGML_LOG_ERROR("%s: %s could not decide placement for all %zu buffers this load needs "
++                           "(%zu bytes total); refusing the whole load rather than placing part of "
++                           "the set\n",
++                           __func__, ggml_backend_buft_name(b->buft), b->n_entries, b->nbytes_total);
++            ggml_backend_alloc_plan_release_plans(plan);
++            return false;
++        }
++        // UNSUPPORTED, and INDETERMINATE for a lone buffer, leave b->plan NULL: those groups
++        // allocate unplanned, exactly as they do today.
++    }
++
++    for (size_t i = 0; i < plan->n_groups; i++) {
++        plan->groups[i].state = ALLOC_PLAN_GROUP_RESERVED;
++    }
++    return true;
++}
++
++ggml_backend_buffer_t ggml_backend_alloc_plan_alloc(ggml_backend_alloc_plan_t plan, struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
++    struct alloc_plan_group * g = NULL;
++    if (plan != NULL && plan->committed) {
++        for (size_t i = 0; i < plan->n_groups; i++) {
++            if (plan->groups[i].ctx == ctx && plan->groups[i].buft == buft &&
++                plan->groups[i].state == ALLOC_PLAN_GROUP_RESERVED) {
++                g = &plan->groups[i];
++                break;
++            }
++        }
++    }
++    if (g == NULL) {
++        // never joined the transaction (meta buffer type, empty context, or a caller that did not
++        // census this group): unchanged behaviour
++        return ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
++    }
++
++    // the reservation is only valid if this group still intends to allocate exactly what was
++    // censused. Re-census and compare rather than assume that allocating an earlier group left this
++    // one untouched.
++    struct alloc_range * now = NULL;
++    size_t n_now = 0;
++    size_t nbytes_now = 0;
++    if (!ggml_backend_alloc_ctx_ranges(ctx, buft, &now, &n_now, &nbytes_now)) {
++        return NULL;
++    }
++    bool same = (n_now == g->n_ranges) && (nbytes_now == g->nbytes_total);
++    for (size_t i = 0; same && i < n_now; i++) {
++        same = now[i].size == g->ranges[i].size && now[i].first == g->ranges[i].first && now[i].last == g->ranges[i].last;
++    }
++    free(now);
++    if (!same) {
++        GGML_LOG_ERROR("%s: %s allocation set changed after it was reserved; refusing to consume a "
++                       "reservation that no longer describes it\n", __func__, ggml_backend_buft_name(buft));
++        return NULL;
++    }
++
++    ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_ranges_alloc(
++        ctx, buft, g->ranges, g->n_ranges, plan->bufts[g->buft_index].plan, g->plan_base);
++    if (buffer != NULL) {
++        g->state = ALLOC_PLAN_GROUP_CONSUMED;
++    }
++    // on failure the group stays RESERVED: whatever it did not consume is still owned by the plan
++    // and is released by ggml_backend_alloc_plan_free()
++    return buffer;
++}
++
++void ggml_backend_alloc_plan_free(ggml_backend_alloc_plan_t plan) {
++    if (plan == NULL) {
++        return;
++    }
++    // releases every reservation not adopted into a buffer, once per buffer type. Buffers already
++    // returned by alloc() belong to the caller and keep exactly their own charges.
++    ggml_backend_alloc_plan_release_plans(plan);
++    for (size_t i = 0; i < plan->n_groups; i++) {
++        free(plan->groups[i].ranges);
++    }
++    free(plan->groups);
++    free(plan->bufts);
++    free(plan);
++}
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index c3b534078..f036bee8e 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1745,6 +1745,63 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+     const size_t n_max_backend_buffer = ml.ctx_map.size() * ml.files.size();
+     pimpl->ctxs_bufs.reserve(n_max_backend_buffer);
+ 
++    // R46b B7b — loader-wide allocation transaction.
++    //
++    // Without it this loop allocates one (buffer type, context) group at a time, so a load that runs
++    // out of device memory on the third group has already placed the first two. The transaction
++    // censuses every group that takes the real-allocation path below, reserves all of them
++    // atomically per buffer type, and only then lets the loop consume those reservations. If any
++    // group cannot be placed, commit() fails before the first plan-owned driver allocation.
++    //
++    // Held by unique_ptr on purpose: this loop throws on several paths, and an escape between
++    // commit() and the last consume must still release every unconsumed reservation - otherwise the
++    // device ledger would stay charged for bytes nothing holds and refuse the NEXT load.
++    struct llama_alloc_plan_deleter {
++        void operator()(ggml_backend_alloc_plan_t p) const { ggml_backend_alloc_plan_free(p); }
++    };
++    std::unique_ptr<ggml_backend_alloc_plan, llama_alloc_plan_deleter> load_plan(ggml_backend_alloc_plan_init());
++    if (!load_plan) {
++        throw std::runtime_error(format("%s: failed to create the model allocation plan", __func__));
++    }
++
++    // the two predicates the loop below decides each group with, shared so the census pass and the
++    // allocation pass can never disagree about which groups are in the transaction
++    auto resolve_dev = [&](ggml_backend_buffer_type_t buft) {
++        ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
++        if (!dev) {
++            // FIXME: workaround for CPU backend buft having a NULL device
++            dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
++            if (!dev) {
++                throw std::runtime_error(format("%s: no CPU backend found", __func__));
++            }
++        }
++        return dev;
++    };
++    auto uses_host_ptr_path = [&](ggml_backend_buffer_type_t buft, bool lazy, ggml_backend_dev_t dev) {
++        ggml_backend_dev_props props;
++        ggml_backend_dev_get_props(dev, &props);
++        const bool is_default_buft = buft == ggml_backend_dev_buffer_type(dev);
++        // a lazy context is mapped whatever the load mode, but the memory-fit pass maps nothing
++        const bool is_lazy_mapped = lazy && !ml.no_alloc;
++        return (ml.use_mmap || is_lazy_mapped) && use_mmap_buffer && props.caps.buffer_from_host_ptr && is_default_buft;
++    };
++
++    // census pass: no allocation happens here
++    for (auto & [ctx_key, ctx_ptr] : ml.ctx_map) {
++        ggml_context * ctx = ctx_ptr.get();
++        if (ggml_get_first_tensor(ctx) == nullptr || ml.no_alloc) {
++            continue;
++        }
++        if (uses_host_ptr_path(ctx_key.buft, ctx_key.lazy, resolve_dev(ctx_key.buft))) {
++            continue;  // mapped from a host pointer, never allocated by the backend
++        }
++        ggml_backend_alloc_plan_add(load_plan.get(), ctx, ctx_key.buft);
++    }
++    if (!ggml_backend_alloc_plan_commit(load_plan.get())) {
++        throw std::runtime_error(format("%s: this model's weights cannot all be placed; "
++                                        "failing before any buffer is allocated", __func__));
++    }
++
+     for (auto & [ctx_key, ctx_ptr] : ml.ctx_map) {
+         ggml_backend_buffer_type_t buft = ctx_key.buft;
+         ggml_context * ctx = ctx_ptr.get();
+@@ -1758,25 +1815,11 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+         buf_map.reserve(n_max_backend_buffer);
+ 
+         // check if it is possible to use buffer_from_host_ptr with this buffer type
+-        ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
+-        if (!dev) {
+-            // FIXME: workaround for CPU backend buft having a NULL device
+-            dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+-            if (!dev) {
+-                throw std::runtime_error(format("%s: no CPU backend found", __func__));
+-            }
+-        }
+-        ggml_backend_dev_props props;
+-        ggml_backend_dev_get_props(dev, &props);
+-        bool buffer_from_host_ptr_supported = props.caps.buffer_from_host_ptr;
+-        bool is_default_buft = buft == ggml_backend_dev_buffer_type(dev);
++        ggml_backend_dev_t dev = resolve_dev(buft);
+ 
+         std::vector<ggml_backend_buffer_ptr> bufs;
+ 
+-        // a lazy context is mapped whatever the load mode, but the memory-fit pass maps nothing
+-        const bool is_lazy_mapped = ctx_key.lazy && !ml.no_alloc;
+-
+-        if ((ml.use_mmap || is_lazy_mapped) && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
++        if (uses_host_ptr_path(buft, ctx_key.lazy, dev)) {
+             GGML_ASSERT(!ml.no_alloc);
+             for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
+                 // only the mmap region containing the tensors in the model is mapped to the backend buffer
+@@ -1805,7 +1848,8 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+                     t->buffer = buf; // set dummy buffer for weights so that the backend scheduler won't try to allocate them
+                 }
+             } else {
+-                buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
++                // real buffer: consumes this group's slice of the reservation commit() already made
++                buf = ggml_backend_alloc_plan_alloc(load_plan.get(), ctx, buft);
+             }
+             if (buf == nullptr) {
+                 throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));
+diff --git a/tests/test-alloc.cpp b/tests/test-alloc.cpp
+index 9e17c7177..684acbf28 100644
+--- a/tests/test-alloc.cpp
++++ b/tests/test-alloc.cpp
+@@ -25,6 +25,17 @@ struct dummy_backend_context {
+     size_t                   plan_free_calls  = 0;
+     size_t                   plan_n           = 0;   // buffers in the last plan_begin
+ 
++    // R46b B7b loader: a capacity ledger, so a transaction that spans several groups of this buffer
++    // type can be observed admitting or refusing. `budget` is what this "device" can hold; `reserved`
++    // is what OPEN plans hold and have not yet handed to a buffer. Live buffer bytes come from
++    // allocated_total(), so a freed buffer returns capacity without any bookkeeping here.
++    size_t              budget          = SIZE_MAX;   // default: unlimited, every older test unchanged
++    size_t              reserved        = 0;
++    size_t              released        = 0;          // bytes plan_free gave back (never consumed)
++    size_t              fail_alloc_at   = SIZE_MAX;   // plan_alloc_buffer call index that returns NULL
++    size_t              plan_alloc_call = 0;
++    std::vector<size_t> plan_alloc_order;             // plan entry index of each plan_alloc_buffer call
++
+     ggml_backend_buffer_i              buffer_interface;
+     ggml_backend_device                device;
+     ggml_backend                       backend;
+@@ -72,6 +83,8 @@ static bool dummy_backend_buffer_type_is_host(ggml_backend_buffer_type_t) {
+ // CALLER's contract in ggml_backend_alloc_ctx_tensors_from_buft() can be tested.
+ struct ggml_backend_buffer_type_plan {
+     std::vector<size_t> sizes;
++    std::vector<bool>   consumed;   // R46b B7b loader: exactly-once adoption is asserted, not assumed
++    size_t              reserved = 0;
+ };
+ 
+ static ggml_backend_buffer_type_plan_t dummy_backend_buffer_type_plan_begin(
+@@ -83,20 +96,59 @@ static ggml_backend_buffer_type_plan_t dummy_backend_buffer_type_plan_begin(
+     if (ctx->plan_status != GGML_BACKEND_PLAN_FEASIBLE) {
+         return nullptr;
+     }
++
++    // R46b B7b loader: decide the WHOLE batch against this buffer type's remaining capacity, which
++    // already counts every open plan's reservation. Overflow is refused, never wrapped.
++    size_t need = 0;
++    for (size_t i = 0; i < n; i++) {
++        if (sizes[i] > SIZE_MAX - need) {
++            *status = GGML_BACKEND_PLAN_INFEASIBLE;
++            return nullptr;
++        }
++        need += sizes[i];
++    }
++    const size_t in_use = ctx->reserved + ctx->allocated_total();
++    if (need > ctx->budget || in_use > ctx->budget - need) {
++        *status = GGML_BACKEND_PLAN_INFEASIBLE;
++        return nullptr;
++    }
++    ctx->reserved += need;
++
+     ggml_backend_buffer_type_plan_t plan = new ggml_backend_buffer_type_plan;
+     plan->sizes.assign(sizes, sizes + n);
++    plan->consumed.assign(n, false);
++    plan->reserved = need;
+     return plan;
+ }
+ 
+ static ggml_backend_buffer_t dummy_backend_buffer_type_plan_alloc_buffer(
+         ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan, size_t i) {
++    dummy_backend_context * ctx = (dummy_backend_context *) buft->context;
+     GGML_ASSERT(i < plan->sizes.size());
++    GGML_ASSERT(!plan->consumed[i]);   // an entry must never be adopted twice
++    ctx->plan_alloc_order.push_back(i);
++    if (ctx->plan_alloc_call++ == ctx->fail_alloc_at) {
++        return nullptr;   // the entry stays unconsumed and must be released by plan_free
++    }
++    // hand the reservation to the buffer: reserved drops, allocated_total() rises by the same bytes
++    plan->consumed[i] = true;
++    ctx->reserved    -= plan->sizes[i];
++    plan->reserved   -= plan->sizes[i];
+     return dummy_backend_buffer_type_alloc_buffer(buft, plan->sizes[i]);
+ }
+ 
+ static void dummy_backend_buffer_type_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan) {
+     dummy_backend_context * ctx = (dummy_backend_context *) buft->context;
+     ctx->plan_free_calls++;
++    // release exactly what was never consumed
++    for (size_t i = 0; i < plan->sizes.size(); i++) {
++        if (!plan->consumed[i]) {
++            ctx->reserved -= plan->sizes[i];
++            ctx->released += plan->sizes[i];
++            plan->reserved -= plan->sizes[i];
++        }
++    }
++    GGML_ASSERT(plan->reserved == 0);
+     delete plan;
+ }
+ 
+@@ -751,6 +803,238 @@ static void test_plan_indeterminate_never_partially_allocates() {
+     }
+ }
+ 
++//
++// R46b B7b — the LOADER-WIDE transaction at its production boundary, the ggml-alloc API that
++// llama_model::load_tensors() calls: init / add per group / commit / alloc per group / free.
++//
++// The unit under test is a whole model load's worth of groups, not one group. Every case below asks
++// the same question in a different shape: can any driver memory be allocated for one group of a load
++// whose LATER groups cannot be placed, and is every reservation discharged exactly once.
++
++struct loader_plan_deleter {
++    void operator()(ggml_backend_alloc_plan_t p) const { ggml_backend_alloc_plan_free(p); }
++};
++using loader_plan_ptr = std::unique_ptr<ggml_backend_alloc_plan, loader_plan_deleter>;
++
++static void test_loader_transaction_refuses_before_any_allocation() {
++    const size_t chunk = 64;
++
++    // two buffer types in one load. A fits; B cannot place its three buffers. The whole load must be
++    // refused, and A - censused and planned FIRST - must not have allocated one byte.
++    dummy_backend a = dummy_backend_init(chunk);
++    dummy_backend b = dummy_backend_init(chunk);
++    plan_wire(a);
++    plan_wire(b);
++    a.context->budget = 10 * chunk;
++    b.context->budget = 2 * chunk;   // three buffers will not fit
++
++    ggml_context_ptr ctx_a = plan_make_ctx(3, chunk);
++    ggml_context_ptr ctx_b = plan_make_ctx(3, chunk);
++
++    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
++    GGML_ASSERT(plan);
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_a.get(), &a.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_b.get(), &b.buffer_type));
++
++    GGML_ASSERT(!ggml_backend_alloc_plan_commit(plan.get()));
++
++    GGML_ASSERT(a.context->alloc_calls == 0);          // the earlier group never touched the driver
++    GGML_ASSERT(b.context->alloc_calls == 0);
++    GGML_ASSERT(a.context->buffers.empty());
++    plan.reset();
++    GGML_ASSERT(a.context->reserved == 0);             // A's plan was opened and released
++    GGML_ASSERT(a.context->plan_free_calls == 1);
++    GGML_ASSERT(a.context->released == 3 * chunk);
++}
++
++static void test_loader_transaction_competing_and_isolated() {
++    const size_t chunk = 64;
++
++    // 1. two concurrent transactions against ONE buffer type must not over-admit
++    {
++        dummy_backend a = dummy_backend_init(chunk);
++        plan_wire(a);
++        a.context->budget = 5 * chunk;
++
++        ggml_context_ptr ctx1 = plan_make_ctx(3, chunk);
++        ggml_context_ptr ctx2 = plan_make_ctx(3, chunk);
++
++        loader_plan_ptr first(ggml_backend_alloc_plan_init());
++        GGML_ASSERT(ggml_backend_alloc_plan_add(first.get(), ctx1.get(), &a.buffer_type));
++        GGML_ASSERT(ggml_backend_alloc_plan_commit(first.get()));
++        GGML_ASSERT(a.context->reserved == 3 * chunk);
++
++        // 3 + 3 buffers do not fit in 5: the second load is refused against the first's reservation
++        loader_plan_ptr second(ggml_backend_alloc_plan_init());
++        GGML_ASSERT(ggml_backend_alloc_plan_add(second.get(), ctx2.get(), &a.buffer_type));
++        GGML_ASSERT(!ggml_backend_alloc_plan_commit(second.get()));
++        second.reset();
++
++        // the first transaction going away frees the capacity, and the same load now fits
++        first.reset();
++        GGML_ASSERT(a.context->reserved == 0);
++        loader_plan_ptr third(ggml_backend_alloc_plan_init());
++        GGML_ASSERT(ggml_backend_alloc_plan_add(third.get(), ctx2.get(), &a.buffer_type));
++        GGML_ASSERT(ggml_backend_alloc_plan_commit(third.get()));
++    }
++
++    // 2. two devices: a transaction spanning both keeps their capacity separate
++    {
++        dummy_backend a = dummy_backend_init(chunk);
++        dummy_backend b = dummy_backend_init(chunk);
++        plan_wire(a);
++        plan_wire(b);
++        a.context->budget = 2 * chunk;   // exactly its own share, nothing spare
++        b.context->budget = 2 * chunk;
++
++        ggml_context_ptr ctx_a = plan_make_ctx(2, chunk);
++        ggml_context_ptr ctx_b = plan_make_ctx(2, chunk);
++
++        loader_plan_ptr plan(ggml_backend_alloc_plan_init());
++        GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_a.get(), &a.buffer_type));
++        GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_b.get(), &b.buffer_type));
++        GGML_ASSERT(ggml_backend_alloc_plan_commit(plan.get()));
++
++        // neither device was charged the other's bytes
++        GGML_ASSERT(a.context->reserved == 2 * chunk);
++        GGML_ASSERT(b.context->reserved == 2 * chunk);
++        GGML_ASSERT(a.context->plan_begin_calls == 1 && a.context->plan_n == 2);
++        GGML_ASSERT(b.context->plan_begin_calls == 1 && b.context->plan_n == 2);
++    }
++}
++
++static void test_loader_transaction_two_contexts_one_buffer_type() {
++    const size_t chunk = 64;
++
++    // two contexts share one buffer type: ONE plan covers both, and the second context consumes its
++    // OWN entries (3,4,5) rather than re-consuming the first context's (0,1,2)
++    dummy_backend a = dummy_backend_init(chunk);
++    plan_wire(a);
++    a.context->budget = 6 * chunk;
++
++    ggml_context_ptr ctx1 = plan_make_ctx(3, chunk);
++    ggml_context_ptr ctx2 = plan_make_ctx(3, chunk);
++
++    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx1.get(), &a.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx2.get(), &a.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_commit(plan.get()));
++    GGML_ASSERT(a.context->plan_begin_calls == 1);   // one plan, not one per context
++    GGML_ASSERT(a.context->plan_n == 6);
++
++    ggml_backend_buffer_t b1 = ggml_backend_alloc_plan_alloc(plan.get(), ctx1.get(), &a.buffer_type);
++    ggml_backend_buffer_t b2 = ggml_backend_alloc_plan_alloc(plan.get(), ctx2.get(), &a.buffer_type);
++    GGML_ASSERT(b1 != nullptr && b2 != nullptr);
++    GGML_ASSERT(a.context->alloc_calls == 6);
++    GGML_ASSERT(a.context->reserved == 0);           // every entry adopted, nothing left reserved
++
++    const std::vector<size_t> expected = { 0, 1, 2, 3, 4, 5 };
++    GGML_ASSERT(a.context->plan_alloc_order == expected);
++
++    plan.reset();
++    GGML_ASSERT(a.context->plan_free_calls == 1);    // one plan freed once, not once per group
++    GGML_ASSERT(a.context->released == 0);           // nothing to release: all consumed
++
++    ggml_backend_buffer_free(b1);
++    ggml_backend_buffer_free(b2);
++    GGML_ASSERT(a.context->allocated_total() == 0);
++}
++
++static void test_loader_transaction_mid_load_failure_rolls_back() {
++    const size_t chunk = 64;
++
++    dummy_backend a = dummy_backend_init(chunk);
++    plan_wire(a);
++    a.context->budget        = 6 * chunk;
++    a.context->fail_alloc_at = 4;   // the 5th planned allocation fails: the second group, mid-group
++
++    ggml_context_ptr ctx1 = plan_make_ctx(3, chunk);
++    ggml_context_ptr ctx2 = plan_make_ctx(3, chunk);
++
++    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx1.get(), &a.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx2.get(), &a.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_commit(plan.get()));
++
++    ggml_backend_buffer_t b1 = ggml_backend_alloc_plan_alloc(plan.get(), ctx1.get(), &a.buffer_type);
++    GGML_ASSERT(b1 != nullptr);
++    ggml_backend_buffer_t b2 = ggml_backend_alloc_plan_alloc(plan.get(), ctx2.get(), &a.buffer_type);
++    GGML_ASSERT(b2 == nullptr);   // the failing group builds nothing
++
++    plan.reset();
++    // entry 3 was adopted then freed with its group's buffers; entries 4 and 5 were never consumed
++    // and came back through plan_free. Either way each is discharged exactly once.
++    GGML_ASSERT(a.context->reserved == 0);
++    GGML_ASSERT(a.context->released == 2 * chunk);
++    GGML_ASSERT(a.context->plan_free_calls == 1);
++
++    ggml_backend_buffer_free(b1);
++    GGML_ASSERT(a.context->allocated_total() == 0);
++}
++
++static void test_loader_transaction_mixed_backends() {
++    const size_t chunk = 64;
++
++    // one planning buffer type and one that does not implement planning, in the same load
++    dummy_backend planned   = dummy_backend_init(chunk);
++    dummy_backend unplanned = dummy_backend_init(chunk);
++    plan_wire(planned);
++    planned.context->budget = 3 * chunk;
++
++    ggml_context_ptr ctx_p = plan_make_ctx(3, chunk);
++    ggml_context_ptr ctx_u = plan_make_ctx(3, chunk);
++
++    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_p.get(), &planned.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_u.get(), &unplanned.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_commit(plan.get()));
++
++    GGML_ASSERT(unplanned.context->plan_begin_calls == 0);   // never asked to plan
++    GGML_ASSERT(unplanned.context->alloc_calls == 0);        // and nothing allocated by commit
++
++    ggml_backend_buffer_t bp = ggml_backend_alloc_plan_alloc(plan.get(), ctx_p.get(), &planned.buffer_type);
++    ggml_backend_buffer_t bu = ggml_backend_alloc_plan_alloc(plan.get(), ctx_u.get(), &unplanned.buffer_type);
++    GGML_ASSERT(bp != nullptr && bu != nullptr);
++    GGML_ASSERT(planned.context->alloc_calls == 3);
++    GGML_ASSERT(unplanned.context->alloc_calls == 3);        // allocates exactly as it always did
++    GGML_ASSERT(unplanned.context->plan_free_calls == 0);
++
++    // a group that never joined the transaction still allocates through the ordinary path
++    dummy_backend outside = dummy_backend_init(chunk);
++    ggml_context_ptr ctx_o = plan_make_ctx(2, chunk);
++    ggml_backend_buffer_t bo = ggml_backend_alloc_plan_alloc(plan.get(), ctx_o.get(), &outside.buffer_type);
++    GGML_ASSERT(bo != nullptr);
++    GGML_ASSERT(outside.context->alloc_calls == 2);
++
++    plan.reset();
++    ggml_backend_buffer_free(bp);
++    ggml_backend_buffer_free(bu);
++    ggml_backend_buffer_free(bo);
++}
++
++static void test_loader_transaction_overflow_is_refused() {
++    // three groups whose byte totals sum past SIZE_MAX. The transaction must refuse while counting,
++    // before any backend is asked to plan - a wrapped total would be a small number a backend would
++    // cheerfully admit.
++    const size_t huge = (size_t) 0x6000000000000000ULL;
++
++    dummy_backend a = dummy_backend_init(SIZE_MAX);
++    plan_wire(a);
++
++    ggml_context_ptr ctx1 = plan_make_ctx(1, huge);
++    ggml_context_ptr ctx2 = plan_make_ctx(1, huge);
++    ggml_context_ptr ctx3 = plan_make_ctx(1, huge);
++
++    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx1.get(), &a.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx2.get(), &a.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx3.get(), &a.buffer_type));
++
++    GGML_ASSERT(!ggml_backend_alloc_plan_commit(plan.get()));
++    GGML_ASSERT(a.context->plan_begin_calls == 0);
++    GGML_ASSERT(a.context->alloc_calls == 0);
++}
++
+ static void test_backend_graph_optimize(ggml_backend_t, ggml_cgraph * graph, ggml_backend_graph_optimize_params * params) {
+     GGML_ASSERT(graph->n_nodes == 3);
+     params->add_alloc_dep(params->user_data, graph->nodes[0], graph->nodes[2]);
+@@ -809,5 +1093,11 @@ int main() {
+     run("test_reallocation", test_reallocation);
+     run("test_graph_optimize_alloc_dep", test_graph_optimize_alloc_dep);
+     run("test_plan_indeterminate_never_partially_allocates", test_plan_indeterminate_never_partially_allocates);
++    run("test_loader_transaction_refuses_before_any_allocation", test_loader_transaction_refuses_before_any_allocation);
++    run("test_loader_transaction_competing_and_isolated", test_loader_transaction_competing_and_isolated);
++    run("test_loader_transaction_two_contexts_one_buffer_type", test_loader_transaction_two_contexts_one_buffer_type);
++    run("test_loader_transaction_mid_load_failure_rolls_back", test_loader_transaction_mid_load_failure_rolls_back);
++    run("test_loader_transaction_mixed_backends", test_loader_transaction_mixed_backends);
++    run("test_loader_transaction_overflow_is_refused", test_loader_transaction_overflow_is_refused);
+     return 0;
+ }

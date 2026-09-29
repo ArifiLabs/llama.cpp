@@ -1,0 +1,372 @@
+From 58187870ffff17b3ea5fcb5b480485f3f50ebbfb Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 01:19:50 -0400
+Subject: [PATCH] provenance: a sha-pinned exemption ledger for the 15 commits
+ --strict cannot pass without rewriting history
+
+cmd_provenance consulted the sha-pinned ledger for the missing-Measured-effect class only (the 'elif not (is_native or sha in grandfathered)' arm); the loose-only arm had no ledger term at all. So the checklist's stated remedy - 'grandfather them explicitly with a reason' - was not executable for 12 of the 15 offenders, and the only other remedy was amending published, tagged, series-pinned commits.
+
+trailer-exemptions.json is a NEW ledger, deliberately not native-grandfather.json (CLOSED by its own text) and not pending-trailers.json (debt owed by UNMERGED branches; these 15 are on arifi/main). Its 15 rows are derived from the tool's own predicates, not hand-listed.
+
+An exemption is not a repair and the report must never let it read as one: a separate 'EXEMPT, NOT REPAIRED' counter, every exempted sha listed with its class, and a qualified PASS line. The unqualified 'PASS: every commit carries provenance.' is now unreachable whenever a row is in use, and the test asserts exactly that - plus that native-grandfather.json still does NOT clear a loose-only commit.
+
+Origin: ArifiLabs (native) - release engineering for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - audit tooling only; no inference code path is touched. provenance --strict over 658 commits: before rc=1 'FAIL (--strict): 12 loose-only, 3 without Measured-effect'; after rc=0 'PASS (15 EXEMPT, not repaired - 12 loose-only, 3 without Measured-effect)'. test_arifi_sync.py SeriesRegenTest 5 tests OK.
+---
+ tools/arifi-sync/arifi_sync.py           |  46 +++++-
+ tools/arifi-sync/test_arifi_sync.py      |  45 ++++++
+ tools/arifi-sync/trailer-exemptions.json | 193 +++++++++++++++++++++++
+ 3 files changed, 282 insertions(+), 2 deletions(-)
+ create mode 100644 tools/arifi-sync/trailer-exemptions.json
+
+diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
+index f74277db2..659707653 100644
+--- a/tools/arifi-sync/arifi_sync.py
++++ b/tools/arifi-sync/arifi_sync.py
+@@ -143,6 +143,22 @@ def load_grandfather(repo: str) -> set:
+     return {row["sha"] for row in data.get("commits", [])}
+ 
+ 
++def load_trailer_exemptions(repo: str) -> dict:
++    """Sha-pinned exemptions for commits whose provenance is PRESENT and human-readable but
++    does not satisfy --strict, and whose only repair would be amending published, tagged,
++    series-pinned history. Distinct from `native-grandfather.json` (CLOSED, pre-convention
++    native commits) and from `pending-trailers.json` (debt owed by UNMERGED branches).
++
++    A row is NOT a repair. `cmd_provenance` counts these separately and says so on the exit
++    line, so an exempted commit can never be read as a fixed one."""
++    p = os.path.join(repo, "tools", "arifi-sync", "trailer-exemptions.json")
++    if not os.path.exists(p):
++        return {}
++    with open(p, "r", encoding="utf-8-sig") as fh:
++        data = json.load(fh)
++    return {row["sha"]: row for row in data.get("commits", [])}
++
++
+ def has_loose_provenance(repo: str, sha: str) -> bool:
+     """The LOOSE test: the token appears anywhere in the message. Deliberately the loose one -
+     it is what `cmd_provenance` uses to decide `NO PROVENANCE AT ALL`, the only provenance
+@@ -160,8 +176,10 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:
+         raise Loud("empty range %s - is the base pin correct?" % rng)
+ 
+     grandfathered = load_grandfather(repo)
++    exempt = load_trailer_exemptions(repo)
+     strict, loose, meas, native, gf = 0, 0, 0, 0, 0
+     loose_only, missing, no_meas = [], [], []
++    ex_loose, ex_meas = [], []
+     for sha in shas:
+         body = gout(repo, "log", "-1", "--format=%B", sha)
+         subject = gout(repo, "log", "-1", "--format=%s", sha)
+@@ -175,9 +193,15 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:
+         if tr["Measured-effect"]:
+             meas += 1
+         elif not (is_native or sha in grandfathered):
+-            no_meas.append((sha[:9], subject))
++            if sha in exempt:
++                ex_meas.append((sha[:9], subject))
++            else:
++                no_meas.append((sha[:9], subject))
+         if is_loose and not is_strict:
+-            loose_only.append((sha[:9], subject))
++            if sha in exempt:
++                ex_loose.append((sha[:9], subject))
++            else:
++                loose_only.append((sha[:9], subject))
+         if not is_loose:
+             if sha in grandfathered:
+                 gf += 1
+@@ -192,6 +216,17 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:
+     say("Measured-effect           : %d / %d" % (meas, n))
+     say("native (Origin trailer)   : %d       (fork-authored, no upstream origin - convention 2026-08-20)" % native)
+     say("grandfathered NATIVE      : %d / %d  (sha-pinned in tools/arifi-sync/native-grandfather.json, ledger CLOSED)" % (gf, n))
++    say("EXEMPT, NOT REPAIRED      : %d / %d  (%d loose-only + %d without Measured-effect; sha-pinned with a reason each in tools/arifi-sync/trailer-exemptions.json)"
++        % (len(ex_loose) + len(ex_meas), n, len(ex_loose), len(ex_meas)))
++
++    if ex_loose or ex_meas:
++        say("\nEXEMPT - the provenance is present and human-readable but does NOT parse, and the")
++        say("only repair would be amending published, tagged, series-pinned history. These are")
++        say("NOT fixed commits. Each row's reason is in trailer-exemptions.json.")
++        for sha, s in ex_loose:
++            say("  %s  [loose-only]          %s" % (sha, s))
++        for sha, s in ex_meas:
++            say("  %s  [no Measured-effect]  %s" % (sha, s))
+ 
+     if loose_only:
+         say("\nLOOSE-ONLY - provenance is human-readable but NOT machine-readable.")
+@@ -226,6 +261,13 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:
+         say("\nFAIL (--strict): %d loose-only, %d without Measured-effect."
+             % (len(loose_only), len(no_meas)))
+         return 1
++    if ex_loose or ex_meas:
++        say("\nPASS (%d EXEMPT, not repaired - %d loose-only, %d without Measured-effect):"
++            % (len(ex_loose) + len(ex_meas), len(ex_loose), len(ex_meas)))
++        say("every commit carries provenance; %d of them carry it in a form git cannot parse,"
++            % (len(ex_loose) + len(ex_meas)))
++        say("and are sha-pinned with a reason in tools/arifi-sync/trailer-exemptions.json.")
++        return 0
+     say("\nPASS: every commit carries provenance.")
+     return 0
+ 
+diff --git a/tools/arifi-sync/test_arifi_sync.py b/tools/arifi-sync/test_arifi_sync.py
+index d2c7148eb..0275427e2 100644
+--- a/tools/arifi-sync/test_arifi_sync.py
++++ b/tools/arifi-sync/test_arifi_sync.py
+@@ -19,7 +19,9 @@ What is asserted, and why each one exists:
+            where it must REFUSE: a collision with no resolution, and a manifest that is itself
+            incomplete. A guard that only ever passes is a guard nobody has tested.
+ """
++import contextlib
+ import hashlib
++import io
+ import json
+ import os
+ import re
+@@ -203,6 +205,49 @@ class SeriesRegenTest(unittest.TestCase):
+         self.assertEqual(before, series_fingerprint(self.r.series_dir),
+                          "regen refused on provenance but mutated patches/series/")
+ 
++    def _provenance(self, strict=True, ref="main"):
++        """Run cmd_provenance and return (rc, printed output)."""
++        args = type("A", (), {"ref": ref, "strict": strict})()
++        buf = io.StringIO()
++        with contextlib.redirect_stdout(buf):
++            rc = A.cmd_provenance(self.r.path, self.r.cfg, args)
++        return rc, buf.getvalue()
++
++    def test_a_sha_pinned_trailer_exemption_clears_strict_but_is_never_reported_as_repaired(self):
++        """The exemption ledger is the ONLY way a loose-only commit can pass --strict without
++        amending it, and passing must never look like a repair. `native-grandfather.json` does
++        not reach the loose-only class at all (cmd_provenance consults it for the missing
++        Measured-effect case only), which is why this second ledger exists."""
++        # A LOOSE-ONLY commit: the tokens are in the message, but a column-0 continuation line
++        # ends git's trailer block, so nothing parses. The real defect, reproduced.
++        self.r.write("e.txt", "5\n")
++        git(self.r.path, "add", "--", "e.txt")
++        git(self.r.path, "commit", "-q", "-m",
++            "feat: wrapped\n\nOrigin: ArifiLabs (native) because the value wraps\nonto column zero, which ends the block.\n")
++        sha = git(self.r.path, "rev-parse", "HEAD")
++
++        rc, out = self._provenance()
++        self.assertNotEqual(0, rc, "a loose-only commit must fail --strict before exemption")
++        self.assertIn("FAIL (--strict)", out)
++
++        # Grandfathering it is NOT the remedy - the closed ledger does not cover this class.
++        commit_json(self.r.path, "tools/arifi-sync/native-grandfather.json",
++                    {"commits": [{"sha": sha}]}, trailers=True)
++        rc, _ = self._provenance()
++        self.assertNotEqual(0, rc, "native-grandfather.json must not clear a loose-only commit")
++
++        commit_json(self.r.path, "tools/arifi-sync/trailer-exemptions.json",
++                    {"commits": [{"sha": sha, "subject": "feat: wrapped",
++                                  "classification": ["loose-only"],
++                                  "reason": "test fixture"}]}, trailers=True)
++        rc, out = self._provenance()
++        self.assertEqual(0, rc, out)
++        self.assertIn("EXEMPT, NOT REPAIRED      : ", out)
++        self.assertIn(sha[:9], out)
++        self.assertIn("EXEMPT, not repaired", out)
++        self.assertNotIn("PASS: every commit carries provenance.", out,
++                         "an exempted commit must never produce the unqualified PASS line")
++
+     def test_preflight_runs_before_any_deletion_even_on_a_fresh_directory(self):
+         """The series directory is empty, so a count-based assertion cannot distinguish the
+         old order from the new one. This asserts the pre-flight fires at all."""
+diff --git a/tools/arifi-sync/trailer-exemptions.json b/tools/arifi-sync/trailer-exemptions.json
+new file mode 100644
+index 000000000..5cfec6f52
+--- /dev/null
++++ b/tools/arifi-sync/trailer-exemptions.json
+@@ -0,0 +1,193 @@
++{
++  "purpose": "Sha-pinned EXEMPTION ledger for commits whose provenance is PRESENT and human-readable but does not satisfy `arifi_sync provenance --strict`, and whose only repair would be amending published, tagged, series-pinned history. A row here does NOT make its commit compliant and is not a repair: it records, per sha, exactly what is wrong and why it was not fixed. The audit reports these separately from clean commits and never folds them into a bare PASS.",
++  "law": "This ledger is DISTINCT from native-grandfather.json, which is CLOSED and covers commits predating the 2026-08-20 native-Origin convention - nothing is ever added there. It is also distinct from pending-trailers.json, which records trailer text OWED by commits on UNMERGED branches, to be pasted when that work reaches arifi/main; the commits below are already on arifi/main. New commits must carry correct trailers and must never be added here: the commit-msg hook rejects the defect at write time.",
++  "recorded": "2026-09-21",
++  "recorded_by": "release-prep maker, branch release/r66i-public-prep-2026-09-21",
++  "range_base": "9e0e220594af405a62835dc3a27495729fd8506b",
++  "audited_ref": "94461e770e119a9ec31fbb877f0af89332e85827",
++  "commits": [
++    {
++      "sha": "1797838f0bf28434b548fff5bdf9f5be2547a092",
++      "subject": "docs: phase-3a OPTIONS-REGISTRY rows (M-RoPE, f16-recurrent, DSpark-iGPU)",
++      "classification": [
++        "loose-only"
++      ],
++      "trailer_tokens_present": [
++        "Origin",
++        "Taken-from"
++      ],
++      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired."
++    },
++    {
++      "sha": "57cddcfd3348d753f0585bf902acd5d55d45d77e",
++      "subject": "patches: make the series generator implement its own convergence rule",
++      "classification": [
++        "loose-only"
++      ],
++      "trailer_tokens_present": [
++        "Measured-effect",
++        "Origin",
++        "Taken-from"
++      ],
++      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired."
++    },
++    {
++      "sha": "43f38b8225ab1d352b53e793231469d9854098ad",
++      "subject": "patches: stop the manifest deriving anything from excluded commits",
++      "classification": [
++        "loose-only"
++      ],
++      "trailer_tokens_present": [
++        "Measured-effect",
++        "Origin",
++        "Taken-from"
++      ],
++      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired."
++    },
++    {
++      "sha": "43f2d29b15a0e9276d7c39b4498e9cbfc626b4b9",
++      "subject": "ggml-cpu: GGML_ARIFI_VNNI_REPACK defaults to OFF (diverging from upstream, on measurement)",
++      "classification": [
++        "loose-only"
++      ],
++      "trailer_tokens_present": [
++        "Measured-effect",
++        "Origin",
++        "Taken-from"
++      ],
++      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired."
++    },
++    {
++      "sha": "01ad15f291eca4269160ebae4935c38f86cf4df4",
++      "subject": "docs: make the fork buildable by someone who did not build it",
++      "classification": [
++        "loose-only"
++      ],
++      "trailer_tokens_present": [
++        "Measured-effect",
++        "Origin"
++      ],
++      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired."
++    },
++    {
++      "sha": "c16526b3b1feb6c803e913ad4490a7eaff865d5b",
++      "subject": "fix(ggml-cpu/x86): don't pass __m256i by value across the repack GEMV/GEMM ABI boundary (Windows 0xC0000005)",
++      "classification": [
++        "loose-only"
++      ],
++      "trailer_tokens_present": [
++        "Measured-effect",
++        "Origin",
++        "Taken-from"
++      ],
++      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired."
++    },
++    {
++      "sha": "0f1afa73d7f776310052d6e604fff89742988a3c",
++      "subject": "patches: regenerate the series after the repack ABI-alignment fix",
++      "classification": [
++        "loose-only"
++      ],
++      "trailer_tokens_present": [
++        "Measured-effect",
++        "Origin"
++      ],
++      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired."
++    },
++    {
++      "sha": "3d9668cdc62c0e316867c080cd1f7f39f2b33f0a",
++      "subject": "ggml: TurboQuant TQ3_1S/TQ4_1S weight formats behind GGML_ARIFI_TURBO_WEIGHT_QUANTS",
++      "classification": [
++        "loose-only"
++      ],
++      "trailer_tokens_present": [
++        "Measured-effect",
++        "Origin",
++        "Taken-from"
++      ],
++      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired."
++    },
++    {
++      "sha": "a10d81dd4006aa735b537860c87fdbd190541d53",
++      "subject": "docs: USAGE - a task-oriented guide for humans, not an option reference",
++      "classification": [
++        "loose-only"
++      ],
++      "trailer_tokens_present": [
++        "Measured-effect",
++        "Origin"
++      ],
++      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired."
++    },
++    {
++      "sha": "c77c324abdeeaab62af3d4acf98fa75b69906dd7",
++      "subject": "ggml-cpu/x86: use the row-stride parameter in repack GEMV stores instead of the row count",
++      "classification": [
++        "loose-only"
++      ],
++      "trailer_tokens_present": [
++        "Measured-effect",
++        "Origin",
++        "Taken-from"
++      ],
++      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired."
++    },
++    {
++      "sha": "8f7895381a7c386c5b5f03ab5deede89e40d9438",
++      "subject": "ggml-cpu: fuse the TurboQuant dot product - transform the activation, not the weights",
++      "classification": [
++        "loose-only"
++      ],
++      "trailer_tokens_present": [
++        "Measured-effect",
++        "Origin"
++      ],
++      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired."
++    },
++    {
++      "sha": "b6a36788ef8e9f50490c4619751eedd84cd03596",
++      "subject": "docs(FINDINGS): F-09 - the repack/GPU trade-off is a compute-placement choice, not a bug",
++      "classification": [
++        "loose-only"
++      ],
++      "trailer_tokens_present": [
++        "Measured-effect",
++        "Origin"
++      ],
++      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired."
++    },
++    {
++      "sha": "948aab9c6e1445d6c8298808adac9cbf132cba77",
++      "subject": "vulkan : integer MMQ (Q8_1 activations) for GGML_TYPE_SX8 (57) - matmul_sx8_q8_1, CREATE_MMQ, per-8 activation sums hoisted into block_b_to_registers (8 dots + 8 FMAs per 32 weights)",
++      "classification": [
++        "no-measured-effect"
++      ],
++      "trailer_tokens_present": [
++        "Taken-from"
++      ],
++      "reason": "Carries Taken-from:/Origin: and parses, but no Measured-effect: trailer. The legal value UNMEASURED could only be added by amending a published commit. Exempted, not repaired; where the commit body states measured data it is prose, not a trailer."
++    },
++    {
++      "sha": "6810d3a9ee0beffa61c131d383138c1521afbeaf",
++      "subject": "vulkan : mul_mm (prompt processing) for GGML_TYPE_SX8 (57) - the device said the gap is the missing mul_mm, not the missing MMQ",
++      "classification": [
++        "no-measured-effect"
++      ],
++      "trailer_tokens_present": [
++        "Taken-from"
++      ],
++      "reason": "Carries Taken-from:/Origin: and parses, but no Measured-effect: trailer. The legal value UNMEASURED could only be added by amending a published commit. Exempted, not repaired; where the commit body states measured data it is prose, not a trailer."
++    },
++    {
++      "sha": "dae71cbbe8b0fe57c6f5e54a249d24bb78348a02",
++      "subject": "llama : Windows unbuffered model reads (--load-mode direct_io) + PR #28223 host bufts under mmap (R31 M17 / M07)",
++      "classification": [
++        "no-measured-effect"
++      ],
++      "trailer_tokens_present": [
++        "Origin"
++      ],
++      "reason": "Carries Taken-from:/Origin: and parses, but no Measured-effect: trailer. The legal value UNMEASURED could only be added by amending a published commit. Exempted, not repaired; where the commit body states measured data it is prose, not a trailer."
++    }
++  ]
++}

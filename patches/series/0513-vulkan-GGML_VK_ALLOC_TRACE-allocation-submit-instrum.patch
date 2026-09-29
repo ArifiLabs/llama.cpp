@@ -1,0 +1,678 @@
+From 8035b31626360174a9d9b2339a3caeb5899b0969 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 11 Sep 2026 03:59:53 -0400
+Subject: [PATCH] vulkan : GGML_VK_ALLOC_TRACE allocation/submit instrument +
+ S-X8 mat-vec rows/workgroup switch (R47a, lane-232)
+
+R47c could not name why GGML_VK_PREFER_HOST_MEMORY=1 and a 256 MiB suballocation block die at
+the first queue submit after every allocation reported success: the existing memory logger records
+requested bytes and a device/host category, and nothing at submit. GGML_VK_ALLOC_TRACE=1 adds the
+missing fields - requirement bytes, memoryTypeBits, every candidate memory type/heap tried, the
+chosen type and heap, per-heap live bytes, the driver's VK_EXT_memory_budget budget/usage (or
+"budget=unavailable", never fabricated zeros), and one line per queue submit with its recorded
+copy batch and VkResult. The trace sits in the single queue-submit chokepoint both queue handles
+already route through, so it cannot miss the failing submit. Zero cost when unset.
+
+The S-X8 mat-vec rows and workgroup become a device-probe switch plus an override
+(GGML_VK_SX8_MMV_ROWS / GGML_VK_SX8_MMV_WG, read once at pipeline creation, default unchanged), so
+one binary pairs rows 1/2/4/8 against workgroups 64/128/256. An override is taken whole or refused
+whole against this device's real limits: workgroup a positive multiple of 32, within
+maxComputeWorkGroupInvocations, and the reduction's shared array within maxComputeSharedMemorySize
+at the WIDEST NUM_COLS. On the 780M (32 KiB shared) rows=8/wg=256 is refused, rows=4/wg=128
+applies and stays 12/12 GREEN.
+
+tests: the R46 27B S-X8 perf shapes (17408x5120, 5120x17408, 248320x5120 at n=1..8) copied
+verbatim - R46 685d7beae is not an ancestor of this base - as the sweep's target rows.
+
+Origin: ArifiLabs (native)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 462 +++++++++++++++++++++++++--
+ tests/test-backend-ops.cpp           |   5 +
+ 2 files changed, 449 insertions(+), 18 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 6c6c36f7e..0d7ee7798 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -69,6 +69,7 @@ typedef struct VkPhysicalDeviceCooperativeMatrixDecodeVectorFeaturesNV {
+ #include <unordered_map>
+ #include <shared_mutex>
+ #include <mutex>
++#include <atomic>
+ #include <future>
+ #include <condition_variable>
+ #include <thread>
+@@ -321,6 +322,55 @@ struct vk_command_pool {
+ static void ggml_vk_print_device_fault_info(const vk_device& device);
+ static void ggml_vk_print_device_lost_info(const vk_device& device);
+ 
++// lane-232 / R47a: opt-in allocation + submit trace, GGML_VK_ALLOC_TRACE=1.
++//
++// R47c could not name why two placement configs die at the first queue submit after every
++// allocation reported success, because GGML_VK_MEMORY_LOGGER records requested bytes and a
++// device/host category and nothing else. This trace adds the missing fields: requirement bytes,
++// memoryTypeBits, the chosen memory type and heap, per-heap live bytes, the driver's budget and
++// usage where VK_EXT_memory_budget is supported, and one line per queue submit carrying its
++// recorded copy batch and the VkResult. Off unless the variable is set; the enable is read once.
++static bool ggml_vk_alloc_trace_enabled() {
++    static const bool enabled = [] {
++        const char * s = getenv("GGML_VK_ALLOC_TRACE");
++        return s != nullptr && s[0] == '1';
++    }();
++    return enabled;
++}
++
++static void vk_alloc_trace_line(const std::string & body) {
++    static std::mutex line_mutex;
++    std::lock_guard<std::mutex> guard(line_mutex);
++    // endl, not "\n": every line must survive an abort mid-submit.
++    std::cerr << "ggml_vulkan alloc-trace: " << body << std::endl;
++}
++
++static uint64_t vk_alloc_trace_new_seq() {
++    static std::atomic<uint64_t> counter{0};
++    return counter.fetch_add(1);
++}
++
++// The batch detail (buffers, offsets, lengths) is only known at the recording site in
++// ggml_vk_submit; the VkResult is only known inside the queue wrapper. One sequence number
++// handed from the first to the second ties the two lines together.
++static thread_local uint64_t vk_alloc_trace_pending_submit_seq = UINT64_MAX;
++
++static uint64_t vk_alloc_trace_begin_submit() {
++    const uint64_t seq = vk_alloc_trace_new_seq();
++    vk_alloc_trace_pending_submit_seq = seq;
++    return seq;
++}
++
++static uint64_t vk_alloc_trace_take_submit() {
++    uint64_t seq = vk_alloc_trace_pending_submit_seq;
++    if (seq == UINT64_MAX) {
++        // a submit that never passed through ggml_vk_submit's recording path (e.g. fence-only)
++        seq = vk_alloc_trace_new_seq();
++    }
++    vk_alloc_trace_pending_submit_seq = UINT64_MAX;
++    return seq;
++}
++
+ // Prevent simultaneous submissions to the same queue.
+ struct vk_queue_handle {
+     vk::Queue queue;
+@@ -331,18 +381,51 @@ struct vk_queue_handle {
+     virtual ~vk_queue_handle() = default;
+ };
+ 
++// lane-232 / R47a: the ONE place every queue submission passes through, so the trace cannot miss
++// the failing submit the way a guard at a single caller would. Both handles call it; behaviour is
++// unchanged when the trace is off, and every exception is rethrown.
++static void vk_queue_submit_inner(vk::Queue & queue, vk_device_ref & device,
++                                  vk::ArrayProxy<const vk::SubmitInfo> submits, vk::Fence fence) {
++    const bool trace = ggml_vk_alloc_trace_enabled();
++    const uint64_t seq = trace ? vk_alloc_trace_take_submit() : 0;
++
++    if (trace) {
++        std::stringstream ss;
++        ss << "submit seq=" << seq
++           << " queue=0x" << std::hex << (uint64_t)(VkQueue)queue << std::dec
++           << " submit_infos=" << submits.size()
++           << " fence=" << (fence ? "yes" : "no")
++           << " state=begin";
++        vk_alloc_trace_line(ss.str());
++    }
++
++    try {
++        queue.submit(submits, fence);
++    } catch (vk::DeviceLostError & e) {
++        if (trace) {
++            vk_alloc_trace_line("submit seq=" + std::to_string(seq) + " state=throw result=DeviceLost what=" + e.what());
++        }
++        if (auto dev = device.lock()) {
++            ggml_vk_print_device_lost_info(dev);
++        }
++        throw;
++    } catch (const vk::SystemError & e) {
++        if (trace) {
++            vk_alloc_trace_line("submit seq=" + std::to_string(seq) + " state=throw result=" + e.code().message() + " what=" + e.what());
++        }
++        throw;
++    }
++
++    if (trace) {
++        vk_alloc_trace_line("submit seq=" + std::to_string(seq) + " state=ok result=Success");
++    }
++}
++
+ struct vk_queue_handle_synchronized : vk_queue_handle {
+     std::mutex mutex;
+     void submit(vk::ArrayProxy<const vk::SubmitInfo> submits, vk::Fence fence) override {
+         std::lock_guard<std::mutex> guard(mutex);
+-        try {
+-            queue.submit(submits, fence);
+-        } catch (vk::DeviceLostError &) {
+-            if (auto dev = device.lock()) {
+-                ggml_vk_print_device_lost_info(dev);
+-            }
+-            throw;
+-        }
++        vk_queue_submit_inner(queue, device, submits, fence);
+     }
+     void lock()   override { mutex.lock(); }
+     void unlock() override { mutex.unlock(); }
+@@ -351,14 +434,7 @@ struct vk_queue_handle_synchronized : vk_queue_handle {
+ struct vk_queue_handle_unsynchronized : vk_queue_handle {
+     void submit(vk::ArrayProxy<const vk::SubmitInfo> submits, vk::Fence fence) override {
+         // Driver guarantees internal synchronization via VK_KHR_internally_synchronized_queues
+-        try {
+-            queue.submit(submits, fence);
+-        } catch (vk::DeviceLostError &) {
+-            if (auto dev = device.lock()) {
+-                ggml_vk_print_device_lost_info(dev);
+-            }
+-            throw;
+-        }
++        vk_queue_submit_inner(queue, device, submits, fence);
+     }
+     // lock()/unlock() inherited no-ops
+ };
+@@ -2194,6 +2270,10 @@ struct vk_context_struct {
+     std::vector<vk_staging_memcpy> out_memcpys;
+     std::vector<vk_staging_memset> memsets;
+ 
++    // lane-232 / R47a: one entry per recorded transfer, populated only under GGML_VK_ALLOC_TRACE
++    // and flushed (then cleared) by ggml_vk_submit right before the queue call.
++    std::vector<std::string> trace_ops;
++
+     vk_command_pool * p {};
+ };
+ typedef std::shared_ptr<vk_context_struct> vk_context;
+@@ -3421,6 +3501,23 @@ static void ggml_vk_submit(vk_context& ctx, vk::Fence fence) {
+         }
+     }
+ 
++    // lane-232 / R47a: flush the recorded batch BEFORE the call, under the sequence number the
++    // queue wrapper will print its VkResult against. If the submit aborts the process, the batch
++    // that died is already on stderr.
++    if (ggml_vk_alloc_trace_enabled()) {
++        const uint64_t seq = vk_alloc_trace_begin_submit();
++        std::stringstream ss;
++        ss << "batch seq=" << seq
++           << " queue_family=" << ctx->p->q->queue_family_index
++           << " submissions=" << submit_infos.size()
++           << " ops=" << ctx->trace_ops.size();
++        vk_alloc_trace_line(ss.str());
++        for (const auto & op : ctx->trace_ops) {
++            vk_alloc_trace_line("batch seq=" + std::to_string(seq) + " op " + op);
++        }
++    }
++    ctx->trace_ops.clear();
++
+     ctx->p->q->handle->submit(submit_infos, fence);
+ 
+     ctx->seqs.clear();
+@@ -3597,6 +3694,192 @@ static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDe
+     return indices;
+ }
+ 
++// lane-232 / R47a: live per-heap accounting for the allocation trace. The memory logger keeps
++// requested bytes by device/host category; this keeps the allocated requirement bytes by HEAP,
++// which is the number a placement failure is actually about.
++struct vk_alloc_trace_state {
++    std::mutex mutex;
++    std::map<uint32_t, uint64_t> heap_live;                            // heapIndex -> live requirement bytes
++    std::map<VkBuffer, std::pair<uint32_t, uint64_t>> by_buffer;       // buffer -> (heapIndex, requirement bytes)
++    uint64_t next_alloc_id = 0;
++};
++
++static vk_alloc_trace_state & vk_alloc_trace() {
++    static vk_alloc_trace_state state;
++    return state;
++}
++
++static uint64_t vk_alloc_trace_next_id() {
++    std::lock_guard<std::mutex> guard(vk_alloc_trace().mutex);
++    return vk_alloc_trace().next_alloc_id++;
++}
++
++// "budget=unavailable" when VK_EXT_memory_budget is not supported on this device. Printing zeros
++// there would be a fabricated measurement, which is exactly what R47c indicted the old logger for.
++static std::string vk_alloc_trace_budget_str(vk_device& device) {
++    if (device->idx >= vk_instance.device_supports_membudget.size() ||
++        !vk_instance.device_supports_membudget[device->idx]) {
++        return "budget=unavailable";
++    }
++
++    vk::PhysicalDeviceMemoryBudgetPropertiesEXT budgetprops;
++    vk::PhysicalDeviceMemoryProperties2 memprops = {};
++    memprops.pNext = &budgetprops;
++    device->physical_device.getMemoryProperties2(&memprops);
++
++    std::stringstream ss;
++    ss << "budget=[";
++    for (uint32_t i = 0; i < memprops.memoryProperties.memoryHeapCount; ++i) {
++        if (i > 0) {
++            ss << ",";
++        }
++        ss << i << ":" << budgetprops.heapBudget[i] << "/" << budgetprops.heapUsage[i];
++    }
++    ss << "]";
++    return ss.str();
++}
++
++static std::string vk_alloc_trace_heap_live_str() {
++    std::stringstream ss;
++    ss << "heap_live=[";
++    bool first = true;
++    for (const auto & kv : vk_alloc_trace().heap_live) {
++        if (!first) {
++            ss << ",";
++        }
++        first = false;
++        ss << kv.first << ":" << kv.second;
++    }
++    ss << "]";
++    return ss.str();
++}
++
++#ifndef _WIN32
++extern char ** environ;
++#endif
++
++// Same-run device topology and the effective GGML_/LLAMA_/VK_ environment, printed once so a
++// trace can be read without guessing which box and which flags produced it. The binary's identity
++// is NOT hashed here: the build receipt carries its sha256.
++static void vk_alloc_trace_preamble(vk_device& device) {
++    static std::once_flag once;
++    std::call_once(once, [&device] {
++        const vk::PhysicalDeviceMemoryProperties mp = device->physical_device.getMemoryProperties();
++
++        std::stringstream ss;
++        ss << "device name=\"" << device->name << "\" idx=" << device->idx
++           << " uma=" << (device->uma ? 1 : 0)
++           << " prefer_host=" << (device->prefer_host_memory ? 1 : 0)
++           << " max_buffer_size=" << device->max_buffer_size;
++        vk_alloc_trace_line(ss.str());
++
++        for (uint32_t i = 0; i < mp.memoryHeapCount; ++i) {
++            vk_alloc_trace_line("heap " + std::to_string(i) +
++                                " size=" + std::to_string(mp.memoryHeaps[i].size) +
++                                " flags=" + to_string(mp.memoryHeaps[i].flags));
++        }
++        for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
++            vk_alloc_trace_line("memtype " + std::to_string(i) +
++                                " heap=" + std::to_string(mp.memoryTypes[i].heapIndex) +
++                                " flags=" + to_string(mp.memoryTypes[i].propertyFlags));
++        }
++        vk_alloc_trace_line(vk_alloc_trace_budget_str(device));
++
++#ifdef _WIN32
++        char ** envp = _environ;
++#else
++        char ** envp = environ;
++#endif
++        for (char ** e = envp; e != nullptr && *e != nullptr; ++e) {
++            const std::string entry(*e);
++            if (entry.rfind("GGML_", 0) == 0 || entry.rfind("LLAMA_", 0) == 0 || entry.rfind("VK_", 0) == 0) {
++                vk_alloc_trace_line("env " + entry);
++            }
++        }
++    });
++}
++
++static void vk_alloc_trace_record_alloc(vk_device& device, VkBuffer buffer, uint64_t alloc_id,
++                                        size_t request_size, const vk::MemoryRequirements & mem_req,
++                                        uint32_t mtype, uint32_t heap) {
++    uint64_t live_after = 0;
++    {
++        std::lock_guard<std::mutex> guard(vk_alloc_trace().mutex);
++        vk_alloc_trace().heap_live[heap] += mem_req.size;
++        vk_alloc_trace().by_buffer[buffer] = { heap, (uint64_t) mem_req.size };
++        live_after = vk_alloc_trace().heap_live[heap];
++    }
++
++    std::stringstream ss;
++    ss << "alloc id=" << alloc_id << " state=ok"
++       << " request=" << request_size
++       << " requirement=" << mem_req.size
++       << " alignment=" << mem_req.alignment
++       << " memoryTypeBits=0x" << std::hex << mem_req.memoryTypeBits << std::dec
++       << " type=" << mtype << " heap=" << heap
++       << " heap_live_after=" << live_after
++       << " buffer=0x" << std::hex << (uint64_t) buffer << std::dec
++       << " " << vk_alloc_trace_heap_live_str()
++       << " " << vk_alloc_trace_budget_str(device);
++    vk_alloc_trace_line(ss.str());
++}
++
++static void vk_alloc_trace_record_free(VkBuffer buffer) {
++    if (!ggml_vk_alloc_trace_enabled()) {
++        return;
++    }
++
++    uint32_t heap = 0;
++    uint64_t bytes = 0;
++    uint64_t live_after = 0;
++    {
++        std::lock_guard<std::mutex> guard(vk_alloc_trace().mutex);
++        auto it = vk_alloc_trace().by_buffer.find(buffer);
++        if (it == vk_alloc_trace().by_buffer.end()) {
++            return;
++        }
++        heap  = it->second.first;
++        bytes = it->second.second;
++        uint64_t & live = vk_alloc_trace().heap_live[heap];
++        live = (live >= bytes) ? (live - bytes) : 0;
++        live_after = live;
++        vk_alloc_trace().by_buffer.erase(it);
++    }
++
++    std::stringstream ss;
++    ss << "free buffer=0x" << std::hex << (uint64_t) buffer << std::dec
++       << " requirement=" << bytes << " heap=" << heap
++       << " heap_live_after=" << live_after;
++    vk_alloc_trace_line(ss.str());
++}
++
++// lane-232 / R47a: one entry per recorded transfer. A single upload can carry thousands of
++// per-row regions, so the entry is a summary - count, total bytes, first and last region - not a
++// line per region; that keeps the trace readable while still naming the buffers and extents that
++// were in flight when a submit died.
++static void vk_alloc_trace_record_copy(vk_context & subctx, const char * tag, const ggml_tensor * tensor,
++                                       VkBuffer src, VkBuffer dst, const vk::BufferCopy * slices, size_t n) {
++    if (!ggml_vk_alloc_trace_enabled() || subctx == nullptr) {
++        return;
++    }
++
++    uint64_t total = 0;
++    for (size_t i = 0; i < n; i++) {
++        total += slices[i].size;
++    }
++
++    std::stringstream ss;
++    ss << tag
++       << " tensor=" << (tensor && tensor->name[0] ? tensor->name : "-")
++       << " src=0x" << std::hex << (uint64_t) src << " dst=0x" << (uint64_t) dst << std::dec
++       << " regions=" << n << " bytes=" << total;
++    if (n > 0) {
++        ss << " first=[" << slices[0].srcOffset << "->" << slices[0].dstOffset << "," << slices[0].size << "]"
++           << " last=["  << slices[n-1].srcOffset << "->" << slices[n-1].dstOffset << "," << slices[n-1].size << "]";
++    }
++    subctx->trace_ops.push_back(ss.str());
++}
++
+ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::initializer_list<vk::MemoryPropertyFlags> & req_flags_list,
+                                        void *import_ptr = nullptr) {
+     VK_LOG_DEBUG("ggml_vk_create_buffer(" << device->name << ", " << size << ", " << to_string(req_flags_list.begin()[0]) << ", " << to_string(req_flags_list.begin()[req_flags_list.size()-1]) << ")");
+@@ -3643,6 +3926,24 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
+ 
+     vk::MemoryAllocateFlagsInfo mem_flags_info { mem_flags };
+ 
++    // lane-232 / R47a
++    const bool     alloc_trace = ggml_vk_alloc_trace_enabled();
++    const uint64_t alloc_id    = alloc_trace ? vk_alloc_trace_next_id() : 0;
++    if (alloc_trace) {
++        vk_alloc_trace_preamble(device);
++        std::stringstream ss;
++        ss << "alloc id=" << alloc_id << " state=attempt"
++           << " request=" << size
++           << " requirement=" << mem_req.size
++           << " alignment=" << mem_req.alignment
++           << " memoryTypeBits=0x" << std::hex << mem_req.memoryTypeBits << std::dec
++           << " import=" << (import_ptr ? 1 : 0)
++           << " flags_first=" << to_string(*req_flags_list.begin())
++           << " " << vk_alloc_trace_heap_live_str()
++           << " " << vk_alloc_trace_budget_str(device);
++        vk_alloc_trace_line(ss.str());
++    }
++
+     if (device->memory_priority) {
+         mem_flags_info.setPNext(&mem_priority_info);
+     }
+@@ -3688,7 +3989,15 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
+             import_info.pHostPointer = import_ptr;
+             import_info.setPNext(&mem_flags_info);
+             buf->device_memory = device->device.allocateMemory({ size, memory_type_idx, &import_info });
++            if (alloc_trace) {
++                vk_alloc_trace_record_alloc(device, buf->buffer, alloc_id, size, mem_req, memory_type_idx,
++                                            mem_props.memoryTypes[memory_type_idx].heapIndex);
++            }
+         } catch (const vk::SystemError& e) {
++            if (alloc_trace) {
++                vk_alloc_trace_line("alloc id=" + std::to_string(alloc_id) + " state=fail import=1 type=" +
++                                    std::to_string(memory_type_idx) + " result=" + e.code().message() + " what=" + e.what());
++            }
+         }
+     } else {
+         for (auto it = req_flags_list.begin(); it != req_flags_list.end(); it++) {
+@@ -3697,18 +4006,42 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
+             const std::vector<uint32_t> memory_type_indices = ggml_vk_find_memory_properties(&mem_props, &mem_req, req_flags);
+ 
+             if (memory_type_indices.empty()) {
++                if (alloc_trace) {
++                    vk_alloc_trace_line("alloc id=" + std::to_string(alloc_id) +
++                                        " state=no_candidate_type req_flags=" + to_string(req_flags));
++                }
+                 continue;
+             }
+ 
+             bool done = false;
+ 
+             for (auto mtype_it = memory_type_indices.begin(); mtype_it != memory_type_indices.end(); mtype_it++) {
++                const uint32_t cand_heap = mem_props.memoryTypes[*mtype_it].heapIndex;
++                if (alloc_trace) {
++                    std::stringstream ss;
++                    ss << "alloc id=" << alloc_id << " state=try"
++                       << " type=" << *mtype_it << " heap=" << cand_heap
++                       << " heap_size=" << mem_props.memoryHeaps[cand_heap].size
++                       << " type_flags=" << to_string(mem_props.memoryTypes[*mtype_it].propertyFlags)
++                       << " req_flags=" << to_string(req_flags);
++                    vk_alloc_trace_line(ss.str());
++                }
+                 try {
+                     buf->device_memory = device->device.allocateMemory({ mem_req.size, *mtype_it, &mem_flags_info });
+                     buf->memory_property_flags = mem_props.memoryTypes[*mtype_it].propertyFlags;
++                    if (alloc_trace) {
++                        vk_alloc_trace_record_alloc(device, buf->buffer, alloc_id, size, mem_req, *mtype_it, cand_heap);
++                    }
+                     done = true;
+                     break;
+                 } catch (const vk::SystemError& e) {
++                    if (alloc_trace) {
++                        std::stringstream ss;
++                        ss << "alloc id=" << alloc_id << " state=fail"
++                           << " type=" << *mtype_it << " heap=" << cand_heap
++                           << " result=" << e.code().message() << " what=" << e.what();
++                        vk_alloc_trace_line(ss.str());
++                    }
+                     // loop and retry
+                     // during last attempt throw the exception
+                     if (it + 1 == req_flags_list.end() && mtype_it + 1 == memory_type_indices.end()) {
+@@ -3811,6 +4144,7 @@ static void ggml_vk_destroy_buffer(vk_buffer& buf) {
+     if (buf->device != nullptr) {
+         buf->device->memory_logger->log_deallocation(buf);
+     }
++    vk_alloc_trace_record_free(buf->buffer);  // lane-232 / R47a
+ 
+     buf.reset();
+ }
+@@ -4363,6 +4697,73 @@ struct CompileTask {
+     uint32_t required_subgroup_size;
+ };
+ 
++// lane-232 / R47a: GGML_VK_SX8_MMV_ROWS / GGML_VK_SX8_MMV_WG. Read once, validated against this
++// device's real limits, applied to every S-X8 mat-vec pipeline or to none. A receipt line per
++// workgroup-size class, applied or refused, on stderr - llama-server drops ggml INFO records at
++// the default verbosity, so the sweep's effective values have to reach the same channel the perf
++// logger uses.
++static void ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size, uint32_t & num_rows) {
++    static const uint32_t wg_req = [] {
++        const char * s = getenv("GGML_VK_SX8_MMV_WG");
++        return s != nullptr ? (uint32_t) strtoul(s, nullptr, 10) : 0u;
++    }();
++    static const uint32_t rows_req = [] {
++        const char * s = getenv("GGML_VK_SX8_MMV_ROWS");
++        return s != nullptr ? (uint32_t) strtoul(s, nullptr, 10) : 0u;
++    }();
++
++    if (wg_req == 0 && rows_req == 0) {
++        return;
++    }
++
++    const uint32_t wg   = (wg_req   != 0) ? wg_req   : wg_size;
++    const uint32_t rows = (rows_req != 0) ? rows_req : num_rows;
++
++    // FLOAT_TYPE is 4 bytes in the worst case (the f16 builds need less), so this bound is
++    // conservative in the safe direction.
++    const uint64_t shmem = (uint64_t) mul_mat_vec_max_cols * rows * wg * 4;
++
++    const char * refusal = nullptr;
++    if (wg == 0 || (wg % 32) != 0) {
++        refusal = "workgroup is not a positive multiple of 32";
++    } else if (rows == 0) {
++        refusal = "rows is zero";
++    } else if (wg > device->properties.limits.maxComputeWorkGroupInvocations) {
++        refusal = "workgroup exceeds maxComputeWorkGroupInvocations";
++    } else if (shmem > device->properties.limits.maxComputeSharedMemorySize) {
++        refusal = "reduction shared memory exceeds maxComputeSharedMemorySize at the widest NUM_COLS";
++    }
++
++    // ggml_vk_load_shaders runs per workgroup-size class and again for each lazily requested
++    // pipeline, so the receipt is printed once per distinct (probed, requested) pair - enough to
++    // read the sweep's effective values out of a log without flooding it.
++    static std::mutex receipt_mutex;
++    static std::set<uint64_t> receipted;
++    const uint64_t receipt_key = ((uint64_t) wg_size << 48) | ((uint64_t) num_rows << 32) | ((uint64_t) wg << 16) | rows;
++    bool first = false;
++    {
++        std::lock_guard<std::mutex> guard(receipt_mutex);
++        first = receipted.insert(receipt_key).second;
++    }
++
++    if (refusal != nullptr) {
++        if (first) {
++            fprintf(stderr, "ggml_vulkan: S-X8 mat-vec override REFUSED (wg=%u rows=%u, shmem=%llu B): %s; "
++                            "keeping probed wg=%u rows=%u\n",
++                    wg, rows, (unsigned long long) shmem, refusal, wg_size, num_rows);
++        }
++        return;
++    }
++
++    if (first) {
++        fprintf(stderr, "ggml_vulkan: S-X8 mat-vec override APPLIED: wg=%u rows=%u (probed wg=%u rows=%u), shmem=%llu B\n",
++                wg, rows, wg_size, num_rows, (unsigned long long) shmem);
++    }
++
++    wg_size  = wg;
++    num_rows = rows;
++}
++
+ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     VK_LOG_DEBUG("ggml_vk_load_shaders(" << device->name << ")");
+ 
+@@ -5596,8 +5997,22 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         // NOT multiples of 32 and would silently drop weights if used as the workgroup.
+         // Reduction stays the shared-memory path: only the plain shader variant is
+         // generated, so no USE_SUBGROUP_ADD build exists to pair a subgroup claim with.
+-        const uint32_t sx8_wg_size  = (wg_size_subgroup >= 32 && (wg_size_subgroup % 32) == 0) ? wg_size_subgroup : 32;
+-        const uint32_t sx8_num_rows = 2;
++        uint32_t sx8_wg_size  = (wg_size_subgroup >= 32 && (wg_size_subgroup % 32) == 0) ? wg_size_subgroup : 32;
++        uint32_t sx8_num_rows = 2;
++
++        // lane-232 / R47a: the NUM_ROWS / workgroup sweep is a DEVICE-PROBE SWITCH plus an
++        // override, not a compile constant, so HQ can pair rows 1/2/4/8 against workgroups
++        // 64/128/256 out of ONE binary. Unset = the probed values above, unchanged.
++        //
++        // An override is taken whole or refused whole. A partial apply would leave some of the
++        // mul_mat_vec_max_cols pipelines on the override and some on the default, which is not a
++        // measurable arm. Three conditions gate it:
++        //   - the workgroup must be a positive multiple of 32 (the correctness condition stated
++        //     above: a thread derives its weight position from tid & 31),
++        //   - it must fit maxComputeWorkGroupInvocations (local_size_x IS the workgroup), and
++        //   - the shared reduction array tmpsh[NUM_COLS][NUM_ROWS][BLOCK_SIZE] must fit
++        //     maxComputeSharedMemorySize at the WIDEST NUM_COLS this loop creates, not at n=1.
++        ggml_vk_apply_sx8_mmv_override(device, sx8_wg_size, sx8_num_rows);
+ 
+         // arifi lane-209 R7: q6_k mat-vec DIRECT SCALES (specialization constant 3 of
+         // mul_mat_vec_q6_k.comp). 1 = read the four scales this thread needs straight out of the
+@@ -9073,6 +9488,7 @@ static void ggml_vk_buffer_write_nc_async(ggml_backend_vk_context * ctx, vk_cont
+         }
+ 
+         ggml_vk_sync_buffers(ctx, subctx);
++        vk_alloc_trace_record_copy(subctx, "write_nc_async/pinned", tensor, buf->buffer, dst->buffer, slices.data(), slices.size());
+         subctx->s->buffer->buf.copyBuffer(buf->buffer, dst->buffer, slices);
+         return;
+     }
+@@ -9088,6 +9504,10 @@ static void ggml_vk_buffer_write_nc_async(ggml_backend_vk_context * ctx, vk_cont
+     VkBufferCopy buf_copy{ 0, offset, copy_size };
+ 
+     ggml_vk_sync_buffers(ctx, subctx);
++    {
++        const vk::BufferCopy trace_slice { buf_copy.srcOffset, buf_copy.dstOffset, buf_copy.size };
++        vk_alloc_trace_record_copy(subctx, "write_nc_async/staging", tensor, (VkBuffer)staging->buffer, (VkBuffer)dst->buffer, &trace_slice, 1);
++    }
+     vkCmdCopyBuffer(subctx->s->buffer->buf, (VkBuffer)staging->buffer, (VkBuffer)dst->buffer, 1, &buf_copy);
+ 
+     for (uint64_t i3 = 0; i3 < ne3; i3++) {
+@@ -9137,6 +9557,7 @@ static bool ggml_vk_buffer_write_2d_async(vk_context subctx, vk_buffer& dst, siz
+         }
+ 
+         ggml_vk_sync_buffers(nullptr, subctx);
++        vk_alloc_trace_record_copy(subctx, "write_2d_async/pinned", nullptr, buf->buffer, dst->buffer, slices.data(), slices.size());
+         subctx->s->buffer->buf.copyBuffer(buf->buffer, dst->buffer, slices);
+         return true;
+     }
+@@ -9168,6 +9589,7 @@ static bool ggml_vk_buffer_write_2d_async(vk_context subctx, vk_buffer& dst, siz
+     }
+ 
+     ggml_vk_sync_buffers(nullptr, subctx);
++    vk_alloc_trace_record_copy(subctx, "write_2d_async/staging", nullptr, (VkBuffer)staging_buffer->buffer, (VkBuffer)dst->buffer, slices.data(), slices.size());
+     subctx->s->buffer->buf.copyBuffer((VkBuffer)staging_buffer->buffer, (VkBuffer)dst->buffer, slices);
+ 
+     if (width == spitch) {
+@@ -9258,6 +9680,7 @@ static bool ggml_vk_buffer_read_2d_async(vk_context subctx, vk_buffer& src, size
+     if (buf != nullptr) {
+         // Memory is pinned, use as staging buffer
+         ggml_vk_sync_buffers(nullptr, subctx);
++        vk_alloc_trace_record_copy(subctx, "read_2d_async/pinned", nullptr, src->buffer, buf->buffer, slices.data(), slices.size());
+         subctx->s->buffer->buf.copyBuffer(src->buffer, buf->buffer, slices);
+ 
+         return true;
+@@ -9290,6 +9713,7 @@ static bool ggml_vk_buffer_read_2d_async(vk_context subctx, vk_buffer& src, size
+     }
+ 
+     ggml_vk_sync_buffers(nullptr, subctx);
++    vk_alloc_trace_record_copy(subctx, "read_2d_async/staging", nullptr, src->buffer, staging_buffer->buffer, staging_slices.data(), staging_slices.size());
+     subctx->s->buffer->buf.copyBuffer(src->buffer, staging_buffer->buffer, staging_slices);
+ 
+     if (width == dpitch) {
+@@ -18069,6 +18493,7 @@ static void ggml_backend_vk_set_tensor_2d_async(ggml_backend_t backend, ggml_ten
+             }
+         }
+ 
++        vk_alloc_trace_record_copy(cpy_ctx, "set_tensor_2d/staging", tensor, ctx->sync_staging->buffer, buf->buffer, slices.data(), slices.size());
+         cpy_ctx->s->buffer->buf.copyBuffer(ctx->sync_staging->buffer, buf->buffer, slices);
+ 
+         if (size == stride_data) {
+@@ -18125,6 +18550,7 @@ static void ggml_backend_vk_get_tensor_2d_async(ggml_backend_t backend, const gg
+             }
+         }
+ 
++        vk_alloc_trace_record_copy(compute_ctx, "get_tensor_2d/staging", tensor, buf->buffer, ctx->sync_staging->buffer, slices.data(), slices.size());
+         compute_ctx->s->buffer->buf.copyBuffer(buf->buffer, ctx->sync_staging->buffer, slices);
+ 
+         if (size == stride_data) {
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index b9b37f7ca..f45c32f7b 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -11886,6 +11886,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+     // 248320x5120 embedding/output pair; every other projection is Q8_0. Q8_0 and Q4_K ride along
+     // as the two controls the R46 analysis pairs S-X8 against. n=6 and n=7 fill the two widths the
+     // lane-224 receipts left empty, so the mat-vec width sweep has no hole.
++    //
++    // lane-232 / R47a kept ONE copy of this block at the R46b rebase: R47a had copied it verbatim
++    // off R46 because R46 was not then an ancestor, and here it is. It is also the sweep's target:
++    // with GGML_VK_SX8_MMV_ROWS / GGML_VK_SX8_MMV_WG set, one binary runs rows 1/2/4/8 x
++    // workgroups 64/128/256 over these rows with no rebuild.
+     for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
+         for (ggml_type type_a : {GGML_TYPE_SX8, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K}) {
+             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, bs,  5120, {1, 1}, {1, 1}));

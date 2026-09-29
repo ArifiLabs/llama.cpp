@@ -1,0 +1,308 @@
+From 3c2d916c51570c2b308a4d10db7586804bbc1dbd Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 05:06:07 -0400
+Subject: [PATCH] escha vulkan: two more levers tried and REFUTED by
+ measurement - occupancy and packed-pair
+
+Both were reasoned from the code, built, proven correct, benched against the shipped kernel in one
+thermal session with the arms alternated, and both lost. They stay behind switches, defaulted OFF,
+each carrying its own numbers so the next seat does not re-derive them.
+
+OCCUPANCY (ESCHA_BLOCKS=2, 256 threads over two adjacent output blocks, GGML_VK_ESCHA_BLOCK2):
+    one block   pp512 16.33 / 16.44   tg32 3.95 / 3.87
+    two blocks  pp512 16.36 / 16.47   tg32 3.90 / 3.92
+Identical. More waves have nothing to hide because the kernel is ALU-bound on the generator, not
+latency-bound - the same reason the subgroup-Hadamard lever failed.
+
+PACKED PAIR (ESCHA_F16_PAIR, two codewords per v_pk_add_f16):
+    base        pp512 16.47 / 16.13   tg32 3.91 / 3.87
+    packed      pp512 16.09 / 16.24   tg32 3.82 / 3.72
+About 3% worse. The vertical swizzle costs at least the add it saves and raises register pressure.
+
+Correctness for both, before either was benched: test-backend-ops -o ESCHA_MM, 12 OK / 0 FAIL,
+including the model shapes at ncols=2 which take the changed path.
+
+Taken with the f16-native generator that DID win (+18% decode), three independent levers now agree
+the generator is the floor: it is imul, and, xor, unpackFloat2x16, one f16 add, one widen.
+
+Origin: ArifiLabs (native)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  24 ++++-
+ .../ggml-vulkan/vulkan-shaders/escha_mm.comp  | 100 +++++++++++++++---
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     |   4 +
+ 3 files changed, 110 insertions(+), 18 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index b4110cc69..f05c0fd78 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1092,6 +1092,7 @@ struct vk_device_struct {
+     vk_pipeline pipeline_fwht_f32[4];
+     vk_pipeline pipeline_escha_mm[2];    // [0]=ESCHA2 (K=2), [1]=ESCHA3 (K=3) — lane-164
+     vk_pipeline pipeline_escha_mm_mc[2]; // same, multi-column (ESCHA_MM_COLS per workgroup)
++    vk_pipeline pipeline_escha_mm_b2[2]; // same, 256 threads over two output blocks (seat-40)
+     vk_pipeline pipeline_cumsum_f32;
+     vk_pipeline pipeline_cumsum_small_f32;
+     vk_pipeline pipeline_cumsum_multipass1_f32;
+@@ -6102,6 +6103,8 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     ggml_vk_create_pipeline(device, device->pipeline_escha_mm[1], "escha_mm_k3_f32", escha_mm_k3_f32_len, escha_mm_k3_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[0], "escha_mm_k2_c8_f32", escha_mm_k2_c8_f32_len, escha_mm_k2_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_escha_mm_mc[1], "escha_mm_k3_c8_f32", escha_mm_k3_c8_f32_len, escha_mm_k3_c8_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_b2[0], "escha_mm_k2_b2_f32", escha_mm_k2_b2_f32_len, escha_mm_k2_b2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_escha_mm_b2[1], "escha_mm_k3_b2_f32", escha_mm_k3_b2_f32_len, escha_mm_k3_b2_f32_data, "main", 4, sizeof(vk_op_escha_mm_push_constants), {1, 1, 1}, {}, 1);
+ 
+     const uint32_t cumsum_elem_per_thread = (device->vendor_id == VK_VENDOR_ID_AMD || device->vendor_id == VK_VENDOR_ID_INTEL) ? 2 : 4;
+     ggml_vk_create_pipeline(device, device->pipeline_cumsum_f32,       "cumsum_f32", cumsum_f32_len, cumsum_f32_data, "main", 2, sizeof(vk_op_sum_rows_push_constants), {1, 1, 1}, { 256, device->subgroup_size, cumsum_elem_per_thread }, 1, true, true, device->subgroup_size);
+@@ -10504,10 +10507,29 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+     // escha2 5120x12288. Below a full block the one-column kernel is simply the better one.
+     const bool use_mc = !no_multicol && ncols >= ESCHA_MM_COLS;
+ 
++    // Occupancy arm (seat-40) - REFUTED BY MEASUREMENT, OFF BY DEFAULT.
++    // The reasoning was that 128 threads is two waves at warp 64, too few to hide code-fetch
++    // latency behind the generator's ALU work, and that 256 threads over two adjacent output
++    // blocks would be four. Measured on the 27B Escha model, one binary, arms alternated, two
++    // rounds in one thermal session on Balanced:
++    //     one block  (128 thr)  pp512 16.33 / 16.44   tg32 3.95 / 3.87
++    //     two blocks (256 thr)  pp512 16.36 / 16.47   tg32 3.90 / 3.92
++    // Identical to three significant figures. The kernel is ALU-bound on the generator, not
++    // latency-bound, so more waves have nothing to hide. Same lesson the subgroup-Hadamard lever
++    // taught, for the same reason.
++    // The code stays behind an OPT-IN switch: on a device with a different wave size or a cheaper
++    // generator this may well win, and it costs nothing to keep reachable.
++    // Correctness at the time of refutation: test-backend-ops -o ESCHA_MM, 12 cases OK / 0 FAIL,
++    // including the model shapes at ncols=2 which take this exact path.
++    static const bool want_block2 = getenv("GGML_VK_ESCHA_BLOCK2") != nullptr;
++    const bool use_b2 = !use_mc && want_block2 && (n_out % 256 == 0);
++
+     const int kidx = src0->type == GGML_TYPE_ESCHA3 ? 1 : 0;
+     vk_pipeline pipeline = use_mc ? ctx->device->pipeline_escha_mm_mc[kidx]
++                         : use_b2 ? ctx->device->pipeline_escha_mm_b2[kidx]
+                                   : ctx->device->pipeline_escha_mm[kidx];
+     const uint32_t cols_per_wg = use_mc ? ESCHA_MM_COLS : 1;
++    const uint32_t out_per_wg  = use_b2 ? 256u : 128u;
+     GGML_ASSERT(pipeline != nullptr);
+ 
+     ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
+@@ -10521,7 +10543,7 @@ static void ggml_vk_escha_mm(ggml_backend_vk_context * ctx, vk_context& subctx,
+     const vk_subbuffer aux_buf = ggml_vk_tensor_subbuffer(ctx, src2);
+     const vk_subbuffer dst_buf = ggml_vk_tensor_subbuffer(ctx, dst);
+ 
+-    const uint32_t wg_x = n_out / 128;
++    const uint32_t wg_x = n_out / out_per_wg;
+ 
+     // F-124 host-freeze guard. One workgroup serves one (output 128-block, column) and re-decodes
+     // the whole weight matrix for its own column, so a single dispatch costs O(ncols): decode pays
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+index d8c97d1c1..90ffea97d 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+@@ -30,7 +30,23 @@
+ // dependence on driver f16 float-controls (Terra-66: glslc does not emit them).
+ // Compile with ESCHA_K = 2 or 3.
+ 
+-layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
++// SEAT-40 OCCUPANCY LEVER: how many 128-channel output blocks one workgroup serves.
++//
++// At ESCHA_BLOCKS=1 a workgroup is 128 threads, which on a warp-64 device is TWO waves - too few
++// to hide the memory latency of the code fetch behind the generator's ALU work. ESCHA_BLOCKS=2
++// makes it 256 threads (four waves) covering two adjacent output blocks that share the same
++// activation column, so the extra parallelism costs no extra staging traffic.
++//
++// Each half keeps its OWN copy of the staged activations. That duplicates the Hadamard butterfly,
++// which is deliberate: the butterfly is roughly 7 operations per thread per input block against
++// ~768 for the tile loop, under 1% of the work, and a shared copy would need either non-uniform
++// barriers (undefined) or two threads writing the same slot (a race, even with equal values).
++#ifndef ESCHA_BLOCKS
++#define ESCHA_BLOCKS 1
++#endif
++#define NB (ESCHA_BLOCKS)
++
++layout(local_size_x = 128 * ESCHA_BLOCKS, local_size_y = 1, local_size_z = 1) in;
+ 
+ #ifndef ESCHA_COLS
+ #define ESCHA_COLS 1
+@@ -50,7 +66,7 @@ layout (binding = 1) readonly  buffer B { float data_b[]; };  // x [n_in, ncols]
+ layout (binding = 2) readonly  buffer C { float data_c[]; };  // aux: rin | rout | bias
+ layout (binding = 3) writeonly buffer D { float data_d[]; };  // y [n_out, ncols]
+ 
+-shared float sh[NC][128];
++shared float sh[NB][NC][128];
+ 
+ const float INV_SQRT128 = 0.08838834764831845;
+ 
+@@ -152,6 +168,40 @@ float escha_F(uint xw) {
+ #endif
+ }
+ 
++// SEAT-40 LEVER 2: decode TWO codewords per packed f16 add.
++//
++// After the f16-native generator the per-weight cost is roughly imul, and, xor, one f16 add and
++// one widen. The add is the only step that can serve two weights at once: RDNA has v_pk_add_f16,
++// which adds two f16 lanes in one instruction. Feeding it needs the two sums arranged VERTICALLY
++// (x-components against y-components) rather than horizontally within one pair, which is what the
++// swizzle below builds.
++//
++// This changes no arithmetic - each sum is still the same f16 add of the same two f16 operands -
++// so the F16ADD sweep column covers this path's values too. Whether the compiler actually emits
++// the packed form is a device/driver fact, which is why this is a switch with a measurement rather
++// than an assumption.
++//
++// REFUTED ON THIS DEVICE, OFF BY DEFAULT. Two rounds, arms alternated, one thermal session:
++//     base (scalar f16 generator)  pp512 16.47 / 16.13   tg32 3.91 / 3.87
++//     packed pair                  pp512 16.09 / 16.24   tg32 3.82 / 3.72
++// Slightly WORSE, about 3% of decode. The swizzle that arranges the operands vertically costs at
++// least as much as the add it saves, and the two extra window shifts have to be live at once,
++// which raises register pressure on a kernel that already holds an accumulator per column.
++// Correctness was proven first and separately: test-backend-ops -o ESCHA_MM, 12 OK / 0 FAIL.
++// Kept behind the switch because a driver that fuses the swizzle would flip the result.
++#ifndef ESCHA_F16_PAIR
++#define ESCHA_F16_PAIR 0
++#endif
++
++vec2 escha_F2(uint x0, uint x1) {
++    const uint q0 = 0x3B603B60u ^ ((x0 * 0xCBAC1FEDu) & 0x8FFF8FFFu);
++    const uint q1 = 0x3B603B60u ^ ((x1 * 0xCBAC1FEDu) & 0x8FFF8FFFu);
++    const f16vec2 h0 = unpackFloat2x16(q0);
++    const f16vec2 h1 = unpackFloat2x16(q1);
++    const f16vec2 s  = f16vec2(h0.x, h1.x) + f16vec2(h0.y, h1.y);   // one v_pk_add_f16
++    return vec2(s);
++}
++
+ // 64-bit funnel shift via two u32s; no shaderInt64
+ uint shr64_32(uint lo, uint hi, uint s) {
+     if (s == 0u)  return lo;
+@@ -194,14 +244,14 @@ uint shr64_32(uint lo, uint hi, uint s) {
+ #define ESCHA_SG_HADAMARD 0
+ #endif
+ 
+-void hadamard128(uint tid) {
++void hadamard128(uint hb, uint tid) {
+     [[unroll]] for (uint step = 1u; step < 128u; step <<= 1u) {
+ #if ESCHA_SG_HADAMARD
+         if (step < gl_SubgroupSize) {          // uniform branch: partner is in my subgroup
+             [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+-                const float a = sh[cj][tid];
++                const float a = sh[hb][cj][tid];
+                 const float o = subgroupShuffleXor(a, step);
+-                sh[cj][tid] = ((tid & step) == 0u) ? (a + o) : (o - a);
++                sh[hb][cj][tid] = ((tid & step) == 0u) ? (a + o) : (o - a);
+             }
+             continue;                          // no barrier: each thread touched only its own slot
+         }
+@@ -209,12 +259,12 @@ void hadamard128(uint tid) {
+ #endif
+         float a[NC], o[NC];
+         [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+-            a[cj] = sh[cj][tid];
+-            o[cj] = sh[cj][tid ^ step];
++            a[cj] = sh[hb][cj][tid];
++            o[cj] = sh[hb][cj][tid ^ step];
+         }
+         barrier();
+         [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+-            sh[cj][tid] = ((tid & step) == 0u) ? (a[cj] + o[cj]) : (o[cj] - a[cj]);
++            sh[hb][cj][tid] = ((tid & step) == 0u) ? (a[cj] + o[cj]) : (o[cj] - a[cj]);
+         }
+         barrier();
+     }
+@@ -224,8 +274,9 @@ void hadamard128(uint tid) {
+ }
+ 
+ void main() {
+-    const uint tid  = gl_LocalInvocationID.x;
+-    const uint ob   = gl_WorkGroupID.x;      // output 128-block
++    const uint hb   = gl_LocalInvocationID.x >> 7u;          // which output block within the group
++    const uint tid  = gl_LocalInvocationID.x & 127u;         // thread within that block
++    const uint ob   = gl_WorkGroupID.x * NB + hb;            // output 128-block
+     const uint col0 = p.col_offset + gl_WorkGroupID.y * NC; // first column of this block
+     const uint ot   = ob * 8u + (tid >> 4u); // this thread's out tile
+     const uint tcol = tid & 15u;             // column within the tile
+@@ -248,10 +299,10 @@ void main() {
+         [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+             // clamp the tail: those lanes recompute a duplicate column that is never stored
+             const uint cc = min(col0 + cj, p.ncols - 1u);
+-            sh[cj][tid] = data_b[cc * p.n_in + gi] * rin;
++            sh[hb][cj][tid] = data_b[cc * p.n_in + gi] * rin;
+         }
+         barrier();
+-        hadamard128(tid);
++        hadamard128(hb, tid);
+         // fold the input-side 1/sqrt(128): sh is read-only below, scale at use
+ 
+         for (uint t = 0u; t < 8u; ++t) {
+@@ -265,14 +316,29 @@ void main() {
+                 const uint pw   = (lane >> 1u) & 15u;
+                 const uint qw   = (pw + 15u) & 15u;
+                 const uint word = shr64_32(data_a[base + pw], data_a[base + qw], ((lane & 1u) == 0u) ? 16u : 0u);
++#if ESCHA_F16_PAIR
++                [[unroll]] for (uint kp = 0u; kp < 2u; ++kp) {
++                    const uint ca  = c0 + 2u*kp;
++                    const uint cb  = ca + 1u;
++                    const uint rowa = 2u*b + (1u - (ca & 1u)) + 8u*(1u - ((ca >> 1u) & 1u));
++                    const uint rowb = 2u*b + (1u - (cb & 1u)) + 8u*(1u - ((cb >> 1u) & 1u));
++                    const vec2 ww  = escha_F2((word >> (2u*ca)) & 0xFFFFu,
++                                              (word >> (2u*cb)) & 0xFFFFu);
++                    [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
++                        acc[cj] += sh[hb][cj][t*16u + rowa] * ww.x
++                                 + sh[hb][cj][t*16u + rowb] * ww.y;
++                    }
++                }
++#else
+                 [[unroll]] for (uint k = 0u; k < 4u; ++k) {
+                     const uint c   = c0 + k;
+                     const uint  row = 2u*b + (1u - (c & 1u)) + 8u*(1u - ((c >> 1u) & 1u));
+                     const float w   = escha_F((word >> (2u*c)) & 0xFFFFu); // decoded ONCE for all NC columns
+                     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+-                        acc[cj] += sh[cj][t*16u + row] * w;
++                        acc[cj] += sh[hb][cj][t*16u + row] * w;
+                     }
+                 }
++#endif
+ #else
+                 // K=3 crossed 96-byte bitstream (PTX lines 2282-2312)
+                 const uint tt   = 24u * lane;
+@@ -291,7 +357,7 @@ void main() {
+                     const uint  win = (c < 4u) ? (pp >> (3u*c)) : (rr >> (3u*(c - 4u)));
+                     const float w   = escha_F(win & 0xFFFFu);              // decoded ONCE for all NC columns
+                     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+-                        acc[cj] += sh[cj][t*16u + row] * w;
++                        acc[cj] += sh[hb][cj][t*16u + row] * w;
+                     }
+                 }
+ #endif
+@@ -302,17 +368,17 @@ void main() {
+ 
+     // output-side transform + scales + bias; both 1/sqrt(128) factors fold here
+     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+-        sh[cj][tid] = acc[cj];
++        sh[hb][cj][tid] = acc[cj];
+     }
+     barrier();
+-    hadamard128(tid);
++    hadamard128(hb, tid);
+     const uint  oc   = ob * 128u + tid;
+     const float rout = data_c[p.n_in + oc];
+     const float bias = data_c[p.n_in + p.n_out + oc];
+     [[unroll]] for (uint cj = 0u; cj < NC; ++cj) {
+         const uint cc = col0 + cj;
+         if (cc < p.ncols) {   // tail guard: never store outside the real column range
+-            data_d[cc * p.n_out + oc] = sh[cj][tid] * (INV_SQRT128 * INV_SQRT128) * rout + bias;
++            data_d[cc * p.n_out + oc] = sh[hb][cj][tid] * (INV_SQRT128 * INV_SQRT128) * rout + bias;
+         }
+     }
+ }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index dbc3ae942..e714da516 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -1219,6 +1219,10 @@ void process_shaders() {
+     // ESCHA_MM_COLS in ggml-vulkan.cpp)
+     string_to_spv("escha_mm_k2_c8_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_COLS", "8"}});
+     string_to_spv("escha_mm_k3_c8_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_COLS", "8"}});
++    // occupancy arm (seat-40): 256 threads covering two adjacent output blocks. Decode-shaped work
++    // only (one column), where 128 threads is two waves on a warp-64 device. Requires n_out % 256.
++    string_to_spv("escha_mm_k2_b2_f32", "escha_mm.comp", {{"ESCHA_K", "2"}, {"ESCHA_BLOCKS", "2"}});
++    string_to_spv("escha_mm_k3_b2_f32", "escha_mm.comp", {{"ESCHA_K", "3"}, {"ESCHA_BLOCKS", "2"}});
+     string_to_spv("count_equal_i32", "count_equal.comp", merge_maps(base_dict, {{"A_TYPE", "int"}, {"B_TYPE", "int"}, {"D_TYPE", "int"}}));
+     string_to_spv("cumsum_f32", "cumsum.comp", merge_maps(base_dict, {{"A_TYPE", "float"}, {"D_TYPE", "float"}}));
+     string_to_spv("cumsum_multipass1_f32", "cumsum_multipass1.comp", merge_maps(base_dict, {{"A_TYPE", "float"}, {"D_TYPE", "float"}}));

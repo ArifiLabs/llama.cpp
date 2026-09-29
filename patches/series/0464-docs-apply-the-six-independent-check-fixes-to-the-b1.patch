@@ -1,0 +1,179 @@
+From a7966b09d934c2475af56cd668212ad6f96fc895 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 5 Sep 2026 15:25:05 -0400
+Subject: [PATCH] docs: apply the six independent-check fixes to the b10680
+ kernel-wave trail
+
+An independent check of the trail (maker != checker) read every number back
+against its cited source and returned INTEGRATE-WITH-FIXES on six. All six are
+prose in files this fork will publish; none changes a verdict word. Three of the
+six re-imported a correction the governed record had already made - a superseded
+commit message republished over the report that corrected it.
+
+1. The q6_k op-level pairing was a cross-run one. 0.9796 is the gated one-binary
+   run's q6_K median; 0.9990 / [0.9520, 1.0527] is the two-binary diagnostic's
+   control. Each arm now carries its own control: 0.9796 against 1.0061,
+   [0.9479, 1.0636]; the diagnostic's 0.9880 against 0.9990, [0.9520, 1.0527].
+   Neither pairing separates, so NEUTRAL is unchanged. Fixed in four places.
+
+2. "12 arm-launches" was the commit message's wrong arithmetic. The byte-identity
+   gate is the serve phase: 6 launches x 3 prompts = 18 completions, 3 distinct
+   shas. Fixed in three places.
+
+3. F-13 credited the FP4 type with 13 correctness cases. That is the iq3_s count.
+   The type's own receipt reads 10/10 MUL_MAT, and the r10 route adds 2
+   MUL_MAT_ID: now "10 MUL_MAT correctness cases and 2 MUL_MAT_ID, 0 FAIL".
+
+4. The every-width iq3_s loss was attributed to the wrong build. 616b877b8 is the
+   >= 2 gate, whose own ladder reads n=4 x0.823 - confirmed by the x1.208 n=4
+   recovery when the stock body came back. The x0.907 / x0.925 pair belongs to an
+   intermediate build that never shipped. Both readings are now stated and
+   attributed. A loss is still a loss; the number changes.
+
+5. The canonical concat figure was labelled "position-balanced". The governed
+   record corrected that on 2026-09-04: the view is position-1-EXCLUDED, a
+   conservative residual. -11.4349% / -13.988 ms is unchanged.
+
+6. The series counts (10 merges / 57 provenance / 415 patches) were stated as
+   measured before-and-after without their basis. They were banked at 84ebe1269
+   and re-held at a0cf8ef33; they were not re-measured at 131fad035. The basis is
+   now on the page.
+
+Docs only: no source, shader, CMake or build file is touched, and MANIFEST.md
+stays generated.
+
+Origin: lane-209 public trail (HQ seat-52, R9B), independent-check fixes
+Measured-effect: UNMEASURED
+---
+ CHANGELOG.md             | 33 ++++++++++++++++++---------------
+ docs/FINDINGS.md         | 13 ++++++++-----
+ docs/OPTIONS-REGISTRY.md |  4 ++--
+ 3 files changed, 28 insertions(+), 22 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 8e7d38a96..d6d0711f5 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -66,10 +66,10 @@ why no row is a continuation of the row above it.
+ | Dedicated `iq4_xs` mat-vec shader (`1884a620a`) | outsourc-e Unleashed UD-Q3_K_XL, 13.22 GB | drafted **8.173 → 8.323 (+2%)**; plain **4.952 → 5.426 (+10%)** | E1 | rolled 35/40 → 35/40, F-141 0/8 | **WIN** |
+ | `iq3_s` mat-vec split at `NUM_COLS == 3 \|\| > 4` (`aa9f0e2aa`) | outsourc-e Unleashed UD-Q3_K_XL, 13.22 GB | drafted decode **8.367 → 9.268 t/s (+11%)**; plain identical | E1 | rolled 35/40 → 35/40, F-141 0/8 | **WIN** |
+ | `iq3_s` mat-vec split (`aa9f0e2aa`) | outsourc-e Unleashed UD-IQ4_XS, 14.30 GB | drafted decode **+0.199 t/s (+2%)**, twice, across a driver change | E1 and E2 | rolled 35/40 → 35/40, F-141 0/8 | **WIN** (small, reproduced) |
+-| `iq3_s` split applied at **every** width (`616b877b8`) | — (kernel bench only) | `n=2` ×0.907, `n=4` ×0.925 | E1 | — | **LOSS — superseded by `aa9f0e2aa`** |
++| `iq3_s` split applied at **every** width (`616b877b8`) | — (kernel bench only) | `n=4` ×0.823 on its own ladder | E1 | — | **LOSS — superseded by `aa9f0e2aa`** |
+ | ROCmFP4-FAST `q8_1` MMVQ mat-vec, retained at `n=3` and `n=5` (`f68a4bd25`) | julianmb Qwen3.8-27B-ROCmFP4-FAST, 14.56 GB | drafted decode **7.498 → 9.518 t/s (+27%)**; plain tied | E2 | rolled 32/40 → 33/40, F-141 0/8, zero empty completions | **MEASURED WIN — default-branch integration BLOCKED**, see below |
+ | Tiled concat-transpose for the delta-net conv state (`5b1b416cb`) | huihui-ai Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL, 16.2 GB | CONCAT dispatch **−13%**; whole-model **TIED**, twice | E3 | output byte-identical gate ON vs OFF 3/3, F-141 0/8 | **WIN at the op, TIE at the seat** |
+-| `q6_k` mat-vec reads scales from the block, not through LDS (`4bbebd619`) | huihui-ai Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL, 16.2 GB | op-level ratio **0.9796** against a control of **0.9990** — no row separates | 32+16 GB | output byte-identical, `test-backend-ops` MUL_MAT 1394/1394 | **NEUTRAL** — shipped for less work, **never quote it as a win** |
++| `q6_k` mat-vec reads scales from the block, not through LDS (`4bbebd619`) | huihui-ai Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL, 16.2 GB | op-level ratio **0.9796** against its own control of **1.0061** — no row separates | 32+16 GB | output byte-identical, `test-backend-ops` MUL_MAT 1394/1394 | **NEUTRAL** — shipped for less work, **never quote it as a win** |
+ | Draft length sized from measured acceptance, `--spec-draft-adaptive` (`6c7d9275f`) | — | **not measured here** | — | — | **UNMEASURED on RIG-A**, default OFF |
+ | Server: do not re-verify replayed draft tokens after a checkpoint restore (`8a4044a82`) | — | no throughput claim | — | — | **BUG FIX** |
+ 
+@@ -129,8 +129,10 @@ quality gate is the 40-prompt rolled smoke score with thinking OFF, reported in
+ 
+ - **A split `iq3_s` mat-vec, at the two widths where it wins.** An unmerged community change reshapes
+   this shader to 16 invocations per superblock and drops its `sum[]` array. Applied at **every** width
+-  it measured a **7–9% loss** on RIG-A at `n=2` (×0.907) and `n=4` (×0.925) — that build (`616b877b8`)
+-  is listed here because it is a result, and it is superseded. The shipped gate is
++  it measured a loss on RIG-A: the committed every-width build (`616b877b8`) read **`n=4` ×0.823** on
++  its own ladder, and an intermediate build carrying the same no-`sum[]` body at the stock widths read
++  **`n=2` ×0.907 / `n=4` ×0.925**. Both are superseded by `aa9f0e2aa`, and `616b877b8`
++  is listed here because it is a result. The shipped gate is
+   `NUM_COLS == 3 || NUM_COLS > 4`: the source's own widths plus the one width below them that measured
+   a win, with every other width taking the upstream body **bit for bit** under a specialization
+   constant that folds at pipeline creation.
+@@ -187,8 +189,8 @@ quality gate is the 40-prompt rolled smoke score with thinking OFF, reported in
+   **Kernel, on RIG-A** (one binary, arms selected by the environment variable, 4 interleaved launches,
+   32 graph blocks, epoch E3): CONCAT **2550.2 → 2224.1 µs per dispatch = −12.79%**, **−15.66 ms per
+   `ub512` prefill graph**. The arms do not overlap — `min(OFF) 2510.5 µs > max(ON) 2325.7 µs`. On a
+-  binary built from the default branch ten commits later, re-measured over three counterbalanced takes
+-  and reported position-balanced, the same op reads **−11.4349% / −13.988 ms**. Both are banked; neither
++  binary built from the default branch ten commits later, re-measured as a position-1-excluded median
++  over three takes (9 launches), the same op reads **−11.4349% / −13.988 ms**. Both are banked; neither
+   replaces the other, because they are different binaries and, per this project's equipment register,
+   potentially different memory configurations.
+ 
+@@ -261,12 +263,13 @@ quality gate is the 40-prompt rolled smoke score with thinking OFF, reported in
+ 
+   **This measured NEUTRAL on RIG-A and must not be quoted as a speed win.** One binary, arms selected
+   by a specialization constant, 6 position-balanced interleaved launches per phase, on the seat serve
+-  line: at the op level the `q6_k` rows read a median ON/OFF ratio of **0.9796** against a control of
+-  **78 untouched op rows at 0.9990, p10–p90 [0.952, 1.053]** — **no `q6_k` row separates from the
+-  control band**. At the serve level, **TIED on all six cells** — prefill and decode, reported
+-  separately, at three prompt lengths, every arm range overlapping. Output is **byte-identical**: one
+-  distinct hash per prompt across all 12 arm-launches. `test-backend-ops -o MUL_MAT` **1394/1394, 0
+-  FAIL, both arms**.
++  line: at the op level the `q6_k` rows read a median ON/OFF ratio of **0.9796** against its own
++  control of **78 untouched op rows at 1.0061, p10–p90 [0.9479, 1.0636]** (one binary, env-gated);
++  the two-binary diagnostic read **0.9880** against **0.9990, p10–p90 [0.9520, 1.0527]** — **no
++  `q6_k` row separates from the control band in either pairing**. At the serve level, **TIED on all
++  six cells** — prefill and decode, reported separately, at three prompt lengths, every arm range
++  overlapping. Output is **byte-identical**: one distinct sha256 per prompt across 6 serve launches
++  (18 completions). `test-backend-ops -o MUL_MAT` **1394/1394, 0 FAIL, both arms**.
+ 
+   It is kept because it is **strictly less work for a bit-identical result** — one fewer workgroup
+   barrier per row per superblock, and no shared-memory tile — on an engine that ships to other people's
+@@ -287,8 +290,8 @@ quality gate is the 40-prompt rolled smoke score with thinking OFF, reported in
+   retained at. What is owed before it lands is named rather than left implicit: an adversarial
+   cache-history corpus that reaches width 3, or a direct comparison of the integer-dot and float logits.
+ 
+-- **The `iq3_s` split applied at every width** (`616b877b8`) — **7–9% slower** at `n=2` and `n=4` on
+-  RIG-A. Superseded by the gated version above rather than kept as an option, because the two widths it
++- **The `iq3_s` split applied at every width** (`616b877b8`) — **`n=4` ×0.823** on its own ladder on
++  RIG-A. Superseded by the gated version above rather than kept as an option, because the widths it
+   loses on are widths the shipped gate simply does not touch.
+ 
+ - **`--spec-draft-adaptive` as a default.** Compiled in, off, and unmeasured here.
+@@ -305,7 +308,7 @@ to prevent.
+ | `6c7d9275f`, `8a4044a82` — adaptive drafting, replay fix | on their working branch | awaiting integration |
+ | `e3220bed0` — ROCmFP4-FAST mat-mat + mat-vec hoist | on its working branch | awaiting integration |
+ | `1884a620a`, `aa9f0e2aa` — `iq4_xs` and `iq3_s` mat-vec | on their working branch | measured wins, awaiting integration |
+-| `616b877b8` — the every-width `iq3_s` split | on its working branch | **superseded by `aa9f0e2aa`** and kept as history; it is the measured 7–9% loss listed above |
++| `616b877b8` — the every-width `iq3_s` split | on its working branch | **superseded by `aa9f0e2aa`** and kept as history; it is the measured `n=4` ×0.823 loss listed above |
+ | `60f57787f`, `ab04258bf`, `294dfdbdd`, `8e2acfd21`, `f68a4bd25` — ROCmFP4-FAST MMVQ | on its working branch | **held there deliberately** — see the residual above. The five narrow the width gate in order, each on what the one before ruled out, so a subset of them is a different and untested change rather than a smaller one |
+ | `da218bab7` — comment correction | on its working branch | comment-only; no behaviour |
+ | `4bbebd619` — `q6_k` direct scales | on its working branch | awaiting integration |
+diff --git a/docs/FINDINGS.md b/docs/FINDINGS.md
+index 6abbdc006..8b0255c44 100644
+--- a/docs/FINDINGS.md
++++ b/docs/FINDINGS.md
+@@ -144,8 +144,9 @@ width 2**, and the shipped gate retains the path only at widths 3 and 5.
+ 
+ **Two things this finding leaves standing.**
+ 
+-`test-backend-ops` passed the type throughout — 13 correctness cases, 0 FAIL, and the identity-path
+-suite green. It is not a broken test: the divergence sits **inside** the op's own normalized-error
++`test-backend-ops` passed the type throughout — 10 MUL_MAT correctness cases and 2 MUL_MAT_ID,
++0 FAIL, and the identity-path suite green. It is not a broken test: the divergence sits **inside**
++the op's own normalized-error
+ tolerance, which is exactly the size of divergence that tolerance is designed to admit. A test that
+ gates on aggregate numerical error over a tensor cannot see a distribution shift at one position that
+ crosses a sampling boundary. **A green op-level suite is not a statement about the first token.**
+@@ -545,9 +546,11 @@ block, each writes its own scale, and each then reads only four bytes of that sa
+ same 16-byte cache line the staging was already fetching. So the barrier could be removed for a
+ **bit-identical** result, and it was, behind a specialization constant so one binary serves both
+ arms. Measured on the seat serve line, 6 position-balanced interleaved launches per phase: the
+-`q6_k` op rows read a median ON/OFF ratio of **0.9796** against a control of **78 untouched op rows
+-at 0.9990, p10–p90 [0.952, 1.053]**. **No `q6_k` row separates from the control band.** Serve level:
+-tied on all six cells. Output: byte-identical, one distinct hash per prompt across 12 arm-launches.
++`q6_k` op rows read a median ON/OFF ratio of **0.9796** against its own control of **78 untouched op
++rows at 1.0061, p10–p90 [0.9479, 1.0636]** (one binary, env-gated); the two-binary diagnostic read
++**0.9880** against **0.9990, p10–p90 [0.9520, 1.0527]**. **No `q6_k` row separates from the control
++band in either pairing.** Serve level: tied on all six cells. Output: byte-identical, one distinct
++sha256 per prompt across 6 serve launches (18 completions).
+ 
+ **The deficit stands, unexplained, and the next attempt has to look somewhere else.** This entry
+ exists so that nobody spends the same day on the same barrier.
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index 054e10dc7..0785b47aa 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -52,8 +52,8 @@ safe measurement posture.
+ | `GGML_SCHED_PREFETCH_EXPERTS` | OFF on unified-memory defaults | thecodacus patch 2: overlaps host-offloaded expert upload with compute. | Discrete-GPU or proven host-offloaded transfer regime. | Documented `+64.5%` prefill in the host-offloaded `-cmoe` condition. Inert when experts are already GPU-resident; it does not enable MTP. |
+ | `GGML_SCHED_MAX_PREFETCH_SLOTS` | implementation default | thecodacus patch 3: sizes per-layer prefetch slots. | Tune only with patch 1 and 2 in dependency order and a transfer-bound workload. | No independent isolated gain accepted; part of the host-transfer bundle and inert in the shipped GPU-resident Vulkan configuration. |
+ | mmap pinning | compiled capability; no universal default | thecodacus patch 1 pins mmap-backed CPU weights. | Use only where CPU-mapped weights must cross a host-to-device boundary. | First dependency in the bundle; inert as part of the triplet on GPU-resident unified-memory Vulkan. |
+-| `GGML_VK_CONCAT_TRANSPOSE` | **ON when unset.** Only an exact `0` disables. Added 2026-09-04. | Scope: `GGML_OP_CONCAT` where `src1` is transposed (`nb[0] > nb[1]`) and `src0` has `ne[2] == ne[3] == 1` — the delta-net conv-state shape, and nothing else. That shape sends the generic concat down a 40960-byte stride (`conv_channels * 4`), one cache line per element and one memory channel per row; the gate routes it to a 32×32 tiled kernel with a `[32][33]` padded shared tile so the strided read coalesces and the write stays linear. The predicate falls back to the generic concat when the tiled grid would exceed `maxComputeWorkGroupCount`. Disjoint from the pre-existing `cpy_transpose_02_32/02_16` tiled branch. | Leave it on. Set `0` to reproduce the BEFORE arm, or if a device's tiled dispatch misbehaves. | **Op-level WIN, serve-level TIE, both measured; the tie is not a loss.** RIG-A, one binary with the arms env-gated, Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL on the seat serve line, 4 interleaved launches / 32 graph blocks, Balanced: CONCAT **2550.2 → 2224.1 µs per dispatch = −12.79%**, **−15.66 ms per `ub512` prefill graph**, arms **non-overlapping** (`min(OFF) 2510.5 > max(ON) 2325.7`). On a default-branch binary ten commits later, three counterbalanced takes reported position-balanced: **−11.4349% / −13.988 ms**. Both banked; neither replaces the other (different binaries, and per the equipment register a possibly different memory configuration).<br>**The end-to-end claim is a TIE and must stay one.** CONCAT is **1.42%** of the prefill graph here, so the ceiling is **+0.18%** — far under this box's paired CI95 halfwidths of **±6.7% / ±5.9% / ±31.2%**. Two counterbalanced 8-launch palindromes both read TIED at `pp512@ub512`, `pp2048@ub512`, `pp2048@ub2048`, with the **sign flipping between takes on two of three shapes**; neither direction is quotable. Upstream's **+3.3% pp2048** was measured on gfx1151 where the op is a larger share — **upstream-reported, not reproduced, not contradicted.**<br>**Quality:** generated text **byte-identical ON vs OFF, 3/3 prompts**, temp 0, on two genuinely separate processes (distinct ports, each listener proven a descendant of its own launcher — an earlier ON-vs-ON result on a shared port was **VOID and is withdrawn**); F-141 content floor **0/8 on every slot**; reachability **1392 generation-time dispatches ON vs 0 OFF**. `test-backend-ops -o CONCAT` **195/195, 0 FAIL, both arms** — but that suite provably carries **no transposed-`src1` case**, so it proves non-regression, **not coverage**. **UNMEASURED:** the decode/verify graph, and MoE models (where the upstream claims live). |
+-| `GGML_VK_Q6K_DIRECT_SCALES` | **ON when unset — this row inverts the usual shape of this registry, read it before assuming.** Specialization constant 3; default `1` = read scales directly from the block. **`GGML_VK_Q6K_DIRECT_SCALES=0` restores upstream's shared-memory staging path byte for byte.** One binary serves both arms; the host prints the resolved mode on stderr at pipeline creation. Added 2026-09-05. | Scope: `mul_mat_vec_q6_k.comp` only. Upstream stages all 16 int8 scales of the superblock into a double-buffered shared tile and pays a `barrier()` **per row, inside the row loop** — the only `q*_k` mat-vec that does; `q4_k` and `q5_k` unpack in registers with no barrier. The exchange moves no data between threads: the 16 threads share one block, each writes its own scale and each reads only four bytes of that same block, off the cache line the staging already fetched. Direct reads yield identical values in identical fma order, so the result is **bit-identical by construction** and measured so. | **Leave it at the default and do not quote it as a speed lever.** Set `0` to A/B the two paths on other hardware, or to fall back if a driver mishandles the specialization constant. It is a plausible win where barriers are costlier or shared memory is scarcer than on gfx1103 — **unmeasured there**. | **MEASURED NEUTRAL on RIG-A. No speed win is claimed and none may be quoted.** Seat line (Huihui UD-Q4_K_XL + DFlash2 Q4_K_M drafter at `--spec-draft-n-max 2`, so verify width 3), one binary, arms env-gated, **6 position-balanced interleaved launches per phase**, Balanced power plan, 32+16 GB asymmetric RAM: op level, `q6_k` rows read a median ON/OFF ratio **0.9796** against a **control of 78 untouched op rows at median 0.9990, p10–p90 [0.952, 1.053]** — **no `q6_k` row separates from the control band.** Serve level **TIED on all six cells** — prefill and decode reported separately at three prompt lengths, every arm range overlapping. Identity: **byte-identical output, one distinct sha256 per prompt across all 12 arm-launches** (3 prompts × 6 launches). Correctness `test-backend-ops -o MUL_MAT` **1394/1394, 0 FAIL, both arms**.<br>**Kept on the distributable-engine ground, not on a measured gain:** strictly less work — one fewer workgroup barrier per row per superblock and no shared tile — for a bit-identical result.<br>**What it did NOT fix, stated:** `q6_K` mat-vec runs **~35% below `q5_K`** at the identical shape (`m=17408 n=3 k=5120`: **41.0 vs 63.8 GB/s**, ratio 0.643), every `q6_K` row in a 39.2–41.6 band. The per-row barrier was the leading mechanism for that deficit and is now **FALSIFIED**; the deficit is **OPEN**. Correction to the motivating claim: `q4_K` at that same shape is **60.6 GB/s, not 72.5** — the deficit survives on the `q5_K` comparison only. See [`FINDINGS.md`](FINDINGS.md) F-14. |
++| `GGML_VK_CONCAT_TRANSPOSE` | **ON when unset.** Only an exact `0` disables. Added 2026-09-04. | Scope: `GGML_OP_CONCAT` where `src1` is transposed (`nb[0] > nb[1]`) and `src0` has `ne[2] == ne[3] == 1` — the delta-net conv-state shape, and nothing else. That shape sends the generic concat down a 40960-byte stride (`conv_channels * 4`), one cache line per element and one memory channel per row; the gate routes it to a 32×32 tiled kernel with a `[32][33]` padded shared tile so the strided read coalesces and the write stays linear. The predicate falls back to the generic concat when the tiled grid would exceed `maxComputeWorkGroupCount`. Disjoint from the pre-existing `cpy_transpose_02_32/02_16` tiled branch. | Leave it on. Set `0` to reproduce the BEFORE arm, or if a device's tiled dispatch misbehaves. | **Op-level WIN, serve-level TIE, both measured; the tie is not a loss.** RIG-A, one binary with the arms env-gated, Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL on the seat serve line, 4 interleaved launches / 32 graph blocks, Balanced: CONCAT **2550.2 → 2224.1 µs per dispatch = −12.79%**, **−15.66 ms per `ub512` prefill graph**, arms **non-overlapping** (`min(OFF) 2510.5 > max(ON) 2325.7`). On a default-branch binary ten commits later, a position-1-excluded median over three takes (9 launches): **−11.4349% / −13.988 ms**. Both banked; neither replaces the other (different binaries, and per the equipment register a possibly different memory configuration).<br>**The end-to-end claim is a TIE and must stay one.** CONCAT is **1.42%** of the prefill graph here, so the ceiling is **+0.18%** — far under this box's paired CI95 halfwidths of **±6.7% / ±5.9% / ±31.2%**. Two counterbalanced 8-launch palindromes both read TIED at `pp512@ub512`, `pp2048@ub512`, `pp2048@ub2048`, with the **sign flipping between takes on two of three shapes**; neither direction is quotable. Upstream's **+3.3% pp2048** was measured on gfx1151 where the op is a larger share — **upstream-reported, not reproduced, not contradicted.**<br>**Quality:** generated text **byte-identical ON vs OFF, 3/3 prompts**, temp 0, on two genuinely separate processes (distinct ports, each listener proven a descendant of its own launcher — an earlier ON-vs-ON result on a shared port was **VOID and is withdrawn**); F-141 content floor **0/8 on every slot**; reachability **1392 generation-time dispatches ON vs 0 OFF**. `test-backend-ops -o CONCAT` **195/195, 0 FAIL, both arms** — but that suite provably carries **no transposed-`src1` case**, so it proves non-regression, **not coverage**. **UNMEASURED:** the decode/verify graph, and MoE models (where the upstream claims live). |
++| `GGML_VK_Q6K_DIRECT_SCALES` | **ON when unset — this row inverts the usual shape of this registry, read it before assuming.** Specialization constant 3; default `1` = read scales directly from the block. **`GGML_VK_Q6K_DIRECT_SCALES=0` restores upstream's shared-memory staging path byte for byte.** One binary serves both arms; the host prints the resolved mode on stderr at pipeline creation. Added 2026-09-05. | Scope: `mul_mat_vec_q6_k.comp` only. Upstream stages all 16 int8 scales of the superblock into a double-buffered shared tile and pays a `barrier()` **per row, inside the row loop** — the only `q*_k` mat-vec that does; `q4_k` and `q5_k` unpack in registers with no barrier. The exchange moves no data between threads: the 16 threads share one block, each writes its own scale and each reads only four bytes of that same block, off the cache line the staging already fetched. Direct reads yield identical values in identical fma order, so the result is **bit-identical by construction** and measured so. | **Leave it at the default and do not quote it as a speed lever.** Set `0` to A/B the two paths on other hardware, or to fall back if a driver mishandles the specialization constant. It is a plausible win where barriers are costlier or shared memory is scarcer than on gfx1103 — **unmeasured there**. | **MEASURED NEUTRAL on RIG-A. No speed win is claimed and none may be quoted.** Seat line (Huihui UD-Q4_K_XL + DFlash2 Q4_K_M drafter at `--spec-draft-n-max 2`, so verify width 3), one binary, arms env-gated, **6 position-balanced interleaved launches per phase**, Balanced power plan, 32+16 GB asymmetric RAM: op level, `q6_k` rows read a median ON/OFF ratio **0.9796** against **its own control of 78 untouched op rows at median 1.0061, p10–p90 [0.9479, 1.0636]** (one binary, env-gated); the two-binary diagnostic read **0.9880** against **0.9990, p10–p90 [0.9520, 1.0527]** — **no `q6_k` row separates from the control band in either pairing.** Serve level **TIED on all six cells** — prefill and decode reported separately at three prompt lengths, every arm range overlapping. Identity: **byte-identical output, one distinct sha256 per prompt across 6 serve launches (18 completions)**. Correctness `test-backend-ops -o MUL_MAT` **1394/1394, 0 FAIL, both arms**.<br>**Kept on the distributable-engine ground, not on a measured gain:** strictly less work — one fewer workgroup barrier per row per superblock and no shared tile — for a bit-identical result.<br>**What it did NOT fix, stated:** `q6_K` mat-vec runs **~35% below `q5_K`** at the identical shape (`m=17408 n=3 k=5120`: **41.0 vs 63.8 GB/s**, ratio 0.643), every `q6_K` row in a 39.2–41.6 band. The per-row barrier was the leading mechanism for that deficit and is now **FALSIFIED**; the deficit is **OPEN**. Correction to the motivating claim: `q4_K` at that same shape is **60.6 GB/s, not 72.5** — the deficit survives on the `q5_K` comparison only. See [`FINDINGS.md`](FINDINGS.md) F-14. |
+ | ROCmFP4-FAST `q8_1` MMVQ width gate | **Code, not an environment variable. No new environment variable was added for this mechanism** — the pre-existing `GGML_VK_DISABLE_MMVQ=1` is the only runtime lever, and it is upstream's, applying to every MMVQ type rather than this one (its own measured effect on `Q2_0_G128` is in the `GGML_ARIFI_G128_MMV_ROWS` row above). `ggml_vk_should_use_mmvq` returns true for `GGML_TYPE_Q4_0_ROCMFP4_FAST` on AMD at **`n == 3` and `n == 5` only**; every other width takes the f32 dequant shader. | Scope: the `q8_1` integer-dot mat-vec and mat-vec-id pipelines for `Q4_0_ROCMFP4_FAST`. Before the port the selector **listed** the type and `should_use_mmvq` **returned true**, but no line ever created the pipeline — so activations were quantized on every mat-vec, the lookup returned null, and the backend fell back to f32 in silence, paying the quantize cost for nothing. The port creates the pipelines and adds the repack and dot product (ue4m3 scale, exact-int LUT so `d_a * d_b * int-dot` forms the same product the f32 path does). | **Do not enable it more widely, and do not put this on a default branch yet.** Width 3 is the verify width of a depth-2 draft, which is where the gain is. Width 1 is a measured tie; width 4 is a tie; width 2 is the width that changed a sampled token; above 5 the port loses. | **MEASURED WIN, INTEGRATION BLOCKED.** Ladder, RIG-A, `m=17408 k=5120`, 3-round medians, epoch E2: `n=1` ×0.991, `n=2` ×1.192, **`n=3` ×1.361**, `n=4` ×1.018, **`n=5` ×1.310**, `n=8` ×1.025. Epoch E1 read ×0.998 / ×1.183 / ×1.335 / ×1.015 / ×1.316 / ×1.040 — **the gains reproduce across a driver change**. The discriminator is the control arm: under `GGML_VK_DISABLE_MMVQ=1` both arms take the identical f32 shader and every row flattens to **×0.991–1.007**, so this is the port and not build drift. Ungated at `n=8` the port read **×0.796**, which is why the gate has an upper bound at all.<br>**Serve, epoch E2** (julianmb Qwen3.8-27B-ROCmFP4-FAST 14.56 GB, DFlash2 depth 2, palindrome, 16 rounds/slot): drafted decode **7.498 → 9.518 t/s mean, +2.0199 [1.3212, 2.7186], 8/8 cells positive = +27%**; median 7.461 → 9.282. Plain **5.084 → 5.086, +0.0016 [−0.0168, +0.0199] = tied**. Prefill tied. Rolled **32/40 → 33/40**. **Zero empty completions in 64 rounds.** F-141 **0/8** on all three slots; `test-backend-ops` **10 MUL_MAT + 2 MUL_MAT_ID cases, 0 FAIL**.<br>**BLOCKING RESIDUAL, and it is why widths 2 and 4 are excluded:** an earlier build of this port made the model emit an empty completion — first token end-of-generation — deterministically on one prompt on this file. Three hypotheses were falsified before the cause was isolated to **width 2** (the n=1 dispatch gate did not remove it; a slot-swap proved the empties follow the **binary**, not the slot; forcing f32 for the whole run removed them). The same shader arithmetic is **still live at widths 3 and 5**, and the reproducer is a plain sequence that cannot reach them. Owed before default-branch integration: an adversarial drafted-mode cache-history corpus reaching width 3, or an MMVQ-vs-f32 logits comparison, or a tightened backend error gate. See [`FINDINGS.md`](FINDINGS.md) F-13. |
+ | `--spec-draft-adaptive` | **OFF.** CLI flag; sizes each draft from a per-sequence EMA of accepted tokens instead of a fixed `--spec-draft-n-max`, which becomes a safety ceiling rather than a tuning parameter. Backing off is averaged (alpha 0.25, ~4-step memory); probing upward is additive. Reset on `begin()` — a new prompt or a reused server slot — never mid-generation. | Scope: `common/speculative.cpp` draft-length selection. Sits in the `else` of this fork's existing DFlash2 adaptive selector, so a controller already armed keeps precedence; the MTP sites keep their own adaptive precedence. Speculation stays distribution-preserving, so the flag can move throughput and **cannot** move output. | Turn it on where content type varies within a session and no single fixed depth is right — its author's motivating measurement is that the correct depth is *opposite* for prose and for JSON. Sweep it against your own fixed depth before adopting. | **UNMEASURED ON RIG-A — no A/B for this flag exists on this hardware, and none should be quoted.** The measured table in the source commit was taken on a **Radeon 8060S** by the upstream author (three drafter configurations × prose/json × fixed-vs-adaptive, 300 greedy tokens on a Qwen3.8-27B ROCmFP4-FAST target). Those are **upstream-reported numbers for a different GPU** and are deliberately not restated here as results of this fork. Default OFF for that reason alone: the mechanism is sound and the evidence for it is somebody else's box. |
+ 

@@ -1,0 +1,495 @@
+From b25c577eee4e4562428e4e02df1478e78debda17 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 07:54:44 -0400
+Subject: [PATCH] feat(vulkan): Q5_K mat-vec activation hoist behind spec
+ constant (R48 phase 1)
+
+The weight decode of mul_mat_vec_q5_k.comp was already shared across NUM_COLS
+columns upstream; the activation side was not. With the row loop outermost the
+eight vec2 loads of data_b were issued num_rows times per superblock per column
+for bytes that do not depend on the row. Arm 1 loads each activation vector once
+per superblock and reuses it across all rows, so the term that grows with batch
+width is divided by NUM_ROWS while the weight term is untouched.
+
+Both arms call the same decode_superblock() and accumulate_column(), so the fma
+chains, operand order and accumulation order into temp[j][n] are one piece of
+code and the arms are bit-identical by construction. Specialization constant 3
+(GGML_ARIFI_Q5K_B_HOIST, default 1) lets one binary serve both arms; the opt-out
+is load-bearing because the hoisted arm holds NUM_ROWS rows of decoded weights
+live across the column loop, and lane-230 measured that shape spilling on this
+device class.
+
+Also adds a device-probed GGML_ARIFI_Q5K_MMVQ_N1 override. Q5_K at n == 1 is the
+only width still served by the q8_1 MMVQ shader on AMD; the override sends it to
+the f32 shader so the whole 1..8 sweep is one kernel. It defaults to the shipped
+route, so no default moves.
+
+Correctness: test-backend-ops -o MUL_MAT -b Vulkan0 -p type_a=q5_K is green in
+both arms (61 cases, 0 FAIL, unset and GGML_ARIFI_Q5K_B_HOIST=0). No perf run,
+no model run. Q6_K registrations and mul_mat_vec_q6_k.comp are untouched.
+
+Origin: fork-authored (ArifiLabs lane-234 R48 Q5_K, Opus 5 MEDIUM kernel-maker)
+Measured-effect: UNMEASURED - correctness only; pairing owed to HQ chain134
+Lane: lane-234
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  58 +++-
+ .../vulkan-shaders/mul_mat_vec_q5_k.comp      | 259 +++++++++++-------
+ tests/test-backend-ops.cpp                    |  54 +++-
+ 3 files changed, 258 insertions(+), 113 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 2a0a87b39..29b8aa14b 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -7106,12 +7106,44 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             const char * s = getenv("GGML_ARIFI_Q6K_XFOLD");
+             return (s != nullptr && s[0] == '0') ? 0u : 1u;
+         }();
++        // arifi lane-234 / R48: q5_k mat-vec ACTIVATION HOIST (specialization constant 3 of
++        // mul_mat_vec_q5_k.comp). 1 = load each activation vector once per superblock and reuse it
++        // across all NUM_ROWS rows; 0 = the shipped order, which reloads it once per row. The
++        // weight decode was already shared across columns in both arms - this is the activation
++        // side, which is the side whose traffic scales with the batch width.
++        //
++        // Both arms run the same decode and the same fma chains in the same accumulation order, so
++        // the values are bit-identical and this is a scheduling change only - the same property
++        // q6k_direct_scales above relies on. Default ON, GGML_ARIFI_Q5K_B_HOIST=0 opts out, which
++        // keeps ONE binary serving both arms of the pairing (the hoisted arm holds NUM_ROWS rows of
++        // decoded weights live across the column loop, and lane-230 measured that shape spilling on
++        // this device class, so the opt-out is load-bearing and not decoration).
++        //
++        // R48 phase 1b WIDTH GATE: the hoist is passed as 1 only to pipelines with NUM_COLS <= 3.
++        // HQ paired the two arms on one binary over 3 quiet interleaved rounds (lane evidence
++        // 32-paired-r48q5k.txt): n=1..3 reads a wash to +5%, but n=4..8 LOSES 30% to 180% on every
++        // shape measured - the NUM_COLS >= 4 register spill that mul_mat_vec_sx8.comp:60-71
++        // documents, since the hoisted arm keeps NUM_ROWS x 26 floats live across the whole column
++        // loop. Wide pipelines therefore get the shipped order. GGML_ARIFI_Q5K_B_HOIST=0 still
++        // forces every width to 0, so the one-binary opt-out is unchanged.
++        const uint32_t q5k_b_hoist = [] {
++            const char * s = getenv("GGML_ARIFI_Q5K_B_HOIST");
++            return (s != nullptr && s[0] == '0') ? 0u : 1u;
++        }();
++        const auto q5k_b_hoist_for_cols = [q5k_b_hoist](uint32_t num_cols) {
++            return num_cols <= 3 ? q5k_b_hoist : 0u;
++        };
+         {
+             static bool once = false;
+             if (!once) {
+                 once = true;
+                 fprintf(stderr, "ggml_vulkan: q6_k mat-vec activation-hoist+xfold: %s\n",
+                         q6k_xfold ? "ON" : "OFF");
++                // stderr for the same reason the q6_k receipt above uses it: llama-server drops
++                // ggml INFO records at the default verbosity, and this line has to be readable in
++                // the A/B's own server log.
++                fprintf(stderr, "ggml_vulkan: q5_k mat-vec activation-hoist: %s\n",
++                        q5k_b_hoist ? "ON (n<=3)" : "OFF");
+             }
+         }
+ 
+@@ -7137,7 +7169,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_TQ2_0][i], "mul_mat_vec_tq2_0_f32_f32", arr_dmmv_tq2_0_f32_f32_len[reduc16], arr_dmmv_tq2_0_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_f32_f32", arr_dmmv_q3_k_f32_f32_len[reduc16], arr_dmmv_q3_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_f32_f32", arr_dmmv_q4_k_f32_f32_len[reduc16], arr_dmmv_q4_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_f32_f32", arr_dmmv_q5_k_f32_f32_len[reduc16], arr_dmmv_q5_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_f32_f32", arr_dmmv_q5_k_f32_f32_len[reduc16], arr_dmmv_q5_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1, q5k_b_hoist_for_cols(i+1)}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_f32_f32", arr_dmmv_q6_k_f32_f32_len[reduc16], arr_dmmv_q6_k_f32_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1, q6k_direct_scales, q6k_xfold}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ1_S][i],   "mul_mat_vec_iq1_s_f32_f32",   arr_dmmv_iq1_s_f32_f32_len[reduc16],   arr_dmmv_iq1_s_f32_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f32_f32[w][GGML_TYPE_IQ1_M][i],   "mul_mat_vec_iq1_m_f32_f32",   arr_dmmv_iq1_m_f32_f32_len[reduc16],   arr_dmmv_iq1_m_f32_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+@@ -7203,7 +7235,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_TQ2_0][i], "mul_mat_vec_tq2_0_f16_f32", arr_dmmv_tq2_0_f16_f32_len[reduc16], arr_dmmv_tq2_0_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_f16_f32", arr_dmmv_q3_k_f16_f32_len[reduc16], arr_dmmv_q3_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_f16_f32", arr_dmmv_q4_k_f16_f32_len[reduc16], arr_dmmv_q4_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_f16_f32", arr_dmmv_q5_k_f16_f32_len[reduc16], arr_dmmv_q5_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_f16_f32", arr_dmmv_q5_k_f16_f32_len[reduc16], arr_dmmv_q5_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1, q5k_b_hoist_for_cols(i+1)}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_f16_f32", arr_dmmv_q6_k_f16_f32_len[reduc16], arr_dmmv_q6_k_f16_f32_data[reduc16], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, i+1, q6k_direct_scales, q6k_xfold}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ1_S][i],   "mul_mat_vec_iq1_s_f16_f32",   arr_dmmv_iq1_s_f16_f32_len[reduc16],   arr_dmmv_iq1_s_f16_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_f16_f32[w][GGML_TYPE_IQ1_M][i],   "mul_mat_vec_iq1_m_f16_f32",   arr_dmmv_iq1_m_f16_f32_len[reduc16],   arr_dmmv_iq1_m_f16_f32_data[reduc16],   "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, i+1}, 1, true, use_subgroups16, force_subgroup_size16);
+@@ -7279,7 +7311,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_TQ2_0], "mul_mat_vec_id_tq2_0_f32",     arr_dmmv_id_tq2_0_f32_f32_len[reduc16],   arr_dmmv_id_tq2_0_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq}, 1, true, use_subgroups16, force_subgroup_size16);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q3_K], "mul_mat_vec_id_q3_k_f32",       arr_dmmv_id_q3_k_f32_f32_len[reduc16],    arr_dmmv_id_q3_k_f32_f32_data[reduc16],    "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq}, 1, true, use_subgroups16, force_subgroup_size16);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q4_K], "mul_mat_vec_id_q4_k_f32",       arr_dmmv_id_q4_k_f32_f32_len[reduc16],    arr_dmmv_id_q4_k_f32_f32_data[reduc16],    "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq}, 1, true, use_subgroups16, force_subgroup_size16);
+-        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q5_K], "mul_mat_vec_id_q5_k_f32",       arr_dmmv_id_q5_k_f32_f32_len[reduc16],    arr_dmmv_id_q5_k_f32_f32_data[reduc16],    "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq}, 1, true, use_subgroups16, force_subgroup_size16);
++        ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q5_K], "mul_mat_vec_id_q5_k_f32",       arr_dmmv_id_q5_k_f32_f32_len[reduc16],    arr_dmmv_id_q5_k_f32_f32_data[reduc16],    "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq, 1, q5k_b_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_Q6_K], "mul_mat_vec_id_q6_k_f32",       arr_dmmv_id_q6_k_f32_f32_len[reduc16],    arr_dmmv_id_q6_k_f32_f32_data[reduc16],    "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_kq, 1, 1}, {wg_size_subgroup16, rm_kq}, 1, true, use_subgroups16, force_subgroup_size16);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_IQ1_S],   "mul_mat_vec_id_iq1_s_f32",   arr_dmmv_id_iq1_s_f32_f32_len[reduc16],   arr_dmmv_id_iq1_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_IQ1_M],   "mul_mat_vec_id_iq1_m_f32",   arr_dmmv_id_iq1_m_f32_f32_len[reduc16],   arr_dmmv_id_iq1_m_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+@@ -11953,6 +11985,26 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
+         return false;
+     }
+ 
++    // arifi lane-234 / R48: Q5_K at n == 1 is the ONLY width still served by the q8_1 MMVQ shader
++    // on AMD. The block below already sends every n > 1 to the f32 dequant shader (lane-198), and
++    // n == 1 falls through to the vendor switch, where AMD at k >= 2048 returns true. So the live
++    // Q5_K route on this box is SPLIT: MMVQ at n=1, f32 at n=2..8. That split is why a single
++    // acceptance rule cannot cover both ends of the width sweep, and it is the open question R48
++    // hands to the measurement chain.
++    //
++    // This is a device-probed switch with an environment override, per the runtime-switch law, and
++    // it DEFAULTS TO THE SHIPPED ROUTE so no default moves (F-08): unset leaves MMVQ at n=1
++    // exactly as today. GGML_ARIFI_Q5K_MMVQ_N1=0 sends n=1 to the f32 shader as well, which makes
++    // the whole 1..8 sweep one kernel and is the second arm of the R48 pairing. Flipping the
++    // default is an independent checker's call once the pairing has numbers, the same standing the
++    // GGML_ARIFI_ROCMFP4_MMVQ row above is held to.
++    if (device->vendor_id == VK_VENDOR_ID_AMD && n == 1 && src0_type == GGML_TYPE_Q5_K) {
++        static const char * q5k_mmvq_n1_env = getenv("GGML_ARIFI_Q5K_MMVQ_N1");
++        if (q5k_mmvq_n1_env != nullptr && q5k_mmvq_n1_env[0] == '0') {
++            return false;
++        }
++    }
++
+     if (device->vendor_id == VK_VENDOR_ID_AMD && n > 1) {
+         // arifi lane-235 / R48b phase 2: NOT superseded. The only Q5_K width the hoist pairing
+         // covers is n=1 -- its only MMVQ width today -- and there it is a wash. The n>1 f32 arm was
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q5_k.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q5_k.comp
+index 54d7e1bcd..b1dd195aa 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q5_k.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q5_k.comp
+@@ -6,112 +6,175 @@
+ 
+ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+ 
++// ArifiLabs lane-234 R48 - ACTIVATION HOIST.
++//
++// The weight decode of this shader was already shared across NUM_COLS columns upstream. The
++// ACTIVATION side was not: with the row loop outermost, the eight vec2 loads of data_b were
++// issued num_rows times per superblock per column, for bytes that do not depend on the row.
++// Arm 1 loads each activation vector once per superblock and reuses it across all rows, so the
++// term that grows with the batch width is divided by NUM_ROWS while the weight term is untouched.
++//
++// Both arms call the same decode_superblock() and the same accumulate_column(): the fma chains,
++// their operand order and the accumulation order into temp[j][n] are one piece of code, so the
++// two arms are bit-identical by construction and this is a scheduling change only.
++//
++// Gated by specialization constant 3 so ONE binary serves both arms:
++//   1 (default) = activation hoisted        0 = the shipped loop order, byte for byte.
++// The host reads GGML_ARIFI_Q5K_B_HOIST=0 to build the pipelines with 0. The opt-out is
++// load-bearing: the hoisted arm holds NUM_ROWS rows of decoded weights live across the column
++// loop, and lane-230 measured that shape spilling on this device class.
++layout (constant_id = 3) const uint ARIFI_Q5K_B_HOIST = 1;
++
+ FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+ 
++// Verbatim lift of the shipped per-row decode. No expression below was rewritten; the only change
++// is that the eight sc* and sixteen q4_* locals are written into caller-supplied arrays.
++void decode_superblock(const uint a_offset, const uint v_im, const uint l0, const uint q_offset, const uint i, const uint num_blocks_per_row, const uint row, out FLOAT_TYPEV2 dm, out FLOAT_TYPE sc[8], out FLOAT_TYPE q4[16]) {
++    const uint ib = a_offset + row*num_blocks_per_row + i;
++
++    dm = FLOAT_TYPEV2(data_a[ib].dm);
++
++    const uint32_t scale0_u32 = data_a_packed16[ib].scales[v_im    ];
++    const uint32_t scale4_u32 = data_a_packed16[ib].scales[v_im + 2];
++    const uint32_t scale8_u32 = data_a_packed16[ib].scales[v_im + 4];
++
++    const uint32_t scale_0_4_l = (scale4_u32 << 16) | scale0_u32;
++    const uint32_t scale_0_4_h = (scale_0_4_l & 0xC0C0C0C0) >> 2;
++    const vec4 scale_0_4_l_f = vec4(unpack8(scale_0_4_l & 0x3F3F3F3F));
++    const vec4 scale8_f = vec4(unpack8((((scale8_u32 << 12) | scale8_u32) & 0x0F0F0F0F) | scale_0_4_h));
++
++    sc[0] = scale_0_4_l_f.x;
++    sc[1] = scale_0_4_l_f.y;
++    sc[2] = scale_0_4_l_f.z;
++    sc[3] = scale_0_4_l_f.w;
++    sc[4] = scale8_f.x;
++    sc[5] = scale8_f.y;
++    sc[6] = scale8_f.z;
++    sc[7] = scale8_f.w;
++
++    const uint32_t qs0_16_u32 = uint32_t(data_a_packed16[ib].qs[q_offset / 2]) | (uint32_t(data_a_packed16[ib].qs[q_offset / 2 + 8]) << 16);
++    const uint32_t qs64_80_u32 = uint32_t(data_a_packed16[ib].qs[q_offset / 2 + 32]) | (uint32_t(data_a_packed16[ib].qs[q_offset / 2 + 40]) << 16);
++
++    uint32_t qs0_16_u32_lo4 = qs0_16_u32 & 0x0F0F0F0F;
++    uint32_t qs0_16_u32_hi4 = (qs0_16_u32 >> 4) & 0x0F0F0F0F;
++    uint32_t qs64_80_u32_lo4 = qs64_80_u32 & 0x0F0F0F0F;
++    uint32_t qs64_80_u32_hi4 = (qs64_80_u32 >> 4) & 0x0F0F0F0F;
++
++    const uint32_t qh = pack32(u16vec2(data_a_packed16[ib].qh[l0 / 2], data_a_packed16[ib].qh[l0 / 2 + 8]));
++
++    const uint32_t qs0_16_lo4_offset16 = ((qh >> (2*v_im)) & 0x01010101) << 4;
++    const uint32_t qs0_16_hi4_offset16 = ((qh >> (2*v_im)) & 0x02020202) << 3;
++    const uint32_t qs64_80_lo4_offset16 = ((qh >> (2*v_im)) & 0x10101010);
++    const uint32_t qs64_80_hi4_offset16 = ((qh >> (2*v_im)) & 0x20202020) >> 1;
++
++    qs0_16_u32_lo4 += qs0_16_lo4_offset16;
++    qs0_16_u32_hi4 += qs0_16_hi4_offset16;
++    qs64_80_u32_lo4 += qs64_80_lo4_offset16;
++    qs64_80_u32_hi4 += qs64_80_hi4_offset16;
++
++    const vec4 qs0_16_lo4 = vec4(unpack8(qs0_16_u32_lo4));
++    const vec4 qs64_80_lo4 = vec4(unpack8(qs64_80_u32_lo4));
++    const vec4 qs0_16_hi4 = vec4(unpack8(qs0_16_u32_hi4));
++    const vec4 qs64_80_hi4 = vec4(unpack8(qs64_80_u32_hi4));
++
++    q4[0]  = qs0_16_lo4.x;
++    q4[1]  = qs0_16_lo4.y;
++    q4[2]  = qs0_16_lo4.z;
++    q4[3]  = qs0_16_lo4.w;
++    q4[4]  = qs0_16_hi4.x;
++    q4[5]  = qs0_16_hi4.y;
++    q4[6]  = qs0_16_hi4.z;
++    q4[7]  = qs0_16_hi4.w;
++    q4[8]  = qs64_80_lo4.x;
++    q4[9]  = qs64_80_lo4.y;
++    q4[10] = qs64_80_lo4.z;
++    q4[11] = qs64_80_lo4.w;
++    q4[12] = qs64_80_hi4.x;
++    q4[13] = qs64_80_hi4.y;
++    q4[14] = qs64_80_hi4.z;
++    q4[15] = qs64_80_hi4.w;
++}
++
++// by[0..7] = the shipped by10, by116, by132, by148, by20, by216, by232, by248, in that order.
++void load_activations(const uint b_offset, const uint y1_idx, const uint y2_idx, const uint j, out vec2 by[8]) {
++    by[0] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2     ]);
++    by[1] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2 +  8]);
++    by[2] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2 + 16]);
++    by[3] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2 + 24]);
++    by[4] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2     ]);
++    by[5] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2 +  8]);
++    by[6] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2 + 16]);
++    by[7] = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2 + 24]);
++}
++
++// Verbatim lift of the shipped inner body. Both arms call this, so the fma nesting, the operand
++// order and the -dm.y sign are one piece of code rather than two that must be compared by eye.
++void accumulate_column(const FLOAT_TYPEV2 dm, const FLOAT_TYPE sc[8], const FLOAT_TYPE q4[16], const vec2 by[8], inout FLOAT_TYPE t) {
++    const FLOAT_TYPE sx =
++      fma(FLOAT_TYPE(by[0].x), q4[0],
++      fma(FLOAT_TYPE(by[0].y), q4[1],
++      fma(FLOAT_TYPE(by[1].x), q4[2],
++         FLOAT_TYPE(by[1].y) * q4[3])));
++    const FLOAT_TYPE sy =
++      fma(FLOAT_TYPE(by[2].x), q4[4],
++      fma(FLOAT_TYPE(by[2].y), q4[5],
++      fma(FLOAT_TYPE(by[3].x), q4[6],
++         FLOAT_TYPE(by[3].y) * q4[7])));
++    const FLOAT_TYPE sz =
++      fma(FLOAT_TYPE(by[4].x), q4[8],
++      fma(FLOAT_TYPE(by[4].y), q4[9],
++      fma(FLOAT_TYPE(by[5].x), q4[10],
++         FLOAT_TYPE(by[5].y) * q4[11])));
++    const FLOAT_TYPE sw =
++      fma(FLOAT_TYPE(by[6].x), q4[12],
++      fma(FLOAT_TYPE(by[6].y), q4[13],
++      fma(FLOAT_TYPE(by[7].x), q4[14],
++         FLOAT_TYPE(by[7].y) * q4[15])));
++    const FLOAT_TYPE smin =
++      fma(FLOAT_TYPE(by[0].x) + FLOAT_TYPE(by[0].y) + FLOAT_TYPE(by[1].x) + FLOAT_TYPE(by[1].y), sc[2],
++      fma(FLOAT_TYPE(by[2].x) + FLOAT_TYPE(by[2].y) + FLOAT_TYPE(by[3].x) + FLOAT_TYPE(by[3].y), sc[3],
++      fma(FLOAT_TYPE(by[4].x) + FLOAT_TYPE(by[4].y) + FLOAT_TYPE(by[5].x) + FLOAT_TYPE(by[5].y), sc[6],
++          (FLOAT_TYPE(by[6].x) + FLOAT_TYPE(by[6].y) + FLOAT_TYPE(by[7].x) + FLOAT_TYPE(by[7].y)) * sc[7])));
++    t = fma(dm.x, fma(sx, sc[0], fma(sy, sc[1], fma(sz, sc[4], sw * sc[5]))), fma(-dm.y, smin, t));
++}
++
+ void calc_superblock(const uint a_offset, const uint b_offset, const uint v_im, const uint l0, const uint q_offset, const uint y_offset, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows) {
+     const uint y1_idx = i * QUANT_K + y_offset;
+     const uint y2_idx = y1_idx + 128;
+ 
+-    [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+-        const uint ib0 = a_offset + (first_row+n)*num_blocks_per_row;
+-        const FLOAT_TYPEV2 dm = FLOAT_TYPEV2(data_a[ib0 + i].dm);
+-
+-        const uint32_t scale0_u32 = data_a_packed16[ib0 + i].scales[v_im    ];
+-        const uint32_t scale4_u32 = data_a_packed16[ib0 + i].scales[v_im + 2];
+-        const uint32_t scale8_u32 = data_a_packed16[ib0 + i].scales[v_im + 4];
+-
+-        const uint32_t scale_0_4_l = (scale4_u32 << 16) | scale0_u32;
+-        const uint32_t scale_0_4_h = (scale_0_4_l & 0xC0C0C0C0) >> 2;
+-        const vec4 scale_0_4_l_f = vec4(unpack8(scale_0_4_l & 0x3F3F3F3F));
+-        const vec4 scale8_f = vec4(unpack8((((scale8_u32 << 12) | scale8_u32) & 0x0F0F0F0F) | scale_0_4_h));
+-
+-        const FLOAT_TYPE sc0 = scale_0_4_l_f.x;
+-        const FLOAT_TYPE sc1 = scale_0_4_l_f.y;
+-        const FLOAT_TYPE sc2 = scale_0_4_l_f.z;
+-        const FLOAT_TYPE sc3 = scale_0_4_l_f.w;
+-        const FLOAT_TYPE sc4 = scale8_f.x;
+-        const FLOAT_TYPE sc5 = scale8_f.y;
+-        const FLOAT_TYPE sc6 = scale8_f.z;
+-        const FLOAT_TYPE sc7 = scale8_f.w;
+-
+-        const uint32_t qs0_16_u32 = uint32_t(data_a_packed16[ib0 + i].qs[q_offset / 2]) | (uint32_t(data_a_packed16[ib0 + i].qs[q_offset / 2 + 8]) << 16);
+-        const uint32_t qs64_80_u32 = uint32_t(data_a_packed16[ib0 + i].qs[q_offset / 2 + 32]) | (uint32_t(data_a_packed16[ib0 + i].qs[q_offset / 2 + 40]) << 16);
+-
+-        uint32_t qs0_16_u32_lo4 = qs0_16_u32 & 0x0F0F0F0F;
+-        uint32_t qs0_16_u32_hi4 = (qs0_16_u32 >> 4) & 0x0F0F0F0F;
+-        uint32_t qs64_80_u32_lo4 = qs64_80_u32 & 0x0F0F0F0F;
+-        uint32_t qs64_80_u32_hi4 = (qs64_80_u32 >> 4) & 0x0F0F0F0F;
+-
+-        const uint32_t qh = pack32(u16vec2(data_a_packed16[ib0 + i].qh[l0 / 2], data_a_packed16[ib0 + i].qh[l0 / 2 + 8]));
+-
+-        const uint32_t qs0_16_lo4_offset16 = ((qh >> (2*v_im)) & 0x01010101) << 4;
+-        const uint32_t qs0_16_hi4_offset16 = ((qh >> (2*v_im)) & 0x02020202) << 3;
+-        const uint32_t qs64_80_lo4_offset16 = ((qh >> (2*v_im)) & 0x10101010);
+-        const uint32_t qs64_80_hi4_offset16 = ((qh >> (2*v_im)) & 0x20202020) >> 1;
+-
+-        qs0_16_u32_lo4 += qs0_16_lo4_offset16;
+-        qs0_16_u32_hi4 += qs0_16_hi4_offset16;
+-        qs64_80_u32_lo4 += qs64_80_lo4_offset16;
+-        qs64_80_u32_hi4 += qs64_80_hi4_offset16;
+-
+-        const vec4 qs0_16_lo4 = vec4(unpack8(qs0_16_u32_lo4));
+-        const vec4 qs64_80_lo4 = vec4(unpack8(qs64_80_u32_lo4));
+-        const vec4 qs0_16_hi4 = vec4(unpack8(qs0_16_u32_hi4));
+-        const vec4 qs64_80_hi4 = vec4(unpack8(qs64_80_u32_hi4));
+-
+-        const FLOAT_TYPE q4_0  = qs0_16_lo4.x;
+-        const FLOAT_TYPE q4_1  = qs0_16_lo4.y;
+-        const FLOAT_TYPE q4_2  = qs0_16_lo4.z;
+-        const FLOAT_TYPE q4_3  = qs0_16_lo4.w;
+-        const FLOAT_TYPE q4_4  = qs0_16_hi4.x;
+-        const FLOAT_TYPE q4_5  = qs0_16_hi4.y;
+-        const FLOAT_TYPE q4_6  = qs0_16_hi4.z;
+-        const FLOAT_TYPE q4_7  = qs0_16_hi4.w;
+-        const FLOAT_TYPE q4_8  = qs64_80_lo4.x;
+-        const FLOAT_TYPE q4_9  = qs64_80_lo4.y;
+-        const FLOAT_TYPE q4_10 = qs64_80_lo4.z;
+-        const FLOAT_TYPE q4_11 = qs64_80_lo4.w;
+-        const FLOAT_TYPE q4_12 = qs64_80_hi4.x;
+-        const FLOAT_TYPE q4_13 = qs64_80_hi4.y;
+-        const FLOAT_TYPE q4_14 = qs64_80_hi4.z;
+-        const FLOAT_TYPE q4_15 = qs64_80_hi4.w;
++    if (ARIFI_Q5K_B_HOIST != 0) {
++        // Decode every row's weights first, then walk the columns once. Each activation vector is
++        // loaded a single time and reused across all num_rows rows.
++        FLOAT_TYPEV2 dmv[NUM_ROWS];
++        FLOAT_TYPE scv[NUM_ROWS][8];
++        FLOAT_TYPE q4v[NUM_ROWS][16];
++
++        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
++            decode_superblock(a_offset, v_im, l0, q_offset, i, num_blocks_per_row, first_row + n, dmv[n], scv[n], q4v[n]);
++        }
+ 
+         [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+-            vec2 by10 =  vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2     ]);
+-            vec2 by116 = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2 +  8]);
+-            vec2 by132 = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2 + 16]);
+-            vec2 by148 = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y1_idx) / 2 + 24]);
+-            vec2 by20 =  vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2     ]);
+-            vec2 by216 = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2 +  8]);
+-            vec2 by232 = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2 + 16]);
+-            vec2 by248 = vec2(data_b_v2[(j*p.batch_stride_b + b_offset + y2_idx) / 2 + 24]);
+-
+-            const FLOAT_TYPE sx =
+-              fma(FLOAT_TYPE(by10.x), q4_0,
+-              fma(FLOAT_TYPE(by10.y), q4_1,
+-              fma(FLOAT_TYPE(by116.x), q4_2,
+-                 FLOAT_TYPE(by116.y) * q4_3)));
+-            const FLOAT_TYPE sy =
+-              fma(FLOAT_TYPE(by132.x), q4_4,
+-              fma(FLOAT_TYPE(by132.y), q4_5,
+-              fma(FLOAT_TYPE(by148.x), q4_6,
+-                 FLOAT_TYPE(by148.y) * q4_7)));
+-            const FLOAT_TYPE sz =
+-              fma(FLOAT_TYPE(by20.x), q4_8,
+-              fma(FLOAT_TYPE(by20.y), q4_9,
+-              fma(FLOAT_TYPE(by216.x), q4_10,
+-                 FLOAT_TYPE(by216.y) * q4_11)));
+-            const FLOAT_TYPE sw =
+-              fma(FLOAT_TYPE(by232.x), q4_12,
+-              fma(FLOAT_TYPE(by232.y), q4_13,
+-              fma(FLOAT_TYPE(by248.x), q4_14,
+-                 FLOAT_TYPE(by248.y) * q4_15)));
+-            const FLOAT_TYPE smin =
+-              fma(FLOAT_TYPE(by10.x) + FLOAT_TYPE(by10.y) + FLOAT_TYPE(by116.x) + FLOAT_TYPE(by116.y), sc2,
+-              fma(FLOAT_TYPE(by132.x) + FLOAT_TYPE(by132.y) + FLOAT_TYPE(by148.x) + FLOAT_TYPE(by148.y), sc3,
+-              fma(FLOAT_TYPE(by20.x) + FLOAT_TYPE(by20.y) + FLOAT_TYPE(by216.x) + FLOAT_TYPE(by216.y), sc6,
+-                  (FLOAT_TYPE(by232.x) + FLOAT_TYPE(by232.y) + FLOAT_TYPE(by248.x) + FLOAT_TYPE(by248.y)) * sc7)));
+-            temp[j][n] = fma(dm.x, fma(sx, sc0, fma(sy, sc1, fma(sz, sc4, sw * sc5))), fma(-dm.y, smin, temp[j][n]));
++            vec2 by[8];
++            load_activations(b_offset, y1_idx, y2_idx, j, by);
++
++            [[unroll]] for (uint n = 0; n < num_rows; ++n) {
++                accumulate_column(dmv[n], scv[n], q4v[n], by, temp[j][n]);
++            }
++        }
++    } else {
++        // The shipped order: one row's weights live at a time, activations reloaded per row.
++        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
++            FLOAT_TYPEV2 dm;
++            FLOAT_TYPE sc[8];
++            FLOAT_TYPE q4[16];
++            decode_superblock(a_offset, v_im, l0, q_offset, i, num_blocks_per_row, first_row + n, dm, sc, q4);
++
++            [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++                vec2 by[8];
++                load_activations(b_offset, y1_idx, y2_idx, j, by);
++
++                accumulate_column(dm, sc, q4, by, temp[j][n]);
++            }
+         }
+     }
+ }
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index c6ec29ee8..981da8a3c 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -10793,6 +10793,32 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32,     7, n, 5120, {1, 1}, {1, 1}));
+     }
+ 
++    // ArifiLabs lane-234 / R48: the real 27B Q5_K decode shapes as CORRECTNESS cases.
++    //
++    // Q5_K is 33.5% of the interactive Q4_K_XL 27B file by bytes - 5.41 GiB over 141 tensors, the
++    // largest single quant share - and lane-198 measured it at 31% of the decode graph. It had no
++    // shape-accurate correctness coverage at these widths before this block.
++    //
++    // n=1..8 is not padding: the Q5_K route SPLITS at n=1 on AMD. n=1 takes the q8_1 MMVQ shader
++    // (mul_mat_vecq.comp + the Q5_K arm of mul_mat_vecq_funcs.glsl) and n=2..8 take the f32 dequant
++    // shader (mul_mat_vec_q5_k.comp), so a sweep that stops short of both sides of that boundary
++    // leaves one of the two kernels untested. Widths 2..8 also cross the NUM_COLS values where the
++    // R48 activation hoist changes how many times data_b is read, and 5120x17408 gives the second
++    // k (17408) so the hoist is exercised at both block counts.
++    for (int n : {1, 2, 3, 4, 5, 6, 7, 8}) {
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q5_K, GGML_TYPE_F32,  17408, n,  5120, {1, 1}, {1, 1}));
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q5_K, GGML_TYPE_F32,   5120, n, 17408, {1, 1}, {1, 1}));
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q5_K, GGML_TYPE_F32, 248320, n,  5120, {1, 1}, {1, 1}));
++    }
++    // Row-tail coverage for the same kernel: first_row + NUM_ROWS > stride_d takes the second arm
++    // of main(), where num_rows is dynamic and smaller than the NUM_ROWS the local weight arrays
++    // are sized by. That arm is what a spec-constant-sized array indexed by a dynamic bound can get
++    // wrong, and no 27B shape above reaches it (all three m values are even).
++    for (int n : {1, 2, 5, 8}) {
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q5_K, GGML_TYPE_F32, 17407, n, 5120, {1, 1}, {1, 1}));
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q5_K, GGML_TYPE_F32,     7, n, 5120, {1, 1}, {1, 1}));
++    }
++
+     // K not a multiple of 32
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F16, 64, 32,  65, {1, 1}, {1, 1}));
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F16, 64, 32,  80, {1, 1}, {1, 1}));
+@@ -12003,21 +12029,25 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+         }
+     }
+ 
+-    // ArifiLabs lane-236 / R48c: Q6_K (the subject) and Q5_K (the mark the phase is measured
+-    // toward) on the same three 27B shapes and the same widths as the block above.
++    // ArifiLabs lane-234 / R48: the real 27B Q5_K decode shapes as PERF rows, the target of the
++    // R48 activation-hoist pairing. Q5_K carries 33.5% of the interactive Q4_K_XL 27B file by
++    // bytes (5.41 GiB, 141 tensors) and 31% of the measured decode graph, at only 84% of this
++    // box's best line - the fattest single lever in the graph.
+     //
+-    // Deliberately a SEPARATE loop rather than two more entries in that block's type list: that
+-    // block is the S-X8 rows/workgroup sweep's own target (see its comment), the sweep runs it 9
+-    // times over GGML_VK_SX8_MMV_ROWS x GGML_VK_SX8_MMV_WG, and widening its type list would have
+-    // made every one of those 9 runs ~67% longer for rows those env vars do not touch. Q4_K sits
+-    // in the block above and serves as the shared control across both.
++    // Q4_K rides along as the control, for the reason the lane-209 block above states: it is the
++    // yardstick shader at 96-100% of best on the 780M, it shares mul_mat_vec_base.glsl and the
++    // tmpsh reduction with Q5_K, and NOTHING in R48 touches its shader. A round in which Q4_K
++    // moves is a round that measured the box, not the kernel, and must be thrown out rather than
++    // interpreted. Q6_K rides along for the opposite reason: it is a protected win
++    // (vulkan-q6k-matvec-direct-scales) that must not regress, and it never enters the MMVQ
++    // framework at all (ggml_vk_should_use_mmvq returns false for it off Intel), so it also
++    // witnesses that the R48 routing switch did not leak outside Q5_K.
+     //
+-    // Read the four quant rows together, but as ROUTES, not as kernels: at n=1 on AMD with
+-    // k >= 2048, ggml_vk_should_use_mmvq() returns true for Q4_K and Q5_K and false for Q6_K
+-    // (ggml-vulkan.cpp:11724 vs :11841-11850), so the Q4_K/Q5_K numbers are q8_1 integer-dot and
+-    // the Q6_K number is f32-dequant. GGML_ARIFI_Q6K_MMVQ=1 makes the comparison like-for-like.
++    // Filter: -p "type_a=q5_K,type_b=f32,m=17408" and the two sibling shapes. n=1..8 spans the
++    // route split - MMVQ at n=1, f32 dequant at n=2..8 - so the two arms of the pairing are read
++    // off different rows of the same table, not the same row.
+     for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
+-        for (ggml_type type_a : {GGML_TYPE_Q5_K, GGML_TYPE_Q6_K}) {
++        for (ggml_type type_a : {GGML_TYPE_Q5_K, GGML_TYPE_Q4_K, GGML_TYPE_Q6_K}) {
+             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, bs,  5120, {1, 1}, {1, 1}));
+             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, bs, 17408, {1, 1}, {1, 1}));
+             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, bs,  5120, {1, 1}, {1, 1}));

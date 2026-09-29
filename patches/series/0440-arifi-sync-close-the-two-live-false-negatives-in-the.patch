@@ -1,0 +1,505 @@
+From 0af534eca0d9f21dcb0253b297bc1c82551f9aec Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 4 Sep 2026 20:14:13 -0400
+Subject: [PATCH] arifi-sync: close the two live false negatives in the
+ protected-win gate, and mechanize the baseline boundary
+
+CHECKER-R3 (independent, 2026-09-04) found two shapes that the fail-closed preflight PASSED. Both are fixed here, and both are fixed at the root rather than at the reported symptom.
+
+D1, rename bypass. A 100%-similarity rename of a protected file passed the preflight. `git diff --name-only` reports only the DESTINATION path, so the protected path never entered `changed`; and a pure rename emits `similarity index 100% / rename from / rename to` with no content lines, so no protected anchor appeared as removed either. Both halves of the guard went blind on the one move that takes a win out from under its manifest entry while leaving the code intact. Fixed by passing `--no-renames` to BOTH git calls in `cmd_protected_win_check`, which turns the rename into delete+add and restores the path hit and the anchor lines together. Parsing `--name-status -M` would have fixed only the path half. CHECKED on the real range: `--no-renames` changes nothing on d7bd3bfca..upstream/master - 335 files either way, the same 6 collisions.
+
+D2, measured-effect laundering. The classifier was prefix-ONLY, so a real measured win stated behind any of the thirty NO_EFFECT_PREFIXES was invisible to discover, validate, check and bump. It is the same class as the bare-dash bug the previous pass fixed, on the other thirty prefixes. Fixed by ORDER, not by another list entry: exact placeholders decide first, then a stated measured quantity makes the value REAL regardless of what prose precedes it, and the prefix vocabulary decides only when no quantity is present. Units that can only mean a rate or a duration count unconditionally; a bare `x` multiplier counts only when signed or decimal, because `2x16 GB` sizes a memory carve and does not report an effect.
+
+THE D2 FIX PRODUCED A FINDING, not just a fix. Run against every Measured-effect trailer in d7bd3bfca..arifi/main (519 commits), the corrected classifier flips SIX commits from NO EFFECT to REAL. All six are pre-existing history and all six are ancestors of the ledger's own tip_when_recorded, so they were structurally invisible when protected-win-baseline.json was authored under the broken classifier. They are dispositioned here, each marked `_surfaced_by`, and the ledger prose is corrected from 24 rows to 30. This is a ledger completed, not a gate quieted: the strict set returns to 0 only because every one of the six now carries a written disposition, four of them REGISTRATION OWED.
+
+D4, two re-dispositions under the President's capability law. bf0abf0be and 39a585bd5 were terminal as NO RUNTIME EFFECT on the ground that the format is OFF by default - while d0112ab49, f81c6dfdf and 159c3a21d, also inert on this seat, were REGISTRATION OWED under "zero on our seat is not zero". Same reasoning, opposite verdict, in one ledger. bf0abf0be's own trailer records a WORKING mechanism: a native ROCmFP4 artifact loaded in llama-server and completed, both ROCmFPX conformance suites pass, and Origin names it as ours. Default-OFF describes the shipped default, not the existence of the mechanism, and only the second is what this ledger protects. Both move to REGISTRATION OWED. Neither capability is discarded and no row is removed.
+
+Counts, in both scopes, because one blended number would misread. Original 24 rows with D4 applied: 9 REGISTRATION OWED / 15 terminal. Plus the 6 surfaced by the D2 fix: 5 owed / 1 terminal. The ledger as a whole: 14 owed / 16 terminal / 30 rows.
+
+BASELINE TAMPERING, closed by mechanism. The previous pass disclosed honestly that the baseline was closed to new shas BY CONVENTION - appending one line silenced the gate for a brand-new win forever. Disclosure is not a wall. `baseline_boundary_problems()` now refuses any row that is not an ancestor of the ledger's own `tip_when_recorded`, and refuses a missing or unresolvable boundary field so the hole cannot be reopened by deleting one line. Genuine history is untouched: all 30 rows are ancestors of bda5865cb, CHECKED per row.
+
+Tests 22 to 34, stdlib only, all green. New: a protected rename is REFUSED and an unprotected rename still passes; all eight laundered shapes CHECKER-R3 reproduced classify REAL, driven through validate and the preflight and not only through the predicate; eighteen must-not-fire values still classify NO EFFECT; the bare-multiplier case both ways; discover and validate agree on the laundered set; and four boundary cases pinning both directions of the ancestry predicate, including that an empty baseline is not forced to invent one.
+
+STILL OPEN, and no mechanism is claimed for it: manifest omission. An incoming change that deletes a mechanism no entry lists still passes check. That is inherent to an authored manifest and it is what discover exists to prevent upstream of.
+
+Origin: ArifiLabs (native)
+Measured-effect: tooling and documentation only; no engine behaviour changed and no shipped default moved
+WI: WI-1688
+Lane: lane-209
+Assisted-by: Opus 5 (guarded Max subscription wrapper)
+---
+ tools/arifi-sync/arifi_sync.py               |  96 ++++++++-
+ tools/arifi-sync/protected-win-baseline.json |  71 ++++++-
+ tools/arifi-sync/test_arifi_sync.py          | 203 ++++++++++++++++++-
+ 3 files changed, 359 insertions(+), 11 deletions(-)
+
+diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
+index 659d6d4ec..96a427c42 100644
+--- a/tools/arifi-sync/arifi_sync.py
++++ b/tools/arifi-sync/arifi_sync.py
+@@ -1191,6 +1191,7 @@ def validate_protected_wins(repo: str, ref: str, cfg=None) -> list:
+             if not _evidence_resolves(repo, e):
+                 problems.append("%s: evidence locator %r does not resolve" % (wid, e))
+     if cfg is not None:
++        problems.extend(baseline_boundary_problems(repo))
+         for sha, subject, eff in unregistered_measured_wins(repo, cfg, ref):
+             problems.append(
+                 "UNREGISTERED measured win %s %r - it landed with `Measured-effect: %s` and is "
+@@ -1221,10 +1222,46 @@ def cmd_protected_win_validate(repo: str, cfg: dict, args) -> int:
+     return 0
+ 
+ 
++def _has_measured_quantity(value: str) -> bool:
++    """True when the trailer states a NUMBER next to a THROUGHPUT/LATENCY UNIT.
++
++    This is the half that cannot be laundered. A prefix test alone lets a real win hide behind any
++    of the 30 NO_EFFECT_PREFIXES - `correctness fix, and -12.79% per dispatch` classified as NO
++    EFFECT, and so did seven other shapes CHECKER-R3 reproduced (D2, 2026-09-04). It is the same
++    class as the bare `-` prefix bug the previous pass fixed, on the other thirty prefixes.
++
++    Units are unconditional where they can only mean a rate or a duration (`%`, `ms`, `us`, `µs`,
++    `s/tok`, `t/s`, `tok/s`, `GB/s`, `MB/s`). A bare `x` multiplier is NOT unconditional: `2x16 GB`
++    and `4x tile` are configuration, not effect, so `x` counts only when the number carries a sign
++    or a decimal point (`-1.8x`, `+2.0x`). Plain `GB`/`MB` never count - they size a carve, not a
++    speed."""
++    v = value or ""
++    if _MEASURED_QUANTITY.search(v):
++        return True
++    return bool(_MEASURED_MULTIPLIER.search(v))
++
++
++_MEASURED_QUANTITY = re.compile(
++    r"[-+−]?\d+(?:\.\d+)?\s*(?:%|ms\b|msec\b|us\b|usec\b|µs\b|s/tok\b|"
++    r"tok/s\b|tokens?/s\b|t/s\b|[KMGT]B/s\b)",
++    re.IGNORECASE)
++_MEASURED_MULTIPLIER = re.compile(r"(?:[-+−]\d+(?:\.\d+)?|\d+\.\d+)\s*x\b", re.IGNORECASE)
++
++
+ def _measured_effect_is_real(value: str) -> bool:
++    """Quantity FIRST, prefix list only as the tiebreak when no quantity is stated.
++
++    Order is the whole fix (D2). The exact placeholders still win - `-`, `n/a`, `none` and friends
++    state an absence and carry no number. After that, a stated measured quantity makes the value
++    REAL no matter what words precede it, because a number with a throughput unit in a
++    `Measured-effect:` trailer IS a measured effect; the prose in front of it is the author's
++    framing, not a classification. Only when no quantity is present does the prefix vocabulary
++    decide, which is what keeps `unmeasured on this seat` and `documentation only` quiet."""
+     v = (value or "").strip().lower()
+     if not v or v in NO_EFFECT_EXACT:
+         return False
++    if _has_measured_quantity(v):
++        return True
+     return not v.startswith(NO_EFFECT_PREFIXES)
+ 
+ 
+@@ -1247,6 +1284,53 @@ def load_discovery_baseline(repo: str) -> dict:
+     return {row["sha"]: row for row in data.get("commits", []) if row.get("sha")}
+ 
+ 
++def baseline_boundary_problems(repo: str) -> list:
++    """The baseline is closed BY MECHANISM now, not by convention (CHECKER-R3 residual, 2026-09-04).
++
++    The hole this closes: `unregistered_measured_wins` skips any sha listed in the baseline, so
++    appending one line to `protected-win-baseline.json` silenced the gate for a brand-new win
++    forever. The previous pass disclosed that honestly rather than implying it away; disclosure is
++    not a wall.
++
++    The wall is the ledger's own `tip_when_recorded` field. The baseline exists to disposition what
++    had ALREADY landed when strict registration was switched on, so every row must be an ANCESTOR
++    of that tip. A commit made after the tip cannot have predated the gate, so it can never be
++    grandfathered by appending its sha - it has to be REGISTERED. Genuine history is untouched:
++    all 24 original rows are ancestors of `bda5865cb` and stay silent.
++
++    Fail-closed on the field itself: a missing, unresolvable or emptied `tip_when_recorded` is a
++    problem, not a pass. Otherwise deleting one line would restore the old hole."""
++    data = _load_json(repo, PROTECTED_BASELINE, {"commits": []})
++    rows = [r for r in data.get("commits", []) if r.get("sha")]
++    if not rows:
++        return []
++    tip = (data.get("tip_when_recorded") or "").strip()
++    if not tip:
++        return ["%s: %d row(s) but no `tip_when_recorded` - the baseline boundary is what stops a "
++                "post-gate win being grandfathered by appending its sha, so an absent boundary is "
++                "refused rather than treated as 'no limit'." % (PROTECTED_BASELINE, len(rows))]
++    tip_full = _resolve_ref(repo, tip)
++    # `_resolve_ref` echoes a well-formed hex string back even when no such object exists, so the
++    # existence of the commit is asked for separately. Otherwise a boundary of forty `f`s would
++    # read as "resolved" and every row would then fail as a non-ancestor - a confusing refusal
++    # instead of the true one.
++    rc_tip, _, _ = git(repo, "cat-file", "-e", "%s^{commit}" % tip_full, check=False)
++    if not tip_full or rc_tip != 0:
++        return ["%s: `tip_when_recorded` %r does not resolve in this repo - the boundary cannot be "
++                "checked, so it is refused." % (PROTECTED_BASELINE, tip)]
++    problems = []
++    for r in rows:
++        sha = r["sha"]
++        rc, _, _ = git(repo, "merge-base", "--is-ancestor", sha, tip_full, check=False)
++        if rc != 0:
++            problems.append(
++                "%s: baseline row %s is NOT an ancestor of tip_when_recorded %s, so it landed "
++                "AFTER strict registration was switched on and cannot be grandfathered. Register "
++                "it in %s instead - the baseline dispositions pre-existing history only."
++                % (PROTECTED_BASELINE, sha[:9], tip[:9], PROTECTED_WINS))
++    return problems
++
++
+ def covered_win_commits(repo: str) -> set:
+     covered = set()
+     for w in _load_json(repo, PROTECTED_WINS, {"wins": []}).get("wins", []):
+@@ -1380,8 +1464,16 @@ def cmd_protected_win_check(repo: str, cfg: dict, args) -> int:
+     if not mb:
+         raise Loud("no merge base between %s and %s" % (ref, incoming))
+     rng = "%s..%s" % (mb, incoming)
+-    changed = set(p for p in gout(repo, "diff", "--name-only", rng).splitlines() if p)
+-    _, diff_text, _ = git(repo, "diff", "--unified=0", rng)
++    # `--no-renames` on BOTH calls, and it is load-bearing on both (D1, CHECKER-R3 2026-09-04).
++    # With rename detection on, a 100%-similarity rename of a protected file reports ONLY the
++    # destination path (`--name-only` prints `kernel_renamed.c` alone) and emits NO content lines
++    # (`similarity index 100% / rename from / rename to`), so `protected_collisions` sees neither
++    # the protected path nor an anchor removal and the fail-closed preflight PASSES a change that
++    # moved the win out from under the manifest. Suppressing rename detection restores both halves
++    # at once: the rename becomes delete+add, the old path returns to `changed`, and every line of
++    # the old file returns as a `-` line so the anchors fire too.
++    changed = set(p for p in gout(repo, "diff", "--no-renames", "--name-only", rng).splitlines() if p)
++    _, diff_text, _ = git(repo, "diff", "--no-renames", "--unified=0", rng)
+     say("incoming range   : %s (%d file(s))" % (rng[:24] + "...", len(changed)))
+ 
+     collisions = protected_collisions(repo, wins, changed, diff_text)
+diff --git a/tools/arifi-sync/protected-win-baseline.json b/tools/arifi-sync/protected-win-baseline.json
+index 57488058d..df76de615 100644
+--- a/tools/arifi-sync/protected-win-baseline.json
++++ b/tools/arifi-sync/protected-win-baseline.json
+@@ -11,7 +11,7 @@
+     "same reason `native-grandfather.json` exists: turning a fail-closed gate on over an estate that",
+     "predates it has exactly two honest options, and this is the second one.",
+     "",
+-    "Option one - fail `validate` on all 24 rows - bricks `protected-win validate`, and therefore",
++    "Option one - fail `validate` on all 30 rows - bricks `protected-win validate`, and therefore",
+     "`check` and `bump`, on day one. A gate nobody can pass is a gate somebody switches off.",
+     "Option two - file the real wins under a soft reason so the gate goes quiet - is the DISCARD the",
+     "President's mandate forbids, and it is worse than no gate at all because it looks like custody.",
+@@ -22,10 +22,33 @@
+     "honestly known before an entry may be written). They are not dismissed and they are not closed -",
+     "they stay here, visible, until their manifest entry can be written truthfully. A win is a win.",
+     "",
+-    "This ledger is CLOSED to new shas by convention. A newly landed measured win must be REGISTERED",
+-    "in protected-wins.json, not added here. `protected-win discover --all` prints every row below",
+-    "with its disposition, so the ledger cannot rot unseen."
++    "This ledger is CLOSED to new shas BY MECHANISM as of 2026-09-04 (it was closed by CONVENTION",
++    "until then, and CHECKER-R3 named that as a real hole). `baseline_boundary_problems()` refuses",
++    "any row that is not an ANCESTOR of `tip_when_recorded`, so a win landed after the gate was",
++    "switched on can no longer be grandfathered by appending its sha - it has to be REGISTERED in",
++    "protected-wins.json. A missing or unresolvable `tip_when_recorded` is itself refused, so the",
++    "hole cannot be reopened by deleting the field. `protected-win discover --all` prints every row",
++    "below with its disposition, so the ledger cannot rot unseen.",
++    "",
++    "AMENDED 2026-09-04 by the CHECKER-R3 fix pass, and the amendment is a FINDING, not bookkeeping.",
++    "This ledger was authored under a PREFIX-ONLY measured-effect classifier. That classifier could",
++    "not see a real measured quantity stated behind any of the thirty NO_EFFECT prefixes (D2), so",
++    "SIX pre-existing commits that carry real numbers were structurally invisible when the original",
++    "24 rows were written. Fixing the classifier surfaced them; all six are ancestors of",
++    "`tip_when_recorded` and therefore belong here, each with its own written disposition. They are",
++    "marked `_surfaced_by`. Two further rows (bf0abf0be, 39a585bd5) were RE-DISPOSITIONED from",
++    "terminal to REGISTRATION OWED under the President's capability law (D4). Nothing was removed.",
++    "",
++    "COUNTS, in both scopes, because a single blended number would misread:",
++    "  original 24 rows, D4 applied :  9 REGISTRATION OWED / 15 terminal",
++    "  + 6 surfaced by the D2 fix   :  5 REGISTRATION OWED /  1 terminal",
++    "  this ledger as a whole       : 14 REGISTRATION OWED / 16 terminal / 30 rows"
+   ],
++  "_amended": {
++    "utc": "2026-09-04T23:58:45Z (19:58:45 EDT), read from the machine clock when this block was written; the pass's close boundary is commit-derived and lives in R3-FIX-REPORT.md",
++    "by": "CHECKER-R3 defect-closure pass (fresh maker, guarded Claude Max subscription wrapper)",
++    "closes": ["D4 re-disposition", "the D2 classifier widening", "baseline tampering residual"]
++  },
+   "_disposition_vocabulary": {
+     "REGISTRATION OWED": "a real, landed win; its manifest entry is owed and cannot yet be written without inventing a field",
+     "NOT A MECHANISM": "the commit records a measurement, a bench, a negative result or generated artifacts - there is no mechanism of ours for an upstream change to overwrite",
+@@ -87,12 +110,12 @@
+     {
+       "sha": "bf0abf0be6ed1ce4f9c9cefb28fc4adb7ec4bb18",
+       "subject": "ggml: ROCmFP4/ROCmFPX weight formats behind GGML_ARIFI_ROCMFPX_FORMATS",
+-      "disposition": "NO RUNTIME EFFECT - OFF by default is a no-op on every existing path by the trailer's own statement; no throughput number was produced."
++      "disposition": "REGISTRATION OWED - RE-DISPOSITIONED 2026-09-04 by the CHECKER-R3 fix pass (D4). It was 'NO RUNTIME EFFECT - OFF by default is a no-op on every existing path by the trailer's own statement; no throughput number was produced.' That reasoning is the SAME reasoning d0112ab49/f81c6dfdf/159c3a21d are marked REGISTRATION OWED under, with the opposite verdict in one ledger. CHECKED against this commit's own trailer: a native ROCmFP4 artifact LOADED in llama-server and completed at 3.24 tok/s, both ROCmFPX conformance suites pass, and `Origin: ArifiLabs/rocmfp-weight-formats` makes the mechanism ours. That is a WORKING capability, not an absence. Under the President's capability law a capability is droppable only when BROKEN, never when merely inert here, so an upstream bump removing the ROCMFP* type ids would silently drop a capability this ledger previously called 'no runtime effect'. Terminal treatment is withdrawn for want of checked evidence, not because the mechanism changed."
+     },
+     {
+       "sha": "39a585bd51901738f3fd9221f2b430270bfd42b9",
+       "subject": "llama: ROCmFPX file types, quantizer wiring and the gguf-py registry",
+-      "disposition": "NO RUNTIME EFFECT - the wiring is inside the same OFF-by-default guard as bf0abf0be; no behaviour change on any existing file type."
++      "disposition": "REGISTRATION OWED - RE-DISPOSITIONED 2026-09-04 by the CHECKER-R3 fix pass (D4), for the same reason as bf0abf0be, whose guard this shares. It was 'NO RUNTIME EFFECT - the wiring is inside the same OFF-by-default guard as bf0abf0be; no behaviour change on any existing file type.' The file types, quantizer wiring and gguf-py registry ARE the mechanism that makes bf0abf0be's working artifact loadable; dropping them drops the capability whether or not the default is OFF. Default-OFF describes the SHIPPED DEFAULT, not the existence of the mechanism, and only the second is what this ledger protects."
+     },
+     {
+       "sha": "7d6f8d16386306e6ce310a48b6484f498d771d12",
+@@ -153,6 +176,42 @@
+       "sha": "ef3d91f580189a52a15fa2112c560bb51ea88aad",
+       "subject": "arifi-sync: root-fix the destructive series regen, and mechanize protected-win preservation",
+       "disposition": "NO RUNTIME EFFECT - the trailer states 'no engine behaviour changed and no shipped default moved; tooling and documentation only'. It is the commit that BUILT this mechanism."
++    },
++    {
++      "sha": "0f30256f63775c65887373449cc8044bc3faf51a",
++      "_surfaced_by": "the D2 classifier fix, 2026-09-04 - invisible to the prefix-only classifier this ledger was authored under",
++      "subject": "docs: OPTIONS-REGISTRY GGML_ARIFI_VNNI_REPACK - bit-divergence ADJUDICATED, performance MEASURED",
++      "disposition": "NOT A MECHANISM - CHECKED docs-only (`git show --stat`: docs/OPTIONS-REGISTRY.md, one line). The percentages the trailer quotes were measured by the run this row documents, and the mechanism behind them is ALREADY REGISTERED as `cpu-vnni-repack-dual-residency`, whose anchor is literally `GGML_ARIFI_VNNI_REPACK`. Terminal because the registered entry, not this commit, is what an incoming change would have to get past."
++    },
++    {
++      "sha": "e44c0bb0d39808d40ec06649dabfb58a93595a7d",
++      "_surfaced_by": "the D2 classifier fix, 2026-09-04",
++      "subject": "ggml-cpu: GGML_ARIFI_VNNI_REPACK defaults to OFF (diverging from upstream, on measurement)",
++      "disposition": "REGISTRATION OWED - the registered `cpu-vnni-repack-dual-residency` entry protects the KERNEL; this commit is the measured DEFAULT decision on top of it, and the two are not the same object. Its own trailer records the pair the default was chosen on: it avoids a -77.1%/-88.1% prompt regression and forgoes a +20.1%/+28.4% decode gain. An upstream bump that flipped the default back would silently forfeit a measured decision while every registered anchor still resolved, so the manifest as it stands would not see it. Not describable as an entry yet: the protected paths and quality gate for a DEFAULT (as distinct from a kernel) are not settled."
++    },
++    {
++      "sha": "e20a8df7f5dc1b0761e56019f5eecdbcd1bc707f",
++      "_surfaced_by": "the D2 classifier fix, 2026-09-04",
++      "subject": "docs: the g128 repack SPEED numbers, measured",
++      "disposition": "REGISTRATION OWED - CHECKED docs-only in its own diff (CHANGELOG.md, docs/FINDINGS.md, docs/OPTIONS-REGISTRY.md), but the numbers it banks are a 3.3x g128 decode win (2.01 -> 6.67/6.69 tok/s, n=12 per cell, ranges disjoint) and the g128 CPU repack KERNEL SET behind them is not demonstrably covered: the one registered repack entry names GGML_ARIFI_VNNI_REPACK and the dual-residency mode, not the g128 kernels of lane-110F mission #1. Terminal treatment is refused for want of checked coverage rather than granted on 'docs-only', because the burden under the capability law sits on terminal. What is owed is the KERNEL commit's registration, which this row names so it cannot be lost."
++    },
++    {
++      "sha": "a38d6c409f856be1aaeb5003a91045af65ca9aec",
++      "_surfaced_by": "the D2 classifier fix, 2026-09-04",
++      "subject": "moe-cache: heat-protected eviction keeps hot experts resident (turboquant tail)",
++      "disposition": "REGISTRATION OWED - a CARRIED mechanism whose only numbers are third-party (+12% TG soft / +7.5% auto on an RTX 5090, quoted and explicitly NOT adopted as ours). Exactly the d0112ab49 class: zero on our seat is not zero, and no measured effect exists on this hardware to register yet. It must not be lost on a bump."
++    },
++    {
++      "sha": "8561db37993c9b326549aed2c996b0dcb24ecfc7",
++      "_surfaced_by": "the D2 classifier fix, 2026-09-04",
++      "subject": "cuda: lift TQ3_4S kernel set from tq3/master (14 files)",
++      "disposition": "REGISTRATION OWED - a lifted CUDA kernel set, UNMEASURABLE on this seat (no CUDA silicon) with tq3-side references RTX 3090 tg128 43.1 -> 47.4 t/s and Ampere decode +35%. Carried capability, inert here, not broken. The d0112ab49 reasoning applies unchanged."
++    },
++    {
++      "sha": "24f43e45cdf65dc539e62c55c6dd65e6be71c6d5",
++      "_surfaced_by": "the D2 classifier fix, 2026-09-04",
++      "subject": "metal: lift TQ3_4S kernel set from tq3/master (5 files + alloc hook)",
++      "disposition": "REGISTRATION OWED - as 8561db379, on Metal: UNMEASURABLE on this seat (no Metal silicon), tq3-side reference M3 Pro 27B decode ~4 t/s. Carried capability, inert here, not broken."
+     }
+   ]
+ }
+diff --git a/tools/arifi-sync/test_arifi_sync.py b/tools/arifi-sync/test_arifi_sync.py
+index e4973e9f9..9326d8f5d 100644
+--- a/tools/arifi-sync/test_arifi_sync.py
++++ b/tools/arifi-sync/test_arifi_sync.py
+@@ -242,6 +242,38 @@ class ProtectedWinTest(unittest.TestCase):
+                              "fork: drop the fast path", start="main")
+         self.assertEqual(1, self._check(inc))
+ 
++    def test_a_pure_RENAME_of_a_protected_file_is_REFUSED(self):
++        """CHECKER-R3 finding 1, 2026-09-04, reproduced here as a regression.
++
++        A 100%-similarity rename was the one mutation of a protected file that PASSED the
++        fail-closed preflight. `git diff --name-only` reports only the DESTINATION path, so the
++        protected path never entered `changed`; and the unified body is `similarity index 100% /
++        rename from / rename to` with no content lines, so no anchor appeared as removed either.
++        Both halves of the guard went blind at once, on the exact move that takes a win out from
++        under its manifest entry while leaving the code intact.
++
++        `--no-renames` on both git calls turns the rename back into delete+add, which restores the
++        path hit AND the `-` anchor lines. This test fails on the old code."""
++        git(self.r.path, "checkout", "-q", "-b", "incoming", "main")
++        git(self.r.path, "mv", "ggml/kernel.c", "ggml/kernel_renamed.c")
++        git(self.r.path, "commit", "-q", "-m", "fork: rename the kernel file")
++        inc = git(self.r.path, "rev-parse", "HEAD")
++        git(self.r.path, "checkout", "-q", "main")
++        self.assertEqual(1, self._check(inc))
++
++    def test_renaming_an_UNPROTECTED_file_still_passes(self):
++        """The must-not-fire half: `--no-renames` widens what the diff shows, so the guard has to
++        stay quiet on a rename that touches nothing of ours. Otherwise every upstream file move
++        would refuse the ingest and the gate gets switched off."""
++        self.r.commit("chore: an unprotected file", {"docs/notes.md": "text\n"},
++                      effect="documentation only")
++        git(self.r.path, "checkout", "-q", "-b", "incoming", "main")
++        git(self.r.path, "mv", "docs/notes.md", "docs/notes-renamed.md")
++        git(self.r.path, "commit", "-q", "-m", "upstream: move the notes")
++        inc = git(self.r.path, "rev-parse", "HEAD")
++        git(self.r.path, "checkout", "-q", "main")
++        self.assertEqual(0, self._check(inc))
++
+     def test_incomplete_active_entry_fails_closed(self):
+         self._write_manifest(self._entry(quality_gate=""))
+         problems = A.validate_protected_wins(self.r.path, "main")
+@@ -323,11 +355,19 @@ class StrictRegistrationTest(unittest.TestCase):
+     def tearDown(self):
+         self.r.close()
+ 
+-    def _baseline(self, sha, disposition="NOT A MECHANISM - fixture"):
++    def _baseline(self, sha, disposition="NOT A MECHANISM - fixture", tip="__main__"):
++        """`tip` defaults to whatever `main` is RIGHT NOW, which is what a genuine baseline looks
++        like: it was recorded at a tip, and every row it dispositions predates that tip. Pass an
++        explicit tip (or `None`) to model the tampering shapes."""
+         p = os.path.join(self.r.path, "tools", "arifi-sync", "protected-win-baseline.json")
++        if tip == "__main__":
++            tip = git(self.r.path, "rev-parse", "main").strip()
++        doc = {"version": 1, "commits": [
++            {"sha": sha, "subject": "fixture", "disposition": disposition}]}
++        if tip is not None:
++            doc["tip_when_recorded"] = tip
+         with open(p, "w", encoding="utf-8") as fh:
+-            json.dump({"version": 1, "commits": [
+-                {"sha": sha, "subject": "fixture", "disposition": disposition}]}, fh)
++            json.dump(doc, fh)
+ 
+     def _validate(self):
+         return A.validate_protected_wins(self.r.path, "main", self.r.cfg)
+@@ -416,6 +456,163 @@ class StrictRegistrationTest(unittest.TestCase):
+         self.r.commit("chore: no trailers", {"docs/none.md": "x\n"}, trailers=False)
+         self.assertEqual([], self._validate())
+ 
++    # -- D2: a measured quantity cannot be laundered behind a prefix ----------
++    #
++    # CHECKER-R3 finding 2, 2026-09-04. The classifier was prefix-ONLY, so a real win hidden
++    # behind any of the thirty NO_EFFECT_PREFIXES was invisible to discover/validate/check/bump.
++    # It is the SAME class as the bare `-` bug the previous pass fixed, on the other thirty
++    # prefixes - which is why the fix is an ORDER change (quantity first, prefix as the tiebreak)
++    # and not another entry added to a list.
++    LAUNDERED = (
++        "correctness fix, and -12.79% per dispatch on the ub512 graph",
++        "kernel dispatch only; +9.4% prefill",
++        "enables the fused path; measured +7% decode",
++        "none on CPU, but -18% per dispatch on Vulkan",
++        "unmeasured on our seat; on the reporter's box we reproduced +14%",
++        "documentation only. Also: -20% per dispatch",
++        "no runtime change is claimed, though decode rose 12%",
++        "comment only -- and the reorder underneath it is worth -11.4% per dispatch",
++    )
++
++    def test_every_laundered_shape_CHECKER_R3_found_is_a_real_measured_effect(self):
++        for shape in self.LAUNDERED:
++            self.assertTrue(A._measured_effect_is_real(shape),
++                            "laundered shape classified NO EFFECT: %r" % shape)
++
++    def test_a_laundered_win_FAILS_validate_and_REFUSES_the_preflight(self):
++        """The unit assertion above is not enough on its own: it proves the predicate, not the
++        gate. This drives the whole path - a commit lands with the effect stated behind a
++        NO_EFFECT prefix, and the preflight must refuse it."""
++        landed = self.r.commit("vulkan: a laundered second win",
++                               {"ggml/other.c": "int f(void){return 1;}\n"},
++                               effect="correctness fix, and -12.79% per dispatch")
++        problems = self._validate()
++        self.assertTrue(any("UNREGISTERED" in p and landed[:9] in p for p in problems), problems)
++        self.assertEqual(1, self._check())
++
++    def test_true_no_effect_values_STILL_classify_as_no_effect(self):
++        """The must-not-fire half. A gate that fires on every documentation commit is switched
++        off within a week, so the widening is only safe if these stay quiet. Each of these states
++        an absence and carries no measured quantity."""
++        for shape in ("documentation only",
++                      "documentation only; no code, build option or engine behaviour changed",
++                      "unmeasured",
++                      "unmeasured on this seat; no number was produced",
++                      "none",
++                      "n/a",
++                      "comment only",
++                      "no runtime change",
++                      "build fix only",
++                      "packaging only",
++                      "tooling and documentation",
++                      "generated artifact refresh: 415 patches",
++                      "file relocation only",
++                      "process guardrail; 24 rows recorded",
++                      "-", "--", "", "tbd"):
++            self.assertFalse(A._measured_effect_is_real(shape),
++                             "must-not-fire shape classified REAL: %r" % shape)
++
++    def test_a_bare_multiplier_is_configuration_not_effect(self):
++        """`x` is the one risky unit: `2x16 GB` sizes a memory carve and `4x tile` names a shape.
++        It counts only when signed or decimal, which is how a real speedup is written."""
++        self.assertFalse(A._measured_effect_is_real("build variant only: 2x16 GB configuration"))
++        self.assertFalse(A._measured_effect_is_real("documentation only; the 4x tile is unchanged"))
++        self.assertTrue(A._measured_effect_is_real("comment only, but the path is 3.3x faster"))
++
++    def test_the_discover_command_sees_the_laundered_win(self):
++        """`discover` and `validate` must agree about the set, which is only true because they
++        share one predicate. Asserted rather than assumed."""
++        landed = self.r.commit("vulkan: a laundered second win",
++                               {"ggml/other.c": "int f(void){return 1;}\n"},
++                               effect="kernel dispatch only; +9.4% prefill")
++        rows = A.unregistered_measured_wins(self.r.path, self.r.cfg, "main")
++        self.assertIn(landed, [r[0] for r in rows])
++
++
++class BaselineBoundaryTest(unittest.TestCase):
++    """CHECKER-R3 residual, 2026-09-04: the baseline was closed to new shas BY CONVENTION only.
++
++    Appending one line to `protected-win-baseline.json` silenced the gate for a brand-new win
++    forever, and the previous pass disclosed that honestly rather than mechanizing it. Disclosure
++    is not a wall. The wall is the ledger's own `tip_when_recorded`: the baseline exists to
++    disposition what had ALREADY landed, so every row must be an ancestor of that tip.
++
++    Both directions are pinned, because only the pair is evidence: genuine historical rows must
++    keep passing (a gate that bricks real history gets switched off), and a post-baseline sha must
++    fail (a gate that lets it through is the hole itself)."""
++
++    def setUp(self):
++        self.r = Repo()
++        self.win_sha = self.r.commit("vulkan: our measured win", dict(PATHS))
++        self.manifest = os.path.join(self.r.path, "tools", "arifi-sync", "protected-wins.json")
++        with open(self.manifest, "w", encoding="utf-8") as fh:
++            json.dump({"version": 1, "wins": [{
++                "id": "test-win", "status": "active", "mechanism": "the fast path",
++                "commit": self.win_sha, "protected_paths": ["ggml/kernel.c"],
++                "anchors": ["ARIFI_FAST_PATH"], "evidence": ["commit:" + self.win_sha],
++                "quality_gate": "byte-identical output", "workload": "the seat serve line",
++                "measured_effect": "-12% per dispatch"}]}, fh)
++        self.bpath = os.path.join(self.r.path, "tools", "arifi-sync",
++                                  "protected-win-baseline.json")
++
++    def tearDown(self):
++        self.r.close()
++
++    def _write(self, rows, tip):
++        doc = {"version": 1, "commits": rows}
++        if tip is not None:
++            doc["tip_when_recorded"] = tip
++        with open(self.bpath, "w", encoding="utf-8") as fh:
++            json.dump(doc, fh)
++
++    def _row(self, sha):
++        return {"sha": sha, "subject": "fixture", "disposition": "NOT A MECHANISM - fixture"}
++
++    def _validate(self):
++        return A.validate_protected_wins(self.r.path, "main", self.r.cfg)
++
++    def test_genuine_historical_rows_pass(self):
++        pre = self.r.commit("vulkan: a win that predates the gate",
++                            {"ggml/pre.c": "int p(void){return 1;}\n"},
++                            effect="-9.4% per dispatch")
++        tip = git(self.r.path, "rev-parse", "main")
++        self._write([self._row(pre)], tip)
++        self.assertEqual([], self._validate())
++
++    def test_a_post_baseline_sha_CANNOT_be_grandfathered_by_appending_it(self):
++        pre = self.r.commit("vulkan: a win that predates the gate",
++                            {"ggml/pre.c": "int p(void){return 1;}\n"},
++                            effect="-9.4% per dispatch")
++        tip = git(self.r.path, "rev-parse", "main")
++        after = self.r.commit("vulkan: a win that landed AFTER the gate went on",
++                              {"ggml/after.c": "int a(void){return 1;}\n"},
++                              effect="-18% per dispatch")
++        # The tamper: silence the new win by adding its sha to the ledger.
++        self._write([self._row(pre), self._row(after)], tip)
++        problems = self._validate()
++        self.assertTrue(any("NOT an ancestor" in p and after[:9] in p for p in problems), problems)
++
++    def test_deleting_the_boundary_field_is_refused_not_treated_as_no_limit(self):
++        pre = self.r.commit("vulkan: a win that predates the gate",
++                            {"ggml/pre.c": "int p(void){return 1;}\n"},
++                            effect="-9.4% per dispatch")
++        self._write([self._row(pre)], None)
++        problems = self._validate()
++        self.assertTrue(any("tip_when_recorded" in p for p in problems), problems)
++
++    def test_an_unresolvable_boundary_is_refused(self):
++        pre = self.r.commit("vulkan: a win that predates the gate",
++                            {"ggml/pre.c": "int p(void){return 1;}\n"},
++                            effect="-9.4% per dispatch")
++        self._write([self._row(pre)], "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
++        problems = self._validate()
++        self.assertTrue(any("does not resolve" in p for p in problems), problems)
++
++    def test_an_empty_baseline_needs_no_boundary(self):
++        """A repo that never recorded a baseline must not be forced to invent one."""
++        self._write([], None)
++        self.assertEqual([], A.baseline_boundary_problems(self.r.path))
++
+ 
+ if __name__ == "__main__":
+     unittest.main(verbosity=2)

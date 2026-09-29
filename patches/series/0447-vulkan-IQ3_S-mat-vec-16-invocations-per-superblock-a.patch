@@ -1,0 +1,55 @@
+From 55f6af57b7d06eaae5302ff823856c15206c4d37 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 2 Sep 2026 19:56:48 -0400
+Subject: [PATCH] vulkan: IQ3_S mat-vec 16 invocations per superblock at
+ NUM_COLS >= 2 (zuijdwijk 211abf6a9 via lane-166, gate extended from >4;
+ lane-209 rank 4; gates run next)
+
+---
+ .../vulkan-shaders/mul_mat_vec_iq3_s.comp     | 24 +++++++++++++------
+ 1 file changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+index 42f52b4a1..063dd6b22 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+@@ -7,14 +7,24 @@ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+ 
+ FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+ 
+-// invocations per superblock. with many columns, 8 invocations need too many
+-// registers and spill, so use 16 to halve the per-invocation B working set
+-const uint TPB = NUM_COLS <= 4 ? 8 : 16;
+-const uint NL  = 32 / TPB; // l steps per invocation
++// Taken-from: LaurentZuijdwijk/llama.cpp 211abf6a9 "vulkan: handle larger batch sizes (>4)
++// efficiently for IQ3_S mat-vec when NUM_COLS > 4. 5x perf at n=8" (ported by lane-166 as
++// lane-166/matvec-vgpr-fix, gated to NUM_COLS > 4: 4.15x at n=5, 3.05x at n=8 on the 780M).
++// arifi lane-209 extends the gate to NUM_COLS >= 2: the lane-204 census put the n=3 DFlash2-verify
++// rows of this shader at 38-45 GB/s against 81 best on the same map (U-Q3KXL 45 ms, U-IQ4XS 22 ms
++// per verify graph). With 8 invocations per superblock the [[unroll]]ed l=4 x NUM_COLS B slab is
++// live per row; 16 invocations halve it. n=1 keeps the stock 8/4 shape.
++// NO DIVISION BY A SPECIALIZATION CONSTANT AT GLOBAL SCOPE (lane-166: the AMD proprietary driver
++// folds OpSpecConstantOp UDiv at pipeline creation and raised STATUS_INTEGER_DIVIDE_BY_ZERO).
++// Selects give the same constants with no divide.
++const bool ARIFI_TPB16 = NUM_COLS >= 2;
++const uint TPB         = ARIFI_TPB16 ? 16u : 8u;
++const uint NL          = ARIFI_TPB16 ?  2u : 4u;   // == 32 / TPB
++const uint TPB_OVER_8  = ARIFI_TPB16 ?  2u : 1u;   // == TPB / 8
+ 
+ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows) {
+-    const uint ib32 = itid / (TPB / 8);
+-    const uint l0   = (itid % (TPB / 8)) * NL;
++    const uint ib32 = itid / TPB_OVER_8;
++    const uint l0   = (itid % TPB_OVER_8) * NL;
+     const uint y_idx = i * QUANT_K + 32 * ib32;
+ 
+     uint ibi = a_offset + first_row * num_blocks_per_row + i;
+@@ -59,7 +69,7 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+     const uint num_blocks_per_row = p.ncols / QUANT_K;
+ 
+     // TPB invocations are used to process each block
+-    const uint blocks_per_wg = gl_WorkGroupSize.x/TPB;
++    const uint blocks_per_wg = ARIFI_TPB16 ? (gl_WorkGroupSize.x >> 4) : (gl_WorkGroupSize.x >> 3);
+     const uint tid = gl_LocalInvocationID.x;
+     const uint itid = tid % TPB;
+     const uint ix = tid / TPB;

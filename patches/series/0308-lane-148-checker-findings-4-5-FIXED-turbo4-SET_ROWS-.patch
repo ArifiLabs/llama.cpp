@@ -1,0 +1,226 @@
+From 5073c8c2d63bbcb8fcefeda53ff063144442b921 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 21:59:08 -0400
+Subject: [PATCH] lane-148 checker findings 4+5 FIXED: turbo4 SET_ROWS was 0/21
+ declined behind a green 'Backend Vulkan0: OK' banner and turbo2 had no
+ SET_ROWS case at all. Root cause: no cpy_turbo{2,4}_0_f32 copy-from-quant
+ shader, so the tests' read-back leg declined. Added turbo2/turbo4
+ dequantize()/dequantize4()/get_dm(), the two spv+pipeline registrations, both
+ supports_op and the DISPATCH switch (a third hand-synced pair - supports_op
+ alone aborts with 'Missing CPY op'), and a test_set_rows_turbo2 class.
+ SET_ROWS_TURBO2/3/4 now 21/21 EXECUTED each.
+
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  9 +++
+ .../vulkan-shaders/dequant_funcs.glsl         | 51 +++++++++++++
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     |  8 ++-
+ tests/test-backend-ops.cpp                    | 71 +++++++++++++++++++
+ 4 files changed, 137 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 941b5d78d..d9e1dc819 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -5844,7 +5844,9 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_Q5_1], "cpy_q5_1_f32", cpy_q5_1_f32_len, cpy_q5_1_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_Q5_1), 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_Q8_0], "cpy_q8_0_f32", cpy_q8_0_f32_len, cpy_q8_0_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_Q8_0), 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_IQ4_NL], "cpy_iq4_nl_f32", cpy_iq4_nl_f32_len, cpy_iq4_nl_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_IQ4_NL), 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_TURBO2_0], "cpy_turbo2_0_f32", cpy_turbo2_0_f32_len, cpy_turbo2_0_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_TURBO2_0), 1, 1}, {}, 1);
+     ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_TURBO3_0], "cpy_turbo3_0_f32", cpy_turbo3_0_f32_len, cpy_turbo3_0_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_TURBO3_0), 1, 1}, {}, 1);
++    ggml_vk_create_pipeline(device, device->pipeline_cpy_quant_f32[GGML_TYPE_TURBO4_0], "cpy_turbo4_0_f32", cpy_turbo4_0_f32_len, cpy_turbo4_0_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {(uint32_t)ggml_blck_size(GGML_TYPE_TURBO4_0), 1, 1}, {}, 1);
+ 
+     auto get_suffix = [](bool src0_f16, bool src1_f16, bool dst_f16) {
+         std::string s;
+@@ -9450,7 +9452,12 @@ static vk_pipeline ggml_vk_get_cpy_pipeline(ggml_backend_vk_context * ctx, const
+         case GGML_TYPE_Q5_0:
+         case GGML_TYPE_Q5_1:
+         case GGML_TYPE_Q8_0:
++        // This dispatch list and supports_op's quant->f32 list are a THIRD and FOURTH hand-synced
++        // pair (lane-146 already fixed one such pair). Adding TURBO2_0/TURBO4_0 to supports_op
++        // without adding them here aborts at the line below with "Missing CPY op for types".
++        case GGML_TYPE_TURBO2_0:
+         case GGML_TYPE_TURBO3_0:
++        case GGML_TYPE_TURBO4_0:
+         case GGML_TYPE_IQ4_NL:
+             return ctx->device->pipeline_cpy_quant_f32[src->type];
+         default:
+@@ -19337,7 +19344,9 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     case GGML_TYPE_Q5_1:
+                     case GGML_TYPE_Q8_0:
+                     case GGML_TYPE_IQ4_NL:
++                    case GGML_TYPE_TURBO2_0:
+                     case GGML_TYPE_TURBO3_0:
++                    case GGML_TYPE_TURBO4_0:
+                         return device->pipeline_cpy_quant_f32[src0_type] != nullptr;
+                     default:
+                         break;
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
+index 651ad80a2..efd60a051 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
+@@ -802,6 +802,57 @@ vec2 get_dm(uint ib, uint a_offset) {
+ }
+ #endif
+ 
++// turbo2 / turbo4 copy-from-quant. Added by lane-148: without these there is no
++// cpy_turbo{2,4}_0_f32 pipeline, so test_set_rows_turbo4's read-back leg declines and the
++// SET_ROWS_TURBO4 case prints "0/0 tests passed / Backend Vulkan0: OK" -- a green banner over
++// zero executed coverage of the turbo4 WHT+quantize write path.
++// No inverse WHT here: dequant stays in the rotated domain, exactly as
++// dequantize_row_turbo2_0 / dequantize_row_turbo4_0 do (ggml/src/ggml-turbo-quant.c).
++#if defined(DATA_A_TURBO2_0)
++vec2 dequantize(uint ib, uint iqs, uint a_offset) {
++    // SOURCE OF TRUTH: CENTROIDS_2BIT in ggml/src/ggml-turbo-quant.c
++    const float centroids[4] = float[4](-0.133462, -0.039994, 0.039994, 0.133462);
++    const uint j0 = iqs;
++    const uint j1 = iqs + 1;
++    const uint i0 = (uint(data_a[a_offset + ib].qs[j0 / 4]) >> ((j0 % 4) * 2)) & 0x3;
++    const uint i1 = (uint(data_a[a_offset + ib].qs[j1 / 4]) >> ((j1 % 4) * 2)) & 0x3;
++    return vec2(centroids[i0], centroids[i1]);
++}
++vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
++    vec2 v0 = dequantize(ib, iqs,     a_offset);
++    vec2 v1 = dequantize(ib, iqs + 2, a_offset);
++    return vec4(v0.x, v0.y, v1.x, v1.y);
++}
++vec2 get_dm(uint ib, uint a_offset) {
++    return vec2(float(data_a[a_offset + ib].norm), 0);
++}
++#endif
++
++#if defined(DATA_A_TURBO4_0)
++vec2 dequantize(uint ib, uint iqs, uint a_offset) {
++    // SOURCE OF TRUTH: CENTROIDS_4BIT in ggml/src/ggml-turbo-quant.c
++    const float centroids[16] = float[16](
++        -0.241529, -0.182877, -0.143016, -0.111036,
++        -0.083292, -0.058050, -0.034299, -0.011349,
++         0.011349,  0.034299,  0.058050,  0.083292,
++         0.111036,  0.143016,  0.182877,  0.241529
++    );
++    const uint j0 = iqs;
++    const uint j1 = iqs + 1;
++    const uint i0 = (uint(data_a[a_offset + ib].qs[j0 / 2]) >> ((j0 % 2) * 4)) & 0xF;
++    const uint i1 = (uint(data_a[a_offset + ib].qs[j1 / 2]) >> ((j1 % 2) * 4)) & 0xF;
++    return vec2(centroids[i0], centroids[i1]);
++}
++vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
++    vec2 v0 = dequantize(ib, iqs,     a_offset);
++    vec2 v1 = dequantize(ib, iqs + 2, a_offset);
++    return vec4(v0.x, v0.y, v1.x, v1.y);
++}
++vec2 get_dm(uint ib, uint a_offset) {
++    return vec2(float(data_a[a_offset + ib].norm), 0);
++}
++#endif
++
+ #if defined(DATA_A_TQ3_1S)
+ vec2 dequantize(uint ib, uint iqs, uint a_offset) {
+     // TQ3_1S: 8-level Lloyd-Max centroids for N(0,1). ASYMMETRIC -- must match
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index f398ab2b0..fab3d7caf 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -896,8 +896,12 @@ void process_shaders() {
+         string_to_spv("cpy_f32_" + t, "copy_to_quant.comp", {{"DATA_A_" + to_uppercase(t), "1"}, {"S_TYPE", "float"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
+         string_to_spv("cpy_" + t + "_f32", "copy_from_quant.comp", {{"DATA_A_" + to_uppercase(t), "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
+     }
+-    // turbo3_0 copy-from-quant only; copy-to-quant (cpy_f32_turbo3_0) omitted because the non-SET_ROWS quantize() path lacks the WHT transform
+-    string_to_spv("cpy_turbo3_0_f32", "copy_from_quant.comp", {{"DATA_A_TURBO3_0", "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
++    // turbo copy-from-quant only; copy-to-quant (cpy_f32_turbo*_0) omitted because the non-SET_ROWS quantize() path lacks the WHT transform.
++    // turbo2_0/turbo4_0 added by lane-148: their absence made test_set_rows_turbo4's read-back leg
++    // decline, so SET_ROWS_TURBO4 printed "0/0 tests passed / Backend Vulkan0: OK".
++    for (std::string t : {"turbo2_0", "turbo3_0", "turbo4_0"}) {
++        string_to_spv("cpy_" + t + "_f32", "copy_from_quant.comp", {{"DATA_A_" + to_uppercase(t), "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}});
++    }
+ 
+     for (auto src : {std::pair{"f32", "float"}, std::pair{"f16", "float16_t"}}) {
+         for (std::string dst : {"f32", "f16", "bf16", "q1_0", "q2_0", "q2_0_g128", "q4_0", "q4_1", "q5_0", "q5_1", "q8_0", "iq4_nl", "turbo2_0", "turbo3_0", "turbo4_0"}) {
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index e371def34..4af365125 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -2762,6 +2762,65 @@ struct test_set_rows_turbo4 : public test_case {
+     }
+ };
+ 
++// Test SET_ROWS with turbo2 destination, then dequantize and compare.
++// Added by lane-148: turbo2 had NO SET_ROWS coverage at all -- the generic test_set_rows
++// iterates all_types, which excludes the TURBO ids -- while set_rows_f32_turbo2_0_* shaders are
++// generated and pipeline_set_rows[...][GGML_TYPE_TURBO2_0] is created. A claimed, shipped write
++// path with zero executed cases. Same bespoke shape as its turbo3/turbo4 neighbours above.
++struct test_set_rows_turbo2 : public test_case {
++    const ggml_type type_idx;
++    const int64_t ne0; // head dim (must be multiple of 128)
++    const int64_t ne1; // rows in dst
++    const int r;       // rows to write
++
++    std::string vars() override {
++        return VARS_TO_STR4(type_idx, ne0, ne1, r);
++    }
++
++    std::string op_desc(ggml_tensor * t) override {
++        GGML_UNUSED(t);
++        return "SET_ROWS_TURBO2";
++    }
++
++    test_set_rows_turbo2(ggml_type type_idx = GGML_TYPE_I32,
++            int64_t ne0 = 128, int64_t ne1 = 8, int r = 4)
++        : type_idx(type_idx), ne0(ne0), ne1(ne1), r(r) {}
++
++    ggml_tensor * build_graph(ggml_context * ctx) override {
++        ggml_tensor * dst = ggml_new_tensor_2d(ctx, GGML_TYPE_TURBO2_0, ne0, ne1);
++        ggml_set_name(dst, "dst");
++
++        ggml_tensor * src = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, ne0, r);
++        ggml_set_name(src, "src");
++
++        ggml_tensor * row_idxs = ggml_new_tensor_1d(ctx, type_idx, r);
++        ggml_set_name(row_idxs, "row_idxs");
++
++        ggml_tensor * written = ggml_set_rows(ctx, dst, src, row_idxs);
++
++        ggml_tensor * out = ggml_cpy(ctx, written, ggml_new_tensor_2d(ctx, GGML_TYPE_F32, ne0, ne1));
++        ggml_set_name(out, "out");
++        return out;
++    }
++
++    void initialize_tensors(ggml_context * ctx) override {
++        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
++            if (t->type == GGML_TYPE_I64 || t->type == GGML_TYPE_I32) {
++                if (ggml_is_view_op(t->op)) continue;
++                init_set_rows_row_ids(t, ne1);
++            } else {
++                init_tensor_uniform(t);
++            }
++        }
++    }
++
++    double max_nmse_err() override {
++        // 2 bits per element: a looser round-trip bound than turbo3/turbo4's 0.05.
++        // A layout or LUT mismatch lands orders of magnitude beyond it either way.
++        return 0.35;
++    }
++};
++
+ // Test SET_ROWS with TQ4_1S destination (weight quantization), then dequantize and compare.
+ // Validates: f32 -> WHT forward -> 16-centroid quantize -> nibble pack -> SET_ROWS
+ // followed by: GET_ROWS/CPY -> WHT inverse -> f32 dequant. Round-trip error is bounded.
+@@ -9179,6 +9238,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     test_cases.emplace_back(new test_set_rows_turbo4(GGML_TYPE_I32, 256, 2048, 512));
+     test_cases.emplace_back(new test_set_rows_turbo4(GGML_TYPE_I32, 512, 1024, 256));
+ 
++    // SET_ROWS with turbo2 destination: quantize then dequant round-trip (lane-148)
++    for (ggml_type idx_type : {GGML_TYPE_I32, GGML_TYPE_I64}) {
++        for (int64_t ne0 : {128, 256, 512}) {
++            for (int r : {1, 4, 7}) {
++                test_cases.emplace_back(new test_set_rows_turbo2(idx_type, ne0, 16, r));
++            }
++        }
++    }
++    test_cases.emplace_back(new test_set_rows_turbo2(GGML_TYPE_I32, 128, 4096, 1024));
++    test_cases.emplace_back(new test_set_rows_turbo2(GGML_TYPE_I32, 256, 2048, 512));
++    test_cases.emplace_back(new test_set_rows_turbo2(GGML_TYPE_I32, 512, 1024, 256));
++
+     // SET_ROWS with TQ4_1S destination: quantize then dequant round-trip
+     for (ggml_type idx_type : {GGML_TYPE_I32, GGML_TYPE_I64}) {
+         for (int64_t ne0 : {32, 64, 128, 256}) {

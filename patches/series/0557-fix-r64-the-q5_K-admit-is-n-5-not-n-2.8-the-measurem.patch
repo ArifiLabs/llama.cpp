@@ -1,0 +1,94 @@
+From 31e609a7ee82a030f94fbf95bb4a100001ec0d50 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 12:06:45 -0400
+Subject: [PATCH] fix(r64): the q5_K admit is n>=5, not n=2..8 - the
+ measurement narrowed it
+
+6 interleaved rounds, paired per round, 17408x5120 (13-paired-ffn.txt):
+default/route = 0.962 at n=3 (0/6 rounds won) and 0.940 at n=4 (1/6), then
+1.067 / 1.109 / 1.095 / 1.204 at n=5/6/7/8 (6/6 each, ranges clear of 1.0).
+n=1 is 0.999 - untouched, as the rule intends.
+
+The sign flip is not a fitted threshold, it is this device's ROW geometry:
+rm_int_n(rm_kq_int=1, i) gives the MMVQ pipeline 1 row per workgroup at
+NUM_COLS<=4 and 4 at NUM_COLS>=5 (:7540), while the f32 shader it leaves runs
+rm_kq=2 rows at every width (:7429). Below n=5 the admit halves rows per
+workgroup; at and above it, doubles them. So the lever lands on exactly the
+n>=5 / k<=8192 rule the Q4_K admit already carries.
+
+The k gate is measured too, not copied: at 5120x17408 (k>8192) forced MMVQ
+LOSES 3.5-4.1% at n=5..8 (0.967/0.959/0.986/0.965). On the served file 90.5%
+of Q5_K bytes sit at k<=8192, so the gate keeps nearly all of the type.
+
+Also: spec-constant 3 does NOT move the post-`spirv-opt -O` instruction count
+in either f32 shader (checked both arms), so step 0(c) cannot decide this
+lane - recorded rather than dressed up. Fixes the q6_k freeze (const3 is
+q6k_direct_scales, const4 q6k_xfold, both default 1), the cells.cmd ')' parse
+break, and a false-green hole in the correctness gate where a filter matching
+zero cases would have exited 0.
+
+Origin: fork-authored (ArifiLabs lane-252 R64 q5_K MMVQ route, Opus 5 MEDIUM kernel-maker)
+Measured-effect: op-level perf-mode only (rows in receipts); served t/s UNMEASURED by the maker - HQ pairs quiet
+Lane: lane-252
+Cherry-picked-from: d47fce21d (SOURCE PATHS ONLY, ArifiLabs lane-254 R66 integration)
+Recut-onto: 668641bc0 (ArifiLabs lane-254 R66c, from cac1c26d1)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 24 +++++++++++++++++-------
+ 1 file changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index c7997c4ab..1d6caa7a0 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -9512,8 +9512,8 @@ static vk_device ggml_vk_get_device(size_t idx) {
+ 
+             // arifi lane-252 / R64: GGML_ARIFI_Q5K_MMVQ=<legacy|route>. DEFAULTS TO legacy, so no
+             // default moves (F-08): unset leaves Q5_K n>1 on the f32 dequant shader exactly as
+-            // today. `route` admits Q5_K to the A-hoisted q8_1 MMVQ path at n=2..8, k <= 8192 --
+-            // the same rule shape the Q4_K n>=5 admit already carries, and for the same mechanism.
++            // today. `route` admits Q5_K to the A-hoisted q8_1 MMVQ path at n=5..8, k <= 8192 --
++            // the same rule the Q4_K admit already carries, and for the same mechanism.
+             // `v2` is accepted as a NAME only and behaves as legacy: it is reserved for a shader
+             // change (R48c-class direct scales) that this lane did not need, and saying so here is
+             // cheaper than a caller discovering it silently routed.
+@@ -9528,7 +9528,7 @@ static vk_device ggml_vk_get_device(size_t idx) {
+                     device->mmvq_a_hoist_iq1 ? "ON" : "OFF",
+                     device->mmvq_route_legacy ? "legacy" : "r48b");
+             fprintf(stderr, "ggml_vulkan: q5_k mmvq route: %s%s\n",
+-                    device->q5k_mmvq_route ? "route (n=2..8, k<=8192)" : "legacy",
++                    device->q5k_mmvq_route ? "route (n=5..8, k<=8192)" : "legacy",
+                     q5k_v2_asked ? " (GGML_ARIFI_Q5K_MMVQ=v2 is UNIMPLEMENTED - running legacy)" : "");
+         }
+ 
+@@ -12313,9 +12313,19 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
+         // change. The hoist itself is still ON for Q5_K pipelines; this is about the route only.
+         //
+         // arifi lane-252 / R64: that pairing is now taken, and the switch below is its lever.
+-        // GGML_ARIFI_Q5K_MMVQ=route admits Q5_K at n=2..8 when k <= 8192, mirroring the Q4_K n>=5
+-        // rule two blocks down -- same gate, same mechanism, same k boundary, because the thing
+-        // that makes the admit safe is the same A-side hoist.
++        // GGML_ARIFI_Q5K_MMVQ=route admits Q5_K at n=5..8 when k <= 8192 -- the SAME rule the Q4_K
++        // admit two blocks down already carries, width for width and k for k.
++        //
++        // The width bound is MEASURED, not copied. The brief asked for n=2..8; the 6-round paired
++        // table on 17408x5120 (r64-evidence/13-paired-ffn.txt, default/route per round) refuses the
++        // bottom of that range and takes the top:
++        //   n=1 0.999  n=2 0.995  n=3 0.962 (0/6 wins)  n=4 0.940 (1/6)
++        //   n=5 1.067  n=6 1.109  n=7 1.095  n=8 1.204  (all 6/6, ranges clear of 1.0)
++        // The sign flip sits exactly on this device's ROW geometry, which is why it is a rule and
++        // not a fitted threshold: rm_int_n(rm_kq_int=1, i) gives the MMVQ pipeline 1 row per
++        // workgroup at NUM_COLS <= 4 and 4 rows at NUM_COLS >= 5 (:7540), while the f32 shader it
++        // leaves runs rm_kq = 2 rows at every width (:7429). Below n=5 the admit would HALVE rows
++        // per workgroup; at and above it, it doubles them.
+         //
+         // WHY THE TWO HOISTS ARE NOT THE SAME HOIST (the fact this lane turns on): the receipt line
+         // `q5_k mat-vec activation-hoist: ON (n<=3)` is q5k_b_hoist_for_cols() -- the B-side hoist
+@@ -12328,7 +12338,7 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
+             if (device->q5k_mmvq_route == 0 || device->mmvq_a_hoist == 0 || device->mmvq_route_legacy) {
+                 return false;
+             }
+-            return k <= 8192 && n <= 8;
++            return k <= 8192 && n >= 5 && n <= 8;
+         }
+         // arifi lane-235 / R48b phase 2: the Q4_K n>=5 exile is superseded CONDITIONALLY -- on the
+         // hoist being live, and only at k <= 8192. The lane-198 reading above ("Q4_K 2.0-2.3x per

@@ -1,0 +1,1797 @@
+From 885256d15bef901a57ad7714ebb18769a4584bb3 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 07:12:06 -0400
+Subject: [PATCH] cuda: lift TQ3_4S kernel set from tq3/master (14 files)
+
+Ports the TQ3_4S (our type 48) CUDA support surgically from the tq3
+fork tip: dequant (convert.cu), get_rows, PRMT vec_dot + dedicated
+4-warp ncols1 decode kernel (mmvq), MMQ tile loader + Ampere configs +
+template instance, Blackwell NVFP4 weight-conversion cache/transient
+path (Option E), and the fused Walsh-Hadamard activation rotation in
+quantize_row_q8_1_cuda keyed on type_src0. tq3-native.cu/.cuh come
+along because mmq.cu/quantize.cu/ggml-cuda.cu include them - the
+census 12-file list undercounts by these two.
+
+Tip state carries the 5f60c3929 (MMQ dispatch + rotated Q8_1
+activations) and 94e033d7e (out-of-place rotation) fix semantics by
+construction. Sibling tq3 types (TQ3_0/TQ3_4SE/TQ3_1S_SHIFT and tq3's
+own TQ3_1S, which is NOT our 45) are trimmed out: no enum or wrong
+enum on this tree. ggml_cuda_should_use_mmq now takes the tensor so
+the TQ3_4S gates can read name/shape.
+
+NOT BUILT HERE: this rig has no CUDA device or toolchain. Compile
+readiness only; hardware validation is an OWED row with verbatim
+commands in the lane evidence (HARDWARE-VALIDATION.md).
+
+Taken-from: turbo-tan/llama.cpp-tq3@854516439
+Origin: lane-160 TQ3_4S hunk port (cherry-pick impossible: trees diverge by whole subsystems); TQ3_4S-only trim + upstream-b10488 adaptation
+Measured-effect: UNMEASURED ON THIS RIG (no CUDA silicon); tq3-side references: RTX 3090 tg128 43.1 -> 47.4 t/s (PRMT vec_dot), Ampere decode +35% (3d3888c9f)
+Lane: lane-160
+---
+ ggml/src/ggml-cuda/common.cuh                 |  17 +
+ ggml/src/ggml-cuda/convert.cu                 |  75 +++++
+ ggml/src/ggml-cuda/getrows.cu                 | 112 +++++++
+ ggml/src/ggml-cuda/ggml-cuda.cu               |  16 +-
+ ggml/src/ggml-cuda/mmq-config-ampere.cuh      |  17 +
+ ggml/src/ggml-cuda/mmq.cu                     | 299 ++++++++++++++++--
+ ggml/src/ggml-cuda/mmq.cuh                    | 133 +++++++-
+ ggml/src/ggml-cuda/mmvq.cu                    | 132 ++++++++
+ ggml/src/ggml-cuda/quantize.cu                | 296 ++++++++++++++++-
+ ggml/src/ggml-cuda/quantize.cuh               |   2 +
+ .../template-instances/mmq-instance-tq3_4s.cu |   5 +
+ ggml/src/ggml-cuda/tq3-native.cu              |  35 ++
+ ggml/src/ggml-cuda/tq3-native.cuh             | 105 ++++++
+ ggml/src/ggml-cuda/vecdotq.cuh                |  70 ++++
+ 14 files changed, 1284 insertions(+), 30 deletions(-)
+ create mode 100644 ggml/src/ggml-cuda/template-instances/mmq-instance-tq3_4s.cu
+ create mode 100644 ggml/src/ggml-cuda/tq3-native.cu
+ create mode 100644 ggml/src/ggml-cuda/tq3-native.cuh
+
+diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
+index b18214ddc..e72887528 100644
+--- a/ggml/src/ggml-cuda/common.cuh
++++ b/ggml/src/ggml-cuda/common.cuh
+@@ -1133,6 +1133,13 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ3_S> {
+     static constexpr int qi = QI3_S;
+ };
+ 
++template<>
++struct ggml_cuda_type_traits<GGML_TYPE_TQ3_4S> {
++    static constexpr int qk = QK_TQ3_0;
++    static constexpr int qr = 2;
++    static constexpr int qi = 16;
++};
++
+ //////////////////////
+ 
+ struct ggml_cuda_device_info {
+@@ -1430,6 +1437,16 @@ struct ggml_backend_cuda_context {
+ 
+     int curr_stream_no = 0;
+ 
++    struct tq3_4s_nvfp4_cache_entry {
++        void * data = nullptr;
++        size_t size = 0;
++        size_t src_size = 0;
++        const void * src_data = nullptr;
++    };
++
++    std::mutex tq3_4s_nvfp4_cache_mutex;
++    std::unordered_map<const void *, tq3_4s_nvfp4_cache_entry> tq3_4s_nvfp4_cache;
++
+ #ifdef USE_CUDA_GRAPH
+     // Map from first_node_ptr to cuda_graph - allows multiple graphs per context
+     // when the computation is split across CPU/GPU (e.g., with --n-cpu-moe)
+diff --git a/ggml/src/ggml-cuda/convert.cu b/ggml/src/ggml-cuda/convert.cu
+index 9c1b861c3..1623282cd 100644
+--- a/ggml/src/ggml-cuda/convert.cu
++++ b/ggml/src/ggml-cuda/convert.cu
+@@ -557,6 +557,77 @@ to_bf16_cuda_t ggml_get_to_bf16_cuda(ggml_type type) {
+     }
+ }
+ 
++// TQ3_4S CUDA dequantize: unpack indices, centroid lookup, inverse WHT, scale
++__constant__ static const float tq3_0_centroids_cuda[8] = {
++    -1.996684f, -1.291398f, -0.740341f, -0.247508f,
++     0.230106f,  0.725222f,  1.277503f,  1.988943f
++};
++__constant__ static const float tq3_0_signs_cuda[32] = {
++    +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
++    -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
++    -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
++    -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
++};
++
++static __device__ __forceinline__ uint8_t tq3_idx_from_packed_cuda(const uint8_t * qp, int r) {
++    switch (r) {
++        case 0: return  qp[0]       & 7;
++        case 1: return (qp[0] >> 3) & 7;
++        case 2: return ((qp[0] >> 6) | (qp[1] << 2)) & 7;
++        case 3: return (qp[1] >> 1) & 7;
++        case 4: return (qp[1] >> 4) & 7;
++        case 5: return ((qp[1] >> 7) | (qp[2] << 1)) & 7;
++        case 6: return (qp[2] >> 2) & 7;
++        default: return (qp[2] >> 5) & 7;
++    }
++}
++
++__device__ static inline float tq3_4s_decode_scale_cuda(uint8_t byte) {
++    if (byte == 0) return 0.0f;
++    const int exp = (byte >> 5) - 9;
++    const float mantissa = 1.0f + (float)(byte & 31) / 32.0f;
++    return ldexpf(mantissa, exp);
++}
++
++template<typename dst_t>
++static __global__ void dequantize_block_tq3_4s(const void * __restrict__ vx, dst_t * __restrict__ yy, int nb) {
++    const int i = blockIdx.x;
++    if (i >= nb) return;
++
++    const block_tq3_4s * x = (const block_tq3_4s *)vx + i;
++    const float ds[4] = {
++        tq3_4s_decode_scale_cuda(x->d[0]),
++        tq3_4s_decode_scale_cuda(x->d[1]),
++        tq3_4s_decode_scale_cuda(x->d[2]),
++        tq3_4s_decode_scale_cuda(x->d[3]),
++    };
++
++    dst_t * y = yy + i * QK_TQ3_0;
++    const int j = threadIdx.x;
++    const int g = j / 8;
++    const int r = j % 8;
++    const uint8_t * qp = x->qs + g * 3;
++    const uint8_t idx = tq3_idx_from_packed_cuda(qp, r);
++
++    float val = tq3_0_centroids_cuda[idx] * ds[g];
++    for (int step = 1; step < 32; step <<= 1) {
++        float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
++        if (j & step) {
++            val = other - val;
++        } else {
++            val = other + val;
++        }
++    }
++
++    y[j] = (dst_t)(val * (tq3_0_signs_cuda[j] / sqrtf(32.0f)));
++}
++
++template<typename dst_t>
++static void dequantize_row_tq3_4s_cuda(const void * vx, dst_t * y, const int64_t k, cudaStream_t stream) {
++    const int nb = k / QK_TQ3_0;
++    dequantize_block_tq3_4s<<<nb, 32, 0, stream>>>(vx, y, nb);
++}
++
+ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
+     switch (type) {
+         case GGML_TYPE_Q1_0:
+@@ -618,6 +689,8 @@ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
+             return dequantize_tq4_1s_warp_cuda<half>;  // fast warp-cooperative WHT
+         case GGML_TYPE_TQ3_1S:
+             return dequantize_block_cont_cuda<QK_TQ3_0, QR_TQ3_1S, dequantize_tq3_1s>;
++        case GGML_TYPE_TQ3_4S:
++            return dequantize_row_tq3_4s_cuda;
+         case GGML_TYPE_F32:
+             return convert_unary_cont_cuda<float>;
+         case GGML_TYPE_BF16:
+@@ -685,6 +758,8 @@ to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
+             return dequantize_tq4_1s_warp_cuda<float>;  // fast warp-cooperative WHT
+         case GGML_TYPE_TQ3_1S:
+             return dequantize_block_cont_cuda<QK_TQ3_0, QR_TQ3_1S, dequantize_tq3_1s>;
++        case GGML_TYPE_TQ3_4S:
++            return dequantize_row_tq3_4s_cuda;
+         case GGML_TYPE_F16:
+             return convert_unary_cont_cuda<half>;
+         case GGML_TYPE_BF16:
+diff --git a/ggml/src/ggml-cuda/getrows.cu b/ggml/src/ggml-cuda/getrows.cu
+index d1832f192..7c3b218b5 100644
+--- a/ggml/src/ggml-cuda/getrows.cu
++++ b/ggml/src/ggml-cuda/getrows.cu
+@@ -292,6 +292,114 @@ static void get_rows_cuda_float(
+         s10, s11, s12/*, s13*/);
+ }
+ 
++__constant__ static const float tq3_0_centroids_getrows_cuda[8] = {
++    -1.996684f, -1.291398f, -0.740341f, -0.247508f,
++     0.230106f,  0.725222f,  1.277503f,  1.988943f
++};
++__constant__ static const float tq3_0_signs_getrows_cuda[32] = {
++    +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
++    -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
++    -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
++    -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
++};
++
++static __device__ __forceinline__ uint8_t tq3_idx_from_packed_getrows_cuda(const uint8_t * qp, int r) {
++    switch (r) {
++        case 0: return  qp[0]       & 7;
++        case 1: return (qp[0] >> 3) & 7;
++        case 2: return ((qp[0] >> 6) | (qp[1] << 2)) & 7;
++        case 3: return (qp[1] >> 1) & 7;
++        case 4: return (qp[1] >> 4) & 7;
++        case 5: return ((qp[1] >> 7) | (qp[2] << 1)) & 7;
++        case 6: return (qp[2] >> 2) & 7;
++        default: return (qp[2] >> 5) & 7;
++    }
++}
++
++template<typename dst_t>
++static __global__ void k_get_rows_tq3_4s(
++        const block_tq3_4s * __restrict__ src0, const int32_t * __restrict__ src1, dst_t * __restrict__ dst,
++        const int64_t ne00, const int64_t ne11, const int64_t ne12,
++        const size_t s1, const size_t s2, const size_t s3,
++        const size_t nb01, const size_t nb02, const size_t nb03,
++        const size_t s10, const size_t s11, const size_t s12) {
++    const int lane = threadIdx.x;
++    const int64_t block = blockIdx.y;
++    const int64_t z = blockIdx.z;
++
++    if (lane >= QK_TQ3_0 || z >= ne11*ne12) {
++        return;
++    }
++
++    const int64_t nblocks_per_row = ne00 / QK_TQ3_0;
++    if (block >= nblocks_per_row) {
++        return;
++    }
++
++    const int i10 = blockIdx.x;
++    const int i11 = z / ne12;
++    const int i12 = z % ne12;
++    const int i01 = src1[i10*s10 + i11*s11 + i12*s12];
++
++    const char * src0_row = (const char *) src0 + i01*nb01 + i11*nb02 + i12*nb03;
++    const block_tq3_4s * x = (const block_tq3_4s *) src0_row + block;
++    dst_t * dst_row = dst + i10*s1 + i11*s2 + i12*s3;
++
++    auto ratio4s = [] __device__ (uint8_t byte) -> float {
++        if (byte == 0) return 0.0f;
++        const int exp = (byte >> 5) - 9;
++        const float mantissa = 1.0f + (float)(byte & 31) / 32.0f;
++        return ldexpf(mantissa, exp);
++    };
++
++    const float ds[4] = {
++        ratio4s(x->d[0]),
++        ratio4s(x->d[1]),
++        ratio4s(x->d[2]),
++        ratio4s(x->d[3]),
++    };
++
++    const int g = lane / 8;
++    const int r = lane % 8;
++    const uint8_t * qp = x->qs + g * 3;
++    const uint8_t idx = tq3_idx_from_packed_getrows_cuda(qp, r);
++
++    float val = tq3_0_centroids_getrows_cuda[idx] * ds[g];
++    for (int step = 1; step < 32; step <<= 1) {
++        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
++        val = (lane & step) ? (other - val) : (other + val);
++    }
++
++    dst_row[block * QK_TQ3_0 + lane] = ggml_cuda_cast<dst_t>(val * (tq3_0_signs_getrows_cuda[lane] / sqrtf(32.0f)));
++}
++
++template<typename dst_t>
++static void get_rows_cuda_tq3_4s(
++        const void * src0_d, const int32_t * src1_d, dst_t * dst_d,
++        const int64_t ne00, const size_t nb01, const size_t nb02, const size_t nb03,
++        const int64_t ne10, const int64_t ne11, const int64_t ne12, const size_t nb10, const size_t nb11, const size_t nb12,
++        const size_t nb1, const size_t nb2, const size_t nb3,
++        cudaStream_t stream) {
++    GGML_ASSERT(ne00 % QK_TQ3_0 == 0);
++
++    const dim3 block_dims(QK_TQ3_0, 1, 1);
++    const dim3 block_nums(ne10, ne00 / QK_TQ3_0, MIN(ne11*ne12, (int64_t) UINT16_MAX));
++
++    const size_t s1 = nb1 / sizeof(dst_t);
++    const size_t s2 = nb2 / sizeof(dst_t);
++    const size_t s3 = nb3 / sizeof(dst_t);
++    const size_t s10 = nb10 / sizeof(int32_t);
++    const size_t s11 = nb11 / sizeof(int32_t);
++    const size_t s12 = nb12 / sizeof(int32_t);
++
++    k_get_rows_tq3_4s<<<block_nums, block_dims, 0, stream>>>(
++        (const block_tq3_4s *) src0_d, src1_d, dst_d,
++        ne00, ne11, ne12,
++        s1, s2, s3,
++        nb01, nb02, nb03,
++        s10, s11, s12);
++}
++
+ template <typename dst_t>
+ static void ggml_cuda_get_rows_switch_src0_type(
+         const void * src0_d, const ggml_type src0_type, const int32_t * src1_d, dst_t * dst_d,
+@@ -414,6 +522,10 @@ static void ggml_cuda_get_rows_switch_src0_type(
+             get_rows_cuda_q<QK_TQ3_0, QR_TQ3_1S, dequantize_tq3_1s>(src0_d, src1_d, dst_d,
+                 ne00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb1, nb2, nb3, stream);
+             break;
++        case GGML_TYPE_TQ3_4S:
++            get_rows_cuda_tq3_4s(src0_d, src1_d, dst_d,
++                ne00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb1, nb2, nb3, stream);
++            break;
+         default:
+             GGML_ABORT("%s: unsupported src0 type: %s\n", __func__, ggml_type_name(src0_type));
+             break;
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index ffc482bf3..6f488dd43 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -735,6 +735,16 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
+     std::unique_lock<std::mutex> lock(ggml_cuda_lock);
+     ggml_cuda_lock_cv.wait(lock, []{ return ggml_cuda_lock_counter.load(std::memory_order_relaxed) == 0; });
+ 
++    if (!tq3_4s_nvfp4_cache.empty()) {
++        ggml_cuda_set_device(device);
++        for (auto & it : tq3_4s_nvfp4_cache) {
++            if (it.second.data != nullptr) {
++                CUDA_CHECK(cudaFree(it.second.data));
++            }
++        }
++        tq3_4s_nvfp4_cache.clear();
++    }
++
+     if (copy_event != nullptr) {
+         CUDA_CHECK(cudaEventDestroy(copy_event));
+     }
+@@ -1947,7 +1957,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
+         ggml_cuda_mul_mat_vec_q(ctx, src0, src1, nullptr, dst);
+         return;
+     }
+-    if (ggml_cuda_should_use_mmq(src0->type, cc, ne11, /*n_experts =*/ 0)) {
++    if (ggml_cuda_should_use_mmq(src0, cc, ne11, /*n_experts =*/ 0)) {
+         ggml_cuda_mul_mat_q(ctx, src0, src1, nullptr, dst);
+         return;
+     }
+@@ -2042,7 +2052,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor *
+             }
+         }
+ 
+-        if (ggml_cuda_should_use_mmq(src0->type, cc, ne12, /*n_experts=*/ne02)) {
++        if (ggml_cuda_should_use_mmq(src0, cc, ne12, /*n_experts=*/ne02)) {
+             ggml_cuda_mul_mat_q(ctx, src0, src1, ids, dst);
+             return;
+         }
+@@ -5255,6 +5265,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+                     case GGML_TYPE_BF16:
+                     case GGML_TYPE_TQ4_1S:
+                     case GGML_TYPE_TQ3_1S:
++                    case GGML_TYPE_TQ3_4S:
+                         return true;
+                     default:
+                         return false;
+@@ -5291,6 +5302,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+                     case GGML_TYPE_IQ4_XS:
+                     case GGML_TYPE_TQ4_1S:
+                     case GGML_TYPE_TQ3_1S:
++                    case GGML_TYPE_TQ3_4S:
+                         return true;
+                     case GGML_TYPE_IQ4_NL:
+                     case GGML_TYPE_MXFP4:
+diff --git a/ggml/src/ggml-cuda/mmq-config-ampere.cuh b/ggml/src/ggml-cuda/mmq-config-ampere.cuh
+index 9f9fd1973..04f1f6616 100644
+--- a/ggml/src/ggml-cuda/mmq-config-ampere.cuh
++++ b/ggml/src/ggml-cuda/mmq-config-ampere.cuh
+@@ -379,5 +379,22 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
+     CASE(GGML_TYPE_NVFP4, 256, 1, 128, 112, GGML_CUDA_MMQ_SRAM_LAYOUT_NVFP4, MMQ_ITER_K, true, false);
+     CASE(GGML_TYPE_NVFP4, 256, 1, 128, 128, GGML_CUDA_MMQ_SRAM_LAYOUT_NVFP4, MMQ_ITER_K, true, false);
+ 
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,   8, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, true);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,  16, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, true);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,  32, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, true);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,  64, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, true);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128, 128, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, true);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,   8, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, false);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,  16, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, false);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,  24, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, false);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,  32, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, false);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,  40, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, false);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,  48, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, false);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,  64, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, false);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,  80, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, false);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128,  96, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, false);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128, 112, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, false);
++    CASE(GGML_TYPE_TQ3_4S, 256, 1, 128, 128, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, true, false);
++
+     return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 256, 1, 128, 64, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, 256, false, true);
+ }
+diff --git a/ggml/src/ggml-cuda/mmq.cu b/ggml/src/ggml-cuda/mmq.cu
+index 7fb440148..5ebc24eb9 100644
+--- a/ggml/src/ggml-cuda/mmq.cu
++++ b/ggml/src/ggml-cuda/mmq.cu
+@@ -4,6 +4,137 @@
+ #include "mmid.cuh"
+ 
+ #include <cstdint>
++#include "tq3-native.cuh"
++
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++
++static constexpr int64_t tq3_4s_native_fp4_min_cols = 512;
++
++static bool ggml_cuda_env_enabled(const char * name, const bool default_value) {
++    const char * value = std::getenv(name);
++    if (value == nullptr) {
++        return default_value;
++    }
++
++    return std::strcmp(value, "0") != 0 &&
++        std::strcmp(value, "false") != 0 &&
++        std::strcmp(value, "off") != 0 &&
++        std::strcmp(value, "no") != 0;
++}
++
++static bool ggml_cuda_tq3_4s_fp4_enabled() {
++    return ggml_cuda_env_enabled("GGML_CUDA_TQ3_4S_FP4", true);
++}
++
++static bool ggml_cuda_tq3_4s_fp4_cache_enabled() {
++    return ggml_cuda_env_enabled("GGML_CUDA_TQ3_4S_FP4_CACHE", true);
++}
++
++static bool ggml_cuda_tq3_4s_fp4_cache_log_enabled() {
++    return ggml_cuda_env_enabled("GGML_CUDA_TQ3_4S_FP4_CACHE_LOG", false);
++}
++
++// Option E: convert TQ3_4S -> NVFP4 once into a transient pool buffer per mul_mat
++// (freed when the call returns) instead of keeping a persistent per-tensor cache.
++// Gives cache-class FP4 MMA speed at ~0 GiB persistent memory. Only used when the
++// persistent cache is disabled (GGML_CUDA_TQ3_4S_FP4_CACHE=0).
++static bool ggml_cuda_tq3_4s_fp4_transient_enabled() {
++    return ggml_cuda_env_enabled("GGML_CUDA_TQ3_4S_FP4_TRANSIENT", false);
++}
++
++static bool ggml_cuda_env_list_has(const char * list, const char * name) {
++    if (list == nullptr || list[0] == '\0') {
++        return false;
++    }
++
++    const char * tok = list;
++    while (*tok != '\0') {
++        while (*tok == ',' || *tok == ' ' || *tok == '\t') {
++            ++tok;
++        }
++
++        const char * end = tok;
++        while (*end != '\0' && *end != ',') {
++            ++end;
++        }
++
++        const size_t len = end - tok;
++        if (len > 0) {
++            const std::string token(tok, len);
++            if (std::strstr(name, token.c_str()) != nullptr) {
++                return true;
++            }
++        }
++
++        if (*end == '\0') {
++            break;
++        }
++
++        tok = end + 1;
++    }
++
++    return false;
++}
++
++static bool ggml_cuda_tq3_4s_fp4_cache_tensor_enabled(const char * name) {
++    const char * include = std::getenv("GGML_CUDA_TQ3_4S_FP4_CACHE_INCLUDE");
++    if (include != nullptr && include[0] != '\0') {
++        return ggml_cuda_env_list_has(include, name);
++    }
++
++    const char * exclude = std::getenv("GGML_CUDA_TQ3_4S_FP4_CACHE_EXCLUDE");
++    return !ggml_cuda_env_list_has(exclude, name);
++}
++
++static bool ggml_cuda_tq3_4s_fp4_default_excluded(const ggml_tensor * src0) {
++    if (src0->ne[0] % MMQ_ITER_K_FP4 == 0) {
++        return false;
++    }
++
++    return std::strstr(src0->name, "ffn_gate") != nullptr ||
++        std::strstr(src0->name, "ffn_up") != nullptr;
++}
++
++static bool ggml_cuda_tq3_4s_fp4_tensor_enabled(const ggml_tensor * src0) {
++    const char * include = std::getenv("GGML_CUDA_TQ3_4S_FP4_INCLUDE");
++    if (include != nullptr && include[0] != '\0') {
++        return ggml_cuda_env_list_has(include, src0->name);
++    }
++
++    const char * exclude = std::getenv("GGML_CUDA_TQ3_4S_FP4_EXCLUDE");
++    if (ggml_cuda_env_list_has(exclude, src0->name)) {
++        return false;
++    }
++
++    return !ggml_cuda_tq3_4s_fp4_default_excluded(src0);
++}
++
++static size_t ggml_cuda_tq3_4s_nvfp4_cache_size(ggml_backend_cuda_context & ctx) {
++    size_t total = 0;
++    for (const auto & it : ctx.tq3_4s_nvfp4_cache) {
++        total += it.second.size;
++    }
++
++    return total;
++}
++
++static void ggml_cuda_tq3_4s_nvfp4_cache_log(
++        ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const size_t src_size, const size_t cache_size) {
++    if (!ggml_cuda_tq3_4s_fp4_cache_log_enabled()) {
++        return;
++    }
++
++    const double mib = 1024.0 * 1024.0;
++    std::fprintf(stderr,
++        "ggml_cuda_tq3_4s_fp4_cache: tensor=%s src=%.3f MiB cache=%.3f MiB total=%.3f MiB\n",
++        src0->name,
++        src_size / mib,
++        cache_size / mib,
++        ggml_cuda_tq3_4s_nvfp4_cache_size(ctx) / mib);
++}
+ 
+ static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
+     switch (args.type_x) {
+@@ -28,6 +159,9 @@ static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, con
+         case GGML_TYPE_Q8_0:
+             mul_mat_q_case<GGML_TYPE_Q8_0>(ctx, args, stream);
+             break;
++        case GGML_TYPE_TQ3_4S:
++            mul_mat_q_case<GGML_TYPE_TQ3_4S>(ctx, args, stream);
++            break;
+ // -----------------------------------------------------------------------
+         case GGML_TYPE_Q2_K:
+             mul_mat_q_case<GGML_TYPE_Q2_K>(ctx, args, stream);
+@@ -82,6 +216,50 @@ static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, con
+     }
+ }
+ 
++static const char * ggml_cuda_tq3_4s_nvfp4_cache_get(
++        ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const int64_t ne00, cudaStream_t stream) {
++    GGML_ASSERT(src0->type == GGML_TYPE_TQ3_4S);
++    GGML_ASSERT(src0->view_src == nullptr);
++    GGML_ASSERT(ggml_is_contiguous(src0));
++    GGML_ASSERT(ne00 % QK_NVFP4 == 0);
++
++    const int64_t nrows = src0->ne[1] * src0->ne[2] * src0->ne[3];
++    const int64_t tq_blocks_per_row = ne00 / QK_TQ3_0;
++    const int64_t nv_blocks_per_row = ne00 / QK_NVFP4;
++    // Pad K to MATRIX_ROW_PADDING so the FP4 MMA never reads past a weight row
++    // (non-512-aligned ne00 like Gemma K=2816 would otherwise crash). No-op for Qwen.
++    const int64_t nv_blocks_per_row_padded = GGML_PAD(ne00, MATRIX_ROW_PADDING) / QK_NVFP4;
++    GGML_ASSERT(tq_blocks_per_row == 2 * nv_blocks_per_row);
++
++    const size_t src_size = (size_t) nrows * tq_blocks_per_row * sizeof(block_tq3_4s);
++    const size_t cache_size = (size_t) nrows * nv_blocks_per_row_padded * sizeof(block_nvfp4);
++    const void * key = src0;
++
++    std::lock_guard<std::mutex> lock(ctx.tq3_4s_nvfp4_cache_mutex);
++    auto & entry = ctx.tq3_4s_nvfp4_cache[key];
++    if (entry.data != nullptr && entry.size == cache_size && entry.src_size == src_size && entry.src_data == src0->data) {
++        return (const char *) entry.data;
++    }
++
++    ggml_cuda_set_device(ctx.device);
++    if (entry.data != nullptr) {
++        CUDA_CHECK(cudaFree(entry.data));
++        entry = {};
++    }
++
++    CUDA_CHECK(cudaMalloc(&entry.data, cache_size));
++    entry.size = cache_size;
++    entry.src_size = src_size;
++    entry.src_data = src0->data;
++
++    quantize_tq3_4s_to_nvfp4_cuda(src0->data, entry.data, ne00, nrows, stream);
++    CUDA_CHECK(cudaGetLastError());
++    CUDA_CHECK(cudaStreamSynchronize(stream));
++    ggml_cuda_tq3_4s_nvfp4_cache_log(ctx, src0, src_size, cache_size);
++
++    return (const char *) entry.data;
++}
++
+ void ggml_cuda_mul_mat_q(
+         ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst) {
+     GGML_ASSERT(        src1->type == GGML_TYPE_F32);
+@@ -128,7 +306,52 @@ void ggml_cuda_mul_mat_q(
+ 
+     const bool fallback = ne01 % 128 != 0;
+ 
+-    const bool use_native_fp4 = blackwell_mma_available(cc) && (src0->type == GGML_TYPE_MXFP4 || src0->type == GGML_TYPE_NVFP4);
++    const bool use_tq3_4s_native_fp4 =
++        ne11 >= tq3_4s_native_fp4_min_cols &&
++        blackwell_mma_available(cc) &&
++        ggml_cuda_tq3_4s_fp4_enabled() &&
++        src0->type == GGML_TYPE_TQ3_4S &&
++        ne00 % QK_NVFP4 == 0 &&
++        ggml_cuda_tq3_4s_fp4_tensor_enabled(src0);
++    const bool use_tq3_4s_native_fp4_cache =
++        use_tq3_4s_native_fp4 &&
++        ggml_cuda_tq3_4s_fp4_cache_enabled() &&
++        src0->buffer != nullptr &&
++        ggml_backend_buffer_get_usage(src0->buffer) == GGML_BACKEND_BUFFER_USAGE_WEIGHTS &&
++        src0->view_src == nullptr &&
++        ggml_is_contiguous(src0) &&
++        ggml_cuda_tq3_4s_fp4_cache_tensor_enabled(src0->name);
++    ggml_type type_x = src0->type;
++    int64_t stride_row_x = s01;
++    int64_t stride_channel_x = s02;
++    int64_t stride_sample_x = s03;
++    bool used_tq3_4s_native_fp4_transient = false;
++    ggml_cuda_pool_alloc<char> src0_nvfp4_transient(ctx.pool());
++    if (use_tq3_4s_native_fp4) {
++        const int64_t bpr_pad = GGML_PAD(ne00, MATRIX_ROW_PADDING) / QK_NVFP4;
++        if (use_tq3_4s_native_fp4_cache) {
++            src0_d = ggml_cuda_tq3_4s_nvfp4_cache_get(ctx, src0, ne00, stream);
++            type_x = GGML_TYPE_NVFP4;
++            stride_row_x = bpr_pad;
++            stride_channel_x = ne01 * bpr_pad;
++            stride_sample_x = ne01 * ne02 * bpr_pad;
++        } else if (ggml_cuda_tq3_4s_fp4_transient_enabled()) {
++            const int64_t nrows = ne01 * ne02 * ne03;
++            src0_nvfp4_transient.alloc((size_t) nrows * bpr_pad * sizeof(block_nvfp4));
++            quantize_tq3_4s_to_nvfp4_cuda(src0->data, src0_nvfp4_transient.get(), ne00, nrows, stream);
++            CUDA_CHECK(cudaGetLastError());
++            src0_d = src0_nvfp4_transient.get();
++            type_x = GGML_TYPE_NVFP4;
++            stride_row_x = bpr_pad;
++            stride_channel_x = ne01 * bpr_pad;
++            stride_sample_x = ne01 * ne02 * bpr_pad;
++            used_tq3_4s_native_fp4_transient = true;
++        }
++    }
++
++    const bool use_native_fp4 = blackwell_mma_available(cc) &&
++        (src0->type == GGML_TYPE_MXFP4 || src0->type == GGML_TYPE_NVFP4 || type_x == GGML_TYPE_NVFP4);
++    const ggml_type activation_fp4_type = type_x == GGML_TYPE_NVFP4 ? GGML_TYPE_NVFP4 : src0->type;
+     const size_t y_block_size       = use_native_fp4 ? sizeof(block_fp4_mmq) : sizeof(block_q8_1_mmq);
+     const size_t y_values_per_block = use_native_fp4 ? QK_FP4_MMQ            : QK8_1_MMQ;
+ 
+@@ -137,7 +360,7 @@ void ggml_cuda_mul_mat_q(
+             ggml_cuda_mmq_get_J_max(src0->type, fallback, cc, ne11) * sizeof(block_q8_1_mmq);
+         ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), nbytes_src1_q8_1);
+         ggml_cuda_pool_alloc<float> src1_scale(ctx.pool());
+-        if (src0->type == GGML_TYPE_NVFP4 && use_native_fp4) {
++        if (type_x == GGML_TYPE_NVFP4 && use_native_fp4) {
+             src1_scale.alloc(ne13*ne12*ne11);
+         }
+ 
+@@ -145,15 +368,23 @@ void ggml_cuda_mul_mat_q(
+             const int64_t s11 = src1->nb[1] / ts_src1;
+             const int64_t s12 = src1->nb[2] / ts_src1;
+             const int64_t s13 = src1->nb[3] / ts_src1;
++            const float * src1_quant = src1_d;
++            ggml_cuda_pool_alloc<float> src1_rot(ctx.pool());
++            if (src0->type == GGML_TYPE_TQ3_4S) {
++                const int64_t n_act = ne13 * ne12 * ne11 * ne10;
++                src1_rot.alloc(n_act);
++                ggml_cuda_tq3_rotate_act(src1_d, src1_rot.get(), n_act, stream);
++                src1_quant = src1_rot.get();
++            }
+             if (use_native_fp4) {
+                 static constexpr size_t align_float8 = 32;
+                 const bool use_aligned_float8 = ggml_cuda_is_aligned(src1, align_float8);
+                 static_assert(sizeof(block_fp4_mmq) == 4 * sizeof(block_q8_1));
+-                quantize_mmq_fp4_cuda(src1_d, nullptr, src1_q8_1.get(), src1_scale.ptr, src0->type, use_aligned_float8, ne10, s11, s12, s13, ne10_padded,
++                quantize_mmq_fp4_cuda(src1_quant, nullptr, src1_q8_1.get(), src1_scale.ptr, activation_fp4_type, use_aligned_float8, ne10, s11, s12, s13, ne10_padded,
+                                         ne11, ne12, ne13, stream);
+ 
+             } else {
+-                quantize_mmq_q8_1_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
++                quantize_mmq_q8_1_cuda(src1_quant, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
+                                        ne11, ne12, ne13, stream);
+             }
+             CUDA_CHECK(cudaGetLastError());
+@@ -166,13 +397,16 @@ void ggml_cuda_mul_mat_q(
+         const int64_t s13 = ne12*s12;
+ 
+         const mmq_args args = {
+-            src0_d, src0->type, (const int *) src1_q8_1.ptr, nullptr, nullptr, dst_d,
+-            src0->type == GGML_TYPE_NVFP4 && use_native_fp4 ? src1_scale.ptr : nullptr,
+-            ne00, ne01, ne1, s01, ne11, s1,
+-            ne02, ne12, s02, s12, s2,
+-            ne03, ne13, s03, s13, s3,
++            src0_d, type_x, (const int *) src1_q8_1.ptr, nullptr, nullptr, dst_d,
++            type_x == GGML_TYPE_NVFP4 && use_native_fp4 ? src1_scale.ptr : nullptr,
++            ne00, ne01, ne1, stride_row_x, ne11, s1,
++            ne02, ne12, stride_channel_x, s12, s2,
++            ne03, ne13, stride_sample_x, s13, s3,
+             ne1};
+         ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
++        if (used_tq3_4s_native_fp4_transient) {
++            CUDA_CHECK(cudaStreamSynchronize(stream));
++        }
+         return;
+     }
+ 
+@@ -206,7 +440,7 @@ void ggml_cuda_mul_mat_q(
+         ggml_cuda_mmq_get_J_max(src0->type, fallback, cc, ne11) * sizeof(block_q8_1_mmq);
+     ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), nbytes_src1_q8_1);
+     ggml_cuda_pool_alloc<float> src1_scale(ctx.pool());
+-    if (src0->type == GGML_TYPE_NVFP4 && use_native_fp4) {
++    if (type_x == GGML_TYPE_NVFP4 && use_native_fp4) {
+         src1_scale.alloc(ne12*n_expert_used);
+     }
+ 
+@@ -219,21 +453,29 @@ void ggml_cuda_mul_mat_q(
+         const int64_t s12 = src1->nb[2] / ts_src1;
+         const int64_t s13 = src1->nb[3] / ts_src1;
+ 
++        const float * src1_quant = src1_d;
++        ggml_cuda_pool_alloc<float> src1_rot(ctx.pool());
++        if (src0->type == GGML_TYPE_TQ3_4S) {
++            const int64_t n_act = ne13 * ne12 * ne11 * ne10;
++            src1_rot.alloc(n_act);
++            ggml_cuda_tq3_rotate_act(src1_d, src1_rot.get(), n_act, stream);
++            src1_quant = src1_rot.get();
++        }
+         if (use_native_fp4) {
+             static constexpr size_t align_float8 = 32;
+             const bool use_aligned_float8 = ggml_cuda_is_aligned(src1, align_float8);
+             if (dedup_bcast) {
+-                quantize_scatter_mmq_fp4_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src1_scale.ptr, src0->type, use_aligned_float8, ne10,
++                quantize_scatter_mmq_fp4_cuda(src1_quant, ids_src1.get(), src1_q8_1.get(), src1_scale.ptr, activation_fp4_type, use_aligned_float8, ne10,
+                                         /*stride_token=*/s12, ne10_padded, ne12, ne11_flat, n_expert_used, stream);
+             } else {
+-                quantize_mmq_fp4_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src1_scale.ptr, src0->type, use_aligned_float8, ne10, s11, s12, s13,
++                quantize_mmq_fp4_cuda(src1_quant, ids_src1.get(), src1_q8_1.get(), src1_scale.ptr, activation_fp4_type, use_aligned_float8, ne10, s11, s12, s13,
+                                         ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
+             }
+         } else if (dedup_bcast) {
+-            quantize_scatter_mmq_q8_1_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10,
++            quantize_scatter_mmq_q8_1_cuda(src1_quant, ids_src1.get(), src1_q8_1.get(), src0->type, ne10,
+                                     /*stride_token=*/s12, ne10_padded, ne12, ne11_flat, n_expert_used, stream);
+         } else {
+-            quantize_mmq_q8_1_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
++            quantize_mmq_q8_1_cuda(src1_quant, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
+                                    ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
+         }
+         CUDA_CHECK(cudaGetLastError());
+@@ -246,21 +488,39 @@ void ggml_cuda_mul_mat_q(
+ 
+     // Note that ne02 is used instead of ne12 because the number of y channels determines the z dimension of the CUDA grid.
+     const mmq_args args = {
+-        src0_d, src0->type, (const int *) src1_q8_1.get(), ids_dst.get(), expert_bounds.get(), dst_d,
++        src0_d, type_x, (const int *) src1_q8_1.get(), ids_dst.get(), expert_bounds.get(), dst_d,
+         src1_scale.ptr,
+-        ne00, ne01, ne_get_rows, s01, ne_get_rows, s1,
+-        ne02, ne02, s02, s12, s2,
+-        ne03, ne13, s03, s13, s3,
++        ne00, ne01, ne_get_rows, stride_row_x, ne_get_rows, s1,
++        ne02, ne02, stride_channel_x, s12, s2,
++        ne03, ne13, stride_sample_x, s13, s3,
+         ne12};
+ 
+     ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
+ }
+ 
+-bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t n_experts) {
++bool ggml_cuda_should_use_mmq(const ggml_tensor * src0, int cc, int64_t ne11, int64_t n_experts) {
+ #ifdef GGML_CUDA_FORCE_CUBLAS
+     return false;
+ #endif // GGML_CUDA_FORCE_CUBLAS
+ 
++    const ggml_type type = src0->type;
++    if (type == GGML_TYPE_TQ3_4S && blackwell_mma_available(cc)) {
++        return ggml_cuda_tq3_4s_fp4_enabled() &&
++            ggml_cuda_tq3_4s_fp4_tensor_enabled(src0) &&
++            n_experts == 0 &&
++            ne11 >= tq3_4s_native_fp4_min_cols;
++    }
++
++    // TQ3_4S: use MMQ for prefill on NVIDIA tensor-core GPUs. Narrower prefill
++    // shapes (ne11 >= 16) also benefit, matching the 8ad718007 reference; the
++    // contiguity guard in ggml_cuda_mul_mat ensures KV cache views use cuBLAS.
++    if (type == GGML_TYPE_TQ3_4S &&
++        GGML_CUDA_CC_IS_NVIDIA(cc) &&
++        fp16_mma_hardware_available(cc) &&
++        n_experts == 0) {
++        return ne11 >= 16;
++    }
++
+     bool mmq_supported;
+ 
+     switch (type) {
+@@ -272,6 +532,7 @@ bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t
+         case GGML_TYPE_Q5_1:
+         case GGML_TYPE_Q8_0:
+ // -------------------------------------------------
++        case GGML_TYPE_TQ3_4S:
+         case GGML_TYPE_Q2_K:
+         case GGML_TYPE_Q3_K:
+         case GGML_TYPE_Q4_K:
+diff --git a/ggml/src/ggml-cuda/mmq.cuh b/ggml/src/ggml-cuda/mmq.cuh
+index b4a747720..40c231f72 100644
+--- a/ggml/src/ggml-cuda/mmq.cuh
++++ b/ggml/src/ggml-cuda/mmq.cuh
+@@ -2,6 +2,7 @@
+ 
+ #include "common.cuh"
+ 
++#include <cfloat>
+ #include <climits>
+ #include <cstdint>
+ 
+@@ -74,6 +75,7 @@ static mmq_q8_1_ds_layout mmq_get_q8_1_ds_layout(const ggml_type type_x) {
+         case GGML_TYPE_MXFP4:
+             return MMQ_Q8_1_DS_LAYOUT_D4;
+         case GGML_TYPE_NVFP4:
++        case GGML_TYPE_TQ3_4S:
+             return MMQ_Q8_1_DS_LAYOUT_D4;
+         case GGML_TYPE_Q2_K:
+             return MMQ_Q8_1_DS_LAYOUT_D2S6;
+@@ -428,9 +430,124 @@ static __host__ int ggml_cuda_mmq_get_nbytes_shared_x(const ggml_cuda_mmq_config
+ 
+ // ------------------------------------------------------------
+ 
++// ---- TQ3_4S compat helpers (turbo-tan/llama.cpp-tq3) ----
++// The tq3 tile loader was written against fixed tile-stride macros; on this
++// tree the Q8_0 stride is config-derived and identical (see the static_assert).
++static constexpr __device__ int mmq_get_nwarps_device() { return MMQ_NWARPS; }
++
++#define MMQ_MMA_TILE_X_K_Q8_0  (2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_0 + 4)
++
++static_assert(MMQ_MMA_TILE_X_K_Q8_0 == ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0),
++    "TQ3_4S tile loader stride must match the Q8_0 SRAM layout");
++// ---- end compat helpers ----
++
+ #include "mmq-load-tiles.cuh"
+ #include "mmq-vec-dot.cuh"
+ 
++template <int mmq_y, bool need_check> static __device__ __forceinline__ void load_tiles_tq3_4s(
++    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
++    constexpr int nwarps = mmq_get_nwarps_device();
++    static_assert(WARP_SIZE == QK_TQ3_0, "TQ3_4S MMQ assumes one 32-lane warp per block");
++
++#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
++    int   * x_qs = (int   *)  x_tile;
++    float * x_df = (float *) (x_qs + 2*MMQ_TILE_NE_K);
++#else
++    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q8_0, mmq_y);
++    int   * x_qs = (int   *)  x_tile;
++    float * x_df = (float *) (x_qs + txs.qs);
++#endif
++
++    constexpr int threads_per_row = 16;
++    constexpr int nrows = WARP_SIZE / threads_per_row;
++    const int kqsx = threadIdx.x % threads_per_row;
++
++    static constexpr float tq3_centroids[8] = {
++        -1.996684f, -1.291398f, -0.740341f, -0.247508f,
++         0.230106f,  0.725222f,  1.277503f,  1.988943f
++    };
++
++    const auto decode_tq3_4s_scale = [] __device__ (const uint8_t sb) {
++        if (sb == 0) {
++            return 0.0f;
++        }
++        const uint32_t bits = (((uint32_t) (sb >> 5) + 118u) << 23) | ((uint32_t) (sb & 31u) << 18);
++        return __uint_as_float(bits);
++    };
++
++#pragma unroll
++    for (int i0 = 0; i0 < mmq_y; i0 += nrows*nwarps) {
++        int i = i0 + threadIdx.y*nrows + threadIdx.x/threads_per_row;
++
++        if (need_check) {
++            i = min(i, i_max);
++        }
++
++        const int blk_in_row = kqsx / 2;
++        const int half = kqsx % 2;
++        const int g_base = half * 2;
++
++        const block_tq3_4s * bxi = (const block_tq3_4s *)x + kbx0 + i*stride + blk_in_row;
++
++        float rms_local[2];
++#pragma unroll
++        for (int sg = 0; sg < 2; ++sg) {
++            rms_local[sg] = decode_tq3_4s_scale(bxi->d[g_base + sg]);
++        }
++
++        const float amax_pair = fmaxf(rms_local[0], rms_local[1]);
++        const float amax_shfl = __shfl_xor_sync(0xFFFFFFFF, amax_pair, 1, WARP_SIZE);
++        const float amax = fmaxf(amax_pair, amax_shfl) * 1.996684f;
++        const float d_block = amax / 127.0f;
++        const float d_inv = (d_block > 0.0f) ? 127.0f / amax : 0.0f;
++
++#pragma unroll
++        for (int sg = 0; sg < 2; sg++) {
++            const int g = g_base + sg;
++            const float rms_g = rms_local[sg];
++
++            const uint8_t * qp = bxi->qs + g * 3;
++            const uint32_t packed = (uint32_t)qp[0] | ((uint32_t)qp[1] << 8) | ((uint32_t)qp[2] << 16);
++
++            const float q_scale = rms_g * d_inv;
++            const uint32_t q0 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  0) & 7] * q_scale);
++            const uint32_t q1 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  3) & 7] * q_scale);
++            const uint32_t q2 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  6) & 7] * q_scale);
++            const uint32_t q3 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  9) & 7] * q_scale);
++            const uint32_t q4 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 12) & 7] * q_scale);
++            const uint32_t q5 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 15) & 7] * q_scale);
++            const uint32_t q6 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 18) & 7] * q_scale);
++            const uint32_t q7 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 21) & 7] * q_scale);
++
++            const uint32_t pq0 = q0 | (q1 << 8) | (q2 << 16) | (q3 << 24);
++            const uint32_t pq1 = q4 | (q5 << 8) | (q6 << 16) | (q7 << 24);
++
++            const int out_base = blk_in_row * QI8_0 + g * 2;
++
++#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
++            x_qs[i*MMQ_MMA_TILE_X_K_Q8_0 + out_base + 0] = pq0;
++            x_qs[i*MMQ_MMA_TILE_X_K_Q8_0 + out_base + 1] = pq1;
++            if (sg == 0 && half == 0) {
++                x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + blk_in_row] = d_block;
++            }
++#else
++            x_qs[i*(2*MMQ_TILE_NE_K + 1) + out_base + 0] = pq0;
++            x_qs[i*(2*MMQ_TILE_NE_K + 1) + out_base + 1] = pq1;
++            if (sg == 0 && half == 0) {
++                x_df[i*(2*MMQ_TILE_NE_K/QI8_0) + i/(QI8_0/2) + blk_in_row] = d_block;
++            }
++#endif
++        }
++    }
++}
++
++template <ggml_type type, int J, bool fallback>
++static __device__ __forceinline__ void ggml_cuda_mmq_load_tiles_tq3_4s(
++        const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
++    constexpr int I = ggml_cuda_mmq_get_I(type, J, fallback);
++    load_tiles_tq3_4s<I, fallback>(x, x_tile, kbx0, i_max, stride);
++}
++
+ template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_write_back_dp4a(
+         const float * __restrict__ sum, const int32_t * __restrict__ ids_dst, float * __restrict__ dst,
+         const float * __restrict__ y_scale, const int stride, const int i_max, const int j_max) {
+@@ -581,6 +698,12 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
+                     ggml_cuda_mmq_load_tiles_q8_0<type, J, fallback>,
+                     ggml_cuda_mmq_vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
+                     ggml_cuda_mmq_write_back_dp4a<type, J, fallback>);
++            case GGML_TYPE_TQ3_4S:
++                return ggml_cuda_mmq_util_funcs(
++                    VDR_Q8_0_Q8_1_MMQ,
++                    ggml_cuda_mmq_load_tiles_tq3_4s<type, J, fallback>,
++                    ggml_cuda_mmq_vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
++                    ggml_cuda_mmq_write_back_dp4a<type, J, fallback>);
+ // ---------------------------------------------------------------------------------------------
+             case GGML_TYPE_Q2_K:
+                 return ggml_cuda_mmq_util_funcs(
+@@ -838,6 +961,12 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
+                 ggml_cuda_mmq_load_tiles_nvfp4<type, J, fallback>,
+                 ggml_cuda_mmq_vec_dot_q8_0_16_q8_1_mma<type, J, fallback>,
+                 ggml_cuda_mmq_write_back_mma<type, J, fallback>);
++        case GGML_TYPE_TQ3_4S:
++            return ggml_cuda_mmq_util_funcs(
++                -1,
++                ggml_cuda_mmq_load_tiles_tq3_4s<type, J, fallback>,
++                ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma<type, J, fallback, MMQ_Q8_1_DS_LAYOUT_D4>,
++                ggml_cuda_mmq_write_back_mma<type, J, fallback>);
+         default:
+             return ggml_cuda_mmq_util_funcs(1, nullptr, nullptr, nullptr);
+     }
+@@ -1589,10 +1718,12 @@ extern DECL_MMQ_CASE(GGML_TYPE_IQ4_XS);
+ // -----------------------------------------
+ extern DECL_MMQ_CASE(GGML_TYPE_MXFP4);
+ extern DECL_MMQ_CASE(GGML_TYPE_NVFP4);
++// -----------------------------------------
++extern DECL_MMQ_CASE(GGML_TYPE_TQ3_4S);
+ 
+ // -------------------------------------------------------------------------------------------------------------------------
+ 
+ void ggml_cuda_mul_mat_q(
+         ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst);
+ 
+-bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t n_experts);
++bool ggml_cuda_should_use_mmq(const ggml_tensor * src0, int cc, int64_t ne11, int64_t n_experts);
+diff --git a/ggml/src/ggml-cuda/mmvq.cu b/ggml/src/ggml-cuda/mmvq.cu
+index ed6c4dcfb..a57a1e424 100644
+--- a/ggml/src/ggml-cuda/mmvq.cu
++++ b/ggml/src/ggml-cuda/mmvq.cu
+@@ -19,6 +19,7 @@ static constexpr __device__ vec_dot_q_cuda_t get_vec_dot_q_cuda(ggml_type type)
+         case GGML_TYPE_Q8_0:    return vec_dot_q8_0_q8_1;
+         case GGML_TYPE_MXFP4:   return vec_dot_mxfp4_q8_1;
+         case GGML_TYPE_NVFP4:   return vec_dot_nvfp4_q8_1;
++        case GGML_TYPE_TQ3_4S:  return vec_dot_tq3_4s_q8_1;
+         case GGML_TYPE_Q2_K:    return vec_dot_q2_K_q8_1;
+         case GGML_TYPE_Q3_K:    return vec_dot_q3_K_q8_1;
+         case GGML_TYPE_Q4_K:    return vec_dot_q4_K_q8_1;
+@@ -48,6 +49,7 @@ static constexpr __host__ __device__ int get_vdr_mmvq(ggml_type type) {
+         case GGML_TYPE_Q8_0:    return VDR_Q8_0_Q8_1_MMVQ;
+         case GGML_TYPE_MXFP4:   return VDR_MXFP4_Q8_1_MMVQ;
+         case GGML_TYPE_NVFP4:   return VDR_NVFP4_Q8_1_MMVQ;
++        case GGML_TYPE_TQ3_4S:  return VDR_TQ3_4S_Q8_1_MMVQ;
+         case GGML_TYPE_Q2_K:    return VDR_Q2_K_Q8_1_MMVQ;
+         case GGML_TYPE_Q3_K:    return VDR_Q3_K_Q8_1_MMVQ;
+         case GGML_TYPE_Q4_K:    return VDR_Q4_K_Q8_1_MMVQ;
+@@ -553,6 +555,89 @@ static constexpr __host__ __device__ int calc_rows_per_block(int ncols_dst, int
+     return 1;
+ }
+ 
++// Dedicated TQ3_4S ncols_dst==1 decode kernel (turbo-tan/llama.cpp-tq3): 4 warps
++// with the PRMT vec_dot (RTX 3090 tg128 43.1 -> 47.4 t/s; 8 warps regresses to 36.9).
++template <int nwarps>
++__launch_bounds__(nwarps*ggml_cuda_get_physical_warp_size(), 1)
++static __global__ void mul_mat_vec_tq3_4s_q8_1_ncols1(
++        const void * __restrict__ vx, const block_q8_1 * __restrict__ vy, float * __restrict__ dst,
++        const uint32_t ncols_x, const uint32_t nrows_x,
++        const uint32_t stride_row_x, const uint32_t stride_channel_x, const uint32_t stride_sample_x,
++        const uint32_t stride_channel_y, const uint32_t stride_sample_y,
++        const uint32_t stride_channel_dst, const uint32_t stride_sample_dst) {
++
++    constexpr int type = GGML_TYPE_TQ3_4S;
++    constexpr int qk = ggml_cuda_type_traits<GGML_TYPE_TQ3_4S>::qk;
++    constexpr int qi = ggml_cuda_type_traits<GGML_TYPE_TQ3_4S>::qi;
++    constexpr int vdr = VDR_TQ3_4S_Q8_1_MMVQ;
++    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
++    constexpr int blocks_per_iter = vdr * nwarps * warp_size / qi;
++
++    const int tid = warp_size * threadIdx.y + threadIdx.x;
++    const int row = blockIdx.x;
++    const int blocks_per_row_x = ncols_x / qk;
++    const uint32_t channel = blockIdx.y;
++    const uint32_t sample = blockIdx.z;
++
++    const block_q8_1 * y = vy + sample * stride_sample_y + channel * stride_channel_y;
++    const int kbx_offset = sample * stride_sample_x + channel * stride_channel_x + row * stride_row_x;
++
++    float tmp = 0.0f;
++
++    for (int kbx = tid / (qi / vdr); kbx < blocks_per_row_x; kbx += blocks_per_iter) {
++        const int kby = kbx * (qk / QK8_1);
++        const int kqs = vdr * (tid % (qi / vdr));
++        tmp += vec_dot_tq3_4s_q8_1(vx, &y[kby], kbx_offset + kbx, kqs);
++    }
++
++    __shared__ float tmp_shared[nwarps - 1 > 0 ? nwarps - 1 : 1][warp_size];
++    if (threadIdx.y > 0) {
++        tmp_shared[threadIdx.y - 1][threadIdx.x] = tmp;
++    }
++    __syncthreads();
++
++    if (threadIdx.y > 0) {
++        return;
++    }
++
++#pragma unroll
++    for (int l = 0; l < nwarps - 1; ++l) {
++        tmp += tmp_shared[l][threadIdx.x];
++    }
++    tmp = warp_reduce_sum<warp_size>(tmp);
++
++    if (threadIdx.x == 0 && row < nrows_x) {
++        dst[sample * stride_sample_dst + channel * stride_channel_dst + row] = tmp;
++    }
++
++    GGML_UNUSED(type);
++}
++
++static bool try_mul_mat_vec_tq3_4s_q8_1_ncols1(
++        const void * vx, const ggml_type type_x, const void * vy, const int32_t * ids, const ggml_cuda_mm_fusion_args_host * fusion, float * dst,
++        const int ncols_x, const int nrows_x,
++        const int stride_row_x, const int stride_col_y, const int stride_col_dst,
++        const int nchannels_x, const int nchannels_y, const int nchannels_dst,
++        const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
++        const int nsamples_x, const int nsamples_dst, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst,
++        cudaStream_t stream) {
++    if (type_x != GGML_TYPE_TQ3_4S || ids != nullptr || fusion != nullptr || nchannels_x != nchannels_y || nchannels_x != nchannels_dst || nsamples_x != nsamples_dst) {
++        return false;
++    }
++
++    constexpr int nwarps = 4;
++    const dim3 block_dims(WARP_SIZE, nwarps, 1);
++    const dim3 block_nums(nrows_x, nchannels_dst, nsamples_dst);
++    mul_mat_vec_tq3_4s_q8_1_ncols1<nwarps><<<block_nums, block_dims, 0, stream>>>(
++        vx, static_cast<const block_q8_1 *>(vy), dst, ncols_x, nrows_x,
++        stride_row_x, stride_channel_x, stride_sample_x,
++        stride_channel_y, stride_sample_y,
++        stride_channel_dst, stride_sample_dst);
++    GGML_UNUSED(stride_col_y);
++    GGML_UNUSED(stride_col_dst);
++    return true;
++}
++
+ template <ggml_type type, int ncols_dst, bool has_fusion, bool small_k = false, bool halve_iters = false>
+ __launch_bounds__(calc_nwarps(type, ncols_dst, get_device_table_id(), small_k, halve_iters)*ggml_cuda_get_physical_warp_size(), 1)
+ static __global__ void mul_mat_vec_q(
+@@ -1079,6 +1164,14 @@ static void mul_mat_vec_q_switch_ncols_dst(
+             use = false;
+         }
+ 
++        if (GGML_CUDA_CC_IS_NVIDIA(cc) && type == GGML_TYPE_TQ3_4S && c_ncols_dst == 1) {
++            // 27B-class widths benefit from 2 rows/block; smaller models do not.
++            constexpr int large_k_threshold_blocks = 144;
++            if (blocks_per_row_x >= large_k_threshold_blocks) {
++                use = true;
++            }
++        }
++
+         return use;
+     };
+ 
+@@ -1261,6 +1354,12 @@ static void mul_mat_vec_q_switch_type(
+                  nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
+                  nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, ids_stride, stream, allow_small_k);
+             break;
++        case GGML_TYPE_TQ3_4S:
++            mul_mat_vec_q_switch_ncols_dst<GGML_TYPE_TQ3_4S>
++                (vx, vy, ids, fusion, dst, ncols_x, nrows_x, ncols_dst, stride_row_x, stride_col_y, stride_col_dst,
++                 nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
++                 nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, ids_stride, stream, allow_small_k);
++            break;
+         case GGML_TYPE_MXFP4:
+             mul_mat_vec_q_switch_ncols_dst<GGML_TYPE_MXFP4>
+                 (vx, vy, ids, fusion, dst, ncols_x, nrows_x, ncols_dst, stride_row_x, stride_col_y, stride_col_dst,
+@@ -1473,6 +1572,16 @@ void ggml_cuda_mul_mat_vec_q(
+ 
+     const int64_t ids_stride = ids ? ids->nb[1] / ggml_type_size(ids->type) : 0;
+ 
++    if (!ids && fusion == nullptr) {
++        if (ncols_dst == 1 &&
++            try_mul_mat_vec_tq3_4s_q8_1_ncols1(
++                src0->data, src0->type, src1_q8_1.get(), nullptr, nullptr, dst_d, ne00, ne01, s01, stride_col_y, stride_col_dst,
++                ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
++                ne03, ne3, s03, s13, s3, stream)) {
++            return;
++        }
++    }
++
+     mul_mat_vec_q_switch_type(
+         src0->data, src0->type, src1_q8_1.get(), ids_d, fusion_local, dst_d, ne00,
+         ne01,              ncols_dst,     s01, stride_col_y,     stride_col_dst,
+@@ -1500,6 +1609,29 @@ void ggml_cuda_op_mul_mat_vec_q(
+     // nrows_dst == nrows of the matrix that the kernel writes into
+     const int64_t nrows_dst = id == ctx.device ? ne0 : row_diff;
+ 
++    if (src0->type == GGML_TYPE_TQ3_4S) {
++        // Rotation is fused into quantize_row_q8_1_cuda (keyed on type_src0).
++        ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(id), src1_ncols * src1_padded_row_size * sizeof(block_q8_1)/QK8_1);
++        quantize_row_q8_1_cuda(src1_ddf_i, nullptr, src1_q8_1.get(), src0->type, ne10, ne10, src1_ncols*ne10, src1_ncols*ne10, src1_padded_row_size, src1_ncols, 1, 1, stream);
++
++        const int stride_row_x = ne00 / ggml_blck_size(src0->type);
++        const int stride_col_y = src1_padded_row_size / QK8_1;
++
++        ggml_cuda_mm_fusion_args_device fusion_local{};
++        if (src1_ncols == 1 &&
++            try_mul_mat_vec_tq3_4s_q8_1_ncols1(
++                src0_dd_i, src0->type, src1_q8_1.get(), nullptr, nullptr, dst_dd_i, ne00, row_diff, stride_row_x, stride_col_y, nrows_dst,
++                1, 1, 1, 1, 1, 1,
++                1, 1, 1, 1, 1, stream)) {
++            return;
++        }
++
++        mul_mat_vec_q_switch_type(
++            src0_dd_i, src0->type, src1_q8_1.get(), nullptr, fusion_local, dst_dd_i, ne00, row_diff, src1_ncols, stride_row_x, stride_col_y, nrows_dst,
++            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, stream);
++        return;
++    }
++
+     const int stride_row_x = ne00 / ggml_blck_size(src0->type);
+     const int stride_col_y = src1_padded_row_size / QK8_1;
+ 
+diff --git a/ggml/src/ggml-cuda/quantize.cu b/ggml/src/ggml-cuda/quantize.cu
+index 7f4d2ba3b..749946806 100644
+--- a/ggml/src/ggml-cuda/quantize.cu
++++ b/ggml/src/ggml-cuda/quantize.cu
+@@ -1,4 +1,5 @@
+ #include "quantize.cuh"
++#include "tq3-native.cuh"
+ #include <cstdint>
+ 
+ #if defined(BLACKWELL_MMA_AVAILABLE)
+@@ -8,9 +9,12 @@ struct __builtin_align__(32) float8 {
+     float x; float y; float z; float w;
+     float p; float q; float r; float s;
+ };
++#endif
+ 
+ #if CUDART_VERSION >= 12080
+-static __device__ __forceinline__ float nvfp4_native_scale_error(
++// [[maybe_unused]]: callers live in BLACKWELL_MMA_AVAILABLE blocks, so on non-Blackwell
++// device passes (e.g. sm_89 CI) this is unreferenced under -Werror all-warnings.
++[[maybe_unused]] static __device__ __forceinline__ float nvfp4_native_scale_error(
+         const float vals[QK_NVFP4_SUB], const float inv_col_scale, const float inv_scale, const float scale) {
+     const float scale_dequant = 2.0f * scale;
+     float err = 0.0f;
+@@ -48,8 +52,8 @@ static __device__ __forceinline__ float nvfp4_native_scale_error(
+     return err;
+ }
+ #endif // CUDART_VERSION >= 12080
+-#endif // defined(BLACKWELL_MMA_AVAILABLE)
+ 
++template <bool tq3_rotate>
+ __launch_bounds__(CUDA_QUANTIZE_BLOCK_SIZE, 1)
+ static __global__ void quantize_q8_1(
+         const float * x_ptr, void * vy_ptr,
+@@ -81,23 +85,37 @@ static __global__ void quantize_q8_1(
+     const int64_t iqs = i_cont % QK8_1; // quant index
+ 
+     ggml_cuda_pdl_sync();
+-    const float xi = i0 < ne00 ? x[i03*s03 + i02*s02 + i01*s01 + i00] : 0.0f;
++    float xi = i0 < ne00 ? x[i03*s03 + i02*s02 + i01*s01 + i00] : 0.0f;
++
++    if constexpr (tq3_rotate) {
++        // Fused TQ3 activation rotation: each q8_1 block is exactly one 32-point
++        // Walsh-Hadamard group (ne0 % QK8_1 == 0), so the butterfly runs on the
++        // same warp lanes that reduce the block. Matches ggml_cuda_tq3_rotate_act.
++        float val = xi * ggml_cuda_tq3_sign(iqs);
++#pragma unroll
++        for (int step = 1; step < QK8_1; step <<= 1) {
++            const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
++            val = (iqs & step) ? (other - val) : (other + val);
++        }
++        xi = val / sqrtf((float) QK8_1);
++    }
++
+     float amax = fabsf(xi);
+-    float sum = 0.0f;
++    float sum = xi;
+ 
+     amax = warp_reduce_max<QK8_1>(amax);
++    sum  = warp_reduce_sum<QK8_1>(sum);
+ 
+     const float  d = amax / 127.0f;
+     const int8_t q = amax == 0.0f ? 0 : roundf(xi / d);
+ 
+     y[ib].qs[iqs] = q;
+-    sum = warp_reduce_sum<QK8_1>((float) q);
+ 
+     if (iqs > 0) {
+         return;
+     }
+ 
+-    y[ib].ds = make_half2(d, d * sum);
++    y[ib].ds = make_half2(d, sum);
+ }
+ 
+ __device__ __forceinline__ uint8_t compute_e8m0_scale(float amax) {
+@@ -123,6 +141,57 @@ __device__ __forceinline__ uint8_t compute_e8m0_scale(float amax) {
+     return static_cast<uint8_t>(biased);
+ }
+ 
++// Number of ue4m3 scale candidates tested per NVFP4 sub-block when quantizing
++// activations: 1 = use ue4m3(amax/6) directly, 3 = also test the {-1,+1}
++// neighboring codes, 5 = also test {-2,+2}. More candidates reduce activation
++// quantization error at the cost of extra ALU per thread; on bandwidth-lean
++// parts (GB10) the search dominates the quantizer's runtime.
++#ifndef GGML_CUDA_NVFP4_ACT_CANDIDATES
++#define GGML_CUDA_NVFP4_ACT_CANDIDATES 1
++#endif
++
++// Pick the ue4m3 sub-block scale for NVFP4 activation quantization.
++// [[maybe_unused]]: the only callers live in BLACKWELL_MMA_AVAILABLE blocks, so on
++// non-Blackwell device passes (e.g. sm_89 CI) this is unreferenced under -Werror all-warnings.
++[[maybe_unused]] static __device__ __forceinline__ void ggml_cuda_nvfp4_act_scale(
++        const float * vals, const float amax, uint8_t & fp8_code, float & subblock_scale) {
++    const int first_fp8_code = (int) ggml_cuda_fp32_to_ue4m3(amax / 6.0f);
++#if GGML_CUDA_NVFP4_ACT_CANDIDATES <= 1
++    GGML_UNUSED(vals);
++    fp8_code       = (uint8_t) min(first_fp8_code, 0x7e);
++    subblock_scale = ggml_cuda_ue4m3_to_fp32(fp8_code);
++#else
++    static constexpr int test_offsets[5] = { 0, -1, 1, -2, 2 };
++
++    float best_err = FLT_MAX;
++    fp8_code       = 0;
++    subblock_scale = 0.0f;
++
++#pragma unroll // Check neighboring codes to find the one with the lowest NVFP4 activation loss.
++    for (int i = 0; i < GGML_CUDA_NVFP4_ACT_CANDIDATES; i++) {
++        const int test_code = first_fp8_code + test_offsets[i];
++        if (test_code < 0 || test_code > 0x7e) {
++            continue;
++        }
++        const float test_scale = ggml_cuda_ue4m3_to_fp32((uint8_t) test_code);
++        const float test_inv_scale = test_scale > 0.0f ? 0.5f / test_scale : 0.0f;
++        float cur_err = 0.0f;
++#pragma unroll
++        for (int k = 0; k < QK_NVFP4_SUB; ++k) {
++            const float v = vals[k];
++            const uint8_t q = ggml_cuda_float_to_fp4_e2m1(v, test_inv_scale);
++            const float err_diff = fabsf(v) - fabsf(kvalues_mxfp4[q & 0x7]) * test_scale;
++            cur_err = fmaf(err_diff, err_diff, cur_err);
++        }
++
++        if (cur_err < best_err) {
++            best_err       = cur_err;
++            fp8_code       = (uint8_t) test_code;
++            subblock_scale = test_scale;
++        }
++    }
++#endif // GGML_CUDA_NVFP4_ACT_CANDIDATES <= 1
++}
+ // scatter: grid over tokens, quantize once, write to all the token's compact rows
+ template <bool scatter, bool use_aligned_float8>
+ static __global__ void quantize_mmq_nvfp4(
+@@ -331,6 +400,191 @@ static __global__ void quantize_mmq_nvfp4(
+ 
+ }
+ 
++// Fused TQ3_4S rotate (Walsh-Hadamard per 32-group) + NVFP4 activation quantize.
++// Each thread owns one 32-value rotation group == 2 NVFP4 sub-blocks, reads the
++// RAW (unrotated) activations, rotates in-register, then quantizes. Replaces the
++// separate cudaMemcpy + tq3_rotate_act kernel + buffer with a single pass.
++// Assumes ne00 (== n_embd) is a multiple of QK_TQ3_0 (matches tq3_rotate_act).
++[[maybe_unused]] static __global__ void quantize_mmq_nvfp4_rot(
++        const float * __restrict__ x, const int32_t * __restrict__ ids, void * __restrict__ vy,
++        const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
++        const int64_t ne0, const int64_t ne1, const int64_t ne2) {
++#if defined(BLACKWELL_MMA_AVAILABLE)
++    const int64_t g_base = ((int64_t) blockDim.x * blockIdx.y + threadIdx.x) * QK_TQ3_0;
++    if (g_base >= ne0) {
++        return;
++    }
++
++    const int64_t i1  = blockIdx.x;
++    const int64_t i2  = blockIdx.z % ne2;
++    const int64_t i3  = blockIdx.z / ne2;
++    const int64_t i01 = ids ? ids[i1] : i1;
++    const int64_t base_idx = i3 * s03 + i2 * s02 + i01 * s01;
++
++    // Load the 32-value rotation group (zero-padded past ne00), apply sign, then
++    // the in-register Walsh-Hadamard butterfly (new_i = a+b, new_j = a-b).
++    float v[QK_TQ3_0];
++#pragma unroll
++    for (int k = 0; k < QK_TQ3_0; k++) {
++        const int64_t i00 = g_base + k;
++        const float xk = (i00 < ne00) ? x[base_idx + i00] : 0.0f;
++        v[k] = xk * ggml_cuda_tq3_sign(k);
++    }
++#pragma unroll
++    for (int step = 1; step < QK_TQ3_0; step <<= 1) {
++#pragma unroll
++        for (int i = 0; i < QK_TQ3_0; i++) {
++            if ((i & step) == 0) {
++                const int jj = i | step;
++                const float a = v[i], b = v[jj];
++                v[i]  = a + b;
++                v[jj] = a - b;
++            }
++        }
++    }
++    const float rnorm = rsqrtf((float) QK_TQ3_0);
++#pragma unroll
++    for (int k = 0; k < QK_TQ3_0; k++) {
++        v[k] *= rnorm;
++    }
++
++    const int64_t blocks_per_col = (ne0 + QK_K - 1) / QK_K;
++
++    // Quantize the two 16-value NVFP4 sub-blocks. Both share one block_fp4_mmq
++    // (QK_TQ3_0 divides QK_K, so a 32-group never straddles a 256-superblock).
++#pragma unroll
++    for (int sb = 0; sb < 2; sb++) {
++        const int64_t i0_base = g_base + sb * QK_NVFP4_SUB;
++        const int64_t k_block = i0_base / QK_K;
++        if (k_block >= blocks_per_col) {
++            continue;
++        }
++        const int64_t ib = blockIdx.z * ((int64_t) blocks_per_col * ne1) + k_block * ne1 + blockIdx.x;
++        block_fp4_mmq * yb = (block_fp4_mmq *) vy + ib;
++        const int sub = (int) ((i0_base % QK_K) / QK_NVFP4_SUB);
++
++        const float * vals_raw = v + sb * QK_NVFP4_SUB;
++        float amax_raw = 0.0f;
++#pragma unroll
++        for (int k = 0; k < QK_NVFP4_SUB; k++) {
++            amax_raw = fmaxf(amax_raw, fabsf(vals_raw[k]));
++        }
++        uint8_t fp8_code = 0;
++        float subblock_scale = 0.0f;
++        ggml_cuda_nvfp4_act_scale(vals_raw, amax_raw, fp8_code, subblock_scale);
++        const float inv_scale = subblock_scale > 0.0f ? 0.5f / subblock_scale : 0.0f;
++        uint32_t q0 = 0, q1 = 0;
++#pragma unroll
++        for (int k = 0; k < QK_NVFP4_SUB / 4; ++k) {
++            q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals_raw[k +  0], inv_scale) << (8 * k);
++            q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals_raw[k +  8], inv_scale) << (8 * k + 4);
++            q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals_raw[k +  4], inv_scale) << (8 * k);
++            q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals_raw[k + 12], inv_scale) << (8 * k + 4);
++        }
++        uint32_t * yqs = reinterpret_cast<uint32_t *>(yb->qs);
++        yqs[2 * sub + 0] = q0;
++        yqs[2 * sub + 1] = q1;
++        reinterpret_cast<uint8_t *>(yb->d4)[sub] = fp8_code;
++    }
++#else
++    NO_DEVICE_CODE;
++#endif // defined(BLACKWELL_MMA_AVAILABLE)
++}
++
++static __global__ void quantize_tq3_4s_to_nvfp4(
++        const block_tq3_4s * __restrict__ x, block_nvfp4 * __restrict__ y,
++        const int64_t blocks_per_row, const int64_t nv_blocks_per_row,
++        const int64_t nv_blocks_per_row_padded, const int64_t nrows) {
++#if defined(BLACKWELL_MMA_AVAILABLE)
++    constexpr float tq3_centroids[8] = { -1.996684f, -1.291398f, -0.740341f, -0.247508f,
++                                          0.230106f,  0.725222f,  1.277503f,  1.988943f };
++
++    const auto decode_tq3_scale = [] __device__ (const uint8_t sb) {
++        if (sb == 0) {
++            return 0.0f;
++        }
++        const uint32_t bits = (((uint32_t) (sb >> 5) + 118u) << 23) | ((uint32_t) (sb & 31u) << 18);
++        return __uint_as_float(bits);
++    };
++
++    const int64_t idx = (int64_t) blockIdx.x * blockDim.x + threadIdx.x;
++    const int64_t nblocks = nv_blocks_per_row * nrows;
++    if (idx >= nblocks) {
++        return;
++    }
++
++    const int64_t row = idx / nv_blocks_per_row;
++    const int64_t col = idx - row * nv_blocks_per_row;
++    const block_tq3_4s * src = x + row * blocks_per_row + 2 * col;
++    // Write into a row-padded layout so K-padding blocks (read by the FP4 MMA up
++    // to the 512-aligned K) stay in bounds; they were zeroed by the caller.
++    block_nvfp4 * dst = y + row * nv_blocks_per_row_padded + col;
++
++#pragma unroll
++    for (int sub = 0; sub < QK_NVFP4 / QK_NVFP4_SUB; ++sub) {
++        const block_tq3_4s * block = src + sub / 2;
++        const int group_base = (sub % 2) * 2;
++        float vals[QK_NVFP4_SUB];
++        float amax = 0.0f;
++
++#pragma unroll
++        for (int group = 0; group < 2; ++group) {
++            const int g = group_base + group;
++            const uint8_t * qp = block->qs + 3 * g;
++            const uint32_t packed = (uint32_t) qp[0] | ((uint32_t) qp[1] << 8) | ((uint32_t) qp[2] << 16);
++            const float d = decode_tq3_scale(block->d[g]);
++#pragma unroll
++            for (int j = 0; j < 8; ++j) {
++                const float value = tq3_centroids[(packed >> (3 * j)) & 7] * d;
++                vals[8 * group + j] = value;
++                amax = fmaxf(amax, fabsf(value));
++            }
++        }
++
++        const int first_scale_code = (int) ggml_cuda_fp32_to_ue4m3(amax / 6.0f);
++        uint8_t scale_code = 0;
++        uint32_t q0 = 0;
++        uint32_t q1 = 0;
++
++        if (first_scale_code >= 0 && first_scale_code <= 0x7e) {
++            scale_code = (uint8_t) first_scale_code;
++            const float test_scale = ggml_cuda_ue4m3_to_fp32(scale_code);
++            const float inv_scale = test_scale > 0.0f ? 0.5f / test_scale : 0.0f;
++#if CUDART_VERSION >= 12080
++#pragma unroll
++            for (int j = 0; j < QK_NVFP4_SUB / 2; j += 2) {
++                const __nv_fp4x4_e2m1 packed(make_float4(
++                    vals[j + 0] * inv_scale, vals[j + 8] * inv_scale,
++                    vals[j + 1] * inv_scale, vals[j + 9] * inv_scale));
++                const char2 q = *reinterpret_cast<const char2 *>(&packed);
++                const uint32_t pair = (uint8_t) q.x | ((uint32_t) (uint8_t) q.y << 8);
++                if (j < 4) {
++                    q0 |= pair << (8 * j);
++                } else {
++                    q1 |= pair << (8 * (j - 4));
++                }
++            }
++#else
++#pragma unroll
++            for (int j = 0; j < QK_NVFP4_SUB / 4; ++j) {
++                q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 0],  inv_scale) << (8 * j);
++                q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 8],  inv_scale) << (8 * j + 4);
++                q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 4],  inv_scale) << (8 * j);
++                q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 12], inv_scale) << (8 * j + 4);
++            }
++#endif // CUDART_VERSION >= 12080
++        }
++
++        uint32_t * dst_qs = reinterpret_cast<uint32_t *>(dst->qs);
++        dst_qs[2 * sub + 0] = q0;
++        dst_qs[2 * sub + 1] = q1;
++        dst->d[sub] = scale_code;
++    }
++#else
++    NO_DEVICE_CODE;
++#endif // defined(BLACKWELL_MMA_AVAILABLE)
++}
++
+ // quantize values in the format mxfp4 is stored which is interleaved nibbles
+ // i.e. a block a0-a31 is represented as a0a16,a1a17 ...a15a31
+ // scatter: grid over tokens, quantize once, write to all the token's compact rows
+@@ -568,8 +822,12 @@ void quantize_row_q8_1_cuda(
+     const dim3 num_blocks(block_num_x, ne1, ne2*ne3);
+     const dim3 block_size(CUDA_QUANTIZE_BLOCK_SIZE, 1, 1);
+     const ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(num_blocks, block_size, 0, stream);
+-    ggml_cuda_kernel_launch(quantize_q8_1, launch_params, x, vy, ne00, s01, s02, s03, ne0, ne1, ne2_fastdiv);
+-    GGML_UNUSED(type_src0);
++    if (type_src0 == GGML_TYPE_TQ3_4S) {
++        // TQ3_4S activations get the Walsh-Hadamard rotation fused into quantization.
++        ggml_cuda_kernel_launch(quantize_q8_1<true>, launch_params, x, vy, ne00, s01, s02, s03, ne0, ne1, ne2_fastdiv);
++    } else {
++        ggml_cuda_kernel_launch(quantize_q8_1<false>, launch_params, x, vy, ne00, s01, s02, s03, ne0, ne1, ne2_fastdiv);
++    }
+ }
+ 
+ void quantize_mmq_q8_1_cuda(
+@@ -695,3 +953,25 @@ void quantize_mmq_fp4_cuda(
+         quantize_mmq_mxfp4<false><<<num_blocks, block_size, 0, stream>>>(x, ids, vy, ne00, s01, s02, s03, ne0, ne1, ne2, /*n_expert_used=*/0);
+     }
+ }
++
++void quantize_tq3_4s_to_nvfp4_cuda(const void * x, void * y, const int64_t ne00, const int64_t nrows, cudaStream_t stream) {
++    GGML_ASSERT(ne00 % QK_NVFP4 == 0);
++    GGML_ASSERT(nrows > 0);
++
++    const int64_t blocks_per_row = ne00 / QK_TQ3_0;
++    const int64_t nv_blocks_per_row = ne00 / QK_NVFP4;
++    // K is padded to MATRIX_ROW_PADDING for the FP4 MMA; the converted weight must
++    // be wide enough or the kernel reads past each row (crash on non-512-aligned
++    // ne00, e.g. Gemma K=2816). For 512-aligned ne00 (Qwen) this is a no-op.
++    const int64_t nv_blocks_per_row_padded = GGML_PAD(ne00, MATRIX_ROW_PADDING) / QK_NVFP4;
++    const int64_t nblocks = nv_blocks_per_row * nrows;
++
++    if (nv_blocks_per_row_padded != nv_blocks_per_row) {
++        CUDA_CHECK(cudaMemsetAsync(y, 0, (size_t) nrows * nv_blocks_per_row_padded * sizeof(block_nvfp4), stream));
++    }
++
++    constexpr int block_size = 256;
++    const dim3 num_blocks((nblocks + block_size - 1) / block_size, 1, 1);
++    quantize_tq3_4s_to_nvfp4<<<num_blocks, block_size, 0, stream>>>(
++        (const block_tq3_4s *) x, (block_nvfp4 *) y, blocks_per_row, nv_blocks_per_row, nv_blocks_per_row_padded, nrows);
++}
+diff --git a/ggml/src/ggml-cuda/quantize.cuh b/ggml/src/ggml-cuda/quantize.cuh
+index 5f08dcbfe..739f9aa9a 100644
+--- a/ggml/src/ggml-cuda/quantize.cuh
++++ b/ggml/src/ggml-cuda/quantize.cuh
+@@ -42,6 +42,8 @@ void quantize_mmq_fp4_cuda(const float *   x,
+                              int64_t         ne3,
+                              cudaStream_t    stream);
+ 
++void quantize_tq3_4s_to_nvfp4_cuda(const void * x, void * y, int64_t ne00, int64_t nrows, cudaStream_t stream);
++
+ // quantize each token once and scatter the block to its compact rows (via the inverse map)
+ void quantize_scatter_mmq_fp4_cuda(const float *   x,
+                                    const int32_t * ids_src1_inv,
+diff --git a/ggml/src/ggml-cuda/template-instances/mmq-instance-tq3_4s.cu b/ggml/src/ggml-cuda/template-instances/mmq-instance-tq3_4s.cu
+new file mode 100644
+index 000000000..50835aea8
+--- /dev/null
++++ b/ggml/src/ggml-cuda/template-instances/mmq-instance-tq3_4s.cu
+@@ -0,0 +1,5 @@
++// TQ3_4S MMQ template instance
++#include "../mmq.cuh"
++#include "../common.cuh"
++
++DECL_MMQ_CASE(GGML_TYPE_TQ3_4S);
+diff --git a/ggml/src/ggml-cuda/tq3-native.cu b/ggml/src/ggml-cuda/tq3-native.cu
+new file mode 100644
+index 000000000..0775aafdb
+--- /dev/null
++++ b/ggml/src/ggml-cuda/tq3-native.cu
+@@ -0,0 +1,35 @@
++#include "common.cuh"
++#include "tq3-native.cuh"
++
++__global__ void ggml_cuda_native_tq3_dot_kernel(
++        const block_tq3_0 * __restrict__ in,
++        const block_q8_0  * __restrict__ act,
++        float * __restrict__ out,
++        int nblocks) {
++
++    const int blk = blockIdx.x;
++    if (blk >= nblocks) {
++        return;
++    }
++
++    out[blk] = vec_dot_tq3_0_q8_0_native_block(in + blk, act + blk);
++}
++
++static __global__ void tq3_rotate_act_kernel(const float * __restrict__ src, float * __restrict__ dst, int64_t n) {
++    const int64_t base = (int64_t)blockIdx.x * QK_TQ3_0;
++    if (base >= n) return;
++    const int lane = threadIdx.x;
++    float val = src[base + lane] * ggml_cuda_tq3_sign(lane);
++    for (int step = 1; step < QK_TQ3_0; step <<= 1) {
++        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
++        val = (lane & step) ? (other - val) : (other + val);
++    }
++    dst[base + lane] = val / sqrtf((float)QK_TQ3_0);
++}
++
++// Out-of-place: reads src, writes dst (src and dst may alias for in-place use).
++// Callers previously did cudaMemcpy(dst, src) + in-place rotate; folding the copy
++// into the kernel halves the activation-rotation memory traffic.
++void ggml_cuda_tq3_rotate_act(const float * src, float * dst, int64_t n, cudaStream_t stream) {
++    tq3_rotate_act_kernel<<<n / QK_TQ3_0, QK_TQ3_0, 0, stream>>>(src, dst, n);
++}
+diff --git a/ggml/src/ggml-cuda/tq3-native.cuh b/ggml/src/ggml-cuda/tq3-native.cuh
+new file mode 100644
+index 000000000..aa370209c
+--- /dev/null
++++ b/ggml/src/ggml-cuda/tq3-native.cuh
+@@ -0,0 +1,105 @@
++#pragma once
++
++#if defined(GGML_USE_HIP)
++#include <hip/hip_fp16.h>
++#include <hip/hip_runtime.h>
++#elif defined(GGML_USE_MUSA)
++#include <musa_fp16.h>
++#include <musa_runtime.h>
++#else
++#include <cuda_fp16.h>
++#include <cuda_runtime.h>
++#endif
++#include <stdint.h>
++
++#if defined(GGML_USE_HIP)
++#define GGML_COMMON_DECL_HIP
++#include "../ggml-common.h"
++#undef GGML_COMMON_DECL_HIP
++#elif defined(GGML_USE_MUSA)
++#define GGML_COMMON_DECL_CUDA
++#define GGML_COMMON_DECL_MUSA
++#include "../ggml-common.h"
++#undef GGML_COMMON_DECL_MUSA
++#undef GGML_COMMON_DECL_CUDA
++#else
++#define GGML_COMMON_DECL_CUDA
++#include "../ggml-common.h"
++#undef GGML_COMMON_DECL_CUDA
++#endif
++
++#ifndef QK_TQ3_0
++#define QK_TQ3_0 32
++#endif
++
++static __device__ __forceinline__ float ggml_cuda_tq3_sign(const int i) {
++    return ((((unsigned) i * 0x9E3779B9u) >> 31) & 1) ? -1.0f : 1.0f;
++}
++
++static __device__ __forceinline__ float ggml_cuda_tq3_centroid(const uint8_t idx) {
++    switch (idx & 7) {
++        case 0: return -2.1519f;
++        case 1: return -1.3439f;
++        case 2: return -0.7560f;
++        case 3: return -0.2451f;
++        case 4: return  0.2451f;
++        case 5: return  0.7560f;
++        case 6: return  1.3439f;
++        default: return 2.1519f;
++    }
++}
++
++static __device__ __forceinline__ uint8_t ggml_cuda_tq3_unpack_idx(const uint32_t packed, const int r) {
++    return (packed >> (3 * r)) & 7;
++}
++
++// Native TQ3_0 x q8_0 block dot: one warp handles one full QK_TQ3_0 block
++// without materializing a temporary dequant buffer.
++static __device__ __forceinline__ float vec_dot_tq3_0_q8_0_native_block(
++    const block_tq3_0 * __restrict__ bq,
++    const block_q8_0  * __restrict__ bq8_0) {
++
++    const int lane = threadIdx.x;
++    const int g = lane / 8;
++    const int r = lane % 8;
++    const int leader = g * 8;
++
++    uint32_t packed = 0;
++    float rms = 0.0f;
++    if (r == 0) {
++        const uint8_t * qp = bq->qs + g * 3;
++        packed = (uint32_t) qp[0] | ((uint32_t) qp[1] << 8) | ((uint32_t) qp[2] << 16);
++        rms = __half2float(bq->d);
++    }
++
++    packed = __shfl_sync(0xFFFFFFFF, packed, leader, 32);
++    rms    = __shfl_sync(0xFFFFFFFF, rms, leader, 32);
++
++    float val = ggml_cuda_tq3_centroid(ggml_cuda_tq3_unpack_idx(packed, r));
++
++#pragma unroll
++    for (int step = 1; step < 32; step <<= 1) {
++        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
++        val = (lane & step) ? (other - val) : (other + val);
++    }
++
++    float contrib = val * ggml_cuda_tq3_sign(lane) * (float) bq8_0->qs[lane];
++    contrib *= (rms * __half2float(bq8_0->d)) / sqrtf((float) QK_TQ3_0);
++
++#pragma unroll
++    for (int step = 16; step > 0; step >>= 1) {
++        contrib += __shfl_xor_sync(0xFFFFFFFF, contrib, step, 32);
++    }
++
++    return contrib;
++}
++
++__global__ void ggml_cuda_native_tq3_dot_kernel(
++        const block_tq3_0 * __restrict__ in,
++        const block_q8_0  * __restrict__ act,
++        float * __restrict__ out,
++        int nblocks);
++
++// Rotate activations out-of-place: dst = rotate(src). Folds the previous
++// cudaMemcpy+in-place-rotate into one pass. src and dst may be equal.
++void ggml_cuda_tq3_rotate_act(const float * src, float * dst, int64_t n, cudaStream_t stream);
+diff --git a/ggml/src/ggml-cuda/vecdotq.cuh b/ggml/src/ggml-cuda/vecdotq.cuh
+index ec117c57d..9f0bc53b1 100644
+--- a/ggml/src/ggml-cuda/vecdotq.cuh
++++ b/ggml/src/ggml-cuda/vecdotq.cuh
+@@ -1369,3 +1369,73 @@ static __device__ __forceinline__ float vec_dot_iq4_xs_q8_1(
+     const float d = __half2float(bq4->d) * __low2float(bq8_1[iqs/4].ds);
+     return d * sumi;
+ }
++
++static __device__ __forceinline__ float tq3_4s_ratio4s(const uint8_t byte) {
++    if (byte == 0) {
++        return 0.0f;
++    }
++
++    // d encodes (1 + mant/32) * 2^(exp - 9), with exp in the high 3 bits.
++    // Build the exact FP32 representation directly and avoid ldexpf in the hot loop.
++    const uint32_t bits = (((uint32_t) (byte >> 5) + 118u) << 23) | ((uint32_t) (byte & 31u) << 18);
++    return __uint_as_float(bits);
++}
++
++// Int8 centroid levels {-127,-79,-45,-14,14,45,79,127} packed into two registers so a
++// single PRMT (__byte_perm) maps four 3-bit indices to four dp4a-ready int8 weights.
++#define TQ3_4S_LEVELS_LO 0xF2D3B181u // bytes {-127, -79, -45, -14}
++#define TQ3_4S_LEVELS_HI 0x7F4F2D0Eu // bytes {  14,  45,  79, 127}
++
++static __device__ __forceinline__ float tq3_4s_dot_subgroup_q8_1(
++    const uint32_t packed,
++    const block_q8_1 * __restrict__ bq8_1,
++    const int subgroup) {
++
++    // Spread the eight 3-bit indices of `packed` into two PRMT selector words
++    // (one 4-bit selector nibble per output byte; index bit 3 stays 0 so no sign-fill).
++    const uint32_t sel_lo = (packed         & 7) | ((packed << 1) & 0x70) | ((packed << 2) & 0x700) | ((packed << 3) & 0x7000);
++    const uint32_t sel_hi = ((packed >> 12) & 7) | ((packed >> 11) & 0x70) | ((packed >> 10) & 0x700) | ((packed >> 9) & 0x7000);
++    const int w_lo = __byte_perm(TQ3_4S_LEVELS_LO, TQ3_4S_LEVELS_HI, sel_lo);
++    const int w_hi = __byte_perm(TQ3_4S_LEVELS_LO, TQ3_4S_LEVELS_HI, sel_hi);
++
++    // Pack activation q8 values (already int8 in bq8_1->qs)
++    const int q8 = subgroup * 8;
++    const int a_lo = *(const int *)&bq8_1->qs[q8 + 0];
++    const int a_hi = *(const int *)&bq8_1->qs[q8 + 4];
++
++    // dp4a: each does 4 int8 multiply-adds
++    int sumi = ggml_cuda_dp4a(w_lo, a_lo, 0);
++    sumi     = ggml_cuda_dp4a(w_hi, a_hi, sumi);
++
++    return (float)sumi;
++}
++
++#define VDR_TQ3_4S_Q8_1_MMVQ 8
++static __device__ __forceinline__ float vec_dot_tq3_4s_q8_1(
++    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
++
++    const block_tq3_4s * bq = (const block_tq3_4s *) vbq + kbx;
++
++    // One 16-byte load covers the whole block: x = the 4 E3M5 scales, y/z/w = the 12 index bytes.
++    // block_tq3_4s is 16 bytes and rows are whole blocks, so the pointer is always 16-aligned.
++    const uint4 b = *(const uint4 *) bq;
++
++    const int g0 = iqs / 4; // this call covers subgroups g0 and g0+1, with g0 in {0, 2}
++    const bool hi = g0 != 0;
++
++    // Funnel-shift the two 24-bit index groups out of the loaded words.
++    const uint32_t p0 = __funnelshift_r(hi ? b.z : b.y, hi ? b.w : b.z, hi ? 16 :  0) & 0xFFFFFF;
++    const uint32_t p1 = __funnelshift_r(hi ? b.w : b.y, hi ? b.w : b.z, hi ?  8 : 24) & 0xFFFFFF;
++
++    const float d0 = tq3_4s_ratio4s((b.x >> (8*g0    )) & 0xFF);
++    const float d1 = tq3_4s_ratio4s((b.x >> (8*g0 + 8)) & 0xFF);
++
++    const float2 ds8 = __half22float2(bq8_1->ds);
++    // Hoist the activation-side scale once per block instead of reloading it per subgroup.
++    const float scale = (2.1519f / 127.0f) * ds8.x;
++
++    const float sum = tq3_4s_dot_subgroup_q8_1(p0, bq8_1, g0    ) * d0
++                    + tq3_4s_dot_subgroup_q8_1(p1, bq8_1, g0 + 1) * d1;
++
++    return sum * scale;
++}

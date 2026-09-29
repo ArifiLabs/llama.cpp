@@ -1,0 +1,268 @@
+From 6ca2f45c6e19eb752fe4e940e380d83437585f36 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 8 Sep 2026 21:27:18 -0400
+Subject: [PATCH] vulkan : mul_mm (prompt processing) for GGML_TYPE_SX8 (57) -
+ the device said the gap is the missing mul_mm, not the missing MMQ
+
+WI-1722b, lane-224. WI-1722 added an integer-MMQ pipeline for S-X8 and the
+op-level number did not move: 98.7 ms at m=4096 n=512 k=14336 against q8_0's
+46.6 ms, identical to the WI-1717 stage (wi1722-cell/53-sx8-gpu-cell.json).
+
+Three probes on the 780M explain why, and they redirect the work:
+
+  36-probe-pipeline-stats-sx8.txt - GGML_VK_PIPELINE_STATS=sx8 prints
+  "pipeline stats for dequant_sx8:" and nothing else. matmul_sx8_q8_1 was
+  never compiled, so it was never dispatched; the MUL_MAT ran dequant_sx8
+  (f16 staging) plus the generic f16 matmul.
+
+  36-probe-no-intdot.txt - with GGML_VK_DISABLE_INTEGER_DOT_PRODUCT=1
+  ("int dot: 0") q8_0 holds 45.9 ms. q8_0's prompt speed on this device does
+  not come from MMQ at all; it comes from q8_0's own mul_mm shader.
+
+  wi1722-cell/53-sx8-gpu-cell.json - the 98.7 vs 46.6 gap itself.
+
+So the gap is the missing mul_mm of ANY kind. S-X8 was the only weight type in
+this tree that staged the whole tensor to f16 before a prompt matmul.
+
+mul_mm_funcs.glsl: new DATA_A_SX8 branch in load_a_to_shmem(). LOAD_VEC_A is
+pinned to 8 so one invocation owns one 8-weight sub-block, which is exactly the
+granularity the rlo/step affine is constant over - ib = idx/4, iqs = idx&3, the
+same mapping dequant_sx8.comp calls sb, and the same pin the tq branches use.
+sx8_range() is CALLED rather than mirrored, so 0.25 / 0.015873 / the 1e-10 clamp
+stay in one place and cannot drift (F-110). Four contiguous pairs, not the
+k_pair,+1,+8,+9 interleave the nibble-split types need: qh indexes j>>1 and ql
+indexes j>>2 over the same ascending j, so K order is natural.
+
+vulkan-shaders-gen.cpp: matmul_sx8_f32/_f16 emitted explicitly rather than by a
+type_names row, which would emit a second matmul_sx8_q8_1 and pull sx8 into the
+coopmat2 family it has no decode entry for. Gated !coopmat2 && MatMulIdType::NONE.
+
+ggml-vulkan.cpp: CREATE_MM2/CREATE_MM in all three non-coopmat2 branches, and
+GGML_TYPE_SX8 into the mul_mm selection switch. The coopmat registration is the
+load-bearing one - the 780M reports "matrix cores: KHR_coopmat", so the fp16
+branch never runs on it and registering only there would have repeated WI-1722's
+failure in a new place: a pipeline that exists and is never selected.
+
+Untouched on purpose: MUL_MAT_ID keeps the f16-staging route (out of scope), so
+ggml_vk_get_to_fp16 keeps its SX8 arm and the MUL_MAT_ID size guard stands. The
+three canon comments that said "S-X8 has no mul_mm" are amended in place.
+
+No mul_mmq change. Part B root cause found and recorded OWED, not fixed: every
+CREATE_MMQ for S-X8 sits in the fp16 or no-fp16 branch, and this device takes
+the coopmat branch, which creates no MMQ pipeline for any type including q8_0.
+That is the same fact the no-intdot probe measured from the other side.
+
+Correctness, CPU only (no build, no GPU - chain 81 owns the GPU, F-161):
+sx8_mulmm_oracle.py models the new load_a_to_shmem branch and checks index math,
+write coverage and values against dequantize_row_sx8 over 4096 invocations.
+GREEN 0 mismatches / 0 unwritten / 0 double-written / 0.0 max abs err
+(62-mulmm-oracle-green.txt); planted RED on one step_sb flips it with indices
+still perfect (63-mulmm-oracle-planted-red.txt) - the F-110 shape exactly.
+
+Report: research/local-inference/lane-evidence/2026-09-08-lane-224-sx8-vulkan/R-WI1722B-SX8-MULMM-CODE.md
+
+Taken-from: MarlaLabsAI/sx8-quantization docs/S-X-METHODOLOGY.md section 2 (Apache-2.0) - the S-X8 affine decomposition (per-block fp16 endpoints, four 2-bit sub-block range strategies, 6-bit levels split across qh nibbles and ql quads).
+WI: WI-1722
+Lane: lane-224
+Receipts: research/local-inference/lane-evidence/2026-09-08-lane-224-sx8-vulkan/62-mulmm-oracle-green.txt, research/local-inference/lane-evidence/2026-09-08-lane-224-sx8-vulkan/63-mulmm-oracle-planted-red.txt
+(cherry picked from commit a36ff919c92aa9ac9ac747498866f4f3fb99bf56)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 18 +++++-
+ .../vulkan-shaders/mul_mm_funcs.glsl          | 39 ++++++++++++
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     | 61 ++++++++++++++++---
+ 3 files changed, 109 insertions(+), 9 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 802697acc..02f5dea0e 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -4966,6 +4966,11 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         CREATE_MM2(GGML_TYPE_Q5_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_0], matmul_q5_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
+         CREATE_MM2(GGML_TYPE_Q5_1, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_1], matmul_q5_1_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
+         CREATE_MM2(GGML_TYPE_Q8_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q8_0], matmul_q8_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
++        // S-X8 (lane-224 / WI-1722b). THIS is the branch the 780M takes -- the device
++        // reports "matrix cores: KHR_coopmat", so coopmat_support is true and the fp16
++        // branch below never runs on it. Registering only there would have repeated
++        // WI-1722's failure in a new place: a pipeline that exists and is never selected.
++        CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
+ 
+         CREATE_MM2(GGML_TYPE_Q2_K, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q2_K], matmul_q2_k_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
+         CREATE_MM2(GGML_TYPE_TQ2_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_TQ2_0], matmul_tq2_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, );
+@@ -5111,6 +5116,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         CREATE_MM2(GGML_TYPE_Q5_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_0], matmul_q5_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM2(GGML_TYPE_Q5_1, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_1], matmul_q5_1_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM2(GGML_TYPE_Q8_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q8_0], matmul_q8_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
++        CREATE_MM2(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8], matmul_sx8_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);  // lane-224 / WI-1722b
+         CREATE_MM2(GGML_TYPE_Q2_K, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q2_K], matmul_q2_k_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM2(GGML_TYPE_TQ2_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_TQ2_0], matmul_tq2_0_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM2(GGML_TYPE_Q3_K, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q3_K], matmul_q3_k_f32, mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+@@ -5316,6 +5322,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         CREATE_MM(GGML_TYPE_Q5_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_0].f32acc, matmul_q5_0_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM(GGML_TYPE_Q5_1, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q5_1].f32acc, matmul_q5_1_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM(GGML_TYPE_Q8_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q8_0].f32acc, matmul_q8_0_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
++        CREATE_MM(GGML_TYPE_SX8, pipeline_dequant_mul_mat_mat[GGML_TYPE_SX8].f32acc, matmul_sx8_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);  // lane-224 / WI-1722b
+ 
+         CREATE_MM(GGML_TYPE_Q2_K, pipeline_dequant_mul_mat_mat[GGML_TYPE_Q2_K].f32acc, matmul_q2_k_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+         CREATE_MM(GGML_TYPE_TQ2_0, pipeline_dequant_mul_mat_mat[GGML_TYPE_TQ2_0].f32acc, matmul_tq2_0_f32, , mmq_wg_denoms, warptile_mmq, vk_mat_mat_push_constants, 3, , 0);
+@@ -8257,8 +8264,10 @@ static vk_pipeline ggml_vk_get_to_fp16(ggml_backend_vk_context * ctx, ggml_type
+         case GGML_TYPE_TQ3_4S:
+         case GGML_TYPE_NVFP4:
+         case GGML_TYPE_TQ2_0:
+-        // S-X8 (lane-224) has no mul_mm, so f16 staging is its ONLY prompt-processing
+-        // route -- the same position TQ3_4S is in, one line above.
++        // S-X8 (lane-224). AMENDED WI-1722b: it now HAS a mul_mm, so f16 staging is no
++        // longer its MUL_MAT route. It stays in this list because MUL_MAT_ID still has
++        // no sx8 mul_mm_id -- removing the arm would break MoE prompt processing and
++        // re-open the GGML_ABORT the :20002 size guard exists to prevent.
+         case GGML_TYPE_SX8:
+             break;
+         default:
+@@ -8311,7 +8320,12 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_conte
+     }
+ 
+     // ARIFI-SYNC-SOLO: types with a mul_mm (matrix-matrix) pipeline. Narrower than the mat-vec list on purpose: tq3_1s/tq4_1s/tq3_4s reach mul_mat through f16 staging.
++    // S-X8 JOINED this list in WI-1722b and is NO LONGER an f16-staging type for MUL_MAT.
++    // It is still one for MUL_MAT_ID, which is why ggml_vk_get_to_fp16 keeps its SX8 arm.
++    // Safe on a coopmat2 device, which gets no sx8 mul_mm: the is_empty() guard at the
++    // bottom of this function returns nullptr and the caller falls back to f16 staging.
+     switch (src0_type) {
++        case GGML_TYPE_SX8:
+         case GGML_TYPE_Q1_0:
+         case GGML_TYPE_Q2_0:
+         case GGML_TYPE_Q2_0_G128:
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl
+index 771e23f75..febff8ac2 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl
+@@ -152,6 +152,45 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
+             const uint k_pair = row * LOAD_VEC_A / 2;
+             store_a(col, k_pair,     FLOAT_TYPEV2(v.xy));
+             store_a(col, k_pair + 1, FLOAT_TYPEV2(v.zw));
++#elif defined(DATA_A_SX8)
++            // S-X8 v4.3 (type-id 57), lane-224 / WI-1722b. LOAD_VEC_A is pinned to 8
++            // host-side so one invocation owns exactly one sub-block: the rlo/step
++            // affine is constant across 8 consecutive weights, so the range algebra
++            // runs once here instead of once per weight. idx/4 is the 32-weight block,
++            // idx&3 the sub-block -- the same mapping dequant_sx8.comp calls `sb`.
++            //
++            // sx8_range() is CALLED, not mirrored: 0.25, 0.015873 and the 1e-10 clamp
++            // exist once in types.glsl, so this branch cannot drift from the CPU
++            // decoder the F-110 way.
++            //
++            // K order is natural -- weight j sits at K offset iqs*8 + i with no
++            // interleave -- because qh indexes j>>1 and ql indexes j>>2 over the same
++            // ascending j. Hence four CONTIGUOUS pairs, unlike the nibble-split types
++            // above that store at k_pair, +1, +8, +9.
++            const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
++
++            const uint ib  = idx / 4;
++            const uint iqs = idx & 0x03;
++
++            float rlo, step;
++            sx8_range(float(data_a[ib].dmin), float(data_a[ib].dmax),
++                      (uint(data_a[ib].config) >> (iqs * 2u)) & 3u, rlo, step);
++
++            const uint k_pair = row * LOAD_VEC_A / 2;
++
++            [[unroll]] for (uint i = 0u; i < 8u; i += 2u) {
++                const uint j0 = iqs * 8u + i;
++                const uint j1 = j0 + 1u;
++
++                const uint hi0 = (uint(data_a[ib].qh[j0 >> 1u]) >> ((j0 & 1u) * 4u)) & 0xFu;
++                const uint lo0 = (uint(data_a[ib].ql[j0 >> 2u]) >> ((3u - (j0 & 3u)) * 2u)) & 0x3u;
++                const uint hi1 = (uint(data_a[ib].qh[j1 >> 1u]) >> ((j1 & 1u) * 4u)) & 0xFu;
++                const uint lo1 = (uint(data_a[ib].ql[j1 >> 2u]) >> ((3u - (j1 & 3u)) * 2u)) & 0x3u;
++
++                store_a(col, k_pair + i / 2u,
++                        FLOAT_TYPEV2(rlo + step * float((hi0 << 2u) | lo0),
++                                     rlo + step * float((hi1 << 2u) | lo1)));
++            }
+ #elif defined(DATA_A_Q1_0)
+             const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+ 
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index 21183f21c..e7f78f8fc 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -639,10 +639,14 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
+ #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+     // S-X8 v4.3 (type-id 57) integer MMQ -- lane-224 / WI-1722. Generated here rather
+     // than from type_names for the same reason the mat-vec block near the bottom of
+-    // process_shaders() is: a type_names row would also demand a mul_mm_funcs.glsl
+-    // unpack branch and the whole matmul/coopmat family, and S-X8 has neither. It has
+-    // a mul_mmq_funcs.glsl branch, so it gets the mul_mmq pipeline and nothing else.
+-    // Same gate as the q8_0 line above: f32 accumulators, no coopmat, no dot2.
++    // process_shaders() is: a type_names row would emit BOTH this mul_mmq variant and
++    // the sx8 mul_mm below, i.e. this line twice.
++    // AMENDED WI-1722b: S-X8 now HAS a mul_mm_funcs.glsl unpack branch and a mul_mm
++    // family (see the sx8 mul_mm block at the end of this function). The original
++    // "S-X8 has neither, so it gets mul_mmq and nothing else" is no longer true.
++    // Same gate as the q8_0 line above: f32 accumulators, no coopmat, no dot2 --
++    // which is also why this pipeline never reaches a coopmat device; see
++    // R-WI1722B-SX8-MULMM-CODE.md §7.
+     if (!f16acc && !coopmat && !coopmat2 && !dot2) {
+         const std::map<std::string, std::string> sx8_float_type_dict = {
+             {"FLOAT_TYPE",   FLOAT_TYPE(1, "sx8")},
+@@ -688,6 +692,43 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
+                 merge_maps(merge_maps(base_dict, float_type_dict), {{data_a_key, "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f16}, {"B_TYPE_SCALAR", "float16_t"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
+         }
+     }
++
++    // S-X8 v4.3 (MarlaLabs, type-id 57) mul_mm -- lane-224 / WI-1722b.
++    //
++    // Generated explicitly rather than by adding "sx8" to type_names, for the same
++    // reason the tq block above is: a type_names row would ALSO emit the q8_1 mmq
++    // variant from the is_legacy_quant/is_k_quant gate (S-X8 has its own explicit
++    // mul_mmq line further down and must not get a second one) and would pull sx8
++    // into the coopmat2 family, which has no dequant_funcs_cm2.glsl entry for it.
++    //
++    // This SUPERSEDES the "S-X8 has no mul_mm" premise in the comment at the top of
++    // the mul_mmq block below and in process_shaders(). The device probe that forced
++    // it (lane-evidence 2026-09-08 36-probe-pipeline-stats-sx8.txt): S-X8 prompt
++    // processing was running dequant_sx8 + the generic f16 matmul, 98.7 ms against
++    // q8_0's 46.6 ms at m=4096 n=512 k=14336. 36-probe-no-intdot.txt showed q8_0
++    // holds 45.9 ms with integer dot DISABLED, so q8_0's speed comes from its own
++    // mul_mm, not from MMQ -- the missing mul_mm is the gap, not the missing MMQ.
++    //
++    // LOAD_VEC_A is pinned to 8 for the same reason tq pins it: the A-side block
++    // indexes idx/4 and idx&3 to map one invocation onto exactly one 8-weight
++    // sub-block, which is the granularity S-X8's rlo/step affine is constant over.
++    //
++    // coopmat2 excluded (no cm2 decode entry). MUL_MAT_ID is NOT generated: the named
++    // scope is MUL_MAT, and mul_mat_id stays on the f16-staging route it already has,
++    // so ggml_vk_get_to_fp16 keeps its SX8 arm and the MUL_MAT_ID size guard stands.
++    if (!coopmat2 && matmul_id_type == MatMulIdType::NONE) {
++        const std::map<std::string, std::string> sx8_mm_float_type_dict = {
++            {"FLOAT_TYPE",   FLOAT_TYPE(1, "sx8")},
++            {"FLOAT_TYPEV2", FLOAT_TYPE(2, "sx8")},
++            {"FLOAT_TYPEV4", FLOAT_TYPE(4, "sx8")},
++            {"FLOAT_TYPEV8", FLOAT_TYPE(8, "sx8")},
++        };
++
++        string_to_spv(shader_name + "_sx8_f32" + dot2_sfx, "mul_mm.comp",
++            merge_maps(merge_maps(base_dict, sx8_mm_float_type_dict), {{"DATA_A_SX8", "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f32}, {"B_TYPE_SCALAR", "float"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
++        string_to_spv(shader_name + "_sx8_f16" + dot2_sfx, "mul_mm.comp",
++            merge_maps(merge_maps(base_dict, sx8_mm_float_type_dict), {{"DATA_A_SX8", "1"}, {"LOAD_VEC_A", "8"}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f16}, {"B_TYPE_SCALAR", "float16_t"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
++    }
+ }
+ 
+ void process_shaders() {
+@@ -1050,9 +1091,15 @@ void process_shaders() {
+ 
+     // S-X8 v4.3 (MarlaLabs, type-id 57) -- lane-224 / WI-1717. Generated explicitly
+     // rather than by adding "sx8" to type_names, for the same reason the tq entries
+-    // above are: a type_names row demands a mul_mm_funcs.glsl unpack branch and the
+-    // whole matmul/coopmat family. S-X8 has no mul_mm and reaches prompt processing
+-    // through f16 staging (dequant_sx8), exactly as TQ3_4S does. GET_ROWS, CPY and
++    // above are: a type_names row would also fire the q8_1 mmq gate and emit a second
++    // matmul_sx8_q8_1, and would pull sx8 into the coopmat2 family it has no decode
++    // entry for.
++    // AMENDED WI-1722b: the original reason given here -- "S-X8 has no mul_mm and
++    // reaches prompt processing through f16 staging (dequant_sx8), exactly as TQ3_4S
++    // does" -- was TRUE until WI-1722b and is now FALSE for MUL_MAT. S-X8 has a
++    // mul_mm (matmul_sx8_f32/_f16, emitted in matmul_shaders()). f16 staging remains
++    // the route for MUL_MAT_ID only, which is why dequant_sx8 below still matters and
++    // why ggml_vk_get_to_fp16 keeps its SX8 arm. GET_ROWS, CPY and
+     // SET_ROWS are deliberately not generated: nothing quantizes TO S-X8 on the GPU,
+     // and supports_op declines them rather than aborting (the honest-supports_op law).
+     // Unlike the tq shaders, mul_mat_vec_sx8.comp needs no 32-thread pin -- it derives

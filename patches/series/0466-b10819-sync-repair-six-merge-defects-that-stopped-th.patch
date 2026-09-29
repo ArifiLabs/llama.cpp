@@ -1,0 +1,310 @@
+From d117f6416284c440dcab16f2eb245a37f946f443 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 6 Sep 2026 03:18:43 -0400
+Subject: [PATCH] b10819 sync: repair six merge defects that stopped the tree
+ from building
+
+The R13 base move (b10680 -> b10819) landed 532 commits over 6a1a922d2 with the
+protected-win anchors intact, but the tree did not compile. Six resolutions were
+incomplete. Each is repaired against the parent that owns the surface, never by
+dropping a side.
+
+1. src/llama-context.cpp, src/llama-model.cpp - upstream turned llama_hparams
+   n_ff_exp / n_expert_used into per-layer accessors (uint32_t f(uint32_t il = 0)).
+   The PowerInfer MoE-pipeline and expert-bundle grafts still read them as fields.
+   Called with the il=0 default, which is the exact prior single-value semantics.
+   CAVEAT: for a model whose layers differ, a global pipeline sized from layer 0 is
+   an under-size; n_expert_used_max() exists for that. Not changed here because it
+   would be an unmeasured behaviour change on a path this estate cannot exercise.
+
+2. ggml/src/ggml-vulkan/ggml-vulkan.cpp - the TurboQuant tq_rotate staging branch
+   still set prealloc_y_last_decode_vector_staging. Upstream 77f132cb1 (mul_mat_id
+   pads K rather than N) replaced that member with prealloc_y_last_k_padded; every
+   other site in the file had been converted. The rotate path never K-pads, so it
+   sets false, mirroring the quantize_y path.
+
+3. src/models/dflash.cpp - the closing brace of the dsv4_hc_mult block was lost, so
+   its early return fell into the generic per-layer loop and the file could not
+   parse. Restored from prebump/arifi-main-95c1b6e69-20260906.
+
+4. src/models/qwen35.cpp - upstream added n_kv_max to build_attn_mha; the batched
+   MTP call site was not updated. Passes 0, the value every dense caller uses (the
+   only non-zero is the top-k sparse path).
+
+5. common/speculative.cpp - collision #10 adopted upstream's per-sequence chunked
+   DFlash encoder but dropped the i_batch_beg/i_batch_end setup its loop reads, and
+   left the fork's older flat encode path dangling after the loop, referencing
+   offset/n_chunk/features_buf that no longer exist there. Upstream's setup block is
+   restored and the dangling path removed - upstream's fused decode does the encode
+   and injection the old path did by hand. The fork's f16 massive-activation
+   sanitize is NOT dropped: it is re-grafted onto upstream's chunked buffer, inside
+   the loop, before the decode. llama_synchronize is kept per sequence.
+
+Loss control for the whole set: a brace-balance scan over all 226 code files the bump
+touched, comparing each file against BOTH parents, reports no file whose balance
+matches neither - defect 3 was the only one of its class.
+
+Origin: ArifiLabs (native)
+Measured-effect: build FAIL at 6/305 -> RC=0 with all five targets linked (llama-cli, llama-server, llama-quantize, test-backend-ops, test-quantize-fns); runtime effect of the speculative.cpp union is measured by the F-141 content gate and the served DFlash2 arm, not by this build.
+Lane: lane-209
+---
+ common/speculative.cpp               | 104 +++++++++++----------------
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp |   4 +-
+ src/llama-context.cpp                |  12 ++--
+ src/llama-model.cpp                  |  16 ++---
+ src/models/dflash.cpp                |   1 +
+ src/models/qwen35.cpp                |   3 +-
+ 6 files changed, 62 insertions(+), 78 deletions(-)
+
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index 5e6378b08..46450150a 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -1455,6 +1455,21 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+ 
+         const int32_t n_tokens = batch_in.n_tokens;
+ 
++        // per-seq inclusive batch range (assumes each seq's tokens are contiguous in the batch)
++        std::vector<int32_t> i_batch_beg(n_seq, -1);
++        std::vector<int32_t> i_batch_end(n_seq, -1);
++        for (int32_t k = 0; k < n_tokens; ++k) {
++            GGML_ASSERT(batch_in.n_seq_id[k] == 1);
++            const llama_seq_id seq_id = batch_in.seq_id[k][0];
++            if (seq_id < 0 || seq_id >= (llama_seq_id) n_seq) {
++                continue;
++            }
++            i_batch_end[seq_id] = k;
++            if (i_batch_beg[seq_id] < 0) {
++                i_batch_beg[seq_id] = k;
++            }
++        }
++
+         auto * ctx_tgt = this->params.ctx_tgt;
+         auto * ctx_dft = this->params.ctx_dft;
+ 
+@@ -1485,6 +1500,33 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+                         std::memcpy(dst, src, (size_t) n_embd_tgt * sizeof(float));
+                     }
+                 }
++
++                // sanitize non-finite feature values before the fused decode. on Metal, the
++                // mat-mat kernels stage f32 activations as f16 for the simdgroup multiply;
++                // Laguna's massive-activation rows (attention-sink tokens, |x| ~ 1e6 in the
++                // pre-final-norm residual) overflow f16 -> inf/nan. one poisoned row would
++                // otherwise NaN the whole drafter KV cache. Re-grafted onto b10819's chunked
++                // encoder buffer; it used to run over the fork's own features_buf.
++                {
++                    size_t n_bad = 0;
++                    float * feats = batch_inject.embd;
++                    for (size_t v = 0; v < (size_t) n_chunk * n_embd_enc; ++v) {
++                        float & x = feats[v];
++                        if (!std::isfinite(x)) {
++                            x = x != x ? 0.0f : (x > 0.0f ? 65504.0f : -65504.0f);
++                            n_bad++;
++                        }
++                    }
++                    if (n_bad > 0) {
++                        static bool warned = false;
++                        if (!warned) {
++                            LOG_WRN("%s: sanitized %zu non-finite target feature values (f16 overflow on massive activations); "
++                                    "draft quality may degrade slightly on affected rows\n", __func__, n_bad);
++                            warned = true;
++                        }
++                    }
++                }
++
+                 for (int32_t i = 0; i < n_chunk; ++i) {
+                     const llama_pos p = batch_in.pos[i_batch_beg[seq_id] + offset + i];
+                     batch_inject.pos[i] = p;
+@@ -1505,68 +1547,6 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
+                 }
+             }
+ 
+-            // sanitize non-finite feature values before fusing. on Metal, the
+-            // mat-mat kernels stage f32 activations as f16 for the simdgroup
+-            // multiply; Laguna's massive-activation rows (attention-sink tokens,
+-            // |x| ~ 1e6 in the pre-final-norm residual) overflow f16 -> inf/nan.
+-            // one poisoned row would otherwise NaN the whole drafter KV cache.
+-            {
+-                size_t n_bad = 0;
+-                for (auto & v : features_buf) {
+-                    if (!std::isfinite(v)) {
+-                        v = v != v ? 0.0f : (v > 0.0f ? 65504.0f : -65504.0f);
+-                        n_bad++;
+-                    }
+-                }
+-                if (n_bad > 0) {
+-                    static bool warned = false;
+-                    if (!warned) {
+-                        LOG_WRN("%s: sanitized %zu non-finite target feature values (f16 overflow on massive activations); "
+-                                "draft quality may degrade slightly on affected rows\n", __func__, n_bad);
+-                        warned = true;
+-                    }
+-                }
+-            }
+-
+-            llama_batch enc_batch = {
+-                /*.n_tokens =*/ n_chunk,
+-                /*.token    =*/ nullptr,
+-                /*.embd     =*/ features_buf.data(),
+-                /*.pos      =*/ nullptr,
+-                /*.n_seq_id =*/ nullptr,
+-                /*.seq_id   =*/ nullptr,
+-                /*.logits   =*/ nullptr,
+-            };
+-
+-            int32_t rc = llama_encode(ctx_dft, enc_batch);
+-            if (rc != 0) {
+-                LOG_ERR("%s: llama_encode(ctx_dft) failed rc=%d (n_tokens=%d, offset=%d)\n",
+-                        __func__, rc, (int) n_chunk, (int) offset);
+-                return false;
+-            }
+-
+-            const float * inp_g = llama_get_embeddings_nextn(ctx_dft);
+-            GGML_ASSERT(inp_g && "DFlash encoder produced no output.");
+-
+-            batch_inject.n_tokens = n_chunk;
+-            std::memcpy(batch_inject.embd, inp_g, (size_t) n_chunk * n_embd_dec * sizeof(float));
+-            for (int32_t i = 0; i < n_chunk; ++i) {
+-                const int32_t j = offset + i;
+-                GGML_ASSERT(batch_in.n_seq_id[j] == 1);
+-                const llama_seq_id seq_id = batch_in.seq_id[j][0];
+-                GGML_ASSERT(seq_id >= 0 && seq_id < (llama_seq_id) n_seq);
+-                batch_inject.pos[i]       = batch_in.pos[j];
+-                batch_inject.n_seq_id[i]  = 1;
+-                batch_inject.seq_id[i][0] = seq_id;
+-                batch_inject.logits[i]    = false;
+-            }
+-
+-            rc = llama_decode(ctx_dft, batch_inject);
+-            if (rc != 0) {
+-                LOG_ERR("%s: llama_decode(ctx_dft) failed rc=%d (n_tokens=%d, offset=%d)\n",
+-                        __func__, rc, (int) n_chunk, (int) offset);
+-                return false;
+-            }
+             // The server may switch contexts before the next draft decode.
+             llama_synchronize(ctx_dft);
+         }
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 017b0aac8..5800f14af 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -11388,7 +11388,9 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context&
+                 { tq_rows * (uint32_t)ne10, 1, 1 });
+             ctx->prealloc_y_last_pipeline_used = ctx->device->pipeline_tq_rotate_act.get();
+             ctx->prealloc_y_last_tensor_used = src1;
+-            ctx->prealloc_y_last_decode_vector_staging = false;
++            // b10819 (77f132cb1) replaced decode-vector staging with K-padding;
++            // the rotate path never K-pads, same as the quantize_y path below.
++            ctx->prealloc_y_last_k_padded = false;
+         }
+     } else if (y_needs_reformat) {
+         if (ctx->prealloc_y_last_pipeline_used != to_fp16_vk_1.get() ||
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index ac93c2d6b..eefed17d1 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -1766,21 +1766,21 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+                 pi_cached_batch != (int) ubatch.n_tokens ||
+                 pi_cached_layers != (int) model.hparams.n_layer() ||
+                 pi_cached_embd != (int) model.hparams.n_embd ||
+-                pi_cached_ffn != (int) model.hparams.n_ff_exp ||
++                pi_cached_ffn != (int) model.hparams.n_ff_exp() ||
+                 pi_cached_experts != (int) model.hparams.n_expert ||
+-                pi_cached_experts_used != (int) model.hparams.n_expert_used;
++                pi_cached_experts_used != (int) model.hparams.n_expert_used();
+             if (pi_shape_changed) {
+                 powerinfer_init_moe_pipeline(pi_nth, model.hparams.n_layer(), model.hparams.n_embd,
+-                                             model.hparams.n_ff_exp, ubatch.n_tokens,
+-                                             model.hparams.n_expert, model.hparams.n_expert_used, true);
++                                             model.hparams.n_ff_exp(), ubatch.n_tokens,
++                                             model.hparams.n_expert, model.hparams.n_expert_used(), true);
+                 az::global_spin_barrier.init(pi_nth);
+                 pi_cached_nth = pi_nth;
+                 pi_cached_batch = (int) ubatch.n_tokens;
+                 pi_cached_layers = (int) model.hparams.n_layer();
+                 pi_cached_embd = (int) model.hparams.n_embd;
+-                pi_cached_ffn = (int) model.hparams.n_ff_exp;
++                pi_cached_ffn = (int) model.hparams.n_ff_exp();
+                 pi_cached_experts = (int) model.hparams.n_expert;
+-                pi_cached_experts_used = (int) model.hparams.n_expert_used;
++                pi_cached_experts_used = (int) model.hparams.n_expert_used();
+                 pi_rebuilt = true;
+             }
+         }
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 0190a8e2a..c3b534078 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1897,9 +1897,9 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+                 break;
+             }
+         }
+-        if (hparams.n_expert != 0 && pi_use_moe && hparams.n_ff_exp > 0) {
++        if (hparams.n_expert != 0 && pi_use_moe && hparams.n_ff_exp() > 0) {
+             const size_t pi_row_size     = ggml_row_size(GGML_TYPE_Q4_0, hparams.n_embd);
+-            const size_t pi_matrix_bytes = pi_row_size * hparams.n_ff_exp;
++            const size_t pi_matrix_bytes = pi_row_size * hparams.n_ff_exp();
+ 
+             // The `pi_matrix_bytes % 4096 == 0` condition that used to guard this is GONE. It existed
+             // only because ExpertCache strode the file by the UNPADDED matrix size and asserted that
+@@ -1920,7 +1920,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+             const char * pi_gen = getenv("GENERATE_EXPERT_BUNDLE");
+             if (pi_gen != nullptr) {
+                 LLAMA_LOG_INFO("%s: PowerInfer: generating expert bundle -> \"%s\" (n_ff_exp=%u n_embd=%u matrix=%zu B)\n",
+-                               __func__, pi_gen, hparams.n_ff_exp, hparams.n_embd, pi_matrix_bytes);
++                               __func__, pi_gen, hparams.n_ff_exp(), hparams.n_embd, pi_matrix_bytes);
+                 moe_sparse_pipeline::ExpertBundleBuilder pi_builder(pi_gen);
+                 for (int64_t layer_id = 0; layer_id < pi_n_layer; layer_id++) {
+                     const auto & L = layers[layer_id];
+@@ -1928,11 +1928,11 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+                     void * pi_gate = L.ffn_gate_exps ? L.ffn_gate_exps->data : nullptr;
+                     void * pi_down = L.ffn_down_exps ? L.ffn_down_exps->data : nullptr;
+                     std::tuple<void *, int, int> pi_matrices[] = {
+-                        { pi_up,   (int) hparams.n_embd, (int) hparams.n_ff_exp },
+-                        { pi_gate, (int) hparams.n_embd, (int) hparams.n_ff_exp },
++                        { pi_up,   (int) hparams.n_embd, (int) hparams.n_ff_exp() },
++                        { pi_gate, (int) hparams.n_embd, (int) hparams.n_ff_exp() },
+                         pi_down_transposed
+-                            ? std::make_tuple(pi_down, (int) hparams.n_embd,   (int) hparams.n_ff_exp)
+-                            : std::make_tuple(pi_down, (int) hparams.n_ff_exp, (int) hparams.n_embd),
++                            ? std::make_tuple(pi_down, (int) hparams.n_embd,     (int) hparams.n_ff_exp())
++                            : std::make_tuple(pi_down, (int) hparams.n_ff_exp(), (int) hparams.n_embd),
+                     };
+                     for (size_t expert_id = 0; expert_id < hparams.n_expert; expert_id++) {
+                         for (int idx = 0; idx < 3; idx++) {
+@@ -1946,7 +1946,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+                                 // already transposed) must be dequant->transpose->requant at bundle-gen.
+                                 const char * pi_src = static_cast<const char *>(pi_data) + expert_id * pi_matrix_bytes;
+                                 const auto * pi_tt = ggml_get_type_traits(GGML_TYPE_Q4_0);
+-                                const int pi_nff = (int) hparams.n_ff_exp, pi_nem = (int) hparams.n_embd;
++                                const int pi_nff = (int) hparams.n_ff_exp(), pi_nem = (int) hparams.n_embd;
+                                 std::vector<float> pi_f((size_t) pi_nff * pi_nem), pi_ft((size_t) pi_nff * pi_nem);
+                                 const size_t pi_src_row = ggml_row_size(GGML_TYPE_Q4_0, pi_nff);
+                                 for (int r = 0; r < pi_nem; r++) {
+diff --git a/src/models/dflash.cpp b/src/models/dflash.cpp
+index dbbcab8c1..9b98d2f32 100644
+--- a/src/models/dflash.cpp
++++ b/src/models/dflash.cpp
+@@ -223,6 +223,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader & ml) {
+         }
+         return;
+ 
++    }
+ 
+     for (int i = 0; i < n_layer; ++i) {
+         auto & layer = layers[i];
+diff --git a/src/models/qwen35.cpp b/src/models/qwen35.cpp
+index 2ce04912b..8b6a594b5 100644
+--- a/src/models/qwen35.cpp
++++ b/src/models/qwen35.cpp
+@@ -633,7 +633,8 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
+ 
+             ggml_tensor * mask_b = ggml_view_2d(ctx0, kq_mask, n_kv, width, kq_mask->nb[1], (size_t) row0*kq_mask->nb[1]);
+ 
+-            cur_b = build_attn_mha(Q_b, k_view, v_view, nullptr, mask_b, nullptr, nullptr, kq_scale, il);
++            // n_kv_max = 0: dense mask, not the top-k sparse path (b10819 added the argument).
++            cur_b = build_attn_mha(Q_b, k_view, v_view, nullptr, mask_b, nullptr, nullptr, 0, kq_scale, il);
+ 
+             cur_b = ggml_mul(ctx0, cur_b, ggml_sigmoid(ctx0, gate_b));
+             cur_b = build_lora_mm(layer.wo, cur_b, layer.wo_s);

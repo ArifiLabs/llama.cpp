@@ -1,0 +1,27 @@
+From d68db927b57e50cac81edbb0e087add6a7e86b51 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 05:56:21 -0400
+Subject: [PATCH] gitattributes: evidence receipt files are byte-exact (-text)
+
+Series replay onto 9e0e22059 differed from arifi/main only in eight build-log receipts under
+r46b-b7b-loader-evidence/ and r46b-b7c-evidence/ (1584 lines swapped: line-ending conversion).
+Marking the evidence trees -text and renormalizing makes the committed blobs byte-exact.
+
+Origin: ArifiLabs (native) - HQ seat-58 series maintenance
+Measured-effect: UNMEASURED - repository hygiene
+Lane: lane-233
+---
+ .gitattributes | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/.gitattributes b/.gitattributes
+index 695b3ec9c..7fe7c6e34 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -18,3 +18,6 @@ patches/** -text diff
+ # on Linux and macOS with an unhelpful 'bad interpreter' error, and Git for Windows defaults
+ # core.autocrlf=true - so pin them to LF regardless of the cloner's settings.
+ .githooks/** text eol=lf
++
++# HQ seat-58 2026-09-14: raw evidence receipts are byte-exact records; never eol-convert them (series replay parity)
++r46b-*-evidence/** -text

@@ -1,0 +1,1161 @@
+From e9aef9df856e1dead626119f946795df436ae114 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 1 Sep 2026 10:07:18 -0400
+Subject: [PATCH] lane-196: Design B BUILT - heterogeneous split-k FA
+ (per-query source selection), the Vulkan dispatch
+
+Shaders (all three FA variants): k_num keeps ONLY its index-decode duty; new push constants
+k_base/k_total replace it in every scratch offset AND the store-path selector (lane-195 trap #1 -
+a 1-partition ring dispatch must take the split epilogue or it is silently dropped);
+m_width/mask_col_base decouple the mask stride from the dispatch's own KV (trap #2), folded into
+m_offset so zero mask read sites change. Push block 128->144 B; devices below sizeof are refused
+FA in supports_op (Vulkan's 128-B floor is the portability minimum, the 780M reports 256).
+
+Dispatch: ggml_vk_flash_attn gains one defaulted part arg (forced common gqa - the gqa/non-gqa
+epilogues index the shared scratch differently, so partitions must agree; aligned forced false,
+mask-opt refused+asserted, dequant-kv refused: partitions are read IN PLACE); split-k heuristic
+extracted to ONE home so the wrapper's k_total cannot disagree with the body dispatch;
+ggml_vk_flash_attn_segmented = body(q4_0, own split-k) + ring hi + ring lo (F16, 1 partition
+each), ONE reduce with k_num=k_total. Mask column bases DERIVED from row counts everywhere.
+
+Graph (opt-in LLAMA_KV_TAIL_PERQ=1, NORING wins): tail_compose stashes RAW ring views and
+returns the bare body view [0,split) - nothing materialised, nothing converted, ggml_concat
+gone from the graph; fa_attach_segments permutes+attaches on the FA node via a memory-context
+virtual (turbo precedent; hybrid forwards). Fallback is the shipped compose, never body-only.
+One-time WARN receipt 'PER-QUERY ACTIVE'; the tail banner names mode=per-query|compose.
+
+Gate: test-fa-segments grew LEG V - the same split-equivalence/poison/mixed-dtype legs on the
+GPU backend, BOTH broadcast shapes (gqa scratch-layout agreement is the one new risk),
+EXECUTED-asserted (56 GPU cases; DECLINED=FAIL). CPU legs 0-3 unchanged and green (leg 1 still
+nmse=0 exactly). V1 tolerance is 1e-5 not 0: coinciding partition boundaries are bit-identical,
+differing groupings round the f16 O-accumulator differently (~1e-7..1e-6), the control fires at
+>=0.017 - the discriminating fidelity leg is V3 vs the independent in-file reference (all 12
+mixed cases ~1e-6 vs tol 5e-4). arifi_sync_check OK.
+
+Design-origin: BeeLlama kvarn_flash_attn.comp (one fp32 online softmax over two sources,
+lane-174); ours reaches the same softmax through the EXISTING flash_attn_split_k_reduce.
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 280 +++++++++++++++---
+ .../vulkan-shaders/flash_attn.comp            |  14 +-
+ .../vulkan-shaders/flash_attn_base.glsl       |  19 +-
+ .../vulkan-shaders/flash_attn_cm1.comp        |  14 +-
+ .../vulkan-shaders/flash_attn_cm2.comp        |  16 +-
+ src/llama-graph.cpp                           |   7 +
+ src/llama-kv-cache.cpp                        | 114 ++++++-
+ src/llama-kv-cache.h                          |  19 +-
+ src/llama-memory-hybrid.cpp                   |   6 +
+ src/llama-memory-hybrid.h                     |   3 +
+ src/llama-memory.h                            |   5 +
+ tests/test-fa-segments.cpp                    | 150 +++++++++-
+ 12 files changed, 571 insertions(+), 76 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 62246b355..075768a35 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1449,8 +1449,36 @@ struct vk_flash_attn_push_constants {
+     uint32_t gqa_ratio;
+     uint32_t split_kv;
+     uint32_t k_num;
++
++    // ARIFI lane-196 (per-query source selection): heterogeneous split-k partitions.
++    // k_num stays the LOCAL partition count of one dispatch; k_base/k_total place it inside the
++    // shared split-k scratch and drive the store-path selector (lane-195 trap #1: a 1-partition
++    // ring dispatch with k_num==1 would otherwise take the non-split epilogue and be silently
++    // dropped). m_width/mask_col_base decouple the mask stride from the dispatch's own KV
++    // (lane-195 trap #2). Single-dispatch nodes pass k_base=0, k_total=k_num, m_width=KV,
++    // mask_col_base=0 — bit-identical arithmetic to the old 128-byte block.
++    uint32_t k_base;
++    uint32_t k_total;
++    uint32_t m_width;
++    uint32_t mask_col_base;
++};
++// 144 bytes. Above Vulkan's guaranteed 128-byte minimum ON PURPOSE: the 780M (and virtually every
++// real GPU) reports maxPushConstantsSize = 256. Devices below sizeof() are refused flash attention
++// in supports_op rather than handed a pipeline that cannot be created (lane-195 §3.1).
++static_assert(sizeof(vk_flash_attn_push_constants) <= 144, "sizeof(vk_flash_attn_push_constants) must be <= 144");
++
++// One heterogeneous split-k partition group of a segmented flash-attention node: which slice of
++// the shared scratch this dispatch owns, and where its mask columns start.
++struct vk_fa_seg_part {
++    uint32_t k_local;        // partitions in THIS dispatch (body may split; ring segments are 1)
++    uint32_t split_kv;       // KV rows per partition inside this dispatch
++    uint32_t k_base;         // first partition index in the shared scratch
++    uint32_t k_total;        // total partitions across all dispatches of the node
++    uint32_t mask_col_base;  // first mask column this dispatch covers
++    uint32_t m_width;        // full mask row width (mask->ne[0])
++    uint32_t gqa_ratio;      // COMMON gqa decision for all partitions (1 = off)
++    bool     emit_reduce;    // the last dispatch emits the fp32 online-softmax merge
+ };
+-static_assert(sizeof(vk_flash_attn_push_constants) <= 128, "sizeof(vk_flash_attn_push_constants) must be <= 128");
+ 
+ struct vk_op_push_constants {
+     uint32_t KX;
+@@ -11655,7 +11683,46 @@ static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, co
+     return supported;
+ }
+ 
+-static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * q, const ggml_tensor * k, const ggml_tensor * v, const ggml_tensor * mask, const ggml_tensor * sinks, ggml_tensor * dst) {
++// The split-k heuristic, ONE home: the single-dispatch path and the segmented wrapper both call it,
++// so the wrapper's k_total (baked into every partition's push constants) cannot disagree with what
++// the body dispatch actually does.
++static void ggml_vk_fa_choose_split_k(const vk_device& device, uint32_t gqa_ratio,
++                                      uint32_t workgroups_x, uint32_t workgroups_y, uint32_t workgroups_z,
++                                      uint32_t Br, uint32_t N, uint32_t KV, uint32_t alignment,
++                                      uint32_t * split_kv_out, uint32_t * split_k_out) {
++    uint32_t split_kv = KV;
++    uint32_t split_k = 1;
++
++    // Intel Alchemist prefers more workgroups
++    const uint32_t shader_core_count_multiplier = (device->vendor_id == VK_VENDOR_ID_INTEL && device->architecture != INTEL_XE2) ? 2 : 1;
++
++    // Use a placeholder core count if one isn't available. split_k is a big help for perf.
++    const uint32_t shader_core_count = device->shader_core_count ? device->shader_core_count * shader_core_count_multiplier : 16;
++
++    const uint32_t Tr = CEIL_DIV(N, Br);
++
++    // Try to use split_k when KV is large enough to be worth the overhead.
++    if (gqa_ratio > 1 && workgroups_x <= Br) {
++        split_k = shader_core_count * 2 / (workgroups_x * workgroups_y * workgroups_z);
++    } else if (gqa_ratio <= 1) {
++        uint32_t total_wgs_no_split = Tr * workgroups_y * workgroups_z;
++        if (total_wgs_no_split < shader_core_count * 2) {
++            split_k = shader_core_count * 2 / total_wgs_no_split;
++        }
++    }
++
++    if (split_k > 1) {
++        // Try to evenly split KV into split_k chunks, but it needs to be a multiple
++        // of "align", so recompute split_k based on that.
++        split_kv = ROUNDUP_POW2(std::max(1u, KV / split_k), alignment);
++        split_k = CEIL_DIV(KV, split_kv);
++    }
++
++    *split_kv_out = split_kv;
++    *split_k_out  = split_k;
++}
++
++static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * q, const ggml_tensor * k, const ggml_tensor * v, const ggml_tensor * mask, const ggml_tensor * sinks, ggml_tensor * dst, const vk_fa_seg_part * part = nullptr) {
+     VK_LOG_DEBUG("ggml_vk_flash_attn((" << q << ", name=" << q->name << ", type=" << q->type << ", ne0=" << q->ne[0] << ", ne1=" << q->ne[1] << ", ne2=" << q->ne[2] << ", ne3=" << q->ne[3] << ", nb0=" << q->nb[0] << ", nb1=" << q->nb[1] << ", nb2=" << q->nb[2] << ", nb3=" << q->nb[3];
+     std::cerr << "), (" << k << ", name=" << k->name << ", type=" << k->type << ", ne0=" << k->ne[0] << ", ne1=" << k->ne[1] << ", ne2=" << k->ne[2] << ", ne3=" << k->ne[3] << ", nb0=" << k->nb[0] << ", nb1=" << k->nb[1] << ", nb2=" << k->nb[2] << ", nb3=" << k->nb[3];
+     std::cerr << "), (" << v << ", name=" << v->name << ", type=" << v->type << ", ne0=" << v->ne[0] << ", ne1=" << v->ne[1] << ", ne2=" << v->ne[2] << ", ne3=" << v->ne[3] << ", nb0=" << v->nb[0] << ", nb1=" << v->nb[1] << ", nb2=" << v->nb[2] << ", nb3=" << v->nb[3];
+@@ -11728,7 +11795,9 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
+     };
+     const bool k_quant = k->type != GGML_TYPE_F16 && k->type != GGML_TYPE_BF16 && k->type != GGML_TYPE_F32;
+     const bool v_quant = v->type != GGML_TYPE_F16 && v->type != GGML_TYPE_BF16 && v->type != GGML_TYPE_F32;
+-    const bool use_dequant_kv = k_quant && v_quant && neq1 >= 64 &&
++    // lane-196: a segmented partition reads its tensor IN PLACE — materialising an F16 copy of the
++    // body is the exact cost this design removes, so the dequant-scratch fast path is refused here.
++    const bool use_dequant_kv = part == nullptr && k_quant && v_quant && neq1 >= 64 &&
+                                 is_dense_kv_cache(k) && is_dense_kv_cache(v) &&
+                                 (uint64_t)ggml_nelements(k) * sizeof(ggml_fp16_t) <= ctx->device->properties.limits.maxStorageBufferRange &&
+                                 (uint64_t)ggml_nelements(v) * sizeof(ggml_fp16_t) <= ctx->device->properties.limits.maxStorageBufferRange &&
+@@ -11747,7 +11816,17 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
+     vk_fa_tuning_params tuning_params = get_fa_tuning_params(ctx->device, HSK, HSV, 512, KV, k_type_eff, v_type_eff, f32acc);
+     const uint32_t max_gqa = std::min(tuning_params.block_rows, 32u);
+ 
+-    if (N <= 8 && qk_ratio > 1 && qk_ratio <= max_gqa &&
++    if (part) {
++        // lane-196: the gqa decision must be COMMON across every partition of one node — the gqa
++        // and non-gqa epilogues index the shared scratch differently, so a per-partition
++        // disagreement is a wrong-and-green merge. The wrapper decided once; obey it.
++        if (part->gqa_ratio > 1) {
++            GGML_ASSERT(part->gqa_ratio == qk_ratio);
++            gqa_ratio = qk_ratio;
++            N = gqa_ratio;
++            workgroups_y /= gqa_ratio;
++        }
++    } else if (N <= 8 && qk_ratio > 1 && qk_ratio <= max_gqa &&
+         qk_ratio * nek2 == neq2 && nek2 == nev2 && nem2 <= 1) {
+         // grouped query attention - make the N dimension equal to gqa_ratio, reduce
+         // workgroups proportionally in y dimension. The shader will detect gqa_ratio > 1
+@@ -11792,6 +11871,13 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
+         aligned = false;
+     }
+ 
++    // lane-196 trap #3: ring segments have small arbitrary row counts, and the body partition of a
++    // segmented node ends at an arbitrary split. The arithmetic above already lands on false for
++    // those — FORCED rather than left to arithmetic, per the lane-195 classification.
++    if (part) {
++        aligned = false;
++    }
++
+     float scale         = 1.0f;
+     float max_bias      = 0.0f;
+     float logit_softcap = 0.0f;
+@@ -11805,8 +11891,12 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
+     }
+ 
+     // Only use mask opt when the mask is fairly large. This hasn't been tuned extensively.
+-    bool use_mask_opt = mask && nem1 >= 32 && nem0 * nem1 > 32768 && nem0 >= tuning_params.block_cols * 16
++    // lane-196 trap #4: mask-opt strides are computed against the dispatch's own KV and segment
++    // offsets are not Bc-aligned — REFUSED BY THE CONDITION on segmented dispatches, and asserted
++    // below so an edit that re-enables it cannot drift in silently.
++    bool use_mask_opt = part == nullptr && mask && nem1 >= 32 && nem0 * nem1 > 32768 && nem0 >= tuning_params.block_cols * 16
+                         && (ctx->device->architecture != vk_device_architecture::AMD_GCN || HSK > 256 || HSV > 256);
++    GGML_ASSERT(!(part && use_mask_opt));
+     vk_fa_pipeline_state fa_pipeline_state = get_fa_pipeline_state(ctx->device, tuning_params, HSK, HSV, aligned, f32acc,
+                                                                    mask != nullptr, use_mask_opt, logit_softcap != 0, k_type_eff, v_type_eff);
+ 
+@@ -11830,40 +11920,31 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
+     uint32_t split_kv = KV;
+     uint32_t split_k = 1;
+ 
+-    // Intel Alchemist prefers more workgroups
+-    const uint32_t shader_core_count_multiplier = (ctx->device->vendor_id == VK_VENDOR_ID_INTEL && ctx->device->architecture != INTEL_XE2) ? 2 : 1;
+-
+-    // Use a placeholder core count if one isn't available. split_k is a big help for perf.
+-    const uint32_t shader_core_count = ctx->device->shader_core_count ? ctx->device->shader_core_count * shader_core_count_multiplier : 16;
+-
+     const uint32_t Br = fa_pipeline_state.Br;
+     const uint32_t Bc = fa_pipeline_state.Bc;
+ 
+     GGML_ASSERT(Br == pipeline->wg_denoms[0]);
+     const uint32_t Tr = CEIL_DIV(N, Br);
+ 
+-    // Try to use split_k when KV is large enough to be worth the overhead.
+-    if (gqa_ratio > 1 && workgroups_x <= Br) {
+-        split_k = shader_core_count * 2 / (workgroups_x * workgroups_y * workgroups_z);
+-    } else if (gqa_ratio <= 1) {
+-        uint32_t total_wgs_no_split = Tr * workgroups_y * workgroups_z;
+-        if (total_wgs_no_split < shader_core_count * 2) {
+-            split_k = shader_core_count * 2 / total_wgs_no_split;
+-        }
++    if (part) {
++        // lane-196: the wrapper already ran the ONE split-k heuristic for the body and fixed the
++        // ring segments at one partition each; this dispatch obeys its slice.
++        split_k  = part->k_local;
++        split_kv = part->split_kv;
++    } else {
++        ggml_vk_fa_choose_split_k(ctx->device, gqa_ratio, workgroups_x, workgroups_y, workgroups_z,
++                                  Br, N, KV, alignment, &split_kv, &split_k);
+     }
+ 
+-    if (split_k > 1) {
+-        // Try to evenly split KV into split_k chunks, but it needs to be a multiple
+-        // of "align", so recompute split_k based on that.
+-        split_kv = ROUNDUP_POW2(std::max(1u, KV / split_k), alignment);
+-        split_k = CEIL_DIV(KV, split_kv);
+-    }
++    // Total partitions the reduce will see: for a segmented node this spans EVERY dispatch of the
++    // node, and it is what replaces k_num in the shaders' scratch offsets and store-path selector.
++    const uint32_t k_total = part ? part->k_total : split_k;
+ 
+     // Reserve space for split_k temporaries. For each split x batch, we need to store the O matrix (D x ne1)
+     // and the per-row m and L values (ne1 rows). We store all the matrices first, followed by the rows.
+     // For matrices, the order is (inner to outer) [HSV, ne1, k, ne2, ne3].
+     // For L/M, the order is (inner to outer) [ne1, k, ne2, ne3].
+-    const uint64_t split_k_size = split_k > 1 ? (HSV * ne1 * sizeof(float) + ne1 * sizeof(float) * 2) * split_k * ne2 * ne3 : 0;
++    const uint64_t split_k_size = k_total > 1 ? (HSV * ne1 * sizeof(float) + ne1 * sizeof(float) * 2) * k_total * ne2 * ne3 : 0;
+     if (split_k_size > ctx->device->properties.limits.maxStorageBufferRange) {
+         GGML_ABORT("Requested preallocation size is too large");
+     }
+@@ -11973,10 +12054,17 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
+                                               v_stride, nbv2_eff, nbv3_eff,
+                                               scale, max_bias, logit_softcap,
+                                               mask_n_head_log2, m0, m1,
+-                                              gqa_ratio, split_kv, split_k };
++                                              gqa_ratio, split_kv, split_k,
++                                              part ? part->k_base : 0, k_total,
++                                              part ? part->m_width : KV,
++                                              part ? part->mask_col_base : 0 };
+ 
+-    if (split_k > 1) {
+-        ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_flash_attn_split_k_reduce, 1);
++    if (k_total > 1) {
++        const bool emit_reduce = part == nullptr || part->emit_reduce;
++
++        if (emit_reduce) {
++            ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_flash_attn_split_k_reduce, 1);
++        }
+ 
+         if (ctx->prealloc_split_k_need_sync) {
+             ggml_vk_sync_buffers(ctx, subctx);
+@@ -11997,12 +12085,16 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
+                                     {q_buf, k_buf, v_buf, mask_buf, sinks_buf, split_k_buf, mask_opt_buf},
+                                     pc, { dispatch_x, workgroups_y, workgroups_z });
+ 
+-        ggml_vk_sync_buffers(ctx, subctx);
+-        const vk_op_flash_attn_split_k_reduce_push_constants pc2 = { HSV, (uint32_t)ne1, (uint32_t)ne2, (uint32_t)ne3, split_k, (sinks != nullptr) };
+-        ggml_vk_dispatch_pipeline(ctx, subctx, ctx->device->pipeline_flash_attn_split_k_reduce,
+-                                    {split_k_buf, sinks_buf, dst_buf},
+-                                    pc2, { (uint32_t)ne1, HSV, (uint32_t)(ne2 * ne3) });
+-        ctx->prealloc_split_k_need_sync = true;
++        if (emit_reduce) {
++            // For a segmented node this is the ONE merge over every dispatch's partitions — the
++            // reduce is what makes heterogeneous split-k a single online softmax.
++            ggml_vk_sync_buffers(ctx, subctx);
++            const vk_op_flash_attn_split_k_reduce_push_constants pc2 = { HSV, (uint32_t)ne1, (uint32_t)ne2, (uint32_t)ne3, k_total, (sinks != nullptr) };
++            ggml_vk_dispatch_pipeline(ctx, subctx, ctx->device->pipeline_flash_attn_split_k_reduce,
++                                        {split_k_buf, sinks_buf, dst_buf},
++                                        pc2, { (uint32_t)ne1, HSV, (uint32_t)(ne2 * ne3) });
++            ctx->prealloc_split_k_need_sync = true;
++        }
+     } else {
+         if (gqa_ratio > 1) {
+             // When using gqa, we want one actual workgroup per batch, so cancel out wg_denoms
+@@ -12018,6 +12110,88 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
+     }
+ }
+ 
++// ARIFI lane-196 — Design B: heterogeneous split-k flash attention (per-query source selection).
++//
++// One FA node whose KV window lives in several tensors at their own dtypes: the quantized body is
++// read IN PLACE (fa_kv_ok already admits q4_0 K/V — the tail-off path), and each exact F16 ring
++// segment is read IN PLACE as one more split-k partition. flash_attn_split_k_reduce is already a
++// general fp32 online-softmax merge over partitions and does not care where they came from.
++// Nothing is materialised, nothing is converted, and no F16 intermediate exists for the body —
++// lane-194's body-leg fidelity loss cannot occur BY CONSTRUCTION (lane-195 §1).
++static void ggml_vk_flash_attn_segmented(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * q, const ggml_tensor * k, const ggml_tensor * v, const ggml_tensor * mask, const ggml_tensor * sinks, ggml_tensor * dst) {
++    const int n_seg = ggml_flash_attn_ext_n_segments(dst);
++    GGML_ASSERT(n_seg >= 1 && n_seg <= 2);
++    GGML_ASSERT(mask != nullptr);
++    // All partitions share one fp32 scratch and one reduce; segmented nodes are F32-prec only
++    // (the graph side sets it, the CPU reference forces it).
++    GGML_ASSERT(ggml_flash_attn_ext_get_prec(dst) == GGML_PREC_F32);
++
++    const uint32_t HSK  = (uint32_t)k->ne[0];
++    const uint32_t HSV  = (uint32_t)v->ne[0];
++    const uint32_t neq1 = (uint32_t)q->ne[1];
++    const uint32_t neq2 = (uint32_t)q->ne[2];
++    const uint32_t neq3 = (uint32_t)q->ne[3];
++    const uint32_t nek2 = (uint32_t)k->ne[2];
++    const uint32_t nev2 = (uint32_t)v->ne[2];
++    const uint32_t nem2 = (uint32_t)mask->ne[2];
++    const uint32_t m_width = (uint32_t)mask->ne[0];
++
++    // prec is F32 (asserted above), so the callee will compute f32acc = true for every partition;
++    // the tuning pre-pass below must see the same value.
++    const bool f32acc = true;
++
++    const ggml_tensor * parts_kv[3][2] = { { k, v }, { dst->src[5], dst->src[6] }, { dst->src[7], dst->src[8] } };
++
++    // ONE gqa decision for the whole node — the gqa and non-gqa epilogues index the shared scratch
++    // differently, so a per-partition disagreement is a wrong-and-green merge (lane-196 §1 step 2).
++    // gqa engages only if EVERY partition's pipeline admits the ratio.
++    const uint32_t qk_ratio = neq2 / nek2;
++    bool gqa_ok = neq1 <= 8 && qk_ratio > 1 && qk_ratio * nek2 == neq2 && nek2 == nev2 && nem2 <= 1;
++    for (int i = 0; i < 1 + n_seg && gqa_ok; ++i) {
++        vk_fa_tuning_params tp = get_fa_tuning_params(ctx->device, HSK, HSV, 512, (uint32_t)parts_kv[i][0]->ne[1],
++                                                      parts_kv[i][0]->type, parts_kv[i][1]->type, f32acc);
++        gqa_ok = qk_ratio <= std::min(tp.block_rows, 32u);
++    }
++    const uint32_t gqa_ratio = gqa_ok ? qk_ratio : 1;
++
++    // The body's split count, from the ONE heuristic the callee also uses (extracted so the
++    // k_total baked into every partition's push constants cannot disagree with the body dispatch).
++    const uint32_t KV_body = (uint32_t)k->ne[1];
++    const uint32_t N_eff   = gqa_ok ? gqa_ratio : neq1;
++    vk_fa_tuning_params tuning_body = get_fa_tuning_params(ctx->device, HSK, HSV, N_eff, KV_body, k->type, v->type, f32acc);
++    uint32_t wx = neq1, wy = neq2, wz = neq3;
++    if (gqa_ok) {
++        wy /= gqa_ratio;
++    }
++    uint32_t body_split_kv = KV_body, body_split_k = 1;
++    ggml_vk_fa_choose_split_k(ctx->device, gqa_ratio, wx, wy, wz, tuning_body.block_rows, N_eff, KV_body,
++                              tuning_body.block_cols, &body_split_kv, &body_split_k);
++    body_split_k = std::max(body_split_k, 1u);
++
++    const uint32_t k_total = body_split_k + (uint32_t)n_seg;
++
++    // Body: the quantized cache read in place, partitions [0, body_split_k).
++    vk_fa_seg_part part = { body_split_k, body_split_kv, 0, k_total, 0, m_width, gqa_ratio, false };
++    ggml_vk_flash_attn(ctx, subctx, q, k, v, mask, sinks, dst, &part);
++
++    // Ring segments: read in place, ONE partition each. Mask column bases are DERIVED from the
++    // row counts — the same derivation the CPU reference uses, so they cannot disagree with the
++    // tensors. The LAST dispatch emits the one reduce over all k_total partitions.
++    uint32_t k_base = body_split_k;
++    uint32_t col    = KV_body;
++    for (int i = 0; i < n_seg; ++i) {
++        const ggml_tensor * sk = parts_kv[1 + i][0];
++        const ggml_tensor * sv = parts_kv[1 + i][1];
++        const uint32_t rows = (uint32_t)sk->ne[1];
++        part = { 1, rows, k_base, k_total, col, m_width, gqa_ratio, i == n_seg - 1 };
++        ggml_vk_flash_attn(ctx, subctx, q, sk, sv, mask, sinks, dst, &part);
++        k_base += 1;
++        col    += rows;
++    }
++    // the KV columns [ body | seg0 | seg1 ] must tile the mask row exactly
++    GGML_ASSERT(col == m_width);
++}
++
+ static vk_conv_shapes ggml_vk_conv_select_shape(ggml_backend_vk_context * ctx, uint32_t K, uint32_t NPQ) {
+     auto n_tiles = [&](vk_conv_shapes s) {
+         return CEIL_DIV(K, vk_conv_block_sizes[s].K)
+@@ -16956,7 +17130,13 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
+         break;
+ 
+     case GGML_OP_FLASH_ATTN_EXT:
+-        ggml_vk_flash_attn(ctx, compute_ctx, src0, src1, src2, src3, node->src[4], node);
++        if (ggml_flash_attn_ext_n_segments(node) > 0) {
++            // lane-196: per-query source selection — body + ring segments as heterogeneous
++            // split-k partitions, merged by the one reduce.
++            ggml_vk_flash_attn_segmented(ctx, compute_ctx, src0, src1, src2, src3, node->src[4], node);
++        } else {
++            ggml_vk_flash_attn(ctx, compute_ctx, src0, src1, src2, src3, node->src[4], node);
++        }
+ 
+         break;
+ 
+@@ -19722,6 +19902,29 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                     // scalar/coopmat1 FA uses subgroupShuffle/subgroupAll
+                     return false;
+                 }
++                // ARIFI lane-196: the push-constant block is 144 B — above Vulkan's guaranteed
++                // 128-B minimum. A device at the floor cannot create the pipelines at all, so it
++                // is refused FA here (falls back to the non-FA path) rather than crashing at
++                // pipeline creation. The 780M (and virtually every real GPU) reports 256.
++                if (device->properties.limits.maxPushConstantsSize < sizeof(vk_flash_attn_push_constants)) {
++                    return false;
++                }
++                // ARIFI lane-196: segmented FA (per-query source selection) — every segment must
++                // itself be an admitted FA K/V type, and the mask column accounting needs a mask.
++                {
++                    const int n_seg = ggml_flash_attn_ext_n_segments(op);
++                    if (n_seg > 0) {
++                        if (!op->src[3]) {
++                            return false;
++                        }
++                        for (int s = 0; s < n_seg; ++s) {
++                            if (!op->src[5 + 2*s] || !op->src[6 + 2*s] ||
++                                !fa_kv_ok(op->src[5 + 2*s]->type) || !fa_kv_ok(op->src[6 + 2*s]->type)) {
++                                return false;
++                            }
++                        }
++                    }
++                }
+                 return true;
+             }
+         case GGML_OP_GET_ROWS:
+@@ -20789,6 +20992,11 @@ static void ggml_vk_check_results_0(ggml_backend_vk_context * ctx, ggml_cgraph *
+             if (src_clone[4]) {
+                 ggml_flash_attn_ext_add_sinks(tensor_clone, src_clone[4]);
+             }
++            ggml_flash_attn_ext_set_prec(tensor_clone, ggml_flash_attn_ext_get_prec(tensor));
++            if (ggml_flash_attn_ext_n_segments(tensor) > 0) {
++                // lane-196: carry the per-query segments into the CHECK_RESULTS clone
++                ggml_flash_attn_ext_add_segments(tensor_clone, src_clone[5], src_clone[6], src_clone[7], src_clone[8]);
++            }
+         } else if (tensor->op == GGML_OP_MUL_MAT) {
+             tensor_clone = ggml_mul_mat(ggml_ctx, src_clone[0], src_clone[1]);
+         } else if (tensor->op == GGML_OP_MUL_MAT_ID) {
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn.comp b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn.comp
+index 5d37405d0..c817e0469 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn.comp
+@@ -190,9 +190,9 @@ void main() {
+     // FaBlockBytesK/V == 2 for f16, 16 for f32, ggml block byte size for quants.
+     uint32_t k_offset = (ik2*p.nb12 + ik3*p.nb13) / FaBlockBytesK;
+     uint32_t v_offset = (iv2*p.nb22 + iv3*p.nb23) / FaBlockBytesV;
+-    uint32_t m_offset = gqa_iq1*KV;
++    uint32_t m_offset = gqa_iq1*p.m_width + p.mask_col_base;
+     if (p.nem2 != 1 || p.nem3 != 1) {
+-        m_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * p.nem1 * KV;
++        m_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * p.nem1 * p.m_width;
+         mo_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * CEIL_DIV(p.nem1, Br) * mo_stride;
+     }
+ 
+@@ -670,10 +670,10 @@ void main() {
+ 
+     // If there is split_k, then the split_k resolve shader does the final
+     // division by L. Store the intermediate O value and per-row m and L values.
+-    if (p.k_num > 1) {
++    if (p.k_total > 1) {
+         if (p.gqa_ratio > 1) {
+             // note: O and Q have swapped coord 1,2.
+-            uint32_t o_offset = HSV * p.ne1 * (split_k_index + p.k_num * (gqa_iq1 + p.ne2 * iq3)) / 4;
++            uint32_t o_offset = HSV * p.ne1 * ((p.k_base + split_k_index) + p.k_total * (gqa_iq1 + p.ne2 * iq3)) / 4;
+ 
+             [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+                 const uint row = tile_row(r);
+@@ -684,7 +684,7 @@ void main() {
+                 }
+             }
+ 
+-            o_offset = HSV * p.ne1 * p.k_num * p.ne2 * p.ne3 + p.ne1 * 2 * (split_k_index + p.k_num * (gqa_iq1 + p.ne2 * iq3));
++            o_offset = HSV * p.ne1 * p.k_total * p.ne2 * p.ne3 + p.ne1 * 2 * ((p.k_base + split_k_index) + p.k_total * (gqa_iq1 + p.ne2 * iq3));
+             [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+                 const uint row = tile_row(r);
+                 if (row < N) {
+@@ -698,7 +698,7 @@ void main() {
+                 const uint global_row = i * Br + row;
+ 
+                 if (global_row < N) {
+-                    uint32_t o_offset = HSV * p.ne1 * (split_k_index + p.k_num * (global_row + p.ne2 * iq3)) / 4;
++                    uint32_t o_offset = HSV * p.ne1 * ((p.k_base + split_k_index) + p.k_total * (global_row + p.ne2 * iq3)) / 4;
+ 
+                     [[unroll]] for (uint32_t d = 0; d < HSV_per_thread / 4; ++d) {
+                         data_ov4[o_offset + iq2 * HSV/4 + d * D_split + d_tid] = D_TYPEV4(Of[r][d]);
+@@ -706,7 +706,7 @@ void main() {
+                 }
+ 
+                 if (global_row < N && d_tid == 0 && col_tid == 0) {
+-                    uint32_t lm_offset = HSV * p.ne1 * p.k_num * p.ne2 * p.ne3 + p.ne1 * 2 * (split_k_index + p.k_num * (global_row + p.ne2 * iq3));
++                    uint32_t lm_offset = HSV * p.ne1 * p.k_total * p.ne2 * p.ne3 + p.ne1 * 2 * ((p.k_base + split_k_index) + p.k_total * (global_row + p.ne2 * iq3));
+                     data_o[lm_offset + iq2] = D_TYPE(Lf[r]);
+                     data_o[lm_offset + p.ne1 + iq2] = D_TYPE(Mf[r]);
+                 }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_base.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_base.glsl
+index 0ce4503a8..370df95d8 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_base.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_base.glsl
+@@ -70,6 +70,21 @@ layout (push_constant) uniform parameter {
+     uint32_t gqa_ratio;
+     uint32_t split_kv;
+     uint32_t k_num;
++
++    // ARIFI lane-196 (per-query source selection): one FA node may be dispatched as SEVERAL
++    // heterogeneous split-k partitions (q4_0 body in place + F16 ring segments in place), merged by
++    // flash_attn_split_k_reduce. k_num stays the LOCAL partition count of THIS dispatch (it decodes
++    // gl_WorkGroupID.x); k_base is where this dispatch's partitions start in the shared scratch;
++    // k_total is the partition count the reduce will see and REPLACES k_num in every scratch offset
++    // and in the store-path selector — a 1-partition ring dispatch with k_total > 1 must take the
++    // split epilogue or its output is silently dropped (lane-195 trap #1). m_width is the FULL mask
++    // row width (the dispatch's KV is only its own column count) and mask_col_base folds into
++    // m_offset so no mask read site changes. Single-dispatch nodes pass
++    // k_base=0, k_total=k_num, m_width=KV, mask_col_base=0 — bit-identical arithmetic.
++    uint32_t k_base;
++    uint32_t k_total;
++    uint32_t m_width;
++    uint32_t mask_col_base;
+ } p;
+ 
+ #define SINK_ENABLE_BIT (1<<24)
+@@ -207,7 +222,9 @@ void init_indices()
+     // "p.gqa_ratio >> 16" is just a roundabout way of writing zero
+     // that prevents the compiler from folding the "&" through the select
+     // and breaking the alignment detection.
+-    m_stride = (p.gqa_ratio > 1) ? (p.gqa_ratio >> 16) : KV;
++    // lane-196: the mask row is m_width wide (== KV except on segmented dispatches, whose KV is
++    // only their own column count — lane-195 trap #2, KV-as-stride-proxy).
++    m_stride = (p.gqa_ratio > 1) ? (p.gqa_ratio >> 16) : p.m_width;
+ }
+ 
+ // Bias applied to softmax to stay in fp16 range.
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp
+index f589439d9..7a7bbc52c 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp
+@@ -141,9 +141,9 @@ void main() {
+     // FaBlockBytesK/V == 2 for f16 (sizeof f16) and == 16 for f32 (vec4) and == ggml block size for quants.
+     uint32_t k_offset = (ik2*p.nb12 + ik3*p.nb13) / FaBlockBytesK;
+     uint32_t v_offset = (iv2*p.nb22 + iv3*p.nb23) / FaBlockBytesV;
+-    uint32_t m_offset = gqa_iq1*KV;
++    uint32_t m_offset = gqa_iq1*p.m_width + p.mask_col_base;
+     if (p.nem2 != 1 || p.nem3 != 1) {
+-        m_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * p.nem1 * KV;
++        m_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * p.nem1 * p.m_width;
+         mo_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * CEIL_DIV(p.nem1, Br) * mo_stride;
+     }
+ 
+@@ -541,10 +541,10 @@ void main() {
+ 
+     // If there is split_k, then the split_k resolve shader does the final
+     // division by L. Store the intermediate O value and per-row m and L values.
+-    if (p.k_num > 1) {
++    if (p.k_total > 1) {
+         if (p.gqa_ratio > 1) {
+             // note: O and Q have swapped coord 1,2.
+-            uint32_t o_offset = HSV * p.ne1 * (split_k_index + p.k_num * (gqa_iq1 + p.ne2 * iq3)) / 4;
++            uint32_t o_offset = HSV * p.ne1 * ((p.k_base + split_k_index) + p.k_total * (gqa_iq1 + p.ne2 * iq3)) / 4;
+ 
+             [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+                 if (tile_row(r) < N) {
+@@ -557,7 +557,7 @@ void main() {
+                 }
+             }
+ 
+-            o_offset = HSV * p.ne1 * p.k_num * p.ne2 * p.ne3 + p.ne1 * 2 * (split_k_index + p.k_num * (gqa_iq1 + p.ne2 * iq3));
++            o_offset = HSV * p.ne1 * p.k_total * p.ne2 * p.ne3 + p.ne1 * 2 * ((p.k_base + split_k_index) + p.k_total * (gqa_iq1 + p.ne2 * iq3));
+             [[unroll]] for (uint32_t r = 0; r < rows_per_thread; ++r) {
+                 if (tile_row(r) < N) {
+                     perElemOpStoreCol0(tile_row(r), 0u, ACC_TYPE(Lf[r]), o_offset, iq2, N);
+@@ -570,7 +570,7 @@ void main() {
+                 const uint global_row = i * Br + row;
+ 
+                 if (global_row < N) {
+-                    uint32_t o_offset = HSV * p.ne1 * (split_k_index + p.k_num * (global_row + p.ne2 * iq3)) / 4;
++                    uint32_t o_offset = HSV * p.ne1 * ((p.k_base + split_k_index) + p.k_total * (global_row + p.ne2 * iq3)) / 4;
+ 
+                     [[unroll]] for (uint32_t d0 = 0; d0 < HSV / 4; d0 += threads_per_rowgroup) {
+                         const uint d = d0 + col_tid;
+@@ -580,7 +580,7 @@ void main() {
+                 }
+ 
+                 if (global_row < N && col_tid == 0) {
+-                    uint32_t lm_offset = HSV * p.ne1 * p.k_num * p.ne2 * p.ne3 + p.ne1 * 2 * (split_k_index + p.k_num * (global_row + p.ne2 * iq3));
++                    uint32_t lm_offset = HSV * p.ne1 * p.k_total * p.ne2 * p.ne3 + p.ne1 * 2 * ((p.k_base + split_k_index) + p.k_total * (global_row + p.ne2 * iq3));
+                     data_o[lm_offset + iq2] = D_TYPE(Lf[r]);
+                     data_o[lm_offset + p.ne1 + iq2] = D_TYPE(Mf[r]);
+                 }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm2.comp b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm2.comp
+index 317411153..8938e9823 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm2.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm2.comp
+@@ -151,7 +151,7 @@ D_TYPE perElemOpNonGqaSplitKStore(const in uint32_t r, const in uint32_t c, cons
+     uint32_t global_row = i * Br + r;
+     if (global_row < N && c < HSV) {
+         uint32_t o_off = HSV * p.ne1
+-            * (split_k_index + p.k_num * (global_row + p.ne2 * iq3));
++            * ((p.k_base + split_k_index) + p.k_total * (global_row + p.ne2 * iq3));
+         data_o[o_off + iq2 * HSV + c] = D_TYPE(elem);
+     }
+     return elem;
+@@ -161,8 +161,8 @@ D_TYPE perElemOpNonGqaSplitKStore(const in uint32_t r, const in uint32_t c, cons
+ ACC_TYPE perElemOpNonGqaSplitKStoreCol0(const in uint32_t r, const in uint32_t c, const in ACC_TYPE elem, const in uint32_t lm_base, const in uint32_t iq2, const in uint32_t N) {
+     uint32_t global_row = i * Br + r;
+     if (global_row < N && c == 0) {
+-        uint32_t lm_off = HSV * p.ne1 * p.k_num * p.ne2 * p.ne3
+-            + p.ne1 * 2 * (split_k_index + p.k_num * (global_row + p.ne2 * iq3));
++        uint32_t lm_off = HSV * p.ne1 * p.k_total * p.ne2 * p.ne3
++            + p.ne1 * 2 * ((p.k_base + split_k_index) + p.k_total * (global_row + p.ne2 * iq3));
+         data_o[lm_off + lm_base + iq2] = D_TYPE(elem);
+     }
+     return elem;
+@@ -242,9 +242,9 @@ void main() {
+     // mo_offset will point to the tile starting at row i*Br and col 0
+     uint32_t mo_offset = mo_stride * i;
+ 
+-    uint32_t m_offset = gqa_iq1*KV * 2 /*sizeof(float16_t)*/;
++    uint32_t m_offset = (gqa_iq1*p.m_width + p.mask_col_base) * 2 /*sizeof(float16_t)*/;
+     if (p.nem2 != 1 || p.nem3 != 1) {
+-        m_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * p.nem1 * KV * 2 /*sizeof(float16_t)*/;
++        m_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * p.nem1 * p.m_width * 2 /*sizeof(float16_t)*/;
+         mo_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * CEIL_DIV(p.nem1, Br) * mo_stride;
+     }
+ 
+@@ -406,15 +406,15 @@ void main() {
+ 
+     // If there is split_k, then the split_k resolve shader does the final
+     // division by L. Store the intermediate O value and per-row m and L values.
+-    if (p.k_num > 1) {
++    if (p.k_total > 1) {
+         coopmat<D_TYPE, gl_ScopeWorkgroup, Br, HSV_pad, gl_MatrixUseAccumulator> O_D = coopmat<D_TYPE, gl_ScopeWorkgroup, Br, HSV_pad, gl_MatrixUseAccumulator>(O);
+ 
+         if (p.gqa_ratio > 1) {
+             // note: O and Q have swapped coord 1,2.
+-            uint32_t o_offset = HSV * p.ne1 * (split_k_index + p.k_num * (gqa_iq1 + p.ne2 * iq3));
++            uint32_t o_offset = HSV * p.ne1 * ((p.k_base + split_k_index) + p.k_total * (gqa_iq1 + p.ne2 * iq3));
+             coopMatPerElementNV(O_D, O_D, perElemOpGqaStore, o_offset, iq2, N);
+ 
+-            o_offset = HSV * p.ne1 * p.k_num * p.ne2 * p.ne3 + p.ne1 * 2 * (split_k_index + p.k_num * (gqa_iq1 + p.ne2 * iq3));
++            o_offset = HSV * p.ne1 * p.k_total * p.ne2 * p.ne3 + p.ne1 * 2 * ((p.k_base + split_k_index) + p.k_total * (gqa_iq1 + p.ne2 * iq3));
+             coopMatPerElementNV(L, L, perElemOpStoreCol0, o_offset, iq2, N);
+             coopMatPerElementNV(M, M, perElemOpStoreCol0, o_offset + p.ne1, iq2, N);
+         } else {
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index dd40f9a60..0faa9ebdd 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -2778,6 +2778,13 @@ ggml_tensor * llm_graph_context::build_attn_mha(
+         ggml_flash_attn_ext_set_n_kv_max(cur, static_cast<int32_t>(n_kv_max));
+         ggml_flash_attn_ext_set_prec (cur, GGML_PREC_F32);
+ 
++        // lane-196 per-query source selection: if get_k/get_v stashed exact-ring segments for this
++        // layer, attach them as extra FA sources (heterogeneous split-k partitions, one online
++        // softmax). No-op for every other memory type and whenever the tail composes.
++        if (mctx) {
++            mctx->fa_attach_segments(ctx0, cur);
++        }
++
+         // TurboQuant: inverse WHT on FA output when V values are WHT-rotated.
+         // For MLA, V is a view of K with different ne[0] (e.g. V=512, K=576).
+         // Group size must come from K (which determines the WHT rotation), not V.
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index 600e0e6a6..e453bc3ea 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -168,6 +168,25 @@ static bool llama_kv_tail_f16_compose() {
+     return cached != 0;
+ }
+ 
++// lane-196 Design B: PER-QUERY SOURCE SELECTION. LLAMA_KV_TAIL_PERQ=1 stops materialising the
++// attention window entirely: the quantized body is handed to flash attention IN PLACE (the
++// tail-off kernel — fa_kv_ok already admits q4_0 K/V) and the exact F16 ring segments ride the
++// SAME FA node as extra sources, dispatched as heterogeneous split-k partitions and merged by the
++// fp32 online-softmax reduce. No compose scratch, no dtype conversion, no F16 intermediate for the
++// body — lane-194's body-leg fidelity mechanism cannot occur by construction (lane-195 §1).
++// Default OFF keeps every shipped arm byte-identical; NORING=1 wins over it (the control arm must
++// stay a one-variable control of the COMPOSE path).
++static bool llama_kv_tail_perq() {
++    static int cached = -1;
++
++    if (cached < 0) {
++        const char * s = getenv("LLAMA_KV_TAIL_PERQ");
++        cached = (s && atoi(s) != 0) ? 1 : 0;
++    }
++
++    return cached != 0;
++}
++
+ static bool llama_kv_tail_broken_env() {
+     static int cached = -1;
+ 
+@@ -533,9 +552,14 @@ llama_kv_cache::llama_kv_cache(
+                 // than a skipped test. Any F16 claim must quote this line.
+                 const bool f16_req = llama_kv_tail_f16_compose();
+                 const bool f16_eff = f16_req && layer_type_k == GGML_TYPE_Q4_0 && layer_type_v == GGML_TYPE_Q4_0;
++                // lane-196: NAME THE READ MODE too — a fidelity row without "mode=per-query" in
++                // its log was measuring the compose, not the per-query path (same vacuous-green
++                // law as the compose type line below).
++                const bool perq = llama_kv_tail_perq() && !llama_kv_tail_noring();
+                 LLAMA_LOG_INFO("%s: KV precision tail ON - %u exact F16 cells per layer beside a %s/%s body; "
+-                        "compose=%s%s\n",
++                        "mode=%s; compose=%s%s\n",
+                         __func__, tail_n, ggml_type_name(layer_type_k), ggml_type_name(layer_type_v),
++                        perq ? "per-query" : "compose",
+                         f16_eff ? "F16" : "F32",
+                         (f16_req && !f16_eff) ? " (F16 REQUESTED BUT REFUSED: body is not q4_0/q4_0)" : "");
+             }
+@@ -1791,7 +1815,8 @@ ggml_tensor * llama_kv_cache::tail_pending_v(int32_t il) const {
+ // the cpy_* return value and the attention output.
+ ggml_tensor * llama_kv_cache::tail_compose(
+         ggml_context * ctx, ggml_tensor * body, ggml_tensor * ring,
+-        int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il) const {
++        int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il,
++        ggml_tensor ** perq_pend) const {
+     GGML_UNUSED(il);
+ 
+     const int64_t n_head_kv = body->ne[1];
+@@ -1832,6 +1857,43 @@ ggml_tensor * llama_kv_cache::tail_compose(
+         }
+     }
+ 
++    // lane-196 Design B: never materialise. The body view is returned BARE (flash attention reads
++    // q4_0 in place — the tail-off kernel), and the ring segments are stashed as RAW F16 views for
++    // build_attn_mha to attach as extra sources on the FA node (heterogeneous split-k partitions
++    // merged by the fp32 reduce). ggml_concat disappears from the graph. Falls through to the
++    // shipped compose — never to a bare body-only window, which would drop the ring silently —
++    // when the ring has nothing trustworthy (n_tail <= 0) or the whole window is ring (split == 0,
++    // session start: a zero-row FA source is not worth a special case).
++    if (perq_pend != nullptr && llama_kv_tail_perq() && !llama_kv_tail_noring() &&
++        n_tail > 0 && split > 0) {
++        if (perq_pend[0] != nullptr || perq_pend[1] != nullptr) {
++            // the previous layer's segments were never attached: the FA node they belonged to was
++            // not built (kq_b path?), so that layer attended over its body only. Refuse the
++            // feature for the session rather than keep silently dropping the ring.
++            tail_break("per-query ring segments were stashed but never attached to a flash-attention node");
++            perq_pend[0] = perq_pend[1] = nullptr;
++        } else {
++            const int64_t n_hi = std::min<int64_t>(n_tail, (int64_t) tail_n - rot);
++            const int64_t n_lo = n_tail - n_hi;
++
++            auto raw_seg = [&](int64_t i0, int64_t n) -> ggml_tensor * {
++                return ggml_view_4d(ctx, ring, head_eff, n_head_kv, n, 1,
++                        ggml_row_size(ring->type, head_eff),
++                        ring->nb[1],
++                        ring->nb[1]*n,
++                        i0*ring->nb[1]);
++            };
++
++            // rot < tail_n always, so the hi segment is never empty while n_tail > 0
++            perq_pend[0] = raw_seg(rot, n_hi);
++            perq_pend[1] = n_lo > 0 ? raw_seg(0, n_lo) : nullptr;
++
++            // the FA columns are [ body | hi | lo ]: the body partition covers [0, split) only
++            return ggml_view_4d(ctx, body, body->ne[0], body->ne[1], split, 1,
++                    body->nb[1], body->nb[2], body->nb[3], 0);
++        }
++    }
++
+     // lane-194: the compose target. F16 halves the materialised window, and is admitted ONLY
+     // when the body is q4_0 - that is the one type with a quant->F16 Vulkan cpy pipeline
+     // (ARIFI-SYNC-SET cpy.quant_to_f16). Asking for F16 over a q5_0/q8_0 body would make
+@@ -1899,6 +1961,46 @@ ggml_tensor * llama_kv_cache::tail_compose(
+     return out ? out : body;
+ }
+ 
++// lane-196: attach the per-query ring segments stashed by tail_compose to the flash-attention
++// node built for this layer. The segments get the SAME permute build_attn_mha applies to K/V, so
++// they arrive in FA layout [head, rows, n_head_kv, 1]; mask column bases are derived from row
++// counts downstream (ggml + CPU + Vulkan all derive, none is passed). Consumed per layer:
++// get_k -> get_v -> build_attn_mha, strictly sequential within one graph build.
++void llama_kv_cache::fa_attach_segments(ggml_context * ctx, ggml_tensor * fa) const {
++    if (tail_perq_k[0] == nullptr && tail_perq_v[0] == nullptr) {
++        return;
++    }
++
++    // K and V must have stashed the SAME segmentation (same layer, same split, same rotation)
++    if (tail_perq_k[0] == nullptr || tail_perq_v[0] == nullptr ||
++        (tail_perq_k[1] != nullptr) != (tail_perq_v[1] != nullptr)) {
++        tail_break("per-query ring segments stashed for only one of K/V");
++        tail_perq_k[0] = tail_perq_k[1] = nullptr;
++        tail_perq_v[0] = tail_perq_v[1] = nullptr;
++        return;
++    }
++
++    auto perm = [&](ggml_tensor * t) -> ggml_tensor * {
++        return t ? ggml_permute(ctx, t, 0, 2, 1, 3) : nullptr;
++    };
++
++    ggml_flash_attn_ext_add_segments(fa,
++            perm(tail_perq_k[0]), perm(tail_perq_v[0]),
++            perm(tail_perq_k[1]), perm(tail_perq_v[1]));
++
++    // ONE-TIME RECEIPT, at WARN so llama-server's default verbosity cannot drop it (the lane-194
++    // banner lesson): a fidelity or perf number without this line was NOT measuring the
++    // per-query path.
++    if (!tail_perq_logged) {
++        LLAMA_LOG_WARN("%s: KV precision tail PER-QUERY ACTIVE - body read in place beside %s exact F16 ring segment(s); nothing materialised\n",
++                       __func__, tail_perq_k[1] ? "two" : "one");
++        tail_perq_logged = true;
++    }
++
++    tail_perq_k[0] = tail_perq_k[1] = nullptr;
++    tail_perq_v[0] = tail_perq_v[1] = nullptr;
++}
++
+ ggml_tensor * llama_kv_cache::get_k(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const {
+     const int32_t ikv = map_layer_ids.at(il);
+ 
+@@ -1943,7 +2045,7 @@ ggml_tensor * llama_kv_cache::get_k(ggml_context * ctx, int32_t il, uint32_t n_k
+     ggml_tensor * ring = tail_pend_k[ikv];
+     tail_pend_k[ikv] = nullptr;
+ 
+-    return tail_compose(ctx, view, ring, n_kv, n_embd_k_gqa, head_k_eff, il);
++    return tail_compose(ctx, view, ring, n_kv, n_embd_k_gqa, head_k_eff, il, tail_perq_k);
+ }
+ 
+ ggml_tensor * llama_kv_cache::get_v(ggml_context * ctx, int32_t il, uint32_t n_kv, const slot_info & sinfo) const {
+@@ -1986,7 +2088,7 @@ ggml_tensor * llama_kv_cache::get_v(ggml_context * ctx, int32_t il, uint32_t n_k
+         ggml_tensor * ring = tail_pend_v[ikv];
+         tail_pend_v[ikv] = nullptr;
+ 
+-        return tail_compose(ctx, view, ring, n_kv, n_embd_v_gqa, head_v_eff, il);
++        return tail_compose(ctx, view, ring, n_kv, n_embd_v_gqa, head_v_eff, il, tail_perq_v);
+     }
+ 
+     // note: v->nb[1] > v->nb[2]
+@@ -3836,6 +3938,10 @@ ggml_tensor * llama_kv_cache_context::get_v(ggml_context * ctx, int32_t il) cons
+     return kv->get_v(ctx, il, n_kv, sinfos[i_cur]);
+ }
+ 
++void llama_kv_cache_context::fa_attach_segments(ggml_context * ctx, ggml_tensor * fa) const {
++    kv->fa_attach_segments(ctx, fa);
++}
++
+ ggml_tensor * llama_kv_cache_context::get_turbo_rotation() const {
+     return kv->get_turbo_rotation();
+ }
+diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
+index 971de67bf..7de73a9ec 100644
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -223,8 +223,15 @@ public:
+     bool          tail_on()  const { return tail_n > 0; }
+     // how many of the newest n_kv cells still have a trustworthy ring entry (0 .. tail_n)
+     int64_t       tail_valid(int64_t n_kv) const;
++    // lane-196: perq_pend (tail_perq_k / tail_perq_v, nullable) receives the raw ring segment
++    // views in per-query mode, in which case the BARE body view [0, split) is returned instead of
++    // a composed window.
+     ggml_tensor * tail_compose(ggml_context * ctx, ggml_tensor * body, ggml_tensor * ring,
+-                               int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il) const;
++                               int64_t n_kv, int64_t n_embd_gqa_eff, int64_t head_eff, int32_t il,
++                               ggml_tensor ** perq_pend = nullptr) const;
++    // lane-196: attach the stashed per-query ring segments to this layer's FA node (no-op when
++    // nothing is stashed).
++    void          fa_attach_segments(ggml_context * ctx, ggml_tensor * fa) const;
+     void          tail_break(const char * why) const;
+     // ring_content_probe: 0 = never broken, >0 = number of invalidating events seen.
+     uint64_t      tail_broken_count() const { return tail_broken; }
+@@ -400,6 +407,13 @@ private:
+     mutable ggml_context *              tail_ctx = nullptr;
+     mutable std::vector<ggml_tensor *>  tail_pend_k;
+     mutable std::vector<ggml_tensor *>  tail_pend_v;
++    // lane-196 per-query source selection: the raw ring segment views {hi, lo} stashed by
++    // tail_compose for the layer CURRENTLY being built, consumed by fa_attach_segments.
++    // One slot, not per-layer: get_k -> get_v -> build_attn_mha is strictly sequential per layer
++    // within one graph build, and a leftover is a tail_break, never a carry-over.
++    mutable ggml_tensor * tail_perq_k[2] = { nullptr, nullptr };
++    mutable ggml_tensor * tail_perq_v[2] = { nullptr, nullptr };
++    mutable bool          tail_perq_logged = false;
+     // HIGH-WATER MARK: one past the highest KV slot ever written since the last full reset.
+     // This is the whole positional invariant. Ring entry (s % tail_n) still holds slot s iff
+     // s + tail_n >= tail_hi, because only a slot that aliases onto it can have overwritten it.
+@@ -531,6 +545,9 @@ public:
+     ggml_tensor * tail_pending_v(int32_t il) const;
+     int64_t       tail_valid() const;
+ 
++    // lane-196: forward the per-query segment attach to the cache (no-op when nothing stashed)
++    void fa_attach_segments(ggml_context * ctx, ggml_tensor * fa) const override;
++
+     // create destination indices for each head of the current batch for where it would be written in the KV cache
+     // the indices address the global KV cache (not per stream) - this is not relevant for the user of this API, but
+     //   helps understand the implementation logic of cpy_k and cpy_v
+diff --git a/src/llama-memory-hybrid.cpp b/src/llama-memory-hybrid.cpp
+index 4da9b607b..6999cc744 100644
+--- a/src/llama-memory-hybrid.cpp
++++ b/src/llama-memory-hybrid.cpp
+@@ -286,6 +286,12 @@ ggml_tensor * llama_memory_hybrid_context::get_turbo_innerq_scale_inv() const {
+     return ctx_attn ? ctx_attn->get_turbo_innerq_scale_inv() : nullptr;
+ }
+ 
++void llama_memory_hybrid_context::fa_attach_segments(ggml_context * ctx, ggml_tensor * fa) const {
++    if (ctx_attn) {
++        ctx_attn->fa_attach_segments(ctx, fa);
++    }
++}
++
+ const llama_memory_recurrent_context * llama_memory_hybrid_context::get_recr() const {
+     return static_cast<const llama_memory_recurrent_context *>(ctx_recr.get());
+ }
+diff --git a/src/llama-memory-hybrid.h b/src/llama-memory-hybrid.h
+index af205875b..6a4c61efe 100644
+--- a/src/llama-memory-hybrid.h
++++ b/src/llama-memory-hybrid.h
+@@ -125,6 +125,9 @@ public:
+     ggml_tensor * get_turbo_rot_inverse() const override;
+     ggml_tensor * get_turbo_innerq_scale_inv() const override;
+ 
++    // lane-196: delegate the per-query segment attach to the attention child
++    void fa_attach_segments(ggml_context * ctx, ggml_tensor * fa) const override;
++
+     //
+     // llama_memory_hybrid_context
+     //
+diff --git a/src/llama-memory.h b/src/llama-memory.h
+index 6bd5ff633..0a168d923 100644
+--- a/src/llama-memory.h
++++ b/src/llama-memory.h
+@@ -73,6 +73,11 @@ struct llama_memory_context_i {
+     // TurboQuant InnerQ: get per-channel scale_inv tensor for Q/V equalization
+     // Returns nullptr when InnerQ is not active. Override in KV cache contexts.
+     virtual ggml_tensor * get_turbo_innerq_scale_inv() const { return nullptr; }
++
++    // lane-196 per-query source selection: attach any pending exact-ring segments to the
++    // flash-attention node just built for this layer. No-op by default; the unified KV cache
++    // context overrides it (and the hybrid context forwards to its attention child).
++    virtual void fa_attach_segments(ggml_context * /*ctx*/, ggml_tensor * /*fa*/) const {}
+ };
+ 
+ using llama_memory_context_ptr = std::unique_ptr<llama_memory_context_i>;
+diff --git a/tests/test-fa-segments.cpp b/tests/test-fa-segments.cpp
+index 21cc24c68..a47a5619d 100644
+--- a/tests/test-fa-segments.cpp
++++ b/tests/test-fa-segments.cpp
+@@ -50,7 +50,8 @@ static std::vector<float> rand_vec(size_t n, float lo = -1.0f, float hi = 1.0f)
+ 
+ struct fa_case {
+     int64_t hs   = 64;   // head size (K and V)
+-    int64_t nh   = 4;    // heads
++    int64_t nh   = 4;    // KV heads
++    int64_t nh_q = 0;    // Q heads (0 = same as nh; > nh exercises the GQA broadcast)
+     int64_t n_q  = 1;    // query rows (decode = 1)
+     int64_t kv   = 0;    // TOTAL kv columns = body + seg0 + seg1
+     int64_t body = 0;    // rows served by src[1]/src[2]
+@@ -80,7 +81,8 @@ struct fa_data {
+ 
+ static fa_data make_data(const fa_case & c) {
+     fa_data d;
+-    d.q = rand_vec(c.hs * c.n_q * c.nh);
++    const int64_t nhq = c.nh_q > 0 ? c.nh_q : c.nh;
++    d.q = rand_vec(c.hs * c.n_q * nhq);
+     d.k = rand_vec(c.hs * c.kv * c.nh);
+     d.v = rand_vec(c.hs * c.kv * c.nh);
+     // an all-visible mask with a few blocked columns, so the -INFINITY skip path is exercised too
+@@ -120,16 +122,20 @@ static std::vector<float> quant_round_trip(ggml_type type, const float * src, in
+ }
+ 
+ // Run the case and return dst as floats. `segmented` picks which of the two builds to use.
+-static std::vector<float> run_case(const fa_case & c, const fa_data & d, bool segmented) {
++// `backend` is borrowed, not owned (nullptr = a fresh CPU backend, freed on exit, the original
++// behaviour). Returns an empty vector iff the backend DECLINES the node — the caller decides
++// whether that is a skip or an executed-assert failure.
++static std::vector<float> run_case(const fa_case & c, const fa_data & d, bool segmented, ggml_backend_t backend0 = nullptr) {
+     const int64_t body = segmented ? c.body : c.kv;
+     const int64_t s0   = segmented ? c.seg0 : 0;
+     const int64_t s1   = segmented ? c.seg1 : 0;
++    const int64_t nhq  = c.nh_q > 0 ? c.nh_q : c.nh;
+ 
+     ggml_init_params ip = { /*.mem_size =*/ ggml_tensor_overhead() * 64 + ggml_graph_overhead(),
+                             /*.mem_buffer =*/ nullptr, /*.no_alloc =*/ true };
+     ggml_context * ctx = ggml_init(ip);
+ 
+-    ggml_tensor * q = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, c.hs, c.n_q, c.nh);
++    ggml_tensor * q = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, c.hs, c.n_q, nhq);
+ 
+     // Body and ring are SEPARATE tensors even in the monolithic build (where the ring rows are
+     // simply zero-length), so the two builds differ in exactly one thing: where the rows live.
+@@ -148,11 +154,21 @@ static std::vector<float> run_case(const fa_case & c, const fa_data & d, bool se
+         ggml_flash_attn_ext_add_segments(out, k0, v0, k1, v1);
+     }
+ 
+-    ggml_backend_t backend = ggml_backend_cpu_init();
++    ggml_backend_t backend = backend0 ? backend0 : ggml_backend_cpu_init();
++
++    // EXECUTED-asserted, not silently green: a declined node returns empty and the caller reports.
++    if (!ggml_backend_supports_op(backend, out)) {
++        if (!backend0) {
++            ggml_backend_free(backend);
++        }
++        ggml_free(ctx);
++        return {};
++    }
++
+     ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(ctx, backend);
+ 
+     // --- load, splitting the SAME source rows across whatever tensors this build has -------------
+-    set_tensor_from_f32(q, d.q.data(), c.hs * c.n_q * c.nh);
++    set_tensor_from_f32(q, d.q.data(), c.hs * c.n_q * nhq);
+ 
+     // K/V are [hs, rows, nh]: row-major within a head, heads outermost. Copy per head so a split
+     // lands on the right rows of the right head.
+@@ -188,7 +204,9 @@ static std::vector<float> run_case(const fa_case & c, const fa_data & d, bool se
+     ggml_backend_tensor_get(out, res.data(), 0, res.size() * sizeof(float));
+ 
+     ggml_backend_buffer_free(buf);
+-    ggml_backend_free(backend);
++    if (!backend0) {
++        ggml_backend_free(backend);
++    }
+     ggml_free(ctx);
+     return res;
+ }
+@@ -196,10 +214,13 @@ static std::vector<float> run_case(const fa_case & c, const fa_data & d, bool se
+ // The independent reference for leg 3: plain (non-online) softmax attention over rows that have
+ // been put through the SAME quantisation the tensors will hold.
+ static std::vector<float> reference(const fa_case & c, const fa_data & d) {
+-    // dst layout matches ggml_flash_attn_ext: permute(0,2,1,3) -> [hs, nh, n_q]
+-    std::vector<float> out((size_t)(c.hs * c.nh * c.n_q), 0.0f);
++    const int64_t nhq = c.nh_q > 0 ? c.nh_q : c.nh;
++    // dst layout matches ggml_flash_attn_ext: permute(0,2,1,3) -> [hs, nh_q, n_q]
++    std::vector<float> out((size_t)(c.hs * nhq * c.n_q), 0.0f);
+ 
+-    for (int64_t h = 0; h < c.nh; ++h) {
++    for (int64_t hq = 0; hq < nhq; ++hq) {
++        // GQA broadcast: q head hq attends over kv head hq / (nhq/nh)
++        const int64_t h = hq / (nhq / c.nh);
+         // rows [0, body) are body_type; the rest are ring_type
+         std::vector<float> kq(c.hs * c.kv), vq(c.hs * c.kv);
+         for (int64_t r = 0; r < c.kv; ++r) {
+@@ -211,7 +232,7 @@ static std::vector<float> reference(const fa_case & c, const fa_data & d) {
+         }
+ 
+         for (int64_t iq = 0; iq < c.n_q; ++iq) {
+-            const float * qp = d.q.data() + (h * c.n_q + iq) * c.hs;
++            const float * qp = d.q.data() + (hq * c.n_q + iq) * c.hs;
+             const float scale = 1.0f / sqrtf((float) c.hs);
+ 
+             std::vector<float> s(c.kv);
+@@ -237,7 +258,7 @@ static std::vector<float> reference(const fa_case & c, const fa_data & d) {
+                 sum += s[r];
+             }
+ 
+-            float * o = out.data() + (iq * c.nh + h) * c.hs;
++            float * o = out.data() + (iq * nhq + hq) * c.hs;
+             for (int64_t r = 0; r < c.kv; ++r) {
+                 if (s[r] == 0.0f) {
+                     continue;
+@@ -375,6 +396,111 @@ int main() {
+         report("LEG3", name, nmse(run_case(c, d, true), reference(c, d)), 5e-4, true);
+     }
+ 
++    // ---------------------------------------------------------------------------------------------
++    // LEG V — lane-196: the SAME gate on the GPU backend, where the segments dispatch as
++    // heterogeneous split-k partitions (q4_0 body in place + F16 ring in place) merged by
++    // flash_attn_split_k_reduce. EXECUTED-asserted (F-112/F-114): a build without a GPU prints a
++    // skip, but a GPU that DECLINES the segmented node is a FAILURE — a 0-executed green is the
++    // exact failure class this estate refuses. Runs both broadcast shapes, because the gqa and
++    // non-gqa epilogues index the shared scratch differently and their agreement across
++    // partitions is this design's one new risk.
++    ggml_backend_t gpu = nullptr;
++    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
++        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
++        // the 780M is a UMA part and registers as IGPU, not GPU - accept both
++        if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU ||
++            ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_IGPU) {
++            gpu = ggml_backend_dev_init(dev, nullptr);
++            break;
++        }
++    }
++
++    if (gpu == nullptr) {
++        printf("\nLEG V SKIPPED - no GPU backend registered in this build (CPU-only gate).\n");
++    } else {
++        int executed = 0;
++        auto run_gpu = [&](const fa_case & c, const fa_data & d, bool seg, const char * what) {
++            std::vector<float> r = run_case(c, d, seg, gpu);
++            if (r.empty()) {
++                printf("  LEGV   %-46s DECLINED by the backend  <<<< UNEXPECTED\n", what);
++                g_fail++;
++            } else {
++                executed++;
++            }
++            return r;
++        };
++
++        for (int gqa = 0; gqa < 2; ++gqa) {
++            printf("\nLEG V%s on %s - split-equivalence, poison control, mixed dtype.\n",
++                   gqa ? " (GQA nh_q=8 over nh=2)" : " (nh_q == nh)", ggml_backend_name(gpu));
++            for (const auto & s : splits) {
++                fa_case c;
++                c.kv = s.kv; c.body = s.body; c.seg0 = s.seg0; c.seg1 = s.seg1;
++                if (gqa) { c.nh = 2; c.nh_q = 8; }
++
++                char name[128];
++
++                // V1: F32 body + F32 ring vs one monolithic F32 tensor, both on the GPU.
++                //
++                // TOLERANCE IS NOT the CPU leg's zero, and the reason is measured, not assumed:
++                // when the segmented partition boundaries happen to COINCIDE with the monolithic
++                // split-k boundaries (kv=96 body=64 seg0=32: 32/32/32 both ways) the GPU result
++                // is bit-identical (nmse = 0 exactly). When the grouping differs, the per-partition
++                // O accumulators round differently (FLOAT_TYPE f16 on this pipeline) and the merge
++                // lands at ~1e-7..1e-6 nmse - the same accumulator-vs-indexing confound lane-195
++                // §2.3 defect 1 documented on the CPU. 1e-5 keeps >3 orders of separation from the
++                // poison control (>= 0.017 observed); the DISCRIMINATING fidelity leg is V3
++                // against the independent reference, not this regrouping comparison.
++                c.body_type = GGML_TYPE_F32; c.ring_type = GGML_TYPE_F32;
++                {
++                    fa_data d = make_data(c);
++                    auto a = run_gpu(c, d, true,  "split-equivalence (segmented arm)");
++                    auto b = run_gpu(c, d, false, "split-equivalence (monolithic arm)");
++                    if (!a.empty() && !b.empty()) {
++                        snprintf(name, sizeof(name), "gpu f32 kv=%lld body=%lld seg0=%lld seg1=%lld",
++                                 (long long) s.kv, (long long) s.body, (long long) s.seg0, (long long) s.seg1);
++                        report("LEGV1", name, nmse(a, b), 1e-5, true);
++                    }
++                }
++
++                // V2: the poison control MUST fire on the GPU too, or V1 was not looking.
++                // Same tolerance as V1, so the control fires against the bar V1 passes at.
++                if (s.seg1 >= 1) {
++                    fa_case cp = c;
++                    cp.poison = 1;
++                    fa_data d = make_data(cp);
++                    auto a = run_gpu(cp, d, true,  "poison control (segmented arm)");
++                    auto b = run_gpu(cp, d, false, "poison control (monolithic arm)");
++                    if (!a.empty() && !b.empty()) {
++                        snprintf(name, sizeof(name), "gpu f32 kv=%lld seg1 rows-1", (long long) s.kv);
++                        report("LEGV2", name, nmse(a, b), 1e-5, false);
++                    }
++                }
++
++                // V3: q4_0 body IN PLACE + F16 ring IN PLACE vs the independent CPU reference —
++                // the design's whole claim, measured on the real dispatch.
++                {
++                    fa_case cm = c;
++                    cm.body_type = GGML_TYPE_Q4_0; cm.ring_type = GGML_TYPE_F16;
++                    fa_data d = make_data(cm);
++                    auto a = run_gpu(cm, d, true, "mixed dtype (segmented arm)");
++                    if (!a.empty()) {
++                        snprintf(name, sizeof(name), "gpu q4_0 body=%lld + f16 ring=%lld/%lld",
++                                 (long long) s.body, (long long) s.seg0, (long long) s.seg1);
++                        report("LEGV3", name, nmse(a, reference(cm, d)), 5e-4, true);
++                    }
++                }
++            }
++        }
++
++        printf("\nLEG V executed %d GPU cases.\n", executed);
++        if (executed == 0) {
++            printf("LEG V EXECUTED ZERO CASES with a GPU present - refused as a vacuous green.  <<<< UNEXPECTED\n");
++            g_fail++;
++        }
++        ggml_backend_free(gpu);
++    }
++
+     printf("\n%s (%d unexpected)\n", g_fail == 0 ? "ALL LEGS AS EXPECTED" : "FAILURES", g_fail);
+     return g_fail == 0 ? 0 : 1;
+ }
