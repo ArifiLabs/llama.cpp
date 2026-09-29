@@ -1,0 +1,73 @@
+R71 DECIDER -- q6_K MUL_MAT, PAIRED per round.  [R71b: per-occurrence parsing]
+ratio = default/mmvq  (>1 = the MMVQ route is FASTER).  Pre-registered admit: won>=5/6 AND median>=1.03; a LOSS is never admitted.
+
+  !! DUPLICATE CASES: 48 (arm, cell) pairs are emitted more than once
+     per run by test-backend-ops (occurrence counts seen: [(2,)]). The VERDICT column
+     below uses the MEAN of a round's occurrences, stated here rather than implied.
+     `first` and `last` are printed beside it because the pick CHANGES the answer:
+     5120x17408 n=3 is a 2/6 LOSS on `first` and a 5/6 ADMIT on `last`. The original
+     R71 table silently used `last` (CHECK-R71 finding 1).
+
+=== q6_K  m=248320  k=5120 ===
+   n   default us     mmvq us   MEAN med          [min..max]   won     first     last  verdict
+   1      13903.0     14125.8     0.9901 [0.9447..1.0044]   1/6    0.9950   0.9822  LOSS
+      rounds won -- mean 1/6, first 3/6, last 1/6
+   2      13966.7     13946.3     0.9970 [0.9698..1.0119]   3/6    1.0084   0.9951  LOSS  <-- PICK-DEPENDENT
+      rounds won -- mean 3/6, first 5/6, last 3/6
+   3      13970.5     14080.3     0.9980 [0.9402..1.0047]   3/6    0.9995   0.9947  LOSS
+      rounds won -- mean 3/6, first 1/6, last 2/6
+   4      13967.6     15224.7     0.9135 [0.8879..0.9377]   0/6    0.9148   0.9093  LOSS
+      rounds won -- mean 0/6, first 0/6, last 0/6
+   5      15608.3     21006.5     0.7398 [0.7214..0.7575]   0/6    0.7437   0.7354  LOSS
+      rounds won -- mean 0/6, first 0/6, last 0/6
+   6      20886.4     21185.2     0.9911 [0.9805..0.9966]   0/6    0.9895   0.9887  LOSS
+      rounds won -- mean 0/6, first 0/6, last 1/6
+   7      20181.3     14297.7     1.4105 [1.3370..1.4396]   6/6    1.4166   1.3997  ADMIT
+      rounds won -- mean 6/6, first 6/6, last 6/6
+   8      18969.6     16789.0     1.1315 [1.1138..1.1438]   6/6    1.1354   1.1308  ADMIT
+      rounds won -- mean 6/6, first 6/6, last 6/6
+  marginal us/col default: n4->n8   1250.5   n1->n8    723.8
+  marginal us/col    mmvq: n4->n8    391.1   n1->n8    380.5
+
+=== q6_K  m=17408  k=5120 ===
+   n   default us     mmvq us   MEAN med          [min..max]   won     first     last  verdict
+   1       2034.3      1988.3     1.0151 [0.9802..1.0460]   5/6    0.9961   1.0427  no  <-- PICK-DEPENDENT
+      rounds won -- mean 5/6, first 2/6, last 6/6
+   2       2013.5      2005.1     1.0047 [0.9677..1.0514]   3/6    0.9979   0.9912  no  <-- PICK-DEPENDENT
+      rounds won -- mean 3/6, first 2/6, last 2/6
+   3       2002.1      2028.6     0.9892 [0.9783..1.0672]   1/6    0.9848   0.9922  LOSS
+      rounds won -- mean 1/6, first 0/6, last 1/6
+   4       2036.1      2116.0     0.9608 [0.9269..0.9937]   0/6    0.9528   0.9650  LOSS
+      rounds won -- mean 0/6, first 2/6, last 0/6
+   5       2109.8      2150.8     0.9958 [0.9647..1.0206]   3/6    0.9851   0.9872  LOSS
+      rounds won -- mean 3/6, first 1/6, last 2/6
+   6       2277.9      2173.4     1.0390 [1.0216..1.0715]   6/6    1.0424   1.0370  ADMIT
+      rounds won -- mean 6/6, first 6/6, last 5/6
+   7       2311.5      2082.1     1.1229 [1.0913..1.1415]   6/6    1.1312   1.1223  ADMIT
+      rounds won -- mean 6/6, first 6/6, last 6/6
+   8       2300.0      2162.8     1.0603 [1.0300..1.1213]   6/6    1.0429   1.0853  ADMIT
+      rounds won -- mean 6/6, first 6/6, last 6/6
+  marginal us/col default: n4->n8     66.0   n1->n8     38.0
+  marginal us/col    mmvq: n4->n8     11.7   n1->n8     24.9
+
+=== q6_K  m=5120  k=17408 ===
+   n   default us     mmvq us   MEAN med          [min..max]   won     first     last  verdict
+   1       1992.2      1925.9     1.0462 [1.0111..1.1053]   6/6    1.0387   1.0467  ADMIT
+      rounds won -- mean 6/6, first 5/6, last 6/6
+   2       2018.5      1968.1     1.0332 [1.0088..1.1205]   6/6    1.0318   1.0537  ADMIT
+      rounds won -- mean 6/6, first 5/6, last 5/6
+   3       2023.7      1987.9     1.0198 [0.9913..1.1313]   4/6    0.9945   1.0463  no  <-- PICK-DEPENDENT
+      rounds won -- mean 4/6, first 2/6, last 5/6
+   4       2013.0      1953.5     1.0354 [1.0125..1.1438]   6/6    1.0322   1.0297  ADMIT  <-- PICK-DEPENDENT
+      rounds won -- mean 6/6, first 6/6, last 6/6
+   5       2112.0      2352.1     0.9001 [0.8802..0.9519]   0/6    0.8935   0.9139  LOSS
+      rounds won -- mean 0/6, first 0/6, last 0/6
+   6       2206.1      2316.1     0.9525 [0.9454..0.9750]   0/6    0.9395   0.9584  LOSS
+      rounds won -- mean 0/6, first 0/6, last 1/6
+   7       2281.3      1981.3     1.1457 [1.0673..1.1668]   6/6    1.1281   1.1628  ADMIT
+      rounds won -- mean 6/6, first 6/6, last 6/6
+   8       2236.9      2117.2     1.0539 [1.0418..1.0733]   6/6    1.0549   1.0498  ADMIT
+      rounds won -- mean 6/6, first 6/6, last 6/6
+  marginal us/col default: n4->n8     56.0   n1->n8     35.0
+  marginal us/col    mmvq: n4->n8     40.9   n1->n8     27.3
+

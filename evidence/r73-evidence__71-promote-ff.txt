@@ -1,0 +1,33 @@
+R73 RELEASE-ENGINE PROMOTION — STEP 2b FAST-FORWARD (2026-09-21, Opus 5)
+
+verification before the ff (mine, not HQ's word):
+$ git rev-parse --abbrev-ref HEAD
+arifi/main
+$ git rev-parse HEAD (before)
+94461e770e119a9ec31fbb877f0af89332e85827
+$ git status --porcelain
+(clean)
+$ git merge-base --is-ancestor HEAD 5a7434218
+rc=0 FF_OK
+$ git log --oneline HEAD..5a7434218
+5a7434218 vulkan: q6_K MMVQ route DEFAULT ON for n=7,8 on AMD; strike the n=2,3 clause the duplicate-case parser manufactured
+104b531da vulkan: measure the q6_K q8_1 MMVQ route at verify widths, ship it as a switch, keep the default
+$ git log --merges --oneline HEAD..5a7434218 | wc -l
+0
+$ head -1 <repo>/models/engines/arifi-b10825-r73i-5a7434218/F137-HASHES.txt
+tip 5a74342182fdfca3007db78769d9406221a8cc16
+   (stamp == the tip being promoted -> no STOP)
+
+=== the fast-forward ===
+$ git merge --ff-only 5a7434218
+Updating 94461e770..5a7434218
+Fast-forward
+ docs/OPTIONS-REGISTRY.md             |   1 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 121 +++++++++++++++++++++++++++++++++--
+ tests/test-backend-ops.cpp           |  32 +++++++++
+ 3 files changed, 148 insertions(+), 6 deletions(-)
+merge rc=0
+$ git rev-parse HEAD (after)
+5a74342182fdfca3007db78769d9406221a8cc16
+5a7434218 vulkan: q6_K MMVQ route DEFAULT ON for n=7,8 on AMD; strike the n=2,3 clause the duplicate-case parser manufactured
+(status end)
