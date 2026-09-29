@@ -1,0 +1,27 @@
+lane-270 / R74b decider parse. Generator for r74b-evidence/21-paired.txt. No GPU.
+
+    C:/ArifiLabs/shared/.venv/Scripts/python.exe r74b-parse.py
+
+ratio = legacy_us / arm_us, paired per round; >1 = the ARM is FASTER.
+
+Occurrences kept separately (CHECK-R71 finding 1): verdict on first, mean AND last; picks that
+disagree = PICK-DEP, not shippable. Uneven occurrence counts raise PARSE-FAIL.
+
+SHIP RULE (pre-registered in OPUS-R74B-Q6K-N6-ADMIT-REPORT.md before any timed round):
+won >= ceil(5/6 * N) paired rounds (6->5, 8->7, 12->10, 13->11) AND median >= 1.03 on all three
+picks; a median < 1.0 on any pick is a LOSS and never ships. 1.00 <= median < 1.03 with the won
+bar met = WIN-BELOW-BAR (reported as a win, not a flip).
+
+  job        m      k  n      arm  legacy us    arm us  median    won     min     max  verdict (first/mean/last)
+  R1      5120  17408  5     c2n5     1976.8    2072.4  0.9576   0/12  0.9153  0.9850  LOSS   [need 10/12]
+  R2      5120   6144  5     c2n5      671.4     670.6  1.0013  10/13  0.9305  1.0118  no   [need 11/13]
+  R3     17408   5120  5     mmvq     1957.1    2059.2  0.9611   0/8   0.9074  0.9952  LOSS   [need 7/8]
+  S1    248320   5120  6  default    20742.4   20220.3  1.0259   5/6   0.9891  1.0588  WIN-BELOW-BAR/PICK-DEP (no/WIN-BELOW-BAR/ADMIT)   [need 5/6]
+  S1    248320   5120  7  default    20050.2   13887.6  1.4285   6/6   1.3826  1.4613  ADMIT   [need 5/6]
+  S1    248320   5120  8  default    18841.8   16379.8  1.1404   6/6   1.0921  1.1695  ADMIT   [need 5/6]
+  S2      5120   6144  6  default      713.3     691.1  1.0363   6/6   1.0232  1.1827  ADMIT   [need 5/6]
+  S2      5120   6144  7  default      708.4     667.1  1.0624   6/6   1.0542  1.1523  ADMIT   [need 5/6]
+  S2      5120   6144  8  default      686.2     682.3  1.0071   5/6   0.9405  1.0832  WIN-BELOW-BAR   [need 5/6]
+
+  EXECUTED round-cells: 138 over 18 (arm, job, shape, n) keys
+

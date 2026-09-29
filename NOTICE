@@ -1,0 +1,162 @@
+ArifiLabs llama.cpp fork
+Copyright 2026 ArifiLabs
+
+This product is a derivative work of llama.cpp (https://github.com/ggml-org/llama.cpp),
+Copyright (c) 2023-2026 The ggml authors, licensed under the MIT License. The MIT text is
+retained verbatim at ./LICENSE and at licenses/llama.cpp-MIT.txt, and upstream's own
+contributor list is retained at ./AUTHORS.
+
+This file exists because the repository carries code and formats from third parties, one of
+them under the Apache License 2.0, whose section 4 requires the licence text and the
+attribution notices to travel with a redistributed derivative work. Every component below is
+named with its licence, its source, and the file in licenses/ that holds its licence text
+verbatim. The audit behind those retentions, including its corrections, is licenses/README.md;
+the machine-readable source pins are tools/arifi-sync/sources.json.
+
+No model weights are distributed with this repository. Model files named in the documents are
+measurement subjects, not redistributed artefacts, and naming one implies no licence to it.
+
+--------------------------------------------------------------------------------
+Apache License 2.0 components
+--------------------------------------------------------------------------------
+
+S-X8 v4.3 (the quantization format and its reference implementation)
+  Author:   Martí Vidal Leandro (MarlaLabs)
+            Copyright (C) 2026 Marla Labs (Martí Vidal Leandro)
+  Licence:  Apache License 2.0
+  Licence text retained VERBATIM, as published by the author:
+            licenses/S-X8-MarlaLabs-LICENSE.txt
+              fetched 2026-09-21 from
+              https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8/resolve/main/LICENSE
+              11,350 bytes, sha256
+              ad4aa936adb43842a3f34d16797acdd39ba4f523e5b02b9ea4fe48b1962d3c74
+  The author's own NOTICE, retained VERBATIM as Apache-2.0 section 4(d) requires:
+            licenses/S-X8-MarlaLabs-NOTICE.txt
+              fetched 2026-09-21 from
+              https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8/resolve/main/NOTICE
+              1,278 bytes, sha256
+              20ea964a519ef0b04ce51beb2ae0cf601a82775cd7e4022c15ec0434a94ca13a
+  Source:   DOI 10.5281/zenodo.21922640, v1.0 2026-08-13. The Zenodo record's own metadata
+            states "license": {"id": "apache2.0"} and names Vidal Leandro, Martí (MarlaLabs)
+            as the rights holder. Files also taken from
+            https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8
+            @ 808043e0a3f0dea1080e8859d6bccad23fc684d7.
+  Carried:  The S-X8 container format, its per-8 affine sub-block decomposition, the reference
+            CUDA kernels and the author's own llama.cpp patch are the author's work. This
+            repository implements GGML_TYPE_SX8 (57) against that format.
+            THE VULKAN KERNELS IN THIS TREE ARE OURS, not the author's - the format, the
+            reference CUDA kernels and the reference patch are his. That distinction is
+            stated here, in the release story, and in the commit trailers.
+  Notice:   Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+            these files except in compliance with the License. You may obtain a copy of the
+            License at http://www.apache.org/licenses/LICENSE-2.0. Unless required by
+            applicable law or agreed to in writing, software distributed under the License is
+            distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+            either express or implied.
+  Note:     licenses/S-X8-MarlaLabs-NOTICE.txt contains the author's own contact address. It is
+            part of a NOTICE file that Apache-2.0 requires to travel verbatim, so it is
+            deliberately NOT scrubbed by this repository's path/identity scrub.
+
+turboquant_plus
+  Author:   Tom Turney
+  Licence:  Apache License 2.0 - licenses/turboquant-plus-Apache-2.0.txt
+  Source:   https://github.com/TheTom/turboquant_plus
+  Notice:   The licensor's own NOTICE is retained verbatim at
+            licenses/turboquant-plus-NOTICE.txt:
+              turboquant_plus
+              Copyright 2026 Tom Turney
+              This product includes software developed by Tom Turney
+              (https://github.com/TheTom/turboquant_plus).
+
+perfetto (tracing SDK, single-header amalgamation)
+  Author:   The Android Open Source Project
+            Copyright (C) 2019 The Android Open Source Project
+  Licence:  Apache License 2.0 - licenses/perfetto-Apache-2.0.txt
+  Carried:  powerinfer/libaz/external/perfetto/, vendored into this tree by the PowerInfer
+            ingest. The upstream drop ships NO licence file of its own: the licence is stated
+            in the header of perfetto.h. The Apache-2.0 text is therefore retained here by
+            this repository so that section 4(a) is satisfied, because a licence that is not
+            shipped does not travel. It is a SECOND copy of the same terms already at
+            licenses/turboquant-plus-Apache-2.0.txt, and that is deliberate: the phase-2
+            audit removed a licensor-neutral Apache-2.0 stand-in on the reasoning that two
+            copies invite the reader to ask which governs, and this file is named for its
+            component so that question cannot arise.
+  Notice:   Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+            these files except in compliance with the License. You may obtain a copy of the
+            License at http://www.apache.org/licenses/LICENSE-2.0. Unless required by
+            applicable law or agreed to in writing, software distributed under the License is
+            distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+            either express or implied.
+
+--------------------------------------------------------------------------------
+BSD 3-Clause components
+--------------------------------------------------------------------------------
+
+Carried with PowerInfer/libaz. These are third-party libraries vendored under
+powerinfer/libaz/external/ by the PowerInfer ingest, not written by this fork. Each licence
+file is the one the vendored drop itself ships, copied verbatim into licenses/.
+
+  CLI11 (University of Cincinnati / Henry Schreiner et al.)
+                                       licenses/libaz-cli11-BSD-3-Clause.txt
+                                       powerinfer/libaz/external/cli11/
+  GoogleTest (Google Inc.)             licenses/libaz-googletest-BSD-3-Clause.txt
+                                       powerinfer/libaz/external/googletest/
+
+--------------------------------------------------------------------------------
+MIT components
+--------------------------------------------------------------------------------
+
+Each MIT licence below is retained verbatim in licenses/. MIT requires the copyright notice
+and permission notice to be retained in redistributions; retaining the licence file is how
+that is done here.
+
+  ggml-org/llama.cpp (upstream)        LICENSE, licenses/llama.cpp-MIT.txt
+  Tiiny-AI/PowerInfer                  licenses/powerinfer-MIT.txt
+  PowerInfer / smallthinker            licenses/smallthinker-MIT.txt
+  charlie12345/ROCmFPX                 licenses/rocmfpx-MIT.txt
+  ciru-ai/ROCmFPX                      licenses/ciru-MIT.txt
+  PrismML-Eng/llama.cpp                licenses/prisml-MIT.txt
+  turbo-tan/llama.cpp-tq3              licenses/tq3-MIT.txt
+  llama-cpp-turboquant                 licenses/llama-cpp-turboquant-MIT.txt
+  jtrefon/llama.cpp-turboq-mtp         licenses/turboq-mtp-MIT.txt
+  spiritbuun/buun-llama-cpp            licenses/buun-MIT.txt
+  LaurentZuijdwijk/llama.cpp           licenses/zuijdwijk-MIT.txt
+  thecodacus/llama.cpp                 licenses/thecodacus-MIT.txt
+
+Carried with PowerInfer/libaz, under powerinfer/libaz/external/:
+
+  {fmt} (Victor Zverovich and contributors)
+                                       licenses/libaz-fmt-MIT.txt
+                                       powerinfer/libaz/external/fmt/
+
+ciru-ai/ROCmFPX is a registered source with its notice retained ahead of any ingest; no code
+from it is carried at this revision.
+
+--------------------------------------------------------------------------------
+Inherited from upstream, not retained by this fork
+--------------------------------------------------------------------------------
+
+These are upstream llama.cpp's own vendored third-party files. They arrived with the tree,
+they carry whatever notices upstream ships with them, and this fork adds nothing to and
+removes nothing from them. They are named here so a reader is not left to discover them.
+
+nlohmann/json (Niels Lohmann), MIT - licenses/LICENSE-jsonhpp. Upstream llama.cpp's own file,
+covering its vendored vendor/nlohmann/json.hpp and json_fwd.hpp.
+
+Also inherited under vendor/, each carrying its own licence file or in-file licence header,
+named here only so a reader is not left to discover them. Read from the files themselves,
+not from memory:
+
+  vendor/cpp-httplib/         MIT            LICENSE, Copyright (c) 2017 yhirose /
+                                             Copyright (c) 2026 Yuji Hirose
+  vendor/miniaudio/           MIT-0 or       in-file header, Copyright 2026 David Reid
+                              public domain
+  vendor/stb/                 MIT or         in-file header, Copyright (c) 2017 Sean Barrett
+                              public domain
+  vendor/sheredom/            public-domain  in-file header (subprocess.h)
+                              dedication
+  vendor/hash/rotate-bits/    MIT            LICENSE.md, Copyright (c) 2021 William Casarin
+  vendor/hash/sha256/         public domain  in-file header
+  vendor/hash/xxhash/         BSD 2-Clause   LICENSE, Copyright (c) 2012-2021 Yann Collet
+
+Upstream llama.cpp is the licensee of record for every row above.

@@ -1,0 +1,38 @@
+R73 PROMOTION — STEP 3: ENGINE-OF-RECORD FLIP (2026-09-21, HQ seat-62, Opus 5 promotion-maker)
+
+Procedure: cache/flip_engine_r73i.py, copied from cache/flip_engine_r66i.py (2026-09-19), itself from
+cache/flip_engine_r56i.py (seat-60). Asserts the OLD value, the NEW binary AND both rollback stages
+(r66i, r56i) before writing a byte.
+
+REGISTER FILE FLIPPED: <repo>/registers/current-state.json — the only one.
+
+  $ <repo>/shared/.venv/Scripts/python.exe cache/flip_engine_r73i.py
+  engine: arifi-b10825-r66i-f6f5ab0cf -> arifi-b10825-r73i-5a7434218
+  lines moved: ['sx8_27b_line', 'interactive_brain']
+  remaining arifi-b10825-r66i-f6f5ab0cf mentions (history text only): 5
+
+  VERIFY (read back):
+  engine.shipped: arifi-b10825-r73i-5a7434218
+  engine.binary : <repo>/models/engines/arifi-b10825-r73i-5a7434218/llama-server.exe
+  sx8_27b_line      -> arifi-b10825-r73i-5a7434218   serve bin: .../arifi-b10825-r73i-5a7434218/llama-server.exe
+  interactive_brain -> arifi-b10825-r73i-5a7434218   serve bin: .../arifi-b10825-r73i-5a7434218/llama-server.exe
+  live fields (engine_of_record / serve) still on r66i: NONE
+
+EVERY line that pointed at the r66i stage now points at r73i: 2 of 2. Both moved WITH the engine on
+PARITY — the q6_K route fires only at n=7,8 and the served draft depth 4 verifies at n=5, so zero
+served tokens change today (CHECK-R73 5a). NOT a seat-56 law 3.3 flip; no served win is claimed.
+Recorded in that wording inside the register itself.
+
+STAGES KEPT ON DISK (both rollback steps, untouched, launchable — asserted by the flip script):
+  <repo>/models/engines/arifi-b10825-r66i-f6f5ab0cf/   (one step back — R66)
+  <repo>/models/engines/arifi-b10825-r56i-280b1553f/   (two steps back — R56)
+
+EXACT ROLLBACK COMMAND (R73 -> R66; run from <repo>):
+
+    <repo>/shared/.venv/Scripts/python.exe -c "import json,pathlib; p=pathlib.Path('registers/current-state.json'); d=json.loads(p.read_text(encoding='utf-8')); NEW='arifi-b10825-r73i-5a7434218'; OLD='arifi-b10825-r66i-f6f5ab0cf'; e=d['engine']; assert e['shipped']==NEW; e['shipped']=OLD; e['binary']=f'<repo>/models/engines/{OLD}/llama-server.exe'; e['adopted']='2026-09-19'; e['rollback_2026_09_21']='R73 (5a7434218) ROLLED BACK to R66 (f6f5ab0cf); reason: <fill in>'; [d['local_models'][k].update({'engine_of_record':OLD,'adopted':'2026-09-19','serve':d['local_models'][k]['serve'].replace(NEW,OLD)}) for k in ('sx8_27b_line','interactive_brain')]; p.write_text(json.dumps(d,indent=2,ensure_ascii=False)+chr(10),encoding='utf-8'); print('rolled back to',OLD)"
+
+  To go a second step back (R66 -> R56), run the same command with NEW='arifi-b10825-r66i-f6f5ab0cf',
+  OLD='arifi-b10825-r56i-280b1553f', adopted '2026-09-16' (the command in r66-evidence/76-flip.txt).
+  arifi/main and the tags are NOT rolled back by this (source promotion is independent of which stage
+  serves). To step the served binary back without touching registers, launch
+  <repo>/models/engines/arifi-b10825-r66i-f6f5ab0cf/llama-server.exe directly.

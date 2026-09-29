@@ -1,0 +1,27 @@
+R64 q5_K/q6_K route table - us/run, median over rounds.
+arms: default = inherited route | force = GGML_VK_FORCE_MMVQ=1 | route = the R64 lever
+band% = (max-min)/median across rounds for that cell. marg(a..b) = (t(b)-t(a))/(b-a).
+
+=== type=q5_K  m=17408 k=5120 ===
+  n                 1         2         3         4         5         6         7         8   marg(4..8)  marg(1..8)
+  default        1688      1692      1696      1777      1804      1929      1990      2232       113.8        77.8
+  band%          12.8      17.6       5.0       8.1       6.0       7.1      10.0       9.4
+  force          1676      1735      1742      1849      1731      1750      1810      1915        16.4        34.1
+  band%           4.9      23.8      24.7       5.3      15.3       6.7       8.0      12.0
+  route          1693      1688      1788      1833      1683      1728      1849      1854         5.4        23.0
+  band%          10.1       4.2       9.7      12.7       2.4       7.1      13.9       7.3
+  force/default      1.007     0.975     0.974     0.961     1.043     1.102     1.099     1.166      (>1 = arm FASTER)
+  route/default      0.997     1.003     0.949     0.970     1.072     1.116     1.076     1.204      (>1 = arm FASTER)
+
+=== type=q6_K  m=17408 k=5120 ===
+  n                 1         2         3         4         5         6         7         8   marg(4..8)  marg(1..8)
+  default        2045      1978      2003      2008      2190      2315      2348      2324        78.9        39.9
+  band%           8.6      13.3       4.9       6.0      13.3      18.9      11.4       3.1
+  force          1989      1999      2051      2127      2251      2230      2075      2148         5.2        22.8
+  band%          15.2       7.7      10.5      14.8       6.8       8.4       6.6       8.7
+  route          2024      1995      2016      2093      2228      2279      2020      2120         6.8        13.8
+  band%          14.7       5.4       5.3       2.4      10.0       5.7      17.5       2.1
+  force/default      1.028     0.989     0.977     0.944     0.973     1.038     1.132     1.082      (>1 = arm FASTER)
+  route/default      1.010     0.992     0.994     0.959     0.983     1.016     1.163     1.096      (>1 = arm FASTER)
+
+cells parsed: 288 rounds/cell: [6]

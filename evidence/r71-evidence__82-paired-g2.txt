@@ -1,0 +1,48 @@
+lane-256 / R71b G2: the paired table for the two SERVED q6_K shapes R71 could not reach.
+
+Generator for r71-evidence/82-paired-g2.txt. No GPU -- re-reads r71-evidence/80-*.txt only.
+
+    C:/ArifiLabs/shared/.venv/Scripts/python.exe r71b-parse.py
+
+Same per-occurrence handling as the corrected r71-parse.py (CHECK-R71 finding 1): test-backend-ops
+emits every n=1..8 case twice per run, so occurrences are kept separately and the verdict is
+reported on first / mean / last. A cell that does not agree across all three picks is
+PICK-DEPENDENT and is not shippable.
+
+Arms here are the SHIPPED values (`legacy` / `route`), not the R48c `=1` diagnostic R71 timed --
+CHECK-R71 finding 5 flagged that gap, and this closes it: the thing measured is the thing shipped.
+
+ratio = legacy/route  (>1 = the ROUTE is FASTER). Admit bar: won>=5/6 AND median>=1.03;
+a LOSS is never admitted. n=7,8 are the load-bearing widths -- they are what the
+shipped predicate claims. n=1..6 are swept so the neighbours are visible.
+
+=== q6_K  m=1024  k=5120 ===
+   n   legacy us   route us   MEAN med          [min..max]   won     first     last  verdict
+   1       152.9      160.6     0.9004 [0.7602..1.0674]   2/6    0.9004   0.9004  LOSS
+   2       139.2      143.8     0.9343 [0.7666..1.0972]   2/6    0.9343   0.9343  LOSS
+   3       118.6      120.7     0.9808 [0.8351..1.0148]   3/6    0.9808   0.9808  LOSS
+   4       117.1      117.0     0.9965 [0.9789..1.0226]   2/6    0.9965   0.9965  LOSS
+   5       119.3      118.8     1.0058 [0.9940..1.0186]   4/6    1.0058   1.0058  no
+   6       130.2      130.1     1.0036 [0.9662..1.0143]   4/6    1.0036   1.0036  no
+   7       127.5      117.1     1.0876 [1.0770..1.0931]   6/6    1.0876   1.0876  ADMIT  *
+   8       125.4      124.4     1.0087 [0.9939..1.0119]   5/6    1.0087   1.0087  no  *
+
+=== q6_K  m=5120  k=6144 ===
+   n   legacy us   route us   MEAN med          [min..max]   won     first     last  verdict
+   1       670.3      670.1     1.0005 [0.8528..1.0844]   3/6    1.0005   1.0005  no
+   2       656.6      655.2     1.0020 [0.9918..1.1435]   4/6    1.0020   1.0020  no
+   3       658.4      657.2     1.0007 [0.9957..1.0032]   4/6    1.0007   1.0007  no
+   4       673.7      682.5     1.0041 [0.9468..1.0411]   4/6    1.0041   1.0041  no
+   5       717.2      715.6     1.0077 [0.9452..1.0662]   4/6    1.0077   1.0077  no
+   6       751.4      736.9     1.0179 [0.9979..1.0443]   5/6    1.0179   1.0179  no
+   7       755.3      676.1     1.1254 [1.0555..1.2548]   6/6    1.1254   1.1254  ADMIT  *
+   8       760.1      734.1     1.0576 [0.9894..1.0638]   5/6    1.0576   1.0576  ADMIT  *
+
+--- SHIP CHECK for the coded predicate `!is_id && (n == 7 || n == 8)` ---
+  m=1024    k=5120   n=7: median 1.0876, 6/6, picks [ADMIT/ADMIT/ADMIT] -> no measured loss
+  m=1024    k=5120   n=8: median 1.0087, 5/6, picks [no/no/no] -> no measured loss
+  m=5120    k=6144   n=7: median 1.1254, 6/6, picks [ADMIT/ADMIT/ADMIT] -> no measured loss
+  m=5120    k=6144   n=8: median 1.0576, 5/6, picks [ADMIT/ADMIT/ADMIT] -> no measured loss
+
+  shapes/widths where route LOSES and the predicate must be fenced: NONE
+  -> the unfenced n==7||n==8 admit stands on these two shapes as well.

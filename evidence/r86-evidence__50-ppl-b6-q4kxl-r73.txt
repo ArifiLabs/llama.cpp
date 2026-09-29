@@ -1,0 +1,38 @@
+ggml_vulkan: mmvq wide rows_from: 4 (default)
+ggml_vulkan: mmvq A-side hoist: ON (device-probe) (iq1: OFF) (route: r48b)
+ggml_vulkan: q5_k mmvq route: route (n=5..8, k<=8192) (device-probe)
+ggml_vulkan: q6_k mmvq route: route (MUL_MAT only, n=7..8) (device-probe)
+ggml_vulkan: S-X8 mul_mm packed tile decode: ON [GGML_ARIFI_SX8_MM_PACKED]
+ggml_vulkan: integer MMQ under coopmat (sx8, q8_0): OFF [GGML_ARIFI_MMQ_UNDER_COOPMAT]
+ggml_vulkan: S-X8 mat-vec shape tuning: ON (R47d 780M lookup, 31 measured m/k/n cells; probed default wg=64 rows=2; subgroup=64 shared=32768 B)
+ggml_vulkan: q6_k mat-vec direct-scales: ON
+ggml_vulkan: q6_k mat-vec activation-hoist+xfold: ON
+ggml_vulkan: q5_k mat-vec activation-hoist: ON (n<=3)
+ggml_vulkan: iq3 mat-vec sign-hoist: v2 [GGML_ARIFI_IQ3_MMVQ]
+ggml_vulkan: iq3 mat-vec n=7 rows: 2 (device-probe (RDNA3)) [GGML_ARIFI_IQ3_N7_ROWS]
+0.01.067.616 W model has unused tensor blk.64.attn_norm.weight (size = 20480 bytes) -- ignoring
+0.01.067.631 W model has unused tensor blk.64.post_attention_norm.weight (size = 20480 bytes) -- ignoring
+0.01.067.651 W model has unused tensor blk.64.attn_q.weight (size = 51609600 bytes) -- ignoring
+0.01.067.658 W model has unused tensor blk.64.attn_k.weight (size = 5570560 bytes) -- ignoring
+0.01.067.665 W model has unused tensor blk.64.attn_v.weight (size = 5570560 bytes) -- ignoring
+0.01.067.689 W model has unused tensor blk.64.attn_output.weight (size = 25804800 bytes) -- ignoring
+0.01.067.697 W model has unused tensor blk.64.attn_q_norm.weight (size = 1024 bytes) -- ignoring
+0.01.067.704 W model has unused tensor blk.64.attn_k_norm.weight (size = 1024 bytes) -- ignoring
+0.01.067.711 W model has unused tensor blk.64.ffn_gate.weight (size = 73113600 bytes) -- ignoring
+0.01.067.718 W model has unused tensor blk.64.ffn_down.weight (size = 73113600 bytes) -- ignoring
+0.01.067.725 W model has unused tensor blk.64.ffn_up.weight (size = 73113600 bytes) -- ignoring
+0.01.067.733 W model has unused tensor blk.64.nextn.eh_proj.weight (size = 43008000 bytes) -- ignoring
+0.01.067.742 W model has unused tensor blk.64.nextn.enorm.weight (size = 20480 bytes) -- ignoring
+0.01.067.749 W model has unused tensor blk.64.nextn.hnorm.weight (size = 20480 bytes) -- ignoring
+0.01.067.770 W model has unused tensor blk.64.nextn.shared_head_norm.weight (size = 20480 bytes) -- ignoring
+0.04.943.449 I cmn          init: llama threadpool init, n_threads = 8
+0.06.195.093 I 
+0.06.195.124 I system_info: n_threads = 8 (n_threads_batch = 8) / 16 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | AVX512 = 1 | AVX512_VBMI = 1 | AVX512_VNNI = 1 | AVX512_BF16 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.06.195.136 I perplexity: tokenizing the input ..
+0.06.574.572 I perplexity: tokenization took 379.388 ms
+0.06.575.059 I perplexity: calculating perplexity over 40 chunks, n_ctx=512, batch_size=6, n_seq=1
+27.12 minutes
+[1]4.3768,[2]6.1593,[3]5.9281,[4]5.8515,[5]5.8494,[6]6.0857,[7]6.2329,[8]6.7055,[9]7.0900,[10]7.4491,[11]7.3418,[12]7.3829,[13]7.7047,[14]7.3095,[15]7.2817,[16]7.4688,[17]7.0494,[18]7.1362,[19]7.0683,[20]7.0107,[21]6.7681,[22]6.6742,[23]6.4459,[24]6.1485,[25]6.0301,[26]5.8936,[27]5.7950,[28]5.7115,[29]5.7084,[30]5.6895,[31]5.6403,[32]5.6503,[33]5.6188,[34]5.6624,[35]5.7329,[36]5.8635,[37]5.9460,[38]5.9415,[39]5.9515,[40]5.9932,
+0.47.272.421 I perplexity: 40.70 seconds per pass - ETA 25.42.533.454 I Final estimate: PPL = 5.9932 +/- 0.14292
+
+25.42.546.826 W ~llama_context:    Vulkan0 compute buffer size of  27.8778 MiB, does not match expectation of  19.2248 MiB

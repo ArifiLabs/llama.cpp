@@ -1,0 +1,12 @@
+shader   arm  totals n=1..8                                        marg instr  marg sel  check
+iq3s     0 leg [4261, 6483, 5320, 10937, 7777, 9006, 10235, 11463]         1229        88  VARIES [2222, -1163, 5617, -3160, 1229, 1229, 1228] (step 0(b) unfolded read (1303, 88) - not comparable, see docstring)
+iq3s     1 v2 [4261, 4723, 3560, 5657, 4257, 4606, 4955, 5303]            349         8  VARIES [462, -1163, 2097, -1400, 349, 349, 348] 
+iq3xxs   0 leg [2478, 3699, 4924, 6151, 7377, 8604, 9831, 11058]          1227        88  VARIES [1221, 1225, 1227, 1226, 1227, 1227, 1227] (step 0(b) unfolded read (1226, 88) - not comparable, see docstring)
+iq3xxs   1 v2 [2478, 2819, 3164, 3511, 3857, 4204, 4551, 4898]            347         8  VARIES [341, 345, 347, 346, 347, 347, 347] 
+iq4xs    ctrl [1424, 1754, 2086, 2420, 2753, 3087, 3421, 3755]            334         8  VARIES [330, 332, 334, 333, 334, 334, 334] 
+
+iq4_xs control marginal = 334 instr/col
+  iq3s arm0: 1229 instr/col = 3.68x iq4_xs
+  iq3s arm1: 349 instr/col = 1.04x iq4_xs
+  iq3xxs arm0: 1227 instr/col = 3.67x iq4_xs
+  iq3xxs arm1: 347 instr/col = 1.04x iq4_xs
