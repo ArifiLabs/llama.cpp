@@ -1310,6 +1310,10 @@ struct vk_device_struct {
     bool cm1_int_smalln_down = false;
     // arifi lane-296 night: Q8_0 int8 cm1 only for weights with ne01 >= this (UINT32_MAX = off, 0 = upstream).
     uint32_t q8_0_cm1_min_m = UINT32_MAX;
+    // arifi lane-296 night R2: Q8_0 int8 by tensor role (GGML_ARIFI_Q8_0_CM1_ONLY / _SKIP, comma list of roles).
+    std::set<std::string> q8_0_cm1_roles;
+    bool q8_0_cm1_roles_only = false;
+    std::set<std::string> q8_0_cm1_roles_logged;
     // arifi lane-296 N11: coopmat1 f32->f16 B conversion. 0 = auto (only when a {type,F16} pipeline
     // exists and ne11 >= cm1_f16b_min_n), 1 = upstream (always), 2 = never (r86i f32-B kernel).
     uint32_t cm1_f16b_mode = 0;

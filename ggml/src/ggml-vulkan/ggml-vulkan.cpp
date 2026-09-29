@@ -4137,10 +4137,16 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         }
     }
 
+    // arifi lane-296 night R2: GGML_ARIFI_Q8_1_SCALE=f16 = scale-consistent activation rounding (default off = upstream).
+    const char * q81s = getenv("GGML_ARIFI_Q8_1_SCALE");
+    const uint32_t q81_f16 = (q81s != nullptr && strcmp(q81s, "f16") == 0) ? 1u : 0u;
+    if (q81_f16) {
+        fprintf(stderr, "ggml_vulkan: q8_1 activation scale: f16-consistent [GGML_ARIFI_Q8_1_SCALE]\n");
+    }
     if (device->subgroup_clustered && device->subgroup_require_full_support) {
-        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size }, 1, true, true);
+        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1, true, true);
     } else {
-        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size }, 1);
+        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1);
     }
 
     for (uint32_t i = 0; i < p021_max_gqa_ratio; ++i) {
@@ -6004,17 +6010,37 @@ vk_device ggml_vk_get_device(size_t idx) {
                 } else if (sd != nullptr && strcmp(sd, "off") == 0) {
                     device->cm1_int_smalln_down = false;
                 }
-                // lane-296 night: GGML_ARIFI_Q8_0_CM1 = off (default) | on | <min output rows>.
-                device->q8_0_cm1_min_m = UINT32_MAX;
+                // lane-296 night: GGML_ARIFI_Q8_0_CM1 = floor (default: int8 on, ssm_out float) | on (all) | off | <min output rows>.
+                // An explicit _ONLY/_SKIP list replaces the floor's default skip set; the token "none" = empty list.
+                device->q8_0_cm1_min_m = 0;
                 const char * q8m = getenv("GGML_ARIFI_Q8_0_CM1");
-                if (q8m != nullptr && strcmp(q8m, "on") == 0) {
-                    device->q8_0_cm1_min_m = 0;
+                const bool q8_floor = q8m == nullptr || strcmp(q8m, "floor") == 0;
+                if (q8m != nullptr && strcmp(q8m, "off") == 0) {
+                    device->q8_0_cm1_min_m = UINT32_MAX;
                 } else if (q8m != nullptr && *q8m >= '0' && *q8m <= '9') {
                     device->q8_0_cm1_min_m = (uint32_t) atoi(q8m);
                 }
                 fprintf(stderr, "ggml_vulkan: Q8_0 int8 cm1 MMQ: %s (min rows %u) [GGML_ARIFI_Q8_0_CM1]\n",
-                        device->q8_0_cm1_min_m == UINT32_MAX ? "OFF" : device->q8_0_cm1_min_m == 0 ? "ON" : "ROWS",
+                        device->q8_0_cm1_min_m == UINT32_MAX ? "OFF" : q8_floor ? "FLOOR" : device->q8_0_cm1_min_m == 0 ? "ON" : "ROWS",
                         device->q8_0_cm1_min_m);
+                const char * q8o = getenv("GGML_ARIFI_Q8_0_CM1_ONLY");
+                const char * q8s = getenv("GGML_ARIFI_Q8_0_CM1_SKIP");
+                if (q8_floor && q8o == nullptr && q8s == nullptr) {
+                    q8s = "ssm_out";
+                }
+                const char * q8l = q8o != nullptr ? q8o : q8s;
+                device->q8_0_cm1_roles_only = q8o != nullptr;
+                for (const char * p = q8l; p != nullptr && *p; ) {
+                    const char * e = strchr(p, ',');
+                    const size_t n = e ? (size_t) (e - p) : strlen(p);
+                    if (n > 0 && std::string(p, n) != "none") {
+                        device->q8_0_cm1_roles.insert(std::string(p, n));
+                    }
+                    p = e ? e + 1 : nullptr;
+                }
+                if (q8l != nullptr) {
+                    fprintf(stderr, "ggml_vulkan: Q8_0 int8 cm1 roles %s: %s\n", q8o != nullptr ? "ONLY" : "SKIP", q8l);
+                }
                 const char * fb = getenv("GGML_ARIFI_CM1_F16B");
                 if (fb != nullptr && strcmp(fb, "upstream") == 0) {
                     device->cm1_f16b_mode = 1u;
@@ -7737,6 +7763,25 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     // (UINT32_MAX = off, float mul_mm = r86i numerics; 0 = upstream, every Q8_0 matmul).
     if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_Q8_0 && (uint32_t) ne01 < ctx->device->q8_0_cm1_min_m) {
         mmp_map = nullptr;
+    }
+    // arifi lane-296 night R2: role = the name segment between "blk.N." and ".weight" (exact match, so attn_q != attn_qkv).
+    if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_Q8_0 && ne11 >= ctx->device->cm1_int_min_n &&
+        ctx->device->q8_0_cm1_min_m != UINT32_MAX) {
+        std::string role = src0->name;
+        if (role.rfind("blk.", 0) == 0 && role.find('.', 4) != std::string::npos) {
+            role = role.substr(role.find('.', 4) + 1);
+        }
+        const size_t w = role.rfind(".weight");
+        if (w != std::string::npos) {
+            role = role.substr(0, w);
+        }
+        if (!ctx->device->q8_0_cm1_roles.empty() &&
+            (ctx->device->q8_0_cm1_roles.count(role) > 0) != ctx->device->q8_0_cm1_roles_only) {
+            mmp_map = nullptr;
+        }
+        if (ctx->device->q8_0_cm1_roles_logged.insert(role).second) {
+            fprintf(stderr, "ggml_vulkan: Q8_0 role %s (%u rows): %s\n", role.c_str(), (uint32_t) ne01, mmp_map ? "INT8" : "FLOAT");
+        }
     }
     if (mmp_map == nullptr) {
         quantize_y = false;

@@ -21,6 +21,8 @@ layout (push_constant) uniform parameter
 #include "types.glsl"
 
 layout(constant_id = 0) const uint GROUP_SIZE = 32;
+// arifi lane-296 night R2: 1 = round against the stored f16 scale (scale-consistent), clamp to +-127.
+layout(constant_id = 1) const uint SCALE_F16 = 0;
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
 layout (binding = 0) readonly buffer A {vec4 data_a[];};
@@ -77,9 +79,12 @@ void quantize(const uint wgid) {
     const float amax = subgroupClusteredMax(thread_max, 8);
 #endif
 
-    const float d = amax / 127.0;
+    const float d = SCALE_F16 != 0 ? unpackHalf2x16(packHalf2x16(vec2(amax / 127.0, 0.0))).x : amax / 127.0;
     const float d_inv = d != 0.0 ? 1.0 / d : 0.0;
     vals = round(vals * d_inv);
+    if (SCALE_F16 != 0) {
+        vals = clamp(vals, vec4(-127.0), vec4(127.0));
+    }
 
 #ifndef QBLOCK_X4
     data_b[ib].qs[iqs] = pack32(i8vec4(round(vals)));
