@@ -1,0 +1,65 @@
+R73 PROMOTION - STEP 4: SMOKE CELL (2026-09-21, after the engine-of-record flip)
+
+Resolution: registers/current-state.json -> local_models.interactive_brain.serve -> engine dir;
+llama-cli.exe from THAT dir, same -dev/-ngl/-fa/-c/-b/-ub/-t/-tb/-ctk/-ctv as the registered
+serve line. Load-only + 32 tokens (-n 32, -st), no draft model, no server.
+
+engine dir resolved: <repo>\models\engines\arifi-b10825-r73i-5a7434218
+model:              <repo>/models/hf/huihui-ai/Huihui-Qwen3.8-27B-abliterated-UD-GGUF/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf
+command:            <repo>\models\engines\arifi-b10825-r73i-5a7434218\llama-cli.exe -m <repo>/models/hf/huihui-ai/Huihui-Qwen3.8-27B-abliterated-UD-GGUF/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf -dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -t 16 -tb 32 -ctk q8_0 -ctv q8_0 -n 32 -st -p Say hello in one short sentence. --seed 1
+
+rc = 0    wall = 37.4s
+
+STARTUP LINES (the four defaults: three from R66, the q6_K route from R73):
+  [OK ] q5_k mmvq route:
+      ggml_vulkan: q5_k mmvq route: route (n=5..8, k<=8192) (device-probe)
+  [OK ] q6_k
+      ggml_vulkan: q6_k mmvq route: route (MUL_MAT only, n=7..8) (device-probe)
+      ggml_vulkan: q6_k mat-vec direct-scales: ON
+      ggml_vulkan: q6_k mat-vec activation-hoist+xfold: ON
+  [OK ] iq3 mat-vec sign-hoist:
+      ggml_vulkan: iq3 mat-vec sign-hoist: v2 [GGML_ARIFI_IQ3_MMVQ]
+  [OK ] iq3 mat-vec n=7 rows:
+      ggml_vulkan: iq3 mat-vec n=7 rows: 2 (device-probe (RDNA3)) [GGML_ARIFI_IQ3_N7_ROWS]
+
+--- tail of the run (last 40 lines) ---
+                                    ██    ██
+                                    ▀▀    ▀▀
+
+build      : b11485-5a7434218
+model      : <repo>/models/hf/huihui-ai/Huihui-Qwen3.8-27B-abliterated-UD-GGUF/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf
+ftype      : Q4_K - Medium
+modalities : text
+
+available commands:
+  /exit or Ctrl+C     stop or exit
+  /regen              regenerate the last response
+  /clear              clear the chat history
+  /read <file>        add a text file
+  /glob <pattern>     add text files using globbing pattern
+
+
+
+> Say hello in one short sentence.
+
+[Start thinking]
+
+We need to respond to user: "Say hello in one short sentence." Need final one short sentence. Ensure only one short sentence. Could be "Hello!"
+
+[ Prompt: 11.7 t/s | Generation: 3.5 t/s ]
+
+
+Exiting...
+
+ggml_vulkan: mmvq wide rows_from: 4 (default)
+ggml_vulkan: mmvq A-side hoist: ON (device-probe) (iq1: OFF) (route: r48b)
+ggml_vulkan: q5_k mmvq route: route (n=5..8, k<=8192) (device-probe)
+ggml_vulkan: q6_k mmvq route: route (MUL_MAT only, n=7..8) (device-probe)
+ggml_vulkan: S-X8 mul_mm packed tile decode: ON [GGML_ARIFI_SX8_MM_PACKED]
+ggml_vulkan: integer MMQ under coopmat (sx8, q8_0): OFF [GGML_ARIFI_MMQ_UNDER_COOPMAT]
+ggml_vulkan: S-X8 mat-vec shape tuning: ON (R47d 780M lookup, 31 measured m/k/n cells; probed default wg=64 rows=2; subgroup=64 shared=32768 B)
+ggml_vulkan: q6_k mat-vec direct-scales: ON
+ggml_vulkan: q6_k mat-vec activation-hoist+xfold: ON
+ggml_vulkan: q5_k mat-vec activation-hoist: ON (n<=3)
+ggml_vulkan: iq3 mat-vec sign-hoist: v2 [GGML_ARIFI_IQ3_MMVQ]
+ggml_vulkan: iq3 mat-vec n=7 rows: 2 (device-probe (RDNA3)) [GGML_ARIFI_IQ3_N7_ROWS]
