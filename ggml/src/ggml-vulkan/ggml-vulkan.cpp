@@ -2737,9 +2737,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             if (!rdna4) { cm1_create_mmq({GGML_TYPE_Q4_1, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,   "matmul_q4_1_q8_1",   matmul_q4_1_q8_1_cm1_len,   matmul_q4_1_q8_1_cm1_data,   sizeof(vk_mat_mat_push_constants), 3); }
             cm1_create_mmq({GGML_TYPE_Q5_0,   GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,   "matmul_q5_0_q8_1",   matmul_q5_0_q8_1_cm1_len,   matmul_q5_0_q8_1_cm1_data,   sizeof(vk_mat_mat_push_constants), 3);
             if (!rdna4) { cm1_create_mmq({GGML_TYPE_Q5_1, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,   "matmul_q5_1_q8_1",   matmul_q5_1_q8_1_cm1_len,   matmul_q5_1_q8_1_cm1_data,   sizeof(vk_mat_mat_push_constants), 3); }
-            // arifi lane-296 night: Q8_0 stays under the r86i gate (default OFF = float mul_mm, r86i numerics).
-            // Upstream 70c4e1582e int8 Q8_0 cost S-X8 +0.28% PPL via its Q8_0 attn/GDN projections.
-            if (mmq_under_coopmat) { cm1_create_mmq({GGML_TYPE_Q8_0,   GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,   "matmul_q8_0_q8_1",   matmul_q8_0_q8_1_cm1_len,   matmul_q8_0_q8_1_cm1_data,   sizeof(vk_mat_mat_push_constants), 3); }
+            // arifi lane-296 night: Q8_0 int8 cm1 is chosen per dispatch by GGML_ARIFI_Q8_0_CM1 (ggml_vk_mul_mat_q_f16).
+            cm1_create_mmq({GGML_TYPE_Q8_0,   GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,   "matmul_q8_0_q8_1",   matmul_q8_0_q8_1_cm1_len,   matmul_q8_0_q8_1_cm1_data,   sizeof(vk_mat_mat_push_constants), 3);
             cm1_create_mmq({GGML_TYPE_IQ4_NL, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,   "matmul_iq4_nl_q8_1", matmul_iq4_nl_q8_1_cm1_len, matmul_iq4_nl_q8_1_cm1_data, sizeof(vk_mat_mat_push_constants), 3);
             cm1_create_mmq({GGML_TYPE_IQ4_XS, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,   "matmul_iq4_xs_q8_1", matmul_iq4_xs_q8_1_cm1_len, matmul_iq4_xs_q8_1_cm1_data, sizeof(vk_mat_mat_push_constants), 3);
             cm1_create_mmq({GGML_TYPE_MXFP4,  GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,   "matmul_mxfp4_q8_1",  matmul_mxfp4_q8_1_cm1_len,  matmul_mxfp4_q8_1_cm1_data,  sizeof(vk_mat_mat_push_constants), 3);
@@ -6005,6 +6004,17 @@ vk_device ggml_vk_get_device(size_t idx) {
                 } else if (sd != nullptr && strcmp(sd, "off") == 0) {
                     device->cm1_int_smalln_down = false;
                 }
+                // lane-296 night: GGML_ARIFI_Q8_0_CM1 = off (default) | on | <min output rows>.
+                device->q8_0_cm1_min_m = UINT32_MAX;
+                const char * q8m = getenv("GGML_ARIFI_Q8_0_CM1");
+                if (q8m != nullptr && strcmp(q8m, "on") == 0) {
+                    device->q8_0_cm1_min_m = 0;
+                } else if (q8m != nullptr && *q8m >= '0' && *q8m <= '9') {
+                    device->q8_0_cm1_min_m = (uint32_t) atoi(q8m);
+                }
+                fprintf(stderr, "ggml_vulkan: Q8_0 int8 cm1 MMQ: %s (min rows %u) [GGML_ARIFI_Q8_0_CM1]\n",
+                        device->q8_0_cm1_min_m == UINT32_MAX ? "OFF" : device->q8_0_cm1_min_m == 0 ? "ON" : "ROWS",
+                        device->q8_0_cm1_min_m);
                 const char * fb = getenv("GGML_ARIFI_CM1_F16B");
                 if (fb != nullptr && strcmp(fb, "upstream") == 0) {
                     device->cm1_f16b_mode = 1u;
@@ -7721,6 +7731,11 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     const bool cm1_int_down = ctx->device->cm1_int_smalln_down &&
                               (src0->type == GGML_TYPE_IQ4_XS || src0->type == GGML_TYPE_Q6_K) && ne10 >= 2 * ne01;
     if (ctx->device->coopmat_int_support && ne11 < ctx->device->cm1_int_min_n && !cm1_int_down) {
+        mmp_map = nullptr;
+    }
+    // arifi lane-296 night: Q8_0 x Q8_1 int8 cm1 only for weights with >= q8_0_cm1_min_m output rows
+    // (UINT32_MAX = off, float mul_mm = r86i numerics; 0 = upstream, every Q8_0 matmul).
+    if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_Q8_0 && (uint32_t) ne01 < ctx->device->q8_0_cm1_min_m) {
         mmp_map = nullptr;
     }
     if (mmp_map == nullptr) {
