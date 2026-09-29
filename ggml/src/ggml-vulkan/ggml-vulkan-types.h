@@ -1318,6 +1318,8 @@ struct vk_device_struct {
     std::set<std::string> q8_0_cm1_2d_roles;
     // arifi lane-296 R4: second digit prescaled by 2^shift so its f16 block scale stays normal; reduce undoes it exactly.
     uint32_t q8_0_cm1_2d_shift = 8;
+    // arifi lane-296 S8: float-path matmuls of these weight roles ("all" = every weight) accumulate in f32 [GGML_ARIFI_F32ACC].
+    std::set<std::string> f32acc_roles;
     // arifi lane-296 N11: coopmat1 f32->f16 B conversion. 0 = auto (only when a {type,F16} pipeline
     // exists and ne11 >= cm1_f16b_min_n), 1 = upstream (always), 2 = never (r86i f32-B kernel).
     uint32_t cm1_f16b_mode = 0;

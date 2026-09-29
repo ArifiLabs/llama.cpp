@@ -6061,6 +6061,18 @@ vk_device ggml_vk_get_device(size_t idx) {
                     fprintf(stderr, "ggml_vulkan: Q8_0 int8 cm1 two-digit roles: %s, second-digit prescale 2^%u [GGML_ARIFI_Q8_0_CM1_2D / _2D_SHIFT]\n",
                             q82, device->q8_0_cm1_2d_shift);
                 }
+                const char * f32a = getenv("GGML_ARIFI_F32ACC");
+                for (const char * p = f32a; p != nullptr && *p; ) {
+                    const char * e = strchr(p, ',');
+                    const size_t n = e ? (size_t) (e - p) : strlen(p);
+                    if (n > 0) {
+                        device->f32acc_roles.insert(std::string(p, n));
+                    }
+                    p = e ? e + 1 : nullptr;
+                }
+                if (f32a != nullptr) {
+                    fprintf(stderr, "ggml_vulkan: float-path f32 accumulation for roles: %s [GGML_ARIFI_F32ACC]\n", f32a);
+                }
                 const char * fb = getenv("GGML_ARIFI_CM1_F16B");
                 if (fb != nullptr && strcmp(fb, "upstream") == 0) {
                     device->cm1_f16b_mode = 1u;
@@ -7767,6 +7779,24 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     // If src0 is BF16, try to use a BF16 x BF16 multiply
     ggml_type f16_type = src0->type == GGML_TYPE_BF16 ? GGML_TYPE_BF16 : GGML_TYPE_F16;
 
+    // arifi lane-296 S8: GGML_ARIFI_F32ACC forces f32 accumulation on the float path for listed weight roles.
+    ggml_prec prec = (ggml_prec)dst->op_params[0];
+    if (!ctx->device->f32acc_roles.empty()) {
+        std::string role = src0->name;
+        if (role.rfind("blk.", 0) == 0 && role.find('.', 4) != std::string::npos) {
+            role = role.substr(role.find('.', 4) + 1);
+        }
+        if (role.rfind(".weight") != std::string::npos) {
+            role = role.substr(0, role.rfind(".weight"));
+        }
+        if (ctx->device->f32acc_roles.count("all") > 0 || ctx->device->f32acc_roles.count(role) > 0) {
+            prec = GGML_PREC_F32;
+            if (ctx->device->q8_0_cm1_roles_logged.insert("f32acc:" + role).second) {
+                fprintf(stderr, "ggml_vulkan: role %s (%s): float path f32 accumulation\n", role.c_str(), ggml_type_name(src0->type));
+            }
+        }
+    }
+
     // Prefer the int8 MMQ path (quantize src1 to q8_1) whenever a matching pipeline exists.
     // The pipeline lookup returns nullptr for types without a q8_1 pipeline (e.g. RDNA4-skipped
     // quants), in which case coopmat1 falls back to the f16 B-type quant matmul below.
@@ -7774,7 +7804,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
                       src1->type == GGML_TYPE_F32 && ggml_is_contiguous(src1) && (ne11 * ne10) % 4 == 0;
 
     // Check for mmq first
-    const std::vector<vk_matmul_pipeline_pair>* mmp_map = quantize_y ? ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, GGML_TYPE_Q8_1, (ggml_prec)dst->op_params[0]) : nullptr;
+    const std::vector<vk_matmul_pipeline_pair>* mmp_map = quantize_y ? ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, GGML_TYPE_Q8_1, prec) : nullptr;
     // arifi lane-296 N12: the int8 coopmat1 MMQ wins prefill but loses n=9..32 on the 780M (small tile);
     // below the switch width the r86i f32-B coopmat1 quant kernel runs instead. Exception (run3 H):
     // IQ4_XS and Q6_K at the long-k ffn_down shape (k >= 2m) keep int8, 1.05-2.0x over f32-B at n=9..32.
@@ -7822,7 +7852,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     // auto also keeps f32-B below cm1_f16b_min_n: f16-B lost 0.37-0.75x at 5120x17408 n=9..16.
     const bool cm1_f16b = ctx->device->cm1_f16b_mode == 1u ||
                           (ctx->device->cm1_f16b_mode == 0u && ne11 >= ctx->device->cm1_f16b_min_n &&
-                           ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, f16_type, (ggml_prec)dst->op_params[0]) != nullptr);
+                           ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, f16_type, prec) != nullptr);
     const bool y_non_contig = (ctx->device->coopmat2 && src1->type == GGML_TYPE_F32) ||
                               // coopmat1: force f32->f16 conversion so the f16 B-type quant pipeline is
                               // used, but only when the int8 MMQ path above is not taken.
@@ -7835,7 +7865,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
 
     if (mmp_map == nullptr) {
         // Fall back to f16 dequant mul mat
-        mmp_map = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, y_non_contig ? f16_type : src1->type, (ggml_prec)dst->op_params[0]);
+        mmp_map = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, y_non_contig ? f16_type : src1->type, prec);
     }
 
     const bool qx_needs_dequant = mmp_map == nullptr || x_non_contig;
@@ -7843,7 +7873,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
 
     if (qx_needs_dequant) {
         // Fall back to dequant + f16 mulmat
-        mmp_map = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, f16_type, y_f32_kernel ? GGML_TYPE_F32 : f16_type, (ggml_prec)dst->op_params[0]);
+        mmp_map = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, f16_type, y_f32_kernel ? GGML_TYPE_F32 : f16_type, prec);
     }
 
     // Not implemented

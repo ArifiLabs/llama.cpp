@@ -39,6 +39,26 @@ static stats compare(const float * y, const std::vector<double> & ref, int M, in
     return { std::sqrt(num / (den + 1e-300)), s.back(), s[s.size() / 2] };
 }
 
+// S8 bias decomposition of e = y - ref: global slope, error share along ref, per-row slope spread, per-row constant shift
+static void bias(const char * kind, const char * tag, const std::string & label, const float * y, const std::vector<double> & ref, int M, int N, const std::vector<int> & rows) {
+    double yr = 0, rr = 0, ee = 0, er = 0, shift_e = 0;
+    std::vector<double> rb;
+    for (int ri = 0; ri < (int) rows.size(); ri++) {
+        double a = 0, b = 0, se = 0;
+        for (int n = 0; n < N; n++) {
+            const double r = ref[(size_t) ri * N + n], v = y[(size_t) n * M + rows[ri]], e = v - r;
+            a += v * r; b += r * r; ee += e * e; er += e * r; se += e;
+        }
+        yr += a; rr += b; shift_e += se * se / N;
+        rb.push_back(1.0 - a / (b + 1e-300));
+    }
+    std::sort(rb.begin(), rb.end());
+    const double beta = yr / rr, rel = std::sqrt(ee / rr);
+    printf("BIAS %s %s case=%s rel=%.4e 1-beta=%+.4e along_ref=%.3f cos(e,ref)=%+.4f row(1-beta) p10=%+.3e p50=%+.3e p90=%+.3e row_shift_share=%.3f\n",
+           kind, tag, label.c_str(), rel, 1.0 - beta, (1.0 - beta) * (1.0 - beta) / (rel * rel), er / std::sqrt(ee * rr),
+           rb[rb.size() / 10], rb[rb.size() / 2], rb[rb.size() * 9 / 10], shift_e / ee);
+}
+
 static float f16r(float v) { return ggml_fp16_to_fp32(ggml_fp32_to_fp16(v)); }
 static float f16z(float v) {  // round toward zero
     ggml_fp16_t h = ggml_fp32_to_fp16(v);
@@ -148,6 +168,7 @@ static void evaluate(ggml_backend_t be, const char * tag, const std::string & la
             if (fread(yd.data(), 4, yd.size(), fd) == yd.size()) {
                 stats d = compare(yd.data(), ref, M, N, rows);
                 printf("INGRAPH %s case=%s rel_fro=%.4e max_row=%.4e med_row=%.4e\n", tag, label.c_str(), d.rel_fro, d.max_rel_row, d.med_rel_row);
+                bias("INGRAPH", tag, label, yd.data(), ref, M, N, rows);
             }
         } else printf("INGRAPH %s case=%s missing or shape mismatch (%d x %d)\n", tag, label.c_str(), h[0], h[1]);
         if (fd) fclose(fd);
@@ -165,6 +186,7 @@ static void evaluate(ggml_backend_t be, const char * tag, const std::string & la
     double num1 = 0, den1 = 0; for (int n = 1; n < N; n++) { num1 += cn[n]; den1 += cd[n]; }
     printf("GPU %s case=%s rel_fro=%.4e max_row=%.4e med_row=%.4e worst_tok=%d(%.4e) tok0=%.4e rel_fro_excl_tok0=%.4e op_ms=%.3f (indication, untimed law)\n",
            tag, label.c_str(), g.rel_fro, g.max_rel_row, g.med_rel_row, worst, cr[worst], cr[0], std::sqrt(num1 / (den1 + 1e-300)), ms);
+    bias("GPU", tag, label, y.data(), ref, M, N, rows);
     if (std::getenv("PROBE_SIM") == nullptr) return;
     block_profile(x, label.c_str());
     struct { const char * name; int digits, shift; bool ftz; int bs; bool f16; bool rtz_sub; } sims[] = {
