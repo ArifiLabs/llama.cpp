@@ -4145,8 +4145,10 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     }
     if (device->subgroup_clustered && device->subgroup_require_full_support) {
         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1, true, true);
+        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_res, "quantize_q8_1_x4_res", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u }, 1, true, true);
     } else {
         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1);
+        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_res, "quantize_q8_1_x4_res", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u }, 1);
     }
 
     for (uint32_t i = 0; i < p021_max_gqa_ratio; ++i) {
@@ -6041,6 +6043,18 @@ vk_device ggml_vk_get_device(size_t idx) {
                 if (q8l != nullptr) {
                     fprintf(stderr, "ggml_vulkan: Q8_0 int8 cm1 roles %s: %s\n", q8o != nullptr ? "ONLY" : "SKIP", q8l);
                 }
+                const char * q82 = getenv("GGML_ARIFI_Q8_0_CM1_2D");
+                for (const char * p = q82; p != nullptr && *p; ) {
+                    const char * e = strchr(p, ',');
+                    const size_t n = e ? (size_t) (e - p) : strlen(p);
+                    if (n > 0) {
+                        device->q8_0_cm1_2d_roles.insert(std::string(p, n));
+                    }
+                    p = e ? e + 1 : nullptr;
+                }
+                if (q82 != nullptr) {
+                    fprintf(stderr, "ggml_vulkan: Q8_0 int8 cm1 two-digit roles: %s [GGML_ARIFI_Q8_0_CM1_2D]\n", q82);
+                }
                 const char * fb = getenv("GGML_ARIFI_CM1_F16B");
                 if (fb != nullptr && strcmp(fb, "upstream") == 0) {
                     device->cm1_f16b_mode = 1u;
@@ -7659,10 +7673,14 @@ vk_pipeline ggml_vk_get_quantize_pipeline(ggml_backend_vk_context * ctx, ggml_ty
     }
 }
 
-void ggml_vk_quantize_q8_1(ggml_backend_vk_context * ctx, vk_context& subctx, const vk_subbuffer & in, const vk_subbuffer & out, uint32_t ne) {
-    VK_LOG_DEBUG("ggml_vk_quantize_q8_1(" << "buffer in size=" << in.buffer->size << ", buffer out size=" << out.buffer->size << ", " << ne << ")");
+static void ggml_vk_quantize_q8_1_with(ggml_backend_vk_context * ctx, vk_context& subctx, const vk_subbuffer & in, const vk_subbuffer & out, uint32_t ne, vk_pipeline pipeline);
 
-    vk_pipeline pipeline = ggml_vk_get_quantize_pipeline(ctx, GGML_TYPE_Q8_1);
+void ggml_vk_quantize_q8_1(ggml_backend_vk_context * ctx, vk_context& subctx, const vk_subbuffer & in, const vk_subbuffer & out, uint32_t ne) {
+    ggml_vk_quantize_q8_1_with(ctx, subctx, in, out, ne, ggml_vk_get_quantize_pipeline(ctx, GGML_TYPE_Q8_1));
+}
+
+static void ggml_vk_quantize_q8_1_with(ggml_backend_vk_context * ctx, vk_context& subctx, const vk_subbuffer & in, const vk_subbuffer & out, uint32_t ne, vk_pipeline pipeline) {
+    VK_LOG_DEBUG("ggml_vk_quantize_q8_1(" << "buffer in size=" << in.buffer->size << ", buffer out size=" << out.buffer->size << ", " << ne << ")");
 
     const uint32_t num_blocks = CEIL_DIV(ne, pipeline->wg_denoms[0]);
     // clamp the number of elements to the max workgroup count. The shader will iterate over the total number of blocks.
@@ -7764,6 +7782,8 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_Q8_0 && (uint32_t) ne01 < ctx->device->q8_0_cm1_min_m) {
         mmp_map = nullptr;
     }
+    // arifi lane-296 R3: two-digit int8 (q1 + residual q2, two MMQ passes summed by split_k_reduce) for listed roles.
+    bool two_digit = false;
     // arifi lane-296 night R2: role = the name segment between "blk.N." and ".weight" (exact match, so attn_q != attn_qkv).
     if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_Q8_0 && ne11 >= ctx->device->cm1_int_min_n &&
         ctx->device->q8_0_cm1_min_m != UINT32_MAX) {
@@ -7779,8 +7799,12 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
             (ctx->device->q8_0_cm1_roles.count(role) > 0) != ctx->device->q8_0_cm1_roles_only) {
             mmp_map = nullptr;
         }
+        const uint64_t d_bytes = sizeof(float) * ggml_nelements(dst);
+        two_digit = mmp_map != nullptr && ctx->device->q8_0_cm1_2d_roles.count(role) > 0 &&
+                    stride_d == ne01 && ne21 == ne11 && ggml_is_contiguous(dst) &&
+                    d_bytes % ctx->device->properties.limits.minStorageBufferOffsetAlignment == 0;
         if (ctx->device->q8_0_cm1_roles_logged.insert(role).second) {
-            fprintf(stderr, "ggml_vulkan: Q8_0 role %s (%u rows): %s\n", role.c_str(), (uint32_t) ne01, mmp_map ? "INT8" : "FLOAT");
+            fprintf(stderr, "ggml_vulkan: Q8_0 role %s (%u rows): %s\n", role.c_str(), (uint32_t) ne01, two_digit ? "INT8x2" : mmp_map ? "INT8" : "FLOAT");
         }
     }
     if (mmp_map == nullptr) {
@@ -7837,13 +7861,17 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     const uint64_t y_ne = padded_n * ne10 * ne12 * ne13;
     const uint64_t d_ne = ggml_nelements(dst);
 
-    const uint32_t split_k = ggml_vk_guess_split_k(ctx, ne01, ne11, ne10, disable_split_k, pipeline);
+    const uint32_t split_k = two_digit ? 1 : ggml_vk_guess_split_k(ctx, ne01, ne11, ne10, disable_split_k, pipeline);
 
     const uint64_t qx_sz = ggml_type_size(src0->type) * x_ne / ggml_blck_size(src0->type);
     const uint64_t qy_sz = ggml_type_size(src1->type) * y_ne / ggml_blck_size(src1->type);
     const uint64_t x_sz = !qx_needs_dequant ? qx_sz : sizeof(ggml_fp16_t) * x_ne;
     const uint64_t y_sz = quantize_y ? (ggml_vk_align_size(y_ne, 128) * ggml_type_size(GGML_TYPE_Q8_1) / ggml_blck_size(GGML_TYPE_Q8_1)) : (y_f32_kernel ? sizeof(float) * y_ne : sizeof(ggml_fp16_t) * y_ne);
     const uint64_t d_sz = sizeof(float) * d_ne;
+    two_digit = two_digit && quantize_y;
+    // two-digit: q2 lives after q1 in prealloc_y (offset aligned, 144-byte read slack kept for both)
+    const uint64_t y2_off = two_digit ? ggml_vk_align_size(CEIL_DIV(y_sz, 144) * 144, ctx->device->properties.limits.minStorageBufferOffsetAlignment) : 0;
+    const uint64_t y_need = two_digit ? y2_off + CEIL_DIV(y_sz, 144) * 144 : y_sz;
 
     vk_pipeline to_fp16_vk_0 = nullptr;
     vk_pipeline to_fp16_vk_1 = nullptr;
@@ -7867,22 +7895,22 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     }
 
     {
-        const uint64_t split_k_size = split_k > 1 ? d_sz * split_k : 0;
+        const uint64_t split_k_size = split_k > 1 ? d_sz * split_k : two_digit ? 2 * d_sz : 0;
         if (
                 (qx_needs_dequant && x_sz > ctx->device->properties.limits.maxStorageBufferRange) ||
                 (qy_needs_dequant && y_sz > ctx->device->properties.limits.maxStorageBufferRange) ||
-                (split_k > 1 && split_k_size > ctx->device->properties.limits.maxStorageBufferRange)) {
+                (split_k_size > 0 && split_k_size > ctx->device->properties.limits.maxStorageBufferRange)) {
             GGML_ABORT("Requested preallocation size is too large");
         }
         if (qx_needs_dequant && ctx->prealloc_size_x < x_sz) {
             ctx->prealloc_size_x = x_sz;
             ggml_vk_preallocate_buffers(ctx, subctx);
         }
-        if ((qy_needs_dequant || quantize_y) && ctx->prealloc_size_y < y_sz) {
-            ctx->prealloc_size_y = y_sz;
+        if ((qy_needs_dequant || quantize_y) && ctx->prealloc_size_y < y_need) {
+            ctx->prealloc_size_y = y_need;
             ggml_vk_preallocate_buffers(ctx, subctx);
         }
-        if (split_k > 1 && ctx->prealloc_size_split_k < split_k_size) {
+        if (split_k_size > 0 && ctx->prealloc_size_split_k < split_k_size) {
             ctx->prealloc_size_split_k = split_k_size;
             ggml_vk_preallocate_buffers(ctx, subctx);
         }
@@ -7897,7 +7925,10 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
         if (quantize_y) {
             ggml_pipeline_request_descriptor_sets(ctx, to_q8_1, 1);
         }
-        if (split_k > 1) {
+        if (two_digit) {
+            ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_quantize_q8_1_x4_res, 1);
+        }
+        if (split_k > 1 || two_digit) {
             ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_matmul_split_k_reduce, 1);
         }
     }
@@ -7992,6 +8023,32 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     }
 
     // compute
+    if (two_digit) {
+        // second digit q2 of the activations (recomputed every call; q1 above keeps its reuse cache)
+        if (ctx->prealloc_y_need_sync) {
+            ggml_vk_sync_buffers(ctx, subctx);
+        }
+        ggml_vk_quantize_q8_1_with(ctx, subctx, ggml_vk_subbuffer(ctx, d_Qy, qy_buf_offset), ggml_vk_subbuffer(ctx, d_Y, y2_off), y_ne,
+                                   ctx->device->pipeline_quantize_q8_1_x4_res);
+        if (ctx->prealloc_split_k_need_sync) {
+            ggml_vk_sync_buffers(ctx, subctx);
+        }
+        for (uint64_t pass = 0; pass < 2; ++pass) {
+            ggml_vk_matmul(
+                ctx, subctx, pipeline,
+                { d_X, x_buf_offset, x_sz }, { d_Y, pass * y2_off, y_sz },
+                { ctx->prealloc_split_k, pass * d_sz, d_sz }, {},
+                ne01, ne11, ne10,
+                ne10, ne10, stride_d, stride_batch_x, stride_batch_y, stride_batch_d,
+                1, ne12*ne13, ne02, ne12, r2, r3, padded_n
+            );  // NOLINT
+        }
+        ggml_vk_sync_buffers(ctx, subctx);
+        const std::array<uint32_t, 2> pc2 = { (uint32_t) d_ne, 2u };
+        ggml_vk_dispatch_pipeline(ctx, subctx, ctx->device->pipeline_matmul_split_k_reduce,
+                                  { vk_subbuffer{ ctx->prealloc_split_k, 0, 2 * d_sz }, ggml_vk_subbuffer(ctx, d_D, d_buf_offset) }, pc2, { (uint32_t) d_ne, 1, 1 });
+        ctx->prealloc_split_k_need_sync = true;
+    } else {
     ggml_vk_matmul(
         ctx, subctx, pipeline,
         { d_X, x_buf_offset, x_sz }, { d_Y, y_buf_offset, y_sz },
@@ -8000,6 +8057,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
         ne10, ne10, stride_d, stride_batch_x, stride_batch_y, stride_batch_d,
         split_k, ne12*ne13, ne02, ne12, r2, r3, padded_n
     );  // NOLINT
+    }
 
     if (x_non_contig || qx_needs_dequant) {
         ctx->prealloc_x_need_sync = true;

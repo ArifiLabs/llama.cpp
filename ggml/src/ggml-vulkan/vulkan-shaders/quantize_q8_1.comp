@@ -23,6 +23,8 @@ layout (push_constant) uniform parameter
 layout(constant_id = 0) const uint GROUP_SIZE = 32;
 // arifi lane-296 night R2: 1 = round against the stored f16 scale (scale-consistent), clamp to +-127.
 layout(constant_id = 1) const uint SCALE_F16 = 0;
+// arifi lane-296 R3: 1 = write the second int8 digit (residual of the first pass), for two-pass int8 matmuls.
+layout(constant_id = 2) const uint RESIDUAL = 0;
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
 layout (binding = 0) readonly buffer A {vec4 data_a[];};
@@ -79,12 +81,36 @@ void quantize(const uint wgid) {
     const float amax = subgroupClusteredMax(thread_max, 8);
 #endif
 
-    const float d = SCALE_F16 != 0 ? unpackHalf2x16(packHalf2x16(vec2(amax / 127.0, 0.0))).x : amax / 127.0;
-    const float d_inv = d != 0.0 ? 1.0 / d : 0.0;
-    vals = round(vals * d_inv);
+    float d = SCALE_F16 != 0 ? unpackHalf2x16(packHalf2x16(vec2(amax / 127.0, 0.0))).x : amax / 127.0;
+    float d_inv = d != 0.0 ? 1.0 / d : 0.0;
+    vec4 q = round(vals * d_inv);
     if (SCALE_F16 != 0) {
-        vals = clamp(vals, vec4(-127.0), vec4(127.0));
+        q = clamp(q, vec4(-127.0), vec4(127.0));
     }
+    if (RESIDUAL != 0) {
+        // second int8 digit: requantize x - q1 * f16(d1), q1 recomputed exactly as the first pass stored it
+        vals -= q * unpackHalf2x16(packHalf2x16(vec2(d, 0.0))).x;
+        const vec4 abs_r = abs(vals);
+        const float thread_rmax = max(max(abs_r.x, abs_r.y), max(abs_r.z, abs_r.w));
+#ifndef USE_SUBGROUPS
+        barrier();
+        shmem[tid] = thread_rmax;
+        barrier();
+        [[unroll]] for (uint s = 4; s > 0; s >>= 1) {
+            if (iqs < s) {
+                shmem[tid] = max(shmem[tid], shmem[tid + s]);
+            }
+            barrier();
+        }
+        const float rmax = shmem[block_in_wg * 8];
+#else
+        const float rmax = subgroupClusteredMax(thread_rmax, 8);
+#endif
+        d = rmax / 127.0;
+        d_inv = d != 0.0 ? 1.0 / d : 0.0;
+        q = round(vals * d_inv);
+    }
+    vals = q;
 
 #ifndef QBLOCK_X4
     data_b[ib].qs[iqs] = pack32(i8vec4(round(vals)));
