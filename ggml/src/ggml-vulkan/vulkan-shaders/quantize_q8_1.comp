@@ -25,6 +25,8 @@ layout(constant_id = 0) const uint GROUP_SIZE = 32;
 layout(constant_id = 1) const uint SCALE_F16 = 0;
 // arifi lane-296 R3: 1 = write the second int8 digit (residual of the first pass), for two-pass int8 matmuls.
 layout(constant_id = 2) const uint RESIDUAL = 0;
+// arifi lane-296 R4: residual prescale 2^RES_SHIFT (keeps the second digit's f16 scale out of the subnormal range).
+layout(constant_id = 3) const uint RES_SHIFT = 0;
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
 layout (binding = 0) readonly buffer A {vec4 data_a[];};
@@ -90,6 +92,7 @@ void quantize(const uint wgid) {
     if (RESIDUAL != 0) {
         // second int8 digit: requantize x - q1 * f16(d1), q1 recomputed exactly as the first pass stored it
         vals -= q * unpackHalf2x16(packHalf2x16(vec2(d, 0.0))).x;
+        vals = ldexp(vals, ivec4(int(RES_SHIFT)));
         const vec4 abs_r = abs(vals);
         const float thread_rmax = max(max(abs_r.x, abs_r.y), max(abs_r.z, abs_r.w));
 #ifndef USE_SUBGROUPS

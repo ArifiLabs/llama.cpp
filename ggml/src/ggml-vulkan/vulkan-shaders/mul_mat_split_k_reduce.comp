@@ -3,6 +3,8 @@
 #extension GL_EXT_control_flow_attributes : enable
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+// arifi lane-296 R4: the LAST slice is scaled by 2^-LAST_SHIFT (two-digit int8 second digit). 0 = plain sum.
+layout(constant_id = 0) const uint LAST_SHIFT = 0;
 
 layout (binding = 0) readonly buffer A {float data_a[];};
 layout (binding = 0) readonly buffer A4 {vec4 data_a4[];};
@@ -28,7 +30,11 @@ void main() {
         vec4 result = vec4(0.0f);
 
         [[unroll]] for (uint i = 0; i < p.k_num; i++) {
-            result += data_a4[(i * p.ne + idx) / 4];
+            vec4 v = data_a4[(i * p.ne + idx) / 4];
+            if (LAST_SHIFT != 0 && i == p.k_num - 1) {
+                v = ldexp(v, ivec4(-int(LAST_SHIFT)));
+            }
+            result += v;
         }
 
         data_d4[idx / 4] = result;
@@ -38,7 +44,11 @@ void main() {
                 float result = 0.0f;
 
                 [[unroll]] for (uint i = 0; i < p.k_num; i++) {
-                    result += data_a[i * p.ne + idx + j];
+                    float v = data_a[i * p.ne + idx + j];
+                    if (LAST_SHIFT != 0 && i == p.k_num - 1) {
+                        v = ldexp(v, -int(LAST_SHIFT));
+                    }
+                    result += v;
                 }
 
                 data_d[idx + j] = result;

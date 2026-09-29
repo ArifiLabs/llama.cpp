@@ -1316,6 +1316,8 @@ struct vk_device_struct {
     std::set<std::string> q8_0_cm1_roles_logged;
     // arifi lane-296 R3: roles whose Q8_0 int8 matmul runs as two int8 passes (q1 + residual q2) [GGML_ARIFI_Q8_0_CM1_2D].
     std::set<std::string> q8_0_cm1_2d_roles;
+    // arifi lane-296 R4: second digit prescaled by 2^shift so its f16 block scale stays normal; reduce undoes it exactly.
+    uint32_t q8_0_cm1_2d_shift = 8;
     // arifi lane-296 N11: coopmat1 f32->f16 B conversion. 0 = auto (only when a {type,F16} pipeline
     // exists and ne11 >= cm1_f16b_min_n), 1 = upstream (always), 2 = never (r86i f32-B kernel).
     uint32_t cm1_f16b_mode = 0;
@@ -1401,6 +1403,7 @@ struct vk_device_struct {
     matmul_tile_selector_t matmul_id_tile_selector;
 
     vk_pipeline pipeline_matmul_split_k_reduce;
+    vk_pipeline pipeline_matmul_split_k_reduce_2d;
     vk_pipeline pipeline_quantize_q8_1_x4;
     vk_pipeline pipeline_quantize_q8_1_x4_res;
 
