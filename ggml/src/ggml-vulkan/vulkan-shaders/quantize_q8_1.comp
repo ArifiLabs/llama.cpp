@@ -83,7 +83,9 @@ void quantize(const uint wgid) {
     const float amax = subgroupClusteredMax(thread_max, 8);
 #endif
 
-    float d = SCALE_F16 != 0 ? unpackHalf2x16(packHalf2x16(vec2(amax / 127.0, 0.0))).x : amax / 127.0;
+    // lane-296c: f16 rounding via the same conversion as the ds store below; packHalf2x16 rounds toward zero on
+    // RDNA3 (AMD proprietary driver), the f16vec2 store rounds to nearest, so mixing the two leaves a 2^-11 mismatch.
+    float d = SCALE_F16 != 0 ? float(f16vec2(vec2(amax / 127.0, 0.0)).x) : amax / 127.0;
     float d_inv = d != 0.0 ? 1.0 / d : 0.0;
     vec4 q = round(vals * d_inv);
     if (SCALE_F16 != 0) {
@@ -91,7 +93,7 @@ void quantize(const uint wgid) {
     }
     if (RESIDUAL != 0) {
         // second int8 digit: requantize x - q1 * f16(d1), q1 recomputed exactly as the first pass stored it
-        vals -= q * unpackHalf2x16(packHalf2x16(vec2(d, 0.0))).x;
+        vals -= q * float(f16vec2(vec2(d, 0.0)).x);
         vals = ldexp(vals, ivec4(int(RES_SHIFT)));
         const vec4 abs_r = abs(vals);
         const float thread_rmax = max(max(abs_r.x, abs_r.y), max(abs_r.z, abs_r.w));

@@ -1,0 +1,8 @@
+set(TARGET arifi-op-probe)
+add_executable(${TARGET} op-probe.cpp)
+target_link_libraries(${TARGET} PRIVATE ggml ${CMAKE_THREAD_LIBS_INIT})
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+add_executable(arifi-op-capture capture.cpp)
+target_link_libraries(arifi-op-capture PRIVATE llama ggml ${CMAKE_THREAD_LIBS_INIT})
+target_compile_features(arifi-op-capture PRIVATE cxx_std_17)
