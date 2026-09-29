@@ -13,11 +13,15 @@
 #include <string>
 #include <vector>
 
-struct cap { std::string dir; std::set<std::string> roles, done; };
+struct cap { std::string dir; std::set<std::string> roles, done; std::set<int> layers; };
 
-static std::string role_of(const std::string & n) {
-    if (n.rfind("blk.", 0) != 0) return "";
-    const size_t a = n.find('.', 4), w = n.rfind(".weight");
+// blk.<L>.<role>.weight -> role (layer in *L); <name>.weight (no block, e.g. output) -> name, *L = -1
+static std::string role_of(const std::string & n, int * L = nullptr) {
+    const size_t w = n.rfind(".weight");
+    if (L) *L = -1;
+    if (n.rfind("blk.", 0) != 0) return w == std::string::npos ? "" : n.substr(0, w);
+    const size_t a = n.find('.', 4);
+    if (L && a != std::string::npos) *L = atoi(n.c_str() + 4);
     return (a == std::string::npos || w == std::string::npos || w <= a) ? "" : n.substr(a + 1, w - a - 1);
 }
 
@@ -25,7 +29,10 @@ static bool cb(ggml_tensor * t, bool ask, void * ud) {
     cap * c = (cap *) ud;
     if (t->op != GGML_OP_MUL_MAT || !t->src[0] || !t->src[1]) return !ask ? true : false;
     const std::string wn = t->src[0]->name;
-    if (!c->roles.count(role_of(wn)) || c->done.count(wn)) return !ask ? true : false;
+    int L = -1;
+    const std::string role = role_of(wn, &L);
+    const bool layer_ok = c->layers.empty() || L < 0 || c->layers.count(L);  // PROBE_LAYERS filters blk.* only
+    if (!c->roles.count(role) || !layer_ok || c->done.count(wn)) return !ask ? true : false;
     if (ask) return true;
     const ggml_tensor * x = t->src[1];
     if (x->type != GGML_TYPE_F32 || x->ne[3] != 1) { fprintf(stderr, "skip %s: src1 type/shape\n", wn.c_str()); return true; }
@@ -56,6 +63,9 @@ int main(int argc, char ** argv) {
     cap c; c.dir = argv[3];
     std::stringstream rs(std::getenv("PROBE_ROLES") ? std::getenv("PROBE_ROLES") : "ssm_out,attn_output,ssm_alpha");
     for (std::string r; std::getline(rs, r, ',');) c.roles.insert(r);
+    std::stringstream ls(std::getenv("PROBE_LAYERS") ? std::getenv("PROBE_LAYERS") : "");
+    for (std::string r; std::getline(ls, r, ',');) c.layers.insert(atoi(r.c_str()));
+    const bool all_logits = std::getenv("PROBE_ALL_LOGITS") != nullptr;  // output head sees every token, as in llama-perplexity
     std::ifstream tf(argv[2], std::ios::binary); std::stringstream ss; ss << tf.rdbuf(); std::string text = ss.str();
     llama_backend_init();
     llama_model_params mp = llama_model_default_params(); mp.n_gpu_layers = 999;
@@ -75,7 +85,7 @@ int main(int argc, char ** argv) {
     llama_batch b = llama_batch_init(512 * ns, 0, 1);
     for (int s = 0; s < ns; s++) for (int i = 0; i < 512; i++) {
         const int j = s * 512 + i;
-        b.token[j] = tok[j]; b.pos[j] = i; b.n_seq_id[j] = 1; b.seq_id[j][0] = s; b.logits[j] = i == 511;
+        b.token[j] = tok[j]; b.pos[j] = i; b.n_seq_id[j] = 1; b.seq_id[j][0] = s; b.logits[j] = all_logits || i == 511;
     }
     b.n_tokens = 512 * ns;
     const int rc = llama_decode(ctx, b);

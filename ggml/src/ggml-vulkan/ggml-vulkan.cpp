@@ -7789,7 +7789,10 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
         if (role.rfind(".weight") != std::string::npos) {
             role = role.substr(0, role.rfind(".weight"));
         }
-        if (ctx->device->f32acc_roles.count("all") > 0 || ctx->device->f32acc_roles.count(role) > 0) {
+        // entries: <role> | all | <type>:<role> | <type>:all (type = ggml_type_name, e.g. sx8:ffn_down)
+        const std::string tn = ggml_type_name(src0->type);
+        const auto & fr = ctx->device->f32acc_roles;
+        if (fr.count("all") > 0 || fr.count(role) > 0 || fr.count(tn + ":all") > 0 || fr.count(tn + ":" + role) > 0) {
             prec = GGML_PREC_F32;
             if (ctx->device->q8_0_cm1_roles_logged.insert("f32acc:" + role).second) {
                 fprintf(stderr, "ggml_vulkan: role %s (%s): float path f32 accumulation\n", role.c_str(), ggml_type_name(src0->type));

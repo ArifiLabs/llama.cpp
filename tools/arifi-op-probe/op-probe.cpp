@@ -15,9 +15,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <random>
+#include <sstream>
 #include <string>
 #include <vector>
 
+static ggml_type g_wtype = GGML_TYPE_Q8_0;  // weight type of the item under test (replay reads it from the GGUF)
 static const int REF_ROWS = 256;  // ponytail: f64 reference on a row subset, full rows if a defect needs it
 
 struct stats { double rel_fro, max_rel_row, med_rel_row; };
@@ -94,10 +96,17 @@ static std::vector<float> sim_q8(const std::vector<float> & x, int digits, int s
     return out;
 }
 
+static std::vector<float> ref_rows(const std::vector<uint8_t> & wq, int K, const std::vector<int> & rows) {
+    const size_t rs = ggml_row_size(g_wtype, K);
+    std::vector<float> wf((size_t) K * rows.size());
+    for (size_t ri = 0; ri < rows.size(); ri++) ggml_get_type_traits(g_wtype)->to_float(wq.data() + (size_t) rows[ri] * rs, &wf[ri * K], K);
+    return wf;
+}
+
 static std::vector<double> host_ref(const std::vector<float> & wf, const std::vector<float> & x, int K, int N, const std::vector<int> & rows) {
     std::vector<double> ref((size_t) rows.size() * N);
     for (int ri = 0; ri < (int) rows.size(); ri++) {
-        const float * w = &wf[(size_t) rows[ri] * K];
+        const float * w = &wf[(size_t) ri * K];  // wf holds only the reference rows, in rows order
         for (int n = 0; n < N; n++) {
             const float * xv = &x[(size_t) n * K];
             double s = 0;
@@ -109,10 +118,10 @@ static std::vector<double> host_ref(const std::vector<float> & wf, const std::ve
 }
 
 static std::vector<float> run_gpu(ggml_backend_t be, const std::string & wname, const std::vector<uint8_t> & wq, const std::vector<float> & x,
-                                  int K, int M, int N, double & ms) {
+                                  int K, int M, int N, double & ms, std::vector<double> * rep_ms = nullptr, int reps_in = 10) {
     ggml_init_params ip = { 4 * ggml_tensor_overhead() + ggml_graph_overhead(), nullptr, true };
     ggml_context * ctx = ggml_init(ip);
-    ggml_tensor * w = ggml_new_tensor_2d(ctx, GGML_TYPE_Q8_0, K, M);
+    ggml_tensor * w = ggml_new_tensor_2d(ctx, g_wtype, K, M);
     ggml_set_name(w, wname.c_str());
     // PROBE_NSEQ=s: same memory viewed as [K, N/s, s] (the batched shape of qwen35 ssm_out with s sequences)
     const int s = std::getenv("PROBE_NSEQ") ? atoi(std::getenv("PROBE_NSEQ")) : 1;
@@ -125,9 +134,13 @@ static std::vector<float> run_gpu(ggml_backend_t be, const std::string & wname, 
     ggml_backend_tensor_set(w, wq.data(), 0, wq.size());
     ggml_backend_tensor_set(xt, x.data(), 0, x.size() * sizeof(float));
     ggml_backend_graph_compute(be, gf);
-    const int reps = 10;
+    const int reps = reps_in;
     auto t0 = std::chrono::steady_clock::now();
-    for (int i = 0; i < reps; i++) ggml_backend_graph_compute(be, gf);
+    for (int i = 0; i < reps; i++) {
+        auto r0 = std::chrono::steady_clock::now();
+        ggml_backend_graph_compute(be, gf);  // synchronous: returns after the queue drains
+        if (rep_ms) rep_ms->push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - r0).count());
+    }
     ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / reps;
     std::vector<float> out((size_t) M * N);
     ggml_backend_tensor_get(y, out.data(), 0, out.size() * sizeof(float));
@@ -156,10 +169,9 @@ static void block_profile(const std::vector<float> & x, const char * label) {
 
 static void evaluate(ggml_backend_t be, const char * tag, const std::string & label, const std::string & wname,
                      const std::vector<uint8_t> & wq, const std::vector<float> & x, int K, int M, int N) {
-    std::vector<float> wf((size_t) K * M);
-    ggml_get_type_traits(GGML_TYPE_Q8_0)->to_float(wq.data(), wf.data(), (int64_t) K * M);
     std::vector<int> rows;
     for (int i = 0; i < std::min(REF_ROWS, M); i++) rows.push_back((int) ((int64_t) i * M / std::min(REF_ROWS, M)));
+    const std::vector<float> wf = ref_rows(wq, K, rows);
     const std::vector<double> ref = host_ref(wf, x, K, N, rows);
     if (const char * dp = std::getenv("PROBE_DST")) {  // in-graph output captured by arifi-op-capture
         FILE * fd = fopen(dp, "rb"); int32_t h[2] = {0, 0};
@@ -212,6 +224,35 @@ static void evaluate(ggml_backend_t be, const char * tag, const std::string & la
     }
 }
 
+static bool read_x(const char * p, std::vector<float> & x, int & K, int & N) {
+    FILE * fx = fopen(p, "rb");
+    int32_t h[2];
+    if (!fx || fread(h, 4, 2, fx) != 2) { if (fx) fclose(fx); return false; }
+    K = h[0]; N = h[1]; x.resize((size_t) K * N);
+    const bool ok = fread(x.data(), 4, x.size(), fx) == x.size();
+    fclose(fx);
+    return ok;
+}
+
+// reads one weight from a GGUF, sets g_wtype; M from the byte size
+static bool load_weight(const char * gpath, const std::string & wname, int K, std::vector<uint8_t> & wq, int & M) {
+    gguf_init_params gp = { true, nullptr };
+    gguf_context * g = gguf_init_from_file(gpath, gp);
+    const int64_t ti = g ? gguf_find_tensor(g, wname.c_str()) : -1;
+    if (ti < 0) { fprintf(stderr, "tensor %s missing in %s\n", wname.c_str(), gpath); return false; }
+    g_wtype = gguf_get_tensor_type(g, ti);
+    if (!ggml_get_type_traits(g_wtype)->to_float) { fprintf(stderr, "tensor %s type %s has no host to_float\n", wname.c_str(), ggml_type_name(g_wtype)); return false; }
+    const size_t sz = gguf_get_tensor_size(g, ti);
+    const size_t off = gguf_get_data_offset(g) + gguf_get_tensor_offset(g, ti);
+    M = (int) (sz / ggml_row_size(g_wtype, K));
+    wq.resize(sz);
+    FILE * fw = fopen(gpath, "rb");
+    _fseeki64(fw, (long long) off, SEEK_SET);
+    const bool ok = fread(wq.data(), 1, sz, fw) == sz;
+    fclose(fw); gguf_free(g);
+    return ok;
+}
+
 int main(int argc, char ** argv) {
     if (argc < 3) { fprintf(stderr, "usage: %s synth <tag> [K M N] | replay <tag> <gguf> <w-name> <x.f32>\n", argv[0]); return 1; }
     const std::string mode = argv[1];
@@ -244,28 +285,40 @@ int main(int argc, char ** argv) {
         std::vector<float> x = base;  // heavy tail: 1 value in 64 x30
         for (size_t i = 0; i < x.size(); i += 64) x[i] *= 30.0f;
         evaluate(be, tag, "heavytail", "blk.0.ssm_out.weight", wq, x, K, M, N);
-    } else if (mode == "replay" && argc >= 6) {
-        const char * gpath = argv[3]; const std::string wname = argv[4];
-        FILE * fx = fopen(argv[5], "rb");
-        if (!fx) { fprintf(stderr, "no x file\n"); return 1; }
-        int32_t hdr[2]; if (fread(hdr, 4, 2, fx) != 2) return 1;
-        const int K = hdr[0], N = hdr[1];
-        std::vector<float> x((size_t) K * N);
-        if (fread(x.data(), 4, x.size(), fx) != x.size()) return 1;
-        fclose(fx);
-        gguf_init_params gp = { true, nullptr };
-        gguf_context * g = gguf_init_from_file(gpath, gp);
-        const int64_t ti = gguf_find_tensor(g, wname.c_str());
-        if (ti < 0 || gguf_get_tensor_type(g, ti) != GGML_TYPE_Q8_0) { fprintf(stderr, "tensor %s missing or not Q8_0\n", wname.c_str()); return 1; }
-        const size_t sz = gguf_get_tensor_size(g, ti);
-        const size_t off = gguf_get_data_offset(g) + gguf_get_tensor_offset(g, ti);
-        const int M = (int) (sz / ggml_row_size(GGML_TYPE_Q8_0, K));
-        std::vector<uint8_t> wq(sz);
-        FILE * fw = fopen(gpath, "rb");
-        _fseeki64(fw, (long long) off, SEEK_SET);
-        if (fread(wq.data(), 1, sz, fw) != sz) return 1;
-        fclose(fw); gguf_free(g);
-        evaluate(be, tag, wname, wname, wq, x, K, M, N);
+    } else if ((mode == "replay" && argc >= 6) || (mode == "time" && argc >= 6)) {
+        // replay <tag> <gguf> <w> <x> [<w> <x> ...]        : error vs f64 (any weight type with a host to_float)
+        // time   <tag> <gguf> <w> <x> [<gguf> <w> <x> ...] : kernel time per width PROBE_NS (default 1,4,5,16,32,512),
+        //   PROBE_REPS timed reps after one discarded warm rep; prints median/p10/p90 and an output hash per width
+        const bool timing = mode == "time";
+        const char * gpath = argv[3];
+        for (int a = timing ? 3 : 4; a + (timing ? 2 : 1) < argc; a += timing ? 3 : 2) {
+            if (timing) gpath = argv[a];
+            const std::string wname = argv[a + (timing ? 1 : 0)];
+            const char * xpath = argv[a + (timing ? 2 : 1)];
+            std::vector<float> x; int K = 0, N = 0;
+            if (!read_x(xpath, x, K, N)) { fprintf(stderr, "no x file %s\n", xpath); return 1; }
+            std::vector<uint8_t> wq; int M = 0;
+            if (!load_weight(gpath, wname, K, wq, M)) return 1;
+            if (!timing) { evaluate(be, tag, wname, wname, wq, x, K, M, N); continue; }
+            const int reps = std::getenv("PROBE_REPS") ? atoi(std::getenv("PROBE_REPS")) : 20;
+            std::stringstream ns(std::getenv("PROBE_NS") ? std::getenv("PROBE_NS") : "1,4,5,16,32,512");
+            for (std::string t; std::getline(ns, t, ',');) {
+                const int n = atoi(t.c_str());
+                std::vector<float> xn((size_t) K * n);
+                for (int j = 0; j < n; j++) std::copy_n(&x[(size_t) (j % N) * K], K, &xn[(size_t) j * K]);
+                std::vector<double> rm; double ms = 0;
+                const std::vector<float> y = run_gpu(be, wname, wq, xn, K, M, n, ms, &rm, reps + 1);
+                rm.erase(rm.begin());  // warm rep
+                std::sort(rm.begin(), rm.end());
+                uint64_t h = 1469598103934665603ull;  // FNV-1a over the output bytes: bit identity across variants
+                const uint8_t * yb = (const uint8_t *) y.data();
+                for (size_t i = 0; i < y.size() * 4; i++) { h ^= yb[i]; h *= 1099511628211ull; }
+                printf("TIME %s w=%s type=%s K=%d M=%d n=%d reps=%zu med_ms=%.4f p10=%.4f p90=%.4f min=%.4f hash=%016llx (indication, untimed law)\n",
+                       tag, wname.c_str(), ggml_type_name(g_wtype), K, M, n, rm.size(), rm[rm.size() / 2], rm[rm.size() / 10],
+                       rm[rm.size() * 9 / 10], rm[0], (unsigned long long) h);
+                fflush(stdout);
+            }
+        }
     } else if (mode == "multi" && argc >= 6) {
         // multi <tag> <gguf> <w1> <x1> [<w2> <x2> ...]: ONE graph, no callback, every matmul checked vs f64
         // (exercises q8_1 reuse cache, prealloc_y and split-k slice reuse between nodes)
@@ -307,10 +360,10 @@ int main(int argc, char ** argv) {
         for (int rep = 0; rep < 2; rep++) ggml_backend_graph_compute(be, gf);
         for (size_t i = 0; i < its.size(); i++) {
             auto & it = its[i];
-            std::vector<float> wf((size_t) it.K * it.M), y((size_t) it.M * it.N);
-            ggml_get_type_traits(GGML_TYPE_Q8_0)->to_float(it.wq.data(), wf.data(), (int64_t) it.K * it.M);
+            std::vector<float> y((size_t) it.M * it.N);
             std::vector<int> rows;
             for (int r = 0; r < REF_ROWS; r++) rows.push_back((int) ((int64_t) r * it.M / REF_ROWS));
+            const std::vector<float> wf = ref_rows(it.wq, it.K, rows);
             ggml_backend_tensor_get(it.y, y.data(), 0, y.size() * 4);
             stats st = compare(y.data(), host_ref(wf, it.x, it.K, it.N, rows), it.M, it.N, rows);
             printf("MULTI %s node=%zu case=%s rel_fro=%.4e max_row=%.4e\n", tag, i, it.w.c_str(), st.rel_fro, st.max_rel_row);
