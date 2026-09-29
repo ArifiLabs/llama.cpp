@@ -20,8 +20,9 @@ y[m, n] = sum over k of W[m, k] * x[k, n], K = 6144 for `ssm_out` and `attn_outp
    - per 16x16 tile and per 32-block: `acc = coopMatMulAdd(qw, qx)` in int32 (:447-452).
      Max |acc| = 32 * 127 * 127 = 516,128 < 2^31: **no saturation**. < 2^24: `float(acc)` is exact.
    - `sums += fma(float(acc) * dw, dx, 0)` in f32 (:136-141, :456-459): scales applied per 32-block, accumulated in
-     f32 over K / 32 = 192 blocks. The magic-bias int->float trick (:125-127) runs only when WARP != 32; RDNA3 runs
-     wave32 for this shader, so it is off (ASSUMED from the commit message "only force subgroup size 32 on AMD RDNA").
+     f32 over K / 32 = 192 blocks. The magic-bias int->float trick (:125-127) runs only when WARP != 32 (the device
+     reports warp size 64; which size this shader runs is not traced). Moot for accuracy: the trick is exact for
+     |acc| < 2^22 and the worst case here is 516,128 < 2^19 (CHECKED arithmetic); the GPU = simulator match agrees.
    - activation scale load: f16 -> f32 (`mul_mmq_cm1_funcs.glsl:522, :537`); weight scale likewise.
    - tail: K = 6144 = 48 x 128, M = 5120 = 40 x 128: no partial tile on these shapes. Out-of-range rows/cols are
      masked at the store (:497-507).
@@ -148,6 +149,13 @@ Per-chunk ln PPL recovered from the running PPL column; pairs share the same 16 
 | B1 - all-on | +0.0088 | 0.0071 | +1.2 | 11/16 |
 | only attn_q - (attn_q + attn_qkv) | +0.0114 | 0.0055 | +2.1 | 10/16 |
 | all-on - A | +0.0266 | 0.0120 | +2.2 | 10/16 |
+| **B1 - B3 (equal `ssm_out` op error, 5.1e-4 vs 5.1e-4)** | **+0.0209** | **0.0062** | **+3.4** | **13/16** |
+| B5 - A | +0.0205 | 0.0117 | +1.7 | 10/16 |
+| B5 - B3 | +0.0060 | 0.0096 | +0.6 | 10/16 |
+
+- B1 and B3 have the same `ssm_out` op error to 3 digits (B1 by simulator, the current binary cannot reproduce it;
+  B3 in graph), yet differ by 0.021 PPL at 3.4 SE. The gap size does not scale with the perturbation size: the
+  16-chunk PPL responds to ANY numerics change at about the 0.02 level, and the paired SE understates that.
 
 - One paired SE of the 16-chunk S-X8 PPL is 0.006-0.012. The bar's margin over the floor (7.4163 - 7.4107 =
   0.0056) is under one SE.
@@ -168,4 +176,8 @@ Per-chunk ln PPL recovered from the running PPL column; pairs share the same 16 
   Mean KLD 0.002612, median 0.001697. FAIL of the 7.4163 bar, as pre-registered (the op model predicted B5 ~ B3).
 - Kernel-level time on the `ssm_out` shape (probe, 10 reps, INDICATION ONLY under the untimed law): one digit
   about 11 ms, float about 16 ms, two digits about 20 ms.
-- 64-chunk paired PPL, A vs B5: `night/gpu-int8goal-p64.sh`, `ev14/`, running at 16:30.
+- 64-chunk paired PPL, A vs B5: `night/gpu-int8goal-p64.sh`, `ev14/`, running at 16:30. Until it lands, "the gap
+  is the instrument, not the math" is ASSUMED. If B5 - A stays positive at more than 2 SE over 64 chunks, the effect
+  lies outside what the witnesses covered, and two cheap checks are owed: (a) a multi-node replay that writes NEW x
+  between the two computes (stale buffer across graph computes); (b) a capture without the first-dispatch filter,
+  taking the LAST of the four ubatches of a decode.

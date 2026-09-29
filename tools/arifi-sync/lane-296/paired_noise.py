@@ -61,7 +61,7 @@ if missing:
     print("missing or incomplete:", ", ".join(missing))
 PAIRS = [("B3", "A(skip ssm_out)"), ("B2", "off"), ("all-on", "off"), ("A(skip ssm_out)", "off"), ("B1", "all-on"),
          ("only attn_q", "rows>=6145"), ("only attn_q", "off"), ("only alpha,beta", "off"), ("all-on", "A(skip ssm_out)"),
-         ("B5", "A(skip ssm_out)"), ("B5", "B3"), ("B5", "off")]
+         ("B5", "A(skip ssm_out)"), ("B5", "B3"), ("B5", "off"), ("B1", "B3")]
 print("| pair | dPPL | paired SE (PPL) | dPPL / SE | chunks where first is worse |")
 print("|---|---|---|---|---|")
 for a, b in PAIRS:
@@ -75,8 +75,8 @@ def chunks64(p):
     f = N / p
     if not f.exists():
         return None
-    txt = f.read_text(encoding="utf-8", errors="replace") + (f.with_suffix(".err").read_text(encoding="utf-8", errors="replace") if f.with_suffix(".err").exists() else "")
-    run = {int(k): float(v) for k, v in re.findall(r"\[(\d+)\]([0-9.]+)", txt)}
+    txt = f.read_text(encoding="utf-8", errors="replace")  # stdout only: a stray [k]x in stderr must not overwrite
+    run ={int(k): float(v) for k, v in re.findall(r"\[(\d+)\]([0-9.]+)", txt)}
     n = max(run) if run else 0
     if n == 0 or any(k not in run for k in range(1, n + 1)):
         return None

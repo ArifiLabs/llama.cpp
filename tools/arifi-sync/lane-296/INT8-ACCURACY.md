@@ -13,11 +13,13 @@ Evidence: `night/ev10/summary.txt` (R3 legs, 16 chunks, c512, seed 1), `night/ev
   (night8 stage G role legs, section 3).
 - **FLOOR = candidate A, the branch default at `d8c538d52c`:** Q8_0 int8 ON for every role except `ssm_out`, which
   stays on the float matmul. It meets the bar on all three lines (section 4). CHECKED.
-- **GOAL = candidate B, int8 accurate FOR `ssm_out`:** the MATH is solved, the BAR is not met. Update 16:3x (int8
-  goal maker, `night/INT8-MATH.md`, section 9 below): int8 on `ssm_out` with two 8-bit digits (B5, commit
-  `1a88a9c09b`) is 50x MORE accurate than the float path it replaces (op error 1.4e-4 vs 7.7e-3, CHECKED against
-  f64, in-graph witness CHECKED). Its S-X8 PPL is 7.431166 (bar 7.4163): FAIL. The 16-chunk PPL has a paired SE of
-  0.006-0.012 and cannot resolve the difference (B5 - A = +0.0205, 1.7 SE). A 64-chunk paired check is running.
+- **GOAL = candidate B, int8 accurate FOR `ssm_out`:** accurate at the op level, the BAR is NOT met; neither exit
+  condition of the job is met yet. Update 16:3x (int8 goal maker, `night/INT8-MATH.md`, section 8 below): int8 on
+  `ssm_out` with two 8-bit digits (B5, commit `1a88a9c09b`) is 50x more accurate than the float path it replaces
+  (op error 1.4e-4 vs 7.7e-3 against f64, CHECKED; in-graph witness CHECKED). Its S-X8 PPL is 7.431166 (bar 7.4163):
+  FAIL. That the gap is instrument sensitivity rather than a real quality loss is CONSISTENT with the numbers
+  (B5 - A +0.0205 at 1.7 SE; B1 - B3 +0.0209 at 3.4 SE with equal op error) but ASSUMED until the 64-chunk paired
+  check (`ev14/`, running) lands.
 
 ## 2. Tensor map (CHECKED, `night/gguf_map.py`, raw GGUF header)
 
@@ -84,7 +86,7 @@ at or under 7.4163, and no line worse than r86i.
   legs, so it ran on Vulkan. Cause of the lost head and tail: NOT established (ASSUMED: output capture of the vanilla
   exe, not the model). R4 re-runs it once as the last leg of its chain (named cause: incomplete capture).
 
-## 5. Candidate B, the GOAL (int8 accurate FOR ssm_out): OPEN
+## 5. Candidate B, the GOAL (int8 accurate FOR ssm_out): R3-R4 record (SUPERSEDED by section 8: the FTZ mechanism below is falsified, B3 ran and failed)
 
 What B1 and B2 changed (CHECKED, commit `4714944839`, `GGML_ARIFI_Q8_0_CM1_2D=<roles>`): the listed roles get a second
 int8 "digit". Pass 1 = today's q8_1 (q1 = round(x / d1)). Pass 2 = a residual quantizer
@@ -166,7 +168,7 @@ parts. No new CPU reference leg was started.
   1, early 2) of 5-20 s each, about 25 min of GPU slot; 4 model loads (capture + 3 witness) about 8 min; 1 S-X8 leg
   5 min. Over the 20-run price line in count, near it in time.
 
-## 9. Int8 goal (maker, 16:3x): mechanism at the level of one multiplication (full derivation `night/INT8-MATH.md`)
+## 8. Int8 goal (maker, 16:3x): mechanism at the level of one multiplication (full derivation `night/INT8-MATH.md`)
 
 What the R4 reading got wrong (CHECKED, op probe `tools/arifi-op-probe`, evidence `night/ev12/`):
 - **Flush-to-zero of f16 scales: FALSIFIED.** Subnormal first-digit scales are kept down to amax 0.001.
@@ -196,13 +198,20 @@ Candidates (S-X8 16 chunks, vs r86i base):
 
 The instrument (CHECKED, `night/paired_noise.py`): paired SE of the 16-chunk PPL = 0.006-0.012; bar margin over A
 = 0.0056 (under 1 SE); B5 - A = +0.0205 (1.7 SE), B5 - B3 = +0.006 (0.6 SE); a config with MORE int8 beat one with
-LESS by 2.1 SE (attn_q + attn_qkv vs only attn_q). KLD vs r86i is distance from the float path's own 7.8e-3 rounding
-and cannot rank accuracy: B5 is 50x closer to exact than A on `ssm_out` and reads 0.0026 vs 0.0022.
+LESS by 2.1 SE (attn_q + attn_qkv vs only attn_q). **B1 - B3 = +0.0209 at 3.4 SE (13/16 chunks) although their
+`ssm_out` op errors are equal to 3 digits** (L0 5.13e-4 simulator vs 5.08e-4; L16-62 equal): a perturbation about
+10x smaller than B5 - A (their outputs differ by at most about 7e-4 relative, ASSUMED from both sitting about 5e-4
+from exact) moves the 16-chunk PPL by the same 0.02. The paired SE understates the PPL's sensitivity to numerics;
+the 7.4163 bar (0.0056 over A) behaves like a lottery for any numerics change. KLD vs r86i is distance from the
+float path's own 7.8e-3 rounding and cannot rank accuracy: B5 is 50x closer to exact than A on `ssm_out` and reads
+0.0026 vs 0.0022.
 
-Exit clause answered with numbers: 8-bit arithmetic is NOT the wall. The limiting property of ONE 8-bit digit is
-one scale per 32 values on heavy tails (1.19x the float error, 3.5x on L0). The smallest wider datatype that makes it
-accurate is a second 8-bit digit (effectively 16-bit integer activations, still int8 coopmat): 50x below the float
-path. What stands between B5 and the bar is the 16-chunk PPL instrument, not the math.
+Against the exit clause, with numbers (the conclusion is CONDITIONAL on `ev14`): the limiting property of ONE 8-bit
+digit is one scale per 32 values on heavy tails (1.19x the float error, 3.5x on L0, CHECKED). A second 8-bit digit
+(effectively 16-bit integer activations, still int8 coopmat) is 50x below the float path (CHECKED). So at the op
+level 8-bit arithmetic is not the wall. That the remaining PPL gap belongs to the instrument and not to the math is
+ASSUMED until the 64-chunk paired check: every int8-on-`ssm_out` variant (all-on, B1, B2, B3, B5) sits above A, and
+B5 is worse than off in 12/16 chunks, which leaves a real effect outside the `ssm_out` matmul possible.
 
 Price of B5 (op microbench on the `ssm_out` shape, INDICATION ONLY, untimed law; served timing HELD): one digit
 about 11 ms, float about 16 ms, two digits about 20 ms per 6144x5120x512 matmul. B5 is slower than the floor on
@@ -214,7 +223,7 @@ Running when this was written: `night/gpu-int8goal-p64.sh` (64-chunk paired PPL,
 `ev14/`, done file `night/int8goal-p64.done`). Pre-registered: |B5 - A| < 2 SE at 64 chunks = the 16-chunk gap was
 instrument noise; B5 - A >= +0.012 at > 2 SE = a real effect outside the `ssm_out` matmul's accuracy.
 
-## 8. Recommendation
+## 9. Recommendation
 
 Ship candidate A as the floor for S-X8: quality at or better than r86i on all three lines, int8 kept on 79% of the
 Q8_0 FLOPs. Keep goal B open until a variant with a named mechanism lands `ssm_out` on int8 at the bar. Nothing is
