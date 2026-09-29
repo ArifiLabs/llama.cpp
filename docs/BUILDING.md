@@ -43,10 +43,11 @@ with `core.longpaths=true` succeeds.
 
 ---
 
-## 2. The three flags that are not optional on MinGW
+## 2. The three flags that are not optional on MinGW, and one PATH rule
 
 These are not tuning. Each one prevents a specific failure, and the failure message does not
-mention the flag. This fork lost three separate builds to them, one flag at a time.
+mention the flag. This fork lost three separate builds to them, one flag at a time, and a fourth
+build to the PATH rule at the end of this section.
 
 ### `-D_WIN32_WINNT=0x0A00` — required, or the build does not link
 
@@ -81,6 +82,29 @@ Without a static GCC runtime, any other `libstdc++-6.dll` earlier on `PATH` shad
 binary was built against. That produced `0xC0000139` (`STATUS_ENTRYPOINT_NOT_FOUND`) when
 `ui-assets.cmake` ran the asset-embed helper. Linking the runtime statically makes the binaries
 immune to DLL shadowing. See [`OPTIONS-REGISTRY.md` §Build variants](OPTIONS-REGISTRY.md#build-variants).
+
+### Your compiler's `bin` directory FIRST on `PATH` — required for the Vulkan build
+
+The static flags above reach the binaries you ship, but **not** `vulkan-shaders-gen.exe`: CMake builds
+that helper as a separate sub-project and **runs it during the build** to generate the shaders. It
+imports `libstdc++-6.dll` from `PATH`. In Git Bash — the shell the commands below are written for —
+Git for Windows puts its own `mingw64\bin` first, and its `libstdc++-6.dll` is not the one WinLibs
+built against, so the Vulkan build dies at the shader step:
+
+```
+FAILED: [code=3221225785] ggml/src/ggml-vulkan/ggml-vulkan-shaders.hpp
+```
+
+`3221225785` is `0xC0000139` (`STATUS_ENTRYPOINT_NOT_FOUND`). Put the compiler's directory first for
+the whole build, in the same shell, before `cmake`:
+
+```bash
+export PATH="$(dirname "$(command -v g++)"):$PATH"
+```
+
+`MEASURED 2026-09-29`, fresh clone of the r86i export in Git Bash: the Vulkan build without this line
+failed exactly as above at the shader step; the CPU-only build (which runs no such helper) built and
+ran either way.
 
 ### `LLAMA_USE_PREBUILT_UI=OFF` — required if you do not want a downloaded UI bundle
 
@@ -217,6 +241,7 @@ tree identical to `master` outside the generated series directory.
 | `git clone` → `Filename too long` / `unable to checkout working tree` | Upstream's 161-char `tools/ui/...` path exceeds `MAX_PATH` | `git clone -c core.longpaths=true`, or clone to a shallower directory (§0) |
 | `'::CreateFile2' has not been declared` at `vendor/cpp-httplib/httplib.cpp:1471` | `_WIN32_WINNT` too low on MinGW | `-D_WIN32_WINNT=0x0A00` on both C and CXX flags (§2) |
 | Binary exits immediately with `0xC0000139` (`STATUS_ENTRYPOINT_NOT_FOUND`) | A foreign `libstdc++-6.dll` on `PATH` shadows the build's runtime | `-static-libgcc -static-libstdc++` (§2), then §4.5 |
+| Vulkan build `FAILED: [code=3221225785] …ggml-vulkan-shaders.hpp` | `vulkan-shaders-gen.exe` ran against a foreign `libstdc++-6.dll` (Git's `mingw64\bin` first on `PATH`) | compiler `bin` first on `PATH` for the build (§2) |
 | Binary exits immediately with `0xC0000135` (`STATUS_DLL_NOT_FOUND`) | A runtime DLL (often `libdl.dll` or `libgomp-1.dll`) is not beside the binary and not on `PATH` | §4.5 |
 | **`0xC0000005` ACCESS_VIOLATION during decode, after `CPU_REPACK model buffer size` is logged** | **Upstream's 8×8 repack kernels. Not this fork.** See below. | Drop `--no-host`, or use a quant whose repack path is 4-wide |
 | `git am` → `unable to auto-detect email address` | No git identity configured | `git config user.email` / `user.name` |
