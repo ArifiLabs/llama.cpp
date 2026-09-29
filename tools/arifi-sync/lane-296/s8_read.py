@@ -33,6 +33,23 @@ for a, b in PAIRS:
     m = sum(d) / n
     se = math.sqrt(sum((x - m) ** 2 for x in d) / (n - 1) / n) * pb
     print(f"| {a} - {b} | {pa - pb:+.4f} | {se:.4f} | {(pa - pb) / se:+.1f} | {sum(1 for x in d if x > 0)}/{n} |")
+# x16 paired over the same 16 chunks (KL-leg rows) against the 16-chunk legs; pre-registered: x16 - off <= -2 SE = exact helps
+import contextlib  # noqa: E402
+import io  # noqa: E402
+
+with contextlib.redirect_stdout(io.StringIO()):  # paired_noise prints its own table at import
+    import paired_noise as pn  # noqa: E402
+
+x = pn.chunks("ev15s8/x16.txt")
+for name, p in (("off", "ev6/sx8-off.txt"), ("A", "ev10/a-sx8.txt"), ("B5", "ev13/b5-sx8.txt")):
+    o = pn.chunks(p)
+    if not x or not o:
+        print(f"| x16 - {name} (16ch) | missing |")
+        continue
+    d = [a - b for a, b in zip(x[0], o[0])]
+    m = sum(d) / 16
+    se = math.sqrt(sum((v - m) ** 2 for v in d) / 15 / 16) * o[1]
+    print(f"| x16 - {name} (16ch) | {x[1] - o[1]:+.4f} | {se:.4f} | {(x[1] - o[1]) / se:+.1f} | {sum(1 for v in d if v > 0)}/16 |")
 for leg in ("x16", "d-q4", "d-gsq"):
     f = N / "ev15s8" / f"{leg}.txt"
     if not f.exists():

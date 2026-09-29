@@ -200,9 +200,18 @@ few outlier chunks.**
 |---|---|---|---|---|
 | H-B | a correction in the file was fitted to the float path | the PCA companion is not loaded in the A / B5 legs | no `<model>.sx8pca.gguf` beside the model (the folder holds only the .gguf); no `GGML_ARIFI_SX8_PCA_FILE` in the ev14 chain; no PCA load line in `a64.err` / `b564.err`; loader `src/llama-model-loader.cpp:862-877` | **FALSIFIED** (CHECKED). Whether the S-X8 quantizer itself saw float-path activations was not read; a per-op RANDOM noise (H-A below) cannot be fitted anyway (ASSUMED). |
 | H-A | the float path is biased in a direction the model likes | systematic if the global slope \|1-beta\| >= 5e-3 (most of the 7.7e-3); random if < 1e-3 | \|1-beta\| = 0.6e-4 to 2.6e-4 against rel 7.7e-3 to 7.9e-3; error share along the output 0.000-0.001; cos(error, output) -0.004 to -0.034; per-row constant-shift share <= 0.7% (table 6c) | **FALSIFIED** (CHECKED). The float-path error is random noise. A consistent shrink exists but is 0.006-0.026% of the output, 30-100x under the noise. |
-| H-A' | source of the 7.7e-3 | if f32 accumulation leaves the error near 7.7e-3, the source is elsewhere | f32 accumulation on the same path: 2.66e-4 (L0), 2.80e-4 (L62), `attn_output` L31 3.64e-4. f16-activation rounding alone (host sim): 1.88e-4 | **NAMED: f16 accumulation** (CHECKED). `ggml_vk_get_mul_mat_mat_f16acc` (`ggml-vulkan.cpp:7366-7380`) picks the f16-accumulator coopmat1 pipeline for EVERY quant type on the float path when `coopmat_acc_f16_support` and prec = DEFAULT. On S-X8 that includes the S-X8 FFN and output matmuls (role log of the `F32ACC=all` smoke, CHECKED). |
+| H-A' | source of the 7.7e-3 | if f32 accumulation leaves the error near 7.7e-3, the source is elsewhere | f32 accumulation on the same path: 2.66e-4 (L0), 2.80e-4 (L62), `attn_output` L31 3.64e-4. f16-activation rounding alone (host sim): 1.88e-4 | **NAMED: f16 accumulation** (CHECKED). `ggml_vk_get_mul_mat_mat_f16acc` (`ggml-vulkan.cpp:7366-7380`) picks the f16-accumulator coopmat1 pipeline for EVERY quant type on the float path when `coopmat_acc_f16_support` and prec = DEFAULT. On S-X8 the FFN and output matmuls pass through the same selection: the role log of the `F32ACC=all` smoke shows the override (CHECKED). A `{sx8, f32-B, f32acc}` coopmat1 pipeline is registered (`X_CM1_F32B`, `ggml-vulkan.cpp:2681-2689`), so the override keeps the same kernel family and takes no dequant fallback (CHECKED by code). The S-X8 op error under f16 vs f32 accumulation is NOT measured (ASSUMED similar to Q8_0). |
 | H-C | exactness on one layer exposes the others' errors | c64 (A + `ssm_out` f32 accumulation, no int8 on `ssm_out`) within 2 SE of A, and B5 - c64 >= 2 SE | chain `night/gpu-int8goal-s8.sh`, leg c64 | PENDING |
-| H-D | PPL on this text does not measure fidelity | exact-arithmetic model (int8 off, f32 accumulation everywhere) scores ABOVE off 7.408170 at 16 chunks | leg x16; 2-chunk smoke: 4.2685 / 6.0557 vs off 4.3127 / 6.0863, A 4.3048 / 6.0800, B5 4.3343 / 6.1022 | PENDING; the smoke points AGAINST H-D (exact scores lower on both chunks; 2 chunks only, ASSUMED direction) |
+| H-D | PPL on this text does not measure fidelity | x16 (int8 off, f32 accumulation everywhere) - off >= +2 paired SE at 16 chunks (paired over the same 16 chunks, `s8_read.py`); x16 - off <= -2 SE = exact HELPS | leg x16 | PENDING. The 2-chunk smoke (4.2685 / 6.0557) is NOT evidence: it ran 2 sequences per pass against 4 in the reference legs (different batch shape on a recurrent model), so it shows no direction |
+
+Joint reading of c64 and x16 (pre-registered 17:5x, before c64 lands at about 18:03; 2 SE = 0.009 at 64 chunks):
+
+| c64 - A | x16 - off | reading | next |
+|---|---|---|---|
+| >= +0.009 (c64 near B5) | <= -2 SE | H-C: exact `ssm_out` alone exposes the other layers' f16-accumulation noise | candidate d is the fix, judged by d64 |
+| >= +0.009 | > -2 SE | H-D: the PPL bar rewards f16-accumulation noise; fidelity and the bar disagree | President sees both numbers as they are |
+| within +-0.009 (c64 near A) and B5 - c64 >= +0.009 | any | an in-graph effect of the int8 two-digit path the op witnesses missed | owed checks (a) new x between computes, (b) last-ubatch capture |
+| <= -0.009 | any | exact `ssm_out` helps; B5's +0.0121 is int8-path specific | same as the row above |
 
 ### 6c. Bias decomposition of one multiplication (CHECKED, `ev12/s8-*.txt`, probe BIAS line, 256 rows x 512 tokens, f64 reference)
 
@@ -233,8 +242,12 @@ HEAD sources and `ev12/s8-off-ssm_out-0.txt` from 3e85f0cb6e).
   sources at once: activation rounding (int8) against accumulation rounding (float).
 - If c64 lands near B5, the extra PPL comes from removing the float noise on `ssm_out`, not from int8.
   Otherwise B5's int8 path carries an in-graph effect, and the two checks owed from section 5 come next.
-- If x16 scores below off (as the 2-chunk smoke suggests), exact arithmetic IMPROVES this model's PPL. Then the
+- If x16 scores below off by 2 paired SE, exact arithmetic IMPROVES this model's PPL. Then the
   lever for "int8 on every layer at r86i quality" is to remove f16 accumulation from the float paths (S-X8 FFN).
   Making int8 less exact is not that lever. Leg d64 is exactly that candidate: B5 + `GGML_ARIFI_F32ACC=all`.
 - Speed: f32 accumulation on the S-X8 FFN is not free on RDNA3 coopmat1 (ASSUMED). The smoke's 22.7 s per 2-chunk
   pass is an INDICATION only; the served timing stays HELD.
+- HQ's H-C leg "two digits on EVERY Q8_0 role, no f32 accumulation" is NOT in the chain. c64 + x16 + d64 replace it
+  for the question asked; it stays owed as the direct int8-only test.
+- Stage-8 price actual: 23 op-level runs of about 20 s (cap 20; 11 voided by the self-initialised `prec`, 1 HEAD
+  re-check), 1 S-X8 2-chunk smoke load (about 1 min, not in the price list), 2 builds of about 45 s.

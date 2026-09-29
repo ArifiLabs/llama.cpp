@@ -238,7 +238,8 @@ merged or pushed; HQ takes the merge word to the President.
 - **H-A (the float path is biased): FALSIFIED.** Its 7.7e-3 error is random: global slope within 2.6e-4 of 1, and
   under 0.1% of the error lies along the output (CHECKED, op probe).
 - **Its source is NAMED: f16 accumulation** on the coopmat1 float path. With f32 accumulation the same path gives
-  2.66e-4. This covers every quant type, S-X8 FFN included (CHECKED, knob `GGML_ARIFI_F32ACC`, commit `3e85f0cb6e`).
+  2.66e-4 (CHECKED on Q8_0, knob `GGML_ARIFI_F32ACC`, commit `3e85f0cb6e`). The same f16-accumulator selection
+  covers the S-X8 FFN (CHECKED by code and role log). Its S-X8 op error is not measured (ASSUMED similar).
 - So "int8 on vs off" swaps two error sources: 8-bit activations (int8) against f16 accumulation (float).
   Separating them is chain `night/gpu-int8goal-s8.sh` (evidence `night/ev15s8/`, reader `night/s8_read.py`):
 
@@ -250,10 +251,13 @@ merged or pushed; HQ takes the merge word to the President.
 | d-q4, d-gsq | candidate on Q4_K_XL and GSQ, 16 chunks, KL vs r86i | no-harm, only if d64 chunk-16 <= 7.4163 |
 | r64 | r86i engine, 64 chunks | pairs the candidate and A against r86i |
 
-2-chunk smoke of the exact-arithmetic model (CHECKED, `ev15s8/smoke-all.*`): 4.2685 / 6.0557. For comparison, off
-reads 4.3127 / 6.0863, A 4.3048 / 6.0800 and B5 4.3343 / 6.1022. Exact scored LOWER than every arm on both chunks.
-Two chunks prove nothing, so the direction is ASSUMED. If it holds, the lever for "int8 on every layer at r86i quality"
-is to remove f16 accumulation from the float paths.
+Pre-registered joint reading of c64 and x16: `night/INT8-MATH.md` section 6b, written before c64 landed.
+x16 is paired over the same 16 chunks against off, A and B5; "exact helps" needs x16 - off <= -2 SE.
+A 2-chunk smoke of the exact model read 4.2685 / 6.0557 (CHECKED). It ran 2 sequences per pass, the reference
+legs run 4, so it is not comparable and shows no direction.
+
+Stage-8 price actual: 23 op-level runs (cap 20; 11 voided by my own self-initialised `prec`, then rerun),
+1 unplanned 2-chunk S-X8 smoke load (about 1 min), 2 builds.
 
 Three numbers per line (r86i / vanilla b11178 / candidate d): PENDING the chain. Filled cells so far:
 
