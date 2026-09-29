@@ -1,0 +1,5256 @@
+{
+ "lane": "lane-200 UNLEASHED TRIAL",
+ "leg": "5 arms x {plain, dflash2 n-max 2} on ONE serve line, only -m changes",
+ "started": "2026-09-21T05:19:07",
+ "engine": {
+  "SEAT": "C:\\ArifiLabs\\models\\engines\\arifi-b10825-r56i-280b1553f\\llama-server.exe",
+  "FIX": "C:\\ArifiLabs\\models\\engines\\arifi-b10825-r66i-f6f5ab0cf\\llama-server.exe"
+ },
+ "rig": {
+  "rig": "beelink-ser7-pro",
+  "epoch": "32+16-asymmetric",
+  "ram": "32GB CT32G56C46S5.M16D1 + 16GB CT16G56C46S5.M8G1, both at 5600, asymmetric (single-channel tail beyond the matched 32 GB), 48 GB physical, 31.73 GiB system-visible",
+  "uma_reservation_gb": 16,
+  "note": "Every result from R46 onward (chain13x from 2026-09-1x, R46..R64, chain138..148, GSQ-RCO first contact) ran here. Beyond-reservation host-visible reads measured 39.9 GB/s (R58). President ruling: the asymmetric kit is a placement target to measure, never a cause to cite. Do not compare directly against the 2x16 epoch as if RAM were held constant.",
+  "live": {
+   "cpu": "AMD Ryzen 7 7840HS w/ Radeon 780M Graphics",
+   "gpu": "AMD Radeon 780M Graphics | driver 32.0.31041.1004",
+   "dimms": [
+    "32GB@5600 CT32G56C46S5.M16D1",
+    "16GB@5600 CT16G56C46S5.M8G1"
+   ],
+   "system_visible_gib": "31.73",
+   "os_build": "29648",
+   "bios": "SER7PRO_P5C8V38",
+   "power_plan": "Balanced"
+  }
+ },
+ "drafter": "C:/ArifiLabs/models/hf/incoai/Qwen3.8-27B-DFlash2-GGUF/Qwen3.8-27B-DFlash2-Q4_K_M.gguf",
+ "arms": {
+  "SEAT": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+  "FIX": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf"
+ },
+ "preflight": {
+  "slots": [
+   "SEAT|df2",
+   "SEAT|plain",
+   "FIX|df2",
+   "FIX|plain"
+  ],
+  "launches_per_slot": 8,
+  "rounds_per_slot": 32,
+  "launch_order": [
+   "SEAT|df2",
+   "SEAT|plain",
+   "FIX|df2",
+   "FIX|plain",
+   "SEAT|plain",
+   "FIX|df2",
+   "FIX|plain",
+   "SEAT|df2",
+   "FIX|df2",
+   "FIX|plain",
+   "SEAT|df2",
+   "SEAT|plain",
+   "FIX|plain",
+   "SEAT|df2",
+   "SEAT|plain",
+   "FIX|df2",
+   "FIX|plain",
+   "FIX|df2",
+   "SEAT|plain",
+   "SEAT|df2",
+   "SEAT|df2",
+   "FIX|plain",
+   "FIX|df2",
+   "SEAT|plain",
+   "SEAT|plain",
+   "SEAT|df2",
+   "FIX|plain",
+   "FIX|df2",
+   "FIX|df2",
+   "SEAT|plain",
+   "SEAT|df2",
+   "FIX|plain"
+  ],
+  "position_histogram": {
+   "SEAT|df2": [
+    2,
+    2,
+    2,
+    2
+   ],
+   "SEAT|plain": [
+    2,
+    2,
+    2,
+    2
+   ],
+   "FIX|df2": [
+    2,
+    2,
+    2,
+    2
+   ],
+   "FIX|plain": [
+    2,
+    2,
+    2,
+    2
+   ]
+  },
+  "counterbalanced": true,
+  "order_warn": null,
+  "engine": "C:\\ArifiLabs\\models\\engines\\arifi-b10680-union-0d60d46f9\\llama-server.exe"
+ },
+ "launch_order": [
+  "SEAT|df2",
+  "SEAT|plain",
+  "FIX|df2",
+  "FIX|plain",
+  "SEAT|plain",
+  "FIX|df2",
+  "FIX|plain",
+  "SEAT|df2",
+  "FIX|df2",
+  "FIX|plain",
+  "SEAT|df2",
+  "SEAT|plain",
+  "FIX|plain",
+  "SEAT|df2",
+  "SEAT|plain",
+  "FIX|df2",
+  "FIX|plain",
+  "FIX|df2",
+  "SEAT|plain",
+  "SEAT|df2",
+  "SEAT|df2",
+  "FIX|plain",
+  "FIX|df2",
+  "SEAT|plain",
+  "SEAT|plain",
+  "SEAT|df2",
+  "FIX|plain",
+  "FIX|df2",
+  "FIX|df2",
+  "SEAT|plain",
+  "SEAT|df2",
+  "FIX|plain"
+ ],
+ "ORDER_WARN": null,
+ "launches_per_arm": 8,
+ "rounds_per_launch": 4,
+ "design": "10-slot palindrome (PAL + reversed PAL), 2 launches x 8 rounds per slot, idle cooldown before every launch (F-165) = 8 INDEPENDENT prompt/seed cells measured TWICE. PRIMARY READ = cell-wise (replicates averaged per cell, paired on n=8 cells) - the lane-199 phase-A design flaw (4 cells reported at 8 df) is not repeated here.",
+ "recommend_rule_preregistered": "Recommend a seat change ONLY if, vs SEAT on the SAME mode: (1) the cell-wise CI95 on decode EXCLUDES ZERO on the positive side, AND (2) rolled/40 is not lower than SEAT's, AND (3) F-141 is 0/8 on that arm. Written before any number was read. The lane never flips the seat - HQ + President rule.",
+ "units": "t/s decode + prefill; ms/tok as PRINTED by the server (F-152)",
+ "launches": [
+  {
+   "label": "SEAT-df2-L0",
+   "slot": "SEAT|df2",
+   "arm": "SEAT",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T05:19:25",
+   "finished_iso": "2026-09-21T05:24:58",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.06,
+    "free_gib": 22.06,
+    "free_gb_true": 23.69,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.28,
+    "free_gib": 22.28,
+    "free_gb_true": 23.92,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1615.5,
+     "prefill_tps": 10.52
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 3018.3,
+     "prefill_tps": 35.45
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17488.3,
+     "prefill_tps": 44.72
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.905,
+     "decode_wall_tps": 5.95,
+     "wall_s": 22.197,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 686.5,
+     "prefill_tps": 5.83
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.627,
+     "decode_wall_tps": 6.669,
+     "wall_s": 32.759,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 13565.7,
+     "prefill_tps": 37.96
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.725,
+     "decode_wall_tps": 5.766,
+     "wall_s": 36.782,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 14581.3,
+     "prefill_tps": 35.52
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.687,
+     "decode_wall_tps": 5.728,
+     "wall_s": 36.358,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 14013.7,
+     "prefill_tps": 36.75
+    }
+   ],
+   "rolled": {
+    "total": 31,
+    "max": 40,
+    "per_prompt": {
+     "math": 1,
+     "json": 5,
+     "fruits": 5,
+     "capital": 5,
+     "prime": 5,
+     "sort": 5,
+     "anagram": 0,
+     "year": 5
+    }
+   },
+   "accept_probe": {
+    "n_lines_total": 44,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 1.0,
+    "accepted": 4,
+    "generated": 4,
+    "mean_len": 5.0
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-plain-L1",
+   "slot": "SEAT|plain",
+   "arm": "SEAT",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T05:27:14",
+   "finished_iso": "2026-09-21T05:32:56",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.29,
+    "free_gib": 22.29,
+    "free_gb_true": 23.93,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.29,
+    "free_gib": 22.29,
+    "free_gb_true": 23.94,
+    "procs": 217,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1487.5,
+     "prefill_tps": 11.43
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2995.6,
+     "prefill_tps": 35.72
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 20356.6,
+     "prefill_tps": 38.41
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.145,
+     "decode_wall_tps": 2.163,
+     "wall_s": 54.273,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 649.1,
+     "prefill_tps": 6.16
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.121,
+     "decode_wall_tps": 2.137,
+     "wall_s": 73.597,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 13709.7,
+     "prefill_tps": 37.56
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.068,
+     "decode_wall_tps": 2.084,
+     "wall_s": 76.398,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 14990.3,
+     "prefill_tps": 34.56
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.137,
+     "decode_wall_tps": 2.157,
+     "wall_s": 65.241,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 15636.4,
+     "prefill_tps": 32.94
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-df2-L2",
+   "slot": "FIX|df2",
+   "arm": "FIX",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T05:35:11",
+   "finished_iso": "2026-09-21T05:40:36",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.28,
+    "free_gib": 22.28,
+    "free_gb_true": 23.92,
+    "procs": 218,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.3,
+    "free_gib": 22.3,
+    "free_gb_true": 23.95,
+    "procs": 213,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 2143.3,
+     "prefill_tps": 7.93
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2972.4,
+     "prefill_tps": 36.0
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16706.0,
+     "prefill_tps": 46.81
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.672,
+     "decode_wall_tps": 5.715,
+     "wall_s": 23.052,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 654.8,
+     "prefill_tps": 6.11
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.671,
+     "decode_wall_tps": 6.716,
+     "wall_s": 31.587,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12529.2,
+     "prefill_tps": 41.1
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.707,
+     "decode_wall_tps": 5.75,
+     "wall_s": 34.741,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 12478.2,
+     "prefill_tps": 41.51
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.679,
+     "decode_wall_tps": 5.718,
+     "wall_s": 34.245,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 11860.7,
+     "prefill_tps": 43.42
+    }
+   ],
+   "rolled": {
+    "total": 31,
+    "max": 40,
+    "per_prompt": {
+     "math": 1,
+     "json": 5,
+     "fruits": 5,
+     "capital": 5,
+     "prime": 5,
+     "sort": 5,
+     "anagram": 0,
+     "year": 5
+    }
+   },
+   "accept_probe": {
+    "n_lines_total": 44,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 1.0,
+    "accepted": 4,
+    "generated": 4,
+    "mean_len": 5.0
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-plain-L3",
+   "slot": "FIX|plain",
+   "arm": "FIX",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T05:42:51",
+   "finished_iso": "2026-09-21T05:48:19",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.31,
+    "free_gib": 22.31,
+    "free_gb_true": 23.96,
+    "procs": 213,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.31,
+    "free_gib": 22.31,
+    "free_gb_true": 23.95,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1486.5,
+     "prefill_tps": 11.44
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2918.6,
+     "prefill_tps": 36.66
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17802.5,
+     "prefill_tps": 43.93
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.242,
+     "decode_wall_tps": 2.261,
+     "wall_s": 51.907,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 611.9,
+     "prefill_tps": 6.54
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.22,
+     "decode_wall_tps": 2.238,
+     "wall_s": 70.941,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 13739.3,
+     "prefill_tps": 37.48
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.229,
+     "decode_wall_tps": 2.247,
+     "wall_s": 72.076,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 15102.9,
+     "prefill_tps": 34.3
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.152,
+     "decode_wall_tps": 2.172,
+     "wall_s": 63.656,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 14403.4,
+     "prefill_tps": 35.76
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-plain-L4",
+   "slot": "SEAT|plain",
+   "arm": "SEAT",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T05:50:34",
+   "finished_iso": "2026-09-21T05:56:03",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.31,
+    "free_gib": 22.31,
+    "free_gb_true": 23.96,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.31,
+    "free_gib": 22.31,
+    "free_gb_true": 23.95,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1505.4,
+     "prefill_tps": 11.29
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2948.0,
+     "prefill_tps": 36.3
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 18052.3,
+     "prefill_tps": 43.32
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.23,
+     "decode_wall_tps": 2.249,
+     "wall_s": 52.242,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 674.6,
+     "prefill_tps": 5.93
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.231,
+     "decode_wall_tps": 2.249,
+     "wall_s": 70.804,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 13880.1,
+     "prefill_tps": 37.1
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.207,
+     "decode_wall_tps": 2.224,
+     "wall_s": 72.331,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 14787.2,
+     "prefill_tps": 35.03
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.18,
+     "decode_wall_tps": 2.2,
+     "wall_s": 62.892,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 14256.2,
+     "prefill_tps": 36.12
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-df2-L5",
+   "slot": "FIX|df2",
+   "arm": "FIX",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T05:58:16",
+   "finished_iso": "2026-09-21T06:01:34",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.32,
+    "free_gib": 22.32,
+    "free_gb_true": 23.96,
+    "procs": 213,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.32,
+    "free_gib": 22.32,
+    "free_gb_true": 23.96,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1553.6,
+     "prefill_tps": 10.94
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2881.2,
+     "prefill_tps": 37.14
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16573.6,
+     "prefill_tps": 47.18
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.937,
+     "decode_wall_tps": 5.978,
+     "wall_s": 22.084,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 673.8,
+     "prefill_tps": 5.94
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.609,
+     "decode_wall_tps": 6.659,
+     "wall_s": 30.846,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 11624.7,
+     "prefill_tps": 44.3
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.685,
+     "decode_wall_tps": 5.728,
+     "wall_s": 35.859,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 13512.7,
+     "prefill_tps": 38.33
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.65,
+     "decode_wall_tps": 5.689,
+     "wall_s": 35.88,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 13381.6,
+     "prefill_tps": 38.49
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-plain-L6",
+   "slot": "FIX|plain",
+   "arm": "FIX",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T06:03:48",
+   "finished_iso": "2026-09-21T06:09:47",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.32,
+    "free_gib": 22.32,
+    "free_gb_true": 23.97,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.32,
+    "free_gib": 22.32,
+    "free_gb_true": 23.97,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1510.0,
+     "prefill_tps": 11.26
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2944.6,
+     "prefill_tps": 36.34
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17984.9,
+     "prefill_tps": 43.48
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.162,
+     "decode_wall_tps": 2.18,
+     "wall_s": 53.885,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 676.8,
+     "prefill_tps": 5.91
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.225,
+     "decode_wall_tps": 2.242,
+     "wall_s": 69.985,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12905.0,
+     "prefill_tps": 39.91
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.224,
+     "decode_wall_tps": 2.24,
+     "wall_s": 71.234,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 14103.7,
+     "prefill_tps": 36.73
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.221,
+     "decode_wall_tps": 2.242,
+     "wall_s": 61.495,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 13766.5,
+     "prefill_tps": 37.41
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-df2-L7",
+   "slot": "SEAT|df2",
+   "arm": "SEAT",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T06:12:01",
+   "finished_iso": "2026-09-21T06:15:20",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.32,
+    "free_gib": 22.32,
+    "free_gb_true": 23.97,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.08,
+    "free_gib": 22.08,
+    "free_gb_true": 23.71,
+    "procs": 226,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1510.5,
+     "prefill_tps": 11.25
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2894.1,
+     "prefill_tps": 36.97
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16566.9,
+     "prefill_tps": 47.2
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.701,
+     "decode_wall_tps": 5.743,
+     "wall_s": 22.959,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 673.1,
+     "prefill_tps": 5.94
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.698,
+     "decode_wall_tps": 6.742,
+     "wall_s": 31.069,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12082.8,
+     "prefill_tps": 42.62
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.718,
+     "decode_wall_tps": 5.756,
+     "wall_s": 35.033,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 12794.6,
+     "prefill_tps": 40.49
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.08,
+     "decode_wall_tps": 5.118,
+     "wall_s": 37.249,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12240.1,
+     "prefill_tps": 42.07
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-df2-L8",
+   "slot": "FIX|df2",
+   "arm": "FIX",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T06:17:34",
+   "finished_iso": "2026-09-21T06:21:24",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.18,
+    "free_gib": 22.18,
+    "free_gb_true": 23.82,
+    "procs": 218,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.18,
+    "free_gib": 22.18,
+    "free_gb_true": 23.82,
+    "procs": 217,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1481.5,
+     "prefill_tps": 11.47
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2903.0,
+     "prefill_tps": 36.86
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16350.9,
+     "prefill_tps": 47.83
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.869,
+     "decode_wall_tps": 5.914,
+     "wall_s": 22.318,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 674.1,
+     "prefill_tps": 5.93
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.681,
+     "decode_wall_tps": 6.728,
+     "wall_s": 30.076,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 11051.4,
+     "prefill_tps": 46.6
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.681,
+     "decode_wall_tps": 5.725,
+     "wall_s": 34.684,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 12325.4,
+     "prefill_tps": 42.03
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.663,
+     "decode_wall_tps": 5.707,
+     "wall_s": 34.617,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12187.0,
+     "prefill_tps": 42.26
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-plain-L9",
+   "slot": "FIX|plain",
+   "arm": "FIX",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T06:23:38",
+   "finished_iso": "2026-09-21T06:29:07",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.19,
+    "free_gib": 22.19,
+    "free_gb_true": 23.82,
+    "procs": 217,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.22,
+    "free_gib": 22.22,
+    "free_gb_true": 23.86,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1497.4,
+     "prefill_tps": 11.35
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2941.7,
+     "prefill_tps": 36.37
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17933.3,
+     "prefill_tps": 43.61
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.244,
+     "decode_wall_tps": 2.263,
+     "wall_s": 51.931,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 671.9,
+     "prefill_tps": 5.95
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.184,
+     "decode_wall_tps": 2.2,
+     "wall_s": 72.077,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 13901.6,
+     "prefill_tps": 37.05
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.209,
+     "decode_wall_tps": 2.227,
+     "wall_s": 72.547,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 15061.1,
+     "prefill_tps": 34.39
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.202,
+     "decode_wall_tps": 2.223,
+     "wall_s": 62.311,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 14168.0,
+     "prefill_tps": 36.35
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-df2-L10",
+   "slot": "SEAT|df2",
+   "arm": "SEAT",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T06:31:21",
+   "finished_iso": "2026-09-21T06:34:47",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.22,
+    "free_gib": 22.22,
+    "free_gb_true": 23.86,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.27,
+    "free_gib": 22.27,
+    "free_gb_true": 23.91,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1648.6,
+     "prefill_tps": 10.31
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2939.9,
+     "prefill_tps": 36.4
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17139.5,
+     "prefill_tps": 45.63
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.979,
+     "decode_wall_tps": 6.025,
+     "wall_s": 21.874,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 629.7,
+     "prefill_tps": 6.35
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 4.615,
+     "decode_wall_tps": 4.649,
+     "wall_s": 39.597,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12064.6,
+     "prefill_tps": 42.69
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.728,
+     "decode_wall_tps": 5.769,
+     "wall_s": 35.793,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 13606.5,
+     "prefill_tps": 38.07
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.701,
+     "decode_wall_tps": 5.742,
+     "wall_s": 35.252,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12959.2,
+     "prefill_tps": 39.74
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-plain-L11",
+   "slot": "SEAT|plain",
+   "arm": "SEAT",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T06:37:02",
+   "finished_iso": "2026-09-21T06:42:31",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.27,
+    "free_gib": 22.27,
+    "free_gb_true": 23.92,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.27,
+    "free_gib": 22.27,
+    "free_gb_true": 23.91,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1497.5,
+     "prefill_tps": 11.35
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2877.2,
+     "prefill_tps": 37.19
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17939.5,
+     "prefill_tps": 43.59
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.199,
+     "decode_wall_tps": 2.218,
+     "wall_s": 52.979,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 671.3,
+     "prefill_tps": 5.96
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.207,
+     "decode_wall_tps": 2.224,
+     "wall_s": 70.994,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 13449.0,
+     "prefill_tps": 38.29
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.158,
+     "decode_wall_tps": 2.175,
+     "wall_s": 73.748,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 14899.1,
+     "prefill_tps": 34.77
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.22,
+     "decode_wall_tps": 2.241,
+     "wall_s": 61.605,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 13854.2,
+     "prefill_tps": 37.17
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-plain-L12",
+   "slot": "FIX|plain",
+   "arm": "FIX",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T06:44:45",
+   "finished_iso": "2026-09-21T06:50:12",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.28,
+    "free_gib": 22.28,
+    "free_gb_true": 23.92,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.27,
+    "free_gib": 22.27,
+    "free_gb_true": 23.91,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1500.3,
+     "prefill_tps": 11.33
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2942.0,
+     "prefill_tps": 36.37
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17801.9,
+     "prefill_tps": 43.93
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.223,
+     "decode_wall_tps": 2.242,
+     "wall_s": 52.402,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 673.0,
+     "prefill_tps": 5.94
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.225,
+     "decode_wall_tps": 2.242,
+     "wall_s": 69.989,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12894.0,
+     "prefill_tps": 39.94
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.215,
+     "decode_wall_tps": 2.233,
+     "wall_s": 71.429,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 14098.4,
+     "prefill_tps": 36.74
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.189,
+     "decode_wall_tps": 2.21,
+     "wall_s": 62.437,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 14018.6,
+     "prefill_tps": 36.74
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-df2-L13",
+   "slot": "SEAT|df2",
+   "arm": "SEAT",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T06:52:26",
+   "finished_iso": "2026-09-21T06:55:41",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.27,
+    "free_gib": 22.27,
+    "free_gb_true": 23.91,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.27,
+    "free_gib": 22.27,
+    "free_gb_true": 23.91,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1487.6,
+     "prefill_tps": 11.43
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2910.5,
+     "prefill_tps": 36.76
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16791.5,
+     "prefill_tps": 46.57
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.974,
+     "decode_wall_tps": 6.02,
+     "wall_s": 21.934,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 671.5,
+     "prefill_tps": 5.96
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.68,
+     "decode_wall_tps": 6.73,
+     "wall_s": 30.542,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 11521.5,
+     "prefill_tps": 44.7
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.718,
+     "decode_wall_tps": 5.762,
+     "wall_s": 34.766,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 12551.6,
+     "prefill_tps": 41.27
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.689,
+     "decode_wall_tps": 5.728,
+     "wall_s": 34.742,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12394.1,
+     "prefill_tps": 41.55
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-plain-L14",
+   "slot": "SEAT|plain",
+   "arm": "SEAT",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T06:57:55",
+   "finished_iso": "2026-09-21T07:03:36",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.27,
+    "free_gib": 22.27,
+    "free_gb_true": 23.91,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.26,
+    "free_gib": 22.26,
+    "free_gb_true": 23.9,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1501.4,
+     "prefill_tps": 11.32
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 3113.2,
+     "prefill_tps": 34.37
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 19516.9,
+     "prefill_tps": 40.07
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.164,
+     "decode_wall_tps": 2.183,
+     "wall_s": 53.845,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 706.3,
+     "prefill_tps": 5.66
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.1,
+     "decode_wall_tps": 2.116,
+     "wall_s": 74.977,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 14498.1,
+     "prefill_tps": 35.52
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.164,
+     "decode_wall_tps": 2.18,
+     "wall_s": 73.628,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 14902.4,
+     "prefill_tps": 34.76
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.143,
+     "decode_wall_tps": 2.163,
+     "wall_s": 65.801,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 16328.6,
+     "prefill_tps": 31.54
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-df2-L15",
+   "slot": "FIX|df2",
+   "arm": "FIX",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T07:05:50",
+   "finished_iso": "2026-09-21T07:09:06",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.27,
+    "free_gib": 22.27,
+    "free_gb_true": 23.91,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.26,
+    "free_gib": 22.26,
+    "free_gb_true": 23.9,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1480.2,
+     "prefill_tps": 11.48
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2868.5,
+     "prefill_tps": 37.3
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16584.1,
+     "prefill_tps": 47.15
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.944,
+     "decode_wall_tps": 5.988,
+     "wall_s": 22.052,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 674.8,
+     "prefill_tps": 5.93
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.651,
+     "decode_wall_tps": 6.695,
+     "wall_s": 31.031,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 11913.7,
+     "prefill_tps": 43.23
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.689,
+     "decode_wall_tps": 5.729,
+     "wall_s": 35.5,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 13156.1,
+     "prefill_tps": 39.37
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.668,
+     "decode_wall_tps": 5.709,
+     "wall_s": 35.061,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12639.5,
+     "prefill_tps": 40.75
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-plain-L16",
+   "slot": "FIX|plain",
+   "arm": "FIX",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T07:11:20",
+   "finished_iso": "2026-09-21T07:16:45",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.26,
+    "free_gib": 22.26,
+    "free_gb_true": 23.9,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.24,
+    "free_gib": 22.24,
+    "free_gb_true": 23.88,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1475.1,
+     "prefill_tps": 11.52
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2787.5,
+     "prefill_tps": 38.39
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16412.8,
+     "prefill_tps": 47.65
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.217,
+     "decode_wall_tps": 2.236,
+     "wall_s": 52.557,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 675.8,
+     "prefill_tps": 5.92
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.242,
+     "decode_wall_tps": 2.259,
+     "wall_s": 68.865,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12204.3,
+     "prefill_tps": 42.2
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.19,
+     "decode_wall_tps": 2.207,
+     "wall_s": 71.861,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 13856.0,
+     "prefill_tps": 37.38
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.124,
+     "decode_wall_tps": 2.144,
+     "wall_s": 63.884,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 13977.4,
+     "prefill_tps": 36.85
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-df2-L17",
+   "slot": "FIX|df2",
+   "arm": "FIX",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T07:18:59",
+   "finished_iso": "2026-09-21T07:22:19",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.21,
+    "free_gib": 22.21,
+    "free_gb_true": 23.84,
+    "procs": 218,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.21,
+    "free_gib": 22.21,
+    "free_gb_true": 23.84,
+    "procs": 216,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1604.6,
+     "prefill_tps": 10.59
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2870.6,
+     "prefill_tps": 37.27
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17126.4,
+     "prefill_tps": 45.66
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.863,
+     "decode_wall_tps": 5.909,
+     "wall_s": 22.338,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 674.6,
+     "prefill_tps": 5.93
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.577,
+     "decode_wall_tps": 6.619,
+     "wall_s": 31.483,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12144.0,
+     "prefill_tps": 42.41
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.402,
+     "decode_wall_tps": 5.442,
+     "wall_s": 36.242,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 12722.2,
+     "prefill_tps": 40.72
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.243,
+     "decode_wall_tps": 5.281,
+     "wall_s": 36.652,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12416.7,
+     "prefill_tps": 41.48
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-plain-L18",
+   "slot": "SEAT|plain",
+   "arm": "SEAT",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T07:24:33",
+   "finished_iso": "2026-09-21T07:30:00",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.21,
+    "free_gib": 22.21,
+    "free_gb_true": 23.85,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.21,
+    "free_gib": 22.21,
+    "free_gb_true": 23.84,
+    "procs": 216,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1487.5,
+     "prefill_tps": 11.43
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2924.9,
+     "prefill_tps": 36.58
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17849.0,
+     "prefill_tps": 43.81
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.198,
+     "decode_wall_tps": 2.217,
+     "wall_s": 52.993,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 670.8,
+     "prefill_tps": 5.96
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.232,
+     "decode_wall_tps": 2.249,
+     "wall_s": 69.938,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 13036.8,
+     "prefill_tps": 39.5
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.197,
+     "decode_wall_tps": 2.214,
+     "wall_s": 72.746,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 14944.9,
+     "prefill_tps": 34.66
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.221,
+     "decode_wall_tps": 2.242,
+     "wall_s": 61.526,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 13804.8,
+     "prefill_tps": 37.31
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-df2-L19",
+   "slot": "SEAT|df2",
+   "arm": "SEAT",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T07:32:14",
+   "finished_iso": "2026-09-21T07:35:29",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.2,
+    "free_gib": 22.2,
+    "free_gb_true": 23.84,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.18,
+    "free_gib": 22.18,
+    "free_gb_true": 23.81,
+    "procs": 217,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1520.5,
+     "prefill_tps": 11.18
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2886.6,
+     "prefill_tps": 37.07
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16452.6,
+     "prefill_tps": 47.53
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.837,
+     "decode_wall_tps": 5.882,
+     "wall_s": 22.421,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 658.4,
+     "prefill_tps": 6.08
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.712,
+     "decode_wall_tps": 6.757,
+     "wall_s": 30.929,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 11984.4,
+     "prefill_tps": 42.97
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.727,
+     "decode_wall_tps": 5.77,
+     "wall_s": 34.919,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 12736.7,
+     "prefill_tps": 40.67
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.691,
+     "decode_wall_tps": 5.731,
+     "wall_s": 34.656,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12323.1,
+     "prefill_tps": 41.79
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-df2-L20",
+   "slot": "SEAT|df2",
+   "arm": "SEAT",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T07:37:43",
+   "finished_iso": "2026-09-21T07:41:30",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.22,
+    "free_gib": 22.22,
+    "free_gb_true": 23.85,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.2,
+    "free_gib": 22.2,
+    "free_gb_true": 23.84,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1492.6,
+     "prefill_tps": 11.39
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2863.3,
+     "prefill_tps": 37.37
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16345.9,
+     "prefill_tps": 47.84
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.78,
+     "decode_wall_tps": 5.824,
+     "wall_s": 22.652,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 674.4,
+     "prefill_tps": 5.93
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.672,
+     "decode_wall_tps": 6.719,
+     "wall_s": 30.795,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 11744.5,
+     "prefill_tps": 43.85
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.699,
+     "decode_wall_tps": 5.743,
+     "wall_s": 35.249,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 12960.9,
+     "prefill_tps": 39.97
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.634,
+     "decode_wall_tps": 5.675,
+     "wall_s": 34.885,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12328.2,
+     "prefill_tps": 41.77
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-plain-L21",
+   "slot": "FIX|plain",
+   "arm": "FIX",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T07:43:44",
+   "finished_iso": "2026-09-21T07:49:12",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.21,
+    "free_gib": 22.21,
+    "free_gb_true": 23.85,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.2,
+    "free_gib": 22.2,
+    "free_gb_true": 23.84,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1501.0,
+     "prefill_tps": 11.33
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2878.4,
+     "prefill_tps": 37.17
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17798.5,
+     "prefill_tps": 43.94
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.237,
+     "decode_wall_tps": 2.256,
+     "wall_s": 52.025,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 613.2,
+     "prefill_tps": 6.52
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.16,
+     "decode_wall_tps": 2.177,
+     "wall_s": 72.276,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 13475.4,
+     "prefill_tps": 38.22
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.231,
+     "decode_wall_tps": 2.248,
+     "wall_s": 72.138,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 15211.4,
+     "prefill_tps": 34.05
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.189,
+     "decode_wall_tps": 2.209,
+     "wall_s": 62.331,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 13894.0,
+     "prefill_tps": 37.07
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-df2-L22",
+   "slot": "FIX|df2",
+   "arm": "FIX",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T07:51:27",
+   "finished_iso": "2026-09-21T07:54:44",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.21,
+    "free_gib": 22.21,
+    "free_gb_true": 23.85,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.2,
+    "free_gib": 22.2,
+    "free_gb_true": 23.84,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1546.1,
+     "prefill_tps": 11.0
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2919.2,
+     "prefill_tps": 36.65
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17023.3,
+     "prefill_tps": 45.94
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.934,
+     "decode_wall_tps": 5.979,
+     "wall_s": 22.069,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 661.9,
+     "prefill_tps": 6.04
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.654,
+     "decode_wall_tps": 6.697,
+     "wall_s": 31.006,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 11892.3,
+     "prefill_tps": 43.31
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.687,
+     "decode_wall_tps": 5.728,
+     "wall_s": 35.632,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 13284.3,
+     "prefill_tps": 38.99
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.661,
+     "decode_wall_tps": 5.702,
+     "wall_s": 35.357,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12908.4,
+     "prefill_tps": 39.9
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-plain-L23",
+   "slot": "SEAT|plain",
+   "arm": "SEAT",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T07:56:58",
+   "finished_iso": "2026-09-21T08:02:22",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.22,
+    "free_gib": 22.22,
+    "free_gb_true": 23.86,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.21,
+    "free_gib": 22.21,
+    "free_gb_true": 23.85,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1492.0,
+     "prefill_tps": 11.39
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2899.7,
+     "prefill_tps": 36.9
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17491.9,
+     "prefill_tps": 44.71
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.248,
+     "decode_wall_tps": 2.267,
+     "wall_s": 51.833,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 669.9,
+     "prefill_tps": 5.97
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.223,
+     "decode_wall_tps": 2.24,
+     "wall_s": 70.046,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12908.5,
+     "prefill_tps": 39.9
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.2,
+     "decode_wall_tps": 2.217,
+     "wall_s": 71.323,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 13588.3,
+     "prefill_tps": 38.12
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.224,
+     "decode_wall_tps": 2.244,
+     "wall_s": 60.732,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 13058.1,
+     "prefill_tps": 39.44
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-plain-L24",
+   "slot": "SEAT|plain",
+   "arm": "SEAT",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T08:04:36",
+   "finished_iso": "2026-09-21T08:10:05",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.21,
+    "free_gib": 22.21,
+    "free_gb_true": 23.85,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.21,
+    "free_gib": 22.21,
+    "free_gb_true": 23.85,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1499.8,
+     "prefill_tps": 11.34
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2856.8,
+     "prefill_tps": 37.45
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17773.0,
+     "prefill_tps": 44.0
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.163,
+     "decode_wall_tps": 2.182,
+     "wall_s": 53.839,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 672.0,
+     "prefill_tps": 5.95
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.229,
+     "decode_wall_tps": 2.246,
+     "wall_s": 70.039,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 13040.0,
+     "prefill_tps": 39.49
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.231,
+     "decode_wall_tps": 2.248,
+     "wall_s": 71.032,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 14094.9,
+     "prefill_tps": 36.75
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.091,
+     "decode_wall_tps": 2.11,
+     "wall_s": 64.341,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 13633.3,
+     "prefill_tps": 37.78
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-df2-L25",
+   "slot": "SEAT|df2",
+   "arm": "SEAT",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T08:12:19",
+   "finished_iso": "2026-09-21T08:15:34",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.22,
+    "free_gib": 22.22,
+    "free_gb_true": 23.85,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.19,
+    "free_gib": 22.19,
+    "free_gb_true": 23.82,
+    "procs": 216,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1556.6,
+     "prefill_tps": 10.92
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2879.3,
+     "prefill_tps": 37.16
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16538.6,
+     "prefill_tps": 47.28
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.872,
+     "decode_wall_tps": 5.917,
+     "wall_s": 22.297,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 666.2,
+     "prefill_tps": 6.0
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.677,
+     "decode_wall_tps": 6.729,
+     "wall_s": 31.035,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12011.2,
+     "prefill_tps": 42.88
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.705,
+     "decode_wall_tps": 5.748,
+     "wall_s": 34.54,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 12273.3,
+     "prefill_tps": 42.21
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.678,
+     "decode_wall_tps": 5.719,
+     "wall_s": 34.645,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12264.8,
+     "prefill_tps": 41.99
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-plain-L26",
+   "slot": "FIX|plain",
+   "arm": "FIX",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T08:17:48",
+   "finished_iso": "2026-09-21T08:23:26",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.19,
+    "free_gib": 22.19,
+    "free_gb_true": 23.82,
+    "procs": 216,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.0,
+    "free_gib": 22.0,
+    "free_gb_true": 23.62,
+    "procs": 216,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1554.8,
+     "prefill_tps": 10.93
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2902.0,
+     "prefill_tps": 36.87
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17159.9,
+     "prefill_tps": 45.57
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.162,
+     "decode_wall_tps": 2.181,
+     "wall_s": 53.883,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 686.6,
+     "prefill_tps": 5.83
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.153,
+     "decode_wall_tps": 2.169,
+     "wall_s": 73.037,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 14036.0,
+     "prefill_tps": 36.69
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.143,
+     "decode_wall_tps": 2.16,
+     "wall_s": 73.71,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 14457.4,
+     "prefill_tps": 35.83
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 1.964,
+     "decode_wall_tps": 1.982,
+     "wall_s": 67.712,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 13736.6,
+     "prefill_tps": 37.49
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-df2-L27",
+   "slot": "FIX|df2",
+   "arm": "FIX",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T08:25:40",
+   "finished_iso": "2026-09-21T08:28:54",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.01,
+    "free_gib": 22.01,
+    "free_gb_true": 23.64,
+    "procs": 216,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 21.99,
+    "free_gib": 21.99,
+    "free_gb_true": 23.61,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1514.8,
+     "prefill_tps": 11.22
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2805.2,
+     "prefill_tps": 38.14
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16463.6,
+     "prefill_tps": 47.5
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.988,
+     "decode_wall_tps": 6.034,
+     "wall_s": 21.807,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 594.5,
+     "prefill_tps": 6.73
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.685,
+     "decode_wall_tps": 6.729,
+     "wall_s": 30.536,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 11514.3,
+     "prefill_tps": 44.73
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.721,
+     "decode_wall_tps": 5.761,
+     "wall_s": 34.498,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 12279.8,
+     "prefill_tps": 42.18
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.688,
+     "decode_wall_tps": 5.732,
+     "wall_s": 34.825,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12495.1,
+     "prefill_tps": 41.22
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-df2-L28",
+   "slot": "FIX|df2",
+   "arm": "FIX",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T08:31:08",
+   "finished_iso": "2026-09-21T08:34:24",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 21.98,
+    "free_gib": 21.98,
+    "free_gb_true": 23.6,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.17,
+    "free_gib": 22.17,
+    "free_gb_true": 23.8,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1480.6,
+     "prefill_tps": 11.48
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2902.7,
+     "prefill_tps": 36.86
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16692.2,
+     "prefill_tps": 46.85
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.663,
+     "decode_wall_tps": 5.705,
+     "wall_s": 23.099,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 663.0,
+     "prefill_tps": 6.03
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.655,
+     "decode_wall_tps": 6.705,
+     "wall_s": 30.744,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 11655.3,
+     "prefill_tps": 44.19
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.686,
+     "decode_wall_tps": 5.726,
+     "wall_s": 34.886,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 12531.0,
+     "prefill_tps": 41.34
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.659,
+     "decode_wall_tps": 5.702,
+     "wall_s": 34.922,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12475.7,
+     "prefill_tps": 41.28
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-plain-L29",
+   "slot": "SEAT|plain",
+   "arm": "SEAT",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T08:36:38",
+   "finished_iso": "2026-09-21T08:42:05",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.16,
+    "free_gib": 22.16,
+    "free_gb_true": 23.8,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.16,
+    "free_gib": 22.16,
+    "free_gb_true": 23.79,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1492.7,
+     "prefill_tps": 11.39
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2880.5,
+     "prefill_tps": 37.15
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17749.8,
+     "prefill_tps": 44.06
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.245,
+     "decode_wall_tps": 2.263,
+     "wall_s": 51.938,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 679.6,
+     "prefill_tps": 5.89
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 2.237,
+     "decode_wall_tps": 2.254,
+     "wall_s": 69.998,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 13217.9,
+     "prefill_tps": 38.96
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.192,
+     "decode_wall_tps": 2.209,
+     "wall_s": 71.966,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 14032.8,
+     "prefill_tps": 36.91
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.221,
+     "decode_wall_tps": 2.242,
+     "wall_s": 63.001,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 15271.8,
+     "prefill_tps": 33.72
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "SEAT-df2-L30",
+   "slot": "SEAT|df2",
+   "arm": "SEAT",
+   "mode": "df2",
+   "status": "OK",
+   "started_iso": "2026-09-21T08:44:19",
+   "finished_iso": "2026-09-21T08:47:34",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.17,
+    "free_gib": 22.17,
+    "free_gb_true": 23.8,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.15,
+    "free_gib": 22.15,
+    "free_gb_true": 23.79,
+    "procs": 214,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1493.1,
+     "prefill_tps": 11.39
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2915.3,
+     "prefill_tps": 36.7
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 16580.1,
+     "prefill_tps": 47.16
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the text provided, here is the three-sentence summary of the memory-segment argument:\n\n1. The allocator must distinguish between buffer types based on access patterns, placing weight tensors involved in per-token matrix-vector products in the segment with the lowest access latency, while allowing lookup tables to reside in any segment since their row-by-row access incurs no measurable cost.\n2. The key-value cache occupies a distinct middle position because its footprint expands linearly with sequence depth and requires a full sweep on every decoded token, making its storage location a critical balance between capacity and access speed.\n3. Furthermore, the precision of",
+     "finish_reason": "length",
+     "decode_server_tps": 5.924,
+     "decode_wall_tps": 5.97,
+     "wall_s": 22.046,
+     "predicted_n": 128,
+     "prompt_n": 4,
+     "prompt_ms": 605.7,
+     "prefill_tps": 6.6
+    },
+    {
+     "round": 1,
+     "text": "\n\n<think>\nThe user is asking me to explain why recent cache cells carry more attention mass, based on the engineering note provided.\n\nLet me carefully re-read the note. The note is actually just a repeated paragraph (repeated 6 times) about a unified-memory graphics architecture. It discusses:\n\n1. A single physical DRAM pool partitioned into a dedicated carve-out and a shared aperture\n2. The allocator decides per buffer which segment backs it\n3. Weight tensors (per-token matrix-vector product) \u2192 lowest access latency segment\n4. Lookup tables (touched one row at a time) \u2192 may live anywhere without",
+     "finish_reason": "length",
+     "decode_server_tps": 6.619,
+     "decode_wall_tps": 6.668,
+     "wall_s": 30.626,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 11430.7,
+     "prefill_tps": 45.05
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the provided engineering note, the bandwidth-versus-fidelity trade-off for the key-value cache is determined by the **precision** of the data stored.\n\nSpecifically, the precision dictates two opposing outcomes:\n1.  **Bandwidth (Bytes Moved):** Lowering the precision reduces the number of bytes required to move the cache data during the full sweep that occurs on every decoded token.\n2.  **Fidelity:** Lowering the precision degrades the quality of the attention scores computed from that data.\n\nTherefore, the trade-off is that **reducing precision saves bandwidth (memory traffic) but lowers the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.701,
+     "decode_wall_tps": 5.744,
+     "wall_s": 34.847,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 12562.8,
+     "prefill_tps": 41.23
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or \"anywhere\" within the unified memory pool, which includes the shared aperture) under the following conditions:\n\n1.  **Access Pattern:** The table is **touched one row at a time**.\n2.  **Performance Impact:** This specific access pattern results in **no measurable cost** (negligible performance impact) regardless of which memory segment backs it.\n\nBecause the access is sparse and sequential (one row per access) rather than a high-latency-sensitive matrix-vector product or a full sweep, the latency difference between the",
+     "finish_reason": "length",
+     "decode_server_tps": 5.669,
+     "decode_wall_tps": 5.711,
+     "wall_s": 34.497,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 12081.9,
+     "prefill_tps": 42.63
+    }
+   ],
+   "rolled": null,
+   "accept_probe": {
+    "n_lines_total": 4,
+    "n_probe": 4,
+    "mean_rate": 0.60005,
+    "min_rate": 0.55414,
+    "max_rate": 0.69925
+   },
+   "accept_final": {
+    "rate": 0.55414,
+    "accepted": 87,
+    "generated": 157,
+    "mean_len": 3.17
+   },
+   "boot": "2026-09-19T05:17"
+  },
+  {
+   "label": "FIX-plain-L31",
+   "slot": "FIX|plain",
+   "arm": "FIX",
+   "mode": "plain",
+   "status": "OK",
+   "started_iso": "2026-09-21T08:49:48",
+   "finished_iso": "2026-09-21T08:55:25",
+   "reason": null,
+   "model": "C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf",
+   "pre": {
+    "free_gb": 22.16,
+    "free_gib": 22.16,
+    "free_gb_true": 23.79,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "post": {
+    "free_gb": 22.16,
+    "free_gib": 22.16,
+    "free_gb_true": 23.8,
+    "procs": 215,
+    "llama_server_live": 0,
+    "probe": "boxprobe (kernel32/psapi, no WMI)"
+   },
+   "fills": {
+    "short": {
+     "prompt_n": 17,
+     "prompt_ms": 1491.9,
+     "prefill_tps": 11.4
+    },
+    "medium": {
+     "prompt_n": 107,
+     "prompt_ms": 2913.8,
+     "prefill_tps": 36.72
+    },
+    "long": {
+     "prompt_n": 782,
+     "prompt_ms": 17778.4,
+     "prefill_tps": 43.99
+    }
+   },
+   "rounds": [
+    {
+     "round": 0,
+     "text": "\n\nBased on the engineering note, the memory-segment argument is summarized as follows:\n\nWeight tensors, which require per-token matrix-vector products, must be allocated to the segment with the lowest access latency to ensure performance. In contrast, lookup tables that are accessed only one row at a time are flexible and can be placed in any segment without measurable cost. The key-value cache occupies a distinct middle ground, as its linear growth with sequence depth and full-sweep access pattern make its precision a critical factor in balancing both the volume of data moved and the fidelity of attention scores.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.219,
+     "decode_wall_tps": 2.238,
+     "wall_s": 52.436,
+     "predicted_n": 116,
+     "prompt_n": 4,
+     "prompt_ms": 606.4,
+     "prefill_tps": 6.6
+    },
+    {
+     "round": 1,
+     "text": "\n\nBased on the engineering note, the explanation for why recent cache cells carry more attention mass is derived from the interaction between the **access pattern** and the **precision** of the key-value (KV) cache.\n\nHere is the breakdown:\n\n1.  **Access Pattern (Full Sweep):** The note states that the KV cache has an access pattern that is a \"full sweep on every decoded token.\" This means that to generate the next token, the model must read the *entire* history of keys and values stored in the cache.\n2.  **Precision and Fidelity:** The note highlights that the cache's \"",
+     "finish_reason": "length",
+     "decode_server_tps": 1.878,
+     "decode_wall_tps": 1.892,
+     "wall_s": 80.979,
+     "predicted_n": 128,
+     "prompt_n": 515,
+     "prompt_ms": 13326.1,
+     "prefill_tps": 38.65
+    },
+    {
+     "round": 2,
+     "text": "\n\nBased on the engineering note provided, here is the bandwidth-versus-fidelity trade-off explained in my own words:\n\nFor the key-value (KV) cache, there is a direct conflict between data volume and data quality. Because the cache must be read in its entirety (a \"full sweep\") for every single token generated, the amount of bandwidth consumed is directly proportional to the size of the cache.\n\nThe \"precision\" of the data acts as the control variable for this trade-off:\n\n*   **High Precision (High Fidelity):** Storing the cache in high precision ensures the attention scores are calculated accurately. However,",
+     "finish_reason": "length",
+     "decode_server_tps": 2.219,
+     "decode_wall_tps": 2.236,
+     "wall_s": 71.575,
+     "predicted_n": 128,
+     "prompt_n": 518,
+     "prompt_ms": 14340.7,
+     "prefill_tps": 36.12
+    },
+    {
+     "round": 3,
+     "text": "\n\nBased on the engineering note provided, a lookup table can safely live in host memory (or the shared aperture) when it is **touched one row at a time**.\n\nThe note explicitly states that for lookup tables with this specific access pattern, they \"may live anywhere without measurable cost,\" implying that the latency difference between the dedicated carve-out and host memory does not negatively impact performance in this scenario. This contrasts with weight tensors, which require the segment with the lowest access latency because they participate in per-token matrix-vector products.",
+     "finish_reason": "stop",
+     "decode_server_tps": 2.217,
+     "decode_wall_tps": 2.238,
+     "wall_s": 61.814,
+     "predicted_n": 107,
+     "prompt_n": 515,
+     "prompt_ms": 13997.9,
+     "prefill_tps": 36.79
+    }
+   ],
+   "rolled": null,
+   "accept_probe": null,
+   "accept_final": null,
+   "boot": "2026-09-19T05:17"
+  }
+ ],
+ "per_slot": {
+  "SEAT|df2": {
+   "n_rounds": 32,
+   "median_server_tps": 5.726,
+   "mean_server_tps": 5.901,
+   "sd_server_tps": 0.4808,
+   "median_wall_tps": 5.768,
+   "median_prefill_tps_longfill": 40.95
+  },
+  "SEAT|plain": {
+   "n_rounds": 32,
+   "median_server_tps": 2.2,
+   "mean_server_tps": 2.188,
+   "sd_server_tps": 0.0477,
+   "median_wall_tps": 2.218,
+   "median_prefill_tps_longfill": 35.28
+  },
+  "FIX|df2": {
+   "n_rounds": 32,
+   "median_server_tps": 5.698,
+   "mean_server_tps": 5.944,
+   "sd_server_tps": 0.4364,
+   "median_wall_tps": 5.741,
+   "median_prefill_tps_longfill": 41.16
+  },
+  "FIX|plain": {
+   "n_rounds": 32,
+   "median_server_tps": 2.216,
+   "mean_server_tps": 2.185,
+   "sd_server_tps": 0.077,
+   "median_wall_tps": 2.235,
+   "median_prefill_tps_longfill": 36.71
+  }
+ },
+ "prefill_fills": {
+  "SEAT|df2": {
+   "short": {
+    "prompt_n": 17,
+    "median_prefill_tps": 11.21,
+    "n": 8
+   },
+   "medium": {
+    "prompt_n": 107,
+    "median_prefill_tps": 36.86,
+    "n": 8
+   },
+   "long": {
+    "prompt_n": 782,
+    "median_prefill_tps": 47.18,
+    "n": 8
+   }
+  },
+  "SEAT|plain": {
+   "short": {
+    "prompt_n": 17,
+    "median_prefill_tps": 11.37,
+    "n": 8
+   },
+   "medium": {
+    "prompt_n": 107,
+    "median_prefill_tps": 36.74,
+    "n": 8
+   },
+   "long": {
+    "prompt_n": 782,
+    "median_prefill_tps": 43.7,
+    "n": 8
+   }
+  },
+  "FIX|df2": {
+   "short": {
+    "prompt_n": 17,
+    "median_prefill_tps": 11.11,
+    "n": 8
+   },
+   "medium": {
+    "prompt_n": 107,
+    "median_prefill_tps": 37.0,
+    "n": 8
+   },
+   "long": {
+    "prompt_n": 782,
+    "median_prefill_tps": 47.0,
+    "n": 8
+   }
+  },
+  "FIX|plain": {
+   "short": {
+    "prompt_n": 17,
+    "median_prefill_tps": 11.34,
+    "n": 8
+   },
+   "medium": {
+    "prompt_n": 107,
+    "median_prefill_tps": 36.69,
+    "n": 8
+   },
+   "long": {
+    "prompt_n": 782,
+    "median_prefill_tps": 43.94,
+    "n": 8
+   }
+  }
+ },
+ "cellwise_vs_seat_PSEUDOREPLICATED": {
+  "FIX|df2_vs_SEAT|df2__decode_server_tps": {
+   "n_cells": 4,
+   "x_cell_means": [
+    5.859,
+    6.648,
+    5.657,
+    5.614
+   ],
+   "y_cell_means": [
+    5.872,
+    6.412,
+    5.715,
+    5.604
+   ],
+   "per_cell_diff": [
+    -0.013,
+    0.235,
+    -0.058,
+    0.01
+   ],
+   "sign": "2/4 positive",
+   "mean_diff": 0.0438,
+   "ci95": [
+    -0.1644,
+    0.2519
+   ],
+   "excludes_zero_PSEUDOREPLICATED": false
+  },
+  "FIX|df2_vs_SEAT|df2__decode_wall_tps": {
+   "n_cells": 4,
+   "x_cell_means": [
+    5.903,
+    6.694,
+    5.699,
+    5.655
+   ],
+   "y_cell_means": [
+    5.916,
+    6.458,
+    5.757,
+    5.644
+   ],
+   "per_cell_diff": [
+    -0.014,
+    0.236,
+    -0.059,
+    0.011
+   ],
+   "sign": "2/4 positive",
+   "mean_diff": 0.0436,
+   "ci95": [
+    -0.1652,
+    0.2524
+   ],
+   "excludes_zero_PSEUDOREPLICATED": false
+  },
+  "FIX|df2_vs_SEAT|df2__prefill_tps": {
+   "n_cells": 4,
+   "x_cell_means": [
+    6.08,
+    43.734,
+    40.559,
+    41.1
+   ],
+   "y_cell_means": [
+    6.086,
+    42.84,
+    39.929,
+    41.036
+   ],
+   "per_cell_diff": [
+    -0.006,
+    0.894,
+    0.63,
+    0.064
+   ],
+   "sign": "3/4 positive",
+   "mean_diff": 0.3953,
+   "ci95": [
+    -0.301,
+    1.0917
+   ],
+   "excludes_zero_PSEUDOREPLICATED": false
+  },
+  "FIX|plain_vs_SEAT|plain__decode_server_tps": {
+   "n_cells": 4,
+   "x_cell_means": [
+    2.213,
+    2.161,
+    2.208,
+    2.157
+   ],
+   "y_cell_means": [
+    2.199,
+    2.197,
+    2.177,
+    2.18
+   ],
+   "per_cell_diff": [
+    0.014,
+    -0.037,
+    0.03,
+    -0.022
+   ],
+   "sign": "2/4 positive",
+   "mean_diff": -0.0036,
+   "ci95": [
+    -0.0532,
+    0.046
+   ],
+   "excludes_zero_PSEUDOREPLICATED": false
+  },
+  "FIX|plain_vs_SEAT|plain__decode_wall_tps": {
+   "n_cells": 4,
+   "x_cell_means": [
+    2.232,
+    2.177,
+    2.225,
+    2.178
+   ],
+   "y_cell_means": [
+    2.218,
+    2.214,
+    2.194,
+    2.2
+   ],
+   "per_cell_diff": [
+    0.014,
+    -0.037,
+    0.031,
+    -0.022
+   ],
+   "sign": "2/4 positive",
+   "mean_diff": -0.0035,
+   "ci95": [
+    -0.0537,
+    0.0466
+   ],
+   "excludes_zero_PSEUDOREPLICATED": false
+  },
+  "FIX|plain_vs_SEAT|plain__prefill_tps": {
+   "n_cells": 4,
+   "x_cell_means": [
+    6.151,
+    38.767,
+    35.692,
+    36.807
+   ],
+   "y_cell_means": [
+    5.935,
+    38.29,
+    35.695,
+    35.752
+   ],
+   "per_cell_diff": [
+    0.216,
+    0.477,
+    -0.003,
+    1.055
+   ],
+   "sign": "3/4 positive",
+   "mean_diff": 0.4366,
+   "ci95": [
+    -0.2899,
+    1.163
+   ],
+   "excludes_zero_PSEUDOREPLICATED": false
+  }
+ },
+ "rolled40": {
+  "SEAT": {
+   "total": 31,
+   "max": 40,
+   "per_prompt": {
+    "math": 1,
+    "json": 5,
+    "fruits": 5,
+    "capital": 5,
+    "prime": 5,
+    "sort": 5,
+    "anagram": 0,
+    "year": 5
+   }
+  },
+  "FIX": {
+   "total": 31,
+   "max": 40,
+   "per_prompt": {
+    "math": 1,
+    "json": 5,
+    "fruits": 5,
+    "capital": 5,
+    "prime": 5,
+    "sort": 5,
+    "anagram": 0,
+    "year": 5
+   }
+  }
+ },
+ "acceptance": {
+  "SEAT-df2-L0": {
+   "rate": 1.0,
+   "accepted": 4,
+   "generated": 4,
+   "mean_len": 5.0
+  },
+  "FIX-df2-L2": {
+   "rate": 1.0,
+   "accepted": 4,
+   "generated": 4,
+   "mean_len": 5.0
+  },
+  "FIX-df2-L5": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "SEAT-df2-L7": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "FIX-df2-L8": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "SEAT-df2-L10": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "SEAT-df2-L13": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "FIX-df2-L15": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "FIX-df2-L17": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "SEAT-df2-L19": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "SEAT-df2-L20": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "FIX-df2-L22": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "SEAT-df2-L25": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "FIX-df2-L27": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "FIX-df2-L28": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  },
+  "SEAT-df2-L30": {
+   "rate": 0.55414,
+   "accepted": 87,
+   "generated": 157,
+   "mean_len": 3.17
+  }
+ },
+ "launchlevel": {
+  "unit_of_replication": "LAUNCH",
+  "rule": "Every metric is averaged to ONE number per launch; the comparison is an UNPAIRED Welch t over those launch means. Launches are not paired across arms. Under 4 valid launches on either side the verdict is UNRESOLVED_TOO_FEW_LAUNCHES - never a win or a loss.",
+  "min_launches_per_arm": 4,
+  "min_draft_acceptance": 0.2,
+  "order_used": [
+   "SEAT|df2",
+   "SEAT|plain",
+   "FIX|df2",
+   "FIX|plain",
+   "SEAT|plain",
+   "FIX|df2",
+   "FIX|plain",
+   "SEAT|df2",
+   "FIX|df2",
+   "FIX|plain",
+   "SEAT|df2",
+   "SEAT|plain",
+   "FIX|plain",
+   "SEAT|df2",
+   "SEAT|plain",
+   "FIX|df2",
+   "FIX|plain",
+   "FIX|df2",
+   "SEAT|plain",
+   "SEAT|df2",
+   "SEAT|df2",
+   "FIX|plain",
+   "FIX|df2",
+   "SEAT|plain",
+   "SEAT|plain",
+   "SEAT|df2",
+   "FIX|plain",
+   "FIX|df2",
+   "FIX|df2",
+   "SEAT|plain",
+   "SEAT|df2",
+   "FIX|plain"
+  ],
+  "order_position_histogram": {
+   "SEAT|df2": [
+    2,
+    2,
+    2,
+    2
+   ],
+   "SEAT|plain": [
+    2,
+    2,
+    2,
+    2
+   ],
+   "FIX|df2": [
+    2,
+    2,
+    2,
+    2
+   ],
+   "FIX|plain": [
+    2,
+    2,
+    2,
+    2
+   ]
+  },
+  "order_counterbalanced": true,
+  "order_warn": null,
+  "invalid_launches": [],
+  "launch_means": {
+   "decode_server_tps": [
+    {
+     "label": "SEAT-df2-L0",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 0,
+     "started_iso": "2026-09-21T05:19:25",
+     "n_rounds": 4,
+     "mean": 5.986,
+     "sd": 0.4378
+    },
+    {
+     "label": "SEAT-plain-L1",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 1,
+     "started_iso": "2026-09-21T05:27:14",
+     "n_rounds": 4,
+     "mean": 2.118,
+     "sd": 0.0346
+    },
+    {
+     "label": "FIX-df2-L2",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 2,
+     "started_iso": "2026-09-21T05:35:11",
+     "n_rounds": 4,
+     "mean": 5.932,
+     "sd": 0.4927
+    },
+    {
+     "label": "FIX-plain-L3",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 3,
+     "started_iso": "2026-09-21T05:42:51",
+     "n_rounds": 4,
+     "mean": 2.211,
+     "sd": 0.0402
+    },
+    {
+     "label": "SEAT-plain-L4",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 4,
+     "started_iso": "2026-09-21T05:50:34",
+     "n_rounds": 4,
+     "mean": 2.212,
+     "sd": 0.024
+    },
+    {
+     "label": "FIX-df2-L5",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 5,
+     "started_iso": "2026-09-21T05:58:16",
+     "n_rounds": 4,
+     "mean": 5.97,
+     "sd": 0.4446
+    },
+    {
+     "label": "FIX-plain-L6",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 6,
+     "started_iso": "2026-09-21T06:03:48",
+     "n_rounds": 4,
+     "mean": 2.208,
+     "sd": 0.0307
+    },
+    {
+     "label": "SEAT-df2-L7",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 7,
+     "started_iso": "2026-09-21T06:12:01",
+     "n_rounds": 4,
+     "mean": 5.799,
+     "sd": 0.6687
+    },
+    {
+     "label": "FIX-df2-L8",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 8,
+     "started_iso": "2026-09-21T06:17:34",
+     "n_rounds": 4,
+     "mean": 5.973,
+     "sd": 0.4808
+    },
+    {
+     "label": "FIX-plain-L9",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 9,
+     "started_iso": "2026-09-21T06:23:38",
+     "n_rounds": 4,
+     "mean": 2.21,
+     "sd": 0.0251
+    },
+    {
+     "label": "SEAT-df2-L10",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 10,
+     "started_iso": "2026-09-21T06:31:21",
+     "n_rounds": 4,
+     "mean": 5.506,
+     "sd": 0.6069
+    },
+    {
+     "label": "SEAT-plain-L11",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 11,
+     "started_iso": "2026-09-21T06:37:02",
+     "n_rounds": 4,
+     "mean": 2.196,
+     "sd": 0.0268
+    },
+    {
+     "label": "FIX-plain-L12",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 12,
+     "started_iso": "2026-09-21T06:44:45",
+     "n_rounds": 4,
+     "mean": 2.213,
+     "sd": 0.0166
+    },
+    {
+     "label": "SEAT-df2-L13",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 13,
+     "started_iso": "2026-09-21T06:52:26",
+     "n_rounds": 4,
+     "mean": 6.015,
+     "sd": 0.4613
+    },
+    {
+     "label": "SEAT-plain-L14",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 14,
+     "started_iso": "2026-09-21T06:57:55",
+     "n_rounds": 4,
+     "mean": 2.143,
+     "sd": 0.0302
+    },
+    {
+     "label": "FIX-df2-L15",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 15,
+     "started_iso": "2026-09-21T07:05:50",
+     "n_rounds": 4,
+     "mean": 5.988,
+     "sd": 0.4595
+    },
+    {
+     "label": "FIX-plain-L16",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 16,
+     "started_iso": "2026-09-21T07:11:20",
+     "n_rounds": 4,
+     "mean": 2.193,
+     "sd": 0.0508
+    },
+    {
+     "label": "FIX-df2-L17",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 17,
+     "started_iso": "2026-09-21T07:18:59",
+     "n_rounds": 4,
+     "mean": 5.771,
+     "sd": 0.5981
+    },
+    {
+     "label": "SEAT-plain-L18",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 18,
+     "started_iso": "2026-09-21T07:24:33",
+     "n_rounds": 4,
+     "mean": 2.212,
+     "sd": 0.0173
+    },
+    {
+     "label": "SEAT-df2-L19",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 19,
+     "started_iso": "2026-09-21T07:32:14",
+     "n_rounds": 4,
+     "mean": 5.992,
+     "sd": 0.4842
+    },
+    {
+     "label": "SEAT-df2-L20",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 20,
+     "started_iso": "2026-09-21T07:37:43",
+     "n_rounds": 4,
+     "mean": 5.946,
+     "sd": 0.4875
+    },
+    {
+     "label": "FIX-plain-L21",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 21,
+     "started_iso": "2026-09-21T07:43:44",
+     "n_rounds": 4,
+     "mean": 2.204,
+     "sd": 0.0364
+    },
+    {
+     "label": "FIX-df2-L22",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 22,
+     "started_iso": "2026-09-21T07:51:27",
+     "n_rounds": 4,
+     "mean": 5.984,
+     "sd": 0.4633
+    },
+    {
+     "label": "SEAT-plain-L23",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 23,
+     "started_iso": "2026-09-21T07:56:58",
+     "n_rounds": 4,
+     "mean": 2.224,
+     "sd": 0.0196
+    },
+    {
+     "label": "SEAT-plain-L24",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 24,
+     "started_iso": "2026-09-21T08:04:36",
+     "n_rounds": 4,
+     "mean": 2.179,
+     "sd": 0.0663
+    },
+    {
+     "label": "SEAT-df2-L25",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 25,
+     "started_iso": "2026-09-21T08:12:19",
+     "n_rounds": 4,
+     "mean": 5.983,
+     "sd": 0.4706
+    },
+    {
+     "label": "FIX-plain-L26",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 26,
+     "started_iso": "2026-09-21T08:17:48",
+     "n_rounds": 4,
+     "mean": 2.106,
+     "sd": 0.0947
+    },
+    {
+     "label": "FIX-df2-L27",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 27,
+     "started_iso": "2026-09-21T08:25:40",
+     "n_rounds": 4,
+     "mean": 6.021,
+     "sd": 0.4629
+    },
+    {
+     "label": "FIX-df2-L28",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 28,
+     "started_iso": "2026-09-21T08:31:08",
+     "n_rounds": 4,
+     "mean": 5.916,
+     "sd": 0.493
+    },
+    {
+     "label": "SEAT-plain-L29",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 29,
+     "started_iso": "2026-09-21T08:36:38",
+     "n_rounds": 4,
+     "mean": 2.224,
+     "sd": 0.0234
+    },
+    {
+     "label": "SEAT-df2-L30",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 30,
+     "started_iso": "2026-09-21T08:44:19",
+     "n_rounds": 4,
+     "mean": 5.978,
+     "sd": 0.442
+    },
+    {
+     "label": "FIX-plain-L31",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 31,
+     "started_iso": "2026-09-21T08:49:48",
+     "n_rounds": 4,
+     "mean": 2.133,
+     "sd": 0.1702
+    }
+   ],
+   "decode_wall_tps": [
+    {
+     "label": "SEAT-df2-L0",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 0,
+     "started_iso": "2026-09-21T05:19:25",
+     "n_rounds": 4,
+     "mean": 6.028,
+     "sd": 0.438
+    },
+    {
+     "label": "SEAT-plain-L1",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 1,
+     "started_iso": "2026-09-21T05:27:14",
+     "n_rounds": 4,
+     "mean": 2.135,
+     "sd": 0.0359
+    },
+    {
+     "label": "FIX-df2-L2",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 2,
+     "started_iso": "2026-09-21T05:35:11",
+     "n_rounds": 4,
+     "mean": 5.975,
+     "sd": 0.4944
+    },
+    {
+     "label": "FIX-plain-L3",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 3,
+     "started_iso": "2026-09-21T05:42:51",
+     "n_rounds": 4,
+     "mean": 2.229,
+     "sd": 0.0395
+    },
+    {
+     "label": "SEAT-plain-L4",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 4,
+     "started_iso": "2026-09-21T05:50:34",
+     "n_rounds": 4,
+     "mean": 2.231,
+     "sd": 0.0235
+    },
+    {
+     "label": "FIX-df2-L5",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 5,
+     "started_iso": "2026-09-21T05:58:16",
+     "n_rounds": 4,
+     "mean": 6.013,
+     "sd": 0.449
+    },
+    {
+     "label": "FIX-plain-L6",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 6,
+     "started_iso": "2026-09-21T06:03:48",
+     "n_rounds": 4,
+     "mean": 2.226,
+     "sd": 0.0307
+    },
+    {
+     "label": "SEAT-df2-L7",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 7,
+     "started_iso": "2026-09-21T06:12:01",
+     "n_rounds": 4,
+     "mean": 5.84,
+     "sd": 0.6712
+    },
+    {
+     "label": "FIX-df2-L8",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 8,
+     "started_iso": "2026-09-21T06:17:34",
+     "n_rounds": 4,
+     "mean": 6.018,
+     "sd": 0.4822
+    },
+    {
+     "label": "FIX-plain-L9",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 9,
+     "started_iso": "2026-09-21T06:23:38",
+     "n_rounds": 4,
+     "mean": 2.228,
+     "sd": 0.026
+    },
+    {
+     "label": "SEAT-df2-L10",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 10,
+     "started_iso": "2026-09-21T06:31:21",
+     "n_rounds": 4,
+     "mean": 5.546,
+     "sd": 0.6116
+    },
+    {
+     "label": "SEAT-plain-L11",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 11,
+     "started_iso": "2026-09-21T06:37:02",
+     "n_rounds": 4,
+     "mean": 2.215,
+     "sd": 0.0281
+    },
+    {
+     "label": "FIX-plain-L12",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 12,
+     "started_iso": "2026-09-21T06:44:45",
+     "n_rounds": 4,
+     "mean": 2.232,
+     "sd": 0.0151
+    },
+    {
+     "label": "SEAT-df2-L13",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 13,
+     "started_iso": "2026-09-21T06:52:26",
+     "n_rounds": 4,
+     "mean": 6.06,
+     "sd": 0.4653
+    },
+    {
+     "label": "SEAT-plain-L14",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 14,
+     "started_iso": "2026-09-21T06:57:55",
+     "n_rounds": 4,
+     "mean": 2.16,
+     "sd": 0.0309
+    },
+    {
+     "label": "FIX-df2-L15",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 15,
+     "started_iso": "2026-09-21T07:05:50",
+     "n_rounds": 4,
+     "mean": 6.03,
+     "sd": 0.461
+    },
+    {
+     "label": "FIX-plain-L16",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 16,
+     "started_iso": "2026-09-21T07:11:20",
+     "n_rounds": 4,
+     "mean": 2.212,
+     "sd": 0.0498
+    },
+    {
+     "label": "FIX-df2-L17",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 17,
+     "started_iso": "2026-09-21T07:18:59",
+     "n_rounds": 4,
+     "mean": 5.813,
+     "sd": 0.5999
+    },
+    {
+     "label": "SEAT-plain-L18",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 18,
+     "started_iso": "2026-09-21T07:24:33",
+     "n_rounds": 4,
+     "mean": 2.231,
+     "sd": 0.0176
+    },
+    {
+     "label": "SEAT-df2-L19",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 19,
+     "started_iso": "2026-09-21T07:32:14",
+     "n_rounds": 4,
+     "mean": 6.035,
+     "sd": 0.4856
+    },
+    {
+     "label": "SEAT-df2-L20",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 20,
+     "started_iso": "2026-09-21T07:37:43",
+     "n_rounds": 4,
+     "mean": 5.99,
+     "sd": 0.4896
+    },
+    {
+     "label": "FIX-plain-L21",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 21,
+     "started_iso": "2026-09-21T07:43:44",
+     "n_rounds": 4,
+     "mean": 2.223,
+     "sd": 0.0366
+    },
+    {
+     "label": "FIX-df2-L22",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 22,
+     "started_iso": "2026-09-21T07:51:27",
+     "n_rounds": 4,
+     "mean": 6.027,
+     "sd": 0.4641
+    },
+    {
+     "label": "SEAT-plain-L23",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 23,
+     "started_iso": "2026-09-21T07:56:58",
+     "n_rounds": 4,
+     "mean": 2.242,
+     "sd": 0.0205
+    },
+    {
+     "label": "SEAT-plain-L24",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 24,
+     "started_iso": "2026-09-21T08:04:36",
+     "n_rounds": 4,
+     "mean": 2.196,
+     "sd": 0.0653
+    },
+    {
+     "label": "SEAT-df2-L25",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 25,
+     "started_iso": "2026-09-21T08:12:19",
+     "n_rounds": 4,
+     "mean": 6.028,
+     "sd": 0.4753
+    },
+    {
+     "label": "FIX-plain-L26",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 26,
+     "started_iso": "2026-09-21T08:17:48",
+     "n_rounds": 4,
+     "mean": 2.123,
+     "sd": 0.0944
+    },
+    {
+     "label": "FIX-df2-L27",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 27,
+     "started_iso": "2026-09-21T08:25:40",
+     "n_rounds": 4,
+     "mean": 6.064,
+     "sd": 0.4637
+    },
+    {
+     "label": "FIX-df2-L28",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 28,
+     "started_iso": "2026-09-21T08:31:08",
+     "n_rounds": 4,
+     "mean": 5.96,
+     "sd": 0.4971
+    },
+    {
+     "label": "SEAT-plain-L29",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 29,
+     "started_iso": "2026-09-21T08:36:38",
+     "n_rounds": 4,
+     "mean": 2.242,
+     "sd": 0.0236
+    },
+    {
+     "label": "SEAT-df2-L30",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 30,
+     "started_iso": "2026-09-21T08:44:19",
+     "n_rounds": 4,
+     "mean": 6.023,
+     "sd": 0.445
+    },
+    {
+     "label": "FIX-plain-L31",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 31,
+     "started_iso": "2026-09-21T08:49:48",
+     "n_rounds": 4,
+     "mean": 2.151,
+     "sd": 0.1727
+    }
+   ],
+   "prefill_tps": [
+    {
+     "label": "SEAT-df2-L0",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 0,
+     "started_iso": "2026-09-21T05:19:25",
+     "n_rounds": 4,
+     "mean": 29.015,
+     "sd": 15.4887
+    },
+    {
+     "label": "SEAT-plain-L1",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 1,
+     "started_iso": "2026-09-21T05:27:14",
+     "n_rounds": 4,
+     "mean": 27.805,
+     "sd": 14.5564
+    },
+    {
+     "label": "FIX-df2-L2",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 2,
+     "started_iso": "2026-09-21T05:35:11",
+     "n_rounds": 4,
+     "mean": 33.035,
+     "sd": 17.9784
+    },
+    {
+     "label": "FIX-plain-L3",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 3,
+     "started_iso": "2026-09-21T05:42:51",
+     "n_rounds": 4,
+     "mean": 28.52,
+     "sd": 14.7109
+    },
+    {
+     "label": "SEAT-plain-L4",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 4,
+     "started_iso": "2026-09-21T05:50:34",
+     "n_rounds": 4,
+     "mean": 28.545,
+     "sd": 15.1004
+    },
+    {
+     "label": "FIX-df2-L5",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 5,
+     "started_iso": "2026-09-21T05:58:16",
+     "n_rounds": 4,
+     "mean": 31.765,
+     "sd": 17.4392
+    },
+    {
+     "label": "FIX-plain-L6",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 6,
+     "started_iso": "2026-09-21T06:03:48",
+     "n_rounds": 4,
+     "mean": 29.99,
+     "sd": 16.1115
+    },
+    {
+     "label": "SEAT-df2-L7",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 7,
+     "started_iso": "2026-09-21T06:12:01",
+     "n_rounds": 4,
+     "mean": 32.78,
+     "sd": 17.9161
+    },
+    {
+     "label": "FIX-df2-L8",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 8,
+     "started_iso": "2026-09-21T06:17:34",
+     "n_rounds": 4,
+     "mean": 34.205,
+     "sd": 18.9669
+    },
+    {
+     "label": "FIX-plain-L9",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 9,
+     "started_iso": "2026-09-21T06:23:38",
+     "n_rounds": 4,
+     "mean": 28.435,
+     "sd": 15.0322
+    },
+    {
+     "label": "SEAT-df2-L10",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 10,
+     "started_iso": "2026-09-21T06:31:21",
+     "n_rounds": 4,
+     "mean": 31.712,
+     "sd": 17.0159
+    },
+    {
+     "label": "SEAT-plain-L11",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 11,
+     "started_iso": "2026-09-21T06:37:02",
+     "n_rounds": 4,
+     "mean": 29.047,
+     "sd": 15.4615
+    },
+    {
+     "label": "FIX-plain-L12",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 12,
+     "started_iso": "2026-09-21T06:44:45",
+     "n_rounds": 4,
+     "mean": 29.84,
+     "sd": 16.0046
+    },
+    {
+     "label": "SEAT-df2-L13",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 13,
+     "started_iso": "2026-09-21T06:52:26",
+     "n_rounds": 4,
+     "mean": 33.37,
+     "sd": 18.3394
+    },
+    {
+     "label": "SEAT-plain-L14",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 14,
+     "started_iso": "2026-09-21T06:57:55",
+     "n_rounds": 4,
+     "mean": 26.87,
+     "sd": 14.2449
+    },
+    {
+     "label": "FIX-df2-L15",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 15,
+     "started_iso": "2026-09-21T07:05:50",
+     "n_rounds": 4,
+     "mean": 32.32,
+     "sd": 17.6657
+    },
+    {
+     "label": "FIX-plain-L16",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 16,
+     "started_iso": "2026-09-21T07:11:20",
+     "n_rounds": 4,
+     "mean": 30.588,
+     "sd": 16.6202
+    },
+    {
+     "label": "FIX-df2-L17",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 17,
+     "started_iso": "2026-09-21T07:18:59",
+     "n_rounds": 4,
+     "mean": 32.635,
+     "sd": 17.8167
+    },
+    {
+     "label": "SEAT-plain-L18",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 18,
+     "started_iso": "2026-09-21T07:24:33",
+     "n_rounds": 4,
+     "mean": 29.357,
+     "sd": 15.7234
+    },
+    {
+     "label": "SEAT-df2-L19",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 19,
+     "started_iso": "2026-09-21T07:32:14",
+     "n_rounds": 4,
+     "mean": 32.877,
+     "sd": 17.8897
+    },
+    {
+     "label": "SEAT-df2-L20",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 20,
+     "started_iso": "2026-09-21T07:37:43",
+     "n_rounds": 4,
+     "mean": 32.88,
+     "sd": 18.0365
+    },
+    {
+     "label": "FIX-plain-L21",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 21,
+     "started_iso": "2026-09-21T07:43:44",
+     "n_rounds": 4,
+     "mean": 28.965,
+     "sd": 15.0663
+    },
+    {
+     "label": "FIX-df2-L22",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 22,
+     "started_iso": "2026-09-21T07:51:27",
+     "n_rounds": 4,
+     "mean": 32.06,
+     "sd": 17.446
+    },
+    {
+     "label": "SEAT-plain-L23",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 23,
+     "started_iso": "2026-09-21T07:56:58",
+     "n_rounds": 4,
+     "mean": 30.857,
+     "sd": 16.6088
+    },
+    {
+     "label": "SEAT-plain-L24",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 24,
+     "started_iso": "2026-09-21T08:04:36",
+     "n_rounds": 4,
+     "mean": 29.992,
+     "sd": 16.0681
+    },
+    {
+     "label": "SEAT-df2-L25",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 25,
+     "started_iso": "2026-09-21T08:12:19",
+     "n_rounds": 4,
+     "mean": 33.27,
+     "sd": 18.1839
+    },
+    {
+     "label": "FIX-plain-L26",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 26,
+     "started_iso": "2026-09-21T08:17:48",
+     "n_rounds": 4,
+     "mean": 28.96,
+     "sd": 15.4349
+    },
+    {
+     "label": "FIX-df2-L27",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 27,
+     "started_iso": "2026-09-21T08:25:40",
+     "n_rounds": 4,
+     "mean": 33.715,
+     "sd": 18.0509
+    },
+    {
+     "label": "FIX-df2-L28",
+     "arm": "FIX",
+     "mode": "df2",
+     "slot": "FIX|df2",
+     "position": 28,
+     "started_iso": "2026-09-21T08:31:08",
+     "n_rounds": 4,
+     "mean": 33.21,
+     "sd": 18.1708
+    },
+    {
+     "label": "SEAT-plain-L29",
+     "arm": "SEAT",
+     "mode": "plain",
+     "slot": "SEAT|plain",
+     "position": 29,
+     "started_iso": "2026-09-21T08:36:38",
+     "n_rounds": 4,
+     "mean": 28.87,
+     "sd": 15.471
+    },
+    {
+     "label": "SEAT-df2-L30",
+     "arm": "SEAT",
+     "mode": "df2",
+     "slot": "SEAT|df2",
+     "position": 30,
+     "started_iso": "2026-09-21T08:44:19",
+     "n_rounds": 4,
+     "mean": 33.877,
+     "sd": 18.2533
+    },
+    {
+     "label": "FIX-plain-L31",
+     "arm": "FIX",
+     "mode": "plain",
+     "slot": "FIX|plain",
+     "position": 31,
+     "started_iso": "2026-09-21T08:49:48",
+     "n_rounds": 4,
+     "mean": 29.54,
+     "sd": 15.3307
+    }
+   ]
+  },
+  "compare": {
+   "FIX|df2_vs_SEAT|df2__decode_server_tps": {
+    "x_slot": "FIX|df2",
+    "y_slot": "SEAT|df2",
+    "n_launches_x": 8,
+    "n_launches_y": 8,
+    "x_launch_means": [
+     5.932,
+     5.97,
+     5.973,
+     5.988,
+     5.771,
+     5.984,
+     6.021,
+     5.916
+    ],
+    "y_launch_means": [
+     5.986,
+     5.799,
+     5.506,
+     6.015,
+     5.992,
+     5.946,
+     5.983,
+     5.978
+    ],
+    "mean_diff": 0.0438,
+    "se": 0.06701,
+    "welch_df": 9.69,
+    "ci95": [
+     -0.1078,
+     0.1953
+    ],
+    "sign": "7/8 launch means above the other arm's mean",
+    "verdict": "NO_DIFFERENCE"
+   },
+   "FIX|plain_vs_SEAT|plain__decode_server_tps": {
+    "x_slot": "FIX|plain",
+    "y_slot": "SEAT|plain",
+    "n_launches_x": 8,
+    "n_launches_y": 8,
+    "x_launch_means": [
+     2.211,
+     2.208,
+     2.21,
+     2.213,
+     2.193,
+     2.204,
+     2.106,
+     2.133
+    ],
+    "y_launch_means": [
+     2.118,
+     2.212,
+     2.196,
+     2.143,
+     2.212,
+     2.224,
+     2.179,
+     2.224
+    ],
+    "mean_diff": -0.0037,
+    "se": 0.02018,
+    "welch_df": 13.96,
+    "ci95": [
+     -0.0487,
+     0.0412
+    ],
+    "sign": "6/8 launch means above the other arm's mean",
+    "verdict": "NO_DIFFERENCE"
+   },
+   "FIX|df2_vs_SEAT|df2__decode_wall_tps": {
+    "x_slot": "FIX|df2",
+    "y_slot": "SEAT|df2",
+    "n_launches_x": 8,
+    "n_launches_y": 8,
+    "x_launch_means": [
+     5.975,
+     6.013,
+     6.018,
+     6.03,
+     5.813,
+     6.027,
+     6.064,
+     5.96
+    ],
+    "y_launch_means": [
+     6.028,
+     5.84,
+     5.546,
+     6.06,
+     6.035,
+     5.99,
+     6.028,
+     6.023
+    ],
+    "mean_diff": 0.0438,
+    "se": 0.06756,
+    "welch_df": 9.66,
+    "ci95": [
+     -0.1091,
+     0.1966
+    ],
+    "sign": "7/8 launch means above the other arm's mean",
+    "verdict": "NO_DIFFERENCE"
+   },
+   "FIX|plain_vs_SEAT|plain__decode_wall_tps": {
+    "x_slot": "FIX|plain",
+    "y_slot": "SEAT|plain",
+    "n_launches_x": 8,
+    "n_launches_y": 8,
+    "x_launch_means": [
+     2.229,
+     2.226,
+     2.228,
+     2.232,
+     2.212,
+     2.223,
+     2.123,
+     2.151
+    ],
+    "y_launch_means": [
+     2.135,
+     2.231,
+     2.215,
+     2.16,
+     2.231,
+     2.242,
+     2.196,
+     2.242
+    ],
+    "mean_diff": -0.0035,
+    "se": 0.02046,
+    "welch_df": 13.97,
+    "ci95": [
+     -0.0491,
+     0.0421
+    ],
+    "sign": "6/8 launch means above the other arm's mean",
+    "verdict": "NO_DIFFERENCE"
+   },
+   "FIX|df2_vs_SEAT|df2__prefill_tps": {
+    "x_slot": "FIX|df2",
+    "y_slot": "SEAT|df2",
+    "n_launches_x": 8,
+    "n_launches_y": 8,
+    "x_launch_means": [
+     33.035,
+     31.765,
+     34.205,
+     32.32,
+     32.635,
+     32.06,
+     33.715,
+     33.21
+    ],
+    "y_launch_means": [
+     29.015,
+     32.78,
+     31.712,
+     33.37,
+     32.877,
+     32.88,
+     33.27,
+     33.877
+    ],
+    "mean_diff": 0.3955,
+    "se": 0.61593,
+    "welch_df": 10.83,
+    "ci95": [
+     -0.9768,
+     1.7678
+    ],
+    "sign": "5/8 launch means above the other arm's mean",
+    "verdict": "NO_DIFFERENCE"
+   },
+   "FIX|plain_vs_SEAT|plain__prefill_tps": {
+    "x_slot": "FIX|plain",
+    "y_slot": "SEAT|plain",
+    "n_launches_x": 8,
+    "n_launches_y": 8,
+    "x_launch_means": [
+     28.52,
+     29.99,
+     28.435,
+     29.84,
+     30.588,
+     28.965,
+     28.96,
+     29.54
+    ],
+    "y_launch_means": [
+     27.805,
+     28.545,
+     29.047,
+     26.87,
+     29.357,
+     30.857,
+     29.992,
+     28.87
+    ],
+    "mean_diff": 0.4369,
+    "se": 0.51308,
+    "welch_df": 11.63,
+    "ci95": [
+     -0.7063,
+     1.58
+    ],
+    "sign": "6/8 launch means above the other arm's mean",
+    "verdict": "NO_DIFFERENCE"
+   }
+  },
+  "SPEED_WINS_CI_EXCLUDES_ZERO_POSITIVE": [],
+  "VERDICT_BY_SLOT": {
+   "FIX|df2": "NO_DIFFERENCE",
+   "FIX|plain": "NO_DIFFERENCE"
+  }
+ },
+ "INTEGRITY": {
+  "skipped_launches": [],
+  "failed_launches": [],
+  "invalid_launches": [],
+  "clean": true,
+  "dead_slots": []
+ },
+ "SPEED_WINS_CI_EXCLUDES_ZERO_POSITIVE": [],
+ "VERDICT_BY_SLOT": {
+  "FIX|df2": "NO_DIFFERENCE",
+  "FIX|plain": "NO_DIFFERENCE"
+ },
+ "BASELINE_EMPTY_GATE": {
+  "baseline_launches_matched": 16,
+  "rule": "F-154 / lane-208: any BASELINE (seat) round with predicted_n <= 1 or empty text VOIDS the cell -- the ruler is dirty, so no challenger may be scored against it.",
+  "void_cells": [],
+  "VERDICT": "GREEN"
+ }
+}

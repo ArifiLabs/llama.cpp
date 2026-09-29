@@ -3,6 +3,11 @@
 This directory retains verbatim license or notice text copied from the audited
 source tree. Do not edit, normalize, shorten, or regenerate these files.
 
+**The short SHAs in the audit prose below are studio-internal or third-party.** They record
+which commit in the fork's own working history made a retention or carried a take, and which
+commit of the upstream project a file was copied from. A public clone resolves neither, and the
+licence texts in this directory are complete without them.
+
 | Destination | Copy verbatim from | Audit disposition |
 |---|---|---|
 | `llama.cpp-MIT.txt` | `<FORK-WORKSPACE>/src/llama-upstream-b10068/LICENSE` | llama.cpp MIT; retain copyright and permission notice |
@@ -20,7 +25,55 @@ source tree. Do not edit, normalize, shorten, or regenerate these files.
 | `buun-MIT.txt` | `git show refs/remotes/buun/master:LICENSE` (spiritbuun/buun-llama-cpp) | buun MIT. **Retained 2026-08-27; this was a GAP** — series patch `0394` ingested buun's DFlash2 controller on 2026-08-21 with no notice row, so the notice lagged the code by six days. Byte-identical to the upstream MIT text apart from LF termination. |
 | `turboq-mtp-MIT.txt` | `LICENSE` of `https://github.com/jtrefon/llama.cpp-turboq-mtp` at `6a02d0494` (shallow clone `cache/r18-turboq-src`, 1099 bytes, "The ggml authors") | jtrefon MIT (llama.cpp lineage). **Retained 2026-09-07 (lane-212, WI-1694) in the same commit that carries the code**: the TBQ3_0/TBQ4_0 codec (`ggml/src/ggml-tbq-quant.c`, tables) at ids 58/59 is ported from this tree. Tracked source in `sources.json` `remotes` as `turboq`, pinned `6a02d0494`. |
 
+| `S-X8-MarlaLabs-LICENSE.txt` | `https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8/resolve/main/LICENSE`, fetched 2026-09-21 | Apache-2.0 as published by the author, carrying his own copyright line *"Copyright 2026 Martí Vidal Leandro"*. Retained for **S-X8 v4.3** (MarlaLabs; DOI 10.5281/zenodo.21922640, v1.0 2026-08-13). **This was the one real licence gap at `94461e770`; closed 2026-09-21.** 11,350 bytes, sha256 `ad4aa936adb43842a3f34d16797acdd39ba4f523e5b02b9ea4fe48b1962d3c74`. |
+| `S-X8-MarlaLabs-NOTICE.txt` | `https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8/resolve/main/NOTICE`, fetched 2026-09-21 | The author's own NOTICE, retained verbatim because **Apache-2.0 §4(d) requires it to travel**. It also carries the base model's attribution (Qwen3.8-27B, Copyright (C) 2026 Qwen Team, Alibaba Group, Apache-2.0). 1,278 bytes, sha256 `20ea964a519ef0b04ce51beb2ae0cf601a82775cd7e4022c15ec0434a94ca13a`. **Not scrubbed** — it contains the author's contact address and a required NOTICE is not ours to edit. |
+
 `../LICENSE` is also the verbatim copy of upstream llama.cpp’s MIT license.
+`../NOTICE` names every component above with its licence and source; it was added 2026-09-21 in
+the same release-prep commit as `Apache-2.0.txt`.
+
+### S-X8 v4.3 — Apache-2.0, retained 2026-09-21 (release prep)
+
+The tree implements `GGML_TYPE_SX8` (57) across 37 source files. The **licence is established, not
+assumed**: `research/local-inference/lane-evidence/2026-09-15-sx8-paper-docs/PROVENANCE.md:3` reads
+*"All files Apache-2.0 (author Martí Vidal Leandro, MarlaLabs)"* over ten files, each banked with a
+source URL and a sha256 — the papers, `SX8_FLASH_V4_3_SPEC.md`, the container scripts, the reference
+CUDA kernels (`sx8_decode1_v3.cu`, `sx8_embed_v44.cu`) and the author's own `llama-cpp-sx8.patch`.
+Commit `948aab9c6` carries `Taken-from: MarlaLabsAI/sx8-quantization docs/S-X-METHODOLOGY.md section
+2 (per-8 affine sub-block decomposition), Apache-2.0`.
+
+**CLOSED 2026-09-21 — the licensor's own files are now retained.** This row previously read OWED,
+because the 2026-09-15 capture took the papers, the scripts, the kernels and the patch but no
+LICENSE blob, and the stand-in was the canonical Apache-2.0 text. That gap is closed by fetching
+the author's own files:
+
+| File | Source | Fetched | Bytes | sha256 |
+|---|---|---|---|---|
+| `S-X8-MarlaLabs-LICENSE.txt` | `https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8/resolve/main/LICENSE` | 2026-09-21 | 11,350 | `ad4aa936adb43842a3f34d16797acdd39ba4f523e5b02b9ea4fe48b1962d3c74` |
+| `S-X8-MarlaLabs-NOTICE.txt` | `https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8/resolve/main/NOTICE` | 2026-09-21 | 1,278 | `20ea964a519ef0b04ce51beb2ae0cf601a82775cd7e4022c15ec0434a94ca13a` |
+
+The retained `LICENSE` carries the author's own copyright line — *"Copyright 2026 Martí Vidal
+Leandro"* — which is exactly what a stand-in could not supply and why this directory refused to
+invent one. **Retaining the author's NOTICE is not optional**: Apache-2.0 §4(d) requires the NOTICE
+of a licensed work to travel with any derivative distribution. It also names the base model's own
+licence (Qwen3.8-27B, Apache-2.0, Qwen Team / Alibaba Group), which now travels with this tree too.
+
+Independently confirmed at the DOI: the Zenodo record for 10.5281/zenodo.21922640 carries
+`"license": {"id": "apache2.0"}` in its own metadata and names Vidal Leandro, Martí (MarlaLabs) as
+rights holder.
+
+`Apache-2.0.txt` — the licensor-neutral stand-in this directory added on 2026-09-21 before the fetch
+succeeded — is **removed**, because the author's own file now does that job and two copies of the
+same terms invite the reader to wonder which one governs.
+
+The author's NOTICE contains his contact address. It is **deliberately excluded** from this
+repository's path/identity scrub: a NOTICE that Apache-2.0 requires to travel verbatim is not ours
+to edit.
+
+**No per-file headers were added.** Apache-2.0 §4(a)–(d) requires the licence, the NOTICE contents
+and any retained attribution notices to travel with the derivative work; it does not require a
+header on every file. The S-X8 sources captured carry no header of the author's to retain, and a
+header composed here would be our text over his name.
 
 ### Inherited from upstream, not retained by this fork
 

@@ -131,6 +131,39 @@ bench-proof build add `-DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF
 -DLLAMA_USE_PREBUILT_WEBUI=OFF`. The UI touches no decode path, so a UI-ON server binary is
 bench-equivalent to UI-OFF — but record which one produced any number you publish.
 
+## 4.5 Make `bin/` self-sufficient before you run or copy it
+
+`-static-libgcc -static-libstdc++` removes two runtime DLLs, not all of them. A MinGW build still
+imports `libgomp-1.dll` (OpenMP), `libwinpthread-1.dll` and, through `libgomp-1`, `libdl.dll`; a
+build configured without the static flags also imports `libstdc++-6.dll` and `libgcc_s_seh-1.dll`.
+If any of them is found only on `PATH`, the binary depends on whatever `PATH` holds when it starts:
+missing = `0xC0000135` (`STATUS_DLL_NOT_FOUND`), a foreign copy first on `PATH` (Git for Windows
+ships one) = `0xC0000139`. The Windows loader searches the executable's own directory **before**
+`PATH`, so copying the DLLs **of the toolchain that built the binary** next to it ends both failures:
+
+```powershell
+$tc = Split-Path (Get-Command g++).Source      # the compiler that ran the build
+foreach ($b in 'build-vulkan\bin', 'build-cpu\bin') {
+  if (Test-Path $b) {
+    foreach ($d in 'libstdc++-6', 'libgcc_s_seh-1', 'libwinpthread-1', 'libgomp-1', 'libdl') {
+      if (Test-Path "$tc\$d.dll") { Copy-Item "$tc\$d.dll" $b -Force }
+    }
+  }
+}
+```
+
+Copy them fresh from the toolchain every time; never from an older build directory, because a
+toolchain upgrade makes the old copies foreign to the new binary. Then prove it with a `PATH` that
+holds Windows only (run it in a new PowerShell window, or `$env:PATH` stays changed):
+
+```powershell
+$env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+build-vulkan\bin\llama-server.exe --version
+```
+
+It prints the version and build line and exits 0. Linking fully static (`-static`) was evaluated
+and not adopted for this release.
+
 ## 5. Reproducing our exact configuration
 
 `tools/arifi-sync/recipe/build-vulkan.cache-snapshot.txt` is the **committed** record of the real
@@ -161,7 +194,7 @@ directory does not exist at the base commit, and the shell would have nothing to
 driver, which replays into its own worktree:
 
 ```bash
-python tools/arifi-sync/arifi_sync.py series replay --onto 571d0d540
+python tools/arifi-sync/arifi_sync.py series replay --onto 9e0e220594af405a62835dc3a27495729fd8506b
 python tools/arifi-sync/arifi_sync.py series check      # regenerate, byte-compare, replay, diff
 ```
 
@@ -176,7 +209,8 @@ tree identical to `master` outside the generated series directory.
 |---|---|---|
 | `git clone` → `Filename too long` / `unable to checkout working tree` | Upstream's 161-char `tools/ui/...` path exceeds `MAX_PATH` | `git clone -c core.longpaths=true`, or clone to a shallower directory (§0) |
 | `'::CreateFile2' has not been declared` at `vendor/cpp-httplib/httplib.cpp:1471` | `_WIN32_WINNT` too low on MinGW | `-D_WIN32_WINNT=0x0A00` on both C and CXX flags (§2) |
-| Binary exits immediately with `0xC0000139` (`STATUS_ENTRYPOINT_NOT_FOUND`) | A foreign `libstdc++-6.dll` on `PATH` shadows the build's runtime | `-static-libgcc -static-libstdc++` (§2) |
+| Binary exits immediately with `0xC0000139` (`STATUS_ENTRYPOINT_NOT_FOUND`) | A foreign `libstdc++-6.dll` on `PATH` shadows the build's runtime | `-static-libgcc -static-libstdc++` (§2), then §4.5 |
+| Binary exits immediately with `0xC0000135` (`STATUS_DLL_NOT_FOUND`) | A runtime DLL (often `libdl.dll` or `libgomp-1.dll`) is not beside the binary and not on `PATH` | §4.5 |
 | **`0xC0000005` ACCESS_VIOLATION during decode, after `CPU_REPACK model buffer size` is logged** | **Upstream's 8×8 repack kernels. Not this fork.** See below. | Drop `--no-host`, or use a quant whose repack path is 4-wide |
 | `git am` → `unable to auto-detect email address` | No git identity configured | `git config user.email` / `user.name` |
 | `series check` byte-compare fails right after a `git` upgrade | Patch signature line changed | `series regen` — the series is generated, never hand-edited |
