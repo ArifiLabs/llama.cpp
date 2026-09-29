@@ -1,0 +1,65 @@
+From c95a6fb0a76c45b8942608a3a45e76379d372c0f Mon Sep 17 00:00:00 2001
+From: ArifiLabs <arifilabs@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 15:41:26 -0400
+Subject: [PATCH] docs: BUILDING takes the runtime DLLs from the compiler CMake
+ recorded; README points at it
+
+The DLL step in BUILDING.md 4.5 now reads the toolchain from each build's CMakeCache.txt (CMAKE_CXX_COMPILER) instead of whatever g++ is first on PATH, which is the same shadowing the step exists to defeat. BUILDING.md 4 names the two fork weight-format flags and the -j 2 memory note the README's recipe uses, and the README stops claiming the two pages carry the same flags: it sends a new machine to BUILDING.md 3-4.5.
+
+Origin: ArifiLabs (native) - release documentation for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ README.md        |  5 +++--
+ docs/BUILDING.md | 15 +++++++++++----
+ 2 files changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/README.md b/README.md
+index 200d01db9..3b2a053dd 100644
+--- a/README.md
++++ b/README.md
+@@ -362,8 +362,9 @@ transfer; numbers do not. If you are on other hardware, read
+ ### Build
+ 
+ Windows / MinGW-w64 / Vulkan. **This is the only configuration any number in this repository was
+-measured on** (source: the internal `UPDATE-RUNBOOK.md`, not published; the same flags are in
+-[`docs/BUILDING.md`](docs/BUILDING.md)):
++measured on** (source: the internal `UPDATE-RUNBOOK.md`, not published). The step-by-step
++version, with the static-runtime and web-UI flags and the runtime-DLL step, is
++[`docs/BUILDING.md`](docs/BUILDING.md) §3–§4.5; follow that page on a new machine:
+ 
+ ```powershell
+ cmake -S . -B build-vulkan -G Ninja `
+diff --git a/docs/BUILDING.md b/docs/BUILDING.md
+index 27ccc629c..b604ad24d 100644
+--- a/docs/BUILDING.md
++++ b/docs/BUILDING.md
+@@ -126,6 +126,11 @@ cmake -S . -B build-vulkan -G Ninja \
+ cmake --build build-vulkan --target llama-server -j 6
+ ```
+ 
++To compile this fork's own weight formats as well (the configuration every published number was
++measured on), add `-DGGML_ARIFI_ROCMFPX_FORMATS=ON -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON`; the README's
++Build section says what each one enables. Vulkan shader generation is memory-hungry: on a machine
++whose GPU shares system RAM, `-j 2` is what we use.
++
+ The web UI is **ON** by default in local builds and is built from source. For a minimal or
+ bench-proof build add `-DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF
+ -DLLAMA_USE_PREBUILT_WEBUI=OFF`. The UI touches no decode path, so a UI-ON server binary is
+@@ -142,11 +147,13 @@ ships one) = `0xC0000139`. The Windows loader searches the executable's own dire
+ `PATH`, so copying the DLLs **of the toolchain that built the binary** next to it ends both failures:
+ 
+ ```powershell
+-$tc = Split-Path (Get-Command g++).Source      # the compiler that ran the build
+-foreach ($b in 'build-vulkan\bin', 'build-cpu\bin') {
+-  if (Test-Path $b) {
++foreach ($b in 'build-vulkan', 'build-cpu') {
++  if (Test-Path "$b\CMakeCache.txt") {
++    # the compiler that ran THIS build, as CMake recorded it
++    $cxx = (Select-String -Path "$b\CMakeCache.txt" -Pattern '^CMAKE_CXX_COMPILER:').Line.Split('=', 2)[1]
++    $tc = Split-Path $cxx
+     foreach ($d in 'libstdc++-6', 'libgcc_s_seh-1', 'libwinpthread-1', 'libgomp-1', 'libdl') {
+-      if (Test-Path "$tc\$d.dll") { Copy-Item "$tc\$d.dll" $b -Force }
++      if (Test-Path "$tc\$d.dll") { Copy-Item "$tc\$d.dll" "$b\bin" -Force }
+     }
+   }
+ }

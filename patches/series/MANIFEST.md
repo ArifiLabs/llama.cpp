@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **591**, all non-merge, applied in filename order.
+- Patches: **592**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 591 commit messages, same provenance trailers. Verified, not
+same file contents, same 592 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -670,6 +670,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 589 | `0589-provenance-re-key-the-ledgers-for-the-r86i-export-an.patch` | arifi-fork-base | `a9187ded7` | - | - | provenance: re-key the ledgers for the r86i export, and name the seven r86i-era offenders |
 | 590 | `0590-release-carry-the-published-documents-to-R86i-NOTICE.patch` | arifi-fork-base | `5da7d4e59` | - | `GGML_ARIFI_VNNI_REPACK`, `GGML_RECURRENT_STATE_F16`, `POWERINFER_IOCP`, `MAX_N_CACHED` | release: carry the published documents to R86i - NOTICE, licences, curated evidence, README, notes, stranger-run DLL step |
 | 591 | `0591-github-drop-the-third-party-FUNDING.yml-that-arrived.patch` | arifi-fork-base | `724e4cb72` | - | - | github: drop the third-party FUNDING.yml that arrived with the turboquant import |
+| 592 | `0592-docs-BUILDING-takes-the-runtime-DLLs-from-the-compil.patch` | arifi-fork-base | `c95a6fb0a` | - | - | docs: BUILDING takes the runtime DLLs from the compiler CMake recorded; README points at it |
 
 ## Measured effect, per patch
 
@@ -1340,6 +1341,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0589-provenance-re-key-the-ledgers-for-the-r86i-export-an.patch` | UNMEASURED - audit tooling and ledgers only; no inference code path is touched. provenance --strict over 662 commits: before rc=1 (4 without any provenance); after rc=0, 22 commits EXEMPT, not repaired. |
 | `0590-release-carry-the-published-documents-to-R86i-NOTICE.patch` | UNMEASURED - documents, licence texts and receipts only; no code path is touched. |
 | `0591-github-drop-the-third-party-FUNDING.yml-that-arrived.patch` | UNMEASURED - repository metadata only; no code path is touched. |
+| `0592-docs-BUILDING-takes-the-runtime-DLLs-from-the-compil.patch` | UNMEASURED - documents only; no code path is touched. |
 
 ## Unclassified
 
