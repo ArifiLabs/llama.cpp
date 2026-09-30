@@ -929,6 +929,11 @@ static std::vector<vk_alloc_attempt> ggml_vk_placement_attempts(vk_device & devi
 
     if (device->prefer_host_memory) {
         attempts.push_back({ { HV | HC, DL }, UINT32_MAX });
+    } else if (device->uma && device->uma_carve_first) {
+        // x1-first-contact: DL|HV|HC is left out ON PURPOSE. The ledger charges it to the DEVICE_LOCAL
+        // heap while the driver bills the shared segment, so as a fallback it would re-open the
+        // first-submit death with bytes the host-split bound never sees. Overflow goes to HV|HC.
+        attempts.push_back({ { DL, HV | HC }, UINT32_MAX });
     } else if (device->uma) {
         // On UMA, prefer host-visible memory so direct tensor borrowing works.
         // If unavailable, fall back to device-local memory.

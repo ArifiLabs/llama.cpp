@@ -4974,6 +4974,28 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     }
 }
 
+// x1-first-contact: which memory type backs the UMA device buffers. On the Radeon 890M (0x150e, AMD
+// 26.8.1 LLPC, Windows) the DEVICE_LOCAL|HOST_VISIBLE type the UMA chain asks for first is billed to
+// the WDDM SHARED segment (system RAM, capped near half of the system-visible pool), while plain
+// DEVICE_LOCAL lands in the BIOS carve. So every load past ~11.2 GiB died at the first upload submit
+// with ErrorUnknown and the 24 GB carve stayed empty. Receipt: research/local-inference/lane-evidence/
+// 2026-09-30-x1-first-contact/. Probe = the MEASURED device ids below; every other device keeps the
+// upstream chain. GGML_VK_UMA_PLACEMENT = auto (default, probe) | legacy | device-local.
+static bool ggml_vk_uma_carve_first(uint32_t vendor_id, uint32_t device_id) {
+    static const int mode = [] {
+        const char * s = getenv("GGML_VK_UMA_PLACEMENT");
+        if (s == nullptr || strcmp(s, "auto") == 0) return 0;
+        if (strcmp(s, "legacy") == 0)               return 1;
+        if (strcmp(s, "device-local") == 0)         return 2;
+        fprintf(stderr, "ggml_vulkan: GGML_VK_UMA_PLACEMENT='%s' is not auto|legacy|device-local; using auto\n", s);
+        return 0;
+    }();
+    if (mode != 0) {
+        return mode == 2;
+    }
+    return vendor_id == VK_VENDOR_ID_AMD && device_id == 0x150e;   // Radeon 890M, measured 2026-09-30
+}
+
 vk_device ggml_vk_get_device(size_t idx) {
     VK_LOG_DEBUG("ggml_vk_get_device(" << idx << ")");
 
@@ -5208,6 +5230,13 @@ vk_device ggml_vk_get_device(size_t idx) {
         device->subgroup_size = subgroup_props.subgroupSize;
         device->subgroup_size_log2 = uint32_t(log2f(float(device->subgroup_size)));
         device->uma = device->properties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu;
+        if (device->uma) {
+            device->uma_carve_first = ggml_vk_uma_carve_first(device->vendor_id, device->properties.deviceID);
+            fprintf(stderr, "ggml_vulkan: UMA placement: %s (device 0x%04x, GGML_VK_UMA_PLACEMENT=%s)\n",
+                    device->uma_carve_first ? "device-local first {DL, HV|HC}" : "legacy {DL|HV|HC, DL, HV|HC}",
+                    device->properties.deviceID,
+                    getenv("GGML_VK_UMA_PLACEMENT") ? getenv("GGML_VK_UMA_PLACEMENT") : "auto");
+        }
         if (sm_builtins) {
             device->shader_core_count = sm_props.shaderSMCount;
         } else if (amd_shader_core_properties2) {
