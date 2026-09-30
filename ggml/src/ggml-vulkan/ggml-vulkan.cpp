@@ -1459,6 +1459,7 @@ struct vk_device_struct {
     uint32_t subgroup_size_log2;
     uint32_t shader_core_count;
     bool uma;
+    bool uma_carve_first = false;   // x1-first-contact: UMA chain puts plain DEVICE_LOCAL first
     bool prefer_host_memory;
     bool float_controls_rte_fp16;
     bool float_controls_denorm_preserve_fp16;
@@ -4450,6 +4451,28 @@ static bool ggml_vk_placement_bulk_large_heap() {
     return on;
 }
 
+// x1-first-contact: which memory type backs the UMA device buffers. On the Radeon 890M (0x150e, AMD
+// 26.8.1 LLPC, Windows) the DEVICE_LOCAL|HOST_VISIBLE type the UMA chain asks for first is billed to
+// the WDDM SHARED segment (system RAM, capped near half of the system-visible pool), while plain
+// DEVICE_LOCAL lands in the BIOS carve. So every load past ~11.2 GiB died at the first upload submit
+// with ErrorUnknown and the 24 GB carve stayed empty. Receipt: research/local-inference/lane-evidence/
+// 2026-09-30-x1-first-contact/. Probe = the MEASURED device ids below; every other device keeps the
+// upstream chain. GGML_VK_UMA_PLACEMENT = auto (default, probe) | legacy | device-local.
+static bool ggml_vk_uma_carve_first(uint32_t vendor_id, uint32_t device_id) {
+    static const int mode = [] {
+        const char * s = getenv("GGML_VK_UMA_PLACEMENT");
+        if (s == nullptr || strcmp(s, "auto") == 0) return 0;
+        if (strcmp(s, "legacy") == 0)               return 1;
+        if (strcmp(s, "device-local") == 0)         return 2;
+        fprintf(stderr, "ggml_vulkan: GGML_VK_UMA_PLACEMENT='%s' is not auto|legacy|device-local; using auto\n", s);
+        return 0;
+    }();
+    if (mode != 0) {
+        return mode == 2;
+    }
+    return vendor_id == VK_VENDOR_ID_AMD && device_id == 0x150e;   // Radeon 890M, measured 2026-09-30
+}
+
 static uint32_t ggml_vk_largest_heap(const vk::PhysicalDeviceMemoryProperties & mem_props) {
     uint32_t best = 0;
     for (uint32_t h = 1; h < mem_props.memoryHeapCount; ++h) {
@@ -5299,6 +5322,11 @@ static std::vector<vk_alloc_attempt> ggml_vk_placement_attempts(vk_device & devi
 
     if (device->prefer_host_memory) {
         attempts.push_back({ { HV | HC, DL }, UINT32_MAX });
+    } else if (device->uma && device->uma_carve_first) {
+        // x1-first-contact: DL|HV|HC is left out ON PURPOSE. The ledger charges it to the DEVICE_LOCAL
+        // heap while the driver bills the shared segment, so as a fallback it would re-open the
+        // first-submit death with bytes the host-split bound never sees. Overflow goes to HV|HC.
+        attempts.push_back({ { DL, HV | HC }, UINT32_MAX });
     } else if (device->uma) {
         // On UMA, prefer host-visible memory so direct tensor borrowing works.
         // If unavailable, fall back to device-local memory.
@@ -9121,6 +9149,13 @@ static vk_device ggml_vk_get_device(size_t idx) {
         device->subgroup_size = subgroup_props.subgroupSize;
         device->subgroup_size_log2 = uint32_t(log2f(float(device->subgroup_size)));
         device->uma = device->properties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu;
+        if (device->uma) {
+            device->uma_carve_first = ggml_vk_uma_carve_first(device->vendor_id, device->properties.deviceID);
+            fprintf(stderr, "ggml_vulkan: UMA placement: %s (device 0x%04x, GGML_VK_UMA_PLACEMENT=%s)\n",
+                    device->uma_carve_first ? "device-local first {DL, HV|HC}" : "legacy {DL|HV|HC, DL, HV|HC}",
+                    device->properties.deviceID,
+                    getenv("GGML_VK_UMA_PLACEMENT") ? getenv("GGML_VK_UMA_PLACEMENT") : "auto");
+        }
         if (sm_builtins) {
             device->shader_core_count = sm_props.shaderSMCount;
         } else if (amd_shader_core_properties2) {
