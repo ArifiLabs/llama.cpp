@@ -19,7 +19,7 @@ speculative decoding stable on Qwen3.8. Built on upstream llama.cpp `b10825`.
 
 Each before → after pair is one A/B on one file: this fork's build without the kernel, then the build with
 it (September 2026, `llama-server`, DFlash2 drafting 2 tokens per step). ¹ Turn on with `GGML_ARIFI_ROCMFP4_MMVQ=1`.
-² The build before these S-X8 kernels could not load this file with a drafter.
+² The build before these kernels could not load this file with a drafter; a per-heap allocator fix cured it.
 
 ## Vulkan support this fork adds
 
@@ -34,8 +34,8 @@ it (September 2026, `llama-server`, DFlash2 drafting 2 tokens per step). ¹ Turn
 | TurboQuant KV cache (turbo2/3/4) | none | `dequant_turbo3_0.comp`, `turbo_wht.comp` | **NEW on Vulkan**: new KV cache types |
 | Q2_0_G128 ternary (type 43) | none | `dequant_q2_0_g128.comp` | **NEW on Vulkan**: new ternary format |
 | IQ4_XS | generic `mul_mat_vec.comp` | `mul_mat_vec_iq4_xs.comp` | dedicated mat-vec kernel |
-| IQ3_S, IQ3_XXS | dedicated mat-vec | `mul_mat_vec_iq3_s.comp`, `mul_mat_vec_iq3_xxs.comp` rewritten | faster mat-vec at verify widths |
-| Q5_K, Q6_K | dedicated mat-vec | `mul_mat_vec_q5_k.comp`, `mul_mat_vec_q6_k.comp` rewritten | faster mat-vec, q8_1 route |
+| IQ3_S, IQ3_XXS | dedicated mat-vec | `mul_mat_vec_iq3_s.comp`, `mul_mat_vec_iq3_xxs.comp` retuned | faster mat-vec at verify widths |
+| Q5_K, Q6_K | dedicated mat-vec | `mul_mat_vec_q5_k.comp`, `mul_mat_vec_q6_k.comp` retuned | faster mat-vec, q8_1 route |
 | Q4_K | dedicated mat-vec | q8_1 route in `mul_mat_vecq.comp`, width-5 split | faster mat-vec at widths 5-8 |
 
 "none": upstream `b10825` has no such type. Shaders live in
