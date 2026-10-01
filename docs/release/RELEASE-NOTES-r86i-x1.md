@@ -17,8 +17,10 @@ commit. Nothing in R86i's defaults changed.
 
 **Why.** On the 890M under Windows, the upstream first choice is billed by the driver to the WDDM
 shared segment, which is capped near half of the system-visible RAM. Loads past about 11.2 GiB died at
-the first upload submit (`vk::Queue::submit: ErrorUnknown`) with the BIOS reservation empty. No 27B
-model we hold loaded on the 890M before this commit; that failure receipt is lane-local, not shipped.
+the first upload submit (`vk::Queue::submit: ErrorUnknown`) with the BIOS reservation empty. Before
+this commit, on the 890M: GSQ IQ3_S and Q4_K_XL 27B failed to load; IQ3_XXS 27B (9.72 GiB) loaded for
+`llama-bench` but `llama-server -c 4096` died at init (`ErrorOutOfDeviceMemory`); S-X8 was never run
+unfixed (its failure is inferred from the mechanism). Those receipts are lane-local, not shipped.
 
 ## Verification on the 890M — correctness only
 
@@ -27,7 +29,7 @@ model we hold loaded on the 890M before this commit; that failure receipt is lan
 | GSQ IQ3_S 27B / Q4_K_XL 27B / S-X8 v4.3 27B load, fix ON | **10.75 / 15.36 / 23.40 GiB in `DEVICE_LOCAL`** (the reservation), 0 failed allocations each | `evidence/x1-first-contact__placement-summary.txt` |
 | `GGML_VK_UMA_PLACEMENT=legacy` control (IQ3_XXS 27B) | 9.19 GiB in the shared-billed type: the upstream chain, reproduced | same |
 | `test-backend-ops test -o MUL_MAT` | **2305 executed / 2305 OK / 0 FAIL**, 876 not supported; 0 case statuses differ from the R86i 780M receipt | `evidence/x1-first-contact__chain2-summary.txt` |
-| `test-backend-ops test -o MUL_MAT_ID` | **1004 / 1004 OK / 0 FAIL**, 10 not supported, the 780M counts | `evidence/x1-first-contact__chain1-executed-counts.txt` |
+| `test-backend-ops test -o MUL_MAT_ID` | **1004 / 1004 OK / 0 FAIL**, 10 not supported; the R86i 780M run has the same counts (lane-local receipt) | `evidence/x1-first-contact__chain1-executed-counts.txt` |
 | Greedy identity, Qwen3.5-9B Q8_0, 4 prompts, temp 0 / top-k 1 | **4/4** in each of 3 pairs (unfixed vs fix ON, `legacy` vs ON, unfixed vs `legacy`) | `evidence/x1-first-contact__chain2-summary.txt` |
 
 ## What we could not show
@@ -42,6 +44,6 @@ model we hold loaded on the 890M before this commit; that failure receipt is lan
 ## Where it was checked
 
 Minisforum AI X1 Pro-470 — Ryzen AI 9 HX 470, **Radeon 890M** (Vulkan device `0x150e`), driver
-32.0.31041.1004 (AMD 26.8.1), Windows 11 build 29671, Balanced power plan, one pool of system RAM:
+32.0.31041.1004 (AMD 26.8.1), Windows 11 (build 29671 at the same day's read), Balanced power plan, one pool of system RAM:
 48 GB physical (32 + 16), **24 GB reserved in BIOS**, 23.6 GiB system-visible. 2026-09-30.
 Every speed figure in the R86i notes stays a **Radeon 780M** figure (Beelink SER7 Pro).
