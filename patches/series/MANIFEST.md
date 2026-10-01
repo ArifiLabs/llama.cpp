@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **598**, all non-merge, applied in filename order.
+- Patches: **599**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 598 commit messages, same provenance trailers. Verified, not
+same file contents, same 599 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -677,6 +677,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 596 | `0596-docs-890M-section-says-exactly-what-failed-before-th.patch` | arifi-fork-base | `a442c8356` | - | `GGML_ARIFI_VNNI_REPACK` | docs: 890M section says exactly what failed before the fix; protected-win effects quoted to the full first sentence |
 | 597 | `0597-docs-README-states-the-protected-win-validate-result.patch` | arifi-fork-base | `359cb3735` | - | - | docs: README states the protected-win validate result at this tip (FAIL, 64 manifest problems) instead of implying a pass |
 | 598 | `0598-docs-rewrite-the-README-front-page-from-the-code-and.patch` | arifi-fork-base | `b4ea7663c` | - | `LLAMA_USE_PREBUILT_UI`, `GGML_ARIFI_VNNI_REPACK`, `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE`, `MAX_N_CACHED` | docs: rewrite the README front page from the code and the receipts; the full ledger moves to docs/arifi/STATUS.md |
+| 599 | `0599-docs-README-first-screen-leads-with-the-default-on-2.patch` | arifi-fork-base | `791447256` | - | `LLAMA_USE_PREBUILT_UI` | docs: README first screen leads with the default-on 27B speed, dates every speed row, and narrows the TQ3_4S row to the type Vulkan runs |
 
 ## Measured effect, per patch
 
@@ -1354,6 +1355,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0596-docs-890M-section-says-exactly-what-failed-before-th.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0597-docs-README-states-the-protected-win-validate-result.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0598-docs-rewrite-the-README-front-page-from-the-code-and.patch` | UNMEASURED - documents only; no code path is touched. |
+| `0599-docs-README-first-screen-leads-with-the-default-on-2.patch` | UNMEASURED - documents only; no code path is touched. |
 
 ## Unclassified
 

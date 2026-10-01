@@ -1,0 +1,119 @@
+From 791447256c2855f45808562bebff82a0e849ba39 Mon Sep 17 00:00:00 2001
+From: ArifiLabs <arifilabs@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 01:46:37 -0400
+Subject: [PATCH] docs: README first screen leads with the default-on 27B
+ speed, dates every speed row, and narrows the TQ3_4S row to the type Vulkan
+ runs
+
+The title now rests on the UD-Q3_K_XL drafted line (9.3 t/s, kernel on by default); the ROCmFP4-FAST 9.5 t/s row keeps its opt-in switch footnote. Each speed row carries its RAM configuration and date. The quick start runs the default-on file with the argv of its receipt. The format table names TQ3_4S (type 48) only: types 49-51 run on the CPU, and docs/arifi/STATUS.md says so.
+
+Origin: ArifiLabs (native) - release documents for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ README.md            | 36 +++++++++++++++++-------------------
+ docs/arifi/STATUS.md |  3 +++
+ 2 files changed, 20 insertions(+), 19 deletions(-)
+
+diff --git a/README.md b/README.md
+index 2ef33397f..44fe677ed 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,7 @@
+ 
+ # ArifiLabs llama.cpp
+ 
+-**Qwen3.8 27B at up to 9.5 tokens/s on an AMD mini-PC with integrated graphics. Vulkan, no discrete GPU.**
++**Qwen3.8 27B at over 9 tokens/s on an AMD mini-PC with integrated graphics. Vulkan, no discrete GPU.**
+ 
+ A llama.cpp fork built for AMD integrated GPUs. It gives Vulkan kernels to quant formats that only
+ CUDA or Metal users could run, makes the formats you already use faster, and keeps DFlash2 and MTP
+@@ -10,34 +10,31 @@ speculative decoding stable on Qwen3.8. Built on upstream llama.cpp `b10825`.
+ 
+ ## Speed: Qwen3.8 27B on a Radeon 780M
+ 
+-| 27B model file | Decode with DFlash2 drafting | Notes |
+-|---|---:|---|
+-| ROCmFP4-FAST (julianmb, 14.6 GB) | **9.5 t/s** | our q8_1 mat-vec kernel: 7.5 → 9.5 t/s, +27% ¹ |
+-| UD-Q3_K_XL (outsourc-e Unleashed, 13.2 GB) | **9.3 t/s** | our IQ3_S mat-vec kernel: 8.4 → 9.3 t/s, +11% |
+-| GSQ-RCO IQ3_S (ISTA-DASLab, 12.1 GB) | **8.1 t/s** | 5.1 t/s plain decode on the same build |
+-| S-X8 v4.3 (MarlaLabs, 24.3 GB) | **5.6 t/s** | 3.0x: this file did 1.8 t/s plain, and drafting crashed at load |
++| 27B model file | Decode, DFlash2 drafting | What our kernels changed | Measured |
++|---|---:|---|---|
++| UD-Q3_K_XL (outsourc-e Unleashed, 13.2 GB) | **9.3 t/s** | IQ3_S mat-vec: 8.4 → 9.3 t/s, +11% | early Sep 2026, 2x16 GB |
++| ROCmFP4-FAST (julianmb, 14.6 GB) | **9.5 t/s** ¹ | q8_1 mat-vec: 7.5 → 9.5 t/s, +27% | early Sep 2026, 2x16 GB |
++| GSQ-RCO IQ3_S (ISTA-DASLab, 12.1 GB) | **8.1 t/s** | plain decode on the same build: 5.1 t/s | 24 Sep 2026, 32+16 GB |
++| S-X8 v4.3 (MarlaLabs, 24.3 GB) | **5.6 t/s** | the 14 Sep build: 1.8 t/s plain, drafting failed at load | 15 Sep 2026, 32+16 GB |
+ 
+-Measured with `llama-server` on a Beelink SER7 Pro (Ryzen 7 7840HS, Radeon 780M, DDR5-5600, Windows 11),
+-September 2026. Each "before" is the previous build of this fork on the same file.
+-¹ One switch: `GGML_ARIFI_ROCMFP4_MMVQ=1`.
++`llama-server` on a Beelink SER7 Pro (Ryzen 7 7840HS, Radeon 780M, DDR5-5600, Windows 11). An arrow
++compares two builds of this fork on the same file. ¹ Turn on with `GGML_ARIFI_ROCMFP4_MMVQ=1`.
+ 
+ **Speed is never bought with quality.** Our latest kernel release kept 27B perplexity flat
+ (Q4_K_XL 5.9932 → 5.9928) and greedy output bit-identical (6 of 6 runs).
+ 
+-**Runs on the Radeon 890M too:** 27B models load fully into GPU memory, 23.4 GiB for the largest we tried.
+-
+ ## Quick start (Windows, Vulkan)
+ 
+ ```powershell
+ git clone -c core.longpaths=true <this repo> arifilabs-llama.cpp; cd arifilabs-llama.cpp
+ cmake -S . -B build-vulkan -G Ninja -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON `
+-  -DGGML_ARIFI_ROCMFPX_FORMATS=ON -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON `
++  -DGGML_ARIFI_ROCMFPX_FORMATS=ON -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON -DLLAMA_USE_PREBUILT_UI=OFF `
+   -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00" -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00" `
+   -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" `
+-  -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF -DLLAMA_USE_PREBUILT_WEBUI=OFF
++  -DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF -DLLAMA_USE_PREBUILT_WEBUI=OFF
+ cmake --build build-vulkan --target llama-server -j 2
+-build-vulkan\bin\llama-server.exe -m Qwen3.8-27B-ROCmFP4-FAST.gguf -dev Vulkan0 -ngl 999 -fa on -c 8192 `
+-  -ctk q8_0 -ctv q8_0 --spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-draft-n-max 2
++build-vulkan\bin\llama-server.exe -m Qwen3.8-27B-Unleashed-UD-Q3_K_XL.gguf -dev Vulkan0 -ngl 999 -fa on `
++  -c 8192 -ctk q8_0 -ctv q8_0 --spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-draft-n-max 2
+ ```
+ 
+ The drafter is incoai's `Qwen3.8-27B-DFlash2-GGUF` (Q4_K_M). Toolchain, flags and the MinGW runtime
+@@ -49,7 +46,8 @@ each tuned default it applied on your GPU.
+ - **Tuned on:** AMD Radeon 780M (RDNA3), one shared pool of DDR5 system memory. Every speed number on
+   this page comes from that box.
+ - **Running now on:** Minisforum AI X1 Pro-470, Ryzen AI 9 HX 470, Radeon 890M, 96 GB DDR5-5600 with
+-  72 GB reserved for the GPU. A placement fix for this GPU puts the whole model in the GPU reservation.
++  72 GB reserved for the GPU. A placement fix for this GPU loads 27B models fully into GPU memory,
++  23.4 GiB for the largest we tried.
+ - **Other GPUs:** tuned defaults switch on by device probe (AMD, RDNA3); every other device runs the
+   upstream code paths. All upstream backends (CPU, CUDA, Metal, SYCL and others) stay in the tree.
+ 
+@@ -66,7 +64,7 @@ GPU against the CPU reference, with 0 failures.
+ | ROCmFP4, ROCmFP4-FAST | charlie12345 | kernel | kernel | none | none |
+ | ROCmFPX FP2 / FP3 / FP6 / FP8 | charlie12345 | kernel | kernel | none | none |
+ | TQ3_1S, TQ4_1S | TheTom (llama-cpp-turboquant) | kernel | kernel | kernel ² | kernel ² |
+-| TQ3_4S family (types 48-51) | turbo-tan (llama.cpp-tq3) | kernel | kernel | kernel ² | kernel ² |
++| TQ3_4S (type 48) | turbo-tan (llama.cpp-tq3) | kernel | kernel | kernel ² | kernel ² |
+ | TurboQuant KV cache (turbo2/3/4) | TheTom (llama-cpp-turboquant) | kernel | kernel | kernel ² | kernel ² |
+ | Q2_0_G128 ternary (type 43) | PrismML | kernel | kernel + VNNI repack | none | none |
+ | Escha-W2, 2 and 3 bpw (types 55/56) | EschaLabs | fused kernel | kernel | none | none |
+@@ -131,7 +129,7 @@ build-vulkan\bin\llama-server.exe -m Qwen3.8-27B-ROCmFP4-FAST.gguf -dev Vulkan0
+ `dequant_turbo3_0.comp` and `turbo_wht.comp`. TQ3_4S 27B: 0.67 → 1.80 t/s; TQ4_1S 0.5B: 44.7 → 126.7 t/s.
+ ```powershell
+ cmake ... -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON       # the quick-start build already has it
+-python tools/gguf-retag-tq3/retag_tq3.py model-tq3_4s.gguf model-tq3_4s.arifi.gguf   # tq3 ids -> 48-51
++python tools/gguf-retag-tq3/retag_tq3.py model-tq3_4s.gguf model-tq3_4s.arifi.gguf   # tq3 ids -> ours
+ build-vulkan\bin\llama-server.exe -m model-tq3_4s.arifi.gguf -dev Vulkan0 -ngl 999 -fa on
+ ```
+ 
+diff --git a/docs/arifi/STATUS.md b/docs/arifi/STATUS.md
+index a8b1435e9..3b5909065 100644
+--- a/docs/arifi/STATUS.md
++++ b/docs/arifi/STATUS.md
+@@ -115,6 +115,9 @@ the draft-checkpoint crash fix; the Q2_0_G128 Vulkan port.
+ - CUDA, Metal and SYCL: compiled by the CI matrix only; no fork number on that hardware.
+ - `arifi-sync` `build` and `judge` legs are written but not yet exercised.
+ - Q2_0_G128 Vulkan path: ported and loading; not benchmarked here.
++- TQ3_0, TQ3_4SE and TQ3_1S_SHIFT (types 49-51): CPU only; the Vulkan backend reports them unsupported.
++- The README's ROCmFP4-FAST and UD-Q3_K_XL speeds were taken in early September on an earlier build;
++  they have not been re-measured on the latest release.
+ 
+ ## Reading the commit trailers
+ 
