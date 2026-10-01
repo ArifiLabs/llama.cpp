@@ -15,10 +15,11 @@ speculative decoding stable on Qwen3.8. Built on upstream llama.cpp `b10825`.
 | ROCmFP4-FAST (julianmb, 14.6 GB) ¹ | 5.1 → 5.1, +0% | 7.5 → **9.5**, +27% | Beelink SER7 Pro, Radeon 780M |
 | UD-Q3_K_XL (outsourc-e Unleashed, 13.2 GB) | 5.4 → 5.4, +0% | 8.4 → **9.3**, +11% | Beelink SER7 Pro, Radeon 780M |
 | UD-Q4_K_XL (Huihui abliterated, 16.2 GB) | 3.9 → 4.1, +6% | 7.1 → **7.6**, +7% | Beelink SER7 Pro, Radeon 780M |
-| S-X8 v4.3 (MarlaLabs, 24.3 GB) | 1.8 → 2.2, +23% | failed at load → **4.5** | Beelink SER7 Pro, Radeon 780M |
+| S-X8 v4.3 (MarlaLabs, 24.3 GB) ² | 1.8 → 2.2, +23% | 3.3 → **4.5**, +34% | Beelink SER7 Pro, Radeon 780M |
 
-Each row is one A/B on one file: "before" is this fork's build without the kernel, "after" the build
-with it (September 2026, `llama-server`, DFlash2 drafting 2 tokens per step). ¹ Turn on with `GGML_ARIFI_ROCMFP4_MMVQ=1`.
+Each before → after pair is one A/B on one file: this fork's build without the kernel, then the build with
+it (September 2026, `llama-server`, DFlash2 drafting 2 tokens per step). ¹ Turn on with `GGML_ARIFI_ROCMFP4_MMVQ=1`.
+² The build before these S-X8 kernels could not load this file with a drafter.
 
 ## Vulkan support this fork adds
 
