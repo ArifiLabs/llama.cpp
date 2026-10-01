@@ -115,6 +115,9 @@ the draft-checkpoint crash fix; the Q2_0_G128 Vulkan port.
 - CUDA, Metal and SYCL: compiled by the CI matrix only; no fork number on that hardware.
 - `arifi-sync` `build` and `judge` legs are written but not yet exercised.
 - Q2_0_G128 Vulkan path: ported and loading; not benchmarked here.
+- TQ3_0, TQ3_4SE and TQ3_1S_SHIFT (types 49-51): CPU only; the Vulkan backend reports them unsupported.
+- The README's ROCmFP4-FAST and UD-Q3_K_XL speeds were taken in early September on an earlier build;
+  they have not been re-measured on the latest release.
 
 ## Reading the commit trailers
 
