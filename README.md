@@ -597,8 +597,12 @@ Build-time: `GGML_ARIFI_ROCMFPX_FORMATS` — *"**OFF.** Build-time option in `gg
 #### Every protected win at this tip
 
 The fork keeps a manifest of the changes it must never lose on a rebase:
-[`tools/arifi-sync/protected-wins.json`](tools/arifi-sync/protected-wins.json) (30 entries; `arifi_sync.py
-protected-win validate` checks it against the tree). The table quotes each entry's registered effect —
+[`tools/arifi-sync/protected-wins.json`](tools/arifi-sync/protected-wins.json) (30 entries). `arifi_sync.py protected-win validate --ref HEAD` checks it against the tree, and
+**at this tip it reports FAIL with 64 open problems**: 29 commits that carry a `Measured-effect` but no
+manifest entry (the 890M placement fix is one), 34 baseline rows the tool refuses because each commit is
+not an ancestor of the recorded registration tip, and one evidence locator that does not resolve in this
+repository. All 64 concern the manifest's records, not a code path; the R86i tag already reported 63 of
+them. The table below is what the manifest registers today. The table quotes each entry's registered effect —
 its first sentence, verbatim — so the full figure, its baseline, its workload and its quality gate are
 one lookup away under the same `id`. "Radeon 780M box" means the SER7 above (the manifest calls it the
 seat or RIG-A). A row marked third-party is someone else's figure, quoted and not adopted as ours.
