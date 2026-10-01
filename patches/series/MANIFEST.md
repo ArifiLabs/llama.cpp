@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **596**, all non-merge, applied in filename order.
+- Patches: **597**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 596 commit messages, same provenance trailers. Verified, not
+same file contents, same 597 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -675,6 +675,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 594 | `0594-vulkan-UMA-device-local-first-placement-on-the-Radeo.patch` | ternary-g128 | `71aa936ff` | - | - | vulkan: UMA device-local-first placement on the Radeon 890M (GGML_VK_UMA_PLACEMENT, probe + override) |
 | 595 | `0595-docs-the-Radeon-890M-placement-fix-on-the-front-page.patch` | arifi-fork-base | `c634d7fbe` | - | `GGML_ARIFI_VNNI_REPACK`, `GENERATE_EXPERT_BUNDLE` | docs: the Radeon 890M placement fix on the front page - README section, release notes, three correctness receipts, every protected win listed |
 | 596 | `0596-docs-890M-section-says-exactly-what-failed-before-th.patch` | arifi-fork-base | `a442c8356` | - | `GGML_ARIFI_VNNI_REPACK` | docs: 890M section says exactly what failed before the fix; protected-win effects quoted to the full first sentence |
+| 597 | `0597-docs-README-states-the-protected-win-validate-result.patch` | arifi-fork-base | `359cb3735` | - | - | docs: README states the protected-win validate result at this tip (FAIL, 64 manifest problems) instead of implying a pass |
 
 ## Measured effect, per patch
 
@@ -1350,6 +1351,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0594-vulkan-UMA-device-local-first-placement-on-the-Radeo.patch` | loads past 11.2 GiB on the 890M (IQ3_S failed before, runs under memtype 0 on the r86i binary via GGML_VK_PLACEMENT=bulk-large-heap); fixed-build proofs in the lane evidence |
 | `0595-docs-the-Radeon-890M-placement-fix-on-the-front-page.patch` | UNMEASURED - documents and receipts only; no code path is touched. |
 | `0596-docs-890M-section-says-exactly-what-failed-before-th.patch` | UNMEASURED - documents only; no code path is touched. |
+| `0597-docs-README-states-the-protected-win-validate-result.patch` | UNMEASURED - documents only; no code path is touched. |
 
 ## Unclassified
 
