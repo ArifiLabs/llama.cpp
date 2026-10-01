@@ -13,7 +13,8 @@ closed.
 method — so it cannot drift from what `README.md`, `docs/release/RELEASE-STORY-r73i.md` and
 `docs/release/RELEASE-NOTES-r73i.md` actually claim. The twelve R86i receipts (`r86-evidence__*`,
 `r85-evidence__*`, `r74b-evidence__*`, `r87-evidence__*`) back the tables in `README.md` and
-`docs/release/RELEASE-NOTES-r86i.md`. A cited receipt that could not be found is listed in the
+`docs/release/RELEASE-NOTES-r86i.md`. The three Radeon 890M receipts (`x1-first-contact__*`,
+correctness only) back the 890M section of `README.md` and `docs/release/RELEASE-NOTES-r86i-x1.md`. A cited receipt that could not be found is listed in the
 manifest's **MISSING** section rather than dropped, and no receipt was invented.
 
 ## What is deliberately not here

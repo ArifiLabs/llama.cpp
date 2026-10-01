@@ -1,0 +1,32 @@
+# X1 first contact - device-memory placement per load, derived from the Vulkan alloc traces
+# memtype 0 = DEVICE_LOCAL (heap 1, the BIOS reservation); memtype 2 = DEVICE_LOCAL|HOST_VISIBLE|HOST_COHERENT
+# (heap 1, billed by the Windows driver to the shared segment); memtype 3 = host (heap 0). Peak live bytes per memtype.
+# Each raw trace is checked against its recorded sha256 before it is read.
+
+GSQ-RCO Qwen3.8-27B IQ3_S-mtp, 11.28 GiB file
+  trace sha256 5641dd36e6e7db1a0be1e1def34fe86b0b68bd713a9191af0559a64aedfdc7b1 (matches the recorded raw hash)
+  placement line: device-local first {DL, HV|HC} (device 0x150e, GGML_VK_UMA_PLACEMENT=auto)
+  memtype 0 / heap 1: peak 10.75 GiB
+  memtype 3 / heap 0: peak 0.38 GiB
+  failed or thrown allocations/submits: 0
+
+Huihui Qwen3.8-27B UD-Q4_K_XL, 16.17 GiB file
+  trace sha256 06bb92653af3c65ba97f481de42846aa264589576921048ad5595241b6c85868 (matches the recorded raw hash)
+  placement line: device-local first {DL, HV|HC} (device 0x150e, GGML_VK_UMA_PLACEMENT=auto)
+  memtype 0 / heap 1: peak 15.36 GiB
+  memtype 3 / heap 0: peak 0.67 GiB
+  failed or thrown allocations/submits: 0
+
+Qwen3.8-27B S-X8 v4.3, 24.33 GiB file
+  trace sha256 3d66c03c408db2b90d21cb42b8c93bce7aaa7be50c20397c3d1ed156b071d74a (matches the recorded raw hash)
+  placement line: device-local first {DL, HV|HC} (device 0x150e, GGML_VK_UMA_PLACEMENT=auto)
+  memtype 0 / heap 1: peak 23.40 GiB
+  memtype 3 / heap 0: peak 0.00 GiB
+  failed or thrown allocations/submits: 0
+
+GSQ-RCO Qwen3.8-27B IQ3_XXS, 9.72 GiB file, GGML_VK_UMA_PLACEMENT=legacy
+  trace sha256 f25306cc493067ea0ed267b64c348044b79a8d0c1ba65ca0e1b4dd72aa04efeb (matches the recorded raw hash)
+  placement line: legacy {DL|HV|HC, DL, HV|HC} (device 0x150e, GGML_VK_UMA_PLACEMENT=legacy)
+  memtype 2 / heap 1: peak 9.19 GiB
+  memtype 3 / heap 0: peak 0.38 GiB
+  failed or thrown allocations/submits: 0

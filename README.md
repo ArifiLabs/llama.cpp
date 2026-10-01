@@ -5,11 +5,12 @@ An attribution-first, rebaseable llama.cpp fork for local inference across curre
 This repository starts from upstream llama.cpp master
 (`9e0e220594af405a62835dc3a27495729fd8506b`, tag `b10825`) and carries an ordered,
 feature-toggled patch series. Its scope is deliberately broad: one engine for
-the current Beelink SER7, future 64/96 GB RAM configurations, an AMD Strix Halo
-128 GB system, and an NVIDIA DGX Spark 128 GB system.
+the Beelink SER7 (Radeon 780M, where every performance number here was measured),
+the Minisforum AI X1 Pro (Radeon 890M, where this tip's placement fix was checked
+for correctness), an AMD Strix Halo 128 GB system, and an NVIDIA DGX Spark 128 GB system.
 
 The fork preserves upstream backends. Vulkan is the blessed AMD path for the
-current gfx1103 estate; upstream CUDA remains available for NVIDIA hardware.
+780M (gfx1103) and 890M estate; upstream CUDA remains available for NVIDIA hardware.
 ROCm/HIP and wholesale ROCmFPX adoption are not the running path on the current
 rig, but Charlie’s fork remains a tracked source for discrete mechanisms and
 currency review.
@@ -28,7 +29,8 @@ patches measure **inert** on our own hardware and are documented as such.
 
 **Every number in this repository was measured on one machine**: a Beelink SER7 (Ryzen 7 7840HS,
 Radeon 780M / gfx1103, unified memory) on Windows 11, built with WinLibs MinGW-w64 GCC 14.2.0,
-running the Vulkan backend — or, where a row says CPU-only, the CPU backend on that same box.
+running the Vulkan backend — or, where a row says CPU-only, the CPU backend on that same box. The
+one exception is the Radeon 890M section, which reports correctness checks (no speed) from a second box.
 
 **Never built or run by anyone, anywhere, on:** Linux, macOS, MSVC, clang-cl, CUDA, ROCm/HIP,
 Arm/NEON, or any GPU other than gfx1103. Upstream supports all of them and nothing here removes
@@ -337,7 +339,9 @@ An attribution-first, rebaseable llama.cpp fork for local inference on **Vulkan*
   it names a commit in the studio's own repository that **does not exist here**. Nothing in this
   repository needs it; it is printed so a bug report can say which engine stage it came from. The
   previous engine, `arifi-b10825-r73i-5a7434218`, is the same kind of label.
-- Published release tag: **`r86i-public-2026-09-29`** — the only tag pushed with this release.
+- Release tag: `r86i-public-2026-09-29` marks the R86i tree **before** the Radeon 890M placement
+  fix; this tip carries that fix and its documents on top (see *Added after the R86i tag* below). The
+  tag this tip is published under is named at publication, and it will be the only tag pushed with it.
   Every other tag you may see mentioned in the history (`r73i-public-2026-09-22b`,
   `r73i-release-engine-2026-09-21`, `r86i-integration-2026-09-24`, and the `b*` upstream tags) is
   **internal, superseded or upstream** and is not part of this publication. Resolve the tree with
@@ -351,10 +355,12 @@ An attribution-first, rebaseable llama.cpp fork for local inference on **Vulkan*
 no gain — other drivers may not already do what AMD's does. The iq3 sign hoist (R66, still ON) is
 exactly that case.
 
-**Every number in this repository was measured on one machine**: a Beelink SER7 Pro — Ryzen 7 7840HS,
+**Every performance number in this repository was measured on one machine**: a Beelink SER7 Pro — Ryzen 7 7840HS,
 **Radeon 780M (RDNA3, gfx1103)**, driver 32.0.31041.1004, Windows 11 build 29648, Balanced power plan,
-one pool of system RAM (48 GB physical, 16 GB reserved in BIOS), Vulkan with `KHR_coopmat`. Kernels
-transfer; numbers do not. If you are on other hardware, read
+one pool of system RAM (48 GB physical, 16 GB reserved in BIOS), Vulkan with `KHR_coopmat`. A second
+machine, a Minisforum AI X1 Pro with a **Radeon 890M**, has run this tip's **correctness** checks only
+(placement, `test-backend-ops`, greedy identity — see *Added after the R86i tag*); no 890M speed
+number is published. Kernels transfer; numbers do not. If you are on other hardware, read
 [`docs/HARDWARE-PROFILES.md`](docs/HARDWARE-PROFILES.md) first — several defaults are wrong for you.
 
 ---
@@ -396,7 +402,7 @@ All three extra flags are load-bearing:
 - `-D_WIN32_WINNT=0x0A00` is Windows-only.
 - The two `GGML_ARIFI_*` CMake flags are optional unless you intend to load those formats.
 - Nothing here has ever been built or run on Linux, macOS, MSVC, clang-cl, CUDA, ROCm/HIP, Arm/NEON,
-  or any GPU other than gfx1103.
+  or any GPU other than the Radeon 780M (gfx1103) and, for correctness checks only, the Radeon 890M.
 
 **Verify the binaries by mtime, never by the wrapper's exit code** — a build tool can exit 0 having
 relinked nothing:
@@ -450,6 +456,53 @@ Two warnings from that page, quoted because they change results:
 
 > *"If you are not on one of the four machines below, read `HARDWARE-PROFILES.md` first."* At least one
 > default (`GGML_ARIFI_VNNI_REPACK`) is measurably the wrong choice on a CPU-only path.
+
+#### Added after the R86i tag — UMA placement fix for the Radeon 890M
+
+One engine commit sits on top of R86i: `vulkan: UMA device-local-first placement on the Radeon 890M
+(GGML_VK_UMA_PLACEMENT, probe + override)`. Without it, no 27B model we hold loads on the 890M.
+Release notes: [`docs/release/RELEASE-NOTES-r86i-x1.md`](docs/release/RELEASE-NOTES-r86i-x1.md).
+
+**The defect.** On a UMA device the upstream chain asks first for memory type
+`DEVICE_LOCAL|HOST_VISIBLE|HOST_COHERENT`. On the 890M under Windows the driver accepts every such
+allocation but bills it to the WDDM *shared* segment, not to the BIOS reservation. That segment is
+capped near half of the system-visible RAM, so a load past about 11.2 GiB dies at the first upload
+submit with `vk::Queue::submit: ErrorUnknown`, while the reservation stays empty. Plain `DEVICE_LOCAL`
+lands in the reservation.
+
+**The fix.** On AMD device `0x150e` (Radeon 890M) only, the placement chain becomes
+`{DEVICE_LOCAL, HOST_VISIBLE|HOST_COHERENT}`. Every other device, the 780M included, keeps the
+upstream chain byte for byte. `GGML_VK_UMA_PLACEMENT=auto|legacy|device-local` overrides the probe, and
+a startup line names the chain in force:
+
+```
+ggml_vulkan: UMA placement: device-local first {DL, HV|HC} (device 0x150e, GGML_VK_UMA_PLACEMENT=auto)
+```
+
+**What is checked on the 890M** (correctness only; every receipt below is in `evidence/`):
+
+| Check | Result | Receipt |
+|---|---|---|
+| GSQ IQ3_S 27B (11.28 GiB file) loads, fix ON | **10.75 GiB in `DEVICE_LOCAL` (the reservation)**, 0.38 GiB host, 0 failed allocations | `evidence/x1-first-contact__placement-summary.txt` |
+| Q4_K_XL 27B (16.17 GiB file) loads, fix ON | **15.36 GiB in `DEVICE_LOCAL`**, 0.67 GiB host, 0 failed | same |
+| S-X8 v4.3 27B (24.33 GiB file) loads, fix ON | **23.40 GiB in `DEVICE_LOCAL`**, 0.00 GiB host, 0 failed | same |
+| the same box with `GGML_VK_UMA_PLACEMENT=legacy` (IQ3_XXS 27B, 9.72 GiB) | 9.19 GiB in the shared-billed type, 0 in `DEVICE_LOCAL`: the upstream chain, reproduced | same |
+| `test-backend-ops test -o MUL_MAT`, fix ON | **2305 executed, 2305 OK, 0 FAIL** (876 not supported) — the same 3181 case statuses as the R86i 780M receipt, 0 differ | `evidence/x1-first-contact__chain2-summary.txt` |
+| `test-backend-ops test -o MUL_MAT_ID`, fix ON | **1004 executed, 1004 OK, 0 FAIL** (10 not supported), the same counts as the 780M | `evidence/x1-first-contact__chain1-executed-counts.txt` |
+| greedy identity, Qwen3.5-9B Q8_0, 4 prompts, `--temp 0 --top-k 1` | **4/4 identical** in each of 3 pairs: unfixed R86i vs fix ON, fix `legacy` vs fix ON, unfixed vs `legacy` — the fix moves memory, not arithmetic | `evidence/x1-first-contact__chain2-summary.txt` |
+
+The unfixed R86i fails to load GSQ IQ3_S and Q4_K_XL on this box (`ErrorUnknown` at the first submit);
+that receipt is lane-local and not shipped. The 9B file is the only one we checked that loads on
+every arm, which is why identity is shown on it and not on a 27B file.
+
+**Not published: any 890M speed number.** Every 890M throughput round so far was taken under a
+measurement harness that we found was disturbing it, so they are indications, not results. The
+780M-tuned defaults in this release reach the 890M by feature probe (`RDNA3`-class, AMD vendor), not by
+an 890M measurement; treat them as untuned there.
+
+Measured 2026-09-30 on a Minisforum AI X1 Pro-470 — Ryzen AI 9 HX 470, **Radeon 890M** (Vulkan device
+`0x150e`), driver 32.0.31041.1004 (AMD 26.8.1), Windows 11 build 29671, Balanced power plan, one pool of
+system RAM: 48 GB physical (32 + 16, asymmetric), **24 GB reserved in BIOS**, 23.6 GiB system-visible.
 
 #### Changed in this release (R86i)
 
@@ -528,6 +581,7 @@ within one stderr. *These five figures have no receipt shipped in `evidence/` �
 | `GGML_VK_HOST_SPLIT_MAX` | *"unset = the derived bound"* — caps bytes one load may place off `DEVICE_LOCAL` |
 | `GGML_VK_HOST_SPLIT_MEMTYPE` / `_CACHED` | *"unset = `legacy`, which changes no byte of today's placement"* |
 | `GGML_VK_PLACEMENT=bulk-large-heap` | *"OFF when unset; unset changes no byte of the existing placement"* |
+| `GGML_VK_UMA_PLACEMENT` | `auto` when unset: device-local first on the Radeon 890M (`0x150e`) only, the upstream chain everywhere else; `legacy` / `device-local` force either chain (see *Added after the R86i tag*) |
 | `GGML_VK_ALLOC_TRACE=1` | *"OFF when unset, zero cost"* — diagnostic only |
 | `GGML_ARIFI_MMVQ_TRACE` | *"OFF when unset"* — *"no behavioural effect in either arm"* |
 | `GGML_ARIFI_OP_DUMP` | *"Unset = off"*, test-only |
@@ -536,6 +590,51 @@ within one stderr. *These five figures have no receipt shipped in `evidence/` �
 | `GGML_ARIFI_UMA_READ_PATH` | *"`auto` when unset"* — read-back only |
 
 Build-time: `GGML_ARIFI_ROCMFPX_FORMATS` — *"**OFF.** Build-time option in `ggml/CMakeLists.txt`"*.
+
+#### Every protected win at this tip
+
+The fork keeps a manifest of the changes it must never lose on a rebase:
+[`tools/arifi-sync/protected-wins.json`](tools/arifi-sync/protected-wins.json) (30 entries; `arifi_sync.py
+protected-win validate` checks it against the tree). The table quotes each entry's registered effect —
+its first sentence, verbatim — so the full figure, its baseline, its workload and its quality gate are
+one lookup away under the same `id`. "Radeon 780M box" means the SER7 above (the manifest calls it the
+seat or RIG-A). A row marked third-party is someone else's figure, quoted and not adopted as ours.
+
+| Protected win (`id`) | Effect as registered (first sentence, verbatim) | Where measured | Opt out |
+|---|---|---|---|
+| `vulkan-concat-transpose-deltanet` | CONCAT dispatch -12.79% (-15.66 ms per ub512 prefill graph) on the LANE binary | Radeon 780M box (SER7) | GGML_VK_CONCAT_TRANSPOSE=0 |
+| `vulkan-tq-matvec-subgroup` | 27B tq3_4s tg32 0.67 -> 1.80 t/s | Radeon 780M box (SER7) | GGML_VK_DISABLE_TQ_SUBGROUP=1 |
+| `vulkan-escha-mm-column-block` | 3.51x on escha3 17408x5120 at ncols=64 (135386 -> 38587 us), 3.09x at ncols=8 | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `escha-w2-decode-correctness` | Escha-W2 native decode goes from token salad to coherent | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `cpu-vnni-repack-dual-residency` | decode +22.0% (mixed) and +23.7% (all-Q2_0) against mode 0, ranges DISJOINT, with prefill held at baseline (958.96 vs 898.11 and 963.51 vs 905.25 prompt t/s, ranges overlapping so no prefill gain is claimed). | Radeon 780M box (SER7) | GGML_ARIFI_VNNI_REPACK unset (mode 0) |
+| `powerinfer-moe-streaming-hook` | server decode climbs 5.99 / 9.79 / 10.48 / 12.31 t/s against the fork's best 9.00 (RESULTS lane-110C). | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `powerinfer-pipeline-init-reuse` | 9 of 263 rebuilds | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `powerinfer-windows-port-avx-cure` | ENABLEMENT AND CRASH CURE, no throughput number claimed by this commit. | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `powerinfer-expert-bundle-generator` | ENABLEMENT: first disk-streamed sparse inference on Windows proven on this path (RESULTS M2a). | Radeon 780M box (SER7) | GENERATE_EXPERT_BUNDLE unset (the generator never runs) |
+| `powerinfer-streamed-repack-carveout` | CORRECTNESS: streamed-expert output goes from garbage to coherent (RESULTS rung2). | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `powerinfer-gpu-safe-staging` | GPU -ngl 99 -cmoe clean at 4.9 t/s with CPU zero-copy retained (RESULTS lane-110B/C). | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `rocmfpx-weight-formats` | CAPABILITY, measured as loadable and correct, not as fast: the native ROCmFP4 artifact loads in llama-server and completes "The capital of France is" with " Paris." at 3.24 tok/s on -ngl 0. | Radeon 780M box (SER7) | GGML_ARIFI_ROCMFPX_FORMATS OFF (the default build) |
+| `cpu-vnni-repack-default-off` | The DECISION is what is measured, and it is a two-sided trade taken on numbers: on the default Vulkan-enabled build, OFF avoids a -77.1% / -88.1% prompt regression and forgoes a +20.1% / +28.4% decode gain, ranges disjoint in all four. | Radeon 780M box (SER7) | GGML_ARIFI_VNNI_REPACK=1 restores the upstream default behaviour exactly |
+| `cpu-vnni-repack-g128-kernels` | Against the g128 scalar path (mode 0), mode 2 (dual residency): decode 2.01 -> 6.69 tok/s (+232.6%, a 3.3x decode win) and prompt 59.09 -> 85.84 tok/s (+45.3%). | Radeon 780M box (SER7) | GGML_ARIFI_VNNI_REPACK unset (the g128 arm is inside the same slot) |
+| `moe-cache-heat-protected-eviction` | THIRD-PARTY, NOT OURS AND NOT ADOPTED AS OURS: llama-cpp-turboquant reports +12% TG (soft) / +7.5% (auto) on an RTX 5090. | not measured by us; the figure is third-party | GGML_CUDA_MOE_CACHE_HOT_USES=0 (every slot is cold, i.e. plain LRU) |
+| `cuda-tq3-4s-kernels` | UNMEASURED ON THIS SEAT (no CUDA silicon). | not measured by us; the figure is third-party | none (always on, or the format is selected by the file) |
+| `metal-tq3-4s-kernels` | UNMEASURED ON THIS SEAT (no Metal silicon). | not measured by us; the figure is third-party | none (always on, or the format is selected by the file) |
+| `vulkan-iq4xs-matvec-dedicated` | LANE-BINARY MEASUREMENT (engine-before -> engine-r5, epochs E1/E2, matched 2x16 GB RAM): U-IQ4XS df2 +0.617 t/s [+0.255, +0.978], 8/8 cells positive | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `vulkan-iq3s-matvec-tpb16-union-gate` | LANE-BINARY MEASUREMENT (engine-r5 -> engine-r4c, E1/E2, matched 2x16 GB RAM): U-Q3KXL df2 +0.820 t/s [+0.622, +1.018], 8/8 positive (8.367 -> 9.268, +10.8%) | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `vulkan-q6k-matvec-direct-scales` | NEUTRAL on gfx1103, and that is the whole claim. | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `vulkan-rocmfp4-fast-q8_1-mmvq` | LANE-BINARY MEASUREMENT (engine-r4 -> engine-r10, epoch E2, matched 2x16 GB RAM): drafted decode 7.498 -> 9.518 mean t/s, +2.0199 [+1.3212, +2.7186], 8/8 cells positive = +26.9% | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `arifi-offrig-ci-backend-matrix` | UNMEASURED and unmeasurable by construction - a build matrix has no t/s. | build matrix, no t/s by construction | none (always on, or the format is selected by the file) |
+| `vulkan-fa-dequant-kv-runtime-gate` | R19D D1 (ON vs OFF, ONE binary, same day): plain prefill clean +8.08% [+1.63%, +14.52%], pooled +24.14% | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `spec-dflash-fused-inject-switch` | DOCUMENTED-TAKE, no gain. | Radeon 780M box (SER7) | LLAMA_DFLASH_FUSED_INJECT=1 (restores upstream 662a0b012 behaviour) |
+| `vulkan-rdna3-mmv-id-rows-switch` | DOCUMENTED-TAKE, no gain. | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `kv-ple-ngram-index-switch` | DOCUMENTED-TAKE, mechanism NEVER MEASURED. | never reached by any workload we hold | LLAMA_KV_NGRAM_INDEX=0 (the pre-b356fa262 cell scan) |
+| `vulkan-mul-mat-id-staging-receipt-hazard-assert` | DOCUMENTED-TAKE, and the receipt is the result: 0 K-padded rows in 7 logs, so the upstream K-padding path CANNOT engage on this GPU. | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
+| `vulkan-uma-read-path-probe` | DOCUMENTED-TAKE, flat. | Radeon 780M box (SER7) | GGML_ARIFI_UMA_READ_PATH=direct (upstream behaviour) |
+| `ggml-sx8-type-57-cpu-decoder` | DOCUMENTED-TAKE. | Radeon 780M box (SER7), CPU path | none (always on, or the format is selected by the file) |
+| `ggml-turboq-tbq-kv-types-58-59` | DOCUMENTED-TAKE. | Radeon 780M box (SER7) | -nkvo, -dev none, or a supported KV type (the device guard); LLAMA_ALLOW_TBQ3_KV=1 (the 3-bit KV quality guard) |
+
+The 890M placement fix above is not yet a manifest entry: it is a load fix with a correctness
+receipt, and the manifest registers a win with its measured effect.
 
 ---
 
@@ -582,7 +681,7 @@ We report **2305 executed / 0 FAIL / 876 not-supported** on the R86i tip
 
 ### Reporting a result from another GPU
 
-We cannot test any GPU but one. A result from yours is worth more to this project than another run on
+We measure speed on one GPU only (the 780M; the 890M so far has correctness checks only). A result from yours is worth more to this project than another run on
 ours. Please include, in the issue:
 
 | Field | Example from our rig |
@@ -593,7 +692,7 @@ ours. Please include, in the issue:
 | Memory layout | one shared pool: 48 GB physical, 16 GB BIOS reservation, 31.73 GiB system-visible — **say if yours is a discrete GPU with its own memory, because our defaults assume it is not** |
 | OS + build | Windows 11, build 29648 |
 | Power / performance plan | Balanced (it moved our decode from 29.0 to 11.2 tok/s when changed) |
-| Fork tip | `git rev-parse HEAD` in your clone, plus `git describe --tags` (this release's tag is `r86i-public-2026-09-29`) |
+| Fork tip | `git rev-parse HEAD` in your clone, plus `git describe --tags` (the release tag is named at publication; `r86i-public-2026-09-29` is the tree before the 890M fix) |
 | Build line | the exact `cmake` invocation you used |
 | The startup lines | which of the three default lines printed on your device |
 | Method | how many launches per arm, whether arms were interleaved, and whether anything else ran on the box |

@@ -132,6 +132,16 @@ Shipped byte-for-byte (no scrub was needed; the copy step refuses a file that ca
 | `r74b-evidence__21-paired.txt` | q6_K n=6 admit at 5120x6144: 713.3 -> 691.1 us (1.0363, 6/6), and the cells that were refused. | `lane-evidence/2026-09-23-r74b-q6k-n6-admit/21-paired.txt` | `01e8cde049fe4152b203a7c42d149f5da06c26ce4db341a3b5a727ec4219ca58` |
 | `r87-evidence__34-served-after-n6r2.txt` | iq3_s n=6 rows 2, served IQ3_S 27B: iq3_s marginal of the 6th verify column +47.23 +/- 1.33 -> +23.78 +/- 2.10 ms/step, 3 vs 3 launches. | `lane-evidence/2026-09-24-r87-iq3s-n6/34-served-after-n6r2.txt` | `9f4d7646be86f9502864b522e9feeab292a6ab866cc7ad40abd832fa6669521d` |
 
+## Radeon 890M (X1) receipts
+
+Correctness only; no 890M speed number is shipped. `2026-09-30-x1-first-contact/` is a directory in the studio's lane-evidence home.
+
+| Shipped file | Claim it supports | Original path | sha256 (original) | Scrubbed |
+|---|---|---|---|---|
+| `x1-first-contact__placement-summary.txt` | 890M, fix ON: GSQ IQ3_S 10.75 GiB, Q4_K_XL 15.36 GiB, S-X8 23.40 GiB in DEVICE_LOCAL (the reservation), 0 failed; `legacy` reproduces the shared-billed type (IQ3_XXS 9.19 GiB). DERIVED by `x1_heapsum.py` from the four gzipped alloc traces after checking each against its recorded raw sha256 (printed in the file). | `2026-09-30-x1-first-contact/chain1/2{0,1,2,3}-trace-*.err.gz (derived)` | `6ff4682d458609dcbb7cb00e6ec308fae303e8b724b33b23196b1e15fc08bd10` | no |
+| `x1-first-contact__chain2-summary.txt` | 890M, fix ON: MUL_MAT 2305 executed / 2305 OK / 0 FAIL / 876 not supported; greedy identity Qwen3.5-9B Q8_0 4/4 in each of 3 pairs (R vs FA, FL vs FA, R vs FL); the placement line per arm. | `2026-09-30-x1-first-contact/chain2/summary.txt` | `b64ceeefa4354140bdcd4207d94036dfa86efbe88d48a2859f3f0c68084980ae` | **yes** — shipped sha256 `ffb0570981eef6fa` |
+| `x1-first-contact__chain1-executed-counts.txt` | 890M, fix ON: MUL_MAT_ID 1004 executed / 1004 OK / 0 FAIL / 10 not supported. Its MUL_MAT block (827) is the run the chain's own timeout cut; the complete MUL_MAT count is in the chain2 summary. | `2026-09-30-x1-first-contact/chain1/19-executed-counts.txt` | `21576dc8a4a71d24b17a2ab42bc15ba556dd9995ed3e5930d0c64f9a04248ab5` | no |
+
 ## MISSING - a cited claim whose receipt could not be found
 
 **None by path.** Every receipt cited *by name* in `README.md`,

@@ -1,5 +1,8 @@
 # ArifiLabs llama.cpp — R86i (`r86i-public-2026-09-29`)
 
+> **Later on this line:** one engine commit, the Radeon 890M placement fix, with correctness checks
+> on a second GPU — `docs/release/RELEASE-NOTES-r86i-x1.md`. Every figure below is unchanged.
+
 > **Where the receipts live.** Every figure below is copied from a file in `evidence/`, named in the
 > row. `evidence/MANIFEST.md` carries each file's sha256. Short SHAs and engine labels in this
 > document (`6fb7a425a`, `5a7434218`, `037b433a9`) are studio-internal and **do not resolve in this
