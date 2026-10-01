@@ -1,0 +1,519 @@
+From c634d7fbe388a5abbd74eef81fddca631e0bd175 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 00:16:45 -0400
+Subject: [PATCH] docs: the Radeon 890M placement fix on the front page -
+ README section, release notes, three correctness receipts, every protected
+ win listed
+
+README gains the 890M section (the defect, the fix, the probe and override, and what is CHECKED on the 890M: GSQ IQ3_S / Q4_K_XL / S-X8 load into DEVICE_LOCAL, MUL_MAT 2305/2305, MUL_MAT_ID 1004/1004, greedy identity 4/4 in 3 pairs), the GGML_VK_UMA_PLACEMENT switch row, and a table of all 30 protected-wins.json entries with each registered effect quoted verbatim. Sentences the fix made false are corrected: every performance number stays a Radeon 780M number, the 890M carries correctness checks only, and r86i-public-2026-09-29 now names the tree before the fix. No 890M speed number is published: every 890M throughput round so far is indication grade.
+
+docs/release/RELEASE-NOTES-r86i-x1.md is new; the R86i notes point at it. evidence/ gains three receipts with MANIFEST rows (one derived from the gzipped alloc traces after a sha256 check, one path-scrubbed).
+
+Origin: ArifiLabs (native) - release documents for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents and receipts only; no code path is touched.
+---
+ README.md                                     | 121 ++++++++++++++++--
+ docs/release/RELEASE-NOTES-r86i-x1.md         |  47 +++++++
+ docs/release/RELEASE-NOTES-r86i.md            |   3 +
+ evidence/MANIFEST.md                          |  10 ++
+ evidence/README.md                            |   3 +-
+ ...-first-contact__chain1-executed-counts.txt |  80 ++++++++++++
+ evidence/x1-first-contact__chain2-summary.txt |  62 +++++++++
+ .../x1-first-contact__placement-summary.txt   |  32 +++++
+ 8 files changed, 346 insertions(+), 12 deletions(-)
+ create mode 100644 docs/release/RELEASE-NOTES-r86i-x1.md
+ create mode 100644 evidence/x1-first-contact__chain1-executed-counts.txt
+ create mode 100644 evidence/x1-first-contact__chain2-summary.txt
+ create mode 100644 evidence/x1-first-contact__placement-summary.txt
+
+diff --git a/README.md b/README.md
+index 3b2a053dd..437db9bc6 100644
+--- a/README.md
++++ b/README.md
+@@ -5,11 +5,12 @@ An attribution-first, rebaseable llama.cpp fork for local inference across curre
+ This repository starts from upstream llama.cpp master
+ (`9e0e220594af405a62835dc3a27495729fd8506b`, tag `b10825`) and carries an ordered,
+ feature-toggled patch series. Its scope is deliberately broad: one engine for
+-the current Beelink SER7, future 64/96 GB RAM configurations, an AMD Strix Halo
+-128 GB system, and an NVIDIA DGX Spark 128 GB system.
++the Beelink SER7 (Radeon 780M, where every performance number here was measured),
++the Minisforum AI X1 Pro (Radeon 890M, where this tip's placement fix was checked
++for correctness), an AMD Strix Halo 128 GB system, and an NVIDIA DGX Spark 128 GB system.
+ 
+ The fork preserves upstream backends. Vulkan is the blessed AMD path for the
+-current gfx1103 estate; upstream CUDA remains available for NVIDIA hardware.
++780M (gfx1103) and 890M estate; upstream CUDA remains available for NVIDIA hardware.
+ ROCm/HIP and wholesale ROCmFPX adoption are not the running path on the current
+ rig, but Charlie’s fork remains a tracked source for discrete mechanisms and
+ currency review.
+@@ -28,7 +29,8 @@ patches measure **inert** on our own hardware and are documented as such.
+ 
+ **Every number in this repository was measured on one machine**: a Beelink SER7 (Ryzen 7 7840HS,
+ Radeon 780M / gfx1103, unified memory) on Windows 11, built with WinLibs MinGW-w64 GCC 14.2.0,
+-running the Vulkan backend — or, where a row says CPU-only, the CPU backend on that same box.
++running the Vulkan backend — or, where a row says CPU-only, the CPU backend on that same box. The
++one exception is the Radeon 890M section, which reports correctness checks (no speed) from a second box.
+ 
+ **Never built or run by anyone, anywhere, on:** Linux, macOS, MSVC, clang-cl, CUDA, ROCm/HIP,
+ Arm/NEON, or any GPU other than gfx1103. Upstream supports all of them and nothing here removes
+@@ -337,7 +339,9 @@ An attribution-first, rebaseable llama.cpp fork for local inference on **Vulkan*
+   it names a commit in the studio's own repository that **does not exist here**. Nothing in this
+   repository needs it; it is printed so a bug report can say which engine stage it came from. The
+   previous engine, `arifi-b10825-r73i-5a7434218`, is the same kind of label.
+-- Published release tag: **`r86i-public-2026-09-29`** — the only tag pushed with this release.
++- Release tag: `r86i-public-2026-09-29` marks the R86i tree **before** the Radeon 890M placement
++  fix; this tip carries that fix and its documents on top (see *Added after the R86i tag* below). The
++  tag this tip is published under is named at publication, and it will be the only tag pushed with it.
+   Every other tag you may see mentioned in the history (`r73i-public-2026-09-22b`,
+   `r73i-release-engine-2026-09-21`, `r86i-integration-2026-09-24`, and the `b*` upstream tags) is
+   **internal, superseded or upstream** and is not part of this publication. Resolve the tree with
+@@ -351,10 +355,12 @@ An attribution-first, rebaseable llama.cpp fork for local inference on **Vulkan*
+ no gain — other drivers may not already do what AMD's does. The iq3 sign hoist (R66, still ON) is
+ exactly that case.
+ 
+-**Every number in this repository was measured on one machine**: a Beelink SER7 Pro — Ryzen 7 7840HS,
++**Every performance number in this repository was measured on one machine**: a Beelink SER7 Pro — Ryzen 7 7840HS,
+ **Radeon 780M (RDNA3, gfx1103)**, driver 32.0.31041.1004, Windows 11 build 29648, Balanced power plan,
+-one pool of system RAM (48 GB physical, 16 GB reserved in BIOS), Vulkan with `KHR_coopmat`. Kernels
+-transfer; numbers do not. If you are on other hardware, read
++one pool of system RAM (48 GB physical, 16 GB reserved in BIOS), Vulkan with `KHR_coopmat`. A second
++machine, a Minisforum AI X1 Pro with a **Radeon 890M**, has run this tip's **correctness** checks only
++(placement, `test-backend-ops`, greedy identity — see *Added after the R86i tag*); no 890M speed
++number is published. Kernels transfer; numbers do not. If you are on other hardware, read
+ [`docs/HARDWARE-PROFILES.md`](docs/HARDWARE-PROFILES.md) first — several defaults are wrong for you.
+ 
+ ---
+@@ -396,7 +402,7 @@ All three extra flags are load-bearing:
+ - `-D_WIN32_WINNT=0x0A00` is Windows-only.
+ - The two `GGML_ARIFI_*` CMake flags are optional unless you intend to load those formats.
+ - Nothing here has ever been built or run on Linux, macOS, MSVC, clang-cl, CUDA, ROCm/HIP, Arm/NEON,
+-  or any GPU other than gfx1103.
++  or any GPU other than the Radeon 780M (gfx1103) and, for correctness checks only, the Radeon 890M.
+ 
+ **Verify the binaries by mtime, never by the wrapper's exit code** — a build tool can exit 0 having
+ relinked nothing:
+@@ -451,6 +457,53 @@ Two warnings from that page, quoted because they change results:
+ > *"If you are not on one of the four machines below, read `HARDWARE-PROFILES.md` first."* At least one
+ > default (`GGML_ARIFI_VNNI_REPACK`) is measurably the wrong choice on a CPU-only path.
+ 
++#### Added after the R86i tag — UMA placement fix for the Radeon 890M
++
++One engine commit sits on top of R86i: `vulkan: UMA device-local-first placement on the Radeon 890M
++(GGML_VK_UMA_PLACEMENT, probe + override)`. Without it, no 27B model we hold loads on the 890M.
++Release notes: [`docs/release/RELEASE-NOTES-r86i-x1.md`](docs/release/RELEASE-NOTES-r86i-x1.md).
++
++**The defect.** On a UMA device the upstream chain asks first for memory type
++`DEVICE_LOCAL|HOST_VISIBLE|HOST_COHERENT`. On the 890M under Windows the driver accepts every such
++allocation but bills it to the WDDM *shared* segment, not to the BIOS reservation. That segment is
++capped near half of the system-visible RAM, so a load past about 11.2 GiB dies at the first upload
++submit with `vk::Queue::submit: ErrorUnknown`, while the reservation stays empty. Plain `DEVICE_LOCAL`
++lands in the reservation.
++
++**The fix.** On AMD device `0x150e` (Radeon 890M) only, the placement chain becomes
++`{DEVICE_LOCAL, HOST_VISIBLE|HOST_COHERENT}`. Every other device, the 780M included, keeps the
++upstream chain byte for byte. `GGML_VK_UMA_PLACEMENT=auto|legacy|device-local` overrides the probe, and
++a startup line names the chain in force:
++
++```
++ggml_vulkan: UMA placement: device-local first {DL, HV|HC} (device 0x150e, GGML_VK_UMA_PLACEMENT=auto)
++```
++
++**What is checked on the 890M** (correctness only; every receipt below is in `evidence/`):
++
++| Check | Result | Receipt |
++|---|---|---|
++| GSQ IQ3_S 27B (11.28 GiB file) loads, fix ON | **10.75 GiB in `DEVICE_LOCAL` (the reservation)**, 0.38 GiB host, 0 failed allocations | `evidence/x1-first-contact__placement-summary.txt` |
++| Q4_K_XL 27B (16.17 GiB file) loads, fix ON | **15.36 GiB in `DEVICE_LOCAL`**, 0.67 GiB host, 0 failed | same |
++| S-X8 v4.3 27B (24.33 GiB file) loads, fix ON | **23.40 GiB in `DEVICE_LOCAL`**, 0.00 GiB host, 0 failed | same |
++| the same box with `GGML_VK_UMA_PLACEMENT=legacy` (IQ3_XXS 27B, 9.72 GiB) | 9.19 GiB in the shared-billed type, 0 in `DEVICE_LOCAL`: the upstream chain, reproduced | same |
++| `test-backend-ops test -o MUL_MAT`, fix ON | **2305 executed, 2305 OK, 0 FAIL** (876 not supported) — the same 3181 case statuses as the R86i 780M receipt, 0 differ | `evidence/x1-first-contact__chain2-summary.txt` |
++| `test-backend-ops test -o MUL_MAT_ID`, fix ON | **1004 executed, 1004 OK, 0 FAIL** (10 not supported), the same counts as the 780M | `evidence/x1-first-contact__chain1-executed-counts.txt` |
++| greedy identity, Qwen3.5-9B Q8_0, 4 prompts, `--temp 0 --top-k 1` | **4/4 identical** in each of 3 pairs: unfixed R86i vs fix ON, fix `legacy` vs fix ON, unfixed vs `legacy` — the fix moves memory, not arithmetic | `evidence/x1-first-contact__chain2-summary.txt` |
++
++The unfixed R86i fails to load GSQ IQ3_S and Q4_K_XL on this box (`ErrorUnknown` at the first submit);
++that receipt is lane-local and not shipped. The 9B file is the only one we checked that loads on
++every arm, which is why identity is shown on it and not on a 27B file.
++
++**Not published: any 890M speed number.** Every 890M throughput round so far was taken under a
++measurement harness that we found was disturbing it, so they are indications, not results. The
++780M-tuned defaults in this release reach the 890M by feature probe (`RDNA3`-class, AMD vendor), not by
++an 890M measurement; treat them as untuned there.
++
++Measured 2026-09-30 on a Minisforum AI X1 Pro-470 — Ryzen AI 9 HX 470, **Radeon 890M** (Vulkan device
++`0x150e`), driver 32.0.31041.1004 (AMD 26.8.1), Windows 11 build 29671, Balanced power plan, one pool of
++system RAM: 48 GB physical (32 + 16, asymmetric), **24 GB reserved in BIOS**, 23.6 GiB system-visible.
++
+ #### Changed in this release (R86i)
+ 
+ Three RDNA3 mat-vec defaults turn ON and one route ships opt-in. Every figure below is copied from
+@@ -528,6 +581,7 @@ within one stderr. *These five figures have no receipt shipped in `evidence/` 
+ | `GGML_VK_HOST_SPLIT_MAX` | *"unset = the derived bound"* — caps bytes one load may place off `DEVICE_LOCAL` |
+ | `GGML_VK_HOST_SPLIT_MEMTYPE` / `_CACHED` | *"unset = `legacy`, which changes no byte of today's placement"* |
+ | `GGML_VK_PLACEMENT=bulk-large-heap` | *"OFF when unset; unset changes no byte of the existing placement"* |
++| `GGML_VK_UMA_PLACEMENT` | `auto` when unset: device-local first on the Radeon 890M (`0x150e`) only, the upstream chain everywhere else; `legacy` / `device-local` force either chain (see *Added after the R86i tag*) |
+ | `GGML_VK_ALLOC_TRACE=1` | *"OFF when unset, zero cost"* — diagnostic only |
+ | `GGML_ARIFI_MMVQ_TRACE` | *"OFF when unset"* — *"no behavioural effect in either arm"* |
+ | `GGML_ARIFI_OP_DUMP` | *"Unset = off"*, test-only |
+@@ -537,6 +591,51 @@ within one stderr. *These five figures have no receipt shipped in `evidence/` 
+ 
+ Build-time: `GGML_ARIFI_ROCMFPX_FORMATS` — *"**OFF.** Build-time option in `ggml/CMakeLists.txt`"*.
+ 
++#### Every protected win at this tip
++
++The fork keeps a manifest of the changes it must never lose on a rebase:
++[`tools/arifi-sync/protected-wins.json`](tools/arifi-sync/protected-wins.json) (30 entries; `arifi_sync.py
++protected-win validate` checks it against the tree). The table quotes each entry's registered effect —
++its first sentence, verbatim — so the full figure, its baseline, its workload and its quality gate are
++one lookup away under the same `id`. "Radeon 780M box" means the SER7 above (the manifest calls it the
++seat or RIG-A). A row marked third-party is someone else's figure, quoted and not adopted as ours.
++
++| Protected win (`id`) | Effect as registered (first sentence, verbatim) | Where measured | Opt out |
++|---|---|---|---|
++| `vulkan-concat-transpose-deltanet` | CONCAT dispatch -12.79% (-15.66 ms per ub512 prefill graph) on the LANE binary | Radeon 780M box (SER7) | GGML_VK_CONCAT_TRANSPOSE=0 |
++| `vulkan-tq-matvec-subgroup` | 27B tq3_4s tg32 0.67 -> 1.80 t/s | Radeon 780M box (SER7) | GGML_VK_DISABLE_TQ_SUBGROUP=1 |
++| `vulkan-escha-mm-column-block` | 3.51x on escha3 17408x5120 at ncols=64 (135386 -> 38587 us), 3.09x at ncols=8 | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `escha-w2-decode-correctness` | Escha-W2 native decode goes from token salad to coherent | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `cpu-vnni-repack-dual-residency` | decode +22.0% (mixed) and +23.7% (all-Q2_0) against mode 0, ranges DISJOINT, with prefill held at baseline (958.96 vs 898.11 and 963.51 vs 905.25 prompt t/s, ranges overlapping so no prefill gain is claimed). | Radeon 780M box (SER7) | GGML_ARIFI_VNNI_REPACK unset (mode 0) |
++| `powerinfer-moe-streaming-hook` | server decode climbs 5.99 / 9.79 / 10.48 / 12.31 t/s against the fork's best 9.00 (RESULTS lane-110C). | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `powerinfer-pipeline-init-reuse` | 9 of 263 rebuilds | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `powerinfer-windows-port-avx-cure` | ENABLEMENT AND CRASH CURE, no throughput number claimed by this commit. | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `powerinfer-expert-bundle-generator` | ENABLEMENT: first disk-streamed sparse inference on Windows proven on this path (RESULTS M2a). | Radeon 780M box (SER7) | GENERATE_EXPERT_BUNDLE unset (the generator never runs) |
++| `powerinfer-streamed-repack-carveout` | CORRECTNESS: streamed-expert output goes from garbage to coherent (RESULTS rung2). | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `powerinfer-gpu-safe-staging` | GPU -ngl 99 -cmoe clean at 4.9 t/s with CPU zero-copy retained (RESULTS lane-110B/C). | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `rocmfpx-weight-formats` | CAPABILITY, measured as loadable and correct, not as fast: the native ROCmFP4 artifact loads in llama-server and completes "The capital of France is" with " Paris." at 3.24 tok/s on -ngl 0. | Radeon 780M box (SER7) | GGML_ARIFI_ROCMFPX_FORMATS OFF (the default build) |
++| `cpu-vnni-repack-default-off` | The DECISION is what is measured, and it is a two-sided trade taken on numbers: on the default Vulkan-enabled build, OFF avoids a -77.1% / -88.1% prompt regression and forgoes a +20.1% / +28.4% decode gain, ranges disjoint in all four. | Radeon 780M box (SER7) | GGML_ARIFI_VNNI_REPACK=1 restores the upstream default behaviour exactly |
++| `cpu-vnni-repack-g128-kernels` | Against the g128 scalar path (mode 0), mode 2 (dual residency): decode 2.01 -> 6.69 tok/s (+232.6%, a 3.3x decode win) and prompt 59.09 -> 85.84 tok/s (+45.3%). | Radeon 780M box (SER7) | GGML_ARIFI_VNNI_REPACK unset (the g128 arm is inside the same slot) |
++| `moe-cache-heat-protected-eviction` | THIRD-PARTY, NOT OURS AND NOT ADOPTED AS OURS: llama-cpp-turboquant reports +12% TG (soft) / +7.5% (auto) on an RTX 5090. | not measured by us; the figure is third-party | GGML_CUDA_MOE_CACHE_HOT_USES=0 (every slot is cold, i.e. plain LRU) |
++| `cuda-tq3-4s-kernels` | UNMEASURED ON THIS SEAT (no CUDA silicon). | not measured by us; the figure is third-party | none (always on, or the format is selected by the file) |
++| `metal-tq3-4s-kernels` | UNMEASURED ON THIS SEAT (no Metal silicon). | not measured by us; the figure is third-party | none (always on, or the format is selected by the file) |
++| `vulkan-iq4xs-matvec-dedicated` | LANE-BINARY MEASUREMENT (engine-before -> engine-r5, epochs E1/E2, matched 2x16 GB RAM): U-IQ4XS df2 +0.617 t/s [+0.255, +0.978], 8/8 cells positive | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `vulkan-iq3s-matvec-tpb16-union-gate` | LANE-BINARY MEASUREMENT (engine-r5 -> engine-r4c, E1/E2, matched 2x16 GB RAM): U-Q3KXL df2 +0.820 t/s [+0.622, +1.018], 8/8 positive (8.367 -> 9.268, +10.8%) | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `vulkan-q6k-matvec-direct-scales` | NEUTRAL on gfx1103, and that is the whole claim. | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `vulkan-rocmfp4-fast-q8_1-mmvq` | LANE-BINARY MEASUREMENT (engine-r4 -> engine-r10, epoch E2, matched 2x16 GB RAM): drafted decode 7.498 -> 9.518 mean t/s, +2.0199 [+1.3212, +2.7186], 8/8 cells positive = +26.9% | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `arifi-offrig-ci-backend-matrix` | UNMEASURED and unmeasurable by construction - a build matrix has no t/s. | build matrix, no t/s by construction | none (always on, or the format is selected by the file) |
++| `vulkan-fa-dequant-kv-runtime-gate` | R19D D1 (ON vs OFF, ONE binary, same day): plain prefill clean +8.08% [+1.63%, +14.52%], pooled +24.14% | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `spec-dflash-fused-inject-switch` | DOCUMENTED-TAKE, no gain. | Radeon 780M box (SER7) | LLAMA_DFLASH_FUSED_INJECT=1 (restores upstream 662a0b012 behaviour) |
++| `vulkan-rdna3-mmv-id-rows-switch` | DOCUMENTED-TAKE, no gain. | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `kv-ple-ngram-index-switch` | DOCUMENTED-TAKE, mechanism NEVER MEASURED. | never reached by any workload we hold | LLAMA_KV_NGRAM_INDEX=0 (the pre-b356fa262 cell scan) |
++| `vulkan-mul-mat-id-staging-receipt-hazard-assert` | DOCUMENTED-TAKE, and the receipt is the result: 0 K-padded rows in 7 logs, so the upstream K-padding path CANNOT engage on this GPU. | Radeon 780M box (SER7) | none (always on, or the format is selected by the file) |
++| `vulkan-uma-read-path-probe` | DOCUMENTED-TAKE, flat. | Radeon 780M box (SER7) | GGML_ARIFI_UMA_READ_PATH=direct (upstream behaviour) |
++| `ggml-sx8-type-57-cpu-decoder` | DOCUMENTED-TAKE. | Radeon 780M box (SER7), CPU path | none (always on, or the format is selected by the file) |
++| `ggml-turboq-tbq-kv-types-58-59` | DOCUMENTED-TAKE. | Radeon 780M box (SER7) | -nkvo, -dev none, or a supported KV type (the device guard); LLAMA_ALLOW_TBQ3_KV=1 (the 3-bit KV quality guard) |
++
++The 890M placement fix above is not yet a manifest entry: it is a load fix with a correctness
++receipt, and the manifest registers a win with its measured effect.
++
+ ---
+ 
+ ### Reproduce a headline number
+@@ -582,7 +681,7 @@ We report **2305 executed / 0 FAIL / 876 not-supported** on the R86i tip
+ 
+ ### Reporting a result from another GPU
+ 
+-We cannot test any GPU but one. A result from yours is worth more to this project than another run on
++We measure speed on one GPU only (the 780M; the 890M so far has correctness checks only). A result from yours is worth more to this project than another run on
+ ours. Please include, in the issue:
+ 
+ | Field | Example from our rig |
+@@ -593,7 +692,7 @@ ours. Please include, in the issue:
+ | Memory layout | one shared pool: 48 GB physical, 16 GB BIOS reservation, 31.73 GiB system-visible — **say if yours is a discrete GPU with its own memory, because our defaults assume it is not** |
+ | OS + build | Windows 11, build 29648 |
+ | Power / performance plan | Balanced (it moved our decode from 29.0 to 11.2 tok/s when changed) |
+-| Fork tip | `git rev-parse HEAD` in your clone, plus `git describe --tags` (this release's tag is `r86i-public-2026-09-29`) |
++| Fork tip | `git rev-parse HEAD` in your clone, plus `git describe --tags` (the release tag is named at publication; `r86i-public-2026-09-29` is the tree before the 890M fix) |
+ | Build line | the exact `cmake` invocation you used |
+ | The startup lines | which of the three default lines printed on your device |
+ | Method | how many launches per arm, whether arms were interleaved, and whether anything else ran on the box |
+diff --git a/docs/release/RELEASE-NOTES-r86i-x1.md b/docs/release/RELEASE-NOTES-r86i-x1.md
+new file mode 100644
+index 000000000..34b222c5e
+--- /dev/null
++++ b/docs/release/RELEASE-NOTES-r86i-x1.md
+@@ -0,0 +1,47 @@
++# ArifiLabs llama.cpp — R86i + the Radeon 890M placement fix
++
++> **Where the receipts live.** Every figure below is copied from a file in `evidence/`, named in the
++> row; `evidence/MANIFEST.md` carries each file's sha256. Resolve the tree with `git rev-parse HEAD`
++> and `git describe --tags`. The tag this tip is published under is named at publication;
++> `r86i-public-2026-09-29` marks the R86i tree before this fix.
++
++Base: upstream `ggml-org/llama.cpp` **b10825** (`9e0e220594af405a62835dc3a27495729fd8506b`), unchanged.
++Engine: R86i (`docs/release/RELEASE-NOTES-r86i.md`, every figure there stands) plus **one** engine
++commit. Nothing in R86i's defaults changed.
++
++## What changed — one placement fix, scoped to one device
++
++| Change | Switch | Devices it touches | Receipt |
++|---|---|---|---|
++| UMA placement: `DEVICE_LOCAL` first, `DEVICE_LOCAL\|HOST_VISIBLE\|HOST_COHERENT` dropped from the chain | `GGML_VK_UMA_PLACEMENT=auto` (default) / `legacy` / `device-local`; registry row `GGML_VK_UMA_PLACEMENT` | AMD device `0x150e` (Radeon 890M) only. Every other device keeps the upstream chain byte for byte | `evidence/x1-first-contact__placement-summary.txt` |
++
++**Why.** On the 890M under Windows, the upstream first choice is billed by the driver to the WDDM
++shared segment, which is capped near half of the system-visible RAM. Loads past about 11.2 GiB died at
++the first upload submit (`vk::Queue::submit: ErrorUnknown`) with the BIOS reservation empty. No 27B
++model we hold loaded on the 890M before this commit; that failure receipt is lane-local, not shipped.
++
++## Verification on the 890M — correctness only
++
++| Check | Result | Receipt |
++|---|---|---|
++| GSQ IQ3_S 27B / Q4_K_XL 27B / S-X8 v4.3 27B load, fix ON | **10.75 / 15.36 / 23.40 GiB in `DEVICE_LOCAL`** (the reservation), 0 failed allocations each | `evidence/x1-first-contact__placement-summary.txt` |
++| `GGML_VK_UMA_PLACEMENT=legacy` control (IQ3_XXS 27B) | 9.19 GiB in the shared-billed type: the upstream chain, reproduced | same |
++| `test-backend-ops test -o MUL_MAT` | **2305 executed / 2305 OK / 0 FAIL**, 876 not supported; 0 case statuses differ from the R86i 780M receipt | `evidence/x1-first-contact__chain2-summary.txt` |
++| `test-backend-ops test -o MUL_MAT_ID` | **1004 / 1004 OK / 0 FAIL**, 10 not supported, the 780M counts | `evidence/x1-first-contact__chain1-executed-counts.txt` |
++| Greedy identity, Qwen3.5-9B Q8_0, 4 prompts, temp 0 / top-k 1 | **4/4** in each of 3 pairs (unfixed vs fix ON, `legacy` vs ON, unfixed vs `legacy`) | `evidence/x1-first-contact__chain2-summary.txt` |
++
++## What we could not show
++
++- **No 890M speed number is published.** Every 890M throughput round so far ran under a harness we
++  found disturbing the measurement; those rounds are indications, not results.
++- The 780M-tuned defaults reach the 890M by feature probe (RDNA3-class, AMD vendor), not by an 890M
++  measurement. Treat them as untuned there.
++- Identity is shown on a 9B file because it is the only file we checked that loads on every arm,
++  the unfixed engine included.
++
++## Where it was checked
++
++Minisforum AI X1 Pro-470 — Ryzen AI 9 HX 470, **Radeon 890M** (Vulkan device `0x150e`), driver
++32.0.31041.1004 (AMD 26.8.1), Windows 11 build 29671, Balanced power plan, one pool of system RAM:
++48 GB physical (32 + 16), **24 GB reserved in BIOS**, 23.6 GiB system-visible. 2026-09-30.
++Every speed figure in the R86i notes stays a **Radeon 780M** figure (Beelink SER7 Pro).
+diff --git a/docs/release/RELEASE-NOTES-r86i.md b/docs/release/RELEASE-NOTES-r86i.md
+index f180a3244..cb046b072 100644
+--- a/docs/release/RELEASE-NOTES-r86i.md
++++ b/docs/release/RELEASE-NOTES-r86i.md
+@@ -1,5 +1,8 @@
+ # ArifiLabs llama.cpp — R86i (`r86i-public-2026-09-29`)
+ 
++> **Later on this line:** one engine commit, the Radeon 890M placement fix, with correctness checks
++> on a second GPU — `docs/release/RELEASE-NOTES-r86i-x1.md`. Every figure below is unchanged.
++
+ > **Where the receipts live.** Every figure below is copied from a file in `evidence/`, named in the
+ > row. `evidence/MANIFEST.md` carries each file's sha256. Short SHAs and engine labels in this
+ > document (`6fb7a425a`, `5a7434218`, `037b433a9`) are studio-internal and **do not resolve in this
+diff --git a/evidence/MANIFEST.md b/evidence/MANIFEST.md
+index 80e06b198..19d5f1e1a 100644
+--- a/evidence/MANIFEST.md
++++ b/evidence/MANIFEST.md
+@@ -132,6 +132,16 @@ Shipped byte-for-byte (no scrub was needed; the copy step refuses a file that ca
+ | `r74b-evidence__21-paired.txt` | q6_K n=6 admit at 5120x6144: 713.3 -> 691.1 us (1.0363, 6/6), and the cells that were refused. | `lane-evidence/2026-09-23-r74b-q6k-n6-admit/21-paired.txt` | `01e8cde049fe4152b203a7c42d149f5da06c26ce4db341a3b5a727ec4219ca58` |
+ | `r87-evidence__34-served-after-n6r2.txt` | iq3_s n=6 rows 2, served IQ3_S 27B: iq3_s marginal of the 6th verify column +47.23 +/- 1.33 -> +23.78 +/- 2.10 ms/step, 3 vs 3 launches. | `lane-evidence/2026-09-24-r87-iq3s-n6/34-served-after-n6r2.txt` | `9f4d7646be86f9502864b522e9feeab292a6ab866cc7ad40abd832fa6669521d` |
+ 
++## Radeon 890M (X1) receipts
++
++Correctness only; no 890M speed number is shipped. `2026-09-30-x1-first-contact/` is a directory in the studio's lane-evidence home.
++
++| Shipped file | Claim it supports | Original path | sha256 (original) | Scrubbed |
++|---|---|---|---|---|
++| `x1-first-contact__placement-summary.txt` | 890M, fix ON: GSQ IQ3_S 10.75 GiB, Q4_K_XL 15.36 GiB, S-X8 23.40 GiB in DEVICE_LOCAL (the reservation), 0 failed; `legacy` reproduces the shared-billed type (IQ3_XXS 9.19 GiB). DERIVED by `x1_heapsum.py` from the four gzipped alloc traces after checking each against its recorded raw sha256 (printed in the file). | `2026-09-30-x1-first-contact/chain1/2{0,1,2,3}-trace-*.err.gz (derived)` | `6ff4682d458609dcbb7cb00e6ec308fae303e8b724b33b23196b1e15fc08bd10` | no |
++| `x1-first-contact__chain2-summary.txt` | 890M, fix ON: MUL_MAT 2305 executed / 2305 OK / 0 FAIL / 876 not supported; greedy identity Qwen3.5-9B Q8_0 4/4 in each of 3 pairs (R vs FA, FL vs FA, R vs FL); the placement line per arm. | `2026-09-30-x1-first-contact/chain2/summary.txt` | `b64ceeefa4354140bdcd4207d94036dfa86efbe88d48a2859f3f0c68084980ae` | **yes** — shipped sha256 `ffb0570981eef6fa` |
++| `x1-first-contact__chain1-executed-counts.txt` | 890M, fix ON: MUL_MAT_ID 1004 executed / 1004 OK / 0 FAIL / 10 not supported. Its MUL_MAT block (827) is the run the chain's own timeout cut; the complete MUL_MAT count is in the chain2 summary. | `2026-09-30-x1-first-contact/chain1/19-executed-counts.txt` | `21576dc8a4a71d24b17a2ab42bc15ba556dd9995ed3e5930d0c64f9a04248ab5` | no |
++
+ ## MISSING - a cited claim whose receipt could not be found
+ 
+ **None by path.** Every receipt cited *by name* in `README.md`,
+diff --git a/evidence/README.md b/evidence/README.md
+index 627c9ef05..dee09c773 100644
+--- a/evidence/README.md
++++ b/evidence/README.md
+@@ -13,7 +13,8 @@ closed.
+ method — so it cannot drift from what `README.md`, `docs/release/RELEASE-STORY-r73i.md` and
+ `docs/release/RELEASE-NOTES-r73i.md` actually claim. The twelve R86i receipts (`r86-evidence__*`,
+ `r85-evidence__*`, `r74b-evidence__*`, `r87-evidence__*`) back the tables in `README.md` and
+-`docs/release/RELEASE-NOTES-r86i.md`. A cited receipt that could not be found is listed in the
++`docs/release/RELEASE-NOTES-r86i.md`. The three Radeon 890M receipts (`x1-first-contact__*`,
++correctness only) back the 890M section of `README.md` and `docs/release/RELEASE-NOTES-r86i-x1.md`. A cited receipt that could not be found is listed in the
+ manifest's **MISSING** section rather than dropped, and no receipt was invented.
+ 
+ ## What is deliberately not here
+diff --git a/evidence/x1-first-contact__chain1-executed-counts.txt b/evidence/x1-first-contact__chain1-executed-counts.txt
+new file mode 100644
+index 000000000..49e3f5cd5
+--- /dev/null
++++ b/evidence/x1-first-contact__chain1-executed-counts.txt
+@@ -0,0 +1,80 @@
++10-tbo-mul_mat.txt
++  EXECUTED 827  (OK 827, FAIL 0)   not-supported 55   unclassified 0
++    MUL_MAT/bf16/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/f16/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/f32/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/iq1_m/f32: executed 28 (OK 28, FAIL 0), not-supported 0
++    MUL_MAT/iq1_s/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/iq2_s/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/iq2_xs/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/iq2_xxs/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/iq3_s/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/iq3_xxs/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/iq4_nl/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/iq4_xs/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/mxfp4/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/nvfp4/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/q1_0/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/q2_0/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/q2_0_g128/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/q2_0_rocmfpx/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/q2_K/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/q3_0_rocmfpx/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/q3_K/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/q4_0/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/q4_0_rocmfp4/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/q4_0_rocmfp4_fast/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/q4_1/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/q4_K/f32: executed 51 (OK 51, FAIL 0), not-supported 0
++    MUL_MAT/q5_0/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/q5_1/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/q5_K/f32: executed 51 (OK 51, FAIL 0), not-supported 0
++    MUL_MAT/q6_0_rocmfpx/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/q6_K/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/q8_0/f32: executed 35 (OK 35, FAIL 0), not-supported 0
++    MUL_MAT/q8_0_rocmfpx/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/sx8/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/tq2_0/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/tq3_1s/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/tq3_4s/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++    MUL_MAT/tq4_1s/f32: executed 11 (OK 11, FAIL 0), not-supported 0
++11-tbo-mul_mat_id.txt
++  EXECUTED 1004  (OK 1004, FAIL 0)   not-supported 10   unclassified 0
++    MUL_MAT_ID/bf16/f32: executed 8 (OK 8, FAIL 0), not-supported 0
++    MUL_MAT_ID/f16/f32: executed 83 (OK 83, FAIL 0), not-supported 0
++    MUL_MAT_ID/f32/f32: executed 74 (OK 74, FAIL 0), not-supported 0
++    MUL_MAT_ID/iq1_m/f32: executed 5 (OK 5, FAIL 0), not-supported 0
++    MUL_MAT_ID/iq1_s/f32: executed 5 (OK 5, FAIL 0), not-supported 0
++    MUL_MAT_ID/iq2_s/f32: executed 5 (OK 5, FAIL 0), not-supported 0
++    MUL_MAT_ID/iq2_xs/f32: executed 5 (OK 5, FAIL 0), not-supported 0
++    MUL_MAT_ID/iq2_xxs/f32: executed 76 (OK 76, FAIL 0), not-supported 0
++    MUL_MAT_ID/iq3_s/f32: executed 5 (OK 5, FAIL 0), not-supported 0
++    MUL_MAT_ID/iq3_xxs/f32: executed 5 (OK 5, FAIL 0), not-supported 0
++    MUL_MAT_ID/iq4_nl/f32: executed 4 (OK 4, FAIL 0), not-supported 0
++    MUL_MAT_ID/iq4_xs/f32: executed 5 (OK 5, FAIL 0), not-supported 0
++    MUL_MAT_ID/mxfp4/f32: executed 75 (OK 75, FAIL 0), not-supported 0
++    MUL_MAT_ID/nvfp4/f32: executed 74 (OK 74, FAIL 0), not-supported 0
++    MUL_MAT_ID/q1_0/f32: executed 76 (OK 76, FAIL 0), not-supported 0
++    MUL_MAT_ID/q2_0/f32: executed 76 (OK 76, FAIL 0), not-supported 0
++    MUL_MAT_ID/q2_0_g128/f32: executed 2 (OK 2, FAIL 0), not-supported 0
++    MUL_MAT_ID/q2_0_rocmfpx/f32: executed 2 (OK 2, FAIL 0), not-supported 0
++    MUL_MAT_ID/q2_K/f32: executed 4 (OK 4, FAIL 0), not-supported 0
++    MUL_MAT_ID/q3_0_rocmfpx/f32: executed 2 (OK 2, FAIL 0), not-supported 0
++    MUL_MAT_ID/q3_K/f32: executed 4 (OK 4, FAIL 0), not-supported 0
++    MUL_MAT_ID/q4_0/f32: executed 75 (OK 75, FAIL 0), not-supported 0
++    MUL_MAT_ID/q4_0_rocmfp4/f32: executed 2 (OK 2, FAIL 0), not-supported 0
++    MUL_MAT_ID/q4_0_rocmfp4_fast/f32: executed 2 (OK 2, FAIL 0), not-supported 0
++    MUL_MAT_ID/q4_1/f32: executed 76 (OK 76, FAIL 0), not-supported 0
++    MUL_MAT_ID/q4_K/f32: executed 74 (OK 74, FAIL 0), not-supported 0
++    MUL_MAT_ID/q5_0/f32: executed 4 (OK 4, FAIL 0), not-supported 0
++    MUL_MAT_ID/q5_1/f32: executed 4 (OK 4, FAIL 0), not-supported 0
++    MUL_MAT_ID/q5_K/f32: executed 4 (OK 4, FAIL 0), not-supported 0
++    MUL_MAT_ID/q6_0_rocmfpx/f32: executed 2 (OK 2, FAIL 0), not-supported 0
++    MUL_MAT_ID/q6_K/f32: executed 4 (OK 4, FAIL 0), not-supported 0
++    MUL_MAT_ID/q8_0/f32: executed 76 (OK 76, FAIL 0), not-supported 0
++    MUL_MAT_ID/q8_0_rocmfpx/f32: executed 2 (OK 2, FAIL 0), not-supported 0
++    MUL_MAT_ID/sx8/f32: executed 2 (OK 2, FAIL 0), not-supported 0
++    MUL_MAT_ID/tq2_0/f32: executed 4 (OK 4, FAIL 0), not-supported 0
++    MUL_MAT_ID/tq3_1s/f32: executed 38 (OK 38, FAIL 0), not-supported 0
++    MUL_MAT_ID/tq3_4s/f32: executed 2 (OK 2, FAIL 0), not-supported 0
++    MUL_MAT_ID/tq4_1s/f32: executed 38 (OK 38, FAIL 0), not-supported 0
+diff --git a/evidence/x1-first-contact__chain2-summary.txt b/evidence/x1-first-contact__chain2-summary.txt
+new file mode 100644
+index 000000000..b6e1d3fc9
+--- /dev/null
++++ b/evidence/x1-first-contact__chain2-summary.txt
+@@ -0,0 +1,62 @@
++identity R vs FA p1: IDENTICAL
++identity R vs FA p2: IDENTICAL
++identity R vs FA p3: IDENTICAL
++identity R vs FA p4: IDENTICAL
++identity R vs FA: 4/4 IDENTICAL
++identity FL vs FA p1: IDENTICAL
++identity FL vs FA p2: IDENTICAL
++identity FL vs FA p3: IDENTICAL
++identity FL vs FA p4: IDENTICAL
++identity FL vs FA: 4/4 IDENTICAL
++identity R vs FL p1: IDENTICAL
++identity R vs FL p2: IDENTICAL
++identity R vs FL p3: IDENTICAL
++identity R vs FL p4: IDENTICAL
++identity R vs FL: 4/4 IDENTICAL
++placement line R: no UMA placement line
++placement line FA: ggml_vulkan: UMA placement: device-local first {DL, HV|HC} (device 0x150e, GGML_VK_UMA_PLACEMENT=auto)
++placement line FL: ggml_vulkan: UMA placement: legacy {DL|HV|HC, DL, HV|HC} (device 0x150e, GGML_VK_UMA_PLACEMENT=legacy)
++<repo>\cache\x1\chain2\10-tbo-mul_mat.txt
++  EXECUTED 2305  (OK 2305, FAIL 0)   not-supported 876   unclassified 0
++    MUL_MAT/bf16/f32: executed 151 (OK 151, FAIL 0), not-supported 0
++    MUL_MAT/f16/f16: executed 52 (OK 52, FAIL 0), not-supported 14
++    MUL_MAT/f16/f32: executed 197 (OK 197, FAIL 0), not-supported 14
++    MUL_MAT/f32/f32: executed 199 (OK 199, FAIL 0), not-supported 14
++    MUL_MAT/iq1_m/f32: executed 38 (OK 38, FAIL 0), not-supported 0
++    MUL_MAT/iq1_s/f32: executed 38 (OK 38, FAIL 0), not-supported 0
++    MUL_MAT/iq2_s/f32: executed 14 (OK 14, FAIL 0), not-supported 0
++    MUL_MAT/iq2_xs/f32: executed 14 (OK 14, FAIL 0), not-supported 0
++    MUL_MAT/iq2_xxs/f32: executed 29 (OK 29, FAIL 0), not-supported 17
++    MUL_MAT/iq3_s/f32: executed 47 (OK 47, FAIL 0), not-supported 0
++    MUL_MAT/iq3_xxs/f32: executed 38 (OK 38, FAIL 0), not-supported 0
++    MUL_MAT/iq4_nl/f32: executed 14 (OK 14, FAIL 0), not-supported 0
++    MUL_MAT/iq4_xs/f32: executed 96 (OK 96, FAIL 0), not-supported 0
++    MUL_MAT/mxfp4/f32: executed 53 (OK 53, FAIL 0), not-supported 17
++    MUL_MAT/nvfp4/f32: executed 28 (OK 28, FAIL 0), not-supported 17
++    MUL_MAT/q1_0/f32: executed 30 (OK 30, FAIL 0), not-supported 17
++    MUL_MAT/q2_0/f32: executed 54 (OK 54, FAIL 0), not-supported 17
++    MUL_MAT/q2_0_g128/f32: executed 36 (OK 36, FAIL 0), not-supported 0
++    MUL_MAT/q2_0_rocmfpx/f32: executed 12 (OK 12, FAIL 0), not-supported 0
++    MUL_MAT/q2_K/f32: executed 37 (OK 37, FAIL 0), not-supported 0
++    MUL_MAT/q3_0_rocmfpx/f32: executed 12 (OK 12, FAIL 0), not-supported 0
++    MUL_MAT/q3_K/f32: executed 37 (OK 37, FAIL 0), not-supported 0
++    MUL_MAT/q4_0/f32: executed 55 (OK 55, FAIL 0), not-supported 17
++    MUL_MAT/q4_0_rocmfp4/f32: executed 12 (OK 12, FAIL 0), not-supported 0
++    MUL_MAT/q4_0_rocmfp4_fast/f32: executed 99 (OK 99, FAIL 0), not-supported 0
++    MUL_MAT/q4_1/f32: executed 54 (OK 54, FAIL 0), not-supported 17
++    MUL_MAT/q4_K/f32: executed 71 (OK 71, FAIL 0), not-supported 17
++    MUL_MAT/q5_0/f32: executed 38 (OK 38, FAIL 0), not-supported 0
++    MUL_MAT/q5_1/f32: executed 38 (OK 38, FAIL 0), not-supported 0
++    MUL_MAT/q5_K/f32: executed 85 (OK 85, FAIL 0), not-supported 0
++    MUL_MAT/q6_0_rocmfpx/f32: executed 12 (OK 12, FAIL 0), not-supported 0
++    MUL_MAT/q6_K/f32: executed 83 (OK 83, FAIL 0), not-supported 0
++    MUL_MAT/q8_0/f32: executed 67 (OK 67, FAIL 0), not-supported 17
++    MUL_MAT/q8_0_rocmfpx/f32: executed 12 (OK 12, FAIL 0), not-supported 0
++    MUL_MAT/sx8/f32: executed 119 (OK 119, FAIL 0), not-supported 0
++    MUL_MAT/tq2_0/f32: executed 13 (OK 13, FAIL 0), not-supported 0
++    MUL_MAT/tq3_1s/f32: executed 159 (OK 159, FAIL 0), not-supported 1
++    MUL_MAT/tq3_4s/f32: executed 12 (OK 12, FAIL 0), not-supported 0
++    MUL_MAT/tq4_1s/f32: executed 150 (OK 150, FAIL 0), not-supported 1
++MUL_MAT rc=0 complete=True banner=[('2305', '2305')] last_case=MUL_MAT(type_a=f32,type_b=f32,m=129,n=1,k=1057,bs=[8,3],nr=[4,1],per=[0,1,2,3],k_v=2113,o=1,src_overlap=0): OK
++status differs on 0 cases present in both receipts
++case diff vs r86i 780M receipt: 0 cases differ (780M cases 3181, 890M cases 3181)
+diff --git a/evidence/x1-first-contact__placement-summary.txt b/evidence/x1-first-contact__placement-summary.txt
+new file mode 100644
+index 000000000..02bad23e6
+--- /dev/null
++++ b/evidence/x1-first-contact__placement-summary.txt
+@@ -0,0 +1,32 @@
++# X1 first contact - device-memory placement per load, derived from the Vulkan alloc traces
++# memtype 0 = DEVICE_LOCAL (heap 1, the BIOS reservation); memtype 2 = DEVICE_LOCAL|HOST_VISIBLE|HOST_COHERENT
++# (heap 1, billed by the Windows driver to the shared segment); memtype 3 = host (heap 0). Peak live bytes per memtype.
++# Each raw trace is checked against its recorded sha256 before it is read.
++
++GSQ-RCO Qwen3.8-27B IQ3_S-mtp, 11.28 GiB file
++  trace sha256 5641dd36e6e7db1a0be1e1def34fe86b0b68bd713a9191af0559a64aedfdc7b1 (matches the recorded raw hash)
++  placement line: device-local first {DL, HV|HC} (device 0x150e, GGML_VK_UMA_PLACEMENT=auto)
++  memtype 0 / heap 1: peak 10.75 GiB
++  memtype 3 / heap 0: peak 0.38 GiB
++  failed or thrown allocations/submits: 0
++
++Huihui Qwen3.8-27B UD-Q4_K_XL, 16.17 GiB file
++  trace sha256 06bb92653af3c65ba97f481de42846aa264589576921048ad5595241b6c85868 (matches the recorded raw hash)
++  placement line: device-local first {DL, HV|HC} (device 0x150e, GGML_VK_UMA_PLACEMENT=auto)
++  memtype 0 / heap 1: peak 15.36 GiB
++  memtype 3 / heap 0: peak 0.67 GiB
++  failed or thrown allocations/submits: 0
++
++Qwen3.8-27B S-X8 v4.3, 24.33 GiB file
++  trace sha256 3d66c03c408db2b90d21cb42b8c93bce7aaa7be50c20397c3d1ed156b071d74a (matches the recorded raw hash)
++  placement line: device-local first {DL, HV|HC} (device 0x150e, GGML_VK_UMA_PLACEMENT=auto)
++  memtype 0 / heap 1: peak 23.40 GiB
++  memtype 3 / heap 0: peak 0.00 GiB
++  failed or thrown allocations/submits: 0
++
++GSQ-RCO Qwen3.8-27B IQ3_XXS, 9.72 GiB file, GGML_VK_UMA_PLACEMENT=legacy
++  trace sha256 f25306cc493067ea0ed267b64c348044b79a8d0c1ba65ca0e1b4dd72aa04efeb (matches the recorded raw hash)
++  placement line: legacy {DL|HV|HC, DL, HV|HC} (device 0x150e, GGML_VK_UMA_PLACEMENT=legacy)
++  memtype 2 / heap 1: peak 9.19 GiB
++  memtype 3 / heap 0: peak 0.38 GiB
++  failed or thrown allocations/submits: 0
