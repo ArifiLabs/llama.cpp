@@ -2,23 +2,43 @@
 
 # ArifiLabs llama.cpp
 
-**Qwen3.8 27B at over 9 tokens/s on an AMD mini-PC with integrated graphics. Vulkan, no discrete GPU.**
+**Qwen3.8 27B at over 9 tokens/s on an AMD Radeon 780M, the integrated graphics of a mini-PC. Vulkan, no discrete GPU.**
 
 A llama.cpp fork built for AMD integrated GPUs. It gives Vulkan kernels to quant formats that only
 CUDA or Metal users could run, makes the formats you already use faster, and keeps DFlash2 and MTP
 speculative decoding stable on Qwen3.8. Built on upstream llama.cpp `b10825`.
 
-## Speed: Qwen3.8 27B on a Radeon 780M
+## Speed: Qwen3.8 27B
 
-| 27B model file | Decode, DFlash2 drafting | What our kernels changed | Measured |
-|---|---:|---|---|
-| UD-Q3_K_XL (outsourc-e Unleashed, 13.2 GB) | **9.3 t/s** | IQ3_S mat-vec: 8.4 → 9.3 t/s, +11% | early Sep 2026, 2x16 GB |
-| ROCmFP4-FAST (julianmb, 14.6 GB) | **9.5 t/s** ¹ | q8_1 mat-vec: 7.5 → 9.5 t/s, +27% | early Sep 2026, 2x16 GB |
-| GSQ-RCO IQ3_S (ISTA-DASLab, 12.1 GB) | **8.1 t/s** | plain decode on the same build: 5.1 t/s | 24 Sep 2026, 32+16 GB |
-| S-X8 v4.3 (MarlaLabs, 24.3 GB) | **5.6 t/s** | the 14 Sep build: 1.8 t/s plain, drafting failed at load | 15 Sep 2026, 32+16 GB |
+| 27B model file | Plain decode, t/s: before → after | DFlash2 decode, t/s: before → after | Machine |
+|---|---|---|---|
+| ROCmFP4-FAST (julianmb, 14.6 GB) ¹ | 5.1 → 5.1, +0% | 7.5 → **9.5**, +27% | Beelink SER7 Pro, Radeon 780M |
+| UD-Q3_K_XL (outsourc-e Unleashed, 13.2 GB) | 5.4 → 5.4, +0% | 8.4 → **9.3**, +11% | Beelink SER7 Pro, Radeon 780M |
+| UD-Q4_K_XL (Huihui abliterated, 16.2 GB) | 3.9 → 4.1, +6% | 7.1 → **7.6**, +7% | Beelink SER7 Pro, Radeon 780M |
+| S-X8 v4.3 (MarlaLabs, 24.3 GB) | 1.8 → 2.2, +23% | failed at load → **4.5** | Beelink SER7 Pro, Radeon 780M |
 
-`llama-server` on a Beelink SER7 Pro (Ryzen 7 7840HS, Radeon 780M, DDR5-5600, Windows 11). An arrow
-compares two builds of this fork on the same file. ¹ Turn on with `GGML_ARIFI_ROCMFP4_MMVQ=1`.
+Each row is one A/B on one file: "before" is this fork's build without the kernel, "after" the build
+with it (September 2026, `llama-server`, DFlash2 drafting 2 tokens per step). ¹ Turn on with `GGML_ARIFI_ROCMFP4_MMVQ=1`.
+
+## Vulkan support this fork adds
+
+| Format | Upstream llama.cpp Vulkan (`b10825`) | This fork | What we added |
+|---|---|---|---|
+| S-X8 v4.3 (type 57) | none | `dequant_sx8.comp`, `mul_mat_vec_sx8.comp` | **NEW on Vulkan**: format plus kernels |
+| ROCmFP4, ROCmFP4-FAST | none | `dequant_rocmfp4.comp`, `dequant_rocmfp4_fast.comp` | **NEW on Vulkan**: formats, q8_1 mat-vec |
+| ROCmFPX FP2 / FP3 / FP6 / FP8 | none | `dequant_rocmfpx_fp2.comp`, `_fp3`, `_fp6`, `_fp8` | **NEW on Vulkan**: four new formats |
+| TQ3_1S, TQ4_1S | none | `dequant_tq3_1s.comp`, `dequant_tq4_1s.comp`, `mul_mat_vec_tq3_1s.comp`, `mul_mat_vec_tq4_1s.comp`, `mul_mat_vec_tq_sg.comp` | **NEW on Vulkan**: formats, subgroup mat-vec |
+| TQ3_4S (type 48) | none | `dequant_tq3_4s.comp`, `mul_mat_vec_tq3_4s.comp` | **NEW on Vulkan**: format plus kernels |
+| Escha-W2 (types 55/56) | none | `escha_mm.comp` | **NEW on Vulkan**: fused decode-and-matmul kernel |
+| TurboQuant KV cache (turbo2/3/4) | none | `dequant_turbo3_0.comp`, `turbo_wht.comp` | **NEW on Vulkan**: new KV cache types |
+| Q2_0_G128 ternary (type 43) | none | `dequant_q2_0_g128.comp` | **NEW on Vulkan**: new ternary format |
+| IQ4_XS | generic `mul_mat_vec.comp` | `mul_mat_vec_iq4_xs.comp` | dedicated mat-vec kernel |
+| IQ3_S, IQ3_XXS | dedicated mat-vec | `mul_mat_vec_iq3_s.comp`, `mul_mat_vec_iq3_xxs.comp` rewritten | faster mat-vec at verify widths |
+| Q5_K, Q6_K | dedicated mat-vec | `mul_mat_vec_q5_k.comp`, `mul_mat_vec_q6_k.comp` rewritten | faster mat-vec, q8_1 route |
+| Q4_K | dedicated mat-vec | q8_1 route in `mul_mat_vecq.comp`, width-5 split | faster mat-vec at widths 5-8 |
+
+"none": upstream `b10825` has no such type. Shaders live in
+[`ggml/src/ggml-vulkan/vulkan-shaders/`](ggml/src/ggml-vulkan/vulkan-shaders/).
 
 **Speed is never bought with quality.** Our latest kernel release kept 27B perplexity flat
 (Q4_K_XL 5.9932 → 5.9928) and greedy output bit-identical (6 of 6 runs).
@@ -107,7 +127,7 @@ decode. These kernels target exactly those widths. Off switches restore the upst
 You were sent this link because your format runs here on the GPU. Find your format below.
 
 **S-X8 v4.3 (MarlaLabs).** Vulkan: `dequant_sx8.comp`, `mul_mat_vec_sx8.comp`, a q8_1 MMVQ path and a
-packed cooperative-matrix tile for prefill. Qwen3.8 27B S-X8: 5.55 t/s drafted, 2.25 t/s plain, mat-vec at
+packed cooperative-matrix tile for prefill. Qwen3.8 27B S-X8: 5.55 t/s drafted at draft depth 4, 2.25 t/s plain, mat-vec at
 71-73 GB/s on a 780M, close to the memory bus.
 ```powershell
 python tools/gguf-retag-sx8/retag_sx8.py model-sx8.gguf model-sx8.57.gguf   # your type id 41 -> our 57

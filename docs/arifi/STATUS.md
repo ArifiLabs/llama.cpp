@@ -12,8 +12,8 @@ Nothing here is hidden from the front page by accident; it is filed where engine
   kernel numbers are `test-backend-ops perf` medians.
 - **Memory epochs on that box:** 2x16 GB matched DDR5-5600 until 2026-09-03, then 32+16 GB. The
   ROCmFP4-FAST, UD-Q3_K_XL and IQ4_XS rows on the README were measured on 2x16 GB in early September
-  2026. The S-X8 rows (2026-09-14/15), the q5_K, q6_K, iq3 and q4_K kernel rows (2026-09-17 to 2026-09-24)
-  and the GSQ IQ3_S and Q4_K_XL rows (2026-09-24) were measured on 32+16 GB.
+  2026. The S-X8 and Q4_K_XL rows (2026-09-14/15), the q5_K, q6_K, iq3 and q4_K kernel rows
+  (2026-09-17 to 2026-09-24) and the latest-release tie (2026-09-24) were measured on 32+16 GB.
 - **Baselines:** a served "before → after" compares two builds of this fork on the same file and box.
   A kernel row whose off switch restores the upstream path is a comparison with upstream.
 - **Radeon 890M:** correctness only so far. The placement and `test-backend-ops` receipts were taken
@@ -21,11 +21,12 @@ Nothing here is hidden from the front page by accident; it is filed where engine
   72 GB reserved. Speed measurement on the 890M is in progress; no 890M speed number is published.
 - **Receipts in this repository:** [`evidence/`](../../evidence/) with
   [`evidence/MANIFEST.md`](../../evidence/MANIFEST.md) (sha256 per file). These README figures have a
-  shipped receipt: GSQ IQ3_S and Q4_K_XL plain and drafted speeds, perplexity, bit-identity,
+  shipped receipt: the latest-release tie (GSQ IQ3_S and Q4_K_XL), perplexity, bit-identity,
   `test-backend-ops` counts, the q4_K width-5 split, the iq3_s width-6 marginal and every 890M check.
   The other speed figures come from the protected-win manifest below or from studio benchmark receipts
-  that are not shipped here: the S-X8 27B progression (1.83 t/s plain and a drafted line that failed at
-  load on the 2026-09-14 build, 5.55 t/s drafted on the 2026-09-15 build), the S-X8 kernel rows, the
+  that are not shipped here: the README speed table (ROCmFP4-FAST, UD-Q3_K_XL, Q4_K_XL and S-X8 before
+  and after), the S-X8 27B progression (1.83 t/s plain and a drafted line that failed at load on the
+  2026-09-14 build, 5.55 t/s drafted at depth 4 on the 2026-09-15 build), the S-X8 kernel rows, the
   q6_K, q5_K and iq3 width-7 kernel rows.
 
 ## Protected wins
@@ -116,8 +117,8 @@ the draft-checkpoint crash fix; the Q2_0_G128 Vulkan port.
 - `arifi-sync` `build` and `judge` legs are written but not yet exercised.
 - Q2_0_G128 Vulkan path: ported and loading; not benchmarked here.
 - TQ3_0, TQ3_4SE and TQ3_1S_SHIFT (types 49-51): CPU only; the Vulkan backend reports them unsupported.
-- The README's ROCmFP4-FAST and UD-Q3_K_XL speeds were taken in early September on an earlier build;
-  they have not been re-measured on the latest release.
+- The README speed table pairs the build before and after each kernel, early to mid September; those
+  four files have not been re-measured on the latest release.
 
 ## Reading the commit trailers
 
