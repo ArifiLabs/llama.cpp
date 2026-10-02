@@ -1,0 +1,46 @@
+From 092c9987d1d143fc15f26eeb919824730a235e7d Mon Sep 17 00:00:00 2001
+From: ArifiLabs <arifilabs@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 21:34:41 -0400
+Subject: [PATCH] docs: licence notes name the thecodacus retention correction
+ as a maintainer's
+
+The thecodacus licence was retained after the project maintainer corrected an absence claim. The previous revision
+called it a review correction, which is not who made it. No other text changes.
+
+Origin: ArifiLabs (native) - release documents for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ licenses/README.md | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/licenses/README.md b/licenses/README.md
+index 1a92bb888..848b8803c 100644
+--- a/licenses/README.md
++++ b/licenses/README.md
+@@ -20,7 +20,7 @@ licence texts in this directory are complete without them.
+ | `tq3-MIT.txt` | `git show refs/remotes/tq3/main:LICENSE` (turbo-tan/llama.cpp-tq3) | tq3 MIT — the `TQ3_4S` family at ids 48-51 is ported from this tree. **Retained 2026-08-18; this was the one real gap.** |
+ | `prisml-MIT.txt` | `git show refs/remotes/prisml/prism:LICENSE` (PrismML-Eng/llama.cpp) | PrismML MIT. **Retained 2026-08-18 — see the correction below.** |
+ | `ciru-MIT.txt` | `git show refs/remotes/ciru/main:LICENSE` (ciru-ai/ROCmFPX) | ciru MIT. One change is carried verbatim: the SPIR-V headers fallback in `ggml/src/ggml-vulkan/CMakeLists.txt` (Taken-from ciru@8ffb2cd5a). |
+-| `thecodacus-MIT.txt` | `https://github.com/thecodacus/llama.cpp` `LICENSE` at its public head — no remote is configured here, and none is needed (see the correction below) | thecodacus MIT. **Retained 2026-08-18 after a review correction, in `19fd8719b`. Row added 2026-08-29 (gap G10)** — its provenance-of-copy had been recorded only in the prose below, never in this table. |
++| `thecodacus-MIT.txt` | `https://github.com/thecodacus/llama.cpp` `LICENSE` at its public head — no remote is configured here, and none is needed (see the correction below) | thecodacus MIT. **Retained 2026-08-18 after a maintainer's correction, in `19fd8719b`. Row added 2026-08-29 (gap G10)** — its provenance-of-copy had been recorded only in the prose below, never in this table. |
+ | `zuijdwijk-MIT.txt` | `git show refs/remotes/zuijdwijk/master:LICENSE` (LaurentZuijdwijk/llama.cpp) | zuijdwijk MIT (llama.cpp lineage, "The ggml authors"). **Retained 2026-08-29 (gap G11)** — the remote was configured and fetched but registered nowhere. **CODE IS CARRIED** (`e146c1175`, `c1440b85d` on unmerged fork branches, both trailered `Taken-from: LaurentZuijdwijk/llama.cpp`); tracked source in `sources.json` `remotes`, pinned `f97c0e6fe`. |
+ | `buun-MIT.txt` | `git show refs/remotes/buun/master:LICENSE` (spiritbuun/buun-llama-cpp) | buun MIT. **Retained 2026-08-27; this was a GAP** — series patch `0394` ingested buun's DFlash2 controller on 2026-08-21 with no notice row, so the notice lagged the code by six days. Byte-identical to the upstream MIT text apart from LF termination. |
+ | `turboq-mtp-MIT.txt` | `LICENSE` of `https://github.com/jtrefon/llama.cpp-turboq-mtp` at `6a02d0494` (1099 bytes, "The ggml authors") | jtrefon MIT (llama.cpp lineage). **Retained 2026-09-07 in the same commit that carries the code**: the TBQ3_0/TBQ4_0 codec (`ggml/src/ggml-tbq-quant.c`, tables) at ids 58/59 is ported from this tree. Tracked source in `sources.json` `remotes` as `turboq`, pinned `6a02d0494`. |
+@@ -107,7 +107,7 @@ the audit.
+ | `PrismML-Eng/llama.cpp` | **yes — `prisml-MIT.txt`** | **CLOSED 2026-08-18.** See the correction below: the "Phase 0 observed no LICENSE" finding was about the retained *release material*, and it was carried forward for a year as though it were a fact about the project. `refs/remotes/prisml/prism:LICENSE` exists and is MIT. |
+ | `turbo-tan/llama.cpp-tq3` | **yes — `tq3-MIT.txt`** | **CLOSED 2026-08-18.** Code IS ported (`58ad80ffb`, the `TQ3_4S` family at ids 48-51), and the license is now retained from `refs/remotes/tq3/main:LICENSE`. |
+ | `ciru-ai/ROCmFPX` | **yes — `ciru-MIT.txt`** | one change carried verbatim: the Vulkan SPIR-V headers fallback (Taken-from ciru@8ffb2cd5a). |
+-| `thecodacus/llama.cpp` | **yes — `thecodacus-MIT.txt`** | **CLOSED 2026-08-18** (review correction, retained in `19fd8719b`). The last open attribution. The old text of this row is preserved in the correction below because the error in it is instructive. |
++| `thecodacus/llama.cpp` | **yes — `thecodacus-MIT.txt`** | **CLOSED 2026-08-18** (a maintainer's correction, retained in `19fd8719b`). The last open attribution. The old text of this row is preserved in the correction below because the error in it is instructive. |
+ 
+ ### Correction, 2026-08-18: a false absence that stood for months
+ 
+@@ -142,7 +142,7 @@ and those artifacts carry no license grant. There is nothing to `git show`. Docu
+ manufactured."* Every clause of that is true, and the conclusion drawn from it is still wrong: the
+ correction above says an absence claim is only as good as the place you looked, and this row then
+ looked in exactly one place — this repository — and stopped. **NO LOCAL REMOTE IS NOT NO SOURCE.**
+-The project is public; its LICENSE is a fetch away and needs no remote configured here. A review
++The project is public; its LICENSE is a fetch away and needs no remote configured here. A maintainer
+ made that correction and `thecodacus-MIT.txt` is retained (`d40e42fae`). All seven registered sources
+ plus thecodacus are now closed; this directory still contains no fabricated license text.
+ 
