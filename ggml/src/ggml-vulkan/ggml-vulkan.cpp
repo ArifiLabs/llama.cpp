@@ -1659,6 +1659,9 @@ static bool ggml_vk_matmul_cm1_int_shmem_support(const vk_device& device, const 
         if (src0_type == GGML_TYPE_SX8 && device->sx8_cm1_h16) {
             total += BN * BK_STEP * 2u * (uint32_t)sizeof(float);  // buf_b_dh (attempt E)
         }
+        if (src0_type == GGML_TYPE_SX8 && device->sx8_cm1_2d_gate != 0) {
+            total += 64u * (uint32_t)sizeof(uint32_t);  // sx8_skip_mask (attempt D)
+        }
     }
     if (has_kvalues) {
         total += 16u * (uint32_t)sizeof(int8_t);         // cm1_kvalues[16]
@@ -2770,6 +2773,11 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                                h16 ? (sx8_cm1_red ? matmul_sx8hred_q8_1_cm1_len : matmul_sx8h_q8_1_cm1_len) : (sx8_cm1_red ? matmul_sx8red_q8_1_cm1_len : matmul_sx8_q8_1_cm1_len),
                                h16 ? (sx8_cm1_red ? matmul_sx8hred_q8_1_cm1_data : matmul_sx8h_q8_1_cm1_data) : (sx8_cm1_red ? matmul_sx8red_q8_1_cm1_data : matmul_sx8_q8_1_cm1_data),
                                sizeof(vk_mat_mat_push_constants), 3);
+            }
+            // attempt D: the skip kernel for the gated second pass, under its own key {SX8, Q8_0} (no S-X8 x Q8_0 matmul exists).
+            if (sx8_cm1 && !h16 && device->sx8_cm1_2d_gate != 0) {
+                cm1_create_mmq({GGML_TYPE_SX8, GGML_TYPE_Q8_0, false, false}, tc_mmq_cm1_int, "matmul_sx8skip_q8_1",
+                               matmul_sx8skip_q8_1_cm1_len, matmul_sx8skip_q8_1_cm1_data, sizeof(vk_mat_mat_push_constants), 3);
             }
             fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 MMQ: %s%s [GGML_ARIFI_SX8_CM1%s / _H16]\n",
                     !sx8_cm1 ? "OFF" : sx8_cm1_red ? "ON (RED twin, test control)" : "ON", h16 ? ", 16-value activation scales" : "",
@@ -4175,10 +4183,12 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1, true, true);
         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_res, "quantize_q8_1_x4_res", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u, device->q8_0_cm1_2d_shift }, 1, true, true);
         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_h16, "quantize_q8_1_x4_h16", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 0u, 0u, 1u }, 1, true, true);
+        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_resg, "quantize_q8_1_x4_resg", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u, device->q8_0_cm1_2d_shift, 0u, device->sx8_cm1_2d_gate }, 1, true, true);
     } else {
         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1);
         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_res, "quantize_q8_1_x4_res", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u, device->q8_0_cm1_2d_shift }, 1);
         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_h16, "quantize_q8_1_x4_h16", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 0u, 0u, 1u }, 1);
+        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_resg, "quantize_q8_1_x4_resg", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u, device->q8_0_cm1_2d_shift, 0u, device->sx8_cm1_2d_gate }, 1);
     }
 
     for (uint32_t i = 0; i < p021_max_gqa_ratio; ++i) {
@@ -6154,6 +6164,12 @@ vk_device ggml_vk_get_device(size_t idx) {
                     fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 16-value activation scales: %s [GGML_ARIFI_SX8_CM1_H16]\n",
                             device->sx8_cm1_h16 ? "ON (replaces two-digit for S-X8)" : "REFUSED (int8 coopmat K != 16)");
                 }
+                const char * sxg = getenv("GGML_ARIFI_SX8_CM1_2D_GATE");
+                if (sxg != nullptr && *sxg) {
+                    device->sx8_cm1_2d_gate = (uint32_t) atoi(sxg);
+                    fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 two-digit gate: amax > %u * mean|x| (others one-digit, pass 2 skips) [GGML_ARIFI_SX8_CM1_2D_GATE]\n",
+                            device->sx8_cm1_2d_gate);
+                }
                 const char * f32a = getenv("GGML_ARIFI_F32ACC");
                 for (const char * p = f32a; p != nullptr && *p; ) {
                     const char * e = strchr(p, ',');
@@ -8047,6 +8063,21 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     // two-digit: q2 lives after q1 in prealloc_y (offset aligned, 144-byte read slack kept for both)
     const uint64_t y2_off = two_digit ? ggml_vk_align_size(CEIL_DIV(y_sz, 144) * 144, ctx->device->properties.limits.minStorageBufferOffsetAlignment) : 0;
     const uint64_t y_need = two_digit ? y2_off + CEIL_DIV(y_sz, 144) * 144 : y_sz;
+    // attempt D: gated second digit (outlier blocks only) + the skip kernel for pass 2
+    const bool sx8_gate = two_digit && src0->type == GGML_TYPE_SX8 && ctx->device->sx8_cm1_2d_gate != 0;
+    vk_pipeline pipeline2 = pipeline;
+    if (sx8_gate) {
+        const std::vector<vk_matmul_pipeline_pair>* smap = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, GGML_TYPE_SX8, GGML_TYPE_Q8_0, prec);
+        GGML_ASSERT(smap != nullptr);
+        pipeline2 = ggml_vk_guess_matmul_pipeline_map(ctx, *smap, ne01, ne11, aligned, false);
+        if (ggml_nbytes(src0) > ctx->device->properties.limits.maxStorageBufferRange) {
+            pipeline2 = ggml_vk_get_64b_indexing_pipeline(ctx, pipeline2);
+        }
+        if (ctx->device->q8_0_cm1_roles_logged.insert("sx8-2dg:" + std::to_string(ne01) + "x" + std::to_string(ne10)).second) {
+            fprintf(stderr, "ggml_vulkan: S-X8 %s (%u rows, k=%u, n=%u): INT8x2g gate %u\n", src0->name, (uint32_t) ne01, (uint32_t) ne10,
+                    (uint32_t) ne11, ctx->device->sx8_cm1_2d_gate);
+        }
+    }
 
     vk_pipeline to_fp16_vk_0 = nullptr;
     vk_pipeline to_fp16_vk_1 = nullptr;
@@ -8101,7 +8132,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
             ggml_pipeline_request_descriptor_sets(ctx, to_q8_1, 1);
         }
         if (two_digit) {
-            ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_quantize_q8_1_x4_res, 1);
+            ggml_pipeline_request_descriptor_sets(ctx, sx8_gate ? ctx->device->pipeline_quantize_q8_1_x4_resg : ctx->device->pipeline_quantize_q8_1_x4_res, 1);
         }
         if (split_k > 1) {
             ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_matmul_split_k_reduce, 1);
@@ -8207,13 +8238,13 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
             ggml_vk_sync_buffers(ctx, subctx);
         }
         ggml_vk_quantize_q8_1_with(ctx, subctx, ggml_vk_subbuffer(ctx, d_Qy, qy_buf_offset), ggml_vk_subbuffer(ctx, d_Y, y2_off), y_ne,
-                                   ctx->device->pipeline_quantize_q8_1_x4_res);
+                                   sx8_gate ? ctx->device->pipeline_quantize_q8_1_x4_resg : ctx->device->pipeline_quantize_q8_1_x4_res);
         if (ctx->prealloc_split_k_need_sync) {
             ggml_vk_sync_buffers(ctx, subctx);
         }
         for (uint64_t pass = 0; pass < 2; ++pass) {
             ggml_vk_matmul(
-                ctx, subctx, pipeline,
+                ctx, subctx, pass == 0 ? pipeline : pipeline2,
                 { d_X, x_buf_offset, x_sz }, { d_Y, pass * y2_off, y_sz },
                 { ctx->prealloc_split_k, pass * d_sz, d_sz }, {},
                 ne01, ne11, ne10,

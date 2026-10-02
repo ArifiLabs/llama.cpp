@@ -117,6 +117,31 @@ shared float buf_b_dh[BN * BK_STEP * 2];
 shared float buf_b_s[BN * BK_STEP];
 #endif
 
+#if defined(SX8_SKIP)
+#if defined(MUL_MAT_ID)
+#error "SX8_SKIP is dense only"
+#endif
+// attempt D: one bit per k-step (BK * BK_STEP values) of this workgroup's column tile; set = some residual block of
+// the tile in that k-step is non-zero. Covers K up to 64 * 32 * 128.
+#define SX8_SKIP_WORDS 64
+shared uint sx8_skip_mask[SX8_SKIP_WORDS];
+// first active k-step at or after block b (block = start_k + i * BK * BK_STEP), end_k if none
+uint sx8_skip_next(uint b, uint start_k, uint end_k) {
+    if (b >= end_k) return end_k;
+    uint i = (b - start_k) / (BK * BK_STEP);
+    const uint nks = (end_k - start_k + BK * BK_STEP - 1) / (BK * BK_STEP);
+    while (i < nks) {
+        const uint w = sx8_skip_mask[i / 32] >> (i % 32);
+        if (w != 0) {
+            i += uint(findLSB(w));
+            return i < nks ? start_k + i * (BK * BK_STEP) : end_k;
+        }
+        i = (i / 32 + 1) * 32;
+    }
+    return end_k;
+}
+#endif
+
 #if defined(DATA_A_IQ4_NL) || defined(DATA_A_IQ4_XS) || defined(DATA_A_MXFP4) || defined(DATA_A_NVFP4)
 shared int8_t cm1_kvalues[16];
 #endif
@@ -300,9 +325,46 @@ void main() {
     block_a_prefetch pre_a[A_LOADS * BK_STEP];
     block_b_prefetch pre_b[B_LOADS * BK_STEP];
 
+#if defined(SX8_SKIP)
+    {
+        const uint KSTEP = BK * BK_STEP;
+        const uint nks = (end_k - start_k + KSTEP - 1) / KSTEP;
+        for (uint i = gl_LocalInvocationID.x; i < SX8_SKIP_WORDS; i += BLOCK_SIZE) {
+            sx8_skip_mask[i] = 0u;
+        }
+        barrier();
+        // k-step fastest: one column's consecutive x4 blocks sit next to each other in memory
+        for (uint t = gl_LocalInvocationID.x; t < BN * nks; t += BLOCK_SIZE) {
+            const uint c = t / nks;
+            const uint s = t % nks;
+            if (ic * BN + c < p.N) {
+                const uint ib = (batch_idx * p.batch_stride_b + (ic * BN + c) * p.stride_b + start_k) / BK + s * BK_STEP;
+                bool any = false;
+                [[unroll]] for (uint ks = 0; ks < BK_STEP; ks++) {
+                    if (start_k + s * KSTEP + ks * BK < end_k) {
+                        const uint ib_k = ib + ks;
+                        any = any || float(data_b[ib_k / 4].ds[ib_k % 4].x) != 0.0;
+                    }
+                }
+                if (any) {
+                    atomicOr(sx8_skip_mask[s / 32], 1u << (s % 32));
+                }
+            }
+        }
+        barrier();
+    }
+    const uint first_block = sx8_skip_next(start_k, start_k, end_k);
+    pos_a_ib += (first_block - start_k) / BK;
+    pos_b_ib += (first_block - start_k) / BK;
+    if (first_block < end_k) {
+        PREFETCH_BLOCK(first_block)
+    }
+#else
+    const uint first_block = start_k;
     if (start_k < end_k) {
         PREFETCH_BLOCK(start_k)
     }
+#endif
 
     const uint a_row0 = warp_r * WM;
     const uint b_col0 = warp_c * WN;
@@ -314,15 +376,25 @@ void main() {
 
     barrier();
 
+#if defined(SX8_SKIP)
+    for (uint block = first_block; block < end_k; ) {
+#else
     for (uint block = start_k; block < end_k; block += BK * BK_STEP) {
+#endif
         STORE_BLOCK_TO_LDS(block)
 
         barrier();
 
+#if defined(SX8_SKIP)
+        const uint next_block = sx8_skip_next(block + BK * BK_STEP, start_k, end_k);
+        pos_a_ib += (next_block - block) / BK;
+        pos_b_ib += (next_block - block) / BK;
+#else
         pos_a_ib += BK_STEP;
         pos_b_ib += BK_STEP;
 
         const uint next_block = block + BK * BK_STEP;
+#endif
         if (next_block < end_k) {
             PREFETCH_BLOCK(next_block)
         }
@@ -533,6 +605,9 @@ void main() {
         }
 
         barrier();
+#if defined(SX8_SKIP)
+        block = next_block;
+#endif
     }
 
 #undef PREFETCH_BLOCK

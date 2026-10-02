@@ -740,6 +740,8 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
         // attempt E: 16-value activation scales (SX8_H16), and its RED twin.
         string_to_spv(shader_name + "_sx8h_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_H16", "1"}}), fp16, coopmat, coopmat2, f16acc);
         string_to_spv(shader_name + "_sx8hred_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_H16", "1"}, {"SX8_CM1_RED", "1"}}), fp16, coopmat, coopmat2, f16acc);
+        // attempt D: second (residual) pass that skips k-steps whose residual blocks are all zero (gated quantizer).
+        string_to_spv(shader_name + "_sx8skip_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_SKIP", "1"}}), fp16, coopmat, coopmat2, f16acc);
     }
 
     // TurboQuant weight types, ROTATED matmul.

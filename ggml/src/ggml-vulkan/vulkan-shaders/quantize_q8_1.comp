@@ -30,6 +30,9 @@ layout(constant_id = 3) const uint RES_SHIFT = 0;
 // lane sx8-int8 attempt E: 1 = one scale per 16-value half block, ds = (d0, d1). Only the S-X8 H16 cm1 kernel reads it
 // (it sums the int8 activations exactly, so the block sum ds.y is not needed). Not combined with RESIDUAL.
 layout(constant_id = 4) const uint HALF = 0;
+// lane sx8-int8 attempt D: with RESIDUAL, write the second digit only for blocks with amax > GATE * mean|x| (an outlier
+// block); every other block gets q2 = 0, d2 = 0, so the SX8_SKIP matmul can skip it. 0 = off (every block).
+layout(constant_id = 5) const uint GATE = 0;
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
 layout (binding = 0) readonly buffer A {vec4 data_a[];};
@@ -108,8 +111,31 @@ void quantize(const uint wgid) {
         q = clamp(q, vec4(-127.0), vec4(127.0));
     }
     if (RESIDUAL != 0) {
+        bool keep = true;
+        if (GATE != 0) {
+            const float thread_asum = abs_vals.x + abs_vals.y + abs_vals.z + abs_vals.w;
+#ifndef USE_SUBGROUPS
+            barrier();
+            shmem[tid] = thread_asum;
+            barrier();
+            [[unroll]] for (uint s = 4; s > 0; s >>= 1) {
+                if (iqs < s) {
+                    shmem[tid] += shmem[tid + s];
+                }
+                barrier();
+            }
+            const float asum = shmem[block_in_wg * 8];
+#else
+            const float asum = subgroupClusteredAdd(thread_asum, 8);
+#endif
+            // amax > GATE * (asum / 32)
+            keep = amax * 32.0 > float(GATE) * asum;
+        }
         // second int8 digit: requantize x - q1 * f16(d1), q1 recomputed exactly as the first pass stored it
         vals -= q * float(f16vec2(vec2(d, 0.0)).x);
+        if (!keep) {
+            vals = vec4(0.0);
+        }
         vals = ldexp(vals, ivec4(int(RES_SHIFT)));
         const vec4 abs_r = abs(vals);
         const float thread_rmax = max(max(abs_r.x, abs_r.y), max(abs_r.z, abs_r.w));
