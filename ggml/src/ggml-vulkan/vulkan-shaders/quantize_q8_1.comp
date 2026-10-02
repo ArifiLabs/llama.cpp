@@ -162,11 +162,11 @@ void quantize(const uint wgid) {
         const float sum = shmem[tid];
 #endif
 
-        const f16vec2 ds_out = HALF != 0 ? f16vec2(dh) : f16vec2(vec2(d, sum * d));
+        const vec2 ds_out = HALF != 0 ? dh : vec2(d, sum * d);
 #ifndef QBLOCK_X4
-        data_b[ib].ds = ds_out;
+        data_b[ib].ds = f16vec2(ds_out);
 #else
-        data_b[ibx4_outer].ds[ibx4_inner] = ds_out;
+        data_b[ibx4_outer].ds[ibx4_inner] = f16vec2(ds_out);
 #endif
     }
 }
