@@ -6142,8 +6142,8 @@ vk_device ggml_vk_get_device(size_t idx) {
                 if (sxn != nullptr && *sxn) {
                     device->sx8_cm1_min_n = (uint32_t) atoi(sxn);
                 }
-                // stage 10 default: two-digit on ffn_up only (fix B: KL/top-1/PPL pass on the 27B, one-digit all-roles fails PPL
-                // on one outlier token, two-digit all-roles is slower than float). "none" = one-digit everywhere, "all" = every role.
+                // stage 10 default: attempt D, two-digit only on outlier blocks of ffn_up (gate 20).
+                // Gate 1 restores fix B; a gate above 32 keeps one digit. "none" = one digit, "all" = every role.
                 const char * sx2 = getenv("GGML_ARIFI_SX8_CM1_2D");
                 if (sx2 == nullptr) {
                     sx2 = "ffn_up";
@@ -6167,9 +6167,9 @@ vk_device ggml_vk_get_device(size_t idx) {
                 const char * sxg = getenv("GGML_ARIFI_SX8_CM1_2D_GATE");
                 if (sxg != nullptr && *sxg) {
                     device->sx8_cm1_2d_gate = (uint32_t) atoi(sxg);
-                    fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 two-digit gate: amax > %u * mean|x| (others one-digit, pass 2 skips) [GGML_ARIFI_SX8_CM1_2D_GATE]\n",
-                            device->sx8_cm1_2d_gate);
                 }
+                fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 two-digit gate: amax > %u * mean|x| (others one-digit, pass 2 skips) [GGML_ARIFI_SX8_CM1_2D_GATE, %s]\n",
+                        device->sx8_cm1_2d_gate, sxg != nullptr && *sxg ? "override" : "default");
                 const char * f32a = getenv("GGML_ARIFI_F32ACC");
                 for (const char * p = f32a; p != nullptr && *p; ) {
                     const char * e = strchr(p, ',');
