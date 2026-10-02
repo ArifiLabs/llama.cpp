@@ -58,7 +58,18 @@ static bool arifi_op_dump_enabled() {
     return enabled;
 }
 
-static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float max = 1.0f) {
+static unsigned int tensor_uniform_seed(const ggml_tensor * tensor, float min, float max) {
+    uint64_t h = 0xcbf29ce484222325ull;
+    auto mix = [&h](uint64_t v) { h ^= v; h *= 0x100000001b3ull; };
+    mix((uint64_t) tensor->type);
+    for (int i = 0; i < GGML_MAX_DIMS; i++) { mix((uint64_t) tensor->ne[i]); }
+    for (const char * p = tensor->name; *p; ++p) { mix((uint64_t) (unsigned char) *p); }
+    mix((uint64_t) (int64_t) (min * 1000000.0f));
+    mix((uint64_t) (int64_t) (max * 1000000.0f));
+    return (unsigned int) (h ^ (h >> 32));
+}
+
+static void init_tensor_uniform_legacy(ggml_tensor * tensor, float min, float max) {
     if (ggml_is_empty(tensor)) {
         return;
     }
@@ -96,7 +107,7 @@ static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float m
         mix((uint64_t) (int64_t) (min * 1000000.0f));
         mix((uint64_t) (int64_t) (max * 1000000.0f));
 
-        std::default_random_engine gen((unsigned int) (h ^ (h >> 32)));
+        std::default_random_engine gen(tensor_uniform_seed(tensor, min, max));
         std::uniform_real_distribution<float> distribution(min, max);
         for (size_t i = 0; i < nels; i++) {
             data[i] = distribution(gen);
@@ -205,6 +216,55 @@ static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float m
         ggml_backend_tensor_set(tensor, data.data(), 1*nbytes_half, nbytes_half);
     } else {
         GGML_ABORT("fatal error");
+    }
+}
+
+static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float max = 1.0f) {
+    if (ggml_is_empty(tensor)) { return; }
+    if (!ggml_is_quantized(tensor->type) && tensor->type != GGML_TYPE_F16 && tensor->type != GGML_TYPE_BF16) {
+        init_tensor_uniform_legacy(tensor, min, max);
+        return;
+    }
+    const size_t nels = ggml_nelements(tensor);
+    const size_t block = ggml_blck_size(tensor->type);
+    const size_t cols = tensor->ne[0];
+    GGML_ASSERT(cols % block == 0);
+    const bool verify = getenv("GGML_ARIFI_INIT_CHUNK_VERIFY") != nullptr && nels <= 65536;
+    const size_t rows_per_chunk = verify ? 2 : std::max<size_t>(1, 1048576 / cols);
+    const size_t row_bytes = ggml_row_size(tensor->type, cols);
+    std::default_random_engine gen(arifi_op_dump_enabled() ? tensor_uniform_seed(tensor, min, max) : std::random_device{}());
+    std::uniform_real_distribution<float> distribution(min, max);
+    std::vector<float> data(std::min<size_t>(ggml_nrows(tensor), rows_per_chunk) * cols);
+    std::vector<uint8_t> quant(data.size() / block * ggml_type_size(tensor->type));
+    std::vector<float> imatrix(cols, 1.0f);
+    const float * im = imatrix.data();
+    for (size_t row = 0; row < (size_t) ggml_nrows(tensor); row += rows_per_chunk) {
+        const size_t rows = std::min<size_t>(rows_per_chunk, ggml_nrows(tensor) - row);
+        for (size_t i = 0; i < rows * cols; ++i) { data[i] = distribution(gen); }
+        if (row == 0 && !ggml_quantize_requires_imatrix(tensor->type) && data[0] > 0.5f * (min + max)) { im = nullptr; }
+        // Same block geometry as the legacy initializer; chunk boundaries never split a row or block.
+        ggml_quantize_chunk(tensor->type, data.data(), quant.data(), 0, rows * cols / block, block, im);
+        if (ggml_is_contiguous(tensor)) {
+            ggml_backend_tensor_set(tensor, quant.data(), row * row_bytes, rows * row_bytes);
+        } else {
+            for (size_t r = 0; r < rows; ++r) {
+                const size_t rr = row + r;
+                const size_t off = (rr % tensor->ne[1]) * tensor->nb[1] +
+                    ((rr / tensor->ne[1]) % tensor->ne[2]) * tensor->nb[2] +
+                    (rr / (tensor->ne[1] * tensor->ne[2])) * tensor->nb[3];
+                ggml_backend_tensor_set(tensor, quant.data() + r * row_bytes, off, row_bytes);
+            }
+        }
+    }
+    if (verify && ggml_is_contiguous(tensor)) {
+        GGML_ASSERT(arifi_op_dump_enabled());
+        std::vector<uint8_t> chunked(ggml_nbytes(tensor)), legacy(chunked.size());
+        ggml_backend_tensor_get(tensor, chunked.data(), 0, chunked.size());
+        init_tensor_uniform_legacy(tensor, min, max);
+        ggml_backend_tensor_get(tensor, legacy.data(), 0, legacy.size());
+        GGML_ASSERT(chunked == legacy);
+        fprintf(stderr, "INIT_CHUNK_IDENTICAL name=%s type=%s elements=%zu bytes=%zu seed=%u\n", tensor->name,
+                ggml_type_name(tensor->type), nels, chunked.size(), tensor_uniform_seed(tensor, min, max));
     }
 }
 
@@ -5570,6 +5630,63 @@ struct test_mul_mat : public test_case {
     std::string op_desc(ggml_tensor * t) override {
         GGML_UNUSED(t);
         return ggml_op_name(GGML_OP_MUL_MAT);
+    }
+};
+
+struct test_mul_mat_sx8_gate : public test_mul_mat {
+    const int pattern; // 0: outlier, 1: equal magnitudes, 2: exact equality, 3: mixed blocks and tail
+    std::vector<float> reference;
+    test_mul_mat_sx8_gate(int pattern, int64_t k = 1056, int64_t n = 17)
+        : test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 64, n, k, {1, 1}, {1, 1}), pattern(pattern) {}
+    std::string vars() override { return test_mul_mat::vars() + ",sx8_gate_fixture=" + std::to_string(pattern); }
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * out = test_mul_mat::build_graph(ctx);
+        ggml_set_name(out->src[0], "blk.0.ffn_up.weight");
+        return out;
+    }
+    void initialize_tensors(ggml_context * ctx) override {
+        ggml_tensor * a = ggml_get_tensor(ctx, "blk.0.ffn_up.weight");
+        ggml_tensor * b = ggml_get_tensor(ctx, "b");
+        GGML_ASSERT(a && b);
+        std::vector<float> w(k), x(k);
+        for (int64_t i = 0; i < k; ++i) {
+            const int p = pattern == 3 ? (i / 32) % 3 : pattern;
+            w[i] = p == 2 ? (i % 32 == 0 ? 1.0f : 0.0f) : (i % 32 == 0 ? 0.0f : 1.0f);
+        }
+        std::vector<uint8_t> q(ggml_row_size(GGML_TYPE_SX8, k));
+        ggml_quantize_chunk(GGML_TYPE_SX8, w.data(), q.data(), 0, k / 32, 32, nullptr);
+        ggml_get_type_traits(GGML_TYPE_SX8)->to_float(q.data(), w.data(), k);
+        for (int64_t r = 0; r < m; ++r) { ggml_backend_tensor_set(a, q.data(), r * q.size(), q.size()); }
+        size_t tripped = 0, equal = 0;
+        for (int64_t i = 0; i < k; ++i) {
+            const int p = pattern == 3 ? (i / 32) % 3 : pattern;
+            const int j = i % 32;
+            x[i] = p == 0 ? (j == 0 ? 128.0f : 0.125f) : p == 1 ? 1.0f : (j == 0 ? 20.0f : j <= 12 ? 1.0f : 0.0f);
+        }
+        double dot = 0;
+        for (int64_t i = 0; i < k; i += 32) {
+            float amax = 0, asum = 0;
+            for (int j = 0; j < 32; ++j) { amax = std::max(amax, std::fabs(x[i+j])); asum += std::fabs(x[i+j]); dot += (double) w[i+j] * x[i+j]; }
+            tripped += amax * 32 > 20 * asum;
+            equal += amax * 32 == 20 * asum;
+        }
+        for (int64_t c = 0; c < n; ++c) { ggml_backend_tensor_set(b, x.data(), c * k * sizeof(float), k * sizeof(float)); }
+        reference.assign(m * n, (float) dot);
+        fprintf(stderr, "SX8_GATE_INPUT pattern=%d k=%lld blocks=%lld trip=%zu equality=%zu strict_gate=20\n",
+                pattern, (long long) k, (long long) k/32, tripped, equal);
+    }
+    double max_err() override { return 5e-4; }
+    double err(const float * gpu, const float * cpu, size_t count) override {
+        if (count != reference.size()) { return test_mul_mat::err(gpu, cpu, count); }
+        double e = 0, ecpu = 0;
+        for (size_t i = 0; i < count; ++i) {
+            const double den = std::max(1.0, std::fabs((double) reference[i]));
+            e = std::max(e, std::fabs(gpu[i] - reference[i]) / den);
+            ecpu = std::max(ecpu, std::fabs(cpu[i] - reference[i]) / den);
+        }
+        fprintf(stderr, "SX8_GATE_MEASURED pattern=%d k=%lld gpu_float_rel=%.9g cpu_q8_float_rel=%.9g residual_recovered=%d\n",
+                pattern, (long long) k, e, ecpu, (pattern == 0 || pattern == 3) && e <= max_err());
+        return e;
     }
 };
 
@@ -11302,6 +11419,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32,  4095, n,  1056, {1, 1}, {1, 1}));
     }
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 248320, 48, 5120, {1, 1}, {1, 1}));
+    for (int pattern : {0, 1, 2, 3}) { test_cases.emplace_back(new test_mul_mat_sx8_gate(pattern)); }
+    // 2048 K steps can use the mask; 2049 must use the ungated two-digit fallback.
+    test_cases.emplace_back(new test_mul_mat_sx8_gate(0, 262144));
+    test_cases.emplace_back(new test_mul_mat_sx8_gate(0, 262176));
 
     // ArifiLabs lane-236 / R48c: Q6_K mat-vec at the three real 27B decode shapes, n = 1..8, as
     // CORRECTNESS cases. Q6_K is 19.7% of the interactive Q4_K_XL 27B bytes (3.19 GiB, 56 tensors)

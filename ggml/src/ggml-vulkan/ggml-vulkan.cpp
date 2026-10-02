@@ -8064,7 +8064,16 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     const uint64_t y2_off = two_digit ? ggml_vk_align_size(CEIL_DIV(y_sz, 144) * 144, ctx->device->properties.limits.minStorageBufferOffsetAlignment) : 0;
     const uint64_t y_need = two_digit ? y2_off + CEIL_DIV(y_sz, 144) * 144 : y_sz;
     // attempt D: gated second digit (outlier blocks only) + the skip kernel for pass 2
-    const bool sx8_gate = two_digit && src0->type == GGML_TYPE_SX8 && ctx->device->sx8_cm1_2d_gate != 0;
+    // SX8_SKIP has 64 mask words, one bit per 128-value K step. Never dispatch it above capacity.
+    const uint64_t sx8_steps = CEIL_DIV((uint64_t) ne10, 128);
+    const bool sx8_gate_requested = two_digit && src0->type == GGML_TYPE_SX8 && ctx->device->sx8_cm1_2d_gate != 0;
+    const bool sx8_gate = sx8_gate_requested && sx8_steps <= 64u * 32u;
+    const char * residual_red = getenv("GGML_ARIFI_SX8_RESIDUAL_RED");
+    const bool drop_residual = two_digit && src0->type == GGML_TYPE_SX8 && residual_red != nullptr && residual_red[0] == '1';
+    vk_pipeline reduce2 = drop_residual ? ctx->device->pipeline_matmul_split_k_reduce : ctx->device->pipeline_matmul_split_k_reduce_2d;
+    if (sx8_gate_requested && !sx8_gate && ctx->device->q8_0_cm1_roles_logged.insert("sx8-2d-fallback:" + std::to_string(ne10)).second) {
+        fprintf(stderr, "ggml_vulkan: S-X8 mask fallback k=%u steps=%llu: ungated INT8x2\n", (uint32_t) ne10, (unsigned long long) sx8_steps);
+    }
     vk_pipeline pipeline2 = pipeline;
     if (sx8_gate) {
         const std::vector<vk_matmul_pipeline_pair>* smap = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, GGML_TYPE_SX8, GGML_TYPE_Q8_0, prec);
@@ -8138,7 +8147,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
             ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_matmul_split_k_reduce, 1);
         }
         if (two_digit) {
-            ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_matmul_split_k_reduce_2d, 1);
+            ggml_pipeline_request_descriptor_sets(ctx, reduce2, 1);
         }
     }
 
@@ -8253,9 +8262,15 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
             );  // NOLINT
         }
         ggml_vk_sync_buffers(ctx, subctx);
-        const std::array<uint32_t, 2> pc2 = { (uint32_t) d_ne, 2u };
-        ggml_vk_dispatch_pipeline(ctx, subctx, ctx->device->pipeline_matmul_split_k_reduce_2d,
+        const std::array<uint32_t, 2> pc2 = { (uint32_t) d_ne, drop_residual ? 1u : 2u };
+        ggml_vk_dispatch_pipeline(ctx, subctx, reduce2,
                                   { vk_subbuffer{ ctx->prealloc_split_k, 0, 2 * d_sz }, ggml_vk_subbuffer(ctx, d_D, d_buf_offset) }, pc2, { (uint32_t) d_ne, 1, 1 });
+        if (getenv("GGML_ARIFI_GATE_CENSUS") != nullptr && src0->type == GGML_TYPE_SX8) {
+            ctx->sx8_census_offset = y2_off;
+            ctx->sx8_census_blocks = y_ne / 32;
+            ctx->sx8_census_k = ne10;
+            ctx->sx8_census_gated = sx8_gate;
+        }
         ctx->prealloc_split_k_need_sync = true;
     } else {
     ggml_vk_matmul(
@@ -16122,6 +16137,20 @@ static void ggml_backend_vk_synchronize(ggml_backend_t backend) {
 
     ggml_vk_synchronize(ctx);
 
+    if (ctx->sx8_census_blocks != 0) {
+        const uint64_t blocks = ctx->sx8_census_blocks;
+        std::vector<uint8_t> residual(CEIL_DIV(blocks, 4) * 144);
+        ggml_vk_buffer_read(ctx->prealloc_y, ctx->sx8_census_offset, residual.data(), residual.size());
+        uint64_t active = 0;
+        for (uint64_t i = 0; i < blocks; ++i) {
+            uint16_t scale;
+            memcpy(&scale, residual.data() + (i / 4) * 144 + (i % 4) * 4, sizeof(scale));
+            active += (scale & 0x7fff) != 0;
+        }
+        fprintf(stderr, "SX8_GATE_GPU_CENSUS k=%u gated=%d blocks=%llu nonzero_residual=%llu\n", ctx->sx8_census_k,
+                ctx->sx8_census_gated, (unsigned long long) blocks, (unsigned long long) active);
+        ctx->sx8_census_blocks = 0;
+    }
     ggml_vk_graph_cleanup(ctx);
 }
 
