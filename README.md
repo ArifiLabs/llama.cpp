@@ -12,13 +12,17 @@ speculative decoding stable on Qwen3.8. Built on upstream llama.cpp `b10825`.
 
 | 27B model file | Plain decode, t/s: before → after | DFlash2 decode, t/s: before → after | Machine |
 |---|---|---|---|
-| ROCmFP4-FAST (julianmb, 14.6 GB) ¹ | 5.1 → 5.1, +0% | 7.5 → **9.5**, +27% | Beelink SER7 Pro, Radeon 780M |
-| UD-Q3_K_XL (outsourc-e Unleashed, 13.2 GB) | 5.4 → 5.4, +0% | 8.4 → **9.3**, +11% | Beelink SER7 Pro, Radeon 780M |
-| UD-Q4_K_XL (Huihui abliterated, 16.2 GB) | 3.9 → 4.1, +6% | 7.1 → **7.6**, +7% | Beelink SER7 Pro, Radeon 780M |
-| S-X8 v4.3 (MarlaLabs, 24.3 GB) ² | 1.8 → 2.2, +23% | 3.3 → **4.5**, +34% | Beelink SER7 Pro, Radeon 780M |
+| ROCmFP4-FAST (julianmb, 14.56 GB) ¹ | 5.084 → 5.086, tie | 7.498 → **9.518**, +26.9% | Beelink SER7 Pro, Radeon 780M |
+| UD-Q3_K_XL (outsourc-e Unleashed, 13.22 GB) | 5.399 → 5.405, tie | 8.367 → **9.268**, +10.7% | Beelink SER7 Pro, Radeon 780M |
+| UD-Q4_K_XL (Huihui abliterated, 17.38 GB) | 3.864 → 4.104, +6.2% | 7.085 → **7.578**, +6.9% | Beelink SER7 Pro, Radeon 780M |
+| S-X8 v4.3 (MarlaLabs, 26.14 GB) ² | 1.831 → 2.247, +22.7% | 3.334 → **4.475**, +34.2% | Beelink SER7 Pro, Radeon 780M |
 
 Each before → after pair is one A/B on one file: this fork's build without the kernel, then the build with
-it (September 2026, `llama-server`, DFlash2 drafting 2 tokens per step). ¹ Turn on with `GGML_ARIFI_ROCMFP4_MMVQ=1`.
+it (September 2026, `llama-server`, DFlash2 drafting 2 tokens per step). Values are server decode t/s over
+16 rounds per arm, copied from the receipts: **medians**, except ROCmFP4-FAST, which shows **means** (its
+pre-registered read). Percent = after ÷ before, cut to one decimal and never rounded up; "tie" = the paired
+confidence interval includes zero. File sizes are in GB (10⁹ bytes) from each file's byte count.
+¹ Turn on with `GGML_ARIFI_ROCMFP4_MMVQ=1`.
 ² The build before these kernels could not load this file with a drafter; a per-heap allocator fix cured it.
 
 ## Vulkan support this fork adds
@@ -41,8 +45,9 @@ it (September 2026, `llama-server`, DFlash2 drafting 2 tokens per step). ¹ Turn
 "none": upstream `b10825` has no such type. Shaders live in
 [`ggml/src/ggml-vulkan/vulkan-shaders/`](ggml/src/ggml-vulkan/vulkan-shaders/).
 
-**Speed is never bought with quality.** Our latest kernel release kept 27B perplexity flat
-(Q4_K_XL 5.9932 → 5.9928) and greedy output bit-identical (6 of 6 runs).
+**Our latest kernel release kept quality.** 27B perplexity held (Q4_K_XL 5.9932 → 5.9928), and greedy
+output stayed bit-identical in 6 of 6 runs (3 prompts each on Q4_K_XL and S-X8 27B). The faster
+ROCmFP4-FAST path stays opt-in until an adversarial test clears a small numerical residual.
 
 ## Quick start (Windows, Vulkan)
 
@@ -67,10 +72,13 @@ each tuned default it applied on your GPU.
 - **Tuned on:** AMD Radeon 780M (RDNA3), one shared pool of DDR5 system memory. Every speed number on
   this page comes from that box.
 - **Running now on:** Minisforum AI X1 Pro-470, Ryzen AI 9 HX 470, Radeon 890M, 96 GB DDR5-5600 with
-  72 GB reserved for the GPU. A placement fix for this GPU loads 27B models fully into GPU memory,
-  23.4 GiB for the largest we tried.
-- **Other GPUs:** tuned defaults switch on by device probe (AMD, RDNA3); every other device runs the
-  upstream code paths. All upstream backends (CPU, CUDA, Metal, SYCL and others) stay in the tree.
+  72 GB reserved for the GPU. A placement fix for this GPU puts 27B weights in the GPU reservation:
+  S-X8 v4.3 placed 23.40 GiB there with 0.00 GiB in host memory (measured at a 24 GB reservation).
+- **Other GPUs:** defaults tuned on this GPU class switch on by device probe, on AMD or on AMD RDNA3
+  only, and other devices keep the upstream setting. Six mat-vec changes to upstream formats run on every
+  Vulkan device: the IQ3_S 16-thread layout, the dedicated IQ4_XS shader, the iq3 sign hoist (bit-identical
+  output), the Q6_K direct scales and x-fold, and the Q5_K activation hoist. All upstream backends (CPU,
+  CUDA, Metal, SYCL and others) stay in the tree.
 
 ## What it adds over upstream
 
@@ -95,21 +103,22 @@ GPU against the CPU reference, with 0 failures.
 ### Faster kernels for formats you already use
 
 Speculative decoding verifies several tokens per step, so mat-vec speed at widths 2-8 decides drafted
-decode. These kernels target exactly those widths. Off switches restore the upstream path.
+decode. These kernels target exactly those widths. Where a row names a switch, it restores the
+upstream path.
 
 | Kernel | Measured effect (Radeon 780M) | Default |
 |---|---|---|
-| IQ3_S mat-vec, 16 threads per superblock at verify widths | Q3_K_XL 27B drafted 8.37 → 9.27 t/s, +10.8% | on |
-| IQ4_XS dedicated mat-vec shader | IQ4_XS 27B drafted +0.62 t/s, 8 of 8 cells | on |
-| iq3 mat-vec at width 7: register spill removed | 465,400 → 20,890 µs per op, 22x | on (RDNA3), `GGML_ARIFI_IQ3_N7_ROWS=4` reverts |
-| q6_K on the q8_1 MMVQ path at widths 7-8 | lm_head 20,046 → 14,313 µs, 1.40x | on (AMD), `GGML_ARIFI_Q6K_MMVQ=legacy` reverts |
-| q4_K width-5 split | lm_head 12,749 → 9,747 µs, 1.31x | on (RDNA3), `GGML_ARIFI_Q4K_W5_SPLIT=0` reverts |
-| q5_K on the q8_1 MMVQ path at widths 5-8 | +7% to +20% per verify column | on (AMD), `GGML_ARIFI_Q5K_MMVQ=0` reverts |
-| iq3_s two rows per workgroup at width 6 | 6th verify column 47.2 → 23.8 ms per step | on (RDNA3) |
-| S-X8 decode kernel, A-hoist and MMVQ route | plain 1.83 → 2.25 t/s; drafted 3.33 → 4.48 t/s; 71-73 GB/s at widths 4-8 | on |
-| TQ subgroup mat-vec | TQ3_4S 27B 0.67 → 1.80 t/s; TQ4_1S 0.5B 44.7 → 126.7 t/s | on |
-| ROCmFP4-FAST q8_1 MMVQ | drafted 7.50 → 9.52 t/s, +26.9% | `GGML_ARIFI_ROCMFP4_MMVQ=1` |
-| Escha-W2 column-blocked matmul | 3.51x on the prefill shape | on |
+| IQ3_S mat-vec, 16 threads per superblock at verify widths | Q3_K_XL 27B drafted 8.367 → 9.268 t/s (medians), +10.7% | on, every device |
+| IQ4_XS dedicated mat-vec shader | IQ4_XS 27B drafted +0.6167 t/s mean paired difference, 8 of 8 cells | on, every device |
+| iq3 mat-vec at width 7: register spill removed | 465,399.5 → 20,890.3 µs per op, 22.2x | on (RDNA3), `GGML_ARIFI_IQ3_N7_ROWS=4` reverts |
+| q6_K on the q8_1 MMVQ path at widths 7-8 | lm_head at width 7 20,046 → 14,313 µs, 1.40x; width 8 1.13x | on (AMD), `GGML_ARIFI_Q6K_MMVQ=legacy` reverts |
+| q4_K width-5 split | lm_head 12,749.2 → 9,747.1 µs, 1.30x | on (RDNA3), `GGML_ARIFI_Q4K_W5_SPLIT=0` reverts |
+| q5_K on the q8_1 MMVQ path at widths 5-8 | +6.7% to +20.4% per op at widths 5-8 (FFN shape 17408x5120) | on (AMD), `GGML_ARIFI_Q5K_MMVQ=0` reverts |
+| iq3_s two rows per workgroup at width 6 | iq3_s mat-vec time of the 6th verify column 47.23 → 23.78 ms per step | on (RDNA3) |
+| S-X8 decode kernel, A-hoist and MMVQ route | plain 1.831 → 2.247 t/s; drafted 3.334 → 4.475 t/s (medians); 71-73 GB/s at widths 4-8 | on |
+| TQ subgroup mat-vec | `llama-bench`: TQ3_4S 27B tg32 0.67 → 1.80 t/s; TQ4_1S 0.5B tg64 44.69 → 126.65 t/s | on |
+| ROCmFP4-FAST q8_1 MMVQ | drafted 7.498 → 9.518 t/s (means), +26.9% | `GGML_ARIFI_ROCMFP4_MMVQ=1` |
+| Escha-W2 column-blocked matmul | 3.50x on the escha3 prefill shape (17408x5120, 64 columns) | on |
 | Q2_0_G128 VNNI repack (CPU) | decode 2.01 → 6.69 t/s, 3.3x | `GGML_ARIFI_VNNI_REPACK=2` |
 
 ### Speculative decoding, MoE and memory
@@ -118,9 +127,12 @@ decode. These kernels target exactly those widths. Off switches restore the upst
   state of hybrid models. Replayed draft tokens are not re-verified after a checkpoint restore, which
   stops a slot loop on Vulkan. A rejected draft checkpoint no longer stops the server.
 - **Adaptive draft length:** `--spec-draft-adaptive` sizes each draft from the measured acceptance.
-- **Bigger-than-RAM MoE:** expert streaming from SSD (`EXPERT_BUNDLE_PATH`) runs a 35B model from a
-  17 GB expert bundle.
-- **Placement that fills the GPU reservation** on the Radeon 890M (`GGML_VK_UMA_PLACEMENT`), plus a
+- **Bigger-than-RAM MoE:** PowerInfer expert streaming from SSD (`EXPERT_BUNDLE_PATH`) runs a 35B MoE
+  model (Qwen3.6-35B-A3B) with its experts read from an on-disk bundle.
+- **MoE expert cache on Vulkan:** `--moe-cache` keeps recently used experts on the GPU when the routed
+  experts stay in host memory, with a dedicated Vulkan shader and heat-protected eviction. It is the
+  ggml-backend provider from TheTom's turboquant tree. See [`docs/backend/MOE-CACHE.md`](docs/backend/MOE-CACHE.md).
+- **Placement into the GPU reservation** on the Radeon 890M (`GGML_VK_UMA_PLACEMENT`), plus a
   per-heap allocator that serves 27B drafted lines which used to fail at load.
 
 ## For format authors and researchers
@@ -128,8 +140,8 @@ decode. These kernels target exactly those widths. Off switches restore the upst
 You were sent this link because your format runs here on the GPU. Find your format below.
 
 **S-X8 v4.3 (MarlaLabs).** Vulkan: `dequant_sx8.comp`, `mul_mat_vec_sx8.comp`, a q8_1 MMVQ path and a
-packed cooperative-matrix tile for prefill. Qwen3.8 27B S-X8: 5.55 t/s drafted at draft depth 4, 2.25 t/s plain, mat-vec at
-71-73 GB/s on a 780M, close to the memory bus.
+packed cooperative-matrix tile for prefill. Qwen3.8 27B S-X8: 5.551 t/s drafted at draft depth 4, 2.247 t/s
+plain (medians), mat-vec at 71-73 GB/s on a 780M, close to the memory bus.
 ```powershell
 python tools/gguf-retag-sx8/retag_sx8.py model-sx8.gguf model-sx8.57.gguf   # your type id 41 -> our 57
 build-vulkan\bin\llama-server.exe -m model-sx8.57.gguf -dev Vulkan0 -ngl 999 -fa on -c 8192
@@ -137,7 +149,7 @@ build-vulkan\bin\llama-server.exe -m model-sx8.57.gguf -dev Vulkan0 -ngl 999 -fa
 
 **ROCmFP4 and ROCmFPX (charlie12345).** Vulkan: `dequant_rocmfp4.comp`, `dequant_rocmfp4_fast.comp`,
 `dequant_rocmfpx_fp2.comp`, `_fp3`, `_fp6`, `_fp8`, mat-vec and get-rows pipelines for all six types, and a
-q8_1 MMVQ path for ROCmFP4-FAST. Qwen3.8 27B ROCmFP4-FAST: 9.52 t/s drafted (from 7.50).
+q8_1 MMVQ path for ROCmFP4-FAST. Qwen3.8 27B ROCmFP4-FAST: 9.518 t/s drafted (from 7.498, means).
 ```powershell
 cmake ... -DGGML_ARIFI_ROCMFPX_FORMATS=ON          # the quick-start build already has it
 $env:GGML_ARIFI_ROCMFP4_MMVQ="1"
@@ -147,7 +159,8 @@ build-vulkan\bin\llama-server.exe -m Qwen3.8-27B-ROCmFP4-FAST.gguf -dev Vulkan0 
 **TQ3_1S, TQ4_1S, TQ3_4S and TurboQuant KV (TheTom, turbo-tan).** Vulkan: `dequant_tq3_1s.comp`,
 `dequant_tq4_1s.comp`, `dequant_tq3_4s.comp`, `mul_mat_vec_tq3_1s.comp`, `mul_mat_vec_tq4_1s.comp`,
 `mul_mat_vec_tq3_4s.comp`, the subgroup mat-vec `mul_mat_vec_tq_sg.comp`, `tq_rotate_act.comp`,
-`dequant_turbo3_0.comp` and `turbo_wht.comp`. TQ3_4S 27B: 0.67 → 1.80 t/s; TQ4_1S 0.5B: 44.7 → 126.7 t/s.
+`dequant_turbo3_0.comp` and `turbo_wht.comp`. Measured with `llama-bench`: TQ3_4S 27B tg32 0.67 → 1.80 t/s;
+TQ4_1S 0.5B tg64 44.69 → 126.65 t/s.
 ```powershell
 cmake ... -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON       # the quick-start build already has it
 python tools/gguf-retag-tq3/retag_tq3.py model-tq3_4s.gguf model-tq3_4s.arifi.gguf   # tq3 ids -> ours
@@ -163,7 +176,7 @@ build-vulkan\bin\llama-server.exe -m model-q2_0.g128.gguf -dev Vulkan0 -ngl 999
 
 **Escha-W2 (EschaLabs).** Native types 55 and 56 with a fused `GGML_OP_ESCHA_MM`
 (`escha_mm.comp`): Hadamard rotation, code decode and matmul in one dispatch. Decode is coherent on
-2- and 3-bit files; column blocking makes the prefill shape 3.51x faster. Load the GGUF with its
+2- and 3-bit files; column blocking makes the escha3 prefill shape 3.50x faster. Load the GGUF with its
 `.escha_aux` sidecar beside it; `test-backend-ops -o ESCHA_MM` checks it against the CPU.
 
 **K-quants and i-quants (upstream formats).** Dedicated or retuned Vulkan mat-vec kernels for IQ4_XS
@@ -178,13 +191,16 @@ switch and its default is in [`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.
 - **Runtime switches.** Each tuned default has an environment switch that restores the old path, listed
   in [`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.md).
 - **Protected wins.** [`tools/arifi-sync/protected-wins.json`](tools/arifi-sync/protected-wins.json) names
-  the code each measured win depends on, so an upstream bump cannot drop one silently.
-- **Provenance in every commit.** `Taken-from:` names the source repository and commit; `Measured-effect:`
-  names the measured result. `python tools/arifi-sync/arifi_sync.py provenance` checks them all.
+  the code that 30 measured wins depend on, and `protected-win validate` flags an upstream bump that drops
+  one. The manifest lags the code at this tip; [`docs/arifi/STATUS.md`](docs/arifi/STATUS.md) lists what is owed.
+- **Provenance trailers.** Fork commits carry `Taken-from:` (source repository and commit) or `Origin:`,
+  and `Measured-effect:`. 357 earlier commits are grandfathered and 22 are exempt, each pinned by sha with
+  its reason. `python tools/arifi-sync/arifi_sync.py provenance --strict` passes.
 
 ## Credits
 
-This fork stands on other people's work. [`NOTICE`](NOTICE) names each licensed source with its licence.
+This fork stands on other people's work. [`NOTICE`](NOTICE) names each licensed source whose code this
+tree carries, with its licence.
 
 - [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp): the engine and the base of this fork.
 - [LaurentZuijdwijk/llama.cpp](https://github.com/LaurentZuijdwijk/llama.cpp): the IQ3_S 16-thread mat-vec
@@ -196,12 +212,14 @@ This fork stands on other people's work. [`NOTICE`](NOTICE) names each licensed 
   CPU paths, quantizer wiring and q8_1 mat-vec functions.
   [ciru-ai/ROCmFPX](https://github.com/ciru-ai/ROCmFPX): a Vulkan build fallback.
 - [TheTom/llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant): TurboQuant KV, the TQ3_1S
-  and TQ4_1S weight formats and their kernels.
+  and TQ4_1S weight formats and their kernels, and the MoE expert cache with its Vulkan provider.
   [TheTom/turboquant_plus](https://github.com/TheTom/turboquant_plus): KV-fidelity tooling (Apache-2.0).
 - [turbo-tan/llama.cpp-tq3](https://github.com/turbo-tan/llama.cpp-tq3): the TQ3_4S format family with its
   CUDA and Metal kernels.
 - [Tiiny-AI/PowerInfer](https://github.com/Tiiny-AI/PowerInfer): sparse execution and SSD expert streaming.
   The Windows IOCP read path is built on it.
+- FreeToken (FlashML-org): the design of the device-resident context checkpoint ring with pooled
+  recurrent-state slots, the tool-call checkpoint anchor and unbuffered model reads, re-implemented here.
 - [PrismML-Eng/llama.cpp](https://github.com/PrismML-Eng/llama.cpp): the Q2_0_G128 ternary format, the VNNI
   repack design and the f16 recurrent state.
 - MarlaLabs (Martí Vidal Leandro): the S-X8 v4.3 format (Apache-2.0). The Vulkan kernels here are ours.
@@ -218,7 +236,7 @@ Qwen3.8 Flash with NVMe offload, on the 96 GB Radeon 890M box.
 ## Requirements and limits
 
 - Tested on Windows 11 with Vulkan; MinGW-w64 GCC is the build of record ([`docs/BUILDING.md`](docs/BUILDING.md)).
-- Tuned for AMD integrated GPUs; on other GPUs the upstream code paths run.
+- Tuned for AMD integrated GPUs; on other GPUs the probe-gated defaults stay off (see Hardware).
 - `GGML_ARIFI_ROCMFP4_MMVQ` and `GGML_ARIFI_VNNI_REPACK` are opt-in.
 - Full engineering ledger, every protected win with its state: [`docs/arifi/STATUS.md`](docs/arifi/STATUS.md).
 

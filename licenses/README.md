@@ -19,7 +19,7 @@ licence texts in this directory are complete without them.
 | `turboquant-plus-NOTICE.txt` | `<FORK-WORKSPACE>/src/turboquant_plus/NOTICE` | turboquant_plus retained NOTICE |
 | `tq3-MIT.txt` | `git show refs/remotes/tq3/main:LICENSE` (turbo-tan/llama.cpp-tq3) | tq3 MIT — the `TQ3_4S` family at ids 48-51 is ported from this tree. **Retained 2026-08-18 (lane-151); this was the one real gap.** |
 | `prisml-MIT.txt` | `git show refs/remotes/prisml/prism:LICENSE` (PrismML-Eng/llama.cpp) | PrismML MIT. **Retained 2026-08-18 (lane-151) — see the correction below.** |
-| `ciru-MIT.txt` | `git show refs/remotes/ciru/main:LICENSE` (ciru-ai/ROCmFPX) | ciru MIT. Registered source, no code carried yet; retained ahead of any ingest so the notice can never lag the code. |
+| `ciru-MIT.txt` | `git show refs/remotes/ciru/main:LICENSE` (ciru-ai/ROCmFPX) | ciru MIT. One change is carried verbatim: the SPIR-V headers fallback in `ggml/src/ggml-vulkan/CMakeLists.txt` (Taken-from ciru@8ffb2cd5a). |
 | `thecodacus-MIT.txt` | `https://github.com/thecodacus/llama.cpp` `LICENSE` at its public head — no remote is configured here, and none is needed (see the correction below) | thecodacus MIT. **Retained 2026-08-18 on the President's correction, in `19fd8719b`. Row added 2026-08-29 (gap G10)** — its provenance-of-copy had been recorded only in the prose below, never in this table. |
 | `zuijdwijk-MIT.txt` | `git show refs/remotes/zuijdwijk/master:LICENSE` (LaurentZuijdwijk/llama.cpp) | zuijdwijk MIT (llama.cpp lineage, "The ggml authors"). **Retained 2026-08-29 (gap G11)** — the remote was configured and fetched but registered nowhere. **CODE IS CARRIED** (`e146c1175`, `c1440b85d` on lane-166 branches, both trailered `Taken-from: LaurentZuijdwijk/llama.cpp`); tracked source in `sources.json` `remotes`, pinned `f97c0e6fe`. |
 | `buun-MIT.txt` | `git show refs/remotes/buun/master:LICENSE` (spiritbuun/buun-llama-cpp) | buun MIT. **Retained 2026-08-27; this was a GAP** — series patch `0394` ingested buun's DFlash2 controller on 2026-08-21 with no notice row, so the notice lagged the code by six days. Byte-identical to the upstream MIT text apart from LF termination. |
@@ -106,7 +106,7 @@ the audit.
 | `turboquant_plus` | yes — Apache-2.0 + NOTICE | complete |
 | `PrismML-Eng/llama.cpp` | **yes — `prisml-MIT.txt`** | **CLOSED 2026-08-18.** See the correction below: the "Phase 0 observed no LICENSE" finding was about the retained *release material*, and it was carried forward for a year as though it were a fact about the project. `refs/remotes/prisml/prism:LICENSE` exists and is MIT. |
 | `turbo-tan/llama.cpp-tq3` | **yes — `tq3-MIT.txt`** | **CLOSED 2026-08-18.** Code IS ported (`58ad80ffb`, the `TQ3_4S` family at ids 48-51), and the license is now retained from `refs/remotes/tq3/main:LICENSE`. |
-| `ciru-ai/ROCmFPX` | **yes — `ciru-MIT.txt`** | registered source, no code carried yet; the notice is retained ahead of any ingest so it can never lag the code. |
+| `ciru-ai/ROCmFPX` | **yes — `ciru-MIT.txt`** | one change carried verbatim: the Vulkan SPIR-V headers fallback (Taken-from ciru@8ffb2cd5a). |
 | `thecodacus/llama.cpp` | **yes — `thecodacus-MIT.txt`** | **CLOSED 2026-08-18** (President's correction, retained in `19fd8719b`; row landed lane-152). The last open attribution. The old text of this row is preserved in the correction below because the error in it is instructive. |
 
 ### Correction, 2026-08-18 (lane-151): a false absence that stood for months

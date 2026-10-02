@@ -16,9 +16,10 @@ commit. Nothing in R86i's defaults changed.
 | UMA placement: `DEVICE_LOCAL` first, `DEVICE_LOCAL\|HOST_VISIBLE\|HOST_COHERENT` dropped from the chain | `GGML_VK_UMA_PLACEMENT=auto` (default) / `legacy` / `device-local`; registry row `GGML_VK_UMA_PLACEMENT` | AMD device `0x150e` (Radeon 890M) only. Every other device keeps the upstream chain byte for byte | `evidence/x1-first-contact__placement-summary.txt` |
 
 **Why.** On the 890M under Windows, the upstream first choice is billed by the driver to the WDDM
-shared segment, which is capped near half of the system-visible RAM. Loads past about 11.2 GiB died at
-the first upload submit (`vk::Queue::submit: ErrorUnknown`) with the BIOS reservation empty. Before
-this commit, on the 890M: GSQ IQ3_S and Q4_K_XL 27B failed to load; IQ3_XXS 27B (9.72 GiB) loaded for
+shared segment, which is capped near half of the system-visible RAM (about 11.8 GiB of 23.6 GiB). The
+GSQ IQ3_S load placed 11.35 GB there and died at the first upload submit (`vk::Queue::submit: ErrorUnknown`)
+with the BIOS reservation empty. Before this commit, on the 890M: GSQ IQ3_S and Q4_K_XL 27B failed to
+load; IQ3_XXS 27B (10.44 GB file) loaded for
 `llama-bench` but `llama-server -c 4096` died at init (`ErrorOutOfDeviceMemory`); S-X8 was never run
 unfixed (its failure is inferred from the mechanism). Those receipts are lane-local, not shipped.
 

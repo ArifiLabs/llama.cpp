@@ -10,9 +10,13 @@ Nothing here is hidden from the front page by accident; it is filed where engine
   with `KHR_coopmat`, AMD driver 32.0.31041.1004, Balanced power plan. Served numbers are
   `llama-server` decode t/s over interleaved launches with a 95% confidence interval per paired cell;
   kernel numbers are `test-backend-ops perf` medians.
+- **Statistics:** the README speed pairs are medians of 16 rounds per arm, except ROCmFP4-FAST, which
+  shows means. Values are copied at the receipt's precision; percents are cut to one decimal, never
+  rounded up.
 - **Memory epochs on that box:** 2x16 GB matched DDR5-5600 until 2026-09-03, then 32+16 GB. The
-  ROCmFP4-FAST, UD-Q3_K_XL and IQ4_XS rows on the README were measured on 2x16 GB in early September
-  2026. The S-X8 and Q4_K_XL rows (2026-09-14/15), the q5_K, q6_K, iq3 and q4_K kernel rows
+  UD-Q3_K_XL and IQ4_XS rows on the README were measured on 2x16 GB on 2026-09-02. The ROCmFP4-FAST
+  A/B started 2026-09-03 13:06; its load line reads 7.69 GiB free at 51.0% RAM load, about 15.7 GiB
+  system-visible, which is the 2x16 GB configuration. The S-X8 and Q4_K_XL rows (2026-09-14/15), the q5_K, q6_K, iq3 and q4_K kernel rows
   (2026-09-17 to 2026-09-24) and the latest-release tie (2026-09-24) were measured on 32+16 GB.
 - **Baselines:** a served "before → after" compares two builds of this fork on the same file and box.
   A kernel row whose off switch restores the upstream path is a comparison with upstream.
@@ -25,9 +29,11 @@ Nothing here is hidden from the front page by accident; it is filed where engine
   `test-backend-ops` counts, the q4_K width-5 split, the iq3_s width-6 marginal and every 890M check.
   The other speed figures come from the protected-win manifest below or from studio benchmark receipts
   that are not shipped here: the README speed table (ROCmFP4-FAST, UD-Q3_K_XL, Q4_K_XL and S-X8 before
-  and after), the S-X8 27B progression (1.83 t/s plain and a drafted line that failed at load on the
-  2026-09-14 build, 5.55 t/s drafted at depth 4 on the 2026-09-15 build), the S-X8 kernel rows, the
+  and after), the S-X8 27B progression (1.831 t/s plain and a drafted line that failed at load on the
+  2026-09-14 build, 5.551 t/s drafted at depth 4 on the 2026-09-15 build), the S-X8 kernel rows, the
   q6_K, q5_K and iq3 width-7 kernel rows.
+- **Bench-tool numbers:** the TQ rows are `llama-bench` tg32 / tg64 results, not served `llama-server`
+  numbers.
 
 ## Protected wins
 
@@ -39,13 +45,13 @@ this repository. Run it for the current count; none of the problems concern a co
 
 | id | State | Measured effect (Radeon 780M unless noted) | Opt out |
 |---|---|---|---|
-| `vulkan-tq-matvec-subgroup` | win | 27B TQ3_4S 0.67 → 1.80 t/s; 0.5B TQ4_1S 44.7 → 126.7, TQ3_1S 45.5 → 107.1; kernel 3.1-3.4x | `GGML_VK_DISABLE_TQ_SUBGROUP=1` |
-| `vulkan-escha-mm-column-block` | win | 3.51x at ncols=64 on escha3 17408x5120; decode held by the threshold | none |
+| `vulkan-tq-matvec-subgroup` | win | `llama-bench`: 27B TQ3_4S tg32 0.67 → 1.80 t/s; 0.5B TQ4_1S tg64 44.69 → 126.65, TQ3_1S 45.46 → 107.10; kernel 3.1-3.4x | `GGML_VK_DISABLE_TQ_SUBGROUP=1` |
+| `vulkan-escha-mm-column-block` | win | 3.50x at ncols=64 on escha3 17408x5120 (135,386 → 38,587 µs); decode held by the threshold | none |
 | `escha-w2-decode-correctness` | correctness fix | Escha-W2 decode from token salad to coherent; weight correlation 0.000 → 0.936 | none |
-| `vulkan-iq4xs-matvec-dedicated` | win | IQ4_XS 27B drafted +0.62 t/s (8/8 cells); Q3_K_XL 27B drafted +0.29, plain +0.74 | none |
-| `vulkan-iq3s-matvec-tpb16-union-gate` | win | Q3_K_XL 27B drafted 8.37 → 9.27 t/s (+10.8%, 8/8); kernel +35% at width 3 | none |
-| `vulkan-rocmfp4-fast-q8_1-mmvq` | win, opt-in | ROCmFP4-FAST 27B drafted 7.50 → 9.52 t/s (+26.9%, 8/8); plain and prefill tied. Default stays off until an adversarial test at widths 3 and 5 clears a numerical residual | `GGML_ARIFI_ROCMFP4_MMVQ` unset |
-| `vulkan-fa-dequant-kv-runtime-gate` | switch over upstream behaviour | plain prefill +8.1% with the scratch copy ON vs OFF; default = upstream (ON) | `GGML_ARIFI_FA_DEQUANT_KV=0` |
+| `vulkan-iq4xs-matvec-dedicated` | win | IQ4_XS 27B drafted +0.6167 t/s mean paired difference (8/8 cells); Q3_K_XL 27B drafted +0.293, plain +0.742 | none |
+| `vulkan-iq3s-matvec-tpb16-union-gate` | win | Q3_K_XL 27B drafted 8.367 → 9.268 t/s medians (+10.7%, 8/8); kernel +35% at width 3 | none |
+| `vulkan-rocmfp4-fast-q8_1-mmvq` | win, opt-in | ROCmFP4-FAST 27B drafted 7.498 → 9.518 t/s means (+26.9%, 8/8); plain and prefill tied. Default stays off until an adversarial test at widths 3 and 5 clears a numerical residual | `GGML_ARIFI_ROCMFP4_MMVQ` unset |
+| `vulkan-fa-dequant-kv-runtime-gate` | switch over upstream behaviour | the knob and its receipt line; same-binary gate OFF vs ON contrast: prefill +0.85% [+0.36%, +1.33%], decode +0.49% [-1.62%, +2.59%]. An earlier +8.08% prefill read did not reproduce. Default = upstream (ON) | `GGML_ARIFI_FA_DEQUANT_KV=0` |
 | `cpu-vnni-repack-g128-kernels` | win, CPU, opt-in | Q2_0_G128 decode 2.01 → 6.69 t/s (3.3x), prompt +45% | `GGML_ARIFI_VNNI_REPACK` unset |
 | `cpu-vnni-repack-dual-residency` | win, CPU, opt-in | decode +22.0% / +23.7% vs mode 0, prefill held | `GGML_ARIFI_VNNI_REPACK` unset |
 | `cpu-vnni-repack-default-off` | decision | off by default on Vulkan builds: on, it costs 77-88% prompt to gain 20-28% decode | `GGML_ARIFI_VNNI_REPACK=1` |
@@ -91,8 +97,10 @@ the draft-checkpoint crash fix; the Q2_0_G128 Vulkan port.
   outputs degenerate, against 6.59 t/s clean for a fixed cap of 3.
 - **Drafter precision:** a Q8_0 drafter is no better than Q4_K_M (Q4_K_XL tie, GSQ -3%).
 - **iq4_xs MMVQ route** ships opt-in (`GGML_ARIFI_IQ4XS_MMVQ=route`): greedy output diverged on one file.
-- **iq3 sign hoist** is flat on the 780M (0.99-1.01). It ships on everywhere because drivers that do not
-  hoist the select themselves gain from it.
+- **iq3 sign hoist** is flat on the 780M (paired ratios 0.991-1.013) and bit-identical to the inherited
+  loop. It ships on for every device, with no device gate, for drivers that do not hoist the select
+  themselves; it compiles to 349 instructions per column against 1229. `GGML_ARIFI_IQ3_MMVQ=legacy`
+  restores the inherited loop.
 - **thecodacus host-transfer prefetch** measured inert on unified memory; its +64.5% prefill belongs to the
   host-offloaded `-cmoe` placement it was written for. Off by default on unified-memory machines.
 - **DSpark** fell from 7.89 to 4.27 t/s (0.54x) on the 780M. Off.
@@ -101,6 +109,12 @@ the draft-checkpoint crash fix; the Q2_0_G128 Vulkan port.
   better trade on this box.
 - **MTP is model-dependent.** A 31B root-MTP model went 1.8 → 9.4 t/s and Gemma-4-26B-A4B 29.3 → 37.3; a
   Qwen3.5 MoE lost to plain Q4_0 (22.8 vs 29.2).
+- **S-X8 plain on the drafted A/B:** the A/B that gave the S-X8 drafted gain (2026-09-14, 3.334 → 4.475
+  t/s) read plain decode 1.995 → 1.705 t/s on the same two builds (medians, 0 of 8 cells). The README plain
+  pair comes from the earlier A/B; the cause of this plain loss is not separated.
+- **MoE expert cache on this box:** with the experts forced off the GPU (`-ncmoe 48`) on a 35B-A3B model,
+  the Vulkan cache read 7.960 t/s against 8.875 with the cache off (medians, -10.3%); the same model fully
+  GPU-resident ran 20.517 t/s. On one memory pool the cache has no residency problem to solve.
 - **Windows IOCP expert reads:** direction unresolved; the test model's experts mostly fit in cache.
 - **Hot-expert RAM cache** (`MAX_N_CACHED`): unmeasured. **Standalone expert prefetch cap:** inconclusive.
 - **Power plan:** a "performance" plan cut GPU-resident decode from 29.0 to 11.2 t/s; every default was
