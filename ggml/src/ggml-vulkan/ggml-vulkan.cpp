@@ -6122,8 +6122,17 @@ vk_device ggml_vk_get_device(size_t idx) {
                 if (sxn != nullptr && *sxn) {
                     device->sx8_cm1_min_n = (uint32_t) atoi(sxn);
                 }
-                fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 roles: %s, min n: %u [GGML_ARIFI_SX8_CM1_ROLES / _MIN_N]\n",
-                        sxr != nullptr ? sxr : "all", device->sx8_cm1_min_n);
+                const char * sx2 = getenv("GGML_ARIFI_SX8_CM1_2D");
+                for (const char * p = sx2; p != nullptr && *p; ) {
+                    const char * e = strchr(p, ',');
+                    const size_t n = e ? (size_t) (e - p) : strlen(p);
+                    if (n > 0) {
+                        device->sx8_cm1_2d_roles.insert(std::string(p, n));
+                    }
+                    p = e ? e + 1 : nullptr;
+                }
+                fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 roles: %s, min n: %u, two-digit roles: %s [GGML_ARIFI_SX8_CM1_ROLES / _MIN_N / _2D]\n",
+                        sxr != nullptr ? sxr : "all", device->sx8_cm1_min_n, sx2 != nullptr ? sx2 : "none");
                 const char * f32a = getenv("GGML_ARIFI_F32ACC");
                 for (const char * p = f32a; p != nullptr && *p; ) {
                     const char * e = strchr(p, ',');
@@ -7926,6 +7935,26 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
                     d_bytes % ctx->device->properties.limits.minStorageBufferOffsetAlignment == 0;
         if (ctx->device->q8_0_cm1_roles_logged.insert(role).second) {
             fprintf(stderr, "ggml_vulkan: Q8_0 role %s (%u rows): %s\n", role.c_str(), (uint32_t) ne01, two_digit ? "INT8x2" : mmp_map ? "INT8" : "FLOAT");
+        }
+    }
+    // lane sx8-int8 stage 10 fix knob: two-digit activations (q1 + residual q2, lane-296 R3 route) for listed S-X8 roles
+    // ("all" = every role). Exact per-pass integer sums keep the min term right in both passes. Default empty.
+    if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_SX8 && mmp_map != nullptr && !ctx->device->sx8_cm1_2d_roles.empty()) {
+        std::string role = src0->name;
+        if (role.rfind("blk.", 0) == 0 && role.find('.', 4) != std::string::npos) {
+            role = role.substr(role.find('.', 4) + 1);
+        }
+        const size_t w = role.rfind(".weight");
+        if (w != std::string::npos) {
+            role = role.substr(0, w);
+        }
+        const auto & r2 = ctx->device->sx8_cm1_2d_roles;
+        const uint64_t d_bytes = sizeof(float) * ggml_nelements(dst);
+        two_digit = (r2.count("all") > 0 || r2.count(role) > 0) &&
+                    stride_d == ne01 && ne21 == ne11 && ggml_is_contiguous(dst) &&
+                    d_bytes % ctx->device->properties.limits.minStorageBufferOffsetAlignment == 0;
+        if (ctx->device->q8_0_cm1_roles_logged.insert("sx8-2d:" + role + (two_digit ? ":2" : ":1")).second) {
+            fprintf(stderr, "ggml_vulkan: S-X8 role %s (%u rows, n=%u): %s\n", role.c_str(), (uint32_t) ne01, (uint32_t) ne11, two_digit ? "INT8x2" : "INT8");
         }
     }
     if (mmp_map == nullptr) {

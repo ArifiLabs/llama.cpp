@@ -1325,6 +1325,8 @@ struct vk_device_struct {
     // and the roles that take it (empty = all; measuring tool for per-role quality) [GGML_ARIFI_SX8_CM1_ROLES].
     uint32_t sx8_cm1_min_n = 0;
     std::set<std::string> sx8_cm1_roles;
+    // lane sx8-int8 stage 10 fix knob: S-X8 roles on two-digit activations ("all" = every role) [GGML_ARIFI_SX8_CM1_2D].
+    std::set<std::string> sx8_cm1_2d_roles;
     // arifi lane-296 N11: coopmat1 f32->f16 B conversion. 0 = auto (only when a {type,F16} pipeline
     // exists and ne11 >= cm1_f16b_min_n), 1 = upstream (always), 2 = never (r86i f32-B kernel).
     uint32_t cm1_f16b_mode = 0;
