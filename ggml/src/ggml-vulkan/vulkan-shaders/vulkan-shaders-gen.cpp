@@ -737,6 +737,9 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
         };
         string_to_spv(shader_name + "_sx8_q8_1", "mul_mmq_cm1.comp", merge_maps(base_dict, sx8_cm1_dict), fp16, coopmat, coopmat2, f16acc);
         string_to_spv(shader_name + "_sx8red_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_CM1_RED", "1"}}), fp16, coopmat, coopmat2, f16acc);
+        // attempt E: 16-value activation scales (SX8_H16), and its RED twin.
+        string_to_spv(shader_name + "_sx8h_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_H16", "1"}}), fp16, coopmat, coopmat2, f16acc);
+        string_to_spv(shader_name + "_sx8hred_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_H16", "1"}, {"SX8_CM1_RED", "1"}}), fp16, coopmat, coopmat2, f16acc);
     }
 
     // TurboQuant weight types, ROTATED matmul.

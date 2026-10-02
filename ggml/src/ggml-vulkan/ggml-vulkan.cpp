@@ -1656,6 +1656,9 @@ static bool ggml_vk_matmul_cm1_int_shmem_support(const vk_device& device, const 
     total += BN * BK_STEP * (uint32_t)sizeof(float);     // buf_b_d
     if (has_dm) {
         total += BN * BK_STEP * (src0_type == GGML_TYPE_SX8 ? 2u : 1u) * (uint32_t)sizeof(float); // buf_b_s
+        if (src0_type == GGML_TYPE_SX8 && device->sx8_cm1_h16) {
+            total += BN * BK_STEP * 2u * (uint32_t)sizeof(float);  // buf_b_dh (attempt E)
+        }
     }
     if (has_kvalues) {
         total += 16u * (uint32_t)sizeof(int8_t);         // cm1_kvalues[16]
@@ -2759,13 +2762,18 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             if (!rdna4) { cm1_create_mmq({GGML_TYPE_Q5_K, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,   "matmul_q5_k_q8_1",   matmul_q5_k_q8_1_cm1_len,   matmul_q5_k_q8_1_cm1_data,   sizeof(vk_mat_mat_push_constants), 3); }
             cm1_create_mmq({GGML_TYPE_Q6_K,   GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int_k, "matmul_q6_k_q8_1",   matmul_q6_k_q8_1_cm1_len,   matmul_q6_k_q8_1_cm1_data,   sizeof(vk_mat_mat_push_constants), 3);
             if (!rdna4) { cm1_create_mmq({GGML_TYPE_NVFP4, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int_k, "matmul_nvfp4_q8_1",  matmul_nvfp4_q8_1_cm1_len,  matmul_nvfp4_q8_1_cm1_data,  sizeof(vk_mat_mat_push_constants), 3); }
+            // attempt E: GGML_ARIFI_SX8_CM1_H16=1 loads the per-half-scale kernel (needs int8 coopmat K == 16).
+            const bool h16 = sx8_cm1 && device->sx8_cm1_h16;
             if (sx8_cm1) {
-                cm1_create_mmq({GGML_TYPE_SX8, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int, sx8_cm1_red ? "matmul_sx8red_q8_1" : "matmul_sx8_q8_1",
-                               sx8_cm1_red ? matmul_sx8red_q8_1_cm1_len : matmul_sx8_q8_1_cm1_len,
-                               sx8_cm1_red ? matmul_sx8red_q8_1_cm1_data : matmul_sx8_q8_1_cm1_data, sizeof(vk_mat_mat_push_constants), 3);
+                cm1_create_mmq({GGML_TYPE_SX8, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,
+                               h16 ? (sx8_cm1_red ? "matmul_sx8hred_q8_1" : "matmul_sx8h_q8_1") : (sx8_cm1_red ? "matmul_sx8red_q8_1" : "matmul_sx8_q8_1"),
+                               h16 ? (sx8_cm1_red ? matmul_sx8hred_q8_1_cm1_len : matmul_sx8h_q8_1_cm1_len) : (sx8_cm1_red ? matmul_sx8red_q8_1_cm1_len : matmul_sx8_q8_1_cm1_len),
+                               h16 ? (sx8_cm1_red ? matmul_sx8hred_q8_1_cm1_data : matmul_sx8h_q8_1_cm1_data) : (sx8_cm1_red ? matmul_sx8red_q8_1_cm1_data : matmul_sx8_q8_1_cm1_data),
+                               sizeof(vk_mat_mat_push_constants), 3);
             }
-            fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 MMQ: %s [GGML_ARIFI_SX8_CM1%s]\n",
-                    !sx8_cm1 ? "OFF" : sx8_cm1_red ? "ON (RED twin, test control)" : "ON", sx8_cm1_red ? " / _RED" : "");
+            fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 MMQ: %s%s [GGML_ARIFI_SX8_CM1%s / _H16]\n",
+                    !sx8_cm1 ? "OFF" : sx8_cm1_red ? "ON (RED twin, test control)" : "ON", h16 ? ", 16-value activation scales" : "",
+                    sx8_cm1_red ? " / _RED" : "");
         }
 
         GGML_ASSERT(device->subgroup_ballot);
@@ -4166,9 +4174,11 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     if (device->subgroup_clustered && device->subgroup_require_full_support) {
         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1, true, true);
         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_res, "quantize_q8_1_x4_res", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u, device->q8_0_cm1_2d_shift }, 1, true, true);
+        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_h16, "quantize_q8_1_x4_h16", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 0u, 0u, 1u }, 1, true, true);
     } else {
         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1);
         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_res, "quantize_q8_1_x4_res", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u, device->q8_0_cm1_2d_shift }, 1);
+        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_h16, "quantize_q8_1_x4_h16", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 0u, 0u, 1u }, 1);
     }
 
     for (uint32_t i = 0; i < p021_max_gqa_ratio; ++i) {
@@ -6138,6 +6148,12 @@ vk_device ggml_vk_get_device(size_t idx) {
                 }
                 fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 roles: %s, min n: %u, two-digit roles: %s [GGML_ARIFI_SX8_CM1_ROLES / _MIN_N / _2D]\n",
                         sxr != nullptr ? sxr : "all", device->sx8_cm1_min_n, sx2);
+                const char * sxh = getenv("GGML_ARIFI_SX8_CM1_H16");
+                if (sxh != nullptr && sxh[0] == '1') {
+                    device->sx8_cm1_h16 = device->coopmat_int_k == 16;
+                    fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 16-value activation scales: %s [GGML_ARIFI_SX8_CM1_H16]\n",
+                            device->sx8_cm1_h16 ? "ON (replaces two-digit for S-X8)" : "REFUSED (int8 coopmat K != 16)");
+                }
                 const char * f32a = getenv("GGML_ARIFI_F32ACC");
                 for (const char * p = f32a; p != nullptr && *p; ) {
                     const char * e = strchr(p, ',');
@@ -7944,7 +7960,11 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     }
     // lane sx8-int8 stage 10 fix knob: two-digit activations (q1 + residual q2, lane-296 R3 route) for listed S-X8 roles
     // ("all" = every role). Exact per-pass integer sums keep the min term right in both passes. Default empty.
-    if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_SX8 && mmp_map != nullptr && !ctx->device->sx8_cm1_2d_roles.empty()) {
+    const bool sx8_h16 = ctx->device->sx8_cm1_h16 && src0->type == GGML_TYPE_SX8 && mmp_map != nullptr;
+    if (sx8_h16 && ctx->device->q8_0_cm1_roles_logged.insert("sx8-h16:" + std::to_string(ne01) + "x" + std::to_string(ne10)).second) {
+        fprintf(stderr, "ggml_vulkan: S-X8 %s (%u rows, k=%u, n=%u): INT8h16\n", src0->name, (uint32_t) ne01, (uint32_t) ne10, (uint32_t) ne11);
+    }
+    if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_SX8 && mmp_map != nullptr && !ctx->device->sx8_cm1_2d_roles.empty() && !sx8_h16) {
         std::string role = src0->name;
         if (role.rfind("blk.", 0) == 0 && role.find('.', 4) != std::string::npos) {
             role = role.substr(role.find('.', 4) + 1);
@@ -8046,7 +8066,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     GGML_ASSERT(!qy_needs_dequant || to_fp16_vk_1 != nullptr);  // NOLINT
 
     if (quantize_y) {
-        to_q8_1 = ggml_vk_get_quantize_pipeline(ctx, GGML_TYPE_Q8_1);
+        to_q8_1 = sx8_h16 ? ctx->device->pipeline_quantize_q8_1_x4_h16 : ggml_vk_get_quantize_pipeline(ctx, GGML_TYPE_Q8_1);
     }
 
     {
@@ -8162,7 +8182,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
             if (ctx->prealloc_y_need_sync) {
                 ggml_vk_sync_buffers(ctx, subctx);
             }
-            ggml_vk_quantize_q8_1(ctx, subctx, ggml_vk_subbuffer(ctx, d_Qy, qy_buf_offset), ggml_vk_subbuffer(ctx, d_Y, 0), y_ne);
+            ggml_vk_quantize_q8_1_with(ctx, subctx, ggml_vk_subbuffer(ctx, d_Qy, qy_buf_offset), ggml_vk_subbuffer(ctx, d_Y, 0), y_ne, to_q8_1);
             ctx->prealloc_y_last_pipeline_used = to_q8_1.get();
             ctx->prealloc_y_last_tensor_used = src1;
             ctx->prealloc_y_last_k_padded = false;

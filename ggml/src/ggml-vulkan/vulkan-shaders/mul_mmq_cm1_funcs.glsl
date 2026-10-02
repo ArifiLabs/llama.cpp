@@ -561,7 +561,12 @@ struct block_b_prefetch {
 block_b_prefetch block_b_load(uint ib_outer, uint ib_inner, uint loadr) {
     block_b_prefetch blk;
     blk.qs = data_b[ib_outer].qs[ib_inner * 2 + loadr];
+#if defined(SX8_H16)
+    // attempt E: ds = (d0, d1), one scale per 16-value half; loadr 0/1 is exactly that half.
+    blk.d = loadr == 0 ? data_b[ib_outer].ds[ib_inner].x : data_b[ib_outer].ds[ib_inner].y;
+#else
     blk.d = data_b[ib_outer].ds[ib_inner].x;
+#endif
 #if defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1) || defined(DATA_A_Q4_K) || defined(DATA_A_Q5_K)
     blk.s = data_b[ib_outer].ds[ib_inner].y;
 #endif
@@ -589,6 +594,9 @@ void block_b_to_shmem(block_b_prefetch blk, uint buf_ib, uint ks, uint loadr, bo
         ps += int(q.x) + int(q.y) + int(q.z) + int(q.w);
     }
     buf_b_s[(ks * BN + buf_ib) * 2 + loadr] = float(ps);
+#if defined(SX8_H16)
+    buf_b_dh[(ks * BN + buf_ib) * 2 + loadr] = in_bounds ? float(blk.d) : 0.0f;
+#endif
 #endif
 }
 

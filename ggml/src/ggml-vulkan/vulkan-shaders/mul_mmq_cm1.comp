@@ -109,6 +109,10 @@ shared float buf_b_d[BN * BK_STEP];
 #if defined(DATA_A_SX8)
 // S-X8: exact integer activation sums, one partial per 16-value half block (loadr_b 0/1), not the fp16 ds.y.
 shared float buf_b_s[BN * BK_STEP * 2];
+#if defined(SX8_H16)
+// attempt E: one activation scale per 16-value half block (quantize_q8_1 HALF=1).
+shared float buf_b_dh[BN * BK_STEP * 2];
+#endif
 #elif defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1) || defined(DATA_A_Q4_K) || defined(DATA_A_Q5_K)
 shared float buf_b_s[BN * BK_STEP];
 #endif
@@ -358,6 +362,62 @@ void main() {
                             sums[tile_idx * CM_ELEMS + e] = cm1_accumulate(
                                 sums[tile_idx * CM_ELEMS + e], int(acc[e]),
                                 scale_a[e], nbias_a[e], scale_b_v, 0.0);
+                        }
+                    }
+                }
+            }
+#elif defined(SX8_H16)
+            // attempt E: S-X8 with one B scale per 16-value half. TK == 16 (RDNA3/4 int8 WMMA), so K_SUB == 2 and MMA h
+            // covers exactly half h; each half gets its own int32 accumulator and its own d_b. The min term uses the
+            // exact half sums: m_a * (d0 * s0 + d1 * s1).
+            coopmat<int8_t, gl_ScopeSubgroup, TM, TK, gl_MatrixUseA> cache_a[cms_per_row * K_SUB];
+            coopmat<int8_t, gl_ScopeSubgroup, TK, TN, gl_MatrixUseB> cache_b[cms_per_col * K_SUB];
+
+            [[unroll]] for (uint r = 0; r < cms_per_row; r++) {
+                [[unroll]] for (uint h = 0; h < K_SUB; h++) {
+                    coopMatLoad(cache_a[r * K_SUB + h], buf_a_qs, (a_row0 + r * TM) * QPITCH + ks * (BK / 4) + h * (TK / 4), QPITCH, gl_CooperativeMatrixLayoutRowMajor);
+                }
+            }
+            [[unroll]] for (uint c = 0; c < cms_per_col; c++) {
+                [[unroll]] for (uint h = 0; h < K_SUB; h++) {
+                    coopMatLoad(cache_b[c * K_SUB + h], buf_b_qs, (b_col0 + c * TN) * QPITCH + ks * (BK / 4) + h * (TK / 4), QPITCH, gl_CooperativeMatrixLayoutColumnMajor);
+                }
+            }
+
+            float scale_bh[cms_per_col * K_SUB];
+            float bs[cms_per_col];
+            [[unroll]] for (uint c = 0; c < cms_per_col; c++) {
+                const uint bsi = (ks * BN + b_col0 + c * TN + elem_col0) * 2;
+                [[unroll]] for (uint h = 0; h < K_SUB; h++) {
+                    scale_bh[c * K_SUB + h] = buf_b_dh[bsi + h];
+                }
+                bs[c] = buf_b_dh[bsi] * buf_b_s[bsi] + buf_b_dh[bsi + 1] * buf_b_s[bsi + 1];
+            }
+
+            [[unroll]] for (uint r = 0; r < cms_per_row; r++) {
+                float scale_a[CM_ELEMS];
+                float nbias_a[CM_ELEMS];
+                float ma[CM_ELEMS];
+                [[unroll]] for (uint e = 0; e < CM_ELEMS; e++) {
+                    vec2 dm = buf_a_dm[ks * BM + a_row0 + r * TM + cm_elem_row(e)];
+                    scale_a[e] = dm.x;
+                    if (USE_MAGIC_BIAS) {
+                        nbias_a[e] = -ACC_BIAS_F * scale_a[e];
+                    }
+                    ma[e] = dm.y;
+                }
+
+                [[unroll]] for (uint c = 0; c < cms_per_col; c++) {
+                    const uint tile_idx = r * cms_per_col + c;
+                    [[unroll]] for (uint h = 0; h < K_SUB; h++) {
+                        coopmat<int32_t, gl_ScopeSubgroup, TM, TN, gl_MatrixUseAccumulator> acc =
+                            coopmat<int32_t, gl_ScopeSubgroup, TM, TN, gl_MatrixUseAccumulator>(
+                                USE_MAGIC_BIAS ? ACC_BIAS_BITS : 0);
+                        acc = coopMatMulAdd(cache_a[r * K_SUB + h], cache_b[c * K_SUB + h], acc);
+                        [[unroll]] for (uint e = 0; e < CM_ELEMS; e++) {
+                            sums[tile_idx * CM_ELEMS + e] = cm1_accumulate(
+                                sums[tile_idx * CM_ELEMS + e], int(acc[e]),
+                                scale_a[e], nbias_a[e], scale_bh[c * K_SUB + h], h == 0 ? ma[e] * bs[c] : 0.0);
                         }
                     }
                 }

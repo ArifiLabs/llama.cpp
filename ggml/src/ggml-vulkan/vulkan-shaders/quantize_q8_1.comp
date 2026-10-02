@@ -27,6 +27,9 @@ layout(constant_id = 1) const uint SCALE_F16 = 0;
 layout(constant_id = 2) const uint RESIDUAL = 0;
 // arifi lane-296 R4: residual prescale 2^RES_SHIFT (keeps the second digit's f16 scale out of the subnormal range).
 layout(constant_id = 3) const uint RES_SHIFT = 0;
+// lane sx8-int8 attempt E: 1 = one scale per 16-value half block, ds = (d0, d1). Only the S-X8 H16 cm1 kernel reads it
+// (it sums the int8 activations exactly, so the block sum ds.y is not needed). Not combined with RESIDUAL.
+layout(constant_id = 4) const uint HALF = 0;
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
 layout (binding = 0) readonly buffer A {vec4 data_a[];};
@@ -71,21 +74,34 @@ void quantize(const uint wgid) {
 #ifndef USE_SUBGROUPS
     shmem[tid] = thread_max;
     barrier();
-    [[unroll]] for (uint s = 4; s > 0; s >>= 1) {
-        if (iqs < s) {
+    [[unroll]] for (uint s = HALF != 0 ? 2 : 4; s > 0; s >>= 1) {
+        if ((HALF != 0 ? (iqs & 3) : iqs) < s) {
             shmem[tid] = max(shmem[tid], shmem[tid + s]);
         }
         barrier();
     }
 
-    const float amax = shmem[block_in_wg * 8];
+    const float amax0 = shmem[block_in_wg * 8];
+    const float amax1 = shmem[block_in_wg * 8 + 4];
+    const float amax = HALF != 0 ? ((iqs & 4) != 0 ? amax1 : amax0) : amax0;
 #else
-    const float amax = subgroupClusteredMax(thread_max, 8);
+    float amax;
+    float amax0 = 0.0;
+    float amax1 = 0.0;
+    if (HALF != 0) {
+        const vec2 hm = subgroupClusteredMax(vec2(iqs < 4 ? thread_max : 0.0, iqs < 4 ? 0.0 : thread_max), 8);
+        amax0 = hm.x;
+        amax1 = hm.y;
+        amax = iqs < 4 ? amax0 : amax1;
+    } else {
+        amax = subgroupClusteredMax(thread_max, 8);
+    }
 #endif
 
     // lane-296c: f16 rounding via the same conversion as the ds store below; packHalf2x16 rounds toward zero on
     // RDNA3 (AMD proprietary driver), the f16vec2 store rounds to nearest, so mixing the two leaves a 2^-11 mismatch.
     float d = SCALE_F16 != 0 ? float(f16vec2(vec2(amax / 127.0, 0.0)).x) : amax / 127.0;
+    const vec2 dh = vec2(amax0, amax1) / 127.0;
     float d_inv = d != 0.0 ? 1.0 / d : 0.0;
     vec4 q = round(vals * d_inv);
     if (SCALE_F16 != 0) {
@@ -146,10 +162,11 @@ void quantize(const uint wgid) {
         const float sum = shmem[tid];
 #endif
 
+        const f16vec2 ds_out = HALF != 0 ? f16vec2(dh) : f16vec2(vec2(d, sum * d));
 #ifndef QBLOCK_X4
-        data_b[ib].ds = f16vec2(vec2(d, sum * d));
+        data_b[ib].ds = ds_out;
 #else
-        data_b[ibx4_outer].ds[ibx4_inner] = f16vec2(vec2(d, sum * d));
+        data_b[ibx4_outer].ds[ibx4_inner] = ds_out;
 #endif
     }
 }

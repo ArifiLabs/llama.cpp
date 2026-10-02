@@ -1327,6 +1327,10 @@ struct vk_device_struct {
     std::set<std::string> sx8_cm1_roles;
     // lane sx8-int8 stage 10 fix knob: S-X8 roles on two-digit activations ("all" = every role) [GGML_ARIFI_SX8_CM1_2D].
     std::set<std::string> sx8_cm1_2d_roles;
+    // lane sx8-int8 attempt E: S-X8 cm1 with one activation scale per 16-value half block [GGML_ARIFI_SX8_CM1_H16=1];
+    // replaces the two-digit route for S-X8 while on. Needs coopmat_int_k == 16.
+    bool sx8_cm1_h16 = false;
+    vk_pipeline pipeline_quantize_q8_1_x4_h16;
     // arifi lane-296 N11: coopmat1 f32->f16 B conversion. 0 = auto (only when a {type,F16} pipeline
     // exists and ne11 >= cm1_f16b_min_n), 1 = upstream (always), 2 = never (r86i f32-B kernel).
     uint32_t cm1_f16b_mode = 0;
