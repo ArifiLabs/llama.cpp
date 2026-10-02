@@ -6122,7 +6122,12 @@ vk_device ggml_vk_get_device(size_t idx) {
                 if (sxn != nullptr && *sxn) {
                     device->sx8_cm1_min_n = (uint32_t) atoi(sxn);
                 }
+                // stage 10 default: two-digit on ffn_up only (fix B: KL/top-1/PPL pass on the 27B, one-digit all-roles fails PPL
+                // on one outlier token, two-digit all-roles is slower than float). "none" = one-digit everywhere, "all" = every role.
                 const char * sx2 = getenv("GGML_ARIFI_SX8_CM1_2D");
+                if (sx2 == nullptr) {
+                    sx2 = "ffn_up";
+                }
                 for (const char * p = sx2; p != nullptr && *p; ) {
                     const char * e = strchr(p, ',');
                     const size_t n = e ? (size_t) (e - p) : strlen(p);
@@ -6132,7 +6137,7 @@ vk_device ggml_vk_get_device(size_t idx) {
                     p = e ? e + 1 : nullptr;
                 }
                 fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 roles: %s, min n: %u, two-digit roles: %s [GGML_ARIFI_SX8_CM1_ROLES / _MIN_N / _2D]\n",
-                        sxr != nullptr ? sxr : "all", device->sx8_cm1_min_n, sx2 != nullptr ? sx2 : "none");
+                        sxr != nullptr ? sxr : "all", device->sx8_cm1_min_n, sx2);
                 const char * f32a = getenv("GGML_ARIFI_F32ACC");
                 for (const char * p = f32a; p != nullptr && *p; ) {
                     const char * e = strchr(p, ',');
