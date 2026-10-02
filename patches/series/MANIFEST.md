@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **602**, all non-merge, applied in filename order.
+- Patches: **603**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 602 commit messages, same provenance trailers. Verified, not
+same file contents, same 603 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -681,6 +681,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 600 | `0600-docs-README-speed-table-shows-plain-and-DFlash2-befo.patch` | arifi-fork-base | `a64605fa8` | - | - | docs: README speed table shows plain and DFlash2 before and after with the machine, and a table of the Vulkan support this fork adds |
 | 601 | `0601-docs-README-S-X8-drafted-pair-is-one-A-B-and-the-cap.patch` | arifi-fork-base | `3012a62f1` | - | - | docs: README S-X8 drafted pair is one A/B, and the caption says each pair is one A/B |
 | 602 | `0602-docs-README-S-X8-footnote-names-the-allocator-fix-th.patch` | arifi-fork-base | `9e21e0cf7` | - | - | docs: README S-X8 footnote names the allocator fix; the Vulkan table says retuned for the rewritten upstream shaders |
+| 603 | `0603-docs-README-STATUS-X1-notes-and-NOTICE-state-each-fi.patch` | arifi-fork-base | `4ab5f0d7f` | - | `EXPERT_BUNDLE_PATH` | docs: README, STATUS, X1 notes and NOTICE state each figure at its receipt's precision and correct six overstatements |
 
 ## Measured effect, per patch
 
@@ -1362,6 +1363,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0600-docs-README-speed-table-shows-plain-and-DFlash2-befo.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0601-docs-README-S-X8-drafted-pair-is-one-A-B-and-the-cap.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0602-docs-README-S-X8-footnote-names-the-allocator-fix-th.patch` | UNMEASURED - documents only; no code path is touched. |
+| `0603-docs-README-STATUS-X1-notes-and-NOTICE-state-each-fi.patch` | UNMEASURED - documents only; no code path is touched. |
 
 ## Unclassified
 
