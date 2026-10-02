@@ -725,6 +725,20 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
     }
 #endif
 
+    // lane sx8-int8 stage 10: S-X8 on the int8 coopmat1 MMQ kernel (dense only), plus the planted-RED twin
+    // (SX8_CM1_RED) that test-backend-ops must FAIL when GGML_ARIFI_SX8_CM1_RED=1 selects it.
+    if (!f16acc && coopmat && !coopmat2 && !dot2 && matmul_id_type == MatMulIdType::NONE) {
+        const std::map<std::string, std::string> sx8_cm1_dict = {
+            {"FLOAT_TYPE",   FLOAT_TYPE(1, "sx8")},
+            {"FLOAT_TYPEV2", FLOAT_TYPE(2, "sx8")},
+            {"FLOAT_TYPEV4", FLOAT_TYPE(4, "sx8")},
+            {"FLOAT_TYPEV8", FLOAT_TYPE(8, "sx8")},
+            {"DATA_A_SX8", "1"}, {"D_TYPE", "float"}, {"D_TYPE_VEC4", "vec4"},
+        };
+        string_to_spv(shader_name + "_sx8_q8_1", "mul_mmq_cm1.comp", merge_maps(base_dict, sx8_cm1_dict), fp16, coopmat, coopmat2, f16acc);
+        string_to_spv(shader_name + "_sx8red_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_CM1_RED", "1"}}), fp16, coopmat, coopmat2, f16acc);
+    }
+
     // TurboQuant weight types, ROTATED matmul.
     //
     // Generated explicitly rather than by adding them to type_names, for the

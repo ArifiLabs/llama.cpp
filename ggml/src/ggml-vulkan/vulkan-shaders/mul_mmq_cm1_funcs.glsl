@@ -504,6 +504,48 @@ void block_a_to_shmem(block_a_prefetch blk, uint buf_ib, uint ks, uint loadr) {
     }
 }
 
+#elif defined(DATA_A_SX8)
+
+// S-X8 v4.3 (type 57), lane sx8-int8 stage 10. With q = (hi-lo)/4 and u = q*0.015873 the four
+// strategies are step = u*{4,1,1,2}, rlo = lo + q*{0,0,3,1} (dequantize_row_sx8), so every block is
+// exactly w = lo + u*L with L = 63*o + m*lv in [0,252]: one (d,m) pair per 32, like Q4_1. Stored as
+// L ^ 0x80 = L - 128 (int8), so d = u and m = lo + 128u (about the block midpoint, small min term).
+// hi == lo: the reference clamps step to 1e-10; u = 0 gives w = lo, off by at most 6.3e-9.
+// SX8_CM1_RED (planted error, test control only): m = lo, so every output is off by 128u * sum(b).
+
+struct block_a_prefetch {
+    uint32_t qs;
+    f16vec2 lohi;
+};
+
+block_a_prefetch block_a_load(uint ib, uint loadr) {
+    // LOAD_VEC_A = 4: loadr 0..7 holds weights 4*loadr..4*loadr+3, all in sub-block loadr >> 1.
+    block_a_prefetch blk;
+    const uint qh_pair = uint(data_a[ib].qh[loadr * 2]) | (uint(data_a[ib].qh[loadr * 2 + 1]) << 8);
+    const uint lv4 = sx8_levels4(qh_pair, uint(data_a[ib].ql[loadr]));
+    const uint s = (uint(data_a[ib].config) >> ((loadr >> 1) * 2u)) & 3u;
+    const uint sh  = s == 0u ? 2u : (s == 3u ? 1u : 0u);
+    const uint off = s == 2u ? 189u : (s == 3u ? 63u : 0u);
+    blk.qs = ((lv4 << sh) + off * 0x01010101u) ^ 0x80808080u;
+    blk.lohi = f16vec2(data_a[ib].dmin, data_a[ib].dmax);
+    return blk;
+}
+
+void block_a_to_shmem(block_a_prefetch blk, uint buf_ib, uint ks, uint loadr) {
+    buf_a_qs[buf_ib * QPITCH + ks * (BK / 4) + loadr] = blk.qs;
+
+    if (loadr == 0) {
+        const float lo = float(blk.lohi.x);
+        const float hi = float(blk.lohi.y);
+        const float u = hi > lo ? (hi - lo) * 0.25 * 0.015873 : 0.0;
+#if defined(SX8_CM1_RED)
+        buf_a_dm[ks * BM + buf_ib] = vec2(u, lo);
+#else
+        buf_a_dm[ks * BM + buf_ib] = vec2(u, fma(128.0, u, lo));
+#endif
+    }
+}
+
 #endif
 
 // ===== B-side: load and store =====
@@ -539,6 +581,15 @@ void block_b_to_shmem(block_b_prefetch blk, uint buf_ib, uint ks, uint loadr, bo
         buf_b_s[ks * BN + buf_ib] = in_bounds ? float(blk.s) : 0.0f;
 #endif
     }
+#if defined(DATA_A_SX8)
+    // Exact sum of this thread's 16 int8 activations (|sum| <= 2032, exact in f32); the kernel multiplies by d.
+    int ps = 0;
+    [[unroll]] for (uint i = 0; i < 4; i++) {
+        const i8vec4 q = unpack8(int32_t(v[i]));
+        ps += int(q.x) + int(q.y) + int(q.z) + int(q.w);
+    }
+    buf_b_s[(ks * BN + buf_ib) * 2 + loadr] = float(ps);
+#endif
 }
 
 // ===== Framework macros =====

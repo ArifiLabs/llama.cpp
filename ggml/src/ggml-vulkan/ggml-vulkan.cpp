@@ -1626,6 +1626,7 @@ static bool ggml_vk_matmul_cm1_int_shmem_support(const vk_device& device, const 
             break;
         case GGML_TYPE_Q4_1: case GGML_TYPE_Q5_1:
         case GGML_TYPE_Q4_K: case GGML_TYPE_Q5_K:
+        case GGML_TYPE_SX8:  // lane sx8-int8 stage 10: (d,m) pair, buf_b_s holds two exact partial sums
             has_dm = true;                          break;
         case GGML_TYPE_IQ4_NL: case GGML_TYPE_IQ4_XS: case GGML_TYPE_MXFP4:
             has_kvalues = true;                     break;
@@ -1654,7 +1655,7 @@ static bool ggml_vk_matmul_cm1_int_shmem_support(const vk_device& device, const 
                     : (BM * BK_STEP * KSCALES * (uint32_t)sizeof(float)); // buf_a_d
     total += BN * BK_STEP * (uint32_t)sizeof(float);     // buf_b_d
     if (has_dm) {
-        total += BN * BK_STEP * (uint32_t)sizeof(float); // buf_b_s
+        total += BN * BK_STEP * (src0_type == GGML_TYPE_SX8 ? 2u : 1u) * (uint32_t)sizeof(float); // buf_b_s
     }
     if (has_kvalues) {
         total += 16u * (uint32_t)sizeof(int8_t);         // cm1_kvalues[16]
@@ -2397,6 +2398,17 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         const char * s = getenv("GGML_ARIFI_MMQ_UNDER_COOPMAT");
         return s != nullptr && s[0] == '1';
     }();
+    // lane sx8-int8 stage 10: S-X8 x Q8_1 on the int8 coopmat1 kernel, default ON on RDNA3/4 int-coopmat devices.
+    // GGML_ARIFI_SX8_CM1=0 leaves S-X8 on the float path (same-binary A/B arm). GGML_ARIFI_SX8_CM1_RED=1 loads the
+    // planted-error twin (m = lo): a test control that test-backend-ops must FAIL, never a serving setting.
+    const bool sx8_cm1 = [] {
+        const char * s = getenv("GGML_ARIFI_SX8_CM1");
+        return !(s != nullptr && s[0] == '0');
+    }();
+    const bool sx8_cm1_red = [] {
+        const char * s = getenv("GGML_ARIFI_SX8_CM1_RED");
+        return s != nullptr && s[0] == '1';
+    }();
 
     // stderr for the same reason the q5_k/q6_k receipts use it: llama-server drops ggml
     // INFO records at the default verbosity and these two lines have to be readable in
@@ -2703,9 +2715,9 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 // lane-296: upstream 70c4e1582 registers Q8_0 x Q8_1 on RDNA3/4 below with its int8
                 // coopmat1 kernel. Registering the same key here first would shadow it (first lazy
                 // claim wins) with a different tile list, so Q8_0 is left to upstream there.
-                if (type == GGML_TYPE_Q8_0 && device->coopmat_int_support &&
+                if ((type == GGML_TYPE_Q8_0 || (type == GGML_TYPE_SX8 && sx8_cm1)) && device->coopmat_int_support &&
                     (device->architecture == vk_device_architecture::AMD_RDNA3 || device->architecture == vk_device_architecture::AMD_RDNA4)) {
-                    continue;
+                    continue;  // stage 10: the SX8 cm1 kernel below owns {SX8, Q8_1} unless GGML_ARIFI_SX8_CM1=0
                 }
                 auto tc = filter_tc(tc_mmq_int_cm, type, false, true);
                 if (!tc.empty()) create_mm_pipelines({type, GGML_TYPE_Q8_1, false, false}, tc, name, len, data, sizeof(vk_mat_mat_push_constants), 3, identity, false, false, 0, false);
@@ -2747,6 +2759,13 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             if (!rdna4) { cm1_create_mmq({GGML_TYPE_Q5_K, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,   "matmul_q5_k_q8_1",   matmul_q5_k_q8_1_cm1_len,   matmul_q5_k_q8_1_cm1_data,   sizeof(vk_mat_mat_push_constants), 3); }
             cm1_create_mmq({GGML_TYPE_Q6_K,   GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int_k, "matmul_q6_k_q8_1",   matmul_q6_k_q8_1_cm1_len,   matmul_q6_k_q8_1_cm1_data,   sizeof(vk_mat_mat_push_constants), 3);
             if (!rdna4) { cm1_create_mmq({GGML_TYPE_NVFP4, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int_k, "matmul_nvfp4_q8_1",  matmul_nvfp4_q8_1_cm1_len,  matmul_nvfp4_q8_1_cm1_data,  sizeof(vk_mat_mat_push_constants), 3); }
+            if (sx8_cm1) {
+                cm1_create_mmq({GGML_TYPE_SX8, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int, sx8_cm1_red ? "matmul_sx8red_q8_1" : "matmul_sx8_q8_1",
+                               sx8_cm1_red ? matmul_sx8red_q8_1_cm1_len : matmul_sx8_q8_1_cm1_len,
+                               sx8_cm1_red ? matmul_sx8red_q8_1_cm1_data : matmul_sx8_q8_1_cm1_data, sizeof(vk_mat_mat_push_constants), 3);
+            }
+            fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 MMQ: %s [GGML_ARIFI_SX8_CM1%s]\n",
+                    !sx8_cm1 ? "OFF" : sx8_cm1_red ? "ON (RED twin, test control)" : "ON", sx8_cm1_red ? " / _RED" : "");
         }
 
         GGML_ASSERT(device->subgroup_ballot);
@@ -6090,6 +6109,21 @@ vk_device ggml_vk_get_device(size_t idx) {
                     fprintf(stderr, "ggml_vulkan: Q8_0 int8 cm1 two-digit roles: %s, second-digit prescale 2^%u [GGML_ARIFI_Q8_0_CM1_2D / _2D_SHIFT]\n",
                             q82, device->q8_0_cm1_2d_shift);
                 }
+                const char * sxr = getenv("GGML_ARIFI_SX8_CM1_ROLES");
+                for (const char * p = sxr; p != nullptr && *p; ) {
+                    const char * e = strchr(p, ',');
+                    const size_t n = e ? (size_t) (e - p) : strlen(p);
+                    if (n > 0) {
+                        device->sx8_cm1_roles.insert(std::string(p, n));
+                    }
+                    p = e ? e + 1 : nullptr;
+                }
+                const char * sxn = getenv("GGML_ARIFI_SX8_CM1_MIN_N");
+                if (sxn != nullptr && *sxn) {
+                    device->sx8_cm1_min_n = (uint32_t) atoi(sxn);
+                }
+                fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 roles: %s, min n: %u [GGML_ARIFI_SX8_CM1_ROLES / _MIN_N]\n",
+                        sxr != nullptr ? sxr : "all", device->sx8_cm1_min_n);
                 const char * f32a = getenv("GGML_ARIFI_F32ACC");
                 for (const char * p = f32a; p != nullptr && *p; ) {
                     const char * e = strchr(p, ',');
@@ -7842,8 +7876,27 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     // IQ4_XS and Q6_K at the long-k ffn_down shape (k >= 2m) keep int8, 1.05-2.0x over f32-B at n=9..32.
     const bool cm1_int_down = ctx->device->cm1_int_smalln_down &&
                               (src0->type == GGML_TYPE_IQ4_XS || src0->type == GGML_TYPE_Q6_K) && ne10 >= 2 * ne01;
-    if (ctx->device->coopmat_int_support && ne11 < ctx->device->cm1_int_min_n && !cm1_int_down) {
+    if (ctx->device->coopmat_int_support && ne11 < ctx->device->cm1_int_min_n && !cm1_int_down && src0->type != GGML_TYPE_SX8) {
         mmp_map = nullptr;
+    }
+    // lane sx8-int8 stage 10: S-X8 has its own width gate (default every width) and role selector, with a receipt per role.
+    if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_SX8) {
+        std::string role = src0->name;
+        if (role.rfind("blk.", 0) == 0 && role.find('.', 4) != std::string::npos) {
+            role = role.substr(role.find('.', 4) + 1);
+        }
+        const size_t w = role.rfind(".weight");
+        if (w != std::string::npos) {
+            role = role.substr(0, w);
+        }
+        const auto & sr = ctx->device->sx8_cm1_roles;
+        if ((uint32_t) ne11 < ctx->device->sx8_cm1_min_n || (!sr.empty() && sr.count(role) == 0)) {
+            mmp_map = nullptr;
+        }
+        const char * st = mmp_map ? "INT8" : "FLOAT";
+        if (ctx->device->q8_0_cm1_roles_logged.insert("sx8:" + role + ":" + st).second) {
+            fprintf(stderr, "ggml_vulkan: S-X8 role %s (%u rows, n=%u): %s\n", role.c_str(), (uint32_t) ne01, (uint32_t) ne11, st);
+        }
     }
     // arifi lane-296 night: Q8_0 x Q8_1 int8 cm1 only for weights with >= q8_0_cm1_min_m output rows
     // (UINT32_MAX = off, float mul_mm = r86i numerics; 0 = upstream, every Q8_0 matmul).

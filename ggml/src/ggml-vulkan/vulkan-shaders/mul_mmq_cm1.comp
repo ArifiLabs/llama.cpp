@@ -97,7 +97,7 @@ layout (constant_id = 11) const uint DEVICE_ARCH = 0; // vk_device_architecture 
 const uint QPITCH = BK_STEP * (BK / 4) + 4;
 
 shared uint32_t buf_a_qs[BM * QPITCH];
-#if defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1) || defined(DATA_A_Q4_K) || defined(DATA_A_Q5_K)
+#if defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1) || defined(DATA_A_Q4_K) || defined(DATA_A_Q5_K) || defined(DATA_A_SX8)
 shared vec2 buf_a_dm[BM * BK_STEP];   // .x = d, .y = m
 #else
 shared float buf_a_d[BM * BK_STEP * KSCALES];
@@ -106,7 +106,10 @@ shared float buf_a_d[BM * BK_STEP * KSCALES];
 shared uint32_t buf_b_qs[BN * QPITCH];
 shared float buf_b_d[BN * BK_STEP];
 
-#if defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1) || defined(DATA_A_Q4_K) || defined(DATA_A_Q5_K)
+#if defined(DATA_A_SX8)
+// S-X8: exact integer activation sums, one partial per 16-value half block (loadr_b 0/1), not the fp16 ds.y.
+shared float buf_b_s[BN * BK_STEP * 2];
+#elif defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1) || defined(DATA_A_Q4_K) || defined(DATA_A_Q5_K)
 shared float buf_b_s[BN * BK_STEP];
 #endif
 
@@ -359,7 +362,7 @@ void main() {
                     }
                 }
             }
-#elif defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1) || defined(DATA_A_Q4_K) || defined(DATA_A_Q5_K)
+#elif defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1) || defined(DATA_A_Q4_K) || defined(DATA_A_Q5_K) || defined(DATA_A_SX8)
             // Preload all A/B fragments up front (ILP).
             coopmat<int8_t, gl_ScopeSubgroup, TM, TK, gl_MatrixUseA> cache_a[cms_per_row * K_SUB];
             coopmat<int8_t, gl_ScopeSubgroup, TK, TN, gl_MatrixUseB> cache_b[cms_per_col * K_SUB];
@@ -379,7 +382,12 @@ void main() {
             float bs[cms_per_col];
             [[unroll]] for (uint c = 0; c < cms_per_col; c++) {
                 scale_b[c] = buf_b_d[ks * BN + b_col0 + c * TN + elem_col0];
+#if defined(DATA_A_SX8)
+                const uint bsi = (ks * BN + b_col0 + c * TN + elem_col0) * 2;
+                bs[c] = scale_b[c] * (buf_b_s[bsi] + buf_b_s[bsi + 1]);
+#else
                 bs[c] = float(buf_b_s[ks * BN + b_col0 + c * TN + elem_col0]);
+#endif
             }
 
             [[unroll]] for (uint r = 0; r < cms_per_row; r++) {

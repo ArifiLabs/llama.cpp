@@ -11291,6 +11291,18 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         }
     }
 
+    // lane sx8-int8 stage 10: S-X8 on the int8 coopmat1 kernel, every mat-mat width class. The 27B FFN shapes
+    // (gate/up 17408x5120, down 5120x17408) at n = 9 (first mat-mat width), 16/17 (tile edge), 47/48 (the old
+    // cm1 width gate), 77 (ragged), 512 (prefill chunk); ragged m (4095) and a 33-block k tail (1056); the output
+    // head at n = 48. The CPU reference also runs S-X8 x q8_1 (ggml_vec_dot_sx8_q8_1), so a wrong (d,m) remap,
+    // a wrong level packing or a missing min term fails the NMSE gate. RED control: GGML_ARIFI_SX8_CM1_RED=1.
+    for (int n : {9, 16, 17, 47, 48, 77, 512}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 17408, n,  5120, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32,  5120, n, 17408, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32,  4095, n,  1056, {1, 1}, {1, 1}));
+    }
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 248320, 48, 5120, {1, 1}, {1, 1}));
+
     // ArifiLabs lane-236 / R48c: Q6_K mat-vec at the three real 27B decode shapes, n = 1..8, as
     // CORRECTNESS cases. Q6_K is 19.7% of the interactive Q4_K_XL 27B bytes (3.19 GiB, 56 tensors)
     // and mul_mat_vec_q6_k.comp gained a second specialization constant (activation hoist +

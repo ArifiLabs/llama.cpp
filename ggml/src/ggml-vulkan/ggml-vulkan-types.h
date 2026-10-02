@@ -1321,6 +1321,10 @@ struct vk_device_struct {
     uint32_t q8_0_cm1_2d_shift = 8;
     // arifi lane-296 S8: float-path matmuls of these weight roles ("all" = every weight) accumulate in f32 [GGML_ARIFI_F32ACC].
     std::set<std::string> f32acc_roles;
+    // lane sx8-int8 stage 10: S-X8 int8 cm1 from this width (default 0 = every mat-mat width) [GGML_ARIFI_SX8_CM1_MIN_N],
+    // and the roles that take it (empty = all; measuring tool for per-role quality) [GGML_ARIFI_SX8_CM1_ROLES].
+    uint32_t sx8_cm1_min_n = 0;
+    std::set<std::string> sx8_cm1_roles;
     // arifi lane-296 N11: coopmat1 f32->f16 B conversion. 0 = auto (only when a {type,F16} pipeline
     // exists and ne11 >= cm1_f16b_min_n), 1 = upstream (always), 2 = never (r86i f32-B kernel).
     uint32_t cm1_f16b_mode = 0;
