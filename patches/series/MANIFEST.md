@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b10825`, `9e0e220594af405a62835dc3a27495729fd8506b`
-- Patches: **604**, all non-merge, applied in filename order.
+- Patches: **605**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 604 commit messages, same provenance trailers. Verified, not
+same file contents, same 605 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -683,6 +683,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 602 | `0602-docs-README-S-X8-footnote-names-the-allocator-fix-th.patch` | arifi-fork-base | `9e21e0cf7` | - | - | docs: README S-X8 footnote names the allocator fix; the Vulkan table says retuned for the rewritten upstream shaders |
 | 603 | `0603-docs-README-STATUS-X1-notes-and-NOTICE-state-each-fi.patch` | arifi-fork-base | `4ab5f0d7f` | - | `EXPERT_BUNDLE_PATH` | docs: README, STATUS, X1 notes and NOTICE state each figure at its receipt's precision and correct six overstatements |
 | 604 | `0604-docs-README-placement-and-other-GPU-lines-state-thei.patch` | arifi-fork-base | `f327f9566` | - | - | docs: README placement and other-GPU lines state their scope; STATUS dates the 2x16 GB speed pairs from their own load lines |
+| 605 | `0605-docs-README-gain-formula-STATUS-driver-and-memory-ep.patch` | arifi-fork-base | `84f661865` | - | - | docs: README gain formula, STATUS driver and memory-epoch lines say only what the receipts show; licence notes drop internal labels |
 
 ## Measured effect, per patch
 
@@ -1366,6 +1367,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0602-docs-README-S-X8-footnote-names-the-allocator-fix-th.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0603-docs-README-STATUS-X1-notes-and-NOTICE-state-each-fi.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0604-docs-README-placement-and-other-GPU-lines-state-thei.patch` | UNMEASURED - documents only; no code path is touched. |
+| `0605-docs-README-gain-formula-STATUS-driver-and-memory-ep.patch` | UNMEASURED - documents only; no code path is touched. |
 
 ## Unclassified
 

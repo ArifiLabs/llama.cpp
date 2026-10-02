@@ -1,0 +1,192 @@
+From 84f66186545356228f697a435c35bfc5731010d6 Mon Sep 17 00:00:00 2001
+From: ArifiLabs <arifilabs@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 21:10:06 -0400
+Subject: [PATCH] docs: README gain formula, STATUS driver and memory-epoch
+ lines say only what the receipts show; licence notes drop internal labels
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The README gives the gain formula in full: (after ÷ before - 1) × 100, cut to one decimal. STATUS no longer names
+one AMD driver for all historical 780M runs, because the run receipts do not reconcile the versions. The STATUS
+memory-epoch line states the 2x16 GB configuration of the early-September runs as an inference from their load lines,
+and says the configuration register's transition times conflict with those receipts.
+
+licenses/README.md and the X1 release notes drop internal work labels and local paths. The licence facts, dates,
+commits and sources are unchanged.
+
+Origin: ArifiLabs (native) - release documents for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ README.md                             |  2 +-
+ docs/arifi/STATUS.md                  | 10 +++------
+ docs/release/RELEASE-NOTES-r86i-x1.md |  4 ++--
+ licenses/README.md                    | 30 +++++++++++++--------------
+ 4 files changed, 21 insertions(+), 25 deletions(-)
+
+diff --git a/README.md b/README.md
+index b8a4af4a2..fafec3b95 100644
+--- a/README.md
++++ b/README.md
+@@ -21,7 +21,7 @@ Each before → after pair is one A/B on one file: this fork's build without the
+ it (September 2026, `llama-server`, DFlash2 drafting 2 tokens per step). Values are server decode t/s over
+ 16 rounds per arm, copied from the receipts: **medians**, except ROCmFP4-FAST, which shows **means**, as
+ its protected-win record states. On the Q4_K_XL and S-X8 rows, the plain and DFlash2 pairs are separate
+-A/Bs. Percent = after ÷ before, cut to one decimal and never rounded up; "tie" = the paired confidence
++A/Bs. Gain (%) = (after ÷ before - 1) × 100, cut to one decimal and never rounded up; "tie" = the paired confidence
+ interval includes zero. File sizes are in GB (10⁹ bytes) from each file's byte count.
+ ¹ Turn on with `GGML_ARIFI_ROCMFP4_MMVQ=1`.
+ ² The build before these kernels could not load this file with a drafter; a per-heap allocator fix cured it.
+diff --git a/docs/arifi/STATUS.md b/docs/arifi/STATUS.md
+index 778f383c6..771aa6e0b 100644
+--- a/docs/arifi/STATUS.md
++++ b/docs/arifi/STATUS.md
+@@ -7,17 +7,13 @@ Nothing here is hidden from the front page by accident; it is filed where engine
+ ## How the numbers were taken
+ 
+ - **Speed:** Beelink SER7 Pro, Ryzen 7 7840HS, Radeon 780M (RDNA3, gfx1103), Windows 11, Vulkan
+-  with `KHR_coopmat`, AMD driver 32.0.31041.1004, Balanced power plan. Served numbers are
++  with `KHR_coopmat` and the Balanced power plan. Driver versions for the historical 780M runs are not reconciled. Served numbers are
+   `llama-server` decode t/s over interleaved launches with a 95% confidence interval per paired cell;
+   kernel numbers are `test-backend-ops perf` medians.
+ - **Statistics:** the README speed pairs are medians of 16 rounds per arm, except ROCmFP4-FAST, which
+   shows means. Values are copied at the receipt's precision; percents are cut to one decimal, never
+   rounded up.
+-- **Memory epochs on that box:** 2x16 GB matched DDR5-5600 until 2026-09-03, then 32+16 GB. The
+-  IQ4_XS row was measured on 2x16 GB on 2026-09-02. The UD-Q3_K_XL A/B ran 2026-09-02 23:56 to
+-  2026-09-03 00:35 and the ROCmFP4-FAST A/B started 2026-09-03 13:06. Every launch's load line in both
+-  reads 7.47-7.94 GiB free at 49-52% RAM load, about 15.5 GiB system-visible: the 2x16 GB
+-  configuration. The S-X8 and Q4_K_XL rows (2026-09-14/15), the q5_K, q6_K, iq3 and q4_K kernel rows
++- **Memory epochs on that box:** the early-September UD-Q3_K_XL, IQ4_XS and ROCmFP4-FAST runs are inferred to use 2x16 GB from roughly 15.5-15.7 GiB system-visible RAM in their load lines; the register's transition times conflict with those receipts. The ROCmFP4-FAST A/B started 2026-09-03 13:06:59. The S-X8 and Q4_K_XL rows (2026-09-14/15), the q5_K, q6_K, iq3 and q4_K kernel rows
+   (2026-09-17 to 2026-09-24) and the latest-release tie (2026-09-24) were measured on 32+16 GB.
+ - **Baselines:** a served "before → after" compares two builds of this fork on the same file and box.
+   A kernel row whose off switch restores the upstream path is a comparison with upstream.
+@@ -28,7 +24,7 @@ Nothing here is hidden from the front page by accident; it is filed where engine
+   [`evidence/MANIFEST.md`](../../evidence/MANIFEST.md) (sha256 per file). These README figures have a
+   shipped receipt: the latest-release tie (GSQ IQ3_S and Q4_K_XL), perplexity, bit-identity,
+   `test-backend-ops` counts, the q4_K width-5 split, the iq3_s width-6 marginal and every 890M check.
+-  The other speed figures come from the protected-win manifest below or from studio benchmark receipts
++  The other speed figures come from the protected-win manifest below or from unpublished benchmark receipts
+   that are not shipped here: the README speed table (ROCmFP4-FAST, UD-Q3_K_XL, Q4_K_XL and S-X8 before
+   and after), the S-X8 27B progression (1.831 t/s plain and a drafted line that failed at load on the
+   2026-09-14 build, 5.551 t/s drafted at depth 4 on the 2026-09-15 build), the S-X8 kernel rows, the
+diff --git a/docs/release/RELEASE-NOTES-r86i-x1.md b/docs/release/RELEASE-NOTES-r86i-x1.md
+index 3ff0cdf00..fd3ee68d3 100644
+--- a/docs/release/RELEASE-NOTES-r86i-x1.md
++++ b/docs/release/RELEASE-NOTES-r86i-x1.md
+@@ -21,7 +21,7 @@ GSQ IQ3_S load placed 11.35 GB there and died at the first upload submit (`vk::Q
+ with the BIOS reservation empty. Before this commit, on the 890M: GSQ IQ3_S and Q4_K_XL 27B failed to
+ load; IQ3_XXS 27B (10.44 GB file) loaded for
+ `llama-bench` but `llama-server -c 4096` died at init (`ErrorOutOfDeviceMemory`); S-X8 was never run
+-unfixed (its failure is inferred from the mechanism). Those receipts are lane-local, not shipped.
++unfixed (its failure is inferred from the mechanism). Those receipts are not shipped in this repository.
+ 
+ ## Verification on the 890M — correctness only
+ 
+@@ -30,7 +30,7 @@ unfixed (its failure is inferred from the mechanism). Those receipts are lane-lo
+ | GSQ IQ3_S 27B / Q4_K_XL 27B / S-X8 v4.3 27B load, fix ON | **10.75 / 15.36 / 23.40 GiB in `DEVICE_LOCAL`** (the reservation), 0 failed allocations each | `evidence/x1-first-contact__placement-summary.txt` |
+ | `GGML_VK_UMA_PLACEMENT=legacy` control (IQ3_XXS 27B) | 9.19 GiB in the shared-billed type: the upstream chain, reproduced | same |
+ | `test-backend-ops test -o MUL_MAT` | **2305 executed / 2305 OK / 0 FAIL**, 876 not supported; 0 case statuses differ from the R86i 780M receipt | `evidence/x1-first-contact__chain2-summary.txt` |
+-| `test-backend-ops test -o MUL_MAT_ID` | **1004 / 1004 OK / 0 FAIL**, 10 not supported; the R86i 780M run has the same counts (lane-local receipt) | `evidence/x1-first-contact__chain1-executed-counts.txt` |
++| `test-backend-ops test -o MUL_MAT_ID` | **1004 / 1004 OK / 0 FAIL**, 10 not supported; the R86i 780M run has the same counts (receipt not shipped) | `evidence/x1-first-contact__chain1-executed-counts.txt` |
+ | Greedy identity, Qwen3.5-9B Q8_0, 4 prompts, temp 0 / top-k 1 | **4/4** in each of 3 pairs (unfixed vs fix ON, `legacy` vs ON, unfixed vs `legacy`) | `evidence/x1-first-contact__chain2-summary.txt` |
+ 
+ ## What we could not show
+diff --git a/licenses/README.md b/licenses/README.md
+index 68f0176e9..1a92bb888 100644
+--- a/licenses/README.md
++++ b/licenses/README.md
+@@ -3,7 +3,7 @@
+ This directory retains verbatim license or notice text copied from the audited
+ source tree. Do not edit, normalize, shorten, or regenerate these files.
+ 
+-**The short SHAs in the audit prose below are studio-internal or third-party.** They record
++**The short SHAs in the audit prose below are fork-internal or third-party.** They record
+ which commit in the fork's own working history made a retention or carried a take, and which
+ commit of the upstream project a file was copied from. A public clone resolves neither, and the
+ licence texts in this directory are complete without them.
+@@ -17,13 +17,13 @@ licence texts in this directory are complete without them.
+ | `llama-cpp-turboquant-MIT.txt` | `<FORK-WORKSPACE>/src/llama-cpp-turboquant/LICENSE` | llama-cpp-turboquant MIT |
+ | `turboquant-plus-Apache-2.0.txt` | `<FORK-WORKSPACE>/src/turboquant_plus/LICENSE` | turboquant_plus Apache-2.0 |
+ | `turboquant-plus-NOTICE.txt` | `<FORK-WORKSPACE>/src/turboquant_plus/NOTICE` | turboquant_plus retained NOTICE |
+-| `tq3-MIT.txt` | `git show refs/remotes/tq3/main:LICENSE` (turbo-tan/llama.cpp-tq3) | tq3 MIT — the `TQ3_4S` family at ids 48-51 is ported from this tree. **Retained 2026-08-18 (lane-151); this was the one real gap.** |
+-| `prisml-MIT.txt` | `git show refs/remotes/prisml/prism:LICENSE` (PrismML-Eng/llama.cpp) | PrismML MIT. **Retained 2026-08-18 (lane-151) — see the correction below.** |
++| `tq3-MIT.txt` | `git show refs/remotes/tq3/main:LICENSE` (turbo-tan/llama.cpp-tq3) | tq3 MIT — the `TQ3_4S` family at ids 48-51 is ported from this tree. **Retained 2026-08-18; this was the one real gap.** |
++| `prisml-MIT.txt` | `git show refs/remotes/prisml/prism:LICENSE` (PrismML-Eng/llama.cpp) | PrismML MIT. **Retained 2026-08-18 — see the correction below.** |
+ | `ciru-MIT.txt` | `git show refs/remotes/ciru/main:LICENSE` (ciru-ai/ROCmFPX) | ciru MIT. One change is carried verbatim: the SPIR-V headers fallback in `ggml/src/ggml-vulkan/CMakeLists.txt` (Taken-from ciru@8ffb2cd5a). |
+-| `thecodacus-MIT.txt` | `https://github.com/thecodacus/llama.cpp` `LICENSE` at its public head — no remote is configured here, and none is needed (see the correction below) | thecodacus MIT. **Retained 2026-08-18 on the President's correction, in `19fd8719b`. Row added 2026-08-29 (gap G10)** — its provenance-of-copy had been recorded only in the prose below, never in this table. |
+-| `zuijdwijk-MIT.txt` | `git show refs/remotes/zuijdwijk/master:LICENSE` (LaurentZuijdwijk/llama.cpp) | zuijdwijk MIT (llama.cpp lineage, "The ggml authors"). **Retained 2026-08-29 (gap G11)** — the remote was configured and fetched but registered nowhere. **CODE IS CARRIED** (`e146c1175`, `c1440b85d` on lane-166 branches, both trailered `Taken-from: LaurentZuijdwijk/llama.cpp`); tracked source in `sources.json` `remotes`, pinned `f97c0e6fe`. |
++| `thecodacus-MIT.txt` | `https://github.com/thecodacus/llama.cpp` `LICENSE` at its public head — no remote is configured here, and none is needed (see the correction below) | thecodacus MIT. **Retained 2026-08-18 after a review correction, in `19fd8719b`. Row added 2026-08-29 (gap G10)** — its provenance-of-copy had been recorded only in the prose below, never in this table. |
++| `zuijdwijk-MIT.txt` | `git show refs/remotes/zuijdwijk/master:LICENSE` (LaurentZuijdwijk/llama.cpp) | zuijdwijk MIT (llama.cpp lineage, "The ggml authors"). **Retained 2026-08-29 (gap G11)** — the remote was configured and fetched but registered nowhere. **CODE IS CARRIED** (`e146c1175`, `c1440b85d` on unmerged fork branches, both trailered `Taken-from: LaurentZuijdwijk/llama.cpp`); tracked source in `sources.json` `remotes`, pinned `f97c0e6fe`. |
+ | `buun-MIT.txt` | `git show refs/remotes/buun/master:LICENSE` (spiritbuun/buun-llama-cpp) | buun MIT. **Retained 2026-08-27; this was a GAP** — series patch `0394` ingested buun's DFlash2 controller on 2026-08-21 with no notice row, so the notice lagged the code by six days. Byte-identical to the upstream MIT text apart from LF termination. |
+-| `turboq-mtp-MIT.txt` | `LICENSE` of `https://github.com/jtrefon/llama.cpp-turboq-mtp` at `6a02d0494` (shallow clone `cache/r18-turboq-src`, 1099 bytes, "The ggml authors") | jtrefon MIT (llama.cpp lineage). **Retained 2026-09-07 (lane-212, WI-1694) in the same commit that carries the code**: the TBQ3_0/TBQ4_0 codec (`ggml/src/ggml-tbq-quant.c`, tables) at ids 58/59 is ported from this tree. Tracked source in `sources.json` `remotes` as `turboq`, pinned `6a02d0494`. |
++| `turboq-mtp-MIT.txt` | `LICENSE` of `https://github.com/jtrefon/llama.cpp-turboq-mtp` at `6a02d0494` (1099 bytes, "The ggml authors") | jtrefon MIT (llama.cpp lineage). **Retained 2026-09-07 in the same commit that carries the code**: the TBQ3_0/TBQ4_0 codec (`ggml/src/ggml-tbq-quant.c`, tables) at ids 58/59 is ported from this tree. Tracked source in `sources.json` `remotes` as `turboq`, pinned `6a02d0494`. |
+ 
+ | `S-X8-MarlaLabs-LICENSE.txt` | `https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8/resolve/main/LICENSE`, fetched 2026-09-21 | Apache-2.0 as published by the author, carrying his own copyright line *"Copyright 2026 Martí Vidal Leandro"*. Retained for **S-X8 v4.3** (MarlaLabs; DOI 10.5281/zenodo.21922640, v1.0 2026-08-13). **This was the one real licence gap at `94461e770`; closed 2026-09-21.** 11,350 bytes, sha256 `ad4aa936adb43842a3f34d16797acdd39ba4f523e5b02b9ea4fe48b1962d3c74`. |
+ | `S-X8-MarlaLabs-NOTICE.txt` | `https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8/resolve/main/NOTICE`, fetched 2026-09-21 | The author's own NOTICE, retained verbatim because **Apache-2.0 §4(d) requires it to travel**. It also carries the base model's attribution (Qwen3.8-27B, Copyright (C) 2026 Qwen Team, Alibaba Group, Apache-2.0). 1,278 bytes, sha256 `20ea964a519ef0b04ce51beb2ae0cf601a82775cd7e4022c15ec0434a94ca13a`. **Not scrubbed** — it contains the author's contact address and a required NOTICE is not ours to edit. |
+@@ -35,7 +35,7 @@ the same release-prep commit as `Apache-2.0.txt`.
+ ### S-X8 v4.3 — Apache-2.0, retained 2026-09-21 (release prep)
+ 
+ The tree implements `GGML_TYPE_SX8` (57) across 37 source files. The **licence is established, not
+-assumed**: `research/local-inference/lane-evidence/2026-09-15-sx8-paper-docs/PROVENANCE.md:3` reads
++assumed**: the provenance record of the 2026-09-15 S-X8 document capture reads
+ *"All files Apache-2.0 (author Martí Vidal Leandro, MarlaLabs)"* over ten files, each banked with a
+ source URL and a sha256 — the papers, `SX8_FLASH_V4_3_SPEC.md`, the container scripts, the reference
+ CUDA kernels (`sx8_decode1_v3.cu`, `sx8_embed_v44.cu`) and the author's own `llama-cpp-sx8.patch`.
+@@ -86,7 +86,7 @@ very repository, so their provenance is a ref, not a local checkout. They are 10
+ 1099 of the older copies: the same MIT text, LF-terminated as git stores it rather than CRLF. Verbatim
+ means verbatim, so they are not re-normalized.
+ 
+-## Audit, 2026-08-18 (lane-151) — every source this fork carries code or credit from
++## Audit, 2026-08-18 — every source this fork carries code or credit from
+ 
+ Derived from the distinct `Taken-from:` values across every fork commit on `arifi/main`, then widened
+ by hand. **The widening is not cosmetic and is stated so the table is not read as a purely mechanical
+@@ -107,9 +107,9 @@ the audit.
+ | `PrismML-Eng/llama.cpp` | **yes — `prisml-MIT.txt`** | **CLOSED 2026-08-18.** See the correction below: the "Phase 0 observed no LICENSE" finding was about the retained *release material*, and it was carried forward for a year as though it were a fact about the project. `refs/remotes/prisml/prism:LICENSE` exists and is MIT. |
+ | `turbo-tan/llama.cpp-tq3` | **yes — `tq3-MIT.txt`** | **CLOSED 2026-08-18.** Code IS ported (`58ad80ffb`, the `TQ3_4S` family at ids 48-51), and the license is now retained from `refs/remotes/tq3/main:LICENSE`. |
+ | `ciru-ai/ROCmFPX` | **yes — `ciru-MIT.txt`** | one change carried verbatim: the Vulkan SPIR-V headers fallback (Taken-from ciru@8ffb2cd5a). |
+-| `thecodacus/llama.cpp` | **yes — `thecodacus-MIT.txt`** | **CLOSED 2026-08-18** (President's correction, retained in `19fd8719b`; row landed lane-152). The last open attribution. The old text of this row is preserved in the correction below because the error in it is instructive. |
++| `thecodacus/llama.cpp` | **yes — `thecodacus-MIT.txt`** | **CLOSED 2026-08-18** (review correction, retained in `19fd8719b`). The last open attribution. The old text of this row is preserved in the correction below because the error in it is instructive. |
+ 
+-### Correction, 2026-08-18 (lane-151): a false absence that stood for months
++### Correction, 2026-08-18: a false absence that stood for months
+ 
+ Two of these rows said "no license" for a year, and one of them said it in this very file's prose.
+ Both were wrong, and the reason they were wrong is worth more than the fix: **the absence was checked
+@@ -118,8 +118,8 @@ no `LICENSE`, and wrote down "there is none". Meanwhile this repository has had
+ `ciru`, `rocmfpx`, `powerinfer`, `turboquant` and `tqplus` configured as git remotes with their
+ objects fetched the whole time — every one of those licenses was one `git show` away.
+ 
+-Lane-151 repeated the same mistake with tq3 in the same breath, writing "no clone remains on the
+-estate to look at" and filing it as an unclosable gap, when `git show refs/remotes/tq3/main:LICENSE`
++The same audit repeated the mistake with tq3 in the same breath, writing that no local clone
++remained to look at and filing it as an unclosable gap, when `git show refs/remotes/tq3/main:LICENSE`
+ answers in a second. **An absence claim is only as good as the place you looked, and "I could not
+ find it" is not the same statement as "it does not exist."**
+ 
+@@ -142,7 +142,7 @@ and those artifacts carry no license grant. There is nothing to `git show`. Docu
+ manufactured."* Every clause of that is true, and the conclusion drawn from it is still wrong: the
+ correction above says an absence claim is only as good as the place you looked, and this row then
+ looked in exactly one place — this repository — and stopped. **NO LOCAL REMOTE IS NOT NO SOURCE.**
+-The project is public; its LICENSE is a fetch away and needs no remote configured here. The President
++The project is public; its LICENSE is a fetch away and needs no remote configured here. A review
+ made that correction and `thecodacus-MIT.txt` is retained (`d40e42fae`). All seven registered sources
+ plus thecodacus are now closed; this directory still contains no fabricated license text.
+ 
+@@ -155,7 +155,7 @@ does not authorize inventing a license text. Therefore this directory still cont
+ `zuijdwijk` (`LaurentZuijdwijk/llama.cpp`) was a configured, fetched remote that appeared in **no**
+ governed artifact: not `sources.json`, not this file, not any `Taken-from:` value on `arifi/main`.
+ It was first registered here as "no code known to be carried". **That was wrong within hours, and
+-the way it was wrong is the lesson:** two lane-166 commits carry `Taken-from:
++the way it was wrong is the lesson:** two fork commits carry `Taken-from:
+ LaurentZuijdwijk/llama.cpp` in full — `e146c1175` (matvec `NUM_COLS>4` VGPR spill, from `211abf6a9`)
+ and `c1440b85d` (coopmat LDS stride pad, from `f97c0e6fe`). The sweep that said "no code carried"
+ read `arifi/main`, and **the takes were on unmerged branches.** A source-registration sweep that
+@@ -173,5 +173,5 @@ unattributed from this source is on the published branch**, and the notice was r
+ takes ever merge.
+ 
+ `turbomerge` was the other unregistered remote and is a different thing entirely: it is a local path
+-inside our own `src/`, authored by this estate (`hq`, `m`), a fork-owned merge workspace. It is
++inside our own `src/`, authored by this fork, a fork-owned merge workspace. It is
+ registered in `sources.json` as a workspace and needs **no** third-party notice.
