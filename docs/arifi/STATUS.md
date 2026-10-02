@@ -7,17 +7,13 @@ Nothing here is hidden from the front page by accident; it is filed where engine
 ## How the numbers were taken
 
 - **Speed:** Beelink SER7 Pro, Ryzen 7 7840HS, Radeon 780M (RDNA3, gfx1103), Windows 11, Vulkan
-  with `KHR_coopmat`, AMD driver 32.0.31041.1004, Balanced power plan. Served numbers are
+  with `KHR_coopmat` and the Balanced power plan. Driver versions for the historical 780M runs are not reconciled. Served numbers are
   `llama-server` decode t/s over interleaved launches with a 95% confidence interval per paired cell;
   kernel numbers are `test-backend-ops perf` medians.
 - **Statistics:** the README speed pairs are medians of 16 rounds per arm, except ROCmFP4-FAST, which
   shows means. Values are copied at the receipt's precision; percents are cut to one decimal, never
   rounded up.
-- **Memory epochs on that box:** 2x16 GB matched DDR5-5600 until 2026-09-03, then 32+16 GB. The
-  IQ4_XS row was measured on 2x16 GB on 2026-09-02. The UD-Q3_K_XL A/B ran 2026-09-02 23:56 to
-  2026-09-03 00:35 and the ROCmFP4-FAST A/B started 2026-09-03 13:06. Every launch's load line in both
-  reads 7.47-7.94 GiB free at 49-52% RAM load, about 15.5 GiB system-visible: the 2x16 GB
-  configuration. The S-X8 and Q4_K_XL rows (2026-09-14/15), the q5_K, q6_K, iq3 and q4_K kernel rows
+- **Memory epochs on that box:** the early-September UD-Q3_K_XL, IQ4_XS and ROCmFP4-FAST runs are inferred to use 2x16 GB from roughly 15.5-15.7 GiB system-visible RAM in their load lines; the register's transition times conflict with those receipts. The ROCmFP4-FAST A/B started 2026-09-03 13:06:59. The S-X8 and Q4_K_XL rows (2026-09-14/15), the q5_K, q6_K, iq3 and q4_K kernel rows
   (2026-09-17 to 2026-09-24) and the latest-release tie (2026-09-24) were measured on 32+16 GB.
 - **Baselines:** a served "before → after" compares two builds of this fork on the same file and box.
   A kernel row whose off switch restores the upstream path is a comparison with upstream.
@@ -28,7 +24,7 @@ Nothing here is hidden from the front page by accident; it is filed where engine
   [`evidence/MANIFEST.md`](../../evidence/MANIFEST.md) (sha256 per file). These README figures have a
   shipped receipt: the latest-release tie (GSQ IQ3_S and Q4_K_XL), perplexity, bit-identity,
   `test-backend-ops` counts, the q4_K width-5 split, the iq3_s width-6 marginal and every 890M check.
-  The other speed figures come from the protected-win manifest below or from studio benchmark receipts
+  The other speed figures come from the protected-win manifest below or from unpublished benchmark receipts
   that are not shipped here: the README speed table (ROCmFP4-FAST, UD-Q3_K_XL, Q4_K_XL and S-X8 before
   and after), the S-X8 27B progression (1.831 t/s plain and a drafted line that failed at load on the
   2026-09-14 build, 5.551 t/s drafted at depth 4 on the 2026-09-15 build), the S-X8 kernel rows, the

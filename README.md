@@ -21,7 +21,7 @@ Each before → after pair is one A/B on one file: this fork's build without the
 it (September 2026, `llama-server`, DFlash2 drafting 2 tokens per step). Values are server decode t/s over
 16 rounds per arm, copied from the receipts: **medians**, except ROCmFP4-FAST, which shows **means**, as
 its protected-win record states. On the Q4_K_XL and S-X8 rows, the plain and DFlash2 pairs are separate
-A/Bs. Percent = after ÷ before, cut to one decimal and never rounded up; "tie" = the paired confidence
+A/Bs. Gain (%) = (after ÷ before - 1) × 100, cut to one decimal and never rounded up; "tie" = the paired confidence
 interval includes zero. File sizes are in GB (10⁹ bytes) from each file's byte count.
 ¹ Turn on with `GGML_ARIFI_ROCMFP4_MMVQ=1`.
 ² The build before these kernels could not load this file with a drafter; a per-heap allocator fix cured it.

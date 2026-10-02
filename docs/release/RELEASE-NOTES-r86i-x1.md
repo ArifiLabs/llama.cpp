@@ -21,7 +21,7 @@ GSQ IQ3_S load placed 11.35 GB there and died at the first upload submit (`vk::Q
 with the BIOS reservation empty. Before this commit, on the 890M: GSQ IQ3_S and Q4_K_XL 27B failed to
 load; IQ3_XXS 27B (10.44 GB file) loaded for
 `llama-bench` but `llama-server -c 4096` died at init (`ErrorOutOfDeviceMemory`); S-X8 was never run
-unfixed (its failure is inferred from the mechanism). Those receipts are lane-local, not shipped.
+unfixed (its failure is inferred from the mechanism). Those receipts are not shipped in this repository.
 
 ## Verification on the 890M — correctness only
 
@@ -30,7 +30,7 @@ unfixed (its failure is inferred from the mechanism). Those receipts are lane-lo
 | GSQ IQ3_S 27B / Q4_K_XL 27B / S-X8 v4.3 27B load, fix ON | **10.75 / 15.36 / 23.40 GiB in `DEVICE_LOCAL`** (the reservation), 0 failed allocations each | `evidence/x1-first-contact__placement-summary.txt` |
 | `GGML_VK_UMA_PLACEMENT=legacy` control (IQ3_XXS 27B) | 9.19 GiB in the shared-billed type: the upstream chain, reproduced | same |
 | `test-backend-ops test -o MUL_MAT` | **2305 executed / 2305 OK / 0 FAIL**, 876 not supported; 0 case statuses differ from the R86i 780M receipt | `evidence/x1-first-contact__chain2-summary.txt` |
-| `test-backend-ops test -o MUL_MAT_ID` | **1004 / 1004 OK / 0 FAIL**, 10 not supported; the R86i 780M run has the same counts (lane-local receipt) | `evidence/x1-first-contact__chain1-executed-counts.txt` |
+| `test-backend-ops test -o MUL_MAT_ID` | **1004 / 1004 OK / 0 FAIL**, 10 not supported; the R86i 780M run has the same counts (receipt not shipped) | `evidence/x1-first-contact__chain1-executed-counts.txt` |
 | Greedy identity, Qwen3.5-9B Q8_0, 4 prompts, temp 0 / top-k 1 | **4/4** in each of 3 pairs (unfixed vs fix ON, `legacy` vs ON, unfixed vs `legacy`) | `evidence/x1-first-contact__chain2-summary.txt` |
 
 ## What we could not show
