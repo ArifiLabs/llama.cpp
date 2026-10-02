@@ -19,9 +19,10 @@ speculative decoding stable on Qwen3.8. Built on upstream llama.cpp `b10825`.
 
 Each before → after pair is one A/B on one file: this fork's build without the kernel, then the build with
 it (September 2026, `llama-server`, DFlash2 drafting 2 tokens per step). Values are server decode t/s over
-16 rounds per arm, copied from the receipts: **medians**, except ROCmFP4-FAST, which shows **means** (its
-pre-registered read). Percent = after ÷ before, cut to one decimal and never rounded up; "tie" = the paired
-confidence interval includes zero. File sizes are in GB (10⁹ bytes) from each file's byte count.
+16 rounds per arm, copied from the receipts: **medians**, except ROCmFP4-FAST, which shows **means**, as
+its protected-win record states. On the Q4_K_XL and S-X8 rows, the plain and DFlash2 pairs are separate
+A/Bs. Percent = after ÷ before, cut to one decimal and never rounded up; "tie" = the paired confidence
+interval includes zero. File sizes are in GB (10⁹ bytes) from each file's byte count.
 ¹ Turn on with `GGML_ARIFI_ROCMFP4_MMVQ=1`.
 ² The build before these kernels could not load this file with a drafter; a per-heap allocator fix cured it.
 
@@ -72,13 +73,15 @@ each tuned default it applied on your GPU.
 - **Tuned on:** AMD Radeon 780M (RDNA3), one shared pool of DDR5 system memory. Every speed number on
   this page comes from that box.
 - **Running now on:** Minisforum AI X1 Pro-470, Ryzen AI 9 HX 470, Radeon 890M, 96 GB DDR5-5600 with
-  72 GB reserved for the GPU. A placement fix for this GPU puts 27B weights in the GPU reservation:
-  S-X8 v4.3 placed 23.40 GiB there with 0.00 GiB in host memory (measured at a 24 GB reservation).
-- **Other GPUs:** defaults tuned on this GPU class switch on by device probe, on AMD or on AMD RDNA3
-  only, and other devices keep the upstream setting. Six mat-vec changes to upstream formats run on every
-  Vulkan device: the IQ3_S 16-thread layout, the dedicated IQ4_XS shader, the iq3 sign hoist (bit-identical
-  output), the Q6_K direct scales and x-fold, and the Q5_K activation hoist. All upstream backends (CPU,
-  CUDA, Metal, SYCL and others) stay in the tree.
+  72 GB reserved for the GPU. A placement fix for this GPU places most of each 27B file in the GPU
+  reservation (measured at a 24 GB reservation): S-X8 v4.3 23.40 GiB there and 0.00 GiB in host memory,
+  Q4_K_XL 15.36 GiB there and 0.67 GiB in host memory.
+- **Other GPUs:** many defaults tuned on this GPU class switch on by device probe, on AMD or on AMD
+  RDNA3 only, and other devices keep the upstream setting there. Some changes run on every Vulkan device,
+  including six mat-vec changes to upstream formats: the IQ3_S 16-thread layout, the dedicated IQ4_XS
+  shader, the iq3 sign hoist (bit-identical output), the Q6_K direct scales and x-fold, and the Q5_K
+  activation hoist. [`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.md) gives each switch's device
+  scope. All upstream backends (CPU, CUDA, Metal, SYCL and others) stay in the tree.
 
 ## What it adds over upstream
 

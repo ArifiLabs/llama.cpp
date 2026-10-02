@@ -14,9 +14,10 @@ Nothing here is hidden from the front page by accident; it is filed where engine
   shows means. Values are copied at the receipt's precision; percents are cut to one decimal, never
   rounded up.
 - **Memory epochs on that box:** 2x16 GB matched DDR5-5600 until 2026-09-03, then 32+16 GB. The
-  UD-Q3_K_XL and IQ4_XS rows on the README were measured on 2x16 GB on 2026-09-02. The ROCmFP4-FAST
-  A/B started 2026-09-03 13:06; its load line reads 7.69 GiB free at 51.0% RAM load, about 15.7 GiB
-  system-visible, which is the 2x16 GB configuration. The S-X8 and Q4_K_XL rows (2026-09-14/15), the q5_K, q6_K, iq3 and q4_K kernel rows
+  IQ4_XS row was measured on 2x16 GB on 2026-09-02. The UD-Q3_K_XL A/B ran 2026-09-02 23:56 to
+  2026-09-03 00:35 and the ROCmFP4-FAST A/B started 2026-09-03 13:06. Every launch's load line in both
+  reads 7.47-7.94 GiB free at 49-52% RAM load, about 15.5 GiB system-visible: the 2x16 GB
+  configuration. The S-X8 and Q4_K_XL rows (2026-09-14/15), the q5_K, q6_K, iq3 and q4_K kernel rows
   (2026-09-17 to 2026-09-24) and the latest-release tie (2026-09-24) were measured on 32+16 GB.
 - **Baselines:** a served "before → after" compares two builds of this fork on the same file and box.
   A kernel row whose off switch restores the upstream path is a comparison with upstream.
@@ -113,7 +114,7 @@ the draft-checkpoint crash fix; the Q2_0_G128 Vulkan port.
   t/s) read plain decode 1.995 → 1.705 t/s on the same two builds (medians, 0 of 8 cells). The README plain
   pair comes from the earlier A/B; the cause of this plain loss is not separated.
 - **MoE expert cache on this box:** with the experts forced off the GPU (`-ncmoe 48`) on a 35B-A3B model,
-  the Vulkan cache read 7.960 t/s against 8.875 with the cache off (medians, -10.3%); the same model fully
+  the Vulkan cache read 7.960 t/s against 8.875 with the cache off (medians, -10.31%); the same model fully
   GPU-resident ran 20.517 t/s. On one memory pool the cache has no residency problem to solve.
 - **Windows IOCP expert reads:** direction unresolved; the test model's experts mostly fit in cache.
 - **Hot-expert RAM cache** (`MAX_N_CACHED`): unmeasured. **Standalone expert prefetch cap:** inconclusive.
