@@ -1321,7 +1321,9 @@ struct vk_device_struct {
     uint32_t q8_0_cm1_2d_shift = 8;
     // arifi lane-296 S8: float-path matmuls of these weight roles ("all" = every weight) accumulate in f32 [GGML_ARIFI_F32ACC].
     std::set<std::string> f32acc_roles;
-    // lane sx8-int8 stage 10: S-X8 int8 cm1 from this width (measured served crossover) [GGML_ARIFI_SX8_CM1_MIN_N],
+    // lane sx8-int8 stage 10: S-X8 int8 cm1 from this DISPATCH width ne11, not request tokens: llama-server splits a 4-token
+    // checkpoint tail, so request N dispatches N-4. Served sweep (HQ seat 74, threshold/hq74-cal): int8 -24% at 32, within +-10%
+    // loaded-desktop noise 36..56, ahead from 128 [GGML_ARIFI_SX8_CM1_MIN_N],
     // and the roles that take it (empty = all; measuring tool for per-role quality) [GGML_ARIFI_SX8_CM1_ROLES].
     uint32_t sx8_cm1_min_n = 56;
     std::set<std::string> sx8_cm1_roles;
