@@ -9,6 +9,8 @@
 #include <mutex>  // lane-110 M3 graft tag:pipeline-init
 
 #include "ggml.h"
+#include "ggml-alloc.h"
+#include "../ggml/src/ggml-backend-impl.h"
 #include "llama-arch.h"
 #include "llama-graph.h"
 #include "llama-impl.h"
@@ -3363,7 +3365,7 @@ public:
     // a fresh buffer even when the shape is unchanged. The earlier in-place refresh/reuse paths
     // avoided both, but could not preserve the previous image and could not fail without either
     // aborting (ggml_tallocr_alloc, ggml-alloc.c:80-84) or destroying the live image.
-    void commit() {
+    void commit(llama_memory_buffers * reusable = nullptr, bool reserve_capacity = false) {
         llama_memory_buffers mbufs_new;
 
         // zero-byte writes get no view, no tensor, no buffer and no copy. Counting them would
@@ -3383,7 +3385,7 @@ public:
 
         for (auto & [buft, mbuf] : mbufs_new) {
             ggml_init_params params = {
-                /*.mem_size   =*/ 2*mbuf.n_tensors*ggml_tensor_overhead(),
+                /*.mem_size   =*/ (2*mbuf.n_tensors + (reserve_capacity ? 1 : 0))*ggml_tensor_overhead(),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ true,
             };
@@ -3417,7 +3419,49 @@ public:
         // group here has total_size > 0, so NULL is unambiguously a failure.
         for (auto & [buft, mbuf] : mbufs_new) {
             if (!llama_io_ckpt_fail_at("LLAMA_R46_CKPT_FAIL_ALLOC", n_alloc)) {
-                mbuf.buf.reset(ggml_backend_alloc_ctx_tensors_from_buft(mbuf.ctx.get(), buft));
+                auto old = reusable ? reusable->find(buft) : mbufs.end();
+                if (reusable && old != reusable->end() && old->second.buf &&
+                    !ggml_backend_buffer_is_multi_buffer(old->second.buf.get())) {
+                    auto alloc = ggml_tallocr_new(old->second.buf.get());
+                    size_t required = alloc.offset;
+                    for (auto * tensor : mbuf.cpy) {
+                        required += GGML_PAD(ggml_backend_buffer_get_alloc_size(alloc.buffer, tensor), alloc.alignment);
+                    }
+                    if (required <= ggml_backend_buffer_get_size(alloc.buffer)) {
+                        // The caller has evicted this image; no live checkpoint is overwritten.
+                        mbuf.buf = std::move(old->second.buf);
+                        ggml_backend_buffer_reset(mbuf.buf.get());
+                        for (auto * tensor : mbuf.org) {
+                            if (ggml_backend_view_init(tensor) != GGML_STATUS_SUCCESS) {
+                                throw std::runtime_error("failed to initialize reused snapshot view");
+                            }
+                        }
+                        for (auto * tensor : mbuf.cpy) {
+                            if (ggml_tallocr_alloc(&alloc, tensor) != GGML_STATUS_SUCCESS) {
+                                throw std::runtime_error("failed to reuse sequence snapshot buffer");
+                            }
+                        }
+                        const char * trace = getenv("GGML_VK_ALLOC_TRACE");
+                        if (trace && trace[0] == '1') {
+                            fprintf(stderr, "prompt-cache reuse: backend=%s capacity=%zu required=%zu\n",
+                                    ggml_backend_buft_name(buft), ggml_backend_buffer_get_size(mbuf.buf.get()), required);
+                        }
+                    }
+                }
+                if (!mbuf.buf) {
+                    // Modest charged headroom avoids allocation churn across nearby prompt sizes.
+                    // It belongs to the snapshot buffer; it is never copied or added to metadata.
+                    if (reserve_capacity) {
+                        const size_t alignment = ggml_backend_buft_get_alignment(buft);
+                        const size_t maximum = ggml_backend_buft_get_max_size(buft);
+                        const size_t padding = std::min(GGML_PAD(mbuf.total_size/8, alignment),
+                                maximum - maximum % alignment);
+                        if (padding > 0) {
+                            ggml_new_tensor_1d(mbuf.ctx.get(), GGML_TYPE_I8, padding);
+                        }
+                    }
+                    mbuf.buf.reset(ggml_backend_alloc_ctx_tensors_from_buft(mbuf.ctx.get(), buft));
+                }
             }
 
             if (!mbuf.buf) {
@@ -3715,6 +3759,100 @@ size_t llama_context::state_set_data(const uint8_t * src, size_t size) {
 }
 
 static constexpr uint32_t io_magic = 0xaf143cd8;
+
+struct llama_state_seq_snapshot {
+    const llama_context * owner = nullptr;
+    std::vector<uint8_t> metadata;
+    llama_memory_buffers buffers;
+};
+
+llama_state_seq_snapshot * llama_context::state_seq_snapshot_create(llama_seq_id seq_id, llama_state_seq_snapshot * reusable) {
+    std::unique_ptr<llama_state_seq_snapshot> previous(reusable);
+    if (seq_id < 0 || (uint32_t) seq_id >= cparams.n_seq_max) { return nullptr; }
+    if (previous && previous->owner != this) { return nullptr; }
+    try {
+        auto snapshot = std::make_unique<llama_state_seq_snapshot>();
+        snapshot->owner = this;
+        const auto flags = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE;
+        snapshot->metadata.resize(state_seq_get_size(seq_id, flags));
+        llama_io_write_device io(snapshot->metadata.data(), snapshot->metadata.size(), snapshot->buffers);
+        io.write(&io_magic, sizeof(io_magic));
+        io.write(&seq_id, sizeof(seq_id));
+        const size_t n = state_seq_write_data(io, seq_id, flags);
+        if (n != snapshot->metadata.size()) {
+            throw std::runtime_error("sequence snapshot metadata size mismatch");
+        }
+        io.commit(previous ? &previous->buffers : nullptr, true);
+        const char * trace = getenv("GGML_VK_ALLOC_TRACE");
+        if (trace && trace[0] == '1') {
+            size_t tensor_bytes = 0;
+            for (const auto & entry : snapshot->buffers) {
+                tensor_bytes += entry.second.total_size;
+                fprintf(stderr, "prompt-cache snapshot: seq=%d backend=%s allocated=%zu logical=%zu purpose=sequence-tensors\n",
+                        seq_id, ggml_backend_buft_name(entry.first),
+                        ggml_backend_buffer_get_size(entry.second.buf.get()), entry.second.total_size);
+            }
+            fprintf(stderr, "prompt-cache snapshot: seq=%d host_metadata=%zu tensor_bytes=%zu purpose=sequence-metadata\n",
+                    seq_id, n, tensor_bytes);
+        }
+        return snapshot.release();
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: %s\n", __func__, err.what());
+        return nullptr;
+    }
+}
+
+bool llama_context::state_seq_snapshot_restore(const llama_state_seq_snapshot & snapshot, llama_seq_id seq_id) {
+    if (snapshot.owner != this || seq_id < 0 || (uint32_t) seq_id >= cparams.n_seq_max) { return false; }
+    try {
+        llama_io_read_device io(snapshot.metadata.data(), snapshot.metadata.size(), snapshot.buffers);
+        uint32_t magic;
+        llama_seq_id source_seq;
+        io.read(&magic, sizeof(magic));
+        io.read(&source_seq, sizeof(source_seq));
+        if (magic != io_magic) {
+            throw std::runtime_error("wrong sequence snapshot magic");
+        }
+        if (state_seq_read_data(io, seq_id, LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) != snapshot.metadata.size()) {
+            throw std::runtime_error("sequence snapshot metadata size mismatch");
+        }
+        io.commit();
+        return true;
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: %s\n", __func__, err.what());
+        return false;
+    }
+}
+
+llama_state_seq_snapshot * llama_state_seq_snapshot_create(llama_context * ctx, llama_seq_id seq_id) {
+    ctx->synchronize();
+    return ctx->state_seq_snapshot_create(seq_id);
+}
+
+bool llama_state_seq_snapshot_restore(llama_context * ctx, const llama_state_seq_snapshot * snapshot, llama_seq_id seq_id) {
+    if (!snapshot) { return false; }
+    ctx->synchronize();
+    return ctx->state_seq_snapshot_restore(*snapshot, seq_id);
+}
+
+void llama_state_seq_snapshot_free(llama_state_seq_snapshot * snapshot) {
+    delete snapshot;
+}
+
+llama_state_seq_snapshot * llama_state_seq_snapshot_recreate(llama_context * ctx, llama_seq_id seq_id, llama_state_seq_snapshot * reusable) {
+    std::unique_ptr<llama_state_seq_snapshot> previous(reusable);
+    ctx->synchronize();
+    return ctx->state_seq_snapshot_create(seq_id, previous.release());
+}
+
+size_t llama_state_seq_snapshot_size(const llama_state_seq_snapshot * snapshot) {
+    if (!snapshot) { return 0; }
+    size_t size = snapshot->metadata.size();
+    for (const auto & entry : snapshot->buffers) {
+        size += ggml_backend_buffer_get_size(entry.second.buf.get());
+    }
+    return size;
+}
 
 size_t llama_context::state_seq_get_size(llama_seq_id seq_id, llama_state_seq_flags flags) {
     llama_io_write_dummy io(flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE);

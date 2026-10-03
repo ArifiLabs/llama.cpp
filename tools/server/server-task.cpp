@@ -1726,6 +1726,7 @@ server_prompt_cache_state * server_prompt_cache::alloc(const server_prompt & pro
     }
 
     const size_t state_size_new = state_size_tgt + state_size_dft + checkpoints_size;
+    server_prompt_data reusable;
 
     // skip over-limit entries to avoid disturbing the cache
     if (limit_size > 0 && state_size_new > limit_size) {
@@ -1741,6 +1742,7 @@ server_prompt_cache_state * server_prompt_cache::alloc(const server_prompt & pro
         if (len == (int) it->prompt.tokens.size()) {
             SRV_TRC(" - removing obsolete cached prompt with length %d\n", len);
 
+            if (!reusable.main) { reusable = std::move(it->data); }
             it = states.erase(it);
         } else {
             ++it;
@@ -1753,27 +1755,9 @@ server_prompt_cache_state * server_prompt_cache::alloc(const server_prompt & pro
             SRV_WRN(" - making room for prompt cache entry, removing oldest entry (size = %.3f MiB)\n",
                     states.front().size() / (1024.0 * 1024.0));
 
+            if (!reusable.main) { reusable = std::move(states.front().data); }
             states.pop_front();
         }
-    }
-
-    std::vector<uint8_t> state_data_tgt;
-    std::vector<uint8_t> state_data_dft;
-
-    // check if we can allocate enough memory for the new state
-    try {
-        state_data_tgt.resize(state_size_tgt);
-        state_data_dft.resize(state_size_dft);
-    } catch (const std::bad_alloc & e) {
-        SRV_ERR("failed to allocate memory for prompt cache state: %s\n", e.what());
-
-        limit_size = std::max<size_t>(1, 0.4*size());
-
-        SRV_WRN(" - cache size limit reduced to %.3f MiB\n", limit_size / (1024.0 * 1024.0));
-
-        update();
-
-        return nullptr;
     }
 
     // R31/M14: device-resident checkpoints reference storage slots the slot keeps reusing, so a
@@ -1792,8 +1776,9 @@ server_prompt_cache_state * server_prompt_cache::alloc(const server_prompt & pro
             /*.checkpoints =*/ std::move(checkpoints_host),
         },
         /*.data   =*/ {
-            /*.main =*/ std::move(state_data_tgt),
-            /*.drft =*/ std::move(state_data_dft),
+            /*.main =*/ std::move(reusable.main),
+            /*.drft =*/ std::move(reusable.drft),
+            /*.payload_size =*/ state_size_tgt + state_size_dft,
         },
     });
 
@@ -1838,34 +1823,24 @@ bool server_prompt_cache::load(server_prompt & prompt, const server_tokens & tok
         {
             auto & data = it_best->data.main;
 
-            const size_t size = data.size();
-            const size_t n = llama_state_seq_set_data_ext(ctx_tgt, data.data(), size, id_slot, 0);
-            if (n != size) {
-                SRV_ERR("failed to restore state with size %zu\n", size);
-
+            if (!llama_state_seq_snapshot_restore(ctx_tgt, data.get(), id_slot)) {
+                SRV_ERR("%s", "failed to restore prompt snapshot\n");
+                states.erase(it_best);
                 return false;
             }
-
-            data.clear();
-            data.shrink_to_fit();
         }
 
         {
             auto & data = it_best->data.drft;
 
-            if (!data.empty()) {
+            if (data) {
                 GGML_ASSERT(ctx_dft);
 
-                const size_t size = data.size();
-                const size_t n = llama_state_seq_set_data_ext(ctx_dft, data.data(), size, id_slot, 0);
-                if (n != size) {
-                    SRV_WRN("failed to restore state with size %zu\n", size);
-
+                if (!llama_state_seq_snapshot_restore(ctx_dft, data.get(), id_slot)) {
+                    SRV_WRN("%s", "failed to restore draft prompt snapshot\n");
+                    states.erase(it_best);
                     return false;
                 }
-
-                data.clear();
-                data.shrink_to_fit();
             }
         }
 

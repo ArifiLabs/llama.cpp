@@ -1023,6 +1023,16 @@ extern "C" {
 
     typedef uint32_t llama_state_seq_flags;
 
+    // Independent sequence image. Tensor bytes stay on their backend; freeing the image releases them.
+    // The source context must outlive the image. Restore into that context only. seq_id must be in [0, n_seq_max).
+    struct llama_state_seq_snapshot;
+    LLAMA_API struct llama_state_seq_snapshot * llama_state_seq_snapshot_create(struct llama_context * ctx, llama_seq_id seq_id);
+    // Consumes an evicted image (including on failure); reuses its buffers when large enough.
+    LLAMA_API struct llama_state_seq_snapshot * llama_state_seq_snapshot_recreate(struct llama_context * ctx, llama_seq_id seq_id, struct llama_state_seq_snapshot * reusable);
+    LLAMA_API bool llama_state_seq_snapshot_restore(struct llama_context * ctx, const struct llama_state_seq_snapshot * snapshot, llama_seq_id seq_id);
+    LLAMA_API void llama_state_seq_snapshot_free(struct llama_state_seq_snapshot * snapshot);
+    LLAMA_API size_t llama_state_seq_snapshot_size(const struct llama_state_seq_snapshot * snapshot);
+
     LLAMA_API size_t llama_state_seq_get_size_ext(
             struct llama_context * ctx,
                     llama_seq_id   seq_id,

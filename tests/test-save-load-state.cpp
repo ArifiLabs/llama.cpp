@@ -1357,10 +1357,111 @@ struct test_suite {
     }
 };
 
+static bool test_owned_snapshot(llama_model * model, const common_params & params) {
+    auto cp = common_context_params_to_llama(params);
+    cp.n_seq_max = 2;
+    cp.kv_unified = true;
+    auto ctx = llama_context_ptr{llama_init_from_model(model, cp)};
+    if (!ctx) { return false; }
+    if (llama_state_seq_snapshot_create(ctx.get(), -1)) { return false; }
+    if (llama_state_seq_snapshot_create(ctx.get(), cp.n_seq_max)) { return false; }
+    {
+        auto empty = std::unique_ptr<llama_state_seq_snapshot, decltype(&llama_state_seq_snapshot_free)>(
+            llama_state_seq_snapshot_create(ctx.get(), 0), llama_state_seq_snapshot_free);
+        if (!empty || !llama_state_seq_snapshot_restore(ctx.get(), empty.get(), 0)) { return false; }
+        llama_token token = 1;
+        if (llama_decode(ctx.get(), llama_batch_get_one(&token, 1)) != 0 ||
+                llama_memory_seq_pos_max(llama_get_memory(ctx.get()), 0) < 0) { return false; }
+        if (!llama_state_seq_snapshot_restore(ctx.get(), empty.get(), 0) ||
+                llama_memory_seq_pos_max(llama_get_memory(ctx.get()), 0) != -1) { return false; }
+        auto other = llama_context_ptr{llama_init_from_model(model, cp)};
+        if (!other || llama_state_seq_snapshot_restore(other.get(), empty.get(), 0)) { return false; }
+    }
+    const auto save_host = [&]() {
+        std::vector<uint8_t> data(llama_state_seq_get_size(ctx.get(), 0));
+        if (llama_state_seq_get_data(ctx.get(), data.data(), data.size(), 0) != data.size()) { data.clear(); }
+        return data;
+    };
+    llama_token first[] = {1, 2, 3, 4};
+    if (llama_decode(ctx.get(), llama_batch_get_one(first, 4)) != 0) { return false; }
+    auto a = std::unique_ptr<llama_state_seq_snapshot, decltype(&llama_state_seq_snapshot_free)>(
+        llama_state_seq_snapshot_create(ctx.get(), 0), llama_state_seq_snapshot_free);
+    const auto host_a = save_host();
+#ifdef LLAMA_TEST_FAULT_INJECTION
+    for (const char * seam : {"LLAMA_R46_CKPT_FAIL_ALLOC", "LLAMA_R46_CKPT_FAIL_COPY"}) {
+        ckpt_fail_env(seam, "1");
+        auto failed = std::unique_ptr<llama_state_seq_snapshot, decltype(&llama_state_seq_snapshot_free)>(
+            llama_state_seq_snapshot_create(ctx.get(), 0), llama_state_seq_snapshot_free);
+        ckpt_fail_env(seam, nullptr);
+        if (failed || save_host() != host_a) { return false; }
+        if (!llama_state_seq_snapshot_restore(ctx.get(), a.get(), 0) || save_host() != host_a) { return false; }
+    }
+#endif
+    llama_token next[] = {5, 6};
+    if (!a || host_a.empty() || llama_decode(ctx.get(), llama_batch_get_one(next, 2)) != 0) { return false; }
+    auto b = std::unique_ptr<llama_state_seq_snapshot, decltype(&llama_state_seq_snapshot_free)>(
+        llama_state_seq_snapshot_create(ctx.get(), 0), llama_state_seq_snapshot_free);
+    const auto host_b = save_host();
+    if (!b || host_b.empty() || host_a == host_b) { return false; }
+    // Reusing the legacy storage slot must not overwrite either independently owned image.
+    const auto flags = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE;
+    std::vector<uint8_t> ring(llama_state_seq_get_size_ext(ctx.get(), 0, flags));
+    if (llama_state_seq_get_data_ext(ctx.get(), ring.data(), ring.size(), 0, flags) != ring.size()) { return false; }
+    const bool red = getenv("LLAMA_TEST_SNAPSHOT_RED") != nullptr;
+    const bool restored = llama_state_seq_snapshot_restore(ctx.get(), red ? b.get() : a.get(), 0);
+    const auto restored_a = save_host();
+    if (!restored || restored_a != host_a) {
+        size_t first_diff = 0;
+        while (first_diff < std::min(restored_a.size(), host_a.size()) && restored_a[first_diff] == host_a[first_diff]) { ++first_diff; }
+        LOG_ERR("snapshot A: restored=%d before=%zu after=%zu first_diff=%zu\n", restored, host_a.size(), restored_a.size(), first_diff);
+        LOG_ERR("owned snapshot A byte equality failed (RED=%d)\n", red);
+        return false;
+    }
+    if (!llama_state_seq_snapshot_restore(ctx.get(), b.get(), 0) || save_host() != host_b) { LOG_ERR("snapshot B byte comparison failed\n"); return false; }
+    if (!llama_state_seq_snapshot_restore(ctx.get(), a.get(), 0)) { return false; }
+    b.reset(llama_state_seq_snapshot_recreate(ctx.get(), 0, b.release()));
+    if (!b || !llama_state_seq_snapshot_restore(ctx.get(), b.get(), 0) || save_host() != host_a) { return false; }
+    b.reset();
+    if (!llama_state_seq_snapshot_restore(ctx.get(), a.get(), 0) || save_host() != host_a) { LOG_ERR("snapshot A after eviction failed\n"); return false; }
+    if (llama_state_seq_snapshot_restore(ctx.get(), nullptr, 0)) { return false; }
+    if (llama_state_seq_snapshot_restore(ctx.get(), a.get(), -1)) { return false; }
+    if (llama_state_seq_snapshot_restore(ctx.get(), a.get(), cp.n_seq_max)) { return false; }
+    if (llama_state_seq_snapshot_size(a.get()) == 0 || llama_state_seq_snapshot_size(nullptr) != 0) { return false; }
+    // Compare cross-slot continuation against the existing host-image route in
+    // the same slot/layout. Comparing slot 0 against slot 1 also measures the
+    // model's sequence-layout rounding, unrelated to snapshot storage.
+    llama_batch_ptr batch(1, 0, 1);
+    common_batch_clear(batch.get());
+    common_batch_add(batch.get(), 7, 4, {1}, true);
+    llama_memory_clear(llama_get_memory(ctx.get()), true);
+    if (llama_state_seq_set_data(ctx.get(), host_a.data(), host_a.size(), 1) != host_a.size()) { return false; }
+    const auto save_slot_one = [&]() {
+        std::vector<uint8_t> data(llama_state_seq_get_size(ctx.get(), 1));
+        if (llama_state_seq_get_data(ctx.get(), data.data(), data.size(), 1) != data.size()) { data.clear(); }
+        return data;
+    };
+    const auto host_slot_one = save_slot_one();
+    if (host_slot_one.empty() || llama_decode(ctx.get(), batch.get()) != 0) { return false; }
+    std::vector<float> reference;
+    if (!get_current_logits(ctx.get(), reference)) { return false; }
+    llama_memory_clear(llama_get_memory(ctx.get()), true);
+    if (!llama_state_seq_snapshot_restore(ctx.get(), a.get(), 1) || save_slot_one() != host_slot_one) {
+        LOG_ERR("cross-slot host/device state mismatch\n"); return false;
+    }
+    if (llama_decode(ctx.get(), batch.get()) != 0) { return false; }
+    std::vector<float> cross_slot;
+    if (!get_current_logits(ctx.get(), cross_slot)) { return false; }
+    const double error = nmse(reference, cross_slot);
+    LOG("cross-slot host/device logits NMSE=%g\n", error);
+    if (error > NMSE_THRESHOLD) { return false; }
+    LOG("owned snapshot: A/B bytes, ring independence, eviction, cross-slot logits, empty image and invalid owner/input PASS\n");
+    return true;
+}
+
 // column headers for the --models table, one per test, in the order they are run
-static const std::vector<const char *> test_names = {
-    "baseline", "seq_rm", "state_load", "cp_h", "cp_d", "cp_h_s", "cp_d_s", "rt", "ring", "own", "fin",
-};
+static const std::vector<const char *> test_names = getenv("LLAMA_TEST_SNAPSHOT_ONLY")
+    ? std::vector<const char *>{ "snapshot" }
+    : std::vector<const char *>{ "baseline", "seq_rm", "state_load", "cp_h", "cp_d", "cp_h_s", "cp_d_s", "rt", "ring", "own", "fin", "snapshot" };
 
 // Run the full save/load test suite (tests 1-8) for a single model.
 // Returns the per-test results.
@@ -1380,6 +1481,11 @@ static test_suite run_save_load_tests_for_model(const std::string & model_path, 
     }
 
     GGML_ASSERT(llama_init->context() == nullptr);
+
+    if (getenv("LLAMA_TEST_SNAPSHOT_ONLY")) {
+        suite.results.push_back(test_owned_snapshot(model, params) ? test_status::PASS : test_status::FAIL);
+        return suite;
+    }
 
     // Tokenize prompt or generate random tokens
     llama_tokens tokens;
@@ -1460,6 +1566,7 @@ static test_suite run_save_load_tests_for_model(const std::string & model_path, 
     // Test 11: checkpoint finalization failure (R46, lane-233); passes as a documented no-op unless
     // built with -DLLAMA_TEST_CHECKPOINT_FAULT_INJECTION=ON
     suite.results.push_back(test_ckpt_finalize_failure(model, params, tokens, 11) ? test_status::PASS : test_status::FAIL);
+    suite.results.push_back(test_owned_snapshot(model, params) ? test_status::PASS : test_status::FAIL);
 
     return suite;
 }

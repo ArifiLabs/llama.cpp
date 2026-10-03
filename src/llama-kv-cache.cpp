@@ -3574,6 +3574,9 @@ const slot_info_vec_t *   sinfos_in) {
     // clear() resets all streams at once, so doing it per stream below would keep only the last one
     if (seq_id == -1) {
         clear(true);
+    } else {
+        // An empty image also replaces the destination sequence.
+        seq_rm(seq_id, -1, -1);
     }
 
     for (uint32_t s = 0; s < n_stream; ++s) {

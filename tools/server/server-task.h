@@ -586,11 +586,13 @@ struct server_prompt {
 };
 
 struct server_prompt_data {
-    std::vector<uint8_t> main;
-    std::vector<uint8_t> drft;
+    using snapshot_ptr = std::unique_ptr<llama_state_seq_snapshot, decltype(&llama_state_seq_snapshot_free)>;
+    snapshot_ptr main { nullptr, llama_state_seq_snapshot_free };
+    snapshot_ptr drft { nullptr, llama_state_seq_snapshot_free };
+    size_t payload_size = 0;
 
     size_t size() const {
-        return main.size() + drft.size();
+        return payload_size;
     }
 };
 

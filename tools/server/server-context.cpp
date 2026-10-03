@@ -593,10 +593,19 @@ struct server_slot {
             return false;
         }
 
-        llama_state_seq_get_data_ext(ctx_tgt, cur->data.main.data(), cur_size_tgt, id, LLAMA_STATE_SEQ_FLAGS_NONE);
+        cur->data.main.reset(llama_state_seq_snapshot_recreate(ctx_tgt, id, cur->data.main.release()));
         if (ctx_dft) {
-            llama_state_seq_get_data_ext(ctx_dft, cur->data.drft.data(), cur_size_dft, id, LLAMA_STATE_SEQ_FLAGS_NONE);
+            cur->data.drft.reset(llama_state_seq_snapshot_recreate(ctx_dft, id, cur->data.drft.release()));
         }
+        if (!cur->data.main || (ctx_dft && !cur->data.drft)) {
+            prompt_cache.states.pop_back();
+            return false;
+        }
+
+        // Charge backend alignment as well as the original logical payload.
+        cur->data.payload_size = std::max(cur_size,
+                llama_state_seq_snapshot_size(cur->data.main.get()) + llama_state_seq_snapshot_size(cur->data.drft.get()));
+        prompt_cache.update();
 
         return true;
     }
@@ -1226,6 +1235,7 @@ private:
     int64_t t_last_load_progress_ms = 0;
 
     void destroy() {
+        prompt_cache.reset();
         spec.reset();
         spec_init.reset();
 
