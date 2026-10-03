@@ -7936,7 +7936,9 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
             role = role.substr(0, w);
         }
         const auto & sr = ctx->device->sx8_cm1_roles;
-        if ((uint32_t) ne11 < ctx->device->sx8_cm1_min_n || (!sr.empty() && sr.count(role) == 0)) {
+        // the width gate covers prompt widths only (n > 8): decode widths that reach this mat-mat path (M-split of an oversized A)
+        // keep the int8 route they had before the gate (check finding F1, 2026-10-03)
+        if ((ne11 > 8 && (uint32_t) ne11 < ctx->device->sx8_cm1_min_n) || (!sr.empty() && sr.count(role) == 0)) {
             mmp_map = nullptr;
         }
         const char * st = mmp_map ? "INT8" : "FLOAT";
