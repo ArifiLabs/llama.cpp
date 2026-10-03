@@ -5690,6 +5690,10 @@ struct test_mul_mat_sx8_gate : public test_mul_mat {
     }
 };
 
+struct test_mul_mat_sx8_threshold : public test_mul_mat_sx8_gate {
+    test_mul_mat_sx8_threshold(int64_t n) : test_mul_mat_sx8_gate(0, 1056, n) {}
+    std::string vars() override { return test_mul_mat_sx8_gate::vars() + ",sx8_threshold_fixture=1"; }
+};
 // ArifiLabs lane-206: adversarial data patterns for MUL_MAT.
 //
 // Every other MUL_MAT case fills both operands from uniform[-1,1]. That distribution cannot reach
@@ -11420,6 +11424,9 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     }
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 248320, 48, 5120, {1, 1}, {1, 1}));
     for (int pattern : {0, 1, 2, 3}) { test_cases.emplace_back(new test_mul_mat_sx8_gate(pattern)); }
+    // Both sides of the default S-X8 mat-mat width gate, against the dequantized float reference.
+    test_cases.emplace_back(new test_mul_mat_sx8_threshold(55));
+    test_cases.emplace_back(new test_mul_mat_sx8_threshold(56));
     // 2048 K steps can use the mask; 2049 must use the ungated two-digit fallback.
     test_cases.emplace_back(new test_mul_mat_sx8_gate(0, 262144));
     test_cases.emplace_back(new test_mul_mat_sx8_gate(0, 262176));

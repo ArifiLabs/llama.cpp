@@ -7925,7 +7925,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     if (ctx->device->coopmat_int_support && ne11 < ctx->device->cm1_int_min_n && !cm1_int_down && src0->type != GGML_TYPE_SX8) {
         mmp_map = nullptr;
     }
-    // lane sx8-int8 stage 10: S-X8 has its own width gate (default every width) and role selector, with a receipt per role.
+    // lane sx8-int8 stage 10: S-X8 has its own width gate and role selector, with a receipt per role.
     if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_SX8) {
         std::string role = src0->name;
         if (role.rfind("blk.", 0) == 0 && role.find('.', 4) != std::string::npos) {
