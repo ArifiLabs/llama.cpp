@@ -155,10 +155,17 @@ int main(int argc, char ** argv) {
     };
     cmp("deadV_run1_nodenorm", run_fa(x0, K0, mixf(V0, V1, 0, nkv, 1, DV), all), base0, DV, nh, 0, nq);
     cmp("deadV_denorm_only", run_fa(x0, K0, mixf(V0, V1, 0, nkv, 2, DV), all), base0, DV, nh, 0, nq);
-    for (float c : { 0.25f, 4.0f, 64.0f, -4.0f }) {
+    // cell 11: sign class. -0.0 dead V (|v| = 0) RED names the signed-zero product; GREEN with c-0.25 RED = negative-value class
+    for (float c : { 0.25f, 4.0f, 64.0f, -4.0f, -0.0f, -0.25f, -64.0f, -1.0f }) {
         char tag[64];
         snprintf(tag, sizeof tag, "deadV_c%g", c);
         cmp(tag, run_fa(x0, K0, mix(V0, nullptr, c, DV), all), base0, DV, nh, 0, nq);
+    }
+    {
+        auto alt = mix(V0, nullptr, 0.25f, DV);  // alternating +-0.25 on dead V
+        for (int64_t h = 0; h < nkvh; ++h) for (int64_t c = 0; c < nkv; ++c) if (dead[c])
+            for (int64_t i = 1; i < DV; i += 2) alt[(size_t) ((h * nkv + c) * DV + i)] = -0.25f;
+        cmp("deadV_alt_pm0.25", run_fa(x0, K0, alt, all), base0, DV, nh, 0, nq);
     }
     // first dead column and the 16-col sub-chunk / 64-col Bc tile edges around it
     int64_t fd = 0; while (fd < nkv && !dead[fd]) ++fd;
