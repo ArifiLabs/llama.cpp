@@ -1214,27 +1214,30 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
 
     ggml_backend_tensor_set(rows, idx.data(), 0, idx.size()*ggml_element_size(rows));
 
-    // lane-298 item 5 (Strata --ple-io semantics, smallest form): the lazy PLE table is a file mapping, and on Windows
-    // every gathered row page stays in the working set. Drop the PREVIOUS ubatch's row pages (its gather has run;
-    // a straggling read would only soft-refault). LLAMA_PLE_RELEASE=1 opts in until the novel-text cell rules.
-    // ponytail: one process-wide pending list (one PLE model per process); per-context state if that changes.
+    // lane-298 item 5 (Strata --ple-io semantics): the lazy PLE table is a file mapping, and on Windows every gathered
+    // row page stays in the working set (~64 KiB per novel token). Once the rows gathered since the last trim could
+    // fill LLAMA_PLE_RELEASE_MIB (default 256), ONE VirtualUnlock over the whole table drops them to standby; later
+    // reads soft-refault. One call per budget, never per row: per-row calls cost ~11 ms each inside the server (v1
+    // 98dc20263, pleio-10050916: -97% prefill). LLAMA_PLE_RELEASE=1 opts in until the novel-text cell rules.
+    // ponytail: process-wide counter (one PLE model per process); per-context state if that changes.
     static const bool release = getenv("LLAMA_PLE_RELEASE") != nullptr && std::string(getenv("LLAMA_PLE_RELEASE")) != "0";
-    static std::vector<int32_t> pending;
+    static const size_t budget = (getenv("LLAMA_PLE_RELEASE_MIB") ? strtoull(getenv("LLAMA_PLE_RELEASE_MIB"), nullptr, 10) : 256) << 20;
+    static size_t since = 0;
     static bool mapped = true;
     const ggml_tensor * tab = pmodel.per_layer_tok_embd;
     if (release && mapped && tab && tab->data && ggml_backend_buffer_is_host(tab->buffer)) {
-        for (const int32_t r : pending) {
-            if (!llama_mmap::release_mapped_pages((const char *) tab->data + (size_t) r * tab->nb[1], tab->nb[1])) {
+        since += idx.size() * std::max<size_t>(tab->nb[1], 4096); // upper bound: each row on its own page
+        if (since >= budget) {
+            const int64_t t0 = ggml_time_us();
+            if (!llama_mmap::release_mapped_pages(tab->data, ggml_nbytes(tab))) {
                 mapped = false; // not a file mapping (or no OS call): never try again
                 LLAMA_LOG_WARN("%s: PLE release off: table is not a file mapping\n", __func__);
-                break;
+            } else {
+                LLAMA_LOG_WARN("%s: PLE trim: %zu MiB budget hit, table unlock %.2f ms\n", __func__, budget >> 20,
+                        (ggml_time_us() - t0) / 1000.0);
             }
+            since = 0;
         }
-        if (mapped && !pending.empty()) {
-            static bool said = false;
-            if (!said) { said = true; LLAMA_LOG_INFO("%s: PLE release on: %zu row pages dropped per ubatch\n", __func__, pending.size()); }
-        }
-        pending.assign(idx.begin(), idx.end());
     }
 }
 
