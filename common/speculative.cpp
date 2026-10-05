@@ -3017,7 +3017,7 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
 
         sinfo.i_last = 0;
         sinfo.n_draft_last = 0;
-        sinfo.cap = cap0;
+        sinfo.cap = cap0 > 0 ? params.n_max : 0; // full width until the first miss
 
         const size_t n = mod.get_n();
         if (prompt.size() < n) {
