@@ -320,7 +320,7 @@ int main(int argc, char ** argv) {
                 const int w = widths[wi];
                 llama_memory_clear(mem, true);
                 pr.step = (int) wi;
-                dec(S, 0, t - 7, false);
+                dec(S, 0, std::min(t - 7, t - w + 1), false);   // widths > 8 must not re-decode prefill positions
                 for (int i = t - 7; i <= t - w; ++i) dec(S, i, i + 1, true);
                 std::vector<rrec> ops;
                 pr.n_tok = w; pr.rows_cur = pr.rows_mode ? &ops : nullptr;
