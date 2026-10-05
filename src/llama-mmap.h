@@ -59,6 +59,10 @@ struct llama_mmap {
     // softly from standby). Returns false, doing nothing, if p is not in a file mapping or the OS has no such call.
     static bool release_mapped_pages(const void * p, size_t n);
 
+    // lane-298 item 5 prefetch-ahead: one batched read of the pages holding rows[i] (row_bytes each) of a mapped table,
+    // so a later gather soft-faults instead of taking one hard fault per page. Returns pages requested, 0 if unsupported.
+    static size_t prefetch_rows(const void * base, size_t row_bytes, const int32_t * rows, size_t n);
+
     // pin the pages backing [first, last) with a backend allocator for faster H2D copies,
     // unpinned in the destructor before the pages are unmapped
     // returns the number of bytes registered, 0 on failure

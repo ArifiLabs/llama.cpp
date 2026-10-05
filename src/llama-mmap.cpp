@@ -869,6 +869,43 @@ bool llama_mmap::release_mapped_pages(const void * p, size_t n) {
 #endif
 }
 
+size_t llama_mmap::prefetch_rows(const void * base, size_t row_bytes, const int32_t * rows, size_t n) {
+#if defined(_WIN32) && _WIN32_WINNT >= 0x602
+    static const auto pf = (BOOL (WINAPI *)(HANDLE, ULONG_PTR, PWIN32_MEMORY_RANGE_ENTRY, ULONG))
+        (void *) GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "PrefetchVirtualMemory");
+    if (!pf || n == 0) {
+        return 0;
+    }
+    const uintptr_t page = 4096;
+    std::vector<uintptr_t> pg;
+    pg.reserve(2*n);
+    for (size_t i = 0; i < n; ++i) {
+        const uintptr_t a = (uintptr_t) base + (uintptr_t) rows[i] * row_bytes;
+        for (uintptr_t p = a & ~(page - 1); p < a + row_bytes; p += page) { // a row may straddle two pages
+            pg.push_back(p);
+        }
+    }
+    std::sort(pg.begin(), pg.end());
+    pg.erase(std::unique(pg.begin(), pg.end()), pg.end());
+    std::vector<WIN32_MEMORY_RANGE_ENTRY> e;
+    for (uintptr_t p : pg) {
+        if (!e.empty() && (uintptr_t) e.back().VirtualAddress + e.back().NumberOfBytes == p) {
+            e.back().NumberOfBytes += page;
+        } else {
+            e.push_back({ (PVOID) p, (SIZE_T) page });
+        }
+    }
+    return pf(GetCurrentProcess(), (ULONG_PTR) e.size(), e.data(), 0) ? pg.size() : 0;
+#else
+    // ponytail: POSIX would be madvise(MADV_WILLNEED) per page; add if a Linux cell shows the cold-fault cost
+    GGML_UNUSED(base);
+    GGML_UNUSED(row_bytes);
+    GGML_UNUSED(rows);
+    GGML_UNUSED(n);
+    return 0;
+#endif
+}
+
 size_t llama_mmap::register_host(size_t first, size_t last, bool (*reg_fn)(void *, size_t), void (*unreg_fn)(void *)) {
 #ifdef _POSIX_MAPPED_FILES
     if (host_reg_addr || !reg_fn || !unreg_fn || last <= first) {
