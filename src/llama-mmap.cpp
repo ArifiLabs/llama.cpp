@@ -849,6 +849,26 @@ void * llama_mmap::addr() const { return pimpl->addr; }
 
 void llama_mmap::unmap_fragment(size_t first, size_t last) { pimpl->unmap_fragment(first, last); }
 
+bool llama_mmap::release_mapped_pages(const void * p, size_t n) {
+#ifdef _WIN32
+    MEMORY_BASIC_INFORMATION mbi;
+    if (n == 0 || VirtualQuery(p, &mbi, sizeof(mbi)) == 0 || mbi.Type != MEM_MAPPED) {
+        return false;
+    }
+    // outward to whole pages: a page shared with other rows only costs them a soft refault
+    const uintptr_t page  = 4096;
+    const uintptr_t first = (uintptr_t) p & ~(page - 1);
+    const uintptr_t last  = ((uintptr_t) p + n + page - 1) & ~(page - 1);
+    VirtualUnlock((void *) first, last - first); // FALSE + ERROR_NOT_LOCKED is the expected result
+    return true;
+#else
+    // ponytail: POSIX keeps clean file pages in the page cache, reclaimable; add madvise if RSS growth shows up
+    GGML_UNUSED(p);
+    GGML_UNUSED(n);
+    return false;
+#endif
+}
+
 size_t llama_mmap::register_host(size_t first, size_t last, bool (*reg_fn)(void *, size_t), void (*unreg_fn)(void *)) {
 #ifdef _POSIX_MAPPED_FILES
     if (host_reg_addr || !reg_fn || !unreg_fn || last <= first) {

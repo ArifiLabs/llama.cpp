@@ -2,9 +2,12 @@
 #include "llama-impl.h"
 #include "llama-memory-hybrid-idx.h"
 #include "llama-memory-recurrent.h"
+#include "llama-mmap.h"
 
 #include <algorithm>
 #include <cinttypes>
+#include <cstdlib>
+#include <string>
 
 // bad metadata must be catchable: GGML_ASSERT aborts the whole process
 static void qwen4exp_require_nonzero(const llama_model_loader & ml, llm_kv kid, uint32_t value) {
@@ -1210,6 +1213,29 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
     }
 
     ggml_backend_tensor_set(rows, idx.data(), 0, idx.size()*ggml_element_size(rows));
+
+    // lane-298 item 5 (Strata --ple-io semantics, smallest form): the lazy PLE table is a file mapping, and on Windows
+    // every gathered row page stays in the working set. Drop the PREVIOUS ubatch's row pages (its gather has run;
+    // a straggling read would only soft-refault). LLAMA_PLE_RELEASE=1 opts in until the novel-text cell rules.
+    // ponytail: one process-wide pending list (one PLE model per process); per-context state if that changes.
+    static const bool release = getenv("LLAMA_PLE_RELEASE") != nullptr && std::string(getenv("LLAMA_PLE_RELEASE")) != "0";
+    static std::vector<int32_t> pending;
+    static bool mapped = true;
+    const ggml_tensor * tab = pmodel.per_layer_tok_embd;
+    if (release && mapped && tab && tab->data && ggml_backend_buffer_is_host(tab->buffer)) {
+        for (const int32_t r : pending) {
+            if (!llama_mmap::release_mapped_pages((const char *) tab->data + (size_t) r * tab->nb[1], tab->nb[1])) {
+                mapped = false; // not a file mapping (or no OS call): never try again
+                LLAMA_LOG_WARN("%s: PLE release off: table is not a file mapping\n", __func__);
+                break;
+            }
+        }
+        if (mapped && !pending.empty()) {
+            static bool said = false;
+            if (!said) { said = true; LLAMA_LOG_INFO("%s: PLE release on: %zu row pages dropped per ubatch\n", __func__, pending.size()); }
+        }
+        pending.assign(idx.begin(), idx.end());
+    }
 }
 
 // Read a conv history out of its own recurrent row and write the new tail back.

@@ -55,6 +55,10 @@ struct llama_mmap {
 
     void unmap_fragment(size_t first, size_t last);
 
+    // lane-298 item 5: drop the pages holding [p, p+n) from the working set (they stay mapped and refault
+    // softly from standby). Returns false, doing nothing, if p is not in a file mapping or the OS has no such call.
+    static bool release_mapped_pages(const void * p, size_t n);
+
     // pin the pages backing [first, last) with a backend allocator for faster H2D copies,
     // unpinned in the destructor before the pages are unmapped
     // returns the number of bytes registered, 0 on failure
