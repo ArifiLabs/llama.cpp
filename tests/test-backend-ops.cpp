@@ -12708,6 +12708,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
 static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     std::vector<std::unique_ptr<test_case>> test_cases;
 
+    // lane 301 CPU co-compute census: the qwen4exp IQ3_S prefill dense matmuls at ub 4096 (Vulkan perf logger shapes)
+    for (ggml_type type : {GGML_TYPE_Q6_K, GGML_TYPE_Q5_K, GGML_TYPE_Q4_K, GGML_TYPE_IQ4_XS}) {
+        test_cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32, 12288, 4096, 2560, {1, 1}, {1, 1}));
+    }
+
     // ArifiLabs Escha-W2 fused linear (lane-164): real 27B projection shapes across the
     // decode->prefill ncols range. Cost is strictly linear in ncols (measured on a 780M:
     // 1.15 us*1000/col for escha2 5120x12288, 2.12 for escha3 17408x5120, from ncols 1/8/64),
@@ -16039,7 +16044,9 @@ int main(int argc, char ** argv) {
         ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
         auto ggml_backend_set_n_threads_fn = (ggml_backend_set_n_threads_t) ggml_backend_reg_get_proc_address(reg, "ggml_backend_set_n_threads");
         if (ggml_backend_set_n_threads_fn) {
-            ggml_backend_set_n_threads_fn(backend.get(), std::max<int>(1, N_THREADS/2));
+            // lane 301 CPU census: GGML_ARIFI_TBO_THREADS overrides the thread count (1 vs all cores)
+            const char * tbo_threads = getenv("GGML_ARIFI_TBO_THREADS");
+            ggml_backend_set_n_threads_fn(backend.get(), tbo_threads ? std::max(1, atoi(tbo_threads)) : std::max<int>(1, N_THREADS/2));
         }
 
         size_t free, total;  // NOLINT

@@ -12,6 +12,15 @@
 // llama_memory_hybrid plus a third cache with one indexer key per token, for block-sparse attention (qwen4exp QSA)
 // the indexer is a side buffer over the attention cells: same size, padding, streams and slots, so cell j is one token in both
 
+// row 25 (lane 301) fresh-block inputs of the pooled indexer-key cache; any pointer may be null
+struct llama_qsa_pool_io {
+    ggml_tensor * fresh_cells = nullptr;   // I32 [ratio*(n_fresh+1)] member cells; the last entry is the dead block
+    ggml_tensor * fresh_pos   = nullptr;   // I32 [4*(n_fresh+1)]     mrope rows of each entry's first token
+    ggml_tensor * fresh_dst   = nullptr;   // I32 [n_fresh+1]         cache row each entry is written to
+    ggml_tensor * read_rows   = nullptr;   // I32 [n_blocks]          cache row of each block id (incremental read, full write)
+    int64_t       n_fresh     = 0;
+};
+
 class llama_memory_hybrid_idx : public llama_memory_hybrid {
 public:
     llama_memory_hybrid_idx(
@@ -85,9 +94,28 @@ public:
     // the caller then adds the attention mask, the only part of the bias that varies within a block
     void set_input_qsa(ggml_tensor * cell_blk, ggml_tensor * blk_cells, ggml_tensor * blk_pos,
                        ggml_tensor * bias, const llama_ubatch * ubatch, uint32_t ratio,
-                       bool blk_bias) const;
+                       bool blk_bias, const llama_qsa_pool_io * pool = nullptr) const;
+
+    // row 25 (lane 301): pooled indexer keys (pool + norm + rope) cached once per full block, row = pos/ratio,
+    // plus spare rows pad (n_rows-2) and dead (n_rows-1). nullptr when off: GGML_ARIFI_QSA_POOL_CACHE=0,
+    // several streams, or a layer without a ratio. A layer is clean while every full block's row is current.
+    ggml_tensor * get_pooled(int32_t il) const;
+    bool pooled_clean(int32_t il) const;
+    void pooled_mark(int32_t il, bool clean) const;
+
+    // incremental pooling holds: one stream, one sequence, 1-d positions, the ubatch spans <= n_fresh blocks
+    bool qsa_incr_ok(const llama_ubatch & ubatch, uint32_t ratio, int64_t n_fresh) const;
 
 private:
+    void pooled_invalidate();
+    bool one_seq() const;
+
+    std::vector<ggml_tensor *>           pooled;         // by il
+    mutable std::vector<int64_t>         pooled_epoch;   // by il, == pooled_gen when clean
+    int64_t                              pooled_gen = 0;
+    std::vector<ggml_context_ptr>        pooled_ctxs;
+    std::vector<ggml_backend_buffer_ptr> pooled_bufs;
+
     // forget seq_id (all of it if seq_id < 0) in every cache at once, so a failed restore cannot leave the caches out of step
     // seq_id < 0 drops the whole context, as the caches themselves do on a failed restore
     void state_drop(llama_seq_id seq_id);
@@ -143,7 +171,9 @@ public:
 
     void set_input_qsa(ggml_tensor * cell_blk, ggml_tensor * blk_cells, ggml_tensor * blk_pos,
                        ggml_tensor * bias, const llama_ubatch * ubatch, uint32_t ratio,
-                       bool blk_bias) const;
+                       bool blk_bias, const llama_qsa_pool_io * pool = nullptr) const;
+
+    const llama_memory_hybrid_idx * get_mem() const { return mem; }
 
 private:
     const llama_memory_hybrid_idx * mem = nullptr;
