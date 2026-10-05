@@ -755,8 +755,21 @@ struct llama_mmap::impl {
     }
 
     void unmap_fragment(size_t first, size_t last) {
-        GGML_UNUSED(first);
-        GGML_UNUSED(last);
+        // lane-298 port item 2: the view stays mapped (so a later read cannot fault), but VirtualUnlock on
+        // unlocked pages drops them from the working set to the standby list, which counts as available RAM
+        static const bool trim = getenv("LLAMA_WIN_UNMAP_FRAGMENT") != nullptr;
+        if (!trim) {
+            return;
+        }
+        SYSTEM_INFO si;
+        GetSystemInfo(&si);
+        const size_t page = si.dwPageSize;
+        first = (first + page - 1) & ~(page - 1);
+        last  = last & ~(page - 1);
+        if (last <= first) {
+            return;
+        }
+        VirtualUnlock((char *) addr + first, last - first); // FALSE + ERROR_NOT_LOCKED is the expected result
     }
 
     ~impl() {
