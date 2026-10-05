@@ -10992,7 +10992,8 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
     // lane-196 trap #4: mask-opt strides are computed against the dispatch's own KV and segment
     // offsets are not Bc-aligned — REFUSED BY THE CONDITION on segmented dispatches, and asserted
     // below so an edit that re-enables it cannot drift in silently.
-    bool use_mask_opt = part == nullptr && mask && !use_sparse && nem1 >= 32 && nem0 * nem1 > 32768 && nem0 >= tuning_params.block_cols * 16
+    static const bool disable_mask_opt = getenv("GGML_VK_FA_MASK_OPT_DISABLE") != nullptr;  // lane-300 diagnosis switch
+    bool use_mask_opt = !disable_mask_opt && part == nullptr && mask && !use_sparse && nem1 >= 32 && nem0 * nem1 > 32768 && nem0 >= tuning_params.block_cols * 16
                         && (ctx->device->architecture != vk_device_architecture::AMD_GCN || HSK > 256 || HSV > 256);
     GGML_ASSERT(!(part && use_mask_opt));
     vk_fa_pipeline_state fa_pipeline_state = get_fa_pipeline_state(ctx->device, tuning_params, HSK, HSV, aligned, f32acc,

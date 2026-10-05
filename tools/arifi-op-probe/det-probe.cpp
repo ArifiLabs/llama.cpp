@@ -23,6 +23,7 @@
 #include <vector>
 
 struct rec { int step; std::string name; int op; int64_t ne[4]; uint64_t h; };
+struct rrec { std::string name; int op; std::vector<float> last; };   // ROWS per-op: the last token's slice
 
 struct probe {
     int mode = 0;                       // 0 off, 1 all nodes, 2 name-filtered
@@ -30,6 +31,9 @@ struct probe {
     int step = 0;
     std::vector<rec> * cur = nullptr;
     std::vector<uint8_t> buf;
+    bool rows_mode = false;
+    int n_tok = 1;
+    std::vector<rrec> * rows_cur = nullptr;
 };
 
 static uint64_t fnv(const uint8_t * p, size_t n, uint64_t h) {
@@ -136,6 +140,26 @@ static void fa_report(int step, const ggml_tensor * t) {
         (unsigned long long) fnv(mraw.data(), mraw.size(), 1469598103934665603ull));
 }
 
+// DETP_FA_DUMP=<prefix>: per run, the first FA node whose q has != 512 rows -> <prefix>-run<r>.bin
+// layout: 5 x { int64 ne[4]; float data[] } for q, k, v, mask, dst (f32, logical order), then float op_params[0..4]
+static const char * g_fa_dump = nullptr;
+static int g_fa_dumped_run = -1;
+
+static void fa_dump(const ggml_tensor * t) {
+    if (!g_fa_dump || g_fa_dumped_run == g_run || t->src[0]->ne[1] == 512) return;
+    g_fa_dumped_run = g_run;
+    char fn[1024]; snprintf(fn, sizeof fn, "%s-run%d.bin", g_fa_dump, g_run);
+    FILE * f = fopen(fn, "wb");
+    const ggml_tensor * ts[5] = { t->src[0], t->src[1], t->src[2], t->src[3], t };
+    for (const ggml_tensor * x : ts) {
+        const std::vector<float> v = to_f32(x);
+        fwrite(x->ne, sizeof(int64_t), 4, f);
+        fwrite(v.data(), sizeof(float), v.size(), f);
+    }
+    fwrite(t->op_params, sizeof(float), 5, f);
+    fclose(f);
+}
+
 static bool want(const probe * p, const ggml_tensor * t) {
     if (g_fa_out && t->op == GGML_OP_FLASH_ATTN_EXT) return true;
     if (p->mode == 1) return true;
@@ -143,11 +167,37 @@ static bool want(const probe * p, const ggml_tensor * t) {
     return false;
 }
 
+// last token's slice: the highest dim whose size equals the batch width (ASSUMED token dim); width 1 = whole tensor
+static void rows_rec(probe * p, const ggml_tensor * t) {
+    if (strncmp(t->name, "cache_", 6) == 0) return;
+    if (t->type != GGML_TYPE_F32 && t->type != GGML_TYPE_F16) return;
+    const std::vector<float> f = to_f32(t);
+    int d = -1;
+    if (p->n_tok > 1) for (int i = 3; i >= 1; --i) if (t->ne[i] == p->n_tok) { d = i; break; }
+    rrec r { t->name, (int) t->op, {} };
+    if (d < 0) r.last = f;
+    else {
+        int64_t inner = 1; for (int i = 0; i < d; ++i) inner *= t->ne[i];
+        int64_t outer = 1; for (int i = d + 1; i < 4; ++i) outer *= t->ne[i];
+        for (int64_t o = 0; o < outer; ++o) {
+            const float * s = f.data() + (o * t->ne[d] + (t->ne[d] - 1)) * inner;
+            r.last.insert(r.last.end(), s, s + inner);
+        }
+    }
+    p->rows_cur->push_back(std::move(r));
+}
+
 static bool cb(ggml_tensor * t, bool ask, void * ud) {
     probe * p = (probe *) ud;
+    if (p->rows_mode) {
+        if (!p->rows_cur) return ask ? false : true;
+        if (ask) return true;
+        rows_rec(p, t);
+        return true;
+    }
     if (p->mode == 0 || !p->cur) return ask ? false : true;
     if (ask) return want(p, t);
-    if (g_fa_out && t->op == GGML_OP_FLASH_ATTN_EXT) fa_report(p->step, t);
+    if (g_fa_out && t->op == GGML_OP_FLASH_ATTN_EXT) { fa_report(p->step, t); fa_dump(t); }
     rec r { p->step, t->name, (int) t->op, { t->ne[0], t->ne[1], t->ne[2], t->ne[3] }, hash_tensor(p, t) };
     p->cur->push_back(r);
     return true;
@@ -189,7 +239,9 @@ int main(int argc, char ** argv) {
         g_fa_out = fopen(ff, "w");
         if (pr.mode == 0) pr.mode = 2;   // no names: only FA nodes are asked for (and hashed)
     }
-    if (pr.mode != 0) { params.cb_eval = cb; params.cb_eval_user_data = &pr; }
+    g_fa_dump = getenv("DETP_FA_DUMP");
+    pr.rows_mode = getenv("DETP_ROWS") && envi("DETP_ROWS_OPS", 0) == 1;
+    if (pr.mode != 0 || pr.rows_mode) { params.cb_eval = cb; params.cb_eval_user_data = &pr; }
     params.warmup = false;
 
     llama_backend_init();
@@ -263,13 +315,39 @@ int main(int argc, char ** argv) {
             const int t = (int) prompt.size() - 1 + off;
             std::vector<float> ref_lg;
             uint64_t ref_h = 0;
+            std::vector<rrec> ref_ops;
             for (size_t wi = 0; wi < widths.size(); ++wi) {
                 const int w = widths[wi];
                 llama_memory_clear(mem, true);
                 pr.step = (int) wi;
                 dec(S, 0, t - 7, false);
                 for (int i = t - 7; i <= t - w; ++i) dec(S, i, i + 1, true);
+                std::vector<rrec> ops;
+                pr.n_tok = w; pr.rows_cur = pr.rows_mode ? &ops : nullptr;
                 dec(S, t - w + 1, t + 1, true);
+                pr.rows_cur = nullptr;
+                if (pr.rows_mode) {
+                    if (wi == 0) ref_ops = std::move(ops);
+                    else {   // walk both node lists in order, matching by name; report the first 40 value differences
+                        size_t j = 0; int nd = 0, nskip = 0;
+                        for (size_t i = 0; i < ops.size() && nd < 40; ++i) {
+                            size_t k = j;
+                            while (k < ref_ops.size() && ref_ops[k].name != ops[i].name) ++k;
+                            if (k == ref_ops.size()) { ++nskip; continue; }
+                            j = k + 1;
+                            const rrec & a = ref_ops[k]; const rrec & b = ops[i];
+                            if (a.last.size() != b.last.size()) { ++nskip; continue; }
+                            double md = 0; for (size_t e = 0; e < a.last.size(); ++e) md = std::max(md, (double) std::fabs(a.last[e] - b.last[e]));
+                            if (memcmp(a.last.data(), b.last.data(), a.last.size() * 4) != 0) {
+                                fprintf(out, "{\"rows_op\":true,\"t\":%d,\"w\":%d,\"idx\":%zu,\"name\":\"%s\",\"op\":\"%s\",\"n\":%zu,\"maxdiff\":%.6g}\n",
+                                        t, w, i, b.name.c_str(), ggml_op_name((ggml_op) b.op), b.last.size(), md);
+                                ++nd;
+                            }
+                        }
+                        fprintf(out, "{\"rows_ops_summary\":true,\"t\":%d,\"w\":%d,\"nodes\":%zu,\"ref_nodes\":%zu,\"shape_or_name_skips\":%d,\"diffs_listed\":%d}\n",
+                                t, w, ops.size(), ref_ops.size(), nskip, nd);
+                    }
+                }
                 const float * lg = llama_get_logits_ith(ctx, -1);
                 const uint64_t h = fnv((const uint8_t *) lg, sizeof(float) * n_vocab, 1469598103934665603ull);
                 int a = 0; for (int i = 1; i < n_vocab; ++i) if (lg[i] > lg[a]) a = i;
