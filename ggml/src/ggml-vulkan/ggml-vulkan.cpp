@@ -10565,6 +10565,26 @@ static void ggml_vk_fa_choose_split_k(const vk_device& device, uint32_t gqa_rati
     *split_k_out  = split_k;
 }
 
+// lane-301: may a multi-row (prefill) FA take the gqa layout so the sparse gather engages? Same conditions the
+// sparse gate checks, minus the gqa test itself. GGML_ARIFI_FA_SPARSE_PREFILL=0 restores dense prefill;
+// GGML_ARIFI_FA_SPARSE_PREFILL_MIN_RATIO raises the KV / n_kv_max floor (never below the gate's own).
+static bool ggml_vk_fa_sparse_prefill_gqa(const ggml_tensor * dst, const ggml_tensor * mask, const ggml_tensor * k,
+                                          const ggml_tensor * v, uint32_t KV, uint32_t nem0, bool coopmat2) {
+    static const bool on = [] { const char * s = getenv("GGML_ARIFI_FA_SPARSE_PREFILL"); return !(s && s[0] == '0'); }();
+    static const int64_t env_ratio = [] { const char * s = getenv("GGML_ARIFI_FA_SPARSE_PREFILL_MIN_RATIO"); return s ? std::max<int64_t>(1, atoll(s)) : 2; }();
+    static const bool disable_sparse = getenv("GGML_VK_FA_SPARSE_DISABLE") != nullptr;
+    if (!on || disable_sparse || !mask || k->type != GGML_TYPE_F16 || v->type != GGML_TYPE_F16 || nem0 != KV) {
+        return false;
+    }
+    const int32_t n_kv_max = ggml_get_op_params_i32(dst, 4);
+    float max_bias = 0.0f, logit_softcap = 0.0f;
+    memcpy(&max_bias,      (const float *) dst->op_params + 1, sizeof(float));
+    memcpy(&logit_softcap, (const float *) dst->op_params + 2, sizeof(float));
+    const int64_t ratio = std::max<int64_t>(env_ratio, coopmat2 ? 4 : 2);
+    return n_kv_max > 0 && max_bias == 0.0f && logit_softcap == 0.0f &&
+           (int64_t)KV >= std::max<int64_t>(4096, ratio * (int64_t)n_kv_max);
+}
+
 void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * q, const ggml_tensor * k, const ggml_tensor * v, const ggml_tensor * mask, const ggml_tensor * sinks, ggml_tensor * dst, const vk_fa_seg_part * part) {
     VK_LOG_DEBUG("ggml_vk_flash_attn((" << q << ", name=" << q->name << ", type=" << q->type << ", ne0=" << q->ne[0] << ", ne1=" << q->ne[1] << ", ne2=" << q->ne[2] << ", ne3=" << q->ne[3] << ", nb0=" << q->nb[0] << ", nb1=" << q->nb[1] << ", nb2=" << q->nb[2] << ", nb3=" << q->nb[3];
     std::cerr << "), (" << k << ", name=" << k->name << ", type=" << k->type << ", ne0=" << k->ne[0] << ", ne1=" << k->ne[1] << ", ne2=" << k->ne[2] << ", ne3=" << k->ne[3] << ", nb0=" << k->nb[0] << ", nb1=" << k->nb[1] << ", nb2=" << k->nb[2] << ", nb3=" << k->nb[3];
@@ -10685,6 +10705,8 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
     vk_fa_tuning_params tuning_params = get_fa_tuning_params(ctx->device, HSK, HSV, 512, KV, k_type_eff, v_type_eff, f32acc);
     const uint32_t max_gqa = std::min(tuning_params.block_rows, 32u);
 
+    bool sparse_prefill_gqa = false;
+    bool prefill_gqa = false;
     if (part) {
         // lane-196: the gqa decision must be COMMON across every partition of one node — the gqa
         // and non-gqa epilogues index the shared scratch differently, so a per-partition
@@ -10695,11 +10717,16 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
             N = gqa_ratio;
             workgroups_y /= gqa_ratio;
         }
-    } else if (N <= 8 && qk_ratio > 1 && qk_ratio <= max_gqa &&
+    } else if ((N <= 8 || (sparse_prefill_gqa = ggml_vk_fa_sparse_prefill_gqa(dst, mask, k, v, KV, nem0, ctx->device->coopmat2))) &&
+        qk_ratio > 1 && qk_ratio <= max_gqa &&
         qk_ratio * nek2 == neq2 && nek2 == nev2 && nem2 <= 1) {
+        // lane-301: a sparse-hinted prefill (QSA: one selected cell set per query token, shared by its gqa heads)
+        // takes the gqa layout too, so each workgroup gathers its own token's n_kv_max cells instead of the
+        // whole causal prefix; the sparse gate below then engages exactly as it does for decode.
         // grouped query attention - make the N dimension equal to gqa_ratio, reduce
         // workgroups proportionally in y dimension. The shader will detect gqa_ratio > 1
         // and change addressing calculations to index Q's dimension 2.
+        prefill_gqa = sparse_prefill_gqa;
         gqa_ratio = qk_ratio;
         N = gqa_ratio;
         workgroups_y /= gqa_ratio;
@@ -10731,6 +10758,15 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
                             nem0 == KV &&
                             (int64_t)KV >= std::max<int64_t>(4096, min_ratio * (int64_t)n_kv_max) &&
                             (gqa_ratio > 1 || (tuning_params.path == FA_SCALAR && N == 1));
+    // lane-301: a prefill promoted to the gqa layout for sparsity must be sparse, never dense-in-gqa
+    GGML_ASSERT(!prefill_gqa || use_sparse);
+    if (prefill_gqa) {
+        static bool once = false;
+        if (!once) {
+            once = true;
+            fprintf(stderr, "ggml_vulkan: FA sparse prefill engaged (lane-301): N=%u KV=%u n_kv_max=%d\n", (uint32_t)neq1, KV, n_kv_max);
+        }
+    }
 
     const uint32_t q_stride = (uint32_t)(nbq1 / ggml_type_size(q->type));
     uint32_t k_stride = (uint32_t)(nbk1 / ggml_type_size(k->type));
@@ -11009,6 +11045,8 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
 
     if (use_sparse)
     {
+        // lane-301 RED plant (test-only): GGML_ARIFI_QSA_RED_PLANT=1 drops one compaction slot on promoted prefills
+        static const bool red_plant = getenv("GGML_ARIFI_QSA_RED_PLANT") != nullptr;
         const vk_op_flash_attn_sparse_compact_push_constants sc_pc = {
             KV,
             nem1,
@@ -11016,7 +11054,7 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
             (uint32_t)(mask->nb[1] / sizeof(ggml_fp16_t)),
             (uint32_t)(mask->nb[2] / sizeof(ggml_fp16_t)),
             (uint32_t)(mask->nb[3] / sizeof(ggml_fp16_t)),
-            (uint32_t)n_kv_max,
+            (uint32_t)n_kv_max - ((red_plant && prefill_gqa) ? 1u : 0u),
         };
 
         ggml_vk_dispatch_pipeline(ctx, subctx, sparse_compact_pipeline,
