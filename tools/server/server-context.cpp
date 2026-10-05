@@ -525,6 +525,15 @@ struct server_slot {
     int64_t spec_n_restores   = 0;
     int64_t spec_n_replay_tok = 0;
 
+    // lane-298 round cost: draft / verify decode / plain decode / post-decode spec process, us + count
+    int64_t spec_t_draft_us   = 0;
+    int64_t spec_n_drafts     = 0;
+    int64_t spec_t_verify_us  = 0;
+    int64_t spec_n_verify     = 0;
+    int64_t spec_t_plain_us   = 0;
+    int64_t spec_n_plain      = 0;
+    int64_t spec_t_process_us = 0;
+
     // TODO: move members that belong to the task (such as `generated_text`, `has_new_line`) to task_results_state
     //       see https://github.com/ggml-org/llama.cpp/pull/18283#issuecomment-3710175837
     std::unique_ptr<const server_task> task;
@@ -687,6 +696,9 @@ struct server_slot {
         // note: callback_on_reset() must have run before this, see release()
         stats = {};
         n_accepted_per_pos.clear();
+        spec_t_save_us = spec_t_restore_us = spec_n_saves = spec_n_restores = spec_n_replay_tok = 0;
+        spec_t_draft_us = spec_n_drafts = spec_t_verify_us = spec_n_verify = 0;
+        spec_t_plain_us = spec_n_plain = spec_t_process_us = 0;
 
         n_predict_max = -1;
 
@@ -974,8 +986,17 @@ struct server_slot {
                     (long long) spec_t_save_us, (long long) spec_n_saves,
                     (long long) spec_t_restore_us, (long long) spec_n_restores,
                     (long long) spec_n_replay_tok, n_draft_accepted);
-            SLT_TRC(*this,
+            SLT_INF(*this,
                     "     acc per pos = (%s)\n", acceptance_rates_per_pos.c_str());
+        }
+
+        if (spec_n_drafts > 0 || spec_n_plain > 0) {
+            SLT_INF(*this,
+                    "spec round cost  = draft %lld us/%lld, verify %lld us/%lld, plain %lld us/%lld, process %lld us, save %lld us, restore %lld us\n",
+                    (long long) spec_t_draft_us, (long long) spec_n_drafts,
+                    (long long) spec_t_verify_us, (long long) spec_n_verify,
+                    (long long) spec_t_plain_us, (long long) spec_n_plain,
+                    (long long) spec_t_process_us, (long long) spec_t_save_us, (long long) spec_t_restore_us);
         }
 
         common_speculative_print_stats(spec);
@@ -3607,9 +3628,16 @@ private:
 
         // generate the actual drafts (if any)
         if (!drafting.empty()) {
+            const int64_t t_draft_start = ggml_time_us();
             queue_tasks.yield_to_queue([&]() {
                 common_speculative_draft(spec.get());
             });
+            // ponytail: one draft call serves all drafting slots; each slot is charged the full wall time
+            const int64_t t_draft = ggml_time_us() - t_draft_start;
+            for (auto * s : drafting) {
+                s->spec_t_draft_us += t_draft;
+                s->spec_n_drafts   += 1;
+            }
         }
 
         // make checkpoints if needed
@@ -4313,12 +4341,29 @@ private:
         // yield to the queue, so we can still handle metrics tasks while decoding
         // note: the sync is done here too, so that the wait is also covered by the yield
         int ret = 0;
+        const int64_t t_dec_start = ggml_time_us();
         queue_tasks.yield_to_queue([&]() {
             ret = llama_decode(ctx_tgt, batch_view);
             if (ret == 0 && has_output) {
                 llama_synchronize(ctx_tgt);
             }
         });
+        if (ret == 0 && has_output) {
+            // ponytail: a mixed batch (prefill + generation) is charged in full to each generating slot
+            const int64_t t_dec = ggml_time_us() - t_dec_start;
+            for (auto & s : slots) {
+                if (!s.is_processing() || s.state != SLOT_STATE_GENERATING) {
+                    continue;
+                }
+                if (!s.spec_i_batch.empty()) {
+                    s.spec_t_verify_us += t_dec;
+                    s.spec_n_verify    += 1;
+                } else {
+                    s.spec_t_plain_us += t_dec;
+                    s.spec_n_plain    += 1;
+                }
+            }
+        }
 
         if (ret != 0) {
             {
@@ -4378,9 +4423,16 @@ private:
         //       ref: https://github.com/ggml-org/llama.cpp/pull/22728#issuecomment-4400925384
         if (spec) {
             bool ok = true;
+            const int64_t t_proc_start = ggml_time_us();
             queue_tasks.yield_to_queue([&]() {
                 ok = common_speculative_process(spec.get(), batch_view);
             });
+            const int64_t t_proc = ggml_time_us() - t_proc_start;
+            for (auto & s : slots) {
+                if (s.is_processing() && s.state == SLOT_STATE_GENERATING) {
+                    s.spec_t_process_us += t_proc;
+                }
+            }
 
             if (!ok) {
                 SRV_ERR("%s", "failed to process speculative batch\n");

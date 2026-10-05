@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cinttypes>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iomanip>
@@ -1963,6 +1964,8 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
     static constexpr int32_t defer_max = 64;
     bool defer_enabled = false;
     bool chain_graph   = false;
+    int   recent_pen_k        = 0;
+    float recent_pen_strength = 0.0f;
     struct {
         std::vector<llama_token>  tok;
         std::vector<llama_pos>    pos;
@@ -2039,6 +2042,13 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         }
 
         const bool chain_enabled = common_speculative_mtp_chain_enabled(this->params);
+
+        if (const char * pen = getenv("LLAMA_SPEC_DRAFT_RECENT_PENALTY")) {
+            if (std::sscanf(pen, "%d:%f", &recent_pen_k, &recent_pen_strength) != 2 || recent_pen_k < 0) {
+                recent_pen_k = 0;
+            }
+            SPC_INF("draft recent-token penalty: k=%d strength=%.2f\n", recent_pen_k, recent_pen_strength);
+        }
 
         llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
         llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ true);
@@ -2703,11 +2713,52 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                             common_token_to_piece(ctx_dft, cur_p->data[k].id).c_str());
                 }
 
+                auto & dp = dparams.at(seq_id);
+                auto & result = *dp.result;
+
                 // add drafted token for each sequence
-                const llama_token id = cur_p->data[0].id;
+                llama_token id    = cur_p->data[0].id;
+                float       p_top = cur_p->data[0].p;
+
+                // lane-298 OW-036: LLAMA_SPEC_DRAFT_RECENT_PENALTY="k:strength" subtracts `strength` from the
+                // draft logit of tokens among the last k history tokens, then re-picks over the top-k
+                // candidates. Draft side only: the verify path is unchanged, so greedy output must not move.
+                if (recent_pen_k > 0 && cur_p->size > 0) {
+                    std::vector<llama_token> recent;
+                    for (int r = (int) result.size() - 1; r >= 0 && (int) recent.size() < recent_pen_k; --r) {
+                        recent.push_back(result[r]);
+                    }
+                    if ((int) recent.size() < recent_pen_k) {
+                        recent.push_back(dp.id_last);
+                    }
+                    if (dp.prompt) {
+                        for (int r = (int) dp.prompt->size() - 1; r >= 0 && (int) recent.size() < recent_pen_k; --r) {
+                            recent.push_back((*dp.prompt)[r]);
+                        }
+                    }
+                    float l_max = -INFINITY;
+                    std::vector<float> l(cur_p->size);
+                    for (size_t c = 0; c < cur_p->size; ++c) {
+                        l[c] = cur_p->data[c].logit;
+                        if (std::find(recent.begin(), recent.end(), cur_p->data[c].id) != recent.end()) {
+                            l[c] -= recent_pen_strength;
+                        }
+                        l_max = std::max(l_max, l[c]);
+                    }
+                    double z = 0.0;
+                    size_t c_best = 0;
+                    for (size_t c = 0; c < cur_p->size; ++c) {
+                        z += std::exp((double) (l[c] - l_max));
+                        if (l[c] > l[c_best]) {
+                            c_best = c;
+                        }
+                    }
+                    id    = cur_p->data[c_best].id;
+                    p_top = (float) (std::exp((double) (l[c_best] - l_max)) / z);
+                }
 
                 // only collect very high-confidence draft tokens
-                if (cur_p->data[0].p < params.p_min) {
+                if (p_top < params.p_min) {
                     drafting[seq_id] = false;
                     n_drafting--;
 
@@ -2715,9 +2766,6 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 }
 
                 common_sampler_accept(smpl, id, true);
-
-                auto & dp = dparams.at(seq_id);
-                auto & result = *dp.result;
 
                 result.push_back(id);
 
