@@ -1445,6 +1445,12 @@ vk_fa_pipeline_state get_fa_pipeline_state(const vk_device& device, const vk_fa_
                      (use_logit_softcap ? 4 : 0) |
                      (old_amd_windows   ? 8 : 0) |
                      (use_sparse        ? 16 : 0);
+    // lane-300 F-141: coopmat1 zeroes fully-masked V rows (bit-deterministic vs stale KV content).
+    // GGML_VK_FA_DEADV_KEEP=1 restores the old leak; it exists only as the planted-RED check.
+    static const bool deadv_keep = getenv("GGML_VK_FA_DEADV_KEEP") != nullptr;
+    if (params.path == FA_COOPMAT1 && use_mask && !deadv_keep) {
+        flags |= 32;
+    }
 
     const uint32_t subgroup_size = params.disable_subgroups ? 0 : params.subgroup_size;
 
@@ -10476,8 +10482,9 @@ bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, const vk_
     const uint32_t pvsh = MatBc * osh_stride * pvsh_elem_size;
 
     const uint32_t slope = Br * acctype;
+    const uint32_t col_live = Bc * sizeof(uint32_t);  // lane-300 colLiveSh
 
-    const uint32_t total_size = tmpsh + iq_shmem + Qf + Psh + sfsh + ksh + pvsh + slope;
+    const uint32_t total_size = tmpsh + iq_shmem + Qf + Psh + sfsh + ksh + pvsh + slope + col_live;
     const bool supported = total_size <= device->properties.limits.maxComputeSharedMemorySize;
 
     VK_LOG_DEBUG("ggml_vk_flash_attn_coopmat_shmem_support(HSK=" << hsk << ", HSV=" << hsv << ", f32acc=" << f32acc << ", total_size=" << total_size << ", supported=" << supported);

@@ -26,6 +26,9 @@ const bool LOGIT_SOFTCAP   = (Flags & 4) != 0;
 const bool OLD_AMD_WINDOWS = (Flags & 8) != 0;
 // Sparse: gather binding-7 indices instead of scanning [0,KV); p.split_kv = n_kv_max.
 const bool USE_SPARSE      = (Flags & 16) != 0;
+// lane-300 F-141: coopmat1 zeroes V rows whose column is masked for every valid tile row, so stale or
+// foreign KV content cannot reach the P*V coopmat sum (RDNA3.5: +0 P times negative V perturbs live sums).
+const bool DEADV_ZERO      = (Flags & 32) != 0;
 
 // Round up head sizes to a multiple of 16, for coopmat1/coopmat2 paths
 const uint32_t HSK_pad = (HSK + 15) & ~15;
