@@ -52,10 +52,10 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint ib32, 
         const vec4 v3 = vec4(kvalues_iq4nl[q1_hi.x], kvalues_iq4nl[q1_hi.y], kvalues_iq4nl[q1_hi.z], kvalues_iq4nl[q1_hi.w]);
 
         [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
-            const vec4 by10 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y1_idx) / 4    ]);
-            const vec4 by11 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y1_idx) / 4 + 1]);
-            const vec4 by20 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y2_idx) / 4    ]);
-            const vec4 by21 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y2_idx) / 4 + 1]);
+            const vec4 by10 = vec4(data_b_v4[(B_COL(j) + b_offset + y1_idx) / 4    ]);
+            const vec4 by11 = vec4(data_b_v4[(B_COL(j) + b_offset + y1_idx) / 4 + 1]);
+            const vec4 by20 = vec4(data_b_v4[(B_COL(j) + b_offset + y2_idx) / 4    ]);
+            const vec4 by21 = vec4(data_b_v4[(B_COL(j) + b_offset + y2_idx) / 4 + 1]);
 
             const FLOAT_TYPE sum = fma(FLOAT_TYPE(by10.x), v0.x, fma(FLOAT_TYPE(by10.y), v0.y, fma(FLOAT_TYPE(by10.z), v0.z, fma(FLOAT_TYPE(by10.w), v0.w,
                                    fma(FLOAT_TYPE(by11.x), v1.x, fma(FLOAT_TYPE(by11.y), v1.y, fma(FLOAT_TYPE(by11.z), v1.z, fma(FLOAT_TYPE(by11.w), v1.w,
@@ -97,6 +97,12 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
 
 void main() {
     const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+
+#ifdef MUL_MAT_ID_GATHER
+    if (!gather_setup()) {
+        return;
+    }
+#endif
 
     init_iq_shmem(gl_WorkGroupSize);
 

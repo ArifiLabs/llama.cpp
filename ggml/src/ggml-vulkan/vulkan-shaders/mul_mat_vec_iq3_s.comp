@@ -93,8 +93,8 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
                     const vec4 s1 = iq3s_sign_hi(grid1, sign);
 
                     [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
-                        const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
-                        const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
+                        const vec4 b0 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 0]);
+                        const vec4 b4 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 1]);
 
                         temp[j][n] = fma(dscale, iq3s_col_dot(b0, b4, s0, s1, FLOAT_TYPE(0.0)), temp[j][n]);
                     }
@@ -102,8 +102,8 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
                 // legacy: the shipped body, VERBATIM. Kept as text rather than routed through
                 // iq3s_col_dot so the default arm's codegen is provably the pre-R61 one.
                 [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
-                    const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
-                    const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
+                    const vec4 b0 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 0]);
+                    const vec4 b4 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 1]);
 
                     const FLOAT_TYPE sum =
                           fma(FLOAT_TYPE(b0.x), FLOAT_TYPE((sign &   1) != 0 ? -grid0.x : grid0.x),
@@ -140,15 +140,15 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
                     const vec4 s1 = iq3s_sign_hi(grid1, sign);
 
                     [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
-                        const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
-                        const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
+                        const vec4 b0 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 0]);
+                        const vec4 b4 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 1]);
 
                         sum[j] = iq3s_col_dot(b0, b4, s0, s1, sum[j]);
                     }
                 } else {
                 [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
-                    const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
-                    const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
+                    const vec4 b0 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 0]);
+                    const vec4 b4 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 1]);
 
                     sum[j] =
                           fma(FLOAT_TYPE(b0.x), FLOAT_TYPE((sign &   1) != 0 ? -grid0.x : grid0.x),
@@ -197,6 +197,12 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
 
 void main() {
     const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+
+#ifdef MUL_MAT_ID_GATHER
+    if (!gather_setup()) {
+        return;
+    }
+#endif
 
     init_iq_shmem(gl_WorkGroupSize);
 

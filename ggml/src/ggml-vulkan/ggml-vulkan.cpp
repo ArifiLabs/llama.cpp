@@ -3928,6 +3928,30 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_MXFP4],   "mul_mat_vec_id_mxfp4_f32",   OCP_DMMV_LEN(arr_dmmv_id_mxfp4_f32_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_id_mxfp4_f32_f32, reduc16), "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_NVFP4],   "mul_mat_vec_id_nvfp4_f32",   OCP_DMMV_LEN(arr_dmmv_id_nvfp4_f32_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_id_nvfp4_f32_f32, reduc16), "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
 
+        // arifi lane-302: MUL_MAT_ID expert gather. Same workgroup, rows and spec constants as the id
+        // pipelines above; only NUM_COLS (spec 2) = the gather width. Widths are limited to 1, 2 and 4:
+        // mul_mat_vec_iq3_s.comp switches thread layout at NUM_COLS 3 and > 4, which would change a
+        // row's arithmetic against the NUM_COLS=1 id pipeline.
+        {
+            const char * env = getenv("GGML_ARIFI_MOE_GATHER");
+            const uint32_t g = env == nullptr ? 0u : (uint32_t) atoi(env);
+            device->moe_gather_cols = (g == 1 || g == 2 || g == 4) ? g : 0u;
+            const char * plant = getenv("GGML_ARIFI_MOE_GATHER_PLANT");
+            device->moe_gather_plant = plant != nullptr && plant[0] == '1';
+            if (w == 0 && device->moe_gather_cols != 0) {
+                GGML_LOG_INFO("ggml_vulkan: MUL_MAT_ID expert gather ON, width %u%s\n", device->moe_gather_cols,
+                              device->moe_gather_plant ? " (PLANT: wrong token count, test only)" : "");
+            }
+        }
+        if (device->moe_gather_cols != 0) {
+            const uint32_t gc = device->moe_gather_cols;
+            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ2_S],   "mul_mat_vec_idg_iq2_s_f32",   arr_dmmv_idg_iq2_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq2_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, gc}, 1, true, use_subgroups16, force_subgroup_size16);
+            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_XXS], "mul_mat_vec_idg_iq3_xxs_f32", arr_dmmv_idg_iq3_xxs_f32_f32_len[reduc16], arr_dmmv_idg_iq3_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, gc, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_idg_iq3_s_f32",   arr_dmmv_idg_iq3_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, gc, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_XS],  "mul_mat_vec_idg_iq4_xs_f32",  arr_dmmv_idg_iq4_xs_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, gc}, 1, true, use_subgroups16, force_subgroup_size16);
+            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_NL],  "mul_mat_vec_idg_iq4_nl_f32",  arr_dmmv_idg_iq4_nl_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_nl_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, gc}, 1, true, use_subgroups16, force_subgroup_size16);
+        }
+
         // TurboQuant weight types. Same 32-thread pin and SHMEM reduction as the
         // non-id pipelines above (tq_wg_size / tq_use_subgroups are declared at
         // the top of this loop): the id shaders are the same source compiled
@@ -10241,6 +10265,19 @@ static void ggml_vk_mul_mat_vec_id_q_f16(ggml_backend_vk_context * ctx, vk_conte
         dmmv = ggml_vk_get_64b_indexing_pipeline(ctx, dmmv);
     }
 
+    // arifi lane-302: swap in the expert-gather pipeline of the SAME workgroup size when the plain f32
+    // id pipeline was chosen (so never with q8_1 B, 64-bit indexing or a fused bias/scale), n_tokens > 1.
+    vk_pipeline dmmv_gather = nullptr;
+    if (ctx->device->moe_gather_cols != 0 && nei1 > 1 && ctx->num_additional_fused_ops == 0 &&
+        !quantize_y && !qx_needs_dequant && !y_non_contig && nei0 * nei1 <= 0xffff) {
+        for (uint32_t w = 0; w < DMMV_WG_SIZE_COUNT; ++w) {
+            if (ctx->device->pipeline_dequant_mul_mat_vec_id_f32[w][src0->type] == dmmv) {
+                dmmv_gather = ctx->device->pipeline_dequant_mul_mat_vec_idg_f32[w][src0->type];
+                break;
+            }
+        }
+    }
+
     // Not implemented
     GGML_ASSERT(y_non_contig || !qy_needs_dequant);  // NOLINT
     GGML_ASSERT(!qx_needs_dequant || to_fp16_vk_0 != nullptr);  // NOLINT
@@ -10280,7 +10317,11 @@ static void ggml_vk_mul_mat_vec_id_q_f16(ggml_backend_vk_context * ctx, vk_conte
         if (quantize_y) {
             ggml_pipeline_request_descriptor_sets(ctx, to_q8_1, 1);
         }
-        ggml_pipeline_request_descriptor_sets(ctx, dmmv, nei1);
+        if (dmmv_gather) {
+            ggml_pipeline_request_descriptor_sets(ctx, dmmv_gather, 1);
+        } else {
+            ggml_pipeline_request_descriptor_sets(ctx, dmmv, nei1);
+        }
     }
 
     vk_subbuffer d_D = ggml_vk_tensor_subbuffer(ctx, cgraph->nodes[node_idx + ctx->num_additional_fused_ops]);
@@ -10378,6 +10419,20 @@ static void ggml_vk_mul_mat_vec_id_q_f16(ggml_backend_vk_context * ctx, vk_conte
         fusion_flags |= MAT_VEC_FUSION_FLAGS_SCALE1;
     }
 
+    if (dmmv_gather) {
+        // one dispatch over every (token, slot); expert_i1 carries the token count (the plant drops the last
+        // token, so its follower slots are never written: a test-only RED arm)
+        const uint32_t ntok = (uint32_t)nei1 - (ctx->device->moe_gather_plant ? 1u : 0u);
+        const vk_mat_vec_id_push_constants pc = {
+            (uint32_t)ne00, (uint32_t)ne10, (uint32_t)ne10, (uint32_t)ne01,
+            (uint32_t)(ne00 * ne01), stride_batch_y, (uint32_t)(ne20 * ne21),
+            fusion_flags,
+            (uint32_t)nei0, (uint32_t)ne11, ntok, nbi1
+        };
+        ggml_vk_dispatch_pipeline(ctx, subctx, dmmv_gather,
+            { d_X, d_Y, d_D, d_F0, d_F1, d_ids, },
+            pc, { groups_x, (uint32_t)(nei0 * nei1), groups_z });
+    } else
     // Loop over the batch dimension
     for (uint32_t expert_i1 = 0; expert_i1 < nei1; ++expert_i1) {
         const vk_mat_vec_id_push_constants pc = {

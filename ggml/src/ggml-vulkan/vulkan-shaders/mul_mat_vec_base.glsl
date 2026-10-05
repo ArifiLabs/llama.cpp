@@ -62,7 +62,7 @@ void get_offsets(out uint a_offset, out uint b_offset, out uint d_offset) {
 
         batch_idx_a = i03 * p.ne02 + i02;
     }
-#else
+#elif !defined(MUL_MAT_ID_GATHER)
     expert_id = data_ids[expert_i0 + p.expert_i1 * p.nbi1];
 #endif
 
@@ -73,13 +73,17 @@ void get_offsets(out uint a_offset, out uint b_offset, out uint d_offset) {
             batch_idx_a * (p.batch_stride_a / QUANT_K);
 #endif
     b_offset =
-#ifdef MUL_MAT_ID
+#ifdef MUL_MAT_ID_GATHER
+            0;
+#elif defined(MUL_MAT_ID)
             (expert_i0 % p.ne11) * p.stride_b + p.expert_i1 * p.batch_stride_b;
 #else
             batch_idx * p.batch_stride_b;
 #endif
     d_offset =
-#ifdef MUL_MAT_ID
+#ifdef MUL_MAT_ID_GATHER
+            0;
+#elif defined(MUL_MAT_ID)
             expert_i0 * p.stride_d + p.expert_i1 * p.batch_stride_d;
 #else
             batch_idx * p.batch_stride_d;
@@ -89,6 +93,66 @@ void get_offsets(out uint a_offset, out uint b_offset, out uint d_offset) {
 layout (constant_id = 0) const uint BLOCK_SIZE = 32;
 layout (constant_id = 1) const uint NUM_ROWS = 1;
 layout (constant_id = 2) const uint NUM_COLS = 1;
+
+// arifi lane-302: MUL_MAT_ID EXPERT GATHER. One dispatch covers every (token, slot); workgroup.y = slot
+// s = token * nei0 + k. The workgroup whose slot is the (rank % NUM_COLS == 0)-th occurrence of its expert
+// reads that expert ONCE for up to NUM_COLS (token, slot) pairs routed to it; every other workgroup exits.
+// Each column runs the same per-column code as the NUM_COLS=1 id pipeline, so a row's result does not
+// depend on how many other rows share its expert. p.expert_i1 carries the token count in this mode.
+#ifdef MUL_MAT_ID_GATHER
+uint gcol_b[NUM_COLS];
+uint gcol_d[NUM_COLS];
+uint gcols;
+#define B_COL(j) gcol_b[j]
+#define D_COL(j) gcol_d[j]
+
+bool gather_setup() {
+    const uint s = gl_WorkGroupID.y;
+    const uint ts = s / p.nei0;
+    const int e = data_ids[(s - ts * p.nei0) + ts * p.nbi1];
+    uint rank = 0;
+    for (uint s2 = 0; s2 < s; ++s2) {
+        const uint t2 = s2 / p.nei0;
+        if (data_ids[(s2 - t2 * p.nei0) + t2 * p.nbi1] == e) {
+            rank++;
+        }
+    }
+    if ((rank % NUM_COLS) != 0) {
+        return false;
+    }
+    expert_id = uint(e);
+    uint c = 0;
+    const uint nslots = p.expert_i1 * p.nei0;
+    for (uint s2 = s; s2 < nslots && c < NUM_COLS; ++s2) {
+        const uint t2 = s2 / p.nei0;
+        const uint k2 = s2 - t2 * p.nei0;
+        if (data_ids[k2 + t2 * p.nbi1] == e) {
+            const uint ob = (k2 % p.ne11) * p.stride_b + t2 * p.batch_stride_b;
+            const uint od = k2 * p.stride_d + t2 * p.batch_stride_d;
+            [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+                if (j == c) {
+                    gcol_b[j] = ob;
+                    gcol_d[j] = od;
+                }
+            }
+            c++;
+        }
+    }
+    [[unroll]] for (uint j = 1; j < NUM_COLS; ++j) {
+        if (j >= c) {
+            gcol_b[j] = gcol_b[0];
+            gcol_d[j] = gcol_d[0];
+        }
+    }
+    gcols = c;
+    return true;
+}
+#define GATHER_WRITE(j) if ((j) < gcols)
+#else
+#define B_COL(j) ((j)*p.batch_stride_b)
+#define D_COL(j) ((j)*p.batch_stride_d)
+#define GATHER_WRITE(j)
+#endif
 
 #ifdef USE_SUBGROUP_ADD_NO_SHMEM
 void reduce_result(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offset, const in uint32_t first_row, const in uint32_t num_rows, const in uint32_t tid) {
@@ -121,7 +185,7 @@ void reduce_result(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t 
                     temp[j][n] += FLOAT_TYPE(data_fuse1[j*p.batch_stride_d + d_offset + first_row + n]);
                 }
 #endif
-                data_d[j*p.batch_stride_d + d_offset + first_row + n] = D_TYPE(temp[j][n]);
+                GATHER_WRITE(j) data_d[D_COL(j) + d_offset + first_row + n] = D_TYPE(temp[j][n]);
             }
         }
     }
@@ -176,7 +240,7 @@ void reduce_result(FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offs
                     temp[j][n] += FLOAT_TYPE(data_fuse1[j*p.batch_stride_d + d_offset + first_row + n]);
                 }
 #endif
-                data_d[j*p.batch_stride_d + d_offset + first_row + n] = D_TYPE(temp[j][n]);
+                GATHER_WRITE(j) data_d[D_COL(j) + d_offset + first_row + n] = D_TYPE(temp[j][n]);
             }
         }
     }
@@ -221,7 +285,7 @@ void reduce_result(FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offs
                     tmpsh[j][n][0] += FLOAT_TYPE(data_fuse1[j*p.batch_stride_d + d_offset + first_row + n]);
                 }
 #endif
-                data_d[j*p.batch_stride_d + d_offset + first_row + n] = D_TYPE(tmpsh[j][n][0]);
+                GATHER_WRITE(j) data_d[D_COL(j) + d_offset + first_row + n] = D_TYPE(tmpsh[j][n][0]);
             }
         }
     }

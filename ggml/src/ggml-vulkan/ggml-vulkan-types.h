@@ -1441,6 +1441,11 @@ struct vk_device_struct {
     vk_pipeline pipeline_dequant_mul_mat_vec_f32_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
     vk_pipeline pipeline_dequant_mul_mat_vec_f16_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
     vk_pipeline pipeline_dequant_mul_mat_vec_id_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
+    // arifi lane-302: MUL_MAT_ID expert-gather mat-vec (NUM_COLS = moe_gather_cols), one dispatch for all
+    // tokens. GGML_ARIFI_MOE_GATHER = 0 (default, per-token loop) | 1 (one dispatch, no sharing) | 2 | 4.
+    uint32_t moe_gather_cols = 0;
+    bool moe_gather_plant = false;
+    vk_pipeline pipeline_dequant_mul_mat_vec_idg_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
 
     vk_pipeline pipeline_dequant_mul_mat_vec_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
     // arifi lane-271 / R85: Q4_K q8_1 MMVQ with the 4+1 column split (spec constant 4 = 3), created

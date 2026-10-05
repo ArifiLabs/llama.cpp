@@ -245,6 +245,12 @@ bool is_legacy_quant(const std::string& type_name) {
     return type_name == "q2_0" || type_name == "q2_0_g128" || type_name == "q4_0" || type_name == "q4_1" || type_name == "q5_0" || type_name == "q5_1" || type_name == "q8_0";
 }
 
+// arifi lane-302: types with a MUL_MAT_ID expert-gather mat-vec (the qwen4exp IQ3_S file's `_exps` set).
+// Keep in sync with ggml_vk_moe_gather_type() in ggml-vulkan.cpp.
+bool is_moe_gather_type(const std::string& type_name) {
+    return type_name == "iq4_nl" || type_name == "iq2_s" || type_name == "iq3_xxs" || type_name == "iq3_s" || type_name == "iq4_xs";
+}
+
 bool is_k_quant(const std::string& type_name) {
     return string_ends_with(type_name, "_k");
 }
@@ -970,6 +976,16 @@ void process_shaders() {
         string_to_spv("mul_mat_vec_id_" + tname + "_f32_f32", shader, merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}}));
         string_to_spv("mul_mat_vec_id_" + tname + "_f32_f32_subgroup", shader, merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}, {"USE_SUBGROUP_ADD", "1"}}));
         string_to_spv("mul_mat_vec_id_" + tname + "_f32_f32_subgroup_no_shmem", shader, merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}, {"USE_SUBGROUP_ADD_NO_SHMEM", "1"}}));
+
+        // arifi lane-302: MUL_MAT_ID expert-gather variants (mul_mat_vec_base.glsl MUL_MAT_ID_GATHER).
+        if (is_moe_gather_type(tname)) {
+            for (const std::string sfx : {"", "_subgroup", "_subgroup_no_shmem"}) {
+                std::map<std::string, std::string> d = merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {"MUL_MAT_ID_GATHER", "1"}, {data_a_key, "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}});
+                if (sfx == "_subgroup") d["USE_SUBGROUP_ADD"] = "1";
+                if (sfx == "_subgroup_no_shmem") d["USE_SUBGROUP_ADD_NO_SHMEM"] = "1";
+                string_to_spv("mul_mat_vec_idg_" + tname + "_f32_f32" + sfx, shader, d);
+            }
+        }
 
         // mul mat vec with integer dot product
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
@@ -1809,6 +1825,20 @@ void write_output_files() {
             src << "const uint64_t arr_dmmv_id_" << tname << "_" << btype << "_f32_len[3] =  {mul_mat_vec_id_" << tname << "_" << btype << "_f32_len,  mul_mat_vec_id_" << tname << "_" << btype << "_f32_subgroup_len, mul_mat_vec_id_"  << tname << "_" << btype << "_f32_subgroup_no_shmem_len};\n";
         }
     }
+    }
+
+    // arifi lane-302: the MUL_MAT_ID expert-gather variants generated above.
+    for (const auto& tname : type_names) {
+        if (!is_moe_gather_type(tname)) {
+            continue;
+        }
+        const std::string n = "idg_" + tname + "_f32_f32";
+        hdr << "extern const void * arr_dmmv_"   << n << "_data[3];\n";
+        hdr << "extern const uint64_t arr_dmmv_" << n << "_len[3];\n";
+        if (basename(input_filepath) == "mul_mat_vec.comp") {
+            src << "const void * arr_dmmv_"   << n << "_data[3] = {mul_mat_vec_" << n << "_data, mul_mat_vec_" << n << "_subgroup_data, mul_mat_vec_" << n << "_subgroup_no_shmem_data};\n";
+            src << "const uint64_t arr_dmmv_" << n << "_len[3] = {mul_mat_vec_" << n << "_len, mul_mat_vec_" << n << "_subgroup_len, mul_mat_vec_" << n << "_subgroup_no_shmem_len};\n";
+        }
     }
 
     // arifi lane-296: the upstream IQ4_XS variants generated above (MUL_MAT only).
