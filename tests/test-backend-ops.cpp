@@ -11745,6 +11745,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_IQ3_S,  GGML_TYPE_F32, 1024, 10, false, 128, n, 512));
         test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_Q4_0,   GGML_TYPE_F32, 1024, 10, false, 256, n, 128));
     }
+    // arifi lane-302: SERVED qwen4exp MoE shapes at the verify widths (gather path, GGML_ARIFI_MOE_GATHER).
+    // 512 experts = served routing; 16 experts forces heavy overlap so every gather width shares experts.
+    for (int n = 1; n <= 8; ++n) {
+        for (int ne : {512, 16}) {
+            for (ggml_type t : {GGML_TYPE_IQ2_S, GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ3_S, GGML_TYPE_IQ4_XS}) {
+                test_cases.emplace_back(new test_mul_mat_id(t, GGML_TYPE_F32, ne, 10, true, 640, n, 2560));
+            }
+            test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_IQ4_NL, GGML_TYPE_F32, ne, 10, false, 2560, n, 640));
+        }
+    }
     test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_Q4_0, GGML_TYPE_F32, 32, 2, false, 2880, 32, 2880));
 
     // multiple blocks per row: exercises the block-stride loop and the

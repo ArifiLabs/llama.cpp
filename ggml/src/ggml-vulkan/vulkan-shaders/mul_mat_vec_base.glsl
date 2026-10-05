@@ -139,6 +139,10 @@ bool gather_setup() {
             c++;
         }
     }
+    // only the PLANT test arm can collect nothing (its last token is outside nslots): no B offsets, no work
+    if (c == 0) {
+        return false;
+    }
     [[unroll]] for (uint j = 1; j < NUM_COLS; ++j) {
         if (j >= c) {
             gcol_b[j] = gcol_b[0];
