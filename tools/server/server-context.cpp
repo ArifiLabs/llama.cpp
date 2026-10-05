@@ -4545,6 +4545,9 @@ private:
 
             GGML_ASSERT(n_draft > 0);
 
+            // lane-298: verify-row index per emitted token, so n_probs works on the speculative path
+            const auto probs_idx = slot.spec_i_batch;
+
             // verify and try to accept the draft
             {
                 common_sampler_ptr smpl_save(common_sampler_clone(slot.smpl.get()));
@@ -4722,7 +4725,9 @@ private:
                 result.text_to_send = common_token_to_piece(slot.ctx_tgt, result.tok, accept_special_token(slot, result.tok));
                 result.prob         = 1.0f; // set later
 
-                // TODO: set result.probs
+                if (slot.task->params.sampling.n_probs > 0 && i < probs_idx.size()) {
+                    populate_token_probs(slot, result, slot.task->params.post_sampling_probs, params_base.special, probs_idx[i]);
+                }
 
                 slot.stats.n_gen += 1;
 
