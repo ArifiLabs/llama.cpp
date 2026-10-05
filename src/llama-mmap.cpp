@@ -194,7 +194,7 @@ struct llama_file::impl {
         seek(0, SEEK_SET);
     }
 
-    size_t tell() const {
+    size_t os_tell() const {
         LARGE_INTEGER li;
         li.QuadPart = 0;
         BOOL ret = SetFilePointerEx(fp_win32, li, &li, FILE_CURRENT);
@@ -205,7 +205,7 @@ struct llama_file::impl {
         return li.QuadPart;
     }
 
-    void seek(size_t offset, int whence) const {
+    void os_seek(size_t offset, int whence) const {
         static_assert(SEEK_SET == FILE_BEGIN, "SEEK_SET != FILE_BEGIN");
         static_assert(SEEK_CUR == FILE_CURRENT, "SEEK_CUR != FILE_CURRENT");
         static_assert(SEEK_END == FILE_END, "SEEK_END != FILE_END");
@@ -216,6 +216,23 @@ struct llama_file::impl {
         if (!ret) {
             throw std::runtime_error(format("read error: %s", GetErrorMessageWin32(GetLastError()).c_str()));
         }
+    }
+
+    // lane-298: a FILE_FLAG_NO_BUFFERING handle refuses an unaligned file-pointer move with
+    // ERROR_INVALID_PARAMETER, so unbuffered handles keep the logical position in dio_pos and park
+    // the OS pointer on the sector floor (the -lm dio "The parameter is incorrect" probe failure).
+    size_t tell() const {
+        return has_direct_io() ? dio_pos : os_tell();
+    }
+
+    void seek(size_t offset, int whence) const {
+        if (!has_direct_io()) {
+            os_seek(offset, whence);
+            return;
+        }
+        const size_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ? dio_pos : size;
+        dio_pos = base + offset;
+        os_seek(dio_pos & ~(alignment - 1), SEEK_SET);
     }
 
     // plain ReadFile loop; on an unbuffered handle the caller guarantees the alignment rule.
@@ -229,7 +246,10 @@ struct llama_file::impl {
             if (!result) {
                 throw std::runtime_error(format("read error: %s", GetErrorMessageWin32(GetLastError()).c_str()));
             }
+            dio_pos += chunk_read;
             if (chunk_read < chunk_size || chunk_read == 0) {
+                // tell(): after a short unbuffered read the OS pointer sits on unaligned EOF and even a
+                // zero FILE_CURRENT move is refused there; dio_pos already counts the bytes read
                 if (allow_eof_pad && tell() == size) {
                     // EOF inside the alignment padding: zero the rest, the caller only copies `len` real bytes
                     std::memset(reinterpret_cast<char *>(ptr) + bytes_read + chunk_read, 0, len - bytes_read - chunk_read);
@@ -312,6 +332,8 @@ struct llama_file::impl {
             std::fclose(fp);
         }
     }
+
+    mutable size_t dio_pos = 0; // logical position of an unbuffered handle (see seek)
 #else
     impl(const char * fname, const char * mode, [[maybe_unused]] const bool use_direct_io = false) : fname(fname) {
 #ifdef __linux__
@@ -559,7 +581,8 @@ int llama_file::file_id() const {
 void llama_file::seek(size_t offset, int whence) const { pimpl->seek(offset, whence); }
 void llama_file::read_raw(void * ptr, size_t len) { pimpl->read_raw(ptr, len); }
 #ifdef _WIN32
-void llama_file::read_raw_unsafe(void * ptr, size_t len) { pimpl->read_raw_unsafe(ptr, len); }
+// unbuffered: the loader's last aligned chunk may run past EOF into padding (the Linux branch allows it too)
+void llama_file::read_raw_unsafe(void * ptr, size_t len) { pimpl->read_raw_unsafe(ptr, len, pimpl->has_direct_io()); }
 #else
 void llama_file::read_raw_unsafe(void * ptr, size_t len) { pimpl->read_raw_unsafe(ptr, len); }
 #endif
