@@ -238,6 +238,9 @@ struct llama_file::impl {
     // plain ReadFile loop; on an unbuffered handle the caller guarantees the alignment rule.
     // allow_eof_pad: an unbuffered read of the last partial sector legitimately comes back short at EOF
     void read_raw_unsafe(void * ptr, size_t len, bool allow_eof_pad = false) {
+        if (has_direct_io() && ((dio_pos | len | (uintptr_t) ptr) & (alignment - 1))) {
+            throw std::runtime_error(format("unaligned unbuffered read: pos %zu len %zu align %zu", dio_pos, len, alignment));
+        }
         size_t bytes_read = 0;
         while (bytes_read < len) {
             size_t chunk_size = std::min<size_t>(len - bytes_read, 64*1024*1024);
