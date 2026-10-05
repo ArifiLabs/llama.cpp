@@ -368,7 +368,19 @@ void llm_graph_input_cls::set_input(const llama_ubatch * ubatch) {
 // R1 (lane-176): fill the ssm bank per-snapshot WRITE rows. Snapshot i is the state i tokens
 // older than this ubatch newest, and it lands at plane (i - pos_bank) mod K. This is a
 // CONTENT-only change per ubatch; the node consuming it is a fixed-topology GGML_OP_SET_ROWS.
-static void set_input_rs_wrow(ggml_tensor * t, const llama_memory_recurrent_context * m) {
+static void set_input_rs_wrow(ggml_tensor * t, const llama_memory_recurrent_context * m,
+                              ggml_tensor * rep_ctl, ggml_tensor * rep_wrow) {
+    // lane-298 replay inputs (same allocation guard)
+    if (rep_ctl && rep_ctl->buffer) {
+        GGML_ASSERT(ggml_backend_buffer_is_host(rep_ctl->buffer));
+        ((int32_t *) rep_ctl->data)[0] = m->rep_ctl(0);
+        ((int32_t *) rep_ctl->data)[1] = m->rep_ctl(1);
+    }
+    if (rep_wrow && rep_wrow->buffer) {
+        GGML_ASSERT(ggml_backend_buffer_is_host(rep_wrow->buffer));
+        ((int32_t *) rep_wrow->data)[0] = m->rep_crow();
+        ((int32_t *) rep_wrow->data)[1] = m->s_wrow(0);
+    }
     // ALLOCATION is the guard, not rs_r1. These tensors are created unconditionally but consumed
     // only when R1 is active AND the model's build_rs call passed bank=true, and the graph
     // allocator allocates only what the graph reaches - so `buffer` is null on the shipped arm,
@@ -407,7 +419,7 @@ void llm_graph_input_rs::set_input(const llama_ubatch * ubatch) {
         for (uint32_t i = 0; i < n_rs; ++i) {
             data[i] = mctx->s_copy2(i, bank_live ? &bank[i] : nullptr);
         }
-        set_input_rs_wrow(s_wrow, mctx);
+        set_input_rs_wrow(s_wrow, mctx, rep_ctl, rep_wrow);
         // ring-repair 2026-08-25: leak hunt - see whether the fresh-seq read row matches the
         // in-graph zeroed row (rs_z). A mismatch = indexing bug; a match = graph-exec gap.
         static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
@@ -440,6 +452,7 @@ bool llm_graph_input_rs::can_reuse(const llm_graph_params & params) {
     res &= rs_z == mctx->get_rs_z();
     res &= rs_z_bank == mctx->get_rs_z_bank();
     res &= rs_shift == mctx->get_rs_shift();
+    res &= (rep_ctl != nullptr) == mctx->get_rs_replay();
 
     return res;
 }
@@ -1206,7 +1219,7 @@ void llm_graph_input_mem_hybrid::set_input(const llama_ubatch * ubatch) {
         for (uint32_t i = 0; i < n_rs; ++i) {
             data[i] = mctx->get_recr()->s_copy2(i, bank_live ? &bank[i] : nullptr);
         }
-        set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
+        set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr(), inp_rs->rep_ctl, inp_rs->rep_wrow);
         // ring-repair 2026-08-25: leak hunt (hybrid path) - fresh-seq read row vs zeroed row.
         static const bool dbg = getenv("LLAMA_RS_TRACE") != nullptr;
         if (dbg) {
@@ -1243,6 +1256,7 @@ bool llm_graph_input_mem_hybrid::can_reuse(const llm_graph_params & params) {
     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
     res &= inp_rs->rs_z_bank == mctx->get_recr()->get_rs_z_bank();
     res &= inp_rs->rs_shift == mctx->get_recr()->get_rs_shift();
+    res &= (inp_rs->rep_ctl != nullptr) == mctx->get_recr()->get_rs_replay();
 
     return res;
 }
@@ -1272,7 +1286,7 @@ void llm_graph_input_mem_hybrid_k::set_input(const llama_ubatch * ubatch) {
         for (uint32_t i = 0; i < n_rs; ++i) {
             data[i] = mctx->get_recr()->s_copy2(i, bank_live ? &bank[i] : nullptr);
         }
-        set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
+        set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr(), inp_rs->rep_ctl, inp_rs->rep_wrow);
     }
 }
 
@@ -1301,6 +1315,7 @@ bool llm_graph_input_mem_hybrid_k::can_reuse(const llm_graph_params & params) {
     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
     res &= inp_rs->rs_z_bank == mctx->get_recr()->get_rs_z_bank();
     res &= inp_rs->rs_shift == mctx->get_recr()->get_rs_shift();
+    res &= (inp_rs->rep_ctl != nullptr) == mctx->get_recr()->get_rs_replay();
 
     return res;
 }
@@ -1361,7 +1376,7 @@ void llm_graph_input_mem_hybrid_iswa::set_input(const llama_ubatch * ubatch) {
         for (uint32_t i = 0; i < n_rs; ++i) {
             data[i] = mctx->get_recr()->s_copy2(i, bank_live ? &bank[i] : nullptr);
         }
-        set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
+        set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr(), inp_rs->rep_ctl, inp_rs->rep_wrow);
     }
 }
 
@@ -1404,6 +1419,7 @@ bool llm_graph_input_mem_hybrid_iswa::can_reuse(const llm_graph_params & params)
     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
     res &= inp_rs->rs_z_bank == mctx->get_recr()->get_rs_z_bank();
     res &= inp_rs->rs_shift == mctx->get_recr()->get_rs_shift();
+    res &= (inp_rs->rep_ctl != nullptr) == mctx->get_recr()->get_rs_replay();
 
     return res;
 }
@@ -3984,6 +4000,15 @@ static std::unique_ptr<llm_graph_input_rs> build_rs_inp_impl(
 
     inp->s_wrow = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, mctx_cur->get_rs_r1() ? n_planes : 1);
     ggml_set_input(inp->s_wrow);
+
+    if (mctx_cur->get_rs_replay()) {
+        inp->rep_ctl  = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, 2);
+        inp->rep_wrow = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, 2);
+        ggml_set_input(inp->rep_ctl);
+        ggml_set_input(inp->rep_wrow);
+        ggml_set_name(inp->rep_ctl, "rs_rep_ctl");
+        ggml_set_name(inp->rep_wrow, "rs_rep_wrow");
+    }
 
     inp->head = mctx_cur->get_head();
     inp->rs_z = mctx_cur->get_rs_z();

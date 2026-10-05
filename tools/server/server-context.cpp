@@ -516,6 +516,7 @@ struct server_slot {
     std::vector<int32_t> spec_i_batch;
     common_prompt_checkpoint spec_ckpt;
     bool spec_is_replay = false;
+    bool spec_rep_partial = false; // lane-298: last verify was a partial ring accept (LLAMA_GDN_REPLAY keeps the next round in the ring)
     std::mt19937 spec_synth_rng;
 
     // LLAMA_SPEC_CKPT_TIMING: per-slot spec cost accounting (ring-repair lane, 2026-08-24)
@@ -683,6 +684,7 @@ struct server_slot {
         if (can_speculate()) {
             spec_draft.clear();
             spec_dists.clear();
+            spec_rep_partial = false;
             spec_i_batch.clear();
             spec_ckpt.clear();
         }
@@ -3663,6 +3665,18 @@ private:
                 }
             }
 
+            // lane-298 GDN replay: after a partial ring accept the target state is "committed + pending log", which a
+            // checkpoint image cannot carry - keep this one round inside the ring (n_draft <= n_rs_seq).
+            static const bool gdn_rep = getenv("LLAMA_GDN_REPLAY") != nullptr;
+            if (gdn_rep && slot.spec_rep_partial && ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS &&
+                draft.size() > (size_t) llama_n_rs_seq(ctx_tgt)) {
+                const size_t n_keep = llama_n_rs_seq(ctx_tgt);
+                draft.resize(n_keep);
+                if (slot.spec_dists.size() > n_keep) {
+                    slot.spec_dists.erase(slot.spec_dists.begin() + n_keep, slot.spec_dists.end());
+                }
+            }
+
             if (!draft.empty()) {
                 const bool use_ckpt_tgt =
                     ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
@@ -4682,6 +4696,8 @@ private:
                 const bool use_ckpt_tgt =
                     ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
                     (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && n_rollback > llama_n_rs_seq(ctx_tgt));
+
+                slot.spec_rep_partial = n_rollback > 0 && !use_ckpt_tgt;
 
                 // check for partial draft acceptance
                 if (n_rollback > 0) {

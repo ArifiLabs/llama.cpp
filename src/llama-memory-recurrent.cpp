@@ -51,6 +51,22 @@ llama_memory_recurrent::llama_memory_recurrent(
         LLAMA_LOG_INFO("%s: R1 runtime-index ring ACTIVE (K = %u planes, no ssm age-shift copies)\n",
                        __func__, n_rs_seq + 1);
     }
+    // lane-298 deferred commit + replay: gated-delta-net state only (n_embd_s == S*S*H_v), opt-in, and refused when the
+    // Vulkan GDN_BANK fusion is switched off (the unfused Vulkan GDN does not implement the replay; it would abort).
+    {
+        const int64_t S_r = hparams.ssm_d_state, H_r = hparams.ssm_dt_rank;
+        rs_replay = rs_r1 && getenv("LLAMA_GDN_REPLAY") != nullptr && S_r > 0 && H_r > 0 &&
+                    (int64_t) hparams.n_embd_s() == S_r * S_r * H_r;
+        if (rs_replay && (getenv("GGML_VK_DISABLE_GDN_BANK") || getenv("GGML_VK_DISABLE_FUSION"))) {
+            LLAMA_LOG_WARN("%s: LLAMA_GDN_REPLAY refused: GDN_BANK fusion is disabled
+", __func__);
+            rs_replay = false;
+        }
+        if (rs_replay) {
+            LLAMA_LOG_INFO("%s: GDN deferred commit + replay ACTIVE (log %u rows per half)
+", __func__, rs_planes());
+        }
+    }
 
     cells.clear();
     cells.resize(mem_size);
@@ -69,7 +85,7 @@ llama_memory_recurrent::llama_memory_recurrent(
         if (it == ctx_map.end()) {
             ggml_init_params params = {
                 // r and s per layer, plus the separate PLE conv row where the model has one
-                /*.mem_size   =*/ size_t((hparams.ple_conv_state() > 0 ? 3u : 2u)*n_layer*ggml_tensor_overhead()),
+                /*.mem_size   =*/ size_t((hparams.ple_conv_state() > 0 ? 4u : 3u)*n_layer*ggml_tensor_overhead()),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ true,
             };
@@ -89,6 +105,7 @@ llama_memory_recurrent::llama_memory_recurrent(
 
     r_l.resize(n_layer);
     s_l.resize(n_layer);
+    l_l.assign(n_layer, nullptr);
     p_l.resize(n_layer);
 
     for (int i = 0; i < n_layer; i++) {
@@ -115,13 +132,20 @@ llama_memory_recurrent::llama_memory_recurrent(
             throw std::runtime_error("failed to create ggml context for rs cache");
         }
 
-        const uint32_t n_rows = mem_size * (1 + n_rs_seq);
+        const uint32_t n_rows = mem_size * rs_planes();
         ggml_tensor * r = ggml_new_tensor_2d(ctx, type_r, hparams.n_embd_r(), n_rows);
         ggml_tensor * s = ggml_new_tensor_2d(ctx, type_s, hparams.n_embd_s(), n_rows);
         ggml_format_name(r, "cache_r_l%d", i);
         ggml_format_name(s, "cache_s_l%d", i);
         r_l[i] = r;
         s_l[i] = s;
+
+        if (rs_replay) {
+            const int64_t S_r = hparams.ssm_d_state, H_r = hparams.ssm_dt_rank;
+            ggml_tensor * lg = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 2 * H_r * S_r + 2 * H_r, 2 * (int64_t) rs_planes());
+            ggml_format_name(lg, "cache_rep_log_l%d", i);
+            l_l[i] = lg;
+        }
 
         // the PLE history needs its own row: Meta must mirror it while the delta-net conv state next door stays split
         if (hparams.ple_conv_state() > 0 && hparams.is_ple(i)) {
@@ -162,6 +186,7 @@ void llama_memory_recurrent::clear(bool data) {
         // reused cell would resolve the first ubatch's reads against the previous occupant.
         cells[i].pos_bank      = -1;
         cells[i].pos_bank_prev = -1;
+        cells[i].rep = {}; // lane-298 replay bookkeeping follows pos
         cells[i].seq_id.clear();
         cells[i].src = -1;
         cells[i].tail = -1;
@@ -284,7 +309,7 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
                             if (zeros.size() < row_size) {
                                 zeros.assign(row_size, 0);
                             }
-                            const uint32_t plane_max = plane0_only ? 0 : n_rs_seq;
+                            const uint32_t plane_max = plane0_only ? 0 : rs_planes() - 1;
                             for (uint32_t plane = 0; plane <= plane_max; ++plane) {
                                 ggml_backend_tensor_set(t, zeros.data(),
                                     ((size_t) plane * size + (size_t) t0) * row_size, row_size);
@@ -318,7 +343,9 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
                 // DEEP-SLOT AGE FIX: bank ages are relative to the end BEFORE any pending
                 // (not-yet-consumed) rollback, so the plane to restore from is pending + rollback.
                 const uint32_t pending = ((size_t) seq_id < rs_pending.size()) ? rs_pending[seq_id] : 0;
-                if (rollback >= 1 && (uint32_t) rollback + pending <= n_rs_seq) {
+                // lane-298 replay: only the last logged window can be rolled back (its pre-window state is committed)
+                const bool rep_ok = !rs_replay || (pending == 0 && rollback <= cell.rep.n);
+                if (rep_ok && rollback >= 1 && (uint32_t) rollback + pending <= n_rs_seq) {
                     if (dbg) {
                         LLAMA_LOG_INFO("rs-trace seq_rm RING seq=%d p0=%d cellpos=%d rollback=%d pending=%u n_rs_seq=%u -> bank set\n",
                                        (int) seq_id, (int) p0, (int) cell.pos, (int) rollback, pending, n_rs_seq);
@@ -408,6 +435,7 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
                 // reused cell would resolve the first ubatch's reads against the previous occupant.
                 cells[i].pos_bank      = -1;
                 cells[i].pos_bank_prev = -1;
+                cells[i].rep = {}; // lane-298 replay bookkeeping follows pos
                 cells[i].src = -1;
                 if (new_head == size) {
                     new_head = i;
@@ -452,6 +480,7 @@ void llama_memory_recurrent::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id
                 // reused cell would resolve the first ubatch's reads against the previous occupant.
                 cell_dst.pos_bank      = -1;
                 cell_dst.pos_bank_prev = -1;
+                cell_dst.rep = {}; // lane-298 replay bookkeeping follows pos
                 cell_dst.src = -1;
                 used -= 1;
             }
@@ -483,6 +512,7 @@ void llama_memory_recurrent::seq_keep(llama_seq_id seq_id) {
             // reused cell would resolve the first ubatch's reads against the previous occupant.
             cells[i].pos_bank      = -1;
             cells[i].pos_bank_prev = -1;
+            cells[i].rep = {}; // lane-298 replay bookkeeping follows pos
             cells[i].src = -1;
             cells[i].seq_id.clear();
 
@@ -758,6 +788,7 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
                         // reused cell would resolve the first ubatch's reads against the previous occupant.
                         cell.pos_bank      = -1;
                         cell.pos_bank_prev = -1;
+                        cell.rep = {}; // lane-298 replay bookkeeping follows pos
                         cell.src = -1;
                         used -= 1;
                     }
@@ -819,6 +850,7 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
                 // R1 ring (lane-176): the anchors belong to the SEQUENCE, so they move with it.
                 empty_cell.pos_bank      = orig_cell.pos_bank;
                 empty_cell.pos_bank_prev = orig_cell.pos_bank_prev;
+                empty_cell.rep           = orig_cell.rep;
                 empty_cell.src = orig_cell.src;
                 orig_cell.seq_id.erase(seq_id);
                 empty_cell.seq_id.insert(seq_id); // will be overwritten
@@ -855,6 +887,7 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
             // (lane-175 ring_anchor_sim.py, carried over as this lane's cell-layer gate).
             std::swap(dst_cell.pos_bank,      src_cell.pos_bank);
             std::swap(dst_cell.pos_bank_prev, src_cell.pos_bank_prev);
+            std::swap(dst_cell.rep,           src_cell.rep);
             std::swap(dst_cell.src, src_cell.src);
             std::swap(dst_cell.seq_id, src_cell.seq_id);
 
@@ -888,6 +921,22 @@ bool llama_memory_recurrent::find_slot(const llama_ubatch & ubatch) {
         // Neither field is derived from `pos`, so seq_rm's rewind of pos cannot poison them.
         cell.pos_bank_prev = cell.pos_bank;
         cell.pos_bank      = last_pos;
+        if (rs_replay) {
+            // lane-298: assignment only (prepare()'s dry run restores cells wholesale). rs_idx is read, never consumed here.
+            const llama_seq_id sq = ubatch.seq_id[i][0];
+            const int32_t idx = (sq >= 0 && (size_t) sq < rs_idx.size()) ? (int32_t) rs_idx[sq] : 0;
+            cell.rep.n_prev   = cell.rep.n;
+            cell.rep.par_prev = cell.rep.par;
+            // full accept (idx 0): the final state was stored, nothing to replay; rollback: replay the accepted part
+            // clamp, not assert: prepare() dry-runs every ubatch of a batch before set_input consumes rs_idx, so a later
+            // ubatch can see a stale idx; seq_rm's rollback <= rep.n guard bounds the real path
+            cell.rep.P        = (idx > 0 && idx <= cell.rep.n) ? cell.rep.n - idx : 0;
+            cell.rep.age      = (int32_t) n_seq_tokens;
+            // n <= K (planes - 1): the committed state (age n) must never alias the final state (age 0)
+            const bool logw   = n_seq_tokens <= rs_planes() - 1;
+            cell.rep.n        = logw ? (int32_t) n_seq_tokens : 0;
+            cell.rep.par      = logw ? 1 - cell.rep.par_prev : cell.rep.par_prev;
+        }
         cell.pos = last_pos;
         cell.seq_id.clear();
         for (int32_t j = 0; j < ubatch.n_seq_id[i]; ++j) {
@@ -1094,6 +1143,11 @@ void llama_memory_recurrent::state_read(llama_io_read_i & io, llama_seq_id seq_i
             seq_rm(seq_id, -1, -1);
         }
         throw std::runtime_error("failed to restore kv cache");
+    }
+
+    // lane-298 replay: a restored state is materialized (the bank holds it); nothing logged is pending
+    for (auto & c : cells) {
+        c.rep = {};
     }
 
     if (n_rs_seq != 0) {
@@ -1586,6 +1640,31 @@ int32_t llama_memory_recurrent_context::s_wrow(int64_t age) const {
     return (int32_t) (mem->rs_plane(anchor, age) * mem->size + mem->head);
 }
 
+bool llama_memory_recurrent_context::get_rs_replay() const {
+    return mem && mem->rs_replay;
+}
+
+int32_t llama_memory_recurrent_context::rep_ctl(int i) const {
+    if (!mem || !mem->rs_replay || mem->head >= mem->cells.size()) {
+        return 0;
+    }
+    const auto & rc = mem->cells[mem->head].rep;
+    return i == 0 ? rc.P : rc.par_prev;
+}
+
+int32_t llama_memory_recurrent_context::rep_crow() const {
+    if (!mem || !mem->rs_replay || mem->head >= mem->cells.size()) {
+        return -1;
+    }
+    // committed state = state@(pos_bank - age): the state before this ubatch's first token
+    const auto & c = mem->cells[mem->head];
+    return (int32_t) (mem->rs_plane(c.pos_bank, c.rep.age) * mem->size + mem->head);
+}
+
+ggml_tensor * llama_memory_recurrent_context::get_l_l(int32_t il) const {
+    return mem->l_l.empty() ? nullptr : mem->l_l[il];
+}
+
 uint32_t llama_memory_recurrent_context::get_size() const {
     return mem->size;
 }
@@ -1634,8 +1713,11 @@ int32_t llama_memory_recurrent_context::s_copy2(int i, int32_t * bank_row) const
     // - lives at plane (idx - pos_bank_prev) mod K. The two banks are read through separate index
     // tensors for exactly this reason; they are never the same row under R1.
     if (bank_row) {
+        // lane-298 replay: read the committed state (pre-window of the last logged ubatch); the graph replays rep.P
+        const auto & rc = mem->cells[cell_idx].rep;
+        const int64_t r_age = (mem->rs_replay && idx > 0 && rc.n_prev > 0) ? (int64_t) rc.n_prev : (int64_t) idx;
         const uint32_t plane = mem->rs_r1
-            ? mem->rs_plane(mem->cells[cell_idx].pos_bank_prev, (int64_t) idx)
+            ? mem->rs_plane(mem->cells[cell_idx].pos_bank_prev, r_age)
             : idx;
         *bank_row = (int32_t) (plane * mem->size) + src0;
     }

@@ -302,6 +302,11 @@ public:
     // Opt-in via LLAMA_RS_WROW_SHARE=1; the shipped default is byte-for-byte unchanged.
     ggml_tensor * s_wrow_view = nullptr;
 
+    // lane-298 GDN deferred commit + replay (LLAMA_GDN_REPLAY): {P, read parity} and the deferred-mode write rows
+    // {committed, final}. Contents move every ubatch; shapes are fixed (can_reuse compares presence only).
+    ggml_tensor * rep_ctl  = nullptr; // I32 [2]
+    ggml_tensor * rep_wrow = nullptr; // I32 [2]
+
     const llama_memory_recurrent_context * mctx;
 
     // used in view offsets, need to match for valid graph reuse

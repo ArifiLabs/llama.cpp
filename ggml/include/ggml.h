@@ -2815,6 +2815,27 @@ extern "C" {
             struct ggml_tensor  * state,
             int64_t               K);
 
+    // lane-298 deferred commit + replay (speculative verify windows, n_seqs == 1, scalar gate).
+    //   log : F32 [2*H_v*S_v + 2*H_v, 2*R] (k region sized H_v) -- per-token k|v|g|beta rows, two halves of R rows
+    //   ctl : I32 [2] -- ctl[0] = P (tokens to replay, 0..R), ctl[1] = parity (half read; 1-parity is written)
+    // The op first advances state over log rows parity*R + 0..P-1 (outputs discarded). Then:
+    //   deferred (n_tokens <= R): TWO state slots: slot 0 = the state AFTER the replay and BEFORE the window (the new
+    //          committed state), slot 1 = the final state; the window's tokens are logged into half 1-parity and no
+    //          per-token snapshot is stored (K is ignored).
+    //   wide: the window runs as ggml_gated_delta_net(K) from the replayed state (K snapshots), no log write.
+    GGML_API struct ggml_tensor * ggml_gated_delta_net_replay(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * q,
+            struct ggml_tensor  * k,
+            struct ggml_tensor  * v,
+            struct ggml_tensor  * g,
+            struct ggml_tensor  * beta,
+            struct ggml_tensor  * state,
+            struct ggml_tensor  * log,
+            struct ggml_tensor  * ctl,
+            int64_t               K,
+            bool                  deferred);
+
     // TurboQuant Walsh-Hadamard Transform (O(d log d) rotation for KV cache compression)
     // Applies WHT rotation to 128-element groups along ne[0]: sign1 → butterfly → sign2 → normalize
     // direction: 0 = forward (signs1 → WHT → signs2), 1 = inverse (signs2 → WHT → signs1)

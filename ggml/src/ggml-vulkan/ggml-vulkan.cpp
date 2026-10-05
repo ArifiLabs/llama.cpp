@@ -4747,21 +4747,29 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             const void * gdn_data;
             size_t gdn_bank_len;
             const void * gdn_bank_data;
+            size_t gdn_rep_len;
+            const void * gdn_rep_data;
             if (use_clustered_reduce) {
                 gdn_len = gated_delta_net_f32_len;
                 gdn_data = (const void *)gated_delta_net_f32_data;
                 gdn_bank_len = gated_delta_net_bank_f32_len;
                 gdn_bank_data = (const void *)gated_delta_net_bank_f32_data;
+                gdn_rep_len = gated_delta_net_bank_replay_f32_len;
+                gdn_rep_data = (const void *)gated_delta_net_bank_replay_f32_data;
             } else if (use_subgroup_reduce) {
                 gdn_len = gated_delta_net_f32_nocluster_len;
                 gdn_data = (const void *)gated_delta_net_f32_nocluster_data;
                 gdn_bank_len = gated_delta_net_bank_f32_nocluster_len;
                 gdn_bank_data = (const void *)gated_delta_net_bank_f32_nocluster_data;
+                gdn_rep_len = gated_delta_net_bank_replay_f32_nocluster_len;
+                gdn_rep_data = (const void *)gated_delta_net_bank_replay_f32_nocluster_data;
             } else {
                 gdn_len = gated_delta_net_f32_shmem_len;
                 gdn_data = (const void *)gated_delta_net_f32_shmem_data;
                 gdn_bank_len = gated_delta_net_bank_f32_shmem_len;
                 gdn_bank_data = (const void *)gated_delta_net_bank_f32_shmem_data;
+                gdn_rep_len = gated_delta_net_bank_replay_f32_shmem_len;
+                gdn_rep_data = (const void *)gated_delta_net_bank_replay_f32_shmem_data;
             }
 
             const uint32_t cols_per_wg = device->subgroup_size / lanes_per_column;
@@ -4776,6 +4784,10 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                     bank_name.c_str(), gdn_bank_len, gdn_bank_data, "main", 9, sizeof(vk_op_gated_delta_net_push_constants),
                     wg_denoms, {S_V, kda, device->subgroup_size, lanes_per_column}, 1, true, use_subgroup_ops, device->subgroup_size);
             }
+            const std::string rep_name = std::string(gdn_names[si][0]) + "_bank_replay";
+            ggml_vk_create_pipeline(device, device->pipeline_gated_delta_net_bank_replay[si],
+                rep_name.c_str(), gdn_rep_len, gdn_rep_data, "main", 11, sizeof(vk_op_gated_delta_net_push_constants),
+                wg_denoms, {S_V, 0u, device->subgroup_size, lanes_per_column}, 1, true, use_subgroup_ops, device->subgroup_size);
         }
     }
 
@@ -12917,12 +12929,17 @@ void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& subctx, 
     auto bank_it = ctx->gdn_bank.find(dst);
     const bool bank = bank_it != ctx->gdn_bank.end();
 
+    // lane-298 deferred commit + replay: only the fused bank path implements it (the unfused GDN would ignore the log)
+    const bool replay = ggml_get_op_params_i32(dst, 1) != 0;
+    GGML_ASSERT(!replay || bank);
+
     vk_pipeline pipeline = ggml_vk_op_get_pipeline(ctx, dst->src[0], dst->src[1], dst->src[2], dst, dst->op);
     GGML_ASSERT(pipeline != nullptr);
     if (bank) {
         const uint32_t si  = S_v == 16 ? 0 : S_v == 32 ? 1 : S_v == 64 ? 2 : 3;
         const uint32_t kda = (dst->src[3]->ne[0] == (int64_t)S_v) ? 1 : 0;
-        pipeline = ctx->device->pipeline_gated_delta_net_bank[si][kda];
+        pipeline = replay ? ctx->device->pipeline_gated_delta_net_bank_replay[si]
+                          : ctx->device->pipeline_gated_delta_net_bank[si][kda];
     }
 
     ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
@@ -12957,6 +12974,8 @@ void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& subctx, 
         K,
         bank ? bank_it->second.n_written : 0u,
         1.0f,
+        0u,
+        0u,
         0u
     };
 
@@ -12968,9 +12987,19 @@ void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& subctx, 
         // lane-298 DIAG ONLY (wrong on any rejected draft): write slot 0 only, measures the GDN snapshot-byte floor
         static const bool snap1 = getenv("GGML_VK_GDN_SNAP1_DIAG") != nullptr;
         if (snap1) { bpc.n_written = std::min<uint32_t>(bpc.n_written, 1u); }
-        // lane-298 DIAG ONLY: replay prologue over the window's own tokens (token loop runs twice), bounds replay compute
-        static const bool rep2 = getenv("GGML_VK_GDN_REPLAY_DIAG") != nullptr;
-        if (rep2) { bpc.n_rep = n_tokens; }
+        if (replay) {
+            bpc.n_rep = (uint32_t) (dst->src[6]->ne[1] / 2);
+            // selfcheck plant: replay one token fewer; the GATED_DELTA_NET replay op test must go RED
+            static const bool rplant = getenv("GGML_VK_GDN_REPLAY_PLANT") != nullptr;
+            bpc.rep_plant = rplant ? 1u : 0u;
+            bpc.rep_mode  = ggml_get_op_params_i32(dst, 2) != 0 ? 1u : 0u;
+            ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
+                {src_buf[0], src_buf[1], src_buf[2], src_buf[3], src_buf[4], src_buf[5], dst_buf,
+                 ggml_vk_tensor_subbuffer(ctx, bank_it->second.ridx), ggml_vk_tensor_subbuffer(ctx, bank_it->second.wrow),
+                 ggml_vk_tensor_subbuffer(ctx, dst->src[6]), ggml_vk_tensor_subbuffer(ctx, dst->src[7])},
+                bpc, { H, n_seqs, S_v });
+            return;
+        }
         ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
             {src_buf[0], src_buf[1], src_buf[2], src_buf[3], src_buf[4], src_buf[5], dst_buf,
              ggml_vk_tensor_subbuffer(ctx, bank_it->second.ridx), ggml_vk_tensor_subbuffer(ctx, bank_it->second.wrow)},

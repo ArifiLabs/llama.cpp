@@ -117,8 +117,15 @@ public:
     // per-plane shift copies to delete, so rotating it would buy nothing and cost an indirection.
     bool rs_r1 = false;
 
+    // lane-298 deferred commit + replay (LLAMA_GDN_REPLAY=1, needs rs_r1): the SSM bank holds only the committed state;
+    // each ubatch replays the accepted tokens of the previous one from a per-layer k|v|g|beta log (l_l, 2 halves of
+    // rs_planes() rows) and logs its own. Measured slice: grep-10051756 (4.64 ms/verify on qwen4exp).
+    bool rs_replay = false;
+    std::vector<ggml_tensor *> l_l;
+
     // K = number of bank planes.
-    uint32_t rs_planes() const { return n_rs_seq + 1; }
+    // lane-298 replay adds one plane so the committed state (age n) never aliases the final state (age 0) for n == K
+    uint32_t rs_planes() const { return n_rs_seq + 1 + (rs_replay ? 1u : 0u); }
 
     // physical plane holding the state that is `age` tokens older than `anchor`.
     uint32_t rs_plane(llama_pos anchor, int64_t age) const {
@@ -151,6 +158,11 @@ public:
         // (r - P) mod K - off by exactly the rollback distance.
         llama_pos pos_bank      = -1;
         llama_pos pos_bank_prev = -1;
+
+        // lane-298 deferred commit + replay (LLAMA_GDN_REPLAY): n/par = tokens logged by the newest ubatch and the log
+        // half they went to (n = 0: nothing pending, the newest state is in the bank); *_prev = values on entry to the
+        // current find_slot (what this ubatch reads); P = tokens this ubatch replays; age = this ubatch's length.
+        struct rep_t { int32_t n = 0, par = 0, n_prev = 0, par_prev = 0, P = 0, age = 0; } rep;
 
         std::set<llama_seq_id> seq_id;
 
@@ -256,6 +268,12 @@ public:
     // inactive. Anchored on pos_bank (the anchor AFTER find_slot advanced it), where the reads are
     // anchored on pos_bank_prev.
     int32_t s_wrow(int64_t age) const;
+
+    // lane-298 replay: session flag, {P, read parity} for the ctl input, the committed-state write row, per-layer log
+    bool          get_rs_replay() const;
+    int32_t       rep_ctl(int i) const;
+    int32_t       rep_crow() const;
+    ggml_tensor * get_l_l(int32_t il) const;
 
     // Is the R1 rotated SSM bank active for this session?
     bool get_rs_r1() const;

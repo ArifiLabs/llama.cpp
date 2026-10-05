@@ -34,7 +34,9 @@ layout(push_constant) uniform Parameters {
     uint K;
     uint n_written; // lane-299 GDN_BANK: bank slots written (the skipped set_rows rows); unused otherwise
     float wsign;    // lane-299 GDN_BANK: 1, or -1 for the selfcheck plant
-    uint n_rep;     // lane-298 GDN_BANK: replay-prologue tokens (state update only, no output, no snapshot)
+    uint n_rep;     // lane-298 GDN_REPLAY: log rows per half (R); 0 elsewhere
+    uint rep_plant; // lane-298 GDN_REPLAY selfcheck: replay this many tokens fewer (RED); 0 = off
+    uint rep_mode;  // lane-298 GDN_REPLAY: 1 = deferred (wrow[0] committed, wrow[1] final, log, no snapshots); 0 = wide
 };
 
 layout(binding = 0) readonly  buffer QBuf     { FLOAT_TYPE data_q[];     };
@@ -49,6 +51,11 @@ layout(binding = 4) readonly  buffer BetaBuf  { FLOAT_TYPE data_beta[];  };
 layout(binding = 5)           buffer StateBuf { FLOAT_TYPE data_state[]; };
 layout(binding = 7) readonly  buffer RIdxBuf  { int data_ridx[]; };
 layout(binding = 8) readonly  buffer WRowBuf  { int data_wrow[]; };
+#if GDN_REPLAY
+// lane-298 deferred commit + replay: per-token k|v|g|beta log (two halves of n_rep rows), ctl = {P, parity}
+layout(binding = 9)           buffer LogBuf   { FLOAT_TYPE data_log[]; };
+layout(binding = 10) readonly buffer CtlBuf   { int data_ctl[]; };
+#endif
 #else
 layout(binding = 5) readonly  buffer StateBuf { FLOAT_TYPE data_state[]; };
 #endif
@@ -135,30 +142,49 @@ void main() {
 
     uint attn_off = (seq_id * n_tokens * H + head_id) * S_V;
 
-#if GDN_BANK
-    // lane-298 replay prologue: advance the state over n_rep tokens (diag: the window's own tokens), outputs discarded
-    for (uint t = 0; t < min(n_rep, n_tokens); t++) {
-        const uint q_off = iq3 * sq3 + t * sq2 + iq1 * sq1;
-        const uint gb_off = seq_id * sb3 + t * sb2 + head_id * sb1;
-        const FLOAT_TYPE beta_val = FLOAT_TYPE(data_beta[gb_off]);
+#if GDN_BANK && GDN_REPLAY
+    // lane-298 deferred commit + replay (scalar gate only, n_seqs == 1): advance the committed state over the P logged
+    // tokens of the last window that were accepted (same statements as the window loop below), publish it as the new
+    // committed state, then run this window with no state writes and log its inputs into the other half.
+    const uint log_stride = 2u * H * S_V + 2u * H;
+    const uint log_off_v  = H * S_V;
+    const uint log_off_g  = log_off_v + H * S_V;
+    const uint log_off_b  = log_off_g + H;
+    const uint rep_P      = min(uint(max(data_ctl[0], 0)), n_rep) - min(rep_plant, min(uint(max(data_ctl[0], 0)), n_rep));
+    const uint rep_par    = uint(data_ctl[1]);
+    for (uint t = 0; t < rep_P; t++) {
+        const uint row = (rep_par * n_rep + t) * log_stride;
+        const FLOAT_TYPE beta_val = FLOAT_TYPE(data_log[row + log_off_b + head_id]);
         FLOAT_TYPE k_reg[ROWS_PER_LANE];
         FLOAT_TYPE g_exp[ROWS_PER_LANE];
-        const FLOAT_TYPE g_one = exp(FLOAT_TYPE(data_g[gb_off]));
+        const FLOAT_TYPE g_val = exp(FLOAT_TYPE(data_log[row + log_off_g + head_id]));
         [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
             const uint i = r * LANES_PER_COLUMN + lane;
-            k_reg[r] = FLOAT_TYPE(data_k[q_off + i]);
-            g_exp[r] = KDA == 0 ? g_one : exp(FLOAT_TYPE(data_g[gb_off * S_V + i]));
+            k_reg[r] = FLOAT_TYPE(data_log[row + iq1 * S_V + i]);
+            g_exp[r] = g_val;
         }
-        const FLOAT_TYPE v_val = FLOAT_TYPE(data_v[seq_id * sv3 + t * sv2 + head_id * sv1 + col]);
+        const FLOAT_TYPE v_val = FLOAT_TYPE(data_log[row + log_off_v + head_id * S_V + col]);
         FLOAT_TYPE kv_shard = 0.0;
         [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
             kv_shard += g_exp[r] * s_shard[r] * k_reg[r];
         }
-        const FLOAT_TYPE delta_col = (v_val - reduce_partial(kv_shard)) * beta_val;
+        FLOAT_TYPE kv_col = reduce_partial(kv_shard);
+        FLOAT_TYPE delta_col = (v_val - kv_col) * beta_val;
         [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
             s_shard[r] = g_exp[r] * s_shard[r] + k_reg[r] * delta_col;
         }
     }
+    // deferred mode: committed state -> wrow[0]; skipped when nothing was replayed into an unchanged row
+    if (rep_mode != 0u && !(rep_P == 0u && data_wrow[0] == data_ridx[seq_id])) {
+        // committed state -> wrow[0] (in place when it equals ridx: each thread read its own elements above)
+        const uint slot_base = uint(data_wrow[0]) * bank_row + head_id * state_size;
+        [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
+            data_state[slot_base + col * S_V + r * LANES_PER_COLUMN + lane] = wsign * s_shard[r];
+        }
+    }
+    const uint log_w = (1u - rep_par) * n_rep;
+    const bool rep_log = rep_mode != 0u;
+    const bool log_k_writer = rep_log && head_id < neq1 && gl_WorkGroupID.z == 0u && (gl_SubgroupInvocationID / LANES_PER_COLUMN) == 0u;
 #endif
 
     for (uint t = 0; t < n_tokens; t++) {
@@ -192,6 +218,24 @@ void main() {
 
         const FLOAT_TYPE v_val = FLOAT_TYPE(data_v[v_off + col]);
 
+#if GDN_BANK && GDN_REPLAY
+        {
+            const uint row = (log_w + t) * log_stride;
+            if (log_k_writer) {
+                [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
+                    data_log[row + head_id * S_V + r * LANES_PER_COLUMN + lane] = k_reg[r];
+                }
+            }
+            if (rep_log && lane == 0u) {
+                data_log[row + log_off_v + head_id * S_V + col] = v_val;
+                if (col == 0u) {
+                    data_log[row + log_off_g + head_id] = data_g[gb_off];
+                    data_log[row + log_off_b + head_id] = beta_val;
+                }
+            }
+        }
+#endif
+
         FLOAT_TYPE kv_shard = 0.0;
         [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
             kv_shard += g_exp[r] * s_shard[r] * k_reg[r];
@@ -213,7 +257,11 @@ void main() {
 
         attn_off += S_V * H;
 
+#if GDN_BANK && GDN_REPLAY
+        if (K > 1u && !rep_log) {
+#else
         if (K > 1u) {
+#endif
             const int target_slot = int(n_tokens) - 1 - int(t);
 #if GDN_BANK
             if (target_slot >= 0 && target_slot < int(n_written)) {
@@ -233,8 +281,19 @@ void main() {
         }
     }
 
+#if GDN_BANK && GDN_REPLAY
+    if (rep_log) {
+        // deferred mode: final state -> wrow[1]
+        const uint slot_base = uint(data_wrow[1]) * bank_row + head_id * state_size;
+        [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
+            data_state[slot_base + col * S_V + r * LANES_PER_COLUMN + lane] = wsign * s_shard[r];
+        }
+    }
+#endif
     if (K == 1u) {
-#if GDN_BANK
+#if GDN_BANK && GDN_REPLAY
+        // replay ops always carry K >= 2 (deferred = 2 slots)
+#elif GDN_BANK
         const uint slot_base = uint(data_wrow[0]) * bank_row + head_id * state_size;
         [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
             data_state[slot_base + col * S_V + r * LANES_PER_COLUMN + lane] = wsign * s_shard[r];

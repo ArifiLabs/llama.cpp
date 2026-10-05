@@ -11164,12 +11164,16 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
     // per-seq stride in floats (seq s starts at state + s * seq_stride)
     const int64_t state_seq_stride = src_state->nb[3] / sizeof(float);
 
-    const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0);
+    // lane-298 replay mode: the output slot holds the post-replay state, so the window runs in scratch
+    const bool replay   = ggml_get_op_params_i32(dst, 1) != 0;
+    const bool rep_log  = replay && ggml_get_op_params_i32(dst, 2) != 0; // deferred: slot 0 = committed, slot 1 = final
+    const bool use_work = K > 1 || replay;
+    const int64_t per_thread = S_v + (use_work ? S_v * S_v : 0);
     const int ith = params->ith;
 
     // per-thread region = per_thread floats + a cache line of padding (sizing in ggml-cpu.c matches)
     float * delta       = (float *)params->wdata + ith * (per_thread + CACHE_LINE_SIZE_F32);
-    float * state_work  = K > 1 ? (delta + S_v) : nullptr;
+    float * state_work  = use_work ? (delta + S_v) : nullptr;
 
     // output layout: [attn_scores | new_states]
     // attn_scores: S_v * H * n_tokens * n_seqs    floats
@@ -11203,7 +11207,7 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
 
         // For K=1, write directly to the single output slot to avoid an extra memcpy at the end.
         // For K>1, work in scratch and copy out per-token when the slot is in range.
-        float * s_out = (K > 1)
+        float * s_out = use_work
             ? state_work
             : state_out_base + (iv3 * H + iv1) * S_v * S_v;
 
@@ -11212,20 +11216,10 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
         const float * s_in = state_in_base + iv3 * state_seq_stride + iv1 * S_v * S_v;
         memcpy(s_out, s_in, S_v * S_v * sizeof(float));
 
-        // attn output pointer for first token of this (head, seq)
-        float * attn_data = attn_out_base + (iv3 * n_tokens * H + iv1) * S_v;
-
-        for (int64_t t = 0; t < n_tokens; t++) {
-            const float * q_d = (const float *)((const char *)src_q->data + iq3 * nbq3 + t * nbq2 + iq1 * nbq1);
-            const float * k_d = (const float *)((const char *)src_k->data + ik3 * nbk3 + t * nbk2 + ik1 * nbk1);
-            const float * v_d = (const float *)((const char *)src_v->data + iv3 * nbv3 + t * nbv2 + iv1 * nbv1);
-
-            const float beta_val = *(const float *)((const char *)src_beta->data + iv3 * nbb3 + t * nbb2 + iv1 * nbb1);
-            const float * g_d    =  (const float *)((const char *)src_g->data    + iv3 * nbg3 + t * nbg2 + iv1 * nbg1);
-
+        // one recurrent step (scalar gate or KDA); shared by the replay prologue and the window loop
+        auto step = [&](const float * k_d, const float * v_d, const float * g_d, float beta_val) {
             // state is stored transposed: s_out[j*S_v + i] = S[i][j]
             // so row j of s_out = column j of S (contiguous access)
-
             if (kda) {
                 // precompute exp(g) into delta scratch (reused below)
                 for (int64_t i = 0; i < S_v; ++i) {
@@ -11250,6 +11244,54 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
             for (int64_t j = 0; j < S_v; ++j) {
                 ggml_vec_mad_f32(S_v, &s_out[j * S_v], k_d, delta[j]);
             }
+        };
+
+        // lane-298 replay: advance over the logged accepted tokens, publish the committed state, log this window
+        float * log_row = nullptr;
+        int64_t log_R = 0, log_half_w = 0, log_off_v = 0, log_off_g = 0, log_off_b = 0;
+        if (replay) {
+            const ggml_tensor * src_log = dst->src[6];
+            const int32_t     * ctl     = (const int32_t *) dst->src[7]->data;
+            log_row    = (float *) src_log->data;
+            log_R      = src_log->ne[1] / 2;
+            log_off_v  = H * S_v;
+            log_off_g  = log_off_v + H * S_v;
+            log_off_b  = log_off_g + H;
+            const int64_t P   = ctl[0];
+            const int64_t par = ctl[1];
+            log_half_w = (1 - par) * log_R;
+            GGML_ASSERT(P >= 0 && P <= log_R && (par == 0 || par == 1));
+            for (int64_t t = 0; t < P; t++) {
+                const float * r = log_row + (par * log_R + t) * src_log->ne[0];
+                step(r + ik1 * S_v, r + log_off_v + iv1 * S_v, r + log_off_g + iv1, r[log_off_b + iv1]);
+            }
+            if (rep_log) {
+                memcpy(state_out_base + (iv3 * H + iv1) * S_v * S_v, s_out, S_v * S_v * sizeof(float));
+            }
+        }
+
+        // attn output pointer for first token of this (head, seq)
+        float * attn_data = attn_out_base + (iv3 * n_tokens * H + iv1) * S_v;
+
+        for (int64_t t = 0; t < n_tokens; t++) {
+            const float * q_d = (const float *)((const char *)src_q->data + iq3 * nbq3 + t * nbq2 + iq1 * nbq1);
+            const float * k_d = (const float *)((const char *)src_k->data + ik3 * nbk3 + t * nbk2 + ik1 * nbk1);
+            const float * v_d = (const float *)((const char *)src_v->data + iv3 * nbv3 + t * nbv2 + iv1 * nbv1);
+
+            const float beta_val = *(const float *)((const char *)src_beta->data + iv3 * nbb3 + t * nbb2 + iv1 * nbb1);
+            const float * g_d    =  (const float *)((const char *)src_g->data    + iv3 * nbg3 + t * nbg2 + iv1 * nbg1);
+
+            if (rep_log) {
+                float * r = log_row + (log_half_w + t) * dst->src[6]->ne[0];
+                if (iv1 < nek1) {
+                    memcpy(r + iv1 * S_v, k_d, S_v * sizeof(float));
+                }
+                memcpy(r + log_off_v + iv1 * S_v, v_d, S_v * sizeof(float));
+                r[log_off_g + iv1] = g_d[0];
+                r[log_off_b + iv1] = beta_val;
+            }
+
+            step(k_d, v_d, g_d, beta_val);
 
             // attn_out[j] = sum_i S[i][j] * q[i] = dot(row j of M, q)
             for (int64_t j = 0; j < S_v; ++j) {
@@ -11260,7 +11302,7 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
 
             attn_data += S_v * H; // advance to next token
 
-            if (K > 1) {
+            if (K > 1 && !rep_log) {
                 const int64_t target_slot = n_tokens - 1 - t;
                 if (target_slot >= 0 && target_slot < K) {
                     float * curr_state_o = state_out_base + target_slot * state_size_per_snap +
@@ -11268,6 +11310,10 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
                     memcpy(curr_state_o, s_out, S_v * S_v * sizeof(float));
                 }
             }
+        }
+        if (rep_log) {
+            // deferred mode: slot 1 = final state
+            memcpy(state_out_base + state_size_per_snap + (iv3 * H + iv1) * S_v * S_v, s_out, S_v * S_v * sizeof(float));
         }
     }
 }

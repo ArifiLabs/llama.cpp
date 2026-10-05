@@ -740,7 +740,9 @@ struct vk_op_gated_delta_net_push_constants {
     uint32_t K;
     uint32_t n_written; // lane-299 GDN_BANK only
     float wsign;        // lane-299 GDN_BANK only (-1 = selfcheck plant)
-    uint32_t n_rep;     // lane-298 GDN_BANK only: replay-prologue token count (0 = none)
+    uint32_t n_rep;     // lane-298 GDN_REPLAY only: log rows per half (R); 0 elsewhere
+    uint32_t rep_plant; // lane-298 GDN_REPLAY selfcheck: tokens skipped from the replay (RED); 0 = off
+    uint32_t rep_mode;  // lane-298 GDN_REPLAY only: 1 = deferred, 0 = wide
 };
 
 struct vk_op_ssm_scan_push_constants {

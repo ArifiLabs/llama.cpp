@@ -772,8 +772,17 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
         return output;
     }
 
+    // lane-298 deferred commit + replay (LLAMA_GDN_REPLAY, R1 only): every ubatch first replays the accepted part of the
+    // last logged window; a ubatch that fits the log (n <= planes) is deferred: it stores only {committed, final} and
+    // logs itself, a wider one keeps the K age snapshots.
+    ggml_tensor * rep_log = (mctx_cur->get_rs_r1() && mctx_cur->get_rs_replay() && inp->rep_ctl) ? mctx_cur->get_l_l(il) : nullptr;
+    // n <= K (log half = planes = K + 1 rows): committed (age n) never aliases final (age 0); must match find_slot
+    const bool rep_deferred = rep_log && n_seq_tokens <= rep_log->ne[1] / 2 - 1;
+
     // state s is 4D [S_v, S_v, H_v, n_seqs]; K snapshot slots are written into the output.
-    ggml_tensor * gdn_out = ggml_gated_delta_net(ctx0, q, k, v, g, b, s, K);
+    ggml_tensor * gdn_out = rep_log
+        ? ggml_gated_delta_net_replay(ctx0, q, k, v, g, b, s, rep_log, inp->rep_ctl, K, rep_deferred)
+        : ggml_gated_delta_net(ctx0, q, k, v, g, b, s, K);
     if (n_seq_tokens > 1) {
         res->add_fused_node({LLM_FUSED_OP_GDN_CH, gdn_out, il});
     } else {
@@ -797,7 +806,7 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
     // ring-repair bisect gate (2026-08-24): persist only slot 0 (the freshest state), skip the
     // shift copies - banks stale, but plain-decode output must then equal K=1. Not a shipping mode.
     static const bool rs_bank_off_ssm = getenv("LLAMA_RS_BANK_OFF_SSM") != nullptr;
-    const int64_t n_written = rs_bank_off_ssm ? 1 : std::min<int64_t>(n_seq_tokens, K);
+    const int64_t n_written = rep_deferred ? 2 : rs_bank_off_ssm ? 1 : std::min<int64_t>(n_seq_tokens, K);
 
     // Bank invariant (F-136 root fix): slot s must hold the state from s tokens before the end of
     // the NEWEST ubatch. The op only produces snapshots for this ubatch's tokens (slots
@@ -890,6 +899,9 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
             wrow = inp->s_wrow_view;
         } else {
             wrow = ggml_view_1d(ctx0, inp->s_wrow, n_written, 0);
+        }
+        if (rep_deferred) {
+            wrow = inp->rep_wrow; // lane-298: {committed row, final row}
         }
 
         ggml_build_forward_expand(gf, ggml_set_rows(ctx0, dst2, src2, wrow));

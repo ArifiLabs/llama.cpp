@@ -1639,6 +1639,7 @@ struct vk_device_struct {
     // [size_idx][kda] where size_idx: 0=d16, 1=d32, 2=d64, 3=d128
     vk_pipeline pipeline_gated_delta_net[4][2];
     vk_pipeline pipeline_gated_delta_net_bank[4][2]; // lane-299 GDN_BANK
+    vk_pipeline pipeline_gated_delta_net_bank_replay[4]; // lane-298 GDN_REPLAY (scalar gate)
     vk_pipeline pipeline_ssm_scan_f32_d128;
     vk_pipeline pipeline_ssm_scan_f32_d256;
     vk_pipeline pipeline_ssm_conv_f32;

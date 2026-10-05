@@ -5495,6 +5495,7 @@ struct test_gated_delta_net_bank : public test_case {
     const int64_t K;
     const int64_t n_written;
     const bool    in_place; // wrow[0] == ridx[0], the decode shape
+    const int64_t rep_P;    // lane-298: >= 0 = ggml_gated_delta_net_replay with ctl P = rep_P (log R = 4)
 
     ggml_tensor * sr_node   = nullptr;
     ggml_tensor * attn_node = nullptr;
@@ -5503,12 +5504,12 @@ struct test_gated_delta_net_bank : public test_case {
     static constexpr int32_t r_row  = 2;
 
     std::string vars() override {
-        return VARS_TO_STR6(head_count, head_size, n_seq_tokens, K, n_written, in_place);
+        return VARS_TO_STR7(head_count, head_size, n_seq_tokens, K, n_written, in_place, rep_P);
     }
 
     test_gated_delta_net_bank(int64_t head_count = 4, int64_t head_size = 32, int64_t n_seq_tokens = 1,
-            int64_t K = 1, int64_t n_written = 1, bool in_place = true)
-        : head_count(head_count), head_size(head_size), n_seq_tokens(n_seq_tokens), K(K), n_written(n_written), in_place(in_place) {}
+            int64_t K = 1, int64_t n_written = 1, bool in_place = true, int64_t rep_P = -1)
+        : head_count(head_count), head_size(head_size), n_seq_tokens(n_seq_tokens), K(K), n_written(n_written), in_place(in_place), rep_P(rep_P) {}
 
     ggml_tensor * build_graph(ggml_context * ctx) override {
         const int64_t S_v = head_size;
@@ -5536,7 +5537,16 @@ struct test_gated_delta_net_bank : public test_case {
         k = ggml_l2_norm(ctx, k, 1e-6f);
 
         ggml_tensor * state = ggml_reshape_4d(ctx, ggml_get_rows(ctx, bank, ridx), S_v, S_v, H, 1);
-        ggml_tensor * gdn   = ggml_gated_delta_net(ctx, q, k, v, g, beta, state, K);
+        ggml_tensor * gdn;
+        if (rep_P >= 0) {
+            ggml_tensor * log = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 2 * H * S_v + 2 * H, 2 * 4);
+            ggml_tensor * ctl = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 2);
+            ggml_set_name(log, "rlog");
+            ggml_set_name(ctl, "rctl");
+            gdn = ggml_gated_delta_net_replay(ctx, q, k, v, g, beta, state, log, ctl, K, K == 1); // K 1 here = deferred (2 slots)
+        } else {
+            gdn = ggml_gated_delta_net(ctx, q, k, v, g, beta, state, K);
+        }
 
         ggml_tensor * attn = ggml_view_4d(ctx, gdn, S_v, H, n_seq_tokens, 1,
                 ggml_row_size(gdn->type, S_v), ggml_row_size(gdn->type, S_v * H),
@@ -5568,6 +5578,12 @@ struct test_gated_delta_net_bank : public test_case {
                 ggml_backend_tensor_set(t, &r_row, 0, sizeof(int32_t));
             } else if (strcmp(t->name, "wrow") == 0) {
                 ggml_backend_tensor_set(t, in_place ? w_in_place : w_moved, 0, n_written * sizeof(int32_t));
+            } else if (strcmp(t->name, "rctl") == 0) {
+                const int32_t c[2] = { (int32_t) rep_P, 1 };
+                ggml_backend_tensor_set(t, c, 0, sizeof(c));
+            } else if (strcmp(t->name, "rlog") == 0) {
+                // k|v|g|beta rows: g must stay negative and beta in [0,1] like real gates; uniform small values keep it stable
+                init_tensor_uniform(t, -0.5f, 0.5f);
             } else if (strcmp(t->name, "g") == 0) {
                 init_tensor_uniform(t, -20.0f, -1e-4f);
             } else if (strcmp(t->name, "beta") == 0) {
@@ -12647,6 +12663,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_gated_delta_net_bank(4,  64,  4, 4, 4, true));
     test_cases.emplace_back(new test_gated_delta_net_bank(4,  64,  4, 4, 1, false));
     test_cases.emplace_back(new test_gated_delta_net_bank(4,  32,  2, 4, 2, false));
+    // lane-298 replay: deferred (K 1, log write) and wide (K 4, snapshots) modes; GGML_VK_GDN_REPLAY_PLANT must go RED
+    test_cases.emplace_back(new test_gated_delta_net_bank(4,  128, 1, 1, 2, true,  3));
+    test_cases.emplace_back(new test_gated_delta_net_bank(4,  128, 4, 1, 2, false, 4));
+    test_cases.emplace_back(new test_gated_delta_net_bank(16, 128, 3, 1, 2, true,  1));
+    test_cases.emplace_back(new test_gated_delta_net_bank(4,  64,  6, 4, 4, true,  2));
+    test_cases.emplace_back(new test_gated_delta_net_bank(4,  64,  4, 1, 2, true,  0));
 
 #if 0
     // these tests are disabled to save execution time, sbut they can be handy for debugging

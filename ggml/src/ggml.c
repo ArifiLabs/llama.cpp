@@ -6747,6 +6747,38 @@ struct ggml_tensor * ggml_gated_delta_net(
     return result;
 }
 
+struct ggml_tensor * ggml_gated_delta_net_replay(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * q,
+        struct ggml_tensor  * k,
+        struct ggml_tensor  * v,
+        struct ggml_tensor  * g,
+        struct ggml_tensor  * beta,
+        struct ggml_tensor  * state,
+        struct ggml_tensor  * log,
+        struct ggml_tensor  * ctl,
+        int64_t               K,
+        bool                  deferred) {
+    struct ggml_tensor * result = ggml_gated_delta_net(ctx, q, k, v, g, beta, state, deferred ? 2 : K);
+
+    const int64_t S_v = v->ne[0];
+    const int64_t H   = v->ne[1];
+    GGML_ASSERT(g->ne[0] == 1);
+    GGML_ASSERT(v->ne[3] == 1);
+    GGML_ASSERT(k->ne[0] == S_v);
+    GGML_ASSERT(log->type == GGML_TYPE_F32 && ggml_is_contiguous(log));
+    GGML_ASSERT(log->ne[0] == 2 * H * S_v + 2 * H); // k region sized H_v (k may be broadcast)
+    GGML_ASSERT(log->ne[1] % 2 == 0 && (!deferred || v->ne[2] <= log->ne[1] / 2));
+    GGML_ASSERT(ctl->type == GGML_TYPE_I32 && ggml_nelements(ctl) >= 2);
+
+    ggml_set_op_params_i32(result, 1, 1);
+    ggml_set_op_params_i32(result, 2, deferred ? 1 : 0);
+    result->src[6] = log;
+    result->src[7] = ctl;
+
+    return result;
+}
+
 // ggml_turbo_wht
 
 struct ggml_tensor * ggml_turbo_wht(
