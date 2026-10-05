@@ -1799,7 +1799,24 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         }
     }
 
-    ml.init_mappings(true, use_mlock ? &pimpl->mlock_mmaps : nullptr);
+    // lane-298: a device without mmap_support copies every offloaded weight out of the mapping, so prefetching
+    // the whole file only floods RAM (Windows PrefetchVirtualMemory over ~58 GB on a 23.6 GB host). Override:
+    // LLAMA_MMAP_PREFETCH=0|1.
+    bool mmap_prefetch = true;
+    for (const auto & dev : devices) {
+        ggml_backend_dev_props props;
+        ggml_backend_dev_get_props(dev.dev, &props);
+        if (!props.caps.mmap_support) {
+            mmap_prefetch = false;
+        }
+    }
+    if (const char * env = getenv("LLAMA_MMAP_PREFETCH")) {
+        mmap_prefetch = atoi(env) != 0;
+    }
+    if (ml.use_mmap) {
+        LLAMA_LOG_INFO("%s: mmap prefetch %s\n", __func__, mmap_prefetch ? "on" : "off (a device copies weights out of the mapping)");
+    }
+    ml.init_mappings(mmap_prefetch, use_mlock ? &pimpl->mlock_mmaps : nullptr);
     pimpl->mappings.reserve(ml.mappings.size());
 
     // create the backend buffers
