@@ -1,0 +1,160 @@
+// lane-300 FA replay: re-run one dumped FLASH_ATTN_EXT (det-probe DETP_FA_DUMP files) on the GPU backend with
+// edited inputs, to name what makes its output depend on masked (dead) K/V cells, and whether a query row's
+// output depends on how many rows share the dispatch (GOAL 3b at op level).
+// usage: arifi-fa-replay <prefix>   (reads <prefix>-run0.bin and <prefix>-run1.bin)
+#include "ggml.h"
+#include "ggml-alloc.h"
+#include "ggml-backend.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+
+struct dump { int64_t ne[5][4]; std::vector<float> d[5]; int32_t op[5]; };
+
+static bool load(const std::string & fn, dump & x) {
+    FILE * f = fopen(fn.c_str(), "rb");
+    if (!f) return false;
+    for (int t = 0; t < 5; ++t) {
+        if (fread(x.ne[t], sizeof(int64_t), 4, f) != 4) { fclose(f); return false; }
+        size_t n = (size_t) (x.ne[t][0] * x.ne[t][1] * x.ne[t][2] * x.ne[t][3]);
+        x.d[t].resize(n);
+        if (fread(x.d[t].data(), sizeof(float), n, f) != n) { fclose(f); return false; }
+    }
+    bool ok = fread(x.op, sizeof(int32_t), 5, f) == 5;
+    fclose(f);
+    return ok;
+}
+
+static uint64_t fnv(const void * p, size_t n) {
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < n; ++i) { h ^= ((const uint8_t *) p)[i]; h *= 1099511628211ull; }
+    return h;
+}
+
+static ggml_backend_t g_be;
+
+// the dump's q rows listed in `rows` (a row may repeat), in the model's layout: Q/K/V allocated as
+// [D, heads, rows] and permuted (0,2,1,3) exactly like build_attn_mha; returns dst [DV, nh, rows.size()] f32
+static std::vector<float> run_fa(const dump & x, const std::vector<float> & k, const std::vector<float> & v, const std::vector<int64_t> & rows) {
+    const int64_t D = x.ne[0][0], nqd = x.ne[0][1], nh = x.ne[0][2], nkv = x.ne[1][1], nkvh = x.ne[1][2], DV = x.ne[2][0];
+    const int64_t nr = (int64_t) rows.size();
+    ggml_init_params ip = { 32 * ggml_tensor_overhead() + ggml_graph_overhead(), nullptr, true };
+    ggml_context * ctx = ggml_init(ip);
+    ggml_tensor * q0 = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, D, nh, nr);
+    ggml_tensor * k0 = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, D, nkvh, nkv);
+    ggml_tensor * v0 = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, DV, nkvh, nkv);
+    ggml_tensor * m = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, nkv, nr, 1, 1);
+    ggml_tensor * o = ggml_flash_attn_ext(ctx, ggml_permute(ctx, q0, 0, 2, 1, 3), ggml_permute(ctx, k0, 0, 2, 1, 3),
+                                          ggml_permute(ctx, v0, 0, 2, 1, 3), m, 0.0f, 0.0f, 0.0f);
+    memcpy(o->op_params, x.op, sizeof(x.op));  // scale, max_bias, softcap, prec, n_kv_max exactly as the model set them
+    ggml_cgraph * gf = ggml_new_graph(ctx);
+    ggml_build_forward_expand(gf, o);
+    ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(ctx, g_be);
+
+    std::vector<float> qs((size_t) (D * nr * nh));
+    for (int64_t r = 0; r < nr; ++r) for (int64_t h = 0; h < nh; ++h)
+        memcpy(&qs[(size_t) ((r * nh + h) * D)], &x.d[0][(size_t) ((h * nqd + rows[r]) * D)], D * sizeof(float));
+    ggml_backend_tensor_set(q0, qs.data(), 0, qs.size() * sizeof(float));
+    // dump K/V logical [d, kv, head] -> raw [d, head, kv]
+    auto setkv = [&](ggml_tensor * t, const std::vector<float> & s, int64_t d) {
+        std::vector<float> f(s.size());
+        for (int64_t h = 0; h < nkvh; ++h) for (int64_t c = 0; c < nkv; ++c)
+            memcpy(&f[(size_t) ((c * nkvh + h) * d)], &s[(size_t) ((h * nkv + c) * d)], d * sizeof(float));
+        std::vector<ggml_fp16_t> hb(f.size());
+        ggml_fp32_to_fp16_row(f.data(), hb.data(), (int64_t) f.size());
+        ggml_backend_tensor_set(t, hb.data(), 0, hb.size() * sizeof(ggml_fp16_t));
+    };
+    setkv(k0, k, D);
+    setkv(v0, v, DV);
+    std::vector<float> mf((size_t) (nr * nkv));
+    for (int64_t r = 0; r < nr; ++r) memcpy(&mf[(size_t) (r * nkv)], &x.d[3][(size_t) (rows[r] * nkv)], nkv * sizeof(float));
+    std::vector<ggml_fp16_t> mh(mf.size());
+    ggml_fp32_to_fp16_row(mf.data(), mh.data(), (int64_t) mf.size());
+    ggml_backend_tensor_set(m, mh.data(), 0, mh.size() * sizeof(ggml_fp16_t));
+
+    ggml_backend_graph_compute(g_be, gf);
+    std::vector<float> out((size_t) ggml_nelements(o));
+    ggml_backend_tensor_get(o, out.data(), 0, out.size() * sizeof(float));
+    ggml_backend_buffer_free(buf);
+    ggml_free(ctx);
+    return out;
+}
+
+static std::vector<int64_t> span(int64_t a, int64_t n) { std::vector<int64_t> r(n); for (int64_t i = 0; i < n; ++i) r[i] = a + i; return r; }
+
+// compare rows [0, nr) of a against rows [ra, ra+nr) of b (both [D, nh, rows])
+static void cmp(const char * tag, const std::vector<float> & a, const std::vector<float> & b, int64_t D, int64_t nh, int64_t ra, int64_t nr) {
+    double mx = 0; long nd = 0, first_r = -1, first_h = -1;
+    for (int64_t r = 0; r < nr; ++r) for (int64_t h = 0; h < nh; ++h) for (int64_t d = 0; d < D; ++d) {
+        const float x = a[(size_t) ((r * nh + h) * D + d)], y = b[(size_t) (((ra + r) * nh + h) * D + d)];
+        if (memcmp(&x, &y, 4) != 0) {
+            if (nd++ == 0) { first_r = (long) r; first_h = (long) h; }
+            mx = std::max(mx, (double) std::fabs(x - y));
+        }
+    }
+    printf("{\"cmp\":\"%s\",\"differ\":%ld,\"maxdiff\":%.6g,\"first_row\":%ld,\"first_head\":%ld,\"red\":%d}\n", tag, nd, mx, first_r, first_h, nd ? 1 : 0);
+    fflush(stdout);
+}
+
+int main(int argc, char ** argv) {
+    if (argc < 2) { fprintf(stderr, "usage: %s <dump prefix>\n", argv[0]); return 1; }
+    dump x0, x1;
+    if (!load(std::string(argv[1]) + "-run0.bin", x0) || !load(std::string(argv[1]) + "-run1.bin", x1)) { fprintf(stderr, "FAILED-PATH dumps\n"); return 1; }
+    ggml_backend_load_all();
+    g_be = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_GPU, nullptr);
+    if (!g_be) { fprintf(stderr, "no GPU backend\n"); return 1; }
+    printf("{\"backend\":\"%s\"}\n", ggml_backend_name(g_be));
+
+    const int64_t D = x0.ne[0][0], nq = x0.ne[0][1], nh = x0.ne[0][2], nkv = x0.ne[1][1], nkvh = x0.ne[1][2], DV = x0.ne[2][0];
+    std::vector<char> dead(nkv, 1);  // dead column = masked for every query row
+    for (int64_t r = 0; r < nq; ++r) for (int64_t c = 0; c < nkv; ++c) if (x0.d[3][(size_t) (r * nkv + c)] > -INFINITY) dead[c] = 0;
+    long nd = 0; for (char c : dead) nd += c;
+    printf("{\"D\":%lld,\"nq\":%lld,\"nh\":%lld,\"nkv\":%lld,\"nkvh\":%lld,\"dead_cols\":%ld,\"prec\":%d,\"n_kv_max\":%d}\n",
+        (long long) D, (long long) nq, (long long) nh, (long long) nkv, (long long) nkvh, nd, x0.op[3], x0.op[4]);
+
+    auto mix = [&](const std::vector<float> & live, const std::vector<float> * dsrc, float dconst, int64_t d) {
+        std::vector<float> o = live;
+        for (int64_t h = 0; h < nkvh; ++h) for (int64_t c = 0; c < nkv; ++c) if (dead[c])
+            for (int64_t i = 0; i < d; ++i) { size_t k = (size_t) ((h * nkv + c) * d + i); o[k] = dsrc ? (*dsrc)[k] : dconst; }
+        return o;
+    };
+    const auto & K0 = x0.d[1], & V0 = x0.d[2], & K1 = x1.d[1], & V1 = x1.d[2];
+    const auto all = span(0, nq);
+
+    const auto base0 = run_fa(x0, K0, V0, all);
+    printf("{\"arm\":\"base0\",\"h\":\"%016llx\"}\n", (unsigned long long) fnv(base0.data(), base0.size() * 4));
+    cmp("base0_vs_gpudump0", base0, x0.d[4], DV, nh, 0, nq);
+    cmp("base0_repeat", run_fa(x0, K0, V0, all), base0, DV, nh, 0, nq);
+    const auto base1 = run_fa(x1, K1, V1, all);
+    cmp("base1_vs_gpudump1", base1, x1.d[4], DV, nh, 0, nq);
+    cmp("base1_vs_base0", base1, base0, DV, nh, 0, nq);
+    cmp("swapKV_dead_from_run1", run_fa(x0, mix(K0, &K1, 0, D), mix(V0, &V1, 0, DV), all), base0, DV, nh, 0, nq);
+    cmp("swapK_dead_only", run_fa(x0, mix(K0, &K1, 0, D), V0, all), base0, DV, nh, 0, nq);
+    cmp("swapV_dead_only", run_fa(x0, K0, mix(V0, &V1, 0, DV), all), base0, DV, nh, 0, nq);
+    cmp("dead_zero", run_fa(x0, mix(K0, nullptr, 0.0f, D), mix(V0, nullptr, 0.0f, DV), all), base0, DV, nh, 0, nq);
+    cmp("deadK_one", run_fa(x0, mix(K0, nullptr, 1.0f, D), V0, all), base0, DV, nh, 0, nq);
+    cmp("deadK_m1000", run_fa(x0, mix(K0, nullptr, -1000.0f, D), V0, all), base0, DV, nh, 0, nq);
+    cmp("deadK_p1000", run_fa(x0, mix(K0, nullptr, 1000.0f, D), V0, all), base0, DV, nh, 0, nq);
+    cmp("deadV_one", run_fa(x0, K0, mix(V0, nullptr, 1.0f, DV), all), base0, DV, nh, 0, nq);
+    // partial-tile carrier: pad the last Br tile with copies of the last row so no tile row is out of range
+    std::vector<int64_t> pad = all;
+    while (pad.size() % 16) pad.push_back(nq - 1);
+    const auto p0 = run_fa(x0, K0, V0, pad);
+    cmp("pad16_vs_base0", p0, base0, DV, nh, 0, nq);
+    cmp("pad16_repeat", run_fa(x0, K0, V0, pad), p0, DV, nh, 0, nq);
+    cmp("pad16_swapKV_dead_from_run1", run_fa(x0, mix(K0, &K1, 0, D), mix(V0, &V1, 0, DV), pad), p0, DV, nh, 0, nq);
+    // GOAL 3b at op level: the last w rows as their own dispatch vs the same rows inside the full nq-row dispatch.
+    // w=1 is a different dispatch shape (GQA row packing), so only w>=2 isolates tile position.
+    for (int64_t w : { 1, 2, 4, 5, 8, 16, 17 }) {
+        if (w > nq) continue;
+        char tag[64];
+        snprintf(tag, sizeof tag, "rows_w%lld_vs_full", (long long) w);
+        cmp(tag, run_fa(x0, K0, V0, span(nq - w, w)), base0, DV, nh, nq - w, w);
+    }
+    ggml_backend_free(g_be);
+    return 0;
+}
