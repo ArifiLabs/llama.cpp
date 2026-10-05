@@ -117,7 +117,8 @@ bool gather_setup() {
             rank++;
         }
     }
-    if ((rank % NUM_COLS) != 0) {
+    // NUM_COLS is 1, 2 or 4 (host-enforced): a mask, never a division by a spec constant (AMD driver, lane-166)
+    if ((rank & (NUM_COLS - 1u)) != 0) {
         return false;
     }
     expert_id = uint(e);

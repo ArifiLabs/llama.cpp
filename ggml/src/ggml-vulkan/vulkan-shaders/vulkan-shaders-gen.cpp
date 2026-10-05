@@ -246,7 +246,7 @@ bool is_legacy_quant(const std::string& type_name) {
 }
 
 // arifi lane-302: types with a MUL_MAT_ID expert-gather mat-vec (the qwen4exp IQ3_S file's `_exps` set).
-// Keep in sync with ggml_vk_moe_gather_type() in ggml-vulkan.cpp.
+// Keep in sync with the pipeline_dequant_mul_mat_vec_idg_f32 creation block in ggml-vulkan.cpp.
 bool is_moe_gather_type(const std::string& type_name) {
     return type_name == "iq4_nl" || type_name == "iq2_s" || type_name == "iq3_xxs" || type_name == "iq3_s" || type_name == "iq4_xs";
 }
