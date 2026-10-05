@@ -4745,15 +4745,23 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             const bool use_subgroup_ops = use_clustered_reduce || use_subgroup_reduce;
             size_t gdn_len;
             const void * gdn_data;
+            size_t gdn_bank_len;
+            const void * gdn_bank_data;
             if (use_clustered_reduce) {
                 gdn_len = gated_delta_net_f32_len;
                 gdn_data = (const void *)gated_delta_net_f32_data;
+                gdn_bank_len = gated_delta_net_bank_f32_len;
+                gdn_bank_data = (const void *)gated_delta_net_bank_f32_data;
             } else if (use_subgroup_reduce) {
                 gdn_len = gated_delta_net_f32_nocluster_len;
                 gdn_data = (const void *)gated_delta_net_f32_nocluster_data;
+                gdn_bank_len = gated_delta_net_bank_f32_nocluster_len;
+                gdn_bank_data = (const void *)gated_delta_net_bank_f32_nocluster_data;
             } else {
                 gdn_len = gated_delta_net_f32_shmem_len;
                 gdn_data = (const void *)gated_delta_net_f32_shmem_data;
+                gdn_bank_len = gated_delta_net_bank_f32_shmem_len;
+                gdn_bank_data = (const void *)gated_delta_net_bank_f32_shmem_data;
             }
 
             const uint32_t cols_per_wg = device->subgroup_size / lanes_per_column;
@@ -4762,6 +4770,10 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             for (uint32_t kda = 0; kda < 2; kda++) {
                 ggml_vk_create_pipeline(device, device->pipeline_gated_delta_net[si][kda],
                     gdn_names[si][kda], gdn_len, gdn_data, "main", 7, sizeof(vk_op_gated_delta_net_push_constants),
+                    wg_denoms, {S_V, kda, device->subgroup_size, lanes_per_column}, 1, true, use_subgroup_ops, device->subgroup_size);
+                const std::string bank_name = std::string(gdn_names[si][kda]) + "_bank";
+                ggml_vk_create_pipeline(device, device->pipeline_gated_delta_net_bank[si][kda],
+                    bank_name.c_str(), gdn_bank_len, gdn_bank_data, "main", 9, sizeof(vk_op_gated_delta_net_push_constants),
                     wg_denoms, {S_V, kda, device->subgroup_size, lanes_per_column}, 1, true, use_subgroup_ops, device->subgroup_size);
             }
         }
@@ -6344,6 +6356,7 @@ vk_device ggml_vk_get_device(size_t idx) {
 
         device->disable_fusion = getenv("GGML_VK_DISABLE_FUSION") != nullptr;
         device->disable_hc_post_w_fusion = getenv("GGML_VK_DISABLE_HC_POST_W") != nullptr;
+        device->disable_gdn_bank_fusion = getenv("GGML_VK_DISABLE_GDN_BANK") != nullptr;
 
         device->add_rms_fusion = !device->disable_fusion &&
                                  device->subgroup_arithmetic &&
@@ -12900,15 +12913,24 @@ void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& subctx, 
 
     const uint32_t s_off = S_v * H * n_tokens * n_seqs;
 
+    // lane-299 GDN_BANK: this node absorbed its state GET_ROWS / SET_ROWS (see ggml_vk_gdn_bank_prepass)
+    auto bank_it = ctx->gdn_bank.find(dst);
+    const bool bank = bank_it != ctx->gdn_bank.end();
+
     vk_pipeline pipeline = ggml_vk_op_get_pipeline(ctx, dst->src[0], dst->src[1], dst->src[2], dst, dst->op);
     GGML_ASSERT(pipeline != nullptr);
+    if (bank) {
+        const uint32_t si  = S_v == 16 ? 0 : S_v == 32 ? 1 : S_v == 64 ? 2 : 3;
+        const uint32_t kda = (dst->src[3]->ne[0] == (int64_t)S_v) ? 1 : 0;
+        pipeline = ctx->device->pipeline_gated_delta_net_bank[si][kda];
+    }
 
     ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
 
     vk_subbuffer dst_buf = ggml_vk_tensor_subbuffer(ctx, dst);
     vk_subbuffer src_buf[6] = {};
     for (int i = 0; i < 6; i++) {
-        src_buf[i] = ggml_vk_tensor_subbuffer(ctx, dst->src[i]);
+        src_buf[i] = ggml_vk_tensor_subbuffer(ctx, bank && i == 5 ? bank_it->second.bank : dst->src[i]);
     }
 
     const uint32_t sq1 = (uint32_t)(src_q->nb[1] / sizeof(float));
@@ -12932,8 +12954,22 @@ void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& subctx, 
         sb1, sb2, sb3,
         neq1, rq3,
         scale,
-        K
+        K,
+        bank ? bank_it->second.n_written : 0u,
+        1.0f
     };
+
+    if (bank) {
+        vk_op_gated_delta_net_push_constants bpc = pc;
+        // selfcheck plant: wrong-sign bank write, test GATED_DELTA_NET_BANK must go RED
+        static const bool plant = getenv("GGML_VK_GDN_BANK_PLANT") != nullptr;
+        bpc.wsign = plant ? -1.0f : 1.0f;
+        ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
+            {src_buf[0], src_buf[1], src_buf[2], src_buf[3], src_buf[4], src_buf[5], dst_buf,
+             ggml_vk_tensor_subbuffer(ctx, bank_it->second.ridx), ggml_vk_tensor_subbuffer(ctx, bank_it->second.wrow)},
+            bpc, { H, n_seqs, S_v });
+        return;
+    }
 
     ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
         {src_buf[0], src_buf[1], src_buf[2], src_buf[3], src_buf[4], src_buf[5], dst_buf},
@@ -14889,6 +14925,10 @@ bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, in
     if ((node->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
         return false;
     }
+    // lane-299 GDN_BANK: the state GET_ROWS / SET_ROWS run inside the fused GATED_DELTA_NET
+    if (!ctx->gdn_bank_skip.empty() && ctx->gdn_bank_skip.count(node)) {
+        return false;
+    }
 
     VK_LOG_DEBUG("ggml_vk_build_graph(" << node << ", " << ggml_op_name(node->op) << ")");
     ctx->semaphore_idx = 0;
@@ -14959,6 +14999,14 @@ bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, in
             return false;
         };
 
+        // lane-299 GDN_BANK: the fused GDN reads and writes the bank, which is not one of its srcs
+        auto gdn_bank_it = node->op == GGML_OP_GATED_DELTA_NET ? ctx->gdn_bank.find(node) : ctx->gdn_bank.end();
+        if (gdn_bank_it != ctx->gdn_bank.end()) {
+            const ggml_tensor * bank_t = gdn_bank_it->second.bank;
+            need_sync = need_sync || overlaps_unsynced(bank_t, ctx->unsynced_nodes_written) ||
+                        overlaps_unsynced(bank_t, ctx->unsynced_nodes_read);
+        }
+
         // For all fused ops, check if the destination node or any of the source
         // nodes require synchronization.
         for (int32_t i = 0; i < ctx->num_additional_fused_ops + 1 && !need_sync; ++i) {
@@ -14994,6 +15042,9 @@ bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, in
                 compute_ctx->s->buffer->buf.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands, ctx->query_pool, ctx->query_idx++);
                 ggml_vk_sync_buffers(ctx, compute_ctx);
             }
+        }
+        if (gdn_bank_it != ctx->gdn_bank.end()) {
+            ctx->unsynced_nodes_written.push_back(gdn_bank_it->second.bank);
         }
         // Add all fused nodes to the unsynchronized lists.
         for (int32_t i = 0; i < ctx->num_additional_fused_ops + 1; ++i) {
@@ -16450,6 +16501,141 @@ static bool ggml_vk_can_fuse_hc_post_w(const ggml_backend_vk_context * ctx, cons
     return true;
 }
 
+// lane-299 GDN_BANK: find GATED_DELTA_NET nodes whose state is GET_ROWS(bank, ridx) and whose snapshot tail is
+// SET_ROWS'd back into the same bank (the R1 recurrent path, delta-net-base.cpp build_recurrent_attn). Such a GDN
+// reads s0 from the bank and writes its snapshots into the bank itself; the GET_ROWS and SET_ROWS are skipped.
+static void ggml_vk_gdn_bank_prepass(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph) {
+    ctx->gdn_bank.clear();
+    ctx->gdn_bank_skip.clear();
+    if (ctx->device->disable_fusion || ctx->device->disable_gdn_bank_fusion) {
+        return;
+    }
+    std::vector<int> gdn_idx;
+    for (int i = 0; i < cgraph->n_nodes; i++) {
+        if (cgraph->nodes[i]->op == GGML_OP_GATED_DELTA_NET) {
+            gdn_idx.push_back(i);
+        }
+    }
+    if (gdn_idx.empty()) {
+        return;
+    }
+    auto const root = [](const ggml_tensor * t) { while (t->view_src) { t = t->view_src; } return t; };
+    auto const use_count = [&](const ggml_tensor * t) -> int32_t {
+        const size_t h = ggml_hash_find(&cgraph->visited_hash_set, t);
+        if (h == GGML_HASHSET_FULL || !ggml_bitset_get(cgraph->visited_hash_set.used, h)) {
+            return -1;
+        }
+        return cgraph->use_counts[h];
+    };
+    auto const s_off_bytes = [](const ggml_tensor * gdn) {
+        const ggml_tensor * v = gdn->src[2];
+        return (size_t) (v->ne[0] * v->ne[1] * v->ne[2] * v->ne[3]) * sizeof(float);
+    };
+
+    // one pass: the SET_ROWS fed by each GDN's snapshot tail, and any reader of a GDN's tail other than it
+    std::unordered_map<const ggml_tensor *, int> sr_of;
+    std::unordered_map<const ggml_tensor *, std::vector<const ggml_tensor *>> tails;
+    std::set<const ggml_tensor *> bad;
+    for (int j = 0; j < cgraph->n_nodes; j++) {
+        const ggml_tensor * m = cgraph->nodes[j];
+        if (m->op == GGML_OP_SET_ROWS && m->src[1] && m->src[1]->op == GGML_OP_VIEW && m->src[1]->view_src &&
+            m->src[1]->view_src->op == GGML_OP_GATED_DELTA_NET) {
+            const ggml_tensor * g = m->src[1]->view_src;
+            if (sr_of.count(g)) {
+                bad.insert(g);
+            }
+            sr_of[g] = j;
+            continue;
+        }
+        for (int s = 0; s < GGML_MAX_SRC; s++) {
+            const ggml_tensor * g = m->src[s];
+            if (!g || g->op != GGML_OP_GATED_DELTA_NET) {
+                continue;
+            }
+            // views inside the attention-score part are fine; a view starting at the tail is the snapshot
+            // view (must be the SET_ROWS source, checked below); anything else may read the tail
+            const bool is_view = m->op == GGML_OP_VIEW || m->op == GGML_OP_RESHAPE ||
+                                 m->op == GGML_OP_PERMUTE || m->op == GGML_OP_TRANSPOSE;
+            if (is_view && m->view_src == g && m->view_offs >= s_off_bytes(g)) {
+                tails[g].push_back(m);
+            } else if (!is_view || m->view_src != g || m->view_offs + ggml_nbytes(m) > s_off_bytes(g)) {
+                bad.insert(g);
+            }
+        }
+    }
+
+    for (int i : gdn_idx) {
+        ggml_tensor * n = cgraph->nodes[i];
+        if (bad.count(n) || !sr_of.count(n) || n->type != GGML_TYPE_F32 || (n->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
+            continue;
+        }
+        const ggml_tensor * v  = n->src[2];
+        const int64_t S_v = v->ne[0], H = v->ne[1], n_seqs = v->ne[3];
+        const int64_t D   = S_v * S_v * H;
+        const uint32_t K  = (uint32_t) ggml_get_op_params_i32(n, 0);
+        if (n_seqs != 1 || (S_v != 16 && S_v != 32 && S_v != 64 && S_v != 128)) {
+            continue;
+        }
+        // read side: state = RESHAPE(GET_ROWS(bank2d, ridx))
+        const ggml_tensor * st = n->src[5];
+        if (!st || st->op != GGML_OP_RESHAPE || !st->src[0] || st->src[0]->op != GGML_OP_GET_ROWS) {
+            continue;
+        }
+        const ggml_tensor * gr    = st->src[0];
+        const ggml_tensor * bank  = gr->src[0];
+        const ggml_tensor * ridx  = gr->src[1];
+        if (gr->type != GGML_TYPE_F32 || bank->type != GGML_TYPE_F32 || ridx->type != GGML_TYPE_I32 ||
+            bank->ne[0] != D || bank->nb[1] != (size_t) D * sizeof(float) || !ggml_is_contiguous(bank) ||
+            ridx->ne[0] != n_seqs || !ggml_is_contiguous(ridx) || gr->ne[1] != n_seqs ||
+            use_count(gr) != 1 || use_count(st) != 1 || (gr->flags & GGML_TENSOR_FLAG_OUTPUT) ||
+            (gr->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
+            continue;
+        }
+        // write side: SET_ROWS(bank2d', VIEW(gdn tail, [D, n_written]), wrow), bank2d' over the same bank memory
+        const int b = sr_of[n];
+        const ggml_tensor * sr   = cgraph->nodes[b];
+        const ggml_tensor * tail = sr->src[1];
+        const ggml_tensor * wrow = sr->src[2];
+        const int64_t n_written  = tail->ne[1];
+        if (sr->src[0]->data != bank->data || root(sr->src[0]) != root(bank) || sr->src[0]->type != GGML_TYPE_F32 ||
+            sr->src[0]->ne[0] != D || sr->src[0]->nb[1] != (size_t) D * sizeof(float) ||
+            tail->type != GGML_TYPE_F32 || tail->ne[0] != D || tail->ne[2] != 1 || tail->ne[3] != 1 ||
+            tail->nb[1] != (size_t) D * sizeof(float) || tail->view_offs != s_off_bytes(n) ||
+            n_written < 1 || n_written > (int64_t) std::max<uint32_t>(K, 1) ||
+            wrow->type != GGML_TYPE_I32 || wrow->ne[0] != n_written || !ggml_is_contiguous(wrow) ||
+            use_count(tail) != 1 || (sr->flags & GGML_TENSOR_FLAG_COMPUTE) == 0 ||
+            tails[n].size() != 1 || tails[n][0] != tail) {
+            continue;
+        }
+        int a = -1;
+        for (int k = i - 1; k >= 0; k--) {
+            if (cgraph->nodes[k] == gr) { a = k; break; }
+        }
+        if (a < 0 || b <= i) {
+            continue;
+        }
+        // nothing else may touch the bank between the skipped GET_ROWS and the skipped SET_ROWS
+        const ggml_tensor * bank_root = root(bank);
+        bool clash = false;
+        for (int k = a + 1; k < b && !clash; k++) {
+            ggml_tensor * m = cgraph->nodes[k];
+            if (k == i || ggml_vk_is_empty(m) || (m->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
+                continue;
+            }
+            clash = root(m) == bank_root;
+            for (int s = 0; s < GGML_MAX_SRC && !clash; s++) {
+                clash = m->src[s] && root(m->src[s]) == bank_root;
+            }
+        }
+        if (clash) {
+            continue;
+        }
+        ctx->gdn_bank[n] = { bank, ridx, wrow, sr, (uint32_t) n_written };
+        ctx->gdn_bank_skip.insert(gr);
+        ctx->gdn_bank_skip.insert(sr);
+    }
+}
+
 bool ggml_vk_can_fuse_ssm_conv(const ggml_backend_vk_context * ctx, const struct ggml_cgraph * cgraph,
                                       int node_idx, int num_extra) {
     const ggml_tensor * conv = cgraph->nodes[node_idx];
@@ -16961,10 +17147,13 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
     ctx->do_add_rms_partials = false;
     ctx->do_add_rms_partials_offset_calculation = false;
 
+    ggml_vk_gdn_bank_prepass(ctx, cgraph);
+
     int last_node = cgraph->n_nodes - 1;
 
     // If the last op in the cgraph isn't backend GPU, the command buffer doesn't get closed properly
-    while (last_node > 0 && (ggml_vk_is_empty(cgraph->nodes[last_node]) || ((cgraph->nodes[last_node]->flags & GGML_TENSOR_FLAG_COMPUTE) == 0))) {
+    while (last_node > 0 && (ggml_vk_is_empty(cgraph->nodes[last_node]) || ((cgraph->nodes[last_node]->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) ||
+                             ctx->gdn_bank_skip.count(cgraph->nodes[last_node]))) {
         last_node -= 1;
     }
 

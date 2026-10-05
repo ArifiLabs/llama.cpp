@@ -32,6 +32,8 @@ layout(push_constant) uniform Parameters {
     uint neq1, rq3;
     float scale;
     uint K;
+    uint n_written; // lane-299 GDN_BANK: bank slots written (the skipped set_rows rows); unused otherwise
+    float wsign;    // lane-299 GDN_BANK: 1, or -1 for the selfcheck plant
 };
 
 layout(binding = 0) readonly  buffer QBuf     { FLOAT_TYPE data_q[];     };
@@ -39,7 +41,16 @@ layout(binding = 1) readonly  buffer KBuf     { FLOAT_TYPE data_k[];     };
 layout(binding = 2) readonly  buffer VBuf     { FLOAT_TYPE data_v[];     };
 layout(binding = 3) readonly  buffer GBuf     { FLOAT_TYPE data_g[];     };
 layout(binding = 4) readonly  buffer BetaBuf  { FLOAT_TYPE data_beta[];  };
+#if GDN_BANK
+// lane-299: s0 is read from bank row ridx[seq]; snapshots go back to bank rows wrow[slot] in place (the
+// GET_ROWS / SET_ROWS pair around the op is skipped). Each thread reads its own state elements once before
+// writing the same element indices, so ridx == wrow is safe.
+layout(binding = 5)           buffer StateBuf { FLOAT_TYPE data_state[]; };
+layout(binding = 7) readonly  buffer RIdxBuf  { int data_ridx[]; };
+layout(binding = 8) readonly  buffer WRowBuf  { int data_wrow[]; };
+#else
 layout(binding = 5) readonly  buffer StateBuf { FLOAT_TYPE data_state[]; };
+#endif
 layout(binding = 6)           buffer DstBuf   { FLOAT_TYPE data_dst[];   };
 
 #if !USE_SUBGROUP_ADD && !USE_SUBGROUP_CLUSTERED
@@ -103,7 +114,12 @@ void main() {
 
     const uint state_size = S_V * S_V;
     // input state holds s0 only [S_v, S_v, H, n_seqs]: per-seq stride is H*D.
+#if GDN_BANK
+    const uint bank_row            = state_size * H;
+    const uint state_in_base       = uint(data_ridx[seq_id]) * bank_row + head_id * state_size;
+#else
     const uint state_in_base       = (seq_id * H + head_id) * state_size;
+#endif
     // output state layout per slot: same per-(seq,head) offset as the single-slot case.
     const uint state_out_base      = (seq_id * H + head_id) * state_size;
     const uint state_size_per_snap = state_size * H * n_seqs;
@@ -172,18 +188,34 @@ void main() {
 
         if (K > 1u) {
             const int target_slot = int(n_tokens) - 1 - int(t);
+#if GDN_BANK
+            if (target_slot >= 0 && target_slot < int(n_written)) {
+                const uint slot_base = uint(data_wrow[target_slot]) * bank_row + head_id * state_size;
+                [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
+                    data_state[slot_base + col * S_V + r * LANES_PER_COLUMN + lane] = wsign * s_shard[r];
+                }
+            }
+#else
             if (target_slot >= 0 && target_slot < int(K)) {
                 const uint slot_base = s_off + uint(target_slot) * state_size_per_snap + state_out_base;
                 [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
                     data_dst[slot_base + col * S_V + r * LANES_PER_COLUMN + lane] = s_shard[r];
                 }
             }
+#endif
         }
     }
 
     if (K == 1u) {
+#if GDN_BANK
+        const uint slot_base = uint(data_wrow[0]) * bank_row + head_id * state_size;
+        [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
+            data_state[slot_base + col * S_V + r * LANES_PER_COLUMN + lane] = wsign * s_shard[r];
+        }
+#else
         [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
             data_dst[s_off + state_out_base + col * S_V + r * LANES_PER_COLUMN + lane] = s_shard[r];
         }
+#endif
     }
 }

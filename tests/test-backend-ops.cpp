@@ -5486,6 +5486,101 @@ struct test_gated_delta_net_cache_fusion : public test_case {
     }
 };
 
+// lane-299 GDN_BANK: GET_ROWS(bank) -> GATED_DELTA_NET -> SET_ROWS(bank) (the R1 recurrent path).
+// Vulkan runs it as one in-place GDN dispatch; GGML_VK_GDN_BANK_PLANT=1 must turn this RED.
+struct test_gated_delta_net_bank : public test_case {
+    const int64_t head_count;
+    const int64_t head_size;
+    const int64_t n_seq_tokens;
+    const int64_t K;
+    const int64_t n_written;
+    const bool    in_place; // wrow[0] == ridx[0], the decode shape
+
+    ggml_tensor * sr_node   = nullptr;
+    ggml_tensor * attn_node = nullptr;
+
+    static constexpr int64_t n_rows = 4;
+    static constexpr int32_t r_row  = 2;
+
+    std::string vars() override {
+        return VARS_TO_STR6(head_count, head_size, n_seq_tokens, K, n_written, in_place);
+    }
+
+    test_gated_delta_net_bank(int64_t head_count = 4, int64_t head_size = 32, int64_t n_seq_tokens = 1,
+            int64_t K = 1, int64_t n_written = 1, bool in_place = true)
+        : head_count(head_count), head_size(head_size), n_seq_tokens(n_seq_tokens), K(K), n_written(n_written), in_place(in_place) {}
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        const int64_t S_v = head_size;
+        const int64_t H   = head_count;
+        const int64_t D   = S_v * S_v * H;
+
+        ggml_tensor * bank = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, D, n_rows);
+        ggml_tensor * ridx = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 1);
+        ggml_tensor * wrow = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_written);
+        ggml_set_name(bank, "bank");
+        ggml_set_name(ridx, "ridx");
+        ggml_set_name(wrow, "wrow");
+
+        ggml_tensor * q    = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, S_v, H, n_seq_tokens, 1);
+        ggml_tensor * k    = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, S_v, H, n_seq_tokens, 1);
+        ggml_tensor * v    = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, S_v, H, n_seq_tokens, 1);
+        ggml_tensor * g    = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 1, H, n_seq_tokens, 1);
+        ggml_tensor * beta = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 1, H, n_seq_tokens, 1);
+        ggml_set_name(q, "q");
+        ggml_set_name(k, "k");
+        ggml_set_name(v, "v");
+        ggml_set_name(g, "g");
+        ggml_set_name(beta, "beta");
+        q = ggml_l2_norm(ctx, q, 1e-6f);
+        k = ggml_l2_norm(ctx, k, 1e-6f);
+
+        ggml_tensor * state = ggml_reshape_4d(ctx, ggml_get_rows(ctx, bank, ridx), S_v, S_v, H, 1);
+        ggml_tensor * gdn   = ggml_gated_delta_net(ctx, q, k, v, g, beta, state, K);
+
+        ggml_tensor * attn = ggml_view_4d(ctx, gdn, S_v, H, n_seq_tokens, 1,
+                ggml_row_size(gdn->type, S_v), ggml_row_size(gdn->type, S_v * H),
+                ggml_row_size(gdn->type, S_v * H * n_seq_tokens), 0);
+        ggml_tensor * tail = ggml_view_2d(ctx, gdn, D, n_written, ggml_row_size(gdn->type, D),
+                ggml_row_size(gdn->type, S_v * H * n_seq_tokens));
+
+        sr_node   = ggml_set_rows(ctx, bank, tail, wrow);
+        attn_node = ggml_cont(ctx, attn);
+        ggml_set_name(sr_node, "bank_out");
+        ggml_set_name(attn_node, "attn_out");
+        return ggml_add(ctx, ggml_sum(ctx, sr_node), ggml_sum(ctx, attn_node));
+    }
+
+    std::string op_desc(ggml_tensor * t) override {
+        GGML_UNUSED(t);
+        return "GATED_DELTA_NET_BANK";
+    }
+
+    bool run_whole_graph() override { return true; }
+    std::vector<ggml_tensor *> fusion_test_nodes() override { return { sr_node, attn_node }; }
+
+    void initialize_tensors(ggml_context * ctx) override {
+        const int32_t w_in_place[4] = { r_row, 0, 3, 1 };
+        const int32_t w_moved[4]    = { 1, 3, 0, r_row };
+        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
+            if (ggml_is_view_op(t->op)) { continue; }
+            if (strcmp(t->name, "ridx") == 0) {
+                ggml_backend_tensor_set(t, &r_row, 0, sizeof(int32_t));
+            } else if (strcmp(t->name, "wrow") == 0) {
+                ggml_backend_tensor_set(t, in_place ? w_in_place : w_moved, 0, n_written * sizeof(int32_t));
+            } else if (strcmp(t->name, "g") == 0) {
+                init_tensor_uniform(t, -20.0f, -1e-4f);
+            } else if (strcmp(t->name, "beta") == 0) {
+                init_tensor_uniform(t, 0.0f, 1.0f);
+            } else if (strcmp(t->name, "v") == 0) {
+                init_tensor_uniform(t, -0.3f, 5.0f);
+            } else {
+                init_tensor_uniform(t);
+            }
+        }
+    }
+};
+
 // GGML_OP_GATED_LINEAR_ATTN
 struct test_gla : public test_case {
     const ggml_type type;
@@ -12544,6 +12639,14 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_gated_delta_net_cache_fusion(GGML_TYPE_F32, 4, 32,   4, 1, 4));
     test_cases.emplace_back(new test_gated_delta_net_cache_fusion(GGML_TYPE_F32, 8, 32,   4, 2, 4));
     test_cases.emplace_back(new test_gated_delta_net_cache_fusion(GGML_TYPE_F32, 4, 32,   8, 1, 4));
+
+    // lane-299 GDN_BANK: head_count, head_size, n_seq_tokens, K, n_written, in_place
+    test_cases.emplace_back(new test_gated_delta_net_bank(4,  128, 1, 1, 1, true));
+    test_cases.emplace_back(new test_gated_delta_net_bank(4,  128, 1, 1, 1, false));
+    test_cases.emplace_back(new test_gated_delta_net_bank(16, 128, 1, 4, 1, true));
+    test_cases.emplace_back(new test_gated_delta_net_bank(4,  64,  4, 4, 4, true));
+    test_cases.emplace_back(new test_gated_delta_net_bank(4,  64,  4, 4, 1, false));
+    test_cases.emplace_back(new test_gated_delta_net_bank(4,  32,  2, 4, 2, false));
 
 #if 0
     // these tests are disabled to save execution time, sbut they can be handy for debugging

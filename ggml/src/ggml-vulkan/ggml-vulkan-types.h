@@ -1638,6 +1638,7 @@ struct vk_device_struct {
     vk_pipeline pipeline_lightning_indexer_f32[GGML_TYPE_COUNT];
     // [size_idx][kda] where size_idx: 0=d16, 1=d32, 2=d64, 3=d128
     vk_pipeline pipeline_gated_delta_net[4][2];
+    vk_pipeline pipeline_gated_delta_net_bank[4][2]; // lane-299 GDN_BANK
     vk_pipeline pipeline_ssm_scan_f32_d128;
     vk_pipeline pipeline_ssm_scan_f32_d256;
     vk_pipeline pipeline_ssm_conv_f32;
@@ -1680,6 +1681,7 @@ struct vk_device_struct {
 
     bool disable_fusion;
     bool disable_hc_post_w_fusion;
+    bool disable_gdn_bank_fusion;
     bool disable_host_visible_vidmem;
     bool allow_sysmem_fallback;
     bool disable_graph_optimize;
@@ -2105,6 +2107,11 @@ struct ggml_backend_vk_context {
     bool fused_topk_qsa {};
     // lane-299: SCALE -> SIGMOID -> SCALE -> DSV4_HC_POST in one dispatch
     bool fused_hc_post_w {};
+    // lane-299 GDN_BANK: per graph, GDN nodes that read/write the recurrent bank in place, and the
+    // GET_ROWS / SET_ROWS nodes they absorb (skipped)
+    struct gdn_bank_fusion { const ggml_tensor * bank; const ggml_tensor * ridx; const ggml_tensor * wrow; const ggml_tensor * set_rows; uint32_t n_written; };
+    std::unordered_map<const ggml_tensor *, gdn_bank_fusion> gdn_bank;
+    std::set<const ggml_tensor *> gdn_bank_skip;
     rms_norm_mode fused_rms_norm_mode {RMS_NORM_COUNT};
 
     // for GGML_VK_PERF_LOGGER
