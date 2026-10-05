@@ -106,8 +106,17 @@ uint gcols;
 #define B_COL(j) gcol_b[j]
 #define D_COL(j) gcol_d[j]
 
+// Slot-major workgroup order: the host grid is {row blocks, slots, z}, but consecutive linear workgroup ids
+// walk the SLOTS of one row block, so every slot that picked the same expert reads that row block while it
+// is still in L2 (cell A: the token-major order re-read a shared expert from DRAM at full cost). A pure
+// permutation of the same (row block, slot) set: no row's arithmetic changes.
+uint gather_linear() {
+    return gl_WorkGroupID.x + gl_NumWorkGroups.x * (gl_WorkGroupID.y + gl_NumWorkGroups.y * gl_WorkGroupID.z);
+}
+#define WG_ROWBLOCK (gather_linear() / gl_NumWorkGroups.y)
+
 bool gather_setup() {
-    const uint s = gl_WorkGroupID.y;
+    const uint s = gather_linear() % gl_NumWorkGroups.y;
     const uint ts = s / p.nei0;
     const int e = data_ids[(s - ts * p.nei0) + ts * p.nbi1];
     uint rank = 0;
@@ -157,6 +166,7 @@ bool gather_setup() {
 #define B_COL(j) ((j)*p.batch_stride_b)
 #define D_COL(j) ((j)*p.batch_stride_d)
 #define GATHER_WRITE(j)
+#define WG_ROWBLOCK (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z)
 #endif
 
 #ifdef USE_SUBGROUP_ADD_NO_SHMEM
