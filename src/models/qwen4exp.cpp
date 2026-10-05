@@ -1214,28 +1214,6 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
 
     ggml_backend_tensor_set(rows, idx.data(), 0, idx.size()*ggml_element_size(rows));
 
-    // lane-298 item 5 prefetch-ahead: cold PLE row pages cost one serial hard fault each inside the CPU gather (novel
-    // prefill r1 -28% vs r2, pleio2). One batched PrefetchVirtualMemory over this ubatch's row pages first.
-    // LLAMA_PLE_PREFETCH=1 multi-token ubatches only, =2 also decode; LLAMA_PLE_PREFETCH_PLANT=1 = wrong rows (RED).
-    static const int prefetch = getenv("LLAMA_PLE_PREFETCH") ? atoi(getenv("LLAMA_PLE_PREFETCH")) : 0;
-    static const bool plant = getenv("LLAMA_PLE_PREFETCH_PLANT") != nullptr;
-    const ggml_tensor * ptab = pmodel.per_layer_tok_embd;
-    if (prefetch > 0 && (n_tokens > 1 || prefetch > 1) && ptab && ptab->data && ggml_backend_buffer_is_host(ptab->buffer)) {
-        std::vector<int32_t> pidx;
-        if (plant) {
-            pidx = idx;
-            for (auto & r : pidx) {
-                r = (int32_t) ((r + ptab->ne[1] / 2) % ptab->ne[1]);
-            }
-        }
-        const int64_t t0 = ggml_time_us();
-        const size_t np = llama_mmap::prefetch_rows(ptab->data, ptab->nb[1], plant ? pidx.data() : idx.data(), idx.size());
-        if (n_tokens > 1) {
-            LLAMA_LOG_WARN("%s: PLE prefetch%s: %lld tokens, %zu pages, %.2f ms\n", __func__, plant ? " PLANT" : "",
-                    (long long) n_tokens, np, (ggml_time_us() - t0) / 1000.0);
-        }
-    }
-
     // lane-298 item 5 (Strata --ple-io semantics): the lazy PLE table is a file mapping, and on Windows every gathered
     // row page stays in the working set (~64 KiB per novel token). Once the rows gathered since the last trim could
     // fill LLAMA_PLE_RELEASE_MIB (default 256), ONE VirtualUnlock over the whole table drops them to standby; later
@@ -1260,6 +1238,28 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
                         (ggml_time_us() - t0) / 1000.0);
             }
             since = 0;
+        }
+    }
+
+    // lane-298 item 5 prefetch-ahead: cold PLE row pages cost one serial hard fault each inside the CPU gather (novel
+    // prefill r1 -28% vs r2, pleio2). One batched PrefetchVirtualMemory over this ubatch's row pages, AFTER the trim so
+    // a trim never drops pages just prefetched. LLAMA_PLE_PREFETCH=1 multi-token ubatches only, =2 also decode;
+    // LLAMA_PLE_PREFETCH_PLANT=1 = wrong rows (RED).
+    static const int prefetch = getenv("LLAMA_PLE_PREFETCH") ? atoi(getenv("LLAMA_PLE_PREFETCH")) : 0;
+    static const bool plant = getenv("LLAMA_PLE_PREFETCH_PLANT") != nullptr;
+    if (prefetch > 0 && (n_tokens > 1 || prefetch > 1) && tab && tab->data && ggml_backend_buffer_is_host(tab->buffer)) {
+        std::vector<int32_t> pidx;
+        if (plant) {
+            pidx = idx;
+            for (auto & r : pidx) {
+                r = (int32_t) ((r + tab->ne[1] / 2) % tab->ne[1]);
+            }
+        }
+        const int64_t t0 = ggml_time_us();
+        const size_t np = llama_mmap::prefetch_rows(tab->data, tab->nb[1], plant ? pidx.data() : idx.data(), idx.size());
+        if (n_tokens > 1) {
+            LLAMA_LOG_WARN("%s: PLE prefetch%s: %lld tokens, %zu pages, %.2f ms\n", __func__, plant ? " PLANT" : "",
+                    (long long) n_tokens, np, (ggml_time_us() - t0) / 1000.0);
         }
     }
 }
