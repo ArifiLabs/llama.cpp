@@ -12964,6 +12964,9 @@ void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& subctx, 
         // selfcheck plant: wrong-sign bank write, test GATED_DELTA_NET_BANK must go RED
         static const bool plant = getenv("GGML_VK_GDN_BANK_PLANT") != nullptr;
         bpc.wsign = plant ? -1.0f : 1.0f;
+        // lane-298 DIAG ONLY (wrong on any rejected draft): write slot 0 only, measures the GDN snapshot-byte floor
+        static const bool snap1 = getenv("GGML_VK_GDN_SNAP1_DIAG") != nullptr;
+        if (snap1) { bpc.n_written = std::min<uint32_t>(bpc.n_written, 1u); }
         ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
             {src_buf[0], src_buf[1], src_buf[2], src_buf[3], src_buf[4], src_buf[5], dst_buf,
              ggml_vk_tensor_subbuffer(ctx, bank_it->second.ridx), ggml_vk_tensor_subbuffer(ctx, bank_it->second.wrow)},
