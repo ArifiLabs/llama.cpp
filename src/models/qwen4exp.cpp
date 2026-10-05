@@ -753,6 +753,18 @@ ggml_tensor * llama_model_qwen4exp::graph::build_qsa_top_k(
 
     (incr ? inp->layers_incr : pool_on ? inp->layers_full_write : inp->layers_stale).push_back(il);
 
+    {
+        // one line per path class, so a server log proves which path ran (llama INFO lines are filtered there)
+        static bool said[3] = {};
+        const int cls = incr ? 0 : pool_on ? 1 : 2;
+        if (!said[cls]) {
+            said[cls] = true;
+            LLAMA_LOG_WARN("qsa pooled cache (lane-301 row 25): first %s graph il=%d n_tokens=%lld n_kv=%lld cache=%d incr_ok=%d\n",
+                    cls == 0 ? "INCREMENTAL" : cls == 1 ? "FULL-WRITE" : "STALE", il, (long long) n_tokens, (long long) n_kv,
+                    pcache != nullptr, (int) inp->incr_ok);
+        }
+    }
+
     if (pool_on && inp->read_rows == nullptr) {
         inp->read_rows = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_blocks);
         ggml_set_input(inp->read_rows);

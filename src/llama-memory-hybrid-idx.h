@@ -113,6 +113,7 @@ private:
     std::vector<ggml_tensor *>           pooled;         // by il
     mutable std::vector<int64_t>         pooled_epoch;   // by il, == pooled_gen when clean
     int64_t                              pooled_gen = 0;
+    mutable bool                         pooled_saw_2d = false;  // an embedding ubatch with 2d positions landed
     std::vector<ggml_context_ptr>        pooled_ctxs;
     std::vector<ggml_backend_buffer_ptr> pooled_bufs;
 

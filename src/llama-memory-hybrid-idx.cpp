@@ -114,7 +114,7 @@ llama_memory_hybrid_idx::llama_memory_hybrid_idx(
     }
 
     if (n_bytes) {
-        LLAMA_LOG_INFO("%s: pooled indexer-key cache %.2f MiB (row 25; GGML_ARIFI_QSA_POOL_CACHE=0 disables)\n", __func__, n_bytes/1024.0/1024.0);
+        LLAMA_LOG_WARN("%s: pooled indexer-key cache %.2f MiB (row 25; GGML_ARIFI_QSA_POOL_CACHE=0 disables)\n", __func__, n_bytes/1024.0/1024.0);
     }
 }
 
@@ -148,7 +148,14 @@ bool llama_memory_hybrid_idx::one_seq() const {
 }
 
 bool llama_memory_hybrid_idx::qsa_incr_ok(const llama_ubatch & ubatch, uint32_t ratio, int64_t n_fresh) const {
-    if (!mem_idx || mem_idx->get_n_stream() != 1 || ratio == 0 || ubatch.n_tokens == 0 || ubatch.is_pos_2d() || !one_seq()) {
+    // M-RoPE models carry n_pos = 4 on every ubatch: a token ubatch broadcasts one position over the sections
+    // (llama_batch_allocr::split), so only an embedding ubatch holds real 2d positions. Once one lands, cells
+    // may need the ranked layout, which the cache does not key; stay off until clear().
+    if (ubatch.is_pos_2d() && !ubatch.token) {
+        pooled_saw_2d = true;
+    }
+
+    if (!mem_idx || mem_idx->get_n_stream() != 1 || ratio == 0 || ubatch.n_tokens == 0 || pooled_saw_2d || !one_seq()) {
         return false;
     }
 
@@ -245,6 +252,7 @@ void llama_memory_hybrid_idx::clear(bool data) {
     llama_memory_hybrid::clear(data);
 
     pooled_invalidate();
+    pooled_saw_2d = false;
 
     if (mem_idx) {
         mem_idx->clear(data);
@@ -484,7 +492,8 @@ void llama_memory_hybrid_idx::set_input_qsa(
             p_lo = std::min(p_lo, ubatch->pos[i]);
         }
 
-        static const bool red = [] { const char * e = getenv("GGML_ARIFI_QSA_POOL_RED"); return e && atoi(e) != 0; }();
+        // RED plant: 1 drops one fresh write per ubatch, 2 drops every fresh write (the cache stays at its first fill)
+        static const int red = [] { const char * e = getenv("GGML_ARIFI_QSA_POOL_RED"); return e ? atoi(e) : 0; }();
         bool planted = false;
 
         for (int64_t e = 0; e < pool->n_fresh; ++e) {
@@ -507,8 +516,7 @@ void llama_memory_hybrid_idx::set_input_qsa(
 
             fd[e] = (int32_t) pb;
 
-            // RED plant: drop one fresh block's write, so its row stays stale
-            if (red && !planted) {
+            if (red >= 2 || (red == 1 && !planted)) {
                 fd[e]   = row_pad;
                 planted = true;
             }
