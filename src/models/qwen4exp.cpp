@@ -162,7 +162,15 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
     hc_head_down = create_tensor(tn(LLM_TENSOR_HC_HEAD_DOWN, "weight"), { hc_dim, hc_lr }, 0);
     hc_head_up   = create_tensor(tn(LLM_TENSOR_HC_HEAD_UP,   "weight"), { hc_lr, hc_dim }, 0);
 
-    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab }, TENSOR_NOT_REQUIRED);
+    // an MTP sidecar may carry a reduced draft head: output rows for a token subset + d2t (Strata draft_vocab)
+    int64_t n_vocab_out = n_vocab;
+    if (const ggml_tensor * d2t_meta = ml.get_tensor_meta("d2t")) {
+        n_vocab_out = d2t_meta->ne[0];
+        d2t = create_tensor(tn(LLM_TENSOR_D2T), { n_vocab_out }, 0);
+        LLAMA_LOG_INFO("%s: QWEN4EXP MTP draft head over %lld tokens (d2t)\n", __func__, (long long) n_vocab_out);
+    }
+
+    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab_out }, TENSOR_NOT_REQUIRED);
     if (output == NULL) {
         output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, TENSOR_DUPLICATED);
     }
@@ -1490,6 +1498,23 @@ llama_model_qwen4exp::graph_mtp::graph_mtp(const llama_model & model, const llm_
     res->t_embd = cur;
 
     cur = build_lora_mm(model.output, cur, model.output_s);
+
+    // reduced draft head: scatter the subset logits into a -inf target vector (dflash.cpp:920-934),
+    // so greedy and p over the full vector equal those over the subset (Strata mtp.cpp:629-644)
+    if (model.d2t) {
+        const int64_t n_draft_vocab = cur->ne[0];
+        const int64_t n_outputs     = cur->ne[1];
+        const int64_t n_vocab       = (int64_t) model.vocab.n_tokens();
+
+        GGML_ASSERT(model.d2t->type == GGML_TYPE_I64);
+        GGML_ASSERT(model.d2t->ne[0] == n_draft_vocab);
+
+        ggml_tensor * logits = ggml_fill(ctx0, ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, 1, n_vocab, n_outputs), -INFINITY);
+        cur = ggml_set_rows(ctx0, logits,
+                ggml_reshape_3d(ctx0, cur,       1,             n_draft_vocab, n_outputs),
+                ggml_reshape_3d(ctx0, model.d2t, n_draft_vocab, 1,             1));
+        cur = ggml_reshape_2d(ctx0, cur, n_vocab, n_outputs);
+    }
     cb(cur, "result_output", -1);
     res->t_logits = cur;
 
