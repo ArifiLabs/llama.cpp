@@ -1803,6 +1803,37 @@
       "valid_conditions": "qwen4exp QSA layers (indexer top-k, compress ratio 4), one sequence, token ubatches. Multi-sequence or 2d-position embedding ubatches fall back to full pooling (previous cost).",
       "notes": "Lane 301 DECISIONS D11, D13, D17: board/programs/local-inference/lanes/2026-10-05-lane-301-*.md. Stacks on vulkan-fa-sparse-prefill-qsa (both arms carried it).",
       "_registered": "2026-10-05, lane 301 relaunch 6."
+    },
+    {
+      "id": "vulkan-moe-gather-slot-major-matvec-id",
+      "status": "active",
+      "_registered": "2026-10-05, lane-302 (Opus 5.5). Registered as an OP-LEVEL win that ships DEFAULT OFF. The served A/B (cellB-10051832) FAILED its pre-registered read rule (round 2 pairs -1.5..-2.8%), so no served t/s win may be quoted from this entry.",
+      "mechanism": "MUL_MAT_ID small-batch mat-vec (n_tokens 2..8) gets gather pipelines whose linear workgroup id maps to (row block = linear / nslots, slot = linear % nslots): consecutive workgroups are the routed slots of one weight row block, so slots that picked the same expert read that row block from L2 instead of DRAM. Per-workgroup math is unchanged (a permutation of work order), so output is byte-identical to the old path. GGML_ARIFI_MOE_GATHER unset = old path; =1 = slot-major gather (the measured width); =2/4 = multi-column variants that lose at real routing (padded-column ALU).",
+      "commit": "088636633d",
+      "also_commits": [
+        "16eb17b431",
+        "2346a2b045",
+        "c0eac97305",
+        "fe8da30014"
+      ],
+      "protected_paths": [
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
+        "ggml/src/ggml-vulkan/ggml-vulkan-types.h",
+        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl",
+        "ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp"
+      ],
+      "anchors": [
+        "GGML_ARIFI_MOE_GATHER"
+      ],
+      "evidence": [
+        "cache/moe-gather-x1-lane/NOTES.md",
+        "cache/moe-gather-x1-lane/cells/cellB-10051832-read.json",
+        "board/programs/local-inference/lanes/2026-10-05-lane-302-REPORT.md"
+      ],
+      "quality_gate": "Byte identity harness on real qwen4exp expert tensors 100% IDENT g1/g2/g4 vs old path; test-backend-ops MUL_MAT_ID served shapes 1099/1099 g4 + 40/40 g1/g2, planted wrong arm RED (37 FAIL) (cellA-10051633). Served greedy token ids IDENT on all 12 request pairs (cellB-10051832).",
+      "workload": "Qwen3.8-Flash-Next qwen4exp IQ3_S serve file MoE experts (IQ4_NL down, IQ2_S / IQ3_XXS / IQ3_S / IQ4_XS gate-up), 512 experts top-10, AMD Radeon 890M (RDNA3.5), MTP verify width 4.",
+      "measured_effect": "Op level, timed pass 100 reps, g1/g0 us per op at real routing n4 / n8: IQ4_NL 0.93/0.92, IQ2_S 0.94/0.91, IQ3_XXS 0.81/0.77, IQ3_S 0.90/0.83, IQ4_XS 0.73/0.65 (cellA-10051633). Perf logger main_b4 (85 verify graphs) g1/off: IQ2_S 0.79, IQ3_XXS 0.83, IQ3_S 0.86, IQ4_NL 0.88 vs untouched control q2_0 0.88 and non-MUL_MAT_ID graph time 0.97 (run-level offset; only IQ2_S/IQ3_XXS/IQ3_S drop clearly beyond the q2_0 control). Served decode: NOT shown.",
+      "valid_conditions": "Vulkan MUL_MAT_ID mat-vec id path, n_tokens 2..8, opt-in env. n_tokens 1 never reaches the gather (plain decode measured -1.3..+2.3%, single round). Q2_0 down (q8_1 MMVQ id pipeline) has no gather variant."
     }
   ]
 }
