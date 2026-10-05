@@ -1432,7 +1432,10 @@ llama_model_qwen4exp::graph_mtp::graph_mtp(const llama_model & model, const llm_
     h_norm = ggml_reshape_3d(ctx0, h_norm, n_embd, hc, n_tokens);
     cb(h_norm, "mtp_hnorm", il);
 
-    ggml_tensor * res_hc = build_lora_mm(layer.nextn.eh_proj, ggml_concat(ctx0, e_norm, h_norm, 0));
+    // 2D so n_tokens > 1 runs one matmul, not a batched mat-vec that re-reads eh_proj per token
+    ggml_tensor * eh_in  = ggml_concat(ctx0, e_norm, h_norm, 0);
+    ggml_tensor * res_hc = build_lora_mm(layer.nextn.eh_proj, ggml_reshape_2d(ctx0, eh_in, 2 * n_embd, hc * n_tokens));
+    res_hc = ggml_reshape_3d(ctx0, res_hc, n_embd, hc, n_tokens);
     cb(res_hc, "mtp_eh_proj", il);
 
     ggml_tensor * inject = nullptr;
