@@ -58,13 +58,11 @@ llama_memory_recurrent::llama_memory_recurrent(
         rs_replay = rs_r1 && getenv("LLAMA_GDN_REPLAY") != nullptr && S_r > 0 && H_r > 0 &&
                     (int64_t) hparams.n_embd_s() == S_r * S_r * H_r;
         if (rs_replay && (getenv("GGML_VK_DISABLE_GDN_BANK") || getenv("GGML_VK_DISABLE_FUSION"))) {
-            LLAMA_LOG_WARN("%s: LLAMA_GDN_REPLAY refused: GDN_BANK fusion is disabled
-", __func__);
+            LLAMA_LOG_WARN("%s: LLAMA_GDN_REPLAY refused: GDN_BANK fusion is disabled\n", __func__);
             rs_replay = false;
         }
         if (rs_replay) {
-            LLAMA_LOG_INFO("%s: GDN deferred commit + replay ACTIVE (log %u rows per half)
-", __func__, rs_planes());
+            LLAMA_LOG_INFO("%s: GDN deferred commit + replay ACTIVE (log %u rows per half)\n", __func__, rs_planes());
         }
     }
 
