@@ -1243,9 +1243,11 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
 
     // lane-298 item 5 prefetch-ahead: cold PLE row pages cost one serial hard fault each inside the CPU gather (novel
     // prefill r1 -28% vs r2, pleio2). One batched PrefetchVirtualMemory over this ubatch's row pages, AFTER the trim so
-    // a trim never drops pages just prefetched. LLAMA_PLE_PREFETCH=1 multi-token ubatches only, =2 also decode;
-    // LLAMA_PLE_PREFETCH_PLANT=1 = wrong rows (RED).
-    static const int prefetch = getenv("LLAMA_PLE_PREFETCH") ? atoi(getenv("LLAMA_PLE_PREFETCH")) : 0;
+    // a trim never drops pages just prefetched. Default 1 = multi-token ubatches only (pfa-10051313: novel r1 prefill
+    // +43%, ids 4/4, plant +2%); =2 also decode (unmeasured), =0 off; the per-call WARN receipt prints only when the env
+    // is set. LLAMA_PLE_PREFETCH_PLANT=1 = wrong rows (RED).
+    static const bool prefetch_env = getenv("LLAMA_PLE_PREFETCH") != nullptr;
+    static const int prefetch = prefetch_env ? atoi(getenv("LLAMA_PLE_PREFETCH")) : 1;
     static const bool plant = getenv("LLAMA_PLE_PREFETCH_PLANT") != nullptr;
     if (prefetch > 0 && (n_tokens > 1 || prefetch > 1) && tab && tab->data && ggml_backend_buffer_is_host(tab->buffer)) {
         std::vector<int32_t> pidx;
@@ -1257,7 +1259,7 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
         }
         const int64_t t0 = ggml_time_us();
         const size_t np = llama_mmap::prefetch_rows(tab->data, tab->nb[1], plant ? pidx.data() : idx.data(), idx.size());
-        if (n_tokens > 1) {
+        if (n_tokens > 1 && prefetch_env) {
             LLAMA_LOG_WARN("%s: PLE prefetch%s: %lld tokens, %zu pages, %.2f ms\n", __func__, plant ? " PLANT" : "",
                     (long long) n_tokens, np, (ggml_time_us() - t0) / 1000.0);
         }
