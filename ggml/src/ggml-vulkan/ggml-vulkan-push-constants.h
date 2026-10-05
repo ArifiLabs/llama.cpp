@@ -740,6 +740,7 @@ struct vk_op_gated_delta_net_push_constants {
     uint32_t K;
     uint32_t n_written; // lane-299 GDN_BANK only
     float wsign;        // lane-299 GDN_BANK only (-1 = selfcheck plant)
+    uint32_t n_rep;     // lane-298 GDN_BANK only: replay-prologue token count (0 = none)
 };
 
 struct vk_op_ssm_scan_push_constants {

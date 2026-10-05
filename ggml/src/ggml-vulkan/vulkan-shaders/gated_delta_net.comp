@@ -34,6 +34,7 @@ layout(push_constant) uniform Parameters {
     uint K;
     uint n_written; // lane-299 GDN_BANK: bank slots written (the skipped set_rows rows); unused otherwise
     float wsign;    // lane-299 GDN_BANK: 1, or -1 for the selfcheck plant
+    uint n_rep;     // lane-298 GDN_BANK: replay-prologue tokens (state update only, no output, no snapshot)
 };
 
 layout(binding = 0) readonly  buffer QBuf     { FLOAT_TYPE data_q[];     };
@@ -133,6 +134,32 @@ void main() {
     // When n_tokens < K, only slots 0..n_tokens-1 are written; older slots are caller-owned.
 
     uint attn_off = (seq_id * n_tokens * H + head_id) * S_V;
+
+#if GDN_BANK
+    // lane-298 replay prologue: advance the state over n_rep tokens (diag: the window's own tokens), outputs discarded
+    for (uint t = 0; t < min(n_rep, n_tokens); t++) {
+        const uint q_off = iq3 * sq3 + t * sq2 + iq1 * sq1;
+        const uint gb_off = seq_id * sb3 + t * sb2 + head_id * sb1;
+        const FLOAT_TYPE beta_val = FLOAT_TYPE(data_beta[gb_off]);
+        FLOAT_TYPE k_reg[ROWS_PER_LANE];
+        FLOAT_TYPE g_exp[ROWS_PER_LANE];
+        const FLOAT_TYPE g_one = exp(FLOAT_TYPE(data_g[gb_off]));
+        [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
+            const uint i = r * LANES_PER_COLUMN + lane;
+            k_reg[r] = FLOAT_TYPE(data_k[q_off + i]);
+            g_exp[r] = KDA == 0 ? g_one : exp(FLOAT_TYPE(data_g[gb_off * S_V + i]));
+        }
+        const FLOAT_TYPE v_val = FLOAT_TYPE(data_v[seq_id * sv3 + t * sv2 + head_id * sv1 + col]);
+        FLOAT_TYPE kv_shard = 0.0;
+        [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
+            kv_shard += g_exp[r] * s_shard[r] * k_reg[r];
+        }
+        const FLOAT_TYPE delta_col = (v_val - reduce_partial(kv_shard)) * beta_val;
+        [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
+            s_shard[r] = g_exp[r] * s_shard[r] + k_reg[r] * delta_col;
+        }
+    }
+#endif
 
     for (uint t = 0; t < n_tokens; t++) {
         const uint q_off = iq3 * sq3 + t * sq2 + iq1 * sq1;

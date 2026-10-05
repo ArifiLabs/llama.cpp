@@ -12956,7 +12956,8 @@ void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& subctx, 
         scale,
         K,
         bank ? bank_it->second.n_written : 0u,
-        1.0f
+        1.0f,
+        0u
     };
 
     if (bank) {
@@ -12967,6 +12968,9 @@ void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& subctx, 
         // lane-298 DIAG ONLY (wrong on any rejected draft): write slot 0 only, measures the GDN snapshot-byte floor
         static const bool snap1 = getenv("GGML_VK_GDN_SNAP1_DIAG") != nullptr;
         if (snap1) { bpc.n_written = std::min<uint32_t>(bpc.n_written, 1u); }
+        // lane-298 DIAG ONLY: replay prologue over the window's own tokens (token loop runs twice), bounds replay compute
+        static const bool rep2 = getenv("GGML_VK_GDN_REPLAY_DIAG") != nullptr;
+        if (rep2) { bpc.n_rep = n_tokens; }
         ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
             {src_buf[0], src_buf[1], src_buf[2], src_buf[3], src_buf[4], src_buf[5], dst_buf,
              ggml_vk_tensor_subbuffer(ctx, bank_it->second.ridx), ggml_vk_tensor_subbuffer(ctx, bank_it->second.wrow)},
