@@ -14,6 +14,9 @@
 
 layout(constant_id = 0) const uint BLOCK_SIZE = 256;
 layout(constant_id = 1) const uint HAS_COMB = 1;
+// FUSE_W == 1 (lane-299): post holds the raw scatter logits; apply the fused
+// SCALE -> SIGMOID -> SCALE chain here, same arithmetic as scale.comp / unary.comp.
+layout(constant_id = 2) const uint FUSE_W = 0;
 
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
@@ -33,6 +36,8 @@ layout(push_constant) uniform parameter
     uint p_offset;
     uint c_offset;
     uint d_offset;
+
+    float s1; float b1; float s2; float b2;
 };
 
 layout(binding = 0, std430) readonly buffer X { float data_x[]; };
@@ -51,7 +56,14 @@ void main() {
     const uint it  = gl_WorkGroupID.y;
 
     if (tid < hc) {
-        post_s[tid] = data_p[p_offset + tid * nbp0 + it * nbp1];
+        const float pv = data_p[p_offset + tid * nbp0 + it * nbp1];
+        if (FUSE_W == 1) {
+            const float a = pv * s1 + b1;
+            const float g = 1.0f / (1.0f + exp(-a));
+            post_s[tid] = g * s2 + b2;
+        } else {
+            post_s[tid] = pv;
+        }
     }
     if (HAS_COMB == 1 && tid < hc * hc) {
         const uint idst = tid & 3;

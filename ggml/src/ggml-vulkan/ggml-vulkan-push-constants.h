@@ -232,6 +232,9 @@ struct vk_op_dsv4_hc_post_push_constants {
     uint32_t p_offset;
     uint32_t c_offset;
     uint32_t d_offset;
+
+    // lane-299 HC_POST_W: post = sigmoid(raw*s1 + b1)*s2 + b2 (only read by the FUSE_W pipelines)
+    float s1; float b1; float s2; float b2;
 };
 
 // ArifiLabs Escha-W2 fused linear (lane-164)

@@ -4637,6 +4637,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     ggml_vk_create_pipeline(device, device->pipeline_dsv4_hc_pre_gated_f32,  "dsv4_hc_pre_gated_f32",  dsv4_hc_pre_f32_len,  dsv4_hc_pre_f32_data,  "main", 3, sizeof(vk_op_dsv4_hc_pre_push_constants),  {256, 1, 1}, { 256, 1 }, 1);
     ggml_vk_create_pipeline(device, device->pipeline_dsv4_hc_post_f32,       "dsv4_hc_post_f32",       dsv4_hc_post_f32_len, dsv4_hc_post_f32_data, "main", 5, sizeof(vk_op_dsv4_hc_post_push_constants), {256, 1, 1}, { 256, 1 }, 1);
     ggml_vk_create_pipeline(device, device->pipeline_dsv4_hc_post_nocomb_f32,"dsv4_hc_post_nocomb_f32",dsv4_hc_post_f32_len, dsv4_hc_post_f32_data, "main", 5, sizeof(vk_op_dsv4_hc_post_push_constants), {256, 1, 1}, { 256, 0 }, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_dsv4_hc_post_w_f32,       "dsv4_hc_post_w_f32",       dsv4_hc_post_f32_len, dsv4_hc_post_f32_data, "main", 5, sizeof(vk_op_dsv4_hc_post_push_constants), {256, 1, 1}, { 256, 1, 1 }, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_dsv4_hc_post_w_nocomb_f32,"dsv4_hc_post_w_nocomb_f32",dsv4_hc_post_f32_len, dsv4_hc_post_f32_data, "main", 5, sizeof(vk_op_dsv4_hc_post_push_constants), {256, 1, 1}, { 256, 0, 1 }, 1);
 
     for (auto &s : device->pipeline_solve_tri_f32) {
         const vk_solve_tri_pipeline_state &state = s.first;
@@ -6341,6 +6343,7 @@ vk_device ggml_vk_get_device(size_t idx) {
         device->serialize_submissions = getenv("GGML_VK_SERIALIZE_SUBMISSIONS") != nullptr;
 
         device->disable_fusion = getenv("GGML_VK_DISABLE_FUSION") != nullptr;
+        device->disable_hc_post_w_fusion = getenv("GGML_VK_DISABLE_HC_POST_W") != nullptr;
 
         device->add_rms_fusion = !device->disable_fusion &&
                                  device->subgroup_arithmetic &&
@@ -9319,10 +9322,12 @@ void ggml_vk_dsv4_hc_pre(ggml_backend_vk_context * ctx, vk_context& subctx, cons
     ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { x_buf, w_buf, d_buf }, pc, { n_embd, n_tokens, 1 });
 }
 
-void ggml_vk_dsv4_hc_post(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * x, const ggml_tensor * residual, const ggml_tensor * post, const ggml_tensor * comb, ggml_tensor * dst) {
+void ggml_vk_dsv4_hc_post(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * x, const ggml_tensor * residual, const ggml_tensor * post, const ggml_tensor * comb, ggml_tensor * dst, const float * w_params) {
     VK_LOG_DEBUG("ggml_vk_dsv4_hc_post(" << x << ", " << residual << ", " << post << ", " << comb << ", " << dst << ")");
 
-    vk_pipeline pipeline = comb ? ctx->device->pipeline_dsv4_hc_post_f32 : ctx->device->pipeline_dsv4_hc_post_nocomb_f32;
+    vk_pipeline pipeline = w_params
+        ? (comb ? ctx->device->pipeline_dsv4_hc_post_w_f32 : ctx->device->pipeline_dsv4_hc_post_w_nocomb_f32)
+        : (comb ? ctx->device->pipeline_dsv4_hc_post_f32   : ctx->device->pipeline_dsv4_hc_post_nocomb_f32);
     GGML_ASSERT(pipeline != nullptr);
 
     const uint32_t n_embd   = (uint32_t)x->ne[0];
@@ -9344,7 +9349,11 @@ void ggml_vk_dsv4_hc_post(ggml_backend_vk_context * ctx, vk_context& subctx, con
         comb ? ggml_vk_nb_elem(comb, 0) : 0, comb ? ggml_vk_nb_elem(comb, 1) : 0, comb ? ggml_vk_nb_elem(comb, 2) : 0,
         ggml_vk_nb_elem(dst,  0), ggml_vk_nb_elem(dst,  1), ggml_vk_nb_elem(dst,  2),
         0, 0, 0, 0, 0,
+        0.0f, 0.0f, 0.0f, 0.0f,
     };
+    if (w_params) {
+        pc.s1 = w_params[0]; pc.b1 = w_params[1]; pc.s2 = w_params[2]; pc.b2 = w_params[3];
+    }
     init_pushconst_tensor_offsets(ctx, pc, x, residual, post, comb, dst);
 
     ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { x_buf, r_buf, p_buf, c_buf, d_buf }, pc, { n_embd, n_tokens, 1 });
@@ -15096,7 +15105,19 @@ bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, in
 
         break;
     case GGML_OP_SCALE:
-        ggml_vk_scale(ctx, compute_ctx, src0, node);
+        if (ctx->fused_hc_post_w) {
+            const ggml_tensor * s2   = cgraph->nodes[node_idx + 2];
+            ggml_tensor *       post = cgraph->nodes[node_idx + 3];
+            // selfcheck plant: wrong-sign logits, test-backend-ops DSV4_HC_POST_W must go RED
+            static const float plant = getenv("GGML_VK_HC_POST_W_PLANT") ? -1.0f : 1.0f;
+            const float w_params[4] = {
+                plant * ggml_get_op_params_f32(node, 0), ggml_get_op_params_f32(node, 1),
+                ggml_get_op_params_f32(s2,   0), ggml_get_op_params_f32(s2,   1),
+            };
+            ggml_vk_dsv4_hc_post(ctx, compute_ctx, post->src[0], post->src[1], src0, post->src[3], post, w_params);
+        } else {
+            ggml_vk_scale(ctx, compute_ctx, src0, node);
+        }
 
         break;
     case GGML_OP_SQR:
@@ -16400,6 +16421,35 @@ bool ggml_vk_can_fuse(const ggml_backend_vk_context * ctx, const struct ggml_cgr
     return true;
 }
 
+// lane-299 HC_POST_W: SCALE -> SIGMOID -> SCALE -> DSV4_HC_POST(post = that chain) is one dispatch:
+// the hc_post shader applies the scatter-weight chain to the raw logits itself (qwen4exp build_hc_combine).
+static bool ggml_vk_can_fuse_hc_post_w(const ggml_backend_vk_context * ctx, const struct ggml_cgraph * cgraph, int node_idx) {
+    if (ctx->device->disable_hc_post_w_fusion || node_idx + 3 >= cgraph->n_nodes) {
+        return false;
+    }
+    if (!ggml_can_fuse(cgraph, node_idx, { GGML_OP_SCALE, GGML_OP_UNARY, GGML_OP_SCALE })) {
+        return false;
+    }
+    const ggml_tensor * s1   = cgraph->nodes[node_idx];
+    const ggml_tensor * sg   = cgraph->nodes[node_idx + 1];
+    const ggml_tensor * s2   = cgraph->nodes[node_idx + 2];
+    const ggml_tensor * post = cgraph->nodes[node_idx + 3];
+    if (ggml_get_unary_op(sg) != GGML_UNARY_OP_SIGMOID || sg->src[0] != s1 || s2->src[0] != sg) {
+        return false;
+    }
+    if (post->op != GGML_OP_DSV4_HC_POST || (post->flags & GGML_TENSOR_FLAG_COMPUTE) == 0 ||
+        post->src[2] != s2 || post->src[0] == s2 || post->src[1] == s2 || post->src[3] == s2 ||
+        !ggml_node_has_n_uses(cgraph, node_idx + 2, 1)) {
+        return false;
+    }
+    const ggml_tensor * raw = s1->src[0];
+    if (raw->type != GGML_TYPE_F32 || s1->type != GGML_TYPE_F32 || sg->type != GGML_TYPE_F32 || s2->type != GGML_TYPE_F32 ||
+        !ggml_are_same_shape(raw, s2)) {
+        return false;
+    }
+    return true;
+}
+
 bool ggml_vk_can_fuse_ssm_conv(const ggml_backend_vk_context * ctx, const struct ggml_cgraph * cgraph,
                                       int node_idx, int num_extra) {
     const ggml_tensor * conv = cgraph->nodes[node_idx];
@@ -17058,6 +17108,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
         ctx->fused_topk_moe_mode = TOPK_MOE_COUNT;
         ctx->fused_topk_moe_scale = false;
         ctx->fused_topk_qsa = false;
+        ctx->fused_hc_post_w = false;
         ctx->fused_rms_norm_mode = RMS_NORM_COUNT;
         const char *fusion_string {};
         if (!ctx->device->disable_fusion) {
@@ -17149,6 +17200,12 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                 }
                 op_srcs_fused_elementwise[0] = true;
                 op_srcs_fused_elementwise[1] = true;
+            } else if (ggml_vk_can_fuse_hc_post_w(ctx, cgraph, i)) {
+                ctx->num_additional_fused_ops = 3;
+                ctx->fused_hc_post_w = true;
+                fusion_string = "HC_POST_W";
+                // hc_post broadcasts x over the streams: never let dst alias any source
+                std::fill_n(op_srcs_fused_elementwise, 4, false);
             } else if (ggml_vk_can_fuse_ssm_conv(ctx, cgraph, i, 2)) {
                 ctx->num_additional_fused_ops = 2;
                 fusion_string = "SSM_CONV_BIAS_SILU";
@@ -17292,6 +17349,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                 ctx->fused_topk_moe_mode = TOPK_MOE_COUNT;
                 ctx->fused_topk_moe_scale = false;
                 ctx->fused_topk_qsa = false;
+                ctx->fused_hc_post_w = false;
                 ctx->fused_rms_norm_mode = RMS_NORM_COUNT;
                 fusion_string = nullptr;
             }
@@ -17554,6 +17612,12 @@ void ggml_vk_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * graph, 
         if (keep_pattern(snake_pattern)) {
             continue;
         }
+        if (match_pattern(hc_post_w_pattern, first_unused)) {
+            // the fused shader reads the raw logits at the hc_post slot: keep them alive until then
+            add_pattern_alloc_deps(hc_post_w_pattern, first_unused + (int) hc_post_w_pattern.size() - 1);
+            keep_pattern(hc_post_w_pattern);
+            continue;
+        }
         if (keep_pattern(topk_qsa_pattern)) {
             continue;
         }
@@ -17607,6 +17671,7 @@ void ggml_vk_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * graph, 
                 match_pattern(topk_moe_early_softmax, j) ||
                 match_pattern(topk_moe_late_softmax, j) ||
                 match_pattern(snake_pattern, j) ||
+                match_pattern(hc_post_w_pattern, j) ||
                 in_qsa_pattern(j) ||
                 match_pattern(rms_norm_mul_add_mul_pattern, j) ||
                 match_pattern(rms_norm_mul_add_pattern, j) ||

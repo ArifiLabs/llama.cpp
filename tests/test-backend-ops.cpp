@@ -4914,6 +4914,52 @@ struct test_dsv4_hc_post : public test_dsv4_hc {
     }
 };
 
+// lane-299: qwen4exp build_hc_combine scatter weights, post = 2*sigmoid(raw/hc), feeding DSV4_HC_POST
+// (Vulkan fuses the four nodes into one dispatch: HC_POST_W)
+struct test_dsv4_hc_post_w : public test_dsv4_hc {
+    const int64_t n_embd;
+    const int64_t n_tokens;
+    const bool    identity;
+
+    std::string op_desc(ggml_tensor * t) override {
+        GGML_UNUSED(t);
+        return "DSV4_HC_POST_W";
+    }
+
+    bool run_whole_graph() override { return true; }
+
+    std::string vars() override {
+        return VARS_TO_STR3(n_embd, n_tokens, identity);
+    }
+
+    test_dsv4_hc_post_w(int64_t n_embd = 31, int64_t n_tokens = 17, bool identity = true)
+        : n_embd(n_embd), n_tokens(n_tokens), identity(identity) {}
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * x = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, n_tokens);
+        ggml_set_name(x, "x");
+
+        ggml_tensor * residual = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_embd, hc, n_tokens);
+        ggml_set_name(residual, "residual");
+
+        ggml_tensor * raw = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hc, n_tokens);
+        ggml_set_name(raw, "raw");
+
+        ggml_tensor * comb = nullptr;
+        if (!identity) {
+            comb = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, hc, hc, n_tokens);
+            ggml_set_name(comb, "comb");
+        }
+
+        ggml_tensor * w = ggml_sigmoid(ctx, ggml_scale(ctx, raw, 1.0f / (float) hc));
+        w = ggml_scale(ctx, w, 2.0f);
+
+        out = ggml_dsv4_hc_post(ctx, x, residual, w, comb);
+        ggml_set_name(out, "out");
+        return out;
+    }
+};
+
 
 // GGML_OP_SSM_CONV
 // GGML_OP_ESCHA_MM — ArifiLabs Escha-W2 fused linear (lane-164)
@@ -9969,6 +10015,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_dsv4_hc_post(4096, 21));
     test_cases.emplace_back(new test_dsv4_hc_post(31, 17, true));
     test_cases.emplace_back(new test_dsv4_hc_post(4096, 21, true));
+    test_cases.emplace_back(new test_dsv4_hc_post_w(2560, 1));        // qwen4exp decode
+    test_cases.emplace_back(new test_dsv4_hc_post_w(2560, 8));        // MTP verify window
+    test_cases.emplace_back(new test_dsv4_hc_post_w(31, 17));
+    test_cases.emplace_back(new test_dsv4_hc_post_w(31, 17, false));  // comb pipeline variant
 
     // glu ops
     for (ggml_type type : {GGML_TYPE_F16, GGML_TYPE_F32}) {
