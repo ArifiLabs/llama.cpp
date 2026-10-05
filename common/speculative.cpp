@@ -1964,8 +1964,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
     static constexpr int32_t defer_max = 64;
     bool defer_enabled = false;
     bool chain_graph   = false;
-    int   recent_pen_k        = 0;
-    float recent_pen_strength = 0.0f;
+    // lane-298 OW-036 default ON (HQ78 Q7b): k=4 strength=3.0; LLAMA_SPEC_DRAFT_RECENT_PENALTY=0:0 turns it off
+    int   recent_pen_k        = 4;
+    float recent_pen_strength = 3.0f;
     struct {
         std::vector<llama_token>  tok;
         std::vector<llama_pos>    pos;
@@ -2971,9 +2972,17 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
 
         // consecutive accept rounds with low acceptance fraction (< 0.5)
         int n_low = 0;
+
+        // lane-298 miss-cost gate: emitted draft length cap (0 = gate off)
+        int cap = 0;
     };
 
     std::vector<seq_info> sinfos;
+
+    // lane-298: LLAMA_SPEC_NGRAM_CAP0=c caps each ngram draft at c tokens after a miss; the cap doubles on
+    // every fully accepted draft up to n_max. The n_min match test is unchanged (still looked up in full), so a
+    // miss costs a (c+1)-row verify instead of an (n_max+1)-row one. Verify decides the tokens: lossless.
+    int cap0 = 0;
 
     common_speculative_impl_ngram_mod(
             const common_params_speculative & params,
@@ -2983,6 +2992,11 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
         , mod(params.ngram_mod.n_match, 4*1024*1024)
         , verbose(std::getenv("LLAMA_TRACE") != nullptr) {
         static_assert(sizeof(llama_token) == sizeof(common_ngram_mod::entry_t));
+
+        if (const char * c = std::getenv("LLAMA_SPEC_NGRAM_CAP0")) {
+            cap0 = std::max(0, std::atoi(c));
+            SPC_INF("ngram_mod miss-cost gate: cap0=%d n_max=%d\n", cap0, this->params.n_max);
+        }
 
         SPC_TRC("%s", "adding speculative implementation 'ngram-mod'\n");
         SPC_TRC("- n_match=%d, n_max=%d, n_min=%d\n",
@@ -3003,6 +3017,7 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
 
         sinfo.i_last = 0;
         sinfo.n_draft_last = 0;
+        sinfo.cap = cap0;
 
         const size_t n = mod.get_n();
         if (prompt.size() < n) {
@@ -3078,6 +3093,10 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
         }
         result.resize(result.size() - n);
 
+        if (sinfo.cap > 0 && (int) result.size() > sinfo.cap) {
+            result.resize(sinfo.cap);
+        }
+
         // store length of drafted n-gram for later acceptance analysis
         sinfo.n_draft_last = result.size();
     }
@@ -3106,6 +3125,10 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
         }
 
         auto & sinfo = sinfos[seq_id];
+
+        if (cap0 > 0 && sinfo.n_draft_last > 0) {
+            sinfo.cap = n_accepted >= sinfo.n_draft_last ? std::min(2 * std::max(sinfo.cap, cap0), params.n_max) : cap0;
+        }
 
         // compute acceptance fraction if we have a recorded draft length
         if (sinfo.n_draft_last > 0) {

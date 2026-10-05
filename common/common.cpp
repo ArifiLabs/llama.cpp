@@ -25,7 +25,9 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -1778,6 +1780,41 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
     return mparams;
 }
 
+// lane-298 MoE-union counter (LLAMA_MOE_UNION_LOG=1, untimed arms only: the callback splits the graph).
+// Per (n_tokens, layer): graphs seen and summed distinct experts over the rows of one ubatch.
+static bool moe_union_cb(struct ggml_tensor * t, bool ask, void * /*user_data*/) {
+    if (strncmp(t->name, "ffn_moe_topk-", 13) != 0 || t->type != GGML_TYPE_I32) {
+        return !ask;
+    }
+    if (ask) {
+        return true;
+    }
+    static std::map<std::pair<int, int>, std::pair<long long, long long>> acc; // (nt, il) -> (graphs, sum distinct)
+    static long long n_cb = 0;
+    const int k = (int) t->ne[0], nt = (int) t->ne[1], il = atoi(t->name + 13);
+    std::vector<uint8_t> buf(ggml_nbytes(t));
+    ggml_backend_tensor_get(t, buf.data(), 0, buf.size());
+    std::set<int32_t> uni;
+    for (int r = 0; r < nt; ++r) {
+        for (int j = 0; j < k; ++j) {
+            uni.insert(*(const int32_t *) (buf.data() + r * t->nb[1] + j * t->nb[0]));
+        }
+    }
+    auto & a = acc[{nt, il}];
+    a.first++;
+    a.second += (long long) uni.size();
+    if (++n_cb % 2048 == 0) {
+        std::map<int, std::string> lines;
+        for (const auto & [key, v] : acc) {
+            lines[key.first] += string_format(" %d:%.2f", key.second, (double) v.second / v.first);
+        }
+        for (const auto & [ntk, s] : lines) {
+            LOG_INF("moe-union k=%d nt=%d layer:mean_distinct%s\n", k, ntk, s.c_str());
+        }
+    }
+    return true;
+}
+
 struct llama_context_params common_context_params_to_llama(const common_params & params) {
     auto cparams = llama_context_default_params();
 
@@ -1818,7 +1855,10 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     cparams.flash_attn_type   = params.flash_attn_type;
     cparams.cb_eval           = params.cb_eval;
     cparams.cb_eval_user_data = params.cb_eval_user_data;
-    cparams.offload_kqv       = !params.no_kv_offload;
+    if (cparams.cb_eval == nullptr && getenv("LLAMA_MOE_UNION_LOG")) {
+        cparams.cb_eval = moe_union_cb;
+    }
+    cparams.offload_kqv      = !params.no_kv_offload;
     cparams.no_perf           = params.no_perf;
     cparams.op_offload        = !params.no_op_offload;
     cparams.swa_full          = params.swa_full;
