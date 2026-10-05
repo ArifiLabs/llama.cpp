@@ -11746,9 +11746,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_Q4_0,   GGML_TYPE_F32, 1024, 10, false, 256, n, 128));
     }
     // arifi lane-302: SERVED qwen4exp MoE shapes at the verify widths (gather path, GGML_ARIFI_MOE_GATHER).
-    // 512 experts = served routing; 16 experts forces heavy overlap so every gather width shares experts.
+    // 16 experts forces heavy overlap so every gather width shares experts. 512 experts is left to the lane harness
+    // (real served tensors): init_tensor_uniform quantizes on one thread, ~150 s per 512x640x2560 case.
     for (int n = 1; n <= 8; ++n) {
-        for (int ne : {512, 16}) {
+        for (int ne : {16}) {
             for (ggml_type t : {GGML_TYPE_IQ2_S, GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ3_S, GGML_TYPE_IQ4_XS}) {
                 test_cases.emplace_back(new test_mul_mat_id(t, GGML_TYPE_F32, ne, 10, true, 640, n, 2560));
             }
