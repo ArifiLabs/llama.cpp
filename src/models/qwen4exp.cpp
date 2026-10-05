@@ -504,8 +504,11 @@ llama_model_qwen4exp::graph::graph(const llama_model & model, const llm_graph_pa
         if (cparams.embeddings_nextn_masked && inp_out_ids && h->ne[1] != res_hc->ne[2]) {
             h = ggml_get_rows(ctx0, h, inp_out_ids);
         }
+        // a bare reshape view is consumed by nothing: copy it and expand so the scheduler assigns a backend
+        h = ggml_cont(ctx0, h);
         cb(h, "h_nextn", -1);
         res->t_h_nextn = h;
+        ggml_build_forward_expand(gf, h);
     }
 
     if (inp_out_ids && !crop_in_loop) {
@@ -1477,8 +1480,9 @@ llama_model_qwen4exp::graph_mtp::graph_mtp(const llama_model & model, const llm_
     // the chain's next draft reads this block's own residual, pre-mixer (mtp.cpp:719, :738)
     ggml_tensor * flat = ggml_reshape_2d(ctx0, res_hc, hc_dim, n_tokens);
     ggml_tensor * flat_out = inp_out_ids ? ggml_get_rows(ctx0, flat, inp_out_ids) : flat;
-    res->t_h_nextn = cparams.embeddings_nextn_masked ? flat_out : flat;
+    res->t_h_nextn = ggml_cont(ctx0, cparams.embeddings_nextn_masked ? flat_out : flat);
     cb(res->t_h_nextn, "h_nextn", -1);
+    ggml_build_forward_expand(gf, res->t_h_nextn);
 
     cur = ggml_reshape_3d(ctx0, flat_out, n_embd, hc, flat_out->ne[1]);
     cur = build_hc_mix(cur, model.hc_head_norm, model.hc_head_down, model.hc_head_up, nullptr, nullptr, -1);
