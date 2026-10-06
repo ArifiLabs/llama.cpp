@@ -186,6 +186,12 @@ The allocator-wide shared admission applies only when `GGML_ARIFI_MOE_NVME=1`;
 `GGML_ARIFI_VK_SHARED_ADMIT=1|0` forces it on or off for any model (lane-298 integ:
 default-on refused a 1 MB staging buffer on a dense qwen4exp load at 5.97 GiB available).
 
+`GGML_VK_GDN_SNAP1_DIAG` (unset) is a DIAGNOSTIC ONLY: it clamps the GDN_BANK write to slot 0 to
+measure the snapshot-byte floor (lane-298 gsnap-10051521). Output is wrong by design on any rejected
+draft; the engine prints a WARN at first use. Never set it for serving.
+`GGML_VK_GDN_REPLAY_DIAG` (lane-298 replay-cost diag) no longer exists: the GDN replay commit
+(`LLAMA_GDN_REPLAY`, opt-in, default off) replaced it, and setting it has no effect.
+
 `GGML_CUDA_MOE_CACHE_STATS=N` logs cumulative counters every N collected nodes.
 NVMe bytes/seconds describe successful aligned expert reads only; they exclude
 resident/nonexpert loading and failed reads. Process transfer counters are a

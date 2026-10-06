@@ -13261,6 +13261,11 @@ void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& subctx, 
         bpc.wsign = plant ? -1.0f : 1.0f;
         // lane-298 DIAG ONLY (wrong on any rejected draft): write slot 0 only, measures the GDN snapshot-byte floor
         static const bool snap1 = getenv("GGML_VK_GDN_SNAP1_DIAG") != nullptr;
+        static bool snap1_warned = false;
+        if (snap1 && !snap1_warned) {
+            snap1_warned = true;
+            GGML_LOG_WARN("ggml_vulkan: GGML_VK_GDN_SNAP1_DIAG is set - diagnostic only, output is wrong by design\n");
+        }
         if (snap1) { bpc.n_written = std::min<uint32_t>(bpc.n_written, 1u); }
         if (replay) {
             bpc.n_rep = (uint32_t) (dst->src[6]->ne[1] / 2);
