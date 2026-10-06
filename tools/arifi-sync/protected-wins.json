@@ -1857,7 +1857,7 @@
       "id": "vulkan-cm1-f16b-staging-mul-mat-id",
       "status": "active",
       "mechanism": "coopmat1 (non-coopmat2, non-Intel) MUL_MAT_ID prompt matmuls stage B f32->f16 before the kernel (lane-296 N11 extended to the id path) when no int8 q8_1 id pipeline is taken and tokens >= cm1_f16b_min_n, so iq2_s / iq3_xxs / iq3_s experts run the f16-B coopmat1 pipeline instead of f32-B. Not a precision change on fp16 devices: the f32-B kernel already rounds B to f16vec2 in shared memory (mul_mm.comp:195). Default ON; GGML_ARIFI_CM1_F16B_ID=0 keeps f32-B; =red is the planted wrong variant (staged B never written).",
-      "commit": "75bd52ad79",
+      "commit": "75bd52ad79759c2ae3120a9209c6955e3c694246",
       "protected_paths": [
         "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
       ],
@@ -2057,7 +2057,7 @@
       "id": "qwen4exp-layout-copies",
       "status": "active",
       "mechanism": "qwen4exp graph: conv-state tails are written with one strided CPY (no CONT first) and the PLE taps use one transpose-copy plus one kernel cast instead of 4 CONT + 4 CONT + 4 CAST + 1 CONT. Same bytes, fewer dispatches.",
-      "commit": "78db7c5e44",
+      "commit": "78db7c5e449765a01f7644d402e764383a97eed2",
       "protected_paths": [
         "src/models/qwen4exp.cpp"
       ],
