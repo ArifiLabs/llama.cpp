@@ -40,6 +40,29 @@ const uint TPB_OVER_8  = ARIFI_TPB16 ?  2u : 1u;   // == TPB / 8
 // Default 0. GGML_ARIFI_IQ3_MMVQ=v2 selects arm 1; ONE binary serves both.
 layout (constant_id = 3) const uint ARIFI_IQ3_SIGN_HOIST = 0;
 
+// arifi lane-302 Route A: IQ3_S grid init (spec 4, GGML_ARIFI_IQ3S_INIT, idg pipeline only). 1 = batched: all of a
+// thread's loads issue before any LDS store (the IQ2_S lever-4 shape; the strided loop serialized 8 x load -> wait ->
+// store). Same table, every entry written once: byte-identical by construction. 2 = planted wrong arm (table rotated).
+layout (constant_id = 4) const uint ARIFI_IQ3S_INIT = 0;
+
+void arifi_init_iq3s_batched() {
+    const uint t = gl_LocalInvocationIndex;
+    const uint W = gl_WorkGroupSize.x;
+    for (uint i0 = 0; i0 < 512; i0 += 8 * W) {
+        uint v[8];
+        [[unroll]] for (uint k = 0; k < 8; ++k) {
+            v[k] = iq3s_grid_const[min(i0 + k * W + t, 511u)];
+        }
+        [[unroll]] for (uint k = 0; k < 8; ++k) {
+            const uint idx = i0 + k * W + t;
+            if (idx < 512) {
+                iq3s_grid[ARIFI_IQ3S_INIT == 2 ? ((idx + 1u) & 511u) : idx] = v[k];
+            }
+        }
+    }
+    barrier();
+}
+
 // The eight signed grid values, as the legacy chain would have computed them element by element.
 vec4 iq3s_sign_lo(const vec4 g, const uint sign) {
     return vec4((sign &  1) != 0 ? -g.x : g.x,
@@ -204,7 +227,11 @@ void main() {
     }
 #endif
 
-    init_iq_shmem(gl_WorkGroupSize);
+    if (ARIFI_IQ3S_INIT != 0) {
+        arifi_init_iq3s_batched();
+    } else {
+        init_iq_shmem(gl_WorkGroupSize);
+    }
 
     // do NUM_ROWS at a time, unless there aren't enough remaining rows
     if (first_row + NUM_ROWS <= p.stride_d) {

@@ -27,6 +27,34 @@ layout (constant_id = 3) const uint GATHER_TAIL = 0;
 #endif
 
 
+#if defined(DATA_A_IQ4_NL) && defined(MUL_MAT_ID_GATHER)
+// arifi lane-302 Route A: IQ4_NL gather body (spec 4, GGML_ARIFI_IQ4NL_BODY). 1 = byte-pair LUT: one LDS read per
+// qs byte gives both nibble values in dequantize4's component order, same floats, so byte-identical by construction.
+// 3 = planted wrong arm (pair swapped inside the table; op gate must go RED).
+#define ARIFI_IQ4NL_BODY_ON 1
+layout (constant_id = 4) const uint ARIFI_IQ4NL_BODY = 0;
+shared vec2 arifi_kv2[256];
+
+void arifi_init_kv2() {
+    for (uint i = gl_LocalInvocationIndex; i < 256; i += gl_WorkGroupSize.x) {
+        const uint lo = ARIFI_IQ4NL_BODY == 3 ? (i >> 4) : (i & 0xFu);
+        const uint hi = ARIFI_IQ4NL_BODY == 3 ? (i & 0xFu) : (i >> 4);
+        arifi_kv2[i] = vec2(kvalues_iq4nl[lo], kvalues_iq4nl[hi]);
+    }
+    barrier();
+}
+
+vec4 arifi_deq4(uint ib, uint iqs, uint a_offset) {
+    if (ARIFI_IQ4NL_BODY == 1 || ARIFI_IQ4NL_BODY == 3) {
+        const uint vui = uint(data_a_packed16[a_offset + ib].qs[iqs/2]);
+        return vec4(arifi_kv2[vui & 0xFFu], arifi_kv2[vui >> 8]);
+    }
+    return dequantize4(ib, iqs, a_offset);
+}
+#else
+#define arifi_deq4 dequantize4
+#endif
+
 uint a_offset, b_offset, d_offset, y_offset;
 
 vec4 load_b(const uint j, const uint iybs, const uint iqs, const bool lastiter, out bool OOB_y, out bool OOB_z, out bool OOB_w) {
@@ -88,8 +116,8 @@ void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const
         const uint ib = (ibi + col)/QUANT_K; // block index
         ibi += p.ncols;
 
-        vec4 v = dequantize4(ib, iqs, a_offset);
-        vec4 v2 = dequantize4(ib, iqs+(4/QUANT_R), a_offset);
+        vec4 v = arifi_deq4(ib, iqs, a_offset);
+        vec4 v2 = arifi_deq4(ib, iqs+(4/QUANT_R), a_offset);
 
         const vec2 dm = get_dm(ib, a_offset);
         if (dm.y != 0) { // quant has min component
@@ -162,8 +190,8 @@ void tail_iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, 
         const uint iybs = col - col%QUANT_K;
         const uint ib = ((first_row + hn)*p.ncols + col)/QUANT_K;
 
-        vec4 v = dequantize4(ib, iqs, a_offset);
-        vec4 v2 = dequantize4(ib, iqs+(4/QUANT_R), a_offset);
+        vec4 v = arifi_deq4(ib, iqs, a_offset);
+        vec4 v2 = arifi_deq4(ib, iqs+(4/QUANT_R), a_offset);
 
         const vec2 dm = get_dm(ib, a_offset);
         if (dm.y != 0) {
@@ -363,6 +391,11 @@ void main() {
 
 #ifdef NEEDS_INIT_IQ_SHMEM
     init_iq_shmem(gl_WorkGroupSize);
+#endif
+#ifdef ARIFI_IQ4NL_BODY_ON
+    if (ARIFI_IQ4NL_BODY == 1 || ARIFI_IQ4NL_BODY == 3) {
+        arifi_init_kv2();
+    }
 #endif
 
     // do NUM_ROWS at a time, unless there aren't enough remaining rows
