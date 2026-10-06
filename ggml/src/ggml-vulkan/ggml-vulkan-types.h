@@ -1445,6 +1445,7 @@ struct vk_device_struct {
     // tokens. GGML_ARIFI_MOE_GATHER = 0 (default, per-token loop) | 1 (one dispatch, no sharing) | 2 | 4.
     uint32_t moe_gather_cols = 0;
     bool moe_gather_plant = false;
+    uint32_t moe_gather_rows = 0;
     vk_pipeline pipeline_dequant_mul_mat_vec_idg_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
 
     vk_pipeline pipeline_dequant_mul_mat_vec_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
