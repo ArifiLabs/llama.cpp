@@ -1183,6 +1183,16 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
             // Write each logical cell row range. With pending recurrent rollback,
             // the logical current state may live in a rollback snapshot plane.
             for (const auto & range : cell_ranges) {
+                if (rs_r1) {
+                    // lane-298 r1h: under R1 the ssm bank is PHYSICAL (state of age a at plane rs_plane(pos_bank, a)),
+                    // so the logical row (plane a = rs_idx) is remapped; conv/ple banks stay logical (scope bound 2).
+                    for (uint32_t id = range.first; id < range.second; ++id) {
+                        const uint32_t c   = id % size;
+                        const uint32_t row = rs_plane(cells[c].pos_bank, id / size) * size + c;
+                        io.write_tensor(s_l[il], row * s_size_row, s_size_row);
+                    }
+                    continue;
+                }
                 const size_t range_size = range.second - range.first;
                 const size_t buf_size = range_size * s_size_row;
                 io.write_tensor(s_l[il], range.first * s_size_row, buf_size);
@@ -1283,9 +1293,8 @@ bool llama_memory_recurrent::state_read_meta(llama_io_read_i & io, uint32_t cell
             io.read(&n_seq_id, sizeof(n_seq_id));
 
             cell.pos = pos;
-            // R1 ring (lane-176): the bank planes are restored byte-for-byte in PHYSICAL order and
-            // `pos` is restored verbatim, so the position-derived labelling is self-consistent with
-            // no rotation at either end. Bound: a state saved between a seq_rm rollback and the next
+            // R1 ring (lane-176): one ssm row per cell travels; state_write_data/state_read_data map it to the
+            // physical plane (lane-298 r1h fix), so pos_bank = pos below names the restored plane. Bound: a state saved between a seq_rm rollback and the next
             // decode restores with pos_bank == the rewound pos, so that blob's deep planes are not
             // addressable. State files are NOT portable between an R1 and a non-R1 build.
             cell.pos_bank      = pos;
@@ -1410,7 +1419,13 @@ bool llama_memory_recurrent::state_read_data(llama_io_read_i & io, uint32_t cell
                 return false;
             }
 
-            if (cell_count) {
+            if (cell_count && rs_r1) {
+                // lane-298 r1h: the next decode reads plane rs_plane(pos_bank, 0); meta set pos_bank = pos
+                for (uint32_t i = 0; i < cell_count; ++i) {
+                    const uint32_t c = head + i;
+                    io.read_tensor(s_l[il], (rs_plane(cells[c].pos_bank, 0) * size + c) * s_size_row, s_size_row);
+                }
+            } else if (cell_count) {
                 // Read and set the values for the whole cell range
                 io.read_tensor(s_l[il], head * s_size_row, cell_count * s_size_row);
             }
