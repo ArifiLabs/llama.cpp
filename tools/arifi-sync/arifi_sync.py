@@ -143,6 +143,30 @@ def load_grandfather(repo: str) -> set:
     return {row["sha"] for row in data.get("commits", [])}
 
 
+def load_trailer_exemptions(repo: str) -> dict:
+    """Sha-pinned exemptions for commits whose provenance is PRESENT and human-readable but
+    does not satisfy --strict, and whose only repair would be amending published, tagged,
+    series-pinned history. Distinct from `native-grandfather.json` (CLOSED, pre-convention
+    native commits) and from `pending-trailers.json` (debt owed by UNMERGED branches).
+
+    A row is NOT a repair. `cmd_provenance` counts these separately and says so on the exit
+    line, so an exempted commit can never be read as a fixed one."""
+    p = os.path.join(repo, "tools", "arifi-sync", "trailer-exemptions.json")
+    if not os.path.exists(p):
+        return {}
+    with open(p, "r", encoding="utf-8-sig") as fh:
+        data = json.load(fh)
+    return {row["sha"]: row for row in data.get("commits", [])}
+
+
+def ledger_origin(row) -> str:
+    """The origin an exemption row records for a commit whose MESSAGE has none. Only a row
+    classified `no-provenance` AND carrying a non-empty `origin` clears the hard failure."""
+    if not row or "no-provenance" not in row.get("classification", []):
+        return ""
+    return str(row.get("origin") or "").strip()
+
+
 def has_loose_provenance(repo: str, sha: str) -> bool:
     """The LOOSE test: the token appears anywhere in the message. Deliberately the loose one -
     it is what `cmd_provenance` uses to decide `NO PROVENANCE AT ALL`, the only provenance
@@ -160,8 +184,10 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:
         raise Loud("empty range %s - is the base pin correct?" % rng)
 
     grandfathered = load_grandfather(repo)
+    exempt = load_trailer_exemptions(repo)
     strict, loose, meas, native, gf = 0, 0, 0, 0, 0
     loose_only, missing, no_meas = [], [], []
+    ex_loose, ex_meas, ex_missing = [], [], []
     for sha in shas:
         body = gout(repo, "log", "-1", "--format=%B", sha)
         subject = gout(repo, "log", "-1", "--format=%s", sha)
@@ -175,12 +201,20 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:
         if tr["Measured-effect"]:
             meas += 1
         elif not (is_native or sha in grandfathered):
-            no_meas.append((sha[:9], subject))
+            if sha in exempt:
+                ex_meas.append((sha[:9], subject))
+            else:
+                no_meas.append((sha[:9], subject))
         if is_loose and not is_strict:
-            loose_only.append((sha[:9], subject))
+            if sha in exempt:
+                ex_loose.append((sha[:9], subject))
+            else:
+                loose_only.append((sha[:9], subject))
         if not is_loose:
             if sha in grandfathered:
                 gf += 1
+            elif ledger_origin(exempt.get(sha)):
+                ex_missing.append((sha[:9], subject, ledger_origin(exempt[sha])))
             else:
                 missing.append((sha[:9], subject))
 
@@ -192,6 +226,20 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:
     say("Measured-effect           : %d / %d" % (meas, n))
     say("native (Origin trailer)   : %d       (fork-authored, no upstream origin - convention 2026-08-20)" % native)
     say("grandfathered NATIVE      : %d / %d  (sha-pinned in tools/arifi-sync/native-grandfather.json, ledger CLOSED)" % (gf, n))
+    n_ex = len({e[0] for e in ex_loose + ex_meas + ex_missing})  # distinct commits; a row can sit in two classes
+    say("EXEMPT, NOT REPAIRED      : %d / %d  commits (%d loose-only + %d without Measured-effect + %d origin in the ledger only; sha-pinned with a reason each in tools/arifi-sync/trailer-exemptions.json)"
+        % (n_ex, n, len(ex_loose), len(ex_meas), len(ex_missing)))
+
+    if n_ex:
+        say("\nEXEMPT - the provenance is incomplete in the message, and the only repair would be")
+        say("amending published, tagged, series-pinned history. These are NOT fixed commits.")
+        say("Each row's reason is in trailer-exemptions.json.")
+        for sha, s in ex_loose:
+            say("  %s  [loose-only]          %s" % (sha, s))
+        for sha, s in ex_meas:
+            say("  %s  [no Measured-effect]  %s" % (sha, s))
+        for sha, s, o in ex_missing:
+            say("  %s  [no provenance; ledger origin: %s]  %s" % (sha, o, s))
 
     if loose_only:
         say("\nLOOSE-ONLY - provenance is human-readable but NOT machine-readable.")
@@ -226,6 +274,12 @@ def cmd_provenance(repo: str, cfg: dict, args) -> int:
         say("\nFAIL (--strict): %d loose-only, %d without Measured-effect."
             % (len(loose_only), len(no_meas)))
         return 1
+    if n_ex:
+        say("\nPASS (%d EXEMPT, not repaired - %d loose-only, %d without Measured-effect, %d origin in the ledger only):"
+            % (n_ex, len(ex_loose), len(ex_meas), len(ex_missing)))
+        say("every commit has a recorded provenance; %d of them carry it incompletely or not at all" % n_ex)
+        say("in the message, and are sha-pinned with a reason in tools/arifi-sync/trailer-exemptions.json.")
+        return 0
     say("\nPASS: every commit carries provenance.")
     return 0
 
@@ -503,8 +557,10 @@ def regen_preflight(repo: str, cfg: dict, ref: str) -> None:
     if not shas:
         raise Loud("empty range %s..%s - is the base pin correct?" % (base[:9], ref))
     grandfathered = load_grandfather(repo)
+    exempt = load_trailer_exemptions(repo)
     missing = [s for s in shas
-               if not has_loose_provenance(repo, s) and s not in grandfathered]
+               if not has_loose_provenance(repo, s) and s not in grandfathered
+               and not ledger_origin(exempt.get(s))]
     if missing:
         raise Loud(
             "%d commit(s) in %s..%s carry no provenance; the series would publish a MANIFEST\n"
