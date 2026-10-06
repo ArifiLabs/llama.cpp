@@ -370,6 +370,51 @@ int main(int argc, char ** argv) {
         return 0;
     }
 
+    // cost mode, DETP_VERIFY=<continuation ids file>: teacher-forced, so every arm decodes the SAME ids (no path confound).
+    // Per rep and width w (DETP_VERIFY_W="1,4"): seq_rm, prefill prompt, then decode the continuation in w-row all-logits
+    // batches (w=1 = plain decode, w>1 = draft verify shape); each decode timed to llama_synchronize. Rep 0 = warm.
+    if (const char * vf = getenv("DETP_VERIFY")) {
+        const std::vector<llama_token> cont = read_ids(vf);
+        std::vector<int> widths;
+        { std::string s = getenv("DETP_VERIFY_W") ? getenv("DETP_VERIFY_W") : "1,4"; std::replace(s.begin(), s.end(), ',', ' ');
+          std::istringstream is(s); int x; while (is >> x) widths.push_back(x); }
+        const int reps = envi("DETP_VERIFY_REPS", 6);
+        llama_memory_t mem = llama_get_memory(ctx);
+        for (int rep = 0; rep < reps; ++rep) {
+            for (int w : widths) {
+                llama_memory_seq_rm(mem, 0, -1, -1);
+                const size_t np = prompt.size();
+                llama_batch b = llama_batch_init((int) np, 0, 1);
+                for (size_t i = 0; i < np; ++i) common_batch_add(b, prompt[i], (llama_pos) i, { 0 }, i + 1 == np);
+                int64_t t0 = ggml_time_us();
+                if (llama_decode(ctx, b) != 0) { fprintf(stderr, "verify prefill failed\n"); return 2; }
+                llama_synchronize(ctx);
+                const double pp_ms = (ggml_time_us() - t0) / 1000.0;
+                llama_batch_free(b);
+                double dec_ms = 0; int steps = 0; uint64_t h = 1469598103934665603ull;
+                for (size_t i = 0; i < cont.size(); i += w) {
+                    const int n = (int) std::min<size_t>(w, cont.size() - i);
+                    llama_batch c = llama_batch_init(n, 0, 1);
+                    for (int j = 0; j < n; ++j) common_batch_add(c, cont[i + j], (llama_pos) (np + i + j), { 0 }, true);
+                    t0 = ggml_time_us();
+                    if (llama_decode(ctx, c) != 0) { fprintf(stderr, "verify step failed\n"); return 2; }
+                    llama_synchronize(ctx);
+                    dec_ms += (ggml_time_us() - t0) / 1000.0; ++steps;
+                    llama_batch_free(c);
+                    h = fnv((const uint8_t *) llama_get_logits_ith(ctx, n - 1), sizeof(float) * n_vocab, h);
+                }
+                fprintf(out, "{\"verify\":true,\"rep\":%d,\"w\":%d,\"prompt\":%zu,\"cont\":%zu,\"pp_ms\":%.3f,\"steps\":%d,"
+                        "\"dec_ms\":%.3f,\"step_ms\":%.4f,\"tok_s\":%.3f,\"lh\":\"%016llx\"}\n", rep, w, np, cont.size(), pp_ms,
+                        steps, dec_ms, dec_ms / steps, cont.size() * 1000.0 / dec_ms, (unsigned long long) h);
+                printf("verify rep=%d w=%d pp_ms=%.1f step_ms=%.3f tok_s=%.2f\n", rep, w, pp_ms, dec_ms / steps, cont.size() * 1000.0 / dec_ms);
+                fflush(out);
+            }
+        }
+        fclose(out);
+        llama_backend_free();
+        return 0;
+    }
+
     fprintf(out, "{\"clear_mode\":%d,\"pre\":%zu,\"pre_n\":%d}\n", clear_mode, pre.size(), pre_n);
 
     for (int r = 0; r < R; ++r) {
