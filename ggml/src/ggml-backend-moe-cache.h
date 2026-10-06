@@ -47,6 +47,7 @@ struct ggml_moe_cache_tensor_desc {
     int64_t n_out;
     int64_t n_expert;
     int32_t type;
+    size_t resident_limit;
 };
 
 enum ggml_moe_cache_mode {
@@ -156,6 +157,18 @@ static inline int ggml_moe_cache_wtype_supported(int wtype) {
     }
     return 0;
 }
+
+typedef int (*ggml_moe_disk_read_fn)(void *, uint64_t, void *, size_t, uint64_t *);
+typedef void (*ggml_moe_disk_free_fn)(void *);
+struct ggml_moe_disk_range { uint64_t offset; void * dst; size_t bytes; };
+typedef int (*ggml_moe_disk_batch_fn)(void *, const struct ggml_moe_disk_range *, size_t, uint64_t *);
+GGML_API int ggml_moe_disk_set_batch(const void *, ggml_moe_disk_batch_fn);
+GGML_API int ggml_moe_disk_read_batch(const void *, const struct ggml_moe_disk_range *, size_t, uint64_t *);
+GGML_API int ggml_moe_disk_register(const struct ggml_moe_cache_tensor_desc *, void *, ggml_moe_disk_read_fn, ggml_moe_disk_free_fn);
+GGML_API void ggml_moe_disk_unregister_range(const void *, size_t);
+GGML_API int ggml_moe_disk_contains(const void *);
+GGML_API int ggml_moe_disk_read(const void *, size_t, void *, size_t, uint64_t *);
+GGML_API size_t ggml_moe_disk_descriptors(struct ggml_moe_cache_tensor_desc *, size_t);
 
 GGML_API void ggml_moe_cache_register(const struct ggml_moe_cache_api * api);
 GGML_API void ggml_moe_cache_unregister(const void * owner);

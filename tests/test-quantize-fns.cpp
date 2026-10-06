@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+static bool model_k_quants_only = false;
+
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
 #endif
@@ -271,6 +273,7 @@ static int test_vec_dot_q(bool verbose) {
 
     for (int i = 0; i < GGML_TYPE_COUNT; i++) {
         ggml_type type = (ggml_type) i;
+        if (model_k_quants_only && type != GGML_TYPE_Q2_K && type != GGML_TYPE_Q3_K && type != GGML_TYPE_Q4_K) { continue; }
         const auto * qfns = ggml_get_type_traits(type);
         const auto * qfns_cpu = ggml_get_type_traits_cpu(type);
 
@@ -393,6 +396,8 @@ int main(int argc, char * argv[]) {
 
         if (arg == "-v") {
             verbose = true;
+        } else if (arg == "--model-k-quants") {
+            model_k_quants_only = true;
         } else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             return 1;
@@ -406,10 +411,11 @@ int main(int argc, char * argv[]) {
     num_failed += test_vec_dot_f32(verbose);
     num_failed += test_vec_dot_q(verbose);
 #ifdef GGML_ARIFI_TURBO_WEIGHT_QUANTS
-    num_failed += test_tq3_family(verbose);
+    if (!model_k_quants_only) { num_failed += test_tq3_family(verbose); }
 #endif
 
-    if (num_failed || verbose) {
+    if (model_k_quants_only) { printf("MODEL_K_QUANTS Q2_K/Q3_K/Q4_K scoped gate\n"); }
+    if (num_failed || verbose || model_k_quants_only) {
         printf("%d tests failed\n", num_failed);
     }
 

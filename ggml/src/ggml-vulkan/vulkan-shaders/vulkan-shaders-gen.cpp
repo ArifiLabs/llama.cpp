@@ -1711,6 +1711,8 @@ void process_shaders() {
     string_to_spv("moe_cache_mv_mxfp4", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "22"}, {"DATA_A_MXFP4", "1"}});
     string_to_spv("moe_cache_mv_nvfp4", "moe_cache_mv.comp", {{"MOE_CACHE_WTYPE", "23"}, {"DATA_A_NVFP4", "1"}});
 
+    string_to_spv("moe_cache_quant_q8_1", "moe_cache_quant_q8_1.comp", {});
+
     for (auto &c : compiles) {
         c.wait();
     }

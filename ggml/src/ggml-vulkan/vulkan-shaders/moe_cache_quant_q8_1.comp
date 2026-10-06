@@ -1,0 +1,87 @@
+#version 450
+
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_control_flow_attributes : require
+
+#define FLOAT_TYPE float
+#include "types.glsl"
+
+// moe-cache v2: Q8_1 quantization of the router activations on the GPU,
+// replacing the host scalar loop vk_quantize_act_q8_1 in
+// ggml-vulkan-moe-cache.cpp. It reuses this provider's own descriptor set
+// layout (4 storage + 1 uniform), so binding 4 is the same Params block the
+// matvec kernel reads and no second pipeline layout exists to drift.
+//
+//   binding 0 : n_hits rows of n_in float32 activations, tightly packed
+//   binding 1 : n_hits * (padded_n_in/32) block_q8_1
+//   binding 4 : Params (only n_in, n_hits and padded_n_in are read)
+//
+// One thread per 32-element block. The arithmetic mirrors the host reference
+// term for term; the two documented differences are named in the comments
+// below and measured by moe_cache_quant_oracle.py.
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly  buffer A {float      data_src[];};
+layout (binding = 1) writeonly buffer B {block_q8_1 data_dst[];};
+
+layout (binding = 4) uniform Params {
+    int64_t n_in;
+    int64_t n_out;
+    int64_t expert_stride;
+    int64_t row_stride;
+    int64_t n_hits;
+    int64_t padded_n_in;
+} p;
+
+void main() {
+    const uint blocks_per_row = uint(p.padded_n_in / int64_t(32));
+    const uint ib = gl_GlobalInvocationID.x;
+    if (ib >= uint(p.n_hits) * blocks_per_row) {
+        return;
+    }
+
+    const uint hit     = ib / blocks_per_row;
+    const uint block   = ib - hit * blocks_per_row;
+    const uint n_in_u  = uint(p.n_in);
+    const uint src_row = hit * n_in_u;
+
+    // Pass 1: absolute max over the block. Elements past n_in are the zero
+    // padding the host reference also feeds in, so amax matches. The source is
+    // re-read in pass 2 rather than held in a 32-float local array: 256 threads
+    // x 128 B would spill to scratch on RDNA3.
+    float amax = 0.0;
+    [[unroll]] for (uint i = 0; i < 32; i++) {
+        const uint idx = block * 32u + i;
+        const float v = (idx < n_in_u) ? data_src[src_row + idx] : 0.0;
+        amax = max(amax, abs(v));
+    }
+
+    const float d  = amax / 127.0;
+    const float id = (d > 0.0) ? (1.0 / d) : 0.0;
+
+    // Pass 2: quantize and accumulate the block sum.
+    int isum = 0;
+    [[unroll]] for (uint i = 0; i < 32; i++) {
+        const uint idx = block * 32u + i;
+        const float v = (idx < n_in_u) ? data_src[src_row + idx] : 0.0;
+        const float r = v * id;
+        // GLSL round() leaves the exact-.5 direction to the implementation;
+        // the host reference uses roundf(), which is round-half-away-from-zero
+        // everywhere. sign*floor(abs+0.5) IS roundf, so the qs bytes stay
+        // bit-exact against the host instead of implementation-defined.
+        const int q = int(sign(r) * floor(abs(r) + 0.5));
+        data_dst[ib].qs[i] = int8_t(q);
+        isum += q;
+    }
+
+    // The host reference accumulates s as sum(q_i * d) sequentially in float32;
+    // this computes (sum q_i) * d, the same value with one rounding instead of
+    // 32. The two can differ by ~1 float32 ULP before the f16 store, which is
+    // the tolerance moe_cache_quant_oracle.py measures.
+    data_dst[ib].ds = f16vec2(d, float(isum) * d);
+}

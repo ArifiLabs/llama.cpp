@@ -823,6 +823,22 @@ void llama_context::sched_reserve() {
     LLAMA_LOG_INFO("%s: MoE cache requested=%s resolved=%s\n",
             __func__, moe_cache_requested,
             moe_cache_eligible ? moe_cache_requested : "off");
+    // NVMe-streamed experts have no CPU fallback: a context of a model WITH expert
+    // tensors must run the cache at the registered budget. Expert-less models
+    // (a DFlash drafter beside the target) run cache-off.
+    if (ggml_moe_disk_descriptors(nullptr, 0)) {
+        const bool model_has_experts = std::any_of(model.tensors_by_name.begin(), model.tensors_by_name.end(),
+            [](const auto & entry) { return entry.first.find("_exps") != std::string::npos ||
+                                            entry.first.find("_chexps") != std::string::npos; });
+        const char * expected = getenv("GGML_ARIFI_MOE_NVME_CACHE_MIB");
+        if (model_has_experts && (moe_cache_mode == GGML_MOE_CACHE_MODE_OFF || !expected ||
+                strtoull(expected, nullptr, 10) != cparams.moe_cache_budget_mib)) {
+            GGML_ABORT("NVME_CONTEXT_CACHE_BUDGET_MISMATCH");
+        }
+        if (!model_has_experts) {
+            LLAMA_LOG_INFO("%s: NVME_CONTEXT_NO_EXPERTS cache=off (expert-less model beside an NVMe target)\n", __func__);
+        }
+    }
 
     sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, cparams.pipeline_parallel, cparams.op_offload));
     ggml_backend_sched_set_moe_cache(
@@ -2850,7 +2866,7 @@ void llama_context::output_reorder() {
 
 uint32_t llama_context::graph_max_nodes(uint32_t n_tokens) const {
     uint32_t res;
-    if (model.arch == LLM_ARCH_KIMI_K3) {
+    if (model.arch == LLM_ARCH_KIMI_K3 || model.arch == LLM_ARCH_GLM5_NEXT) {
         // the n_tokens*40 budget below is exhausted at ubatch 3840
         res = std::max<uint32_t>(n_tokens * 160, 64u * model.n_tensors());
     } else if (model.arch == LLM_ARCH_HRM_TEXT) {
@@ -3230,6 +3246,10 @@ public:
         ptr += size;
         size_read += size;
         buf_size -= size;
+    }
+
+    void discard() override {
+        rinfos.clear();
     }
 
     size_t n_bytes() override {
@@ -3708,6 +3728,11 @@ public:
         rinfos.push_back({tensor, ptr, size, offset});
     }
 
+    void discard() override {
+        rinfos.clear();
+        buf_size = 0;
+    }
+
     size_t n_bytes() override {
         return size_read;
     }
@@ -3754,6 +3779,7 @@ size_t llama_context::state_set_data(const uint8_t * src, size_t size) {
         return state_read_data(io);
     } catch (const std::exception & err) {
         LLAMA_LOG_ERROR("%s: error loading state: %s\n", __func__, err.what());
+        io.discard();
         return 0;
     }
 }
@@ -3972,6 +3998,7 @@ size_t llama_context::state_seq_set_data(llama_seq_id seq_id, const uint8_t * sr
         return n_read;
     } catch (const std::exception & err) {
         LLAMA_LOG_ERROR("%s: error loading state: %s\n", __func__, err.what());
+        io->discard();
         return 0;
     }
 }

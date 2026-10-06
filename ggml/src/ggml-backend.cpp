@@ -15,8 +15,114 @@
 #include "ggml-backend-moe-cache.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <vector>
+
+struct ggml_moe_disk_entry {
+    ggml_moe_cache_tensor_desc desc;
+    void * reader;
+    ggml_moe_disk_read_fn read;
+    ggml_moe_disk_free_fn free;
+    ggml_moe_disk_batch_fn batch = nullptr;
+};
+static std::mutex g_moe_disk_mutex;
+static std::vector<ggml_moe_disk_entry> g_moe_disk_entries;
+
+int ggml_moe_disk_register(const ggml_moe_cache_tensor_desc * desc, void * reader,
+                         ggml_moe_disk_read_fn read, ggml_moe_disk_free_fn free_fn) {
+    if (!desc || !desc->data || !reader || !read || !free_fn || desc->n_expert <= 0 ||
+        desc->expert_size == 0 || uint64_t(desc->n_expert) > SIZE_MAX / desc->expert_size) { return 0; }
+    std::lock_guard<std::mutex> lock(g_moe_disk_mutex);
+    for (const auto & entry : g_moe_disk_entries) {
+        if (entry.desc.data == desc->data) { return 0; }
+    }
+    try { g_moe_disk_entries.push_back({*desc, reader, read, free_fn}); }
+    catch (...) { return 0; }
+    return 1;
+}
+
+void ggml_moe_disk_unregister_range(const void * base, size_t size) {
+    std::lock_guard<std::mutex> lock(g_moe_disk_mutex);
+    const uintptr_t first = uintptr_t(base);
+    for (auto it = g_moe_disk_entries.begin(); it != g_moe_disk_entries.end();) {
+        const uintptr_t addr = uintptr_t(it->desc.data);
+        if (addr >= first && addr - first < size) {
+            it->free(it->reader);
+            it = g_moe_disk_entries.erase(it);
+        } else { ++it; }
+    }
+}
+
+int ggml_moe_disk_contains(const void * base) {
+    std::lock_guard<std::mutex> lock(g_moe_disk_mutex);
+    for (const auto & entry : g_moe_disk_entries) {
+        if (entry.desc.data == base) { return 1; }
+    }
+    return 0;
+}
+
+// x14: the registry mutex guards only the entries vector. IO runs after it is released (the reader serializes real
+// reads with its own source/lane mutexes), so a background sibling pre-read never blocks the per-node
+// ggml_moe_disk_contains() calls. ponytail: unregister during in-flight IO is not guarded (teardown only).
+static bool ggml_moe_disk_find(const void * base, ggml_moe_disk_entry & out) {
+    std::lock_guard<std::mutex> lock(g_moe_disk_mutex);
+    for (const auto & entry : g_moe_disk_entries) {
+        if (entry.desc.data == base) { out = entry; return true; }
+    }
+    return false;
+}
+
+int ggml_moe_disk_read(const void * base, size_t offset, void * dst, size_t bytes, uint64_t * physical) {
+    ggml_moe_disk_entry entry;
+    if (!ggml_moe_disk_find(base, entry)) { return 0; }
+    const size_t limit = entry.desc.expert_size * size_t(entry.desc.n_expert);
+    if (!dst || offset > limit || bytes > limit - offset) { return 0; }
+    return entry.read(entry.reader, offset, dst, bytes, physical);
+}
+
+int ggml_moe_disk_set_batch(const void * base, ggml_moe_disk_batch_fn batch) {
+    std::lock_guard<std::mutex> lock(g_moe_disk_mutex);
+    for (auto & entry : g_moe_disk_entries) {
+        if (entry.desc.data == base) { entry.batch = batch; return 1; }
+    }
+    return 0;
+}
+
+int ggml_moe_disk_read_batch(const void * base, const ggml_moe_disk_range * ranges, size_t n, uint64_t * physical) {
+    const auto t0 = std::chrono::steady_clock::now();
+    ggml_moe_disk_entry entry;
+    const bool found = ggml_moe_disk_find(base, entry);
+    const double lock_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    if (lock_s > 0.001) { fprintf(stderr, "NVME_DISK_MUTEX_WAIT seconds=%.6f\n", lock_s); }
+    if (!found || !ranges || !n || n > 64) { return 0; }
+    // GGML_ARIFI_MOE_NVME_BATCH_READ=0: sequential per-range reads on the source handle (the d4r0 path).
+    static const bool batch_read = [] { const char * v = getenv("GGML_ARIFI_MOE_NVME_BATCH_READ"); return !v || strcmp(v, "0") != 0; }();
+    const size_t limit = entry.desc.expert_size * size_t(entry.desc.n_expert);
+    for (size_t i = 0; i < n; ++i) {
+        if (!ranges[i].dst || ranges[i].offset > limit || ranges[i].bytes > limit - ranges[i].offset) { return 0; }
+    }
+    if (entry.batch && batch_read) { return entry.batch(entry.reader, ranges, n, physical); }
+    uint64_t total = 0;
+    for (size_t i = 0; i < n; ++i) {
+        uint64_t bytes = 0;
+        if (!entry.read(entry.reader, ranges[i].offset, ranges[i].dst, ranges[i].bytes, &bytes)) { return 0; }
+        total += bytes;
+    }
+    if (physical) { *physical = total; }
+    return 1;
+}
+
+size_t ggml_moe_disk_descriptors(ggml_moe_cache_tensor_desc * out, size_t capacity) {
+    std::lock_guard<std::mutex> lock(g_moe_disk_mutex);
+    for (size_t i = 0; out && i < std::min(capacity, g_moe_disk_entries.size()); ++i) {
+        out[i] = g_moe_disk_entries[i].desc;
+    }
+    return g_moe_disk_entries.size();
+}
 
 // MoE expert cache providers, keyed by backend registration object. Multiple
 // backends (CUDA, Metal, Vulkan, HIP) can register; each scheduler picks the
@@ -1533,6 +1639,15 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
         GGML_ASSERT(*cur_backend_id != -1);
     }
 
+    for (int i = 0; i < graph->n_nodes; ++i) {
+        ggml_tensor * node = graph->nodes[i];
+        if (node->src[0] && ggml_moe_disk_contains(node->src[0]->data)) {
+            if (node->op != GGML_OP_MUL_MAT_ID) { GGML_ABORT("NVME_UNSUPPORTED_EXPERT_OP"); }
+            tensor_backend_id(node) = sched->n_backends - 1;
+            SET_CAUSE(node, "nvme.vulkan-provider");
+        }
+    }
+
     // pass 5: split graph, find tensors that need to be copied
     {
         int i_split = 0;
@@ -2033,6 +2148,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             struct ggml_tensor * input = split->inputs[input_id];
             struct ggml_tensor * input_cpy = tensor_copy(input, split_backend_id, sched->cur_copy);
 
+            if (ggml_moe_disk_contains(input->data)) { GGML_ABORT("NVME_SCHEDULER_COPY_FORBIDDEN"); }
+
             if (input->flags & GGML_TENSOR_FLAG_INPUT) {
                 // inputs from the user must be copied immediately to prevent the user overwriting the data before the copy is done
                 if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
@@ -2334,7 +2451,7 @@ ggml_backend_sched_t ggml_backend_sched_new(
     // max-sized expert tensor of device memory per slot
     const char * GGML_SCHED_PREFETCH_EXPERTS = getenv("GGML_SCHED_PREFETCH_EXPERTS");
     const int prefetch_n_slots = GGML_SCHED_PREFETCH_EXPERTS ? atoi(GGML_SCHED_PREFETCH_EXPERTS) : 0;
-    sched->prefetch_experts = op_offload && prefetch_n_slots > 0;
+    sched->prefetch_experts = op_offload && prefetch_n_slots > 0 && ggml_moe_disk_descriptors(nullptr, 0) == 0;
     // default of 3 covers the gate/up/down expert tensors of one MoE layer
     sched->prefetch_n_slots = prefetch_n_slots <= 1 ? 3 : std::min(prefetch_n_slots, GGML_SCHED_MAX_PREFETCH_SLOTS);
 
@@ -2346,6 +2463,8 @@ ggml_backend_sched_t ggml_backend_sched_new(
 void ggml_backend_sched_set_moe_cache(
         ggml_backend_sched_t sched, enum ggml_moe_cache_mode mode, size_t budget_mib) {
     GGML_ASSERT(sched);
+    // The NVMe budget guard lives in llama_context::sched_reserve: only a model
+    // with expert tensors must match it (an expert-less drafter runs cache-off).
     if (mode == GGML_MOE_CACHE_MODE_UNSPECIFIED) {
         return;
     }

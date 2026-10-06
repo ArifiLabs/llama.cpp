@@ -149,3 +149,109 @@ math used by the loader, and only then writes `GGML_Q2_0_G128=1`. `--in-place`
 is an explicit opt-in and warns before replacement. This is a metadata-key
 gate, not the superseded ambient environment-variable design: the model file
 declares its required geometry, while an absent key keeps normal g64 behavior.
+
+## X1 NVMe expert streaming (candidate, not promoted)
+
+`GGML_ARIFI_MOE_NVME=1` enables direct-NVMe demand fills for overflow expert tensors.
+Default is off. Use `-lm mmap -b 8 -ub 8 --no-host --no-op-offload`; mapped expert
+addresses are identity keys only. CPU expert execution and scheduler expert copies
+refuse with named `NVME_*` errors. Repeated expert IDs are deduplicated before
+fills and pinned until the ubatch completes. Every quant-shape pool needs at least
+64 slots; the complete census refuses an insufficient budget before residency
+preload. No buffered-reader fallback is permitted.
+
+`GGML_ARIFI_MOE_NVME_CACHE_MIB` is required in streaming mode and must agree with
+the explicit `--moe-cache` budget. Placement reserves that cache plus 4 GiB compute
+headroom within the 70 GiB local allowance. Nonexpert and selected resident expert
+weights load through 8 MiB direct-read chunks; overflow weights remain on disk.
+
+`GGML_ARIFI_MOE_NVME_POLICY=none` disables residency reuse between expert nodes;
+the default heat policy retains demand-filled slots. This control still needs a
+bounded device scratch pool. It is not a CPU/mmap-compute baseline.
+
+`GGML_ARIFI_VK_MOE_CACHE=v1|v2` defaults to v1. Normal slabs use pure device-local
+storage, each at most 2 GiB. `GGML_ARIFI_VK_MOE_CACHE_POOL_CLAMP=1` restores the
+labelled old one-tensor clamp. `GGML_ARIFI_VK_MOE_CACHE_HOST_SLAB=1` is the unsafe
+legacy RED control; `2` uses budgeted mapped slabs. Both are prohibited for NVMe
+streaming. Normal staging growth is capped at 512 MiB per provider buffer, with
+old-plus-new staging at most 1 GiB; initial cells enforce a 2 GiB aggregate allowance.
+
+`GGML_ARIFI_MMAP_PREFETCH_MIB=0` suppresses ordinary mmap prefetch; streaming
+always disables it. `GGML_ARIFI_VK_SHARED_BUDGET_MIB` bounds shared allocations
+with live available-RAM-minus-4-GiB admission and an 11800 MiB maximum.
+`GGML_ARIFI_VK_FILE_CACHE_RESERVE_MIB` defaults to an estimated 2048 MiB mapping
+window; streaming cells set zero because weight reads bypass the page cache.
+Pure device-local allocations share a 70 GiB lease ledger across backend and cache.
+
+`GGML_CUDA_MOE_CACHE_STATS=N` logs cumulative counters every N collected nodes.
+NVMe bytes/seconds describe successful aligned expert reads only; they exclude
+resident/nonexpert loading and failed reads. Process transfer counters are a
+separate measurement and are not whole-drive physical disk traffic.
+Runtime safety/correctness acceptance is recorded in the lane report.
+
+### Bounded NVMe shard readers (moe-x1-d1r0-10040743)
+
+NVMe tensors share one unbuffered handle per GGUF shard. A mutex covers the
+seek/read/physical-byte-counter transaction. Windows aligned scratch is reused,
+with generic direct reads split into at most 8 MiB payloads and requested EOF
+overreads refused before IO. Sector padding is never returned as requested data.
+At most 32 live shard sources with alignment at most 64 KiB are admitted per
+process; excess sources print `NVME_READER_STAGING_BUDGET_REFUSED`, and unsupported
+alignment prints `NVME_READ_ALIGNMENT_REFUSED`. Readers remain owned by the disk
+registry after loader destruction. Scratch telemetry reports retained bytes and
+the observed old-plus-new allocation peak; acceptance counts both the reader and
+loader upload staging. No runtime RAM or throughput improvement is implied.
+
+`GGML_ARIFI_MOE_NVME_IO_LANES=1..16` selects the maximum parallel direct-reader
+cursors (default 4). Invalid values refuse with `NVME_IO_LANES_REFUSED`.
+`NVME_READ_BATCH` logs configured cursors, launched workers, successful aligned
+bytes and `no_buffering=1`. Workers can number fewer than the configured limit
+when there are fewer jobs. These are synchronous unbuffered handles used in
+parallel, not the PowerInfer IOCP ring. `POWERINFER_NO_BUFFERING` and its queue
+depth do not control this path. Reads use 16 MiB jobs and at most 8 MiB aligned
+bounce payloads; sixteen cursors retain at most 130 MiB (260 MiB during growth),
+in addition to the bounded shard readers and provider staging. Runtime aggregate
+staging and RAM guards remain required. The 1/8/16 comparison is pending.
+
+### Identical-copy N-drive misses (moe-x1-d1r0-10042011)
+
+`GGML_ARIFI_MOE_NVME_REPLICAS=<manifest>` optionally adds identical file copies.
+Unset keeps the primary-only reader and its default4 cursors. Manifest header:
+`# nvme-replicas-v1 quoted-primary quoted-replica bytes sha256`, followed by
+rows with quoted absolute paths, exact file length and64 hex SHA256 characters.
+The coordinator MUST verify full-file SHA256 equality and hold read-only leases
+on all copies and the manifest for the entire engine run. The engine validates
+manifest syntax/paths/lengths/direct handles; it does not compute the full hash.
+The schema digest is a coordinator attestation, not an engine-observed equality.
+Duplicate canonical paths, excess replicas, bad ranges and insufficient cursors
+refuse. Up to16 cursors TOTAL are striped across N sources;16 over2 means8 per
+drive. Sorted/coalesced miss jobs are assigned round-robin, with separate drive
+queues. Resident preloading and scalar reads use the primary; only miss batches
+use replicas. No sidecar repack or CPU-expert computation is introduced.
+
+`NVME_READ_SOURCE` identifies drive index/path; `NVME_READ_DRIVE` reports each
+drive's successful aligned bytes and common batch wall time. Effective per-drive
+MiB/s divides bytes by that COMMON wall interval; summing drive times is wrong.
+`[moe-cache-io-phase] tokens=` tags prefill/decode graph scope for the runner.
+`NVME_READ_BATCH` includes replica count, configured total cursors and launched
+workers. None of these counts proves hardware outstanding IO depth. Byte/RAM/
+throughput acceptance remains pending the new detached cells and HQ check.
+
+### Profile-ranked expert residency (moe-x1-d3r0-10042115)
+
+`GGML_ARIFI_MOE_NVME_HOT_MODE=1` streams every expert tensor instead of choosing
+whole resident layers. Without `GGML_ARIFI_MOE_NVME_PROFILE_IN` it trains with
+zero resident expert bytes; `GGML_ARIFI_MOE_NVME_PROFILE_OUT` saves decode routing
+counts. The input profile validates version, optional model tag, all tensor
+coverage, unique IDs, row bytes and types. `GGML_ARIFI_MOE_NVME_PROFILE_TAG`
+must match the saved model tag when supplied.
+
+`GGML_ARIFI_MOE_NVME_RESIDENT_MIB` defaults to 61440 MiB, clipped to the loader's
+remaining local allowance; cache plus requested residency above 66 GiB refuses.
+Observed positive-frequency rows across all layers rank first; absent rows have
+zero measured frequency and fill unused capacity in deterministic tensor/ID order.
+`NVME_HOT_SELECTION` separates measured bytes from zero-frequency filler and
+reports effective budget and unused bytes. Unseen rows are not claimed hot.
+Residency uses unmapped device-local buffers of at most 2 GiB and bounded staging;
+the aggregate 70 GiB local and live shared/RAM guards still bind every allocation.
+`NVME_HOT_READY` reports successfully loaded rows. Runtime acceptance is pending.

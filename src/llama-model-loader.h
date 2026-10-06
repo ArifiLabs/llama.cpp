@@ -29,7 +29,13 @@ enum llama_fver {
 
 const char * llama_file_version_name(llama_fver version);
 
+struct moe_disk_source;
+
 struct llama_model_loader {
+    // One unbuffered handle/bounce buffer per GGUF shard; registered tensors
+    // share ownership after the loader exits. A serialized process-wide pool
+    // retains at most16 miss cursors across all sources/replicas.
+    std::unordered_map<uint16_t, std::shared_ptr<moe_disk_source>> moe_disk_sources;
     // Holds information on a model weight
     struct llama_tensor_weight {
         uint16_t  idx; // source file index
@@ -117,6 +123,10 @@ struct llama_model_loader {
         std::set<std::string>                  tensors;
     } lazy;
 
+    // One bounded upload window reused across tensors and buffer contexts.
+    std::vector<uint8_t> nvme_load_stage;
+    size_t nvme_resident_expert_bytes = 0;
+    size_t nvme_resident_expert_limit = SIZE_MAX;
     llama_files files;
     llama_ftype ftype;
     llama_fver  fver;

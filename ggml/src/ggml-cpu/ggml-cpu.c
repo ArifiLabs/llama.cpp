@@ -2173,6 +2173,8 @@ static void ggml_compute_forward_mul_mat_id_impl(
     const int n_ids = ids->ne[0]; // n_expert_used
     const int n_as  = ne02;       // n_expert
 
+    const bool disk_experts = ggml_moe_disk_contains(src0->data);
+
     // MoE expert cache state is used by thread 0 only.
     const int64_t moe_cache_n_rows = ids->ne[0] > 0 && ids->ne[1] > 0 &&
         ids->ne[0] <= INT64_MAX / ids->ne[1]
@@ -2282,6 +2284,8 @@ static void ggml_compute_forward_mul_mat_id_impl(
             }
         }
 
+        if (disk_experts && !moe_cache_node) { GGML_ABORT("NVME_GPU_PROVIDER_REQUIRED: %s", src0->name); }
+
         // initialize matrix_row_counts
         memset(matrix_row_counts, 0, n_as*sizeof(int64_t));
 
@@ -2311,6 +2315,7 @@ static void ggml_compute_forward_mul_mat_id_impl(
                     continue;
                 }
 
+                if (disk_experts) { GGML_ABORT("NVME_GPU_ROW_REQUIRED: %s expert=%d", src0->name, i02); }
                 MMID_MATRIX_ROW(i02, matrix_row_counts[i02]) = (struct mmid_row_mapping) {id, iid1};
                 matrix_row_counts[i02] += 1;
             }
@@ -2319,6 +2324,7 @@ static void ggml_compute_forward_mul_mat_id_impl(
         if (moe_cache_node && moe_cache_n_hits > 0) {
             if (!moe_cache.dispatch(moe_cache_node, (int) type, ne00, ne01,
                                     moe_cache_n_hits, moe_cache_compact, moe_cache_acts)) {
+                if (disk_experts) { GGML_ABORT("NVME_GPU_DISPATCH_FAILED: %s", src0->name); }
                 for (int i = 0; i < moe_cache_n_hits; i++) {
                     const int expert = moe_cache_experts[i];
                     MMID_MATRIX_ROW(expert, matrix_row_counts[expert]) =
@@ -2414,6 +2420,7 @@ static void ggml_compute_forward_mul_mat_id_impl(
     if (ith == 0 && moe_cache_node) {
         const struct ggml_moe_cache_api moe_cache = ggml_moe_cache_active();
         if (!moe_cache.collect(moe_cache_node, moe_cache_n_hits, moe_cache_rows, ne0)) {
+            if (disk_experts) { GGML_ABORT("NVME_GPU_COLLECT_FAILED: %s", src0->name); }
             const void * wdata = (src1->type == vec_dot_type) ? src1->data : params->wdata;
             const size_t row_size = ggml_row_size(vec_dot_type, ne10);
             for (int i = 0; i < moe_cache_n_hits; i++) {

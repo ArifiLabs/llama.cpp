@@ -1,4 +1,5 @@
 #include "llama-mmap.h"
+#include "../ggml/src/ggml-backend-moe-cache.h"
 
 #include "llama-impl.h"
 
@@ -73,6 +74,12 @@ static std::string llama_format_win_err(DWORD err) {
 struct llama_file::impl {
 #if defined(_WIN32)
     HANDLE fp_win32;
+    struct aligned_buffer_deleter {
+        void operator()(void * p) const { _aligned_free(p); }
+    };
+    std::unique_ptr<void, aligned_buffer_deleter> read_scratch;
+    size_t read_scratch_capacity = 0;
+    size_t read_scratch_peak = 0;
     std::string GetErrorMessageWin32(DWORD error_code) const {
         std::string ret;
         LPSTR lpMsgBuf = NULL;
@@ -110,9 +117,16 @@ struct llama_file::impl {
             throw std::runtime_error(format("failed to open %s: %s", fname, strerror(errno)));
         }
         fp_win32 = (HANDLE) _get_osfhandle(_fileno(fp));
-        seek(0, SEEK_END);
-        size = tell();
-        seek(0, SEEK_SET);
+        try {
+            seek(0, SEEK_END);
+            size = tell();
+            seek(0, SEEK_SET);
+        } catch (...) {
+            std::fclose(fp);
+            fp = NULL;
+            fp_win32 = NULL;
+            throw;
+        }
     }
 
     // open with FILE_FLAG_NO_BUFFERING; on success fp/fp_win32/size/alignment are set and true is returned
@@ -194,7 +208,11 @@ struct llama_file::impl {
         seek(0, SEEK_SET);
     }
 
-    size_t os_tell() const {
+    // A FILE_FLAG_NO_BUFFERING handle refuses an unaligned file-pointer move (ERROR_INVALID_PARAMETER,
+    // the -lm dio probe failure), so unbuffered handles keep the logical position in logical_position
+    // and park the OS pointer on the sector floor (lane-298 + moe-cache-x1, one mechanism).
+    size_t tell() const {
+        if (alignment > 1) { return logical_position; }
         LARGE_INTEGER li;
         li.QuadPart = 0;
         BOOL ret = SetFilePointerEx(fp_win32, li, &li, FILE_CURRENT);
@@ -205,54 +223,63 @@ struct llama_file::impl {
         return li.QuadPart;
     }
 
-    void os_seek(size_t offset, int whence) const {
+    void seek(size_t offset, int whence) const {
         static_assert(SEEK_SET == FILE_BEGIN, "SEEK_SET != FILE_BEGIN");
         static_assert(SEEK_CUR == FILE_CURRENT, "SEEK_CUR != FILE_CURRENT");
         static_assert(SEEK_END == FILE_END, "SEEK_END != FILE_END");
 
         LARGE_INTEGER li;
-        li.QuadPart = offset;
+        size_t proposed_position = logical_position;
+        if (alignment > 1) {
+            if (whence == SEEK_SET) {
+                proposed_position = offset;
+            } else if (whence == SEEK_CUR || whence == SEEK_END) {
+                const size_t base = whence == SEEK_CUR ? logical_position : size;
+                // The size_t API represents negative relative offsets in two's
+                // complement, like the buffered SetFilePointerEx path below.
+                if (offset <= size_t(INT64_MAX)) {
+                    if (offset > SIZE_MAX - base) { throw std::runtime_error("NVME_SEEK_RANGE_REFUSED"); }
+                    proposed_position = base + offset;
+                } else {
+                    const size_t distance = SIZE_MAX - offset + 1;
+                    if (distance > base) { throw std::runtime_error("NVME_SEEK_RANGE_REFUSED"); }
+                    proposed_position = base - distance;
+                }
+            } else {
+                throw std::runtime_error("NVME_SEEK_WHENCE_REFUSED");
+            }
+            if (proposed_position > size_t(INT64_MAX)) { throw std::runtime_error("NVME_SEEK_RANGE_REFUSED"); }
+            li.QuadPart = proposed_position & ~(alignment - 1);
+            whence = FILE_BEGIN;
+        } else {
+            li.QuadPart = offset;
+        }
         BOOL ret = SetFilePointerEx(fp_win32, li, NULL, whence);
         if (!ret) {
             throw std::runtime_error(format("read error: %s", GetErrorMessageWin32(GetLastError()).c_str()));
         }
-    }
-
-    // lane-298: a FILE_FLAG_NO_BUFFERING handle refuses an unaligned file-pointer move with
-    // ERROR_INVALID_PARAMETER, so unbuffered handles keep the logical position in dio_pos and park
-    // the OS pointer on the sector floor (the -lm dio "The parameter is incorrect" probe failure).
-    size_t tell() const {
-        return has_direct_io() ? dio_pos : os_tell();
-    }
-
-    void seek(size_t offset, int whence) const {
-        if (!has_direct_io()) {
-            os_seek(offset, whence);
-            return;
-        }
-        const size_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ? dio_pos : size;
-        dio_pos = base + offset;
-        os_seek(dio_pos & ~(alignment - 1), SEEK_SET);
+        if (alignment > 1) { logical_position = proposed_position; }
     }
 
     // plain ReadFile loop; on an unbuffered handle the caller guarantees the alignment rule.
     // allow_eof_pad: an unbuffered read of the last partial sector legitimately comes back short at EOF
     void read_raw_unsafe(void * ptr, size_t len, bool allow_eof_pad = false) {
-        if (has_direct_io() && ((dio_pos | len | (uintptr_t) ptr) & (alignment - 1))) {
-            throw std::runtime_error(format("unaligned unbuffered read: pos %zu len %zu align %zu", dio_pos, len, alignment));
+        if (has_direct_io() && ((logical_position | len | (uintptr_t) ptr) & (alignment - 1))) {
+            throw std::runtime_error(format("unaligned unbuffered read: pos %zu len %zu align %zu", logical_position, len, alignment));
         }
         size_t bytes_read = 0;
         while (bytes_read < len) {
             size_t chunk_size = std::min<size_t>(len - bytes_read, 64*1024*1024);
             DWORD chunk_read = 0;
             BOOL result = ReadFile(fp_win32, reinterpret_cast<char*>(ptr) + bytes_read, chunk_size, &chunk_read, NULL);
+            physical_read_bytes += chunk_read;
+            if (alignment > 1) { logical_position += chunk_read; }
             if (!result) {
                 throw std::runtime_error(format("read error: %s", GetErrorMessageWin32(GetLastError()).c_str()));
             }
-            dio_pos += chunk_read;
             if (chunk_read < chunk_size || chunk_read == 0) {
                 // tell(): after a short unbuffered read the OS pointer sits on unaligned EOF and even a
-                // zero FILE_CURRENT move is refused there; dio_pos already counts the bytes read
+                // zero FILE_CURRENT move is refused there; logical_position already counts the bytes read
                 if (allow_eof_pad && tell() == size) {
                     // EOF inside the alignment padding: zero the rest, the caller only copies `len` real bytes
                     std::memset(reinterpret_cast<char *>(ptr) + bytes_read + chunk_read, 0, len - bytes_read - chunk_read);
@@ -268,23 +295,40 @@ struct llama_file::impl {
     // unbuffered handles: read the sector-aligned superset into an aligned staging buffer, copy `size` bytes out
     void read_aligned_chunk(void * dest, size_t sz) {
         const size_t offset = tell();
+        if (offset > size || sz > size - offset) {
+            throw std::runtime_error("NVME_READ_RANGE_REFUSED");
+        }
+        // Also bound direct callers (e.g. a host tensor load), not just the
+        // MoE callback. Padding belongs to the aligned IO, never the request.
+        constexpr size_t chunk_limit = 8u << 20;
+        if (sz > chunk_limit) {
+            for (size_t done = 0; done < sz;) {
+                const size_t count = std::min(chunk_limit, sz - done);
+                read_aligned_chunk(static_cast<char *>(dest) + done, count);
+                done += count;
+            }
+            return;
+        }
         const size_t aligned_offset      = offset & ~(alignment - 1);
         const size_t offset_from_aligned = offset - aligned_offset;
         const size_t bytes_to_read       = (offset_from_aligned + sz + alignment - 1) & ~(alignment - 1);
 
-        void * raw_buffer = _aligned_malloc(bytes_to_read, alignment);
-        if (raw_buffer == nullptr) {
-            throw std::runtime_error(format("_aligned_malloc(%zu, %zu) failed", bytes_to_read, alignment));
+        // A shard reader reuses this bounded bounce buffer across expert misses.
+        // Allocate before replacing it: failure preserves the old reader state.
+        if (bytes_to_read > read_scratch_capacity) {
+            std::unique_ptr<void, aligned_buffer_deleter> next(_aligned_malloc(bytes_to_read, alignment));
+            if (!next) {
+                throw std::runtime_error(format("_aligned_malloc(%zu, %zu) failed", bytes_to_read, alignment));
+            }
+            read_scratch_peak = std::max(read_scratch_peak, read_scratch_capacity + bytes_to_read);
+            read_scratch = std::move(next);
+            read_scratch_capacity = bytes_to_read;
         }
-        struct aligned_buffer_deleter {
-            void operator()(void * p) const { _aligned_free(p); }
-        };
-        std::unique_ptr<void, aligned_buffer_deleter> buffer(raw_buffer);
 
         seek(aligned_offset, SEEK_SET);
-        read_raw_unsafe(buffer.get(), bytes_to_read, /*allow_eof_pad =*/ true);
+        read_raw_unsafe(read_scratch.get(), bytes_to_read, /*allow_eof_pad =*/ true);
 
-        std::memcpy(dest, reinterpret_cast<const char *>(buffer.get()) + offset_from_aligned, sz);
+        std::memcpy(dest, reinterpret_cast<const char *>(read_scratch.get()) + offset_from_aligned, sz);
 
         // leave the logical position where a buffered read would have left it
         seek(offset + sz, SEEK_SET);
@@ -335,8 +379,6 @@ struct llama_file::impl {
             std::fclose(fp);
         }
     }
-
-    mutable size_t dio_pos = 0; // logical position of an unbuffered handle (see seek)
 #else
     impl(const char * fname, const char * mode, [[maybe_unused]] const bool use_direct_io = false) : fname(fname) {
 #ifdef __linux__
@@ -546,6 +588,8 @@ struct llama_file::impl {
         return alignment;
     }
 
+    uint64_t physical_read_bytes = 0;
+    mutable size_t logical_position = 0;
     size_t alignment = 1;
 
     FILE * fp{};
@@ -554,7 +598,9 @@ struct llama_file::impl {
 };
 
 llama_file::llama_file(const char * fname, const char * mode, const bool use_direct_io) :
-    pimpl(std::make_unique<impl>(fname, mode, use_direct_io)) {}
+    path_name(fname), pimpl(std::make_unique<impl>(fname, mode, use_direct_io)) {}
+
+uint64_t llama_file::physical_read_bytes() const { return pimpl->physical_read_bytes; }
 
 llama_file::llama_file(FILE * file) : pimpl(std::make_unique<impl>(file)) {}
 
@@ -838,6 +884,7 @@ llama_mmap::llama_mmap(struct llama_file * file, size_t prefetch, bool numa,
         const ranges & lazy_ranges) : pimpl(std::make_unique<impl>(file, prefetch, numa, lazy_ranges)) {}
 
 llama_mmap::~llama_mmap() {
+    ggml_moe_disk_unregister_range(pimpl->addr, pimpl->size);
     // unpin before the pages are unmapped by the impl destructor
     if (host_reg_addr && host_unreg_fn) {
         host_unreg_fn(host_reg_addr);
@@ -1085,4 +1132,20 @@ const bool llama_mlock::SUPPORTED = false;
 
 size_t llama_path_max() {
     return PATH_MAX;
+}
+
+size_t llama_file::direct_io_scratch_size() const {
+#if defined(_WIN32)
+    return pimpl->read_scratch_capacity;
+#else
+    return 0; // POSIX aligned reads own a temporary buffer, not retained scratch.
+#endif
+}
+
+size_t llama_file::direct_io_scratch_peak() const {
+#if defined(_WIN32)
+    return pimpl->read_scratch_peak;
+#else
+    return 0;
+#endif
 }

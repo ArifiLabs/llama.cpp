@@ -1,4 +1,5 @@
 #include "ggml-vulkan-common.h"
+#include "ggml-vulkan-shared-budget.h"
 
 // R46b B7b: per-buffer-type batch allocation planning (defined at the end of this file).
 static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(ggml_backend_buffer_type_t buft, const size_t * sizes, const char * const * names, size_t n, enum ggml_backend_plan_status * status);
@@ -745,6 +746,18 @@ vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vecto
         }
         reservation = std::move(*planned->reservation);
         const uint32_t cand_heap = mem_props.memoryTypes[planned->type].heapIndex;
+        if (getenv("GGML_ARIFI_MOE_NVME") && strcmp(getenv("GGML_ARIFI_MOE_NVME"), "1") == 0 &&
+                !req_flags_list.empty() && (req_flags_list.front() & vk::MemoryPropertyFlagBits::eDeviceLocal) &&
+                (mem_props.memoryTypes[planned->type].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible)) {
+            throw vk::OutOfDeviceMemoryError("NVME_LOCAL_PLACEMENT_REQUIRED");
+        }
+        if (mem_props.memoryTypes[planned->type].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible) {
+            buf->shared_lease = arifi_vk_shared_reserve(mem_req.size);
+            if (!buf->shared_lease) { throw vk::OutOfDeviceMemoryError("REFUSED_SHARED_BUDGET: planned shared allocation"); }
+        } else if (mem_props.memoryHeaps[cand_heap].size >= (uint64_t(64) << 30)) {
+            buf->local_lease = arifi_vk_local_reserve(mem_req.size);
+            if (!buf->local_lease) { throw vk::OutOfDeviceMemoryError("REFUSED_LOCAL_70GIB: planned local allocation"); }
+        }
         if (alloc_trace) {
             std::stringstream ss;
             ss << "alloc id=" << alloc_id << " state=planned"
@@ -754,6 +767,7 @@ vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vecto
         }
         VK_TEST_NOTE_DRIVER_ALLOC();
         buf->device_memory = device->device.allocateMemory({ mem_req.size, planned->type, &mem_flags_info });
+        if (buf->shared_lease) { buf->shared_lease->commit(); }
         buf->memory_property_flags = mem_props.memoryTypes[planned->type].propertyFlags;
         if (alloc_trace) {
             vk_alloc_trace_record_alloc(device, buf->buffer, alloc_id, size, mem_req, planned->type, cand_heap);
@@ -776,7 +790,19 @@ vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vecto
 
             for (auto mtype_it = memory_type_indices.begin(); mtype_it != memory_type_indices.end(); mtype_it++) {
                 const uint32_t cand_heap   = mem_props.memoryTypes[*mtype_it].heapIndex;
-                const uint64_t cand_budget = mem_props.memoryHeaps[cand_heap].size;
+                const uint64_t raw_budget = mem_props.memoryHeaps[cand_heap].size;
+                const uint64_t cand_budget = raw_budget >= (uint64_t(64) << 30)
+                    ? std::min<uint64_t>(raw_budget - (uint64_t(2) << 30), uint64_t(70) << 30) : raw_budget;
+                if (getenv("GGML_ARIFI_MOE_NVME") && strcmp(getenv("GGML_ARIFI_MOE_NVME"), "1") == 0 &&
+                        !req_flags_list.empty() && (req_flags_list.front() & vk::MemoryPropertyFlagBits::eDeviceLocal) &&
+                        (mem_props.memoryTypes[*mtype_it].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible)) { continue; }
+                if (mem_props.memoryTypes[*mtype_it].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible) {
+                    buf->shared_lease = arifi_vk_shared_reserve(mem_req.size);
+                    if (!buf->shared_lease) { continue; }
+                } else if (raw_budget >= (uint64_t(64) << 30)) {
+                    buf->local_lease = arifi_vk_local_reserve(mem_req.size);
+                    if (!buf->local_lease) { continue; }
+                }
                 if (alloc_trace) {
                     std::stringstream ss;
                     ss << "alloc id=" << alloc_id << " state=try"
@@ -791,6 +817,8 @@ vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vecto
                 // R46b B7a: reserve BEFORE the driver is asked, so concurrent callers cannot each be
                 // admitted against the same bytes.
                 if (!reservation.try_reserve(&device->heap_ledger, cand_heap, mem_req.size, cand_budget)) {
+                    buf->shared_lease.reset();
+                    buf->local_lease.reset();
                     if (alloc_trace) {
                         std::stringstream ss;
                         ss << "alloc id=" << alloc_id << " state=refuse_budget"
@@ -805,6 +833,7 @@ vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vecto
                 try {
                     VK_TEST_NOTE_DRIVER_ALLOC();
                     buf->device_memory = device->device.allocateMemory({ mem_req.size, *mtype_it, &mem_flags_info });
+                    if (buf->shared_lease) { buf->shared_lease->commit(); }
                     buf->memory_property_flags = mem_props.memoryTypes[*mtype_it].propertyFlags;
                     if (alloc_trace) {
                         vk_alloc_trace_record_alloc(device, buf->buffer, alloc_id, size, mem_req, *mtype_it, cand_heap);
@@ -815,6 +844,8 @@ vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vecto
                     // R46b B7a: roll back this candidate's reservation before the next candidate is
                     // tried or the exception leaves the function.
                     reservation.release();
+                    buf->shared_lease.reset();
+                    buf->local_lease.reset();
                     if (alloc_trace) {
                         std::stringstream ss;
                         ss << "alloc id=" << alloc_id << " state=fail"
@@ -917,6 +948,12 @@ static std::vector<vk_alloc_attempt> ggml_vk_placement_attempts(vk_device & devi
     const auto HC = vk::MemoryPropertyFlagBits::eHostCoherent;
 
     std::vector<vk_alloc_attempt> attempts;
+
+    const char * nvme = std::getenv("GGML_ARIFI_MOE_NVME");
+    if (nvme && std::strcmp(nvme, "1") == 0) {
+        const auto props = device->physical_device.getMemoryProperties();
+        return { { { DL }, ggml_vk_largest_heap(props) } };
+    }
 
     // lane-230 / R46b commit E: bulk weight buffers, policy ON. DEVICE_LOCAL on the largest heap
     // and nothing else. A failure here is NOT fatal: the stock chain below is tried next, because
@@ -1081,20 +1118,34 @@ void ggml_vk_host_get(const vk_device& device, const void * ptr, vk_buffer& buf,
 void ggml_vk_ensure_sync_staging_buffer(vk_device& device, size_t size) {
     if (device->sync_staging == nullptr || device->sync_staging->size < size) {
         VK_LOG_MEMORY("ggml_vk_ensure_sync_staging_buffer(" << size << ")");
-        ggml_vk_destroy_buffer(device->sync_staging);
-        device->sync_staging = ggml_vk_create_buffer_check(device, size,
+        auto next = ggml_vk_create_buffer_check(device, size,
             vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent | vk::MemoryPropertyFlagBits::eHostCached,
             vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        if (getenv("GGML_ARIFI_VK_MOE_TRACE")) {
+            const uint64_t old_bytes = device->sync_staging ? device->sync_staging->reservation.bytes : 0;
+            fprintf(stderr, "[moe-main-stage] owner=%p bytes=%llu peak=%llu\n", (void *)device.get(),
+                    (unsigned long long)next->reservation.bytes,
+                    (unsigned long long)(old_bytes + next->reservation.bytes));
+        }
+        ggml_vk_destroy_buffer(device->sync_staging);
+        device->sync_staging = std::move(next);
     }
 }
 
 void ggml_vk_ensure_sync_staging_buffer(ggml_backend_vk_context * ctx, size_t size) {
     if (ctx->sync_staging == nullptr || ctx->sync_staging->size < size) {
         VK_LOG_MEMORY("ggml_vk_ensure_sync_staging_buffer(" << size << ")");
-        ggml_vk_destroy_buffer(ctx->sync_staging);
-        ctx->sync_staging = ggml_vk_create_buffer_check(ctx->device, size,
+        auto next = ggml_vk_create_buffer_check(ctx->device, size,
             vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent | vk::MemoryPropertyFlagBits::eHostCached,
             vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        if (getenv("GGML_ARIFI_VK_MOE_TRACE")) {
+            const uint64_t old_bytes = ctx->sync_staging ? ctx->sync_staging->reservation.bytes : 0;
+            fprintf(stderr, "[moe-main-stage] owner=%p bytes=%llu peak=%llu\n", (void *)ctx,
+                    (unsigned long long)next->reservation.bytes,
+                    (unsigned long long)(old_bytes + next->reservation.bytes));
+        }
+        ggml_vk_destroy_buffer(ctx->sync_staging);
+        ctx->sync_staging = std::move(next);
     }
 }
 
@@ -1291,6 +1342,31 @@ void ggml_vk_buffer_write_2d(vk_buffer& dst, size_t offset, const void * src, si
     } else {
         std::lock_guard<std::recursive_mutex> guard(dst->device->mutex);
 
+        // A refused growth must not discard usable staging or terminate a
+        // request which can copy through it. Each recursive copy submits and
+        // waits before reusing the same bytes; no deferred copy spans chunks.
+        vk_buffer pinned;
+        size_t pinned_offset = 0;
+        ggml_vk_host_get(dst->device, src, pinned, pinned_offset);
+        try {
+            if (!pinned) { ggml_vk_ensure_sync_staging_buffer(dst->device, width * height); }
+        } catch (const vk::SystemError & error) {
+            if (error.code() != vk::make_error_code(vk::Result::eErrorOutOfDeviceMemory) &&
+                error.code() != vk::make_error_code(vk::Result::eErrorOutOfHostMemory)) { throw; }
+            const auto & staging = dst->device->sync_staging;
+            if (!staging || staging->size < 4) { throw; }
+            const size_t chunk = staging->size & ~size_t(3);
+            fprintf(stderr, "[vk-shared-budget] STAGING_REUSE_WRITE chunk=%zu requested=%zu\n", chunk, width * height);
+            for (size_t row = 0; row < height; ++row) {
+                for (size_t col = 0; col < width; col += std::min(chunk, width - col)) {
+                    const size_t count = std::min(chunk, width - col);
+                    ggml_vk_buffer_write_2d(dst, offset + row * dpitch + col,
+                            (const uint8_t *) src + row * spitch + col, count, count, count, 1);
+                }
+            }
+            return;
+        }
+
         vk_context subctx = ggml_vk_create_temporary_context(dst->device->transfer_queue->cmd_pool);
         ggml_vk_ctx_begin(dst->device, subctx);
         bool ret = ggml_vk_buffer_write_2d_async(subctx, dst, offset, src, spitch, dpitch, width, height, true);
@@ -1477,6 +1553,28 @@ void ggml_vk_buffer_read_2d(vk_buffer& src, size_t offset, void * dst, size_t sp
         }
     } else {
         std::lock_guard<std::recursive_mutex> guard(src->device->mutex);
+
+        vk_buffer pinned;
+        size_t pinned_offset = 0;
+        ggml_vk_host_get(src->device, dst, pinned, pinned_offset);
+        try {
+            if (!pinned) { ggml_vk_ensure_sync_staging_buffer(src->device, width * height); }
+        } catch (const vk::SystemError & error) {
+            if (error.code() != vk::make_error_code(vk::Result::eErrorOutOfDeviceMemory) &&
+                error.code() != vk::make_error_code(vk::Result::eErrorOutOfHostMemory)) { throw; }
+            const auto & staging = src->device->sync_staging;
+            if (!staging || staging->size < 4) { throw; }
+            const size_t chunk = staging->size & ~size_t(3);
+            fprintf(stderr, "[vk-shared-budget] STAGING_REUSE_READ chunk=%zu requested=%zu\n", chunk, width * height);
+            for (size_t row = 0; row < height; ++row) {
+                for (size_t col = 0; col < width; col += std::min(chunk, width - col)) {
+                    const size_t count = std::min(chunk, width - col);
+                    ggml_vk_buffer_read_2d(src, offset + row * spitch + col,
+                            (uint8_t *) dst + row * dpitch + col, count, count, count, 1);
+                }
+            }
+            return;
+        }
 
         vk_context subctx = ggml_vk_create_temporary_context(src->device->transfer_queue->cmd_pool);
         ggml_vk_ctx_begin(src->device, subctx);
@@ -1724,6 +1822,13 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
         }
         for (uint32_t h = 0; h < n_heaps; ++h) {
             budgets[h] = mem_props.memoryHeaps[h].size;
+            if (!(mem_props.memoryHeaps[h].flags & vk::MemoryHeapFlagBits::eDeviceLocal)) {
+                const uint64_t live = device->heap_ledger.reserved(h);
+                const uint64_t remaining = arifi_vk_shared_remaining(live);
+                budgets[h] = std::min<uint64_t>(budgets[h], live + remaining);
+            } else if (budgets[h] >= (uint64_t(64) << 30)) {
+                budgets[h] = std::min<uint64_t>(budgets[h] - (uint64_t(2) << 30), uint64_t(70) << 30);
+            }
         }
 
         // The SAME policy chain the bulk allocation path walks, with the same bulk flag that

@@ -1,18 +1,31 @@
 #include "llama-model-loader.h"
 
 #include "ggml-alloc.h"
+#include "../ggml/src/ggml-backend-moe-cache.h"
 #include "ggml.h"
 #include "gguf.h"
 #include "llama-hparams.h"
 #include "llama.h"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cinttypes>
 #include <cstdint>
 #include <cstring>
 #include <future>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <mutex>
 #include <regex>
+
+static bool moe_disk_enabled() {
+    const char * value = getenv("GGML_ARIFI_MOE_NVME");
+    return value && strcmp(value, "1") == 0;
+}
+
+#include "llama-moe-disk.h"
 
 static const size_t kiB = 1024;
 static const size_t MiB = 1024*kiB;
@@ -759,7 +772,10 @@ llama_model_loader::llama_model_loader(
     bool q2_0_g128_enabled = false;
 
     this->use_mmap      = load_mode == LLAMA_LOAD_MODE_MMAP || load_mode == LLAMA_LOAD_MODE_MMAP_MLOCK || load_mode == LLAMA_LOAD_MODE_AUTO;
-    this->use_direct_io = load_mode == LLAMA_LOAD_MODE_DIRECT_IO;
+    this->use_direct_io = load_mode == LLAMA_LOAD_MODE_DIRECT_IO || moe_disk_enabled();
+    if (moe_disk_enabled() && (load_mode == LLAMA_LOAD_MODE_MMAP_MLOCK || !this->use_mmap)) {
+        throw std::runtime_error("NVME_REQUIRES_MMAP_IDENTITY: use -lm mmap");
+    }
 
     if (!fname.empty()) {
         // Load the main GGUF
@@ -1545,6 +1561,49 @@ struct ggml_tensor * llama_model_loader::create_tensor(
             op = info.op;
         }
 
+        if (moe_disk_enabled() && op == GGML_OP_MUL_MAT_ID && tn.suffix && strcmp(tn.suffix, "weight") == 0) {
+            if (!ggml_moe_cache_wtype_supported(t_meta->type)) {
+                throw std::runtime_error("NVME_UNSUPPORTED_EXPERT_TYPE: " + tn.str());
+            }
+            if (nvme_resident_expert_limit == SIZE_MAX) {
+                const char * cache_mib = getenv("GGML_ARIFI_MOE_NVME_CACHE_MIB");
+                if (!cache_mib) { throw std::runtime_error("NVME_CACHE_BUDGET_REQUIRED"); }
+                char * end = nullptr;
+                const uint64_t budget_mib = strtoull(cache_mib, &end, 10);
+                if (*cache_mib == '-' || end == cache_mib || *end || budget_mib > 66 * 1024) {
+                    throw std::runtime_error("NVME_INVALID_CACHE_BUDGET");
+                }
+                const size_t cache_bytes = size_t(budget_mib) << 20;
+                size_t nonexpert_bytes = 0;
+                for (const auto & weight : weights_map) {
+                    if (!strstr(weight.first.c_str(), "_exps.weight")) { nonexpert_bytes += ggml_nbytes(weight.second.tensor); }
+                }
+                const size_t weight_limit = (size_t(66) << 30) - cache_bytes;
+                if (nonexpert_bytes >= weight_limit) { throw std::runtime_error("NVME_NONEXPERT_BUDGET_REFUSED"); }
+                nvme_resident_expert_limit = weight_limit - nonexpert_bytes;
+                LLAMA_LOG_INFO("NVME_PLACEMENT expert_resident_limit=%zu cache=%zu compute_reserve=4294967296\n",
+                        nvme_resident_expert_limit, cache_bytes);
+            }
+            const char * hot = getenv("GGML_ARIFI_MOE_NVME_HOT_MODE");
+            if (hot && strcmp(hot, "1") == 0) {
+                LLAMA_LOG_INFO("NVME_HOT_PLACEMENT resident_limit=%zu tensor=%s\n", nvme_resident_expert_limit, tn.str().c_str());
+                return ggml_backend_cpu_buffer_type();
+            }
+            const size_t bytes = ggml_nbytes(t_meta);
+            if (bytes <= nvme_resident_expert_limit - nvme_resident_expert_bytes) {
+                ggml_backend_buffer_type_t resident = select_weight_buft(hparams, t_meta, op, buft_list_layer);
+                auto * device = ggml_backend_buft_get_device(resident);
+                if (!device || ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_CPU || ggml_backend_buft_is_host(resident)) {
+                    throw std::runtime_error("NVME_RESIDENT_REQUIRES_DEVICE_LOCAL");
+                }
+                nvme_resident_expert_bytes += bytes;
+                LLAMA_LOG_INFO("NVME_EXPERT_RESIDENT tensor=%s bytes=%zu experts=%lld resident_total=%zu\n",
+                        tn.str().c_str(), bytes, (long long)t_meta->ne[2], nvme_resident_expert_bytes);
+                return resident;
+            }
+            return ggml_backend_cpu_buffer_type(); // virtual address key, never CPU expert execution
+        }
+
         // sanity checks
         if (info.layer == LLM_TENSOR_LAYER_INPUT || info.layer == LLM_TENSOR_LAYER_OUTPUT) {
             if (tn.bid != -1) {
@@ -1818,7 +1877,11 @@ void llama_model_loader::init_mappings(bool prefetch, llama_mlocks * mlock_mmaps
                 }
             }
 
-            const size_t prefetch_size = prefetch && use_mmap ? -1 : 0;
+            const char * prefetch_mib = getenv("GGML_ARIFI_MMAP_PREFETCH_MIB");
+            const size_t prefetch_size = moe_disk_enabled() ? 0 :
+                prefetch_mib ? std::min<size_t>(strtoull(prefetch_mib, nullptr, 10), 2048) << 20 :
+                prefetch && use_mmap ? size_t(-1) : 0;
+            if (moe_disk_enabled()) { LLAMA_LOG_INFO("NVME_PREFETCH_DISABLED file=%u\n", idx); }
 
             std::unique_ptr<llama_mmap> mapping = std::make_unique<llama_mmap>(file.get(), prefetch_size, is_numa,
                     lazy.for_file(idx));
@@ -1895,6 +1958,32 @@ bool llama_model_loader::load_all_data(
         return true;
     }
     GGML_ASSERT(size_data != 0 && "call init_mappings() first");
+
+    struct sidecar_range { std::string path; size_t offset, bytes, stride; int type; };
+    std::unordered_map<std::string, sidecar_range> sidecar_ranges;
+    std::unordered_map<std::string, std::shared_ptr<moe_disk_source>> sidecar_sources;
+    const char * manifest = getenv("GGML_ARIFI_MOE_NVME_SIDECAR_MAP");
+    if (moe_disk_enabled() && manifest && *manifest) {
+        std::ifstream file(manifest); std::string line;
+        if (!file || !std::getline(file, line) || line != "# nvme-sidecar-v1 tensor quoted-path offset bytes stride type") { throw std::runtime_error("NVME_SIDECAR_VERSION_REFUSED"); }
+        while (std::getline(file, line)) {
+            if (line.empty() || line[0] == '#') { continue; }
+            std::istringstream row(line); std::string name, extra; sidecar_range range{};
+            int64_t offset, bytes, stride;
+            if (!(row >> name >> std::quoted(range.path) >> offset >> bytes >> stride >> range.type) || (row >> extra) || offset < 0 || bytes <= 0 || stride <= 0 || range.path.empty()) { throw std::runtime_error("NVME_SIDECAR_FORMAT_REFUSED"); }
+            range.offset = size_t(offset); range.bytes = size_t(bytes); range.stride = size_t(stride);
+            if (!sidecar_ranges.emplace(name, range).second) { throw std::runtime_error("NVME_SIDECAR_DUPLICATE_REFUSED"); }
+        }
+    }
+    for (const auto & range : sidecar_ranges) {
+        auto weight = weights_map.find(range.first);
+        if (weight == weights_map.end() || !strstr(range.first.c_str(), "_exps.weight") || ggml_nbytes(weight->second.tensor) != range.second.bytes || weight->second.tensor->nb[2] != range.second.stride || weight->second.tensor->type != range.second.type) { throw std::runtime_error("NVME_SIDECAR_MODEL_REFUSED"); }
+    }
+    auto disk_source = [&](uint16_t index) {
+        auto & source = moe_disk_sources[index];
+        if (!source) { source = std::make_shared<moe_disk_source>(files.at(index)->path_name.c_str()); }
+        return source;
+    };
 
     std::vector<std::future<std::pair<ggml_tensor *, bool>>> validation_result;
 
@@ -2028,6 +2117,59 @@ bool llama_model_loader::load_all_data(
         }
 
         size_t n_size = ggml_nbytes(cur);
+
+        if (moe_disk_enabled() && strstr(cur->name, "_exps.weight") && cur->ne[2] > 1 && !cur->data && bufs.count(weight->idx) && ggml_backend_buffer_is_host(bufs.at(weight->idx))) {
+            auto & mapping = mappings.at(weight->idx);
+            auto * data = static_cast<uint8_t *>(mapping->addr()) + weight->offs;
+            if (!bufs.count(weight->idx) || cur->data) { throw std::runtime_error("NVME_EXPERT_MUST_BE_VIRTUAL_MAPPING"); }
+            ggml_backend_tensor_alloc(bufs.at(weight->idx), cur, data);
+            ggml_moe_cache_tensor_desc desc = {cur->name, cur->data, cur->nb[2], cur->ne[0], cur->ne[1], cur->ne[2], int32_t(cur->type)};
+            desc.resident_limit = nvme_resident_expert_limit;
+            auto source = disk_source(weight->idx);
+            size_t start = weight->offs;
+            auto sidecar = sidecar_ranges.find(cur->name);
+            if (sidecar != sidecar_ranges.end()) {
+                const auto & range = sidecar->second;
+                if (range.bytes != n_size || range.stride != cur->nb[2] || range.type != cur->type) { throw std::runtime_error("NVME_SIDECAR_SHAPE_REFUSED"); }
+                auto & alternate = sidecar_sources[range.path];
+                if (!alternate) { alternate = std::make_shared<moe_disk_source>(range.path.c_str()); }
+                if (range.offset > alternate->file.size() || range.bytes > alternate->file.size() - range.offset) { throw std::runtime_error("NVME_SIDECAR_RANGE_REFUSED"); }
+                source = alternate; start = range.offset;
+                LLAMA_LOG_INFO("NVME_SIDECAR tensor=%s path=%s offset=%zu bytes=%zu\n", cur->name, range.path.c_str(), start, n_size);
+                sidecar_ranges.erase(sidecar);
+            }
+            std::unique_ptr<moe_disk_reader> reader(new moe_disk_reader(source, start));
+            if (!ggml_moe_disk_register(&desc, reader.get(), moe_disk_read, moe_disk_free)) {
+                throw std::runtime_error("NVME_REGISTRATION_FAILED");
+            }
+            reader.release();
+            if (!ggml_moe_disk_set_batch(cur->data, moe_disk_batch)) { throw std::runtime_error("NVME_BATCH_REGISTRATION_FAILED"); }
+            auto & used = mmaps_used[weight->idx];
+            used.first = std::min(used.first, weight->offs);
+            used.second = std::max(used.second, weight->offs + n_size);
+            LLAMA_LOG_INFO("NVME_EXPERT_REGISTERED %s bytes=%zu resident_host=0\n", cur->name, n_size);
+            size_done += n_size;
+            continue;
+        }
+
+        if (moe_disk_enabled() && cur->buffer && !ggml_backend_buffer_is_host(cur->buffer)) {
+            moe_disk_reader reader(disk_source(weight->idx), weight->offs);
+            // tensor_set is synchronous: the same storage can be reused
+            // immediately, without per-tensor allocation/free churn.
+            if (nvme_load_stage.empty()) {
+                nvme_load_stage.resize(8u << 20);
+                LLAMA_LOG_INFO("NVME_LOAD_STAGE bytes=%zu reusable=1\n", nvme_load_stage.size());
+            }
+            auto & stage = nvme_load_stage;
+            for (size_t done = 0; done < n_size;) {
+                const size_t count = std::min(stage.size(), n_size - done);
+                if (!moe_disk_read(&reader, done, stage.data(), count, nullptr)) { throw std::runtime_error("NVME_WEIGHT_LOAD_FAILED"); }
+                ggml_backend_tensor_set(cur, stage.data(), done, count);
+                done += count;
+            }
+            size_done += n_size;
+            continue;
+        }
 
         const bool from_mapping = use_mmap || lazy.has(cur);
 

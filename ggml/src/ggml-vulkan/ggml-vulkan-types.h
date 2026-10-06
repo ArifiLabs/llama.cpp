@@ -6,6 +6,7 @@
 // skipped, and the definitions below silently acquire C++ linkage while every caller that
 // includes <vulkan/vulkan.h> first expects C linkage — a link error, not a compile error.
 #include <vulkan/vulkan_core.h>
+#include "ggml-vulkan-shared-budget.h"
 #include "ggml-vulkan.h"
 
 #if defined(GGML_VULKAN_RUN_TESTS) || defined(GGML_VULKAN_CHECK_RESULTS)
@@ -1788,6 +1789,8 @@ struct vk_heap_reservation {
 };
 
 struct vk_buffer_struct {
+    std::shared_ptr<arifi_vk_shared_lease> shared_lease;
+    std::shared_ptr<arifi_vk_local_lease> local_lease;
     vk::Buffer buffer = VK_NULL_HANDLE;
     vk::DeviceMemory device_memory = VK_NULL_HANDLE;
     vk::MemoryPropertyFlags memory_property_flags;
@@ -1832,6 +1835,8 @@ struct vk_buffer_struct {
         // Unconditional and last: it does not depend on `size` being initialized, it runs on every
         // path including the size == 0 one, and release() is idempotent.
         reservation.release();
+        shared_lease.reset();
+        local_lease.reset();
     }
 };
 

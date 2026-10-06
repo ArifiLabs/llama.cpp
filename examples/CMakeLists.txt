@@ -42,3 +42,6 @@ else()
         endif()
     endif()
 endif()
+
+add_subdirectory(moe-trace)
+add_subdirectory(moe-disk-probe)

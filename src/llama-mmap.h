@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 #include <cstdio>
+#include <string>
 
 struct llama_file;
 struct llama_mmap;
@@ -22,6 +23,7 @@ struct llama_file {
     size_t tell() const;
     size_t size() const;
 
+    std::string path_name;
     int file_id() const; // fileno overload
 
     void seek(size_t offset, int whence) const;
@@ -36,6 +38,9 @@ struct llama_file {
 
     size_t read_alignment() const;
     bool has_direct_io() const;
+    uint64_t physical_read_bytes() const;
+    size_t direct_io_scratch_size() const;
+    size_t direct_io_scratch_peak() const;
 private:
     struct impl;
     std::unique_ptr<impl> pimpl;

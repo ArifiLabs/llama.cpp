@@ -30,6 +30,7 @@ layout (binding = 4) uniform Params {
     int64_t row_stride;
     int64_t n_hits;
     int64_t padded_n_in;
+    int64_t coop;
 } p;
 
 // Select weight block type via preprocessor define (1=Q8_0, 2=Q4_0, 3=Q4_K, 4=Q6_K, 5=Q5_K).
@@ -826,7 +827,99 @@ float dot_block_nvfp4(const block_nvfp4 w, const uint ab) {
 }
 #endif // MOE_CACHE_WTYPE == 23
 
+// One weight block against its activation block(s); shared by both mappings.
+float block_dot(const uint wb, const uint ab) {
+#if MOE_CACHE_WTYPE == 1
+    return dot_block_q8_0(data_slab[wb], data_act[ab]);
+#elif MOE_CACHE_WTYPE == 2
+    return dot_block_q4_0(data_slab[wb], data_act[ab]);
+#elif MOE_CACHE_WTYPE == 3
+    return dot_block_q4_K(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 4
+    return dot_block_q6_K(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 5
+    return dot_block_q5_K(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 6
+    return dot_block_q1_0(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 7
+    return dot_block_q2_0(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 8
+    return dot_block_q4_1(data_slab[wb], data_act[ab]);
+#elif MOE_CACHE_WTYPE == 9
+    return dot_block_q5_0(data_slab[wb], data_act[ab]);
+#elif MOE_CACHE_WTYPE == 10
+    return dot_block_q5_1(data_slab[wb], data_act[ab]);
+#elif MOE_CACHE_WTYPE == 11
+    return dot_block_q2_K(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 12
+    return dot_block_q3_K(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 13
+    return dot_block_iq2_xxs(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 14
+    return dot_block_iq2_xs(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 15
+    return dot_block_iq2_s(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 16
+    return dot_block_iq3_xxs(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 17
+    return dot_block_iq3_s(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 18
+    return dot_block_iq1_s(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 19
+    return dot_block_iq1_m(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 20
+    return dot_block_iq4_nl(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 21
+    return dot_block_iq4_xs(data_slab[wb], ab);
+#elif MOE_CACHE_WTYPE == 22
+    return dot_block_mxfp4(data_slab[wb], data_act[ab]);
+#elif MOE_CACHE_WTYPE == 23
+    return dot_block_nvfp4(data_slab[wb], ab);
+#endif
+}
+
+// Cooperative mapping (GGML_ARIFI_VK_MOE_MV=coop): 16 lanes per (hit, row),
+// adjacent lanes read adjacent weight blocks of one row, shared-memory reduce.
+// ponytail: fixed 16 lanes idles half of them at nb=8 (n_in 2048); tune per shape later.
+shared float coop_part[256];
+void main_coop() {
+    const uint lid = gl_LocalInvocationID.x;
+    const uint lane = lid & 15u;
+    const uint grow = gl_WorkGroupID.x * 16u + (lid >> 4u);
+    const uint total = uint(p.n_hits) * uint(p.n_out);
+    float sum = 0.0f;
+    if (grow < total) {
+        const uint hit = grow / uint(p.n_out);
+        const uint row = grow - hit * uint(p.n_out);
+        const int slot = data_ids[hit];
+        if (slot >= 0) {
+            const int64_t byte_off = int64_t(slot) * p.expert_stride + int64_t(row) * p.row_stride;
+            const uint block_base = uint(byte_off / int64_t(WBLOCK_BYTES));
+            const uint act_base = hit * uint(p.padded_n_in / int64_t(32));
+            const uint nb = uint(p.n_in / int64_t(WBLOCK_QK));
+            for (uint ib = lane; ib < nb; ib += 16u) {
+                sum += block_dot(block_base + ib, act_base + ib * ACT_BLOCKS_PER_WBLOCK);
+            }
+        }
+    }
+    coop_part[lid] = sum;
+    barrier();
+    [[unroll]] for (uint s = 8u; s > 0u; s >>= 1u) {
+        if (lane < s) {
+            coop_part[lid] += coop_part[lid + s];
+        }
+        barrier();
+    }
+    if (lane == 0u && grow < total) {
+        data_dst[grow] = coop_part[lid];
+    }
+}
+
 void main() {
+    if (p.coop != 0) {
+        main_coop();
+        return;
+    }
     // One thread per (hit, output row) pair, like the Metal kernel.
     const uint id = gl_GlobalInvocationID.x;
     const uint total = uint(p.n_hits) * uint(p.n_out);
@@ -851,53 +944,7 @@ void main() {
     float sum = 0.0f;
     for (int ib = 0; ib < nb; ib++) {
         const uint ab = act_base + uint(ib) * ACT_BLOCKS_PER_WBLOCK;
-#if MOE_CACHE_WTYPE == 1
-        sum += dot_block_q8_0(data_slab[block_base + uint(ib)], data_act[ab]);
-#elif MOE_CACHE_WTYPE == 2
-        sum += dot_block_q4_0(data_slab[block_base + uint(ib)], data_act[ab]);
-#elif MOE_CACHE_WTYPE == 3
-        sum += dot_block_q4_K(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 4
-        sum += dot_block_q6_K(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 5
-        sum += dot_block_q5_K(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 6
-        sum += dot_block_q1_0(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 7
-        sum += dot_block_q2_0(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 8
-        sum += dot_block_q4_1(data_slab[block_base + uint(ib)], data_act[ab]);
-#elif MOE_CACHE_WTYPE == 9
-        sum += dot_block_q5_0(data_slab[block_base + uint(ib)], data_act[ab]);
-#elif MOE_CACHE_WTYPE == 10
-        sum += dot_block_q5_1(data_slab[block_base + uint(ib)], data_act[ab]);
-#elif MOE_CACHE_WTYPE == 11
-        sum += dot_block_q2_K(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 12
-        sum += dot_block_q3_K(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 13
-        sum += dot_block_iq2_xxs(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 14
-        sum += dot_block_iq2_xs(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 15
-        sum += dot_block_iq2_s(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 16
-        sum += dot_block_iq3_xxs(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 17
-        sum += dot_block_iq3_s(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 18
-        sum += dot_block_iq1_s(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 19
-        sum += dot_block_iq1_m(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 20
-        sum += dot_block_iq4_nl(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 21
-        sum += dot_block_iq4_xs(data_slab[block_base + uint(ib)], ab);
-#elif MOE_CACHE_WTYPE == 22
-        sum += dot_block_mxfp4(data_slab[block_base + uint(ib)], data_act[ab]);
-#elif MOE_CACHE_WTYPE == 23
-        sum += dot_block_nvfp4(data_slab[block_base + uint(ib)], ab);
-#endif
+        sum += block_dot(block_base + uint(ib), ab);
     }
     data_dst[id] = sum;
 }
