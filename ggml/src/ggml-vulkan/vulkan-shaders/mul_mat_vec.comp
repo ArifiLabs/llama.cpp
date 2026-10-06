@@ -2,6 +2,11 @@
 
 #extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
 
+#if defined(MUL_MAT_ID_GATHER) && defined(USE_SUBGROUP_ADD_NO_SHMEM) && !defined(DATA_A_F32) && !defined(DATA_A_F16) && !defined(DATA_A_BF16)
+#extension GL_KHR_shader_subgroup_shuffle : require
+#define ARIFI_GATHER_TAIL 1
+#endif
+
 #include "mul_mat_vec_base.glsl"
 #include "dequant_funcs.glsl"
 
@@ -11,6 +16,14 @@ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 #define K_PER_ITER 8
 #else
 #define K_PER_ITER 4
+#endif
+
+#ifdef ARIFI_GATHER_TAIL
+// arifi lane-302 Route A: K-tail redistribution (IQ4_NL down, K = 640 on a 64-lane subgroup: the last K iteration
+// ran 16 of 64 lanes). Lane h computes owner (h % tl)'s tail chunk of row (h / tl) with the same statements as
+// iter(), then the owner pulls it by subgroupShuffle and applies the same `*= dm.x; temp +=` in the same order.
+// Per-lane partials and the subgroupAdd tree are unchanged, so each row is byte-identical to the old path.
+layout (constant_id = 3) const uint GATHER_TAIL = 0;
 #endif
 
 
@@ -133,6 +146,69 @@ void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const
 #endif
 }
 
+#ifdef ARIFI_GATHER_TAIL
+void tail_iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const uint num_rows, const uint tid, const uint i, const uint tl)
+{
+    // helper side: lane tid computes the tail chunk of owner ht for row hn (statements copied from iter())
+    const uint hn = tid / tl;
+    const uint ht = tid - hn * tl;
+    FLOAT_TYPE pre[NUM_COLS];
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        pre[j] = FLOAT_TYPE(0);
+    }
+    if (hn < num_rows) {
+        const uint col = i*BLOCK_SIZE + K_PER_ITER*ht;
+        const uint iqs = (col%QUANT_K)/QUANT_R;
+        const uint iybs = col - col%QUANT_K;
+        const uint ib = ((first_row + hn)*p.ncols + col)/QUANT_K;
+
+        vec4 v = dequantize4(ib, iqs, a_offset);
+        vec4 v2 = dequantize4(ib, iqs+(4/QUANT_R), a_offset);
+
+        const vec2 dm = get_dm(ib, a_offset);
+        if (dm.y != 0) {
+            v = v * dm.x + dm.y;
+            v2 = v2 * dm.x + dm.y;
+        }
+
+        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+#if QUANT_R == 2
+            const vec4 bv02 = vec4(data_b_v4[(B_COL(j) + b_offset + iybs + iqs) / 4]);
+            const vec4 bv13 = vec4(data_b_v4[(B_COL(j) + b_offset + iybs + iqs + y_offset) / 4]);
+            const vec4 bv0 = vec4(bv02.x, bv13.x, bv02.y, bv13.y);
+            const vec4 bv1 = vec4(bv02.z, bv13.z, bv02.w, bv13.w);
+#else
+            const vec4 bv0 = vec4(data_b_v4[(B_COL(j) + b_offset + iybs + iqs) / 4]);
+            const vec4 bv1 = vec4(data_b_v4[(B_COL(j) + b_offset + iybs + iqs) / 4 + 1]);
+#endif
+            FLOAT_TYPE rowtmp = dot(bv0, v);
+            rowtmp += dot(bv1, v2);
+            pre[j] = rowtmp;
+        }
+    }
+
+    // owner side: lanes < tl own a tail chunk; every lane joins the shuffle (uniform control flow)
+    const bool owner = tid < tl;
+    const uint col = i*BLOCK_SIZE + K_PER_ITER*(owner ? tid : 0);
+    uint ibi = first_row*p.ncols;
+    [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+        const uint ib = (ibi + col)/QUANT_K;
+        ibi += p.ncols;
+        const vec2 dm = get_dm(ib, a_offset);
+        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+            // GATHER_TAIL == 2 is the planted wrong arm (pulls the neighbour lane's chunk; op gate must go RED)
+            FLOAT_TYPE rowtmp = subgroupShuffle(pre[j], n*tl + (owner ? tid : 0) + (GATHER_TAIL == 2 ? 1 : 0));
+            if (owner) {
+                if (dm.y == 0)
+                    rowtmp *= dm.x;
+
+                temp[j][n] += rowtmp;
+            }
+        }
+    }
+}
+#endif
+
 #if defined(DATA_A_F32) || defined(DATA_A_F16) || defined(DATA_A_BF16)
 void iter_aligned_nonquant(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const uint num_rows, const uint tid, const uint i)
 {
@@ -177,6 +253,12 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
     }
 
     uint num_iters = p.ncols / (K_PER_ITER * BLOCK_SIZE);
+#ifdef ARIFI_GATHER_TAIL
+    const uint tail_lanes = (p.ncols - num_iters * K_PER_ITER * BLOCK_SIZE) / K_PER_ITER;
+    const bool use_tail = GATHER_TAIL != 0 && tail_lanes != 0 && (p.ncols % K_PER_ITER) == 0 &&
+                          tail_lanes * num_rows <= BLOCK_SIZE && gl_SubgroupSize == BLOCK_SIZE;
+    if (!use_tail)
+#endif
     if (num_iters * K_PER_ITER * BLOCK_SIZE + K_PER_ITER*tid < p.ncols) {
         num_iters++;
     }
@@ -258,6 +340,12 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
         i++;
     }
 #if K_PER_ITER == 4
+    }
+#endif
+
+#ifdef ARIFI_GATHER_TAIL
+    if (use_tail) {
+        tail_iter(temp, first_row, num_rows, tid, num_iters*K_PER_ITER, tail_lanes);
     }
 #endif
 
