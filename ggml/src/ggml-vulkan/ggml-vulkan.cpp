@@ -3934,7 +3934,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         // row's arithmetic against the NUM_COLS=1 id pipeline.
         {
             const char * env = getenv("GGML_ARIFI_MOE_GATHER");
-            const uint32_t g = env == nullptr ? 0u : (uint32_t) atoi(env);
+            // default ON at width 1 (lane-302 cellE-10052000 served ABBA x2); GGML_ARIFI_MOE_GATHER=0 opts out
+            const uint32_t g = env == nullptr ? 1u : (uint32_t) atoi(env);
             device->moe_gather_cols = (g == 1 || g == 2 || g == 4) ? g : 0u;
             const char * plant = getenv("GGML_ARIFI_MOE_GATHER_PLANT");
             device->moe_gather_plant = plant != nullptr && plant[0] == '1';
