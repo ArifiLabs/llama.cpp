@@ -1011,6 +1011,15 @@ void process_shaders() {
                 string_to_spv("mul_mat_vec_idg_" + tname + "_q8_1_f32" + sfx, "mul_mat_vecq.comp", d);
             }
         }
+        // lane-300 F-141 3b: `precise` Q4_K/Q5_K MMVQ dot as its own SPIR-V (GGML_ARIFI_MMV_ROWSTABLE_N), MUL_MAT only.
+        if (tname == "q4_k" || tname == "q5_k") {
+            for (const std::string sfx : {"", "_subgroup", "_subgroup_no_shmem"}) {
+                std::map<std::string, std::string> d = merge_maps(base_dict, {{data_a_key, "1"}, {"ARIFI_MMVQ_PRECISE", "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}});
+                if (sfx == "_subgroup") d["USE_SUBGROUP_ADD"] = "1";
+                if (sfx == "_subgroup_no_shmem") d["USE_SUBGROUP_ADD_NO_SHMEM"] = "1";
+                string_to_spv("mul_mat_vec_" + tname + "_prec_q8_1_f32" + sfx, "mul_mat_vecq.comp", d);
+            }
+        }
         // arifi lane-296: upstream b1ff4ca23's IQ4_XS q8_1 MMVQ body (K_PER_ITER 32) beside R75's,
         // selected at pipeline creation by GGML_ARIFI_IQ4XS_MMVQ_BODY (W1 collision three-arm).
         if (tname == "iq4_xs") {
@@ -1873,6 +1882,18 @@ void write_output_files() {
         if (basename(input_filepath) == "mul_mat_vec.comp") {
             src << "const void * arr_dmmv_"   << n << "_data[3] = {mul_mat_vec_" << n << "_data, mul_mat_vec_" << n << "_subgroup_data, mul_mat_vec_" << n << "_subgroup_no_shmem_data};\n";
             src << "const uint64_t arr_dmmv_" << n << "_len[3] = {mul_mat_vec_" << n << "_len, mul_mat_vec_" << n << "_subgroup_len, mul_mat_vec_" << n << "_subgroup_no_shmem_len};\n";
+        }
+        // lane-300: the precise Q4_K/Q5_K MMVQ variants (q8_1 only).
+        if (btype == "q8_1") {
+            for (const std::string t : {"q4_k", "q5_k"}) {
+                const std::string np = t + "_prec_q8_1_f32";
+                hdr << "extern const void * arr_dmmv_"   << np << "_data[3];\n";
+                hdr << "extern const uint64_t arr_dmmv_" << np << "_len[3];\n";
+                if (basename(input_filepath) == "mul_mat_vec.comp") {
+                    src << "const void * arr_dmmv_"   << np << "_data[3] = {mul_mat_vec_" << np << "_data, mul_mat_vec_" << np << "_subgroup_data, mul_mat_vec_" << np << "_subgroup_no_shmem_data};\n";
+                    src << "const uint64_t arr_dmmv_" << np << "_len[3] = {mul_mat_vec_" << np << "_len, mul_mat_vec_" << np << "_subgroup_len, mul_mat_vec_" << np << "_subgroup_no_shmem_len};\n";
+                }
+            }
         }
     }
 

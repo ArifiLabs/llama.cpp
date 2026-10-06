@@ -20,7 +20,10 @@ FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
 // NO DIVISION BY A SPECIALIZATION CONSTANT AT GLOBAL SCOPE (lane-166: the AMD proprietary driver
 // folds OpSpecConstantOp UDiv at pipeline creation and raised STATUS_INTEGER_DIVIDE_BY_ZERO).
 // Selects give the same constants with no divide.
-const bool ARIFI_TPB16 = (NUM_COLS == 3) || (NUM_COLS > 4);
+// lane-300 F-141 3b: 1 = stock 8/4 shape at every width (GGML_ARIFI_MMV_ROWSTABLE_N), so column j sums as at n=1.
+layout (constant_id = 4) const uint ARIFI_IQ3_TPB_STOCK = 0;
+const uint ARIFI_TPB_COLS = (ARIFI_IQ3_TPB_STOCK != 0) ? 1u : NUM_COLS;
+const bool ARIFI_TPB16 = (ARIFI_TPB_COLS == 3) || (ARIFI_TPB_COLS > 4);
 const uint TPB         = ARIFI_TPB16 ? 16u : 8u;
 const uint NL          = ARIFI_TPB16 ?  2u : 4u;   // == 32 / TPB
 const uint TPB_OVER_8  = ARIFI_TPB16 ?  2u : 1u;   // == TPB / 8

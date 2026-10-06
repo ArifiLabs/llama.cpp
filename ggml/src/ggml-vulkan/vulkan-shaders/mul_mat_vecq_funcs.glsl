@@ -508,11 +508,13 @@ FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
     q_sum += dotPacked4x8EXT(a.qs.z, cache_b_qs[2]);
     q_sum += dotPacked4x8EXT(a.qs.w, cache_b_qs[3]);
 
-    if (ARIFI_MMVQ_PRECISE != 0) {
-        precise float r = float(cache_b_ds.x) * float(a.dm_scale.x) * float(q_sum) - float(a.dm_scale.y) * float(cache_b_ds.y / 2);
-        return FLOAT_TYPE(r);
-    }
+#ifdef ARIFI_MMVQ_PRECISE
+    // lane-300 F-141 3b: separate SPIR-V variant (a spec-constant branch moved the default codegen in the driver, cell 25).
+    precise float r = float(cache_b_ds.x) * float(a.dm_scale.x) * float(q_sum) - float(a.dm_scale.y) * float(cache_b_ds.y / 2);
+    return FLOAT_TYPE(r);
+#else
     return FLOAT_TYPE(float(cache_b_ds.x) * float(a.dm_scale.x) * float(q_sum) - float(a.dm_scale.y) * float(cache_b_ds.y / 2));
+#endif
 }
 #endif
 
