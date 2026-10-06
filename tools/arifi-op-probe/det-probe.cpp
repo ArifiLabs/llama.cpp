@@ -23,7 +23,7 @@
 #include <vector>
 
 struct rec { int step; std::string name; int op; int64_t ne[4]; uint64_t h; };
-struct rrec { std::string name; int op; std::vector<float> last; };   // ROWS per-op: the last token's slice
+struct rrec { std::string name; int op; std::vector<float> last; std::vector<uint64_t> rh; int amb = 0; size_t n = 0; };   // ROWS per-op: last token's slice; ops=3: every token slice's hash
 
 struct probe {
     int mode = 0;                       // 0 off, 1 all nodes, 2 name-filtered
@@ -34,6 +34,7 @@ struct probe {
     bool rows_mode = false;
     int n_tok = 1;
     std::vector<rrec> * rows_cur = nullptr;
+    bool per_row = false;               // DETP_ROWS_OPS=3
 };
 
 static uint64_t fnv(const uint8_t * p, size_t n, uint64_t h) {
@@ -172,6 +173,25 @@ static void rows_rec(probe * p, const ggml_tensor * t) {
     if (strncmp(t->name, "cache_", 6) == 0) return;
     if (t->type != GGML_TYPE_F32 && t->type != GGML_TYPE_F16 && t->type != GGML_TYPE_I32) return;   // I32: bit-copied, equality only
     const std::vector<float> f = to_f32(t);
+    if (p->per_row) {   // ops=3: hash of every token slice; a width that equals 2+ dims is ambiguous and not sliced
+        rrec r { t->name, (int) t->op, {} };
+        int d = -1, cnt = 0;
+        if (p->n_tok > 1) for (int i = 1; i < 4; ++i) if (t->ne[i] == p->n_tok) { d = i; ++cnt; }
+        if (p->n_tok == 1) { r.n = f.size(); r.rh.push_back(fnv((const uint8_t *) f.data(), f.size() * 4, 1469598103934665603ull)); }
+        else if (cnt != 1) { r.amb = cnt; }
+        else {
+            int64_t inner = 1; for (int i = 0; i < d; ++i) inner *= t->ne[i];
+            int64_t outer = 1; for (int i = d + 1; i < 4; ++i) outer *= t->ne[i];
+            r.n = (size_t) (inner * outer);
+            for (int64_t s = 0; s < t->ne[d]; ++s) {
+                uint64_t h = 1469598103934665603ull;
+                for (int64_t o = 0; o < outer; ++o) h = fnv((const uint8_t *) (f.data() + (o * t->ne[d] + s) * inner), inner * 4, h);
+                r.rh.push_back(h);
+            }
+        }
+        p->rows_cur->push_back(std::move(r));
+        return;
+    }
     int d = -1;
     if (p->n_tok > 1) for (int i = 3; i >= 1; --i) if (t->ne[i] == p->n_tok) { d = i; break; }
     rrec r { t->name, (int) t->op, {} };
@@ -243,6 +263,7 @@ int main(int argc, char ** argv) {
     // DETP_ROWS_OPS=1: name-walk compare (first 40 diffs); =2: also dump every node's last-row hash per width (offline match)
     const int rows_ops = envi("DETP_ROWS_OPS", 0);
     pr.rows_mode = getenv("DETP_ROWS") && rows_ops >= 1;
+    pr.per_row = pr.rows_mode && rows_ops == 3;
     if (pr.mode != 0 || pr.rows_mode) { params.cb_eval = cb; params.cb_eval_user_data = &pr; }
     params.warmup = false;
 
@@ -323,11 +344,30 @@ int main(int argc, char ** argv) {
                 llama_memory_clear(mem, true);
                 pr.step = (int) wi;
                 dec(S, 0, std::min(t - 7, t - w + 1), false);   // widths > 8 must not re-decode prefill positions
-                for (int i = t - 7; i <= t - w; ++i) dec(S, i, i + 1, true);
+                // ops=3: every node's per-token hash, keyed by absolute position p; single steps are the per-position reference
+                auto dump3 = [&](const std::vector<rrec> & v, int p0, int nw, bool single) {
+                    for (size_t i = 0; i < v.size(); ++i) {
+                        const rrec & o = v[i];
+                        if (o.amb) { fprintf(out, "{\"r3\":true,\"t\":%d,\"w\":%d,\"s\":%d,\"i\":%zu,\"name\":\"%s\",\"op\":\"%s\",\"amb\":%d}\n",
+                                             t, w, (int) single, i, o.name.c_str(), ggml_op_name((ggml_op) o.op), o.amb); continue; }
+                        for (size_t r = 0; r < o.rh.size(); ++r)
+                            fprintf(out, "{\"r3\":true,\"t\":%d,\"w\":%d,\"s\":%d,\"p\":%d,\"i\":%zu,\"name\":\"%s\",\"op\":\"%s\",\"n\":%zu,\"h\":\"%016llx\"}\n",
+                                    t, w, (int) single, p0 + (nw == 1 ? 0 : (int) r), i, o.name.c_str(), ggml_op_name((ggml_op) o.op), o.n,
+                                    (unsigned long long) o.rh[r]);
+                    }
+                };
+                for (int i = t - 7; i <= t - w; ++i) {
+                    std::vector<rrec> sops;
+                    if (pr.per_row) { pr.n_tok = 1; pr.rows_cur = &sops; }
+                    dec(S, i, i + 1, true);
+                    pr.rows_cur = nullptr;
+                    if (pr.per_row) dump3(sops, i, 1, true);
+                }
                 std::vector<rrec> ops;
                 pr.n_tok = w; pr.rows_cur = pr.rows_mode ? &ops : nullptr;
                 dec(S, t - w + 1, t + 1, true);
                 pr.rows_cur = nullptr;
+                if (pr.per_row) dump3(ops, t - w + 1, w, false);
                 if (pr.rows_mode && rows_ops == 2) {
                     for (size_t i = 0; i < ops.size(); ++i) {
                         const rrec & o = ops[i];

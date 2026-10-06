@@ -10710,6 +10710,17 @@ bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, const vk_
 // The split-k heuristic, ONE home: the single-dispatch path and the segmented wrapper both call it,
 // so the wrapper's k_total (baked into every partition's push constants) cannot disagree with what
 // the body dispatch actually does.
+// lane-300 F-141 3b: under GQA, workgroups_x is the token count, so split_k (the KV reduction split) moved with the
+// verify width and row t's FA output changed bits with batch size. For neq1 <= GGML_ARIFI_FA_ROWSTABLE_N (default 8)
+// choose split_k as for one token: every token keeps its n=1 KV partition and reduction order. 0 = old behaviour.
+static uint32_t ggml_vk_fa_rowstable_wx(uint32_t gqa_ratio, uint32_t neq1, uint32_t workgroups_x) {
+    static const uint32_t fa_rowstable_n = [] {
+        const char * s = getenv("GGML_ARIFI_FA_ROWSTABLE_N");
+        return s ? (uint32_t) atoi(s) : 8u;
+    }();
+    return (gqa_ratio > 1 && neq1 <= fa_rowstable_n) ? 1u : workgroups_x;
+}
+
 static void ggml_vk_fa_choose_split_k(const vk_device& device, uint32_t gqa_ratio,
                                       uint32_t workgroups_x, uint32_t workgroups_y, uint32_t workgroups_z,
                                       uint32_t Br, uint32_t N, uint32_t KV, uint32_t alignment,
@@ -11037,14 +11048,7 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
     GGML_ASSERT(Br == pipeline->wg_denoms[0]);
     const uint32_t Tr = CEIL_DIV(N, Br);
 
-    // lane-300 F-141 3b: under GQA, workgroups_x is the token count, so split_k (the KV reduction split) moved with the
-    // verify width and row t's FA output changed bits with batch size. For neq1 <= GGML_ARIFI_FA_ROWSTABLE_N (default 8)
-    // choose split_k as for one token: every token keeps its n=1 KV partition and reduction order. 0 = old behaviour.
-    static const uint32_t fa_rowstable_n = [] {
-        const char * s = getenv("GGML_ARIFI_FA_ROWSTABLE_N");
-        return s ? (uint32_t) atoi(s) : 8u;
-    }();
-    const uint32_t wgx_split = (gqa_ratio > 1 && neq1 <= fa_rowstable_n) ? 1u : workgroups_x;
+    const uint32_t wgx_split = ggml_vk_fa_rowstable_wx(gqa_ratio, neq1, workgroups_x);
 
     if (part) {
         // lane-196: the wrapper already ran the ONE split-k heuristic for the body and fixed the
@@ -11070,6 +11074,19 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
     } else {
         ggml_vk_fa_choose_split_k(ctx->device, gqa_ratio, wgx_split, workgroups_y, workgroups_z,
                                   Br, N, KV, alignment, &split_kv, &split_k);
+    }
+
+    // lane-300 F-141 3b diagnosis: one stderr line per distinct FA dispatch tuple (which knob moves with width)
+    static const bool fa_trace = getenv("GGML_ARIFI_FA_TRACE") != nullptr;
+    if (fa_trace) {
+        static std::mutex fa_trace_mtx;
+        static std::set<std::string> fa_trace_seen;
+        char buf[384];
+        snprintf(buf, sizeof(buf), "FA_TRACE neq1=%u gqa=%u N=%u Br=%u Bc=%u KV=%u split_k=%u split_kv=%u sparse=%d mopt=%d deq=%d path=%d aligned=%d part=%d nem1=%u",
+                 (uint32_t) neq1, gqa_ratio, N, Br, Bc, KV, split_k, split_kv, (int) use_sparse, (int) use_mask_opt,
+                 (int) use_dequant_kv, (int) tuning_params.path, (int) aligned, (int) (part != nullptr), (uint32_t) nem1);
+        std::lock_guard<std::mutex> g(fa_trace_mtx);
+        if (fa_trace_seen.insert(buf).second) fprintf(stderr, "%s\n", buf);
     }
 
     // upstream 4ceb17191 Intel Xe FA; the KV re-split it followed is inside ggml_vk_fa_choose_split_k (lane-196),
@@ -11439,7 +11456,7 @@ static void ggml_vk_flash_attn_segmented(ggml_backend_vk_context * ctx, vk_conte
         wy /= gqa_ratio;
     }
     uint32_t body_split_kv = KV_body, body_split_k = 1;
-    ggml_vk_fa_choose_split_k(ctx->device, gqa_ratio, wx, wy, wz, tuning_body.block_rows, N_eff, KV_body,
+    ggml_vk_fa_choose_split_k(ctx->device, gqa_ratio, ggml_vk_fa_rowstable_wx(gqa_ratio, neq1, wx), wy, wz, tuning_body.block_rows, N_eff, KV_body,
                               tuning_body.block_cols, &body_split_kv, &body_split_k);
     body_split_k = std::max(body_split_k, 1u);
 
