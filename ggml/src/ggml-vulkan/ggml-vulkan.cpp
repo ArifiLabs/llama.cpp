@@ -10740,12 +10740,12 @@ bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, const vk_
 // so the wrapper's k_total (baked into every partition's push constants) cannot disagree with what
 // the body dispatch actually does.
 // lane-300 F-141 3b: under GQA, workgroups_x is the token count, so split_k (the KV reduction split) moved with the
-// verify width and row t's FA output changed bits with batch size. For neq1 <= GGML_ARIFI_FA_ROWSTABLE_N (default 8)
-// choose split_k as for one token: every token keeps its n=1 KV partition and reduction order. 0 = old behaviour.
+// verify width and row t's FA output changed bits with batch size. For neq1 <= GGML_ARIFI_FA_ROWSTABLE_N (opt-in, e.g. 8)
+// choose split_k as for one token: every token keeps its n=1 KV partition and reduction order. 0 (default) = old behaviour.
 static uint32_t ggml_vk_fa_rowstable_wx(uint32_t gqa_ratio, uint32_t neq1, uint32_t workgroups_x) {
     static const uint32_t fa_rowstable_n = [] {
         const char * s = getenv("GGML_ARIFI_FA_ROWSTABLE_N");
-        return s ? (uint32_t) atoi(s) : 8u;
+        return s ? (uint32_t) atoi(s) : 0u;
     }();
     return (gqa_ratio > 1 && neq1 <= fa_rowstable_n) ? 1u : workgroups_x;
 }
