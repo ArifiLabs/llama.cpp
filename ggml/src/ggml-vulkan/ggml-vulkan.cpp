@@ -3858,6 +3858,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_0][i], "mul_mat_vec_q5_0_q8_1_f32", arr_dmmv_q5_0_q8_1_f32_len[reduc], arr_dmmv_q5_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_1][i], "mul_mat_vec_q5_1_q8_1_f32", arr_dmmv_q5_1_q8_1_f32_len[reduc], arr_dmmv_q5_1_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q8_0][i], "mul_mat_vec_q8_0_q8_1_f32", arr_dmmv_q8_0_q8_1_f32_len[reduc], arr_dmmv_q8_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
+                // arifi lane-302 Route B: IQ4_NL q8_1 mat-vec, Q4_0 geometry; routed only by GGML_ARIFI_IQ4NL_MMVQ=1
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_IQ4_NL][i], "mul_mat_vec_iq4_nl_q8_1_f32", arr_dmmv_iq4_nl_q8_1_f32_len[reduc], arr_dmmv_iq4_nl_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
 
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_MXFP4][i], "mul_mat_vec_mxfp4_q8_1_f32", arr_dmmv_mxfp4_q8_1_f32_len[reduc], arr_dmmv_mxfp4_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
 
@@ -3997,6 +3999,12 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_q8_1_f32[w][GGML_TYPE_Q5_0], "mul_mat_vec_id_q5_0_q8_1_f32", arr_dmmv_id_q5_0_q8_1_f32_len[reduc], arr_dmmv_id_q5_0_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_id(1*rm_stdq_int), 1, 1}, {wg_size_subgroup_int, rm_id(1*rm_stdq_int)}, 1, true, use_subgroups, subgroup_size_int);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_q8_1_f32[w][GGML_TYPE_Q5_1], "mul_mat_vec_id_q5_1_q8_1_f32", arr_dmmv_id_q5_1_q8_1_f32_len[reduc], arr_dmmv_id_q5_1_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_id(1*rm_stdq_int), 1, 1}, {wg_size_subgroup_int, rm_id(1*rm_stdq_int)}, 1, true, use_subgroups, subgroup_size_int);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_q8_1_f32[w][GGML_TYPE_Q8_0], "mul_mat_vec_id_q8_0_q8_1_f32", arr_dmmv_id_q8_0_q8_1_f32_len[reduc], arr_dmmv_id_q8_0_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_id(1*rm_stdq_int), 1, 1}, {wg_size_subgroup_int, rm_id(1*rm_stdq_int)}, 1, true, use_subgroups, subgroup_size_int);
+            // arifi lane-302 Route B: IQ4_NL q8_1 id pipeline (Q4_0 geometry) + its expert-gather twin. Routed only
+            // by GGML_ARIFI_IQ4NL_MMVQ=1 (ggml_vk_should_use_mmvq_impl).
+            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_q8_1_f32[w][GGML_TYPE_IQ4_NL], "mul_mat_vec_id_iq4_nl_q8_1_f32", arr_dmmv_id_iq4_nl_q8_1_f32_len[reduc], arr_dmmv_id_iq4_nl_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_id(1*rm_stdq_int), 1, 1}, {wg_size_subgroup_int, rm_id(1*rm_stdq_int)}, 1, true, use_subgroups, subgroup_size_int);
+            if (device->moe_gather_cols != 0) {
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_q8_1_f32[w][GGML_TYPE_IQ4_NL], "mul_mat_vec_idg_iq4_nl_q8_1_f32", arr_dmmv_idg_iq4_nl_q8_1_f32_len[reduc], arr_dmmv_idg_iq4_nl_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_id(1*rm_stdq_int), 1, 1}, {wg_size_subgroup_int, rm_id(1*rm_stdq_int), device->moe_gather_cols}, 1, true, use_subgroups, subgroup_size_int);
+            }
 
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_q8_1_f32[w][GGML_TYPE_MXFP4], "mul_mat_vec_id_mxfp4_q8_1_f32", arr_dmmv_id_mxfp4_q8_1_f32_len[reduc], arr_dmmv_id_mxfp4_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_id(2*rm_stdq_int), 1, 1}, {wg_size_subgroup_int, rm_id(2*rm_stdq_int)}, 1, true, use_subgroups, subgroup_size_int);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_q8_1_f32[w][GGML_TYPE_Q4_0_ROCMFP4_FAST], "mul_mat_vec_id_rocmfp4_fast_q8_1_f32", arr_dmmv_id_rocmfp4_fast_q8_1_f32_len[reduc], arr_dmmv_id_rocmfp4_fast_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_id(2*rm_stdq_int), 1, 1}, {wg_size_subgroup_int, rm_id(2*rm_stdq_int)}, 1, true, use_subgroups, subgroup_size_int);
@@ -6364,6 +6372,13 @@ vk_device ggml_vk_get_device(size_t idx) {
             }
             fprintf(stderr, "ggml_vulkan: q6_k mmvq route: %s (%s)\n",
                     device->q6k_mmvq_route ? "route (MUL_MAT only, n=7..8; n=6 at 5120x6144 on RDNA3 when the n=6 pipeline is rows 1)" : "legacy", q6k_src);
+            {
+                // arifi lane-302 Route B: exact "1" only (the R71 parser lesson); the q8_1 integer dot at EVERY n
+                const char * s = getenv("GGML_ARIFI_IQ4NL_MMVQ");
+                device->iq4nl_mmvq = s != nullptr && strcmp(s, "1") == 0;
+                fprintf(stderr, "ggml_vulkan: iq4_nl mmvq: %s [GGML_ARIFI_IQ4NL_MMVQ]\n",
+                        device->iq4nl_mmvq ? "ON (q8_1 integer dot, every n)" : "OFF (f32 dequant, default)");
+            }
             fprintf(stderr, "ggml_vulkan: iq4_xs mmvq route: %s (%s)\n",
                     device->iq4xs_mmvq_route == 3 ? "upstream" :
                     device->iq4xs_mmvq_route == 2 ? "all" :
@@ -7066,6 +7081,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec(ggml_backend_vk_context * 
             // As with S-X8 below, this switch alone does not route the type --
             // ggml_vk_should_use_mmvq() carries the IQ4_XS admit.
             case GGML_TYPE_IQ4_XS:
+            case GGML_TYPE_IQ4_NL: // arifi lane-302 Route B (q8_1 pipelines registered; routed only by GGML_ARIFI_IQ4NL_MMVQ=1)
             // arifi lane-230 / R46: S-X8 has a q8_1 mat-vec (mul_mat_vec_sx8_q8_1_f32).
             // This switch alone does not route it -- ggml_vk_should_use_mmvq() must admit
             // the type too, or quantize_y stays false and the pipeline is never selected.
@@ -7212,6 +7228,7 @@ static vk_pipeline ggml_vk_get_dequantize_mul_mat_vec_id(ggml_backend_vk_context
             // route still fences `_id` out (zero served `_id` bytes); this only makes the
             // diagnostic arm reach a real pipeline instead of a null one.
             case GGML_TYPE_IQ4_XS:
+            case GGML_TYPE_IQ4_NL: // arifi lane-302 Route B (q8_1 pipelines registered; routed only by GGML_ARIFI_IQ4NL_MMVQ=1)
                 break;
             default:
                 return nullptr;
@@ -8384,6 +8401,12 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
         return true;
     } else if (device->mmvq_mode == -1) {
         return false;
+    }
+
+    // arifi lane-302 Route B: IQ4_NL decides HERE at every n, MUL_MAT and MUL_MAT_ID alike (no row-count
+    // dependence, lane 300). Default OFF: before Route B the type had no q8_1 pipeline, so this keeps the old route.
+    if (src0_type == GGML_TYPE_IQ4_NL) {
+        return device->iq4nl_mmvq;
     }
 
     // arifi lane-262 / R75: IQ4_XS decides HERE and never falls through. Before R75 the type had no
@@ -10286,13 +10309,18 @@ static void ggml_vk_mul_mat_vec_id_q_f16(ggml_backend_vk_context * ctx, vk_conte
     }
 
     // arifi lane-302: swap in the expert-gather pipeline of the SAME workgroup size when the plain f32
-    // id pipeline was chosen (so never with q8_1 B, 64-bit indexing or a fused bias/scale), n_tokens > 1.
+    // id pipeline was chosen (so never with 64-bit indexing or a fused bias/scale), n_tokens > 1. Route B: the
+    // q8_1 id pipeline swaps to its q8_1 gather twin (IQ4_NL only; other q8_1 types have none and keep the loop).
     vk_pipeline dmmv_gather = nullptr;
     if (ctx->device->moe_gather_cols != 0 && nei1 > 1 && ctx->num_additional_fused_ops == 0 &&
-        !quantize_y && !qx_needs_dequant && !y_non_contig && nei0 * nei1 <= 0xffff) {
+        !qx_needs_dequant && !y_non_contig && nei0 * nei1 <= 0xffff) {
         for (uint32_t w = 0; w < DMMV_WG_SIZE_COUNT; ++w) {
-            if (ctx->device->pipeline_dequant_mul_mat_vec_id_f32[w][src0->type] == dmmv) {
+            if (!quantize_y && ctx->device->pipeline_dequant_mul_mat_vec_id_f32[w][src0->type] == dmmv) {
                 dmmv_gather = ctx->device->pipeline_dequant_mul_mat_vec_idg_f32[w][src0->type];
+                break;
+            }
+            if (quantize_y && ctx->device->pipeline_dequant_mul_mat_vec_id_q8_1_f32[w][src0->type] == dmmv) {
+                dmmv_gather = ctx->device->pipeline_dequant_mul_mat_vec_idg_q8_1_f32[w][src0->type];
                 break;
             }
         }

@@ -1447,6 +1447,10 @@ struct vk_device_struct {
     bool moe_gather_plant = false;
     uint32_t moe_gather_rows = 0;
     vk_pipeline pipeline_dequant_mul_mat_vec_idg_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
+    vk_pipeline pipeline_dequant_mul_mat_vec_idg_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
+    // lane-302 Route B: GGML_ARIFI_IQ4NL_MMVQ=1 routes IQ4_NL mat-vec to the q8_1 integer dot at EVERY n (opt-in;
+    // a precision change, not byte-identical to the f32 path)
+    bool iq4nl_mmvq = false;
 
     vk_pipeline pipeline_dequant_mul_mat_vec_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
     // arifi lane-271 / R85: Q4_K q8_1 MMVQ with the 4+1 column split (spec constant 4 = 3), created

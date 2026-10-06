@@ -174,6 +174,21 @@ FLOAT_TYPE mul_q8_1(const int32_t q_sum, const float da, const vec2 dsb, const i
 }
 #endif
 
+#if defined(DATA_A_IQ4_NL)
+// arifi lane-302 Route B: IQ4_NL on the q8_1 integer dot. Same 18-byte layout and nibble order as Q4_0
+// (low nibbles = weights iqs*4..+3, high = +16), so the Q4_0 2-byte loads; the nibbles index the signed
+// int8 LUT instead of an offset of 8 (CUDA vec_dot_iq4_nl_q8_1: d_a * d_b * int-dot, no ds.y term).
+i32vec2 repack(uint ib, uint iqs) {
+    const u16vec2 quants = u16vec2(data_a_packed16[ib].qs[iqs * 2    ],
+                                   data_a_packed16[ib].qs[iqs * 2 + 1]);
+    return iq4nl_to_i8x8(pack32(quants));
+}
+
+FLOAT_TYPE mul_q8_1(const int32_t q_sum, const float da, const vec2 dsb, const int32_t sum_divisor) {
+    return FLOAT_TYPE(da * float(q_sum) * dsb.x);
+}
+#endif
+
 #if defined(DATA_A_MXFP4) || defined(DATA_A_ROCMFP4_FAST)
 // 1-byte loads for mxfp4 blocks (17 bytes). ROCmFP4-FAST (17 bytes, one ue4m3 scale) shares the
 // nibble layout and swaps the LUT (arifi lane-209, taken-from rocmfpx/main mul_mat_vecq_funcs.glsl).
@@ -244,7 +259,7 @@ FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
     // 16 quants per call => divide sums by 32/16 = 2
     return mul_q8_1(q_sum, a.dm, cache_b_ds, 2);
 }
-#elif defined(DATA_A_QUANT_LEGACY) || defined(DATA_A_MXFP4)
+#elif defined(DATA_A_QUANT_LEGACY) || defined(DATA_A_MXFP4) || defined(DATA_A_IQ4_NL)
 #if defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1)
 #define MMVQ_DM_TYPE FLOAT_TYPEV2
 #else

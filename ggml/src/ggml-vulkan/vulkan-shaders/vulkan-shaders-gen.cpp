@@ -993,7 +993,7 @@ void process_shaders() {
         // arifi lane-262 / R75: iq4_xs joins the q8_1 MMVQ set. It is the one big format in the
         // served files with no fast path at any width (R77 scoreboard: 39.5% / 32.7% of the
         // MUL_MAT marginal verify column at n=5).
-        if (is_legacy_quant(tname) || tname == "mxfp4" || tname == "rocmfp4_fast" || is_k_quant(tname) || tname == "iq1_s" || tname == "iq1_m" || tname == "iq4_xs") {
+        if (is_legacy_quant(tname) || tname == "mxfp4" || tname == "rocmfp4_fast" || is_k_quant(tname) || tname == "iq1_s" || tname == "iq1_m" || tname == "iq4_xs" || tname == "iq4_nl") {
             string_to_spv("mul_mat_vec_" + tname + "_q8_1_f32", "mul_mat_vecq.comp", merge_maps(base_dict, {{data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}}));
             string_to_spv("mul_mat_vec_" + tname + "_q8_1_f32_subgroup", "mul_mat_vecq.comp", merge_maps(base_dict, {{data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}, {"USE_SUBGROUP_ADD", "1"}}));
             string_to_spv("mul_mat_vec_" + tname + "_q8_1_f32_subgroup_no_shmem", "mul_mat_vecq.comp", merge_maps(base_dict, {{data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}, {"USE_SUBGROUP_ADD_NO_SHMEM", "1"}}));
@@ -1001,6 +1001,15 @@ void process_shaders() {
             string_to_spv("mul_mat_vec_id_" + tname + "_q8_1_f32", "mul_mat_vecq.comp", merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}}));
             string_to_spv("mul_mat_vec_id_" + tname + "_q8_1_f32_subgroup", "mul_mat_vecq.comp", merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}, {"USE_SUBGROUP_ADD", "1"}}));
             string_to_spv("mul_mat_vec_id_" + tname + "_q8_1_f32_subgroup_no_shmem", "mul_mat_vecq.comp", merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}, {"USE_SUBGROUP_ADD_NO_SHMEM", "1"}}));
+        }
+        // arifi lane-302 Route B: the expert-gather (slot-major) q8_1 id variant for IQ4_NL.
+        if (tname == "iq4_nl") {
+            for (const std::string sfx : {"", "_subgroup", "_subgroup_no_shmem"}) {
+                std::map<std::string, std::string> d = merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {"MUL_MAT_ID_GATHER", "1"}, {data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}});
+                if (sfx == "_subgroup") d["USE_SUBGROUP_ADD"] = "1";
+                if (sfx == "_subgroup_no_shmem") d["USE_SUBGROUP_ADD_NO_SHMEM"] = "1";
+                string_to_spv("mul_mat_vec_idg_" + tname + "_q8_1_f32" + sfx, "mul_mat_vecq.comp", d);
+            }
         }
         // arifi lane-296: upstream b1ff4ca23's IQ4_XS q8_1 MMVQ body (K_PER_ITER 32) beside R75's,
         // selected at pipeline creation by GGML_ARIFI_IQ4XS_MMVQ_BODY (W1 collision three-arm).
@@ -1805,7 +1814,7 @@ void write_output_files() {
     for (const auto& tname : type_names) {
         // arifi lane-262 / R75: this gate MUST match the string_to_spv() gate above, or the
         // arr_dmmv_* array for a generated shader is never declared and the host fails to link.
-        if (btype == "q8_1" && !is_legacy_quant(tname) && tname != "mxfp4" && tname != "rocmfp4_fast" && !is_k_quant(tname) && tname != "iq1_s" && tname != "iq1_m" && tname != "iq4_xs") {
+        if (btype == "q8_1" && !is_legacy_quant(tname) && tname != "mxfp4" && tname != "rocmfp4_fast" && !is_k_quant(tname) && tname != "iq1_s" && tname != "iq1_m" && tname != "iq4_xs" && tname != "iq4_nl") {
             continue;
         }
         hdr << "extern const void * arr_dmmv_"   << tname << "_" << btype << "_f32_data[3];\n";
@@ -1840,6 +1849,19 @@ void write_output_files() {
             src << "const uint64_t arr_dmmv_" << n << "_len[3] = {mul_mat_vec_" << n << "_len, mul_mat_vec_" << n << "_subgroup_len, mul_mat_vec_" << n << "_subgroup_no_shmem_len};\n";
         }
     }
+
+#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+    // arifi lane-302 Route B: the IQ4_NL q8_1 expert-gather variant generated above.
+    {
+        const std::string n = "idg_iq4_nl_q8_1_f32";
+        hdr << "extern const void * arr_dmmv_"   << n << "_data[3];\n";
+        hdr << "extern const uint64_t arr_dmmv_" << n << "_len[3];\n";
+        if (basename(input_filepath) == "mul_mat_vec.comp") {
+            src << "const void * arr_dmmv_"   << n << "_data[3] = {mul_mat_vec_" << n << "_data, mul_mat_vec_" << n << "_subgroup_data, mul_mat_vec_" << n << "_subgroup_no_shmem_data};\n";
+            src << "const uint64_t arr_dmmv_" << n << "_len[3] = {mul_mat_vec_" << n << "_len, mul_mat_vec_" << n << "_subgroup_len, mul_mat_vec_" << n << "_subgroup_no_shmem_len};\n";
+        }
+    }
+#endif
 
     // arifi lane-296: the upstream IQ4_XS variants generated above (MUL_MAT only).
     for (const std::string& btype : btypes) {
