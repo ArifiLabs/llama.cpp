@@ -50,6 +50,9 @@ layout (constant_id = 3) const uint ARIFI_MMVQ_A_HOIST = 0;
 // regions over the same hoisted A. Every arm adds the same terms in the same order to each
 // temp[j][n], so all three are bit-identical.
 layout (constant_id = 4) const uint ARIFI_MMVQ_OVERLAP = 0;
+// lane-300 F-141 3b: 1 = Q4_K/Q5_K dot built `precise` (no FMA contraction), so every NUM_COLS specialization rounds
+// column j the same way. Host passes 1 only under GGML_ARIFI_MMV_ROWSTABLE_N.
+layout (constant_id = 5) const uint ARIFI_MMVQ_PRECISE = 0;
 
 #include "mul_mat_vecq_funcs.glsl"
 

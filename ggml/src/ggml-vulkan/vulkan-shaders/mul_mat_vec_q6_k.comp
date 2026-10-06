@@ -59,6 +59,7 @@ layout (constant_id = 3) const uint ARIFI_Q6K_DIRECT_SCALES = 1;
 // the row loop), which is the shape that spilled in lane-230 - see mul_mat_vec_sx8.comp:60-71,
 // where whole-block ownership lost -45% at n=5 and -77% at n=8. A kernel written without a
 // compiler must keep a one-binary way to back that out.
+// lane-300: 2 = fold at every NUM_COLS (GGML_ARIFI_MMV_ROWSTABLE_N), so column j rounds as at n=1.
 layout (constant_id = 4) const uint ARIFI_Q6K_XFOLD = 1;
 
 shared FLOAT_TYPE sccache[2][BLOCK_SIZE/16][16];
@@ -102,7 +103,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
             //
             // Stated summation order: (x + y) + (z + w). Pairwise, so the order is pinned by the
             // parentheses rather than left to the compiler (dot() would not pin it).
-            if (NUM_COLS <= 3) {
+            if (NUM_COLS <= 3 || ARIFI_Q6K_XFOLD == 2) {
                 xs0[j]  = (FLOAT_TYPE(bc0[j].x)  + FLOAT_TYPE(bc0[j].y))  + (FLOAT_TYPE(bc0[j].z)  + FLOAT_TYPE(bc0[j].w));
                 xs32[j] = (FLOAT_TYPE(bc32[j].x) + FLOAT_TYPE(bc32[j].y)) + (FLOAT_TYPE(bc32[j].z) + FLOAT_TYPE(bc32[j].w));
                 xs64[j] = (FLOAT_TYPE(bc64[j].x) + FLOAT_TYPE(bc64[j].y)) + (FLOAT_TYPE(bc64[j].z) + FLOAT_TYPE(bc64[j].w));
@@ -152,10 +153,10 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
         const vec4 u2 = vec4(unpack8(q2_u32));
         const vec4 u3 = vec4(unpack8(q3_u32));
 
-        const vec4 q0 = (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) ? u0 : (u0 - 32);
-        const vec4 q1 = (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) ? u1 : (u1 - 32);
-        const vec4 q2 = (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) ? u2 : (u2 - 32);
-        const vec4 q3 = (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) ? u3 : (u3 - 32);
+        const vec4 q0 = (ARIFI_Q6K_XFOLD != 0 && (NUM_COLS <= 3 || ARIFI_Q6K_XFOLD == 2)) ? u0 : (u0 - 32);
+        const vec4 q1 = (ARIFI_Q6K_XFOLD != 0 && (NUM_COLS <= 3 || ARIFI_Q6K_XFOLD == 2)) ? u1 : (u1 - 32);
+        const vec4 q2 = (ARIFI_Q6K_XFOLD != 0 && (NUM_COLS <= 3 || ARIFI_Q6K_XFOLD == 2)) ? u2 : (u2 - 32);
+        const vec4 q3 = (ARIFI_Q6K_XFOLD != 0 && (NUM_COLS <= 3 || ARIFI_Q6K_XFOLD == 2)) ? u3 : (u3 - 32);
 
         FLOAT_TYPE sc0, sc2, sc4, sc6;
         if (ARIFI_Q6K_DIRECT_SCALES == 0) {
@@ -196,7 +197,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
                 sum[2] = fma(FLOAT_TYPE(by64[l]), q2[l], sum[2]);
                 sum[3] = fma(FLOAT_TYPE(by96[l]), q3[l], sum[3]);
             }
-            if (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) {
+            if (ARIFI_Q6K_XFOLD != 0 && (NUM_COLS <= 3 || ARIFI_Q6K_XFOLD == 2)) {
                 sum[0] = fma(FLOAT_TYPE(-32.0), xs0[j],  sum[0]);
                 sum[1] = fma(FLOAT_TYPE(-32.0), xs32[j], sum[1]);
                 sum[2] = fma(FLOAT_TYPE(-32.0), xs64[j], sum[2]);

@@ -1893,6 +1893,18 @@ static bool ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size
     return true;
 }
 
+// lane-300 F-141 3b: mat-vec column 0 changed bits with the column count (arifi-mmv-width, cell 24): the MMVQ vs
+// f32-dequant route moved with n, the q6_K -32 fold applied only at NUM_COLS <= 3, and Q4_K/Q5_K MMVQ dots contracted
+// differently per NUM_COLS specialization. For n <= GGML_ARIFI_MMV_ROWSTABLE_N: n=1's route, fold at every width,
+// `precise` Q4_K/Q5_K dot (moves the n=1 bits of those two MMVQ shaders; receipt in cell 25). 0 (default) = unchanged.
+static uint32_t ggml_vk_mmv_rowstable_n() {
+    static const uint32_t n = [] {
+        const char * s = getenv("GGML_ARIFI_MMV_ROWSTABLE_N");
+        return s ? (uint32_t) std::max(0, atoi(s)) : 0u;
+    }();
+    return n;
+}
+
 void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     VK_LOG_DEBUG("ggml_vk_load_shaders(" << device->name << ")");
 
@@ -3509,8 +3521,10 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         // of THAT constant's arms, so its bit-identity-between-arms gate is unaffected.
         const uint32_t q6k_xfold = [] {
             const char * s = getenv("GGML_ARIFI_Q6K_XFOLD");
-            return (s != nullptr && s[0] == '0') ? 0u : 1u;
+            return (s != nullptr && s[0] == '0') ? 0u : (ggml_vk_mmv_rowstable_n() > 0 ? 2u : 1u);
         }();
+        // lane-300: Q4_K/Q5_K MMVQ `precise` dot (spec constant 5 of mul_mat_vecq.comp) under GGML_ARIFI_MMV_ROWSTABLE_N.
+        const uint32_t mmvq_precise = ggml_vk_mmv_rowstable_n() > 0 ? 1u : 0u;
         // arifi lane-234 / R48: q5_k mat-vec ACTIVATION HOIST (specialization constant 3 of
         // mul_mat_vec_q5_k.comp). 1 = load each activation vector once per superblock and reuse it
         // across all NUM_ROWS rows; 0 = the shipped order, which reloads it once per row. The
@@ -3928,11 +3942,11 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
 
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_K][i], "mul_mat_vec_q2_k_q8_1_f32", arr_dmmv_q2_k_q8_1_f32_len[reduc], arr_dmmv_q2_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_q8_1_f32", arr_dmmv_q3_k_q8_1_f32_len[reduc], arr_dmmv_q3_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_q8_1_f32", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q4k_rows(i), 1, 1}, {wg_size_subgroup_int, q4k_rows(i), i+1, mmvq_a_hoist, i >= 4 ? device->q4k_w5_overlap : 0u}, 1, true, use_subgroups, subgroup_size_int);
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_q8_1_f32", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q4k_rows(i), 1, 1}, {wg_size_subgroup_int, q4k_rows(i), i+1, mmvq_a_hoist, i >= 4 ? device->q4k_w5_overlap : 0u, mmvq_precise}, 1, true, use_subgroups, subgroup_size_int);
                 if (i == 4 || i == 5) {
-                    ggml_vk_create_pipeline(device, device->pipeline_mul_mat_vec_q4k_q8_1_split[w][i], "mul_mat_vec_q4_k_q8_1_f32_split", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist, 3u}, 1, true, use_subgroups, subgroup_size_int);
+                    ggml_vk_create_pipeline(device, device->pipeline_mul_mat_vec_q4k_q8_1_split[w][i], "mul_mat_vec_q4_k_q8_1_f32_split", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist, 3u, mmvq_precise}, 1, true, use_subgroups, subgroup_size_int);
                 }
-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_q8_1_f32", arr_dmmv_q5_k_q8_1_f32_len[reduc], arr_dmmv_q5_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_q8_1_f32", arr_dmmv_q5_k_q8_1_f32_len[reduc], arr_dmmv_q5_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist, 0u, mmvq_precise}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_q8_1_f32", arr_dmmv_q6_k_q8_1_f32_len[reduc], arr_dmmv_q6_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q6k_mmvq_rows(i), 1, 1}, {wg_size_subgroup_int, q6k_mmvq_rows(i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
 
                 // arifi lane-262 / R75: IQ4_XS gains a q8_1 MMVQ pipeline. Same superblock geometry
@@ -8856,7 +8870,8 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
 // a perf run calls this thousands of times for the same cell. Off by default and no behavioural
 // effect either way: the wrapper returns exactly what the rule set returned.
 static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type, bool is_id = false) {
-    const bool r = ggml_vk_should_use_mmvq_impl(device, m, n, k, src0_type, is_id);
+    // lane-300: widths up to GGML_ARIFI_MMV_ROWSTABLE_N take n=1's route (direction law: n>1 reproduces n=1).
+    const bool r = ggml_vk_should_use_mmvq_impl(device, m, n <= ggml_vk_mmv_rowstable_n() ? 1u : n, k, src0_type, is_id);
     static const bool trace = [] {
         const char * s = getenv("GGML_ARIFI_MMVQ_TRACE");
         return s != nullptr && s[0] == '1';
