@@ -1,0 +1,740 @@
+{
+  "purpose": "Sha-pinned EXEMPTION ledger for commits whose provenance is PRESENT and human-readable but does not satisfy `arifi_sync provenance --strict`, and whose only repair would be amending published, tagged, series-pinned history. A row here does NOT make its commit compliant and is not a repair: it records, per sha, exactly what is wrong and why it was not fixed. The audit reports these separately from clean commits and never folds them into a bare PASS.",
+  "law": "This ledger is DISTINCT from native-grandfather.json, which is CLOSED and covers commits predating the 2026-08-20 native-Origin convention - nothing is ever added there. It is also distinct from pending-trailers.json, which records trailer text OWED by commits on UNMERGED branches, to be pasted when that work reaches arifi/main; the commits below are already on arifi/main. New commits must carry correct trailers and must never be added here: the commit-msg hook rejects the defect at write time.",
+  "recorded": "2026-10-06",
+  "recorded_by": "release-prep (HQ82), branch release/prep",
+  "range_base": "f9af9be219ca647a59106f6201bf0d85fab00224",
+  "audited_ref": "d716f45cab (lane-298/x1i-integ at 2026-10-06 15:4x)",
+  "scope": "Every --strict offender that is an ancestor of the shipped engine c23bd8cc5e. Commits after it are repaired by a reword on integ before the freeze (post-x1i-trailers.tsv), never exempted here.",
+  "commits": [
+    {
+      "sha": "1c1cb5cc98889faf1881a53e946372fd44d7f669",
+      "subject": "docs: phase-3a OPTIONS-REGISTRY rows (M-RoPE, f16-recurrent, DSpark-iGPU)",
+      "classification": [
+        "loose-only"
+      ],
+      "trailer_tokens_present": [
+        "Origin",
+        "Taken-from"
+      ],
+      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired.",
+      "sha_r86i_export": "8e559241c74b92a37104e832229cf8dc0b91f230",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "3fcab81346e040543611c816d77cd7ddc7aa0b20",
+      "subject": "patches: make the series generator implement its own convergence rule",
+      "classification": [
+        "loose-only"
+      ],
+      "trailer_tokens_present": [
+        "Measured-effect",
+        "Origin",
+        "Taken-from"
+      ],
+      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired.",
+      "sha_r86i_export": "7408355a50ba9720aa7ca51f2951186f77146f32",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "380c0ba9e8aa950969fd2d0bf60192c496917311",
+      "subject": "patches: stop the manifest deriving anything from excluded commits",
+      "classification": [
+        "loose-only"
+      ],
+      "trailer_tokens_present": [
+        "Measured-effect",
+        "Origin",
+        "Taken-from"
+      ],
+      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired.",
+      "sha_r86i_export": "73d69b072737f7fc18d3e0dac1e26918e7fe9886",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "518d06764b3bec89208ad0041353574efb78d5ad",
+      "subject": "ggml-cpu: GGML_ARIFI_VNNI_REPACK defaults to OFF (diverging from upstream, on measurement)",
+      "classification": [
+        "loose-only"
+      ],
+      "trailer_tokens_present": [
+        "Measured-effect",
+        "Origin",
+        "Taken-from"
+      ],
+      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired.",
+      "sha_r86i_export": "30c8cb0379cb6fa5d12abdd8e50d86c271a43bc6",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "2b0e775aa531a6ee7e22e983af7dff4c1f47883e",
+      "subject": "docs: make the fork buildable by someone who did not build it",
+      "classification": [
+        "loose-only"
+      ],
+      "trailer_tokens_present": [
+        "Measured-effect",
+        "Origin"
+      ],
+      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired.",
+      "sha_r86i_export": "3ebadf562d99b514f26350fe7e19d01e4f6a139d",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "055efbf0d7eed084f22a0a87b44febfd17f51513",
+      "subject": "fix(ggml-cpu/x86): don't pass __m256i by value across the repack GEMV/GEMM ABI boundary (Windows 0xC0000005)",
+      "classification": [
+        "loose-only"
+      ],
+      "trailer_tokens_present": [
+        "Measured-effect",
+        "Origin",
+        "Taken-from"
+      ],
+      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired.",
+      "sha_r86i_export": "080250aa55bac1058cb3847bd41469a3e60ca901",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "92105247f9070c0eaa4ba81224eac19d41411291",
+      "subject": "patches: regenerate the series after the repack ABI-alignment fix",
+      "classification": [
+        "loose-only"
+      ],
+      "trailer_tokens_present": [
+        "Measured-effect",
+        "Origin"
+      ],
+      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired.",
+      "sha_r86i_export": "588e02d68ab4c9650d139b39fc3ba241ff2a3f36",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "10adb5b3b57bd10b4f5e5165ce3be9cb124e6fe9",
+      "subject": "ggml: TurboQuant TQ3_1S/TQ4_1S weight formats behind GGML_ARIFI_TURBO_WEIGHT_QUANTS",
+      "classification": [
+        "loose-only"
+      ],
+      "trailer_tokens_present": [
+        "Measured-effect",
+        "Origin",
+        "Taken-from"
+      ],
+      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired.",
+      "sha_r86i_export": "de45c301c0054d1194b93e3a7c2ad41bd5dc8451",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "7d6d4db0190efa8ee053f4ed9967e799a3822ac2",
+      "subject": "docs: USAGE - a task-oriented guide for humans, not an option reference",
+      "classification": [
+        "loose-only"
+      ],
+      "trailer_tokens_present": [
+        "Measured-effect",
+        "Origin"
+      ],
+      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired.",
+      "sha_r86i_export": "3ca397235b1859c112e3de166c34cc0d375d5040",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "17ac2969befe10133c8777f3f12c3631b33aedc1",
+      "subject": "ggml-cpu/x86: use the row-stride parameter in repack GEMV stores instead of the row count",
+      "classification": [
+        "loose-only"
+      ],
+      "trailer_tokens_present": [
+        "Measured-effect",
+        "Origin",
+        "Taken-from"
+      ],
+      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired.",
+      "sha_r86i_export": "7e3a8a9dec48667c8fc975b6f4ab8d48df6769c6",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "efb03325ef4938982d47b7a0979e0a02b2abdf02",
+      "subject": "ggml-cpu: fuse the TurboQuant dot product - transform the activation, not the weights",
+      "classification": [
+        "loose-only"
+      ],
+      "trailer_tokens_present": [
+        "Measured-effect",
+        "Origin"
+      ],
+      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired.",
+      "sha_r86i_export": "2205f2d39c92ff62c64a788469cadc338c5e4630",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "ee199085a43f2327f7b321c16b8beb964271de7a",
+      "subject": "docs(FINDINGS): F-09 - the repack/GPU trade-off is a compute-placement choice, not a bug",
+      "classification": [
+        "loose-only"
+      ],
+      "trailer_tokens_present": [
+        "Measured-effect",
+        "Origin"
+      ],
+      "reason": "The provenance is IN the message and a human reads it correctly. It does not PARSE: git ends the trailer block at the first line that is not trailer-shaped, so a prose lead-in or a continuation line starting in column 0 invalidates the whole block. The defect is the layout of a published commit message, and the only repair is an amend - a rewrite of tagged, series-pinned history. Exempted, not repaired.",
+      "sha_r86i_export": "4c20f23e6bdc79dade31250dfcc1b894e056ee8f",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "40347768baa292b9b6a2980c43a20cdaae3ddb3d",
+      "subject": "vulkan : integer MMQ (Q8_1 activations) for GGML_TYPE_SX8 (57) - matmul_sx8_q8_1, CREATE_MMQ, per-8 activation sums hoisted into block_b_to_registers (8 dots + 8 FMAs per 32 weights)",
+      "classification": [
+        "no-measured-effect"
+      ],
+      "trailer_tokens_present": [
+        "Taken-from"
+      ],
+      "reason": "Carries Taken-from:/Origin: and parses, but no Measured-effect: trailer. The legal value UNMEASURED could only be added by amending a published commit. Exempted, not repaired; where the commit body states measured data it is prose, not a trailer.",
+      "sha_r86i_export": "89d4ffda42344c4ae7aa983599456f3b0fc20e1b",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "4cfca125bef4883d9334c4c52927e47ca7649f83",
+      "subject": "vulkan : mul_mm (prompt processing) for GGML_TYPE_SX8 (57) - the device said the gap is the missing mul_mm, not the missing MMQ",
+      "classification": [
+        "no-measured-effect"
+      ],
+      "trailer_tokens_present": [
+        "Taken-from"
+      ],
+      "reason": "Carries Taken-from:/Origin: and parses, but no Measured-effect: trailer. The legal value UNMEASURED could only be added by amending a published commit. Exempted, not repaired; where the commit body states measured data it is prose, not a trailer.",
+      "sha_r86i_export": "6ca2f45c6e19eb752fe4e940e380d83437585f36",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "f85706ebb9a0725beb799e0d356dc588d5da69c3",
+      "subject": "llama : Windows unbuffered model reads (--load-mode direct_io) + PR #28223 host bufts under mmap (R31 M17 / M07)",
+      "classification": [
+        "no-measured-effect"
+      ],
+      "trailer_tokens_present": [
+        "Origin"
+      ],
+      "reason": "Carries Taken-from:/Origin: and parses, but no Measured-effect: trailer. The legal value UNMEASURED could only be added by amending a published commit. Exempted, not repaired; where the commit body states measured data it is prose, not a trailer.",
+      "sha_r86i_export": "52356ca1cbef667fada6ae24b6907b1281846f4c",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "b8ca07de65ab568a2cde6ffec9702a5f4737d3fe",
+      "subject": "R75 (lane-262) WIP: iq4_xs q8_1 MMVQ shader arm + registrations inherited from the stopped Opus 5 maker (unreviewed, unbuilt, default unrouted)",
+      "classification": [
+        "no-measured-effect"
+      ],
+      "reason": "Carries Origin:/Taken-from: but no Measured-effect: trailer; landed on arifi/main through the R86 integration (lane-278). The legal value UNMEASURED could only be added by amending a published commit. Exempted, not repaired.",
+      "sha_r86i_export": "55722e0b4908298e278be257e650a24438bf830b",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "8d5a1f5dfa72f6443babba3f9a5d559f9864ac8f",
+      "subject": "vulkan: GGML_ARIFI_IQ4XS_MMVQ=<legacy|route|all> switch + startup line; iq4_xs decides in should_use_mmvq and never falls through",
+      "classification": [
+        "no-measured-effect"
+      ],
+      "reason": "Carries Origin:/Taken-from: but no Measured-effect: trailer; landed on arifi/main through the R86 integration (lane-278). The legal value UNMEASURED could only be added by amending a published commit. Exempted, not repaired.",
+      "sha_r86i_export": "4a0a58ba270dc3df6785bcdb7577c65557f14193",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "6887522f7d4094023347e1c5c9505f7b44332201",
+      "subject": "tests: perf rows bs 1..9 at the served attention shapes (10240x5120, 6144x5120, 12288x5120 for q4_K/q5_K/q6_K/iq4_xs/iq3_s/iq3_xxs; 5120x6144, 1024x5120 for q5_K/iq4_xs/iq3_s/iq3_xxs, bs=9 only for q4_K/q6_K)",
+      "classification": [
+        "no-measured-effect"
+      ],
+      "reason": "Carries Origin:/Taken-from: but no Measured-effect: trailer; landed on arifi/main through the R86 integration (lane-278). The legal value UNMEASURED could only be added by amending a published commit. Exempted, not repaired.",
+      "sha_r86i_export": "199f573f2dd88efb236f6ed6508ab4218c5739e2",
+      "rekey_note": "x1i rebase re-keyed this r86i export row by exact subject match inside c23bd8cc5e's ancestry; row text unchanged."
+    },
+    {
+      "sha": "5432990f3d41721bdb7f600bb977b80c372f8a41",
+      "subject": "W1 collisions N12: RDNA3 small-n ffn_down int8 exception defaults OFF (served -ub 32: q4kxl 0.920x vs 0.977x, GSQ 0.928x vs 0.958x of r86i); GGML_ARIFI_CM1_INT_SMALLN=down restores it",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "4eed112ad659bc425de98299cdecc73cd435d00c",
+      "subject": "server: carry the tool-call anchor across upstream's same-n_tokens checkpoint supersede (W1 collision C077)",
+      "classification": [
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "ba36830345fab1725ad8f4a96a93d565c55c6a4c",
+      "subject": "qwen35: chained MTP drafting works with fused-QKV GGUFs (W1 collision C071)",
+      "classification": [
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "f2b078a885751d446cd3dcdac08e6bb1c6b657ad",
+      "subject": "ggml-cpu: upstream's ARM NEON Q1_0 repack arms stay default ON outside the fork VNNI gate (W1 collision C019)",
+      "classification": [
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "c63cad345fc33c664bc0ad631e94e733357888da",
+      "subject": "vulkan: graph_optimize no longer hoists a UNARY away from the MUL it fuses with (W1 collision V023)",
+      "classification": [
+        "no-provenance"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired."
+    },
+    {
+      "sha": "a1b1f611a80c3f17bcfd2a3cc6bc6c388aacbe57",
+      "subject": "arifi-sync: carry spec-dflash-fused-inject-switch to 4fea45e7e and register the Vulkan Q2_0_G128 port 56763ff4e (lane-296 Sol-fix, protected-win validate)",
+      "classification": [
+        "no-provenance"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired."
+    },
+    {
+      "sha": "51a6f49a38bfd45db839bb252a1261c4cef98617",
+      "subject": "docs: GGML_ARIFI_VNNI_REPACK scope after C019 - ARM NEON Q1_0 arms are upstream default ON, outside the fork gate (comment + OPTIONS-REGISTRY row)",
+      "classification": [
+        "no-provenance"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired."
+    },
+    {
+      "sha": "0d62bfd1ee05e37f3ecca42e4d1240fa16fc145a",
+      "subject": "arifi-sync: protected-win-resolutions.json for the 36 wins the b10825 to b11178 range touches (lane-296 Sol-fix item 3, runbook 4.1c)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "16f0ae402b36271f19dd688fccd6d62b1ae71ca0",
+      "subject": "tests: V023 asserting regression check - SILU must stay fused with its MUL on Vulkan (lane-296 B3)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "d43dc95e752169e3ff7e53af8c5ca0d7d9b2dd1c",
+      "subject": "arifi-sync: protected-win-resolutions B1 rows measured (lane-296 run15/17/23): 12 daily-dense rows carry r86i/U8 numbers, vanilla where it runs; open op re-pair cells listed per row",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "450b82a5b65da876ffe58e4a175bc4e9ee28434f",
+      "subject": "arifi-sync: B1 rows corrected (lane-296): 248320 head cell is in the perf list and owed (run24 d), iq3 N7 off arm = registered legacy cliff, concat dispatch count wording, owed flags + run24 scope",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "feabf1a0ba408e936d7eb91f5b0c2ea7a473063d",
+      "subject": "tests: SILU*MUL perf/eval cases at the 27B FFN width (n_ff 17408, tokens 1/5/512) + ARIFI_PRINT_ERR error print (lane-296 B2b receipt source)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "2bd33c42bdd6faa1d1f68440513982786610046d",
+      "subject": "lane-296 B1: run24 + stage h close in protected-win resolutions",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "39e8e1ac2f3f13cb70472ec61f7a2f7aab6c4ff3",
+      "subject": "lane-296 B1: correct run24 order-effect sign, record kernel identity R vs U8",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "c597892ae3eea74c84dfd6ab41133a69648e1ba7",
+      "subject": "lane-296 B1: run25 close of OPEN 1 + OPEN 2 (protected-win resolutions)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "d70b854552b6c8b7e909ee60bc28866425e5dea9",
+      "subject": "lane-296 B1: OPEN 1 row - harness/sync/submit/pipeline identity CHECKED, n=6 off the registered GSQ depth-4 line",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "ef308e5d8dc488f4e566e593f459dae0a87d3ddd",
+      "subject": "lane-296 B1: OPEN 1 not yet a documented loss (mechanism unnamed), depth-5 width mapping, OPEN 2 q4_K closed at line level",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "ff323b02fdb1047b9562f538af2f08eabc43df4b",
+      "subject": "night/sx8-numerics: revert GDN q/k norm to ggml_l2_norm (5fdfa62829, qwen35 only) - throwaway numerics probe",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "night/sx8-numerics",
+      "origin": "ArifiLabs (native) - fork-authored (night/sx8-numerics); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "8305fcd90cdfbd5da2a4f581d13c7f0978e99e8e",
+      "subject": "Revert \"night/sx8-numerics: revert GDN q/k norm to ggml_l2_norm (5fdfa62829, qwen35 only) - throwaway numerics probe\"",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "night/sx8-numerics",
+      "origin": "ArifiLabs (native) - fork-authored (night/sx8-numerics); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "9c0e74c2f0772a5847d4354086327ba9b1e43210",
+      "subject": "vulkan: keep Q8_0 x Q8_1 int8 coopmat1 under GGML_ARIFI_MMQ_UNDER_COOPMAT (default OFF)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "S-X8",
+      "origin": "ArifiLabs (native) - fork-authored (S-X8); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "9223743e101876c3b2bf0f1672ee4e791cb8c973",
+      "subject": "vulkan: GGML_ARIFI_Q8_0_CM1 = off | on | <min rows> for the RDNA3/4 Q8_0 x Q8_1 int8 coopmat1 MMQ",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "d8c538d52c47a8060134c41965d8957e90373b19",
+      "subject": "vulkan: Q8_0 int8 cm1 default = FLOOR (int8 on, ssm_out float) + per-role switches",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "4714944839bb996e56902881f58718f14bf23d3b",
+      "subject": "vulkan: GGML_ARIFI_Q8_0_CM1_2D=<roles> two-digit int8 activations for Q8_0 MMQ (candidate B)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "fe49d8b1736e351705630087c4663412f800a249",
+      "subject": "lane-296 night: int8 accuracy deliverable - floor A passes 3/3, goal B (int8 ssm_out) open",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "c445bedf35cb241f9465f1e19fbe70532dfec2e1",
+      "subject": "vulkan: two-digit int8 second digit prescaled by 2^GGML_ARIFI_Q8_0_CM1_2D_SHIFT (default 8), candidate B3",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "1a88a9c09b7ee70d71875cdba0c725e03ec34799",
+      "subject": "vulkan: q8_1 residual and scale-f16 rounding use the ds store's own f16 conversion; arifi-op-probe op-level int8 tools",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "9a3783ec7f8d6144ba66d79069c7b6119e9fd9a2",
+      "subject": "lane-296 int8 goal: INT8-MATH derivation + op-level error tables, INT8-ACCURACY update (B5 accurate at op level, 7.431166 vs bar 7.4163; instrument paired SE 0.006-0.012)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "abbda340119474c38e0d3fdda2c1191dbe1b9420",
+      "subject": "lane-296 int8 goal: conclusions made conditional on the 64-chunk check; B1-B3 pair (+0.0209 PPL at 3.4 SE with equal ssm_out op error); section renumber; magic-bias note",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "3e85f0cb6e00912a1e949930d2f1ff118c59c23b",
+      "subject": "vulkan: GGML_ARIFI_F32ACC=<roles>|all forces f32 accumulation on the float matmul path; arifi-op-probe bias decomposition",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "6813ffc87c3ff494090efc2c7e8fb2d1f7f9851f",
+      "subject": "lane-296 int8 goal stage 8: 64-chunk gap is real (+2.7 SE, broad); H-B and H-A falsified; float-path error named as f16 accumulation (random, 7.7e-3 -> 2.66e-4 with f32 acc); chain s8 pre-registered",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "a1eaa94a3b3827ce50709c7ce6bc24b3daa04a82",
+      "subject": "lane-296 int8 goal stage 8: pre-register x16 pairing and the c64 x x16 joint reading before c64 lands; smoke downgraded (2 seqs/pass); S-X8 f32acc route checked by code; price disclosed",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "1691b758c40de22193b7dca5972ba3d0e86c69a3",
+      "subject": "lane-296 int8 goal stage 9: F32ACC takes <type>:<role> and <type>:all; op probe replays any weight type and times widths",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "2fa02db7f3d47864effb66a24daa95082e3cf946",
+      "subject": "vulkan: UMA device-local-first placement on the Radeon 890M (port of 3a68edb49 onto night/sx8-numerics 1691b758c4)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "night/sx8-numerics",
+      "origin": "ArifiLabs (native) - fork-authored (night/sx8-numerics); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "d871a4fae31c2563a70a25dec87c4d53d7b664e5",
+      "subject": "sx8-int8 stage 10: S-X8 on the int8 coopmat1 MMQ kernel (exact (d,m) remap, exact b sums, RED twin, role/min-n knobs, tests)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "sx8-int8",
+      "origin": "ArifiLabs (native) - fork-authored (sx8-int8); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "3f5c709217a20f5576b0a0c0f6b76436553a9fc7",
+      "subject": "sx8-int8 stage 10: GGML_ARIFI_SX8_CM1_2D fix knob (two-digit activations for listed S-X8 roles, lane-296 R3 route)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "lane-296",
+      "origin": "ArifiLabs (native) - fork-authored (lane-296); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "e650ca8a83e5103b935a059cc675aed4837ebb25",
+      "subject": "sx8-int8 stage 10: two-digit activations default ON for ffn_up (fix B)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "sx8-int8",
+      "origin": "ArifiLabs (native) - fork-authored (sx8-int8); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "7e8380ca6fbdd63d89a2926f2b9774648303527b",
+      "subject": "sx8-int8 attempt E: 16-value activation scales for the S-X8 int8 cm1 kernel (env-only arm)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "sx8-int8",
+      "origin": "ArifiLabs (native) - fork-authored (sx8-int8); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "b43fe423bed720a56a021a432f6ea6315187df98",
+      "subject": "sx8-int8 attempt E: quantize_q8_1 HALF ds store via vec2 (f16 locals need the arithmetic extension)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "sx8-int8",
+      "origin": "ArifiLabs (native) - fork-authored (sx8-int8); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "fb251eed0b9c7be35bfc9fbd268b09a4bf7753a4",
+      "subject": "sx8-int8 attempt D: two-digit activations only for outlier blocks, skip kernel for the second pass",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "sx8-int8",
+      "origin": "ArifiLabs (native) - fork-authored (sx8-int8); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "16884e572d6aa31f6c6e4fab249e682f34bbfa07",
+      "subject": "sx8-int8: default to gate20 selective two-digit ffn_up activations",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "sx8-int8",
+      "origin": "ArifiLabs (native) - fork-authored (sx8-int8); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "f9df20b327f0d1ba52d8134cabc03557a4b1119d",
+      "subject": "vulkan: bound SX8 residual masks and exercise gate fixtures",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "x1i engine work",
+      "origin": "ArifiLabs (native) - fork-authored (x1i engine work); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "841093695cfe3f7eee716710c0b35583488746a3",
+      "subject": "vulkan: use float below S-X8 served crossover",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "S-X8",
+      "origin": "ArifiLabs (native) - fork-authored (S-X8); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "fecb342078c23d7c4eb0e332cebc44db3f9f528a",
+      "subject": "vulkan: S-X8 width gate covers prompt widths only (n > 8); decode widths keep the int8 route (check finding F1; S-X8 bank 149/149 + fixtures 10/10 green on build9)",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "S-X8",
+      "origin": "ArifiLabs (native) - fork-authored (S-X8); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "926e2931d9d32eefe369690139193d1152def1d6",
+      "subject": "S-X8 gate comment: threshold is in dispatch columns, not request tokens",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "S-X8",
+      "origin": "ArifiLabs (native) - fork-authored (S-X8); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    },
+    {
+      "sha": "c23bd8cc5e3e4008334d590ed9218eb3cd4e4cac",
+      "subject": "server: keep prompt images in reusable device snapshots",
+      "classification": [
+        "no-provenance",
+        "no-measured-effect"
+      ],
+      "lane": "x1i engine work",
+      "origin": "ArifiLabs (native) - fork-authored (x1i engine work); no upstream origin exists.",
+      "reason": "Shipped engine: this commit is an ancestor of c23bd8cc5e, the engine of record arifi-b11178-x1i-c23bd8cc5 (built, served and tagged). Adding the trailer is an amend that rewrites every sha up to the shipped tip, breaking the engine tag, the series pins and every receipt that cites these shas. History is immutable, so the ledger records what the message lacks. Exempted, not repaired. The message has no Measured-effect: trailer; where the commit moved a number, the number is in the lane record named in `lane`, not here."
+    }
+  ]
+}
