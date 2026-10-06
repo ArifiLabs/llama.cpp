@@ -646,6 +646,12 @@ static uint32_t moe_gather_iq3s_init_env() {
     return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
 }
 
+// lane-302 Route A: IQ3_XXS gather grid init (spec 4 of mul_mat_vec_iq3_xxs.comp), same shape as IQ3_S, opt-in until measured
+static uint32_t moe_gather_iq3xxs_init_env() {
+    const char * e = getenv("GGML_ARIFI_IQ3XXS_INIT");
+    return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
+}
+
 static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipeline, size_t spv_size, const void* spv_data, const std::string entrypoint,
                                          uint32_t parameter_count, std::array<uint32_t, 3> wg_denoms, std::vector<uint32_t> specialization_constants,
                                          bool disable_robustness, bool require_full_subgroups, uint32_t required_subgroup_size) {
@@ -4003,8 +4009,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             device->moe_gather_rows = (r == 1 || r == 2 || r == 4 || r == 8) ? r : rm_iq;
             if (w == 0 && device->moe_gather_cols != 0) {
                 // fprintf, not GGML_LOG_INFO: the server log callback drops ggml-vulkan INFO lines (lane-302 cell E)
-                fprintf(stderr, "ggml_vulkan: MUL_MAT_ID expert gather ON, width %u, rows %u, iq3_s rows %u, iq4_nl tail %u, iq2_s body %u, iq4_nl body %u, iq3_s init %u%s\n", device->moe_gather_cols,
-                        device->moe_gather_rows, renv == nullptr ? 2u : device->moe_gather_rows, moe_gather_tail_env(), moe_gather_iq2s_body_env(), moe_gather_iq4nl_body_env(), moe_gather_iq3s_init_env(),
+                fprintf(stderr, "ggml_vulkan: MUL_MAT_ID expert gather ON, width %u, rows %u, iq3_s rows %u, iq4_nl tail %u, iq2_s body %u, iq4_nl body %u, iq3_s init %u, iq3_xxs init %u%s\n", device->moe_gather_cols,
+                        device->moe_gather_rows, renv == nullptr ? 2u : device->moe_gather_rows, moe_gather_tail_env(), moe_gather_iq2s_body_env(), moe_gather_iq4nl_body_env(), moe_gather_iq3s_init_env(), moe_gather_iq3xxs_init_env(),
                         device->moe_gather_plant ? " (PLANT: wrong token count, test only)" : "");
             }
         }
@@ -4018,7 +4024,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             // lane-302 Route A levers 3/4: IQ2_S body (spec 3 of mul_mat_vec_iq2_s.comp); unset = 5 (int8 body + batched init, cellO KEEP), 0 = legacy, 2 = diagnostic only
             const uint32_t iq2s_body = moe_gather_iq2s_body_env();
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ2_S],  "mul_mat_vec_idg_iq2_s_f32",   arr_dmmv_idg_iq2_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq2_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, iq2s_body}, 1, true, use_subgroups16, force_subgroup_size16);
-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_XXS], "mul_mat_vec_idg_iq3_xxs_f32", arr_dmmv_idg_iq3_xxs_f32_f32_len[reduc16], arr_dmmv_idg_iq3_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_XXS], "mul_mat_vec_idg_iq3_xxs_f32", arr_dmmv_idg_iq3_xxs_f32_f32_len[reduc16], arr_dmmv_idg_iq3_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, iq3_sign_hoist, moe_gather_iq3xxs_init_env()}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_idg_iq3_s_f32",   arr_dmmv_idg_iq3_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr_iq3s, 1, 1}, {wg_size_subgroup16, gr_iq3s, gc, iq3_sign_hoist, moe_gather_iq3s_init_env()}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_XS],  "mul_mat_vec_idg_iq4_xs_f32",  arr_dmmv_idg_iq4_xs_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_NL],  "mul_mat_vec_idg_iq4_nl_f32",  arr_dmmv_idg_iq4_nl_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_nl_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, moe_gather_tail, moe_gather_iq4nl_body_env()}, 1, true, use_subgroups16, force_subgroup_size16);
