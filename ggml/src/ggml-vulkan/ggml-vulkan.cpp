@@ -9904,8 +9904,30 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context& 
 #else
     const bool y_decode_vector_staging = false;
 #endif
+    // arifi lane-301 D57: lane-296 N11 for the id path (was Intel-only). cm1 stages B f32->f16 when no int8 MMQ id
+    // pipeline is taken (iq4_nl keeps q8_1); threshold on tokens (ne12) so decode/verify widths stay on f32-B.
+    const bool id_mmq_possible = ctx->device->integer_dot_product && src1->type == GGML_TYPE_F32 &&
+                                 ggml_is_contiguous(src1) && ggml_vk_dim01_contiguous(src1) && (ne11 * ne10) % 4 == 0 &&
+                                 ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, GGML_TYPE_Q8_1, (ggml_prec)dst->op_params[0], true) != nullptr;
+    // DEFAULT ON (D61, HQ81 Q4: the cm1 f32-B kernel already rounds B to f16 in shmem; c15 KL = noise floor).
+    // GGML_ARIFI_CM1_F16B_ID=0 keeps f32-B; =red is the planted wrong variant for the op gate.
+    static const char * id_f16b_env = getenv("GGML_ARIFI_CM1_F16B_ID");
+    static const bool id_f16b_off = id_f16b_env && id_f16b_env[0] == '0';
+    static const bool id_f16b_red = id_f16b_env && strcmp(id_f16b_env, "red") == 0;
+    const bool id_cm1_f16b = !id_f16b_off && ctx->device->coopmat_support && !ctx->device->coopmat2 && !id_mmq_possible &&
+                             ctx->device->vendor_id != VK_VENDOR_ID_INTEL &&
+                             ggml_is_quantized(src0->type) && src1->type == GGML_TYPE_F32 &&
+                             (ctx->device->cm1_f16b_mode == 1u ||
+                              (ctx->device->cm1_f16b_mode == 0u && ne12 >= ctx->device->cm1_f16b_min_n)) &&
+                             ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, f16_type, (ggml_prec)dst->op_params[0], true) != nullptr;
+    static bool id_f16b_logged = false;
+    if (id_cm1_f16b && !id_f16b_logged) {
+        id_f16b_logged = true;
+        fprintf(stderr, "ggml_vulkan: lane-301 id f16-B staging engaged (%s, n=%u)%s\n", ggml_type_name(src0->type), (uint32_t) ne12, id_f16b_red ? " RED-PLANT" : "");
+    }
     const bool y_non_contig = y_decode_vector_staging ||
                               (ctx->device->coopmat2 && src1->type == GGML_TYPE_F32) ||
+                              id_cm1_f16b ||
                               // Intel coopmat1: force f32->f16 conversion so the f16 B-type quant pipeline is used.
                               (ctx->device->coopmat_support && !ctx->device->coopmat2 &&
                                ctx->device->vendor_id == VK_VENDOR_ID_INTEL &&
@@ -10219,7 +10241,7 @@ static void ggml_vk_mul_mat_id_q_f16(ggml_backend_vk_context * ctx, vk_context& 
                     (uint32_t)(y_staged_dst.nb[1] / y_staged_dst_type_size),
                     (uint32_t)(y_staged_dst.nb[2] / y_staged_dst_type_size),
                     (uint32_t)(y_staged_dst.nb[3] / y_staged_dst_type_size));
-            } else {
+            } else if (!(id_cm1_f16b && id_f16b_red)) {  // red plant: staged B never written, kernel reads stale prealloc_y
                 ggml_vk_cpy_to_contiguous(ctx, subctx, to_fp16_vk_1, src1, ggml_vk_subbuffer(ctx, d_Qy, qy_buf_offset), ggml_vk_subbuffer(ctx, d_Y, 0));
             }
             ctx->prealloc_y_last_pipeline_used = to_fp16_vk_1.get();
