@@ -122,7 +122,10 @@ def main():
                    "\n".join("  " + t for t in touched)))
         with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(body)
-        run(work, "commit", "-q", "-F", tmp, "--", *touched)
+        who = run(work, "log", "-1", "--format=%an%x00%ae%x00%cn%x00%ce", "HEAD").strip().split("\x00")
+        env = dict(os.environ, GIT_AUTHOR_NAME=who[0], GIT_AUTHOR_EMAIL=who[1],
+                   GIT_COMMITTER_NAME=who[2], GIT_COMMITTER_EMAIL=who[3])
+        run(work, "commit", "-q", "-F", tmp, "--", *touched, env=env)
     with open(os.path.join(work, "reword-commit-map.tsv"), "w", encoding="utf-8", newline="\n") as fh:
         fh.write("old\tnew\n")
         for o in shas:
