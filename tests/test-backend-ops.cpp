@@ -12571,6 +12571,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_opt_step_adamw(GGML_TYPE_F32, {10, 5, 4, 3}));
     test_cases.emplace_back(new test_opt_step_sgd(GGML_TYPE_F32, {10, 5, 4, 3}));
 
+    // lane-299 item B: qwen4exp ssm_alpha bf16 [2560,48] mat-vec + ssm_dt bias (decode shape)
+    test_cases.emplace_back(new test_mul_mat_vec_fusion(GGML_TYPE_BF16, GGML_GLU_OP_SWIGLU, 1, 48, 2560,
+        false, 1, 1, false, true, false, false, {1, 1}));
+
     for (ggml_type type : base_types) {
         for (bool with_gate : {false, true}) {
             for (bool use_id : {false, true}) {

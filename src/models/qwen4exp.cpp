@@ -15,6 +15,12 @@ static bool l299_layout() {
     return on;
 }
 
+// lane-299 item B: ssm_dt bias joins the ssm_alpha mat-vec (MUL_MAT_ADD). LLAMA_L299_ALPHA_OFF=1 restores the old order.
+static bool l299_alpha() {
+    static const bool on = getenv("LLAMA_L299_ALPHA_OFF") == nullptr;
+    return on;
+}
+
 // bad metadata must be catchable: GGML_ASSERT aborts the whole process
 static void qwen4exp_require_nonzero(const llama_model_loader & ml, llm_kv kid, uint32_t value) {
     if (value == 0) {
@@ -1093,10 +1099,20 @@ ggml_tensor * llama_model_qwen4exp::graph::build_layer_attn_linear(
     cb(beta, "beta_sigmoid", il);
 
     ggml_tensor * alpha = build_lora_mm(model.layers[il].ssm_alpha, cur, model.layers[il].ssm_alpha_s);
-    alpha = ggml_reshape_3d(ctx0, alpha, num_v_heads, n_seq_tokens, n_seqs);
-    cb(alpha, "alpha", il);
-
-    ggml_tensor * alpha_biased   = ggml_add(ctx0, alpha, model.layers[il].ssm_dt);
+    ggml_tensor * alpha_biased = nullptr;
+    if (l299_alpha()) {
+        // lane-299 item B: bias before the reshape so MUL_MAT + ADD are adjacent (backend MUL_MAT_ADD fusion; same math)
+        static const bool plant = getenv("LLAMA_L299_ALPHA_PLANT") != nullptr; // RED check: bias added twice
+        alpha_biased = ggml_add(ctx0, alpha, model.layers[il].ssm_dt);
+        if (plant) {
+            alpha_biased = ggml_add(ctx0, alpha_biased, model.layers[il].ssm_dt);
+        }
+        alpha_biased = ggml_reshape_3d(ctx0, alpha_biased, num_v_heads, n_seq_tokens, n_seqs);
+    } else {
+        alpha = ggml_reshape_3d(ctx0, alpha, num_v_heads, n_seq_tokens, n_seqs);
+        cb(alpha, "alpha", il);
+        alpha_biased = ggml_add(ctx0, alpha, model.layers[il].ssm_dt);
+    }
     ggml_tensor * alpha_softplus = ggml_softplus(ctx0, alpha_biased);
     cb(alpha_softplus, "a_softplus", il);
 
