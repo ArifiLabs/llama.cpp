@@ -11,6 +11,10 @@ add_executable(arifi-fa-replay fa-replay.cpp)
 target_link_libraries(arifi-fa-replay PRIVATE ggml ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(arifi-fa-replay PRIVATE cxx_std_17)
 
+add_executable(arifi-mmv-width mmv-width.cpp)
+target_link_libraries(arifi-mmv-width PRIVATE ggml ${CMAKE_THREAD_LIBS_INIT})
+target_compile_features(arifi-mmv-width PRIVATE cxx_std_17)
+
 add_executable(arifi-det-probe det-probe.cpp)
 target_link_libraries(arifi-det-probe PRIVATE llama-common llama ggml ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(arifi-det-probe PRIVATE cxx_std_17)
