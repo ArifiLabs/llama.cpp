@@ -2570,13 +2570,18 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     assert(n_expert_used > 0);
 
     // experts layout: [n_embd, n_expert_used, n_tokens]
-    // Decode (n_tokens==1): permute+sum_rows beats 10 views + 9 adds.
+    // Decode (n_tokens<=sumrows_max, default 1): permute+sum_rows beats 10 views + 9 adds.
     // Prefill: the cont/permute of a large expert slab is slower than the
     // classic view/add tree — keep that path for multi-token.
+    // lane-300 F-141 3b: verify widths up to LLAMA_ARIFI_MOE_SUMROWS_MAX keep the n=1 sum order (row-count independent).
+    static const int64_t sumrows_max = [] {
+        const char * s = getenv("LLAMA_ARIFI_MOE_SUMROWS_MAX");
+        return s ? std::max<int64_t>(1, atoll(s)) : int64_t(1);
+    }();
     ggml_tensor * moe_out;
     if (hparams.n_expert_used(il) == 1) {
         moe_out = ggml_cont(ctx0, ggml_view_2d(ctx0, experts, n_embd, n_tokens, experts->nb[2], 0));
-    } else if (n_tokens == 1) {
+    } else if (n_tokens <= sumrows_max) {
         ggml_tensor * experts_pe = ggml_cont(ctx0, ggml_permute(ctx0, experts, 1, 0, 2, 3));
         ggml_tensor * summed     = ggml_sum_rows(ctx0, experts_pe); // [1, n_embd, 1]
         moe_out = ggml_reshape_2d(ctx0, summed, n_embd, n_tokens);
