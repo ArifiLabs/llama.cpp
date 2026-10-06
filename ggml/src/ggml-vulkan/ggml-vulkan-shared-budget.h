@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <memory>
 #ifdef _WIN32
@@ -84,6 +85,16 @@ inline bool arifi_vk_shared_admit(uint64_t bytes, uint64_t already_shared = 0) {
             (unsigned long long)bytes, (unsigned long long)remaining,
             (unsigned long long)arifi_vk_available_bytes());
     return false;
+}
+
+// Allocator-wide shared admission is scoped to MoE NVMe streaming (where it was measured);
+// GGML_ARIFI_VK_SHARED_ADMIT=1|0 overrides. Default-on elsewhere refused staging buffers on
+// dense loads near 6 GiB available (lane-298 ismoke-10061217 ig2) and fails closed off Windows.
+inline bool arifi_vk_shared_admission_on() {
+    const char * admit = getenv("GGML_ARIFI_VK_SHARED_ADMIT");
+    if (admit && (strcmp(admit, "0") == 0 || strcmp(admit, "1") == 0)) { return admit[0] == '1'; }
+    const char * nvme = getenv("GGML_ARIFI_MOE_NVME");
+    return nvme && strcmp(nvme, "1") == 0;
 }
 
 inline std::shared_ptr<arifi_vk_shared_lease> arifi_vk_shared_reserve(uint64_t bytes) {

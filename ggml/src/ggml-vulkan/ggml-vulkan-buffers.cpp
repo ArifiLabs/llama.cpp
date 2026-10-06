@@ -752,8 +752,10 @@ vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vecto
             throw vk::OutOfDeviceMemoryError("NVME_LOCAL_PLACEMENT_REQUIRED");
         }
         if (mem_props.memoryTypes[planned->type].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible) {
-            buf->shared_lease = arifi_vk_shared_reserve(mem_req.size);
-            if (!buf->shared_lease) { throw vk::OutOfDeviceMemoryError("REFUSED_SHARED_BUDGET: planned shared allocation"); }
+            if (arifi_vk_shared_admission_on()) {
+                buf->shared_lease = arifi_vk_shared_reserve(mem_req.size);
+                if (!buf->shared_lease) { throw vk::OutOfDeviceMemoryError("REFUSED_SHARED_BUDGET: planned shared allocation"); }
+            }
         } else if (mem_props.memoryHeaps[cand_heap].size >= (uint64_t(64) << 30)) {
             buf->local_lease = arifi_vk_local_reserve(mem_req.size);
             if (!buf->local_lease) { throw vk::OutOfDeviceMemoryError("REFUSED_LOCAL_70GIB: planned local allocation"); }
@@ -797,8 +799,10 @@ vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::vecto
                         !req_flags_list.empty() && (req_flags_list.front() & vk::MemoryPropertyFlagBits::eDeviceLocal) &&
                         (mem_props.memoryTypes[*mtype_it].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible)) { continue; }
                 if (mem_props.memoryTypes[*mtype_it].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible) {
-                    buf->shared_lease = arifi_vk_shared_reserve(mem_req.size);
-                    if (!buf->shared_lease) { continue; }
+                    if (arifi_vk_shared_admission_on()) {
+                        buf->shared_lease = arifi_vk_shared_reserve(mem_req.size);
+                        if (!buf->shared_lease) { continue; }
+                    }
                 } else if (raw_budget >= (uint64_t(64) << 30)) {
                     buf->local_lease = arifi_vk_local_reserve(mem_req.size);
                     if (!buf->local_lease) { continue; }

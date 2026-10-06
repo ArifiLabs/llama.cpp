@@ -182,6 +182,9 @@ with live available-RAM-minus-4-GiB admission and an 11800 MiB maximum.
 `GGML_ARIFI_VK_FILE_CACHE_RESERVE_MIB` defaults to an estimated 2048 MiB mapping
 window; streaming cells set zero because weight reads bypass the page cache.
 Pure device-local allocations share a 70 GiB lease ledger across backend and cache.
+The allocator-wide shared admission applies only when `GGML_ARIFI_MOE_NVME=1`;
+`GGML_ARIFI_VK_SHARED_ADMIT=1|0` forces it on or off for any model (lane-298 integ:
+default-on refused a 1 MB staging buffer on a dense qwen4exp load at 5.97 GiB available).
 
 `GGML_CUDA_MOE_CACHE_STATS=N` logs cumulative counters every N collected nodes.
 NVMe bytes/seconds describe successful aligned expert reads only; they exclude
