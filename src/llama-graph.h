@@ -1387,8 +1387,8 @@ struct llm_graph_context {
 
     // `bank`: read through the R1 ROTATED index instead of the logical one. Pass true if and only
     // if this tensor is also written by build_recurrent_attn's R1 path - the read and the write must
-    // agree on the layout. Five call sites qualify (the models that call build_recurrent_attn);
-    // every other s_l reader (mamba, rwkv6/7, plamo2, lfm2, kimi-*, minimax) leaves it false and is
+    // agree on the layout. Every model that calls build_recurrent_attn qualifies (incl. glm5-next,
+    // kimi-k3); every other s_l reader (mamba, rwkv6/7, plamo2, lfm2, kimi-linear, minimax) leaves it false and is
     // therefore physically unable to pick up a rotation it does not write. No arch list to drift.
     ggml_tensor * build_rs(
             llm_graph_input_rs * inp,
