@@ -11037,6 +11037,15 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
     GGML_ASSERT(Br == pipeline->wg_denoms[0]);
     const uint32_t Tr = CEIL_DIV(N, Br);
 
+    // lane-300 F-141 3b: under GQA, workgroups_x is the token count, so split_k (the KV reduction split) moved with the
+    // verify width and row t's FA output changed bits with batch size. For neq1 <= GGML_ARIFI_FA_ROWSTABLE_N (default 8)
+    // choose split_k as for one token: every token keeps its n=1 KV partition and reduction order. 0 = old behaviour.
+    static const uint32_t fa_rowstable_n = [] {
+        const char * s = getenv("GGML_ARIFI_FA_ROWSTABLE_N");
+        return s ? (uint32_t) atoi(s) : 8u;
+    }();
+    const uint32_t wgx_split = (gqa_ratio > 1 && neq1 <= fa_rowstable_n) ? 1u : workgroups_x;
+
     if (part) {
         // lane-196: the wrapper already ran the ONE split-k heuristic for the body and fixed the
         // ring segments at one partition each; this dispatch obeys its slice.
@@ -11050,7 +11059,7 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
             : 16;
         split_kv = (uint32_t)n_kv_max;
         const uint32_t total_blocks = CEIL_DIV((uint32_t)n_kv_max, Bc);
-        const uint32_t base_wgs = (gqa_ratio > 1 ? workgroups_x : Tr) * workgroups_y * workgroups_z;
+        const uint32_t base_wgs = (gqa_ratio > 1 ? wgx_split : Tr) * workgroups_y * workgroups_z;
         if (base_wgs < shader_core_count * 2) {
             split_k = shader_core_count * 2 / base_wgs;
         }
@@ -11059,7 +11068,7 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
         const uint32_t per_blocks = CEIL_DIV(total_blocks, split_k);
         split_k = CEIL_DIV(total_blocks, per_blocks);
     } else {
-        ggml_vk_fa_choose_split_k(ctx->device, gqa_ratio, workgroups_x, workgroups_y, workgroups_z,
+        ggml_vk_fa_choose_split_k(ctx->device, gqa_ratio, wgx_split, workgroups_y, workgroups_z,
                                   Br, N, KV, alignment, &split_kv, &split_k);
     }
 
