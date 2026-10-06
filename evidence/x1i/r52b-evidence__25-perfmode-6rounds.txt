@@ -1,0 +1,68 @@
+# perf mode (many dispatches averaged), 3 interleaved rounds 
+### round 1 
+-- A1 sx8 packed=0 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    28 runs - 36026.07 us/run -  91.27 GFLOP/run - [1;34m  2.53 TFLOPS[0m
+-- A2 sx8 packed=1 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    30 runs - 34361.17 us/run -  91.27 GFLOP/run - [1;34m  2.66 TFLOPS[0m
+-- A0 q8_0 control 
+  MUL_MAT(type_a=q8_0,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                   26 runs - 40269.85 us/run -  91.27 GFLOP/run - [1;34m  2.27 TFLOPS[0m
+-- B sx8 MMQ under coopmat 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    24 runs - 45038.17 us/run -  91.27 GFLOP/run - [1;34m  2.03 TFLOPS[0m
+-- B q8_0 MMQ under coopmat 
+  MUL_MAT(type_a=q8_0,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                   28 runs - 37753.50 us/run -  91.27 GFLOP/run - [1;34m  2.42 TFLOPS[0m
+### round 2 
+-- A1 sx8 packed=0 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    30 runs - 35822.80 us/run -  91.27 GFLOP/run - [1;34m  2.55 TFLOPS[0m
+-- A2 sx8 packed=1 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    22 runs - 47784.41 us/run -  91.27 GFLOP/run - [1;34m  1.91 TFLOPS[0m
+-- A0 q8_0 control 
+  MUL_MAT(type_a=q8_0,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                   26 runs - 40687.42 us/run -  91.27 GFLOP/run - [1;34m  2.24 TFLOPS[0m
+-- B sx8 MMQ under coopmat 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    22 runs - 45641.41 us/run -  91.27 GFLOP/run - [1;34m  2.00 TFLOPS[0m
+-- B q8_0 MMQ under coopmat 
+  MUL_MAT(type_a=q8_0,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                   30 runs - 35593.07 us/run -  91.27 GFLOP/run - [1;34m  2.56 TFLOPS[0m
+### round 3 
+-- A1 sx8 packed=0 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    30 runs - 34879.57 us/run -  91.27 GFLOP/run - [1;34m  2.62 TFLOPS[0m
+-- A2 sx8 packed=1 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    30 runs - 35144.13 us/run -  91.27 GFLOP/run - [1;34m  2.60 TFLOPS[0m
+-- A0 q8_0 control 
+  MUL_MAT(type_a=q8_0,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                   24 runs - 42240.58 us/run -  91.27 GFLOP/run - [1;34m  2.16 TFLOPS[0m
+-- B sx8 MMQ under coopmat 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    22 runs - 46325.68 us/run -  91.27 GFLOP/run - [1;34m  1.97 TFLOPS[0m
+-- B q8_0 MMQ under coopmat 
+  MUL_MAT(type_a=q8_0,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                   28 runs - 36364.86 us/run -  91.27 GFLOP/run - [1;34m  2.51 TFLOPS[0m
+### round 4 
+-- A1 sx8 packed=0 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    30 runs - 35458.57 us/run -  91.27 GFLOP/run - [1;34m  2.57 TFLOPS[0m
+-- A2 sx8 packed=1 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    24 runs - 44430.42 us/run -  91.27 GFLOP/run - [1;34m  2.05 TFLOPS[0m
+-- A0 q8_0 control 
+  MUL_MAT(type_a=q8_0,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                   24 runs - 43537.13 us/run -  91.27 GFLOP/run - [1;34m  2.10 TFLOPS[0m
+-- B sx8 MMQ under coopmat 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    20 runs - 52745.80 us/run -  91.27 GFLOP/run - [1;34m  1.73 TFLOPS[0m
+-- B q8_0 MMQ under coopmat 
+  MUL_MAT(type_a=q8_0,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                   30 runs - 35493.33 us/run -  91.27 GFLOP/run - [1;34m  2.57 TFLOPS[0m
+### round 5 
+-- A1 sx8 packed=0 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    30 runs - 34285.23 us/run -  91.27 GFLOP/run - [1;34m  2.66 TFLOPS[0m
+-- A2 sx8 packed=1 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    30 runs - 33721.60 us/run -  91.27 GFLOP/run - [1;34m  2.71 TFLOPS[0m
+-- A0 q8_0 control 
+  MUL_MAT(type_a=q8_0,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                   26 runs - 40781.15 us/run -  91.27 GFLOP/run - [1;34m  2.24 TFLOPS[0m
+-- B sx8 MMQ under coopmat 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    22 runs - 46370.45 us/run -  91.27 GFLOP/run - [1;34m  1.97 TFLOPS[0m
+-- B q8_0 MMQ under coopmat 
+  MUL_MAT(type_a=q8_0,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                   30 runs - 35498.30 us/run -  91.27 GFLOP/run - [1;34m  2.57 TFLOPS[0m
+### round 6 
+-- A1 sx8 packed=0 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    30 runs - 34110.93 us/run -  91.27 GFLOP/run - [1;34m  2.68 TFLOPS[0m
+-- A2 sx8 packed=1 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    30 runs - 33435.60 us/run -  91.27 GFLOP/run - [1;34m  2.73 TFLOPS[0m
+-- A0 q8_0 control 
+  MUL_MAT(type_a=q8_0,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                   18 runs - 73669.22 us/run -  91.27 GFLOP/run - [1;34m  1.24 TFLOPS[0m
+-- B sx8 MMQ under coopmat 
+  MUL_MAT(type_a=sx8,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                    22 runs - 46543.32 us/run -  91.27 GFLOP/run - [1;34m  1.96 TFLOPS[0m
+-- B q8_0 MMQ under coopmat 
+  MUL_MAT(type_a=q8_0,type_b=f32,m=17408,n=512,k=5120,bs=[1,1],nr=[1,1],per=[0,1,2,3],k_v=0,o=1,src_overlap=0):                   28 runs - 37014.93 us/run -  91.27 GFLOP/run - [1;34m  2.47 TFLOPS[0m
+RC=0 
