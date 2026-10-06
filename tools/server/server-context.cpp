@@ -4693,9 +4693,14 @@ private:
 
                 const uint32_t n_rollback = slot.spec_draft.size() + 1 - accepted.size();
 
+                // lane-298 GDN replay: a verify batch wider than the ring is not logged, so the ring cannot roll it
+                // back at all; its checkpoint was saved at draft time (same n_draft > n_rs_seq condition)
+                static const bool gdn_rep_v = getenv("LLAMA_GDN_REPLAY") != nullptr;
                 const bool use_ckpt_tgt =
                     ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
-                    (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && n_rollback > llama_n_rs_seq(ctx_tgt));
+                    (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && n_rollback > llama_n_rs_seq(ctx_tgt)) ||
+                    (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && gdn_rep_v && n_rollback > 0 &&
+                     n_draft > llama_n_rs_seq(ctx_tgt));
 
                 slot.spec_rep_partial = n_rollback > 0 && !use_ckpt_tgt;
 
