@@ -5597,6 +5597,53 @@ struct test_gated_delta_net_bank : public test_case {
     }
 };
 
+// lane-299 layout copies (qwen4exp build_conv_state_at / build_ple without CONTs), decode shapes.
+// mode 0: strided conv tail CPY'd into a same-shape view of a bank row.
+// mode 1: PLE taps = views of one transpose-copy, times a kernel column of one F16->F32 cast, summed, SiLU.
+struct test_l299_layout : public test_case {
+    const int     mode;
+    const int64_t C;
+    const int64_t hist;
+    const int64_t n_t;
+
+    std::string vars() override { return VARS_TO_STR4(mode, C, hist, n_t); }
+
+    test_l299_layout(int mode = 0, int64_t C = 10240, int64_t hist = 3, int64_t n_t = 1)
+        : mode(mode), C(C), hist(hist), n_t(n_t) {}
+
+    std::string op_desc(ggml_tensor * t) override { GGML_UNUSED(t); return "L299_LAYOUT"; }
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * ci = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, hist + n_t, C, 1);
+        ggml_set_name(ci, "ci");
+        if (mode == 0) {
+            ggml_tensor * bank = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hist * C, 4);
+            ggml_set_name(bank, "bank");
+            ggml_tensor * tail = ggml_view_3d(ctx, ci, hist, C, 1, ci->nb[1], ci->nb[2], ggml_row_size(ci->type, n_t));
+            ggml_tensor * dst3 = ggml_view_3d(ctx, bank, hist, C, 1, ggml_row_size(bank->type, hist), bank->nb[1], 2 * bank->nb[1]);
+            ggml_tensor * out = ggml_cpy(ctx, tail, dst3);
+            ggml_set_name(out, "out");
+            return out;
+        }
+        const int64_t kern = 4;
+        const int64_t dil  = hist / (kern - 1);
+        ggml_tensor * w = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, kern, C);
+        ggml_set_name(w, "w");
+        ggml_tensor * w_all = ggml_cast(ctx, ggml_transpose(ctx, w), GGML_TYPE_F32);
+        ggml_tensor * pt    = ggml_cont(ctx, ggml_permute(ctx, ci, 1, 0, 2, 3));
+        ggml_tensor * acc   = nullptr;
+        for (int64_t k = 0; k < kern; ++k) {
+            const int64_t start = hist - (kern - 1 - k) * dil;
+            ggml_tensor * sh = ggml_view_3d(ctx, pt, C, n_t, 1, pt->nb[1], pt->nb[2], start * pt->nb[1]);
+            ggml_tensor * term = ggml_mul(ctx, sh, ggml_view_1d(ctx, w_all, C, k * w_all->nb[1]));
+            acc = acc ? ggml_add(ctx, acc, term) : term;
+        }
+        ggml_tensor * out = ggml_silu(ctx, acc);
+        ggml_set_name(out, "out");
+        return out;
+    }
+};
+
 // GGML_OP_GATED_LINEAR_ATTN
 struct test_gla : public test_case {
     const ggml_type type;
@@ -12680,6 +12727,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_gated_delta_net_bank(16, 128, 3, 1, 2, true,  1));
     test_cases.emplace_back(new test_gated_delta_net_bank(4,  64,  6, 4, 4, true,  2));
     test_cases.emplace_back(new test_gated_delta_net_bank(4,  64,  4, 1, 2, true,  0));
+    // lane-299 layout copies: mode, C, hist, n_t (GDN conv tail 10240x3, PLE conv 10240 hist 9)
+    test_cases.emplace_back(new test_l299_layout(0, 10240, 3, 1));
+    test_cases.emplace_back(new test_l299_layout(0, 10240, 3, 4));
+    test_cases.emplace_back(new test_l299_layout(1, 10240, 9, 1));
+    test_cases.emplace_back(new test_l299_layout(1, 10240, 9, 5));
 
 #if 0
     // these tests are disabled to save execution time, sbut they can be handy for debugging

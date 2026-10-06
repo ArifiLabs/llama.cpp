@@ -9,6 +9,12 @@
 #include <cstdlib>
 #include <string>
 
+// lane-299 layout copies: conv tails and PLE taps skip their CONTs (pure copies, same bytes). LLAMA_L299_LAYOUT_OFF=1 restores the old graph.
+static bool l299_layout() {
+    static const bool on = getenv("LLAMA_L299_LAYOUT_OFF") == nullptr;
+    return on;
+}
+
 // bad metadata must be catchable: GGML_ASSERT aborts the whole process
 static void qwen4exp_require_nonzero(const llama_model_loader & ml, llm_kv kid, uint32_t value) {
     if (value == 0) {
@@ -1422,6 +1428,22 @@ ggml_tensor * llama_model_qwen4exp::graph::build_conv_state_at(
                 conv_input->nb[1], conv_input->nb[2],
                 ggml_row_size(conv_input->type, s_idx));
 
+        if (l299_layout()) {
+            // lane-299: the strided tail copies straight into a same-shape view of the row (same bytes, no CONT)
+            static const bool plant = getenv("LLAMA_L299_LAYOUT_PLANT") != nullptr; // RED check: stale history
+            if (plant && slot == 0 && s_idx > 0) {
+                tail = ggml_view_3d(ctx0, conv_input, state_cols, channels, n_seqs,
+                        conv_input->nb[1], conv_input->nb[2], ggml_row_size(conv_input->type, s_idx - 1));
+            }
+            ggml_tensor * dst3 = ggml_view_3d(ctx0, conv_states_all,
+                    state_cols, channels, n_seqs,
+                    ggml_row_size(conv_states_all->type, state_cols),
+                    conv_states_all->nb[1],
+                    (slot * mem_size + kv_head) * row_size);
+            ggml_build_forward_expand(gf, ggml_cpy(ctx0, tail, dst3));
+            continue;
+        }
+
         ggml_tensor * dst = ggml_view_2d(ctx0, conv_states_all,
                 state_cols * channels, n_seqs,
                 conv_states_all->nb[1],
@@ -1512,6 +1534,25 @@ ggml_tensor * llama_model_qwen4exp::graph::build_ple(
             hist, hc_dim, il);
 
     ggml_tensor * conv_out = nullptr;
+    if (l299_layout()) {
+        // lane-299: one transpose-copy of the history and one cast of the [hc_dim, kern] kernel replace the
+        // per-tap CONTs and casts; tap views have contiguous rows (same values, same add order)
+        ggml_tensor * w_t = ggml_transpose(ctx0, model.layers[il].ple_conv1d);
+        ggml_tensor * w_all = w_t->type == GGML_TYPE_F32 ? ggml_cont(ctx0, w_t) : ggml_cast(ctx0, w_t, GGML_TYPE_F32);
+        ggml_tensor * pt = ggml_cont(ctx0, ggml_permute(ctx0, padded, 1, 0, 2, 3)); // [hc_dim, hist + T, n_seqs]
+        for (int64_t k = 0; k < kern; ++k) {
+            const int64_t start = hist - (kern - 1 - k) * dil;
+            ggml_tensor * shifted = ggml_view_3d(ctx0, pt, hc_dim, n_seq_tokens, n_seqs,
+                    pt->nb[1], pt->nb[2], start * pt->nb[1]);
+            ggml_tensor * wk = ggml_view_1d(ctx0, w_all, hc_dim, k * w_all->nb[1]);
+            ggml_tensor * term = ggml_mul(ctx0, shifted, wk);
+            conv_out = conv_out ? ggml_add(ctx0, conv_out, term) : term;
+        }
+        conv_out = ggml_silu(ctx0, conv_out);
+        conv_out = ggml_reshape_3d(ctx0, conv_out, n_embd, hc, n_tokens);
+        cb(conv_out, "ple_conv_out", il);
+        return ggml_add(ctx0, hidden, ggml_add(ctx0, gated, conv_out));
+    }
     for (int64_t k = 0; k < kern; ++k) {
         // tap k reads (kern-1-k)*dilation positions back
         const int64_t start = hist - (kern - 1 - k) * dil;
