@@ -27,12 +27,14 @@ shared FLOAT_TYPE sumsh[BLOCK_SIZE];
 
 void main() {
     const uint ncols     = p.ne00;
-    const uint nrows     = gl_NumWorkGroups.x;
-    const uint nchannels = gl_NumWorkGroups.y;
+    // lane-300: y = row. The partials path admits ne2 = ne3 = 1 only (one row, or rows <= ADD_RMS_ROWSTABLE_N),
+    // so channel and sample are 0; row r reads its own n=1-shaped partials at r * num_partials.
+    const uint nrows     = gl_NumWorkGroups.y;
+    const uint nchannels = 1;
 
-    const uint row       = 0;
-    const uint channel   = gl_WorkGroupID.y;
-    const uint samp      = gl_WorkGroupID.z;
+    const uint row       = gl_WorkGroupID.y;
+    const uint channel   = 0;
+    const uint samp      = 0;
     // The work is split across multiple workgroups in the x dimension. Each invocation
     // processes one element
     const uint tid       = gl_GlobalInvocationID.x;
@@ -49,7 +51,7 @@ void main() {
 
     uint32_t num_partials = p.param3;
     for (uint32_t i = gl_SubgroupInvocationID; i < num_partials; i += gl_SubgroupSize) {
-        sum += partial_sums[i];
+        sum += partial_sums[row * num_partials + i];
     }
     sum = subgroupAdd(sum);
 

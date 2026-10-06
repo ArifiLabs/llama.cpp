@@ -7006,6 +7006,18 @@ void ggml_vk_instance_init() {
     }
 }
 
+// lane-300 F-141 3b: the residual ADD -> RMS_NORM partials fusion was admitted only for one row, so a verify batch
+// normalized every row with a different reduction order than n=1 decode. For rows <= GGML_ARIFI_ADD_RMS_ROWSTABLE_N
+// each row keeps its n=1 partials (same chunks, same admission budget). 0 (default) = old behaviour.
+static uint32_t ggml_vk_add_rms_rowstable_n() {
+    static const uint32_t n = [] {
+        const char * s = getenv("GGML_ARIFI_ADD_RMS_ROWSTABLE_N");
+        return s ? (uint32_t) std::max(0, atoi(s)) : 0u;
+    }();
+    return n;
+}
+static constexpr size_t ADD_RMS_PARTIALS_BUDGET = 1024; // per graph, in one-row bytes
+
 void ggml_vk_init(ggml_backend_vk_context * ctx, size_t idx) {
     VK_LOG_DEBUG("ggml_vk_init(" << ctx->name << ", " << idx << ")");
     ggml_vk_instance_init();
@@ -7022,7 +7034,7 @@ void ggml_vk_init(ggml_backend_vk_context * ctx, size_t idx) {
     ctx->prealloc_size_y = 0;
     ctx->prealloc_size_split_k = 0;
     // Fixed size of 1KB, for deterministic behavior
-    ctx->prealloc_size_add_rms_partials = 1024;
+    ctx->prealloc_size_add_rms_partials = ADD_RMS_PARTIALS_BUDGET * std::max(1u, ggml_vk_add_rms_rowstable_n());
 
     ctx->fence = ctx->device->device.createFence({});
     ctx->almost_ready_fence = ctx->device->device.createFence({});
@@ -12372,8 +12384,8 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
         break;
     case GGML_OP_RMS_NORM:
         if (ctx->do_add_rms_partials) {
-            // Run one element per thread, 128 threads per workgroup
-            elements = { (uint32_t)CEIL_DIV(ne00, 128), 1, 1 };
+            // Run one element per thread, 128 threads per workgroup; y = row (lane-300: rows <= ADD_RMS_ROWSTABLE_N)
+            elements = { (uint32_t)CEIL_DIV(ne00, 128), (uint32_t)ne01, 1 };
         } else {
             elements = { (uint32_t)ne01, (uint32_t)ne02, (uint32_t)ne03 };
         }
@@ -13710,8 +13722,8 @@ static uint32_t ggml_vk_rms_num_partials(ggml_backend_vk_context * ctx, const gg
     return num_partials;
 }
 
-uint32_t ggml_vk_rms_partials_size(ggml_backend_vk_context * ctx, const ggml_tensor *node) {
-    const uint32_t num_partials = ggml_vk_rms_num_partials(ctx, node);
+uint32_t ggml_vk_rms_partials_size(ggml_backend_vk_context * ctx, const ggml_tensor *node, bool one_row) {
+    const uint32_t num_partials = ggml_vk_rms_num_partials(ctx, node) * (one_row ? 1u : (uint32_t) ggml_nrows(node));
     const uint32_t num_bytes = ROUNDUP_POW2(num_partials * sizeof(uint32_t), ctx->device->partials_binding_alignment);
     return num_bytes;
 }
@@ -13767,6 +13779,7 @@ static vk_op_rope_push_constants ggml_vk_make_rope_constants(const ggml_tensor *
 static void ggml_vk_rms_norm_finish(ggml_backend_vk_context * ctx, const ggml_tensor * src0) {
     if (ctx->do_add_rms_partials_offset_calculation) {
         ctx->prealloc_size_add_rms_partials_offset += ggml_vk_rms_partials_size(ctx, src0);
+        ctx->add_rms_partials_logical_offset += ggml_vk_rms_partials_size(ctx, src0, true);
         ctx->do_add_rms_partials = false;
         ctx->do_add_rms_partials_offset_calculation = false;
     }
@@ -13830,7 +13843,7 @@ void ggml_vk_rms_norm(ggml_backend_vk_context * ctx, vk_context& subctx, const s
                     ggml_vk_subbuffer(ctx, ctx->prealloc_add_rms_partials, ctx->prealloc_size_add_rms_partials_offset),
                     ggml_vk_tensor_subbuffer(ctx, residual),
                     ggml_vk_tensor_subbuffer(ctx, post_scale),
-                }, pc, { (uint32_t)CEIL_DIV(src0->ne[0], 128), 1, 1 });
+                }, pc, { (uint32_t)CEIL_DIV(src0->ne[0], 128), (uint32_t)src0->ne[1], 1 });
         } else {
             ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
                 {
@@ -15199,6 +15212,31 @@ void ggml_vk_preallocate_buffers(ggml_backend_vk_context * ctx, vk_context subct
     }
 }
 
+// Rows the residual ADD -> RMS_NORM partials path admits: one row always; with GGML_ARIFI_ADD_RMS_ROWSTABLE_N, up to N
+// rows whose partial chunks never straddle a row, unless n=1 would have folded this ADD into a mat-vec MUL_MAT+ADD
+// epilogue (no partials at n=1 either; mirrors mm_add_ok without its one-row test).
+static bool ggml_vk_add_rms_rows_ok(ggml_backend_vk_context * ctx, const ggml_cgraph * cgraph, int node_idx, const ggml_tensor * rms) {
+    const int64_t nr = ggml_nrows(rms);
+    if (nr == 1) {
+        return true;
+    }
+    if (nr > (int64_t) ggml_vk_add_rms_rowstable_n() || rms->ne[2] != 1 || rms->ne[3] != 1 ||
+        rms->ne[0] % ctx->device->pipeline_add_rms[0][0][0]->wg_denoms[0] != 0) {
+        return false;
+    }
+    const ggml_tensor * add = cgraph->nodes[node_idx];
+    const ggml_tensor * mm = node_idx > 0 ? cgraph->nodes[node_idx - 1] : nullptr;
+    if (mm && mm->op == GGML_OP_MUL_MAT && (add->src[0] == mm || add->src[1] == mm) &&
+        ggml_can_fuse(cgraph, node_idx - 1, { GGML_OP_MUL_MAT, GGML_OP_ADD })) {
+        const ggml_tensor * bias = add->src[0] == mm ? add->src[1] : add->src[0];
+        if (mm->type == bias->type && ggml_are_same_shape(mm, bias) && ggml_are_same_stride(mm, bias) &&
+            get_misalign_bytes(ctx, bias) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, int node_idx, ggml_tensor *node_begin, int node_idx_begin, bool last_node, bool almost_ready, bool submit){
     ggml_tensor * node = cgraph->nodes[node_idx];
     if (ggml_is_empty(node) || ggml_op_is_empty(node->op) || !node->buffer) {
@@ -15225,11 +15263,11 @@ bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, in
         if (next_node_idx < cgraph->n_nodes &&
             cgraph->nodes[next_node_idx]->op == GGML_OP_RMS_NORM &&
             cgraph->nodes[next_node_idx]->src[0] == cgraph->nodes[next_node_idx - 1] &&
-            ggml_nrows(cgraph->nodes[next_node_idx]) == 1 &&
+            ggml_vk_add_rms_rows_ok(ctx, cgraph, node_idx, cgraph->nodes[next_node_idx]) &&
             ctx->device->add_rms_fusion) {
-            uint32_t size = ggml_vk_rms_partials_size(ctx, cgraph->nodes[node_idx]);
+            uint32_t size = ggml_vk_rms_partials_size(ctx, cgraph->nodes[node_idx], true);
             ctx->do_add_rms_partials_offset_calculation = true;
-            if (ctx->prealloc_size_add_rms_partials_offset + size <= ctx->prealloc_size_add_rms_partials) {
+            if (ctx->add_rms_partials_logical_offset + size <= ADD_RMS_PARTIALS_BUDGET) {
                 ctx->do_add_rms_partials = true;
             }
         }
@@ -17439,6 +17477,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
     ggml_vk_debug_label queue_dbg(ctx->device->compute_queue->handle.get(), "ggml_backend_vk_graph_compute");
 
     ctx->prealloc_size_add_rms_partials_offset = 0;
+    ctx->add_rms_partials_logical_offset = 0;
     ctx->do_add_rms_partials = false;
     ctx->do_add_rms_partials_offset_calculation = false;
 

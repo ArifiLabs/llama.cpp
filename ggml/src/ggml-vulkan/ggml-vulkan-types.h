@@ -2077,6 +2077,8 @@ struct ggml_backend_vk_context {
     // write partial sums to accumulate the square of the vector components
     bool do_add_rms_partials_offset_calculation;
     bool do_add_rms_partials;
+    // lane-300 F-141 3b: n=1 (one-row) accounting of the partials budget, so every width admits the same pairs
+    size_t add_rms_partials_logical_offset {};
 
     uint64_t last_total_flops {UINT64_MAX};
 
