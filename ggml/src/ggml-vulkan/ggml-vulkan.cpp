@@ -623,11 +623,13 @@ static uint32_t moe_gather_tail_env() {
     return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
 }
 
-// lane-302 Route A lever 3: IQ2_S gather body, opt-in (GGML_ARIFI_IQ2S_BODY=1 int8 sign path) until measured;
-// =2 skips the LDS grid copy (wrong values, timing diagnostic only); =3 planted wrong arm 1 (test only)
+// lane-302 Route A lever 3: IQ2_S gather body, opt-in. 1 = int8 sign path (cellL-10060536 op: n2/n4/n8 -12..-17%,
+// byte-identical; cellM-10060610 served ABBA = LOSS by rule, mean -0.74%, so unset stays 0 = legacy body);
+// 2 skips the LDS grid copy (wrong values, timing diagnostic only); 3 planted wrong arm 1 (test only);
+// 4/5 = body 0/1 with the batched grid init (lever 4, opt-in until measured)
 static uint32_t moe_gather_iq2s_body_env() {
     const char * e = getenv("GGML_ARIFI_IQ2S_BODY");
-    return (e != nullptr && e[0] >= '1' && e[0] <= '3') ? (uint32_t) (e[0] - '0') : 0u;
+    return (e != nullptr && e[0] >= '0' && e[0] <= '5') ? (uint32_t) (e[0] - '0') : 0u;
 }
 
 static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipeline, size_t spv_size, const void* spv_data, const std::string entrypoint,
