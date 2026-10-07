@@ -1,0 +1,127 @@
+From c2e648e700e4884e147f54f3b754cda9739d6f9c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 11:07:28 -0400
+Subject: [PATCH] docs: README adds download links for every model, S-X8 and
+ Escha-W2 format notes, linked credits
+
+New "Models used (download links)" table (each source checked live on Hugging Face; changed-by-us files marked). S-X8 v4.3 and Escha-W2 sections describe the formats with links to their authors. Credits link Strata (MIT, incl. its MTP fetch tool), FreeToken, EschaLabs, ISTA-DASLab, MarlaLabs and Qwen.
+
+Origin: ArifiLabs (native) - release documentation for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ README.md | 60 +++++++++++++++++++++++++++++++++++++++++++++----------
+ 1 file changed, 50 insertions(+), 10 deletions(-)
+
+diff --git a/README.md b/README.md
+index 11fccf3726..bd6469f18b 100644
+--- a/README.md
++++ b/README.md
+@@ -23,7 +23,7 @@ July 2026; this is its third published release.
+ | Qwen3.8 27B UD-Q4_K_XL (Huihui abliterated) | plain | - | - | `-ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --ctx-checkpoints 32` | 4.57 / 4.60 | 104.4 | +5.9% / +6.0% |
+ | same | MTP (built-in head) | 3 | head in the model file | plain flags + `--spec-type draft-mtp --spec-draft-p-min 0.5` | 10.08 / 9.84 | 102.2 | +120.6% / +114.0% over plain |
+ | same | DFlash2 | 3 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | plain flags + `--spec-type draft-dflash --dflash-defer-injection 0` | **12.09 / 11.55** | 95.0 | +15.5% / +8.7% |
+-| Qwen3.8 27B S-X8 v4.3 (MarlaLabs) | plain | - | - | `-ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0` | 2.94 / 2.96 | 90.8 | +1.5% / +2.4% |
++| Qwen3.8 27B S-X8 v4.3, 7.5 bits per weight ([MarlaLabs](https://github.com/MarlaLabsAI/sx8-quantization)) | plain | - | - | `-ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0` | 2.94 / 2.96 | 90.8 | +1.5% / +2.4% |
+ | same | DFlash2 | 4 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | plain flags + `--spec-type draft-dflash --dflash-defer-injection 0` | 8.89 / 8.29 | 88.5 | +5.5% / +6.9% |
+ | GLM-5.3 Flash GSQ-RCO 3.0-bit, experts streamed from NVMe ³ | DFlash2 | 2 | `GLM-5.3-Flash-DFlash2-Q8_0.gguf` | `--moe-cache 1536 -fa off -c 2048 -b 8 -ub 8` + `GGML_ARIFI_MOE_NVME=1` | 2.96 (chat) | 4.4–4.6 | tie (+0.3%), output identical |
+ 
+@@ -69,7 +69,10 @@ Base: `-ngl 999 -np 1 -fa on --lazy-mode on -c 4096 -lm dio`
+ Where the MTP sidecars come from: we built both. `mtp-sidecar-qwen4exp-q8_0.gguf` is the MTP block (31 tensors) of
+ Qwen's official BF16 Qwen3.8-Flash-Next checkpoint, extracted and converted by us to a Q8_0 GGUF sidecar, because the
+ quantized GSQ-RCO files do not carry it. The `-dven40k` variant adds a 40,525-token English draft vocabulary, a design
+-taken from Strata and re-implemented here.
++taken from [Strata](https://github.com/Niko1221/Strata) and re-implemented here. To build them yourself: fetch the MTP
++weights from Hugging Face `Qwen/Qwen3.8-Flash-Next` with Strata's `tools/mtp_fetch.py`, then convert them with our
++sidecar builder. The builder, Strata's fetch tool (MIT, credited) and step-by-step instructions ship in
++`tools/qwen4exp-mtp-sidecar/` in the next update.
+ 
+ **Ornith-1.5 35B-A3B MoE · Q4_K_M** (ornith-ai) · file `Ornith-1.5-35B-Q4_K_M.gguf`
+ Base: `-ngl 999 -np 1 -fa on -c 4096 -ub 512 -b 2048 -lm dio --lazy-mode on`
+@@ -114,6 +117,26 @@ identical copies of the model file on two drives. Each server line is copied fro
+ [`evidence/b11178-x1i2/`](evidence/b11178-x1i2/) `sg-*-state.json` (field `args`). The GLM cell's command record is not
+ in this repository; its result is [`glm-shipgate-VERDICT.txt`](evidence/b11178-x1i2/glm-shipgate-VERDICT.txt).
+ 
++## Models used (download links)
++
++Every model and drafter file in the speed tables, with where it comes from. "As downloaded" = we run the publisher's
++file unchanged.
++
++| Model | File | Download | Notes |
++|---|---|---|---|
++| Qwen3.8-Flash-Next, GSQ-RCO IQ3_S | `Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf` (+ part 2) | [ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF) | as downloaded |
++| Qwen3.8-Flash-Next MTP sidecar | `mtp-sidecar-qwen4exp-q8_0.gguf`, `...-dven40k.gguf` | built by us from [Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) | see "Where the MTP sidecars come from" above |
++| Ornith-1.5 35B-A3B, Q4_K_M | `Ornith-1.5-35B-Q4_K_M.gguf` | [ornith-ai/Ornith-1.5-35B-A3B-GGUF](https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF) | as downloaded; MTP head inside |
++| Ornith-1.5 DFlash2 drafter | `Ornith-1.5-35B-A3B-DFlash2-BF16.gguf` | [jzinno/Ornith-1.5-35B-A3B-DFlash2](https://huggingface.co/jzinno/Ornith-1.5-35B-A3B-DFlash2) | published as safetensors; converted by us to a BF16 GGUF |
++| Qwen3.8 27B, UD-Q4_K_XL (Huihui abliterated) | `Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf` | [huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF](https://huggingface.co/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF) | as downloaded; MTP head inside |
++| Qwen3.8 27B DFlash2 drafter | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | [incoai/Qwen3.8-27B-DFlash2-GGUF](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2-GGUF) | as downloaded |
++| Qwen3.8 27B, S-X8 v4.3 | `Qwen3.8-27B-SX8v43.gguf` | [marlalabsAI/Qwen3.8-27B-SX8](https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8) | retag the type id once: `python tools/gguf-retag-sx8/retag_sx8.py` (writes the `-id57` file we run) |
++| GLM-5.3 Flash, GSQ-RCO 3.0-bit | `GLM-5.3-Flash-GSQ-RCO-3.0bit.gguf` | [pfeifferj/GLM-5.3-Flash-GSQ-RCO-GGUF](https://huggingface.co/pfeifferj/GLM-5.3-Flash-GSQ-RCO-GGUF) | as downloaded |
++| GLM-5.3 Flash DFlash2 drafter | `GLM-5.3-Flash-DFlash2-Q8_0.gguf` | [Anbeeld/GLM-5.3-Flash-DFlash2-GGUF](https://huggingface.co/Anbeeld/GLM-5.3-Flash-DFlash2-GGUF) | as downloaded |
++| Qwen3.8 27B, ROCmFP4-FAST (780M table) | `Qwen3.8-27B-ROCmFP4-FAST.gguf` | [julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF](https://huggingface.co/julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF) | as downloaded |
++| Qwen3.8 27B, UD-Q3_K_XL Unleashed (780M table) | `Qwen3.8-27B-Unleashed-UD-Q3_K_XL.gguf` | [outsourc-e/Qwen3.8-27B-Unleashed-GGUF](https://huggingface.co/outsourc-e/Qwen3.8-27B-Unleashed-GGUF) | as downloaded |
++| Qwen3.8 27B, Escha-W2 (format page) | Escha-W2 GGUF + `.escha_aux` | [EschaLabs/Qwen3.8-27B-Escha-W2](https://huggingface.co/EschaLabs/Qwen3.8-27B-Escha-W2) | published for SGLang; converted by us to a native GGUF (types 55/56) |
++
+ ## Speed: Radeon 780M (Beelink SER7 Pro), Qwen3.8 27B
+ 
+ | 27B model file | Plain decode, t/s: before → after | DFlash2 decode, t/s: before → after |
+@@ -358,7 +381,13 @@ a ~600-token prompt, means of 4 rounds (8 for MTP).
+ 
+ You were sent this link because your format runs here with Vulkan kernels. Find your format below.
+ 
+-**S-X8 v4.3 (MarlaLabs).** Vulkan: `dequant_sx8.comp`, `mul_mat_vec_sx8.comp`, a q8_1 MMVQ path, a
++**S-X8 v4.3 (MarlaLabs).** S-X8 v4.3 is a weight format at 7.50 bits per weight (30 bytes per block), designed for
++near-FP16 quality with a simple decoder (about 9-10 ALU operations per weight, no shared memory). Its author reports
++wikitext-2 perplexity +0.17% over FP16 on Qwen3.5-4B, against +2.40% for Q8_0, at 11.6% fewer bytes than Q8_0. Format,
++paper and CUDA kernels: [MarlaLabsAI/sx8-quantization](https://github.com/MarlaLabsAI/sx8-quantization) (Apache-2.0);
++paper [doi:10.5281/zenodo.21922640](https://doi.org/10.5281/zenodo.21922640); the 27B file measured here:
++[marlalabsAI/Qwen3.8-27B-SX8](https://huggingface.co/marlalabsAI/Qwen3.8-27B-SX8). This fork adds the Vulkan path.
++Vulkan: `dequant_sx8.comp`, `mul_mat_vec_sx8.comp`, a q8_1 MMVQ path, a
+ packed cooperative-matrix tile for prefill, and (new) prompt reading on the int8 coopmat1 kernel from 56 columns.
+ Qwen3.8 27B S-X8: 5.551 t/s drafted at draft depth 4, 2.247 t/s plain (medians), mat-vec at 71-73 GB/s on a 780M,
+ close to the memory bus.
+@@ -393,7 +422,13 @@ python tools/gguf-retag-g128/retag_g128.py model-q2_0.gguf   # writes model-q2_0
+ build-vulkan\bin\llama-server.exe -m model-q2_0.g128.gguf -dev Vulkan0 -ngl 999
+ ```
+ 
+-**Escha-W2 (EschaLabs).** Native types 55 and 56 with a fused `GGML_OP_ESCHA_MM`
++**Escha-W2 (EschaLabs).** Escha-W2 is a 2-bit codebook weight format with mixed precision: on their 35B release the
++gate and up projections are 2-bit, down projections 3-bit, attention projections, embeddings and LM head Int8 (12.3 GB
++from a 71.9 GB BF16 checkpoint). EschaLabs publish it for a custom SGLang runtime on CUDA, Apache-2.0:
++[eschalabs.com](https://www.eschalabs.com/), [Hugging Face](https://huggingface.co/EschaLabs), the 27B model
++[EschaLabs/Qwen3.8-27B-Escha-W2](https://huggingface.co/EschaLabs/Qwen3.8-27B-Escha-W2). We found no public GitHub
++repository for it. This fork runs the format in llama.cpp with Vulkan:
++native types 55 and 56 with a fused `GGML_OP_ESCHA_MM`
+ (`escha_mm.comp`): Hadamard rotation, code decode and matmul in one dispatch. Decode is coherent on
+ 2- and 3-bit files; column blocking makes the escha3 prefill shape 3.50x faster. Load the GGUF with its
+ `.escha_aux` sidecar beside it; `test-backend-ops -o ESCHA_MM` checks it against the CPU.
+@@ -437,19 +472,24 @@ tree carries, with its licence.
+   CUDA and Metal kernels.
+ - [Tiiny-AI/PowerInfer](https://github.com/Tiiny-AI/PowerInfer): sparse execution and SSD expert streaming.
+   The Windows IOCP read path is built on it.
+-- FreeToken (FlashML-org): the design of the device-resident context checkpoint ring with pooled
++- [FlashML-org/FreeToken](https://github.com/FlashML-org/FreeToken): the design of the device-resident context checkpoint ring with pooled
+   recurrent-state slots, the tool-call checkpoint anchor and unbuffered model reads, re-implemented here.
+ - [PrismML-Eng/llama.cpp](https://github.com/PrismML-Eng/llama.cpp): the Q2_0_G128 ternary format, the VNNI
+   repack design and the f16 recurrent state.
+-- MarlaLabs (Martí Vidal Leandro): the S-X8 v4.3 format (Apache-2.0). The Vulkan kernels here are ours.
++- [MarlaLabsAI/sx8-quantization](https://github.com/MarlaLabsAI/sx8-quantization) (Martí Vidal Leandro): the S-X8
++  v4.3 format, 7.50 bits per weight (Apache-2.0; paper [doi:10.5281/zenodo.21922640](https://doi.org/10.5281/zenodo.21922640)).
++  The Vulkan kernels here are ours.
+ - [jtrefon/llama.cpp-turboq-mtp](https://github.com/jtrefon/llama.cpp-turboq-mtp): the TBQ3_0 and TBQ4_0
+   KV cache types.
+ - [thecodacus/llama.cpp](https://github.com/thecodacus/llama.cpp): three host-transfer expert-prefetch
+   patches.
+-- EschaLabs: the Escha-W2 code format.
+-- ISTA-DASLab: the Qwen3.8-Flash-Next GSQ-RCO GGUF files measured here.
+-- Strata: the design of the sparse prefill attention, the pooled indexer-key cache and the 40,525-token draft
+-  vocabulary, re-implemented here.
++- [EschaLabs](https://www.eschalabs.com/) ([Hugging Face](https://huggingface.co/EschaLabs)): the Escha-W2 code
++  format (Apache-2.0).
++- [ISTA-DASLab](https://huggingface.co/ISTA-DASLab): the Qwen3.8-Flash-Next GSQ-RCO GGUF files measured here.
++- [Niko1221/Strata](https://github.com/Niko1221/Strata) (Niko1221 and the Strata contributors, MIT): the design of the
++  sparse prefill attention, the pooled indexer-key cache and the 40,525-token draft vocabulary, re-implemented here;
++  its `mtp_fetch.py` tool fetches the Qwen3.8-Flash-Next MTP weights we build the MTP sidecar from.
++- [Qwen](https://huggingface.co/Qwen): the Qwen3.8-Flash-Next BF16 checkpoint whose MTP block is the MTP sidecar.
+ 
+ ## Requirements and limits
+ 
