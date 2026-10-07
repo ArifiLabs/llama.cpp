@@ -1,0 +1,44 @@
+From 5991bb1e34ff239038c9d9eba2da1a4572624e45 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 10:38:38 -0400
+Subject: [PATCH] lane-302 lever 9: GGML_ARIFI_MOE_GATHER_EXT default OFF
+ (opt-in, measured slower on Q2_0)
+
+Cell T (cells/cellT-10070643) timed the lever 9 Q2_0 gather twin against the per-token loop on the
+served ffn_down_exps tensors (blk 1/10/20/30, real routing, 100 reps, two rounds, round 2 reversed):
+n1 tie (-4.1/+1.7%), n2 +18.4/+9.1%, n4 +9.5/+8.4%, n8 +21.7/+21.8% SLOWER with the gather on.
+Gates were green (tbo 56/56, plant RED 41 FAIL, harness 32/32 IDENT, plant 16/16 DIFF).
+
+Cause (derived from cell T, no re-measure): the per-token loop already reads the 0.46 MB Q2_0
+experts at 62-66 GB/s per pair against the box's ~72 GB/s roof, so slot-major reordering has no
+bandwidth left to recover and loses dispatch parallelism.
+
+Unset is now OFF: no idg twins are created for these types, so the dispatch at
+ggml-vulkan.cpp mul_mat_vec_id swap (pipeline_dequant_mul_mat_vec_idg_*[w][type] == nullptr) keeps
+the per-token loop, the integ 7156c61607 route. GGML_ARIFI_MOE_GATHER_EXT=1 opts in; the capability
+stays for other rigs and quant files.
+
+Origin: lane-302
+Measured-effect: default OFF = integ route (cell T e0 32/32 IDENT to gather-off; cell U default-arm proof cache/moe-gather-x1-lane/cells/cellU-*/SUMMARY.txt); opt-in arm +8..+22% slower at n2..n8 on Q2_0 down, cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index d77cf2542d..5f201e7ca0 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -653,10 +653,11 @@ static uint32_t moe_gather_iq3xxs_init_env() {
+ }
+ 
+ // lane-302 lever 9: expert gather for the legacy f32-path types and every q8_1 MMVQ id type (the served Q2_0 down
+-// tensors among them). Same workgroup, rows and spec constants as each id pipeline. Unset = ON, 0 = off.
++// tensors among them). Same workgroup, rows and spec constants as each id pipeline. Unset = OFF, 1 = on
++// (cell T: Q2_0 down n2..n8 +8..+22% slower; OFF creates no idg twins, so dispatch keeps the per-token loop).
+ static uint32_t moe_gather_ext_env() {
+     const char * e = getenv("GGML_ARIFI_MOE_GATHER_EXT");
+-    return (e != nullptr && e[0] == '0') ? 0u : 1u;
++    return (e != nullptr && e[0] == '1') ? 1u : 0u;
+ }
+ 
+ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipeline, size_t spv_size, const void* spv_data, const std::string entrypoint,

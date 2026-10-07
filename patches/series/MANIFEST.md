@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **763**, all non-merge, applied in filename order.
+- Patches: **772**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 763 commit messages, same provenance trailers. Verified, not
+same file contents, same 772 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -842,6 +842,15 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 761 | `0761-arifi-sync-re-key-the-sha-pinned-ledgers-after-the-p.patch` | arifi-fork-base | `4476c4221` | - | - | arifi-sync: re-key the sha-pinned ledgers after the post-x1i trailer reword |
 | 762 | `0762-vulkan-IQ3_S-mat-vec-spec-id-clash-from-merge-round-.patch` | ternary-g128 | `5f37b7400` | - | - | vulkan: IQ3_S mat-vec spec id clash from merge round 2 (IQ3S_INIT moves to spec 5) |
 | 763 | `0763-protected-wins-register-the-integ-wins-W5-W6-W7-W8-W.patch` | arifi-fork-base | `aa9cac23a` | - | - | protected-wins: register the integ wins W5 W6 W7 W8 W12 W13 W18, join W9 W16, cover the round-2 non-wins |
+| 764 | `0764-common-fit-block-treats-draft-mtp-adaptive-as-MTP-lo.patch` | arifi-fork-base | `2adf5cc55` | - | - | common: fit block treats draft-mtp-adaptive as MTP (load crash fix) |
+| 765 | `0765-tools-qwen4exp-MTP-sidecar-builders-with-Strata-s-fe.patch` | arifi-fork-base | `7dbdd0731` | Niko1221/Strata@82f46a8c8f475f001ad76d92f58f4a4f8ffb0253 (tools/mtp_fetch.py, tools/test_mtp_fetch.py, LICENSE; copied unchanged) | - | tools: qwen4exp MTP sidecar builders, with Strata's fetch tool and its MIT license |
+| 766 | `0766-lane-300-F-141-producer-fix-zero-freed-KV-cells-befo.patch` | arifi-fork-base | `1ea866f86` | - | - | lane-300: F-141 producer fix - zero freed KV cells before they are read (LLAMA_ARIFI_KV_ZERO_FREED, default on) |
+| 767 | `0767-lane-300-kv-zero-hardening-mid-decode-window-bound-t.patch` | arifi-fork-base | `7ecb9a918` | - | - | lane-300: kv-zero hardening - mid-decode window bound, transposed-V block assert, zeroing log |
+| 768 | `0768-lane-300-LLAMA_ARIFI_KV_ZERO_FREED-default-1-0-cell-.patch` | arifi-fork-base | `2fc868a68` | - | - | lane-300: LLAMA_ARIFI_KV_ZERO_FREED default 1 -> 0 (cell 31 OO re-cut failed the pooled clause) |
+| 769 | `0769-build-info-version-prints-the-arifilabs-release-and-.patch` | arifi-fork-base | `58d81805c` | - | - | build-info: --version prints the arifilabs release and its upstream base |
+| 770 | `0770-docs-lane-299-runbook-NMSE-op-tests-miss-n_tokens-2..patch` | arifi-fork-base | `417d26b36` | - | - | docs: lane-299 runbook - NMSE op tests miss n_tokens 2..8 bit-exactness; verify-window census recipe |
+| 771 | `0771-lane-302-lever-9-MUL_MAT_ID-expert-gather-for-Q2_0-a.patch` | arifi-fork-base | `bfa4b73e2` | - | - | lane-302 lever 9: MUL_MAT_ID expert gather for Q2_0 and every legacy / q8_1 MMVQ id type |
+| 772 | `0772-lane-302-lever-9-GGML_ARIFI_MOE_GATHER_EXT-default-O.patch` | arifi-fork-base | `5991bb1e3` | - | - | lane-302 lever 9: GGML_ARIFI_MOE_GATHER_EXT default OFF (opt-in, measured slower on Q2_0) |
 
 ## Measured effect, per patch
 
@@ -1684,6 +1693,15 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0761-arifi-sync-re-key-the-sha-pinned-ledgers-after-the-p.patch` | UNMEASURED - ledger keys only; no inference code path is touched. |
 | `0762-vulkan-IQ3_S-mat-vec-spec-id-clash-from-merge-round-.patch` | UNMEASURED (merge repair; restores the build, smoke run-ismoke2.ps1 is the receipt) |
 | `0763-protected-wins-register-the-integ-wins-W5-W6-W7-W8-W.patch` | none (protected-win ledger registration; the numbers live in the entries) |
+| `0764-common-fit-block-treats-draft-mtp-adaptive-as-MTP-lo.patch` | UNMEASURED (correctness fix; served-load receipt cells/afix-* from run-afix.ps1: integ crashes, fix loads, ids vs draft-mtp) |
+| `0765-tools-qwen4exp-MTP-sidecar-builders-with-Strata-s-fe.patch` | none on the engine (tools only); the shipped scripts regenerate both served sidecars with identical tensors, cache/mtp-x1-lane/cells/sidecar-regen.txt |
+| `0766-lane-300-F-141-producer-fix-zero-freed-KV-cells-befo.patch` | OPT-IN after cell 31 (default 0 from the commit 'KV_ZERO_FREED default 1 -> 0'): -fa off history == fresh bit-equal, S-NF F-nondet 4 -> 0 (cells/c31p-10070726-*); served ids Z0 == I every load (c31q-10070739, c31o-10070746, c31o-10070901); cost QM pooled +0.45% (floor 0.87%), OO pooled -0.31% / -3.23% (floors 0.38% / 7.33%) |
+| `0767-lane-300-kv-zero-hardening-mid-decode-window-bound-t.patch` | OPT-IN after cell 31 (default 0 from the commit 'KV_ZERO_FREED default 1 -> 0'): -fa off history == fresh bit-equal, S-NF F-nondet 4 -> 0 (cells/c31p-10070726-*); served ids Z0 == I every load (c31q-10070739, c31o-10070746, c31o-10070901); cost QM pooled +0.45% (floor 0.87%), OO pooled -0.31% / -3.23% (floors 0.38% / 7.33%) |
+| `0768-lane-300-LLAMA_ARIFI_KV_ZERO_FREED-default-1-0-cell-.patch` | OPT-IN; default restored to merge base (ids Z0 == I, cells/c31q-10070739-*, c31o-10070746-*, c31o-10070901-*); opt-in cost QM pooled +0.45% (floor 0.87%), OO pooled -0.31% / -3.23% (floors 0.38% / 7.33%) |
+| `0769-build-info-version-prints-the-arifilabs-release-and-.patch` | none (string only); --version check in cache/mtp-x1-lane/cells/point-version.txt |
+| `0770-docs-lane-299-runbook-NMSE-op-tests-miss-n_tokens-2..patch` | UNMEASURED (docs only; trap from cache/fusion-x1-lane/cells/ab14-10071210-verdict.json) |
+| `0771-lane-302-lever-9-MUL_MAT_ID-expert-gather-for-Q2_0-a.patch` | UNMEASURED at commit; op gates + timing in cache/moe-gather-x1-lane/cells/cellT-*/SUMMARY.txt |
+| `0772-lane-302-lever-9-GGML_ARIFI_MOE_GATHER_EXT-default-O.patch` | default OFF = integ route (cell T e0 32/32 IDENT to gather-off; cell U default-arm proof cache/moe-gather-x1-lane/cells/cellU-*/SUMMARY.txt); opt-in arm +8..+22% slower at n2..n8 on Q2_0 down, cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt |
 
 ## Unclassified
 
@@ -2317,4 +2335,12 @@ rather than silently bucketed - add a rule when a new source appears.
 - `acf329085` lane-298 integ round 2 freeze prep: full shas on the round-2 win commit fields; Q39 Measured-effect cells
 - `4476c4221` arifi-sync: re-key the sha-pinned ledgers after the post-x1i trailer reword
 - `aa9cac23a` protected-wins: register the integ wins W5 W6 W7 W8 W12 W13 W18, join W9 W16, cover the round-2 non-wins
+- `2adf5cc55` common: fit block treats draft-mtp-adaptive as MTP (load crash fix)
+- `7dbdd0731` tools: qwen4exp MTP sidecar builders, with Strata's fetch tool and its MIT license
+- `1ea866f86` lane-300: F-141 producer fix - zero freed KV cells before they are read (LLAMA_ARIFI_KV_ZERO_FREED, default on)
+- `7ecb9a918` lane-300: kv-zero hardening - mid-decode window bound, transposed-V block assert, zeroing log
+- `2fc868a68` lane-300: LLAMA_ARIFI_KV_ZERO_FREED default 1 -> 0 (cell 31 OO re-cut failed the pooled clause)
+- `58d81805c` build-info: --version prints the arifilabs release and its upstream base
+- `bfa4b73e2` lane-302 lever 9: MUL_MAT_ID expert gather for Q2_0 and every legacy / q8_1 MMVQ id type
+- `5991bb1e3` lane-302 lever 9: GGML_ARIFI_MOE_GATHER_EXT default OFF (opt-in, measured slower on Q2_0)
 

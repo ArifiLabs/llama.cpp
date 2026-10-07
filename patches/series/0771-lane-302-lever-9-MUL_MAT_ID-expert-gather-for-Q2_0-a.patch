@@ -1,0 +1,168 @@
+From bfa4b73e2da1f58d3ee8124a6eaa2d7afb0825b6 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 05:03:39 -0400
+Subject: [PATCH] lane-302 lever 9: MUL_MAT_ID expert gather for Q2_0 and every
+ legacy / q8_1 MMVQ id type
+
+The slot-major expert gather (one dispatch over every (token, slot), shared experts read while
+in L2) covered only the five IQ types of the qwen4exp file. The served file's nine Q2_0
+ffn_down_exps tensors (2.4 ms per 4-row verify) still ran the per-token dispatch loop, and so
+did every legacy, K-quant and MXFP4 MoE file on either the f32 or the q8_1 MMVQ route.
+
+- vulkan-shaders-gen: idg f32 variants for the legacy set (mul_mat_vec.comp), idg q8_1 variants
+  for every q8_1 id type (mul_mat_vecq.comp), arrays declared for both.
+- ggml-vulkan: the idg twins use the workgroup, rows and spec constants of each id pipeline,
+  so a row's arithmetic does not change. GGML_ARIFI_MOE_GATHER_EXT=0 opts out (unset = ON);
+  the gather notice prints "ext N".
+- test-backend-ops: served-shape MUL_MAT_ID cases for Q2_0 (down) and Q4_0, Q8_0, Q4_K, Q5_K,
+  Q6_K, MXFP4 (gate) at n 1..8, 16 experts.
+
+Origin: lane-302
+Measured-effect: UNMEASURED at commit; op gates + timing in cache/moe-gather-x1-lane/cells/cellT-*/SUMMARY.txt
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 46 ++++++++++++++++++-
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     | 22 ++++++---
+ tests/test-backend-ops.cpp                    |  5 ++
+ 3 files changed, 65 insertions(+), 8 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 6ae0fb3b9c..d77cf2542d 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -652,6 +652,13 @@ static uint32_t moe_gather_iq3xxs_init_env() {
+     return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
+ }
+ 
++// lane-302 lever 9: expert gather for the legacy f32-path types and every q8_1 MMVQ id type (the served Q2_0 down
++// tensors among them). Same workgroup, rows and spec constants as each id pipeline. Unset = ON, 0 = off.
++static uint32_t moe_gather_ext_env() {
++    const char * e = getenv("GGML_ARIFI_MOE_GATHER_EXT");
++    return (e != nullptr && e[0] == '0') ? 0u : 1u;
++}
++
+ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipeline, size_t spv_size, const void* spv_data, const std::string entrypoint,
+                                          uint32_t parameter_count, std::array<uint32_t, 3> wg_denoms, std::vector<uint32_t> specialization_constants,
+                                          bool disable_robustness, bool require_full_subgroups, uint32_t required_subgroup_size) {
+@@ -4025,8 +4032,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             device->moe_gather_rows = (r == 1 || r == 2 || r == 4 || r == 8) ? r : rm_iq;
+             if (w == 0 && device->moe_gather_cols != 0) {
+                 // fprintf, not GGML_LOG_INFO: the server log callback drops ggml-vulkan INFO lines (lane-302 cell E)
+-                fprintf(stderr, "ggml_vulkan: MUL_MAT_ID expert gather ON, width %u, rows %u, iq3_s rows %u, iq4_nl tail %u, iq2_s body %u, iq4_nl body %u, iq3_s init %u, iq3_xxs init %u%s\n", device->moe_gather_cols,
+-                        device->moe_gather_rows, renv == nullptr ? 2u : device->moe_gather_rows, moe_gather_tail_env(), moe_gather_iq2s_body_env(), moe_gather_iq4nl_body_env(), moe_gather_iq3s_init_env(), moe_gather_iq3xxs_init_env(),
++                fprintf(stderr, "ggml_vulkan: MUL_MAT_ID expert gather ON, width %u, rows %u, iq3_s rows %u, iq4_nl tail %u, iq2_s body %u, iq4_nl body %u, iq3_s init %u, iq3_xxs init %u, ext %u%s\n", device->moe_gather_cols,
++                        device->moe_gather_rows, renv == nullptr ? 2u : device->moe_gather_rows, moe_gather_tail_env(), moe_gather_iq2s_body_env(), moe_gather_iq4nl_body_env(), moe_gather_iq3s_init_env(), moe_gather_iq3xxs_init_env(), moe_gather_ext_env(),
+                         device->moe_gather_plant ? " (PLANT: wrong token count, test only)" : "");
+             }
+         }
+@@ -4044,6 +4051,18 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_idg_iq3_s_f32",   arr_dmmv_idg_iq3_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr_iq3s, 1, 1}, {wg_size_subgroup16, gr_iq3s, gc, iq3_sign_hoist, 0u, moe_gather_iq3s_init_env()}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_XS],  "mul_mat_vec_idg_iq4_xs_f32",  arr_dmmv_idg_iq4_xs_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_NL],  "mul_mat_vec_idg_iq4_nl_f32",  arr_dmmv_idg_iq4_nl_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_nl_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, moe_gather_tail, moe_gather_iq4nl_body_env()}, 1, true, use_subgroups16, force_subgroup_size16);
++            if (moe_gather_ext_env()) {
++                // lane-302 lever 9: legacy f32-path gather twins, workgroup and rows copied from the id lines above
++#define ARIFI_IDG_F32(T, tn, R) ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][T], "mul_mat_vec_idg_" #tn "_f32", arr_dmmv_idg_##tn##_f32_f32_len[reduc], arr_dmmv_idg_##tn##_f32_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {R, 1, 1}, {wg_size_subgroup, R, gc}, 1, true, use_subgroups, force_subgroup_size)
++                ARIFI_IDG_F32(GGML_TYPE_Q2_0,      q2_0,      2*rm_stdq);
++                ARIFI_IDG_F32(GGML_TYPE_Q2_0_G128, q2_0_g128, 2*rm_stdq);
++                ARIFI_IDG_F32(GGML_TYPE_Q4_0,      q4_0,      2*rm_stdq);
++                ARIFI_IDG_F32(GGML_TYPE_Q4_1,      q4_1,      2*rm_stdq);
++                ARIFI_IDG_F32(GGML_TYPE_Q5_0,      q5_0,      2*rm_stdq);
++                ARIFI_IDG_F32(GGML_TYPE_Q5_1,      q5_1,      2*rm_stdq);
++                ARIFI_IDG_F32(GGML_TYPE_Q8_0,      q8_0,      1*rm_stdq);
++#undef ARIFI_IDG_F32
++            }
+         }
+ 
+         // TurboQuant weight types. Same 32-thread pin and SHMEM reduction as the
+@@ -4096,6 +4115,29 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+ 
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_q8_1_f32[w][GGML_TYPE_IQ1_S], "mul_mat_vec_id_iq1_s_q8_1_f32", arr_dmmv_id_iq1_s_q8_1_f32_len[reduc], arr_dmmv_id_iq1_s_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {1*rm_iq_int(0), 1, 1}, {wg_size_subgroup_int, 1*rm_iq_int(0)}, 1, true, use_subgroups, subgroup_size_int);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_q8_1_f32[w][GGML_TYPE_IQ1_M], "mul_mat_vec_id_iq1_m_q8_1_f32", arr_dmmv_id_iq1_m_q8_1_f32_len[reduc], arr_dmmv_id_iq1_m_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {1*rm_iq_int(0), 1, 1}, {wg_size_subgroup_int, 1*rm_iq_int(0)}, 1, true, use_subgroups, subgroup_size_int);
++
++            if (device->moe_gather_cols != 0 && moe_gather_ext_env()) {
++                // lane-302 lever 9: q8_1 MMVQ gather twins, workgroup and rows copied from the id lines above
++#define ARIFI_IDG_Q8(T, tn, R) ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_q8_1_f32[w][T], "mul_mat_vec_idg_" #tn "_q8_1_f32", arr_dmmv_idg_##tn##_q8_1_f32_len[reduc], arr_dmmv_idg_##tn##_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {R, 1, 1}, {wg_size_subgroup_int, R, device->moe_gather_cols}, 1, true, use_subgroups, subgroup_size_int)
++                ARIFI_IDG_Q8(GGML_TYPE_Q2_0,      q2_0,         rm_id(2*rm_kq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_Q2_0_G128, q2_0_g128,    rm_id(2*rm_kq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_Q4_0,      q4_0,         rm_id(1*rm_stdq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_Q4_1,      q4_1,         rm_id(1*rm_stdq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_Q5_0,      q5_0,         rm_id(1*rm_stdq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_Q5_1,      q5_1,         rm_id(1*rm_stdq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_Q8_0,      q8_0,         rm_id(1*rm_stdq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_MXFP4,     mxfp4,        rm_id(2*rm_stdq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_Q4_0_ROCMFP4_FAST, rocmfp4_fast, rm_id(2*rm_stdq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_Q2_K,      q2_k,         rm_id(2*rm_kq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_Q3_K,      q3_k,         rm_id(1*rm_kq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_Q4_K,      q4_k,         rm_id(1*rm_kq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_Q5_K,      q5_k,         rm_id(1*rm_kq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_Q6_K,      q6_k,         rm_id(1*rm_kq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_IQ4_XS,    iq4_xs,       rm_id(1*rm_kq_int));
++                ARIFI_IDG_Q8(GGML_TYPE_IQ1_S,     iq1_s,        1*rm_iq_int(0));
++                ARIFI_IDG_Q8(GGML_TYPE_IQ1_M,     iq1_m,        1*rm_iq_int(0));
++#undef ARIFI_IDG_Q8
++            }
+         }
+ #endif // GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT
+     }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index 2647038a3d..b971220fe9 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -248,7 +248,14 @@ bool is_legacy_quant(const std::string& type_name) {
+ // arifi lane-302: types with a MUL_MAT_ID expert-gather mat-vec (the qwen4exp IQ3_S file's `_exps` set).
+ // Keep in sync with the pipeline_dequant_mul_mat_vec_idg_f32 creation block in ggml-vulkan.cpp.
+ bool is_moe_gather_type(const std::string& type_name) {
+-    return type_name == "iq4_nl" || type_name == "iq2_s" || type_name == "iq3_xxs" || type_name == "iq3_s" || type_name == "iq4_xs";
++    return type_name == "iq4_nl" || type_name == "iq2_s" || type_name == "iq3_xxs" || type_name == "iq3_s" || type_name == "iq4_xs" ||
++           is_legacy_quant(type_name);  // lane-302 lever 9: the legacy set shares mul_mat_vec.comp
++}
++
++// lane-302 lever 9: every type with a q8_1 MMVQ id pipeline gets its expert-gather twin (same gate as the q8_1 spv below)
++bool is_mmvq_type(const std::string& type_name) {
++    return is_legacy_quant(type_name) || type_name == "mxfp4" || type_name == "rocmfp4_fast" || string_ends_with(type_name, "_k") ||
++           type_name == "iq1_s" || type_name == "iq1_m" || type_name == "iq4_xs" || type_name == "iq4_nl";
+ }
+ 
+ bool is_k_quant(const std::string& type_name) {
+@@ -1002,8 +1009,8 @@ void process_shaders() {
+             string_to_spv("mul_mat_vec_id_" + tname + "_q8_1_f32_subgroup", "mul_mat_vecq.comp", merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}, {"USE_SUBGROUP_ADD", "1"}}));
+             string_to_spv("mul_mat_vec_id_" + tname + "_q8_1_f32_subgroup_no_shmem", "mul_mat_vecq.comp", merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}, {"USE_SUBGROUP_ADD_NO_SHMEM", "1"}}));
+         }
+-        // arifi lane-302 Route B: the expert-gather (slot-major) q8_1 id variant for IQ4_NL.
+-        if (tname == "iq4_nl") {
++        // arifi lane-302 Route B: the expert-gather (slot-major) q8_1 id variant for IQ4_NL; lever 9: every q8_1 id type.
++        if (is_mmvq_type(tname)) {
+             for (const std::string sfx : {"", "_subgroup", "_subgroup_no_shmem"}) {
+                 std::map<std::string, std::string> d = merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {"MUL_MAT_ID_GATHER", "1"}, {data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}});
+                 if (sfx == "_subgroup") d["USE_SUBGROUP_ADD"] = "1";
+@@ -1862,9 +1869,12 @@ void write_output_files() {
+     }
+ 
+ #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+-    // arifi lane-302 Route B: the IQ4_NL q8_1 expert-gather variant generated above.
+-    {
+-        const std::string n = "idg_iq4_nl_q8_1_f32";
++    // arifi lane-302 Route B / lever 9: the q8_1 expert-gather variants generated above.
++    for (const auto& tname : type_names) {
++        if (!is_mmvq_type(tname)) {
++            continue;
++        }
++        const std::string n = "idg_" + tname + "_q8_1_f32";
+         hdr << "extern const void * arr_dmmv_"   << n << "_data[3];\n";
+         hdr << "extern const uint64_t arr_dmmv_" << n << "_len[3];\n";
+         if (basename(input_filepath) == "mul_mat_vec.comp") {
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 0b30fd8650..cadd3ae32c 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -11801,6 +11801,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+                 test_cases.emplace_back(new test_mul_mat_id(t, GGML_TYPE_F32, ne, 10, true, 640, n, 2560));
+             }
+             test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_IQ4_NL, GGML_TYPE_F32, ne, 10, false, 2560, n, 640));
++            // lane-302 lever 9: the served Q2_0 down tensors + the legacy/K/MXFP4 gather twins (other MoE files)
++            test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_Q2_0, GGML_TYPE_F32, ne, 10, false, 2560, n, 640));
++            for (ggml_type t : {GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_MXFP4}) {
++                test_cases.emplace_back(new test_mul_mat_id(t, GGML_TYPE_F32, ne, 10, true, 640, n, 2560));
++            }
+         }
+     }
+     test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_Q4_0, GGML_TYPE_F32, 32, 2, false, 2880, 32, 2880));

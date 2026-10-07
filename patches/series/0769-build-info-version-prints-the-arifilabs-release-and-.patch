@@ -1,0 +1,32 @@
+From 58d81805c0b4846f23cf1f494d709eb8b24c538d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 14:15:03 -0400
+Subject: [PATCH] build-info: --version prints the arifilabs release and its
+ upstream base
+
+Releases are versioned v0.1.<release>.<patch>. llama_print_build_info now leads with
+"arifilabs v0.1.3.1 (upstream b11178)", so every binary names the release it came from.
+
+Origin: lane-298 (point release v0.1.3.1, HQ84 order 3)
+Measured-effect: none (string only); --version check in cache/mtp-x1-lane/cells/point-version.txt
+---
+ common/build-info.cpp.in | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/common/build-info.cpp.in b/common/build-info.cpp.in
+index f194348ca7..dfdf5b0387 100644
+--- a/common/build-info.cpp.in
++++ b/common/build-info.cpp.in
+@@ -29,7 +29,12 @@ const char * llama_build_info(void) {
+     return s.c_str();
+ }
+ 
++// arifilabs release version; bump with CHANGELOG.md. Upstream base is the llama.cpp tag this tree is built on.
++static const char * ARIFI_VERSION = "v0.1.3.1";
++static const char * ARIFI_UPSTREAM = "b11178";
++
+ void llama_print_build_info(const char * llama_version, FILE * stream) {
++    fprintf(stream, "arifilabs %s (upstream %s)\n", ARIFI_VERSION, ARIFI_UPSTREAM);
+     fprintf(stream, "version: %s (build %d, commit %s)\n", llama_version, llama_build_number(), llama_commit());
+     fprintf(stream, "built with %s for %s\n", llama_compiler(), llama_build_target());
+ }
