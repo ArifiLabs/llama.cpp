@@ -709,8 +709,8 @@ llama_kv_cache::llama_kv_cache(
         n_embd_head_k_all = other->n_embd_head_k_all;
         n_embd_head_v_all = other->n_embd_head_v_all;
 
-        attn_rot_k = other->attn_rot_k;
-        attn_rot_v = other->attn_rot_v;
+        n_rot_k = other->n_rot_k;
+        n_rot_v = other->n_rot_v;
     } else {
         // TurboQuant: master's #21038 attention rotation is OFF by default on this
         // fork. Enable per-side via LLAMA_ATTN_ROT_K_OVERRIDE=1 and/or
@@ -743,8 +743,8 @@ llama_kv_cache::llama_kv_cache(
 
         // Default: rotation OFF on both sides (safe across all tested model families).
         // Override per side via env vars below.
-        attn_rot_k = false;
-        attn_rot_v = false;
+        bool attn_rot_k = false;
+        bool attn_rot_v = false;
 
         // Per-side overrides. Set LLAMA_ATTN_ROT_K_OVERRIDE=1 / LLAMA_ATTN_ROT_V_OVERRIDE=1
         // to enable rotation. The cache type and head-dim alignment guards below
@@ -774,14 +774,42 @@ llama_kv_cache::llama_kv_cache(
             hparams.n_embd_head_k_full == hparams.indexer_head_size) {
             attn_rot_k = true;
         }
+
+        if (attn_rot_k) {
+            // EXPERIMENT (master TODO): K uses the smallest rotation matrix (nrot=64) by default, mirroring V;
+            // the upstream comment hypothesizes smaller tiles keep more local structure (gemma-4 26B-A4B
+            // reportedly regresses with the largest tile). LLAMA_ATTN_ROT_K_NROT=<n> picks the size,
+            // =0 restores master's largest power of 2 that divides head_dim. Resolved here, once, so the
+            // value saved with the state (#28498) is the one the graph uses.
+            // ref: https://github.com/ggml-org/llama.cpp/pull/21038#issuecomment-4141323088
+            const char * LLAMA_ATTN_ROT_K_NROT = getenv("LLAMA_ATTN_ROT_K_NROT");
+            const int nrot = LLAMA_ATTN_ROT_K_NROT ? atoi(LLAMA_ATTN_ROT_K_NROT) : 64;
+
+            if (nrot > 0) {
+                n_rot_k = (uint32_t) nrot;
+            } else {
+                n_rot_k = 64;
+                while (n_embd_head_k_all % (2*n_rot_k) == 0) {
+                    n_rot_k *= 2;
+                }
+            }
+        }
+        if (attn_rot_v) {
+            n_rot_v = 64;
+            // using smaller rotation matrices for V seems beneficial
+            // ref: https://github.com/ggml-org/llama.cpp/pull/21038#issuecomment-4146397570
+            //while (hparams.n_embd_head_v() % (2*n_rot_v) == 0) {
+            //    n_rot_v *= 2;
+            //}
+        }
     }
 
-    LLAMA_LOG_INFO("%s: attn_rot_k = %d, n_embd_head_k_all = %d\n", __func__, attn_rot_k, n_embd_head_k_all);
-    LLAMA_LOG_INFO("%s: attn_rot_v = %d, n_embd_head_k_all = %d\n", __func__, attn_rot_v, n_embd_head_v_all);
+    LLAMA_LOG_INFO("%s: n_rot_k = %u, n_embd_head_k_all = %d\n", __func__, n_rot_k, n_embd_head_k_all);
+    LLAMA_LOG_INFO("%s: n_rot_v = %u, n_embd_head_k_all = %d\n", __func__, n_rot_v, n_embd_head_v_all);
 
     // pre-compute the haramard matrices and keep them in host memory
     // TODO: in the future, we can make copies in the backend buffers to avoid host -> device transfers
-    if (attn_rot_k || attn_rot_v) {
+    if (n_rot_k || n_rot_v) {
         for (int64_t n = 64; n <= std::max(n_embd_head_k_all, n_embd_head_v_all); n *= 2) {
             attn_rot_hadamard[n] = std::vector<float>(n*n);
 
@@ -2660,6 +2688,7 @@ bool llama_kv_cache::load_kv_mean_center(
             return fail_metadata("does not contain a valid K-cache rotation basis");
         }
         const bool bias_k_rot = gguf_get_val_bool(ctx_gguf, idx_k_rot);
+        const bool attn_rot_k = n_rot_k != 0;
         if (bias_k_rot != attn_rot_k) {
             LLAMA_LOG_ERROR("%s: bias file %s was calibrated with the K-cache rotation %s, but it is %s "
                     "for this context - recalibrate with matching cache settings "
@@ -2833,26 +2862,8 @@ ggml_tensor * llama_kv_cache::build_input_v_idxs(ggml_context * ctx, const llama
 ggml_tensor * llama_kv_cache::build_input_k_rot(ggml_context * ctx) const {
     ggml_tensor * res = nullptr;
 
-    if (attn_rot_k) {
-        // EXPERIMENT (master TODO): force smallest rotation matrix (nrot=64)
-        // for K, mirroring V's choice. Master defaults to the largest power-of-2
-        // that divides head_dim, but the upstream comment hypothesizes smaller
-        // tiles preserve more local structure → less PPL hit on sensitive models
-        // (gemma-4 26B-A4B reportedly regresses with the largest tile).
-        // ref: https://github.com/ggml-org/llama.cpp/pull/21038#issuecomment-4141323088
-        const char * LLAMA_ATTN_ROT_K_NROT = getenv("LLAMA_ATTN_ROT_K_NROT");
-        int nrot = LLAMA_ATTN_ROT_K_NROT ? atoi(LLAMA_ATTN_ROT_K_NROT) : 64;
-
-        // Original master behavior (largest power-of-2): set LLAMA_ATTN_ROT_K_NROT=0
-        if (nrot == 0) {
-            nrot = 64;
-            do {
-                nrot *= 2;
-            } while (n_embd_head_k_all % nrot == 0);
-            nrot /= 2;
-        }
-
-        res = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nrot, nrot);
+    if (n_rot_k) {
+        res = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rot_k, n_rot_k);
         ggml_set_input(res);
         ggml_set_name(res, "attn_inp_k_rot");
     }
@@ -2863,16 +2874,8 @@ ggml_tensor * llama_kv_cache::build_input_k_rot(ggml_context * ctx) const {
 ggml_tensor * llama_kv_cache::build_input_v_rot(ggml_context * ctx) const {
     ggml_tensor * res = nullptr;
 
-    if (attn_rot_v) {
-        int nrot = 64;
-        // using smaller rotation matrices for V seems beneficial
-        // ref: https://github.com/ggml-org/llama.cpp/pull/21038#issuecomment-4146397570
-        //do {
-        //    nrot *= 2;
-        //} while (hparams.n_embd_head_v() % nrot == 0);
-        //nrot /= 2;
-
-        res = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, nrot, nrot);
+    if (n_rot_v) {
+        res = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rot_v, n_rot_v);
         ggml_set_input(res);
         ggml_set_name(res, "attn_inp_v_rot");
     }
@@ -3767,6 +3770,8 @@ void llama_kv_cache::state_write_data(llama_io_write_i & io, const cell_ranges_t
 
     io.write(&v_trans, sizeof(v_trans));
     io.write(&n_layer, sizeof(n_layer));
+    io.write(&n_rot_k, sizeof(n_rot_k));
+    io.write(&n_rot_v, sizeof(n_rot_v));
 
     // Iterate and write all the keys first, each row is a cell
     // Get whole range at a time
@@ -4061,9 +4066,13 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
 
     uint32_t v_trans;
     uint32_t n_layer;
+    uint32_t n_rot_k_ref;
+    uint32_t n_rot_v_ref;
 
     io.read(&v_trans, sizeof(v_trans));
     io.read(&n_layer, sizeof(n_layer));
+    io.read(&n_rot_k_ref, sizeof(n_rot_k_ref));
+    io.read(&n_rot_v_ref, sizeof(n_rot_v_ref));
 
     if (n_layer != layers.size()) {
         LLAMA_LOG_ERROR("%s: mismatched layer count (%u instead of %u)\n", __func__, n_layer, (uint32_t) layers.size());
@@ -4077,6 +4086,16 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
 
     if (this->v_trans != (bool) v_trans) {
         LLAMA_LOG_ERROR("%s: incompatible V transposition\n", __func__);
+        return false;
+    }
+
+    if (n_rot_k_ref != n_rot_k) {
+        LLAMA_LOG_ERROR("%s: incompatible key rotation (%u instead of %u)\n", __func__, n_rot_k_ref, n_rot_k);
+        return false;
+    }
+
+    if (n_rot_v_ref != n_rot_v) {
+        LLAMA_LOG_ERROR("%s: incompatible value rotation (%u instead of %u)\n", __func__, n_rot_v_ref, n_rot_v);
         return false;
     }
 
