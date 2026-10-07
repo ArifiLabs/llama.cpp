@@ -43,10 +43,11 @@ const uint TPB_OVER_8  = ARIFI_TPB16 ?  2u : 1u;   // == TPB / 8
 // Default 0. GGML_ARIFI_IQ3_MMVQ=v2 selects arm 1; ONE binary serves both.
 layout (constant_id = 3) const uint ARIFI_IQ3_SIGN_HOIST = 0;
 
-// arifi lane-302 Route A: IQ3_S grid init (spec 4, GGML_ARIFI_IQ3S_INIT, idg pipeline only). 1 = batched: all of a
+// arifi lane-302 Route A: IQ3_S grid init (spec 5, GGML_ARIFI_IQ3S_INIT, idg pipeline only). 1 = batched: all of a
 // thread's loads issue before any LDS store (the IQ2_S lever-4 shape; the strided loop serialized 8 x load -> wait ->
 // store). Same table, every entry written once: byte-identical by construction. 2 = planted wrong arm (table rotated).
-layout (constant_id = 4) const uint ARIFI_IQ3S_INIT = 0;
+// lane-298 round-2 merge: spec 4 is lane-300's ARIFI_IQ3_TPB_STOCK above, so this arm moved to spec 5.
+layout (constant_id = 5) const uint ARIFI_IQ3S_INIT = 0;
 
 void arifi_init_iq3s_batched() {
     const uint t = gl_LocalInvocationIndex;
