@@ -6830,6 +6830,9 @@ struct test_mul_mat_prealloc_reuse : public test_case {
         return 5e-4;
     }
 
+    // node-by-node compare runs each node as its own graph, and the Vulkan graph cleanup resets the reuse record
+    bool run_whole_graph() override { return true; }
+
     test_mul_mat_prealloc_reuse(ggml_type type_a = GGML_TYPE_Q4_0, bool fa = false, int64_t m = 64, int64_t n = 32, int64_t k = 256,
             bool b_strided = true)
         : type_a(type_a), fa(fa), m(m), n(n), k(k), b_strided(b_strided) {}
