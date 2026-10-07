@@ -51,25 +51,58 @@ after a ~12-token and a ~600-token prompt.
 
 ## How we run it (Radeon 890M)
 
-Every row of the 890M table above, with the exact server flags of the arm that produced it. Each line starts with
-`llama-server -m <model file>`; port, host and CPU-thread flags (`-t`, `-tb`) are left out. "Draft depth" is
-`--spec-draft-n-max`: the most tokens the drafter proposes per step.
+Every row of the 890M table above, with the exact server flags of the arm that produced it. One block per model:
+the base line, then what each mode adds to it. Every line starts with `llama-server -m <model file>`; port, host and
+CPU-thread flags (`-t`, `-tb`) are left out. "Draft depth" is `--spec-draft-n-max`: the most tokens the drafter
+proposes per step. Every change marked "on" in [What is new](#what-is-new-in-this-release) is active in these lines with
+no flag; its `=0` environment switch only turns it off, so none appear below.
 
-| Model file | Mode | Draft depth | Drafter file | Server flags | Decode t/s, short / long |
-|---|---|---|---|---|---|
-| `Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf` (ISTA-DASLab) | plain (A/B arm) ⁴ | none | none | `-ngl 999 -np 1 -fa on --lazy-mode on -c 2048 -lm mmap` | 12.01 / 11.89 |
-| same | plain (in-cell arm for the MTP rows) | none | none | `-ngl 999 -np 1 -fa on --lazy-mode on -c 4096 -lm dio` | 11.89 / 11.77 |
-| same | MTP | 3 | `mtp-sidecar-qwen4exp-q8_0.gguf` (MTP sidecar) | `-ngl 999 -np 1 -fa on --lazy-mode on -c 4096 -lm dio -md mtp-sidecar-qwen4exp-q8_0.gguf -ngld 999 --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | 19.68 / 17.70 |
-| same | MTP + 40K draft vocabulary | 3 | `mtp-sidecar-qwen4exp-q8_0-dven40k.gguf` | `-ngl 999 -np 1 -fa on --lazy-mode on -c 4096 -lm dio -md mtp-sidecar-qwen4exp-q8_0-dven40k.gguf -ngld 999 --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | **20.24 / 19.45** |
-| `Ornith-1.5-35B-Q4_K_M.gguf` (ornith-ai) | plain | none | none | `-ngl 999 -np 1 -fa on -c 4096 -ub 512 -b 2048 -lm dio --lazy-mode on` | 29.33 / 28.98 |
-| same | MTP | 3 | none: the head is in the model file | `-ngl 999 -np 1 -fa on -c 4096 -ub 512 -b 2048 -lm dio --lazy-mode on --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | **34.07 / 35.01** |
-| same | DFlash2 | 2 | `Ornith-1.5-35B-A3B-DFlash2-BF16.gguf` (jzinno) | `-ngl 999 -np 1 -fa on -c 4096 -ub 512 -b 2048 -lm dio --lazy-mode on -md Ornith-1.5-35B-A3B-DFlash2-BF16.gguf -ngld 999 --spec-type draft-dflash --spec-draft-n-max 2 --dflash-defer-injection 0` | 32.07 / 33.60 |
-| `Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf` (huihui-ai) | plain | none | none | `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1 --ctx-checkpoints 32 --ctx-checkpoints-device off --ctx-checkpoints-toolcall on` | 4.57 / 4.60 |
-| same | MTP | 3 | none: the head is in the model file | `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1 --ctx-checkpoints 32 --ctx-checkpoints-device off --ctx-checkpoints-toolcall on --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | 10.08 / 9.84 |
-| same | DFlash2 | 3 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (incoai) | `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1 --ctx-checkpoints 32 --ctx-checkpoints-device off --ctx-checkpoints-toolcall on --spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 3` | **12.09 / 11.55** |
-| `Qwen3.8-27B-SX8v43-id57.gguf` (MarlaLabs, retagged to type 57) | plain | none | none | `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1` | 2.94 / 2.96 |
-| same | DFlash2 | 4 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (incoai) | `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1 --spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 4` | 8.89 / 8.29 |
-| `GLM-5.3-Flash-GSQ-RCO-3.0bit.gguf` (pfeifferj) | DFlash2, experts streamed from NVMe ⁵ | 2 | `GLM-5.3-Flash-DFlash2-Q8_0.gguf` (Anbeeld) | `-dev Vulkan0 -ngl 999 --no-host --no-op-offload --no-warmup -fit off -lm mmap -fa off -c 2048 -b 8 -ub 8 -np 1 --moe-cache 1536 -md GLM-5.3-Flash-DFlash2-Q8_0.gguf -devd Vulkan0 -ngld 99 --spec-type draft-dflash --spec-draft-n-max 2` | 2.96 (chat) |
+**Qwen3.8-Flash-Next · GSQ-RCO IQ3_S** (ISTA-DASLab) · file `Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf`
+Base: `-ngl 999 -np 1 -fa on --lazy-mode on -c 4096 -lm dio`
+
+| Mode | Draft depth | Drafter | Add to the base line | Decode t/s, short / long |
+|---|---|---|---|---|
+| plain | - | - | - (A/B arm ⁴: `-c 2048 -lm mmap` instead of `-c 4096 -lm dio`) | 12.01 / 11.89 (in-cell arm: 11.89 / 11.77) |
+| MTP | 3 | `mtp-sidecar-qwen4exp-q8_0.gguf` (MTP sidecar) | `-md mtp-sidecar-qwen4exp-q8_0.gguf -ngld 999 --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | 19.68 / 17.70 |
+| MTP + 40K draft vocabulary | 3 | `mtp-sidecar-qwen4exp-q8_0-dven40k.gguf` | `-md mtp-sidecar-qwen4exp-q8_0-dven40k.gguf -ngld 999 --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | **20.24 / 19.45** |
+
+Where the MTP sidecars come from: we built both. `mtp-sidecar-qwen4exp-q8_0.gguf` is the MTP block (31 tensors) of
+Qwen's official BF16 Qwen3.8-Flash-Next checkpoint, extracted and converted by us to a Q8_0 GGUF sidecar, because the
+quantized GSQ-RCO files do not carry it. The `-dven40k` variant adds a 40,525-token English draft vocabulary, a design
+taken from Strata and re-implemented here.
+
+**Ornith-1.5 35B-A3B MoE · Q4_K_M** (ornith-ai) · file `Ornith-1.5-35B-Q4_K_M.gguf`
+Base: `-ngl 999 -np 1 -fa on -c 4096 -ub 512 -b 2048 -lm dio --lazy-mode on`
+
+| Mode | Draft depth | Drafter | Add to the base line | Decode t/s, short / long |
+|---|---|---|---|---|
+| plain | - | - | - | 29.33 / 28.98 |
+| MTP | 3 | head inside the model file | `--spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | **34.07 / 35.01** |
+| DFlash2 | 2 | `Ornith-1.5-35B-A3B-DFlash2-BF16.gguf` (jzinno) | `-md Ornith-1.5-35B-A3B-DFlash2-BF16.gguf -ngld 999 --spec-type draft-dflash --spec-draft-n-max 2 --dflash-defer-injection 0` | 32.07 / 33.60 |
+
+**Qwen3.8 27B dense · UD-Q4_K_XL** (Huihui abliterated, huihui-ai) · file `Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf`
+Base: `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1 --ctx-checkpoints 32 --ctx-checkpoints-device off --ctx-checkpoints-toolcall on`
+
+| Mode | Draft depth | Drafter | Add to the base line | Decode t/s, short / long |
+|---|---|---|---|---|
+| plain | - | - | - | 4.57 / 4.60 |
+| MTP | 3 | head inside the model file | `--spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | 10.08 / 9.84 |
+| DFlash2 | 3 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (incoai) | `--spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 3` | **12.09 / 11.55** |
+
+**Qwen3.8 27B dense · S-X8 v4.3 format, 7.5 bits per weight** (MarlaLabs) · file `Qwen3.8-27B-SX8v43-id57.gguf` (retagged to our type 57 with `tools/gguf-retag-sx8/`)
+Base: `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1`
+
+| Mode | Draft depth | Drafter | Add to the base line | Decode t/s, short / long |
+|---|---|---|---|---|
+| plain | - | - | - | 2.94 / 2.96 |
+| DFlash2 | 4 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (incoai) | `--spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 4` | 8.89 / 8.29 |
+
+**GLM-5.3 Flash MoE · GSQ-RCO 3.0-bit, routed experts streamed from NVMe** (pfeifferj) · file `GLM-5.3-Flash-GSQ-RCO-3.0bit.gguf`
+Base: `-dev Vulkan0 -ngl 999 --no-host --no-op-offload --no-warmup -fit off -lm mmap -fa off -c 2048 -b 8 -ub 8 -np 1 --moe-cache 1536` plus the environment in note ⁵
+
+| Mode | Draft depth | Drafter | Add to the base line | Decode t/s |
+|---|---|---|---|---|
+| DFlash2 | 2 | `GLM-5.3-Flash-DFlash2-Q8_0.gguf` (Anbeeld) | `-md GLM-5.3-Flash-DFlash2-Q8_0.gguf -devd Vulkan0 -ngld 99 --spec-type draft-dflash --spec-draft-n-max 2` | 2.96 (chat) |
 
 ⁴ In the A/B arms the test harness held the server's Windows working set to 4.29 GB. That is a job limit set
 outside the server, not a server flag. ⁵ The GLM line also needs these environment variables:
