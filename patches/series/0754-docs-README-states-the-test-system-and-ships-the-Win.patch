@@ -1,0 +1,418 @@
+From 45a0eae436f49e22e21b73e0ee5cb83e4e526160 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 12:50:56 -0400
+Subject: [PATCH] docs: README states the test system, and ships the Windows
+ native NVMe guide
+
+A "Test system" section lists the machine, BIOS, memory and GPU reservation, the three NVMe drives on Windows' native NVMe driver, the Windows build and Insider channel, the AMD driver, Vulkan and chipset versions, the build tools and the Windows settings every 890M number was measured under (live read 2026-10-07), and says the numbers are from Windows only. docs/arifi/windows-native-nvme/ carries the native NVMe guide with its scripts, DiskSpd results, recovery-prompt undo and step-by-step instructions for an AI assistant.
+
+Origin: ArifiLabs (native) - release documentation for this fork; the guide is Arifi Labs' own work (scripts MIT, text CC BY 4.0).
+Measured-effect: UNMEASURED - documents only; no engine code path is touched.
+---
+ README.md                                     |  19 +++
+ docs/arifi/windows-native-nvme/.gitattributes |   2 +
+ docs/arifi/windows-native-nvme/LICENSE        |  21 +++
+ docs/arifi/windows-native-nvme/README.md      | 134 ++++++++++++++++++
+ .../results/diskspd-native-full.csv           |  19 +++
+ .../results/diskspd-summary.csv               |  21 +++
+ .../windows-native-nvme/scripts/bench.ps1     |  37 +++++
+ .../scripts/enable-native-nvme.ps1            |  53 +++++++
+ .../scripts/winre-undo.cmd                    |  23 +++
+ 9 files changed, 329 insertions(+)
+ create mode 100644 docs/arifi/windows-native-nvme/.gitattributes
+ create mode 100644 docs/arifi/windows-native-nvme/LICENSE
+ create mode 100644 docs/arifi/windows-native-nvme/README.md
+ create mode 100644 docs/arifi/windows-native-nvme/results/diskspd-native-full.csv
+ create mode 100644 docs/arifi/windows-native-nvme/results/diskspd-summary.csv
+ create mode 100644 docs/arifi/windows-native-nvme/scripts/bench.ps1
+ create mode 100644 docs/arifi/windows-native-nvme/scripts/enable-native-nvme.ps1
+ create mode 100644 docs/arifi/windows-native-nvme/scripts/winre-undo.cmd
+
+diff --git a/README.md b/README.md
+index 7d889b8c7f..85f8b8cf7a 100644
+--- a/README.md
++++ b/README.md
+@@ -232,6 +232,25 @@ The two serve lines are the measured cells' command lines (`evidence/b11178-x1i2
+ Toolchain, flags and the MinGW runtime step are in [`docs/BUILDING.md`](docs/BUILDING.md). At startup the Vulkan
+ backend prints one line for each tuned default it applied on your GPU.
+ 
++## Test system (Radeon 890M numbers)
++
++Every 890M number on this page was measured on this machine and software stack, read live on 2026-10-07.
++
++| Part | What we run |
++|---|---|
++| Machine | Minisforum AI X1 Pro-470 (board GPBAC 1.0), BIOS 1.01 (2026-04-08, the latest Minisforum lists), performance mode |
++| CPU / GPU | AMD Ryzen AI 9 HX 470, 12 cores / 24 threads; Radeon 890M (RDNA 3.5, gfx1150), integrated |
++| Memory | 96 GB DDR5-5600 (2 x 48 GB, dual channel); 72 GB reserved for the GPU in the BIOS, so Windows sees about 23.6 GB |
++| Storage | three NVMe drives on Windows' native NVMe driver (`nvmedisk.sys`, not the SCSI path): models on a Fanxiang S880 1 TB and a KingSpec XG7000 2 TB (PCIe Gen4 x4), Windows on a Crucial P3 Plus 1 TB. How: [native NVMe guide](docs/arifi/windows-native-nvme/README.md) |
++| Operating system | Windows 11 Pro Insider Preview, Dev channel, build 29680.1000 |
++| GPU driver | AMD Software (Adrenalin) 26.8.1, driver 32.0.31041.1004; Vulkan 1.4.349, AMD driver 2.0.395 (LLPC compiler) |
++| AMD chipset | AMD Chipset Software 8.08.12.551 |
++| Build tools | MinGW-w64 GCC (build of record, [`docs/BUILDING.md`](docs/BUILDING.md)), Vulkan SDK 1.4.357.0. ROCm / HIP SDK is not installed: this fork runs on Vulkan |
++| Windows settings | power plan Balanced (fastest for the integrated GPU in our A/B on the previous machine, a Radeon 780M; not yet re-tested on this one); hypervisor and VBS off; hardware-accelerated GPU scheduling on; Windows Search indexer, SysMain, OneDrive and 12 background scheduled tasks off |
++
++**All numbers here are from Windows.** We have not measured this fork on Linux; the drivers, scheduler and memory
++handling there differ, so Linux numbers on the same machine may differ in either direction.
++
+ ## Hardware
+ 
+ - **Measured on:** AMD Radeon 890M (Minisforum AI X1 Pro-470, the tables above marked 890M) and AMD Radeon 780M
+diff --git a/docs/arifi/windows-native-nvme/.gitattributes b/docs/arifi/windows-native-nvme/.gitattributes
+new file mode 100644
+index 0000000000..da5ccf8df8
+--- /dev/null
++++ b/docs/arifi/windows-native-nvme/.gitattributes
+@@ -0,0 +1,2 @@
++*.cmd text eol=crlf
++*.ps1 text eol=crlf
+diff --git a/docs/arifi/windows-native-nvme/LICENSE b/docs/arifi/windows-native-nvme/LICENSE
+new file mode 100644
+index 0000000000..dbaa54141b
+--- /dev/null
++++ b/docs/arifi/windows-native-nvme/LICENSE
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 Arifi Labs
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/docs/arifi/windows-native-nvme/README.md b/docs/arifi/windows-native-nvme/README.md
+new file mode 100644
+index 0000000000..f0f93caa49
+--- /dev/null
++++ b/docs/arifi/windows-native-nvme/README.md
+@@ -0,0 +1,134 @@
++# Native NVMe on Windows 11 client: a per-drive switch, no patched files
++
++Windows Server 2025 introduced a native NVMe storage stack (`nvmedisk.sys`): the disk talks NVMe directly,
++without the old SCSI translation layer (`stornvme.sys` + `disk.sys`). On Windows 11 client builds there is no
++supported switch for it.
++
++**We found one built into Windows itself.** Storport reads a per-controller registry value at boot. Set it on a
++data drive, reboot, and that drive runs on `nvmedisk.sys`. Secure Boot and driver signing stay on, and no system
++file is modified. Every other drive keeps the stock driver.
++
++## Results
++
++Same 109 GB file, same five DiskSpd read tests, 20 s each, before and after the switch.
++Minisforum AI X1 Pro (Ryzen AI 9 HX 470, 96 GB), Windows 11 Insider build 29680, both drives PCIe Gen4 x4.
++
++### Fanxiang S880 1 TB (Silicon Motion SM2268XT)
++
++| Test | Stock: MiB/s or IOPS (CPU) | Native: MiB/s or IOPS (CPU) | Throughput | CPU used |
++|---|---|---|---|---|
++| Random 4 MB reads, 8 in flight, whole file | 4,743 (5.95%) | 4,792 (1.04%) | +1.0% | **-83%** |
++| Random 4 MB reads, 8 in flight, 8 GB span | 4,781 (5.75%) | 4,812 (1.48%) | +0.6% | **-74%** |
++| Random 4 MB reads, 8 in flight, 1 GB span | 4,950 (1.44%) | 4,955 (1.22%) | +0.1% | -15% |
++| Random 4 KB reads, 32 in flight x 4 threads | 167,880 IOPS (4.13%) | 168,602 IOPS (3.12%) | +0.4% | **-24%** |
++| Random 4 KB reads, 1 in flight | 10,661 IOPS (1.67%) | 10,768 IOPS (1.00%) | +1.0% | **-40%** |
++
++### KingSpec XG7000 2 TB (Maxio MAP1602)
++
++| Test | Stock: MiB/s or IOPS (CPU) | Native: MiB/s or IOPS (CPU) | Throughput | CPU used |
++|---|---|---|---|---|
++| Random 4 MB reads, 8 in flight, whole file | 5,896 (1.86%) | 5,851 (1.42%) | -0.8% | **-24%** |
++| Random 4 MB reads, 8 in flight, 8 GB span | 6,458 (1.47%) | 6,469 (1.37%) | +0.2% | -7% |
++| Random 4 MB reads, 8 in flight, 1 GB span | 6,475 (0.96%) | 6,453 (1.27%) | -0.3% | +32% |
++| Random 4 KB reads, 32 in flight x 4 threads | 502,958 IOPS (11.52%) | 477,561 IOPS (7.26%) | -5.0% | **-37%** |
++| Random 4 KB reads, 1 in flight | 12,542 IOPS (1.42%) | 12,511 IOPS (1.10%) | -0.2% | **-23%** |
++
++**What it buys:** the drives were already at their own limit, so throughput barely moves. The CPU cost of
++reading drops sharply. On the KingSpec at ~480,000 IOPS, native does **51% more reads per unit of CPU**.
++That CPU goes back to whatever is consuming the data; for us, a local LLM streaming its weights from disk.
++
++Raw numbers: [`results/diskspd-summary.csv`](results/diskspd-summary.csv). The S880 stock run is one round taken
++while other jobs ran; every other arm is the mean of two rounds on a quiet machine.
++
++## How it works
++
++At boot, storport's AddDevice routine opens each NVMe controller's device key and reads one DWORD:
++
++```
++HKLM\SYSTEM\CurrentControlSet\Enum\PCI\<controller instance>\Device Parameters\StorPort
++    EnableNativeNVMeUserSetting = 1
++```
++
++A non-zero value turns the native path on for that controller. Storport then checks the disk-class filter
++drivers; if it finds one it considers incompatible, native stays off and it records `IncompatibleFilterCount`
++under `HKLM\SYSTEM\CurrentControlSet\Control\StorPort`. If the check passes, the namespace is exposed as
++`GenNvmeDisk`, and Microsoft's own `nvmedisk.inf` binds `nvmedisk.sys` to it.
++
++`nvmedisk.sys` must be allowed to load: its service `Start` value must be `0` (boot start, the stock value).
++
++We found this by reading `storport.sys` on build 29680: the value name and the code that reads it. Nothing in the
++Settings app or any other Windows binary writes it on this build.
++
++## Do it yourself
++
++**Before you start:** back up. Test on a **data** drive, never your boot drive first. This is undocumented and
++may change in any Windows build.
++
++1. Install DiskSpd if you want before/after numbers: `winget install Microsoft.DiskSpd`.
++2. Copy [`scripts/winre-undo.cmd`](scripts/winre-undo.cmd) to the root of your Windows drive (for example
++   `C:\winre-undo.cmd`). It is your way back if Windows ever fails to start.
++3. In an elevated PowerShell 7, list your controllers:
++   ```
++   pwsh -File enable-native-nvme.ps1 -List
++   ```
++4. Measure before: `pwsh -File bench.ps1 -Target <a big file on that drive> -Out .\before`
++5. Enable it on one controller, using its `VEN_xxxx&DEV_xxxx` from the list:
++   ```
++   pwsh -File enable-native-nvme.ps1 -Match 'VEN_1E4B&DEV_1602'
++   ```
++   The script refuses if the boot or system disk sits behind that controller.
++6. Reboot, then check: `pwsh -File enable-native-nvme.ps1 -Status`. Success looks like
++   `class=NvmeDisk driver=nvmedisk` for that drive.
++7. Measure after: `pwsh -File bench.ps1 -Target <same file> -Out .\after`
++
++**Undo:** `pwsh -File enable-native-nvme.ps1 -Undo -Match '<same VEN&DEV>'`, then reboot. If Windows does not
++start: Troubleshoot > Advanced options > Command Prompt, run `C:\winre-undo.cmd` (try `D:\`, `E:\` if the letter
++moved), then Continue.
++
++## Instructions for an AI assistant
++
++If you ask an AI coding assistant (Claude Code, Codex, Copilot and similar) to do this for you, paste this section
++to it. It is written so the assistant follows the same safe order a person would.
++
++```text
++Goal: switch ONE data NVMe drive on this Windows 11 PC to the native NVMe stack (nvmedisk.sys) using the scripts in
++this folder, with a working way back. Rules:
++1. Read README.md and both scripts in full before running anything. Run everything in an elevated PowerShell 7.
++2. Run `winre-undo.cmd test` on the running system and show me its output. Then copy winre-undo.cmd to the root of
++   the Windows drive (C:\winre-undo.cmd). Do not continue until that file exists.
++3. Ask me to confirm a recent backup and a restore point (Checkpoint-Computer) before any change.
++4. Run `enable-native-nvme.ps1 -List`. Pick a controller whose disks are NOT marked [BOOT/SYSTEM]. Never pass
++   -AllowBootDisk unless I say so in my own words after the data drive has worked through a reboot.
++5. If DiskSpd is installed, run bench.ps1 on a large file on that drive (before).
++6. Run `enable-native-nvme.ps1 -Match '<VEN_xxxx&DEV_xxxx>'` for that one controller. Show me the output. Ask me to
++   reboot; do not reboot by yourself.
++7. After the reboot, run `-Status`. Success = `class=NvmeDisk driver=nvmedisk` for that drive and no
++   IncompatibleFilterCount line. Run bench.ps1 again (after) and show both results side by side.
++8. If anything is wrong while Windows runs: `enable-native-nvme.ps1 -Undo -Match '<same VEN&DEV>'`, then reboot.
++9. If Windows does not start, tell me: hold Shift while choosing Restart (or let Windows fail to boot twice) >
++   Troubleshoot > Advanced options > Command Prompt, run C:\winre-undo.cmd (try D:\ or E:\ if the letter moved),
++   then Continue. That removes the setting from every controller in the offline registry.
++10. After every Windows update, run -Status again: an update can change storport.
++Never edit storport.sys, never bind nvmedisk with a custom INF (that made a PC unbootable), never turn off Secure
++Boot or driver signing.
++```
++
++## What did not work
++
++| Attempt | Result |
++|---|---|
++| ViVeTool feature flags (the published native-NVMe IDs and storport's own feature IDs) | No effect on this build |
++| A custom INF binding `nvmedisk.sys` to the existing SCSI disk node | **Unbootable (0x7B, INACCESSIBLE_BOOT_DEVICE)**. `nvmedisk` binds only `GenNvmeDisk`, which storport exposes only in native mode, so that bind is wrong in principle. Do not do this. |
++| The official Feature Preview package (KB5066835) | Built for 24H2 / 25H2 only |
++
++## Notes
++
++- Tested only on Windows 11 Insider build 29680, three consumer drives without on-board DRAM: the two data drives
++  above, then the boot drive (Crucial P3 Plus, with `-AllowBootDisk`, after both data drives had worked through a
++  reboot). Your results may differ.
++- The switch is per controller: every namespace behind that controller goes native.
++- Windows updates can change storport. After an update, run `-Status` again.
++
++## License
++
++Scripts: MIT ([`LICENSE`](LICENSE)). Text: CC BY 4.0. Arifi Labs, 2026.
+diff --git a/docs/arifi/windows-native-nvme/results/diskspd-native-full.csv b/docs/arifi/windows-native-nvme/results/diskspd-native-full.csv
+new file mode 100644
+index 0000000000..66d3143774
+--- /dev/null
++++ b/docs/arifi/windows-native-nvme/results/diskspd-native-full.csv
+@@ -0,0 +1,19 @@
++"drive","test","r1_MiB","r2_MiB","r1_IOPS","r2_IOPS","r1_CPU","r2_CPU"
++"kingspec","rand-128K-qd8","4342.62","4001.7","34741","32014","1.23","5.42"
++"kingspec","rand-4K-qd1-full","46.82","40.65","11986","10405","3.16","8.66"
++"kingspec","rand-4K-qd32x4-full","1867.59","1840.46","478102","471158","8.15","17.95"
++"kingspec","rand-4M-qd8-full","5548.79","5870.56","1387","1468","9.13","0.77"
++"kingspec","rand-4M-qd8-span1G","6464.1","6403.19","1616","1601","3.85","4.21"
++"kingspec","rand-4M-qd8-span8G","6218.64","6335.09","1555","1584","6.5","7.17"
++"kingspec","seq-1M-qd8","6454.54","6250.21","6455","6250","6.26","6.36"
++"kingspec","write-rand-4K-qd32x4","654.19","663.3","167474","169806","3.22","10.71"
++"kingspec","write-seq-1M-qd8","5960.17","5571.38","5960","5571","0.82","7.57"
++"s880","rand-128K-qd8","1536.05","1412.76","12288","11302","5.08","7.78"
++"s880","rand-4K-qd1-full","41.24","38.41","10558","9832","10.22","6.07"
++"s880","rand-4K-qd32x4-full","641.62","651.6","164255","166809","2.4","9.68"
++"s880","rand-4M-qd8-full","4652.05","4791.04","1163","1198","7.85","1.03"
++"s880","rand-4M-qd8-span1G","4959.16","4861.61","1240","1215","0.64","6.78"
++"s880","rand-4M-qd8-span8G","4818.92","4609.73","1205","1152","0.84","6.5"
++"s880","seq-1M-qd8","6368.8","5991.07","6369","5991","1.15","6.9"
++"s880","write-rand-4K-qd32x4","2141.81","2064.6","548304","528539","8.22","15.18"
++"s880","write-seq-1M-qd8","6169.76","5925.98","6170","5926","4.93","6.23"
+diff --git a/docs/arifi/windows-native-nvme/results/diskspd-summary.csv b/docs/arifi/windows-native-nvme/results/diskspd-summary.csv
+new file mode 100644
+index 0000000000..9525e50268
+--- /dev/null
++++ b/docs/arifi/windows-native-nvme/results/diskspd-summary.csv
+@@ -0,0 +1,21 @@
++"drive_driver","test","rounds","MiB_s","IOPS","CPU_pct"
++"S880 stock","rand-4K-qd1-full","1","41.6","10661","1.67"
++"S880 stock","rand-4K-qd32x4-full","1","655.8","167880","4.13"
++"S880 stock","rand-4M-qd8-full","1","4743.1","1186","5.95"
++"S880 stock","rand-4M-qd8-span1G","1","4949.7","1237","1.44"
++"S880 stock","rand-4M-qd8-span8G","1","4780.8","1195","5.75"
++"S880 native","rand-4K-qd1-full","2","42.1","10768","1"
++"S880 native","rand-4K-qd32x4-full","2","658.6","168602","3.12"
++"S880 native","rand-4M-qd8-full","2","4791.7","1198","1.04"
++"S880 native","rand-4M-qd8-span1G","2","4954.5","1239","1.22"
++"S880 native","rand-4M-qd8-span8G","2","4811.8","1203","1.48"
++"KingSpec stock","rand-4K-qd1-full","2","49","12542","1.42"
++"KingSpec stock","rand-4K-qd32x4-full","2","1964.7","502958","11.52"
++"KingSpec stock","rand-4M-qd8-full","2","5895.9","1474","1.86"
++"KingSpec stock","rand-4M-qd8-span1G","2","6475.1","1619","0.96"
++"KingSpec stock","rand-4M-qd8-span8G","2","6458","1614","1.47"
++"KingSpec native","rand-4K-qd1-full","2","48.9","12511","1.1"
++"KingSpec native","rand-4K-qd32x4-full","2","1865.5","477561","7.26"
++"KingSpec native","rand-4M-qd8-full","2","5851.3","1463","1.42"
++"KingSpec native","rand-4M-qd8-span1G","2","6452.8","1613","1.27"
++"KingSpec native","rand-4M-qd8-span8G","2","6468.6","1617","1.37"
+diff --git a/docs/arifi/windows-native-nvme/scripts/bench.ps1 b/docs/arifi/windows-native-nvme/scripts/bench.ps1
+new file mode 100644
+index 0000000000..635fa1028d
+--- /dev/null
++++ b/docs/arifi/windows-native-nvme/scripts/bench.ps1
+@@ -0,0 +1,37 @@
++# DiskSpd tests behind every number in the README. Needs DiskSpd (winget install Microsoft.DiskSpd).
++# Read tests run on -Target (any large existing file, never modified). Write tests run on a separate scratch file
++# that this script creates on the same drive (-Scratch) and deletes at the end.
++#   pwsh -File bench.ps1 -Target 'E:\models\big.gguf' -Out .\before -Rounds 2
++#   pwsh -File bench.ps1 -Target 'C:\bench\read.dat' -Out .\before -Rounds 2 -CreateTargetGB 32
++param([Parameter(Mandatory)][string]$Target, [string]$Out = '.\bench-out', [int]$Rounds = 2,
++      [int]$CreateTargetGB = 0, [string]$Scratch, [switch]$NoWrites)
++New-Item -ItemType Directory -Force $Out | Out-Null
++if ($CreateTargetGB -and -not (Test-Path $Target)) { & diskspd "-c$($CreateTargetGB)G" -w100 -b1M -o8 -t1 -si -d1 -Sh $Target | Out-Null }
++if (-not $Scratch) { $Scratch = Join-Path (Split-Path $Target -Qualifier) 'diskspd-scratch.dat' }
++$reads = [ordered]@{
++    'rand-4M-qd8-full'    = @('-b4M', '-o8', '-t1', '-r')
++    'rand-4M-qd8-span8G'  = @('-b4M', '-o8', '-t1', '-r', '-f8G')
++    'rand-4M-qd8-span1G'  = @('-b4M', '-o8', '-t1', '-r', '-f1G')
++    'rand-4K-qd32x4-full' = @('-b4K', '-o32', '-t4', '-r')
++    'rand-4K-qd1-full'    = @('-b4K', '-o1', '-t1', '-r')
++    'seq-1M-qd8'          = @('-b1M', '-o8', '-t1', '-si')
++    'rand-128K-qd8'       = @('-b128K', '-o8', '-t1', '-r')
++}
++$writes = [ordered]@{
++    'write-seq-1M-qd8'      = @('-b1M', '-o8', '-t1', '-si')
++    'write-rand-4K-qd32x4'  = @('-b4K', '-o32', '-t4', '-r')
++}
++function Run($name, $a, $file, $w, $r) {
++    $f = Join-Path $Out "$name-r$r.txt"
++    & diskspd @($a + @("-w$w", '-Sh', '-d20')) $file > $f
++    $t = Get-Content $f
++    $tot = (($t | Select-String '^total:' | Select-Object -First 1).Line) -split '\|'
++    $cpu = (($t | Select-String '^\s*avg\.' | Select-Object -First 1).Line) -split '\|'
++    '{0,-22} r{1}  MiB/s {2,9}  IOPS {3,10}  CPU {4}' -f $name, $r, $tot[2].Trim(), $tot[3].Trim(), $cpu[1].Trim()
++}
++if (-not $NoWrites) { & diskspd -c16G -w100 -b1M -o8 -t1 -si -d1 -Sh $Scratch | Out-Null }
++foreach ($r in 1..$Rounds) {
++    foreach ($n in $reads.Keys) { Run $n $reads[$n] $Target 0 $r }
++    if (-not $NoWrites) { foreach ($n in $writes.Keys) { Run $n $writes[$n] $Scratch 100 $r } }
++}
++if (-not $NoWrites) { Remove-Item $Scratch -ErrorAction SilentlyContinue }
+diff --git a/docs/arifi/windows-native-nvme/scripts/enable-native-nvme.ps1 b/docs/arifi/windows-native-nvme/scripts/enable-native-nvme.ps1
+new file mode 100644
+index 0000000000..c8f50a2812
+--- /dev/null
++++ b/docs/arifi/windows-native-nvme/scripts/enable-native-nvme.ps1
+@@ -0,0 +1,53 @@
++# Switch ONE NVMe controller to Windows' native NVMe stack (nvmedisk.sys) through storport's per-controller setting.
++# Run in an elevated PowerShell 7. Nothing changes until you reboot.
++#   List controllers : pwsh -File enable-native-nvme.ps1 -List
++#   Status           : pwsh -File enable-native-nvme.ps1 -Status -Match 'VEN_1E4B&DEV_1602'
++#   Enable           : pwsh -File enable-native-nvme.ps1 -Match 'VEN_1E4B&DEV_1602'
++#   Undo             : pwsh -File enable-native-nvme.ps1 -Undo -Match 'VEN_1E4B&DEV_1602'
++param([string]$Match, [switch]$List, [switch]$Status, [switch]$Undo, [switch]$AllowBootDisk)
++$ErrorActionPreference = 'Stop'
++$svc = 'HKLM:\SYSTEM\CurrentControlSet\Services\nvmedisk'
++
++function Controllers { Get-PnpDevice -PresentOnly -Class SCSIAdapter | Where-Object { $_.InstanceId -like 'PCI\*' -and $_.FriendlyName -match 'NVM' } }
++function DisksBehind($ctlId) {
++    @(Get-CimInstance Win32_DiskDrive | Where-Object {
++        (Get-PnpDeviceProperty -InstanceId $_.PNPDeviceID -KeyName DEVPKEY_Device_Parent).Data -eq $ctlId })
++}
++function KeyOf($ctlId) { "HKLM:\SYSTEM\CurrentControlSet\Enum\$ctlId\Device Parameters\StorPort" }
++function Show {
++    foreach ($c in Controllers) {
++        $v = (Get-ItemProperty (KeyOf $c.InstanceId) -ErrorAction SilentlyContinue).EnableNativeNVMeUserSetting
++        $d = DisksBehind $c.InstanceId | ForEach-Object { $g = Get-Disk -Number $_.Index; "$($g.FriendlyName)$(if ($g.IsBoot -or $g.IsSystem) { ' [BOOT/SYSTEM]' })" }
++        '{0} | setting={1} | disks: {2}' -f ($c.InstanceId -split '\\')[1], $(if ($null -ne $v) { $v } else { 'unset' }), ($d -join ', ')
++    }
++    "nvmedisk service Start = $((Get-ItemProperty $svc).Start)  (0 = boot start, the stock value)"
++    foreach ($cls in 'DiskDrive', 'NvmeDisk') {
++        Get-PnpDevice -PresentOnly -Class $cls -ErrorAction SilentlyContinue | ForEach-Object {
++            $s = (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_Service).Data
++            '  {0,-28} class={1,-9} driver={2}' -f $_.FriendlyName, $_.Class, $s
++        }
++    }
++    $inc = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\StorPort' -ErrorAction SilentlyContinue
++    if ($inc.IncompatibleFilterCount) { "WARNING: storport found $($inc.IncompatibleFilterCount) incompatible disk filter driver(s); native mode stays off." }
++}
++
++if ($List -or (-not $Match)) { Show; if (-not $Match) { "`nPass -Match with the VEN_xxxx&DEV_xxxx of the controller you want." }; exit 0 }
++$ctl = @(Controllers | Where-Object InstanceId -like "PCI\$Match*")
++if ($ctl.Count -ne 1) { throw "Expected exactly one NVMe controller matching '$Match', found $($ctl.Count). Use -List." }
++$key = KeyOf $ctl[0].InstanceId
++if ($Status) { Show; exit 0 }
++if ($Undo) {
++    Remove-ItemProperty -Path $key -Name EnableNativeNVMeUserSetting -ErrorAction SilentlyContinue
++    "Removed the setting from $($ctl[0].InstanceId). Reboot to return it to stornvme + disk.sys."; exit 0
++}
++foreach ($d in DisksBehind $ctl[0].InstanceId) {
++    $g = Get-Disk -Number $d.Index
++    if (($g.IsBoot -or $g.IsSystem) -and -not $AllowBootDisk) {
++        throw "Disk $($d.Index) ($($g.FriendlyName)) behind this controller is your boot/system disk. Test on a data drive first; pass -AllowBootDisk only with a recovery plan (see README)."
++    }
++}
++if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
++New-ItemProperty -Path $key -Name EnableNativeNVMeUserSetting -PropertyType DWord -Value 1 -Force | Out-Null
++$start = (Get-ItemProperty $svc).Start
++if ($start -ne 0) { Set-ItemProperty $svc -Name Start -Value 0 -Type DWord; "nvmedisk Start $start -> 0 (stock boot-start value)." }
++"Enabled on $($ctl[0].InstanceId). Reboot, then run -Status: the disk should show class=NvmeDisk driver=nvmedisk."
+diff --git a/docs/arifi/windows-native-nvme/scripts/winre-undo.cmd b/docs/arifi/windows-native-nvme/scripts/winre-undo.cmd
+new file mode 100644
+index 0000000000..3578560302
+--- /dev/null
++++ b/docs/arifi/windows-native-nvme/scripts/winre-undo.cmd
+@@ -0,0 +1,23 @@
++@echo off
++rem Undo native NVMe from the Windows Recovery command prompt (Troubleshoot > Advanced options > Command Prompt).
++rem Removes EnableNativeNVMeUserSetting from EVERY controller in the offline Windows registry.
++rem Copy this file to the root of your Windows drive BEFORE you enable anything, e.g. C:\winre-undo.cmd
++rem Test on running Windows (changes nothing):  winre-undo.cmd test
++setlocal EnableDelayedExpansion
++if /i "%~1"=="test" (set "ROOT=HKLM\SYSTEM" & goto :select)
++set WIN=
++for %%L in (C D E F G H I J K) do if exist %%L:\Windows\System32\config\SYSTEM set WIN=%%L:
++if "%WIN%"=="" (echo Windows folder not found on any drive & exit /b 1)
++echo Windows found on %WIN%
++reg load HKLM\OFF %WIN%\Windows\System32\config\SYSTEM || (echo reg load failed & exit /b 1)
++set "ROOT=HKLM\OFF"
++:select
++for /f "tokens=3" %%A in ('reg query "%ROOT%\Select" /v Current ^| find "Current"') do set /a CS=%%A
++set "CSK=%ROOT%\ControlSet00%CS%"
++echo Control set: %CSK%
++for /f "delims=" %%K in ('reg query "%CSK%\Enum\PCI" /s /f EnableNativeNVMeUserSetting /v ^| find "HKEY_"') do (
++  if /i "%~1"=="test" (echo found: %%K) else (reg delete "%%K" /v EnableNativeNVMeUserSetting /f)
++)
++if /i "%~1"=="test" (echo TEST ONLY - nothing changed. & exit /b 0)
++reg unload HKLM\OFF
++echo DONE. Close this window and choose Continue. Every controller is back on the stock driver.

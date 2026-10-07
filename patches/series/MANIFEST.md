@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **753**, all non-merge, applied in filename order.
+- Patches: **754**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 753 commit messages, same provenance trailers. Verified, not
+same file contents, same 754 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -832,6 +832,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 751 | `0751-docs-README-adds-download-links-for-every-model-S-X8.patch` | arifi-fork-base | `c2e648e70` | - | - | docs: README adds download links for every model, S-X8 and Escha-W2 format notes, linked credits |
 | 752 | `0752-docs-README-names-the-MTP-sidecar-source-in-the-swit.patch` | arifi-fork-base | `81f914952` | - | - | docs: README names the MTP sidecar source in the switch table, marks the 780M-only files as not yet measured on the 890M |
 | 753 | `0753-docs-version-the-releases-v0.1.-release-.-patch-and-.patch` | arifi-fork-base | `5b506202a` | - | - | docs: version the releases v0.1.<release>.<patch>, and bring the changelog up to v0.1.3.0 |
+| 754 | `0754-docs-README-states-the-test-system-and-ships-the-Win.patch` | arifi-fork-base | `45a0eae43` | - | - | docs: README states the test system, and ships the Windows native NVMe guide |
 
 ## Measured effect, per patch
 
@@ -1664,6 +1665,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0751-docs-README-adds-download-links-for-every-model-S-X8.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0752-docs-README-names-the-MTP-sidecar-source-in-the-swit.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0753-docs-version-the-releases-v0.1.-release-.-patch-and-.patch` | UNMEASURED - documents only; no code path is touched. |
+| `0754-docs-README-states-the-test-system-and-ships-the-Win.patch` | UNMEASURED - documents only; no engine code path is touched. |
 
 ## Unclassified
 
