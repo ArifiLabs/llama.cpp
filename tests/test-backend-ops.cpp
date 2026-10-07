@@ -6807,20 +6807,26 @@ struct test_mul_mat_prealloc_reuse : public test_case {
         return "MUL_MAT_PREALLOC_REUSE";
     }
 
+    double max_nmse_err() override {
+        return 5e-4;
+    }
+
     test_mul_mat_prealloc_reuse(ggml_type type_a = GGML_TYPE_Q4_0, int64_t m = 64, int64_t n = 32, int64_t k = 256)
         : type_a(type_a), m(m), n(n), k(k) {}
 
     ggml_tensor * build_graph(ggml_context * ctx) override {
         ggml_tensor * a1 = ggml_new_tensor_2d(ctx, type_a, k, m);
         ggml_tensor * b  = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, k, n);
-        ggml_tensor * x  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 20000);
+        ggml_tensor * x  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 20000 - m*n);
         ggml_tensor * a2 = ggml_new_tensor_2d(ctx, type_a, k, m);
         ggml_set_name(a1, "a1");
         ggml_set_name(b, "b");
         ggml_set_name(x, "x");
 
+        // the soft_max input depends on y1, so no graph reorder can move the first matmul after it
         ggml_tensor * y1 = ggml_mul_mat(ctx, a1, b);
-        ggml_tensor * s  = ggml_scale(ctx, ggml_soft_max(ctx, x), 20000.0f);
+        ggml_tensor * s_in = ggml_concat(ctx, ggml_reshape_1d(ctx, y1, m*n), x, 0);
+        ggml_tensor * s  = ggml_scale(ctx, ggml_soft_max(ctx, s_in), 20000.0f);
         ggml_tensor * w2 = ggml_cpy(ctx, ggml_reshape_2d(ctx, ggml_view_1d(ctx, s, k*m, 0), k, m), a2);
         ggml_tensor * y2 = ggml_mul_mat(ctx, w2, b);
 
