@@ -1,0 +1,27 @@
+From b0b41ed54846a40291a14a24ce59549cb9c3069d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 16:36:55 -0400
+Subject: [PATCH] lane-300: LLAMA_ARIFI_KV_ZERO_FREED default 0 -> 1 (HQ84 item
+ 3: kv-zero ships default ON in the point release)
+
+HQ84 12:0x ruled that freed-KV-cell zeroing ships default ON with its measured cost in the MERGE-READY row, over the cell 31 pooled clause. Unset = zeroing on; LLAMA_ARIFI_KV_ZERO_FREED=0 restores merge-base behaviour (no zeroing, bookkeeping only; served ids Z0 == integ 7156c61607 on every load, cell 31).
+
+Origin: lane-300
+Measured-effect: default ON, cost QM (qwen4exp MTP n3) pooled +0.45% (floor 0.87%), OO (Ornith DFlash n2) pooled -0.31% / -3.23% (floors 0.38% / 7.33%, worst round -4.51%) (cells/c31q-10070739-*, c31o-10070746-*, c31o-10070901-*); -fa off history == fresh bit-equal, S-NF F-nondet 4 -> 0 (cells/c31p-10070726-*)
+---
+ src/llama-kv-cache.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index ccc1774611..09d38dfb5f 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -1786,7 +1786,7 @@ uint32_t llama_kv_cache::get_n_kv(const slot_info & sinfo) const {
+ static bool llama_kv_zero_freed() {
+     static const bool on = [] {
+         const char * e = getenv("LLAMA_ARIFI_KV_ZERO_FREED");
+-        return e != nullptr && atoi(e) != 0;
++        return e == nullptr || atoi(e) != 0;
+     }();
+     return on;
+ }

@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **773**, all non-merge, applied in filename order.
+- Patches: **775**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 773 commit messages, same provenance trailers. Verified, not
+same file contents, same 775 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -852,6 +852,8 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 771 | `0771-lane-302-lever-9-MUL_MAT_ID-expert-gather-for-Q2_0-a.patch` | arifi-fork-base | `bfa4b73e2` | - | - | lane-302 lever 9: MUL_MAT_ID expert gather for Q2_0 and every legacy / q8_1 MMVQ id type |
 | 772 | `0772-lane-302-lever-9-GGML_ARIFI_MOE_GATHER_EXT-default-O.patch` | arifi-fork-base | `5991bb1e3` | - | - | lane-302 lever 9: GGML_ARIFI_MOE_GATHER_EXT default OFF (opt-in, measured slower on Q2_0) |
 | 773 | `0773-protected-wins-register-the-v0.1.3.1-opt-in-arms-KV_.patch` | arifi-fork-base | `a5ff6df2b` | - | - | protected-wins: register the v0.1.3.1 opt-in arms (KV_ZERO_FREED entry, GATHER_EXT joins the slot-major gather) |
+| 774 | `0774-lane-300-LLAMA_ARIFI_KV_ZERO_FREED-default-0-1-HQ84-.patch` | arifi-fork-base | `b0b41ed54` | - | - | lane-300: LLAMA_ARIFI_KV_ZERO_FREED default 0 -> 1 (HQ84 item 3: kv-zero ships default ON in the point release) |
+| 775 | `0775-protected-wins-kv-zero-freed-cells-is-default-ON-in-.patch` | arifi-fork-base | `410f8e275` | - | - | protected-wins: kv-zero-freed-cells is default ON in v0.1.3.1 (b0b41ed548), id drops -opt-in |
 
 ## Measured effect, per patch
 
@@ -1704,6 +1706,8 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0771-lane-302-lever-9-MUL_MAT_ID-expert-gather-for-Q2_0-a.patch` | UNMEASURED at commit; op gates + timing in cache/moe-gather-x1-lane/cells/cellT-*/SUMMARY.txt |
 | `0772-lane-302-lever-9-GGML_ARIFI_MOE_GATHER_EXT-default-O.patch` | default OFF = integ route (cell T e0 32/32 IDENT to gather-off; cell U default-arm proof cache/moe-gather-x1-lane/cells/cellU-*/SUMMARY.txt); opt-in arm +8..+22% slower at n2..n8 on Q2_0 down, cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt |
 | `0773-protected-wins-register-the-v0.1.3.1-opt-in-arms-KV_.patch` | none (protected-win ledger registration; the numbers live in the entries) |
+| `0774-lane-300-LLAMA_ARIFI_KV_ZERO_FREED-default-0-1-HQ84-.patch` | default ON, cost QM (qwen4exp MTP n3) pooled +0.45% (floor 0.87%), OO (Ornith DFlash n2) pooled -0.31% / -3.23% (floors 0.38% / 7.33%, worst round -4.51%) (cells/c31q-10070739-*, c31o-10070746-*, c31o-10070901-*); -fa off history == fresh bit-equal, S-NF F-nondet 4 -> 0 (cells/c31p-10070726-*) |
+| `0775-protected-wins-kv-zero-freed-cells-is-default-ON-in-.patch` | none (registry text; receipts are lane 300 cell 31: c31p-10070726, c31q-10070739, c31o-10070746, c31o-10070901) |
 
 ## Unclassified
 
@@ -2346,4 +2350,6 @@ rather than silently bucketed - add a rule when a new source appears.
 - `bfa4b73e2` lane-302 lever 9: MUL_MAT_ID expert gather for Q2_0 and every legacy / q8_1 MMVQ id type
 - `5991bb1e3` lane-302 lever 9: GGML_ARIFI_MOE_GATHER_EXT default OFF (opt-in, measured slower on Q2_0)
 - `a5ff6df2b` protected-wins: register the v0.1.3.1 opt-in arms (KV_ZERO_FREED entry, GATHER_EXT joins the slot-major gather)
+- `b0b41ed54` lane-300: LLAMA_ARIFI_KV_ZERO_FREED default 0 -> 1 (HQ84 item 3: kv-zero ships default ON in the point release)
+- `410f8e275` protected-wins: kv-zero-freed-cells is default ON in v0.1.3.1 (b0b41ed548), id drops -opt-in
 
