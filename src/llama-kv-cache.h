@@ -400,7 +400,7 @@ private:
     void zero_cells(uint32_t strm, uint32_t i0, uint32_t i1, std::vector<uint8_t> & zeros) const;
 
 public:
-    void zero_stale_cells(const slot_info & sinfo, uint32_t n_kv);
+    void zero_stale_cells(const slot_info & sinfo, uint32_t lo, uint32_t n_kv);
 
 private:
     // TODO: temporary until we refactor to be able to share the same cells between 2 kv caches [TAG_KV_CACHE_SHARE_CELLS]

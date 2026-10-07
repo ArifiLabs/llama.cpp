@@ -1810,6 +1810,7 @@ void llama_kv_cache::zero_cells(uint32_t strm, uint32_t i0, uint32_t i1, std::ve
         }
 
         // transposed V (no flash attention, f16/f32 only): cell i of embd row d sits at (d*kv_size + i)*esz
+        GGML_ASSERT(ggml_blck_size(v->type) == 1);
         const size_t esz = ggml_type_size(v->type);
         const size_t w   = (size_t) (i1 - i0)*esz;
         if (zeros.size() < w) {
@@ -1819,15 +1820,17 @@ void llama_kv_cache::zero_cells(uint32_t strm, uint32_t i0, uint32_t i1, std::ve
     }
 }
 
-void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t n_kv) {
+void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t lo, uint32_t n_kv) {
     if (!kv_zero_pending || other || model.hparams.no_alloc || !llama_kv_zero_freed()) {
         return;
     }
 
     // ponytail: O(kv_size) scan per ubatch while a freed cell sits outside the read window; a min-index
     // watermark if that ever shows in a profile
-    bool left = sinfo.n_stream() < n_stream;
+    bool left = lo > 0 || sinfo.n_stream() < n_stream;
     std::vector<uint8_t> zeros;
+    uint32_t n_cells = 0;
+    uint32_t n_runs  = 0;
 
     for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
         const uint32_t strm  = sinfo.strm[s];
@@ -1836,7 +1839,7 @@ void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t n_kv) {
 
         const uint32_t n = std::min<uint32_t>(n_kv, cells.size());
 
-        for (uint32_t i = 0; i < n; ) {
+        for (uint32_t i = lo; i < n; ) {
             if (!dirty[i] || !cells.is_empty(i)) {
                 ++i;
                 continue;
@@ -1846,12 +1849,18 @@ void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t n_kv) {
                 dirty[j++] = 0;
             }
             zero_cells(strm, i, j, zeros);
+            n_cells += j - i;
+            n_runs++;
             i = j;
         }
 
         for (uint32_t i = n; i < cells.size() && !left; ++i) {
             left = dirty[i] && cells.is_empty(i);
         }
+    }
+
+    if (n_cells > 0) {
+        LLAMA_LOG_INFO("%s: kv-zero %u freed cells in %u runs, window [%u, %u)\n", __func__, n_cells, n_runs, lo, n_kv);
     }
 
     kv_zero_pending = left;
@@ -4354,9 +4363,12 @@ bool llama_kv_cache_context::apply() {
         return true;
     }
 
+    // a later ubatch of the same decode may run while the previous graph still reads [0, n_kv): only zero above it
+    const uint32_t zero_lo = i_cur > 0 ? n_kv : 0;
+
     kv->apply_ubatch(sinfos[i_cur], ubatches[i_cur]);
     n_kv = kv->get_n_kv(sinfos[i_cur]);
-    kv->zero_stale_cells(sinfos[i_cur], n_kv);
+    kv->zero_stale_cells(sinfos[i_cur], zero_lo, n_kv);
 
     // InnerQ: check if CUDA calibration finalized and tensor needs update
     if (kv->get_turbo_innerq_scale_inv() != nullptr && turbo_innerq_needs_tensor_update()) {
