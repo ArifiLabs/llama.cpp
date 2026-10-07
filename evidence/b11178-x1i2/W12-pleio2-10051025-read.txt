@@ -1,0 +1,14 @@
+base: r1 window 16-106s ws 0.760->1.140 GiB growth 389 MiB = 49.8 KiB/novel token; peak ws 1.143
+  r1 prefill mean 129.65 decode mean 9.94 (n=4)
+  r2 prefill mean 179.03 decode mean 10.17 (n=4)
+rel: r1 window 25-120s ws 0.697->0.632 GiB growth -67 MiB = -8.5 KiB/novel token; peak ws 0.801
+  r1 prefill mean 123.43 decode mean 9.48 (n=4)
+  r2 prefill mean 183.00 decode mean 10.55 (n=4)
+basea: r1 window 17-112s ws 0.761->1.138 GiB growth 386 MiB = 49.4 KiB/novel token; peak ws 1.138
+  r1 prefill mean 127.88 decode mean 9.80 (n=4)
+(1) RED premise base >= 16 KiB/token: 49.8 -> MET
+(2) GREEN rel <= 25% of base: -67 vs 389 MiB -> PASS
+(4) ids rel r1 == basea r1 on [1, 2, 3, 4] : True
+(0) rel: 16 PLE trim lines, call ms min/max 28.49/60.80
+(0) basea: 0 PLE trim lines
+(0) base: 0 PLE trim lines

@@ -1,0 +1,535 @@
+{
+  "run_id": "sg-q27m-10062225",
+  "state": "shipgate-gpu-complete",
+  "pid": 30152,
+  "started_utc": "2026-10-07T02:26:00.2694374Z",
+  "head": "7156c616079285b495b03e3ef03d7c4b554ab182",
+  "arms": [
+    {
+      "arm": "M-a1-i",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 2470961152.0,
+      "started_utc": "2026-10-07T02:27:36.6564338Z",
+      "healthy": true,
+      "peak_ws_bytes": 1724981248,
+      "peak_private_bytes": 21584003072,
+      "min_avail_bytes": 13301018624,
+      "avail_before_bytes": 15441338368,
+      "requests": [
+        {
+          "tag": "sg-q27m-10062225-M-a1-i-warmup-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=14.03 ttft_ms=895.7 gen_n=8 decode_tps=8.12 draft=4/5"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-a1-i-r1-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=17.88 ttft_ms=691.8 gen_n=128 decode_tps=10.01 draft=86/100"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-a1-i-r1-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=95.04 ttft_ms=6396.5 gen_n=128 decode_tps=9.9 draft=84/101"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-a1-i-r2-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=18.3 ttft_ms=827.8 gen_n=128 decode_tps=9.98 draft=85/97"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-a1-i-r2-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=103.15 ttft_ms=5900.7 gen_n=128 decode_tps=9.65 draft=84/101"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 12312,
+      "load_s": 10.7,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.10.087.886 I common_speculative_init_result: creating MTP draft context against the target model 'C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf'\r",
+        "0.12.610.112 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.12.610.113 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.12.610.115 I slot print_timing: id  0 | task 0 | spec round cost  = draft 133338 us/3, verify 714277 us/3, plain 0 us/0, process 8349 us, save 0 us, restore 0 us\r",
+        "0.28.123.850 I slot print_timing: id  0 | task 6 | draft acceptance = 0.86000 (   86 accepted /   100 generated), mean len =  3.21\r",
+        "0.28.123.851 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 86 accepted)\r",
+        "0.28.123.853 I slot print_timing: id  0 | task 6 | spec round cost  = draft 2282342 us/41, verify 9525558 us/39, plain 667001 us/2, process 100382 us, save 0 us, restore 0 us\r",
+        "0.48.052.702 I slot print_timing: id  0 | task 50 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "0.48.052.702 I slot print_timing: id  0 | task 50 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "0.48.052.704 I slot print_timing: id  0 | task 50 | spec round cost  = draft 2355485 us/42, verify 9192467 us/38, plain 1116662 us/5, process 96245 us, save 0 us, restore 0 us\r",
+        "1.02.534.757 I slot print_timing: id  0 | task 97 | draft acceptance = 0.87629 (   85 accepted /    97 generated), mean len =  3.12\r",
+        "1.02.534.758 I slot print_timing: id  0 | task 97 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 85 accepted)\r",
+        "1.02.534.760 I slot print_timing: id  0 | task 97 | spec round cost  = draft 2315523 us/42, verify 9797207 us/40, plain 445020 us/2, process 106644 us, save 0 us, restore 0 us\r",
+        "1.22.124.491 I slot print_timing: id  0 | task 142 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "1.22.124.492 I slot print_timing: id  0 | task 142 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.22.124.494 I slot print_timing: id  0 | task 142 | spec round cost  = draft 2375068 us/42, verify 9496656 us/38, plain 1137882 us/5, process 101896 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-07T02:29:03.1818452Z"
+    },
+    {
+      "arm": "M-b1-i",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 2484056064.0,
+      "started_utc": "2026-10-07T02:29:35.6875941Z",
+      "healthy": true,
+      "peak_ws_bytes": 1724915712,
+      "peak_private_bytes": 21582467072,
+      "min_avail_bytes": 11405488128,
+      "avail_before_bytes": 13713096704,
+      "requests": [
+        {
+          "tag": "sg-q27m-10062225-M-b1-i-warmup-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=13.9 ttft_ms=913.5 gen_n=8 decode_tps=7.35 draft=4/5"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-b1-i-r1-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=17.74 ttft_ms=696.9 gen_n=128 decode_tps=10.12 draft=86/100"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-b1-i-r1-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=99.31 ttft_ms=6069.2 gen_n=128 decode_tps=9.7 draft=84/101"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-b1-i-r2-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=17.64 ttft_ms=815.0 gen_n=128 decode_tps=9.72 draft=85/97"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-b1-i-r2-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=105.77 ttft_ms=5756.5 gen_n=128 decode_tps=9.8 draft=84/101"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 12392,
+      "load_s": 11.7,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.10.698.367 I common_speculative_init_result: creating MTP draft context against the target model 'C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf'\r",
+        "0.13.702.663 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.13.702.664 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.13.702.666 I slot print_timing: id  0 | task 0 | spec round cost  = draft 136053 us/3, verify 743283 us/3, plain 0 us/0, process 25566 us, save 0 us, restore 0 us\r",
+        "0.29.085.850 I slot print_timing: id  0 | task 6 | draft acceptance = 0.86000 (   86 accepted /   100 generated), mean len =  3.21\r",
+        "0.29.085.852 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 86 accepted)\r",
+        "0.29.085.853 I slot print_timing: id  0 | task 6 | spec round cost  = draft 2334490 us/41, verify 9536298 us/39, plain 536878 us/2, process 86771 us, save 0 us, restore 0 us\r",
+        "0.49.133.218 I slot print_timing: id  0 | task 50 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "0.49.133.219 I slot print_timing: id  0 | task 50 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "0.49.133.221 I slot print_timing: id  0 | task 50 | spec round cost  = draft 2413037 us/42, verify 9343520 us/38, plain 1179559 us/5, process 103070 us, save 0 us, restore 0 us\r",
+        "1.03.913.612 I slot print_timing: id  0 | task 97 | draft acceptance = 0.87629 (   85 accepted /    97 generated), mean len =  3.12\r",
+        "1.03.913.614 I slot print_timing: id  0 | task 97 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 85 accepted)\r",
+        "1.03.913.625 I slot print_timing: id  0 | task 97 | spec round cost  = draft 2393913 us/42, verify 10032054 us/40, plain 468229 us/2, process 93592 us, save 0 us, restore 0 us\r",
+        "1.22.876.091 I slot print_timing: id  0 | task 142 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "1.22.876.092 I slot print_timing: id  0 | task 142 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.22.876.094 I slot print_timing: id  0 | task 142 | spec round cost  = draft 2389034 us/42, verify 9304610 us/38, plain 1113001 us/5, process 101030 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-07T02:31:03.0167417Z"
+    },
+    {
+      "arm": "M-b2-i",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 2478755840.0,
+      "started_utc": "2026-10-07T02:31:35.4749883Z",
+      "healthy": true,
+      "peak_ws_bytes": 1724420096,
+      "peak_private_bytes": 21604339712,
+      "min_avail_bytes": 11822628864,
+      "avail_before_bytes": 13480247296,
+      "requests": [
+        {
+          "tag": "sg-q27m-10062225-M-b2-i-warmup-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=13.94 ttft_ms=897.7 gen_n=8 decode_tps=8.11 draft=4/5"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-b2-i-r1-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=18.04 ttft_ms=684.6 gen_n=128 decode_tps=10.24 draft=86/100"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-b2-i-r1-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=102.19 ttft_ms=5949.2 gen_n=128 decode_tps=9.93 draft=84/101"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-b2-i-r2-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=18.03 ttft_ms=816.1 gen_n=128 decode_tps=10.16 draft=85/97"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-b2-i-r2-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=105.77 ttft_ms=5740.3 gen_n=128 decode_tps=9.9 draft=84/101"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 28464,
+      "load_s": 10.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.10.004.195 I common_speculative_init_result: creating MTP draft context against the target model 'C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf'\r",
+        "0.12.620.222 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.12.620.223 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.12.620.226 I slot print_timing: id  0 | task 0 | spec round cost  = draft 131912 us/3, verify 717600 us/3, plain 0 us/0, process 6450 us, save 0 us, restore 0 us\r",
+        "0.27.865.338 I slot print_timing: id  0 | task 6 | draft acceptance = 0.86000 (   86 accepted /   100 generated), mean len =  3.21\r",
+        "0.27.865.340 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 86 accepted)\r",
+        "0.27.865.342 I slot print_timing: id  0 | task 6 | spec round cost  = draft 2313836 us/41, verify 9391957 us/39, plain 537706 us/2, process 105426 us, save 0 us, restore 0 us\r",
+        "0.47.602.987 I slot print_timing: id  0 | task 50 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "0.47.602.987 I slot print_timing: id  0 | task 50 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "0.47.602.990 I slot print_timing: id  0 | task 50 | spec round cost  = draft 2381835 us/42, verify 9117512 us/38, plain 1111455 us/5, process 119310 us, save 0 us, restore 0 us\r",
+        "1.02.270.491 I slot print_timing: id  0 | task 97 | draft acceptance = 0.87629 (   85 accepted /    97 generated), mean len =  3.12\r",
+        "1.02.270.493 I slot print_timing: id  0 | task 97 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 85 accepted)\r",
+        "1.02.270.505 I slot print_timing: id  0 | task 97 | spec round cost  = draft 2354910 us/42, verify 9527317 us/40, plain 441733 us/2, process 121668 us, save 0 us, restore 0 us\r",
+        "1.21.610.279 I slot print_timing: id  0 | task 142 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "1.21.610.280 I slot print_timing: id  0 | task 142 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.21.610.283 I slot print_timing: id  0 | task 142 | spec round cost  = draft 2396310 us/42, verify 9135927 us/38, plain 1117842 us/5, process 123390 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-07T02:33:01.7187375Z"
+    },
+    {
+      "arm": "M-a2-i",
+      "args": [
+        "-m",
+        "C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf",
+        "-dev",
+        "Vulkan0",
+        "-ngl",
+        "999",
+        "-fa",
+        "on",
+        "-c",
+        "8192",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-t",
+        "16",
+        "-tb",
+        "32",
+        "-ctk",
+        "q8_0",
+        "-ctv",
+        "q8_0",
+        "--parallel",
+        "1",
+        "--port",
+        "8298",
+        "--host",
+        "127.0.0.1",
+        "--ctx-checkpoints",
+        "32",
+        "--ctx-checkpoints-device",
+        "off",
+        "--ctx-checkpoints-toolcall",
+        "on",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "3",
+        "--spec-draft-p-min",
+        "0.5"
+      ],
+      "env": {},
+      "cap_bytes": 0,
+      "nonpaged_before": 2477092864.0,
+      "started_utc": "2026-10-07T02:33:34.1750597Z",
+      "healthy": true,
+      "peak_ws_bytes": 1724334080,
+      "peak_private_bytes": 21584433152,
+      "min_avail_bytes": 12024225792,
+      "avail_before_bytes": 13893476352,
+      "requests": [
+        {
+          "tag": "sg-q27m-10062225-M-a2-i-warmup-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=14.0 ttft_ms=898.7 gen_n=8 decode_tps=8.13 draft=4/5"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-a2-i-r1-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=18.15 ttft_ms=682.2 gen_n=128 decode_tps=10.25 draft=86/100"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-a2-i-r1-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=100.12 ttft_ms=6063.3 gen_n=128 decode_tps=9.92 draft=84/101"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-a2-i-r2-short",
+          "exit": 0,
+          "summary": "prompt_n=12 prefill_tps=18.47 ttft_ms=829.3 gen_n=128 decode_tps=10.19 draft=85/97"
+        },
+        {
+          "tag": "sg-q27m-10062225-M-a2-i-r2-long",
+          "exit": 0,
+          "summary": "prompt_n=597 prefill_tps=105.99 ttft_ms=5726.6 gen_n=128 decode_tps=9.9 draft=84/101"
+        }
+      ],
+      "peak_gpu_dedicated_bytes": 0,
+      "peak_gpu_shared_bytes": 0,
+      "cap_readback": "uncapped",
+      "pid": 19464,
+      "load_s": 10.6,
+      "result": "ok",
+      "exit_code": -1,
+      "key_lines": [
+        "0.09.833.719 I common_speculative_init_result: creating MTP draft context against the target model 'C:\\ArifiLabs\\models\\hf\\huihui-ai\\Huihui-Qwen3.8-27B-abliterated-UD-GGUF\\Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf'\r",
+        "0.12.587.502 I slot print_timing: id  0 | task 0 | draft acceptance = 0.80000 (    4 accepted /     5 generated), mean len =  2.33\r",
+        "0.12.587.503 I slot print_timing: id  0 | task 0 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 4 accepted)\r",
+        "0.12.587.505 I slot print_timing: id  0 | task 0 | spec round cost  = draft 134776 us/3, verify 710466 us/3, plain 0 us/0, process 7996 us, save 0 us, restore 0 us\r",
+        "0.27.831.443 I slot print_timing: id  0 | task 6 | draft acceptance = 0.86000 (   86 accepted /   100 generated), mean len =  3.21\r",
+        "0.27.831.444 I slot print_timing: id  0 | task 6 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 86 accepted)\r",
+        "0.27.831.446 I slot print_timing: id  0 | task 6 | spec round cost  = draft 2307010 us/41, verify 9382018 us/39, plain 533201 us/2, process 114824 us, save 0 us, restore 0 us\r",
+        "0.47.723.230 I slot print_timing: id  0 | task 50 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "0.47.723.233 I slot print_timing: id  0 | task 50 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "0.47.723.238 I slot print_timing: id  0 | task 50 | spec round cost  = draft 2387575 us/42, verify 9123054 us/38, plain 1107502 us/5, process 115316 us, save 0 us, restore 0 us\r",
+        "1.02.254.688 I slot print_timing: id  0 | task 97 | draft acceptance = 0.87629 (   85 accepted /    97 generated), mean len =  3.12\r",
+        "1.02.254.689 I slot print_timing: id  0 | task 97 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 85 accepted)\r",
+        "1.02.254.691 I slot print_timing: id  0 | task 97 | spec round cost  = draft 2329924 us/42, verify 9526100 us/40, plain 439266 us/2, process 111247 us, save 0 us, restore 0 us\r",
+        "1.21.586.384 I slot print_timing: id  0 | task 142 | draft acceptance = 0.83168 (   84 accepted /   101 generated), mean len =  3.21\r",
+        "1.21.586.387 I slot print_timing: id  0 | task 142 | spec ckpt cost   = save 0 us/0, restore 0 us/0, replay 0 tok (of 84 accepted)\r",
+        "1.21.586.392 I slot print_timing: id  0 | task 142 | spec round cost  = draft 2386982 us/42, verify 9145979 us/38, plain 1120994 us/5, process 123746 us, save 0 us, restore 0 us\r"
+      ],
+      "finished_utc": "2026-10-07T02:35:00.3832772Z"
+    }
+  ],
+  "build_sha": "5f37b74001e015e664f1bdff5239389be5e1580f",
+  "model": "q27m",
+  "comparator": "x",
+  "slots": [
+    {
+      "tag": "M-a1",
+      "mode": "M",
+      "side": "a",
+      "bin": "i",
+      "arm": "M-a1-i",
+      "result": "ok",
+      "load_s": 10.7,
+      "min_avail_bytes": 13301018624
+    },
+    {
+      "tag": "M-b1",
+      "mode": "M",
+      "side": "b",
+      "bin": "i",
+      "arm": "M-b1-i",
+      "result": "ok",
+      "load_s": 11.7,
+      "min_avail_bytes": 11405488128
+    },
+    {
+      "tag": "M-b2",
+      "mode": "M",
+      "side": "b",
+      "bin": "i",
+      "arm": "M-b2-i",
+      "result": "ok",
+      "load_s": 10.6,
+      "min_avail_bytes": 11822628864
+    },
+    {
+      "tag": "M-a2",
+      "mode": "M",
+      "side": "a",
+      "bin": "i",
+      "arm": "M-a2-i",
+      "result": "ok",
+      "load_s": 10.6,
+      "min_avail_bytes": 12024225792
+    }
+  ],
+  "plan": [
+    [
+      "warmup",
+      "short",
+      8
+    ],
+    [
+      "r1",
+      "short",
+      128
+    ],
+    [
+      "r1",
+      "long",
+      128
+    ],
+    [
+      "r2",
+      "short",
+      128
+    ],
+    [
+      "r2",
+      "long",
+      128
+    ]
+  ],
+  "prompts": {
+    "short": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\sg-short.txt",
+    "long": "C:\\ArifiLabs\\cache\\strata-x1\\prompt-long.txt"
+  },
+  "trim_ws": "trimmed 197 processes; available MB 13487 -> 15339",
+  "start_M-a1-i": {
+    "committed_GB": 21.05,
+    "waited_s": 32.0,
+    "avail_GB": 15.68
+  },
+  "start_M-b1-i": {
+    "committed_GB": 21.34,
+    "waited_s": 31.0,
+    "avail_GB": 13.78
+  },
+  "start_M-b2-i": {
+    "committed_GB": 21.11,
+    "waited_s": 31.0,
+    "avail_GB": 13.48
+  },
+  "start_M-a2-i": {
+    "committed_GB": 20.43,
+    "waited_s": 31.0,
+    "avail_GB": 13.68
+  },
+  "finished_utc": "2026-10-07T02:35:00.3920870Z"
+}
