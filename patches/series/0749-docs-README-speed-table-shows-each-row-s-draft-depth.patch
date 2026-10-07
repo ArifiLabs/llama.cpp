@@ -1,0 +1,58 @@
+From 86fd7d8578a8909a9c1e92a8423f46a200a85877 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 10:21:26 -0400
+Subject: [PATCH] docs: README speed table shows each row's draft depth,
+ drafter and key server flags
+
+The 890M table now carries the recipe per row (draft depth, drafter file, key flags; the full lines stay in How we run it) and a dated note on the draft-depth-6 results for both 27B files measured after this release.
+
+Origin: ArifiLabs (native) - release documentation for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ README.md | 33 +++++++++++++++++++--------------
+ 1 file changed, 19 insertions(+), 14 deletions(-)
+
+diff --git a/README.md b/README.md
+index 704b6fa47b..b2577bbab1 100644
+--- a/README.md
++++ b/README.md
+@@ -12,20 +12,25 @@ July 2026; this is its third published release.
+ 
+ ## Speed: Radeon 890M (Minisforum AI X1 Pro-470)
+ 
+-| Model file | Mode | Decode t/s, short / ~600-token prompt | Prompt t/s (~600 tokens) | Decode vs our previous release |
+-|---|---|---|---|---|
+-| Qwen3.8-Flash-Next GSQ-RCO IQ3_S (ISTA-DASLab) | plain | 12.01 / 11.89 | 150.2 | +8.5% / +9.2% ¹ |
+-| same | MTP (sidecar head) | 19.68 / 17.70 | 144.0 | new: +65.4% / +50.4% over plain ² |
+-| same | MTP + 40K draft vocabulary | **20.24 / 19.45** | 143.5 | new: +70.1% / +65.3% over plain ² |
+-| Ornith-1.5 35B-A3B Q4_K_M | plain | 29.33 / 28.98 | 397.9 | +8.6% / +8.8% |
+-| same | MTP (built-in head) | **34.07 / 35.01** | 415.2 | +16.1% / +20.8% over plain |
+-| same | DFlash2, 2 tokens | 32.07 / 33.60 | 398.1 | +8.6% / +7.5% |
+-| Qwen3.8 27B UD-Q4_K_XL (Huihui abliterated) | plain | 4.57 / 4.60 | 104.4 | +5.9% / +6.0% |
+-| same | MTP (built-in head) | 10.08 / 9.84 | 102.2 | +120.6% / +114.0% over plain |
+-| same | DFlash2, 3 tokens | **12.09 / 11.55** | 95.0 | +15.5% / +8.7% |
+-| Qwen3.8 27B S-X8 v4.3 (MarlaLabs) | plain | 2.94 / 2.96 | 90.8 | +1.5% / +2.4% |
+-| same | DFlash2, 4 tokens | 8.89 / 8.29 | 88.5 | +5.5% / +6.9% |
+-| GLM-5.3 Flash GSQ-RCO 3.0-bit, experts streamed from NVMe ³ | DFlash2, 2 tokens | 2.96 (chat) | 4.4–4.6 | tie (+0.3%), output identical |
++| Model file | Mode | Draft depth | Drafter | Key server flags | Decode t/s, short / ~600-token prompt | Prompt t/s (~600 tokens) | Decode vs our previous release |
++|---|---|---|---|---|---|---|---|
++| Qwen3.8-Flash-Next GSQ-RCO IQ3_S (ISTA-DASLab) | plain | - | - | `-ngl 999 -fa on --lazy-mode on -lm mmap -c 2048` | 12.01 / 11.89 | 150.2 | +8.5% / +9.2% ¹ |
++| same | MTP (sidecar head) | 3 | `mtp-sidecar-qwen4exp-q8_0.gguf` | `-fa on --lazy-mode on -lm dio -c 4096 --spec-type draft-mtp --spec-draft-p-min 0.5` | 19.68 / 17.70 | 144.0 | new: +65.4% / +50.4% over plain ² |
++| same | MTP + 40K draft vocabulary | 3 | `mtp-sidecar-qwen4exp-q8_0-dven40k.gguf` | same as the MTP row | **20.24 / 19.45** | 143.5 | new: +70.1% / +65.3% over plain ² |
++| Ornith-1.5 35B-A3B Q4_K_M | plain | - | - | `-ngl 999 -fa on -lm dio --lazy-mode on -c 4096 -b 2048 -ub 512` | 29.33 / 28.98 | 397.9 | +8.6% / +8.8% |
++| same | MTP (built-in head) | 3 | head in the model file | plain flags + `--spec-type draft-mtp --spec-draft-p-min 0.5` | **34.07 / 35.01** | 415.2 | +16.1% / +20.8% over plain |
++| same | DFlash2 | 2 | `Ornith-1.5-35B-A3B-DFlash2-BF16.gguf` | plain flags + `--spec-type draft-dflash --dflash-defer-injection 0` | 32.07 / 33.60 | 398.1 | +8.6% / +7.5% |
++| Qwen3.8 27B UD-Q4_K_XL (Huihui abliterated) | plain | - | - | `-ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --ctx-checkpoints 32` | 4.57 / 4.60 | 104.4 | +5.9% / +6.0% |
++| same | MTP (built-in head) | 3 | head in the model file | plain flags + `--spec-type draft-mtp --spec-draft-p-min 0.5` | 10.08 / 9.84 | 102.2 | +120.6% / +114.0% over plain |
++| same | DFlash2 | 3 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | plain flags + `--spec-type draft-dflash --dflash-defer-injection 0` | **12.09 / 11.55** | 95.0 | +15.5% / +8.7% |
++| Qwen3.8 27B S-X8 v4.3 (MarlaLabs) | plain | - | - | `-ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0` | 2.94 / 2.96 | 90.8 | +1.5% / +2.4% |
++| same | DFlash2 | 4 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | plain flags + `--spec-type draft-dflash --dflash-defer-injection 0` | 8.89 / 8.29 | 88.5 | +5.5% / +6.9% |
++| GLM-5.3 Flash GSQ-RCO 3.0-bit, experts streamed from NVMe ³ | DFlash2 | 2 | `GLM-5.3-Flash-DFlash2-Q8_0.gguf` | `--moe-cache 1536 -fa off -c 2048 -b 8 -ub 8` + `GGML_ARIFI_MOE_NVME=1` | 2.96 (chat) | 4.4–4.6 | tie (+0.3%), output identical |
++
++Every row's full command line is in [How we run it](#how-we-run-it-radeon-890m). **Since this release** (separate
++ABBA A/Bs on the same build, not yet in the table): draft depth 6 is faster on both 27B files - Q4_K_XL DFlash2 11.63 →
++13.28 t/s short (+14.2%), long +1.2%; S-X8 DFlash2 short +8.4%, long +3.6%, output identical. The next release moves
++both rows to depth 6.
+ 
+ ¹ Flash-Next's comparator is our previous release plus its three load/restore fixes: the previous release cannot load
+ this file inside the memory floor. ² The previous release had no MTP for these models, so MTP rows compare MTP against
