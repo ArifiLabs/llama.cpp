@@ -1,0 +1,319 @@
+From 7e8380ca6fbdd63d89a2926f2b9774648303527b Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 03:17:18 -0400
+Subject: [PATCH] sx8-int8 attempt E: 16-value activation scales for the S-X8
+ int8 cm1 kernel (env-only arm)
+
+GGML_ARIFI_SX8_CM1_H16=1: quantize_q8_1 HALF=1 stores one scale per 16-value half (ds = d0, d1); the SX8_H16 cm1
+kernel keeps one int32 accumulator per half (TK == 16, K_SUB == 2) with its own B scale, and the min term uses the
+exact half sums (m * (d0*s0 + d1*s1)). Replaces the two-digit route for S-X8 while on; refused unless int8 coopmat
+K == 16. Offline gate on 25 captured real inputs: error energy x0.51..0.72, worst token x0.64..0.79 vs 32-value
+scales. Default unchanged (fix B). RED twin matmul_sx8hred_q8_1 for the tests.
+
+Lane: sx8-int8-stage10-2026-10-02
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h      |  4 ++
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 36 ++++++++---
+ .../vulkan-shaders/mul_mmq_cm1.comp           | 60 +++++++++++++++++++
+ .../vulkan-shaders/mul_mmq_cm1_funcs.glsl     |  8 +++
+ .../vulkan-shaders/quantize_q8_1.comp         | 29 +++++++--
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     |  3 +
+ 6 files changed, 126 insertions(+), 14 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index a5f7a5e138..2e97191041 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -1327,6 +1327,10 @@ struct vk_device_struct {
+     std::set<std::string> sx8_cm1_roles;
+     // lane sx8-int8 stage 10 fix knob: S-X8 roles on two-digit activations ("all" = every role) [GGML_ARIFI_SX8_CM1_2D].
+     std::set<std::string> sx8_cm1_2d_roles;
++    // lane sx8-int8 attempt E: S-X8 cm1 with one activation scale per 16-value half block [GGML_ARIFI_SX8_CM1_H16=1];
++    // replaces the two-digit route for S-X8 while on. Needs coopmat_int_k == 16.
++    bool sx8_cm1_h16 = false;
++    vk_pipeline pipeline_quantize_q8_1_x4_h16;
+     // arifi lane-296 N11: coopmat1 f32->f16 B conversion. 0 = auto (only when a {type,F16} pipeline
+     // exists and ne11 >= cm1_f16b_min_n), 1 = upstream (always), 2 = never (r86i f32-B kernel).
+     uint32_t cm1_f16b_mode = 0;
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 0d5e24ed7f..200d08ca7f 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1656,6 +1656,9 @@ static bool ggml_vk_matmul_cm1_int_shmem_support(const vk_device& device, const
+     total += BN * BK_STEP * (uint32_t)sizeof(float);     // buf_b_d
+     if (has_dm) {
+         total += BN * BK_STEP * (src0_type == GGML_TYPE_SX8 ? 2u : 1u) * (uint32_t)sizeof(float); // buf_b_s
++        if (src0_type == GGML_TYPE_SX8 && device->sx8_cm1_h16) {
++            total += BN * BK_STEP * 2u * (uint32_t)sizeof(float);  // buf_b_dh (attempt E)
++        }
+     }
+     if (has_kvalues) {
+         total += 16u * (uint32_t)sizeof(int8_t);         // cm1_kvalues[16]
+@@ -2759,13 +2762,18 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             if (!rdna4) { cm1_create_mmq({GGML_TYPE_Q5_K, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,   "matmul_q5_k_q8_1",   matmul_q5_k_q8_1_cm1_len,   matmul_q5_k_q8_1_cm1_data,   sizeof(vk_mat_mat_push_constants), 3); }
+             cm1_create_mmq({GGML_TYPE_Q6_K,   GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int_k, "matmul_q6_k_q8_1",   matmul_q6_k_q8_1_cm1_len,   matmul_q6_k_q8_1_cm1_data,   sizeof(vk_mat_mat_push_constants), 3);
+             if (!rdna4) { cm1_create_mmq({GGML_TYPE_NVFP4, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int_k, "matmul_nvfp4_q8_1",  matmul_nvfp4_q8_1_cm1_len,  matmul_nvfp4_q8_1_cm1_data,  sizeof(vk_mat_mat_push_constants), 3); }
++            // attempt E: GGML_ARIFI_SX8_CM1_H16=1 loads the per-half-scale kernel (needs int8 coopmat K == 16).
++            const bool h16 = sx8_cm1 && device->sx8_cm1_h16;
+             if (sx8_cm1) {
+-                cm1_create_mmq({GGML_TYPE_SX8, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int, sx8_cm1_red ? "matmul_sx8red_q8_1" : "matmul_sx8_q8_1",
+-                               sx8_cm1_red ? matmul_sx8red_q8_1_cm1_len : matmul_sx8_q8_1_cm1_len,
+-                               sx8_cm1_red ? matmul_sx8red_q8_1_cm1_data : matmul_sx8_q8_1_cm1_data, sizeof(vk_mat_mat_push_constants), 3);
++                cm1_create_mmq({GGML_TYPE_SX8, GGML_TYPE_Q8_1, false, false}, tc_mmq_cm1_int,
++                               h16 ? (sx8_cm1_red ? "matmul_sx8hred_q8_1" : "matmul_sx8h_q8_1") : (sx8_cm1_red ? "matmul_sx8red_q8_1" : "matmul_sx8_q8_1"),
++                               h16 ? (sx8_cm1_red ? matmul_sx8hred_q8_1_cm1_len : matmul_sx8h_q8_1_cm1_len) : (sx8_cm1_red ? matmul_sx8red_q8_1_cm1_len : matmul_sx8_q8_1_cm1_len),
++                               h16 ? (sx8_cm1_red ? matmul_sx8hred_q8_1_cm1_data : matmul_sx8h_q8_1_cm1_data) : (sx8_cm1_red ? matmul_sx8red_q8_1_cm1_data : matmul_sx8_q8_1_cm1_data),
++                               sizeof(vk_mat_mat_push_constants), 3);
+             }
+-            fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 MMQ: %s [GGML_ARIFI_SX8_CM1%s]\n",
+-                    !sx8_cm1 ? "OFF" : sx8_cm1_red ? "ON (RED twin, test control)" : "ON", sx8_cm1_red ? " / _RED" : "");
++            fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 MMQ: %s%s [GGML_ARIFI_SX8_CM1%s / _H16]\n",
++                    !sx8_cm1 ? "OFF" : sx8_cm1_red ? "ON (RED twin, test control)" : "ON", h16 ? ", 16-value activation scales" : "",
++                    sx8_cm1_red ? " / _RED" : "");
+         }
+ 
+         GGML_ASSERT(device->subgroup_ballot);
+@@ -4166,9 +4174,11 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     if (device->subgroup_clustered && device->subgroup_require_full_support) {
+         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1, true, true);
+         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_res, "quantize_q8_1_x4_res", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u, device->q8_0_cm1_2d_shift }, 1, true, true);
++        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_h16, "quantize_q8_1_x4_h16", quantize_q8_1_x4_subgroup_len, quantize_q8_1_x4_subgroup_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 0u, 0u, 1u }, 1, true, true);
+     } else {
+         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4, "quantize_q8_1_x4", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16 }, 1);
+         ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_res, "quantize_q8_1_x4_res", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 1u, device->q8_0_cm1_2d_shift }, 1);
++        ggml_vk_create_pipeline(device, device->pipeline_quantize_q8_1_x4_h16, "quantize_q8_1_x4_h16", quantize_q8_1_x4_len, quantize_q8_1_x4_data, "main", 2, sizeof(vk_quantize_q8_1_push_constants), {32 * device->subgroup_size / 8, 1, 1}, { device->subgroup_size, q81_f16, 0u, 0u, 1u }, 1);
+     }
+ 
+     for (uint32_t i = 0; i < p021_max_gqa_ratio; ++i) {
+@@ -6138,6 +6148,12 @@ vk_device ggml_vk_get_device(size_t idx) {
+                 }
+                 fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 roles: %s, min n: %u, two-digit roles: %s [GGML_ARIFI_SX8_CM1_ROLES / _MIN_N / _2D]\n",
+                         sxr != nullptr ? sxr : "all", device->sx8_cm1_min_n, sx2);
++                const char * sxh = getenv("GGML_ARIFI_SX8_CM1_H16");
++                if (sxh != nullptr && sxh[0] == '1') {
++                    device->sx8_cm1_h16 = device->coopmat_int_k == 16;
++                    fprintf(stderr, "ggml_vulkan: S-X8 int8 cm1 16-value activation scales: %s [GGML_ARIFI_SX8_CM1_H16]\n",
++                            device->sx8_cm1_h16 ? "ON (replaces two-digit for S-X8)" : "REFUSED (int8 coopmat K != 16)");
++                }
+                 const char * f32a = getenv("GGML_ARIFI_F32ACC");
+                 for (const char * p = f32a; p != nullptr && *p; ) {
+                     const char * e = strchr(p, ',');
+@@ -7944,7 +7960,11 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+     }
+     // lane sx8-int8 stage 10 fix knob: two-digit activations (q1 + residual q2, lane-296 R3 route) for listed S-X8 roles
+     // ("all" = every role). Exact per-pass integer sums keep the min term right in both passes. Default empty.
+-    if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_SX8 && mmp_map != nullptr && !ctx->device->sx8_cm1_2d_roles.empty()) {
++    const bool sx8_h16 = ctx->device->sx8_cm1_h16 && src0->type == GGML_TYPE_SX8 && mmp_map != nullptr;
++    if (sx8_h16 && ctx->device->q8_0_cm1_roles_logged.insert("sx8-h16:" + std::to_string(ne01) + "x" + std::to_string(ne10)).second) {
++        fprintf(stderr, "ggml_vulkan: S-X8 %s (%u rows, k=%u, n=%u): INT8h16\n", src0->name, (uint32_t) ne01, (uint32_t) ne10, (uint32_t) ne11);
++    }
++    if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_SX8 && mmp_map != nullptr && !ctx->device->sx8_cm1_2d_roles.empty() && !sx8_h16) {
+         std::string role = src0->name;
+         if (role.rfind("blk.", 0) == 0 && role.find('.', 4) != std::string::npos) {
+             role = role.substr(role.find('.', 4) + 1);
+@@ -8046,7 +8066,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+     GGML_ASSERT(!qy_needs_dequant || to_fp16_vk_1 != nullptr);  // NOLINT
+ 
+     if (quantize_y) {
+-        to_q8_1 = ggml_vk_get_quantize_pipeline(ctx, GGML_TYPE_Q8_1);
++        to_q8_1 = sx8_h16 ? ctx->device->pipeline_quantize_q8_1_x4_h16 : ggml_vk_get_quantize_pipeline(ctx, GGML_TYPE_Q8_1);
+     }
+ 
+     {
+@@ -8162,7 +8182,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+             if (ctx->prealloc_y_need_sync) {
+                 ggml_vk_sync_buffers(ctx, subctx);
+             }
+-            ggml_vk_quantize_q8_1(ctx, subctx, ggml_vk_subbuffer(ctx, d_Qy, qy_buf_offset), ggml_vk_subbuffer(ctx, d_Y, 0), y_ne);
++            ggml_vk_quantize_q8_1_with(ctx, subctx, ggml_vk_subbuffer(ctx, d_Qy, qy_buf_offset), ggml_vk_subbuffer(ctx, d_Y, 0), y_ne, to_q8_1);
+             ctx->prealloc_y_last_pipeline_used = to_q8_1.get();
+             ctx->prealloc_y_last_tensor_used = src1;
+             ctx->prealloc_y_last_k_padded = false;
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_cm1.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_cm1.comp
+index 64f860a7f0..4f30216a2b 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_cm1.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_cm1.comp
+@@ -109,6 +109,10 @@ shared float buf_b_d[BN * BK_STEP];
+ #if defined(DATA_A_SX8)
+ // S-X8: exact integer activation sums, one partial per 16-value half block (loadr_b 0/1), not the fp16 ds.y.
+ shared float buf_b_s[BN * BK_STEP * 2];
++#if defined(SX8_H16)
++// attempt E: one activation scale per 16-value half block (quantize_q8_1 HALF=1).
++shared float buf_b_dh[BN * BK_STEP * 2];
++#endif
+ #elif defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1) || defined(DATA_A_Q4_K) || defined(DATA_A_Q5_K)
+ shared float buf_b_s[BN * BK_STEP];
+ #endif
+@@ -362,6 +366,62 @@ void main() {
+                     }
+                 }
+             }
++#elif defined(SX8_H16)
++            // attempt E: S-X8 with one B scale per 16-value half. TK == 16 (RDNA3/4 int8 WMMA), so K_SUB == 2 and MMA h
++            // covers exactly half h; each half gets its own int32 accumulator and its own d_b. The min term uses the
++            // exact half sums: m_a * (d0 * s0 + d1 * s1).
++            coopmat<int8_t, gl_ScopeSubgroup, TM, TK, gl_MatrixUseA> cache_a[cms_per_row * K_SUB];
++            coopmat<int8_t, gl_ScopeSubgroup, TK, TN, gl_MatrixUseB> cache_b[cms_per_col * K_SUB];
++
++            [[unroll]] for (uint r = 0; r < cms_per_row; r++) {
++                [[unroll]] for (uint h = 0; h < K_SUB; h++) {
++                    coopMatLoad(cache_a[r * K_SUB + h], buf_a_qs, (a_row0 + r * TM) * QPITCH + ks * (BK / 4) + h * (TK / 4), QPITCH, gl_CooperativeMatrixLayoutRowMajor);
++                }
++            }
++            [[unroll]] for (uint c = 0; c < cms_per_col; c++) {
++                [[unroll]] for (uint h = 0; h < K_SUB; h++) {
++                    coopMatLoad(cache_b[c * K_SUB + h], buf_b_qs, (b_col0 + c * TN) * QPITCH + ks * (BK / 4) + h * (TK / 4), QPITCH, gl_CooperativeMatrixLayoutColumnMajor);
++                }
++            }
++
++            float scale_bh[cms_per_col * K_SUB];
++            float bs[cms_per_col];
++            [[unroll]] for (uint c = 0; c < cms_per_col; c++) {
++                const uint bsi = (ks * BN + b_col0 + c * TN + elem_col0) * 2;
++                [[unroll]] for (uint h = 0; h < K_SUB; h++) {
++                    scale_bh[c * K_SUB + h] = buf_b_dh[bsi + h];
++                }
++                bs[c] = buf_b_dh[bsi] * buf_b_s[bsi] + buf_b_dh[bsi + 1] * buf_b_s[bsi + 1];
++            }
++
++            [[unroll]] for (uint r = 0; r < cms_per_row; r++) {
++                float scale_a[CM_ELEMS];
++                float nbias_a[CM_ELEMS];
++                float ma[CM_ELEMS];
++                [[unroll]] for (uint e = 0; e < CM_ELEMS; e++) {
++                    vec2 dm = buf_a_dm[ks * BM + a_row0 + r * TM + cm_elem_row(e)];
++                    scale_a[e] = dm.x;
++                    if (USE_MAGIC_BIAS) {
++                        nbias_a[e] = -ACC_BIAS_F * scale_a[e];
++                    }
++                    ma[e] = dm.y;
++                }
++
++                [[unroll]] for (uint c = 0; c < cms_per_col; c++) {
++                    const uint tile_idx = r * cms_per_col + c;
++                    [[unroll]] for (uint h = 0; h < K_SUB; h++) {
++                        coopmat<int32_t, gl_ScopeSubgroup, TM, TN, gl_MatrixUseAccumulator> acc =
++                            coopmat<int32_t, gl_ScopeSubgroup, TM, TN, gl_MatrixUseAccumulator>(
++                                USE_MAGIC_BIAS ? ACC_BIAS_BITS : 0);
++                        acc = coopMatMulAdd(cache_a[r * K_SUB + h], cache_b[c * K_SUB + h], acc);
++                        [[unroll]] for (uint e = 0; e < CM_ELEMS; e++) {
++                            sums[tile_idx * CM_ELEMS + e] = cm1_accumulate(
++                                sums[tile_idx * CM_ELEMS + e], int(acc[e]),
++                                scale_a[e], nbias_a[e], scale_bh[c * K_SUB + h], h == 0 ? ma[e] * bs[c] : 0.0);
++                        }
++                    }
++                }
++            }
+ #elif defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1) || defined(DATA_A_Q4_K) || defined(DATA_A_Q5_K) || defined(DATA_A_SX8)
+             // Preload all A/B fragments up front (ILP).
+             coopmat<int8_t, gl_ScopeSubgroup, TM, TK, gl_MatrixUseA> cache_a[cms_per_row * K_SUB];
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_cm1_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_cm1_funcs.glsl
+index e705ed821e..cf1e336efa 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_cm1_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq_cm1_funcs.glsl
+@@ -561,7 +561,12 @@ struct block_b_prefetch {
+ block_b_prefetch block_b_load(uint ib_outer, uint ib_inner, uint loadr) {
+     block_b_prefetch blk;
+     blk.qs = data_b[ib_outer].qs[ib_inner * 2 + loadr];
++#if defined(SX8_H16)
++    // attempt E: ds = (d0, d1), one scale per 16-value half; loadr 0/1 is exactly that half.
++    blk.d = loadr == 0 ? data_b[ib_outer].ds[ib_inner].x : data_b[ib_outer].ds[ib_inner].y;
++#else
+     blk.d = data_b[ib_outer].ds[ib_inner].x;
++#endif
+ #if defined(DATA_A_Q4_1) || defined(DATA_A_Q5_1) || defined(DATA_A_Q4_K) || defined(DATA_A_Q5_K)
+     blk.s = data_b[ib_outer].ds[ib_inner].y;
+ #endif
+@@ -589,6 +594,9 @@ void block_b_to_shmem(block_b_prefetch blk, uint buf_ib, uint ks, uint loadr, bo
+         ps += int(q.x) + int(q.y) + int(q.z) + int(q.w);
+     }
+     buf_b_s[(ks * BN + buf_ib) * 2 + loadr] = float(ps);
++#if defined(SX8_H16)
++    buf_b_dh[(ks * BN + buf_ib) * 2 + loadr] = in_bounds ? float(blk.d) : 0.0f;
++#endif
+ #endif
+ }
+ 
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp b/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp
+index 40c1f55e0a..3f87a0c3c3 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp
+@@ -27,6 +27,9 @@ layout(constant_id = 1) const uint SCALE_F16 = 0;
+ layout(constant_id = 2) const uint RESIDUAL = 0;
+ // arifi lane-296 R4: residual prescale 2^RES_SHIFT (keeps the second digit's f16 scale out of the subnormal range).
+ layout(constant_id = 3) const uint RES_SHIFT = 0;
++// lane sx8-int8 attempt E: 1 = one scale per 16-value half block, ds = (d0, d1). Only the S-X8 H16 cm1 kernel reads it
++// (it sums the int8 activations exactly, so the block sum ds.y is not needed). Not combined with RESIDUAL.
++layout(constant_id = 4) const uint HALF = 0;
+ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+ 
+ layout (binding = 0) readonly buffer A {vec4 data_a[];};
+@@ -71,21 +74,34 @@ void quantize(const uint wgid) {
+ #ifndef USE_SUBGROUPS
+     shmem[tid] = thread_max;
+     barrier();
+-    [[unroll]] for (uint s = 4; s > 0; s >>= 1) {
+-        if (iqs < s) {
++    [[unroll]] for (uint s = HALF != 0 ? 2 : 4; s > 0; s >>= 1) {
++        if ((HALF != 0 ? (iqs & 3) : iqs) < s) {
+             shmem[tid] = max(shmem[tid], shmem[tid + s]);
+         }
+         barrier();
+     }
+ 
+-    const float amax = shmem[block_in_wg * 8];
++    const float amax0 = shmem[block_in_wg * 8];
++    const float amax1 = shmem[block_in_wg * 8 + 4];
++    const float amax = HALF != 0 ? ((iqs & 4) != 0 ? amax1 : amax0) : amax0;
+ #else
+-    const float amax = subgroupClusteredMax(thread_max, 8);
++    float amax;
++    float amax0 = 0.0;
++    float amax1 = 0.0;
++    if (HALF != 0) {
++        const vec2 hm = subgroupClusteredMax(vec2(iqs < 4 ? thread_max : 0.0, iqs < 4 ? 0.0 : thread_max), 8);
++        amax0 = hm.x;
++        amax1 = hm.y;
++        amax = iqs < 4 ? amax0 : amax1;
++    } else {
++        amax = subgroupClusteredMax(thread_max, 8);
++    }
+ #endif
+ 
+     // lane-296c: f16 rounding via the same conversion as the ds store below; packHalf2x16 rounds toward zero on
+     // RDNA3 (AMD proprietary driver), the f16vec2 store rounds to nearest, so mixing the two leaves a 2^-11 mismatch.
+     float d = SCALE_F16 != 0 ? float(f16vec2(vec2(amax / 127.0, 0.0)).x) : amax / 127.0;
++    const vec2 dh = vec2(amax0, amax1) / 127.0;
+     float d_inv = d != 0.0 ? 1.0 / d : 0.0;
+     vec4 q = round(vals * d_inv);
+     if (SCALE_F16 != 0) {
+@@ -146,10 +162,11 @@ void quantize(const uint wgid) {
+         const float sum = shmem[tid];
+ #endif
+ 
++        const f16vec2 ds_out = HALF != 0 ? f16vec2(dh) : f16vec2(vec2(d, sum * d));
+ #ifndef QBLOCK_X4
+-        data_b[ib].ds = f16vec2(vec2(d, sum * d));
++        data_b[ib].ds = ds_out;
+ #else
+-        data_b[ibx4_outer].ds[ibx4_inner] = f16vec2(vec2(d, sum * d));
++        data_b[ibx4_outer].ds[ibx4_inner] = ds_out;
+ #endif
+     }
+ }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index a2b600ed0c..ab26491fe0 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -737,6 +737,9 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
+         };
+         string_to_spv(shader_name + "_sx8_q8_1", "mul_mmq_cm1.comp", merge_maps(base_dict, sx8_cm1_dict), fp16, coopmat, coopmat2, f16acc);
+         string_to_spv(shader_name + "_sx8red_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_CM1_RED", "1"}}), fp16, coopmat, coopmat2, f16acc);
++        // attempt E: 16-value activation scales (SX8_H16), and its RED twin.
++        string_to_spv(shader_name + "_sx8h_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_H16", "1"}}), fp16, coopmat, coopmat2, f16acc);
++        string_to_spv(shader_name + "_sx8hred_q8_1", "mul_mmq_cm1.comp", merge_maps(merge_maps(base_dict, sx8_cm1_dict), {{"SX8_H16", "1"}, {"SX8_CM1_RED", "1"}}), fp16, coopmat, coopmat2, f16acc);
+     }
+ 
+     // TurboQuant weight types, ROTATED matmul.

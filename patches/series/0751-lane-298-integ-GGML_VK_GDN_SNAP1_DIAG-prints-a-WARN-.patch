@@ -1,0 +1,52 @@
+From 40b6dc11ab82a73c45c0d026aca258a116256a97 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 19:55:49 -0400
+Subject: [PATCH] lane-298 integ: GGML_VK_GDN_SNAP1_DIAG prints a WARN at first
+ use; OPTIONS-REGISTRY rows for both GDN diagnostics
+
+HQ82 answer Q39: the two lane-298 GDN diagnostics stay (the replay commit depends on them textually), each
+marked as diagnostic only. SNAP1_DIAG clamps the GDN_BANK write to slot 0, so output is wrong on any rejected
+draft; it now logs one WARN. GGML_VK_GDN_REPLAY_DIAG was removed by the GDN replay commit (LLAMA_GDN_REPLAY); the registry
+says so. No default-path change (the WARN sits behind the unset env).
+
+Origin: lane-298
+Measured-effect: none (diagnostic warning + docs only; default path unchanged)
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/OPTIONS-REGISTRY.md             | 6 ++++++
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 5 +++++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index 6e60be63e3..ed8d358de6 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -186,6 +186,12 @@ The allocator-wide shared admission applies only when `GGML_ARIFI_MOE_NVME=1`;
+ `GGML_ARIFI_VK_SHARED_ADMIT=1|0` forces it on or off for any model (lane-298 integ:
+ default-on refused a 1 MB staging buffer on a dense qwen4exp load at 5.97 GiB available).
+ 
++`GGML_VK_GDN_SNAP1_DIAG` (unset) is a DIAGNOSTIC ONLY: it clamps the GDN_BANK write to slot 0 to
++measure the snapshot-byte floor (lane-298 gsnap-10051521). Output is wrong by design on any rejected
++draft; the engine prints a WARN at first use. Never set it for serving.
++`GGML_VK_GDN_REPLAY_DIAG` (lane-298 replay-cost diag) no longer exists: the GDN replay commit
++(`LLAMA_GDN_REPLAY`, opt-in, default off) replaced it, and setting it has no effect.
++
+ `GGML_CUDA_MOE_CACHE_STATS=N` logs cumulative counters every N collected nodes.
+ NVMe bytes/seconds describe successful aligned expert reads only; they exclude
+ resident/nonexpert loading and failed reads. Process transfer counters are a
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index c038a0da8e..504f7c0704 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -13261,6 +13261,11 @@ void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& subctx,
+         bpc.wsign = plant ? -1.0f : 1.0f;
+         // lane-298 DIAG ONLY (wrong on any rejected draft): write slot 0 only, measures the GDN snapshot-byte floor
+         static const bool snap1 = getenv("GGML_VK_GDN_SNAP1_DIAG") != nullptr;
++        static bool snap1_warned = false;
++        if (snap1 && !snap1_warned) {
++            snap1_warned = true;
++            GGML_LOG_WARN("ggml_vulkan: GGML_VK_GDN_SNAP1_DIAG is set - diagnostic only, output is wrong by design\n");
++        }
+         if (snap1) { bpc.n_written = std::min<uint32_t>(bpc.n_written, 1u); }
+         if (replay) {
+             bpc.n_rep = (uint32_t) (dst->src[6]->ne[1] / 2);

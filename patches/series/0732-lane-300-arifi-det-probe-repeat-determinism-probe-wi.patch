@@ -1,0 +1,267 @@
+From 9ca84f74ae4cbe356a4023b85975adeda558ee8a Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 04:45:36 -0400
+Subject: [PATCH] lane-300: arifi-det-probe - repeat-determinism probe with
+ history arms (DETP_CLEAR, DETP_PRE)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Origin: lane-300
+Measured-effect: tooling only (tools/arifi-op-probe, no engine source); served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json
+---
+ tools/arifi-op-probe/CMakeLists.txt |   4 +
+ tools/arifi-op-probe/det-probe.cpp  | 234 ++++++++++++++++++++++++++++
+ 2 files changed, 238 insertions(+)
+ create mode 100644 tools/arifi-op-probe/det-probe.cpp
+
+diff --git a/tools/arifi-op-probe/CMakeLists.txt b/tools/arifi-op-probe/CMakeLists.txt
+index 3c7275f5f9..8d33c3558f 100644
+--- a/tools/arifi-op-probe/CMakeLists.txt
++++ b/tools/arifi-op-probe/CMakeLists.txt
+@@ -6,3 +6,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
+ add_executable(arifi-op-capture capture.cpp)
+ target_link_libraries(arifi-op-capture PRIVATE llama ggml ${CMAKE_THREAD_LIBS_INIT})
+ target_compile_features(arifi-op-capture PRIVATE cxx_std_17)
++
++add_executable(arifi-det-probe det-probe.cpp)
++target_link_libraries(arifi-det-probe PRIVATE llama-common llama ggml ${CMAKE_THREAD_LIBS_INIT})
++target_compile_features(arifi-det-probe PRIVATE cxx_std_17)
+diff --git a/tools/arifi-op-probe/det-probe.cpp b/tools/arifi-op-probe/det-probe.cpp
+new file mode 100644
+index 0000000000..56b5412fb2
+--- /dev/null
++++ b/tools/arifi-op-probe/det-probe.cpp
+@@ -0,0 +1,234 @@
++// lane-300 determinism probe: run the same prompt R times in one process, teacher-force runs 2..R to run 1's
++// greedy ids, and compare per-step logits (and optionally every graph node's output bytes) against run 1.
++// env: DETP_TOKENS=<file of comma/space separated ids>  DETP_RUNS=3  DETP_N=32
++//      DETP_HASH=0|1|layer   0: logits only (graph untouched), 1: hash every node (one node per submit),
++//                            layer: hash only nodes whose name starts with DETP_HASH_NAMES (comma list)
++//      DETP_OUT=<jsonl file>
++// usage: arifi-det-probe -m model.gguf -ngl 999 -fa on -c 2048 [any common args]
++#include "arg.h"
++#include "common.h"
++#include "ggml.h"
++#include "ggml-backend.h"
++#include "llama.h"
++
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
++#include <sstream>
++#include <string>
++#include <vector>
++
++struct rec { int step; std::string name; int op; int64_t ne[4]; uint64_t h; };
++
++struct probe {
++    int mode = 0;                       // 0 off, 1 all nodes, 2 name-filtered
++    std::vector<std::string> names;
++    int step = 0;
++    std::vector<rec> * cur = nullptr;
++    std::vector<uint8_t> buf;
++};
++
++static uint64_t fnv(const uint8_t * p, size_t n, uint64_t h) {
++    for (size_t i = 0; i < n; ++i) { h ^= p[i]; h *= 1099511628211ull; }
++    return h;
++}
++
++static bool is_index_op(const ggml_tensor * t) {
++    return t->op == GGML_OP_ARGSORT || t->op == GGML_OP_TOP_K;
++}
++
++// stride-aware: hash each row's live bytes only (never the gaps of a view); index rows hash as a sorted set
++static uint64_t hash_tensor(probe * p, const ggml_tensor * t) {
++    const size_t nb = ggml_nbytes(t);
++    p->buf.resize(nb);
++    ggml_backend_tensor_get(t, p->buf.data(), 0, nb);
++    const size_t row = ggml_row_size(t->type, t->ne[0]);
++    const bool rows_ok = t->nb[0] == ggml_type_size(t->type) || ggml_is_quantized(t->type);
++    uint64_t h = 1469598103934665603ull;
++    std::vector<int32_t> ids;
++    for (int64_t i3 = 0; i3 < t->ne[3]; ++i3)
++    for (int64_t i2 = 0; i2 < t->ne[2]; ++i2)
++    for (int64_t i1 = 0; i1 < t->ne[1]; ++i1) {
++        const uint8_t * r = p->buf.data() + i1*t->nb[1] + i2*t->nb[2] + i3*t->nb[3];
++        if (is_index_op(t) && t->type == GGML_TYPE_I32 && rows_ok) {
++            ids.assign((const int32_t *) r, (const int32_t *) r + t->ne[0]);
++            std::sort(ids.begin(), ids.end());
++            h = fnv((const uint8_t *) ids.data(), ids.size()*4, h);
++        } else if (rows_ok) {
++            h = fnv(r, row, h);
++        } else {
++            for (int64_t i0 = 0; i0 < t->ne[0]; ++i0) h = fnv(r + i0*t->nb[0], ggml_type_size(t->type), h);
++        }
++    }
++    return h;
++}
++
++static bool want(const probe * p, const ggml_tensor * t) {
++    if (p->mode == 1) return true;
++    for (const auto & n : p->names) if (strncmp(t->name, n.c_str(), n.size()) == 0) return true;
++    return false;
++}
++
++static bool cb(ggml_tensor * t, bool ask, void * ud) {
++    probe * p = (probe *) ud;
++    if (p->mode == 0 || !p->cur) return ask ? false : true;
++    if (ask) return want(p, t);
++    rec r { p->step, t->name, (int) t->op, { t->ne[0], t->ne[1], t->ne[2], t->ne[3] }, hash_tensor(p, t) };
++    p->cur->push_back(r);
++    return true;
++}
++
++static std::vector<llama_token> read_ids(const char * f) {
++    std::ifstream in(f);
++    std::stringstream ss; ss << in.rdbuf();
++    std::string s = ss.str();
++    std::replace(s.begin(), s.end(), ',', ' ');
++    std::istringstream is(s);
++    std::vector<llama_token> v; long long x;
++    while (is >> x) v.push_back((llama_token) x);
++    return v;
++}
++
++static int envi(const char * k, int d) { const char * v = getenv(k); return v ? atoi(v) : d; }
++
++int main(int argc, char ** argv) {
++    common_params params;
++    if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_COMMON)) return 1;
++    common_init();
++
++    const char * tf = getenv("DETP_TOKENS");
++    const char * of = getenv("DETP_OUT");
++    if (!tf || !of) { fprintf(stderr, "DETP_TOKENS and DETP_OUT required\n"); return 1; }
++    const int R = envi("DETP_RUNS", 3), N = envi("DETP_N", 32);
++
++    probe pr;
++    const char * hm = getenv("DETP_HASH");
++    if (hm && strcmp(hm, "1") == 0) pr.mode = 1;
++    if (hm && strcmp(hm, "layer") == 0) {
++        pr.mode = 2;
++        std::string s = getenv("DETP_HASH_NAMES") ? getenv("DETP_HASH_NAMES") : "l_out,ffn_out,ffn_moe_out,attn_out,result_output";
++        std::istringstream is(s); std::string tok;
++        while (std::getline(is, tok, ',')) if (!tok.empty()) pr.names.push_back(tok);
++    }
++    if (pr.mode != 0) { params.cb_eval = cb; params.cb_eval_user_data = &pr; }
++    params.warmup = false;
++
++    llama_backend_init();
++    auto init = common_init_from_params(params);
++    llama_model * model = init->model();
++    llama_context * ctx = init->context();
++    if (!model || !ctx) { fprintf(stderr, "load failed\n"); return 1; }
++    const int n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
++
++    const std::vector<llama_token> prompt = read_ids(tf);
++    FILE * out = fopen(of, "w");
++    std::vector<llama_token> ref;                       // run-1 greedy ids
++    std::vector<uint64_t> ref_lh;                       // run-1 logits hash per step
++    std::vector<rec> ref_nodes;
++    int n_bad_runs = 0;
++
++    // history arms: DETP_CLEAR=data|nodata|seq (how memory is reset between runs; seq = llama-server style seq_rm),
++    // DETP_PRE=<ids file>: before every odd run, decode this prompt + DETP_PRE_N greedy steps, then reset again
++    const char * cm = getenv("DETP_CLEAR");
++    const int clear_mode = !cm || strcmp(cm, "data") == 0 ? 0 : strcmp(cm, "nodata") == 0 ? 1 : 2;
++    const char * pf = getenv("DETP_PRE");
++    const std::vector<llama_token> pre = pf ? read_ids(pf) : std::vector<llama_token>();
++    const int pre_n = envi("DETP_PRE_N", 16);
++    auto reset = [&]() {
++        llama_memory_t mem = llama_get_memory(ctx);
++        if (clear_mode == 2) llama_memory_seq_rm(mem, 0, -1, -1);
++        else llama_memory_clear(mem, clear_mode == 0);
++    };
++    auto pollute = [&]() {
++        llama_batch b = llama_batch_init((int) pre.size(), 0, 1);
++        for (size_t i = 0; i < pre.size(); ++i) common_batch_add(b, pre[i], (llama_pos) i, { 0 }, i + 1 == pre.size());
++        if (llama_decode(ctx, b) != 0) { fprintf(stderr, "pre decode failed\n"); exit(3); }
++        llama_batch_free(b);
++        for (int s = 0; s < pre_n; ++s) {
++            const float * lg = llama_get_logits_ith(ctx, -1);
++            int a = 0; for (int i = 1; i < n_vocab; ++i) if (lg[i] > lg[a]) a = i;
++            llama_batch c = llama_batch_init(1, 0, 1);
++            common_batch_add(c, a, (llama_pos) (pre.size() + s), { 0 }, true);
++            if (llama_decode(ctx, c) != 0) { fprintf(stderr, "pre step failed\n"); exit(3); }
++            llama_batch_free(c);
++        }
++    };
++    fprintf(out, "{\"clear_mode\":%d,\"pre\":%zu,\"pre_n\":%d}\n", clear_mode, pre.size(), pre_n);
++
++    for (int r = 0; r < R; ++r) {
++        if (r == 0) llama_memory_clear(llama_get_memory(ctx), true);
++        else reset();
++        if (!pre.empty() && (r & 1)) { pr.cur = nullptr; pollute(); reset(); }
++        std::vector<rec> nodes;
++        pr.cur = &nodes;
++        std::vector<llama_token> ids;
++        int first_logit_diff = -1, first_id_diff = -1;
++        for (int s = 0; s < N; ++s) {
++            pr.step = s;
++            int rc;
++            if (s == 0) {
++                llama_batch b = llama_batch_init((int) prompt.size(), 0, 1);
++                for (size_t i = 0; i < prompt.size(); ++i) common_batch_add(b, prompt[i], (llama_pos) i, { 0 }, i + 1 == prompt.size());
++                rc = llama_decode(ctx, b);
++                llama_batch_free(b);
++            } else {
++                llama_token t = r == 0 ? ids.back() : ref[s - 1];
++                llama_batch b = llama_batch_init(1, 0, 1);
++                common_batch_add(b, t, (llama_pos) (prompt.size() + s - 1), { 0 }, true);
++                rc = llama_decode(ctx, b);
++                llama_batch_free(b);
++            }
++            if (rc != 0) { fprintf(stderr, "decode rc=%d run %d step %d\n", rc, r, s); return 2; }
++            const float * lg = llama_get_logits_ith(ctx, -1);
++            int a = 0, b2 = -1;
++            for (int i = 1; i < n_vocab; ++i) if (lg[i] > lg[a]) a = i;
++            for (int i = 0; i < n_vocab; ++i) if (i != a && (b2 < 0 || lg[i] > lg[b2])) b2 = i;
++            // log-softmax gap top1-top2 equals the raw logit gap
++            const double gap = (double) lg[a] - (double) lg[b2];
++            const uint64_t lh = fnv((const uint8_t *) lg, sizeof(float) * n_vocab, 1469598103934665603ull);
++            ids.push_back(a);
++            if (r == 0) { ref.push_back(a); ref_lh.push_back(lh); }
++            else {
++                if (first_logit_diff < 0 && lh != ref_lh[s]) first_logit_diff = s;
++                if (first_id_diff < 0 && a != ref[s]) first_id_diff = s;
++            }
++            fprintf(out, "{\"run\":%d,\"step\":%d,\"argmax\":%d,\"second\":%d,\"gap\":%.6f,\"lh\":\"%016llx\"}\n",
++                    r, s, a, b2, gap, (unsigned long long) lh);
++        }
++        pr.cur = nullptr;
++        if (r == 0) { ref_nodes = nodes; fprintf(out, "{\"run\":0,\"nodes\":%zu}\n", nodes.size()); }
++        else {
++            if (first_logit_diff >= 0) ++n_bad_runs;
++            // first node whose values differ, in graph order; plus the first 12 differing nodes of that step
++            long first = -1; int nd = 0;
++            const size_t m = std::min(nodes.size(), ref_nodes.size());
++            for (size_t i = 0; i < m; ++i) {
++                const rec & x = nodes[i]; const rec & y = ref_nodes[i];
++                if (x.name != y.name || x.step != y.step) { fprintf(out, "{\"run\":%d,\"node_misalign\":%zu}\n", r, i); break; }
++                if (x.h != y.h) {
++                    if (first < 0) first = (long) i;
++                    if (x.step != nodes[first].step) break;
++                    if (nd++ < 12) {
++                        fprintf(out, "{\"run\":%d,\"diff_node\":%zu,\"step\":%d,\"name\":\"%s\",\"op\":\"%s\",\"ne\":[%lld,%lld,%lld,%lld]}\n",
++                            r, i, x.step, x.name.c_str(), ggml_op_name((ggml_op) x.op),
++                            (long long) x.ne[0], (long long) x.ne[1], (long long) x.ne[2], (long long) x.ne[3]);
++                    }
++                }
++            }
++            fprintf(out, "{\"run\":%d,\"first_logit_diff_step\":%d,\"first_id_diff_step\":%d,\"nodes\":%zu,\"first_diff_node\":%ld}\n",
++                    r, first_logit_diff, first_id_diff, nodes.size(), first);
++            printf("run %d: first_logit_diff_step=%d first_id_diff_step=%d first_diff_node=%ld %s\n", r, first_logit_diff,
++                   first_id_diff, first, first >= 0 ? nodes[first].name.c_str() : "");
++        }
++        fflush(out);
++    }
++    fprintf(out, "{\"summary\":true,\"runs\":%d,\"n\":%d,\"bad_runs\":%d,\"hash_mode\":%d}\n", R, N, n_bad_runs, pr.mode);
++    fclose(out);
++    printf("DETP runs=%d n=%d bad_runs=%d hash_mode=%d\n", R, N, n_bad_runs, pr.mode);
++    llama_backend_free();
++    return 0;
++}

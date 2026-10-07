@@ -1,0 +1,552 @@
+From c49a7c15e4bbd1f88116b5ba4be96f31d0872486 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 07:37:21 -0400
+Subject: [PATCH] lane-302: MUL_MAT_ID expert gather for small-batch mat-vec
+ (opt-in GGML_ARIFI_MOE_GATHER=1|2|4)
+
+The n<=8 MUL_MAT_ID path dispatched once per token and read each routed expert once per
+(token, slot) pair. The gather pipelines run one dispatch over every slot; the first-occurrence
+workgroup of each expert reads it once for up to G tokens routed to it, other workgroups exit.
+Per-column code is the NUM_COLS=1 id code, so a row's result does not depend on sharing.
+Types: iq4_nl, iq2_s, iq3_xxs, iq3_s, iq4_xs. Default off; GGML_ARIFI_MOE_GATHER_PLANT=1 is a
+test-only wrong-token-count arm.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Lane: lane-302
+(cherry picked from commit 16eb17b43163cb4374be580915a126f0888044d6)
+
+Origin: ArifiLabs (native) - fork-authored (lane-302); no upstream origin exists.
+Measured-effect: part of win W17, MUL_MAT_ID slot-major expert gather at width 1: op level, real routing n4/n8: 0.73-0.94x of the old path per type (cells/cellA-10051633/); served perf split MUL_MAT_ID iq2_s 0.79, iq3_xxs 0.83, iq3_s 0.86 vs q2_0 control 0.88 (cells/cellB-10051832-read.json); served balanced ABBA x2 mean +0.34% (worst -0.69%), ids IDENT (cells/cellE-10052000-read.json, state head = 75b81abe13) [release ledger Table 1 W17]
+---
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h      |  5 ++
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 57 +++++++++++++-
+ .../vulkan-shaders/mul_mat_vec.comp           | 36 +++++----
+ .../vulkan-shaders/mul_mat_vec_base.glsl      | 76 +++++++++++++++++--
+ .../vulkan-shaders/mul_mat_vec_iq2_s.comp     | 10 ++-
+ .../vulkan-shaders/mul_mat_vec_iq3_s.comp     | 22 ++++--
+ .../vulkan-shaders/mul_mat_vec_iq3_xxs.comp   | 14 +++-
+ .../vulkan-shaders/mul_mat_vec_iq4_xs.comp    | 14 +++-
+ .../vulkan-shaders/vulkan-shaders-gen.cpp     | 30 ++++++++
+ 9 files changed, 224 insertions(+), 40 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index cb78370cc4..462d056f22 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -1441,6 +1441,11 @@ struct vk_device_struct {
+     vk_pipeline pipeline_dequant_mul_mat_vec_f32_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
+     vk_pipeline pipeline_dequant_mul_mat_vec_f16_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
+     vk_pipeline pipeline_dequant_mul_mat_vec_id_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
++    // arifi lane-302: MUL_MAT_ID expert-gather mat-vec (NUM_COLS = moe_gather_cols), one dispatch for all
++    // tokens. GGML_ARIFI_MOE_GATHER = 0 (default, per-token loop) | 1 (one dispatch, no sharing) | 2 | 4.
++    uint32_t moe_gather_cols = 0;
++    bool moe_gather_plant = false;
++    vk_pipeline pipeline_dequant_mul_mat_vec_idg_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT];
+ 
+     vk_pipeline pipeline_dequant_mul_mat_vec_q8_1_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
+     // arifi lane-271 / R85: Q4_K q8_1 MMVQ with the 4+1 column split (spec constant 4 = 3), created
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 05178284b0..b8a1dcfe2f 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -3928,6 +3928,30 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_MXFP4],   "mul_mat_vec_id_mxfp4_f32",   OCP_DMMV_LEN(arr_dmmv_id_mxfp4_f32_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_id_mxfp4_f32_f32, reduc16), "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+         ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_f32[w][GGML_TYPE_NVFP4],   "mul_mat_vec_id_nvfp4_f32",   OCP_DMMV_LEN(arr_dmmv_id_nvfp4_f32_f32, reduc16), OCP_DMMV_DATA(arr_dmmv_id_nvfp4_f32_f32, reduc16), "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq}, 1, true, use_subgroups16, force_subgroup_size16);
+ 
++        // arifi lane-302: MUL_MAT_ID expert gather. Same workgroup, rows and spec constants as the id
++        // pipelines above; only NUM_COLS (spec 2) = the gather width. Widths are limited to 1, 2 and 4:
++        // mul_mat_vec_iq3_s.comp switches thread layout at NUM_COLS 3 and > 4, which would change a
++        // row's arithmetic against the NUM_COLS=1 id pipeline.
++        {
++            const char * env = getenv("GGML_ARIFI_MOE_GATHER");
++            const uint32_t g = env == nullptr ? 0u : (uint32_t) atoi(env);
++            device->moe_gather_cols = (g == 1 || g == 2 || g == 4) ? g : 0u;
++            const char * plant = getenv("GGML_ARIFI_MOE_GATHER_PLANT");
++            device->moe_gather_plant = plant != nullptr && plant[0] == '1';
++            if (w == 0 && device->moe_gather_cols != 0) {
++                GGML_LOG_INFO("ggml_vulkan: MUL_MAT_ID expert gather ON, width %u%s\n", device->moe_gather_cols,
++                              device->moe_gather_plant ? " (PLANT: wrong token count, test only)" : "");
++            }
++        }
++        if (device->moe_gather_cols != 0) {
++            const uint32_t gc = device->moe_gather_cols;
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ2_S],   "mul_mat_vec_idg_iq2_s_f32",   arr_dmmv_idg_iq2_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq2_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, gc}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_XXS], "mul_mat_vec_idg_iq3_xxs_f32", arr_dmmv_idg_iq3_xxs_f32_f32_len[reduc16], arr_dmmv_idg_iq3_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, gc, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_idg_iq3_s_f32",   arr_dmmv_idg_iq3_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, gc, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_XS],  "mul_mat_vec_idg_iq4_xs_f32",  arr_dmmv_idg_iq4_xs_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, gc}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_NL],  "mul_mat_vec_idg_iq4_nl_f32",  arr_dmmv_idg_iq4_nl_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_nl_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {rm_iq, 1, 1}, {wg_size_subgroup16, rm_iq, gc}, 1, true, use_subgroups16, force_subgroup_size16);
++        }
++
+         // TurboQuant weight types. Same 32-thread pin and SHMEM reduction as the
+         // non-id pipelines above (tq_wg_size / tq_use_subgroups are declared at
+         // the top of this loop): the id shaders are the same source compiled
+@@ -10241,6 +10265,19 @@ static void ggml_vk_mul_mat_vec_id_q_f16(ggml_backend_vk_context * ctx, vk_conte
+         dmmv = ggml_vk_get_64b_indexing_pipeline(ctx, dmmv);
+     }
+ 
++    // arifi lane-302: swap in the expert-gather pipeline of the SAME workgroup size when the plain f32
++    // id pipeline was chosen (so never with q8_1 B, 64-bit indexing or a fused bias/scale), n_tokens > 1.
++    vk_pipeline dmmv_gather = nullptr;
++    if (ctx->device->moe_gather_cols != 0 && nei1 > 1 && ctx->num_additional_fused_ops == 0 &&
++        !quantize_y && !qx_needs_dequant && !y_non_contig && nei0 * nei1 <= 0xffff) {
++        for (uint32_t w = 0; w < DMMV_WG_SIZE_COUNT; ++w) {
++            if (ctx->device->pipeline_dequant_mul_mat_vec_id_f32[w][src0->type] == dmmv) {
++                dmmv_gather = ctx->device->pipeline_dequant_mul_mat_vec_idg_f32[w][src0->type];
++                break;
++            }
++        }
++    }
++
+     // Not implemented
+     GGML_ASSERT(y_non_contig || !qy_needs_dequant);  // NOLINT
+     GGML_ASSERT(!qx_needs_dequant || to_fp16_vk_0 != nullptr);  // NOLINT
+@@ -10280,7 +10317,11 @@ static void ggml_vk_mul_mat_vec_id_q_f16(ggml_backend_vk_context * ctx, vk_conte
+         if (quantize_y) {
+             ggml_pipeline_request_descriptor_sets(ctx, to_q8_1, 1);
+         }
+-        ggml_pipeline_request_descriptor_sets(ctx, dmmv, nei1);
++        if (dmmv_gather) {
++            ggml_pipeline_request_descriptor_sets(ctx, dmmv_gather, 1);
++        } else {
++            ggml_pipeline_request_descriptor_sets(ctx, dmmv, nei1);
++        }
+     }
+ 
+     vk_subbuffer d_D = ggml_vk_tensor_subbuffer(ctx, cgraph->nodes[node_idx + ctx->num_additional_fused_ops]);
+@@ -10378,6 +10419,20 @@ static void ggml_vk_mul_mat_vec_id_q_f16(ggml_backend_vk_context * ctx, vk_conte
+         fusion_flags |= MAT_VEC_FUSION_FLAGS_SCALE1;
+     }
+ 
++    if (dmmv_gather) {
++        // one dispatch over every (token, slot); expert_i1 carries the token count (the plant drops the last
++        // token, so its follower slots are never written: a test-only RED arm)
++        const uint32_t ntok = (uint32_t)nei1 - (ctx->device->moe_gather_plant ? 1u : 0u);
++        const vk_mat_vec_id_push_constants pc = {
++            (uint32_t)ne00, (uint32_t)ne10, (uint32_t)ne10, (uint32_t)ne01,
++            (uint32_t)(ne00 * ne01), stride_batch_y, (uint32_t)(ne20 * ne21),
++            fusion_flags,
++            (uint32_t)nei0, (uint32_t)ne11, ntok, nbi1
++        };
++        ggml_vk_dispatch_pipeline(ctx, subctx, dmmv_gather,
++            { d_X, d_Y, d_D, d_F0, d_F1, d_ids, },
++            pc, { groups_x, (uint32_t)(nei0 * nei1), groups_z });
++    } else
+     // Loop over the batch dimension
+     for (uint32_t expert_i1 = 0; expert_i1 < nei1; ++expert_i1) {
+         const vk_mat_vec_id_push_constants pc = {
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
+index 25c1713ff2..6e57b17801 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
+@@ -23,21 +23,21 @@ vec4 load_b(const uint j, const uint iybs, const uint iqs, const bool lastiter,
+     OOB_w = lastiter && (iybs + iqs + y_offset*3 >= p.ncols);
+ 
+     if (!OOB_w) {
+-        return vec4(FLOAT_TYPE(data_b[j*p.batch_stride_b + b_offset + iybs + iqs]),
+-                 FLOAT_TYPE(data_b[j*p.batch_stride_b + b_offset + iybs + iqs + y_offset]),
+-                 FLOAT_TYPE(data_b[j*p.batch_stride_b + b_offset + iybs + iqs + y_offset*2]),
+-                 FLOAT_TYPE(data_b[j*p.batch_stride_b + b_offset + iybs + iqs + y_offset*3]));
++        return vec4(FLOAT_TYPE(data_b[B_COL(j) + b_offset + iybs + iqs]),
++                 FLOAT_TYPE(data_b[B_COL(j) + b_offset + iybs + iqs + y_offset]),
++                 FLOAT_TYPE(data_b[B_COL(j) + b_offset + iybs + iqs + y_offset*2]),
++                 FLOAT_TYPE(data_b[B_COL(j) + b_offset + iybs + iqs + y_offset*3]));
+     } else if (!OOB_z) {
+-        return vec4(FLOAT_TYPE(data_b[j*p.batch_stride_b + b_offset + iybs + iqs]),
+-                 FLOAT_TYPE(data_b[j*p.batch_stride_b + b_offset + iybs + iqs + y_offset]),
+-                 FLOAT_TYPE(data_b[j*p.batch_stride_b + b_offset + iybs + iqs + y_offset*2]),
++        return vec4(FLOAT_TYPE(data_b[B_COL(j) + b_offset + iybs + iqs]),
++                 FLOAT_TYPE(data_b[B_COL(j) + b_offset + iybs + iqs + y_offset]),
++                 FLOAT_TYPE(data_b[B_COL(j) + b_offset + iybs + iqs + y_offset*2]),
+                  0);
+     } else if (!OOB_y) {
+-        return vec4(FLOAT_TYPE(data_b[j*p.batch_stride_b + b_offset + iybs + iqs]),
+-                 FLOAT_TYPE(data_b[j*p.batch_stride_b + b_offset + iybs + iqs + y_offset]),
++        return vec4(FLOAT_TYPE(data_b[B_COL(j) + b_offset + iybs + iqs]),
++                 FLOAT_TYPE(data_b[B_COL(j) + b_offset + iybs + iqs + y_offset]),
+                  0, 0);
+     } else {
+-        return vec4(FLOAT_TYPE(data_b[j*p.batch_stride_b + b_offset + iybs + iqs]),
++        return vec4(FLOAT_TYPE(data_b[B_COL(j) + b_offset + iybs + iqs]),
+                  0, 0, 0);
+     }
+ }
+@@ -60,13 +60,13 @@ void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const
+ #if QUANT_R == 2
+         // Note that we end up fetching bogus elements here, but its fine as they'll be
+         // within an accessible block.
+-        const vec4 bv02 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + iybs + iqs) / 4]);
+-        const vec4 bv13 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + iybs + iqs + y_offset) / 4]);
++        const vec4 bv02 = vec4(data_b_v4[(B_COL(j) + b_offset + iybs + iqs) / 4]);
++        const vec4 bv13 = vec4(data_b_v4[(B_COL(j) + b_offset + iybs + iqs + y_offset) / 4]);
+         bv0[j] = vec4(bv02.x, bv13.x, bv02.y, bv13.y);
+         bv1[j] = vec4(bv02.z, bv13.z, bv02.w, bv13.w);
+ #else
+-        bv0[j] = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + iybs + iqs) / 4]);
+-        bv1[j] = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + iybs + iqs) / 4 + 1]);
++        bv0[j] = vec4(data_b_v4[(B_COL(j) + b_offset + iybs + iqs) / 4]);
++        bv1[j] = vec4(data_b_v4[(B_COL(j) + b_offset + iybs + iqs) / 4 + 1]);
+ #endif
+     }
+ 
+@@ -141,7 +141,7 @@ void iter_aligned_nonquant(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint
+         const uint iqs = 0; // quant index
+         const uint iybs = col; // y block start index
+ 
+-        const vec4 b = data_b_v4[(j*p.batch_stride_b + b_offset + iybs + iqs) / 4];
++        const vec4 b = data_b_v4[(B_COL(j) + b_offset + iybs + iqs) / 4];
+ 
+         uint ibi = first_row*p.ncols;
+         [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+@@ -267,6 +267,12 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+ void main() {
+     const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+ 
++#ifdef MUL_MAT_ID_GATHER
++    if (!gather_setup()) {
++        return;
++    }
++#endif
++
+ #ifdef NEEDS_INIT_IQ_SHMEM
+     init_iq_shmem(gl_WorkGroupSize);
+ #endif
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
+index 4aeda68c7f..05ebf969c0 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
+@@ -62,7 +62,7 @@ void get_offsets(out uint a_offset, out uint b_offset, out uint d_offset) {
+ 
+         batch_idx_a = i03 * p.ne02 + i02;
+     }
+-#else
++#elif !defined(MUL_MAT_ID_GATHER)
+     expert_id = data_ids[expert_i0 + p.expert_i1 * p.nbi1];
+ #endif
+ 
+@@ -73,13 +73,17 @@ void get_offsets(out uint a_offset, out uint b_offset, out uint d_offset) {
+             batch_idx_a * (p.batch_stride_a / QUANT_K);
+ #endif
+     b_offset =
+-#ifdef MUL_MAT_ID
++#ifdef MUL_MAT_ID_GATHER
++            0;
++#elif defined(MUL_MAT_ID)
+             (expert_i0 % p.ne11) * p.stride_b + p.expert_i1 * p.batch_stride_b;
+ #else
+             batch_idx * p.batch_stride_b;
+ #endif
+     d_offset =
+-#ifdef MUL_MAT_ID
++#ifdef MUL_MAT_ID_GATHER
++            0;
++#elif defined(MUL_MAT_ID)
+             expert_i0 * p.stride_d + p.expert_i1 * p.batch_stride_d;
+ #else
+             batch_idx * p.batch_stride_d;
+@@ -90,6 +94,66 @@ layout (constant_id = 0) const uint BLOCK_SIZE = 32;
+ layout (constant_id = 1) const uint NUM_ROWS = 1;
+ layout (constant_id = 2) const uint NUM_COLS = 1;
+ 
++// arifi lane-302: MUL_MAT_ID EXPERT GATHER. One dispatch covers every (token, slot); workgroup.y = slot
++// s = token * nei0 + k. The workgroup whose slot is the (rank % NUM_COLS == 0)-th occurrence of its expert
++// reads that expert ONCE for up to NUM_COLS (token, slot) pairs routed to it; every other workgroup exits.
++// Each column runs the same per-column code as the NUM_COLS=1 id pipeline, so a row's result does not
++// depend on how many other rows share its expert. p.expert_i1 carries the token count in this mode.
++#ifdef MUL_MAT_ID_GATHER
++uint gcol_b[NUM_COLS];
++uint gcol_d[NUM_COLS];
++uint gcols;
++#define B_COL(j) gcol_b[j]
++#define D_COL(j) gcol_d[j]
++
++bool gather_setup() {
++    const uint s = gl_WorkGroupID.y;
++    const uint ts = s / p.nei0;
++    const int e = data_ids[(s - ts * p.nei0) + ts * p.nbi1];
++    uint rank = 0;
++    for (uint s2 = 0; s2 < s; ++s2) {
++        const uint t2 = s2 / p.nei0;
++        if (data_ids[(s2 - t2 * p.nei0) + t2 * p.nbi1] == e) {
++            rank++;
++        }
++    }
++    if ((rank % NUM_COLS) != 0) {
++        return false;
++    }
++    expert_id = uint(e);
++    uint c = 0;
++    const uint nslots = p.expert_i1 * p.nei0;
++    for (uint s2 = s; s2 < nslots && c < NUM_COLS; ++s2) {
++        const uint t2 = s2 / p.nei0;
++        const uint k2 = s2 - t2 * p.nei0;
++        if (data_ids[k2 + t2 * p.nbi1] == e) {
++            const uint ob = (k2 % p.ne11) * p.stride_b + t2 * p.batch_stride_b;
++            const uint od = k2 * p.stride_d + t2 * p.batch_stride_d;
++            [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++                if (j == c) {
++                    gcol_b[j] = ob;
++                    gcol_d[j] = od;
++                }
++            }
++            c++;
++        }
++    }
++    [[unroll]] for (uint j = 1; j < NUM_COLS; ++j) {
++        if (j >= c) {
++            gcol_b[j] = gcol_b[0];
++            gcol_d[j] = gcol_d[0];
++        }
++    }
++    gcols = c;
++    return true;
++}
++#define GATHER_WRITE(j) if ((j) < gcols)
++#else
++#define B_COL(j) ((j)*p.batch_stride_b)
++#define D_COL(j) ((j)*p.batch_stride_d)
++#define GATHER_WRITE(j)
++#endif
++
+ #ifdef USE_SUBGROUP_ADD_NO_SHMEM
+ void reduce_result(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offset, const in uint32_t first_row, const in uint32_t num_rows, const in uint32_t tid) {
+     [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+@@ -121,7 +185,7 @@ void reduce_result(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t
+                     temp[j][n] += FLOAT_TYPE(data_fuse1[j*p.batch_stride_d + d_offset + first_row + n]);
+                 }
+ #endif
+-                data_d[j*p.batch_stride_d + d_offset + first_row + n] = D_TYPE(temp[j][n]);
++                GATHER_WRITE(j) data_d[D_COL(j) + d_offset + first_row + n] = D_TYPE(temp[j][n]);
+             }
+         }
+     }
+@@ -176,7 +240,7 @@ void reduce_result(FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offs
+                     temp[j][n] += FLOAT_TYPE(data_fuse1[j*p.batch_stride_d + d_offset + first_row + n]);
+                 }
+ #endif
+-                data_d[j*p.batch_stride_d + d_offset + first_row + n] = D_TYPE(temp[j][n]);
++                GATHER_WRITE(j) data_d[D_COL(j) + d_offset + first_row + n] = D_TYPE(temp[j][n]);
+             }
+         }
+     }
+@@ -221,7 +285,7 @@ void reduce_result(FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offs
+                     tmpsh[j][n][0] += FLOAT_TYPE(data_fuse1[j*p.batch_stride_d + d_offset + first_row + n]);
+                 }
+ #endif
+-                data_d[j*p.batch_stride_d + d_offset + first_row + n] = D_TYPE(tmpsh[j][n][0]);
++                GATHER_WRITE(j) data_d[D_COL(j) + d_offset + first_row + n] = D_TYPE(tmpsh[j][n][0]);
+             }
+         }
+     }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
+index b4f6d1d6b6..ea79cdc885 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
+@@ -29,8 +29,8 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+             const vec4 grid1 = vec4(unpack8(grid.y));
+ 
+             [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+-                vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+-                vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
++                vec4 b0 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 0]);
++                vec4 b4 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 1]);
+ 
+                 FLOAT_TYPE sum =
+                       fma(FLOAT_TYPE(b0.x), FLOAT_TYPE((sign &   1) != 0 ? -grid0.x : grid0.x),
+@@ -76,6 +76,12 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+ void main() {
+     const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+ 
++#ifdef MUL_MAT_ID_GATHER
++    if (!gather_setup()) {
++        return;
++    }
++#endif
++
+     init_iq_shmem(gl_WorkGroupSize);
+ 
+     // do NUM_ROWS at a time, unless there aren't enough remaining rows
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+index 35c1f451cd..70ac7cabc7 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+@@ -93,8 +93,8 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+                     const vec4 s1 = iq3s_sign_hi(grid1, sign);
+ 
+                     [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+-                        const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+-                        const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
++                        const vec4 b0 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 0]);
++                        const vec4 b4 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 1]);
+ 
+                         temp[j][n] = fma(dscale, iq3s_col_dot(b0, b4, s0, s1, FLOAT_TYPE(0.0)), temp[j][n]);
+                     }
+@@ -102,8 +102,8 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+                 // legacy: the shipped body, VERBATIM. Kept as text rather than routed through
+                 // iq3s_col_dot so the default arm's codegen is provably the pre-R61 one.
+                 [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+-                    const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+-                    const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
++                    const vec4 b0 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 0]);
++                    const vec4 b4 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 1]);
+ 
+                     const FLOAT_TYPE sum =
+                           fma(FLOAT_TYPE(b0.x), FLOAT_TYPE((sign &   1) != 0 ? -grid0.x : grid0.x),
+@@ -140,15 +140,15 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+                     const vec4 s1 = iq3s_sign_hi(grid1, sign);
+ 
+                     [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+-                        const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+-                        const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
++                        const vec4 b0 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 0]);
++                        const vec4 b4 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 1]);
+ 
+                         sum[j] = iq3s_col_dot(b0, b4, s0, s1, sum[j]);
+                     }
+                 } else {
+                 [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+-                    const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+-                    const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
++                    const vec4 b0 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 0]);
++                    const vec4 b4 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 1]);
+ 
+                     sum[j] =
+                           fma(FLOAT_TYPE(b0.x), FLOAT_TYPE((sign &   1) != 0 ? -grid0.x : grid0.x),
+@@ -198,6 +198,12 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+ void main() {
+     const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+ 
++#ifdef MUL_MAT_ID_GATHER
++    if (!gather_setup()) {
++        return;
++    }
++#endif
++
+     init_iq_shmem(gl_WorkGroupSize);
+ 
+     // do NUM_ROWS at a time, unless there aren't enough remaining rows
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp
+index 732eb05317..f0037a00db 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp
+@@ -72,8 +72,8 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+                 const vec4 s1 = iq3xxs_sign_hi(grid1, sign, sign7);
+ 
+                 [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+-                    const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+-                    const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
++                    const vec4 b0 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 0]);
++                    const vec4 b4 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 1]);
+ 
+                     temp[j][n] = fma(db, iq3xxs_col_dot(b0, b4, s0, s1), temp[j][n]);
+                 }
+@@ -81,8 +81,8 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+             // legacy: the shipped body, VERBATIM. Kept as text rather than routed through
+             // iq3xxs_col_dot so the default arm's codegen is provably the pre-R61 one.
+             [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+-                const vec4 b0 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 0]);
+-                const vec4 b4 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 2*l + 1]);
++                const vec4 b0 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 0]);
++                const vec4 b4 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 1]);
+ 
+                 FLOAT_TYPE sum =
+                       fma(FLOAT_TYPE(b0.x), FLOAT_TYPE((sign &   1) != 0 ? -grid0.x : grid0.x),
+@@ -129,6 +129,12 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+ void main() {
+     const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+ 
++#ifdef MUL_MAT_ID_GATHER
++    if (!gather_setup()) {
++        return;
++    }
++#endif
++
+     init_iq_shmem(gl_WorkGroupSize);
+ 
+     // do NUM_ROWS at a time, unless there aren't enough remaining rows
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp
+index e3ad9f286c..e73e55cf7e 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp
+@@ -52,10 +52,10 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint ib32,
+         const vec4 v3 = vec4(kvalues_iq4nl[q1_hi.x], kvalues_iq4nl[q1_hi.y], kvalues_iq4nl[q1_hi.z], kvalues_iq4nl[q1_hi.w]);
+ 
+         [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+-            const vec4 by10 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y1_idx) / 4    ]);
+-            const vec4 by11 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y1_idx) / 4 + 1]);
+-            const vec4 by20 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y2_idx) / 4    ]);
+-            const vec4 by21 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + y2_idx) / 4 + 1]);
++            const vec4 by10 = vec4(data_b_v4[(B_COL(j) + b_offset + y1_idx) / 4    ]);
++            const vec4 by11 = vec4(data_b_v4[(B_COL(j) + b_offset + y1_idx) / 4 + 1]);
++            const vec4 by20 = vec4(data_b_v4[(B_COL(j) + b_offset + y2_idx) / 4    ]);
++            const vec4 by21 = vec4(data_b_v4[(B_COL(j) + b_offset + y2_idx) / 4 + 1]);
+ 
+             const FLOAT_TYPE sum = fma(FLOAT_TYPE(by10.x), v0.x, fma(FLOAT_TYPE(by10.y), v0.y, fma(FLOAT_TYPE(by10.z), v0.z, fma(FLOAT_TYPE(by10.w), v0.w,
+                                    fma(FLOAT_TYPE(by11.x), v1.x, fma(FLOAT_TYPE(by11.y), v1.y, fma(FLOAT_TYPE(by11.z), v1.z, fma(FLOAT_TYPE(by11.w), v1.w,
+@@ -98,6 +98,12 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+ void main() {
+     const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+ 
++#ifdef MUL_MAT_ID_GATHER
++    if (!gather_setup()) {
++        return;
++    }
++#endif
++
+     init_iq_shmem(gl_WorkGroupSize);
+ 
+     // do NUM_ROWS at a time, unless there aren't enough remaining rows
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index 6f3d65b672..c71d6defd3 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -245,6 +245,12 @@ bool is_legacy_quant(const std::string& type_name) {
+     return type_name == "q2_0" || type_name == "q2_0_g128" || type_name == "q4_0" || type_name == "q4_1" || type_name == "q5_0" || type_name == "q5_1" || type_name == "q8_0";
+ }
+ 
++// arifi lane-302: types with a MUL_MAT_ID expert-gather mat-vec (the qwen4exp IQ3_S file's `_exps` set).
++// Keep in sync with ggml_vk_moe_gather_type() in ggml-vulkan.cpp.
++bool is_moe_gather_type(const std::string& type_name) {
++    return type_name == "iq4_nl" || type_name == "iq2_s" || type_name == "iq3_xxs" || type_name == "iq3_s" || type_name == "iq4_xs";
++}
++
+ bool is_k_quant(const std::string& type_name) {
+     return string_ends_with(type_name, "_k");
+ }
+@@ -971,6 +977,16 @@ void process_shaders() {
+         string_to_spv("mul_mat_vec_id_" + tname + "_f32_f32_subgroup", shader, merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}, {"USE_SUBGROUP_ADD", "1"}}));
+         string_to_spv("mul_mat_vec_id_" + tname + "_f32_f32_subgroup_no_shmem", shader, merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}, {"USE_SUBGROUP_ADD_NO_SHMEM", "1"}}));
+ 
++        // arifi lane-302: MUL_MAT_ID expert-gather variants (mul_mat_vec_base.glsl MUL_MAT_ID_GATHER).
++        if (is_moe_gather_type(tname)) {
++            for (const std::string sfx : {"", "_subgroup", "_subgroup_no_shmem"}) {
++                std::map<std::string, std::string> d = merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {"MUL_MAT_ID_GATHER", "1"}, {data_a_key, "1"}, {"B_TYPE", "float"}, {"B_TYPEV2", "vec2"}, {"B_TYPEV4", "vec4"}, {"D_TYPE", "float"}});
++                if (sfx == "_subgroup") d["USE_SUBGROUP_ADD"] = "1";
++                if (sfx == "_subgroup_no_shmem") d["USE_SUBGROUP_ADD_NO_SHMEM"] = "1";
++                string_to_spv("mul_mat_vec_idg_" + tname + "_f32_f32" + sfx, shader, d);
++            }
++        }
++
+         // mul mat vec with integer dot product
+ #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+         // arifi lane-209: rocmfp4_fast q8_1 MMVQ (taken-from rocmfpx/main), the FP4 verify-residual arm
+@@ -1811,6 +1827,20 @@ void write_output_files() {
+     }
+     }
+ 
++    // arifi lane-302: the MUL_MAT_ID expert-gather variants generated above.
++    for (const auto& tname : type_names) {
++        if (!is_moe_gather_type(tname)) {
++            continue;
++        }
++        const std::string n = "idg_" + tname + "_f32_f32";
++        hdr << "extern const void * arr_dmmv_"   << n << "_data[3];\n";
++        hdr << "extern const uint64_t arr_dmmv_" << n << "_len[3];\n";
++        if (basename(input_filepath) == "mul_mat_vec.comp") {
++            src << "const void * arr_dmmv_"   << n << "_data[3] = {mul_mat_vec_" << n << "_data, mul_mat_vec_" << n << "_subgroup_data, mul_mat_vec_" << n << "_subgroup_no_shmem_data};\n";
++            src << "const uint64_t arr_dmmv_" << n << "_len[3] = {mul_mat_vec_" << n << "_len, mul_mat_vec_" << n << "_subgroup_len, mul_mat_vec_" << n << "_subgroup_no_shmem_len};\n";
++        }
++    }
++
+     // arifi lane-296: the upstream IQ4_XS variants generated above (MUL_MAT only).
+     for (const std::string& btype : btypes) {
+         const std::string n = "iq4_xs_up_" + btype + "_f32";

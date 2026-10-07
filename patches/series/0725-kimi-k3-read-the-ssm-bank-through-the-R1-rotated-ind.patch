@@ -1,0 +1,55 @@
+From f144818c12669c787d1144eae43c60ce94af2354 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 07:07:01 -0400
+Subject: [PATCH] kimi-k3: read the ssm bank through the R1 rotated index
+ (bank=true)
+
+kimi-k3 writes its ssm state through build_recurrent_attn's R1 rotated row
+but read it with bank=false, the same read/write layout mismatch fixed in
+glm5-next at lane x7 (that defect produced wrong output there). Every
+build_recurrent_attn caller now reads bank=true; the build_rs header comment
+no longer lists kimi-* among the non-writers.
+
+UNTESTED: verified by code read only; no Kimi-K3 GGUF on this machine.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit 4559c60777fa4969bde6c483d0bb5880d1983721)
+
+Origin: ArifiLabs (native) - fork-authored (x1i post-ship work); no upstream origin exists.
+Measured-effect: UNMEASURED - no served number for this commit in the release ledger or the commit message
+---
+ src/llama-graph.h      | 4 ++--
+ src/models/kimi-k3.cpp | 5 ++++-
+ 2 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+index 8a502bd8b0..905addbe35 100644
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -1387,8 +1387,8 @@ struct llm_graph_context {
+ 
+     // `bank`: read through the R1 ROTATED index instead of the logical one. Pass true if and only
+     // if this tensor is also written by build_recurrent_attn's R1 path - the read and the write must
+-    // agree on the layout. Five call sites qualify (the models that call build_recurrent_attn);
+-    // every other s_l reader (mamba, rwkv6/7, plamo2, lfm2, kimi-*, minimax) leaves it false and is
++    // agree on the layout. Every model that calls build_recurrent_attn qualifies (incl. glm5-next,
++    // kimi-k3); every other s_l reader (mamba, rwkv6/7, plamo2, lfm2, kimi-linear, minimax) leaves it false and is
+     // therefore physically unable to pick up a rotation it does not write. No arch list to drift.
+     ggml_tensor * build_rs(
+             llm_graph_input_rs * inp,
+diff --git a/src/models/kimi-k3.cpp b/src/models/kimi-k3.cpp
+index 112b098490..d310513c69 100644
+--- a/src/models/kimi-k3.cpp
++++ b/src/models/kimi-k3.cpp
+@@ -449,7 +449,10 @@ ggml_tensor * llama_model_kimi_k3::graph::build_kda_layer(
+     ggml_tensor * cur_3d = ggml_reshape_3d(ctx0, cur, cur->ne[0], n_seq_tokens, n_seqs);
+ 
+     ggml_tensor * ssm_states_all = mctx_cur->get_s_l(il);
+-    ggml_tensor * state = build_rs(inp_rs, ssm_states_all, hparams.n_embd_s(), n_seqs);
++    // build_recurrent_attn below writes the ssm bank through the R1 ROTATED row, so the read must
++    // use the rotated index too (bank=true), same defect class as glm5-next before lane x7.
++    ggml_tensor * state = build_rs(inp_rs, ssm_states_all, hparams.n_embd_s(), n_seqs,
++                                   ggml_get_rows, /*bank=*/true);
+     state = ggml_reshape_4d(ctx0, state, head_dim, head_dim, n_head_kda, n_seqs);
+ 
+     const float eps_norm = hparams.f_norm_rms_eps;

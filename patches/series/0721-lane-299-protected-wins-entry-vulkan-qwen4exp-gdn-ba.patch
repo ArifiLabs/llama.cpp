@@ -1,0 +1,61 @@
+From 936985888748741ae4998e4a9a6d86f7d7872ede Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 08:12:55 -0400
+Subject: [PATCH] lane-299: protected-wins entry vulkan-qwen4exp-gdn-bank
+ (measured 3-round medians +4.47%/+3.09%, ids exact 12/12)
+
+Lane: lane-299
+(cherry picked from commit 93562a574707ff01136b1196187a09f0b2c29c8b)
+
+Origin: ArifiLabs (native) - fork-authored (lane-299); no upstream origin exists.
+Measured-effect: UNMEASURED on its own - supporting commit; see release ledger Table 1 W10, the number sits on that win's main commit
+---
+ tools/arifi-sync/protected-wins.json | 35 ++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index ddcec5f51e..816341aa8e 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -1926,6 +1926,41 @@
+       "measured_effect": "Decode dispatches per token 3387 -> 3099 (-288 = 96 halves x 3). Decode tok/s ABBA means: short prompt 10.69 -> 10.83 (+1.28%), 597-token prompt 9.93 -> 10.60 (+6.69%); second pair alone +0.4% / +3.0% (first unfused arm ran cold, kept).",
+       "valid_conditions": "Fires only on the exact SCALE->SIGMOID->SCALE->DSV4_HC_POST node chain qwen4exp emits with fused_dsv4_hc_post on; other models never match the pattern.",
+       "notes": "lane-299 2026-10-05. Commit subject still reads WIP; HQ rewords at merge."
++    },
++    {
++      "id": "vulkan-qwen4exp-gdn-bank",
++      "status": "active",
++      "mechanism": "Vulkan backend fusion of the R1 recurrent-state path GET_ROWS(bank, ridx) -> GATED_DELTA_NET -> SET_ROWS(bank, wrow): a graph_compute prepass (ggml_vk_gdn_bank_prepass) matches the pattern, skips the state GET_ROWS and SET_ROWS, and runs a GDN_BANK shader variant that reads the state from bank[ridx] and writes the snapshot rows to bank[wrow] in place.",
++      "commit": "85f01020b7",
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/vulkan-shaders/gated_delta_net.comp",
++        "ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h",
++        "ggml/src/ggml-vulkan/ggml-vulkan-push-constants.h"
++      ],
++      "anchors": [
++        "gated_delta_net_bank_f32",
++        "ggml_vk_gdn_bank_prepass",
++        "GGML_VK_DISABLE_GDN_BANK"
++      ],
++      "symbols": {
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": [
++          "ggml_vk_gdn_bank_prepass"
++        ]
++      },
++      "opt_out": "GGML_VK_DISABLE_GDN_BANK=1",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/ab3-10050747-verdict.json",
++        "cache/fusion-x1-lane/cells/optest4-10050646-gdnbank.txt",
++        "cache/fusion-x1-lane/cells/optest4-10050646-gdnbank-plant.txt",
++        "cache/fusion-x1-lane/cells/optest4-10050646-gdnbank-off.txt"
++      ],
++      "quality_gate": "test-backend-ops -o GATED_DELTA_NET_BANK 6/6 OK with the fused path matched 6/6 (GGML_VK_GDN_BANK_DEBUG); planted wrong-sign state write (GGML_VK_GDN_BANK_PLANT=1) FAILs 0/6 (RED seen once); GATED_DELTA_NET 36/36 and cache tests unchanged. llama-server greedy token ids identical fused vs unfused, 64 tokens, 12-token and 597-token prompts, 12/12 arms.",
++      "workload": "ISTA-DASLab Qwen3.8-Flash-Next-GSQ-RCO IQ3_S (qwen4exp, 48 blocks, hc=4) on the X1 (890M), llama-server -ngl 999 -c 2048 -np 1 -fa on -lm dio --lazy-mode on, 64-token greedy decode; fused vs GGML_VK_DISABLE_GDN_BANK=1 interleaved unf fus fus unf unf fus in one window, one load per arm, HC_POST_W on in both arms.",
++      "measured_effect": "Decode dispatches per token 3099 -> 3027 (-72 = 36 GDN layers x (GET_ROWS + SET_ROWS)). Decode tok/s medians of 3 rounds: short prompt 10.98 -> 11.47 (+4.47%), 597-token prompt 10.85 -> 11.19 (+3.09%). Rounds unfused short 9.99/10.98/10.98, fused 11.47/11.52/11.45; unfused long 10.43/10.86/10.85, fused 10.72/11.52/11.19 (first unfused arm ran cold, kept). No bootstrap CI computed (n=3 per arm).",
++      "valid_conditions": "Fires only when a GATED_DELTA_NET state src is a single-use GET_ROWS of a recurrent bank and its snapshot tail is SET_ROWS back into the same bank with no other bank access in between (qwen4exp R1 path). Conv-state GET_ROWS/SET_ROWS are not fused. Other graphs never match.",
++      "notes": "lane-299 2026-10-05. Commit subjects 7d07d087b9 / 85f01020b7 still read WIP; HQ rewords at merge."
+     }
+   ]
+ }

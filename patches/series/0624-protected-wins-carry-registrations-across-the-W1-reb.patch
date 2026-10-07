@@ -1,0 +1,1476 @@
+From 9bf09374d950b4ce2999f7520c8f10b6a2452fe0 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 03:50:56 -0400
+Subject: [PATCH] protected-wins: carry registrations across the W1 rebase and
+ register the unregistered measured wins (Sol REJECT fix 3)
+
+Validate on the candidate went from 83 problems to 2. Pre-rebase arifi/main e86ca0289 already failed with 27 of them (receipt pw-validate-prerebase-e86ca0289.txt), so most of this is debt the W1 rebase inherited, not debt it created.
+
+1. replay-provenance.json: 37 rebased commits mapped to their registered originals via replay-map against the retained tag arifi-pre-rebase-e86ca0289 (patch-id, trailers and subject re-derived live).
+2. 13 registered wins whose patch-id changed only by context (-U0 patch-id equal) or by the f172be756 file split (changed-line multiset identical) now name their rebased sha; the original moves to commit_pre_rebase_chain, re-homed files join protected_paths, and each carries a _rebase_b11178 line naming the check.
+3. 14 new entries register the 27 inherited unregistered wins (R48, R48b, R52b, R53, R57, R58, R61, R64, R65, R71, R75, R85, R87) and lane-296's own N11/N12 width rule (aa6ebfce2, e0d733dde, 11eef8565, 5432990f3). OW-028 attaches to vulkan-rocmfp4-fast-q8_1-mmvq. Every field is taken from the originating commit body or lane report; entries whose effect was a tie or a loss say so.
+
+Still unregistered (2): 56763ff4e (g128 Vulkan port, content-edited by the upstream pipeline map) and 4fea45e7e (DFlash fused/legacy switch, content-edited by the llama_batch_ext re-home). Their registered gates are GPU legs, owed in the lane-296 Sol-fix GPU run.
+
+Origin: fork-authored (ArifiLabs lane-296 Sol-fix pass, Opus 5.5)
+Measured-effect: none - registry only
+Lane: lane-296
+Receipts: C:/ArifiLabs/cache/lane296/pw-validate-7.txt, C:/ArifiLabs/cache/lane296/pw-validate-prerebase-e86ca0289.txt
+---
+ tools/arifi-sync/protected-wins.json    | 719 +++++++++++++++++++++++-
+ tools/arifi-sync/replay-provenance.json | 523 +++++++++++++++++
+ 2 files changed, 1216 insertions(+), 26 deletions(-)
+ create mode 100644 tools/arifi-sync/replay-provenance.json
+
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index a7c23e6325..123505c10f 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -45,10 +45,11 @@
+       "id": "vulkan-concat-transpose-deltanet",
+       "status": "active",
+       "mechanism": "Tiled CONCAT dispatch for a transposed src1, taken on the delta-net conv state. A dedicated concat_transpose shader plus a selector branch ahead of the pre-existing cpy_transpose_02_32/02_16 tiled branch; the two predicates select disjoint pipelines.",
+-      "commit": "3caa602adc45d27fc3f265618d7625750fefd234",
++      "commit": "a5bd0995ac9d21dbc47a08ec432b2601322397d9",
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/vulkan-shaders/concat_transpose.comp",
+-        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h"
+       ],
+       "anchors": [
+         "pipeline_concat_transpose_i32",
+@@ -74,10 +75,14 @@
+       "valid_conditions": "Fires only where src1 is transposed with nb[0] > nb[1] and src0 ne[2]==ne[3]==1 - the delta-net conv-state shape. test-backend-ops carries no case of that shape, so the suite proves non-regression, not coverage.",
+       "notes": "The win is op-level and statistically zero at the seat. It is retained anyway: a win is a win even if it is small (mandate root cause 1).",
+       "commit_pre_rebase_chain": [
+-        "5b1b416cb9beec3f9d987de47149b06a989e1783"
++        "5b1b416cb9beec3f9d987de47149b06a989e1783",
++        "3caa602adc45d27fc3f265618d7625750fefd234"
+       ],
+       "sha_pre_rebase_chain": [
+         "50ad74343bfd349e8782c546ed2cd0a979f441bf"
++      ],
++      "_rebase_b11178": [
++        "a5bd0995a <- 3caa602ad (commit): changed-line multiset identical, code re-homed into ggml/src/ggml-vulkan/ggml-vulkan-types.h by upstream f172be756; CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)"
+       ]
+     },
+     {
+@@ -126,16 +131,20 @@
+       "id": "vulkan-escha-mm-column-block",
+       "status": "active",
+       "mechanism": "Column-blocked escha_mm: one weight decode serves C columns, removing redundant decode work rather than load pressure. C=8 shipped, with a fall-back to the one-column pipeline below a full block, and every dispatch bounded to 32 columns (the F-124 host-freeze guard).",
+-      "commit": "f8716ab56a7538ac466c9d35238dd78ad36e0a09",
++      "commit": "29a2be66d62e858ce6f9e68a755dfd33607afa06",
+       "also_commits": [
+         "edd9c1528",
+         "b0d9c3152",
+         "59f328d25",
+-        "974d46603"
++        "974d46603",
++        "9cfd7e246af3b4ca8a1473fe89b5f05ca05280d3",
++        "835a6717c71c4d66ddd28f0ea4043513f88a4798"
+       ],
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp",
+-        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan-push-constants.h",
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h"
+       ],
+       "anchors": [
+         "ESCHA_MM_COLS",
+@@ -163,10 +172,18 @@
+       "valid_conditions": "Prefill shapes with ncols >= ESCHA_MM_COLS. Below the threshold the one-column pipeline is the winner - C=4 made decode 11-27% SLOWER - so the threshold is part of the win, not an optimisation of it. ESCHA_SG_HADAMARD stays OFF by default: the lever was refuted by measurement.",
+       "notes": "C=16 is the next untested step and is deliberately not assumed.",
+       "commit_pre_rebase_chain": [
+-        "146f1bf8b"
++        "146f1bf8b",
++        "1b6bfaf582f54e634a8b82b17d888f4f3fafd37f",
++        "abca2e78265f8f8e6c1d69dfd5d9d0a327b79cad",
++        "f8716ab56a7538ac466c9d35238dd78ad36e0a09"
+       ],
+       "sha_pre_rebase_chain": [
+         "596c640f4c149991ea1790cbb9699871357d1c85"
++      ],
++      "_rebase_b11178": [
++        "9cfd7e246 <- 1b6bfaf58 (baseline->also): changed-line multiset identical, code re-homed into ggml/src/ggml-vulkan/ggml-vulkan-push-constants.h by upstream f172be756; original was dispositioned in protected-win-baseline.json (closed to new shas), attached here because that disposition names this entry's mechanism; CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)",
++        "835a6717c <- abca2e782 (baseline->also): changed-line multiset identical, code re-homed into ggml/src/ggml-vulkan/ggml-vulkan-types.h by upstream f172be756; original was dispositioned in protected-win-baseline.json (closed to new shas), attached here because that disposition names this entry's mechanism; CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)",
++        "29a2be66d <- f8716ab56 (commit): -U0 patch-id equal (context lines moved only); CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)"
+       ]
+     },
+     {
+@@ -234,10 +251,17 @@
+       "measured_effect": "decode +22.0% (mixed) and +23.7% (all-Q2_0) against mode 0, ranges DISJOINT, with prefill held at baseline (958.96 vs 898.11 and 963.51 vs 905.25 prompt t/s, ranges overlapping so no prefill gain is claimed).",
+       "valid_conditions": "CPU tier, g64 ternary models, -ngl 0. Mode 1 remains the wrong trade on this workload: it pays -65% to -80% of prefill for the same decode.",
+       "commit_pre_rebase_chain": [
+-        "2fb12c5c6"
++        "2fb12c5c6",
++        "46aca7c0cd724d4c97a335cdefe1650fcb62901a"
+       ],
+       "sha_pre_rebase_chain": [
+         "a77a2f9f369d62cf4708365171ddf02cde1d2ee1"
++      ],
++      "also_commits": [
++        "d2574a07193c76bd6110128c45afdab82e52641a"
++      ],
++      "_rebase_b11178": [
++        "d2574a071 <- 46aca7c0c (baseline->also): -U0 patch-id equal (context lines moved only); original was dispositioned in protected-win-baseline.json (closed to new shas), attached here because that disposition names this entry's mechanism; CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)"
+       ]
+     },
+     {
+@@ -364,7 +388,7 @@
+       "status": "active",
+       "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (11c9a7702); its row asked only that the quality gate be stated before an entry was written, and it is stated below.",
+       "mechanism": "Carve-out in ggml_repack_get_optimal_repack_type: while either expert-bundle env is set, the ffn_up/gate/down expert tensors are refused a repack traits object and fall through to the plain path. The bundle holds plain Q4_0 bytes and the streaming kernels read plain Q4_0, so an AARCH64 repack of those tensors silently reinterprets them.",
+-      "commit": "87dd24346704e5267980c5636aab747ea8408bad",
++      "commit": "3344b1a75309473967acd035ddf5c8a420b93f3f",
+       "protected_paths": [
+         "ggml/src/ggml-cpu/repack.cpp"
+       ],
+@@ -381,10 +405,14 @@
+       "valid_conditions": "Any build where the repack traits path can claim expert tensors while an expert bundle is in play.",
+       "notes": "Correctness class, same as escha-w2-decode-correctness: an incoming change that is faster but lets the repack claim streamed experts loses outright. Speed cannot buy this one back.",
+       "commit_pre_rebase_chain": [
+-        "11c9a7702b75135496880546e0660c4f5e1c897a"
++        "11c9a7702b75135496880546e0660c4f5e1c897a",
++        "87dd24346704e5267980c5636aab747ea8408bad"
+       ],
+       "sha_pre_rebase_chain": [
+         "df6ec6a1fc0efe675f9bf02a0e05313678815192"
++      ],
++      "_rebase_b11178": [
++        "3344b1a75 <- 87dd24346 (commit): -U0 patch-id equal (context lines moved only); CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)"
+       ]
+     },
+     {
+@@ -426,7 +454,7 @@
+       "status": "active",
+       "_registered": "2026-09-05, lane-209 rank-3 R6. Was TWO `REGISTRATION OWED` rows (bf0abf0be and 39a585bd5), re-dispositioned there on 2026-09-04 under the President's capability law. They share one guard and one capability, so they are one entry with an also_commit rather than two entries that could drift apart.",
+       "mechanism": "ROCmFP4 / ROCmFPX serialized weight formats: the format sources and their CPU quant, dequant, validate and vec_dot paths, plus the type ids, ftype ids, quantizer wiring and gguf-py registry that make a ROCmFPX artifact loadable. Adopted verbatim from charlie12345/ROCmFPX so its GGUFs and its convert/quantize tooling interoperate byte-for-byte.",
+-      "commit": "667ee75c4d3793c3b130d56cf578ee9703ec20a2",
++      "commit": "672273b1e0d6f9076c61569e98d89a2fb7f04caa",
+       "also_commits": [
+         "39a585bd51901738f3fd9221f2b430270bfd42b9"
+       ],
+@@ -453,10 +481,14 @@
+       "valid_conditions": "Builds with GGML_ARIFI_ROCMFPX_FORMATS ON, and any build at all for the ids: the enum values are unconditional ABI on purpose, because a file may carry them regardless of what this build can decode. An upstream change that renumbers or removes the ROCMFP* ids breaks interoperation with charlie12345/ROCmFPX artifacts even on a build that cannot decode them.",
+       "notes": "protected_paths names only the two subtrees that are wholly this mechanism. The shared core files it also touches (ggml.h, ggml.c, ggml-quants.c, ggml-cpu.c, ops.cpp, llama.h, llama-model-loader.cpp, llama-quant.cpp, quantize.cpp, gguf-py/gguf/constants.py) are guarded by the ANCHOR half instead, deliberately: those files change on nearly every bump, and pinning them as paths would refuse every sync for a reason that is almost never the real one. The anchors catch what actually threatens this win - a renumbering or removal of the type/ftype ids. That is a signal-to-noise choice and it is named here so it can be revisited, not discovered.",
+       "commit_pre_rebase_chain": [
+-        "bf0abf0be6ed1ce4f9c9cefb28fc4adb7ec4bb18"
++        "bf0abf0be6ed1ce4f9c9cefb28fc4adb7ec4bb18",
++        "667ee75c4d3793c3b130d56cf578ee9703ec20a2"
+       ],
+       "sha_pre_rebase_chain": [
+         "8639a12e616b8a3d82aeb624a70be9ae853f1aaf"
++      ],
++      "_rebase_b11178": [
++        "672273b1e <- 667ee75c4 (commit): -U0 patch-id equal (context lines moved only); CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)"
+       ]
+     },
+     {
+@@ -466,7 +498,9 @@
+       "mechanism": "The measured DEFAULT decision on top of the VNNI repack slot: ggml_arifi_vnni_repack_enabled() returns true only for an exact \"1\", so unset takes the no-repack branch. This DIVERGES DELIBERATELY from PrismML's upstream default of ON. It is a different object from the kernel it gates - `cpu-vnni-repack-dual-residency` protects the kernel, and every anchor of that entry would still resolve after this default was flipped back.",
+       "commit": "43f2d29b15a0e9276d7c39b4498e9cbfc626b4b9",
+       "protected_paths": [
+-        "ggml/src/ggml-cpu/repack.cpp"
++        "ggml/src/ggml-cpu/repack.cpp",
++        "common/arifi-profile.cpp",
++        "common/arifi-profile.h"
+       ],
+       "anchors": [
+         "ggml_arifi_vnni_repack_enabled",
+@@ -489,10 +523,17 @@
+       "valid_conditions": "The default is right for a Vulkan-enabled build, where a repacked weight loses large-batch GPU-offload eligibility. On a CPU-only path (-dev none) the same slot is +326.7% / +441.8% prompt and +19.9% / +23.6% decode, which is exactly why it stays compiled in and one env var away. An upstream bump that restored ON-when-unset would forfeit a measured decision while every anchor of the kernel entry still resolved.",
+       "notes": "NOT a pre-slot restore switch on x86: c7645a0df also replaced the x86 ggml_vec_dot_q2_0_q8_0, which is selected at compile time and sits outside this toggle. OFF selects the new vec_dot kernel, not the one that predated the slot.",
+       "commit_pre_rebase_chain": [
+-        "e44c0bb0d39808d40ec06649dabfb58a93595a7d"
++        "e44c0bb0d39808d40ec06649dabfb58a93595a7d",
++        "65bd34a31eb8f1f4369ef6761726f37d9ca204e2"
+       ],
+       "sha_pre_rebase_chain": [
+         "244acd58ebf7b3042340545e12355592d24b4cc1"
++      ],
++      "also_commits": [
++        "53c28a68c4ffdd6a5a5697888c98cb795ffb4210"
++      ],
++      "_rebase_b11178": [
++        "53c28a68c <- 65bd34a31 (baseline->also): -U0 patch-id equal (context lines moved only); original was dispositioned in protected-win-baseline.json (closed to new shas), attached here because that disposition names this entry's mechanism; CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)"
+       ]
+     },
+     {
+@@ -603,7 +644,7 @@
+       "status": "active",
+       "_registered": "2026-09-05, lane-209 rank-3 R6. Was `REGISTRATION OWED` (8561db379). Registered on describability, not on an on-seat number, exactly as vulkan-tq-matvec-subgroup is registered with valid_conditions naming the hardware it wins on.",
+       "mechanism": "TQ3_4S CUDA kernel set lifted from tq3/master: native TQ3_4S convert, getrows, mmq, mmvq and quantize paths including the PRMT vec_dot, trimmed to TQ3_4S only and adapted to upstream b10488. A hunk port, not a cherry-pick - the trees diverge by whole subsystems.",
+-      "commit": "8225dbd0e9d69f762cd82330197d28867233ed80",
++      "commit": "22f812d66dfc612ad3629fabad26a2a1f3de0553",
+       "protected_paths": [
+         "ggml/src/ggml-cuda/tq3-native.cu",
+         "ggml/src/ggml-cuda/tq3-native.cuh",
+@@ -632,10 +673,14 @@
+       "measured_effect": "UNMEASURED ON THIS SEAT (no CUDA silicon). THIRD-PARTY reference from tq3/master, quoted and not adopted as ours: RTX 3090 tg128 43.1 -> 47.4 t/s (PRMT vec_dot), Ampere decode +35% (3d3888c9f).",
+       "valid_conditions": "NVIDIA CUDA devices running TQ3_4S. Carried capability, inert here, not broken. The anchor `tq3_4s_native` is CUDA-unique on purpose: the bare string TQ3_4S also lives in the CPU and Metal paths, so it would keep validating after the CUDA set alone was deleted.",
+       "commit_pre_rebase_chain": [
+-        "8561db37993c9b326549aed2c996b0dcb24ecfc7"
++        "8561db37993c9b326549aed2c996b0dcb24ecfc7",
++        "8225dbd0e9d69f762cd82330197d28867233ed80"
+       ],
+       "sha_pre_rebase_chain": [
+         "f61556205533067aa96ad9570a50cc516463ebf9"
++      ],
++      "_rebase_b11178": [
++        "22f812d66 <- 8225dbd0e (commit): -U0 patch-id equal (context lines moved only); CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)"
+       ]
+     },
+     {
+@@ -746,7 +791,7 @@
+       "status": "active",
+       "_registered": "2026-09-05, lane-206 integration (R8). Registered as a KEPT NEUTRAL: no speed win is claimed here and none may be quoted from this entry.",
+       "mechanism": "mul_mat_vec_q6_k.comp reads its 16 int8 superblock scales directly out of the block instead of staging them through a double-buffered LDS tile with a barrier() per row. The exchange moved no data between threads, so the direct read is bit-identical by construction, and measured so. Specialization constant 3 selects the path; GGML_VK_Q6K_DIRECT_SCALES=0 restores upstream's LDS path byte for byte in the same binary.",
+-      "commit": "10b7c23502e2e69f6a8b6cd50568d9168c4b98bd",
++      "commit": "e213bdd09ca43ab490cb371b6db6163bbbe35ca0",
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q6_k.comp"
+       ],
+@@ -763,10 +808,14 @@
+       "valid_conditions": "Kept because it is strictly less work for a bit-identical result - one fewer workgroup barrier per row per superblock, and no shared-memory tile - on an engine that ships to other people's hardware, where LDS pressure and barrier cost are not what they are on a 780M. Protected as a NEUTRAL: an incoming upstream change that reverts it is not a regression to fight on speed grounds here, but it must be compared rather than silently taken, because the mechanism's value is off-seat.",
+       "notes": "Also banks the falsification the next attempt needs: the per-row barrier was the leading mechanism for q6_k's reproducible ~35% mat-vec deficit on this box (41.0 GB/s against q5_k 63.8 and q4_k 72.5 at m=17408 n=3 k=5120). Removing it moves nothing. The deficit stands, unexplained.",
+       "commit_pre_rebase_chain": [
+-        "4bbebd619"
++        "4bbebd619",
++        "10b7c23502e2e69f6a8b6cd50568d9168c4b98bd"
+       ],
+       "sha_pre_rebase_chain": [
+         "8bfaeeff463a9d40b82449a05e9d330482cbe0e5"
++      ],
++      "_rebase_b11178": [
++        "e213bdd09 <- 10b7c2350 (commit): -U0 patch-id equal (context lines moved only); CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)"
+       ]
+     },
+     {
+@@ -780,11 +829,14 @@
+         "ab04258bf",
+         "294dfdbdd",
+         "8e2acfd21",
+-        "ab1eeb108"
++        "ab1eeb108",
++        "d525d6670e1890ec6a103df9449ffc1266aea055"
+       ],
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl",
+-        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp"
++        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp",
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h"
+       ],
+       "anchors": [
+         "GGML_ARIFI_ROCMFP4_MMVQ",
+@@ -807,6 +859,9 @@
+       ],
+       "sha_pre_rebase_chain": [
+         "4a13b108bbbe3dd645ea4fe89ee1d723002b1800"
++      ],
++      "_rebase_b11178": [
++        "attached d525d6670: OW-028 (lane-279, President YES 2026-09-24) flips THIS entry's mechanism to DEFAULT ON (device->rocmfp4_mmvq_route, GGML_ARIFI_ROCMFP4_MMVQ=0 opts out, =1 still ON); the entry's mechanism/valid_conditions text already describes it (the same commit edited protected-wins.json). It has no arifi/main pre-rebase original on this line (landed on W1 by the lane-289 stage step); its lane source is 8ac5e0a01c200e3b38e91b62d6c7f49e6ba91d41 (lane-279/ow028-fp4-mmvq-default-2026-09-24, b10825 base), which is not a pre-rebase sha of this chain, so commit_pre_rebase_chain_add is left empty. Gates from the body (receipts research/local-inference/lane-evidence/2026-09-24-ow028-fp4-default, OW028-REPORT.md): build rc=0; MUL_MAT 2305/2305 + MUL_MAT_ID 1004/1004, 0 FAIL, default and legacy arms; trace census MMVQ at n=3,5 only (default), 0 MMVQ rows (legacy); RED sign-flip in the FP4 mmvq_dot_a: default 32/99 FAIL all at n=3/5, legacy 99/99, restore sha d684ee74 + regreen 99/99; greedy identity DEFAULT vs LEGACY differ 2/6 (prompts 4,5), control 6/6. A ruling, not new speed evidence: no measured_effect change. protected_paths_add: the default-ON probe and the n=3,5 width gate live in ggml-vulkan.cpp (ggml_vk_should_use_mmvq_impl, device init) and the field in ggml-vulkan-types.h; today the entry guards only the two shader files, so an incoming change that reverts the default or the gate in ggml-vulkan.cpp would not register as a collision (the GGML_ARIFI_ROCMFP4_MMVQ anchor only catches removal of the name)."
+       ]
+     },
+     {
+@@ -941,7 +996,7 @@
+       "id": "vulkan-mul-mat-id-staging-receipt-hazard-assert",
+       "status": "active",
+       "mechanism": "Two things, neither of which changes a default. (1) A receipt: one GGML_LOG_INFO per distinct MUL_MAT_ID B-staging mode per process - contiguous | K-padded | q8_1 - naming coopmat2, both source types, ne10, the staged row stride and ne11, so an A/B log proves which path the dispatch took. Upstream 77f132cb1's K-padded staging is a coopmat2 requirement (its B decode callback does not bounds-check K); on a coopmat1/scalar device the padded mode is never selected and this line is the runtime witness of that. No override is offered on purpose. (2) A hazard assert: the fork's tq_rotate staging wins the tq_rotate / y_needs_reformat ladder and copies B CONTIGUOUS f32 while stride_b_y still follows y_needs_k_padding, so GGML_ASSERT(!(tq_rotate && y_needs_k_padding)) aborts instead of reading B with a padded stride over an unpadded copy.",
+-      "commit": "abdb774783fc9802399c9d9483e4c1e77cf6acfb",
++      "commit": "7b949bc5758a1a9f0e2bb14c897a0d46f4d9ec4c",
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
+       ],
+@@ -956,13 +1011,19 @@
+       "quality_gate": "No default and no dispatch changes, so the arms are the same kernel: 48 MUL_MAT_ID ops, 3 rounds per arm, correctness unchanged. The assert converts a silent wrong-math read into an abort.",
+       "workload": "Radeon 780M (gfx1103, Vulkan0, coopmat1 - no coopmat2), test-backend-ops MUL_MAT_ID op ladder plus seven server logs read for the receipt.",
+       "measured_effect": "DOCUMENTED-TAKE, and the receipt is the result: 0 K-padded rows in 7 logs, so the upstream K-padding path CANNOT engage on this GPU. Op ladder x0.976 to x1.032, no CI claimed at n=3. The real cure for the hazard - padded f32 rotate staging - is OWED to the off-rig lane where a coopmat2 device exists.",
+-      "notes": "The protectable thing is the receipt line and the assert. Removing either restores a state where a wrong staging mode is unprovable from a log, and where the rotate x padding combination computes garbage instead of aborting."
++      "notes": "The protectable thing is the receipt line and the assert. Removing either restores a state where a wrong staging mode is unprovable from a log, and where the rotate x padding combination computes garbage instead of aborting.",
++      "commit_pre_rebase_chain": [
++        "abdb774783fc9802399c9d9483e4c1e77cf6acfb"
++      ],
++      "_rebase_b11178": [
++        "7b949bc57 <- abdb77478 (commit): -U0 patch-id equal (context lines moved only); CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)"
++      ]
+     },
+     {
+       "id": "vulkan-uma-read-path-probe",
+       "status": "active",
+       "mechanism": "The UMA read-back direct memcpy is taken only when the buffer's OWN matched memory type is HOST_CACHED, probed per call from the flags stored at allocation, instead of unconditionally for every host-visible buffer on a UMA device. An uncached mapping falls through to the staging branch that every non-UMA host-visible (rebar) buffer already uses. GGML_ARIFI_UMA_READ_PATH = auto (default, probe) | direct (upstream behaviour) | staging (always staging). One stderr receipt per process names the resolved path and the env value, because llama-server drops ggml INFO records. Writes are untouched: write-combined is the right mode for CPU writes.",
+-      "commit": "2f241c57dd1dfb7d9430e851a0bc73db338e8adf",
++      "commit": "ae805d1f9b0c3801ae5350c348109d34b13357ea",
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
+         "ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp"
+@@ -985,13 +1046,19 @@
+       "quality_gate": "Bit-identical by construction: the same bytes, copied by the copy engine instead of the CPU. F-141 recorded in the cell; no arithmetic is touched.",
+       "workload": "Radeon 780M (gfx1103, Vulkan0), UMA device whose host-visible mapping is NOT host-cached, seat line plus four c3 files; lane209 palindrome.",
+       "measured_effect": "DOCUMENTED-TAKE, flat. Mechanism cell (ONE binary, direct vs auto) read decode +0.21% CI95 [-0.26%, +0.69%] - one of the two quietest cells in the whole wave. The four c3 files land within -1.88% and -0.03% on DFlash2 decode. Cell c1 was NOT BANKED (resumed across the 21:30 job). OWED: a host-cached unified-memory device, which is where the probe would actually select direct and where the fix can pay.",
+-      "notes": "Origin is ucicelos/flashnext-hybrid fix 3 ('boundary tensors read through the wrong memory mapping'); the Vulkan/UMA port is native to ArifiLabs."
++      "notes": "Origin is ucicelos/flashnext-hybrid fix 3 ('boundary tensors read through the wrong memory mapping'); the Vulkan/UMA port is native to ArifiLabs.",
++      "commit_pre_rebase_chain": [
++        "2f241c57dd1dfb7d9430e851a0bc73db338e8adf"
++      ],
++      "_rebase_b11178": [
++        "ae805d1f9 <- 2f241c57d (commit): changed-line multiset identical, code re-homed into ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp by upstream f172be756; CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)"
++      ]
+     },
+     {
+       "id": "ggml-sx8-type-57-cpu-decoder",
+       "status": "active",
+       "mechanism": "GGML_TYPE_SX8 = 57: the MarlaLabs S-X8 v4.3 weight format (dmin/dmax f16 + 4 x 2-bit range strategy + 6-bit levels, 30 B / 32, 7.50 bpw) as a CPU decoder - dequant, vec_dot against q8_1, and the GET_ROWS / CPY / SET_ROWS arms - plus gguf-py constants and test-backend-ops coverage. Retagged from the author's id 41, which this tree spends on upstream Q1_0, under the fork's type-id arbitration; tools/gguf-retag-sx8/retag_sx8.py rewrites a file's ids on a COPY and refuses unless every id-41 tensor spans exactly 30 B / 32 values. OPT-IN BY TYPE NAME: no env, no build flag, no default moved, so any launch that does not name the type is byte-identical to the pre-port engine.",
+-      "commit": "174ead5cace018c9d0a10ee45067ca5536df743d",
++      "commit": "cb36687a0a2b7afde1a6e17e5f792549f8ca9123",
+       "protected_paths": [
+         "tools/gguf-retag-sx8"
+       ],
+@@ -1017,7 +1084,13 @@
+       "quality_gate": "Codec cross-check against the author's reference (tools/gguf-retag-sx8/test_sx8_codec.py) plus the test-backend-ops rows for the type; no S-X8 file exists on the estate, so an end-to-end quality cell is OWED, not claimed.",
+       "workload": "CPU path only. The harmless cell measured the port PRESENT and UNREACHABLE on the seat line (Radeon 780M, Vulkan0, Huihui UD-Q4_K_XL), which is what proves it costs nothing when unused.",
+       "measured_effect": "DOCUMENTED-TAKE. Harmless cell: DFlash2 decode +0.43% CI95 [-0.47%, +1.33%], plain decode -5.33% [-12.26%, +1.60%], and plain PREFILL -8.28% [-11.00%, -5.56%] - the wave's largest inert move and therefore a measurement of the build, not of this port. TBO ladder x0.991 to x1.033. The S-X8 FILE cell never ran: no such file exists and the decoder is CPU-only.",
+-      "notes": "The Vulkan kernel (WI-1717, lane-224) builds ON this enum value. It must extend id 57, never re-add it. Blocked until that lands: any GPU-side S-X8 measurement."
++      "notes": "The Vulkan kernel (WI-1717, lane-224) builds ON this enum value. It must extend id 57, never re-add it. Blocked until that lands: any GPU-side S-X8 measurement.",
++      "commit_pre_rebase_chain": [
++        "174ead5cace018c9d0a10ee45067ca5536df743d"
++      ],
++      "_rebase_b11178": [
++        "cb36687a0 <- 174ead5ca (commit): -U0 patch-id equal (context lines moved only); CHECKED 2026-09-27 lane-296 (cache/lane296/pw-u0.json, pw_u0.py, pw_lines.py)"
++      ]
+     },
+     {
+       "id": "ggml-turboq-tbq-kv-types-58-59",
+@@ -1052,6 +1125,600 @@
+       "workload": "Radeon 780M (gfx1103, Vulkan0) for the harmless cell; the KV cells ran at KV-on-host on a 0.515 t/s crawl and did not complete.",
+       "measured_effect": "DOCUMENTED-TAKE. Harmless cell (types present, no launch names them): DFlash2 decode +0.60% CI95 [-1.28%, +2.47%], DFlash2 prefill +8.15% [+5.38%, +10.92%] - the latter pure build floor. THE KV MECHANISM WAS NEVER MEASURED: the baseline arm refused the type ('Unsupported cache type: tbq4_0') and the candidate arm was aborted by the schedule horizon. What ran is engine-vs-engine at KV-on-host, +1.60% [+1.30%, +1.90%] on a 0.515 t/s crawl, which is not a claim about TBQ.",
+       "notes": "The re-run design is named: candidate-engine tbq4_0 vs candidate-engine q8_0. A baseline-engine arm is impossible, because the base engine does not know the type - that is what produced the refusal."
++    },
++    {
++      "id": "vulkan-q5k-matvec-b-hoist-width-gate",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. The R48 phase-1b Measured-effect commit landed on arifi/main before the W1 rebase and was never registered.",
++      "mechanism": "Q5_K dmmv ACTIVATION HOIST. Specialization constant 3 of mul_mat_vec_q5_k.comp: 1 loads each activation vector once per superblock and reuses it across all NUM_ROWS rows; 0 is the shipped order, which reloads it once per row. Both arms run the same decode and the same fma chains in the same order, so the results are bit-identical by construction. The host WIDTH GATE (q5k_b_hoist_for_cols) passes 1 only to pipelines with NUM_COLS <= 3 and 0 to wider ones, because n>=4 spills registers. GGML_ARIFI_Q5K_B_HOIST=0 forces every width to 0 on the same binary. The device-init stderr line reads 'q5_k mat-vec activation-hoist: ON (n<=3)' / 'OFF'.",
++      "commit": "8e7ac9e946ee76742dd24412fbfc86175908e03c",
++      "also_commits": [
++        "3bd085b08339129c0c308ca40be5008253d89d40",
++        "d43f74f7a6f0fa1b397ed6b3470a4c0c3ae84603"
++      ],
++      "commit_pre_rebase_chain": [
++        "283503f0993e70163fe4ed94420d60a9a58c005c"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q5_k.comp",
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
++      ],
++      "anchors": [
++        "GGML_ARIFI_Q5K_B_HOIST",
++        "q5k_b_hoist_for_cols"
++      ],
++      "evidence": [
++        "commit:3bd085b08339129c0c308ca40be5008253d89d40",
++        "commit:d43f74f7a6f0fa1b397ed6b3470a4c0c3ae84603",
++        "research/local-inference/lane-evidence/2026-09-14-lane-234-r48-kernels/32-paired-r48q5k.txt",
++        "board/programs/local-inference/lanes/2026-09-14-lane-234-r48-q5k-matvec-REPORT.md",
++        "docs/OPTIONS-REGISTRY.md"
++      ],
++      "quality_gate": "test-backend-ops test -o MUL_MAT -b Vulkan0 -p \"type_a=q5_K\": 61/61, 0 FAIL, in both arms (gate ON and GGML_ARIFI_Q5K_B_HOIST=0), receipts r48-evidence/61-*, 62-*. The f32_f32 registration is the only one exercised. test-backend-ops produces 0 cases for type_a=q5_K,type_b=f16, so the f16_f32 registration is gated by inspection only (d43f74f7a). Bit-identity between the arms is by construction (same decode, same fma order).",
++      "workload": "Radeon 780M gfx1103 Vulkan, test-backend-ops perf, one binary, arm A hoist OFF vs arm B hoist ON, 3 quiet interleaved rounds (HQ, lane-234). Q5_K shapes 17408x5120, 248320x5120, 4096x14336, 5120x17408 at n=1..8.",
++      "measured_effect": "UNMEASURED at the gated default; a re-pair is owed. The GATE is what was measured. On the ungated hoist, n=1..3 is a wash to +5% (17408x5120 +4.7/+1.3/+3.3%; 248320x5120 -0.4/+0.4/0.0%; 4096x14336 +0.3/-1.7/+0.6%). n=4..8 LOSES 30% to 180% on every shape (248320x5120 n=4 -83.6%; 5120x17408 n=8 -179.9%). NO speed win may be quoted for the narrow arm: its band overlaps zero.",
++      "valid_conditions": "The <=3 boundary is a gfx1103 measurement, not a portable constant. Re-pair before assuming it on another device class. Bit-identical in both arms, so the risk of keeping it is register spill, not wrong output.",
++      "notes": "SURPRISE for the maker: the width-gate CODE (q5k_b_hoist_for_cols, the 'ON (n<=3)' receipt) is in the phase-1 commit 8e7ac9e94 ('Q5_K mat-vec activation hoist behind spec constant'), not in the phase-1b commit 3bd085b08. 3bd085b08 and its pre-rebase original 283503f09 carry only the report, the registry row and receipts, although the subject says 'feat(vulkan): gate'. So commit = 8e7ac9e94, and the listed Measured-effect sha is in also_commits. Lane board report records the phase-1b commit as c64af970c (lane branch).",
++      "_evidence_rows": [
++        "docs/OPTIONS-REGISTRY.md: row GGML_ARIFI_Q5K_B_HOIST"
++      ]
++    },
++    {
++      "id": "vulkan-mmvq-a-hoist-r48b-route",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. The R48b phase-2 Measured-effect commit landed on arifi/main before the W1 rebase and was never registered.",
++      "mechanism": "MMVQ A-SIDE HOIST + the R48b route table. Specialization constant 3 of mul_mat_vecq.comp: 1 decodes each row's A block once per (row, k-slice) into registers and loops the columns doing only the B load and the integer dot; 0 is the inherited nest, which re-decodes A once per column. Bit-identical by construction. Device-probed ON for AMD; GGML_ARIFI_MMVQ_A_HOIST=0|1 overrides. Per-type width gate: the legacy-block family (Q4_0/Q4_1/Q5_0/Q5_1/Q8_0/MXFP4) is OFF at NUM_COLS >= 6 (mmvq_a_hoist_legacy); IQ1_S/IQ1_M are OFF unless GGML_ARIFI_MMVQ_A_HOIST_IQ1=1. Route (ggml_vk_should_use_mmvq_impl), gated on the hoist being live: S-X8 -> MMVQ at every n (GGML_ARIFI_SX8_MMVQ=0 hands it back), Q4_K n>=5 -> MMVQ when k <= 8192. GGML_ARIFI_MMVQ_ROUTE=legacy restores the pre-R48b rules while keeping the hoisted nest (device->mmvq_route_legacy).",
++      "commit": "993ad050aa45c75ff47291a3498affc6f60b0d42",
++      "also_commits": [
++        "21b68eb74173638085956e8a07d843cec42a2c1d",
++        "c2b438cfa1b001909714e896ab9eeba4f4704938"
++      ],
++      "commit_pre_rebase_chain": [
++        "6f7be0350a6d7854c9b56093867f73ba863ac7fd"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp",
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h"
++      ],
++      "anchors": [
++        "GGML_ARIFI_MMVQ_A_HOIST",
++        "GGML_ARIFI_MMVQ_ROUTE",
++        "GGML_ARIFI_SX8_MMVQ",
++        "mmvq_a_hoist_legacy",
++        "mmvq_route_legacy"
++      ],
++      "symbols": {
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": [
++          "ggml_vk_should_use_mmvq_impl"
++        ]
++      },
++      "evidence": [
++        "commit:21b68eb74173638085956e8a07d843cec42a2c1d",
++        "board/programs/local-inference/lanes/2026-09-14-lane-235-r48b-mmvq-a-hoist-REPORT.md",
++        "research/local-inference/lane-evidence/2026-09-14-lane-234-r48-kernels/32-paired-r48bforce.txt",
++        "research/local-inference/lane-evidence/2026-09-14-lane-234-r48-kernels/32-paired-r48bhoist.txt",
++        "research/local-inference/lane-evidence/2026-09-14-lane-234-r48-kernels/CHECK-R48I-CHAIN135-SOL-LOW.md",
++        "OPUS-R48B-MMVQ-A-HOIST-REPORT.md",
++        "docs/OPTIONS-REGISTRY.md"
++      ],
++      "quality_gate": "All synchronous, 0 FAIL on every arm (21b68eb74, r48b-evidence/63a-69e). Full test-backend-ops -o MUL_MAT -b Vulkan0 at defaults, taken as regex-partitioned chunks and proved equal to the phase-1 sweep by set difference: 2879 unique rows, 0 missing. sx8 and q4_K each at defaults, GGML_ARIFI_MMVQ_ROUTE=legacy and GGML_ARIFI_MMVQ_A_HOIST=0. S-X8 independent-reference slice at n=4..8 on the MMVQ route: 64 cases, 0 failed, 0 route mismatch, on three arms. HQ planted reds (lane-branch commit 2a0bb5512, NOT an ancestor of 5432990f3; receipts per the lane-235 board report):RED-1 fires in both arms n=1..4, RED-2 fires ON-only n=2..4, so the hoisted nest is the one serving. Lane-238 integration check returns INTEGRATE.",
++      "workload": "Radeon 780M gfx1103 Vulkan, test-backend-ops perf, HQ forced-MMVQ pairing (GGML_VK_FORCE_MMVQ=1, GGML_ARIFI_SX8_MMVQ=1 both arms), hoist OFF vs ON, one binary, 3 quiet interleaved rounds. Shapes 248320x5120 (lm_head), 17408x5120, 5120x17408, 4096x14336 at n=1..8; q4_K, S-X8, Q8_0, q5_K.",
++      "measured_effect": "Op-level, forced-MMVQ arms ONLY; the default-routing re-pair is OWED. The hoist removes a 10-15x tail cliff for q4_K at NUM_COLS 6..7 (248320x5120 5.1/3.3 -> 52/48 GB/s; 5120x17408 3.7/2.5 -> 26.8/24.3). S-X8 is flat at the bus across n=1..8 (248320x5120 74.8/75.2/72.1/73.6/74.2/74.7/73.7/72.8 GB/s) and beats the shipped whole-block route by +40..+110% at n>=4 on 248320x5120 and +15/+34% at n=2/3 on 17408x5120. q4_K MMVQ+hoist vs f32 at n=5..8 on 248320x5120: +21/+44/+37/+57%, but a LOSS at k=17408 (hence the k<=8192 split, an untested boundary). The hoist REGRESSES Q8_0 at n>=6 (-25/-17/-24% at n=6/7/8 on 4096x14336), which is what the legacy-family gate is for. Phase 1 at default routing read a WASH (+-2%).",
++      "valid_conditions": "AMD under Vulkan (device probe); measured on gfx1103 only. k=8192 is the midpoint of two measured k values (5120 and 17408), not a measured boundary. GGML_ARIFI_MMVQ_A_HOIST=0 removes the nest AND the route; GGML_ARIFI_MMVQ_ROUTE=legacy moves only the route. A pairing must say which it used.",
++      "notes": "21b68eb74 (the listed Measured-effect sha) is docs + receipts only: it verified the phase-2 draft and changed no code. The code is in 993ad050a (the protective WIP commit HQ took of the maker's draft; the lane report names its lane-branch successor 23d975d8d) and the hoist itself in c2b438cfa (phase 1). UNATTRIBUTED bundle-level results, never to be quoted for this entry alone: R48i vs R46i S-X8 27B plain 2.145/2.162 TIE, and R45 vs R48i Q4_K_XL plain 3.864 -> 4.104 t/s (+6.2%, CI95 [+0.12,+0.58]); both are the R48+R48b+R48c bundle (board/hq/succession/2026-09-15-hq-seat-60-state.md 3c, 3e).",
++      "_evidence_rows": [
++        "docs/OPTIONS-REGISTRY.md: rows GGML_ARIFI_SX8_MMVQ, GGML_ARIFI_MMVQ_A_HOIST, GGML_ARIFI_MMVQ_ROUTE"
++      ]
++    },
++    {
++      "id": "vulkan-sx8-mulmm-packed-decode-and-mmq-under-coopmat",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. The R52b code and its two diagnostic follow-ups landed on arifi/main before the W1 rebase and were never registered.",
++      "mechanism": "Two switches in one commit. (1) PACKED S-X8 mul_mm TILE DECODE: load_a_to_shmem() in mul_mm_funcs.glsl, DATA_A_SX8 branch under #if SX8_PACKED_DECODE, calls sx8_levels4() to decode four weights from three byte reads: 6 byte reads per 8 weights instead of 16. Same sx8_range(), same level values, same shmem slots, so bit-identical by construction. Two SPIR-V variants (plain and packed) are compiled by vulkan-shaders-gen.cpp and one is chosen at pipeline creation. In the REBASED form (b11178 pipeline map), the per-type CREATE_MM2/CREATE_MM arms are gone; FOR_EACH_ARIFI_MM_NOID_NOCM2_TYPE picks the packed (sx8p) or scalar (sx8) SPIR-V at every site. Device probe: ON for AMD RDNA3; GGML_ARIFI_SX8_MM_PACKED=0|1 overrides. (2) MMQ UNDER COOPMAT, opt-in: GGML_ARIFI_MMQ_UNDER_COOPMAT=1 registers (Q8_0, SX8) x Q8_1 integer-MMQ map entries (_int tiles, f32acc only) in the coopmat arm, inside GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT and only on integer-dot devices. Default OFF, byte-identical. One stderr receipt line per switch.",
++      "commit": "2d5b6b2c9d6f82401bf6b90cc26e4cb8c851a3e3",
++      "also_commits": [
++        "1ff06a6940a49f016212e20a80dfc70efc5dce01",
++        "50a9d4916304068c22e01136ff41a79643687195",
++        "cddff4b4814402ad28b2a6d43aae7e580e863fbd"
++      ],
++      "commit_pre_rebase_chain": [
++        "9a3566ca64bedfedeff20b3f36f77e85c3b8d8b3",
++        "834dc682bfd3b9596a1456741d8c13fe823ea48e",
++        "ff4b7cfe2fd3e2aee8f3ff9949c2d29419509010",
++        "3a4341ba411bc7e6f2e4734f0f70abe27e50ab6a"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl",
++        "ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
++      ],
++      "anchors": [
++        "GGML_ARIFI_SX8_MM_PACKED",
++        "GGML_ARIFI_MMQ_UNDER_COOPMAT",
++        "SX8_PACKED_DECODE"
++      ],
++      "evidence": [
++        "commit:2d5b6b2c9d6f82401bf6b90cc26e4cb8c851a3e3",
++        "commit:50a9d4916304068c22e01136ff41a79643687195",
++        "board/programs/local-inference/lanes/2026-09-15-lane-243-r52b-sx8-coopmat-mulmm-REPORT.md",
++        "OPUS-R52B-SX8-COOPMAT-MULMM-REPORT.md",
++        "r52b-evidence/25-perfmode-6rounds.txt",
++        "r52b-evidence/30-packed-decode-proof.txt",
++        "research/local-inference/lane-evidence/2026-09-14-lane-234-r48-kernels/82-q8-mmq-coopmat-1-arm0.txt",
++        "research/local-inference/lane-evidence/2026-09-14-lane-234-r48-kernels/80-r52b-full-mulmat-sweep.txt",
++        "docs/OPTIONS-REGISTRY.md"
++      ],
++      "quality_gate": "Packed decode: -p \"type_a=sx8\" 109/109, 0 FAIL, in both decode arms. sx8_levels4() checked against sx8_level() over all 2^24 byte triples, 0 mismatches (30-packed-decode-proof). Planted RED inside the packed branch only (qh1 -> qh0): packed-ON n=512 FAIL at ERR 0.990, n=64 FAIL, all n<=8 GREEN, packed-OFF arm of the same binary GREEN; restored binary green. Element-wise bit-identity on device is NOT verified (by construction only). MMQ under coopmat: S-X8 m=17408 17/17, q8_0 9/9, both n=64 rows 1/1. HQ full MUL_MAT sweep on the lane build: 2129/2130, the one FAIL is q2_K m=248320 n=6 (R49 class, unserved type); every S-X8/q8_0 row passes. R60 (cddff4b48) adds paired S-X8/q8_0 mul_mm rows at the 4B FFN shapes n=32..512: 2150/2150 pass.",
++      "workload": "Radeon 780M gfx1103 Vulkan, KHR_coopmat. test-backend-ops perf, one binary, arms env-gated, 6 interleaved rounds, m=17408 n=512 k=5120 (S-X8 and q8_0). MMQ serve-side: llama-bench pp128/tg32 on qwen35 4B Q8_0, cooled ABBA (HQ chain139 leg 4).",
++      "measured_effect": "KEPT NEUTRAL for the packed decode; a NEGATIVE result for MMQ under coopmat. NO SPEED WIN MAY BE QUOTED from this entry. Packed decode: 35169 -> 34753 us median = -1.18%, ranges overlap = TIE (all four slow rounds landed on the ON arm, disclosed); the earlier -2.20% single-dispatch reading is WITHDRAWN. MMQ under coopmat, op-level: q8_0 41511 -> 35979 us (-13.33%), S-X8 35169 -> 46348 us (+31.79% time, LOSS). The q8_0 op win did NOT survive the graph: llama-bench pp128 OFF 494.8 / 484.0 vs ON 313.5 / 313.0 t/s = -37%, tg unchanged. WI-1724 closed NEGATIVE; default stays OFF. Side finding: S-X8 mul_mm is 15.28% FASTER than q8_0 at this shape.",
++      "valid_conditions": "Packed decode is kept on the distributable-engine ground (strictly fewer loads, bit-identical), the same ground as vulkan-q6k-matvec-direct-scales. An incoming change that reverts it must be compared, not taken silently; it is not a regression to fight on speed grounds. MMQ under coopmat is a default-OFF diagnostic instrument scoped to Q8_0 and S-X8; widen it only per type with per-type measurements. Both measured on gfx1103 only.",
++      "notes": "The rebased 2d5b6b2c9 is CONTENT-EDITED (Conflict-resolved S2): upstream's b11178 pipeline map replaced the per-type CREATE_MM2 lines, so its diff differs from the pre-rebase 9a3566ca6. The packed SPIR-V names (matmul_sx8_f32 / matmul_sx8p_f32) appear only in a comment at 5432990f3 and are not used as anchors; FOR_EACH_ARIFI_MM_NOID_NOCM2_TYPE is not anchored because it is shared macro plumbing, not this mechanism. cddff4b48 (R60) is test coverage only: it refuted both R60 fix premises and added no switch.",
++      "_evidence_rows": [
++        "docs/OPTIONS-REGISTRY.md: rows GGML_ARIFI_SX8_MM_PACKED, GGML_ARIFI_MMQ_UNDER_COOPMAT"
++      ]
++    },
++    {
++      "id": "sx8-pca-companion-correction",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. The R53 PCA commit landed on arifi/main before the W1 rebase with a QUALITY Measured-effect and was never registered.",
++      "mechanism": "Recovers the S-X8 v4.3 PCA correction that GGUF conversion drops. tools/sx8/extract_sx8_pca.py pulls the PCA bases/scales out of the .sx8v43 container over HTTP ranges; tools/sx8/add_sx8_pca_to_gguf.py writes them, with the unpacked coefficient planes, into a companion GGUF (<model>.sx8pca.gguf). The loader picks the companion up as an extra file (sx8_pca_c0/c1/b0/b1 tensors via the ordinary weights_map route). build_lora_mm in src/llama-graph.cpp applies Y[n] += c0*Z0 + c1*Z1 in stock ggml ops, so every backend shares one implementation and no kernel knows about PCA. With no companion the map is empty and the graph is the pre-R53 graph, bit for bit. GGML_ARIFI_SX8_PCA=0 skips the companion; GGML_ARIFI_SX8_PCA_FILE names one explicitly.",
++      "commit": "8d8c8ca89c2455b538549058bc9d5727b9ee19cd",
++      "also_commits": [
++        "112470efbdbe7b47df05e0ac041416e550b04396"
++      ],
++      "commit_pre_rebase_chain": [
++        "325074d2ca90ec2b7ed96d74ebdec2fff1fd6cc2"
++      ],
++      "protected_paths": [
++        "src/llama-graph.cpp",
++        "src/llama-model-loader.cpp",
++        "src/llama-model-loader.h",
++        "src/llama-model.h",
++        "tests/test-sx8-pca.cpp",
++        "tools/sx8"
++      ],
++      "anchors": [
++        "GGML_ARIFI_SX8_PCA",
++        "GGML_ARIFI_SX8_PCA_FILE",
++        "sx8pca.gguf",
++        "sx8_pca_weights",
++        "get_sx8_pca"
++      ],
++      "symbols": {
++        "src/llama-model.h": [
++          "get_sx8_pca"
++        ]
++      },
++      "evidence": [
++        "commit:8d8c8ca89c2455b538549058bc9d5727b9ee19cd",
++        "commit:112470efbdbe7b47df05e0ac041416e550b04396",
++        "board/programs/local-inference/lanes/2026-09-15-lane-242-r53-sx8-pca-REPORT.md",
++        "OPUS-R53-SX8-PCA-REPORT.md",
++        "docs/OPTIONS-REGISTRY.md"
++      ],
++      "quality_gate": "test-sx8-pca runs a real 64-row slice of blk.0.ffn_down.weight against float64 goldens taken from the spec: PCA term within 7.3e-07 on CPU and 4.3e-08 on Vulkan, backends agree to 8.2e-07; a planted coefficient-sign flip is caught. test-backend-ops MUL_MAT 2128/2128, 0 FAIL on Vulkan0 in both arms (CPU MUL_MAT surface not swept: the harness printed 'Skipping CPU backend'). Weight space: the correction moves five tested tensors TOWARD a Q8_0 reference by 3.0-3.4% RMS error; sign flip and c0/c1 swap move them away. The GGUF is the same quantization run as the container (r53-evidence/40-*, EXIT=0). The companion identity guard (112470efb) is UNBUILT and UNRUN per its own commit body.",
++      "workload": "Qwen 4B S-X8 (id57 GGUF) with its 366 MB companion, llama-perplexity wikitext-2 -c 512, 580 chunks, one cell at a time, Vulkan; Q8_0 of the same model as reference.",
++      "measured_effect": "QUALITY: NO MEASURABLE PPL EFFECT; speed UNMEASURED. PPL S-X8 PCA OFF 9.9989 (+/-0.07217), PCA ON 9.9955 (+/-0.07213), Q8_0 9.9742. The -0.034% delta is sign only, indistinguishable from zero (~5% of one cell's stderr; two shorter receipts have the opposite sign). It must NOT be quoted as a gain. It does NOT reproduce the author's -2.64% (Table 4).",
++      "valid_conditions": "Only when a PCA companion GGUF sits beside (or is named for) an S-X8 v4.3 model; inert otherwise, bit for bit. Protected as a capability (the recovered correction path and its tooling), not as a speed or PPL win. Not applied to the token_embd get_rows lookup (owed).",
++      "notes": "Owed per the lane and 112470efb: build and smoke the identity guard; regenerate the 4B companion with the identity stamp; a paired per-chunk NLL dump is the gate for any signed quality claim; 27B PPL cell. tools/sx8 is a subtree this fork owns, so it is registered as a directory.",
++      "_evidence_rows": [
++        "docs/OPTIONS-REGISTRY.md: row GGML_ARIFI_SX8_PCA / GGML_ARIFI_SX8_PCA_FILE"
++      ]
++    },
++    {
++      "id": "vulkan-host-split-memtype-select",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. The R58 commit landed on arifi/main before the W1 rebase and was never registered.",
++      "mechanism": "Makes the Vulkan memory TYPE of host-split weight buffers selectable and measurable instead of fixed by ascending index. GGML_VK_HOST_SPLIT_MEMTYPE=legacy|<index>|auto and GGML_VK_HOST_SPLIT_CACHED=0|1 reorder ONLY the host-split candidates of a plan in ggml_backend_vk_buffer_type_plan_begin(); DEVICE_LOCAL candidates keep their exact position, so a load that fits device memory places exactly as before. auto reads the receipt named by GGML_VK_MEMTYPE_PROBE_FILE (written by the new test-backend-ops memtype probe, format VK_MEMTYPE_PROBE_LINE_FMT) and takes the fastest non-DEVICE_LOCAL row. Default legacy changes no byte of placement. One ungated stderr line per host-split buffer names type, heap, flags and bytes.",
++      "commit": "c0f6d3c08aa0dd16ce4a7de7a7f5e77007b2db2e",
++      "commit_pre_rebase_chain": [
++        "8c3aaa3d805160c282c7f9fc4826474d35843e81"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan-common.h"
++      ],
++      "anchors": [
++        "GGML_VK_HOST_SPLIT_MEMTYPE",
++        "GGML_VK_HOST_SPLIT_CACHED",
++        "GGML_VK_MEMTYPE_PROBE_FILE",
++        "VK_MEMTYPE_PROBE_LINE_FMT"
++      ],
++      "symbols": {
++        "ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp": [
++          "ggml_vk_host_split_memtype",
++          "ggml_vk_host_split_cached",
++          "ggml_vk_host_split_auto_type"
++        ]
++      },
++      "evidence": [
++        "commit:c0f6d3c08aa0dd16ce4a7de7a7f5e77007b2db2e",
++        "board/programs/local-inference/lanes/2026-09-15-lane-244-r58-uma-memtype-bandwidth-REPORT.md",
++        "board/hq/succession/2026-09-15-hq-seat-60-state.md",
++        "research/local-inference/lane-evidence/2026-09-14-lane-234-r48-kernels/88-c7-abplain-legacy-vs-memtype3-SX8-27b.txt",
++        "research/local-inference/lane-evidence/2026-09-14-lane-234-r48-kernels/89-c8-ab-df2-legacy-vs-memtype3-SX8-27b.txt",
++        "OPUS-R58-UMA-MEMTYPE-BANDWIDTH-REPORT.md",
++        "r58-evidence/10-memtypes.txt"
++      ],
++      "quality_gate": "Placement only; bit-identical by construction (every eligible heap-1 type on this box is HOST_COHERENT, so no flush/invalidate obligation changes). HQ receipt: S-X8 27B generated text IDENTICAL under legacy and GGML_VK_HOST_SPLIT_MEMTYPE=3 (sha 5fc09c5f..., 165 B both); all 5 host-split buffers move memtype 1 -> 3 as the receipt line states; GET_ROWS 151/151 x2; GGML_VK_HOST_SPLIT_MAX=0 still refuses (rc=1); Q4_K_XL emits zero split lines. Served c8 rolled40 35/40 in both arms.",
++      "workload": "Radeon 780M gfx1103 Vulkan, one RAM pool. S-X8 27B with ~2.97 GB of late-layer weights on the host-visible path. Probe test-backend-ops memtype, 4 GiB span, best of 3. Served A/B legacy vs GGML_VK_HOST_SPLIT_MEMTYPE=3, same binary, same file: c7 plain 2 slots x 2 launches x 8 rounds; c8 DFlash2 n-max 4, 4 slots x 2 launches x 8 rounds (HQ chain139 legs 1-3).",
++      "measured_effect": "INSTRUMENT, NEGATIVE ON THE LEVER. Probe: type 1 uncached 39.9 GB/s GPU read vs type 3 host-cached 36.1 GB/s (the already-serving type is faster). Served c7 plain: legacy 1.998 vs type 3 1.321 t/s, CI95 [-0.60, -0.13] = LOSS. Served c8 df2: 5.624 vs 5.637, CI95 [-0.17, +0.18] = TIE (its plain slots read 1.854 vs 2.03 the other way, order-noisy). Verdict (HQ seat-60 3g): memory TYPE is not a lever on this box; default stays legacy. NO SPEED WIN MAY BE QUOTED.",
++      "valid_conditions": "Default legacy is inert. Kept as an instrument (probe + switch + named receipts), for UMA devices whose host-split path offers more than one eligible type. On a device with one host-visible type it is a no-op. The lever answer is gfx1103-specific.",
++      "notes": "docs/OPTIONS-REGISTRY.md rows GGML_VK_HOST_SPLIT_MEMTYPE / _CACHED still say UNMEASURED at 5432990f3; they are stale against the HQ served verdict cited here. Rebased form re-homes the allocator hunks into ggml-vulkan-buffers.cpp (Conflict-resolved S4); the probe line writer stays in ggml-vulkan.cpp and the format macro in ggml-vulkan-common.h. The probe's device-local (type 0) run crashed (OutOfDeviceMemory) - owed probe fix.",
++      "_evidence_rows": [
++        "board/hq/succession/2026-09-15-hq-seat-60-state.md: 3d, 3f, 3g"
++      ]
++    },
++    {
++      "id": "vulkan-mmv-admit-width-switch",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. The R57 switch and its decider receipts landed on arifi/main before the W1 rebase and were never registered.",
++      "mechanism": "Makes the mat-vec admit width runtime-selectable. ggml_vk_mmv_max_cols() reads GGML_ARIFI_MMV_MAX_COLS: unset returns the inherited mul_mat_vec_max_cols (8), so the route condition in ggml_vk_mul_mat is the inherited one term for term (the added '> 0' conjunct is trivially true); =k admits mat-vec only up to n=k; =0 puts every width including n=1 on the GEMM path (ggml_vk_mul_mat_q_f16). The perf-logger _VEC label reads the same value, so a receipt names the path taken. One 'mat-vec admit width' log line, emitted only when the switch is set, so the default stderr is byte-identical.",
++      "commit": "c3ed6236ba33cd00e454b087ea5fa886f38e5389",
++      "also_commits": [
++        "636558ae8d0699867d781bfbce568f6d977f0df1",
++        "6064d93cc9ddd72db389c505d16afe29975b4b67",
++        "62a2e4531fcbf0d9fdb81fd498ad179b3ea29a14",
++        "ac525a6780efb091625364702900f623ae0c4dda",
++        "49961fdcd90b14d7906e5290d95f700b2b2af57a"
++      ],
++      "commit_pre_rebase_chain": [
++        "124416a70118ccba5f82d21ef20d17f8b122bba3",
++        "0d3f24284c5fc3c3c3fcc17719304a84b369167a",
++        "1dec47d914e4804421709e6196d524c46fbf6598",
++        "b0fdaf4db6a063051912b42ae69d72d1a5ea4178"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h",
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
++      ],
++      "anchors": [
++        "GGML_ARIFI_MMV_MAX_COLS",
++        "ggml_vk_mmv_max_cols",
++        "mat-vec admit width"
++      ],
++      "symbols": {
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h": [
++          "ggml_vk_mmv_max_cols"
++        ]
++      },
++      "evidence": [
++        "commit:c3ed6236ba33cd00e454b087ea5fa886f38e5389",
++        "commit:6064d93cc9ddd72db389c505d16afe29975b4b67",
++        "commit:62a2e4531fcbf0d9fdb81fd498ad179b3ea29a14",
++        "cache/r57-q4k-dot-wt/OPUS-R57-Q4K-CHEAPER-DOT-REPORT.md",
++        "cache/r57-q4k-dot-wt/CHECK-R57-FABLE.md",
++        "docs/OPTIONS-REGISTRY.md"
++      ],
++      "quality_gate": "test-backend-ops test -o MUL_MAT -p \"type_a=q4_K\": 71/71 OK at the default AND at =0, rc 0 (r57-evidence/20-mulmat-q4k-default.txt, 20-mulmat-q4k-gemm0.txt), covering n=1..8, odd m 1023/6271/6273 and both 27B decode shapes; n=1 on the GEMM path had never been reachable before and is correct. Re-taken at the final binary (636558ae8): 71/71 both arms, and the admit-width line appears in the =0 receipt and not in the default one. Inertness unset is source-level (term-for-term route condition).",
++      "workload": "Radeon 780M gfx1103 Vulkan, test-backend-ops perf, q4_K lm_head shape 248320x5120 (plus 17408x5120 and FFN shapes, four types), inherited arm vs GGML_ARIFI_MMV_MAX_COLS=0, 3 rounds, same-config band 0.8% median / 1.1% max.",
++      "measured_effect": "DIAGNOSTIC; no default moves on any device, served t/s UNMEASURED. Op-level decider on 248320x5120 (inherited arm): n=1..8 8975/9273/9779/11655/13012/13593/14570/15533 us, marg(4..8) = 969 us/col; n=9..16 flat at ~19.2k us, marg(9..16) = 21 us/col; a one-time 3642 us step at n=8->9. Forced GEMM at n<=8 is 2.4x worse than mat-vec, so there is no crossing below 9 on any of the three shapes or four types - the lever is DFlash2 n-max, not the admit width. Also banked: the GEMM n=5..8 penalty band (~13-22%, four types) and the q4_K n=6->7 cliff at small k (+34.6% k=2048, +27.4% k=3072, +6% k=5120).",
++      "valid_conditions": "Inert unless GGML_ARIFI_MMV_MAX_COLS is set. Protected as an instrument: it is the only way this tree times a served verify width on both the mat-vec and GEMM paths from one binary.",
++      "notes": "636558ae8 restores the receipt line that r57-basecheck.cmd's 'git checkout HEAD --' had discarded from the working tree; the 20-* inertness receipts were re-taken on it. Rebased form re-homes the helper into ggml-vulkan-types.h (Conflict-resolved S4). 62a2e4531 and 6064d93cc are test/registry rows of the same lane (lane-248).",
++      "_evidence_rows": [
++        "docs/OPTIONS-REGISTRY.md: rows GGML_ARIFI_MMV_MAX_COLS, 'q4_K MMVQ n=7 cliff at small k', 'the GEMM n=5..8 penalty band'"
++      ]
++    },
++    {
++      "id": "vulkan-mmvq-wide-rows-switch",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. The R65 knee-test commit landed on arifi/main before the W1 rebase with an op-level Measured-effect and was never registered; its only shipped code is this switch.",
++      "mechanism": "Rows-per-workgroup knob on the PLAIN q8_1 MMVQ path. rm_int_n() hands the MMVQ pipelines upstream's static 4-row RDNA3 shape at NUM_COLS index i >= device->mmvq_wide_rows_from, probed once at device creation, default 4 (the inherited rule, bit for bit). GGML_ARIFI_MMVQ_WIDE=legacy|v2 (v2 lowers the gate to i >= 3); GGML_ARIFI_MMVQ_WIDE_ROWS_FROM=<0..8> is the diagnostic that sets it outright, so one binary can measure NUM_ROWS at a fixed NUM_COLS. NUM_ROWS changes only which output rows a workgroup owns, so the arithmetic is bit-identical. Distinct from vulkan-rdna3-mmv-id-rows-switch, which covers the mul_mat_vec_id rows.",
++      "commit": "3a49c5eb9f902979b0aa21f0d794fa37e56e1aa5",
++      "also_commits": [
++        "df6e77e2e9c82d7e4972d9dcde921eb1cb9faf78"
++      ],
++      "commit_pre_rebase_chain": [
++        "199f98129ec84564d4e82873b9b70e1122d05159"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h"
++      ],
++      "anchors": [
++        "GGML_ARIFI_MMVQ_WIDE",
++        "GGML_ARIFI_MMVQ_WIDE_ROWS_FROM",
++        "mmvq_wide_rows_from"
++      ],
++      "evidence": [
++        "commit:df6e77e2e9c82d7e4972d9dcde921eb1cb9faf78",
++        "commit:3a49c5eb9f902979b0aa21f0d794fa37e56e1aa5",
++        "cache/r65-width-knee-wt/OPUS-R65-MMVQ-WIDTH-KNEE-REPORT.md",
++        "cache/r65-width-knee-wt/CHECK-R65-FABLE.md",
++        "cache/r65-width-knee-wt/r65-evidence/22-ksweep-table.txt"
++      ],
++      "quality_gate": "test-backend-ops test -o MUL_MAT -b Vulkan0, full sweep, both arms from one binary (r65-evidence/40-mulmat-default.txt, 41-mulmat-v2.txt): default 2129 OK / 1 FAIL, v2 2132 OK / 0 FAIL. The one FAIL is MUL_MAT(type_a=q3_K, m=248320, n=5, k=5120) ERR=inf, the R49 m=248320 class, and both arms compile the identical NUM_ROWS=4 pipeline at that cell, so it is not caused by the switch.",
++      "workload": "Radeon 780M gfx1103 Vulkan, test-backend-ops perf, q4_K GGML_VK_FORCE_MMVQ=1, m=248320 (m=17408 as negative control), k=4096..12288 at n=1..5, one binary, 4 interleaved rounds, median of rounds, GB/s-of-A.",
++      "measured_effect": "DIAGNOSTIC, NO WIN; default unchanged. The width-4 knee is width-locked, not a capacity: across k=4096..12288 the n=3->4 step is 16.7/15.2/10.7/10.8/8.0/16.1% and the n=1->2 step stays in the 5-9% same-config spread; validity gate n=1 k=5120 78.8 GB/s vs R61's 79.5. The v2 arm is measured SLOWER (R50 rows table at n=4: 1 -> 4 rows 61.02 -> 55.02 GB/s, -10%), so nothing should pair it expecting a win. Served t/s UNMEASURED.",
++      "valid_conditions": "Inert at the default (rows_from 4 = the inherited RDNA3 rule). Kept as the only way this tree puts a number on the rows axis of the plain MMVQ path. RDNA3 only (is_rdna3 gate).",
++      "notes": "df6e77e2e (the listed Measured-effect sha) adds perf rows only; the switch it is read through is in 3a49c5eb9 (same lane-253, trailer 'Measured-effect: none yet', so it never tripped the gate on its own). Commit_pre_rebase_chain holds df6e77e2e's original only; 3a49c5eb9's original is 1916db11b per its Cherry-picked-from trailer."
++    },
++    {
++      "id": "vulkan-q5k-mmvq-route-n5-8",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. Landed on arifi/main pre-W1 with a Measured-effect trailer (lane-252 R64) and was never registered; validate fails closed on the five R64 commits.",
++      "mechanism": "Q5_K leaves the f32 dequant mat-vec for the A-hoisted q8_1 integer-dot MMVQ pipeline at n=5..8 and k<=8192 on AMD, in the Q5_K arm of ggml_vk_should_use_mmvq_impl (inside the `vendor_id == AMD && n > 1` block; also gated on mmvq_a_hoist live and GGML_ARIFI_MMVQ_ROUTE != legacy). The load-bearing find: the `q5_k mat-vec activation-hoist: ON (n<=3)` receipt is the B-side hoist of the f32 shader, not the MMVQ A-side hoist, so at n=4..8 Q5_K ran the f32 shader unhoisted; the lever is to leave that route. The n>=5 bound follows this device's row geometry (MMVQ rm_int_n gives 1 row/workgroup at NUM_COLS<=4 and 4 at >=5; the f32 shader runs rm_kq=2 at every width). Runtime switch GGML_ARIFI_Q5K_MMVQ=<legacy|route> (`v2` is a reserved name that runs legacy), device field q5k_mmvq_route. At 5432990f3 the DEFAULT is device-probed `route` on AMD, `legacy` elsewhere - flipped by lane-254 R66 step 2(a) (b6e9accfc, President ruling 2026-09-18); R64 itself shipped it default legacy. Also carries GGML_ARIFI_MMVQ_TRACE=1, a dedup'd route trace in the ggml_vk_should_use_mmvq wrapper (default off, no behavioural effect).",
++      "commit": "b9d0b4de89103bf8bbfe6e8c00a1c96622aafdec",
++      "also_commits": [
++        "b936134852ce2b8aa802327481ebaed8909521bf",
++        "d0edc90a96b55f490c225fc385f8d6f4156078e4",
++        "a0dd546da8d622a763cbd0b854b4733b6702f4fa",
++        "bf27706b0eea3dbc24855e48658ad7e69e1fd8cc",
++        "b6e9accfc9e30e6ddff337d77b317f8183606222"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h"
++      ],
++      "anchors": [
++        "GGML_ARIFI_Q5K_MMVQ",
++        "q5k_mmvq_route",
++        "GGML_ARIFI_MMVQ_TRACE"
++      ],
++      "symbols": {
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": [
++          "ggml_vk_should_use_mmvq_impl",
++          "ggml_vk_should_use_mmvq"
++        ]
++      },
++      "evidence": [
++        "commit:b936134852ce2b8aa802327481ebaed8909521bf",
++        "commit:d0edc90a96b55f490c225fc385f8d6f4156078e4",
++        "commit:bf27706b0eea3dbc24855e48658ad7e69e1fd8cc",
++        "commit:7a771f37ba6aaa00f2d4b849dbca4d5971edd47f",
++        "docs/OPTIONS-REGISTRY.md"
++      ],
++      "quality_gate": "test-backend-ops targeted MUL_MAT 152 cases (q5_K 85 + q6_K 67; the first report's 160 was a line count, corrected in bf27706b0) x 3 modes, 0 FAIL, counts equal across arms; full MUL_MAT sweep 0 FAIL on both arms. Planted RED under DATA_A_Q5_K && NUM_COLS>1 reddens 33 cases with `route` (every one at n=5..8, none below; first report said 35) and 0 with `legacy`, restored with an empty git diff, re-green 0 FAIL. PPL at batch 8, where the route is actually exercised (HQ chain149, report section 6b): legacy 5.9918 vs route 5.9932 against +/-0.143, inside one stderr. The 27B 6/6 token-identical text cells decode at n=1 where the rule is inert, so they are a no-regression receipt only. NOT bit-identical to legacy by construction (q8_1 integer dot vs f32 madds).",
++      "workload": "Radeon 780M gfx1103 Vulkan. test-backend-ops perf MUL_MAT q5_K at 17408x5120 (ffn, the decider shape), 5120x17408 (k=17408, the k-gate shape) and the head shape, n=1..8; 6 interleaved rounds, one quiet hold, one binary, arms by env (default vs GGML_ARIFI_Q5K_MMVQ=route), paired per round (r64-evidence/13-paired-ffn.txt, 13-paired-down-head.txt, in commit 7a771f37b).",
++      "measured_effect": "OP-LEVEL, 6 paired rounds, 17408x5120 default/route: n=5 1.067, n=6 1.109, n=7 1.095, n=8 1.204, each 6/6 with ranges clear of 1.0; n=1 0.999 (untouched). Re-taken on the shipped n>=5 binary: n=5..8 = 1.056/1.120/1.075/1.152, 5-6/6. marg(4..8) q5_K 113.8 -> 5.4 us/col. The k gate is measured: at 5120x17408 forced MMVQ loses at n=5 (0.962, 0/6) and n=6 (0.968, 1/6); n=7/8 there are unresolved (0.988 3/6, 0.976 2/6; the earlier 'repeatable at every width' claim was WITHDRAWN in a0dd546da). Null control: at n<=4 route is the same code path as default yet read 0.942 at n=4, bounding the slot artifact at 1-3%, so n>=5 is the conservative geometry bound, not a fitted threshold. SERVED t/s UNMEASURED by the maker; HQ chain149 served pairing: df2 tie, plain arm noise, rolled40 37/37 - a tie IS the prediction (expected ~+0.7% at n=5, ceiling ~+1.8%).",
++      "valid_conditions": "AMD under Vulkan (the admit is fenced to VK_VENDOR_ID_AMD, n>1), mmvq_a_hoist live, GGML_ARIFI_MMVQ_ROUTE not legacy. The n>=5 and k<=8192 bounds are gfx1103 measurements, not portable constants; k=8192 is an untested midpoint between the measured k=5120 and k=17408. 90.5% of the served file's Q5_K bytes sit at k<=8192 (r64 11-shapes.txt). Non-AMD never measured and keeps legacy.",
++      "notes": "Registered from the lane's banked commit bodies and report (OPUS-R64-Q5K-MMVQ-ROUTE-REPORT.md + CHECK-R64-FABLE.md, both in commit 7a771f37b), not re-measured. The evidence tree r64-evidence/ was not carried by the W1 rebase (SOURCE PATHS ONLY); it lives in lane commit 7a771f37b. The default flip to route-on-AMD is b6e9accfc (lane-254 R66 step 2a), cited in also_commits because the entry must describe the state at 5432990f3. q6_K was declined by R64 as overfitting (sign reversal inside the served band); the q6_K route is a separate entry.",
++      "commit_pre_rebase_chain": [
++        "a9683cc26b26d45e57ee455297f502d7bdceec09",
++        "c40cdbe44f5394787e30ae9021a87a93806a6623",
++        "2776d29f9f69c382b9c28c16a060122e43c41485",
++        "ce4c96c21eee2f73ac0666501b352c3f7b532494",
++        "914f9660be759b0103736d67d612af85569cf598"
++      ]
++    },
++    {
++      "id": "vulkan-iq3-matvec-sign-hoist-n7-rows",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. Landed on arifi/main pre-W1 with a Measured-effect trailer (lane-249 R61) and was never registered; validate fails closed on the four R61 commits.",
++      "mechanism": "Two runtime levers on the iq3_s / iq3_xxs f32 mat-vec, set once at pipeline creation. (1) SIGN HOIST: specialization constant 3 ARIFI_IQ3_SIGN_HOIST in mul_mat_vec_iq3_s.comp and mul_mat_vec_iq3_xxs.comp applies the iq3 sign to the eight A-side grid values once per (l, row) instead of once per weight per column; the legacy body is kept verbatim so arm 0 codegen is the pre-R61 one; same products, same fma nest, same order = bit-identical. Switch GGML_ARIFI_IQ3_MMVQ=<legacy|v2> (the name is historical: the iq3 types have NO q8_1 MMVQ pipeline, R61 step 0(a)). (2) N7 ROWS: GGML_ARIFI_IQ3_N7_ROWS=1|2|4 sets NUM_ROWS and the workgroup denominator of the NUM_COLS==7 iq3 pipelines only (f32 and f16 B, both iq3 types; MUL_MAT_ID mirrors have NUM_COLS 1 and never see it); it clears a driver register spill (scratchMemUsageInBytes 768 at n=7, 0 elsewhere). At 5432990f3 the DEFAULTS are v2 on all devices and N7 rows 2 on AMD RDNA3 / inherited rm_iq elsewhere - both flipped by lane-254 R66 steps 2(b)/2(c) (b6e9accfc, President ruling 2026-09-18); R61 shipped both default legacy. Also ships two diagnostics: GGML_ARIFI_MMV_PIPELINE_TRACE=1 (names the selected mat-vec pipeline, default off) and the test-only GGML_ARIFI_OP_DUMP=<path> in test-backend-ops (raw-output dump + deterministic init, for sha-level arm comparison).",
++      "commit": "35058539c17da18fb7b5e04c301d013dbcc6a863",
++      "also_commits": [
++        "e0a94115baddcbd8b167c9e69b450af3b3c1a3ea",
++        "2edf5cac0c59b8999243ef87b32646919953fdac",
++        "cd1e2d3ae832f94d7ad005162e9859fb0c1df64c",
++        "85e321ae970af6daf210952b0edd2ffd6aa4b4c2",
++        "b6e9accfc9e30e6ddff337d77b317f8183606222"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp",
++        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp",
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
++      ],
++      "anchors": [
++        "ARIFI_IQ3_SIGN_HOIST",
++        "GGML_ARIFI_IQ3_MMVQ",
++        "GGML_ARIFI_IQ3_N7_ROWS",
++        "GGML_ARIFI_MMV_PIPELINE_TRACE"
++      ],
++      "evidence": [
++        "commit:35058539c17da18fb7b5e04c301d013dbcc6a863",
++        "commit:2edf5cac0c59b8999243ef87b32646919953fdac",
++        "commit:cd1e2d3ae832f94d7ad005162e9859fb0c1df64c",
++        "commit:265c6e3a20f35c1c2c770161f2efe20e914a2f67",
++        "docs/OPTIONS-REGISTRY.md"
++      ],
++      "quality_gate": "Bit-identity is the gate for both levers. Sign hoist: one deterministic GGML_ARIFI_OP_DUMP sha over 76 executed cases per arm (both iq3 types, n=1..10 and 64), legacy == control == v2 (r61-evidence/44-dump-sha256.txt; CHECK-R61-FABLE, as cited in the ggml-vulkan.cpp R66 comment); iq3 correctness logs legacy and v2 (41-/42-correct-iq3-*.txt) and full MUL_MAT sweeps both arms (45-correct-mulmat-full-*.txt). N7 rows: the four arms (unset/1/2/4) all read sha 9E70CA848F1631D86AD6918B522FA404A3AF076EB87DBDBE83B99BDB39568B02 over 71,778,304 bytes (r61-evidence/74-n7id-sha256.txt). The dump harness's own same-arm control first FAILED and caught a nondeterminism defect, fixed in 85e321ae9 - always take a same-arm control before a cross-arm compare.",
++      "workload": "Radeon 780M gfx1103 Vulkan. test-backend-ops perf MUL_MAT iq3_s / iq3_xxs (iq4_xs as control) at 248320x5120 (read cleanly by the microbench; NOT the served lm_head, which is Q4_K) and the two 27B FFN orientations 17408x5120 / 5120x17408 (labelled launch/issue-bound diagnostics), n=1..8; 6 interleaved rounds, one binary, arms by env. SPIR-V counts via spirv-opt --freeze-spec-const --fold-spec-const-op-composite -O; spill via GGML_VK_PIPELINE_STATS.",
++      "measured_effect": "SIGN HOIST: compiled cost per extra column iq3_s 1229 instr / 88 OpSelect -> 349 / 8, iq3_xxs 1227/88 -> 347/8 (iq4_xs control 334/8); WALL CLOCK NONE on gfx1103 - v2/legacy 0.991-1.013 at every n, both types, ship gate FAIL (this driver already hoists the select, CHECK-R61 F3); shipped ON for drivers that do not. N7 ROWS: iq3_s n=7 at m=248320 ~462,000 -> 20,898 us/run with =2, 22.1x (restated from 23.8x in cd1e2d3ae/CHECK-R61-FABLE F7: the 6-round legacy median is 462,277; unset and =4 read 497,199 and 461,993 on the same pipeline, a 7.6% precision bound); cliff 22.5x -> 1.02x flat; =1 gives 30,115; iq3_xxs 22,189 -> 17,706. The N7_ROWS arms are SINGLE RUNS; =2 over =1 is a recommendation from one comparison. Served t/s UNMEASURED by the maker.",
++      "valid_conditions": "Sign hoist: any device; zero gain on gfx1103, retained for instruction-issue-bound devices, bit-identical everywhere. N7 rows: the spill is a driver-allocator effect measured on AMD RDNA3 only, so the default is RDNA3-scoped; it matters only where iq3 mat-vec is dispatched at width 7 (speculative verify producing 7-token batches) and is inert at every other width.",
++      "notes": "Registered from the lane's banked commit bodies, OPTIONS-REGISTRY rows and OPUS-R61-IQ3-MMVQ-WIDE-REPORT.md (commit 265c6e3a2), not re-measured. r61-evidence/ was not carried by the W1 rebase (SOURCE PATHS ONLY); it lives in lane commit 265c6e3a2. e0a94115b is the step-0 diagnosis (test rows + pipeline trace) that refuted the brief's MMVQ-route candidate; 2edf5cac0 and cd1e2d3ae are the registry rows and the receipts/report corrections. mul_mat_vec_iq3_s.comp is also protected by vulkan-iq3s-matvec-tpb16-union-gate (ARIFI_TPB16); the sign hoist is applied to both iq3_s column bodies. The iq3_s NUM_COLS==6 rows lever (R87) is a separate entry.",
++      "commit_pre_rebase_chain": [
++        "471b1c18c615390ccf63184b5a532e88cb26c7fd",
++        "465f2cd3b2fc67b587837dac40634952fbe5cc10",
++        "fe54fa4fca759a3272cb9af22870e72fd47bfc3b",
++        "b93af00d6e1deb49a44d40dd3ea032bf0643a59c"
++      ]
++    },
++    {
++      "id": "vulkan-q6k-mmvq-route-n7-8",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. Landed on arifi/main pre-W1 with a Measured-effect trailer (lane-256 R71/R71b, the R73 engine of record) and was never registered; validate fails closed on both commits.",
++      "mechanism": "Q6_K is admitted to the q8_1 integer-dot MMVQ mat-vec (mul_mat_vec_q6_k_q8_1_f32) at n==7 and n==8, MUL_MAT only, on AMD, in the Q6_K arm of ggml_vk_should_use_mmvq_impl (above the AMD n>1 block, so it cannot share the Q5_K/Q4_K admit's shape). An is_id flag was added because MUL_MAT and MUL_MAT_ID share the predicate; MUL_MAT_ID is fenced out of `route` on evidence. GGML_ARIFI_Q6K_MMVQ gains named values `route` / `legacy` on top of the R48c diagnostics `1` (MMVQ at every width, reaches _id) and `0`; ROOT FIX: only the exact strings 0 and 1 are the diagnostic, because the old 'not 0 means 1' parser would have made `legacy` force-route. Device field q6k_mmvq_route; DEFAULT device-probed `route` on AMD, `legacy` elsewhere (R71b). R71b STRUCK the n=2/n=3 at k>8192 clause R71 shipped (a duplicate-case parser artefact). At 5432990f3 the route also carries ONE exact n=6 cell (5120x6144, RDNA3, only while the n=6 q8_1 pipeline is rows 1), added later by lane-270 R74b (316f2006d), outside this registration's commits.",
++      "commit": "c780814eb19dae75fce75549ff8d683e0470d1e3",
++      "also_commits": [
++        "2d4a8050b89e1065fd5d98bd6e0b3a5e87b3093b"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h"
++      ],
++      "anchors": [
++        "GGML_ARIFI_Q6K_MMVQ",
++        "q6k_mmvq_route"
++      ],
++      "symbols": {
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": [
++          "ggml_vk_should_use_mmvq_impl"
++        ]
++      },
++      "evidence": [
++        "commit:c780814eb19dae75fce75549ff8d683e0470d1e3",
++        "commit:2d4a8050b89e1065fd5d98bd6e0b3a5e87b3093b",
++        "commit:e9f69f1284ca0fb7d7940f5b97e4c78acf0ff6a5",
++        "commit:088cf4e0fc69c1750f0c52b7626232b287c19dbd",
++        "docs/OPTIONS-REGISTRY.md"
++      ],
++      "quality_gate": "R71 report (commit e9f69f128): full MUL_MAT + MUL_MAT_ID sweeps 0 FAIL on the route arm (MUL_MAT 2222/2222, MUL_MAT_ID 1004/1004); planted RED 46/67 with 21 FAIL on the route arm vs 67/67 on legacy, byte-identical restore; PPL -b 8 -ub 8, c512, 40 chunks, seed 1: 5.9932 +/-0.14292 vs 5.9945 +/-0.14298 (delta ~1% of one stderr); R71b adds PPL at -b 7: 5.9897 vs 5.9947, inside one stderr. Shipped-switch trace, three arms, one binary (12-trace-ship-*.txt): legacy routes 0 cells to MMVQ; route routes only the admitted widths and 0 MUL_MAT_ID. NOT bit-identical to legacy by construction.",
++      "workload": "Radeon 780M gfx1103 Vulkan. test-backend-ops perf MUL_MAT q6_K at 248320x5120, 17408x5120, 5120x17408 (R71), plus 5120x6144 and 1024x5120 (R71b G2, test cases added in c780814eb to both eval and perf lists), n=1..8; 6 interleaved counterbalanced rounds, one binary, arms by env only, paired per round (r71-evidence/13-paired.txt, 16-paired-id.txt), and every result checked on first/mean/last duplicate-case occurrence.",
++      "measured_effect": "OP-LEVEL: n=7,8 won 36/36 paired rounds across the three R71 shapes and all three occurrence picks, worst single round 1.003; medians n=7 1.400 (248320x5120) / 1.122 (17408x5120) / 1.163 (5120x17408), n=8 1.131 / 1.085 / 1.050. G2 on the two previously untested served shapes: 5120x6144 1.1254 6/6 and 1.0576 5/6, 1024x5120 1.0876 6/6 and 1.0087 5/6, no measured loss. MUL_MAT_ID: 26 executed cells gave 1 admit, 9 losses, ~1.00 medians - a wash, hence fenced. Mechanism reading NOT withdrawn: n=7,8 is the gap between an f32 cliff at n=6,7 and an MMVQ cliff at n=5,6, not evidence MMVQ is the right route in general. Served t/s UNMEASURED by the maker.",
++      "valid_conditions": "AMD under Vulkan, MUL_MAT only, n=7 and n=8 (plus the R74b exact n=6 cell on RDNA3). Non-AMD UNMEASURED and keeps legacy. When a q6_K shader lane removes either width cliff, the decider must be re-run and the admission may move; an incoming change to the q6_K route must be compared at n=5..8 on this box.",
++      "notes": "Registered from the lane's banked commit bodies and OPUS-R71-Q6K-MMVQ-ROUTE-REPORT.md (commit e9f69f128; R71 evidence in 088cf4e0f), not re-measured. r71-evidence/ was not carried by the W1 rebase. Distinct from vulkan-q6k-matvec-direct-scales (which changes the f32 shader's scale reads, not the route). The R74 rows knobs (GGML_ARIFI_Q6K_MMVQ_ROWS / _F32_ROWS) and the R74b n=6 cell are separate lane-258/270 work and are not registered here.",
++      "commit_pre_rebase_chain": [
++        "5a74342182fdfca3007db78769d9406221a8cc16",
++        "104b531da74c33acb4f3da7004221b5ca4507dd6"
++      ]
++    },
++    {
++      "id": "vulkan-q4k-mmvq-w5-column-split",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. Landed on arifi/main pre-W1 with a Measured-effect trailer (lane-271 R85) and was never registered; validate fails closed on it.",
++      "mechanism": "q4_K q8_1 MMVQ at NUM_COLS 5 and 6 dispatches a dedicated split pipeline (pipeline_mul_mat_vec_q4k_q8_1_split, `mul_mat_vec_q4_k_q8_1_f32_split`) created with specialization constant 4 ARIFI_MMVQ_OVERLAP = 3, which splits the columns 4 + (NUM_COLS-4) into two scheduling groups inside mul_mat_vecq.comp (the C3 arm). Admitted only at the measured-winning cells: n=5,6, k<=8192, and m>=131072 or m<=1024 (in ggml_vk_get_dequantize_mul_mat_vec). Device-probed ON on AMD RDNA3; GGML_ARIFI_Q4K_W5_SPLIT=0|1 overrides; device field q4k_w5_split. The shader arm (C1/C2/C3 behind default-off switches) landed in 791bfcbfb.",
++      "commit": "bc5b0b3afbf84ba111deb5de8db381a04c3ac639",
++      "also_commits": [
++        "791bfcbfb27f7a5d117b7ffd498c0f41a384a267"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp",
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h"
++      ],
++      "anchors": [
++        "GGML_ARIFI_Q4K_W5_SPLIT",
++        "pipeline_mul_mat_vec_q4k_q8_1_split",
++        "ARIFI_MMVQ_OVERLAP"
++      ],
++      "evidence": [
++        "commit:bc5b0b3afbf84ba111deb5de8db381a04c3ac639",
++        "commit:52b1e0ad107277121e595d39be5832f15043d259",
++        "research/local-inference/lane-evidence/2026-09-22-r85-q4k-width5-overlap/OPUS-R85-Q4K-WIDTH5-OVERLAP-REPORT.md",
++        "research/local-inference/lane-evidence/2026-09-22-r85-q4k-width5-overlap/13-paired-c3.txt",
++        "research/local-inference/lane-evidence/2026-09-22-r85-q4k-width5-overlap/30-gates-log.txt",
++        "research/local-inference/lane-evidence/2026-09-22-r85-q4k-width5-overlap/32-dump-sha256.txt"
++      ],
++      "quality_gate": "On the shipped config: q4_K MUL_MAT 71/71 OK and MUL_MAT_ID 74/74 OK in off, off-control and ship arms; GGML_ARIFI_OP_DUMP sha256 82029a12...3968 identical in all three = BIT-IDENTICAL, so no PPL gate is owed. Route trace (31-trace-mm-ship.txt): split taken ONLY at m=248320 k=5120, m=1023 k=4096, m=16 k=256, each at n=5 and n=6; 17408x5120 and n=4/7/8 keep the shipped pipeline. (The commit body names r85-evidence/30-gates.log; the file on disk in the studio lane-evidence copy is 30-gates-log.txt.)",
++      "workload": "Radeon 780M gfx1103 Vulkan. test-backend-ops perf MUL_MAT q4_K at 248320x5120 (GSQ-RCO output.weight is q4_K 248320x5120, 40-q4k-shapes.txt), 1024x5120, 17408x5120, 5120x17408, 5120x6144, n=4..6; 6 paired rounds per cell (r85-evidence/13-paired-c3.txt).",
++      "measured_effect": "OP-LEVEL: 248320x5120 n=5 12.75 -> 9.75 ms (x1.31, 6/6), n=6 13.64 -> 10.50 ms (x1.30, 6/6); 1024x5120 n=5 x1.06 (5/6), n=6 x1.09 (6/6); every other cell unchanged by construction. It LOSES at 17408x5120 n=5/6 (x0.96/x0.97, 0/6) and 5120x6144 n=6 (x0.95, 0/6), which is why the admit is per m, not per width. Served t/s not stated in the commit.",
++      "valid_conditions": "AMD RDNA3 under Vulkan (device probe), q4_K at n=5,6, k<=8192, m>=131072 or m<=1024. The m bounds 131072 and 1024 are UNTESTED boundaries named in the code: nothing was measured between m=1024 and m=5120, nor between 17408 and 248320.",
++      "notes": "Registered from the commit body, the lane report and the receipts in research/local-inference/lane-evidence/2026-09-22-r85-q4k-width5-overlap (also committed in lane commit 52b1e0ad1 as r85-evidence/), not re-measured. The C1 (prefetch) and C2 (rows=2) arms from 791bfcbfb stay default-off diagnostics (GGML_ARIFI_Q4K_W5_OVERLAP / _ROWS) and are not the protected win.",
++      "commit_pre_rebase_chain": [
++        "57562cc3b1fdbc0e6966146fd6e3105e20f03d71"
++      ]
++    },
++    {
++      "id": "vulkan-iq3s-matvec-n6-rows2",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. Landed on arifi/main pre-W1 with a Measured-effect trailer (lane-277 R87) and was never registered; validate fails closed on it.",
++      "mechanism": "The iq3_s NUM_COLS==6 f32-B mat-vec pipeline runs 2 rows per workgroup instead of the inherited rm_iq=4 (NUM_ROWS and the workgroup denominator together), device-probed on AMD RDNA3; inherited shape elsewhere. GGML_ARIFI_IQ3S_N6_ROWS=1|2|4 overrides on any device; `red` is a planted-defect arm for the eval-reach proof, never served. iq3_xxs untouched (served iq3_xxs got faster 5->6 in R84); the f16-B pipeline keeps the inherited shape since the 8a233ac96 correction (it has no n=6 eval/perf row). Partitions rows only, so partial products and summation order are unchanged. The ISA-level cause is unresolved: not spill (scratch 0 in every arm), occupancy not needed for the win (rows=2 178 VGPRs vs rows=4 180).",
++      "commit": "31dade0443cb9f178a9a5a0b12b581774f86677a",
++      "also_commits": [
++        "8a233ac965af4183abccf690aa0dd391f057d09b"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
++      ],
++      "anchors": [
++        "GGML_ARIFI_IQ3S_N6_ROWS",
++        "iq3s_n6_rows"
++      ],
++      "evidence": [
++        "commit:31dade0443cb9f178a9a5a0b12b581774f86677a",
++        "commit:8a233ac965af4183abccf690aa0dd391f057d09b",
++        "research/local-inference/lane-evidence/2026-09-24-r87-iq3s-n6/OPUS-R87-IQ3S-N6-REPORT.md",
++        "research/local-inference/lane-evidence/2026-09-24-r87-iq3s-n6/21-decider-table.txt",
++        "research/local-inference/lane-evidence/2026-09-24-r87-iq3s-n6/34-served-after-n6r2.txt",
++        "research/local-inference/lane-evidence/2026-09-24-r87-iq3s-n6/42-dump-sha256.txt"
++      ],
++      "quality_gate": "BIT-IDENTICAL: GGML_ARIFI_OP_DUMP sha identical across rows 4/2/1 and the flipped default (final build: sha D0286F92 unchanged, 8a233ac96 body). RED arm (GGML_ARIFI_IQ3S_N6_ROWS=red: denominator 4, spec 2) fails exactly the 7 iq3_s n=6 eval rows. Final-build gates (r87-evidence/40-postflip.log): default resolves to 2 (device-probe RDNA3), env 4 restores 4, 50/50 + 8/8 OK.",
++      "workload": "Radeon 780M gfx1103 Vulkan, Balanced plan. Isolated decider: test-backend-ops perf MUL_MAT iq3_s at the five served GSQ shapes 10240x5120, 17408x5120, 5120x17408, 5120x6144, 6144x5120, n=5..7, 6 rotated rounds. Served: GSQ-RCO IQ3_S 27B with GGML_VK_PERF_LOGGER ON, ABBA 3 rounds, width-5 vs width-6 steps.",
++      "measured_effect": "OP-LEVEL isolated decider at n=6: +20.1% 10240x5120, +23.2% 17408x5120, +41.1% 5120x17408, +23.4% 5120x6144, +20.8% 6144x5120, each 6/6; n=5 and n=7 null on every shape; rows=1 loses on 4/5. SERVED GSQ-RCO IQ3_S (logger ON, ABBA 3 rounds): iq3_s marg(5->6) +47.2 -> +23.8 ms per step; width-6 wall 522.8 -> 508.9 ms; report: iq3_s n=6 op time 139.8 -> 116.7 ms per step (-23.1 +/- 1.7).",
++      "valid_conditions": "AMD RDNA3 under Vulkan (device probe), iq3_s f32-B mat-vec at NUM_COLS==6 only - i.e. speculative verify producing 6-token batches on files with a material IQ3_S share (GSQ-RCO: iq3_s was 47% of the 6th column). Inert at every other width and type.",
++      "notes": "Registered from the commit bodies and the lane-277 report/receipts in research/local-inference/lane-evidence/2026-09-24-r87-iq3s-n6, not re-measured. Same lever class as the R61 N7 rows switch (vulkan-iq3-matvec-sign-hoist-n7-rows) at a different width; kept a separate entry because the width, basis and default scope differ. The logger-ON served numbers carry the perf-logger overhead.",
++      "commit_pre_rebase_chain": [
++        "d52f55a7dcd731372ff0c79d657a9e9f6a288ff6"
++      ]
++    },
++    {
++      "id": "vulkan-iq4xs-q8_1-mmvq-admit-table",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. Landed on arifi/main pre-W1 with a Measured-effect trailer (lane-262 R75) and was never registered. Registered although it ships DEFAULT legacy, on the same reading as vulkan-rocmfp4-fast-q8_1-mmvq: default-off describes the shipped default, not the existence of the mechanism.",
++      "mechanism": "IQ4_XS gets a q8_1 integer-dot MMVQ mat-vec arm (split-API mmvq funcs, K_PER_ITER 16, R48b A-hoist; b8ca07de6) and an exact six-cell admit in ggml_vk_should_use_mmvq_impl: MUL_MAT only, AMD, A-hoist live, 5120x17408 at n=2..4 and 17408/12288/10240 x 5120 at n=6. IQ4_XS decides in that function and NEVER falls through to the generic `n > 1 -> true` rule (8d5a1f5df), so registering the q8_1 pipeline cannot silently move every n>1 iq4_xs matmul. GGML_ARIFI_IQ4XS_MMVQ=<legacy|route|all> (exact strings), device field iq4xs_mmvq_route. 6ed3910b0 flipped `route` default on AMD; c00ce0742 reverted the DEFAULT to `legacy` on every vendor because the greedy identity gate FAILED, so at 5432990f3 `route` is opt-in. Legacy = the dedicated f32 shader of vulkan-iq4xs-matvec-dedicated. At 5432990f3 lane-296 W1 also exposes upstream b1ff4ca23's arm (GGML_ARIFI_IQ4XS_MMVQ=upstream, GGML_ARIFI_IQ4XS_MMVQ_BODY=upstream, df9ecc1f7); the protected thing here is the fork's six-cell admit plus the never-fall-through rule and its shader arm, not the mere existence of an iq4_xs q8_1 pipeline.",
++      "commit": "6ed3910b0f05acb2d8ddba9488dafbef3633fe67",
++      "also_commits": [
++        "c00ce07429709b2457062768bcedcfc4c42843ee",
++        "8d5a1f5dfa72f6443babba3f9a5d559f9864ac8f",
++        "b8ca07de65ab568a2cde6ffec9702a5f4737d3fe"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h",
++        "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl"
++      ],
++      "anchors": [
++        "GGML_ARIFI_IQ4XS_MMVQ",
++        "iq4xs_mmvq_route"
++      ],
++      "symbols": {
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": [
++          "ggml_vk_should_use_mmvq_impl"
++        ]
++      },
++      "evidence": [
++        "commit:6ed3910b0f05acb2d8ddba9488dafbef3633fe67",
++        "commit:c00ce07429709b2457062768bcedcfc4c42843ee",
++        "commit:b1bab0ac1b47bb0925777528eff1e852ac279a03",
++        "research/local-inference/lane-evidence/2026-09-22-r75-iq4xs-mmvq/25-paired.txt",
++        "research/local-inference/lane-evidence/2026-09-22-r75-iq4xs-mmvq/56-greedy-verdict.txt",
++        "docs/OPTIONS-REGISTRY.md"
++      ],
++      "quality_gate": "Targeted 101/101 and full 3300/3300 on both arms; planted RED reddens exactly the six cells, byte-identical restore; PPL at -b n -ub n for n = 6, 4, 3, 2 (legacy -> route): 5.9932 -> 5.9917, 5.9913 -> 5.9925, 5.9897 -> 5.9913, 5.9915 -> 5.9900, all within +/-0.143. GREEDY IDENTITY FAILED: 9/12 pairs token-identical, 3/12 differ, all on the Unsloth Qwen3.8-27B UD-Q4_K_XL file (56-greedy-verdict.txt) - which is why the default is legacy. Not bit-identical by construction (integer dot).",
++      "workload": "Radeon 780M gfx1103 Vulkan. test-backend-ops perf MUL_MAT iq4_xs on the seven served iq4_xs shapes (incl. 5120x17408, 17408/12288/10240/6144x5120, 5120x6144, 1024x5120), n=1..8, 6 counterbalanced paired rounds, arms legacy vs all; bar pre-registered at eaa386f07 (>=5/6 won AND median >=1.03 on first/mean/last occurrence, a loss on any pick never admitted).",
++      "measured_effect": "OP-LEVEL (r75-evidence/25-paired.txt): 5120x17408 n=2 1.051 (6/6), n=3 1.042 (6/6), n=4 1.056 (5/6); 17408/12288/10240 x 5120 n=6 1.084 (6/6) / 1.112 (5/6) / 1.106 (5/6). The served verify width is a REFUTATION: at n=5 the route loses on all seven served shapes (0.70-0.97, 0-2/6), and it loses at n=7,8 everywhere. iq4_xs step cost: S(6) -6.35 ms Q4_K_XL / -4.25 ms GSQ, S(4) -0.54 / -1.62 ms, S(5) unchanged (46-iq4xs-component.txt). MUL_MAT_ID: 10 synthetic cells, 0 admits, 5 losses, 5 ties - fenced. DEFAULT legacy, so served effect of the default is zero; served t/s of `route` UNMEASURED by the maker.",
++      "valid_conditions": "AMD under Vulkan, A-hoist live, MUL_MAT only, the six exact (m, n, k) cells, and only when GGML_ARIFI_IQ4XS_MMVQ=route is set. Not token-identical to legacy (greedy 3/12 differ on UD-Q4_K_XL). UNMEASURED: non-AMD, served t/s, every unlisted shape.",
++      "notes": "Registered from the commit bodies, the OPTIONS-REGISTRY row and the lane-262 receipts (research/local-inference/lane-evidence/2026-09-22-r75-iq4xs-mmvq; also in lane commit b1bab0ac1 as r75-evidence/), not re-measured. NOT attached to vulkan-iq4xs-matvec-dedicated: that entry is the f32 dequant shader (the `legacy` arm here); this is a q8_1 integer-dot route with its own admit. mul_mat_vecq_funcs.glsl is also protected by vulkan-rocmfp4-fast-q8_1-mmvq. The W1 conflict resolution for b8ca07de6 records 'OWED rig A/B upstream K32 arm vs ours'.",
++      "commit_pre_rebase_chain": [
++        "339f8ad351c66d913640e4337008c1935172ab2d"
++      ]
++    },
++    {
++      "id": "vulkan-cm1-width-rule-f16b-guard",
++      "status": "active",
++      "mechanism": "RDNA3 coopmat1 mat-mat width rule on top of upstream b11178's int8 coopmat1 MMQ (70c4e1582) and its forced f16-B conversion (91f6a6cf3 pipeline map). (1) N11 guard: the f32->f16 B conversion is taken only where a {type,F16} pipeline exists, so f32-B-only fork types (S-X8) keep their own mul_mm instead of falling to full A dequant (GGML_ARIFI_CM1_F16B=auto|upstream|never). (2) N12 width rule, device-probe default on RDNA3: int8 coopmat1 from n = 48 (cm1_int_min_n), r86i f32-B coopmat1 mul_mm below; auto f16-B from n = 24 (cm1_f16b_min_n); the small-n ffn_down int8 exception for IQ4_XS/Q6_K with k >= 2m defaults OFF (GGML_ARIFI_CM1_INT_SMALLN=down restores it). Every lever is a runtime switch with the device probe as default (runtime-switch law).",
++      "commit": "5432990f3d41721bdb7f600bb977b80c372f8a41",
++      "also_commits": [
++        "aa6ebfce21239d0cb27b17ec75c76de72c04d951",
++        "e0d733dde09852753e3cad99df67c2e1f2f28e70",
++        "11eef8565e73dce91095c305b741b3fbb85ae8d1"
++      ],
++      "_also_commits_why": "aa6ebfce2 adds the N11 guard and the width switch (default 0 = upstream); e0d733dde sets the RDNA3 n >= 48 default; 11eef8565 decouples the f16-B floor (24); 5432990f3 flips the small-n ffn_down exception OFF. Their Measured-effect trailers read 'pending runN' because each commit landed before its witness run; the measured numbers below are the witnessed ones. 5432990f3 carries no Measured-effect trailer (subject line holds the numbers) - a provenance gap recorded here, not rewritten, because rewriting would move the candidate sha under every receipt.",
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/ggml-vulkan-types.h"
++      ],
++      "anchors": [
++        "GGML_ARIFI_CM1_F16B",
++        "GGML_ARIFI_CM1_INT_MIN_N",
++        "GGML_ARIFI_CM1_INT_SMALLN",
++        "GGML_ARIFI_CM1_F16B_MIN_N",
++        "cm1_int_min_n",
++        "cm1_f16b_min_n"
++      ],
++      "symbols": {
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp": [
++          "ggml_vk_mul_mat_q_f16"
++        ]
++      },
++      "evidence": [
++        "research/local-inference/lane-evidence/2026-09-25-w1-rebase-b11178/W1-COLLISION-MAP.md",
++        "cache/lane296/ladder3.txt",
++        "cache/lane296/ladder6.txt",
++        "cache/lane296/ladder7.txt",
++        "cache/lane296/ladder8.txt",
++        "cache/lane296/ladder9.txt",
++        "cache/lane296/ladder10.txt",
++        "commit:5432990f3d41721bdb7f600bb977b80c372f8a41"
++      ],
++      "quality_gate": "llama-perplexity wikitext-2 40 chunks at the mat-mat batch (-ub 512 and served -ub 32), union vs r86i, |delta| <= r86i stderr: 5/5 PASS on 5432990f3 (Q4_K_XL ub512 5.9956 vs 6.0085 +/-0.1437; GSQ ub512 6.0289 vs 6.0447; S-X8 ub512 5.9558 vs 5.9517; Q4_K_XL ub32 6.0114 vs 6.0157; GSQ ub32 6.0473 vs 6.0480), -ub 512 bit-identical to 11eef8565 on all 3 models. Greedy 5/6 vs r86i (S-X8 p2 differs at char 134, predates lane-296: the W1 tip diverges at char 49); 6/6 only vs mixed references (Q4 vs r86i, S-X8 vs 11eef8565). PPL -b 6 is NOT a valid gate here: ubatch <= 6 never reaches the mat-mat route.",
++      "workload": "Served prefill on the 780M (RDNA3, gfx1103): llama-perplexity 40 chunks -ub 32 wall time on Huihui Qwen3.8-27B Q4_K_XL and GSQ IQ3_S, same measurement window vs r86i, counterbalanced; op level test-backend-ops perf -o MUL_MAT at 5120x17408 / 17408x5120 / 4096x14336, n = 9..512, per type (q4_K, q5_K, q6_K, iq4_xs, q8_0, sx8).",
++      "measured_effect": "Served -ub 32 prefill 0.919x of r86i time on Q4_K_XL and 0.939x on GSQ (run 10, same window); S-X8 0.915x (run 9). vs the W1 tip (upstream form): 1.54x faster at served -ub 32 (122.1 s vs 187.6 s, run 6). N11: S-X8 mat-mat 33.7-56.5 ms vs upstream-form 58.3-90.9 ms (0.998-1.007x of r86i vs 0.58-0.62x).",
++      "valid_conditions": "RDNA3 with coopmat1 int8 support (device probe). Elsewhere cm1_int_min_n = cm1_f16b_min_n = 0 = upstream behaviour. Upstream int8 coopmat1 still wins from n >= 48 (1.04-3.53x) and for IQ4_XS/Q6_K at 5120x17408 at small n when SMALLN=down is set; M33 (int8 from n = 33) and a medium-tile int8 at n <= 32 are banked levers, unmeasured.",
++      "notes": "Three-arm table and per-side mechanism paragraphs: W1-COLLISION-MAP.md sections N11, N12 and section 4. Literal vanilla-b11178 upstream arm: see the map's Sol-fix section.",
++      "_registered": "2026-09-27, lane-296 Sol-fix pass. The fail-closed validator named aa6ebfce2 / e0d733dde / 11eef8565 unregistered; 5432990f3 registered with them as the shipped form."
+     }
+   ]
+ }
+diff --git a/tools/arifi-sync/replay-provenance.json b/tools/arifi-sync/replay-provenance.json
+new file mode 100644
+index 0000000000..169c65048d
+--- /dev/null
++++ b/tools/arifi-sync/replay-provenance.json
+@@ -0,0 +1,523 @@
++{
++  "mappings": [
++    {
++      "original": "d026313af406afd8d780bff77a862c0b0b954878",
++      "patch_id": "de6c08e13e104fcd7822f5f08ec8381034db6fa0",
++      "rebased": "6ffe2b530105e078c1bf3973126d03d72f95323d",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:08:32+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "chore: establish ArifiLabs fork identity and retained notices",
++      "trailers": {
++        "Measured-effect": "Documentation and retained-notice baseline only; no runtime change.",
++        "Origin": "ArifiLabs lane-110",
++        "Taken-from": "ggml-org/llama.cpp@571d0d540df04f25298d0e159e520d9fc62ed121,Tiiny-AI/PowerInfer@8bd56d69906c9d2dba4d3bf6899763401e01a9a4,charlie12345/ROCmFPX@a6a93765f7ce9779c13f9881164a65f7a9f31198"
++      }
++    },
++    {
++      "original": "e258435da9a92398d778b970f8ba5764ebc4cade",
++      "patch_id": "7434a58a673b22e4b99ccd9e25b0d7f2d4d90635",
++      "rebased": "d41faca3ef0049ca62cf310f5eacdeb89c311533",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:08:38+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "powerinfer: vendor streaming library incl. lane-110 Windows port [series 0003]",
++      "trailers": {
++        "Measured-effect": "Carries io_uring->Win32 read path + -mprefer-vector-width=128 AVX-spill cure (novel MinGW codegen finding, RESULTS lane-110).",
++        "Origin": "ArifiLabs lane-110",
++        "Taken-from": "Tiiny-AI/PowerInfer@8bd56d69906c9d2dba4d3bf6899763401e01a9a4"
++      }
++    },
++    {
++      "original": "e5b4c84e1c024e5db8a390b95e8d6581f96853e7",
++      "patch_id": "29265ee749f54c051d1a1655875ed08a06c4fcfa",
++      "rebased": "9f4d5285c833a5ff3cadfb962c47ff2d33f381f6",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:08:42+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "powerinfer: expert-bundle loader + GENERATE_EXPERT_BUNDLE [series 0005]",
++      "trailers": {
++        "Measured-effect": "First disk-streamed sparse inference on Windows proven on this path (RESULTS M2a).",
++        "Origin": "ArifiLabs lane-110",
++        "Taken-from": "Tiiny-AI/PowerInfer@8bd56d69906c9d2dba4d3bf6899763401e01a9a4"
++      }
++    },
++    {
++      "original": "782a730b5b293482e3bf662f3131c680830f8d90",
++      "patch_id": "7d7ce060c0c838f2197b10b649936e8cef4380e5",
++      "rebased": "e879872d752a1cd98d9987f66a142824c4d32535",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:08:47+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "powerinfer: generic MoE streaming hook, SiLU op-type, standalone expert prefetch [series 0006+0009]",
++      "trailers": {
++        "Measured-effect": "Warm-regime fix: server decode climbs 5.99/9.79/10.48/12.31 t/s vs fork best 9.00 (RESULTS lane-110C).",
++        "Origin": "ArifiLabs lane-110",
++        "Taken-from": "Tiiny-AI/PowerInfer@8bd56d69906c9d2dba4d3bf6899763401e01a9a4"
++      }
++    },
++    {
++      "original": "cfb977c9356fab569e0b9d32ca2da58abf7f9218",
++      "patch_id": "3f3aaf0cc3477736b0955519ac4c5428dc1b4e99",
++      "rebased": "fddd31e2a4ec16a03eee69ade6a8ba794317af45",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:08:51+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "powerinfer: per-ubatch pipeline init, guarded reuse, PROF field [series 0007+0010]",
++      "trailers": {
++        "Measured-effect": "Reuse: 9/263 rebuilds, init 2472us->0-2us (~2.5ms/token), coherent (RESULTS lane-110C round 2).",
++        "Origin": "ArifiLabs lane-110",
++        "Taken-from": "Tiiny-AI/PowerInfer@8bd56d69906c9d2dba4d3bf6899763401e01a9a4"
++      }
++    },
++    {
++      "original": "a6324c47c091fcd1fccc6458cf3864be8bbc13e5",
++      "patch_id": "caaea2f2f9060f0e1eb1fd1c06806d9bc6c54b28",
++      "rebased": "976703cc27f3187ea4d61bb69eb1915983e56605",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:09:00+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "powerinfer: GPU-safe staging, CPU zero-copy, LANE110_PROF [series 0011]",
++      "trailers": {
++        "Measured-effect": "GPU -ngl99 -cmoe clean 4.9 t/s; CPU zero-copy kept (RESULTS lane-110B/C).",
++        "Origin": "ArifiLabs lane-110",
++        "Taken-from": "Tiiny-AI/PowerInfer@8bd56d69906c9d2dba4d3bf6899763401e01a9a4"
++      }
++    },
++    {
++      "original": "6a022922ff477c188ab179620cacb9e12419ced4",
++      "patch_id": "517f314fb7a23da3874052e55d1822d282614796",
++      "rebased": "02149696b15fdc197fad42d30d77388b9439f76c",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:09:05+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "community: llama : pin mmap-backed CPU weights for faster H2D uploads",
++      "trailers": {
++        "Measured-effect": "inert on GPU-resident unified memory (ki-prefetch-experts-conditionality); carried for discrete-GPU + streamed-path trial owed",
++        "Origin": "ArifiLabs lane-110",
++        "Taken-from": "thecodacus/llama.cpp@20f5994bfeb91d24da328077c4b6095998cc9888"
++      }
++    },
++    {
++      "original": "cc296d507d18a2649ec6604c108585ee1502d290",
++      "patch_id": "44b2b9e0bdf9d9c2745da874b345fd270d632a1a",
++      "rebased": "f332b35b97fdb99ad20e01acba99b8e2e378ac6b",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:09:09+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "community: ggml : overlap offloaded expert weight uploads with compute",
++      "trailers": {
++        "Measured-effect": "inert on GPU-resident unified memory (ki-prefetch-experts-conditionality); carried for discrete-GPU + streamed-path trial owed",
++        "Origin": "ArifiLabs lane-110",
++        "Taken-from": "thecodacus/llama.cpp@1163cb34939fe4a9cb07aec034c5954144497ae9"
++      }
++    },
++    {
++      "original": "cba2e95386fdf60fc1c4772bb6e97a8b95c528f8",
++      "patch_id": "6cbd8872294bd8b17c08ebfe55d7e2a910c9d8e9",
++      "rebased": "154819d7fcbf4bd3eb2fb9da0b2914cfa99e608c",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:09:14+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "community: ggml : size prefetch slots per layer and fix fallback use-after-free",
++      "trailers": {
++        "Measured-effect": "inert on GPU-resident unified memory (ki-prefetch-experts-conditionality); carried for discrete-GPU + streamed-path trial owed",
++        "Origin": "ArifiLabs lane-110",
++        "Taken-from": "thecodacus/llama.cpp@5f83fbbe7c668c59912a1fe09e86a0ef580406c4"
++      }
++    },
++    {
++      "original": "57cddcfd3348d753f0585bf902acd5d55d45d77e",
++      "patch_id": "3a37c375791c8e605ee803f66282e3bd5a9ef716",
++      "rebased": "3fcab81346e040543611c816d77cd7ddc7aa0b20",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:09:23+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "patches: make the series generator implement its own convergence rule",
++      "trailers": {
++        "Measured-effect": "tooling and generated-artifact rules only; no engine behaviour changed. series check --ref master goes 1 -> 0; 40/40 patches byte-identical to a fresh generation and git am replays them to a tree identical to master outside patches/series.",
++        "Origin": "",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "ef4792cab284e0d0fb984c3910227a43a07661f1",
++      "patch_id": "c928112bfd60cf0651bc9fbb5bc08390809619ca",
++      "rebased": "51a99e0e19e15143d4aac45da5ef08d7dfa6d732",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:09:27+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "docs: OPTIONS-REGISTRY GGML_ARIFI_VNNI_REPACK - bit-divergence ADJUDICATED, performance MEASURED",
++      "trailers": {
++        "Measured-effect": "documentation only; this commit changes one line of docs/OPTIONS-REGISTRY.md and no code, build option or engine behaviour. The numbers the row records were measured by the run it documents, on the ArifiLabs rig only (Beelink SER7, Radeon 780M, Windows): CPU-only prompt +326.7% / +441.8% and decode +19.9% / +23.6%; Vulkan prompt -77.1% / -88.1% and decode +20.1% / +28.4%. UNMEASURED on any other machine.",
++        "Origin": "ArifiLabs/lane-110C",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "43f2d29b15a0e9276d7c39b4498e9cbfc626b4b9",
++      "patch_id": "4baadff92505343c3eb884e9e62d15caacc2ca51",
++      "rebased": "518d06764b3bec89208ad0041353574efb78d5ad",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:09:32+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "ggml-cpu: GGML_ARIFI_VNNI_REPACK defaults to OFF (diverging from upstream, on measurement)",
++      "trailers": {
++        "Measured-effect": "default-only change; neither kernel is touched. An unset environment now takes the no-repack branch, which on the default Vulkan build avoids the measured -77.1%/-88.1% prompt regression and forgoes the +20.1%/+28.4% decode gain. GGML_ARIFI_VNNI_REPACK=1 restores the previous behaviour exactly. Engagement re-verified in both arms; performance deliberately not re-measured, since the flip changes branch selection and not either kernel.",
++        "Origin": "",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "2c27c91a91309630243d924b530332928c7706ac",
++      "patch_id": "4496e7f973294e6ca90be5ec88d998b142146f5d",
++      "rebased": "f9224cefb2d031b218dd64a64c5025ec91d0c085",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:09:41+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "llama: ROCmFPX file types, quantizer wiring and the gguf-py registry",
++      "trailers": {
++        "Measured-effect": "no behaviour change on any existing file type; the C wiring is inside GGML_ARIFI_ROCMFPX_FORMATS and the default build is OFF. The ftype enum values and their name strings are unconditional because a file may carry them regardless of what this build can decode. gguf-py has no build gate and is unconditional by nature. Quantizer output for these types is UNMEASURED - no round-trip quantization was performed.",
++        "Origin": "ArifiLabs/rocmfp-weight-formats",
++        "Taken-from": "charlie12345/ROCmFPX@3edc3d31e"
++      }
++    },
++    {
++      "original": "39940ceb6c42cf5d3e6c280060c70972e7f2865e",
++      "patch_id": "0cad91d7f3f83fddc29f8957e15b8da22839619b",
++      "rebased": "249d5b5a45babb043b63a4bc27ed12e5843df96b",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:09:51+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "sync: bump base to upstream b10173 (e9fa0781f) \u2014 series replayed (1 hand-resolved conflict: loader load-mode refactor e6dd0e29a), judge harness wired + exercised (F-085 llama-server, g128 ternary 27B PASS), pins updated, series regenerated",
++      "trailers": {
++        "Measured-effect": "three-arm bench 2026-07-28 \u2014 F>=O all cells; U refuses g128 (expected); gemma fit-path F 39.1 t/s vs stock-upstream 15-21 t/s",
++        "Origin": "lane-110D mission #1 (currency -> replay -> build -> judge, all PASS)",
++        "Taken-from": "upstream b10173 e9fa0781f"
++      }
++    },
++    {
++      "original": "eae07ca1c6a326ef8b56ab04af6548cfae2cc67c",
++      "patch_id": "0ea017c22daed711003bb3a28c02913dc0eeb507",
++      "rebased": "169bbd309ed0efe87671bccdcfa4319e8a8bd465",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:10:00+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "repack: dual residency measured - both wins held; fix the hot-path cost that ate the first one",
++      "trailers": {
++        "Measured-effect": "decode +22.0% (mixed) and +23.7% (all-Q2_0) against mode 0, ranges DISJOINT, while\n  prefill is held at baseline instead of collapsing -65%/-80% as mode 1 does. Shadow cost 4.68 /\n  84.16 / 95.98 MiB on the 4- / 72- / 168-tensor models, byte-for-byte equal to what mode 1 places\n  in CPU_REPACK. Precision unchanged: with --no-op-offload, which isolates the shadow from where\n  prefill ran, mode 2 is bit-identical to mode 1 on all six model x prompt cells (max |delta\n  logprob| 0.000000000, deterministic 3/3). Re-verified on the shipped binary after the hot-path\n  fix. Evidence: research/local-inference/trial-evidence/110/dual-residency/",
++        "Origin": "ArifiLabs lane-110E, F-09 exit 1",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "ac294e8f176804c3d6b9a5a0f7ac3975732d5f0d",
++      "patch_id": "88a229c71f1694131a77cea2e328fce4ad95d4e4",
++      "rebased": "c86a044713d5249f6323282f984a7f958bd86595",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:10:04+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "docs: the g128 repack SPEED numbers, measured",
++      "trailers": {
++        "Measured-effect": "no code changed; documents measured throughput. decode 2.01 ->\n  6.67/6.69 tok/s and prompt 59.09 -> 17.44/85.84 on RIG-A, n=12 per cell, all\n  ranges disjoint.",
++        "Origin": "lane-110F, mission #1 (g128 CPU repack kernels) - the SPEED half",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "f932903cd7246e407773dde403987de162772213",
++      "patch_id": "06bc90fbd661d831a5744f6df478c8d14cd80ee3",
++      "rebased": "0816b04ddc47ed10b401f9d7bcfc4cc3a1e0a153",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:10:09+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "F-06: measure the GPU tier on one binary, and count the placement the prompt claim rested on",
++      "trailers": {
++        "Measured-effect": "RIG-A, llama-server, Ternary-Bonsai-8B-Q2_0.g128.gguf, 519-token\n  prefill, n_predict 128, three interleaved replicates, one binary. GPU (-ngl 99)\n  327.38 prompt / 34.40 decode; CPU floor 58.15 / 1.88; CPU dual 85.62 / 6.56.\n  The two arms with published values reproduced within 6% as the run's own\n  known-answer control. Placement counted separately with GGML_SCHED_DEBUG=2:\n  mode 2 identical to mode 0 across all 24 graph dumps, CPU share 4 of 253.",
++        "Origin": "lane-110G missions 1a and 1d.",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "5bb165467c1d2fa0e1ee694362556552727ee97c",
++      "patch_id": "4fa0d786b9c96e392ec201d54a616c43d696b572",
++      "rebased": "0b0926702450e323018249679f364c1787e86ed4",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:10:13+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "powerinfer: MAX_N_CACHED admitted two values that break the eviction invariant",
++      "trailers": {
++        "Measured-effect": "no throughput effect by construction - the default (6144) and\n  unset paths are unchanged. Behaviour verified on the built llama-server on\n  RIG-A: MAX_N_CACHED=512 and MAX_N_CACHED=-1 are refused with the new message,\n  513 and unset start normally. Before the change the same binary shape accepted\n  512, and accepted -1 as 18446744073709551615.",
++        "Origin": "lane-110G mission #3.1 - found while establishing what the expert-stream\n  submit path actually does.",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "69472e9279a6c8c9151b2c287533e172ce25bb67",
++      "patch_id": "1898a73dd6552736a730a998cf7c2af38abf4315",
++      "rebased": "8164d2b48f991e4ba3373383b1c45167227f4c8f",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:10:18+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "registry: our DSpark verdict was never ours -- the drafter cannot load on this fork",
++      "trailers": {
++        "Measured-effect": "no throughput measurement was possible -- that IS the result.\n  Evidence is the two load failures, quoted verbatim, plus the offset arithmetic\n  in trial-evidence/110/dspark/inspect_drafter.py.",
++        "Origin": "lane-110G mission 1f, reopened by the President after I had left it\n  untouched and called it done.",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "4e32775f4f7a8350b7b793fea6f561994c95b3be",
++      "patch_id": "300eb929e96fe9c4404f49513b7c0c93dedae726",
++      "rebased": "118a60223aef9b49327076f42753ec59c6992fe1",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:10:23+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "moe-cache: heat-protected eviction keeps hot experts resident (turboquant tail)",
++      "trailers": {
++        "Measured-effect": "UNMEASURED here. The source reports +12% TG (soft) / +7.5%\n  (auto) on an RTX 5090 with Laguna S-2.1 - a CUDA measurement on hardware this\n  estate does not have, quoted, NOT adopted as our number.",
++        "Origin": "taken at tip d14e36827 for the five touched files; nothing else carried",
++        "Taken-from": "llama-cpp-turboquant@730cc87ed (+ its doc follow-up cef75bf06)"
++      }
++    },
++    {
++      "original": "2fbed2efda4d815203a14e5074072d62b6fe27b6",
++      "patch_id": "b315185ab1d738bbd508f2f0145688b826a58916",
++      "rebased": "71f2b2316a05d3d119e9312e04e800817caae5f9",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:10:27+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "sync: regenerate series for lane-158 K-cache stack",
++      "trailers": {
++        "Measured-effect": "359-patch series regenerated from 9d77fa172 through f56cf26f1",
++        "Origin": "ArifiLabs generated patch custody",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "29db08b6e20a86fbfb22d326ac32f12f64432fe8",
++      "patch_id": "0086925fb64dc9e31885a0597ed611461d9256a0",
++      "rebased": "864b11510cd5ccab74df71399c8502ea2336e63c",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:10:32+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "sync: regenerate series after lane-158 source review",
++      "trailers": {
++        "Measured-effect": "360-patch series regenerated from 9d77fa172 through efc3eec68",
++        "Origin": "ArifiLabs generated patch custody",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "52141b22c2dc2320c233d053c2fdb1bc49965d22",
++      "patch_id": "49c8f53bc6acac04793129b22515b647f1dc4c7d",
++      "rebased": "364a9bc0ef3c13242b5d2dd3940e13a0e9eab6b0",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:10:36+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "sync: regenerate series after OFF-identity guard",
++      "trailers": {
++        "Measured-effect": "361-patch series regenerated from 9d77fa172 through 8fd1ef2f0",
++        "Origin": "ArifiLabs generated patch custody",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "541fa63744a895dcbf537bffb17e5fee791ce121",
++      "patch_id": "ff685743ba7606c3a411945aadb8e00977c06fbd",
++      "rebased": "5e675284dc1c1145e36770b0f2c4a058ff85c05a",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:10:45+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "metal: lift TQ3_4S kernel set from tq3/master (5 files + alloc hook)",
++      "trailers": {
++        "Measured-effect": "UNMEASURED ON THIS RIG (no Metal silicon); tq3-side reference: M3 Pro 27B decode ~4 t/s, ~27x over CPU (02d51f048)",
++        "Origin": "lane-160 TQ3_4S hunk port; dispatch-hook placement restored to the 02d51f048 original (tip regression); TQ3_4S-only trim",
++        "Taken-from": "turbo-tan/llama.cpp-tq3@854516439"
++      }
++    },
++    {
++      "original": "3c5ac214e9c1dbd189ccc18c4cca88decb54b404",
++      "patch_id": "f676964f22c61bf72da178bc5a466b0e78791cc5",
++      "rebased": "bb6c17b86d152e6890277e72ed57fe7a715766e2",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:10:50+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "vulkan: subgroup-cooperative TQ mat-vec (tq3_1s/tq4_1s/tq3_4s)",
++      "trailers": {
++        "Measured-effect": "27B tq3_4s tg32 0.67->1.80 t/s; 0.5b tq4_1s tg64 44.7->126.7, tq3_1s 45.5->107.1; mat-vec kernel n=1 3.1-3.4x (780M, evidence lane-163)",
++        "Origin": "ArifiLabs (native)",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "c5982591fcf4375ae661362701e7cfefa7f663e3",
++      "patch_id": "737bc3f2fe3e02a6209efb1c0b7261f5e98b1539",
++      "rebased": "2a03445f4b421bb3bed3c380f09b5429cb44a715",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:10:55+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "escha: F-125 fix - full 64-bit pair sourcing + row-parity correction (K=2 AND K=3)",
++      "trailers": {
++        "Measured-effect": "Escha-W2 native decode goes from token salad to coherent; worst-projection weight correlation 0.9358, K=2 and K=3 both correct",
++        "Origin": "ArifiLabs (native)",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "1f1864aba7c0a875c0bc50f7ab2bbe74cbd7e361",
++      "patch_id": "caec294b0906362462eeea94a2780046a8a47c12",
++      "rebased": "366e6fa09ab873b1c1ebd02f979372bb9443230b",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:11:13+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "escha tests: cover the column-blocked kernel AT MODEL DEPTH (ncols=9, real 27B shapes)",
++      "trailers": {
++        "Measured-effect": "shipped C=8 prefill path now covered at real 27B shapes, 10/10 GREEN",
++        "Origin": "ArifiLabs (native)",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "753d0eb64b5814551af91b6efec29bd2c362d421",
++      "patch_id": "fff36d21d02dbcff43cccdbd0cdd6717e809cf23",
++      "rebased": "41ebd38ae97d66c4b719fcb2dacf2dfcccd129b1",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:11:17+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "escha vulkan: the hardware f32->f16 convert must be float16_t, NOT packHalf2x16 (RTZ)",
++      "trailers": {
++        "Measured-effect": "CORRECTNESS ONLY at this commit - removes a one-ulp truncation error affecting 25.6% of codewords that 1ee8e9ad7 would have shipped; speed deltas for this lever alone are measured next and reported separately.",
++        "Origin": "ArifiLabs (native)",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "6d3bd166c13a5f26fca4e1dcf02b61cdfa3ce4a2",
++      "patch_id": "f06d4dee2c5072628b090cef8645ea3daeed3e0f",
++      "rebased": "66493e606739f728065ebad7c75311083b739065",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:11:22+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "escha vulkan: ESCHA_SG_HADAMARD defaults OFF - the lever is refuted by measurement",
++      "trailers": {
++        "Measured-effect": "SG lever OFF by default; no speed change vs the shipped RTE-only configuration, and ~3% of prefill recovered versus having it on",
++        "Origin": "ArifiLabs (native)",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "93177b4d9d4e5802defd1e821d0896755bd0d523",
++      "patch_id": "f807c16c67a932153fd4757c50a07a349124afcc",
++      "rebased": "c259de14850c68f1cadecce0c7512fb5eaa742ae",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:11:31+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "arifi-sync: root-fix the destructive series regen, and mechanize protected-win preservation",
++      "trailers": {
++        "Measured-effect": "no engine behaviour changed and no shipped default moved; tooling and\n  documentation only, verified by the 14-case suite including four fail-closed negative cases.",
++        "Origin": "ArifiLabs (native)",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "2ac18271f39a6be235952c4dcd8a744007d87262",
++      "patch_id": "f49fd3885f3478d781ca5ecf37ee9eb63dd7c35f",
++      "rebased": "6bf658f0b872126ba1eab990cf706bc988ef4a45",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:11:40+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "vulkan: ROCmFP4 MMVQ becomes opt-in (GGML_ARIFI_ROCMFP4_MMVQ=1) - kept in full, not yet cleared",
++      "trailers": {
++        "Measured-effect": "none on the seated line (no ROCmFP4 tensors); on ROCmFP4 files\n  this defers a measured +26.9% drafted decode behind an opt-in env var",
++        "Origin": "ArifiLabs (native)",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "aa8f8feca2cb10e753cc0f052a8ce35e63293ad9",
++      "patch_id": "5ed1fdc0bdf20b218465493c96da425c8166753e",
++      "rebased": "cd5ce0aa7c98e8575da99dd469fed1fc44ea1527",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:11:44+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "b10819 sync: repair six merge defects that stopped the tree from building",
++      "trailers": {
++        "Measured-effect": "build FAIL at 6/305 -> RC=0 with all five targets linked (llama-cli, llama-server, llama-quantize, test-backend-ops, test-quantize-fns); runtime effect of the speculative.cpp union is measured by the F-141 content gate and the served DFlash2 arm, not by this build.",
++        "Origin": "ArifiLabs (native)",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "cb2bd09a7189b89b6b158d0029c9b1bda16f8e21",
++      "patch_id": "a5cde5a82e38e8a18c0ceebbb97ff00061baa717",
++      "rebased": "9dcd8f6232b2a5a804e1ae44890b5bcf8646b707",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:11:49+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "vulkan: tq_rotate is a src1 reformat - restore the TQ MUL_MAT_ID path",
++      "trailers": {
++        "Measured-effect": "test-backend-ops goes from ABORT at case 12343 (GGML_ASSERT y_needs_reformat, rc 0xC0000409, no result at all) to a completed sweep; build stays RC=0 on all five targets.",
++        "Origin": "ArifiLabs (native)",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "9d26dc5cea8aa4a1c75dbf70ef65d0ccb2e1b35f",
++      "patch_id": "99d0a75f82740b383c240ae9fe5fd0b79a27ba1d",
++      "rebased": "63bf739ba23435be8c6a7a870840b0d4ec002178",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:11:53+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "vulkan: FA dequant-KV f16 scratch is a runtime gate, default ON on every device (upstream behaviour) - GGML_ARIFI_FA_DEQUANT_KV overrides both ways",
++      "trailers": {
++        "Measured-effect": "R19D-ENGAGEMENT-LEGS.md D1 (ON vs OFF, one binary): prefill clean +8.08% [+1.63%, +14.52%]; this commit = the ON default, expected 0 vs the engine of record (same path)",
++        "Origin": "arifi R19 lane-215 (26ab4d9cb) re-carried by R27 lane-220, 2026-09-06; default flipped per R19D; gate on upstream c7bda030e",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "0c4b9444dff01432446eafbe3bf195aff4462700",
++      "patch_id": "0ecc2e3ce8ddba6682ad69566008c129e2094269",
++      "rebased": "6833c83bce5cf944e735483f61ed03a606e10c0e",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:12:02+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "vulkan: RDNA3 mul_mat_vec_id rows runtime-selectable (GGML_ARIFI_MMV_ID_ROWS) + Ornith expert-shape perf rows",
++      "trailers": {
++        "Measured-effect": "DOCUMENTED-TAKE. 20 op rows, 3 rounds each: x0.979 to x1.031 against the upstream default of 4 - no setting separates from the ladder's own spread. Correctness 80/80 per setting, TBOID GREEN. No serve cell ran (no MoE file that fits this box was staged).",
++        "Origin": "upstream 2cdae802e (vulkan: tune mat-vec rows for batched inference on Strix Halo),R15 s2.2 / R15-C3 (lane-209 r15-kernel-hunt, Opus 5 + Fable 5.1 R15B),ArifiLabs lane-212 R18 kernel wave, candidate r15c3-rm-id-moe",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "0fe8c7f4955f6ac74e4771c8a32f05b08a051048",
++      "patch_id": "0cb87f847675164aca49263aa65fde029a7fd46a",
++      "rebased": "7788c6102f3d988cf9e8035961f7338810695ae0",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:12:07+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "kv-cache: the PLE n-gram history lookup becomes a runtime switch - seq_pos index by default, the cell scan behind LLAMA_KV_NGRAM_INDEX=0",
++      "trailers": {
++        "Measured-effect": "DOCUMENTED-TAKE, mechanism UNMEASURED. Receipt grep: 0 hits in 10 server logs - the mechanism never ran. The same engine pair still moved DFlash2 prefill +8.03% [+5.56%, +10.49%] and plain decode -2.20% [-2.79%, -1.60%], which is therefore pure build floor, not this switch. Witness owed: test-llama-archs -a qwen4exp under both envs (PREREG-r15c4-kv-ngram-index.md).",
++        "Origin": "arifi R18 lane-212 R15-C4, 2026-09-07; switch over upstream b356fa262 + 62acc89c2",
++        "Taken-from": ""
++      }
++    },
++    {
++      "original": "3e3eb64d0df3bba8d4723a880fc46766eabc8b90",
++      "patch_id": "591401a28ead19f9e159225d0a3e589b3b8e1811",
++      "rebased": "e832c80a932944c683236948bf7fc9b9f3117b9d",
++      "recorded_by": "arifilabs@users.noreply.github.com",
++      "recorded_utc": "2026-09-27T07:12:25+00:00",
++      "retained_ref": "arifi-pre-rebase-e86ca0289",
++      "subject": "ggml: port jtrefon TBQ3_0/TBQ4_0 at ids 58/59 with the type-id arbitration, plus the SET_ROWS device guard (WI-1694 half A)",
++      "trailers": {
++        "Measured-effect": "DOCUMENTED-TAKE. The harmless cell (types present, no launch names them) read DFlash2 decode +0.60% CI95 [-1.28%, +2.47%] and DFlash2 prefill +8.15% [+5.38%, +10.92%], the latter pure build floor. The KV MECHANISM WAS NEVER MEASURED: the baseline arm refused the type (\"Unsupported cache type: tbq4_0\") and the candidate arm was aborted by the schedule horizon. What ran is engine-vs-engine at KV-on-host, +1.60% [+1.30%, +1.90%] on a 0.515 t/s crawl. Owed: candidate-engine tbq4_0 vs candidate-engine q8_0; the baseline-engine design is impossible because the base engine does not know the type.",
++        "Origin": "ArifiLabs lane-212 WI-1694A (Fable 5.1 MEDIUM, kernel-maker), R18 kernel wave, id arbitration + CPU reference port,ArifiLabs lane-212 WI-1694A, device guard found by the Vulkan coherence smoke",
++        "Taken-from": "jtrefon/llama.cpp-turboq-mtp@6a02d0494 (ggml/src/ggml-turboq.c, ggml-turboq-tables.h, ggml-common.h, ggml.c, ggml-cpu, src/llama-kv-cache.cpp, src/llama-graph.cpp, src/llama-context.cpp, common/arg.cpp, tests)"
++      }
++    }
++  ],
++  "version": 1
++}

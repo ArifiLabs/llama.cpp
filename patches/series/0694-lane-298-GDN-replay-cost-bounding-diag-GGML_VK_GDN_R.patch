@@ -1,0 +1,102 @@
+From 0d511dd7621b6581246cce615ab4a185b0041028 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 15:35:45 -0400
+Subject: [PATCH] lane-298 GDN replay-cost bounding diag:
+ GGML_VK_GDN_REPLAY_DIAG runs a replay prologue (n_rep push constant) in the
+ GDN_BANK shader
+
+Diagnostic for HQ79 Q16: bounds the per-token compute of the deferred-commit + replay design. The prologue is the
+future replay path (state update only, outputs discarded); n_rep = 0 on every non-diag dispatch.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit a33b1e9d165b452e2b22c8e36bfef2e0348c08df)
+
+Origin: ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.
+Measured-effect: UNMEASURED - no served number for this commit in the release ledger or the commit message
+---
+ .../ggml-vulkan/ggml-vulkan-push-constants.h  |  1 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  6 ++++-
+ .../vulkan-shaders/gated_delta_net.comp       | 27 +++++++++++++++++++
+ 3 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-push-constants.h b/ggml/src/ggml-vulkan/ggml-vulkan-push-constants.h
+index a9c1056876..4177f0ea04 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-push-constants.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-push-constants.h
+@@ -740,6 +740,7 @@ struct vk_op_gated_delta_net_push_constants {
+     uint32_t K;
+     uint32_t n_written; // lane-299 GDN_BANK only
+     float wsign;        // lane-299 GDN_BANK only (-1 = selfcheck plant)
++    uint32_t n_rep;     // lane-298 GDN_BANK only: replay-prologue token count (0 = none)
+ };
+ 
+ struct vk_op_ssm_scan_push_constants {
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 062e660dd4..117269e2d6 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -12956,7 +12956,8 @@ void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& subctx,
+         scale,
+         K,
+         bank ? bank_it->second.n_written : 0u,
+-        1.0f
++        1.0f,
++        0u
+     };
+ 
+     if (bank) {
+@@ -12967,6 +12968,9 @@ void ggml_vk_gated_delta_net(ggml_backend_vk_context * ctx, vk_context& subctx,
+         // lane-298 DIAG ONLY (wrong on any rejected draft): write slot 0 only, measures the GDN snapshot-byte floor
+         static const bool snap1 = getenv("GGML_VK_GDN_SNAP1_DIAG") != nullptr;
+         if (snap1) { bpc.n_written = std::min<uint32_t>(bpc.n_written, 1u); }
++        // lane-298 DIAG ONLY: replay prologue over the window's own tokens (token loop runs twice), bounds replay compute
++        static const bool rep2 = getenv("GGML_VK_GDN_REPLAY_DIAG") != nullptr;
++        if (rep2) { bpc.n_rep = n_tokens; }
+         ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
+             {src_buf[0], src_buf[1], src_buf[2], src_buf[3], src_buf[4], src_buf[5], dst_buf,
+              ggml_vk_tensor_subbuffer(ctx, bank_it->second.ridx), ggml_vk_tensor_subbuffer(ctx, bank_it->second.wrow)},
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/gated_delta_net.comp b/ggml/src/ggml-vulkan/vulkan-shaders/gated_delta_net.comp
+index 70253a3a8d..317ff6360b 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/gated_delta_net.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/gated_delta_net.comp
+@@ -34,6 +34,7 @@ layout(push_constant) uniform Parameters {
+     uint K;
+     uint n_written; // lane-299 GDN_BANK: bank slots written (the skipped set_rows rows); unused otherwise
+     float wsign;    // lane-299 GDN_BANK: 1, or -1 for the selfcheck plant
++    uint n_rep;     // lane-298 GDN_BANK: replay-prologue tokens (state update only, no output, no snapshot)
+ };
+ 
+ layout(binding = 0) readonly  buffer QBuf     { FLOAT_TYPE data_q[];     };
+@@ -134,6 +135,32 @@ void main() {
+ 
+     uint attn_off = (seq_id * n_tokens * H + head_id) * S_V;
+ 
++#if GDN_BANK
++    // lane-298 replay prologue: advance the state over n_rep tokens (diag: the window's own tokens), outputs discarded
++    for (uint t = 0; t < min(n_rep, n_tokens); t++) {
++        const uint q_off = iq3 * sq3 + t * sq2 + iq1 * sq1;
++        const uint gb_off = seq_id * sb3 + t * sb2 + head_id * sb1;
++        const FLOAT_TYPE beta_val = FLOAT_TYPE(data_beta[gb_off]);
++        FLOAT_TYPE k_reg[ROWS_PER_LANE];
++        FLOAT_TYPE g_exp[ROWS_PER_LANE];
++        const FLOAT_TYPE g_one = exp(FLOAT_TYPE(data_g[gb_off]));
++        [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
++            const uint i = r * LANES_PER_COLUMN + lane;
++            k_reg[r] = FLOAT_TYPE(data_k[q_off + i]);
++            g_exp[r] = KDA == 0 ? g_one : exp(FLOAT_TYPE(data_g[gb_off * S_V + i]));
++        }
++        const FLOAT_TYPE v_val = FLOAT_TYPE(data_v[seq_id * sv3 + t * sv2 + head_id * sv1 + col]);
++        FLOAT_TYPE kv_shard = 0.0;
++        [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
++            kv_shard += g_exp[r] * s_shard[r] * k_reg[r];
++        }
++        const FLOAT_TYPE delta_col = (v_val - reduce_partial(kv_shard)) * beta_val;
++        [[unroll]] for (uint r = 0; r < ROWS_PER_LANE; r++) {
++            s_shard[r] = g_exp[r] * s_shard[r] + k_reg[r] * delta_col;
++        }
++    }
++#endif
++
+     for (uint t = 0; t < n_tokens; t++) {
+         const uint q_off = iq3 * sq3 + t * sq2 + iq1 * sq1;
+         const uint k_off = q_off;

@@ -1,0 +1,33 @@
+From 38f348fabd08e061f2c00c61201497f4f535367e Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 16:58:25 -0400
+Subject: [PATCH] W1 collision fixup (N3): MMQ-under-coopmat opt-in leaves Q8_0
+ to upstream int8 coopmat1 on RDNA3/4
+
+Upstream 70c4e1582 registers {Q8_0, Q8_1} on RDNA3/4 with its int8 coopmat1 MMQ. The R52b opt-in (GGML_ARIFI_MMQ_UNDER_COOPMAT=1) registered the same key earlier with the scalar mul_mmq.comp and a different tile list. create_mm_pipelines reuses the first vector for a key and the lazy compile claims the first matching creation call, so with the opt-in ON the scalar kernel would shadow upstream's and the second call would index a tile vector sized by the first. Two registrants on one key: a mechanism fault, not a performance choice. R52b also measured the scalar path losing under coopmat (closed lever q8_0-mmq-under-coopmat-serve). S-X8 has no upstream int kernel and keeps the opt-in. Default (opt-in OFF) unchanged.
+
+Origin: fork-authored (ArifiLabs lane-296 W1 collision maker, Opus 5.5)
+Measured-effect: none on the default path (opt-in OFF); runtime witness of the opt-in arm OWED (closed-lever launch gate refused it)
+Lane: lane-296
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 728acdea49..422141338d 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -2700,6 +2700,13 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             for (const auto & [type, name, len, data] : std::initializer_list<std::tuple<ggml_type, const char *, size_t, const void *>>{
+                     {GGML_TYPE_Q8_0, "matmul_q8_0_q8_1", matmul_q8_0_q8_1_len, matmul_q8_0_q8_1_data},
+                     {GGML_TYPE_SX8,  "matmul_sx8_q8_1",  matmul_sx8_q8_1_len,  matmul_sx8_q8_1_data}}) {
++                // lane-296: upstream 70c4e1582 registers Q8_0 x Q8_1 on RDNA3/4 below with its int8
++                // coopmat1 kernel. Registering the same key here first would shadow it (first lazy
++                // claim wins) with a different tile list, so Q8_0 is left to upstream there.
++                if (type == GGML_TYPE_Q8_0 && device->coopmat_int_support &&
++                    (device->architecture == vk_device_architecture::AMD_RDNA3 || device->architecture == vk_device_architecture::AMD_RDNA4)) {
++                    continue;
++                }
+                 auto tc = filter_tc(tc_mmq_int_cm, type, false, true);
+                 if (!tc.empty()) create_mm_pipelines({type, GGML_TYPE_Q8_1, false, false}, tc, name, len, data, sizeof(vk_mat_mat_push_constants), 3, identity, false, false, 0, false);
+             }

@@ -1,0 +1,38 @@
+From a26d71b8f111467f07e371ecdef767075e7ce5b7 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 18:54:49 -0400
+Subject: [PATCH] lane-300: F-141 3b: GGML_ARIFI_FA_ROWSTABLE_N default 8 -> 0
+ (opt-in). bf1de9485b shipped it ON before the default-OFF rule; its
+ verify-width cost is unmeasured (cell 28 held), so per HQ82 the default
+ returns to stock split_k. N=0 never selects the n=1 split (neq1 >= 1), so
+ ggml_vk_fa_rowstable_wx returns workgroups_x on the single and the segmented
+ dispatch = merge-base behaviour by construction. Served proof: cell 27
+ OP-0/QP-0 (env FA_ROWSTABLE_N=0, other flags unset) ids == the 96a6a8d976
+ binary's plain ids (cells 12 S-fix, 13 O-fix) on short/2k/long, both models.
+
+Origin: lane-300
+Measured-effect: default-only change: default-OFF ids identical to the 96a6a8d976 binary served plain (cache/determinism-x1-lane/cells/c27-10061355-state.json vs c12-10051803, c13-10051909); opt-in cost not measured
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 3b982875d5..c038a0da8e 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -10740,12 +10740,12 @@ bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, const vk_
+ // so the wrapper's k_total (baked into every partition's push constants) cannot disagree with what
+ // the body dispatch actually does.
+ // lane-300 F-141 3b: under GQA, workgroups_x is the token count, so split_k (the KV reduction split) moved with the
+-// verify width and row t's FA output changed bits with batch size. For neq1 <= GGML_ARIFI_FA_ROWSTABLE_N (default 8)
+-// choose split_k as for one token: every token keeps its n=1 KV partition and reduction order. 0 = old behaviour.
++// verify width and row t's FA output changed bits with batch size. For neq1 <= GGML_ARIFI_FA_ROWSTABLE_N (opt-in, e.g. 8)
++// choose split_k as for one token: every token keeps its n=1 KV partition and reduction order. 0 (default) = old behaviour.
+ static uint32_t ggml_vk_fa_rowstable_wx(uint32_t gqa_ratio, uint32_t neq1, uint32_t workgroups_x) {
+     static const uint32_t fa_rowstable_n = [] {
+         const char * s = getenv("GGML_ARIFI_FA_ROWSTABLE_N");
+-        return s ? (uint32_t) atoi(s) : 8u;
++        return s ? (uint32_t) atoi(s) : 0u;
+     }();
+     return (gqa_ratio > 1 && neq1 <= fa_rowstable_n) ? 1u : workgroups_x;
+ }

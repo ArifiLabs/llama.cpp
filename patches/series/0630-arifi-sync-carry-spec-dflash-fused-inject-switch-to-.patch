@@ -1,0 +1,78 @@
+From a1b1f611a80c3f17bcfd2a3cc6bc6c388aacbe57 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 10:56:10 -0400
+Subject: [PATCH] arifi-sync: carry spec-dflash-fused-inject-switch to
+ 4fea45e7e and register the Vulkan Q2_0_G128 port 56763ff4e (lane-296 Sol-fix,
+ protected-win validate)
+
+DFlash switch: commit -> 4fea45e7e, f9746db7b -> commit_pre_rebase_chain; the N6 re-home is named; every quality_gate clause re-run or carried with its reason (F-141 both arms on u7, the quantize-fns identity vs the bank, MUL_MAT from run 11 u6 since u6..u7 touches no Vulkan file); the -0.98% measured_effect is marked carried. g128: correctness-only entry, three fix commits as also_commits, gate MUL_MAT q2_0_g128 36/36 + Bonsai g128 greedy identity R/U6/U7; the pre-existing q2_0_g128 CPU quantize FAIL is stated.
+
+Measured-effect: none - registry only
+Lane: lane-296
+---
+ tools/arifi-sync/protected-wins.json | 45 ++++++++++++++++++++++++++--
+ 1 file changed, 43 insertions(+), 2 deletions(-)
+
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index 123505c10f..1c006ece59 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -914,7 +914,7 @@
+       "id": "spec-dflash-fused-inject-switch",
+       "status": "active",
+       "mechanism": "Runtime switch over upstream 662a0b012's fused DFlash encoder injection. Fused = one llama_decode per chunk with the encoder (fc + rms norm) in-graph; legacy = llama_encode the chunk, read the encoded rows back through llama_get_embeddings_nextn, feed them to the injection decode at the draft width. Both paths stay compiled and dispatchable, so the fusion is A/B-able on ONE binary instead of a revert-only second build. LLAMA_DFLASH_FUSED_INJECT=1 selects fused; unset = LEGACY on this fork (lane-225 R38), because the R18 wave measured the fused path negative on the seat decode cell. The C API default (llama_cparams::dflash_fused_inject = true) is deliberately left at upstream-fused: the legacy shape is a CALLER contract, so only common/speculative.cpp, which owns both halves, defaults it off. One receipt line per process names the arm.",
+-      "commit": "f9746db7bf97e500283f8d217eb0705c7fc15d76",
++      "commit": "4fea45e7e26f56c421b654f20b1bf8d8d6d9e6ee",
+       "protected_paths": [
+         "common/speculative.cpp",
+         "src/models/dflash.cpp"
+@@ -938,7 +938,48 @@
+       "quality_gate": "F-141 both arms on the seat (40-f141-fused-SEAT.txt, 40-f141-legacy-SEAT.txt); test-quantize-fns identical to the bank (11-test-quantize-fns.diff-vs-bank.txt); test-backend-ops MUL_MAT arm recorded (11-tbo-test-MUL_MAT.txt). The two paths are the same arithmetic in a different graph split, not a different kernel.",
+       "workload": "Radeon 780M (gfx1103, Vulkan0), seat line Huihui-Qwen3.8-27B-abliterated-UD Q4_K_XL with the DFlash2 Q4_K_M drafter, plus U-IQ4XS and U-Q3KXL arms; lane209 palindrome, paired t on n=8 cells, decode is the verdict axis.",
+       "measured_effect": "DOCUMENTED-TAKE, no gain. Seat DFlash2 decode -0.98% CI95 [-1.16%, -0.80%] fused vs legacy; U-IQ4XS +0.05% [-0.56%, +0.67%]; U-Q3KXL -0.87% [-2.50%, +0.77%]. The INERT control on the same pair (identical code both arms) moved +3.71% [+0.80%, +6.61%] on decode, so nothing here clears this box's build floor. The protectable thing is the SWITCH plus its receipt line plus the legacy path, not a speed claim.",
+-      "notes": "The default flip to legacy is a lane-225 decision on a sub-floor number, recorded as such in docs/OPTIONS-REGISTRY.md and in the commit. It is one env var from upstream behaviour and must not be quoted as a measured win."
++      "notes": "The default flip to legacy is a lane-225 decision on a sub-floor number, recorded as such in docs/OPTIONS-REGISTRY.md and in the commit. It is one env var from upstream behaviour and must not be quoted as a measured win.",
++      "commit_pre_rebase_chain": [
++        "f9746db7bf97e500283f8d217eb0705c7fc15d76"
++      ],
++      "_rebase_b11178": [
++        "4fea45e7e <- f9746db7b (commit): NOT a context-only carry - the N6 re-home moved the width selection into llama_batch_ext_select_n_embd_inp (upstream's llama_batch_ext API replaced llama_context::decode's local DFlash width pick, W1 collision C037); the switch, its receipt line and the legacy path are unchanged. CHECKED 2026-09-27 lane-296 (W1-COLLISION-MAP.md 6.3 N6).",
++        "quality_gate re-run on the union, clause by clause: (1) F-141 both arms on the seat - lane-296 run 12 DF-U7-fused GREEN 0/8 (server log names `fused`, armgate OK) and DF-U7-legacy GREEN 0/8 (log names `legacy`, armgate OK), candidate f2b078a88 (cache/lane296/ev12/DF-U7-*.txt, *.armgate); (2) test-quantize-fns on f2b078a88 = the bank line for line (same 6 pre-existing FAILED rows, identical values) except a BOM and three types added after the bank (sx8, tbq3_0, tbq4_0) (cache/lane296/tqf-u7.txt); (3) test-backend-ops MUL_MAT on u6 5432990f3: 2327/2327 (run 11 MM-test-U); u6..u7 (git diff --stat 5432990f3..f2b078a88) touches no Vulkan or MUL_MAT file, so the clause carries to u7.",
++        "measured_effect is CARRIED, not re-measured: the -0.98% seat number is the r15c2 measurement on the pre-rebase build. No speed claim is made for the union."
++      ]
++    },
++    {
++      "id": "vulkan-q2-0-g128-engine-port",
++      "status": "active",
++      "_registered": "2026-09-27, lane-296 Sol-fix (validate on the W1 candidate reported 56763ff4e UNREGISTERED). The pre-rebase a3cddd4de sits in protected-win-baseline.json as NOT LANDED AS A WORKING WIN (build-blocked at copy_to_quant.comp); that row stays exactly as written - it was true of that commit. The port works on the union only with its later fix commits, listed as also_commits.",
++      "mechanism": "Internal GGML_TYPE_Q2_0_G128 (128-element groups, gated by the GGUF key GGML_Q2_0_G128) end to end on Vulkan: type/traits, CPU reference quant, gguf loader gate/verify/remap, and the Vulkan dequant, mul_mat_vecq, mul_mm/mul_mmq and SET_ROWS (copy_to_quant) shaders. On the union the mat-mat path goes through upstream's per-type LUT path (is_arifi_mm_quant, W1 N2 map).",
++      "commit": "56763ff4e8b0f9924eb808aa3f5b4a290acc3d2b",
++      "commit_pre_rebase_chain": [
++        "a3cddd4def6ed709991d2092998071c588e74800"
++      ],
++      "also_commits": [
++        "06980aa5fb47314f3c9398cd7e106d2095fcc8b8",
++        "7842efc41b794878156aac264119a05c8bbe020e",
++        "acbab1a4c9440a57156956f068aef1facb3aaadf"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/vulkan-shaders/dequant_q2_0_g128.comp",
++        "ggml/src/ggml-vulkan/vulkan-shaders/copy_to_quant.comp"
++      ],
++      "anchors": [
++        "GGML_TYPE_Q2_0_G128",
++        "DATA_A_Q2_0_G128",
++        "is_arifi_mm_quant"
++      ],
++      "evidence": [
++        "research/local-inference/lane-evidence/2026-09-25-w1-rebase-b11178/W1-COLLISION-MAP.md",
++        "commit:06980aa5fb47314f3c9398cd7e106d2095fcc8b8",
++        "commit:7842efc41b794878156aac264119a05c8bbe020e"
++      ],
++      "quality_gate": "CORRECTNESS ONLY. test-backend-ops MUL_MAT q2_0_g128 subset 36/36 on the union u6 (lane-296 run 11 MM-test-g128-U); Ternary-Bonsai-27B-Abliterated-LowDeg-Q2_0.g128 on Vulkan (-ngl 99, greedy, 48 tokens) byte-identical on r86i, u6 and u7 (run 12 BG-R/BG-U6/BG-U7). Stated limit: test-quantize-fns FAILS q2_0_g128 on the CPU reference (absolute 0.008678, dot 0.141111) - identical values in the r15c2 bank and on u7, so pre-existing, not W1-created, and not closed by this entry.",
++      "workload": "Radeon 780M (gfx1103, Vulkan0), test-backend-ops -o MUL_MAT -b Vulkan0 (q2_0_g128 cases); llama-cli Ternary-Bonsai-27B g128, -ngl 99 -c 2048 -n 48 --temp 0 --top-k 1 --seed 42.",
++      "measured_effect": "NO SPEED CLAIM. The protectable thing is Vulkan support for the g128 type (without it a g128 GGUF cannot run on the GPU); no throughput was measured against any other path.",
++      "notes": "Registered so a future sync that drops the Vulkan g128 arms refuses instead of silently losing GPU support for the Bonsai g128 line."
+     },
+     {
+       "id": "vulkan-rdna3-mmv-id-rows-switch",

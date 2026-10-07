@@ -1,0 +1,80 @@
+From e30a7e459f585ff2f3fe74ffb7461d704c587702 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 11:32:14 -0400
+Subject: [PATCH] lane-298 item 5 prefetch-ahead: prefetch after the PLE trim,
+ not before
+
+A trim (whole-table VirtualUnlock at the 256 MiB budget) between prefetch and gather would drop the pages just prefetched; the prefetch block now runs after the release accounting. Same opt-in env, same receipt.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Lane: lane-298
+(cherry picked from commit 6b0e35cf5216614c17762fddd1b5f1f42e82d8a5)
+
+Origin: ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.
+Measured-effect: UNMEASURED on its own - supporting commit; see release ledger Table 1 W13, the number sits on that win's main commit
+---
+ src/models/qwen4exp.cpp | 44 ++++++++++++++++++++---------------------
+ 1 file changed, 22 insertions(+), 22 deletions(-)
+
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+index b6ddc015a1..23146139bc 100644
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -1214,28 +1214,6 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
+ 
+     ggml_backend_tensor_set(rows, idx.data(), 0, idx.size()*ggml_element_size(rows));
+ 
+-    // lane-298 item 5 prefetch-ahead: cold PLE row pages cost one serial hard fault each inside the CPU gather (novel
+-    // prefill r1 -28% vs r2, pleio2). One batched PrefetchVirtualMemory over this ubatch's row pages first.
+-    // LLAMA_PLE_PREFETCH=1 multi-token ubatches only, =2 also decode; LLAMA_PLE_PREFETCH_PLANT=1 = wrong rows (RED).
+-    static const int prefetch = getenv("LLAMA_PLE_PREFETCH") ? atoi(getenv("LLAMA_PLE_PREFETCH")) : 0;
+-    static const bool plant = getenv("LLAMA_PLE_PREFETCH_PLANT") != nullptr;
+-    const ggml_tensor * ptab = pmodel.per_layer_tok_embd;
+-    if (prefetch > 0 && (n_tokens > 1 || prefetch > 1) && ptab && ptab->data && ggml_backend_buffer_is_host(ptab->buffer)) {
+-        std::vector<int32_t> pidx;
+-        if (plant) {
+-            pidx = idx;
+-            for (auto & r : pidx) {
+-                r = (int32_t) ((r + ptab->ne[1] / 2) % ptab->ne[1]);
+-            }
+-        }
+-        const int64_t t0 = ggml_time_us();
+-        const size_t np = llama_mmap::prefetch_rows(ptab->data, ptab->nb[1], plant ? pidx.data() : idx.data(), idx.size());
+-        if (n_tokens > 1) {
+-            LLAMA_LOG_WARN("%s: PLE prefetch%s: %lld tokens, %zu pages, %.2f ms\n", __func__, plant ? " PLANT" : "",
+-                    (long long) n_tokens, np, (ggml_time_us() - t0) / 1000.0);
+-        }
+-    }
+-
+     // lane-298 item 5 (Strata --ple-io semantics): the lazy PLE table is a file mapping, and on Windows every gathered
+     // row page stays in the working set (~64 KiB per novel token). Once the rows gathered since the last trim could
+     // fill LLAMA_PLE_RELEASE_MIB (default 256), ONE VirtualUnlock over the whole table drops them to standby; later
+@@ -1262,6 +1240,28 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
+             since = 0;
+         }
+     }
++
++    // lane-298 item 5 prefetch-ahead: cold PLE row pages cost one serial hard fault each inside the CPU gather (novel
++    // prefill r1 -28% vs r2, pleio2). One batched PrefetchVirtualMemory over this ubatch's row pages, AFTER the trim so
++    // a trim never drops pages just prefetched. LLAMA_PLE_PREFETCH=1 multi-token ubatches only, =2 also decode;
++    // LLAMA_PLE_PREFETCH_PLANT=1 = wrong rows (RED).
++    static const int prefetch = getenv("LLAMA_PLE_PREFETCH") ? atoi(getenv("LLAMA_PLE_PREFETCH")) : 0;
++    static const bool plant = getenv("LLAMA_PLE_PREFETCH_PLANT") != nullptr;
++    if (prefetch > 0 && (n_tokens > 1 || prefetch > 1) && tab && tab->data && ggml_backend_buffer_is_host(tab->buffer)) {
++        std::vector<int32_t> pidx;
++        if (plant) {
++            pidx = idx;
++            for (auto & r : pidx) {
++                r = (int32_t) ((r + tab->ne[1] / 2) % tab->ne[1]);
++            }
++        }
++        const int64_t t0 = ggml_time_us();
++        const size_t np = llama_mmap::prefetch_rows(tab->data, tab->nb[1], plant ? pidx.data() : idx.data(), idx.size());
++        if (n_tokens > 1) {
++            LLAMA_LOG_WARN("%s: PLE prefetch%s: %lld tokens, %zu pages, %.2f ms\n", __func__, plant ? " PLANT" : "",
++                    (long long) n_tokens, np, (ggml_time_us() - t0) / 1000.0);
++        }
++    }
+ }
+ 
+ // Read a conv history out of its own recurrent row and write the new tail back.

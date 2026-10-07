@@ -1,0 +1,164 @@
+From c1f0071d83f86d1169bc8bfe61534d6d6bcca35f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 06:45:05 -0400
+Subject: [PATCH] lane-298: OW-036 draft penalty default on, ngram-mod
+ miss-cost cap, MoE-union counter
+
+OW-036 draft recent-token penalty defaults to k=4 strength=3.0 (HQ78 Q7b: lossless, long prompts +2..+4.5%); LLAMA_SPEC_DRAFT_RECENT_PENALTY=0:0 turns it off. LLAMA_SPEC_NGRAM_CAP0=c caps each ngram-mod draft at c tokens after a miss and doubles the cap on every fully accepted draft up to n_max, so a miss costs a (c+1)-row verify instead of an (n_max+1)-row one (cold copy lost 7.5% ungated). LLAMA_MOE_UNION_LOG=1 installs a cb_eval that counts distinct experts per ubatch per layer on ffn_moe_topk (untimed use only: it splits the graph).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Lane: lane-298
+(cherry picked from commit 1c4d20f0fbc98004e23211f214ff80fabd1f070e)
+
+Origin: ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.
+Measured-effect: part of win W8, OW-036 draft recent-token penalty (pk4s3): long +2..+4.5%, other prompts flat, ids 12/12; cells/combo-10050615-*, ngcap* [release ledger Table 1 W8]
+---
+ common/common.cpp      | 42 +++++++++++++++++++++++++++++++++++++++++-
+ common/speculative.cpp | 27 +++++++++++++++++++++++++--
+ 2 files changed, 66 insertions(+), 3 deletions(-)
+
+diff --git a/common/common.cpp b/common/common.cpp
+index a342c0f165..7c6cb068ae 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -25,7 +25,9 @@
+ #include <fstream>
+ #include <iostream>
+ #include <iterator>
++#include <map>
+ #include <regex>
++#include <set>
+ #include <sstream>
+ #include <string>
+ #include <thread>
+@@ -1778,6 +1780,41 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
+     return mparams;
+ }
+ 
++// lane-298 MoE-union counter (LLAMA_MOE_UNION_LOG=1, untimed arms only: the callback splits the graph).
++// Per (n_tokens, layer): graphs seen and summed distinct experts over the rows of one ubatch.
++static bool moe_union_cb(struct ggml_tensor * t, bool ask, void * /*user_data*/) {
++    if (strncmp(t->name, "ffn_moe_topk-", 13) != 0 || t->type != GGML_TYPE_I32) {
++        return !ask;
++    }
++    if (ask) {
++        return true;
++    }
++    static std::map<std::pair<int, int>, std::pair<long long, long long>> acc; // (nt, il) -> (graphs, sum distinct)
++    static long long n_cb = 0;
++    const int k = (int) t->ne[0], nt = (int) t->ne[1], il = atoi(t->name + 13);
++    std::vector<uint8_t> buf(ggml_nbytes(t));
++    ggml_backend_tensor_get(t, buf.data(), 0, buf.size());
++    std::set<int32_t> uni;
++    for (int r = 0; r < nt; ++r) {
++        for (int j = 0; j < k; ++j) {
++            uni.insert(*(const int32_t *) (buf.data() + r * t->nb[1] + j * t->nb[0]));
++        }
++    }
++    auto & a = acc[{nt, il}];
++    a.first++;
++    a.second += (long long) uni.size();
++    if (++n_cb % 2048 == 0) {
++        std::map<int, std::string> lines;
++        for (const auto & [key, v] : acc) {
++            lines[key.first] += string_format(" %d:%.2f", key.second, (double) v.second / v.first);
++        }
++        for (const auto & [ntk, s] : lines) {
++            LOG_INF("moe-union k=%d nt=%d layer:mean_distinct%s\n", k, ntk, s.c_str());
++        }
++    }
++    return true;
++}
++
+ struct llama_context_params common_context_params_to_llama(const common_params & params) {
+     auto cparams = llama_context_default_params();
+ 
+@@ -1818,7 +1855,10 @@ struct llama_context_params common_context_params_to_llama(const common_params &
+     cparams.flash_attn_type   = params.flash_attn_type;
+     cparams.cb_eval           = params.cb_eval;
+     cparams.cb_eval_user_data = params.cb_eval_user_data;
+-    cparams.offload_kqv       = !params.no_kv_offload;
++    if (cparams.cb_eval == nullptr && getenv("LLAMA_MOE_UNION_LOG")) {
++        cparams.cb_eval = moe_union_cb;
++    }
++    cparams.offload_kqv      = !params.no_kv_offload;
+     cparams.no_perf           = params.no_perf;
+     cparams.op_offload        = !params.no_op_offload;
+     cparams.swa_full          = params.swa_full;
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index 69be68d49b..78a4543681 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -1964,8 +1964,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+     static constexpr int32_t defer_max = 64;
+     bool defer_enabled = false;
+     bool chain_graph   = false;
+-    int   recent_pen_k        = 0;
+-    float recent_pen_strength = 0.0f;
++    // lane-298 OW-036 default ON (HQ78 Q7b): k=4 strength=3.0; LLAMA_SPEC_DRAFT_RECENT_PENALTY=0:0 turns it off
++    int   recent_pen_k        = 4;
++    float recent_pen_strength = 3.0f;
+     struct {
+         std::vector<llama_token>  tok;
+         std::vector<llama_pos>    pos;
+@@ -2971,10 +2972,18 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
+ 
+         // consecutive accept rounds with low acceptance fraction (< 0.5)
+         int n_low = 0;
++
++        // lane-298 miss-cost gate: emitted draft length cap (0 = gate off)
++        int cap = 0;
+     };
+ 
+     std::vector<seq_info> sinfos;
+ 
++    // lane-298: LLAMA_SPEC_NGRAM_CAP0=c caps each ngram draft at c tokens after a miss; the cap doubles on
++    // every fully accepted draft up to n_max. The n_min match test is unchanged (still looked up in full), so a
++    // miss costs a (c+1)-row verify instead of an (n_max+1)-row one. Verify decides the tokens: lossless.
++    int cap0 = 0;
++
+     common_speculative_impl_ngram_mod(
+             const common_params_speculative & params,
+             uint32_t n_seq)
+@@ -2984,6 +2993,11 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
+         , verbose(std::getenv("LLAMA_TRACE") != nullptr) {
+         static_assert(sizeof(llama_token) == sizeof(common_ngram_mod::entry_t));
+ 
++        if (const char * c = std::getenv("LLAMA_SPEC_NGRAM_CAP0")) {
++            cap0 = std::max(0, std::atoi(c));
++            SPC_INF("ngram_mod miss-cost gate: cap0=%d n_max=%d\n", cap0, this->params.n_max);
++        }
++
+         SPC_TRC("%s", "adding speculative implementation 'ngram-mod'\n");
+         SPC_TRC("- n_match=%d, n_max=%d, n_min=%d\n",
+                 this->params.n_match, this->params.n_max, this->params.n_min);
+@@ -3003,6 +3017,7 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
+ 
+         sinfo.i_last = 0;
+         sinfo.n_draft_last = 0;
++        sinfo.cap = cap0;
+ 
+         const size_t n = mod.get_n();
+         if (prompt.size() < n) {
+@@ -3078,6 +3093,10 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
+         }
+         result.resize(result.size() - n);
+ 
++        if (sinfo.cap > 0 && (int) result.size() > sinfo.cap) {
++            result.resize(sinfo.cap);
++        }
++
+         // store length of drafted n-gram for later acceptance analysis
+         sinfo.n_draft_last = result.size();
+     }
+@@ -3107,6 +3126,10 @@ struct common_speculative_impl_ngram_mod : public common_speculative_impl {
+ 
+         auto & sinfo = sinfos[seq_id];
+ 
++        if (cap0 > 0 && sinfo.n_draft_last > 0) {
++            sinfo.cap = n_accepted >= sinfo.n_draft_last ? std::min(2 * std::max(sinfo.cap, cap0), params.n_max) : cap0;
++        }
++
+         // compute acceptance fraction if we have a recorded draft length
+         if (sinfo.n_draft_last > 0) {
+             const double f_acc = (double)n_accepted / (double)sinfo.n_draft_last;

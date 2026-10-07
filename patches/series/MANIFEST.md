@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **616**, all non-merge, applied in filename order.
+- Patches: **761**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 616 commit messages, same provenance trailers. Verified, not
+same file contents, same 761 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -695,6 +695,151 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 614 | `0614-arifi-sync-re-key-provenance-ledgers-after-the-b1082.patch` | arifi-fork-base | `80e47f738` | - | - | arifi-sync: re-key provenance ledgers after the b10825 -> b11178 move (UPDATE-RUNBOOK 2.2.1) + G7 rows for 14 untrailered commits |
 | 615 | `0615-OW-028-lane-279-ROCmFP4-FAST-q8_1-MMVQ-route-DEFAULT.patch` | arifi-fork-base | `d525d6670` | - | - | OW-028 (lane-279): ROCmFP4-FAST q8_1 MMVQ route DEFAULT ON for FP4-format files |
 | 616 | `0616-W1-split-fixup-Vulkan-test-fault-seam-atomics-are-in.patch` | arifi-fork-base | `9678f7da1` | - | - | W1 split fixup: Vulkan test-fault seam atomics are inline, not static (heapres mid-plan failure RED -> one definition) |
+| 617 | `0617-W1-collision-fixup-N3-MMQ-under-coopmat-opt-in-leave.patch` | arifi-fork-base | `38f348fab` | - | - | W1 collision fixup (N3): MMQ-under-coopmat opt-in leaves Q8_0 to upstream int8 coopmat1 on RDNA3/4 |
+| 618 | `0618-W1-collision-arms-N1-upstream-IQ4_XS-mat-vec-shader-.patch` | arifi-fork-base | `df9ecc1f7` | - | - | W1 collision arms (N1): upstream IQ4_XS mat-vec shader, MMVQ body and route as runtime switches beside ours, default ours |
+| 619 | `0619-protected-wins-vulkan-uma-read-path-probe-symbol-re-.patch` | arifi-fork-base | `59c65e0be` | - | - | protected-wins: vulkan-uma-read-path-probe symbol re-homed to ggml-vulkan-buffers.cpp after the f172be756 split |
+| 620 | `0620-W1-collisions-N11-N12-coopmat1-f16-B-guard-for-f32-B.patch` | arifi-fork-base | `aa6ebfce2` | - | - | W1 collisions N11/N12: coopmat1 f16-B guard for f32-B-only types; int8 coopmat1 MMQ min-n switch |
+| 621 | `0621-W1-collisions-N12-RDNA3-device-probe-default-for-the.patch` | arifi-fork-base | `e0d733dde` | - | - | W1 collisions N12: RDNA3 device-probe default for the int8 coopmat1 MMQ width switch |
+| 622 | `0622-W1-collisions-N12-RDNA3-f16-B-width-floor-24-for-the.patch` | arifi-fork-base | `11eef8565` | - | - | W1 collisions N12: RDNA3 f16-B width floor 24 for the coopmat1 f32->f16 B conversion |
+| 623 | `0623-W1-collisions-N12-RDNA3-small-n-ffn_down-int8-except.patch` | arifi-fork-base | `5432990f3` | - | - | W1 collisions N12: RDNA3 small-n ffn_down int8 exception defaults OFF (served -ub 32: q4kxl 0.920x vs 0.977x, GSQ 0.928x vs 0.958x of r86i); GGML_ARIFI_CM1_INT_SMALLN=down restores it |
+| 624 | `0624-protected-wins-carry-registrations-across-the-W1-reb.patch` | arifi-fork-base | `9bf09374d` | - | `GENERATE_EXPERT_BUNDLE`, `LANE110_PROF`, `GGML_ARIFI_VNNI_REPACK`, `MAX_N_CACHED` | protected-wins: carry registrations across the W1 rebase and register the unregistered measured wins (Sol REJECT fix 3) |
+| 625 | `0625-metal-restore-upstream-s-dk-96-dv-64-sparse-FA-shape.patch` | arifi-fork-base | `0f50ef68d` | ggml-org/llama.cpp 1e7bcf3da4b2741868d152fa47976fb2501c85e3 (#28599) | - | metal: restore upstream's (dk=96, dv=64) sparse-FA shape lost in the W1 re-home |
+| 626 | `0626-server-carry-the-tool-call-anchor-across-upstream-s-.patch` | arifi-fork-base | `4eed112ad` | - | - | server: carry the tool-call anchor across upstream's same-n_tokens checkpoint supersede (W1 collision C077) |
+| 627 | `0627-qwen35-chained-MTP-drafting-works-with-fused-QKV-GGU.patch` | arifi-fork-base | `ba3683034` | - | - | qwen35: chained MTP drafting works with fused-QKV GGUFs (W1 collision C071) |
+| 628 | `0628-ggml-cpu-upstream-s-ARM-NEON-Q1_0-repack-arms-stay-d.patch` | ternary-g128 | `f2b078a88` | - | `GGML_ARIFI_VNNI_REPACK` | ggml-cpu: upstream's ARM NEON Q1_0 repack arms stay default ON outside the fork VNNI gate (W1 collision C019) |
+| 629 | `0629-vulkan-graph_optimize-no-longer-hoists-a-UNARY-away-.patch` | ternary-g128 | `c63cad345` | - | - | vulkan: graph_optimize no longer hoists a UNARY away from the MUL it fuses with (W1 collision V023) |
+| 630 | `0630-arifi-sync-carry-spec-dflash-fused-inject-switch-to-.patch` | ternary-g128 | `a1b1f611a` | - | - | arifi-sync: carry spec-dflash-fused-inject-switch to 4fea45e7e and register the Vulkan Q2_0_G128 port 56763ff4e (lane-296 Sol-fix, protected-win validate) |
+| 631 | `0631-docs-GGML_ARIFI_VNNI_REPACK-scope-after-C019-ARM-NEO.patch` | arifi-fork-base | `51a6f49a3` | - | `GGML_ARIFI_VNNI_REPACK` | docs: GGML_ARIFI_VNNI_REPACK scope after C019 - ARM NEON Q1_0 arms are upstream default ON, outside the fork gate (comment + OPTIONS-REGISTRY row) |
+| 632 | `0632-arifi-sync-protected-win-resolutions.json-for-the-36.patch` | arifi-fork-base | `0d62bfd1e` | - | `GGML_ARIFI_VNNI_REPACK`, `GENERATE_EXPERT_BUNDLE` | arifi-sync: protected-win-resolutions.json for the 36 wins the b10825 to b11178 range touches (lane-296 Sol-fix item 3, runbook 4.1c) |
+| 633 | `0633-tests-V023-asserting-regression-check-SILU-must-stay.patch` | arifi-fork-base | `16f0ae402` | - | - | tests: V023 asserting regression check - SILU must stay fused with its MUL on Vulkan (lane-296 B3) |
+| 634 | `0634-arifi-sync-protected-win-resolutions-B1-rows-measure.patch` | arifi-fork-base | `d43dc95e7` | - | - | arifi-sync: protected-win-resolutions B1 rows measured (lane-296 run15/17/23): 12 daily-dense rows carry r86i/U8 numbers, vanilla where it runs; open op re-pair cells listed per row |
+| 635 | `0635-arifi-sync-B1-rows-corrected-lane-296-248320-head-ce.patch` | arifi-fork-base | `450b82a5b` | - | - | arifi-sync: B1 rows corrected (lane-296): 248320 head cell is in the perf list and owed (run24 d), iq3 N7 off arm = registered legacy cliff, concat dispatch count wording, owed flags + run24 scope |
+| 636 | `0636-tests-SILU-MUL-perf-eval-cases-at-the-27B-FFN-width-.patch` | arifi-fork-base | `feabf1a0b` | - | - | tests: SILU*MUL perf/eval cases at the 27B FFN width (n_ff 17408, tokens 1/5/512) + ARIFI_PRINT_ERR error print (lane-296 B2b receipt source) |
+| 637 | `0637-lane-296-B1-run24-stage-h-close-in-protected-win-res.patch` | arifi-fork-base | `2bd33c42b` | - | - | lane-296 B1: run24 + stage h close in protected-win resolutions |
+| 638 | `0638-lane-296-B1-correct-run24-order-effect-sign-record-k.patch` | arifi-fork-base | `39e8e1ac2` | - | - | lane-296 B1: correct run24 order-effect sign, record kernel identity R vs U8 |
+| 639 | `0639-lane-296-B1-run25-close-of-OPEN-1-OPEN-2-protected-w.patch` | arifi-fork-base | `c597892ae` | - | - | lane-296 B1: run25 close of OPEN 1 + OPEN 2 (protected-win resolutions) |
+| 640 | `0640-lane-296-B1-OPEN-1-row-harness-sync-submit-pipeline-.patch` | arifi-fork-base | `d70b85455` | - | - | lane-296 B1: OPEN 1 row - harness/sync/submit/pipeline identity CHECKED, n=6 off the registered GSQ depth-4 line |
+| 641 | `0641-lane-296-B1-OPEN-1-not-yet-a-documented-loss-mechani.patch` | arifi-fork-base | `ef308e5d8` | - | - | lane-296 B1: OPEN 1 not yet a documented loss (mechanism unnamed), depth-5 width mapping, OPEN 2 q4_K closed at line level |
+| 642 | `0642-night-sx8-numerics-revert-GDN-q-k-norm-to-ggml_l2_no.patch` | arifi-fork-base | `ff323b02f` | - | - | night/sx8-numerics: revert GDN q/k norm to ggml_l2_norm (5fdfa62829, qwen35 only) - throwaway numerics probe |
+| 643 | `0643-Revert-night-sx8-numerics-revert-GDN-q-k-norm-to-ggm.patch` | arifi-fork-base | `8305fcd90` | - | - | Revert "night/sx8-numerics: revert GDN q/k norm to ggml_l2_norm (5fdfa62829, qwen35 only) - throwaway numerics probe" |
+| 644 | `0644-vulkan-keep-Q8_0-x-Q8_1-int8-coopmat1-under-GGML_ARI.patch` | ternary-g128 | `9c0e74c2f` | - | - | vulkan: keep Q8_0 x Q8_1 int8 coopmat1 under GGML_ARIFI_MMQ_UNDER_COOPMAT (default OFF) |
+| 645 | `0645-vulkan-GGML_ARIFI_Q8_0_CM1-off-on-min-rows-for-the-R.patch` | ternary-g128 | `9223743e1` | - | - | vulkan: GGML_ARIFI_Q8_0_CM1 = off \| on \| <min rows> for the RDNA3/4 Q8_0 x Q8_1 int8 coopmat1 MMQ |
+| 646 | `0646-vulkan-Q8_0-int8-cm1-default-FLOOR-int8-on-ssm_out-f.patch` | ternary-g128 | `d8c538d52` | - | - | vulkan: Q8_0 int8 cm1 default = FLOOR (int8 on, ssm_out float) + per-role switches |
+| 647 | `0647-vulkan-GGML_ARIFI_Q8_0_CM1_2D-roles-two-digit-int8-a.patch` | ternary-g128 | `471494483` | - | - | vulkan: GGML_ARIFI_Q8_0_CM1_2D=<roles> two-digit int8 activations for Q8_0 MMQ (candidate B) |
+| 648 | `0648-lane-296-night-int8-accuracy-deliverable-floor-A-pas.patch` | arifi-fork-base | `fe49d8b17` | - | - | lane-296 night: int8 accuracy deliverable - floor A passes 3/3, goal B (int8 ssm_out) open |
+| 649 | `0649-vulkan-two-digit-int8-second-digit-prescaled-by-2-GG.patch` | ternary-g128 | `c445bedf3` | - | - | vulkan: two-digit int8 second digit prescaled by 2^GGML_ARIFI_Q8_0_CM1_2D_SHIFT (default 8), candidate B3 |
+| 650 | `0650-vulkan-q8_1-residual-and-scale-f16-rounding-use-the-.patch` | ternary-g128 | `1a88a9c09` | - | - | vulkan: q8_1 residual and scale-f16 rounding use the ds store's own f16 conversion; arifi-op-probe op-level int8 tools |
+| 651 | `0651-lane-296-int8-goal-INT8-MATH-derivation-op-level-err.patch` | arifi-fork-base | `9a3783ec7` | - | - | lane-296 int8 goal: INT8-MATH derivation + op-level error tables, INT8-ACCURACY update (B5 accurate at op level, 7.431166 vs bar 7.4163; instrument paired SE 0.006-0.012) |
+| 652 | `0652-lane-296-int8-goal-conclusions-made-conditional-on-t.patch` | arifi-fork-base | `abbda3401` | - | - | lane-296 int8 goal: conclusions made conditional on the 64-chunk check; B1-B3 pair (+0.0209 PPL at 3.4 SE with equal ssm_out op error); section renumber; magic-bias note |
+| 653 | `0653-vulkan-GGML_ARIFI_F32ACC-roles-all-forces-f32-accumu.patch` | ternary-g128 | `3e85f0cb6` | - | - | vulkan: GGML_ARIFI_F32ACC=<roles>\|all forces f32 accumulation on the float matmul path; arifi-op-probe bias decomposition |
+| 654 | `0654-lane-296-int8-goal-stage-8-64-chunk-gap-is-real-2.7-.patch` | arifi-fork-base | `6813ffc87` | - | - | lane-296 int8 goal stage 8: 64-chunk gap is real (+2.7 SE, broad); H-B and H-A falsified; float-path error named as f16 accumulation (random, 7.7e-3 -> 2.66e-4 with f32 acc); chain s8 pre-registered |
+| 655 | `0655-lane-296-int8-goal-stage-8-pre-register-x16-pairing-.patch` | arifi-fork-base | `a1eaa94a3` | - | - | lane-296 int8 goal stage 8: pre-register x16 pairing and the c64 x x16 joint reading before c64 lands; smoke downgraded (2 seqs/pass); S-X8 f32acc route checked by code; price disclosed |
+| 656 | `0656-lane-296-int8-goal-stage-9-F32ACC-takes-type-role-an.patch` | arifi-fork-base | `1691b758c` | - | - | lane-296 int8 goal stage 9: F32ACC takes <type>:<role> and <type>:all; op probe replays any weight type and times widths |
+| 657 | `0657-vulkan-UMA-device-local-first-placement-on-the-Radeo.patch` | ternary-g128 | `2fa02db7f` | - | - | vulkan: UMA device-local-first placement on the Radeon 890M (port of 3a68edb49 onto night/sx8-numerics 1691b758c4) |
+| 658 | `0658-sx8-int8-stage-10-S-X8-on-the-int8-coopmat1-MMQ-kern.patch` | arifi-fork-base | `d871a4fae` | - | - | sx8-int8 stage 10: S-X8 on the int8 coopmat1 MMQ kernel (exact (d,m) remap, exact b sums, RED twin, role/min-n knobs, tests) |
+| 659 | `0659-sx8-int8-stage-10-GGML_ARIFI_SX8_CM1_2D-fix-knob-two.patch` | arifi-fork-base | `3f5c70921` | - | - | sx8-int8 stage 10: GGML_ARIFI_SX8_CM1_2D fix knob (two-digit activations for listed S-X8 roles, lane-296 R3 route) |
+| 660 | `0660-sx8-int8-stage-10-two-digit-activations-default-ON-f.patch` | arifi-fork-base | `e650ca8a8` | - | - | sx8-int8 stage 10: two-digit activations default ON for ffn_up (fix B) |
+| 661 | `0661-sx8-int8-attempt-E-16-value-activation-scales-for-th.patch` | arifi-fork-base | `7e8380ca6` | - | - | sx8-int8 attempt E: 16-value activation scales for the S-X8 int8 cm1 kernel (env-only arm) |
+| 662 | `0662-sx8-int8-attempt-E-quantize_q8_1-HALF-ds-store-via-v.patch` | arifi-fork-base | `b43fe423b` | - | - | sx8-int8 attempt E: quantize_q8_1 HALF ds store via vec2 (f16 locals need the arithmetic extension) |
+| 663 | `0663-sx8-int8-attempt-D-two-digit-activations-only-for-ou.patch` | arifi-fork-base | `fb251eed0` | - | - | sx8-int8 attempt D: two-digit activations only for outlier blocks, skip kernel for the second pass |
+| 664 | `0664-sx8-int8-default-to-gate20-selective-two-digit-ffn_u.patch` | arifi-fork-base | `16884e572` | - | - | sx8-int8: default to gate20 selective two-digit ffn_up activations |
+| 665 | `0665-vulkan-bound-SX8-residual-masks-and-exercise-gate-fi.patch` | ternary-g128 | `f9df20b32` | - | - | vulkan: bound SX8 residual masks and exercise gate fixtures |
+| 666 | `0666-vulkan-use-float-below-S-X8-served-crossover.patch` | ternary-g128 | `841093695` | - | - | vulkan: use float below S-X8 served crossover |
+| 667 | `0667-vulkan-S-X8-width-gate-covers-prompt-widths-only-n-8.patch` | ternary-g128 | `fecb34207` | - | - | vulkan: S-X8 width gate covers prompt widths only (n > 8); decode widths keep the int8 route (check finding F1; S-X8 bank 149/149 + fixtures 10/10 green on build9) |
+| 668 | `0668-S-X8-gate-comment-threshold-is-in-dispatch-columns-n.patch` | arifi-fork-base | `926e2931d` | - | - | S-X8 gate comment: threshold is in dispatch columns, not request tokens |
+| 669 | `0669-server-keep-prompt-images-in-reusable-device-snapsho.patch` | arifi-fork-base | `c23bd8cc5` | - | - | server: keep prompt images in reusable device snapshots |
+| 670 | `0670-lane-298-skip-whole-file-mmap-prefetch-when-a-device.patch` | arifi-fork-base | `b651d7f98` | - | - | lane-298: skip whole-file mmap prefetch when a device copies weights out of the mapping |
+| 671 | `0671-lane-300-F-141-coopmat1-FA-zeroes-V-rows-masked-for-.patch` | arifi-fork-base | `8608d59a3` | - | - | lane-300 F-141: coopmat1 FA zeroes V rows masked for every valid tile row (stale/foreign KV content no longer reaches the P*V WMMA sum); flags bit 32 default ON, GGML_VK_FA_DEADV_KEEP=1 = planted-RED switch; fa-replay sign-class arms. Lane: lane-300 |
+| 672 | `0672-lane-298-R1-checkpoint-fix-ssm-row-save-restore-maps.patch` | arifi-fork-base | `1cfa48571` | - | - | lane-298 R1 checkpoint fix: ssm row save/restore maps to the physical ring plane |
+| 673 | `0673-lane-298-qwen4exp-MTP-sidecar-load-graph_mtp-target-.patch` | arifi-fork-base | `8a721b95d` | - | - | lane-298: qwen4exp MTP sidecar load + graph_mtp, target 4-stream capture, Windows unmap_fragment trim (env-gated) |
+| 674 | `0674-lane-298-fix-Windows-lm-dio-probe-failure-unaligned-.patch` | arifi-fork-base | `a3cdce01b` | - | - | lane-298: fix Windows -lm dio probe failure (unaligned file-pointer moves on NO_BUFFERING handles) |
+| 675 | `0675-lane-298-unbuffered-read_raw_unsafe-throws-on-an-una.patch` | arifi-fork-base | `30347e2b6` | - | - | lane-298: unbuffered read_raw_unsafe throws on an unaligned cursor/len/ptr instead of returning floor-sector bytes |
+| 676 | `0676-lane-298-qwen4exp-MTP-capture-is-a-real-graph-node-f.patch` | arifi-fork-base | `52566ff2c` | - | - | lane-298: qwen4exp MTP capture is a real graph node (fixes GGML_ASSERT backend_h != nullptr) |
+| 677 | `0677-lane-298-server-emits-n_probs-on-the-speculative-pat.patch` | arifi-fork-base | `1980c2b73` | - | - | lane-298: server emits n_probs on the speculative path (verify-row index per emitted token) |
+| 678 | `0678-lane-298-spec-round-cost-timers-env-draft-recent-tok.patch` | arifi-fork-base | `c0c175642` | - | - | lane-298: spec round-cost timers + env draft recent-token penalty (OW-036) |
+| 679 | `0679-lane-298-qwen4exp-MTP-draft-head-over-a-token-subset.patch` | arifi-fork-base | `99b1bd597` | - | - | lane-298: qwen4exp MTP draft head over a token subset (d2t + gathered output rows, Strata draft_vocab) |
+| 680 | `0680-lane-298-MTP-eh_proj-as-one-2D-matmul.patch` | arifi-fork-base | `6350b8f7e` | - | - | lane-298: MTP eh_proj as one 2D matmul |
+| 681 | `0681-lane-298-OW-036-draft-penalty-default-on-ngram-mod-m.patch` | arifi-fork-base | `c1f0071d8` | - | - | lane-298: OW-036 draft penalty default on, ngram-mod miss-cost cap, MoE-union counter |
+| 682 | `0682-lane-298-ngram-mod-CAP0-gate-starts-at-full-width-ca.patch` | arifi-fork-base | `e3ec87d92` | - | - | lane-298: ngram-mod CAP0 gate starts at full width, caps only after a miss |
+| 683 | `0683-lane-298-item-5-drop-the-previous-ubatch-PLE-row-pag.patch` | arifi-fork-base | `e8f260b80` | - | - | lane-298 item 5: drop the previous ubatch PLE row pages from the working set (LLAMA_PLE_RELEASE=1) |
+| 684 | `0684-lane-298-item-5-v2-PLE-release-one-whole-table-Virtu.patch` | arifi-fork-base | `8291ce4ed` | - | - | lane-298 item 5 v2: PLE release = one whole-table VirtualUnlock per row budget, not per row |
+| 685 | `0685-lane-298-item-5-PLE-release-default-ON-at-256-MiB-LL.patch` | arifi-fork-base | `671a9594e` | - | - | lane-298 item 5: PLE release default ON at 256 MiB; LLAMA_PLE_RELEASE=0 turns it off |
+| 686 | `0686-lane-299-WIP-vulkan-HC_POST_W-fusion-SCALE-SIGMOID-S.patch` | arifi-fork-base | `1ea9394f5` | - | - | lane-299 WIP: vulkan HC_POST_W fusion (SCALE->SIGMOID->SCALE->DSV4_HC_POST, one dispatch) |
+| 687 | `0687-lane-299-WIP-vulkan-GDN_BANK-fusion-GATED_DELTA_NET-.patch` | prismml-recurrent | `c474cc1d9` | - | - | lane-299 WIP: vulkan GDN_BANK fusion (GATED_DELTA_NET reads/writes the R1 recurrent bank in place; state GET_ROWS + SET_ROWS skipped). Off GGML_VK_DISABLE_GDN_BANK, plant GGML_VK_GDN_BANK_PLANT, test GATED_DELTA_NET_BANK. UNBUILT at commit time (GPU-TIMED-moe hold). |
+| 688 | `0688-lane-299-WIP-GDN_BANK-prepass-reads-SET_ROWS-operand.patch` | arifi-fork-base | `df91200f0` | - | - | lane-299 WIP: GDN_BANK prepass reads SET_ROWS operands in ggml order (src0 data, src1 row ids, src2 dst); the old order never matched, so the fused path never fired (optest3 reject 2). Adds GGML_VK_GDN_BANK_DEBUG reject-stage prints. |
+| 689 | `0689-lane-298-item-5-prefetch-ahead-one-PrefetchVirtualMe.patch` | arifi-fork-base | `300d9d691` | - | - | lane-298 item 5 prefetch-ahead: one PrefetchVirtualMemory over each ubatch's PLE row pages (LLAMA_PLE_PREFETCH=1 opt-in) |
+| 690 | `0690-lane-298-item-5-prefetch-ahead-prefetch-after-the-PL.patch` | arifi-fork-base | `e30a7e459` | - | - | lane-298 item 5 prefetch-ahead: prefetch after the PLE trim, not before |
+| 691 | `0691-lane-298-item-5-prefetch-ahead-LLAMA_PLE_PREFETCH-de.patch` | arifi-fork-base | `e2eb456e4` | - | - | lane-298 item 5 prefetch-ahead: LLAMA_PLE_PREFETCH default 1 (pfa-10051313 PASS) |
+| 692 | `0692-lane-298-item-5-prefetch-ahead-keep-the-per-ubatch-W.patch` | arifi-fork-base | `4295f4827` | - | - | lane-298 item 5 prefetch-ahead: keep the per-ubatch WARN receipt on the default path |
+| 693 | `0693-lane-298-GDN-snapshot-byte-floor-diag-GGML_VK_GDN_SN.patch` | arifi-fork-base | `4b1fb8b39` | - | - | lane-298 GDN snapshot-byte floor diag: GGML_VK_GDN_SNAP1_DIAG clamps GDN_BANK n_written to 1 |
+| 694 | `0694-lane-298-GDN-replay-cost-bounding-diag-GGML_VK_GDN_R.patch` | arifi-fork-base | `0d511dd76` | - | - | lane-298 GDN replay-cost bounding diag: GGML_VK_GDN_REPLAY_DIAG runs a replay prologue (n_rep push constant) in the GDN_BANK shader |
+| 695 | `0695-lane-298-GDN-deferred-commit-replay-opt-in-LLAMA_GDN.patch` | prismml-recurrent | `a8b20d128` | - | - | lane-298 GDN deferred commit + replay (opt-in LLAMA_GDN_REPLAY=1): replay op, Vulkan GDN_REPLAY bank pipeline, recurrent wiring |
+| 696 | `0696-lane-298-fix-two-log-format-strings-carried-raw-newl.patch` | arifi-fork-base | `f5276ee24` | - | - | lane-298 fix: two log format strings carried raw newlines instead of \n (cf4f877c07 build break) |
+| 697 | `0697-lane-298-GDN-replay-verify-routes-an-unlogged-wide-b.patch` | arifi-fork-base | `d42ee555f` | - | - | lane-298 GDN replay: verify routes an unlogged wide-batch partial reject to the draft-time checkpoint |
+| 698 | `0698-lane-301-Vulkan-FA-sparse-gather-for-QSA-prefill-gqa.patch` | arifi-fork-base | `634bbd673` | - | - | lane-301: Vulkan FA sparse gather for QSA prefill (gqa layout for sparse-hinted multi-row FA) + prefill sparse op cases |
+| 699 | `0699-lane-301-qwen4exp-row-25-persistent-pooled-indexer-k.patch` | arifi-fork-base | `7d61001f0` | - | - | lane-301: qwen4exp row 25 - persistent pooled indexer-key cache (pool+norm+rope once per full block, incremental fresh blocks), GGML_ARIFI_QSA_POOL_CACHE=0 / GGML_ARIFI_QSA_POOL_RED=1; test-backend-ops CPU census perf shapes + GGML_ARIFI_TBO_THREADS |
+| 700 | `0700-lane-301-row-25-gate-fix-M-RoPE-token-ubatches-carry.patch` | rocmfpx-mrope | `ea75fe8ca` | - | - | lane-301: row 25 gate fix - M-RoPE token ubatches carry n_pos=4, only an embedding ubatch disables the pooled cache; path-class WARN log; RED=2 drops every fresh write; protected-win entry for row-26 sparse prefill (c3 logger-off x2) |
+| 701 | `0701-lane-301-protected-win-entry-qwen4exp-qsa-pooled-ind.patch` | arifi-fork-base | `49c4e1891` | - | - | lane-301: protected-win entry qwen4exp-qsa-pooled-indexer-cache (row 25, c4 logger-off x2: decode 32K 8.29->10.35 tok/s, ids identical) |
+| 702 | `0702-lane-302-MUL_MAT_ID-expert-gather-for-small-batch-ma.patch` | arifi-fork-base | `c49a7c15e` | - | - | lane-302: MUL_MAT_ID expert gather for small-batch mat-vec (opt-in GGML_ARIFI_MOE_GATHER=1\|2\|4) |
+| 703 | `0703-lane-302-gather-leader-test-uses-a-mask-G-is-1-2-or-.patch` | arifi-fork-base | `ba68186d9` | - | - | lane-302: gather leader test uses a mask (G is 1, 2 or 4), comment points at the real pipeline block |
+| 704 | `0704-lane-302-served-qwen4exp-MoE-op-test-shapes-n-1.8-ga.patch` | arifi-fork-base | `fe35f4fa7` | - | - | lane-302: served qwen4exp MoE op-test shapes n=1..8 + gather plant guard |
+| 705 | `0705-lane-302-served-MoE-op-test-cases-at-16-experts-only.patch` | arifi-fork-base | `afbe861ef` | - | - | lane-302: served MoE op-test cases at 16 experts only |
+| 706 | `0706-lane-302-gather-pipelines-walk-slots-fastest-slot-ma.patch` | arifi-fork-base | `57c45ac84` | - | - | lane-302: gather pipelines walk slots fastest (slot-major workgroup order) so shared experts hit L2 |
+| 707 | `0707-lane-302-protected-wins-entry-for-the-slot-major-MoE.patch` | arifi-fork-base | `6350bcf72` | - | - | lane-302: protected-wins entry for the slot-major MoE gather (op-level win, default off; served A/B not shown) Lane: lane-302 |
+| 708 | `0708-lane-302-MoE-gather-default-ON-at-width-1-cellE-1005.patch` | arifi-fork-base | `e8bf3e812` | - | - | lane-302: MoE gather default ON at width 1 (cellE-10052000 served ABBA x2: mean +0.34%, ids IDENT 48/48); GGML_ARIFI_MOE_GATHER=0 opts out; protected-wins entry amended with served fields |
+| 709 | `0709-lane-302-GGML_ARIFI_MOE_GATHER_ROWS-1-2-4-8-sets-row.patch` | arifi-fork-base | `8c913a9d2` | - | - | lane-302: GGML_ARIFI_MOE_GATHER_ROWS (1\|2\|4\|8) sets rows per workgroup of the gather pipelines; unset = rm_iq (no default moves) |
+| 710 | `0710-lane-302-IQ3_S-gather-pipeline-defaults-to-2-rows-pe.patch` | arifi-fork-base | `7c9a6bc21` | - | - | lane-302: IQ3_S gather pipeline defaults to 2 rows per workgroup (cellG-10052319: n4 -10%/-13% vs rm_iq in both rounds, harness 80/80 byte-identical); GGML_ARIFI_MOE_GATHER_ROWS still overrides every type |
+| 711 | `0711-lane-302-protected-wins-entry-for-the-IQ3_S-gather-r.patch` | arifi-fork-base | `35841fffa` | - | - | lane-302: protected-wins entry for the IQ3_S gather rows-2 default (cellH-10060008 served ABBA x2: mean +0.07%, worst prompt -0.54%, ids IDENT = KEEP; op -10%/-13% cellG-10052319) |
+| 712 | `0712-lane-302-IQ4_NL-gather-K-tail-redistribution-opt-in-.patch` | arifi-fork-base | `d5deb283b` | - | - | lane-302: IQ4_NL gather K-tail redistribution, opt-in GGML_ARIFI_MOE_GATHER_TAIL=1 (=2 planted wrong arm) |
+| 713 | `0713-lane-302-IQ4_NL-q8_1-integer-dot-mat-vec-expert-gath.patch` | arifi-fork-base | `3d333a096` | - | - | lane-302: IQ4_NL q8_1 integer-dot mat-vec + expert-gather twin, opt-in GGML_ARIFI_IQ4NL_MMVQ=1 (every n) |
+| 714 | `0714-lane-302-IQ2_S-gather-body-arms-opt-in-GGML_ARIFI_IQ.patch` | arifi-fork-base | `ad9f46e05` | - | - | lane-302: IQ2_S gather body arms (opt-in GGML_ARIFI_IQ2S_BODY) + ISA dump under GGML_VK_PIPELINE_STATS |
+| 715 | `0715-lane-302-IQ2_S-gather-batched-grid-init-arms-opt-in-.patch` | arifi-fork-base | `ad0ef50aa` | - | - | lane-302: IQ2_S gather batched grid init arms (opt-in GGML_ARIFI_IQ2S_BODY=4\|5), body stays opt-in |
+| 716 | `0716-lane-302-IQ2_S-gather-body-5-int8-sign-batched-grid-.patch` | arifi-fork-base | `88eeef9a0` | - | - | lane-302: IQ2_S gather body 5 (int8 sign + batched grid init) DEFAULT ON |
+| 717 | `0717-lane-302-protected-wins-entry-vulkan-moe-gather-iq2s.patch` | arifi-fork-base | `32f06513d` | - | - | lane-302: protected-wins entry vulkan-moe-gather-iq2s-body5 (cellO-10060849 KEEP) Lane: lane-302 |
+| 718 | `0718-llama-quant-same-type-tensors-are-byte-copied-so-ski.patch` | arifi-fork-base | `b1c60b4e9` | - | - | llama-quant: same-type tensors are byte-copied, so skip the imatrix guard for them (lets --tensor-type-file pin quantized tensors to their current type while requantizing others) |
+| 719 | `0719-llama-quantize-read-via-slabbed-file-path-on-Windows.patch` | arifi-fork-base | `16557e772` | - | - | llama-quantize: read via slabbed file path on Windows, not mmap |
+| 720 | `0720-lane-299-protected-wins-entry-vulkan-qwen4exp-hc-pos.patch` | arifi-fork-base | `edc570ed3` | - | - | lane-299: protected-wins entry vulkan-qwen4exp-hc-post-w (measured ABBA +1.28%/+6.69%, ids exact) Lane: lane-299 |
+| 721 | `0721-lane-299-protected-wins-entry-vulkan-qwen4exp-gdn-ba.patch` | arifi-fork-base | `936985888` | - | - | lane-299: protected-wins entry vulkan-qwen4exp-gdn-bank (measured 3-round medians +4.47%/+3.09%, ids exact 12/12) |
+| 722 | `0722-lane-299-gdn-bank-protected-wins-entry-carries-the-i.patch` | arifi-fork-base | `ea904964e` | - | - | lane-299: gdn-bank protected-wins entry carries the interleaved_ab bootstrap CI (short SIGNIFICANT, long TIED at n=3) |
+| 723 | `0723-lane-299-runbook-for-the-qwen4exp-decode-fusion-gate.patch` | arifi-fork-base | `9ef9ad5b7` | - | - | lane-299: runbook for the qwen4exp decode-fusion gates (build, op test with MATCH>0 rule, interleaved served A/B, noise floor) |
+| 724 | `0724-moe-cache-x1-GLM-5.3-NVMe-expert-streaming-x12.x21-m.patch` | arifi-fork-base | `b61ddcec3` | - | - | moe-cache-x1: GLM-5.3 NVMe expert streaming, x12..x21 measured source |
+| 725 | `0725-kimi-k3-read-the-ssm-bank-through-the-R1-rotated-ind.patch` | arifi-fork-base | `f144818c1` | - | - | kimi-k3: read the ssm bank through the R1 rotated index (bank=true) |
+| 726 | `0726-lane-298-integ-protected-win-registration-fixes-carr.patch` | arifi-fork-base | `0130f822a` | - | - | lane-298 integ: protected-win registration fixes carried in from lanes 301/302 + HQ80 f2c5fad421 resolution rows |
+| 727 | `0727-vulkan-scope-allocator-wide-shared-admission-to-MoE-.patch` | ternary-g128 | `284fa77c4` | - | - | vulkan: scope allocator-wide shared admission to MoE NVMe streaming |
+| 728 | `0728-lane-301-coopmat1-f16-B-staging-for-MUL_MAT_ID-on-no.patch` | arifi-fork-base | `1d7f47ec4` | - | - | lane-301: coopmat1 f16-B staging for MUL_MAT_ID on non-Intel devices, default on |
+| 729 | `0729-lane-301-protected-win-vulkan-cm1-f16b-staging-mul-m.patch` | arifi-fork-base | `44450ec46` | - | - | lane-301: protected-win vulkan-cm1-f16b-staging-mul-mat-id + row-26 workload 780M -> Radeon 890M (X1) |
+| 730 | `0730-lane-302-IQ4_NL-gather-byte-pair-LUT-IQ3_S-gather-ba.patch` | arifi-fork-base | `48468238d` | - | - | lane-302: IQ4_NL gather byte-pair LUT + IQ3_S gather batched grid init arms (opt-in) |
+| 731 | `0731-lane-302-IQ3_XXS-gather-batched-grid-init-arm-opt-in.patch` | arifi-fork-base | `70e4f2303` | - | - | lane-302: IQ3_XXS gather batched grid init arm (opt-in GGML_ARIFI_IQ3XXS_INIT=1\|2) |
+| 732 | `0732-lane-300-arifi-det-probe-repeat-determinism-probe-wi.patch` | arifi-fork-base | `9ca84f74a` | - | - | lane-300: arifi-det-probe - repeat-determinism probe with history arms (DETP_CLEAR, DETP_PRE) |
+| 733 | `0733-lane-300-det-probe-DETP_FA-FA-mask-live-column-dead-.patch` | arifi-fork-base | `9ac5c5b4a` | - | - | lane-300: det-probe DETP_FA (FA mask live-column + dead K/V report) and DETP_ROWS (GOAL 3b row-independence) |
+| 734 | `0734-lane-300-det-probe-DETP_FA_DUMP-FA-node-inputs-outpu.patch` | arifi-fork-base | `f0701495e` | - | - | lane-300: det-probe DETP_FA_DUMP (FA node inputs/output per run) + DETP_ROWS_OPS (per-op last-row compare by width); GGML_VK_FA_MASK_OPT_DISABLE diagnosis switch Lane: lane-300 |
+| 735 | `0735-lane-300-arifi-fa-replay-model-free-replay-of-a-dump.patch` | arifi-fork-base | `565bb1a2e` | - | - | lane-300: arifi-fa-replay - model-free replay of a dumped FLASH_ATTN_EXT node (swap/constant/pad/row-width arms) for the F-141 coopmat FA locate |
+| 736 | `0736-lane-300-fa-replay-IGPU-backend-fallback-cell-10-dea.patch` | arifi-fork-base | `fa61e861f` | - | - | lane-300: fa-replay IGPU backend fallback + cell-10 dead-V value-class/column-range arms; det-probe prefill ends at min(t-7,t-w+1) for widths > 8 |
+| 737 | `0737-lane-300-F-141-coopmat1-FA-zeroes-V-rows-masked-for-.patch` | arifi-fork-base | `b5ea4e3ee` | - | - | lane-300 F-141: coopmat1 FA zeroes V rows masked for every valid tile row (stale/foreign KV content no longer reaches the P*V WMMA sum); flags bit 32 default ON, GGML_VK_FA_DEADV_KEEP=1 = planted-RED switch; fa-replay sign-class arms. Lane: lane-300 |
+| 738 | `0738-lane-300-det-probe-DETP_VERIFY-cost-mode-teacher-for.patch` | arifi-fork-base | `f0be30eb6` | - | - | lane-300: det-probe DETP_VERIFY cost mode - teacher-forced w-row verify timing, fix vs planted-RED on identical ids (HQ79 Q7). Lane: lane-300 |
+| 739 | `0739-lane-300-det-probe-DETP_ROWS_OPS-2-full-node-dump-pe.patch` | arifi-fork-base | `630ed8e76` | - | - | lane-300: det-probe DETP_ROWS_OPS=2 full node dump per width (last-row hash, I32 nodes included); cell-16 name-walk compare was blind across width-dependent graphs. Lane: lane-300 |
+| 740 | `0740-lane-300-F-141-3b-LLAMA_ARIFI_MOE_SUMROWS_MAX-N-keep.patch` | arifi-fork-base | `41cc36d84` | - | - | lane-300: F-141 3b: LLAMA_ARIFI_MOE_SUMROWS_MAX=<N> keeps the n=1 permute+sum_rows expert-sum order for n_tokens<=N (cell 17: n=1 SUM_ROWS vs n>1 ADD chain = first width carrier, ffn_moe_out layer 0). Default 1 = unchanged. Lane: lane-300 |
+| 741 | `0741-lane-300-F-141-3b-FA-split_k-row-stable-under-GQA-wo.patch` | arifi-fork-base | `3bea6eff0` | - | - | lane-300: F-141 3b: FA split_k row-stable under GQA - workgroups_x is the token count, so split_k (KV reduction split) moved with verify width; for neq1 <= GGML_ARIFI_FA_ROWSTABLE_N (default 8, 0 = old) split_k is chosen as for one token. Cell 18: SR8+MMVQ-force first diff = layer-3 attention. Lane: lane-300 |
+| 742 | `0742-lane-300-F-141-3b-row-stable-FA-split_k-also-on-the-.patch` | arifi-fork-base | `4274c5f12` | - | - | lane-300: F-141 3b: row-stable FA split_k also on the segmented body dispatch (one helper, same GGML_ARIFI_FA_ROWSTABLE_N rule); GGML_ARIFI_FA_TRACE=1 prints each distinct FA dispatch tuple; det-probe DETP_ROWS_OPS=3 hashes every token slice of every node keyed by absolute position (single steps = per-position reference). Cell 19: w=4/8 still first-differ at layer-3 FA. Lane: lane-300 |
+| 743 | `0743-lane-300-F-141-3b-GGML_ARIFI_ADD_RMS_ROWSTABLE_N-N-k.patch` | arifi-fork-base | `d3c419a01` | - | - | lane-300: F-141 3b: GGML_ARIFI_ADD_RMS_ROWSTABLE_N=<N> keeps the residual ADD -> RMS_NORM partials fusion for rows <= N (was one row only: a verify batch normalized every row with a different reduction order than n=1 decode). add/multi_add already write partials by flat index/512, so row r owns its n=1 partials; rms_norm_partials reads row = WorkGroupID.y; admission keeps the one-row budget so every width fuses the same layers. Default 0 = unchanged. Cell 21: fused RED, unfused GREEN. Lane: lane-300 |
+| 744 | `0744-lane-300-F-141-3b-arifi-mmv-width-model-free-MUL_MAT.patch` | arifi-fork-base | `56d0974bd` | - | - | lane-300: F-141 3b: arifi-mmv-width - model-free MUL_MAT width replay: column 0 of an n-column mat-vec byte-compared with the n=1 result per (type, m, k). Cell 23: qwen4exp layer-0 z (q4_K 6144x2560) differs n=4 vs n=1 with hoist off; f32-dequant route moves the first diff to the q6_K qkv sibling. Lane: lane-300 |
+| 745 | `0745-lane-300-F-141-3b-GGML_ARIFI_MMV_ROWSTABLE_N-N-targe.patch` | arifi-fork-base | `e13cd0de8` | - | - | lane-300: F-141 3b: GGML_ARIFI_MMV_ROWSTABLE_N=<N> targets mat-vec column j bit-equal to n=1 for n <= N. Cell 24 (arifi-mmv-width, model-free) showed three width carriers: (1) the MMVQ vs f32-dequant route moved with n (q5_K, q8_0, q6_K, small-k q4_K); now n <= N takes n=1's route. (2) the q6_K -32 fold (ARIFI_Q6K_XFOLD) applied only at NUM_COLS <= 3, so n >= 4 used other arithmetic (source CHECKED); spec constant 4 = 2 folds at every width. (3) Q4_K/Q5_K MMVQ column 0 differed n>1 vs n=1 at k = 2560/3072 only, same shader + pipeline by trace; mechanism ASSUMED = FMA contraction of the a*b*c - d*e dot varying per NUM_COLS specialization (the k pattern fits num_iters = 3 at wave64, wave size ASSUMED); spec constant 5 builds that dot `precise`. (3) moves the n=1 bits of Q4_K/Q5_K MMVQ under the flag only. Default 0 = unchanged (receipt arms O-FX/Q-FX in cell 25). Lane: lane-300 |
+| 746 | `0746-lane-300-F-141-3b-precise-Q4_K-Q5_K-MMVQ-dot-moves-t.patch` | arifi-fork-base | `538198cd9` | - | - | lane-300: F-141 3b: precise Q4_K/Q5_K MMVQ dot moves to its own SPIR-V (*_prec_q8_1_f32), iq3_s stock shape under GGML_ARIFI_MMV_ROWSTABLE_N |
+| 747 | `0747-lane-300-F-141-3b-GGML_ARIFI_FA_ROWSTABLE_N-default-.patch` | arifi-fork-base | `a26d71b8f` | - | - | lane-300: F-141 3b: GGML_ARIFI_FA_ROWSTABLE_N default 8 -> 0 (opt-in). bf1de9485b shipped it ON before the default-OFF rule; its verify-width cost is unmeasured (cell 28 held), so per HQ82 the default returns to stock split_k. N=0 never selects the n=1 split (neq1 >= 1), so ggml_vk_fa_rowstable_wx returns workgroups_x on the single and the segmented dispatch = merge-base behaviour by construction. Served proof: cell 27 OP-0/QP-0 (env FA_ROWSTABLE_N=0, other flags unset) ids == the 96a6a8d976 binary's plain ids (cells 12 S-fix, 13 O-fix) on short/2k/long, both models. |
+| 748 | `0748-lane-299-layout-copies-conv-tails-CPY-strided-no-CON.patch` | arifi-fork-base | `35a67b322` | - | - | lane-299: layout copies - conv tails CPY strided (no CONT, 4 per conv per token), PLE one transpose-copy + one kernel cast (replaces 4 CONT + 4 CONT + 4 CAST + 1 CONT). Same bytes. Off: LLAMA_L299_LAYOUT_OFF=1; RED plant: LLAMA_L299_LAYOUT_PLANT=1 (stale slot-0 history). Op test L299_LAYOUT. |
+| 749 | `0749-lane-299-item-B-alpha-bias-joins-the-ssm_alpha-mat-v.patch` | arifi-fork-base | `23de61bab` | - | - | lane-299: item B alpha bias joins the ssm_alpha mat-vec - ADD(ssm_dt) moves before the reshape so MUL_MAT + ADD are adjacent and the backend MUL_MAT_ADD fusion engages (36 ADD dispatches/token; same math). Off: LLAMA_L299_ALPHA_OFF=1; RED plant: LLAMA_L299_ALPHA_PLANT=1 (bias twice). Op test: MUL_MAT_VEC_FUSION bf16 m=1 n=48 k=2560 with bias. |
+| 750 | `0750-lane-299-protected-wins-entry-qwen4exp-layout-copies.patch` | arifi-fork-base | `063b87820` | - | - | lane-299: protected-wins entry qwen4exp-layout-copies (measured +1.48%/+1.19%, ids exact 10/10) |
+| 751 | `0751-lane-298-integ-GGML_VK_GDN_SNAP1_DIAG-prints-a-WARN-.patch` | arifi-fork-base | `40b6dc11a` | - | - | lane-298 integ: GGML_VK_GDN_SNAP1_DIAG prints a WARN at first use; OPTIONS-REGISTRY rows for both GDN diagnostics |
+| 752 | `0752-lane-298-integ-round-2-protected-wins-commit-fields-.patch` | arifi-fork-base | `7013014ac` | - | - | lane-298 integ round 2: protected-wins commit fields repointed to the integ cherry-pick shas |
+| 753 | `0753-arifi-sync-port-the-sha-pinned-trailer-exemption-led.patch` | arifi-fork-base | `01cde6911` | - | - | arifi-sync: port the sha-pinned trailer-exemption ledger (r86i 58187870f + a9187ded7) natively |
+| 754 | `0754-arifi-sync-trailer-exemptions.json-rows-for-the-63-s.patch` | arifi-fork-base | `0f112f59b` | - | `GGML_ARIFI_VNNI_REPACK` | arifi-sync: trailer-exemptions.json rows for the 63 --strict offenders under the shipped engine c23bd8cc5 |
+| 755 | `0755-arifi-sync-re-key-the-protected-win-ledgers-from-the.patch` | arifi-fork-base | `c00417ff7` | - | `GGML_ARIFI_VNNI_REPACK` | arifi-sync: re-key the protected-win ledgers from the pre-rebase chain to the x1i commits |
+| 756 | `0756-arifi-sync-x1i-reword-trailer-table-and-replay-scrip.patch` | arifi-fork-base | `0e4f3c72b` | - | - | arifi-sync: x1i-reword - trailer table and replay script for the 58 post-x1i commits |
+| 757 | `0757-arifi-sync-x1i-reword-commits-the-ledger-re-key-as-t.patch` | arifi-fork-base | `d6ad887f3` | - | - | arifi-sync: x1i-reword commits the ledger re-key as the tip commit's identity |
+| 758 | `0758-arifi-sync-x1i-reword-table-one-commit-per-win-carri.patch` | arifi-fork-base | `3c2a74ae8` | - | - | arifi-sync: x1i-reword table - one commit per win carries the number |
+| 759 | `0759-arifi-sync-x1i-reword-table-context-rows-carry-no-fi.patch` | arifi-fork-base | `0dcbd357c` | - | - | arifi-sync: x1i-reword table - context rows carry no figures |
+| 760 | `0760-lane-298-integ-round-2-freeze-prep-full-shas-on-the-.patch` | arifi-fork-base | `acf329085` | - | - | lane-298 integ round 2 freeze prep: full shas on the round-2 win commit fields; Q39 Measured-effect cells |
+| 761 | `0761-arifi-sync-re-key-the-sha-pinned-ledgers-after-the-p.patch` | arifi-fork-base | `4476c4221` | - | - | arifi-sync: re-key the sha-pinned ledgers after the post-x1i trailer reword |
 
 ## Measured effect, per patch
 
@@ -1390,6 +1535,151 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0614-arifi-sync-re-key-provenance-ledgers-after-the-b1082.patch` | UNMEASURED - register only |
 | `0615-OW-028-lane-279-ROCmFP4-FAST-q8_1-MMVQ-route-DEFAULT.patch` | see the lane-279 gates in the body; W1 re-runs the ROCmFP4 cells on b11178 |
 | `0616-W1-split-fixup-Vulkan-test-fault-seam-atomics-are-in.patch` | UNMEASURED - test seam only; heapres re-run owed in the W1 battery |
+| `0617-W1-collision-fixup-N3-MMQ-under-coopmat-opt-in-leave.patch` | none on the default path (opt-in OFF); runtime witness of the opt-in arm OWED (closed-lever launch gate refused it) |
+| `0618-W1-collision-arms-N1-upstream-IQ4_XS-mat-vec-shader-.patch` | none on the default path (switches unset); arms receipts C:/ArifiLabs/cache/lane296/ev/B*-*.txt, ladder.txt |
+| `0619-protected-wins-vulkan-uma-read-path-probe-symbol-re-.patch` | none - manifest only |
+| `0620-W1-collisions-N11-N12-coopmat1-f16-B-guard-for-f32-B.patch` | pending run3 (C:/ArifiLabs/cache/lane296/ev3); run2 receipts C:/ArifiLabs/cache/lane296/ev2, ladder2.txt |
+| `0621-W1-collisions-N12-RDNA3-device-probe-default-for-the.patch` | pending run4 (C:/ArifiLabs/cache/lane296/ev4); basis run3 C:/ArifiLabs/cache/lane296/ladder3.txt |
+| `0622-W1-collisions-N12-RDNA3-f16-B-width-floor-24-for-the.patch` | pending run8 (C:/ArifiLabs/cache/lane296/ev8); basis run7 C:/ArifiLabs/cache/lane296/ladder7.txt |
+| `0623-W1-collisions-N12-RDNA3-small-n-ffn_down-int8-except.patch` | *(no Measured-effect trailer)* |
+| `0624-protected-wins-carry-registrations-across-the-W1-reb.patch` | none - registry only |
+| `0625-metal-restore-upstream-s-dk-96-dv-64-sparse-FA-shape.patch` | none on this rig (Metal not compiled); restores an upstream shape admit |
+| `0626-server-carry-the-tool-call-anchor-across-upstream-s-.patch` | *(no Measured-effect trailer)* |
+| `0627-qwen35-chained-MTP-drafting-works-with-fused-QKV-GGU.patch` | *(no Measured-effect trailer)* |
+| `0628-ggml-cpu-upstream-s-ARM-NEON-Q1_0-repack-arms-stay-d.patch` | *(no Measured-effect trailer)* |
+| `0629-vulkan-graph_optimize-no-longer-hoists-a-UNARY-away-.patch` | none claimed; fused-op census + quality regate in lane-296 run 13 |
+| `0630-arifi-sync-carry-spec-dflash-fused-inject-switch-to-.patch` | none - registry only |
+| `0631-docs-GGML_ARIFI_VNNI_REPACK-scope-after-C019-ARM-NEO.patch` | none - documentation and a code comment only |
+| `0632-arifi-sync-protected-win-resolutions.json-for-the-36.patch` | *(no Measured-effect trailer)* |
+| `0633-tests-V023-asserting-regression-check-SILU-must-stay.patch` | *(no Measured-effect trailer)* |
+| `0634-arifi-sync-protected-win-resolutions-B1-rows-measure.patch` | *(no Measured-effect trailer)* |
+| `0635-arifi-sync-B1-rows-corrected-lane-296-248320-head-ce.patch` | *(no Measured-effect trailer)* |
+| `0636-tests-SILU-MUL-perf-eval-cases-at-the-27B-FFN-width-.patch` | *(no Measured-effect trailer)* |
+| `0637-lane-296-B1-run24-stage-h-close-in-protected-win-res.patch` | *(no Measured-effect trailer)* |
+| `0638-lane-296-B1-correct-run24-order-effect-sign-record-k.patch` | *(no Measured-effect trailer)* |
+| `0639-lane-296-B1-run25-close-of-OPEN-1-OPEN-2-protected-w.patch` | *(no Measured-effect trailer)* |
+| `0640-lane-296-B1-OPEN-1-row-harness-sync-submit-pipeline-.patch` | *(no Measured-effect trailer)* |
+| `0641-lane-296-B1-OPEN-1-not-yet-a-documented-loss-mechani.patch` | *(no Measured-effect trailer)* |
+| `0642-night-sx8-numerics-revert-GDN-q-k-norm-to-ggml_l2_no.patch` | *(no Measured-effect trailer)* |
+| `0643-Revert-night-sx8-numerics-revert-GDN-q-k-norm-to-ggm.patch` | *(no Measured-effect trailer)* |
+| `0644-vulkan-keep-Q8_0-x-Q8_1-int8-coopmat1-under-GGML_ARI.patch` | *(no Measured-effect trailer)* |
+| `0645-vulkan-GGML_ARIFI_Q8_0_CM1-off-on-min-rows-for-the-R.patch` | *(no Measured-effect trailer)* |
+| `0646-vulkan-Q8_0-int8-cm1-default-FLOOR-int8-on-ssm_out-f.patch` | *(no Measured-effect trailer)* |
+| `0647-vulkan-GGML_ARIFI_Q8_0_CM1_2D-roles-two-digit-int8-a.patch` | *(no Measured-effect trailer)* |
+| `0648-lane-296-night-int8-accuracy-deliverable-floor-A-pas.patch` | *(no Measured-effect trailer)* |
+| `0649-vulkan-two-digit-int8-second-digit-prescaled-by-2-GG.patch` | *(no Measured-effect trailer)* |
+| `0650-vulkan-q8_1-residual-and-scale-f16-rounding-use-the-.patch` | *(no Measured-effect trailer)* |
+| `0651-lane-296-int8-goal-INT8-MATH-derivation-op-level-err.patch` | *(no Measured-effect trailer)* |
+| `0652-lane-296-int8-goal-conclusions-made-conditional-on-t.patch` | *(no Measured-effect trailer)* |
+| `0653-vulkan-GGML_ARIFI_F32ACC-roles-all-forces-f32-accumu.patch` | *(no Measured-effect trailer)* |
+| `0654-lane-296-int8-goal-stage-8-64-chunk-gap-is-real-2.7-.patch` | *(no Measured-effect trailer)* |
+| `0655-lane-296-int8-goal-stage-8-pre-register-x16-pairing-.patch` | *(no Measured-effect trailer)* |
+| `0656-lane-296-int8-goal-stage-9-F32ACC-takes-type-role-an.patch` | *(no Measured-effect trailer)* |
+| `0657-vulkan-UMA-device-local-first-placement-on-the-Radeo.patch` | *(no Measured-effect trailer)* |
+| `0658-sx8-int8-stage-10-S-X8-on-the-int8-coopmat1-MMQ-kern.patch` | *(no Measured-effect trailer)* |
+| `0659-sx8-int8-stage-10-GGML_ARIFI_SX8_CM1_2D-fix-knob-two.patch` | *(no Measured-effect trailer)* |
+| `0660-sx8-int8-stage-10-two-digit-activations-default-ON-f.patch` | *(no Measured-effect trailer)* |
+| `0661-sx8-int8-attempt-E-16-value-activation-scales-for-th.patch` | *(no Measured-effect trailer)* |
+| `0662-sx8-int8-attempt-E-quantize_q8_1-HALF-ds-store-via-v.patch` | *(no Measured-effect trailer)* |
+| `0663-sx8-int8-attempt-D-two-digit-activations-only-for-ou.patch` | *(no Measured-effect trailer)* |
+| `0664-sx8-int8-default-to-gate20-selective-two-digit-ffn_u.patch` | *(no Measured-effect trailer)* |
+| `0665-vulkan-bound-SX8-residual-masks-and-exercise-gate-fi.patch` | *(no Measured-effect trailer)* |
+| `0666-vulkan-use-float-below-S-X8-served-crossover.patch` | *(no Measured-effect trailer)* |
+| `0667-vulkan-S-X8-width-gate-covers-prompt-widths-only-n-8.patch` | *(no Measured-effect trailer)* |
+| `0668-S-X8-gate-comment-threshold-is-in-dispatch-columns-n.patch` | *(no Measured-effect trailer)* |
+| `0669-server-keep-prompt-images-in-reusable-device-snapsho.patch` | *(no Measured-effect trailer)* |
+| `0670-lane-298-skip-whole-file-mmap-prefetch-when-a-device.patch` | correctness fix (shipped-engine load drain), no speed claim: RED r1k-10060240 / GREEN r1l-10060355 (cache/mtp-x1-lane/cells) |
+| `0671-lane-300-F-141-coopmat1-FA-zeroes-V-rows-masked-for-.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0672-lane-298-R1-checkpoint-fix-ssm-row-save-restore-maps.patch` | correctness fix (R1 checkpoint restore), no speed claim: RED r1h-10060107 / GREEN r1i-10060141, shipped base r1n-10060634 (cache/mtp-x1-lane/cells) |
+| `0673-lane-298-qwen4exp-MTP-sidecar-load-graph_mtp-target-.patch` | part of win W5, MTP drafting for Qwen3.8-Flash-Next (qwen4exp): plain 10.73 -> MTP n-max 3 p-min 0.5 16.64 t/s short (+55.0%), long 10.38 -> 15.14 (+45.8%); accept 91.5% / 78.2%; MEANS of 2 rounds, -lm dio. cache/mtp-x1-lane/cells/gate2c-10050216-* (state head = 1c80315817). Lane grade: "pending strict 2a" [release ledger Table 1 W5] |
+| `0674-lane-298-fix-Windows-lm-dio-probe-failure-unaligned-.patch` | part of win W6, Windows -lm dio direct-I/O load fixed: dio loads and serves uncapped: peak WS 0.95 GB, min available 5.4-9.7 GB, ids == reference (298 REPORT item 4); seat 77 reads the same cell as WS 1.0-1.4 GB, 15-17 s load. gate2c-10050216-state.json [release ledger Table 1 W6] |
+| `0675-lane-298-unbuffered-read_raw_unsafe-throws-on-an-una.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W6, the number sits on that win's main commit |
+| `0676-lane-298-qwen4exp-MTP-capture-is-a-real-graph-node-f.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W5, the number sits on that win's main commit |
+| `0677-lane-298-server-emits-n_probs-on-the-speculative-pat.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W5, the number sits on that win's main commit |
+| `0678-lane-298-spec-round-cost-timers-env-draft-recent-tok.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W8, the number sits on that win's main commit |
+| `0679-lane-298-qwen4exp-MTP-draft-head-over-a-token-subset.patch` | part of win W7, dven40k draft subset head (Strata draft_vocab, 40,525 ids): +4.6..+8.7% decode on all 6 requests vs the MTP base, ids == base; cells/dvocab-10050535-* (state head = 7507baba3e) [release ledger Table 1 W7] |
+| `0680-lane-298-MTP-eh_proj-as-one-2D-matmul.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 2 (lane 298), the number sits on that win's main commit |
+| `0681-lane-298-OW-036-draft-penalty-default-on-ngram-mod-m.patch` | part of win W8, OW-036 draft recent-token penalty (pk4s3): long +2..+4.5%, other prompts flat, ids 12/12; cells/combo-10050615-*, ngcap* [release ledger Table 1 W8] |
+| `0682-lane-298-ngram-mod-CAP0-gate-starts-at-full-width-ca.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0683-lane-298-item-5-drop-the-previous-ubatch-PLE-row-pag.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0684-lane-298-item-5-v2-PLE-release-one-whole-table-Virtu.patch` | part of win W12, PLE page release v2 (drop the previous ubatch's PLE rows from the working set): WS -67 vs +389 MiB per 8000 novel tokens, no repeat loss, ids 4/4; cells/pleio2-10051025-* (state head = e37036365e; default flip is the next commit) [release ledger Table 1 W12] |
+| `0685-lane-298-item-5-PLE-release-default-ON-at-256-MiB-LL.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W12, the number sits on that win's main commit |
+| `0686-lane-299-WIP-vulkan-HC_POST_W-fusion-SCALE-SIGMOID-S.patch` | part of win W11, HC_POST_W fusion (SCALE->SIGMOID->SCALE->DSV4_HC_POST in one dispatch): ABBA, 2 runs per arm: short 10.692 -> 10.828 (+1.2%), long 9.935 -> 10.599 (+6.6%), ids 8/8, -288 dispatches/token; fusion-x1-lane/cells/ab2-10050243-verdict.json (tps read and recomputed; state head 39d218e83d, which contains 6db5300cc1) [release ledger Table 1 W11] |
+| `0687-lane-299-WIP-vulkan-GDN_BANK-fusion-GATED_DELTA_NET-.patch` | part of win W9, GDN_BANK fusion on the MTP verify path: +9.59% mean of four per-prompt MEDIANS of 3 rounds (short +13.65, long +8.88, copy +7.19, agent +8.65), ids 12/12, SET_ROWS 12.33 -> 0.08 ms; cells/gdnb-10051106-READ.txt (state head = 192127969f) [release ledger Table 1 W9] |
+| `0688-lane-299-WIP-GDN_BANK-prepass-reads-SET_ROWS-operand.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W9, the number sits on that win's main commit |
+| `0689-lane-298-item-5-prefetch-ahead-one-PrefetchVirtualMe.patch` | part of win W13, PLE prefetch-ahead (one PrefetchVirtualMemory per ubatch): novel 2,000-token prefill 126.01 -> 180.15 t/s (+42.9%), decode r1 +6.21%, repeat prefill +1.14%; MEANS of 4 requests; plant RED +2.02%; off2 tainted, off1 alone 126.00 -> 180.10; cells/pfa-10051313-* (state head = 6b0e35cf52) [release ledger Table 1 W13] |
+| `0690-lane-298-item-5-prefetch-ahead-prefetch-after-the-PL.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W13, the number sits on that win's main commit |
+| `0691-lane-298-item-5-prefetch-ahead-LLAMA_PLE_PREFETCH-de.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W13, the number sits on that win's main commit |
+| `0692-lane-298-item-5-prefetch-ahead-keep-the-per-ubatch-W.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W13, the number sits on that win's main commit |
+| `0693-lane-298-GDN-snapshot-byte-floor-diag-GGML_VK_GDN_SN.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0694-lane-298-GDN-replay-cost-bounding-diag-GGML_VK_GDN_R.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0695-lane-298-GDN-deferred-commit-replay-opt-in-LLAMA_GDN.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 2 (lane 298), the number sits on that win's main commit |
+| `0696-lane-298-fix-two-log-format-strings-carried-raw-newl.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 2 (lane 298), the number sits on that win's main commit |
+| `0697-lane-298-GDN-replay-verify-routes-an-unlogged-wide-b.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0698-lane-301-Vulkan-FA-sparse-gather-for-QSA-prefill-gqa.patch` | part of win W15, QSA sparse flash attention at prefill (Strata row 26): 32K prefill 105.8 -> 194.1 t/s (+83.4%), 16K 156.9 -> 205.7; 32K/2K ratio 0.49 -> 0.91; ids identical; FLASH_ATTN_EXT 21/21, RED fails the 9 prefill cases; -ub 4096 -b 4096 -c 33792, F16 KV, 2 rounds; qsa-x1-lane/cells/c3-10051215-* (bin-b source 1c80315817 dirty=2, Gap 7) [release ledger Table 1 W15] |
+| `0699-lane-301-qwen4exp-row-25-persistent-pooled-indexer-k.patch` | part of win W16, Persistent pooled indexer-key cache for QSA decode (Strata row 25): decode at 32K 8.29 -> 10.35 t/s (+24.8%), 16K 9.41 -> 10.47; 32K/2K 0.79 -> 0.98; ids 16/16; RED=2 diverges; cells/c4-10051443-* (bin-d source 354ff5c9cc dirty=4, Gap 7) [release ledger Table 1 W16] |
+| `0700-lane-301-row-25-gate-fix-M-RoPE-token-ubatches-carry.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W16, the number sits on that win's main commit |
+| `0701-lane-301-protected-win-entry-qwen4exp-qsa-pooled-ind.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W16, the number sits on that win's main commit |
+| `0702-lane-302-MUL_MAT_ID-expert-gather-for-small-batch-ma.patch` | part of win W17, MUL_MAT_ID slot-major expert gather at width 1: op level, real routing n4/n8: 0.73-0.94x of the old path per type (cells/cellA-10051633/); served perf split MUL_MAT_ID iq2_s 0.79, iq3_xxs 0.83, iq3_s 0.86 vs q2_0 control 0.88 (cells/cellB-10051832-read.json); served balanced ABBA x2 mean +0.34% (worst -0.69%), ids IDENT (cells/cellE-10052000-read.json, state head = 75b81abe13) [release ledger Table 1 W17] |
+| `0703-lane-302-gather-leader-test-uses-a-mask-G-is-1-2-or-.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W17, the number sits on that win's main commit |
+| `0704-lane-302-served-qwen4exp-MoE-op-test-shapes-n-1.8-ga.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W17, the number sits on that win's main commit |
+| `0705-lane-302-served-MoE-op-test-cases-at-16-experts-only.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W17, the number sits on that win's main commit |
+| `0706-lane-302-gather-pipelines-walk-slots-fastest-slot-ma.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W17, the number sits on that win's main commit |
+| `0707-lane-302-protected-wins-entry-for-the-slot-major-MoE.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0708-lane-302-MoE-gather-default-ON-at-width-1-cellE-1005.patch` | UNMEASURED on its own - protected-wins registration commit; the number is in the entry it adds |
+| `0709-lane-302-GGML_ARIFI_MOE_GATHER_ROWS-1-2-4-8-sets-row.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0710-lane-302-IQ3_S-gather-pipeline-defaults-to-2-rows-pe.patch` | as recorded in the subject: lane-302: IQ3_S gather pipeline defaults to 2 rows per workgroup (cellG-10052319: n4 -10%/-13% vs rm_iq in both rounds, harness 80/80 byte-identical); GGML_ARIFI_MOE_GATHER_ROWS still overrides every type |
+| `0711-lane-302-protected-wins-entry-for-the-IQ3_S-gather-r.patch` | UNMEASURED on its own - protected-wins registration commit; the number is in the entry it adds |
+| `0712-lane-302-IQ4_NL-gather-K-tail-redistribution-opt-in-.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0713-lane-302-IQ4_NL-q8_1-integer-dot-mat-vec-expert-gath.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0714-lane-302-IQ2_S-gather-body-arms-opt-in-GGML_ARIFI_IQ.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0715-lane-302-IQ2_S-gather-batched-grid-init-arms-opt-in-.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0716-lane-302-IQ2_S-gather-body-5-int8-sign-batched-grid-.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0717-lane-302-protected-wins-entry-vulkan-moe-gather-iq2s.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0718-llama-quant-same-type-tensors-are-byte-copied-so-ski.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W18, the number sits on that win's main commit |
+| `0719-llama-quantize-read-via-slabbed-file-path-on-Windows.patch` | part of win W18, llama-quantize reads by slab on Windows (no mmap) + imatrix guard skip for byte-copied tensors: quantgate: R1 == R2 == R3 sha256 E60BC37C0A74DF39, planted R4 differs; quantize WS 1.18 -> 0.09 GB (seat 79 citing progress 19:11). The 27.5 GB tensor also needs --max-buffer-size 256 (CLI flag, no code). fusion-x1-lane/VERDICT.txt, cells/qgate1-10052023-* [release ledger Table 1 W18] |
+| `0720-lane-299-protected-wins-entry-vulkan-qwen4exp-hc-pos.patch` | UNMEASURED on its own - protected-wins registration commit; the number is in the entry it adds |
+| `0721-lane-299-protected-wins-entry-vulkan-qwen4exp-gdn-ba.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W10, the number sits on that win's main commit |
+| `0722-lane-299-gdn-bank-protected-wins-entry-carries-the-i.patch` | UNMEASURED on its own - supporting commit; see release ledger Table 1 W10, the number sits on that win's main commit |
+| `0723-lane-299-runbook-for-the-qwen4exp-decode-fusion-gate.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0724-moe-cache-x1-GLM-5.3-NVMe-expert-streaming-x12.x21-m.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0725-kimi-k3-read-the-ssm-bank-through-the-R1-rotated-ind.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0726-lane-298-integ-protected-win-registration-fixes-carr.patch` | UNMEASURED - no served number for this commit in the release ledger or the commit message |
+| `0727-vulkan-scope-allocator-wide-shared-admission-to-MoE-.patch` | correctness fix (integ load regression), no speed claim: RED ismoke-10061217 arm ig2 / GREEN ismoke-10061337 (cache/mtp-x1-lane/cells) |
+| `0728-lane-301-coopmat1-f16-B-staging-for-MUL_MAT_ID-on-no.patch` | prefill +2.3/+2.1/+1.6/+1.5% at 2K/8K/16K/32K, decode flat, ids identical (cache/qsa-x1-lane/cells/c14-10061050-state.json; quality cache/qsa-x1-lane/cells/c15-10061248-quality.json) |
+| `0729-lane-301-protected-win-vulkan-cm1-f16b-staging-mul-m.patch` | none (registration only, no code change; the registered effect of 50b195beba is prefill +2.3/+2.1/+1.6/+1.5% at 2K/8K/16K/32K (cache/qsa-x1-lane/cells/c14-10061050-state.json)) |
+| `0730-lane-302-IQ4_NL-gather-byte-pair-LUT-IQ3_S-gather-ba.patch` | OPT-IN, default off. Op level cells/cellQ-10061202-read.json (cache/moe-gather-x1-lane): IQ4_NL byte-pair LUT n2 +14.7/+15.8%, n4 +12.9/+15.6%, n8 +16.2/+19.5% slower; IQ3_S batched init n2 +10.2/+19.9%, n4 +3.7/+6.3% slower, n8 -1.8/-1.7%; both byte-identical (harness IDENT) with planted RED; default arm unchanged |
+| `0731-lane-302-IQ3_XXS-gather-batched-grid-init-arm-opt-in.patch` | OPT-IN, default off. Op level cells/cellR-10061529-read.json (cache/moe-gather-x1-lane): IQ3_XXS batched init n2 +2.5/+2.1%, n4 +2.3/+8.3%, n8 +1.7/+1.9% slower, n1 +1.1/-1.3%; byte-identical (harness IDENT 3 arms), planted RED init=2 fails 9/10 |
+| `0732-lane-300-arifi-det-probe-repeat-determinism-probe-wi.patch` | tooling only (tools/arifi-op-probe, no engine source); served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json |
+| `0733-lane-300-det-probe-DETP_FA-FA-mask-live-column-dead-.patch` | tooling only (tools/arifi-op-probe, no engine source); served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json |
+| `0734-lane-300-det-probe-DETP_FA_DUMP-FA-node-inputs-outpu.patch` | tooling only plus diagnostic env GGML_VK_FA_MASK_OPT_DISABLE (unset = unchanged condition); served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json |
+| `0735-lane-300-arifi-fa-replay-model-free-replay-of-a-dump.patch` | tooling only (tools/arifi-op-probe, no engine source); served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json |
+| `0736-lane-300-fa-replay-IGPU-backend-fallback-cell-10-dea.patch` | tooling only (tools/arifi-op-probe, no engine source); served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json |
+| `0737-lane-300-F-141-coopmat1-FA-zeroes-V-rows-masked-for-.patch` | correctness fix: repeat-determinism 10/10 one sequence per key vs keep 2 distinct (cache/determinism-x1-lane/cells/c12-10051803-state.json, served ABA); teacher-forced cost TIE, CI spans 1.0 at w=1/3/4 (cells/c15-10052057, NOTES Cell 15 READ); planted RED GGML_VK_FA_DEADV_KEEP=1 |
+| `0738-lane-300-det-probe-DETP_VERIFY-cost-mode-teacher-for.patch` | tooling only (tools/arifi-op-probe, no engine source); served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json |
+| `0739-lane-300-det-probe-DETP_ROWS_OPS-2-full-node-dump-pe.patch` | tooling only (tools/arifi-op-probe, no engine source); served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json |
+| `0740-lane-300-F-141-3b-LLAMA_ARIFI_MOE_SUMROWS_MAX-N-keep.patch` | correctness only, opt-in; default 1 = unchanged (served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json); 3b GREEN with the bundle (same file); opt-in cost not measured |
+| `0741-lane-300-F-141-3b-FA-split_k-row-stable-under-GQA-wo.patch` | correctness only, opt-in after the default-0 commit (served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json); 3b GREEN with the bundle; opt-in cost not measured |
+| `0742-lane-300-F-141-3b-row-stable-FA-split_k-also-on-the-.patch` | correctness only, opt-in after the default-0 commit (served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json); opt-in cost not measured |
+| `0743-lane-300-F-141-3b-GGML_ARIFI_ADD_RMS_ROWSTABLE_N-N-k.patch` | correctness only, opt-in; default 0 (served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json); 3b GREEN with the bundle; opt-in cost not measured |
+| `0744-lane-300-F-141-3b-arifi-mmv-width-model-free-MUL_MAT.patch` | tooling only (tools/arifi-op-probe, no engine source); served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json |
+| `0745-lane-300-F-141-3b-GGML_ARIFI_MMV_ROWSTABLE_N-N-targe.patch` | correctness only, opt-in; ships ONLY with the next commit (alone it moves default Q4_K/Q5_K bits, cells/c25); pair default restored (cells/c26-10061224-state.json) |
+| `0746-lane-300-F-141-3b-precise-Q4_K-Q5_K-MMVQ-dot-moves-t.patch` | correctness only, opt-in; default restored (cache/determinism-x1-lane/cells/c26-10061224-state.json Q-FX bed0e37284dd1839, O-FX 9ec22b32739bffed; served cache/determinism-x1-lane/cells/c27-10061355-state.json); opt-in cost not measured |
+| `0747-lane-300-F-141-3b-GGML_ARIFI_FA_ROWSTABLE_N-default-.patch` | default-only change: default-OFF ids identical to the 96a6a8d976 binary served plain (cache/determinism-x1-lane/cells/c27-10061355-state.json vs c12-10051803, c13-10051909); opt-in cost not measured |
+| `0748-lane-299-layout-copies-conv-tails-CPY-strided-no-CON.patch` | WIN +1.48% short / +1.19% long decode tok/s (all-on vs LLAMA_L299_LAYOUT_OFF=1, 10 rotated ABBA rounds, bootstrap CI [1.005, 1.0161] / [1.0061, 1.0155], ids exact 10/10 both prompts) cache/fusion-x1-lane/cells/ab11-10061754-verdict.json; dispatches 3027 -> 2868, plant RED first_diff 2/2 cells/ab7-10060555-verdict.json |
+| `0749-lane-299-item-B-alpha-bias-joins-the-ssm_alpha-mat-v.patch` | LOSSLESS-TIE +0.09% short / +0.07% long decode tok/s (all-on vs LLAMA_L299_ALPHA_OFF=1, 10 rotated ABBA rounds, CI [0.9912, 1.0022] / [0.9943, 1.0035], ids exact 10/10 both prompts) cache/fusion-x1-lane/cells/ab11-10061754-verdict.json; dispatches 2868 -> 2833, plant RED first_diff 26/2 cells/ab8-10060930-verdict.json |
+| `0750-lane-299-protected-wins-entry-qwen4exp-layout-copies.patch` | UNMEASURED (registration only; the win it registers is +1.48%/+1.19%, cache/fusion-x1-lane/cells/ab11-10061754-verdict.json) |
+| `0751-lane-298-integ-GGML_VK_GDN_SNAP1_DIAG-prints-a-WARN-.patch` | none (diagnostic warning + docs only; default path unchanged) |
+| `0752-lane-298-integ-round-2-protected-wins-commit-fields-.patch` | none (registration locator fix only; no engine change) |
+| `0753-arifi-sync-port-the-sha-pinned-trailer-exemption-led.patch` | UNMEASURED - audit tooling only; no inference code path is touched. test_arifi_sync.py 169 tests OK. |
+| `0754-arifi-sync-trailer-exemptions.json-rows-for-the-63-s.patch` | UNMEASURED - ledger only; no inference code path is touched. Offender classes on release/prep (tool predicates, classify.py): before 63 x1i rows unexempted, after 63/63 EXEMPT; 58 post-x1i remain for the reword. |
+| `0755-arifi-sync-re-key-the-protected-win-ledgers-from-the.patch` | UNMEASURED - ledger keys and evidence copies only; no inference code path is touched. Re-key counts above CHECKED (07-b3-rekey.txt); protected-win validate --ref on a tagless clone is recorded in the release-prep MERGE-READY receipt. |
+| `0756-arifi-sync-x1i-reword-trailer-table-and-replay-scrip.patch` | UNMEASURED - release tooling only; no inference code path is touched. Dry run on a scratch clone of release/prep: 60 commits replayed, 58 reworded, 60 shas changed, trees identical. |
+| `0757-arifi-sync-x1i-reword-commits-the-ledger-re-key-as-t.patch` | UNMEASURED - release tooling only. Dry run on a scratch clone of release/prep @ 8c44efad0e: 62 commits replayed, 58 reworded, protected-wins.json re-keyed, ledger commit landed. |
+| `0758-arifi-sync-x1i-reword-table-one-commit-per-win-carri.patch` | UNMEASURED - release tooling only. Dry run on a scratch clone of release/prep @ d3958ae2ed: 63 commits replayed, 58 reworded. |
+| `0759-arifi-sync-x1i-reword-table-context-rows-carry-no-fi.patch` | UNMEASURED - release tooling only. effcheck.py over post-x1i-trailers.tsv: 13 rows classify as real, 45 as no effect. |
+| `0760-lane-298-integ-round-2-freeze-prep-full-shas-on-the-.patch` | none (ledger keys and trailer-table text only; no engine change) |
+| `0761-arifi-sync-re-key-the-sha-pinned-ledgers-after-the-p.patch` | UNMEASURED - ledger keys only; no inference code path is touched. |
 
 ## Unclassified
 
@@ -1896,4 +2186,130 @@ rather than silently bucketed - add a rule when a new source appears.
 - `80e47f738` arifi-sync: re-key provenance ledgers after the b10825 -> b11178 move (UPDATE-RUNBOOK 2.2.1) + G7 rows for 14 untrailered commits
 - `d525d6670` OW-028 (lane-279): ROCmFP4-FAST q8_1 MMVQ route DEFAULT ON for FP4-format files
 - `9678f7da1` W1 split fixup: Vulkan test-fault seam atomics are inline, not static (heapres mid-plan failure RED -> one definition)
+- `38f348fab` W1 collision fixup (N3): MMQ-under-coopmat opt-in leaves Q8_0 to upstream int8 coopmat1 on RDNA3/4
+- `df9ecc1f7` W1 collision arms (N1): upstream IQ4_XS mat-vec shader, MMVQ body and route as runtime switches beside ours, default ours
+- `59c65e0be` protected-wins: vulkan-uma-read-path-probe symbol re-homed to ggml-vulkan-buffers.cpp after the f172be756 split
+- `aa6ebfce2` W1 collisions N11/N12: coopmat1 f16-B guard for f32-B-only types; int8 coopmat1 MMQ min-n switch
+- `e0d733dde` W1 collisions N12: RDNA3 device-probe default for the int8 coopmat1 MMQ width switch
+- `11eef8565` W1 collisions N12: RDNA3 f16-B width floor 24 for the coopmat1 f32->f16 B conversion
+- `5432990f3` W1 collisions N12: RDNA3 small-n ffn_down int8 exception defaults OFF (served -ub 32: q4kxl 0.920x vs 0.977x, GSQ 0.928x vs 0.958x of r86i); GGML_ARIFI_CM1_INT_SMALLN=down restores it
+- `9bf09374d` protected-wins: carry registrations across the W1 rebase and register the unregistered measured wins (Sol REJECT fix 3)
+- `0f50ef68d` metal: restore upstream's (dk=96, dv=64) sparse-FA shape lost in the W1 re-home
+- `4eed112ad` server: carry the tool-call anchor across upstream's same-n_tokens checkpoint supersede (W1 collision C077)
+- `ba3683034` qwen35: chained MTP drafting works with fused-QKV GGUFs (W1 collision C071)
+- `0d62bfd1e` arifi-sync: protected-win-resolutions.json for the 36 wins the b10825 to b11178 range touches (lane-296 Sol-fix item 3, runbook 4.1c)
+- `16f0ae402` tests: V023 asserting regression check - SILU must stay fused with its MUL on Vulkan (lane-296 B3)
+- `d43dc95e7` arifi-sync: protected-win-resolutions B1 rows measured (lane-296 run15/17/23): 12 daily-dense rows carry r86i/U8 numbers, vanilla where it runs; open op re-pair cells listed per row
+- `450b82a5b` arifi-sync: B1 rows corrected (lane-296): 248320 head cell is in the perf list and owed (run24 d), iq3 N7 off arm = registered legacy cliff, concat dispatch count wording, owed flags + run24 scope
+- `feabf1a0b` tests: SILU*MUL perf/eval cases at the 27B FFN width (n_ff 17408, tokens 1/5/512) + ARIFI_PRINT_ERR error print (lane-296 B2b receipt source)
+- `2bd33c42b` lane-296 B1: run24 + stage h close in protected-win resolutions
+- `39e8e1ac2` lane-296 B1: correct run24 order-effect sign, record kernel identity R vs U8
+- `c597892ae` lane-296 B1: run25 close of OPEN 1 + OPEN 2 (protected-win resolutions)
+- `d70b85455` lane-296 B1: OPEN 1 row - harness/sync/submit/pipeline identity CHECKED, n=6 off the registered GSQ depth-4 line
+- `ef308e5d8` lane-296 B1: OPEN 1 not yet a documented loss (mechanism unnamed), depth-5 width mapping, OPEN 2 q4_K closed at line level
+- `ff323b02f` night/sx8-numerics: revert GDN q/k norm to ggml_l2_norm (5fdfa62829, qwen35 only) - throwaway numerics probe
+- `8305fcd90` Revert "night/sx8-numerics: revert GDN q/k norm to ggml_l2_norm (5fdfa62829, qwen35 only) - throwaway numerics probe"
+- `fe49d8b17` lane-296 night: int8 accuracy deliverable - floor A passes 3/3, goal B (int8 ssm_out) open
+- `9a3783ec7` lane-296 int8 goal: INT8-MATH derivation + op-level error tables, INT8-ACCURACY update (B5 accurate at op level, 7.431166 vs bar 7.4163; instrument paired SE 0.006-0.012)
+- `abbda3401` lane-296 int8 goal: conclusions made conditional on the 64-chunk check; B1-B3 pair (+0.0209 PPL at 3.4 SE with equal ssm_out op error); section renumber; magic-bias note
+- `6813ffc87` lane-296 int8 goal stage 8: 64-chunk gap is real (+2.7 SE, broad); H-B and H-A falsified; float-path error named as f16 accumulation (random, 7.7e-3 -> 2.66e-4 with f32 acc); chain s8 pre-registered
+- `a1eaa94a3` lane-296 int8 goal stage 8: pre-register x16 pairing and the c64 x x16 joint reading before c64 lands; smoke downgraded (2 seqs/pass); S-X8 f32acc route checked by code; price disclosed
+- `1691b758c` lane-296 int8 goal stage 9: F32ACC takes <type>:<role> and <type>:all; op probe replays any weight type and times widths
+- `d871a4fae` sx8-int8 stage 10: S-X8 on the int8 coopmat1 MMQ kernel (exact (d,m) remap, exact b sums, RED twin, role/min-n knobs, tests)
+- `3f5c70921` sx8-int8 stage 10: GGML_ARIFI_SX8_CM1_2D fix knob (two-digit activations for listed S-X8 roles, lane-296 R3 route)
+- `e650ca8a8` sx8-int8 stage 10: two-digit activations default ON for ffn_up (fix B)
+- `7e8380ca6` sx8-int8 attempt E: 16-value activation scales for the S-X8 int8 cm1 kernel (env-only arm)
+- `b43fe423b` sx8-int8 attempt E: quantize_q8_1 HALF ds store via vec2 (f16 locals need the arithmetic extension)
+- `fb251eed0` sx8-int8 attempt D: two-digit activations only for outlier blocks, skip kernel for the second pass
+- `16884e572` sx8-int8: default to gate20 selective two-digit ffn_up activations
+- `926e2931d` S-X8 gate comment: threshold is in dispatch columns, not request tokens
+- `c23bd8cc5` server: keep prompt images in reusable device snapshots
+- `b651d7f98` lane-298: skip whole-file mmap prefetch when a device copies weights out of the mapping
+- `8608d59a3` lane-300 F-141: coopmat1 FA zeroes V rows masked for every valid tile row (stale/foreign KV content no longer reaches the P*V WMMA sum); flags bit 32 default ON, GGML_VK_FA_DEADV_KEEP=1 = planted-RED switch; fa-replay sign-class arms. Lane: lane-300
+- `1cfa48571` lane-298 R1 checkpoint fix: ssm row save/restore maps to the physical ring plane
+- `8a721b95d` lane-298: qwen4exp MTP sidecar load + graph_mtp, target 4-stream capture, Windows unmap_fragment trim (env-gated)
+- `a3cdce01b` lane-298: fix Windows -lm dio probe failure (unaligned file-pointer moves on NO_BUFFERING handles)
+- `30347e2b6` lane-298: unbuffered read_raw_unsafe throws on an unaligned cursor/len/ptr instead of returning floor-sector bytes
+- `52566ff2c` lane-298: qwen4exp MTP capture is a real graph node (fixes GGML_ASSERT backend_h != nullptr)
+- `1980c2b73` lane-298: server emits n_probs on the speculative path (verify-row index per emitted token)
+- `c0c175642` lane-298: spec round-cost timers + env draft recent-token penalty (OW-036)
+- `99b1bd597` lane-298: qwen4exp MTP draft head over a token subset (d2t + gathered output rows, Strata draft_vocab)
+- `6350b8f7e` lane-298: MTP eh_proj as one 2D matmul
+- `c1f0071d8` lane-298: OW-036 draft penalty default on, ngram-mod miss-cost cap, MoE-union counter
+- `e3ec87d92` lane-298: ngram-mod CAP0 gate starts at full width, caps only after a miss
+- `e8f260b80` lane-298 item 5: drop the previous ubatch PLE row pages from the working set (LLAMA_PLE_RELEASE=1)
+- `8291ce4ed` lane-298 item 5 v2: PLE release = one whole-table VirtualUnlock per row budget, not per row
+- `671a9594e` lane-298 item 5: PLE release default ON at 256 MiB; LLAMA_PLE_RELEASE=0 turns it off
+- `1ea9394f5` lane-299 WIP: vulkan HC_POST_W fusion (SCALE->SIGMOID->SCALE->DSV4_HC_POST, one dispatch)
+- `df91200f0` lane-299 WIP: GDN_BANK prepass reads SET_ROWS operands in ggml order (src0 data, src1 row ids, src2 dst); the old order never matched, so the fused path never fired (optest3 reject 2). Adds GGML_VK_GDN_BANK_DEBUG reject-stage prints.
+- `300d9d691` lane-298 item 5 prefetch-ahead: one PrefetchVirtualMemory over each ubatch's PLE row pages (LLAMA_PLE_PREFETCH=1 opt-in)
+- `e30a7e459` lane-298 item 5 prefetch-ahead: prefetch after the PLE trim, not before
+- `e2eb456e4` lane-298 item 5 prefetch-ahead: LLAMA_PLE_PREFETCH default 1 (pfa-10051313 PASS)
+- `4295f4827` lane-298 item 5 prefetch-ahead: keep the per-ubatch WARN receipt on the default path
+- `4b1fb8b39` lane-298 GDN snapshot-byte floor diag: GGML_VK_GDN_SNAP1_DIAG clamps GDN_BANK n_written to 1
+- `0d511dd76` lane-298 GDN replay-cost bounding diag: GGML_VK_GDN_REPLAY_DIAG runs a replay prologue (n_rep push constant) in the GDN_BANK shader
+- `f5276ee24` lane-298 fix: two log format strings carried raw newlines instead of \n (cf4f877c07 build break)
+- `d42ee555f` lane-298 GDN replay: verify routes an unlogged wide-batch partial reject to the draft-time checkpoint
+- `634bbd673` lane-301: Vulkan FA sparse gather for QSA prefill (gqa layout for sparse-hinted multi-row FA) + prefill sparse op cases
+- `7d61001f0` lane-301: qwen4exp row 25 - persistent pooled indexer-key cache (pool+norm+rope once per full block, incremental fresh blocks), GGML_ARIFI_QSA_POOL_CACHE=0 / GGML_ARIFI_QSA_POOL_RED=1; test-backend-ops CPU census perf shapes + GGML_ARIFI_TBO_THREADS
+- `49c4e1891` lane-301: protected-win entry qwen4exp-qsa-pooled-indexer-cache (row 25, c4 logger-off x2: decode 32K 8.29->10.35 tok/s, ids identical)
+- `c49a7c15e` lane-302: MUL_MAT_ID expert gather for small-batch mat-vec (opt-in GGML_ARIFI_MOE_GATHER=1|2|4)
+- `ba68186d9` lane-302: gather leader test uses a mask (G is 1, 2 or 4), comment points at the real pipeline block
+- `fe35f4fa7` lane-302: served qwen4exp MoE op-test shapes n=1..8 + gather plant guard
+- `afbe861ef` lane-302: served MoE op-test cases at 16 experts only
+- `57c45ac84` lane-302: gather pipelines walk slots fastest (slot-major workgroup order) so shared experts hit L2
+- `6350bcf72` lane-302: protected-wins entry for the slot-major MoE gather (op-level win, default off; served A/B not shown) Lane: lane-302
+- `e8bf3e812` lane-302: MoE gather default ON at width 1 (cellE-10052000 served ABBA x2: mean +0.34%, ids IDENT 48/48); GGML_ARIFI_MOE_GATHER=0 opts out; protected-wins entry amended with served fields
+- `8c913a9d2` lane-302: GGML_ARIFI_MOE_GATHER_ROWS (1|2|4|8) sets rows per workgroup of the gather pipelines; unset = rm_iq (no default moves)
+- `7c9a6bc21` lane-302: IQ3_S gather pipeline defaults to 2 rows per workgroup (cellG-10052319: n4 -10%/-13% vs rm_iq in both rounds, harness 80/80 byte-identical); GGML_ARIFI_MOE_GATHER_ROWS still overrides every type
+- `35841fffa` lane-302: protected-wins entry for the IQ3_S gather rows-2 default (cellH-10060008 served ABBA x2: mean +0.07%, worst prompt -0.54%, ids IDENT = KEEP; op -10%/-13% cellG-10052319)
+- `d5deb283b` lane-302: IQ4_NL gather K-tail redistribution, opt-in GGML_ARIFI_MOE_GATHER_TAIL=1 (=2 planted wrong arm)
+- `3d333a096` lane-302: IQ4_NL q8_1 integer-dot mat-vec + expert-gather twin, opt-in GGML_ARIFI_IQ4NL_MMVQ=1 (every n)
+- `ad9f46e05` lane-302: IQ2_S gather body arms (opt-in GGML_ARIFI_IQ2S_BODY) + ISA dump under GGML_VK_PIPELINE_STATS
+- `ad0ef50aa` lane-302: IQ2_S gather batched grid init arms (opt-in GGML_ARIFI_IQ2S_BODY=4|5), body stays opt-in
+- `88eeef9a0` lane-302: IQ2_S gather body 5 (int8 sign + batched grid init) DEFAULT ON
+- `32f06513d` lane-302: protected-wins entry vulkan-moe-gather-iq2s-body5 (cellO-10060849 KEEP) Lane: lane-302
+- `b1c60b4e9` llama-quant: same-type tensors are byte-copied, so skip the imatrix guard for them (lets --tensor-type-file pin quantized tensors to their current type while requantizing others)
+- `16557e772` llama-quantize: read via slabbed file path on Windows, not mmap
+- `edc570ed3` lane-299: protected-wins entry vulkan-qwen4exp-hc-post-w (measured ABBA +1.28%/+6.69%, ids exact) Lane: lane-299
+- `936985888` lane-299: protected-wins entry vulkan-qwen4exp-gdn-bank (measured 3-round medians +4.47%/+3.09%, ids exact 12/12)
+- `ea904964e` lane-299: gdn-bank protected-wins entry carries the interleaved_ab bootstrap CI (short SIGNIFICANT, long TIED at n=3)
+- `9ef9ad5b7` lane-299: runbook for the qwen4exp decode-fusion gates (build, op test with MATCH>0 rule, interleaved served A/B, noise floor)
+- `b61ddcec3` moe-cache-x1: GLM-5.3 NVMe expert streaming, x12..x21 measured source
+- `f144818c1` kimi-k3: read the ssm bank through the R1 rotated index (bank=true)
+- `0130f822a` lane-298 integ: protected-win registration fixes carried in from lanes 301/302 + HQ80 f2c5fad421 resolution rows
+- `1d7f47ec4` lane-301: coopmat1 f16-B staging for MUL_MAT_ID on non-Intel devices, default on
+- `44450ec46` lane-301: protected-win vulkan-cm1-f16b-staging-mul-mat-id + row-26 workload 780M -> Radeon 890M (X1)
+- `48468238d` lane-302: IQ4_NL gather byte-pair LUT + IQ3_S gather batched grid init arms (opt-in)
+- `70e4f2303` lane-302: IQ3_XXS gather batched grid init arm (opt-in GGML_ARIFI_IQ3XXS_INIT=1|2)
+- `9ca84f74a` lane-300: arifi-det-probe - repeat-determinism probe with history arms (DETP_CLEAR, DETP_PRE)
+- `9ac5c5b4a` lane-300: det-probe DETP_FA (FA mask live-column + dead K/V report) and DETP_ROWS (GOAL 3b row-independence)
+- `f0701495e` lane-300: det-probe DETP_FA_DUMP (FA node inputs/output per run) + DETP_ROWS_OPS (per-op last-row compare by width); GGML_VK_FA_MASK_OPT_DISABLE diagnosis switch Lane: lane-300
+- `565bb1a2e` lane-300: arifi-fa-replay - model-free replay of a dumped FLASH_ATTN_EXT node (swap/constant/pad/row-width arms) for the F-141 coopmat FA locate
+- `fa61e861f` lane-300: fa-replay IGPU backend fallback + cell-10 dead-V value-class/column-range arms; det-probe prefill ends at min(t-7,t-w+1) for widths > 8
+- `b5ea4e3ee` lane-300 F-141: coopmat1 FA zeroes V rows masked for every valid tile row (stale/foreign KV content no longer reaches the P*V WMMA sum); flags bit 32 default ON, GGML_VK_FA_DEADV_KEEP=1 = planted-RED switch; fa-replay sign-class arms. Lane: lane-300
+- `f0be30eb6` lane-300: det-probe DETP_VERIFY cost mode - teacher-forced w-row verify timing, fix vs planted-RED on identical ids (HQ79 Q7). Lane: lane-300
+- `630ed8e76` lane-300: det-probe DETP_ROWS_OPS=2 full node dump per width (last-row hash, I32 nodes included); cell-16 name-walk compare was blind across width-dependent graphs. Lane: lane-300
+- `41cc36d84` lane-300: F-141 3b: LLAMA_ARIFI_MOE_SUMROWS_MAX=<N> keeps the n=1 permute+sum_rows expert-sum order for n_tokens<=N (cell 17: n=1 SUM_ROWS vs n>1 ADD chain = first width carrier, ffn_moe_out layer 0). Default 1 = unchanged. Lane: lane-300
+- `3bea6eff0` lane-300: F-141 3b: FA split_k row-stable under GQA - workgroups_x is the token count, so split_k (KV reduction split) moved with verify width; for neq1 <= GGML_ARIFI_FA_ROWSTABLE_N (default 8, 0 = old) split_k is chosen as for one token. Cell 18: SR8+MMVQ-force first diff = layer-3 attention. Lane: lane-300
+- `4274c5f12` lane-300: F-141 3b: row-stable FA split_k also on the segmented body dispatch (one helper, same GGML_ARIFI_FA_ROWSTABLE_N rule); GGML_ARIFI_FA_TRACE=1 prints each distinct FA dispatch tuple; det-probe DETP_ROWS_OPS=3 hashes every token slice of every node keyed by absolute position (single steps = per-position reference). Cell 19: w=4/8 still first-differ at layer-3 FA. Lane: lane-300
+- `d3c419a01` lane-300: F-141 3b: GGML_ARIFI_ADD_RMS_ROWSTABLE_N=<N> keeps the residual ADD -> RMS_NORM partials fusion for rows <= N (was one row only: a verify batch normalized every row with a different reduction order than n=1 decode). add/multi_add already write partials by flat index/512, so row r owns its n=1 partials; rms_norm_partials reads row = WorkGroupID.y; admission keeps the one-row budget so every width fuses the same layers. Default 0 = unchanged. Cell 21: fused RED, unfused GREEN. Lane: lane-300
+- `56d0974bd` lane-300: F-141 3b: arifi-mmv-width - model-free MUL_MAT width replay: column 0 of an n-column mat-vec byte-compared with the n=1 result per (type, m, k). Cell 23: qwen4exp layer-0 z (q4_K 6144x2560) differs n=4 vs n=1 with hoist off; f32-dequant route moves the first diff to the q6_K qkv sibling. Lane: lane-300
+- `e13cd0de8` lane-300: F-141 3b: GGML_ARIFI_MMV_ROWSTABLE_N=<N> targets mat-vec column j bit-equal to n=1 for n <= N. Cell 24 (arifi-mmv-width, model-free) showed three width carriers: (1) the MMVQ vs f32-dequant route moved with n (q5_K, q8_0, q6_K, small-k q4_K); now n <= N takes n=1's route. (2) the q6_K -32 fold (ARIFI_Q6K_XFOLD) applied only at NUM_COLS <= 3, so n >= 4 used other arithmetic (source CHECKED); spec constant 4 = 2 folds at every width. (3) Q4_K/Q5_K MMVQ column 0 differed n>1 vs n=1 at k = 2560/3072 only, same shader + pipeline by trace; mechanism ASSUMED = FMA contraction of the a*b*c - d*e dot varying per NUM_COLS specialization (the k pattern fits num_iters = 3 at wave64, wave size ASSUMED); spec constant 5 builds that dot `precise`. (3) moves the n=1 bits of Q4_K/Q5_K MMVQ under the flag only. Default 0 = unchanged (receipt arms O-FX/Q-FX in cell 25). Lane: lane-300
+- `538198cd9` lane-300: F-141 3b: precise Q4_K/Q5_K MMVQ dot moves to its own SPIR-V (*_prec_q8_1_f32), iq3_s stock shape under GGML_ARIFI_MMV_ROWSTABLE_N
+- `a26d71b8f` lane-300: F-141 3b: GGML_ARIFI_FA_ROWSTABLE_N default 8 -> 0 (opt-in). bf1de9485b shipped it ON before the default-OFF rule; its verify-width cost is unmeasured (cell 28 held), so per HQ82 the default returns to stock split_k. N=0 never selects the n=1 split (neq1 >= 1), so ggml_vk_fa_rowstable_wx returns workgroups_x on the single and the segmented dispatch = merge-base behaviour by construction. Served proof: cell 27 OP-0/QP-0 (env FA_ROWSTABLE_N=0, other flags unset) ids == the 96a6a8d976 binary's plain ids (cells 12 S-fix, 13 O-fix) on short/2k/long, both models.
+- `35a67b322` lane-299: layout copies - conv tails CPY strided (no CONT, 4 per conv per token), PLE one transpose-copy + one kernel cast (replaces 4 CONT + 4 CONT + 4 CAST + 1 CONT). Same bytes. Off: LLAMA_L299_LAYOUT_OFF=1; RED plant: LLAMA_L299_LAYOUT_PLANT=1 (stale slot-0 history). Op test L299_LAYOUT.
+- `23de61bab` lane-299: item B alpha bias joins the ssm_alpha mat-vec - ADD(ssm_dt) moves before the reshape so MUL_MAT + ADD are adjacent and the backend MUL_MAT_ADD fusion engages (36 ADD dispatches/token; same math). Off: LLAMA_L299_ALPHA_OFF=1; RED plant: LLAMA_L299_ALPHA_PLANT=1 (bias twice). Op test: MUL_MAT_VEC_FUSION bf16 m=1 n=48 k=2560 with bias.
+- `063b87820` lane-299: protected-wins entry qwen4exp-layout-copies (measured +1.48%/+1.19%, ids exact 10/10)
+- `40b6dc11a` lane-298 integ: GGML_VK_GDN_SNAP1_DIAG prints a WARN at first use; OPTIONS-REGISTRY rows for both GDN diagnostics
+- `7013014ac` lane-298 integ round 2: protected-wins commit fields repointed to the integ cherry-pick shas
+- `01cde6911` arifi-sync: port the sha-pinned trailer-exemption ledger (r86i 58187870f + a9187ded7) natively
+- `0f112f59b` arifi-sync: trailer-exemptions.json rows for the 63 --strict offenders under the shipped engine c23bd8cc5
+- `c00417ff7` arifi-sync: re-key the protected-win ledgers from the pre-rebase chain to the x1i commits
+- `0e4f3c72b` arifi-sync: x1i-reword - trailer table and replay script for the 58 post-x1i commits
+- `d6ad887f3` arifi-sync: x1i-reword commits the ledger re-key as the tip commit's identity
+- `3c2a74ae8` arifi-sync: x1i-reword table - one commit per win carries the number
+- `0dcbd357c` arifi-sync: x1i-reword table - context rows carry no figures
+- `acf329085` lane-298 integ round 2 freeze prep: full shas on the round-2 win commit fields; Q39 Measured-effect cells
+- `4476c4221` arifi-sync: re-key the sha-pinned ledgers after the post-x1i trailer reword
 

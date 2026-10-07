@@ -1,0 +1,260 @@
+From f9df20b327f0d1ba52d8134cabc03557a4b1119d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 13:18:02 -0400
+Subject: [PATCH] vulkan: bound SX8 residual masks and exercise gate fixtures
+
+Assisted-by: GPT-6.1 Sol
+---
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h |   3 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp     |  37 ++++++-
+ tests/test-backend-ops.cpp               | 125 ++++++++++++++++++++++-
+ 3 files changed, 159 insertions(+), 6 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index 6c99d62105..f3c9061f6b 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -2040,6 +2040,9 @@ struct ggml_backend_vk_context {
+     ggml_vk_garbage_collector gc;
+     size_t prealloc_size_x, prealloc_size_y, prealloc_size_split_k, prealloc_size_add_rms_partials, prealloc_size_add_rms_partials_offset;
+     vk_buffer prealloc_x, prealloc_y, prealloc_split_k, prealloc_add_rms_partials, sync_staging;
++    uint64_t sx8_census_offset {}, sx8_census_blocks {};
++    uint32_t sx8_census_k {};
++    bool sx8_census_gated {};
+     vk::Fence fence, almost_ready_fence;
+     bool submit_pending {};
+     bool almost_ready_fence_pending {};
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index d1c10b3fd0..90097f120a 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -8064,7 +8064,16 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+     const uint64_t y2_off = two_digit ? ggml_vk_align_size(CEIL_DIV(y_sz, 144) * 144, ctx->device->properties.limits.minStorageBufferOffsetAlignment) : 0;
+     const uint64_t y_need = two_digit ? y2_off + CEIL_DIV(y_sz, 144) * 144 : y_sz;
+     // attempt D: gated second digit (outlier blocks only) + the skip kernel for pass 2
+-    const bool sx8_gate = two_digit && src0->type == GGML_TYPE_SX8 && ctx->device->sx8_cm1_2d_gate != 0;
++    // SX8_SKIP has 64 mask words, one bit per 128-value K step. Never dispatch it above capacity.
++    const uint64_t sx8_steps = CEIL_DIV((uint64_t) ne10, 128);
++    const bool sx8_gate_requested = two_digit && src0->type == GGML_TYPE_SX8 && ctx->device->sx8_cm1_2d_gate != 0;
++    const bool sx8_gate = sx8_gate_requested && sx8_steps <= 64u * 32u;
++    const char * residual_red = getenv("GGML_ARIFI_SX8_RESIDUAL_RED");
++    const bool drop_residual = two_digit && src0->type == GGML_TYPE_SX8 && residual_red != nullptr && residual_red[0] == '1';
++    vk_pipeline reduce2 = drop_residual ? ctx->device->pipeline_matmul_split_k_reduce : ctx->device->pipeline_matmul_split_k_reduce_2d;
++    if (sx8_gate_requested && !sx8_gate && ctx->device->q8_0_cm1_roles_logged.insert("sx8-2d-fallback:" + std::to_string(ne10)).second) {
++        fprintf(stderr, "ggml_vulkan: S-X8 mask fallback k=%u steps=%llu: ungated INT8x2\n", (uint32_t) ne10, (unsigned long long) sx8_steps);
++    }
+     vk_pipeline pipeline2 = pipeline;
+     if (sx8_gate) {
+         const std::vector<vk_matmul_pipeline_pair>* smap = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, GGML_TYPE_SX8, GGML_TYPE_Q8_0, prec);
+@@ -8138,7 +8147,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+             ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_matmul_split_k_reduce, 1);
+         }
+         if (two_digit) {
+-            ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_matmul_split_k_reduce_2d, 1);
++            ggml_pipeline_request_descriptor_sets(ctx, reduce2, 1);
+         }
+     }
+ 
+@@ -8253,9 +8262,15 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+             );  // NOLINT
+         }
+         ggml_vk_sync_buffers(ctx, subctx);
+-        const std::array<uint32_t, 2> pc2 = { (uint32_t) d_ne, 2u };
+-        ggml_vk_dispatch_pipeline(ctx, subctx, ctx->device->pipeline_matmul_split_k_reduce_2d,
++        const std::array<uint32_t, 2> pc2 = { (uint32_t) d_ne, drop_residual ? 1u : 2u };
++        ggml_vk_dispatch_pipeline(ctx, subctx, reduce2,
+                                   { vk_subbuffer{ ctx->prealloc_split_k, 0, 2 * d_sz }, ggml_vk_subbuffer(ctx, d_D, d_buf_offset) }, pc2, { (uint32_t) d_ne, 1, 1 });
++        if (getenv("GGML_ARIFI_GATE_CENSUS") != nullptr && src0->type == GGML_TYPE_SX8) {
++            ctx->sx8_census_offset = y2_off;
++            ctx->sx8_census_blocks = y_ne / 32;
++            ctx->sx8_census_k = ne10;
++            ctx->sx8_census_gated = sx8_gate;
++        }
+         ctx->prealloc_split_k_need_sync = true;
+     } else {
+     ggml_vk_matmul(
+@@ -16122,6 +16137,20 @@ static void ggml_backend_vk_synchronize(ggml_backend_t backend) {
+ 
+     ggml_vk_synchronize(ctx);
+ 
++    if (ctx->sx8_census_blocks != 0) {
++        const uint64_t blocks = ctx->sx8_census_blocks;
++        std::vector<uint8_t> residual(CEIL_DIV(blocks, 4) * 144);
++        ggml_vk_buffer_read(ctx->prealloc_y, ctx->sx8_census_offset, residual.data(), residual.size());
++        uint64_t active = 0;
++        for (uint64_t i = 0; i < blocks; ++i) {
++            uint16_t scale;
++            memcpy(&scale, residual.data() + (i / 4) * 144 + (i % 4) * 4, sizeof(scale));
++            active += (scale & 0x7fff) != 0;
++        }
++        fprintf(stderr, "SX8_GATE_GPU_CENSUS k=%u gated=%d blocks=%llu nonzero_residual=%llu\n", ctx->sx8_census_k,
++                ctx->sx8_census_gated, (unsigned long long) blocks, (unsigned long long) active);
++        ctx->sx8_census_blocks = 0;
++    }
+     ggml_vk_graph_cleanup(ctx);
+ }
+ 
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index f085c3e0db..a682e413f8 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -58,7 +58,18 @@ static bool arifi_op_dump_enabled() {
+     return enabled;
+ }
+ 
+-static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float max = 1.0f) {
++static unsigned int tensor_uniform_seed(const ggml_tensor * tensor, float min, float max) {
++    uint64_t h = 0xcbf29ce484222325ull;
++    auto mix = [&h](uint64_t v) { h ^= v; h *= 0x100000001b3ull; };
++    mix((uint64_t) tensor->type);
++    for (int i = 0; i < GGML_MAX_DIMS; i++) { mix((uint64_t) tensor->ne[i]); }
++    for (const char * p = tensor->name; *p; ++p) { mix((uint64_t) (unsigned char) *p); }
++    mix((uint64_t) (int64_t) (min * 1000000.0f));
++    mix((uint64_t) (int64_t) (max * 1000000.0f));
++    return (unsigned int) (h ^ (h >> 32));
++}
++
++static void init_tensor_uniform_legacy(ggml_tensor * tensor, float min, float max) {
+     if (ggml_is_empty(tensor)) {
+         return;
+     }
+@@ -96,7 +107,7 @@ static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float m
+         mix((uint64_t) (int64_t) (min * 1000000.0f));
+         mix((uint64_t) (int64_t) (max * 1000000.0f));
+ 
+-        std::default_random_engine gen((unsigned int) (h ^ (h >> 32)));
++        std::default_random_engine gen(tensor_uniform_seed(tensor, min, max));
+         std::uniform_real_distribution<float> distribution(min, max);
+         for (size_t i = 0; i < nels; i++) {
+             data[i] = distribution(gen);
+@@ -208,6 +219,55 @@ static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float m
+     }
+ }
+ 
++static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float max = 1.0f) {
++    if (ggml_is_empty(tensor)) { return; }
++    if (!ggml_is_quantized(tensor->type) && tensor->type != GGML_TYPE_F16 && tensor->type != GGML_TYPE_BF16) {
++        init_tensor_uniform_legacy(tensor, min, max);
++        return;
++    }
++    const size_t nels = ggml_nelements(tensor);
++    const size_t block = ggml_blck_size(tensor->type);
++    const size_t cols = tensor->ne[0];
++    GGML_ASSERT(cols % block == 0);
++    const bool verify = getenv("GGML_ARIFI_INIT_CHUNK_VERIFY") != nullptr && nels <= 65536;
++    const size_t rows_per_chunk = verify ? 2 : std::max<size_t>(1, 1048576 / cols);
++    const size_t row_bytes = ggml_row_size(tensor->type, cols);
++    std::default_random_engine gen(arifi_op_dump_enabled() ? tensor_uniform_seed(tensor, min, max) : std::random_device{}());
++    std::uniform_real_distribution<float> distribution(min, max);
++    std::vector<float> data(std::min<size_t>(ggml_nrows(tensor), rows_per_chunk) * cols);
++    std::vector<uint8_t> quant(data.size() / block * ggml_type_size(tensor->type));
++    std::vector<float> imatrix(cols, 1.0f);
++    const float * im = imatrix.data();
++    for (size_t row = 0; row < (size_t) ggml_nrows(tensor); row += rows_per_chunk) {
++        const size_t rows = std::min<size_t>(rows_per_chunk, ggml_nrows(tensor) - row);
++        for (size_t i = 0; i < rows * cols; ++i) { data[i] = distribution(gen); }
++        if (row == 0 && !ggml_quantize_requires_imatrix(tensor->type) && data[0] > 0.5f * (min + max)) { im = nullptr; }
++        // Same block geometry as the legacy initializer; chunk boundaries never split a row or block.
++        ggml_quantize_chunk(tensor->type, data.data(), quant.data(), 0, rows * cols / block, block, im);
++        if (ggml_is_contiguous(tensor)) {
++            ggml_backend_tensor_set(tensor, quant.data(), row * row_bytes, rows * row_bytes);
++        } else {
++            for (size_t r = 0; r < rows; ++r) {
++                const size_t rr = row + r;
++                const size_t off = (rr % tensor->ne[1]) * tensor->nb[1] +
++                    ((rr / tensor->ne[1]) % tensor->ne[2]) * tensor->nb[2] +
++                    (rr / (tensor->ne[1] * tensor->ne[2])) * tensor->nb[3];
++                ggml_backend_tensor_set(tensor, quant.data() + r * row_bytes, off, row_bytes);
++            }
++        }
++    }
++    if (verify && ggml_is_contiguous(tensor)) {
++        GGML_ASSERT(arifi_op_dump_enabled());
++        std::vector<uint8_t> chunked(ggml_nbytes(tensor)), legacy(chunked.size());
++        ggml_backend_tensor_get(tensor, chunked.data(), 0, chunked.size());
++        init_tensor_uniform_legacy(tensor, min, max);
++        ggml_backend_tensor_get(tensor, legacy.data(), 0, legacy.size());
++        GGML_ASSERT(chunked == legacy);
++        fprintf(stderr, "INIT_CHUNK_IDENTICAL name=%s type=%s elements=%zu bytes=%zu seed=%u\n", tensor->name,
++                ggml_type_name(tensor->type), nels, chunked.size(), tensor_uniform_seed(tensor, min, max));
++    }
++}
++
+ // generate an F16 mask where certain blocks are randomly masked with -INF value
+ static void init_tensor_kq_mask(ggml_tensor * tensor, float min = -1.0f, float max = 1.0f) {
+     GGML_ASSERT(tensor->type == GGML_TYPE_F16);
+@@ -5573,6 +5633,63 @@ struct test_mul_mat : public test_case {
+     }
+ };
+ 
++struct test_mul_mat_sx8_gate : public test_mul_mat {
++    const int pattern; // 0: outlier, 1: equal magnitudes, 2: exact equality, 3: mixed blocks and tail
++    std::vector<float> reference;
++    test_mul_mat_sx8_gate(int pattern, int64_t k = 1056, int64_t n = 17)
++        : test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 64, n, k, {1, 1}, {1, 1}), pattern(pattern) {}
++    std::string vars() override { return test_mul_mat::vars() + ",sx8_gate_fixture=" + std::to_string(pattern); }
++    ggml_tensor * build_graph(ggml_context * ctx) override {
++        ggml_tensor * out = test_mul_mat::build_graph(ctx);
++        ggml_set_name(out->src[0], "blk.0.ffn_up.weight");
++        return out;
++    }
++    void initialize_tensors(ggml_context * ctx) override {
++        ggml_tensor * a = ggml_get_tensor(ctx, "blk.0.ffn_up.weight");
++        ggml_tensor * b = ggml_get_tensor(ctx, "b");
++        GGML_ASSERT(a && b);
++        std::vector<float> w(k), x(k);
++        for (int64_t i = 0; i < k; ++i) {
++            const int p = pattern == 3 ? (i / 32) % 3 : pattern;
++            w[i] = p == 2 ? (i % 32 == 0 ? 1.0f : 0.0f) : (i % 32 == 0 ? 0.0f : 1.0f);
++        }
++        std::vector<uint8_t> q(ggml_row_size(GGML_TYPE_SX8, k));
++        ggml_quantize_chunk(GGML_TYPE_SX8, w.data(), q.data(), 0, k / 32, 32, nullptr);
++        ggml_get_type_traits(GGML_TYPE_SX8)->to_float(q.data(), w.data(), k);
++        for (int64_t r = 0; r < m; ++r) { ggml_backend_tensor_set(a, q.data(), r * q.size(), q.size()); }
++        size_t tripped = 0, equal = 0;
++        for (int64_t i = 0; i < k; ++i) {
++            const int p = pattern == 3 ? (i / 32) % 3 : pattern;
++            const int j = i % 32;
++            x[i] = p == 0 ? (j == 0 ? 128.0f : 0.125f) : p == 1 ? 1.0f : (j == 0 ? 20.0f : j <= 12 ? 1.0f : 0.0f);
++        }
++        double dot = 0;
++        for (int64_t i = 0; i < k; i += 32) {
++            float amax = 0, asum = 0;
++            for (int j = 0; j < 32; ++j) { amax = std::max(amax, std::fabs(x[i+j])); asum += std::fabs(x[i+j]); dot += (double) w[i+j] * x[i+j]; }
++            tripped += amax * 32 > 20 * asum;
++            equal += amax * 32 == 20 * asum;
++        }
++        for (int64_t c = 0; c < n; ++c) { ggml_backend_tensor_set(b, x.data(), c * k * sizeof(float), k * sizeof(float)); }
++        reference.assign(m * n, (float) dot);
++        fprintf(stderr, "SX8_GATE_INPUT pattern=%d k=%lld blocks=%lld trip=%zu equality=%zu strict_gate=20\n",
++                pattern, (long long) k, (long long) k/32, tripped, equal);
++    }
++    double max_err() override { return 5e-4; }
++    double err(const float * gpu, const float * cpu, size_t count) override {
++        if (count != reference.size()) { return test_mul_mat::err(gpu, cpu, count); }
++        double e = 0, ecpu = 0;
++        for (size_t i = 0; i < count; ++i) {
++            const double den = std::max(1.0, std::fabs((double) reference[i]));
++            e = std::max(e, std::fabs(gpu[i] - reference[i]) / den);
++            ecpu = std::max(ecpu, std::fabs(cpu[i] - reference[i]) / den);
++        }
++        fprintf(stderr, "SX8_GATE_MEASURED pattern=%d k=%lld gpu_float_rel=%.9g cpu_q8_float_rel=%.9g residual_recovered=%d\n",
++                pattern, (long long) k, e, ecpu, (pattern == 0 || pattern == 3) && e <= max_err());
++        return e;
++    }
++};
++
+ // ArifiLabs lane-206: adversarial data patterns for MUL_MAT.
+ //
+ // Every other MUL_MAT case fills both operands from uniform[-1,1]. That distribution cannot reach
+@@ -11302,6 +11419,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32,  4095, n,  1056, {1, 1}, {1, 1}));
+     }
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 248320, 48, 5120, {1, 1}, {1, 1}));
++    for (int pattern : {0, 1, 2, 3}) { test_cases.emplace_back(new test_mul_mat_sx8_gate(pattern)); }
++    // 2048 K steps can use the mask; 2049 must use the ungated two-digit fallback.
++    test_cases.emplace_back(new test_mul_mat_sx8_gate(0, 262144));
++    test_cases.emplace_back(new test_mul_mat_sx8_gate(0, 262176));
+ 
+     // ArifiLabs lane-236 / R48c: Q6_K mat-vec at the three real 27B decode shapes, n = 1..8, as
+     // CORRECTNESS cases. Q6_K is 19.7% of the interactive Q4_K_XL 27B bytes (3.19 GiB, 56 tensors)

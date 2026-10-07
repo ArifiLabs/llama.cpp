@@ -1,0 +1,159 @@
+From e13cd0de8d6e533b955b05daab74696dd38adafa Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 09:51:13 -0400
+Subject: [PATCH] lane-300: F-141 3b: GGML_ARIFI_MMV_ROWSTABLE_N=<N> targets
+ mat-vec column j bit-equal to n=1 for n <= N. Cell 24 (arifi-mmv-width,
+ model-free) showed three width carriers: (1) the MMVQ vs f32-dequant route
+ moved with n (q5_K, q8_0, q6_K, small-k q4_K); now n <= N takes n=1's route.
+ (2) the q6_K -32 fold (ARIFI_Q6K_XFOLD) applied only at NUM_COLS <= 3, so n
+ >= 4 used other arithmetic (source CHECKED); spec constant 4 = 2 folds at
+ every width. (3) Q4_K/Q5_K MMVQ column 0 differed n>1 vs n=1 at k = 2560/3072
+ only, same shader + pipeline by trace; mechanism ASSUMED = FMA contraction of
+ the a*b*c - d*e dot varying per NUM_COLS specialization (the k pattern fits
+ num_iters = 3 at wave64, wave size ASSUMED); spec constant 5 builds that dot
+ `precise`. (3) moves the n=1 bits of Q4_K/Q5_K MMVQ under the flag only.
+ Default 0 = unchanged (receipt arms O-FX/Q-FX in cell 25). Lane: lane-300
+
+Origin: lane-300
+Measured-effect: correctness only, opt-in; ships ONLY with the next commit (alone it moves default Q4_K/Q5_K bits, cells/c25); pair default restored (cells/c26-10061224-state.json)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 25 +++++++++++++++----
+ .../vulkan-shaders/mul_mat_vec_q6_k.comp      | 13 +++++-----
+ .../vulkan-shaders/mul_mat_vecq.comp          |  3 +++
+ .../vulkan-shaders/mul_mat_vecq_funcs.glsl    |  4 +++
+ 4 files changed, 34 insertions(+), 11 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 4238482591..fa7792dc75 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1893,6 +1893,18 @@ static bool ggml_vk_apply_sx8_mmv_override(vk_device& device, uint32_t & wg_size
+     return true;
+ }
+ 
++// lane-300 F-141 3b: mat-vec column 0 changed bits with the column count (arifi-mmv-width, cell 24): the MMVQ vs
++// f32-dequant route moved with n, the q6_K -32 fold applied only at NUM_COLS <= 3, and Q4_K/Q5_K MMVQ dots contracted
++// differently per NUM_COLS specialization. For n <= GGML_ARIFI_MMV_ROWSTABLE_N: n=1's route, fold at every width,
++// `precise` Q4_K/Q5_K dot (moves the n=1 bits of those two MMVQ shaders; receipt in cell 25). 0 (default) = unchanged.
++static uint32_t ggml_vk_mmv_rowstable_n() {
++    static const uint32_t n = [] {
++        const char * s = getenv("GGML_ARIFI_MMV_ROWSTABLE_N");
++        return s ? (uint32_t) std::max(0, atoi(s)) : 0u;
++    }();
++    return n;
++}
++
+ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+     VK_LOG_DEBUG("ggml_vk_load_shaders(" << device->name << ")");
+ 
+@@ -3509,8 +3521,10 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+         // of THAT constant's arms, so its bit-identity-between-arms gate is unaffected.
+         const uint32_t q6k_xfold = [] {
+             const char * s = getenv("GGML_ARIFI_Q6K_XFOLD");
+-            return (s != nullptr && s[0] == '0') ? 0u : 1u;
++            return (s != nullptr && s[0] == '0') ? 0u : (ggml_vk_mmv_rowstable_n() > 0 ? 2u : 1u);
+         }();
++        // lane-300: Q4_K/Q5_K MMVQ `precise` dot (spec constant 5 of mul_mat_vecq.comp) under GGML_ARIFI_MMV_ROWSTABLE_N.
++        const uint32_t mmvq_precise = ggml_vk_mmv_rowstable_n() > 0 ? 1u : 0u;
+         // arifi lane-234 / R48: q5_k mat-vec ACTIVATION HOIST (specialization constant 3 of
+         // mul_mat_vec_q5_k.comp). 1 = load each activation vector once per superblock and reuse it
+         // across all NUM_ROWS rows; 0 = the shipped order, which reloads it once per row. The
+@@ -3928,11 +3942,11 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+ 
+                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q2_K][i], "mul_mat_vec_q2_k_q8_1_f32", arr_dmmv_q2_k_q8_1_f32_len[reduc], arr_dmmv_q2_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(2*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(2*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q3_K][i], "mul_mat_vec_q3_k_q8_1_f32", arr_dmmv_q3_k_q8_1_f32_len[reduc], arr_dmmv_q3_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_q8_1_f32", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q4k_rows(i), 1, 1}, {wg_size_subgroup_int, q4k_rows(i), i+1, mmvq_a_hoist, i >= 4 ? device->q4k_w5_overlap : 0u}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_K][i], "mul_mat_vec_q4_k_q8_1_f32", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q4k_rows(i), 1, 1}, {wg_size_subgroup_int, q4k_rows(i), i+1, mmvq_a_hoist, i >= 4 ? device->q4k_w5_overlap : 0u, mmvq_precise}, 1, true, use_subgroups, subgroup_size_int);
+                 if (i == 4 || i == 5) {
+-                    ggml_vk_create_pipeline(device, device->pipeline_mul_mat_vec_q4k_q8_1_split[w][i], "mul_mat_vec_q4_k_q8_1_f32_split", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist, 3u}, 1, true, use_subgroups, subgroup_size_int);
++                    ggml_vk_create_pipeline(device, device->pipeline_mul_mat_vec_q4k_q8_1_split[w][i], "mul_mat_vec_q4_k_q8_1_f32_split", arr_dmmv_q4_k_q8_1_f32_len[reduc], arr_dmmv_q4_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist, 3u, mmvq_precise}, 1, true, use_subgroups, subgroup_size_int);
+                 }
+-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_q8_1_f32", arr_dmmv_q5_k_q8_1_f32_len[reduc], arr_dmmv_q5_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
++                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_K][i], "mul_mat_vec_q5_k_q8_1_f32", arr_dmmv_q5_k_q8_1_f32_len[reduc], arr_dmmv_q5_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_kq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_kq_int, i), i+1, mmvq_a_hoist, 0u, mmvq_precise}, 1, true, use_subgroups, subgroup_size_int);
+                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q6_K][i], "mul_mat_vec_q6_k_q8_1_f32", arr_dmmv_q6_k_q8_1_f32_len[reduc], arr_dmmv_q6_k_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {q6k_mmvq_rows(i), 1, 1}, {wg_size_subgroup_int, q6k_mmvq_rows(i), i+1, mmvq_a_hoist}, 1, true, use_subgroups, subgroup_size_int);
+ 
+                 // arifi lane-262 / R75: IQ4_XS gains a q8_1 MMVQ pipeline. Same superblock geometry
+@@ -8856,7 +8870,8 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
+ // a perf run calls this thousands of times for the same cell. Off by default and no behavioural
+ // effect either way: the wrapper returns exactly what the rule set returned.
+ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_t n, uint32_t k, ggml_type src0_type, bool is_id = false) {
+-    const bool r = ggml_vk_should_use_mmvq_impl(device, m, n, k, src0_type, is_id);
++    // lane-300: widths up to GGML_ARIFI_MMV_ROWSTABLE_N take n=1's route (direction law: n>1 reproduces n=1).
++    const bool r = ggml_vk_should_use_mmvq_impl(device, m, n <= ggml_vk_mmv_rowstable_n() ? 1u : n, k, src0_type, is_id);
+     static const bool trace = [] {
+         const char * s = getenv("GGML_ARIFI_MMVQ_TRACE");
+         return s != nullptr && s[0] == '1';
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q6_k.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q6_k.comp
+index fde830cc76..5b79924ced 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q6_k.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q6_k.comp
+@@ -59,6 +59,7 @@ layout (constant_id = 3) const uint ARIFI_Q6K_DIRECT_SCALES = 1;
+ // the row loop), which is the shape that spilled in lane-230 - see mul_mat_vec_sx8.comp:60-71,
+ // where whole-block ownership lost -45% at n=5 and -77% at n=8. A kernel written without a
+ // compiler must keep a one-binary way to back that out.
++// lane-300: 2 = fold at every NUM_COLS (GGML_ARIFI_MMV_ROWSTABLE_N), so column j rounds as at n=1.
+ layout (constant_id = 4) const uint ARIFI_Q6K_XFOLD = 1;
+ 
+ shared FLOAT_TYPE sccache[2][BLOCK_SIZE/16][16];
+@@ -102,7 +103,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+             //
+             // Stated summation order: (x + y) + (z + w). Pairwise, so the order is pinned by the
+             // parentheses rather than left to the compiler (dot() would not pin it).
+-            if (NUM_COLS <= 3) {
++            if (NUM_COLS <= 3 || ARIFI_Q6K_XFOLD == 2) {
+                 xs0[j]  = (FLOAT_TYPE(bc0[j].x)  + FLOAT_TYPE(bc0[j].y))  + (FLOAT_TYPE(bc0[j].z)  + FLOAT_TYPE(bc0[j].w));
+                 xs32[j] = (FLOAT_TYPE(bc32[j].x) + FLOAT_TYPE(bc32[j].y)) + (FLOAT_TYPE(bc32[j].z) + FLOAT_TYPE(bc32[j].w));
+                 xs64[j] = (FLOAT_TYPE(bc64[j].x) + FLOAT_TYPE(bc64[j].y)) + (FLOAT_TYPE(bc64[j].z) + FLOAT_TYPE(bc64[j].w));
+@@ -152,10 +153,10 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+         const vec4 u2 = vec4(unpack8(q2_u32));
+         const vec4 u3 = vec4(unpack8(q3_u32));
+ 
+-        const vec4 q0 = (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) ? u0 : (u0 - 32);
+-        const vec4 q1 = (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) ? u1 : (u1 - 32);
+-        const vec4 q2 = (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) ? u2 : (u2 - 32);
+-        const vec4 q3 = (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) ? u3 : (u3 - 32);
++        const vec4 q0 = (ARIFI_Q6K_XFOLD != 0 && (NUM_COLS <= 3 || ARIFI_Q6K_XFOLD == 2)) ? u0 : (u0 - 32);
++        const vec4 q1 = (ARIFI_Q6K_XFOLD != 0 && (NUM_COLS <= 3 || ARIFI_Q6K_XFOLD == 2)) ? u1 : (u1 - 32);
++        const vec4 q2 = (ARIFI_Q6K_XFOLD != 0 && (NUM_COLS <= 3 || ARIFI_Q6K_XFOLD == 2)) ? u2 : (u2 - 32);
++        const vec4 q3 = (ARIFI_Q6K_XFOLD != 0 && (NUM_COLS <= 3 || ARIFI_Q6K_XFOLD == 2)) ? u3 : (u3 - 32);
+ 
+         FLOAT_TYPE sc0, sc2, sc4, sc6;
+         if (ARIFI_Q6K_DIRECT_SCALES == 0) {
+@@ -196,7 +197,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+                 sum[2] = fma(FLOAT_TYPE(by64[l]), q2[l], sum[2]);
+                 sum[3] = fma(FLOAT_TYPE(by96[l]), q3[l], sum[3]);
+             }
+-            if (ARIFI_Q6K_XFOLD != 0 && NUM_COLS <= 3) {
++            if (ARIFI_Q6K_XFOLD != 0 && (NUM_COLS <= 3 || ARIFI_Q6K_XFOLD == 2)) {
+                 sum[0] = fma(FLOAT_TYPE(-32.0), xs0[j],  sum[0]);
+                 sum[1] = fma(FLOAT_TYPE(-32.0), xs32[j], sum[1]);
+                 sum[2] = fma(FLOAT_TYPE(-32.0), xs64[j], sum[2]);
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp
+index 46d2187e6f..8903d65bc6 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp
+@@ -50,6 +50,9 @@ layout (constant_id = 3) const uint ARIFI_MMVQ_A_HOIST = 0;
+ // regions over the same hoisted A. Every arm adds the same terms in the same order to each
+ // temp[j][n], so all three are bit-identical.
+ layout (constant_id = 4) const uint ARIFI_MMVQ_OVERLAP = 0;
++// lane-300 F-141 3b: 1 = Q4_K/Q5_K dot built `precise` (no FMA contraction), so every NUM_COLS specialization rounds
++// column j the same way. Host passes 1 only under GGML_ARIFI_MMV_ROWSTABLE_N.
++layout (constant_id = 5) const uint ARIFI_MMVQ_PRECISE = 0;
+ 
+ #include "mul_mat_vecq_funcs.glsl"
+ 
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl
+index f2e02ff2bf..b0fa180208 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl
+@@ -508,6 +508,10 @@ FLOAT_TYPE mmvq_dot_a(const mmvq_a_t a) {
+     q_sum += dotPacked4x8EXT(a.qs.z, cache_b_qs[2]);
+     q_sum += dotPacked4x8EXT(a.qs.w, cache_b_qs[3]);
+ 
++    if (ARIFI_MMVQ_PRECISE != 0) {
++        precise float r = float(cache_b_ds.x) * float(a.dm_scale.x) * float(q_sum) - float(a.dm_scale.y) * float(cache_b_ds.y / 2);
++        return FLOAT_TYPE(r);
++    }
+     return FLOAT_TYPE(float(cache_b_ds.x) * float(a.dm_scale.x) * float(q_sum) - float(a.dm_scale.y) * float(cache_b_ds.y / 2));
+ }
+ #endif

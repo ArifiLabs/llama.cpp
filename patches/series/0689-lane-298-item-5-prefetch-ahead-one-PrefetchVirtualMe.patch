@@ -1,0 +1,116 @@
+From 300d9d6912bc084087f2b708fba1aaadf433bc4c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 11:28:05 -0400
+Subject: [PATCH] lane-298 item 5 prefetch-ahead: one PrefetchVirtualMemory
+ over each ubatch's PLE row pages (LLAMA_PLE_PREFETCH=1 opt-in)
+
+Novel-text prefill r1 runs -28% vs the repeat (pleio2: cold PLE row pages take one serial hard fault each inside the CPU gather). llama_mmap::prefetch_rows batches the ubatch's row pages (sorted, deduped, adjacent pages merged) into one PrefetchVirtualMemory call before compute. Opt-in until run-pfa.ps1 reads; =2 also prefetches decode; LLAMA_PLE_PREFETCH_PLANT=1 shifts rows by half the table as the planted RED. WARN receipt per multi-token ubatch: tokens, pages, call ms.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Lane: lane-298
+(cherry picked from commit 98017585ff1f37646a1b8d5efe1ba2739e49aa95)
+
+Origin: ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.
+Measured-effect: part of win W13, PLE prefetch-ahead (one PrefetchVirtualMemory per ubatch): novel 2,000-token prefill 126.01 -> 180.15 t/s (+42.9%), decode r1 +6.21%, repeat prefill +1.14%; MEANS of 4 requests; plant RED +2.02%; off2 tainted, off1 alone 126.00 -> 180.10; cells/pfa-10051313-* (state head = 6b0e35cf52) [release ledger Table 1 W13]
+---
+ src/llama-mmap.cpp      | 37 +++++++++++++++++++++++++++++++++++++
+ src/llama-mmap.h        |  4 ++++
+ src/models/qwen4exp.cpp | 22 ++++++++++++++++++++++
+ 3 files changed, 63 insertions(+)
+
+diff --git a/src/llama-mmap.cpp b/src/llama-mmap.cpp
+index 3c7d9848a3..5a71293b4e 100644
+--- a/src/llama-mmap.cpp
++++ b/src/llama-mmap.cpp
+@@ -869,6 +869,43 @@ bool llama_mmap::release_mapped_pages(const void * p, size_t n) {
+ #endif
+ }
+ 
++size_t llama_mmap::prefetch_rows(const void * base, size_t row_bytes, const int32_t * rows, size_t n) {
++#if defined(_WIN32) && _WIN32_WINNT >= 0x602
++    static const auto pf = (BOOL (WINAPI *)(HANDLE, ULONG_PTR, PWIN32_MEMORY_RANGE_ENTRY, ULONG))
++        (void *) GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "PrefetchVirtualMemory");
++    if (!pf || n == 0) {
++        return 0;
++    }
++    const uintptr_t page = 4096;
++    std::vector<uintptr_t> pg;
++    pg.reserve(2*n);
++    for (size_t i = 0; i < n; ++i) {
++        const uintptr_t a = (uintptr_t) base + (uintptr_t) rows[i] * row_bytes;
++        for (uintptr_t p = a & ~(page - 1); p < a + row_bytes; p += page) { // a row may straddle two pages
++            pg.push_back(p);
++        }
++    }
++    std::sort(pg.begin(), pg.end());
++    pg.erase(std::unique(pg.begin(), pg.end()), pg.end());
++    std::vector<WIN32_MEMORY_RANGE_ENTRY> e;
++    for (uintptr_t p : pg) {
++        if (!e.empty() && (uintptr_t) e.back().VirtualAddress + e.back().NumberOfBytes == p) {
++            e.back().NumberOfBytes += page;
++        } else {
++            e.push_back({ (PVOID) p, (SIZE_T) page });
++        }
++    }
++    return pf(GetCurrentProcess(), (ULONG_PTR) e.size(), e.data(), 0) ? pg.size() : 0;
++#else
++    // ponytail: POSIX would be madvise(MADV_WILLNEED) per page; add if a Linux cell shows the cold-fault cost
++    GGML_UNUSED(base);
++    GGML_UNUSED(row_bytes);
++    GGML_UNUSED(rows);
++    GGML_UNUSED(n);
++    return 0;
++#endif
++}
++
+ size_t llama_mmap::register_host(size_t first, size_t last, bool (*reg_fn)(void *, size_t), void (*unreg_fn)(void *)) {
+ #ifdef _POSIX_MAPPED_FILES
+     if (host_reg_addr || !reg_fn || !unreg_fn || last <= first) {
+diff --git a/src/llama-mmap.h b/src/llama-mmap.h
+index 22095bca91..0eeb2cdd91 100644
+--- a/src/llama-mmap.h
++++ b/src/llama-mmap.h
+@@ -59,6 +59,10 @@ struct llama_mmap {
+     // softly from standby). Returns false, doing nothing, if p is not in a file mapping or the OS has no such call.
+     static bool release_mapped_pages(const void * p, size_t n);
+ 
++    // lane-298 item 5 prefetch-ahead: one batched read of the pages holding rows[i] (row_bytes each) of a mapped table,
++    // so a later gather soft-faults instead of taking one hard fault per page. Returns pages requested, 0 if unsupported.
++    static size_t prefetch_rows(const void * base, size_t row_bytes, const int32_t * rows, size_t n);
++
+     // pin the pages backing [first, last) with a backend allocator for faster H2D copies,
+     // unpinned in the destructor before the pages are unmapped
+     // returns the number of bytes registered, 0 on failure
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+index 0847c48035..b6ddc015a1 100644
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -1214,6 +1214,28 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
+ 
+     ggml_backend_tensor_set(rows, idx.data(), 0, idx.size()*ggml_element_size(rows));
+ 
++    // lane-298 item 5 prefetch-ahead: cold PLE row pages cost one serial hard fault each inside the CPU gather (novel
++    // prefill r1 -28% vs r2, pleio2). One batched PrefetchVirtualMemory over this ubatch's row pages first.
++    // LLAMA_PLE_PREFETCH=1 multi-token ubatches only, =2 also decode; LLAMA_PLE_PREFETCH_PLANT=1 = wrong rows (RED).
++    static const int prefetch = getenv("LLAMA_PLE_PREFETCH") ? atoi(getenv("LLAMA_PLE_PREFETCH")) : 0;
++    static const bool plant = getenv("LLAMA_PLE_PREFETCH_PLANT") != nullptr;
++    const ggml_tensor * ptab = pmodel.per_layer_tok_embd;
++    if (prefetch > 0 && (n_tokens > 1 || prefetch > 1) && ptab && ptab->data && ggml_backend_buffer_is_host(ptab->buffer)) {
++        std::vector<int32_t> pidx;
++        if (plant) {
++            pidx = idx;
++            for (auto & r : pidx) {
++                r = (int32_t) ((r + ptab->ne[1] / 2) % ptab->ne[1]);
++            }
++        }
++        const int64_t t0 = ggml_time_us();
++        const size_t np = llama_mmap::prefetch_rows(ptab->data, ptab->nb[1], plant ? pidx.data() : idx.data(), idx.size());
++        if (n_tokens > 1) {
++            LLAMA_LOG_WARN("%s: PLE prefetch%s: %lld tokens, %zu pages, %.2f ms\n", __func__, plant ? " PLANT" : "",
++                    (long long) n_tokens, np, (ggml_time_us() - t0) / 1000.0);
++        }
++    }
++
+     // lane-298 item 5 (Strata --ple-io semantics): the lazy PLE table is a file mapping, and on Windows every gathered
+     // row page stays in the working set (~64 KiB per novel token). Once the rows gathered since the last trim could
+     // fill LLAMA_PLE_RELEASE_MIB (default 256), ONE VirtualUnlock over the whole table drops them to standby; later

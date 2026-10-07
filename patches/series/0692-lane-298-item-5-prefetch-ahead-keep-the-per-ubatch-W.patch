@@ -1,0 +1,45 @@
+From 4295f482721a31ce29ea1ce878f91c7e91c08018 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 13:41:33 -0400
+Subject: [PATCH] lane-298 item 5 prefetch-ahead: keep the per-ubatch WARN
+ receipt on the default path
+
+The default-on engine needs a fire receipt (same trap as pk4s3, NOTES relaunch-20); one line per prefill ubatch is not spam.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Lane: lane-298
+(cherry picked from commit 6f189589a2e659598384eca870db5c8436f58f33)
+
+Origin: ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.
+Measured-effect: UNMEASURED on its own - supporting commit; see release ledger Table 1 W13, the number sits on that win's main commit
+---
+ src/models/qwen4exp.cpp | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+index 16fc7db464..65dcdd04b2 100644
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -1244,10 +1244,9 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
+     // lane-298 item 5 prefetch-ahead: cold PLE row pages cost one serial hard fault each inside the CPU gather (novel
+     // prefill r1 -28% vs r2, pleio2). One batched PrefetchVirtualMemory over this ubatch's row pages, AFTER the trim so
+     // a trim never drops pages just prefetched. Default 1 = multi-token ubatches only (pfa-10051313: novel r1 prefill
+-    // +43%, ids 4/4, plant +2%); =2 also decode (unmeasured), =0 off; the per-call WARN receipt prints only when the env
+-    // is set. LLAMA_PLE_PREFETCH_PLANT=1 = wrong rows (RED).
+-    static const bool prefetch_env = getenv("LLAMA_PLE_PREFETCH") != nullptr;
+-    static const int prefetch = prefetch_env ? atoi(getenv("LLAMA_PLE_PREFETCH")) : 1;
++    // +43%, ids 4/4, plant +2%); =2 also decode (unmeasured), =0 off; one WARN receipt per prefill ubatch (the default
++    // needs a fire receipt). LLAMA_PLE_PREFETCH_PLANT=1 = wrong rows (RED).
++    static const int prefetch = getenv("LLAMA_PLE_PREFETCH") ? atoi(getenv("LLAMA_PLE_PREFETCH")) : 1;
+     static const bool plant = getenv("LLAMA_PLE_PREFETCH_PLANT") != nullptr;
+     if (prefetch > 0 && (n_tokens > 1 || prefetch > 1) && tab && tab->data && ggml_backend_buffer_is_host(tab->buffer)) {
+         std::vector<int32_t> pidx;
+@@ -1259,7 +1258,7 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
+         }
+         const int64_t t0 = ggml_time_us();
+         const size_t np = llama_mmap::prefetch_rows(tab->data, tab->nb[1], plant ? pidx.data() : idx.data(), idx.size());
+-        if (n_tokens > 1 && prefetch_env) {
++        if (n_tokens > 1) {
+             LLAMA_LOG_WARN("%s: PLE prefetch%s: %lld tokens, %zu pages, %.2f ms\n", __func__, plant ? " PLANT" : "",
+                     (long long) n_tokens, np, (ggml_time_us() - t0) / 1000.0);
+         }

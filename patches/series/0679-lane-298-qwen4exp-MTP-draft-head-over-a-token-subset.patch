@@ -1,0 +1,63 @@
+From 99b1bd597ce48b200f3266881de71da8deeaae3f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 05:33:15 -0400
+Subject: [PATCH] lane-298: qwen4exp MTP draft head over a token subset (d2t +
+ gathered output rows, Strata draft_vocab)
+
+A sidecar carrying d2t (I64) and an output.weight of n_dvocab rows drafts over that subset: logits scatter into a -inf full-vocab vector (dflash.cpp pattern), so greedy and p equal Strata subset sampling (mtp.cpp:629-644). Verify keeps the target full head: output ids cannot change, only acceptance. Cuts the 521.5 MB Q6_K head read per draft step.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Lane: lane-298
+(cherry picked from commit 7507baba3e3f78a369b3e7a5ead82721ca33e6fc)
+
+Origin: ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.
+Measured-effect: part of win W7, dven40k draft subset head (Strata draft_vocab, 40,525 ids): +4.6..+8.7% decode on all 6 requests vs the MTP base, ids == base; cells/dvocab-10050535-* (state head = 7507baba3e) [release ledger Table 1 W7]
+---
+ src/models/qwen4exp.cpp | 27 ++++++++++++++++++++++++++-
+ 1 file changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+index 6cd2160522..f098e78132 100644
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -162,7 +162,15 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
+     hc_head_down = create_tensor(tn(LLM_TENSOR_HC_HEAD_DOWN, "weight"), { hc_dim, hc_lr }, 0);
+     hc_head_up   = create_tensor(tn(LLM_TENSOR_HC_HEAD_UP,   "weight"), { hc_lr, hc_dim }, 0);
+ 
+-    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab }, TENSOR_NOT_REQUIRED);
++    // an MTP sidecar may carry a reduced draft head: output rows for a token subset + d2t (Strata draft_vocab)
++    int64_t n_vocab_out = n_vocab;
++    if (const ggml_tensor * d2t_meta = ml.get_tensor_meta("d2t")) {
++        n_vocab_out = d2t_meta->ne[0];
++        d2t = create_tensor(tn(LLM_TENSOR_D2T), { n_vocab_out }, 0);
++        LLAMA_LOG_INFO("%s: QWEN4EXP MTP draft head over %lld tokens (d2t)\n", __func__, (long long) n_vocab_out);
++    }
++
++    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab_out }, TENSOR_NOT_REQUIRED);
+     if (output == NULL) {
+         output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, TENSOR_DUPLICATED);
+     }
+@@ -1490,6 +1498,23 @@ llama_model_qwen4exp::graph_mtp::graph_mtp(const llama_model & model, const llm_
+     res->t_embd = cur;
+ 
+     cur = build_lora_mm(model.output, cur, model.output_s);
++
++    // reduced draft head: scatter the subset logits into a -inf target vector (dflash.cpp:920-934),
++    // so greedy and p over the full vector equal those over the subset (Strata mtp.cpp:629-644)
++    if (model.d2t) {
++        const int64_t n_draft_vocab = cur->ne[0];
++        const int64_t n_outputs     = cur->ne[1];
++        const int64_t n_vocab       = (int64_t) model.vocab.n_tokens();
++
++        GGML_ASSERT(model.d2t->type == GGML_TYPE_I64);
++        GGML_ASSERT(model.d2t->ne[0] == n_draft_vocab);
++
++        ggml_tensor * logits = ggml_fill(ctx0, ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, 1, n_vocab, n_outputs), -INFINITY);
++        cur = ggml_set_rows(ctx0, logits,
++                ggml_reshape_3d(ctx0, cur,       1,             n_draft_vocab, n_outputs),
++                ggml_reshape_3d(ctx0, model.d2t, n_draft_vocab, 1,             1));
++        cur = ggml_reshape_2d(ctx0, cur, n_vocab, n_outputs);
++    }
+     cb(cur, "result_output", -1);
+     res->t_logits = cur;
+ 

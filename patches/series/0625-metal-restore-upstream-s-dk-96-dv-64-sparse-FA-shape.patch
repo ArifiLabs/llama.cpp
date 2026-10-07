@@ -1,0 +1,28 @@
+From 0f50ef68d505ee85b0c00d342e5adc315d3c0c7e Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 04:06:14 -0400
+Subject: [PATCH] metal: restore upstream's (dk=96, dv=64) sparse-FA shape lost
+ in the W1 re-home
+
+Upstream 1e7bcf3da4 (MiniCPM3) added (dk == 96 && dv == 64) to ggml_metal_op_flash_attn_ext_n_kv_max_sparse. W1 15305fe1df deleted the function and 42ce1f0e9b rebuilt it from the b10819 form, which predates that line, so the union refused the shape for sparse FA while the fa.metal kernels for it survived. Found by the lane-296 Sol-fix dropped-line check (cache/lane296/drop-triage.md). Metal only; the Vulkan build is untouched. Mac compile owed (UNTESTABLE-HERE).
+
+Taken-from: ggml-org/llama.cpp 1e7bcf3da4b2741868d152fa47976fb2501c85e3 (#28599)
+Measured-effect: none on this rig (Metal not compiled); restores an upstream shape admit
+Conflict-resolved: W1 re-home dropped one upstream line; restored verbatim
+Lane: lane-296
+---
+ ggml/src/ggml-metal/ggml-metal-ops.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+index a413693af7..b1607aacec 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -3376,6 +3376,7 @@ static int ggml_metal_op_flash_attn_ext_n_kv_max_sparse(const ggml_tensor * op)
+     const bool dk_dv_ok = (dk == 32  && dv == 32)  ||
+                           (dk == 64  && dv == 64)  ||
+                           (dk == 96  && dv == 96)  ||
++                          (dk == 96  && dv == 64)  ||
+                           (dk == 128 && dv == 128) ||
+                           (dk == 192 && dv == 128) ||
+                           (dk == 192 && dv == 192) ||

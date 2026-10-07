@@ -1,0 +1,547 @@
+From 9a3783ec7f8d6144ba66d79069c7b6119e9fd9a2 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 16:33:32 -0400
+Subject: [PATCH] lane-296 int8 goal: INT8-MATH derivation + op-level error
+ tables, INT8-ACCURACY update (B5 accurate at op level, 7.431166 vs bar
+ 7.4163; instrument paired SE 0.006-0.012)
+
+Lane: lane-296
+---
+ tools/arifi-sync/lane-296/INT8-ACCURACY.md | 155 ++++++++++++++-----
+ tools/arifi-sync/lane-296/INT8-MATH.md     | 171 +++++++++++++++++++++
+ tools/arifi-sync/lane-296/ladder_read.py   |  32 ++++
+ tools/arifi-sync/lane-296/paired_noise.py  | 102 ++++++++++++
+ 4 files changed, 423 insertions(+), 37 deletions(-)
+ create mode 100644 tools/arifi-sync/lane-296/INT8-MATH.md
+ create mode 100644 tools/arifi-sync/lane-296/ladder_read.py
+ create mode 100644 tools/arifi-sync/lane-296/paired_noise.py
+
+diff --git a/tools/arifi-sync/lane-296/INT8-ACCURACY.md b/tools/arifi-sync/lane-296/INT8-ACCURACY.md
+index f2d6aaa20b..0c95ac1ef8 100644
+--- a/tools/arifi-sync/lane-296/INT8-ACCURACY.md
++++ b/tools/arifi-sync/lane-296/INT8-ACCURACY.md
+@@ -13,8 +13,11 @@ Evidence: `night/ev10/summary.txt` (R3 legs, 16 chunks, c512, seed 1), `night/ev
+   (night8 stage G role legs, section 3).
+ - **FLOOR = candidate A, the branch default at `d8c538d52c`:** Q8_0 int8 ON for every role except `ssm_out`, which
+   stays on the float matmul. It meets the bar on all three lines (section 4). CHECKED.
+-- **GOAL = candidate B, int8 accurate FOR `ssm_out`:** OPEN. Two variants tried (B1, B2), both miss the S-X8 bar
+-  (section 5).
++- **GOAL = candidate B, int8 accurate FOR `ssm_out`:** the MATH is solved, the BAR is not met. Update 16:3x (int8
++  goal maker, `night/INT8-MATH.md`, section 9 below): int8 on `ssm_out` with two 8-bit digits (B5, commit
++  `1a88a9c09b`) is 50x MORE accurate than the float path it replaces (op error 1.4e-4 vs 7.7e-3, CHECKED against
++  f64, in-graph witness CHECKED). Its S-X8 PPL is 7.431166 (bar 7.4163): FAIL. The 16-chunk PPL has a paired SE of
++  0.006-0.012 and cannot resolve the difference (B5 - A = +0.0205, 1.7 SE). A 64-chunk paired check is running.
+ 
+ ## 2. Tensor map (CHECKED, `night/gguf_map.py`, raw GGUF header)
+ 
+@@ -36,21 +39,25 @@ Q4_K_XL: 0.131 GB Q8_0 (ssm_alpha x48, ssm_beta x48, attn_v x11, attn_k x2, ssm_
+ 
+ ## 3. Where the loss sits (CHECKED, S-X8 Mean KLD vs the r86i base, 16 chunks; PPL where the log has it)
+ 
+-| config | Mean KLD | PPL | source |
+-|---|---|---|---|
+-| int8 off | 0.001973 | 7.408170 | ev8 / ev10 c-off |
+-| only ssm_alpha, ssm_beta on | 0.001966 | see ev8 log | ev8 g-onlyab |
+-| **skip ssm_out (= candidate A)** | **0.002188** | **7.410711** | ev8 g-skipssmout = ev10 a-sx8, bit for bit |
+-| skip ssm_out + attn_output | 0.002279 | see ev8 log | ev8 g-skipout |
+-| only ssm_out + attn_output on | 0.002508 | see ev8 log | ev8 g-onlyout |
+-| all on (vanilla-equivalent) | 0.002619 | 7.437251 | ev8 s-on / ev10 c-on |
+-| skip attn_output | 0.002682 | see ev8 log | ev8 g-skipattnout |
+-| Q8_1 scale f16 (R2 repair 1) | 0.002657 | see ev8 log | ev8 q4-sf16 |
++| config | Mean KLD | Median KLD | PPL | source |
++|---|---|---|---|---|
++| int8 off | 0.001973 | 0.001323 | 7.408170 | ev6 sx8-off (= ev10 c-off PPL) |
++| only ssm_alpha, ssm_beta on | 0.001966 | 0.001345 | 7.409773 | ev8 g-onlyab |
++| **skip ssm_out (= candidate A)** | **0.002188** | **0.001557** | **7.410711** | ev8 g-skipssmout = ev10 a-sx8, bit for bit |
++| skip ssm_out + attn_output | 0.002279 | 0.001586 | 7.420754 | ev8 g-skipout |
++| only attn_q on | 0.002364 | 0.001397 | 7.425040 | ev8 g-onlyq |
++| only ssm_out + attn_output on | 0.002508 | 0.001693 | 7.448008 | ev8 g-onlyout |
++| all on (vanilla-equivalent) | 0.002619 | 0.001759 | 7.437251 | ev6 sx8-on (= ev10 c-on PPL) |
++| skip ssm_alpha, ssm_beta | 0.002664 | 0.001762 | 7.433674 | ev8 g-skipab |
++| skip attn_output | 0.002682 | 0.001783 | 7.426277 | ev8 g-skipattnout |
++| all on, Q8_1 scale f16 (R2 repair 1) | 0.002657 | 0.001745 | 7.425654 | ev8 s-on |
++| skip ssm_out + attn_output, scale f16 | 0.002192 | 0.001512 | 7.410162 | ev8 s-skipout |
+ 
+ - The gate projections `ssm_alpha/beta` are innocent: H1 of the R2 memo is FALSIFIED.
+-- Taking `ssm_out` off int8 removes 0.000431 of the 0.000646 on-minus-off KLD (67%). The rest spreads over the other
+-  roles and does not move PPL (A PPL 7.4107 vs off 7.4082, inside the 0.0085 stderr).
+-- The S-X8 rows marked "see ev8 log" carry a PPL line in their ev8 log; R4 did not re-read them (no new number here).
++- Taking `ssm_out` off int8 removes 0.000431 of the 0.000646 on-minus-off Mean KLD (67%). The rest spreads over the
++  other roles and does not move PPL (A PPL 7.4107 vs off 7.4082, inside the 0.0085 stderr).
++- All PPL and median cells are read from the ev6/ev8 logs (CHECKED, 15:3x). The Q4 row with scale f16 (ev8 q4-sf16:
++  7.452918 / 0.003903) is the Q4 no-harm leg of repair 1, not an S-X8 row.
+ 
+ ## 4. Candidate A, the FLOOR (CHECKED, ev10 a-sx8 / a-q4 / a-gsq)
+ 
+@@ -63,8 +70,8 @@ at or under 7.4163, and no line worse than r86i.
+ | S-X8 | Mean KLD vs r86i | base | N/A | 0.002188 | - |
+ | Q4_K_XL | PPL 16ch | 7.4918 | 7.473680 | **7.461558** | PASS |
+ | Q4_K_XL | Mean KLD vs r86i | base | 0.004083 | 0.003941 | - |
+-| GSQ | PPL 16ch | 7.5549 | OWED (see below) | **7.530565** | PASS |
+-| GSQ | Mean KLD vs r86i | base | OWED | 0.003899 | - |
++| GSQ | PPL 16ch | 7.5549 | 7.533470 (ev11 v-gsq2) | **7.530565** | PASS |
++| GSQ | Mean KLD vs r86i | base | 0.003981 | 0.003899 | - |
+ 
+ - The default path equals the env path bit for bit: a-sx8 = night8 g-skipssmout (7.410711 / 0.002188 / max 0.050070),
+   and the role log shows `ssm_out:FLOAT`, every other role `INT8`. a-gsq = night7 gsq-fix (GSQ has no Q8_0). The
+@@ -86,31 +93,40 @@ d2 = max|r| / 127. The MMQ runs once on q1 and once on q2 into two split-k slice
+ are exact int8 and the accumulator is f32 (the cm1 int8 shader is only built without f16acc,
+ `vulkan-shaders-gen.cpp:647`), so the design target was about 15-bit activations.
+ 
+-| variant | roles with two digits | S-X8 PPL | Mean KLD vs r86i | 99.9% KLD | verdict |
+-|---|---|---|---|---|---|
+-| all on (one digit) | none | 7.437251 | 0.002619 | - | reference |
+-| B1 | ssm_out only | 7.446102 | 0.002680 | 0.056349 | FAIL (bar 7.4163) |
+-| B2 | every Q8_0 role | 7.426905 | 0.002224 | 0.034295 | FAIL (bar 7.4163) |
+-| A (floor) | none, ssm_out float | 7.410711 | 0.002188 | 0.027863 | PASS |
+-
+-Why B1 moved the wrong way (reading of the numbers, CHECKED; cause ASSUMED):
+-- A correct second digit on `ssm_out` must land near A (0.002188). B1 lands at the all-on value (0.002680 vs
+-  0.002619; PPL +0.0089 = about 0.8 of one 16-chunk SE). So the second digit gave `ssm_out` NOTHING. B1 is "one digit
+-  plus noise", not a real move worse.
++| variant | roles with two digits | S-X8 PPL | Mean KLD vs r86i | Median KLD | 99.9% KLD | verdict |
++|---|---|---|---|---|---|---|
++| int8 off | - | 7.408170 | 0.001973 | 0.001323 | - | reference |
++| all on (one digit) | none | 7.437251 | 0.002619 | 0.001759 | - | reference |
++| B1 | ssm_out only | 7.446102 | 0.002680 | 0.001736 | 0.056349 | FAIL (bar 7.4163) |
++| B2 | every Q8_0 role | 7.426905 | 0.002224 | 0.001506 | 0.034295 | FAIL (bar 7.4163) |
++| A (floor) | none, ssm_out float | 7.410711 | 0.002188 | 0.001557 | 0.027863 | PASS |
++
++Why B1 moved the wrong way (numbers CHECKED; cause ASSUMED):
++- A correct second digit on `ssm_out` must land near A. B1 lands on all-on: median 0.001736 vs 0.001759, PPL +0.0089
++  (about 0.8 of one 16-chunk SE). So the second digit gave `ssm_out` NOTHING. B1 is "one digit plus noise", not a real
++  move worse.
+ - The role log reads `ssm_out (5120 rows): INT8x2` (CHECKED, ev10/b1-sx8.txt:41), so the path did run.
+-- B2 gives the OTHER roles a real gain (0.002680 -> 0.002224 when they get two digits too). So the two-pass wiring
+-  works where the inputs are RMS-normalized hidden states, and fails on `ssm_out`.
++- Median KLD is the clean read (Mean KLD is driven by a few tail tokens, R2 memo section 2): B2 median 0.001506 is
++  about A's 0.001557. A = the other roles on one digit plus `ssm_out` float; B2 = the other roles on two digits plus
++  `ssm_out` two digits. So in both B1 and B2 the other roles gain from the second digit and `ssm_out` does not. The
++  failure is specific to the `ssm_out` input values.
+ - Named mechanism (ASSUMED, not measured): the block scale is stored as f16 (`quantize_q8_1.comp`, `ds = f16vec2(d,
+   sum*d)`, CHECKED). d2 is about amax / 32258. f16 is normal only above 6.1e-5, so d2 is subnormal for every block with
+-  amax below about 1.97, and rounds to zero below about 0.001. `ssm_out` inputs are norm x silu(z) products, smaller
+-  per block than the normalized hidden states. Where d2 is subnormal it keeps few bits; where it is zero the second
+-  digit vanishes and the block is back to one digit. This explains B1 = one digit, and B2 helping the other roles.
++  amax below about 1.97. A subnormal scale at amax 0.1-2 still keeps about 8-10 bits, which is enough for a second
++  digit. So the digit only VANISHES if f16 denormals are flushed to zero (on the f16 store, or on the scale read in
++  `mul_mmq_cm1`), or if the `ssm_out` blocks are very small (amax below about 0.01). The device reports both
++  `shaderDenormPreserveFloat16` and `shaderDenormFlushToZeroFloat16` = true, and neither shader declares a denorm
++  execution mode, so the driver's default decides (CHECKED vulkaninfo and shader source; which default = NOT known).
++  `ssm_out` inputs are norm x silu(z) products, smaller per block than the normalized hidden states (ASSUMED).
+ 
+ The variants that follow from that mechanism (one per leg, S-X8 first; a variant at or under 7.4163 gets Q4 and GSQ):
+ - **B3 (runs first): two digits with the second digit prescaled by 2^8.** The residual quantizer multiplies r by 256
+   before it takes d2, so d2 sits in the same f16 range as d1 (normal whenever d1 is normal). The reduce multiplies the
+-  pass-2 slice by 2^-8 (exact, power of two). Prediction if the mechanism is right: S-X8 KLD near A (about 0.0022) and
+-  PPL at or under 7.4163. If B3 lands on B1 again, the f16-scale mechanism is FALSIFIED.
++  pass-2 slice by 2^-8 (exact, power of two). LANDED `c445bedf35` (`GGML_ARIFI_Q8_0_CM1_2D_SHIFT`, default 8; 0 =
++  the B1/B2 path; the plain split_k_reduce pipeline keeps spec constant 0, unchanged). Chain `night/gpu-int8r4.sh`,
++  evidence `night/ev11/`. Pre-registered: CONFIRMED if Mean KLD <= 0.0023, median <= 0.0016 and PPL <= 7.4163; then
++  Q4 (bar 7.4918) and GSQ (must equal a-gsq bit for bit, which also proves the reduce change neutral). FALSIFIED if
++  B3 lands on B1. Caveat: the prescale fixes d2 only; blocks with amax below about 0.008 have a subnormal d1 too.
+ - B4 (only if B3 fails, and only with a mechanism named from B3's numbers): outlier handling (clamp vs per-block
+   scale) or a per-row activation scale. Not run without a stated mechanism.
+ - Accumulation width is NOT a candidate: the int8 kernel accumulates in f32 (CHECKED above).
+@@ -137,11 +153,76 @@ parts. No new CPU reference leg was started.
+ - TIMED legs: HELD by the measurement law (`night/gpu-int8-timed.sh`). Candidate A's price vs all-on is not measured.
+   A moves 20.9% of the Q8_0 FLOPs back to float, so a small pp512 cost is ASSUMED.
+ - The 64-chunk S-X8 reference (night8 stage C, when HQ resumes it) and KL of off / A / B vs it.
+-- Vanilla GSQ cell (section 4), re-run in R4's chain.
+-- Goal B (section 5).
++- Vanilla GSQ cell (section 4): FILLED by R4's re-run `ev11/v-gsq2` = PPL 7.533470, Mean KLD 0.003981 (CHECKED,
++  stdout/stderr split capture; candidate A 7.530565 / 0.003899).
++- Goal B: the 64-chunk paired PPL A vs B5 (`ev14/`, running at 16:30). HQ's call (not the maker's): whether the bar
++  stays a 16-chunk PPL with a margin under one paired SE, or moves to an instrument that ranks accuracy (KLD vs an
++  INDEPENDENT accurate reference: the float path with f32 accumulation, env switch at `ggml-vulkan.cpp:7384`, op
++  error to verify with the probe first; NOT the two-digit path itself, which would be circular for B5).
++- B5 Q4_K_XL and GSQ no-harm legs: not run (B5 did not hold the S-X8 bar, pre-registered). GSQ has no Q8_0 and the
++  fix touches only env-gated paths, so GSQ is unchanged (ASSUMED, not re-measured).
++- The selective two-digit option (15 layers) is not built; it needs a layer list in the role gate.
++- Probe price actual: about 190 probe runs (synthetic 4, replay 30, ladder 128, batched 6, witness compares 15, multi
++  1, early 2) of 5-20 s each, about 25 min of GPU slot; 4 model loads (capture + 3 witness) about 8 min; 1 S-X8 leg
++  5 min. Over the 20-run price line in count, near it in time.
++
++## 9. Int8 goal (maker, 16:3x): mechanism at the level of one multiplication (full derivation `night/INT8-MATH.md`)
++
++What the R4 reading got wrong (CHECKED, op probe `tools/arifi-op-probe`, evidence `night/ev12/`):
++- **Flush-to-zero of f16 scales: FALSIFIED.** Subnormal first-digit scales are kept down to amax 0.001.
++- **"B1/B3 = one digit plus noise": FALSIFIED.** In the real graph (4 sequences, ubatch 4 x 128), B3's `ssm_out`
++  output is 5.0e-4 from f64 on every sampled layer (L0/16/32/48/62), 15x below the float path's 7.6-7.9e-3.
++
++The mechanism, named with its numbers:
++1. The kernel has NO defect: int32 per 32-block, no saturation (max 516,128 < 2^31), f32 accumulation, no tail on
++   6144 x 5120. GPU = ideal q8 simulator to 1e-5.
++2. The loss is precision: one 8-bit scale per 32 activations on heavy-tailed blocks. `ssm_out` block max/median
++   reaches 857 at p99 (L0). Op error, one digit vs float path: median 1.19x over 48 layers, L0 3.5x, L52-62 1.3-1.5x;
++   `attn_output` control 1.14x (`ev12/ladder-table.md`).
++3. The float path is not exact: 7.5-8.5e-3 per Q8_0 matmul (ASSUMED cause: f16 accumulation).
++4. Fork defect found and fixed: the two-digit residual used `packHalf2x16` (rounds toward zero on this driver)
++   while the stored scale rounds to nearest; floor 5.1e-4. Fix `1a88a9c09b`: 1.38e-4 (L0), 3e-5 (L16-62), equal
++   to the ideal simulator.
++
++Candidates (S-X8 16 chunks, vs r86i base):
++
++| variant | `ssm_out` op error vs f64 | PPL | Mean KLD | Median KLD | bar 7.4163 |
++|---|---|---|---|---|---|
++| int8 off (float everywhere) | 7.7e-3 | 7.408170 | 0.001973 | 0.001323 | - |
++| A floor (ssm_out float) | 7.7e-3 | 7.410711 | 0.002188 | 0.001557 | PASS |
++| all on (one digit) | 8.1e-3 - 2.8e-2 | 7.437251 | 0.002619 | 0.001759 | FAIL |
++| B3 (two digits, R4) | 5.0e-4 (in graph) | 7.425242 | 0.002513 | 0.001719 | FAIL |
++| **B5 (two digits, fixed, `1a88a9c09b`)** | **1.4e-4 / 3e-5** | **7.431166** | **0.002612** | **0.001697** | **FAIL** |
++
++The instrument (CHECKED, `night/paired_noise.py`): paired SE of the 16-chunk PPL = 0.006-0.012; bar margin over A
++= 0.0056 (under 1 SE); B5 - A = +0.0205 (1.7 SE), B5 - B3 = +0.006 (0.6 SE); a config with MORE int8 beat one with
++LESS by 2.1 SE (attn_q + attn_qkv vs only attn_q). KLD vs r86i is distance from the float path's own 7.8e-3 rounding
++and cannot rank accuracy: B5 is 50x closer to exact than A on `ssm_out` and reads 0.0026 vs 0.0022.
++
++Exit clause answered with numbers: 8-bit arithmetic is NOT the wall. The limiting property of ONE 8-bit digit is
++one scale per 32 values on heavy tails (1.19x the float error, 3.5x on L0). The smallest wider datatype that makes it
++accurate is a second 8-bit digit (effectively 16-bit integer activations, still int8 coopmat): 50x below the float
++path. What stands between B5 and the bar is the 16-chunk PPL instrument, not the math.
++
++Price of B5 (op microbench on the `ssm_out` shape, INDICATION ONLY, untimed law; served timing HELD): one digit
++about 11 ms, float about 16 ms, two digits about 20 ms per 6144x5120x512 matmul. B5 is slower than the floor on
++`ssm_out` (21% of Q8_0 FLOPs). A cheaper option (not built): two digits only on the layers where one digit exceeds
++1.25x the float error (15 of 48: L0, 2, 21, 22, 38, 42, 52-54, 56-58, 60-62), about 13.8 ms average (ASSUMED from
++the per-op indications), every layer at or under 1.25x float.
++
++Running when this was written: `night/gpu-int8goal-p64.sh` (64-chunk paired PPL, A vs B5, no KL base, evidence
++`ev14/`, done file `night/int8goal-p64.done`). Pre-registered: |B5 - A| < 2 SE at 64 chunks = the 16-chunk gap was
++instrument noise; B5 - A >= +0.012 at > 2 SE = a real effect outside the `ssm_out` matmul's accuracy.
+ 
+ ## 8. Recommendation
+ 
+ Ship candidate A as the floor for S-X8: quality at or better than r86i on all three lines, int8 kept on 79% of the
+ Q8_0 FLOPs. Keep goal B open until a variant with a named mechanism lands `ssm_out` on int8 at the bar. Nothing is
+ merged or pushed; HQ takes the merge word to the President.
++
++Update 16:3x (int8 goal maker): the floor stays the default. B5 (`GGML_ARIFI_Q8_0_CM1=on GGML_ARIFI_Q8_0_CM1_2D=
++ssm_out`, commit `1a88a9c09b`) is the accurate int8 path for `ssm_out` (50x below the float error, CHECKED at op
++level and in graph) but misses the 16-chunk PPL bar (7.431166) and costs more than the float path on that op
++(indication). Two decisions for HQ and the President: (1) the instrument (64-chunk paired result pending in
++`ev14/`, or an independent accurate KL reference); (2) speed vs accuracy on `ssm_out` (float floor, B5, or the
++15-layer selective two-digit option).
+diff --git a/tools/arifi-sync/lane-296/INT8-MATH.md b/tools/arifi-sync/lane-296/INT8-MATH.md
+new file mode 100644
+index 0000000000..7673046bc5
+--- /dev/null
++++ b/tools/arifi-sync/lane-296/INT8-MATH.md
+@@ -0,0 +1,171 @@
++# lane-296 night — INT8 MATH (int8 goal maker, Opus 5.5 MEDIUM, HQ seat-68, 2026-09-29 16:xx)
++
++Labels: CHECKED = measured, or read in code or logs; ASSUMED = reasoning, not measured.
++Source tree: fork branch `night/sx8-numerics`, worktree `cache/lane296/night/src-urev`. File:line refers to that tree.
++Evidence: `night/ev12/` (op probe logs), `night/ev12/ladder-table.md` (per-layer table), tool `tools/arifi-op-probe/`.
++
++## 1. The math of one int8 matmul (upstream 70c4e1582e + fork patches) — CHECKED by reading
++
++y[m, n] = sum over k of W[m, k] * x[k, n], K = 6144 for `ssm_out` and `attn_output`, M = 5120.
++
++1. **Weights.** Q8_0: blocks of 32, int8 `qw` and one f16 scale `dw` per block. Exact in int8; no rounding at load.
++2. **Activations become q8_1** (`vulkan-shaders/quantize_q8_1.comp`):
++   - block of 32 consecutive k values of one column n; `amax` = max |x| over the block (:66-84).
++   - `d = amax / 127` in f32 (:88); `q = round(x / d)` in f32, round half away from zero, no clamp (:89-90).
++     |q| <= 127 because x / d <= 127 up to f32 rounding.
++   - stored: `qs` as int8 and `ds = f16vec2(d, sum(q) * d)` (:150, :152). The scale is rounded to f16 HERE.
++     Q8_0 weights are symmetric, so the `sum * d` half is not used by the Q8_0 kernel.
++3. **The kernel** (`vulkan-shaders/mul_mmq_cm1.comp`, Q8_0 path = the `#else` branch :415-462):
++   - BK = 32 (one q8 block), BK_STEP = 4 (:89-94): each loop step covers 128 k values.
++   - per 16x16 tile and per 32-block: `acc = coopMatMulAdd(qw, qx)` in int32 (:447-452).
++     Max |acc| = 32 * 127 * 127 = 516,128 < 2^31: **no saturation**. < 2^24: `float(acc)` is exact.
++   - `sums += fma(float(acc) * dw, dx, 0)` in f32 (:136-141, :456-459): scales applied per 32-block, accumulated in
++     f32 over K / 32 = 192 blocks. The magic-bias int->float trick (:125-127) runs only when WARP != 32; RDNA3 runs
++     wave32 for this shader, so it is off (ASSUMED from the commit message "only force subgroup size 32 on AMD RDNA").
++   - activation scale load: f16 -> f32 (`mul_mmq_cm1_funcs.glsl:522, :537`); weight scale likewise.
++   - tail: K = 6144 = 48 x 128, M = 5120 = 40 x 128: no partial tile on these shapes. Out-of-range rows/cols are
++     masked at the store (:497-507).
++4. **So the int8 result is** y = sum over blocks b of dw_b * f16(d_b) * sum over i of qw_i * q_i.
++   The only rounding is the activation: e_i = x_i - q_i * f16(d_b), with |x_i - q_i * d_b| <= d_b / 2 and a
++   per-block scale error q_i * (d_b - f16(d_b)), |relative| <= 2^-11 (RTE).
++   Per block, the rounding step is amax_b / 127. A block whose values are small except one outlier keeps the step of
++   the outlier for every value: the small values are rounded to 0 or +-1 step. **Error grows with the block's
++   max / typical ratio (heavy tails).**
++5. **Fork dispatch** (`ggml-vulkan.cpp`): int8 chosen when `quantize_y` (:7773) and a Q8_1 pipeline exists (:7777);
++   per-role gate from the weight name (:7794-7815, `GGML_ARIFI_Q8_0_CM1*`); q8_1 quantize with a reuse cache keyed
++   by (pipeline, src1 pointer) (:8009-8021); two-digit path (:8035-8059): q2 written after q1 in `prealloc_y`,
++   two MMQ passes into two split-k slices, `split_k_reduce_2d` sums them. The quantize dispatch ends with a barrier
++   (:7702). The S-X8 PCA correction (`src/llama-graph.cpp:1654-1681`) applies to S-X8-type weights only, not to the
++   Q8_0 `ssm_out`. Whole-block decode / MMVQ routes are for n < `cm1_int_min_n`; the prefill shapes here do not
++   reach them (ASSUMED from the gate at :7783).
++6. **The float path it replaces** ("int8 off" = r86i numerics): activations converted to f16 (`cm1_f16b`,
++   :7823-7832), weights dequantized to f16, coopmat1 matmul. Accumulator width: f16acc is selected when available
++   for the default precision (:7384, `ggml_vk_get_mul_mat_mat_f16acc`); that it is the f16acc pipeline here is
++   ASSUMED (not traced to the pipeline name), but the error it produces is CHECKED (section 2).
++
++## 2. Error of ONE multiplication (CHECKED, op probe vs f64 host reference, 256 output rows x 512 tokens)
++
++Tool: `tools/arifi-op-probe` (`arifi-op-probe synth|replay`, `arifi-op-capture`). The reference is f64 from the exact
++Q8_0 weights. "Simulator" = the q8_1 math above done on the host; GPU vs simulator distance is the engagement witness.
++
++### 2a. Synthetic (random Q8_0 6144x5120, Gaussian activations with a fixed block amax; `ev12/synth-*.txt`)
++
++| case | float path | int8 one digit | ideal q8 simulator | GPU vs simulator | 2-digit shift 0 | 2-digit shift 8 | ideal 2-digit |
++|---|---|---|---|---|---|---|---|
++| amax 1 | 8.12e-3 | 5.14e-3 | 5.14e-3 | 1.5e-5 | 1.95e-5 | 1.93e-5 | 1.95e-5 |
++| amax 0.005 (d subnormal) | 8.11e-3 | 5.20e-3 | 5.20e-3 | 2.5e-7 | 1.70e-3 | 1.51e-3 | - |
++| amax 0.001 (d subnormal) | 8.15e-3 | 5.19e-3 | 5.19e-3 | 2.7e-5 | 4.54e-3 | 2.35e-5 | - |
++| amax 1e-5 (d below f16 min) | 1.39e-1 | 2.43e-1 | 2.43e-1 | 2.5e-7 | 2.43e-1 | 1.35e-3 | - |
++| heavy tail (1 in 64 x30) | 8.14e-3 | 1.23e-2 | 1.23e-2 | 5.1e-6 | 5.08e-4 | 5.08e-4 | 4.70e-5 |
++
++- **Flush-to-zero of subnormal f16 scales: FALSIFIED.** int8 at amax 0.001 (d = 7.9e-6, subnormal) equals the
++  simulator with denormals kept. The R4 memo's B1 mechanism does not hold on this driver.
++- **The kernel is correct.** GPU = ideal simulator to 1e-5 or better in every one-digit case: no shape, tail or
++  accumulator defect on 6144 x 5120.
++- **The float path is not exact:** 8.1e-3 relative on every case, independent of scale (ASSUMED cause: f16
++  accumulation over K = 6144).
++- **The two-digit path has a defect:** with varying block scales it floors at 5.08e-4 against 4.70e-5 ideal.
++
++### 2b. Real S-X8 inputs (one 512-token wikitext pass, float path; `ev12/cap/`, `ev12/r-*.txt`, `ev12/ladder/`)
++
++Activation profile per 32-block (`PROFILE` lines):
++
++| tensor | block amax p50 | amax p99 | max / median in block, p50 | p99 | worst |
++|---|---|---|---|---|---|
++| ssm_out L0 | 0.0336 | 2.47 | 16.7 | 857 | 23787 |
++| ssm_out L16 | 0.112 | 0.737 | 8.9 | 48.8 | 3185 |
++| ssm_out L32 | 0.313 | 1.44 | 8.7 | 48.0 | 988 |
++| ssm_out L48 | 0.38 | 2.29 | 9.6 | 63.6 | 2720 |
++| ssm_out L62 | 1.6 | 18.6 | 15.8 | 237 | 2670 |
++| attn_output L3 | 0.0304 | 0.514 | 11.4 | 307 | 5042 |
++| attn_output L31 | 0.434 | 1.76 | 6.0 | 36.8 | 485 |
++| attn_output L63 | 2.79 | 11.1 | 11.2 | 81.6 | 530 |
++
++Op error vs f64, all 48 `ssm_out` and 16 `attn_output` layers (full table `ev12/ladder-table.md`):
++
++| role | int8 / float, median | int8 / float, sum of squares | worst layer |
++|---|---|---|---|
++| ssm_out (48) | 1.19 | 1.65 | L0: int8 2.70e-2 vs float 7.66e-3 (3.5x); L52-62 1.3-1.5x |
++| attn_output (16) | 1.14 | 1.26 | L59 1.52x |
++
++Two digits on real `ssm_out` (shift 8): L0 5.08e-4, L16 4.82e-4, L32 5.02e-4, L48 4.98e-4, L62 4.97e-4 — 15x
++BELOW the float path. Ideal two digits (simulator): 1.38e-4 (L0). The GPU value 5.0845e-4 equals the simulator with
++a round-toward-zero f16 scale in the residual subtract to 5 digits (L0: 5.0845e-4 both). CHECKED.
++Batched shape (4 sequences x 128 tokens, as in the KL legs): identical errors to 5 digits (`ev12/b4-*.txt`).
++
++## 3. Mechanisms named with their numbers
++
++1. **One-digit int8 on `ssm_out` is only 1.19x the float path's own error (median), 3.5x on layer 0.** The loss is
++   the q8_1 activation step on heavy-tailed blocks (max/median up to 857 at p99 on L0). It is a precision property
++   of one 8-bit scale per 32 values, not a kernel defect. The float path itself errs 7.5-8.5e-3 per Q8_0 matmul.
++2. **Two-digit residual defect (fork, R3/R4, `quantize_q8_1.comp` old :94 vs :150):** the residual used
++   `unpackHalf2x16(packHalf2x16(d))`, which rounds toward zero on this driver, while the stored scale
++   `f16vec2(d)` rounds to nearest. The residual was taken against the wrong d1 for about half the blocks, floor
++   2^-11 relative (5.1e-4). The same mismatch sat in the R2 `SCALE_F16` repair (old :86). FIX: both use the store's
++   own conversion (now :88, :96). Predicted: 5.1e-4 -> 1.4e-4 on real `ssm_out` (simulator).
++3. **The instrument.** KLD vs r86i measures distance from the float path, which carries 7.8e-3 op error per Q8_0
++   matmul. Any other rounding — even a 15x more accurate one — is "distance". PPL over 16 chunks moves by about
++   +-0.01 under numerical perturbations of the same size (the row-count ladder: only attn_q int8 7.4250, attn_q +
++   attn_qkv int8 7.4136). See section 4 for the in-graph witness that separates "B3 not engaged" from "PPL does
++   not rank op accuracy at this resolution".
++
++## 4. In-graph witness and the instrument (CHECKED)
++
++### 4a. In-graph `ssm_out` output vs f64 (`night/gpu-int8goal-witness.sh`, `ev12/w-cmp-*.txt`)
++
++One S-X8 forward pass per path in the KL-leg shape (4 sequences x 512 tokens, ubatch = 4 x 128), dumping the
++`ssm_out` matmul's own input and output from inside the graph (`cb_eval`); f64 reference from the same in-graph input.
++
++| layer | float path (off) | int8 one digit (all on) | B3 two digits (as it ran in R4) |
++|---|---|---|---|
++| 0 | 7.59e-3 | 2.79e-2 | 5.12e-4 |
++| 16 | 7.80e-3 | 8.11e-3 | 4.82e-4 |
++| 32 | 7.83e-3 | 8.31e-3 | 5.01e-4 |
++| 48 | 7.90e-3 | 9.26e-3 | 5.03e-4 |
++| 62 | 7.71e-3 | 1.09e-2 | 5.06e-4 |
++
++- **B3 WAS engaged and accurate in the real graph**: 15x below the float path on every sampled layer. The R4 memo's
++  reading "B1/B3 = one digit plus noise" is FALSIFIED at the op level.
++- Limitation: `cb_eval` splits the graph at each observed node, so hazards BETWEEN nodes are masked. Closed separately:
++
++### 4b. Multi-node replay, one graph, no callback (`ev12/multi-b3.txt`, library at 1a88a9c09b)
++
++Seven Q8_0 matmuls in one graph (ssm_out L0, attn_output L3, ssm_out L16, ssm_alpha L4, ssm_out L32, attn_output L31,
++ssm_out L62), two-digit on `ssm_out`, read after the second compute: ssm_out 1.38e-4 / 3.10e-5 / 3.25e-5 / 4.53e-5;
++the one-digit controls equal their single-op values (1.060e-2, 9.021e-3). No stale-buffer or hazard effect in this
++order. That the real graph order behaves the same is ASSUMED (same buffer layout).
++
++### 4c. The model-level instrument (`night/paired_noise.py` over ev6/ev8/ev10/ev11 logs)
++
++Per-chunk ln PPL recovered from the running PPL column; pairs share the same 16 chunks.
++
++| pair | dPPL | paired SE | dPPL / SE | chunks where the first is worse |
++|---|---|---|---|---|
++| B3 - A | +0.0145 | 0.0102 | +1.4 | 11/16 |
++| B2 - off | +0.0187 | 0.0099 | +1.9 | 11/16 |
++| all-on - off | +0.0291 | 0.0115 | +2.5 | 12/16 |
++| A - off | +0.0025 | 0.0074 | +0.3 | 8/16 |
++| B1 - all-on | +0.0088 | 0.0071 | +1.2 | 11/16 |
++| only attn_q - (attn_q + attn_qkv) | +0.0114 | 0.0055 | +2.1 | 10/16 |
++| all-on - A | +0.0266 | 0.0120 | +2.2 | 10/16 |
++
++- One paired SE of the 16-chunk S-X8 PPL is 0.006-0.012. The bar's margin over the floor (7.4163 - 7.4107 =
++  0.0056) is under one SE.
++- A MORE int8 config beat a LESS int8 config by 2.1 SE (only attn_q vs attn_q + attn_qkv): perturbation effects of
++  about 2 SE occur with no accuracy change in the direction measured. B3 (15x more accurate than float on
++  `ssm_out`) vs A (float `ssm_out`) is +1.4 SE: inside that band.
++- KLD vs r86i is the distance from the float path, which itself errs 7.6-7.9e-3 per Q8_0 matmul. Any other
++  rounding, even a 50x more accurate one, reads as distance. It cannot rank accuracy.
++
++## 5. Candidate from the numbers, verified (CHECKED)
++
++- Predicted before building: two 8-bit digits with ONE f16 conversion for the scale remove both the heavy-tail
++  precision limit (1.19x-3.5x float) and the rounding-mismatch floor (5.1e-4). Simulator: 1.38e-4 on L0.
++- Built: `1a88a9c09b` (`quantize_q8_1.comp` :88, :96). Op level: 1.38e-4 (L0), 3.1e-5 (L16), 3.3e-5 (L32),
++  4.5e-5 (L62) in a 7-node graph with no callback: 50-250x below the float path. The bar of step 5 ("bring
++  `ssm_out` to the level of the innocent controls") is exceeded: the controls sit at 7.5e-3 to 1.06e-2.
++- Model level, one S-X8 leg (`ev13/b5-sx8.txt`, pre-registered in `night/gpu-int8goal-b5.sh`): PPL 7.431166,
++  Mean KLD 0.002612, median 0.001697. FAIL of the 7.4163 bar, as pre-registered (the op model predicted B5 ~ B3).
++- Kernel-level time on the `ssm_out` shape (probe, 10 reps, INDICATION ONLY under the untimed law): one digit
++  about 11 ms, float about 16 ms, two digits about 20 ms.
++- 64-chunk paired PPL, A vs B5: `night/gpu-int8goal-p64.sh`, `ev14/`, running at 16:30.
+diff --git a/tools/arifi-sync/lane-296/ladder_read.py b/tools/arifi-sync/lane-296/ladder_read.py
+new file mode 100644
+index 0000000000..9103d2af8b
+--- /dev/null
++++ b/tools/arifi-sync/lane-296/ladder_read.py
+@@ -0,0 +1,32 @@
++"""lane-296c: read ev12/ladder op-probe logs into a per-layer int8-vs-float table."""
++import glob
++import re
++import statistics as s
++import sys
++
++D = sys.argv[1] if len(sys.argv) > 1 else "ev12/ladder"
++
++
++def rd(p):
++    m = re.search(r"^GPU .*$", open(p).read(), re.M).group(0)
++    return dict(re.findall(r"(\w+)=([^\s]+)", m))
++
++
++rows = []
++for p in glob.glob(f"{D}/on-*.txt"):
++    name = p.split("on-", 1)[1][:-len(".weight.txt")]
++    a, b = rd(p), rd(p.replace("/on-", "/off-").replace("\\on-", "\\off-"))
++    _, L, role = name.split(".")
++    rows.append((role, int(L), float(a["rel_fro"]), float(b["rel_fro"]), float(a["rel_fro_excl_tok0"]),
++                 float(b["rel_fro_excl_tok0"]), a["worst_tok"], float(a["max_row"])))
++rows.sort()
++print("| role | layer | int8 rel err | float rel err | int8/float | int8/float excl tok0 | int8 worst token | int8 worst row |")
++print("|---|---|---|---|---|---|---|---|")
++for r in rows:
++    print(f"| {r[0]} | {r[1]} | {r[2]:.3e} | {r[3]:.3e} | {r[2]/r[3]:.2f} | {r[4]/r[5]:.2f} | {r[6]} | {r[7]:.2e} |")
++for role in ("ssm_out", "attn_output"):
++    rr = [x for x in rows if x[0] == role]
++    print(f"{role}: n={len(rr)} median int8/float={s.median([x[2]/x[3] for x in rr]):.3f} "
++          f"excl tok0={s.median([x[4]/x[5] for x in rr]):.3f} "
++          f"sum sq int8/sum sq float={sum(x[2]**2 for x in rr)/sum(x[3]**2 for x in rr):.3f} "
++          f"max int8={max(x[2] for x in rr):.3e}")
+diff --git a/tools/arifi-sync/lane-296/paired_noise.py b/tools/arifi-sync/lane-296/paired_noise.py
+new file mode 100644
+index 0000000000..c0a4d4885a
+--- /dev/null
++++ b/tools/arifi-sync/lane-296/paired_noise.py
+@@ -0,0 +1,102 @@
++"""lane-296c: paired per-chunk PPL differences between S-X8 KL legs (same 16 chunks, c512, seed 1).
++
++Per-chunk ln PPL is recovered from the running PPL column: l_k = k ln P_k - (k-1) ln P_(k-1).
++Pairs share the chunks, so d_k = l_k(A) - l_k(B) removes the chunk-to-chunk text variance; its SE is the
++instrument's paired noise. Output: mean dPPL, paired SE in PPL units, and the sign count.
++"""
++import math
++import re
++import sys
++from pathlib import Path
++
++N = Path(__file__).parent
++LEGS = {
++    "off": "ev6/sx8-off.txt", "all-on": "ev6/sx8-on.txt",
++    "A(skip ssm_out)": "ev10/a-sx8.txt", "B1": "ev10/b1-sx8.txt", "B2": "ev10/b2-sx8.txt", "B3": "ev11/b3-sx8.txt",
++    "only attn_q": "ev8/g-onlyq.txt", "rows>=6145": "ev6/sx8-r6145.txt", "only alpha,beta": "ev8/g-onlyab.txt",
++    "skip ssm_out+attn_out": "ev8/g-skipout.txt", "skip attn_out": "ev8/g-skipattnout.txt",
++    "only ssm_out+attn_out": "ev8/g-onlyout.txt", "skip alpha,beta": "ev8/g-skipab.txt",
++    "B5": "ev13/b5-sx8.txt",
++}
++ROW = re.compile(r"^\s*(\d+)\s+([0-9.]+)\s+\+/-|^\s*(\d+)\s+([0-9.]+)\s+±")
++
++
++def chunks(p):
++    f = N / p
++    if not f.exists():
++        return None
++    txt = f.read_text(encoding="utf-8", errors="replace")
++    err = f.with_suffix(".err")
++    if err.exists():
++        txt += err.read_text(encoding="utf-8", errors="replace")
++    run = {}
++    for line in txt.splitlines():
++        m = re.match(r"^\s*(\d+)\s+([0-9.]+)\s+±", line)
++        if m and 1 <= int(m.group(1)) <= 16:
++            run[int(m.group(1))] = float(m.group(2))
++    if len(run) != 16:
++        return None
++    out, prev = [], 0.0
++    for k in range(1, 17):
++        cur = k * math.log(run[k])
++        out.append(cur - prev)
++        prev = cur
++    return out, run[16]
++
++
++def pair(a, b, data):
++    la, pa = data[a]
++    lb, pb = data[b]
++    d = [x - y for x, y in zip(la, lb)]
++    m = sum(d) / 16
++    se = math.sqrt(sum((x - m) ** 2 for x in d) / 15 / 16)
++    pos = sum(1 for x in d if x > 0)
++    return pa - pb, pb * se, pos
++
++
++data = {k: v for k, v in ((k, chunks(p)) for k, p in LEGS.items()) if v}
++missing = [k for k in LEGS if k not in data]
++print("legs read:", ", ".join(f"{k} {v[1]:.4f}" for k, v in data.items()))
++if missing:
++    print("missing or incomplete:", ", ".join(missing))
++PAIRS = [("B3", "A(skip ssm_out)"), ("B2", "off"), ("all-on", "off"), ("A(skip ssm_out)", "off"), ("B1", "all-on"),
++         ("only attn_q", "rows>=6145"), ("only attn_q", "off"), ("only alpha,beta", "off"), ("all-on", "A(skip ssm_out)"),
++         ("B5", "A(skip ssm_out)"), ("B5", "B3"), ("B5", "off")]
++print("| pair | dPPL | paired SE (PPL) | dPPL / SE | chunks where first is worse |")
++print("|---|---|---|---|---|")
++for a, b in PAIRS:
++    if a in data and b in data:
++        dp, se, pos = pair(a, b, data)
++        print(f"| {a} - {b} | {dp:+.4f} | {se:.4f} | {dp / se:+.1f} | {pos}/16 |")
++
++
++def chunks64(p):
++    """llama-perplexity PPL-only output: running '[k]ppl' values."""
++    f = N / p
++    if not f.exists():
++        return None
++    txt = f.read_text(encoding="utf-8", errors="replace") + (f.with_suffix(".err").read_text(encoding="utf-8", errors="replace") if f.with_suffix(".err").exists() else "")
++    run = {int(k): float(v) for k, v in re.findall(r"\[(\d+)\]([0-9.]+)", txt)}
++    n = max(run) if run else 0
++    if n == 0 or any(k not in run for k in range(1, n + 1)):
++        return None
++    out, prev = [], 0.0
++    for k in range(1, n + 1):
++        cur = k * math.log(run[k])
++        out.append(cur - prev)
++        prev = cur
++    return out, run[n]
++
++
++a64, b64 = chunks64("ev14/a64.txt"), chunks64("ev14/b564.txt")
++if a64 and b64 and len(a64[0]) == len(b64[0]):
++    n = len(a64[0])
++    d = [x - y for x, y in zip(b64[0], a64[0])]
++    m = sum(d) / n
++    se = math.sqrt(sum((x - m) ** 2 for x in d) / (n - 1) / n)
++    print(f"64-chunk: A {a64[1]:.4f}, B5 {b64[1]:.4f}, B5 - A = {b64[1] - a64[1]:+.4f}, paired SE {a64[1] * se:.4f}, "
++          f"{(b64[1] - a64[1]) / (a64[1] * se):+.1f} SE, B5 worse in {sum(1 for x in d if x > 0)}/{n} chunks")
++else:
++    print("64-chunk pair not complete yet (ev14/a64.txt, ev14/b564.txt)")
++if len(sys.argv) > 1:
++    print(data)

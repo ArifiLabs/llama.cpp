@@ -1,0 +1,161 @@
+From 3e85f0cb6e00912a1e949930d2f1ff118c59c23b Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 17:43:20 -0400
+Subject: [PATCH] vulkan: GGML_ARIFI_F32ACC=<roles>|all forces f32 accumulation
+ on the float matmul path; arifi-op-probe bias decomposition
+
+lane-296 int8 goal stage 8. The float path (Q8_0 dequant x f16 activations, coopmat1) accumulates in f16 on RDNA3: 7.66e-3 relative error vs f64 on real ssm_out L0 inputs; with f32 accumulation 2.66e-4. The error is random, not a bias (|1-beta| <= 2.6e-4, share along the reference <= 0.1%). The knob sets prec = F32 for listed weight roles (role = name between blk.N. and .weight; "all" = every weight) in ggml_vk_mul_mat_q_f16; unset, the path is unchanged. Probe: BIAS line (global slope, error share along ref, per-row slope spread, per-row shift share).
+
+Lane: lane-296
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h |  2 ++
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp     | 38 +++++++++++++++++++++---
+ tools/arifi-op-probe/op-probe.cpp        | 22 ++++++++++++++
+ 3 files changed, 58 insertions(+), 4 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index de6c828107..49e6dc7bea 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -1318,6 +1318,8 @@ struct vk_device_struct {
+     std::set<std::string> q8_0_cm1_2d_roles;
+     // arifi lane-296 R4: second digit prescaled by 2^shift so its f16 block scale stays normal; reduce undoes it exactly.
+     uint32_t q8_0_cm1_2d_shift = 8;
++    // arifi lane-296 S8: float-path matmuls of these weight roles ("all" = every weight) accumulate in f32 [GGML_ARIFI_F32ACC].
++    std::set<std::string> f32acc_roles;
+     // arifi lane-296 N11: coopmat1 f32->f16 B conversion. 0 = auto (only when a {type,F16} pipeline
+     // exists and ne11 >= cm1_f16b_min_n), 1 = upstream (always), 2 = never (r86i f32-B kernel).
+     uint32_t cm1_f16b_mode = 0;
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index fed2ea7792..0a132f660b 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -6061,6 +6061,18 @@ vk_device ggml_vk_get_device(size_t idx) {
+                     fprintf(stderr, "ggml_vulkan: Q8_0 int8 cm1 two-digit roles: %s, second-digit prescale 2^%u [GGML_ARIFI_Q8_0_CM1_2D / _2D_SHIFT]\n",
+                             q82, device->q8_0_cm1_2d_shift);
+                 }
++                const char * f32a = getenv("GGML_ARIFI_F32ACC");
++                for (const char * p = f32a; p != nullptr && *p; ) {
++                    const char * e = strchr(p, ',');
++                    const size_t n = e ? (size_t) (e - p) : strlen(p);
++                    if (n > 0) {
++                        device->f32acc_roles.insert(std::string(p, n));
++                    }
++                    p = e ? e + 1 : nullptr;
++                }
++                if (f32a != nullptr) {
++                    fprintf(stderr, "ggml_vulkan: float-path f32 accumulation for roles: %s [GGML_ARIFI_F32ACC]\n", f32a);
++                }
+                 const char * fb = getenv("GGML_ARIFI_CM1_F16B");
+                 if (fb != nullptr && strcmp(fb, "upstream") == 0) {
+                     device->cm1_f16b_mode = 1u;
+@@ -7767,6 +7779,24 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+     // If src0 is BF16, try to use a BF16 x BF16 multiply
+     ggml_type f16_type = src0->type == GGML_TYPE_BF16 ? GGML_TYPE_BF16 : GGML_TYPE_F16;
+ 
++    // arifi lane-296 S8: GGML_ARIFI_F32ACC forces f32 accumulation on the float path for listed weight roles.
++    ggml_prec prec = (ggml_prec)dst->op_params[0];
++    if (!ctx->device->f32acc_roles.empty()) {
++        std::string role = src0->name;
++        if (role.rfind("blk.", 0) == 0 && role.find('.', 4) != std::string::npos) {
++            role = role.substr(role.find('.', 4) + 1);
++        }
++        if (role.rfind(".weight") != std::string::npos) {
++            role = role.substr(0, role.rfind(".weight"));
++        }
++        if (ctx->device->f32acc_roles.count("all") > 0 || ctx->device->f32acc_roles.count(role) > 0) {
++            prec = GGML_PREC_F32;
++            if (ctx->device->q8_0_cm1_roles_logged.insert("f32acc:" + role).second) {
++                fprintf(stderr, "ggml_vulkan: role %s (%s): float path f32 accumulation\n", role.c_str(), ggml_type_name(src0->type));
++            }
++        }
++    }
++
+     // Prefer the int8 MMQ path (quantize src1 to q8_1) whenever a matching pipeline exists.
+     // The pipeline lookup returns nullptr for types without a q8_1 pipeline (e.g. RDNA4-skipped
+     // quants), in which case coopmat1 falls back to the f16 B-type quant matmul below.
+@@ -7774,7 +7804,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+                       src1->type == GGML_TYPE_F32 && ggml_is_contiguous(src1) && (ne11 * ne10) % 4 == 0;
+ 
+     // Check for mmq first
+-    const std::vector<vk_matmul_pipeline_pair>* mmp_map = quantize_y ? ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, GGML_TYPE_Q8_1, (ggml_prec)dst->op_params[0]) : nullptr;
++    const std::vector<vk_matmul_pipeline_pair>* mmp_map = quantize_y ? ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, GGML_TYPE_Q8_1, prec) : nullptr;
+     // arifi lane-296 N12: the int8 coopmat1 MMQ wins prefill but loses n=9..32 on the 780M (small tile);
+     // below the switch width the r86i f32-B coopmat1 quant kernel runs instead. Exception (run3 H):
+     // IQ4_XS and Q6_K at the long-k ffn_down shape (k >= 2m) keep int8, 1.05-2.0x over f32-B at n=9..32.
+@@ -7822,7 +7852,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+     // auto also keeps f32-B below cm1_f16b_min_n: f16-B lost 0.37-0.75x at 5120x17408 n=9..16.
+     const bool cm1_f16b = ctx->device->cm1_f16b_mode == 1u ||
+                           (ctx->device->cm1_f16b_mode == 0u && ne11 >= ctx->device->cm1_f16b_min_n &&
+-                           ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, f16_type, (ggml_prec)dst->op_params[0]) != nullptr);
++                           ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, f16_type, prec) != nullptr);
+     const bool y_non_contig = (ctx->device->coopmat2 && src1->type == GGML_TYPE_F32) ||
+                               // coopmat1: force f32->f16 conversion so the f16 B-type quant pipeline is
+                               // used, but only when the int8 MMQ path above is not taken.
+@@ -7835,7 +7865,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+ 
+     if (mmp_map == nullptr) {
+         // Fall back to f16 dequant mul mat
+-        mmp_map = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, y_non_contig ? f16_type : src1->type, (ggml_prec)dst->op_params[0]);
++        mmp_map = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, src0->type, y_non_contig ? f16_type : src1->type, prec);
+     }
+ 
+     const bool qx_needs_dequant = mmp_map == nullptr || x_non_contig;
+@@ -7843,7 +7873,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+ 
+     if (qx_needs_dequant) {
+         // Fall back to dequant + f16 mulmat
+-        mmp_map = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, f16_type, y_f32_kernel ? GGML_TYPE_F32 : f16_type, (ggml_prec)dst->op_params[0]);
++        mmp_map = ggml_vk_get_mul_mat_mat_pipeline_map(ctx, f16_type, y_f32_kernel ? GGML_TYPE_F32 : f16_type, prec);
+     }
+ 
+     // Not implemented
+diff --git a/tools/arifi-op-probe/op-probe.cpp b/tools/arifi-op-probe/op-probe.cpp
+index 573d734e47..ee500d4ef1 100644
+--- a/tools/arifi-op-probe/op-probe.cpp
++++ b/tools/arifi-op-probe/op-probe.cpp
+@@ -39,6 +39,26 @@ static stats compare(const float * y, const std::vector<double> & ref, int M, in
+     return { std::sqrt(num / (den + 1e-300)), s.back(), s[s.size() / 2] };
+ }
+ 
++// S8 bias decomposition of e = y - ref: global slope, error share along ref, per-row slope spread, per-row constant shift
++static void bias(const char * kind, const char * tag, const std::string & label, const float * y, const std::vector<double> & ref, int M, int N, const std::vector<int> & rows) {
++    double yr = 0, rr = 0, ee = 0, er = 0, shift_e = 0;
++    std::vector<double> rb;
++    for (int ri = 0; ri < (int) rows.size(); ri++) {
++        double a = 0, b = 0, se = 0;
++        for (int n = 0; n < N; n++) {
++            const double r = ref[(size_t) ri * N + n], v = y[(size_t) n * M + rows[ri]], e = v - r;
++            a += v * r; b += r * r; ee += e * e; er += e * r; se += e;
++        }
++        yr += a; rr += b; shift_e += se * se / N;
++        rb.push_back(1.0 - a / (b + 1e-300));
++    }
++    std::sort(rb.begin(), rb.end());
++    const double beta = yr / rr, rel = std::sqrt(ee / rr);
++    printf("BIAS %s %s case=%s rel=%.4e 1-beta=%+.4e along_ref=%.3f cos(e,ref)=%+.4f row(1-beta) p10=%+.3e p50=%+.3e p90=%+.3e row_shift_share=%.3f\n",
++           kind, tag, label.c_str(), rel, 1.0 - beta, (1.0 - beta) * (1.0 - beta) / (rel * rel), er / std::sqrt(ee * rr),
++           rb[rb.size() / 10], rb[rb.size() / 2], rb[rb.size() * 9 / 10], shift_e / ee);
++}
++
+ static float f16r(float v) { return ggml_fp16_to_fp32(ggml_fp32_to_fp16(v)); }
+ static float f16z(float v) {  // round toward zero
+     ggml_fp16_t h = ggml_fp32_to_fp16(v);
+@@ -148,6 +168,7 @@ static void evaluate(ggml_backend_t be, const char * tag, const std::string & la
+             if (fread(yd.data(), 4, yd.size(), fd) == yd.size()) {
+                 stats d = compare(yd.data(), ref, M, N, rows);
+                 printf("INGRAPH %s case=%s rel_fro=%.4e max_row=%.4e med_row=%.4e\n", tag, label.c_str(), d.rel_fro, d.max_rel_row, d.med_rel_row);
++                bias("INGRAPH", tag, label, yd.data(), ref, M, N, rows);
+             }
+         } else printf("INGRAPH %s case=%s missing or shape mismatch (%d x %d)\n", tag, label.c_str(), h[0], h[1]);
+         if (fd) fclose(fd);
+@@ -165,6 +186,7 @@ static void evaluate(ggml_backend_t be, const char * tag, const std::string & la
+     double num1 = 0, den1 = 0; for (int n = 1; n < N; n++) { num1 += cn[n]; den1 += cd[n]; }
+     printf("GPU %s case=%s rel_fro=%.4e max_row=%.4e med_row=%.4e worst_tok=%d(%.4e) tok0=%.4e rel_fro_excl_tok0=%.4e op_ms=%.3f (indication, untimed law)\n",
+            tag, label.c_str(), g.rel_fro, g.max_rel_row, g.med_rel_row, worst, cr[worst], cr[0], std::sqrt(num1 / (den1 + 1e-300)), ms);
++    bias("GPU", tag, label, y.data(), ref, M, N, rows);
+     if (std::getenv("PROBE_SIM") == nullptr) return;
+     block_profile(x, label.c_str());
+     struct { const char * name; int digits, shift; bool ftz; int bs; bool f16; bool rtz_sub; } sims[] = {

@@ -1,0 +1,122 @@
+From 57c45ac84570da49a4ada5e738caab16c1e151db Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 16:22:53 -0400
+Subject: [PATCH] lane-302: gather pipelines walk slots fastest (slot-major
+ workgroup order) so shared experts hit L2
+
+Cell A (cellA-10051527): the multi-column gather is byte-identical but ALU-bound at real routing (padded
+columns cost full loads+FMA), and the token-major order re-read a shared expert from DRAM at full cost
+(pattern all g0 = pattern none g0). This keeps the NUM_COLS math and only permutes the (row block, slot)
+workgroup set: consecutive linear workgroup ids walk the slots of one row block. Non-gather pipelines get
+the same first_row expression through the WG_ROWBLOCK macro (identical source text).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit 088636633d32c06feffc323c62b166d82ae71eab)
+
+Origin: ArifiLabs (native) - fork-authored (lane-302); no upstream origin exists.
+Measured-effect: UNMEASURED on its own - supporting commit; see release ledger Table 1 W17, the number sits on that win's main commit
+---
+ ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp |  2 +-
+ .../ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl | 12 +++++++++++-
+ .../vulkan-shaders/mul_mat_vec_iq2_s.comp            |  2 +-
+ .../vulkan-shaders/mul_mat_vec_iq3_s.comp            |  2 +-
+ .../vulkan-shaders/mul_mat_vec_iq3_xxs.comp          |  2 +-
+ .../vulkan-shaders/mul_mat_vec_iq4_xs.comp           |  2 +-
+ 6 files changed, 16 insertions(+), 6 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
+index 6e57b17801..c6a498916d 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
+@@ -265,7 +265,7 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+ }
+ 
+ void main() {
+-    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
++    const uint first_row = NUM_ROWS * WG_ROWBLOCK;
+ 
+ #ifdef MUL_MAT_ID_GATHER
+     if (!gather_setup()) {
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
+index a7faf1f3fc..9f4aade59a 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
+@@ -106,8 +106,17 @@ uint gcols;
+ #define B_COL(j) gcol_b[j]
+ #define D_COL(j) gcol_d[j]
+ 
++// Slot-major workgroup order: the host grid is {row blocks, slots, z}, but consecutive linear workgroup ids
++// walk the SLOTS of one row block, so every slot that picked the same expert reads that row block while it
++// is still in L2 (cell A: the token-major order re-read a shared expert from DRAM at full cost). A pure
++// permutation of the same (row block, slot) set: no row's arithmetic changes.
++uint gather_linear() {
++    return gl_WorkGroupID.x + gl_NumWorkGroups.x * (gl_WorkGroupID.y + gl_NumWorkGroups.y * gl_WorkGroupID.z);
++}
++#define WG_ROWBLOCK (gather_linear() / gl_NumWorkGroups.y)
++
+ bool gather_setup() {
+-    const uint s = gl_WorkGroupID.y;
++    const uint s = gather_linear() % gl_NumWorkGroups.y;
+     const uint ts = s / p.nei0;
+     const int e = data_ids[(s - ts * p.nei0) + ts * p.nbi1];
+     uint rank = 0;
+@@ -157,6 +166,7 @@ bool gather_setup() {
+ #define B_COL(j) ((j)*p.batch_stride_b)
+ #define D_COL(j) ((j)*p.batch_stride_d)
+ #define GATHER_WRITE(j)
++#define WG_ROWBLOCK (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z)
+ #endif
+ 
+ #ifdef USE_SUBGROUP_ADD_NO_SHMEM
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
+index ea79cdc885..02c3886707 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
+@@ -74,7 +74,7 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+ }
+ 
+ void main() {
+-    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
++    const uint first_row = NUM_ROWS * WG_ROWBLOCK;
+ 
+ #ifdef MUL_MAT_ID_GATHER
+     if (!gather_setup()) {
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+index 70ac7cabc7..c2ab7cf5b4 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+@@ -196,7 +196,7 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+ }
+ 
+ void main() {
+-    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
++    const uint first_row = NUM_ROWS * WG_ROWBLOCK;
+ 
+ #ifdef MUL_MAT_ID_GATHER
+     if (!gather_setup()) {
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp
+index f0037a00db..1e372aed5c 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp
+@@ -127,7 +127,7 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+ }
+ 
+ void main() {
+-    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
++    const uint first_row = NUM_ROWS * WG_ROWBLOCK;
+ 
+ #ifdef MUL_MAT_ID_GATHER
+     if (!gather_setup()) {
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp
+index e73e55cf7e..ac6e4bea81 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp
+@@ -96,7 +96,7 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+ }
+ 
+ void main() {
+-    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
++    const uint first_row = NUM_ROWS * WG_ROWBLOCK;
+ 
+ #ifdef MUL_MAT_ID_GATHER
+     if (!gather_setup()) {

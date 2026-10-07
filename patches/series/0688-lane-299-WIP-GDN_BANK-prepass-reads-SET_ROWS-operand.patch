@@ -1,0 +1,113 @@
+From df91200f0fada939bb07a144902b5bb1759175a9 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 06:06:39 -0400
+Subject: [PATCH] lane-299 WIP: GDN_BANK prepass reads SET_ROWS operands in
+ ggml order (src0 data, src1 row ids, src2 dst); the old order never matched,
+ so the fused path never fired (optest3 reject 2). Adds GGML_VK_GDN_BANK_DEBUG
+ reject-stage prints.
+
+Lane: lane-299
+(cherry picked from commit 85f01020b79c9823b2315197fc750fd75c9a21ee)
+(cherry picked from commit 192127969fef6cf1e14511c7478183e9cfaceb9c)
+
+Origin: ArifiLabs (native) - fork-authored (lane-299); no upstream origin exists.
+Measured-effect: UNMEASURED on its own - supporting commit; see release ledger Table 1 W9, the number sits on that win's main commit
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 27 ++++++++++++++++++++-------
+ 1 file changed, 20 insertions(+), 7 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 477eafb685..f282da99b6 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -16538,9 +16538,10 @@ static void ggml_vk_gdn_bank_prepass(ggml_backend_vk_context * ctx, ggml_cgraph
+     std::set<const ggml_tensor *> bad;
+     for (int j = 0; j < cgraph->n_nodes; j++) {
+         const ggml_tensor * m = cgraph->nodes[j];
+-        if (m->op == GGML_OP_SET_ROWS && m->src[1] && m->src[1]->op == GGML_OP_VIEW && m->src[1]->view_src &&
+-            m->src[1]->view_src->op == GGML_OP_GATED_DELTA_NET) {
+-            const ggml_tensor * g = m->src[1]->view_src;
++        // SET_ROWS operands (ggml.c ggml_set_rows): src[0] = data, src[1] = row ids, src[2] = destination
++        if (m->op == GGML_OP_SET_ROWS && m->src[0] && m->src[0]->op == GGML_OP_VIEW && m->src[0]->view_src &&
++            m->src[0]->view_src->op == GGML_OP_GATED_DELTA_NET) {
++            const ggml_tensor * g = m->src[0]->view_src;
+             if (sr_of.count(g)) {
+                 bad.insert(g);
+             }
+@@ -16564,9 +16565,12 @@ static void ggml_vk_gdn_bank_prepass(ggml_backend_vk_context * ctx, ggml_cgraph
+         }
+     }
+ 
++    static const bool dbg = getenv("GGML_VK_GDN_BANK_DEBUG") != nullptr;
+     for (int i : gdn_idx) {
+         ggml_tensor * n = cgraph->nodes[i];
++        auto const rej = [&](int s) { if (dbg) { fprintf(stderr, "gdn_bank: node %d %s reject %d\n", i, n->name, s); } };
+         if (bad.count(n) || !sr_of.count(n) || n->type != GGML_TYPE_F32 || (n->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
++            rej(bad.count(n) ? 1 : !sr_of.count(n) ? 2 : 3);
+             continue;
+         }
+         const ggml_tensor * v  = n->src[2];
+@@ -16574,11 +16578,13 @@ static void ggml_vk_gdn_bank_prepass(ggml_backend_vk_context * ctx, ggml_cgraph
+         const int64_t D   = S_v * S_v * H;
+         const uint32_t K  = (uint32_t) ggml_get_op_params_i32(n, 0);
+         if (n_seqs != 1 || (S_v != 16 && S_v != 32 && S_v != 64 && S_v != 128)) {
++            rej(4);
+             continue;
+         }
+         // read side: state = RESHAPE(GET_ROWS(bank2d, ridx))
+         const ggml_tensor * st = n->src[5];
+         if (!st || st->op != GGML_OP_RESHAPE || !st->src[0] || st->src[0]->op != GGML_OP_GET_ROWS) {
++            rej(5);
+             continue;
+         }
+         const ggml_tensor * gr    = st->src[0];
+@@ -16589,22 +16595,26 @@ static void ggml_vk_gdn_bank_prepass(ggml_backend_vk_context * ctx, ggml_cgraph
+             ridx->ne[0] != n_seqs || !ggml_is_contiguous(ridx) || gr->ne[1] != n_seqs ||
+             use_count(gr) != 1 || use_count(st) != 1 || (gr->flags & GGML_TENSOR_FLAG_OUTPUT) ||
+             (gr->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
++            rej(use_count(gr) != 1 ? 61 : use_count(st) != 1 ? 62 : 6);
+             continue;
+         }
+         // write side: SET_ROWS(bank2d', VIEW(gdn tail, [D, n_written]), wrow), bank2d' over the same bank memory
+         const int b = sr_of[n];
+         const ggml_tensor * sr   = cgraph->nodes[b];
+-        const ggml_tensor * tail = sr->src[1];
+-        const ggml_tensor * wrow = sr->src[2];
++        const ggml_tensor * tail = sr->src[0];
++        const ggml_tensor * wrow = sr->src[1];
++        const ggml_tensor * sdst = sr->src[2];
+         const int64_t n_written  = tail->ne[1];
+-        if (sr->src[0]->data != bank->data || root(sr->src[0]) != root(bank) || sr->src[0]->type != GGML_TYPE_F32 ||
+-            sr->src[0]->ne[0] != D || sr->src[0]->nb[1] != (size_t) D * sizeof(float) ||
++        if (sdst->data != bank->data || root(sdst) != root(bank) || sdst->type != GGML_TYPE_F32 ||
++            sdst->ne[0] != D || sdst->nb[1] != (size_t) D * sizeof(float) ||
+             tail->type != GGML_TYPE_F32 || tail->ne[0] != D || tail->ne[2] != 1 || tail->ne[3] != 1 ||
+             tail->nb[1] != (size_t) D * sizeof(float) || tail->view_offs != s_off_bytes(n) ||
+             n_written < 1 || n_written > (int64_t) std::max<uint32_t>(K, 1) ||
+             wrow->type != GGML_TYPE_I32 || wrow->ne[0] != n_written || !ggml_is_contiguous(wrow) ||
+             use_count(tail) != 1 || (sr->flags & GGML_TENSOR_FLAG_COMPUTE) == 0 ||
+             tails[n].size() != 1 || tails[n][0] != tail) {
++            rej(sdst->data != bank->data ? 71 : root(sdst) != root(bank) ? 72 :
++                tail->view_offs != s_off_bytes(n) ? 73 : use_count(tail) != 1 ? 74 : tails[n].size() != 1 ? 75 : 7);
+             continue;
+         }
+         int a = -1;
+@@ -16612,6 +16622,7 @@ static void ggml_vk_gdn_bank_prepass(ggml_backend_vk_context * ctx, ggml_cgraph
+             if (cgraph->nodes[k] == gr) { a = k; break; }
+         }
+         if (a < 0 || b <= i) {
++            rej(8);
+             continue;
+         }
+         // nothing else may touch the bank between the skipped GET_ROWS and the skipped SET_ROWS
+@@ -16628,8 +16639,10 @@ static void ggml_vk_gdn_bank_prepass(ggml_backend_vk_context * ctx, ggml_cgraph
+             }
+         }
+         if (clash) {
++            rej(9);
+             continue;
+         }
++        if (dbg) { fprintf(stderr, "gdn_bank: node %d %s MATCH n_written=%d\n", i, n->name, (int) n_written); }
+         ctx->gdn_bank[n] = { bank, ridx, wrow, sr, (uint32_t) n_written };
+         ctx->gdn_bank_skip.insert(gr);
+         ctx->gdn_bank_skip.insert(sr);

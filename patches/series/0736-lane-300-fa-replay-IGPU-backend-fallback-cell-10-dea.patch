@@ -1,0 +1,72 @@
+From fa61e861f36f6cc0a7dcde74acb045462d823532 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 14:51:18 -0400
+Subject: [PATCH] lane-300: fa-replay IGPU backend fallback + cell-10 dead-V
+ value-class/column-range arms; det-probe prefill ends at min(t-7,t-w+1) for
+ widths > 8
+
+Origin: lane-300
+Measured-effect: tooling only (tools/arifi-op-probe, no engine source); served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json
+---
+ tools/arifi-op-probe/det-probe.cpp |  2 +-
+ tools/arifi-op-probe/fa-replay.cpp | 27 +++++++++++++++++++++++++++
+ 2 files changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/tools/arifi-op-probe/det-probe.cpp b/tools/arifi-op-probe/det-probe.cpp
+index ec156ea7c8..60954ef032 100644
+--- a/tools/arifi-op-probe/det-probe.cpp
++++ b/tools/arifi-op-probe/det-probe.cpp
+@@ -320,7 +320,7 @@ int main(int argc, char ** argv) {
+                 const int w = widths[wi];
+                 llama_memory_clear(mem, true);
+                 pr.step = (int) wi;
+-                dec(S, 0, t - 7, false);
++                dec(S, 0, std::min(t - 7, t - w + 1), false);   // widths > 8 must not re-decode prefill positions
+                 for (int i = t - 7; i <= t - w; ++i) dec(S, i, i + 1, true);
+                 std::vector<rrec> ops;
+                 pr.n_tok = w; pr.rows_cur = pr.rows_mode ? &ops : nullptr;
+diff --git a/tools/arifi-op-probe/fa-replay.cpp b/tools/arifi-op-probe/fa-replay.cpp
+index 9a5099a191..bce37d13af 100644
+--- a/tools/arifi-op-probe/fa-replay.cpp
++++ b/tools/arifi-op-probe/fa-replay.cpp
+@@ -106,6 +106,7 @@ int main(int argc, char ** argv) {
+     if (!load(std::string(argv[1]) + "-run0.bin", x0) || !load(std::string(argv[1]) + "-run1.bin", x1)) { fprintf(stderr, "FAILED-PATH dumps\n"); return 1; }
+     ggml_backend_load_all();
+     g_be = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_GPU, nullptr);
++    if (!g_be) g_be = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU, nullptr);  // UMA 890M reports IGPU
+     if (!g_be) { fprintf(stderr, "no GPU backend\n"); return 1; }
+     printf("{\"backend\":\"%s\"}\n", ggml_backend_name(g_be));
+ 
+@@ -140,6 +141,32 @@ int main(int argc, char ** argv) {
+     cmp("deadK_m1000", run_fa(x0, mix(K0, nullptr, -1000.0f, D), V0, all), base0, DV, nh, 0, nq);
+     cmp("deadK_p1000", run_fa(x0, mix(K0, nullptr, 1000.0f, D), V0, all), base0, DV, nh, 0, nq);
+     cmp("deadV_one", run_fa(x0, K0, mix(V0, nullptr, 1.0f, DV), all), base0, DV, nh, 0, nq);
++    // cell 10 (relaunch 12): value class of the dead-V leak (denormal vs magnitude) and which dead column range carries it
++    auto mixf = [&](const std::vector<float> & live, const std::vector<float> & src, int64_t c0, int64_t c1, int mode, int64_t d) {
++        std::vector<float> o = live;  // mode 0: src values in [c0,c1); 1: src with f16-denormals zeroed; 2: only src f16-denormals
++        for (int64_t h = 0; h < nkvh; ++h) for (int64_t c = std::max<int64_t>(c0, 0); c < std::min(c1, nkv); ++c) if (dead[c])
++            for (int64_t i = 0; i < d; ++i) {
++                size_t k = (size_t) ((h * nkv + c) * d + i);
++                const float s = src[k];
++                const bool den = s != 0.0f && std::fabs(s) < 6.1035156e-5f;
++                o[k] = mode == 0 ? s : mode == 1 ? (den ? 0.0f : s) : (den ? s : 0.0f);
++            }
++        return o;
++    };
++    cmp("deadV_run1_nodenorm", run_fa(x0, K0, mixf(V0, V1, 0, nkv, 1, DV), all), base0, DV, nh, 0, nq);
++    cmp("deadV_denorm_only", run_fa(x0, K0, mixf(V0, V1, 0, nkv, 2, DV), all), base0, DV, nh, 0, nq);
++    for (float c : { 0.25f, 4.0f, 64.0f, -4.0f }) {
++        char tag[64];
++        snprintf(tag, sizeof tag, "deadV_c%g", c);
++        cmp(tag, run_fa(x0, K0, mix(V0, nullptr, c, DV), all), base0, DV, nh, 0, nq);
++    }
++    // first dead column and the 16-col sub-chunk / 64-col Bc tile edges around it
++    int64_t fd = 0; while (fd < nkv && !dead[fd]) ++fd;
++    const int64_t sc = (fd / 16 + 1) * 16, bt = (fd / 64 + 1) * 64;
++    printf("{\"first_dead\":%lld,\"subchunk_end\":%lld,\"bc_tile_end\":%lld}\n", (long long) fd, (long long) sc, (long long) bt);
++    cmp("deadV_run1_mixed_subchunk", run_fa(x0, K0, mixf(V0, V1, fd, sc, 0, DV), all), base0, DV, nh, 0, nq);
++    cmp("deadV_run1_rest_of_tile", run_fa(x0, K0, mixf(V0, V1, sc, bt, 0, DV), all), base0, DV, nh, 0, nq);
++    cmp("deadV_run1_beyond_tile", run_fa(x0, K0, mixf(V0, V1, bt, nkv, 0, DV), all), base0, DV, nh, 0, nq);
+     // partial-tile carrier: pad the last Br tile with copies of the last row so no tile row is out of range
+     std::vector<int64_t> pad = all;
+     while (pad.size() % 16) pad.push_back(nq - 1);

@@ -1,0 +1,26 @@
+From fecb342078c23d7c4eb0e332cebc44db3f9f528a Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 12:45:14 -0400
+Subject: [PATCH] vulkan: S-X8 width gate covers prompt widths only (n > 8);
+ decode widths keep the int8 route (check finding F1; S-X8 bank 149/149 +
+ fixtures 10/10 green on build9)
+
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index de8d43d876..4d78b604d5 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -7936,7 +7936,9 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+             role = role.substr(0, w);
+         }
+         const auto & sr = ctx->device->sx8_cm1_roles;
+-        if ((uint32_t) ne11 < ctx->device->sx8_cm1_min_n || (!sr.empty() && sr.count(role) == 0)) {
++        // the width gate covers prompt widths only (n > 8): decode widths that reach this mat-mat path (M-split of an oversized A)
++        // keep the int8 route they had before the gate (check finding F1, 2026-10-03)
++        if ((ne11 > 8 && (uint32_t) ne11 < ctx->device->sx8_cm1_min_n) || (!sr.empty() && sr.count(role) == 0)) {
+             mmp_map = nullptr;
+         }
+         const char * st = mmp_map ? "INT8" : "FLOAT";

@@ -1,0 +1,121 @@
+From 4476c42210c81b6597ab9533a9d515813d20c796 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 20:01:06 -0400
+Subject: [PATCH] arifi-sync: re-key the sha-pinned ledgers after the post-x1i
+ trailer reword
+
+The trailer reword (reword.py, B1c) replayed c23bd8cc5e..69927fe1d2 with the same trees and new
+messages, so 91 commit shas changed. Every full sha of a rewritten commit in the ledgers
+below is replaced by its new sha (map: reword-commit-map.tsv). Abbreviated shas in prose
+fields are not rewritten. Commits under c23bd8cc5e are untouched.
+  tools/arifi-sync/protected-wins.json
+
+Origin: ArifiLabs (native) - release engineering for this fork; no upstream origin exists.
+Origin: release-prep (HQ82)
+Measured-effect: UNMEASURED - ledger keys only; no inference code path is touched.
+---
+ tools/arifi-sync/protected-wins.json | 32 ++++++++++++++--------------
+ 1 file changed, 16 insertions(+), 16 deletions(-)
+
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index 383e5fd4e0..5972dec371 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -1808,7 +1808,7 @@
+       "id": "vulkan-fa-sparse-prefill-qsa",
+       "status": "active",
+       "mechanism": "Vulkan flash-attention sparse gather for QSA PREFILL (Strata FEATURE-MAP row 26, lane 301). A sparse-hinted FA (n_kv_max > 0) with N > 8 now takes the gqa layout when the sparse gate's own conditions hold (raw F16 K/V, KV >= max(4096, 2*n_kv_max)); the shader resolves per-token rows (sparse_base uses gqa_iq1 = token), so each prefill query reads only its ~2051 selected cells instead of dense masked attention over all n_kv. Runtime switches: GGML_ARIFI_FA_SPARSE_PREFILL=0 restores dense prefill, GGML_ARIFI_FA_SPARSE_PREFILL_MIN_RATIO; RED plant GGML_ARIFI_QSA_RED_PLANT=1.",
+-      "commit": "97e533fb8e3e32ba0052e469b8876958ef99ab8b",
++      "commit": "634bbd6732fc82f652eeb5c94d887904873f461a",
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
+       ],
+@@ -1831,7 +1831,7 @@
+       "id": "qwen4exp-qsa-pooled-indexer-cache",
+       "status": "active",
+       "mechanism": "Persistent pooled indexer-key cache for qwen4exp QSA layers (Strata FEATURE-MAP row 25, lane 301). Pool + rms_norm + rope of the raw indexer keys runs ONCE per completed 4-cell block and is stored per QSA layer (f32 rows keyed by block index); each ubatch pools only its fresh blocks and the tail, instead of re-gathering, re-pooling, re-norming and re-roping all n_kv raw keys every token. Same op chain per row (bit-identical rows). Full pooling fallback (writes or marks stale) on multi-sequence, embedding ubatches with 2d positions, or spans past n_fresh; invalidation on clear/seq_cp/seq_keep/seq_add/seq_div/state_read. Switches: GGML_ARIFI_QSA_POOL_CACHE=0 (off == previous path), RED plant GGML_ARIFI_QSA_POOL_RED=2 (drops every fresh write).",
+-      "commit": "13c3981eab31dc862899c029fe3cf746940708ab",
++      "commit": "ea75fe8cab01670aba413b794c4e170f696606e1",
+       "protected_paths": [
+         "src/llama-memory-hybrid-idx.cpp",
+         "src/llama-memory-hybrid-idx.h",
+@@ -1857,7 +1857,7 @@
+       "id": "vulkan-cm1-f16b-staging-mul-mat-id",
+       "status": "active",
+       "mechanism": "coopmat1 (non-coopmat2, non-Intel) MUL_MAT_ID prompt matmuls stage B f32->f16 before the kernel (lane-296 N11 extended to the id path) when no int8 q8_1 id pipeline is taken and tokens >= cm1_f16b_min_n, so iq2_s / iq3_xxs / iq3_s experts run the f16-B coopmat1 pipeline instead of f32-B. Not a precision change on fp16 devices: the f32-B kernel already rounds B to f16vec2 in shared memory (mul_mm.comp:195). Default ON; GGML_ARIFI_CM1_F16B_ID=0 keeps f32-B; =red is the planted wrong variant (staged B never written).",
+-      "commit": "75bd52ad79759c2ae3120a9209c6955e3c694246",
++      "commit": "1d7f47ec44f5383ffe892171a651312c8f765e84",
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
+       ],
+@@ -1882,12 +1882,12 @@
+       "status": "active",
+       "_registered": "2026-10-05, lane-302 (Opus 5.5). Registered as an OP-LEVEL win that shipped DEFAULT OFF. The served A/B (cellB-10051832) FAILED its pre-registered read rule (round 2 pairs -1.5..-2.8%, unbalanced order). Amended same day: the balanced served A/B (cellE-10052000, warm arm discarded, ABBA x2) PASSED its pre-registered default-on rule, so the gather is DEFAULT ON at width 1 from the flip commit (lane-302 branch, commit-msg-6).",
+       "mechanism": "MUL_MAT_ID small-batch mat-vec (n_tokens 2..8) gets gather pipelines whose linear workgroup id maps to (row block = linear / nslots, slot = linear % nslots): consecutive workgroups are the routed slots of one weight row block, so slots that picked the same expert read that row block from L2 instead of DRAM. Per-workgroup math is unchanged (a permutation of work order), so output is byte-identical to the old path. GGML_ARIFI_MOE_GATHER unset = old path; =1 = slot-major gather (the measured width); =2/4 = multi-column variants that lose at real routing (padded-column ALU).",
+-      "commit": "cbbfff501090d4d16c3b9f1b878afc87a04ad56a",
++      "commit": "57c45ac84570da49a4ada5e738caab16c1e151db",
+       "also_commits": [
+-        "e59f9fa87f8126fe2154879d58b82b9672a5aa06",
+-        "2e9ba4221e3efac3e9acbed1ced61446b3e620fd",
+-        "b6a607b9483eca54a05153dfed5744d4801c25ec",
+-        "2c1df8d8c776546772bc6c8da4e49abd3131bdb8"
++        "c49a7c15e4bbd1f88116b5ba4be96f31d0872486",
++        "ba68186d94322a83785e2b48ad0519c205595fba",
++        "fe35f4fa7e4d86a3da282c647f89664a4c09c59f",
++        "afbe861ef769ad711d22dbec7f3894cde0dc16d1"
+       ],
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
+@@ -1921,9 +1921,9 @@
+       "status": "active",
+       "_registered": "2026-10-06, lane-302 (Opus 5.5). Route A lever 1 (rows per workgroup of the gather pipelines). Default ON for IQ3_S only.",
+       "mechanism": "The IQ3_S MUL_MAT_ID gather pipeline (n_tokens 2..8) runs 2 weight rows per workgroup instead of rm_iq (4 on non-GCN AMD). Per-row reduction does not depend on NUM_ROWS (mul_mat_vec_base.glsl reduce_result), so output is byte-identical. GGML_ARIFI_MOE_GATHER_ROWS=1|2|4|8 overrides every gather type.",
+-      "commit": "fb070be94df9a67527788252e319330108ea4dd0",
++      "commit": "7c9a6bc215a34d4dc3e06d1a95add0f01cc8bf51",
+       "also_commits": [
+-        "8b4dbbf489df53ca5e2311ef9ddb2afe0f631a24"
++        "8c913a9d2410659e82946a74f9b8bbadbf69f4e6"
+       ],
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
+@@ -1952,10 +1952,10 @@
+       "status": "active",
+       "_registered": "2026-10-06, lane-302 (Opus 5.5). Route A levers 3+4 (IQ2_S gather shader body). Default ON (GGML_ARIFI_IQ2S_BODY unset = 5) from the flip commit (commit-msg-15).",
+       "mechanism": "mul_mat_vec_iq2_s.comp spec constant 3 on the IQ2_S MUL_MAT_ID gather pipeline: body 5 = int8 packed sign application ((g ^ 0xFF) + 1 per byte; iq2s grid bytes are never 0, so no -0) plus a batched LDS grid init (every thread loads its 16 table entries into registers, then stores; the ISA serialized global_load -> s_waitcnt vmcnt(0) chain drops from 16 to 2 waits). Same table, same LDS bytes, same arithmetic order: byte-identical. GGML_ARIFI_IQ2S_BODY=0 = legacy body; 1 = int8 body only; 4 = legacy body + batched init; 2 = diagnostic (skip init, wrong output); 3 = planted wrong arm.",
+-      "commit": "47c949cdb3a71228d2fbd2dd85a452d17fa9a67b",
++      "commit": "88eeef9a0efe5b46c72eff2734c0c4356f25ff4c",
+       "also_commits": [
+-        "16bb97279f01476fa29d70a54cc0a1157004dc96",
+-        "82d04862ede2bb694f7e753b8ac15e7ea8f476d0"
++        "ad9f46e0596597753d2ba5aa2ab2c87e32f6add8",
++        "ad0ef50aa439b09ec35072596b85c92a86c925f1"
+       ],
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
+@@ -1987,7 +1987,7 @@
+       "id": "vulkan-qwen4exp-hc-post-w",
+       "status": "active",
+       "mechanism": "Vulkan backend fusion of the qwen4exp build_hc_combine scatter chain SCALE -> SIGMOID -> SCALE -> DSV4_HC_POST into one dispatch of the existing dsv4_hc_post shader (FUSE_W spec constant); graph_optimize keeps the 4-node pattern adjacent.",
+-      "commit": "d2b55d1c671c5315c32e9459e8e5ceb857f9aadb",
++      "commit": "1ea9394f5cab546666b0cf4d497284111b31960d",
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/vulkan-shaders/dsv4_hc_post.comp",
+         "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
+@@ -2021,7 +2021,7 @@
+       "id": "vulkan-qwen4exp-gdn-bank",
+       "status": "active",
+       "mechanism": "Vulkan backend fusion of the R1 recurrent-state path GET_ROWS(bank, ridx) -> GATED_DELTA_NET -> SET_ROWS(bank, wrow): a graph_compute prepass (ggml_vk_gdn_bank_prepass) matches the pattern, skips the state GET_ROWS and SET_ROWS, and runs a GDN_BANK shader variant that reads the state from bank[ridx] and writes the snapshot rows to bank[wrow] in place.",
+-      "commit": "e91c2df0d8ae2a82655e72bbc1eb837ce2a6bab8",
++      "commit": "df91200f0fada939bb07a144902b5bb1759175a9",
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/vulkan-shaders/gated_delta_net.comp",
+         "ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp",
+@@ -2057,7 +2057,7 @@
+       "id": "qwen4exp-layout-copies",
+       "status": "active",
+       "mechanism": "qwen4exp graph: conv-state tails are written with one strided CPY (no CONT first) and the PLE taps use one transpose-copy plus one kernel cast instead of 4 CONT + 4 CONT + 4 CAST + 1 CONT. Same bytes, fewer dispatches.",
+-      "commit": "78db7c5e449765a01f7644d402e764383a97eed2",
++      "commit": "35a67b3221b1bd96ecdf8f125c8404fad74736f8",
+       "protected_paths": [
+         "src/models/qwen4exp.cpp"
+       ],

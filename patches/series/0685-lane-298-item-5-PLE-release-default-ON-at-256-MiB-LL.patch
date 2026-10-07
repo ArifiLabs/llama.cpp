@@ -1,0 +1,44 @@
+From 671a9594eb3795ef112947240b52598cc5d9875d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 10:38:06 -0400
+Subject: [PATCH] lane-298 item 5: PLE release default ON at 256 MiB;
+ LLAMA_PLE_RELEASE=0 turns it off
+
+pleio2-10051025 (v2 at 64 MiB, 2 trims per 2000-token request, 28-61 ms each) passed its pre-registered rule: base WS +389 MiB over 4 novel requests vs rel -67 MiB; repeat prefill 183.0 vs 179.0 and decode 10.55 vs 10.17 (no loss); ids rel r1 == off r1 on 4 prompts; 16 trim lines on rel, 0 on off arms. Novel r1 read -3.5% prefill / -3.3% decode vs the same-prompt off twin (information, order-confounded: the twin ran second on standby-warm pages).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Lane: lane-298
+(cherry picked from commit 3e03954ec2708d175e66658cffc848202a79cff4)
+
+Origin: ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.
+Measured-effect: UNMEASURED on its own - supporting commit; see release ledger Table 1 W12, the number sits on that win's main commit
+---
+ src/models/qwen4exp.cpp | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+index fb7f3a10da..0847c48035 100644
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -1218,9 +1218,10 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
+     // row page stays in the working set (~64 KiB per novel token). Once the rows gathered since the last trim could
+     // fill LLAMA_PLE_RELEASE_MIB (default 256), ONE VirtualUnlock over the whole table drops them to standby; later
+     // reads soft-refault. One call per budget, never per row: per-row calls cost ~11 ms each inside the server (v1
+-    // 98dc20263, pleio-10050916: -97% prefill). LLAMA_PLE_RELEASE=1 opts in until the novel-text cell rules.
++    // 98dc20263, pleio-10050916: -97% prefill). Default ON (pleio2-10051025: WS -67 vs +389 MiB per 8000
++    // novel tokens, repeat prefill/decode no loss, ids == off); LLAMA_PLE_RELEASE=0 turns it off.
+     // ponytail: process-wide counter (one PLE model per process); per-context state if that changes.
+-    static const bool release = getenv("LLAMA_PLE_RELEASE") != nullptr && std::string(getenv("LLAMA_PLE_RELEASE")) != "0";
++    static const bool release = getenv("LLAMA_PLE_RELEASE") == nullptr || std::string(getenv("LLAMA_PLE_RELEASE")) != "0";
+     static const size_t budget = (getenv("LLAMA_PLE_RELEASE_MIB") ? strtoull(getenv("LLAMA_PLE_RELEASE_MIB"), nullptr, 10) : 256) << 20;
+     static size_t since = 0;
+     static bool mapped = true;
+@@ -1231,7 +1232,7 @@ void llm_graph_input_ple::set_input(const llama_ubatch * ubatch) {
+             const int64_t t0 = ggml_time_us();
+             if (!llama_mmap::release_mapped_pages(tab->data, ggml_nbytes(tab))) {
+                 mapped = false; // not a file mapping (or no OS call): never try again
+-                LLAMA_LOG_WARN("%s: PLE release off: table is not a file mapping\n", __func__);
++                LLAMA_LOG_WARN("%s: PLE release off: table is not a Windows file mapping\n", __func__);
+             } else {
+                 LLAMA_LOG_WARN("%s: PLE trim: %zu MiB budget hit, table unlock %.2f ms\n", __func__, budget >> 20,
+                         (ggml_time_us() - t0) / 1000.0);
