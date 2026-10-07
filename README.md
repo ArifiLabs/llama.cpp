@@ -69,13 +69,16 @@ Base: `-ngl 999 -np 1 -fa on --lazy-mode on -c 4096 -lm dio`
 | MTP | 3 | `mtp-sidecar-qwen4exp-q8_0.gguf` (MTP sidecar) | `-md mtp-sidecar-qwen4exp-q8_0.gguf -ngld 999 --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | 19.68 / 17.70 |
 | MTP + 40K draft vocabulary | 3 | `mtp-sidecar-qwen4exp-q8_0-dven40k.gguf` | `-md mtp-sidecar-qwen4exp-q8_0-dven40k.gguf -ngld 999 --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | **20.24 / 19.45** |
 
-Where the MTP sidecars come from: we built both. `mtp-sidecar-qwen4exp-q8_0.gguf` is the MTP block (31 tensors) of
-Qwen's official BF16 Qwen3.8-Flash-Next checkpoint, extracted and converted by us to a Q8_0 GGUF sidecar, because the
-quantized GSQ-RCO files do not carry it. The `-dven40k` variant adds a 40,525-token English draft vocabulary, a design
-taken from [Strata](https://github.com/Niko1221/Strata) and re-implemented here. To build them yourself: fetch the MTP
-weights from Hugging Face `Qwen/Qwen3.8-Flash-Next` with Strata's `tools/mtp_fetch.py`, then convert them with our
-sidecar builder. The builder, Strata's fetch tool (MIT, credited) and step-by-step instructions ship in
-`tools/qwen4exp-mtp-sidecar/` in the next update.
+Where the MTP sidecars come from: we built both, because the quantized GSQ-RCO files do not carry the MTP block.
+`mtp-sidecar-qwen4exp-q8_0.gguf` is a small side GGUF holding only the MTP block: its head tensors come from
+[ashbash's Q8_0 MTP drafter](https://huggingface.co/ashbash/Qwen3.8-Flash-Next-MTP-Drafter-GGUF), and our builder
+checks every one of them against the 31 `mtp.*` tensors of Qwen's official BF16
+[Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) checkpoint before it writes anything. The
+`-dven40k` variant adds a 40,525-token English draft vocabulary, a design taken from
+[Strata](https://github.com/Niko1221/Strata) and re-implemented here. To build them yourself: fetch the BF16 MTP tensors
+with Strata's `mtp_fetch.py`, then run our sidecar builder. The builder, Strata's fetch tool (MIT, credited), pinned
+inputs, step-by-step instructions and the sha256 of both files are in
+[`tools/qwen4exp-mtp-sidecar/`](tools/qwen4exp-mtp-sidecar/README.md).
 
 **Ornith-1.5 35B-A3B MoE · Q4_K_M** (ornith-ai) · file `Ornith-1.5-35B-Q4_K_M.gguf`
 Base: `-ngl 999 -np 1 -fa on -c 4096 -ub 512 -b 2048 -lm dio --lazy-mode on`
@@ -128,7 +131,7 @@ file unchanged.
 | Model | File | Download | Notes |
 |---|---|---|---|
 | Qwen3.8-Flash-Next, GSQ-RCO IQ3_S | `Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf` (+ part 2) | [ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF) | as downloaded |
-| Qwen3.8-Flash-Next MTP sidecar | `mtp-sidecar-qwen4exp-q8_0.gguf`, `...-dven40k.gguf` | built by us from [Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) | see "Where the MTP sidecars come from" above |
+| Qwen3.8-Flash-Next MTP sidecar | `mtp-sidecar-qwen4exp-q8_0.gguf`, `...-dven40k.gguf` | built by us from [ashbash's MTP drafter](https://huggingface.co/ashbash/Qwen3.8-Flash-Next-MTP-Drafter-GGUF), checked against [Qwen/Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) | tools: [`tools/qwen4exp-mtp-sidecar/`](tools/qwen4exp-mtp-sidecar/README.md) |
 | Ornith-1.5 35B-A3B, Q4_K_M | `Ornith-1.5-35B-Q4_K_M.gguf` | [ornith-ai/Ornith-1.5-35B-A3B-GGUF](https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF) | as downloaded; MTP head inside |
 | Ornith-1.5 DFlash2 drafter | `Ornith-1.5-35B-A3B-DFlash2-BF16.gguf` | [jzinno/Ornith-1.5-35B-A3B-DFlash2](https://huggingface.co/jzinno/Ornith-1.5-35B-A3B-DFlash2) | published as safetensors; converted by us to a BF16 GGUF |
 | Qwen3.8 27B, UD-Q4_K_XL (Huihui abliterated) | `Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf` | [huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF](https://huggingface.co/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF) | as downloaded; MTP head inside |
@@ -138,7 +141,7 @@ file unchanged.
 | GLM-5.3 Flash DFlash2 drafter | `GLM-5.3-Flash-DFlash2-Q8_0.gguf` | [Anbeeld/GLM-5.3-Flash-DFlash2-GGUF](https://huggingface.co/Anbeeld/GLM-5.3-Flash-DFlash2-GGUF) | as downloaded |
 | Qwen3.8 27B, ROCmFP4-FAST (780M table) | `Qwen3.8-27B-ROCmFP4-FAST.gguf` | [julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF](https://huggingface.co/julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF) | as downloaded |
 | Qwen3.8 27B, UD-Q3_K_XL Unleashed (780M table) | `Qwen3.8-27B-Unleashed-UD-Q3_K_XL.gguf` | [outsourc-e/Qwen3.8-27B-Unleashed-GGUF](https://huggingface.co/outsourc-e/Qwen3.8-27B-Unleashed-GGUF) | as downloaded |
-| Qwen3.8 27B, Escha-W2 (format page) | Escha-W2 GGUF + `.escha_aux` | [EschaLabs/Qwen3.8-27B-Escha-W2](https://huggingface.co/EschaLabs/Qwen3.8-27B-Escha-W2) | published for SGLang; converted by us to a native GGUF (types 55/56) |
+| Qwen3.8 27B, Escha-W2 (format page) | `Qwen3.8-27B-Escha-W2.escha-native.gguf` | [EschaLabs/Qwen3.8-27B-Escha-W2](https://huggingface.co/EschaLabs/Qwen3.8-27B-Escha-W2) | published for SGLang; converted by us to a native GGUF (types 55/56) |
 
 ## Speed: Radeon 780M (Beelink SER7 Pro), Qwen3.8 27B
 
@@ -453,8 +456,9 @@ from a 71.9 GB BF16 checkpoint). EschaLabs publish it for a custom SGLang runtim
 repository for it. This fork runs the format in llama.cpp with Vulkan:
 native types 55 and 56 with a fused `GGML_OP_ESCHA_MM`
 (`escha_mm.comp`): Hadamard rotation, code decode and matmul in one dispatch. Decode is coherent on
-2- and 3-bit files; column blocking makes the escha3 prefill shape 3.50x faster. Load the GGUF with its
-`.escha_aux` sidecar beside it; `test-backend-ops -o ESCHA_MM` checks it against the CPU.
+2- and 3-bit files; column blocking makes the escha3 prefill shape 3.50x faster. The native GGUF
+carries an `.escha_aux` tensor beside every code tensor (no separate file); `test-backend-ops -o ESCHA_MM` checks the
+kernel against the CPU.
 
 **K-quants and i-quants (upstream formats).** Dedicated or retuned Vulkan mat-vec kernels for IQ4_XS
 (`mul_mat_vec_iq4_xs.comp`), IQ3_S and IQ3_XXS, Q4_K, Q5_K and Q6_K. See the kernel table above. Every
@@ -511,8 +515,20 @@ tree carries, with its licence.
 - [ISTA-DASLab](https://huggingface.co/ISTA-DASLab): the Qwen3.8-Flash-Next GSQ-RCO GGUF files measured here.
 - [Niko1221/Strata](https://github.com/Niko1221/Strata) (Niko1221 and the Strata contributors, MIT): the design of the
   sparse prefill attention, the pooled indexer-key cache and the 40,525-token draft vocabulary, re-implemented here;
-  its `mtp_fetch.py` tool fetches the Qwen3.8-Flash-Next MTP weights we build the MTP sidecar from.
+  its `mtp_fetch.py` tool (shipped unchanged in `tools/qwen4exp-mtp-sidecar/`) fetches the Qwen3.8-Flash-Next BF16 MTP
+  tensors our sidecar builder checks against.
 - [Qwen](https://huggingface.co/Qwen): the Qwen3.8-Flash-Next BF16 checkpoint whose MTP block is the MTP sidecar.
+- Model files measured on this page, with thanks to their publishers:
+  [ornith-ai](https://huggingface.co/ornith-ai) (Ornith-1.5 35B-A3B),
+  [jzinno](https://huggingface.co/jzinno) (Ornith-1.5 DFlash2 drafter),
+  [huihui-ai](https://huggingface.co/huihui-ai) (Qwen3.8 27B abliterated),
+  [incoai](https://huggingface.co/incoai) (Qwen3.8 27B DFlash2 drafter),
+  [marlalabsAI](https://huggingface.co/marlalabsAI) (Qwen3.8 27B S-X8),
+  [pfeifferj](https://huggingface.co/pfeifferj) (GLM-5.3 Flash GSQ-RCO),
+  [Anbeeld](https://huggingface.co/Anbeeld) (GLM-5.3 Flash DFlash2 drafter),
+  [julianmb](https://huggingface.co/julianmb) (Qwen3.8 27B ROCmFP4-FAST),
+  [outsourc-e](https://huggingface.co/outsourc-e) (Qwen3.8 27B Unleashed),
+  [ashbash](https://huggingface.co/ashbash) (the Qwen3.8-Flash-Next MTP drafter whose head tensors our sidecars use).
 
 ## Requirements and limits
 
