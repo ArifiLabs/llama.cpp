@@ -2283,14 +2283,15 @@
       "_registered": "2026-10-06, lane 298 relaunch-62 (HQ82 Q41 answer (a))."
     },
     {
-      "id": "kv-zero-freed-cells-opt-in",
+      "id": "kv-zero-freed-cells",
       "status": "active",
-      "_registered": "2026-10-07, lane 298 relaunch-78 (point release v0.1.3.1 integration owner), from lane 300's commit trailers and MERGE-READY (cache/determinism-x1-lane/MERGE-READY.md, branch lane-300/kv-zero). OPT-IN, default OFF: protected so the switch and its zeroing path survive merges, not as a speed win.",
-      "mechanism": "F-141 producer fix: KV cells freed by seq_rm / a rewind are zeroed before any later read, inside the mid-decode window bound [n_kv_prev, n_kv), with a transposed-V block assert and one INFO line naming the zeroing. LLAMA_ARIFI_KV_ZERO_FREED=1 turns it on; unset or 0 = the merge-base path (the third commit moved the default 1 -> 0 after cell 31's pooled-cost clause failed).",
+      "_registered": "2026-10-07, lane 298 relaunch-78 (point release v0.1.3.1 integration owner), from lane 300's commit trailers and MERGE-READY (cache/determinism-x1-lane/MERGE-READY.md, branch lane-300/kv-zero). Protected so the switch and its zeroing path survive merges, not as a speed win. Updated relaunch-79: default ON (b0b41ed548, HQ84 item 3 ruling); id was kv-zero-freed-cells-opt-in.",
+      "mechanism": "F-141 producer fix: KV cells freed by seq_rm / a rewind are zeroed before any later read, inside the mid-decode window bound [n_kv_prev, n_kv), with a transposed-V block assert and one INFO line naming the zeroing. Unset or LLAMA_ARIFI_KV_ZERO_FREED=1 = zeroing on (default ON since b0b41ed548); =0 = the merge-base path.",
       "commit": "1ea866f868bd3e0447da7ba60959de460adb8e91",
       "also_commits": [
         "7ecb9a918b0b2b11bd180ab1725eb339fa0bc766",
-        "2fc868a681e2a9fa8d663bfc3b7c5a76a8942270"
+        "2fc868a681e2a9fa8d663bfc3b7c5a76a8942270",
+        "b0b41ed54846a40291a14a24ce59549cb9c3069d"
       ],
       "protected_paths": [
         "src/llama-kv-cache.cpp",
@@ -2302,12 +2303,13 @@
       "evidence": [
         "commit:1ea866f868bd3e0447da7ba60959de460adb8e91",
         "commit:2fc868a681e2a9fa8d663bfc3b7c5a76a8942270",
+        "commit:b0b41ed54846a40291a14a24ce59549cb9c3069d",
         "cache/determinism-x1-lane/MERGE-READY.md"
       ],
-      "quality_gate": "Served ids with the switch unset == integ 7156c61607 every load (c31q-10070739, c31o-10070746, c31o-10070901, lane 300 cells); with it on, -fa off decode after a history == a fresh run bit for bit (c31p-10070726).",
+      "quality_gate": "Served ids with LLAMA_ARIFI_KV_ZERO_FREED=0 == integ 7156c61607 every load, and with it on the served ids are equal too (c31q-10070739, c31o-10070746, c31o-10070901, lane 300 cells); with it on, -fa off decode after a history == a fresh run bit for bit (c31p-10070726).",
       "workload": "Qwen3.8 27B / Qwen3.8-Flash-Next served greedy decode after a prompt history (lane 300 cell 31 shapes QM and OO) on the Radeon 890M, llama-server.",
-      "measured_effect": "When ON: F-nondet 4 -> 0 on S-NF (-fa off history == fresh, bit-equal); decode cost QM pooled +0.45% (floor 0.87%), OO pooled -0.31% / -3.23% (floors 0.38% / 7.33%). When OFF (default): identical to the merge base.",
-      "opt_out": "default OFF; LLAMA_ARIFI_KV_ZERO_FREED=1 opts in"
+      "measured_effect": "When ON: F-nondet 4 -> 0 on S-NF (-fa off history == fresh, bit-equal); decode cost QM pooled +0.45% (floor 0.87%), OO pooled -0.31% / -3.23% (floors 0.38% / 7.33%); a measured cost, not a speed win. =0: identical to the merge base.",
+      "opt_out": "default ON; LLAMA_ARIFI_KV_ZERO_FREED=0 restores the merge-base path"
     }
   ],
   "_rekeyed_pre_rebase_to_x1i": "Re-keyed 2026-10-06 (release-prep HQ82) from the pre-rebase chain (reachable only through the fork tag arifi-pre-rebase-e86ca0289, which does not ship) to the rebased commit on the x1i line. Map: the checked replay-provenance.json row when one exists, else a unique git patch-id --stable match. The prior key is kept in *_pre_rebase. No row was added, removed or re-judged."
