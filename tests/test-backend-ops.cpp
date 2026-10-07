@@ -11801,6 +11801,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
                 test_cases.emplace_back(new test_mul_mat_id(t, GGML_TYPE_F32, ne, 10, true, 640, n, 2560));
             }
             test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_IQ4_NL, GGML_TYPE_F32, ne, 10, false, 2560, n, 640));
+            // lane-302 lever 9: the served Q2_0 down tensors + the legacy/K/MXFP4 gather twins (other MoE files)
+            test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_Q2_0, GGML_TYPE_F32, ne, 10, false, 2560, n, 640));
+            for (ggml_type t : {GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_MXFP4}) {
+                test_cases.emplace_back(new test_mul_mat_id(t, GGML_TYPE_F32, ne, 10, true, 640, n, 2560));
+            }
         }
     }
     test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_Q4_0, GGML_TYPE_F32, 32, 2, false, 2880, 32, 2880));

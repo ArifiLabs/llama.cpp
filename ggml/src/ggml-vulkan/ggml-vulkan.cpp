@@ -652,6 +652,13 @@ static uint32_t moe_gather_iq3xxs_init_env() {
     return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
 }
 
+// lane-302 lever 9: expert gather for the legacy f32-path types and every q8_1 MMVQ id type (the served Q2_0 down
+// tensors among them). Same workgroup, rows and spec constants as each id pipeline. Unset = ON, 0 = off.
+static uint32_t moe_gather_ext_env() {
+    const char * e = getenv("GGML_ARIFI_MOE_GATHER_EXT");
+    return (e != nullptr && e[0] == '0') ? 0u : 1u;
+}
+
 static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipeline, size_t spv_size, const void* spv_data, const std::string entrypoint,
                                          uint32_t parameter_count, std::array<uint32_t, 3> wg_denoms, std::vector<uint32_t> specialization_constants,
                                          bool disable_robustness, bool require_full_subgroups, uint32_t required_subgroup_size) {
@@ -4025,8 +4032,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             device->moe_gather_rows = (r == 1 || r == 2 || r == 4 || r == 8) ? r : rm_iq;
             if (w == 0 && device->moe_gather_cols != 0) {
                 // fprintf, not GGML_LOG_INFO: the server log callback drops ggml-vulkan INFO lines (lane-302 cell E)
-                fprintf(stderr, "ggml_vulkan: MUL_MAT_ID expert gather ON, width %u, rows %u, iq3_s rows %u, iq4_nl tail %u, iq2_s body %u, iq4_nl body %u, iq3_s init %u, iq3_xxs init %u%s\n", device->moe_gather_cols,
-                        device->moe_gather_rows, renv == nullptr ? 2u : device->moe_gather_rows, moe_gather_tail_env(), moe_gather_iq2s_body_env(), moe_gather_iq4nl_body_env(), moe_gather_iq3s_init_env(), moe_gather_iq3xxs_init_env(),
+                fprintf(stderr, "ggml_vulkan: MUL_MAT_ID expert gather ON, width %u, rows %u, iq3_s rows %u, iq4_nl tail %u, iq2_s body %u, iq4_nl body %u, iq3_s init %u, iq3_xxs init %u, ext %u%s\n", device->moe_gather_cols,
+                        device->moe_gather_rows, renv == nullptr ? 2u : device->moe_gather_rows, moe_gather_tail_env(), moe_gather_iq2s_body_env(), moe_gather_iq4nl_body_env(), moe_gather_iq3s_init_env(), moe_gather_iq3xxs_init_env(), moe_gather_ext_env(),
                         device->moe_gather_plant ? " (PLANT: wrong token count, test only)" : "");
             }
         }
@@ -4044,6 +4051,18 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_idg_iq3_s_f32",   arr_dmmv_idg_iq3_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr_iq3s, 1, 1}, {wg_size_subgroup16, gr_iq3s, gc, iq3_sign_hoist, 0u, moe_gather_iq3s_init_env()}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_XS],  "mul_mat_vec_idg_iq4_xs_f32",  arr_dmmv_idg_iq4_xs_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc}, 1, true, use_subgroups16, force_subgroup_size16);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_NL],  "mul_mat_vec_idg_iq4_nl_f32",  arr_dmmv_idg_iq4_nl_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_nl_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, moe_gather_tail, moe_gather_iq4nl_body_env()}, 1, true, use_subgroups16, force_subgroup_size16);
+            if (moe_gather_ext_env()) {
+                // lane-302 lever 9: legacy f32-path gather twins, workgroup and rows copied from the id lines above
+#define ARIFI_IDG_F32(T, tn, R) ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][T], "mul_mat_vec_idg_" #tn "_f32", arr_dmmv_idg_##tn##_f32_f32_len[reduc], arr_dmmv_idg_##tn##_f32_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {R, 1, 1}, {wg_size_subgroup, R, gc}, 1, true, use_subgroups, force_subgroup_size)
+                ARIFI_IDG_F32(GGML_TYPE_Q2_0,      q2_0,      2*rm_stdq);
+                ARIFI_IDG_F32(GGML_TYPE_Q2_0_G128, q2_0_g128, 2*rm_stdq);
+                ARIFI_IDG_F32(GGML_TYPE_Q4_0,      q4_0,      2*rm_stdq);
+                ARIFI_IDG_F32(GGML_TYPE_Q4_1,      q4_1,      2*rm_stdq);
+                ARIFI_IDG_F32(GGML_TYPE_Q5_0,      q5_0,      2*rm_stdq);
+                ARIFI_IDG_F32(GGML_TYPE_Q5_1,      q5_1,      2*rm_stdq);
+                ARIFI_IDG_F32(GGML_TYPE_Q8_0,      q8_0,      1*rm_stdq);
+#undef ARIFI_IDG_F32
+            }
         }
 
         // TurboQuant weight types. Same 32-thread pin and SHMEM reduction as the
@@ -4096,6 +4115,29 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
 
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_q8_1_f32[w][GGML_TYPE_IQ1_S], "mul_mat_vec_id_iq1_s_q8_1_f32", arr_dmmv_id_iq1_s_q8_1_f32_len[reduc], arr_dmmv_id_iq1_s_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {1*rm_iq_int(0), 1, 1}, {wg_size_subgroup_int, 1*rm_iq_int(0)}, 1, true, use_subgroups, subgroup_size_int);
             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_id_q8_1_f32[w][GGML_TYPE_IQ1_M], "mul_mat_vec_id_iq1_m_q8_1_f32", arr_dmmv_id_iq1_m_q8_1_f32_len[reduc], arr_dmmv_id_iq1_m_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {1*rm_iq_int(0), 1, 1}, {wg_size_subgroup_int, 1*rm_iq_int(0)}, 1, true, use_subgroups, subgroup_size_int);
+
+            if (device->moe_gather_cols != 0 && moe_gather_ext_env()) {
+                // lane-302 lever 9: q8_1 MMVQ gather twins, workgroup and rows copied from the id lines above
+#define ARIFI_IDG_Q8(T, tn, R) ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_q8_1_f32[w][T], "mul_mat_vec_idg_" #tn "_q8_1_f32", arr_dmmv_idg_##tn##_q8_1_f32_len[reduc], arr_dmmv_idg_##tn##_q8_1_f32_data[reduc], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {R, 1, 1}, {wg_size_subgroup_int, R, device->moe_gather_cols}, 1, true, use_subgroups, subgroup_size_int)
+                ARIFI_IDG_Q8(GGML_TYPE_Q2_0,      q2_0,         rm_id(2*rm_kq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_Q2_0_G128, q2_0_g128,    rm_id(2*rm_kq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_Q4_0,      q4_0,         rm_id(1*rm_stdq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_Q4_1,      q4_1,         rm_id(1*rm_stdq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_Q5_0,      q5_0,         rm_id(1*rm_stdq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_Q5_1,      q5_1,         rm_id(1*rm_stdq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_Q8_0,      q8_0,         rm_id(1*rm_stdq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_MXFP4,     mxfp4,        rm_id(2*rm_stdq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_Q4_0_ROCMFP4_FAST, rocmfp4_fast, rm_id(2*rm_stdq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_Q2_K,      q2_k,         rm_id(2*rm_kq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_Q3_K,      q3_k,         rm_id(1*rm_kq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_Q4_K,      q4_k,         rm_id(1*rm_kq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_Q5_K,      q5_k,         rm_id(1*rm_kq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_Q6_K,      q6_k,         rm_id(1*rm_kq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_IQ4_XS,    iq4_xs,       rm_id(1*rm_kq_int));
+                ARIFI_IDG_Q8(GGML_TYPE_IQ1_S,     iq1_s,        1*rm_iq_int(0));
+                ARIFI_IDG_Q8(GGML_TYPE_IQ1_M,     iq1_m,        1*rm_iq_int(0));
+#undef ARIFI_IDG_Q8
+            }
         }
 #endif // GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT
     }

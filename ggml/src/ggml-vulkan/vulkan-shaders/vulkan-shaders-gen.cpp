@@ -248,7 +248,14 @@ bool is_legacy_quant(const std::string& type_name) {
 // arifi lane-302: types with a MUL_MAT_ID expert-gather mat-vec (the qwen4exp IQ3_S file's `_exps` set).
 // Keep in sync with the pipeline_dequant_mul_mat_vec_idg_f32 creation block in ggml-vulkan.cpp.
 bool is_moe_gather_type(const std::string& type_name) {
-    return type_name == "iq4_nl" || type_name == "iq2_s" || type_name == "iq3_xxs" || type_name == "iq3_s" || type_name == "iq4_xs";
+    return type_name == "iq4_nl" || type_name == "iq2_s" || type_name == "iq3_xxs" || type_name == "iq3_s" || type_name == "iq4_xs" ||
+           is_legacy_quant(type_name);  // lane-302 lever 9: the legacy set shares mul_mat_vec.comp
+}
+
+// lane-302 lever 9: every type with a q8_1 MMVQ id pipeline gets its expert-gather twin (same gate as the q8_1 spv below)
+bool is_mmvq_type(const std::string& type_name) {
+    return is_legacy_quant(type_name) || type_name == "mxfp4" || type_name == "rocmfp4_fast" || string_ends_with(type_name, "_k") ||
+           type_name == "iq1_s" || type_name == "iq1_m" || type_name == "iq4_xs" || type_name == "iq4_nl";
 }
 
 bool is_k_quant(const std::string& type_name) {
@@ -1002,8 +1009,8 @@ void process_shaders() {
             string_to_spv("mul_mat_vec_id_" + tname + "_q8_1_f32_subgroup", "mul_mat_vecq.comp", merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}, {"USE_SUBGROUP_ADD", "1"}}));
             string_to_spv("mul_mat_vec_id_" + tname + "_q8_1_f32_subgroup_no_shmem", "mul_mat_vecq.comp", merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}, {"USE_SUBGROUP_ADD_NO_SHMEM", "1"}}));
         }
-        // arifi lane-302 Route B: the expert-gather (slot-major) q8_1 id variant for IQ4_NL.
-        if (tname == "iq4_nl") {
+        // arifi lane-302 Route B: the expert-gather (slot-major) q8_1 id variant for IQ4_NL; lever 9: every q8_1 id type.
+        if (is_mmvq_type(tname)) {
             for (const std::string sfx : {"", "_subgroup", "_subgroup_no_shmem"}) {
                 std::map<std::string, std::string> d = merge_maps(base_dict, {{"MUL_MAT_ID", "1"}, {"MUL_MAT_ID_GATHER", "1"}, {data_a_key, "1"}, {"D_TYPE", "float"}, {"FLOAT_TYPE", "float"}, {"FLOAT_TYPEV2", "vec2"}, {"ACC_TYPE", "float"}});
                 if (sfx == "_subgroup") d["USE_SUBGROUP_ADD"] = "1";
@@ -1862,9 +1869,12 @@ void write_output_files() {
     }
 
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
-    // arifi lane-302 Route B: the IQ4_NL q8_1 expert-gather variant generated above.
-    {
-        const std::string n = "idg_iq4_nl_q8_1_f32";
+    // arifi lane-302 Route B / lever 9: the q8_1 expert-gather variants generated above.
+    for (const auto& tname : type_names) {
+        if (!is_mmvq_type(tname)) {
+            continue;
+        }
+        const std::string n = "idg_" + tname + "_q8_1_f32";
         hdr << "extern const void * arr_dmmv_"   << n << "_data[3];\n";
         hdr << "extern const uint64_t arr_dmmv_" << n << "_len[3];\n";
         if (basename(input_filepath) == "mul_mat_vec.comp") {
