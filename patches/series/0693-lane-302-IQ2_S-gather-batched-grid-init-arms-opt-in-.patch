@@ -1,0 +1,97 @@
+From 568aef63059f69cb2bae3f395a1247dc6d4498f0 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 07:02:08 -0400
+Subject: [PATCH] lane-302: IQ2_S gather batched grid init arms (opt-in
+ GGML_ARIFI_IQ2S_BODY=4|5), body stays opt-in
+
+GGML_ARIFI_IQ2S_BODY unset stays 0 (legacy body). cellM-10060610 served ABBA of body 1 vs 0 read LOSS by its
+pre-declared rule (mean -0.74%, short -2.06%), ids identical; the op win (cellL-10060536 n2/n4/n8 -12..-17%) and
+the perf-logger drop (iq2_s MUL_MAT_ID 13.33 -> 11.39 ms per verify) stay available behind =1.
+Lever 4: the IQ2_S grid init issued 16 serialized global_load -> s_waitcnt vmcnt(0) -> ds_store (ISA);
+arms 4/5 load every table entry before any LDS store. Same table, same LDS bytes, byte-identical.
+Cherry-pick name for lane 298: lane-302 IQ2_S gather body.
+
+(cherry picked from commit 33958522fb5d9deecd541c1d818c5c1837059697)
+
+Origin: ArifiLabs (native) - fork-authored (lane-302); no upstream origin exists.
+Measured-effect: UNMEASURED - no served number for this commit in the release ledger or the commit message
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  8 +++---
+ .../vulkan-shaders/mul_mat_vec_iq2_s.comp     | 27 +++++++++++++++++--
+ 2 files changed, 30 insertions(+), 5 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 0dfc096146..ed9199f7dd 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -623,11 +623,13 @@ static uint32_t moe_gather_tail_env() {
+     return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
+ }
+ 
+-// lane-302 Route A lever 3: IQ2_S gather body, opt-in (GGML_ARIFI_IQ2S_BODY=1 int8 sign path) until measured;
+-// =2 skips the LDS grid copy (wrong values, timing diagnostic only); =3 planted wrong arm 1 (test only)
++// lane-302 Route A lever 3: IQ2_S gather body, opt-in. 1 = int8 sign path (cellL-10060536 op: n2/n4/n8 -12..-17%,
++// byte-identical; cellM-10060610 served ABBA = LOSS by rule, mean -0.74%, so unset stays 0 = legacy body);
++// 2 skips the LDS grid copy (wrong values, timing diagnostic only); 3 planted wrong arm 1 (test only);
++// 4/5 = body 0/1 with the batched grid init (lever 4, opt-in until measured)
+ static uint32_t moe_gather_iq2s_body_env() {
+     const char * e = getenv("GGML_ARIFI_IQ2S_BODY");
+-    return (e != nullptr && e[0] >= '1' && e[0] <= '3') ? (uint32_t) (e[0] - '0') : 0u;
++    return (e != nullptr && e[0] >= '0' && e[0] <= '5') ? (uint32_t) (e[0] - '0') : 0u;
+ }
+ 
+ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipeline, size_t spv_size, const void* spv_data, const std::string entrypoint,
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
+index b082dccdaa..8952875dad 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
+@@ -13,8 +13,29 @@ FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+ //     exactly, same fma nesting and order: byte-identical by construction. 2 = DIAGNOSTIC ONLY: skip the 8 KB
+ //     grid copy into LDS (garbage values, timing only; prices the per-workgroup init). 3 = PLANTED WRONG arm 1 (sign
+ //     nibbles swapped) for the op gate's RED check, test only.
++//     4 = legacy body + batched grid init, 5 = arm 1 body + batched grid init (lane-302 lever 4: cellL ISA showed the
++//     init as 16 serialized global_load -> s_waitcnt vmcnt(0) -> ds_store; same table, same LDS bytes, so byte-identical).
+ layout (constant_id = 3) const uint ARIFI_IQ2S_BODY = 0;
+ 
++// lane-302 lever 4: issue every grid load before any LDS store (one wait instead of one per load); loads clamp the
++// index instead of branching, stores keep the bound, so any workgroup size still writes each entry exactly once.
++void arifi_init_iq2s_batched() {
++    const uint t = gl_LocalInvocationIndex;
++    const uint W = gl_WorkGroupSize.x;
++    for (uint i0 = 0; i0 < 1024; i0 += 16 * W) {
++        uvec2 v[16];
++        [[unroll]] for (uint k = 0; k < 16; ++k) {
++            v[k] = iq2s_grid_const[min(i0 + k * W + t, 1023u)];
++        }
++        [[unroll]] for (uint k = 0; k < 16; ++k) {
++            if (i0 + k * W + t < 1024) {
++                iq2s_grid[i0 + k * W + t] = v[k];
++            }
++        }
++    }
++    barrier();
++}
++
+ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows) {
+     const uint y_idx = i * QUANT_K + 16 * itid;
+     const uint nibble_shift = 4 * (itid & 1);
+@@ -33,7 +54,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+             const uint8_t sign = sign16[l];
+             const uint qs = qs16[l] | ((qh << (8 - nibble_shift - 2 * l)) & 0x300);
+             const uvec2 grid = iq2s_grid[qs];
+-            if (ARIFI_IQ2S_BODY == 1 || ARIFI_IQ2S_BODY == 3) {
++            if (ARIFI_IQ2S_BODY == 1 || ARIFI_IQ2S_BODY == 3 || ARIFI_IQ2S_BODY == 5) {
+                 const uint s8 = ARIFI_IQ2S_BODY == 3 ? ((uint(sign) >> 4) | ((uint(sign) & 0xFu) << 4)) : uint(sign);
+                 const uint mlo = ((s8 & 0xFu) * 0x00204081u) & 0x01010101u;
+                 const uint mhi = (((s8 >> 4) & 0xFu) * 0x00204081u) & 0x01010101u;
+@@ -113,7 +134,9 @@ void main() {
+     }
+ #endif
+ 
+-    if (ARIFI_IQ2S_BODY != 2) {
++    if (ARIFI_IQ2S_BODY == 4 || ARIFI_IQ2S_BODY == 5) {
++        arifi_init_iq2s_batched();
++    } else if (ARIFI_IQ2S_BODY != 2) {
+         init_iq_shmem(gl_WorkGroupSize);
+     }
+ 

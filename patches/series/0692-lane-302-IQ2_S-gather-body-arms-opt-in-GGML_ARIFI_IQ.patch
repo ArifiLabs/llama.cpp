@@ -1,0 +1,178 @@
+From 1f631e3f2b1c6d4216d951fd4872670ccd7d7296 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 04:52:01 -0400
+Subject: [PATCH] lane-302: IQ2_S gather body arms (opt-in
+ GGML_ARIFI_IQ2S_BODY) + ISA dump under GGML_VK_PIPELINE_STATS
+
+Route A lever 3 of lane 302. mul_mat_vec_iq2_s.comp gains spec constant 3, set only on the idg (expert-gather)
+pipeline:
+- 1 = signs applied to the packed grid bytes as int8 ((g ^ 0xFF) + 1 = -g per byte, g in {8,25,43}, no carry
+  crosses a byte), then one int8 convert per weight. float(int8(-g)) == -float(g) exactly and the fma chain is
+  unchanged, so the result is byte-identical by construction (the harness checks it). Desk SPIR-V: -16 OpSelect,
+  -16 OpFNegate, +10 integer ops per body.
+- 2 = DIAGNOSTIC ONLY: skips the 8 KB iq2s grid copy into LDS (wrong values). Prices the per-workgroup init.
+- 3 = PLANTED WRONG arm 1 (sign nibbles swapped), test only: the op gate's body-specific RED.
+Default 0 = legacy body, unchanged.
+
+ggml-vulkan.cpp: pipelines whose name matches GGML_VK_PIPELINE_STATS are also created with
+eCaptureInternalRepresentationsKHR, and their internal representations are printed to stderr (ISA on AMD,
+ASSUMED until the first dump). Startup notice adds "iq2_s body N".
+
+Lane: lane-302
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit 0fc8010c8730c0319413f46e623b6dcf0f11d297)
+
+Origin: ArifiLabs (native) - fork-authored (lane-302); no upstream origin exists.
+Measured-effect: UNMEASURED - no served number for this commit in the release ledger or the commit message
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 46 ++++++++++++++++---
+ .../vulkan-shaders/mul_mat_vec_iq2_s.comp     | 35 +++++++++++++-
+ 2 files changed, 74 insertions(+), 7 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 38db2bb97e..0dfc096146 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -623,6 +623,13 @@ static uint32_t moe_gather_tail_env() {
+     return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
+ }
+ 
++// lane-302 Route A lever 3: IQ2_S gather body, opt-in (GGML_ARIFI_IQ2S_BODY=1 int8 sign path) until measured;
++// =2 skips the LDS grid copy (wrong values, timing diagnostic only); =3 planted wrong arm 1 (test only)
++static uint32_t moe_gather_iq2s_body_env() {
++    const char * e = getenv("GGML_ARIFI_IQ2S_BODY");
++    return (e != nullptr && e[0] >= '1' && e[0] <= '3') ? (uint32_t) (e[0] - '0') : 0u;
++}
++
+ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipeline, size_t spv_size, const void* spv_data, const std::string entrypoint,
+                                          uint32_t parameter_count, std::array<uint32_t, 3> wg_denoms, std::vector<uint32_t> specialization_constants,
+                                          bool disable_robustness, bool require_full_subgroups, uint32_t required_subgroup_size) {
+@@ -784,10 +791,16 @@ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipelin
+         pipeline_shader_create_info.setPNext(&pipeline_shader_stage_required_subgroup_size_create_info);
+     }
+ 
++    // lane-302: GGML_VK_PIPELINE_STATS also captures the driver's internal representations (ISA on AMD, ASSUMED)
++    vk::PipelineCreateFlags capture_flags{};
++    if (device->pipeline_executable_properties_support) {
++        capture_flags = vk::PipelineCreateFlagBits::eCaptureStatisticsKHR;
++        if (!vk_pipeline_stats_filter.empty() && pipeline->name.find(vk_pipeline_stats_filter) != std::string::npos) {
++            capture_flags |= vk::PipelineCreateFlagBits::eCaptureInternalRepresentationsKHR;
++        }
++    }
+     vk::ComputePipelineCreateInfo compute_pipeline_create_info(
+-        device->pipeline_executable_properties_support ?
+-            vk::PipelineCreateFlagBits::eCaptureStatisticsKHR :
+-            vk::PipelineCreateFlags{},
++        capture_flags,
+         pipeline_shader_create_info,
+         pipeline->layout);
+ 
+@@ -871,6 +884,25 @@ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipelin
+                 pipeline->register_count = (uint32_t)s.value.u64;
+             }
+         }
++        if (print_stats && (capture_flags & vk::PipelineCreateFlagBits::eCaptureInternalRepresentationsKHR)) {
++            uint32_t nrep = 0;
++            (void) device->device.getPipelineExecutableInternalRepresentationsKHR(&executableInfo, &nrep, nullptr);
++            std::vector<vk::PipelineExecutableInternalRepresentationKHR> reps(nrep);
++            (void) device->device.getPipelineExecutableInternalRepresentationsKHR(&executableInfo, &nrep, reps.data());
++            std::vector<std::vector<char>> bufs(nrep);
++            for (uint32_t ri = 0; ri < nrep; ri++) {
++                bufs[ri].resize(reps[ri].dataSize + 1, 0);
++                reps[ri].pData = bufs[ri].data();
++            }
++            (void) device->device.getPipelineExecutableInternalRepresentationsKHR(&executableInfo, &nrep, reps.data());
++            for (uint32_t ri = 0; ri < nrep; ri++) {
++                std::cerr << "ggml_vulkan: IR " << ri << " " << reps[ri].name.data() << " text=" << (reps[ri].isText ? 1 : 0)
++                          << " bytes=" << reps[ri].dataSize << std::endl;
++                if (reps[ri].isText) {
++                    std::cerr << bufs[ri].data() << std::endl << "ggml_vulkan: IR END" << std::endl;
++                }
++            }
++        }
+     }
+ 
+     {
+@@ -3955,8 +3987,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             device->moe_gather_rows = (r == 1 || r == 2 || r == 4 || r == 8) ? r : rm_iq;
+             if (w == 0 && device->moe_gather_cols != 0) {
+                 // fprintf, not GGML_LOG_INFO: the server log callback drops ggml-vulkan INFO lines (lane-302 cell E)
+-                fprintf(stderr, "ggml_vulkan: MUL_MAT_ID expert gather ON, width %u, rows %u, iq3_s rows %u, iq4_nl tail %u%s\n", device->moe_gather_cols,
+-                        device->moe_gather_rows, renv == nullptr ? 2u : device->moe_gather_rows, moe_gather_tail_env(),
++                fprintf(stderr, "ggml_vulkan: MUL_MAT_ID expert gather ON, width %u, rows %u, iq3_s rows %u, iq4_nl tail %u, iq2_s body %u%s\n", device->moe_gather_cols,
++                        device->moe_gather_rows, renv == nullptr ? 2u : device->moe_gather_rows, moe_gather_tail_env(), moe_gather_iq2s_body_env(),
+                         device->moe_gather_plant ? " (PLANT: wrong token count, test only)" : "");
+             }
+         }
+@@ -3967,7 +3999,9 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             const uint32_t gr_iq3s = getenv("GGML_ARIFI_MOE_GATHER_ROWS") == nullptr ? 2u : gr;
+             // lane-302 Route A lever 2: IQ4_NL K-tail redistribution (spec 3 of the generic idg shader); unset = old tail loop
+             const uint32_t moe_gather_tail = moe_gather_tail_env();
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ2_S],  "mul_mat_vec_idg_iq2_s_f32",   arr_dmmv_idg_iq2_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq2_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc}, 1, true, use_subgroups16, force_subgroup_size16);
++            // lane-302 Route A lever 3: IQ2_S body (spec 3 of mul_mat_vec_iq2_s.comp); unset = legacy, 2 = diagnostic only
++            const uint32_t iq2s_body = moe_gather_iq2s_body_env();
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ2_S],  "mul_mat_vec_idg_iq2_s_f32",   arr_dmmv_idg_iq2_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq2_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, iq2s_body}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_XXS], "mul_mat_vec_idg_iq3_xxs_f32", arr_dmmv_idg_iq3_xxs_f32_f32_len[reduc16], arr_dmmv_idg_iq3_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_idg_iq3_s_f32",   arr_dmmv_idg_iq3_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr_iq3s, 1, 1}, {wg_size_subgroup16, gr_iq3s, gc, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_XS],  "mul_mat_vec_idg_iq4_xs_f32",  arr_dmmv_idg_iq4_xs_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc}, 1, true, use_subgroups16, force_subgroup_size16);
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
+index 02c3886707..b082dccdaa 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
+@@ -7,6 +7,14 @@ layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+ 
+ FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+ 
++// lane-302 Route A lever 3 (IQ2_S body), spec constant 3, set only on the idg pipeline (GGML_ARIFI_IQ2S_BODY):
++// 0 = legacy body verbatim. 1 = signs applied to the packed grid bytes as int8 ((g ^ 0xFF) + 1 = -g per byte;
++//     g in {8,25,43}, so no carry crosses a byte), one int8 convert per weight; float(int8(-g)) == -float(g)
++//     exactly, same fma nesting and order: byte-identical by construction. 2 = DIAGNOSTIC ONLY: skip the 8 KB
++//     grid copy into LDS (garbage values, timing only; prices the per-workgroup init). 3 = PLANTED WRONG arm 1 (sign
++//     nibbles swapped) for the op gate's RED check, test only.
++layout (constant_id = 3) const uint ARIFI_IQ2S_BODY = 0;
++
+ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows) {
+     const uint y_idx = i * QUANT_K + 16 * itid;
+     const uint nibble_shift = 4 * (itid & 1);
+@@ -25,6 +33,29 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+             const uint8_t sign = sign16[l];
+             const uint qs = qs16[l] | ((qh << (8 - nibble_shift - 2 * l)) & 0x300);
+             const uvec2 grid = iq2s_grid[qs];
++            if (ARIFI_IQ2S_BODY == 1 || ARIFI_IQ2S_BODY == 3) {
++                const uint s8 = ARIFI_IQ2S_BODY == 3 ? ((uint(sign) >> 4) | ((uint(sign) & 0xFu) << 4)) : uint(sign);
++                const uint mlo = ((s8 & 0xFu) * 0x00204081u) & 0x01010101u;
++                const uint mhi = (((s8 >> 4) & 0xFu) * 0x00204081u) & 0x01010101u;
++                const vec4 sg0 = vec4(unpack8(int32_t((grid.x ^ (mlo * 0xFFu)) + mlo)));
++                const vec4 sg1 = vec4(unpack8(int32_t((grid.y ^ (mhi * 0xFFu)) + mhi)));
++                [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
++                    vec4 b0 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 0]);
++                    vec4 b4 = vec4(data_b_v4[(B_COL(j) + b_offset + y_idx) / 4 + 2*l + 1]);
++                    FLOAT_TYPE sum =
++                          fma(FLOAT_TYPE(b0.x), FLOAT_TYPE(sg0.x),
++                          fma(FLOAT_TYPE(b0.y), FLOAT_TYPE(sg0.y),
++                          fma(FLOAT_TYPE(b0.z), FLOAT_TYPE(sg0.z),
++                          fma(FLOAT_TYPE(b0.w), FLOAT_TYPE(sg0.w),
++                          fma(FLOAT_TYPE(b4.x), FLOAT_TYPE(sg1.x),
++                          fma(FLOAT_TYPE(b4.y), FLOAT_TYPE(sg1.y),
++                          fma(FLOAT_TYPE(b4.z), FLOAT_TYPE(sg1.z),
++                          fma(FLOAT_TYPE(b4.w), FLOAT_TYPE(sg1.w),
++                          FLOAT_TYPE(0.0)))))))));
++                    temp[j][n] = fma(db, sum, temp[j][n]);
++                }
++                continue;
++            }
+             const vec4 grid0 = vec4(unpack8(grid.x));
+             const vec4 grid1 = vec4(unpack8(grid.y));
+ 
+@@ -82,7 +113,9 @@ void main() {
+     }
+ #endif
+ 
+-    init_iq_shmem(gl_WorkGroupSize);
++    if (ARIFI_IQ2S_BODY != 2) {
++        init_iq_shmem(gl_WorkGroupSize);
++    }
+ 
+     // do NUM_ROWS at a time, unless there aren't enough remaining rows
+     if (first_row + NUM_ROWS <= p.stride_d) {

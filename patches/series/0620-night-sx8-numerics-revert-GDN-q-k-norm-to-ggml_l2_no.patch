@@ -1,0 +1,25 @@
+From 73f6d09153868bed193a07cba672df6efdb35e67 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 28 Sep 2026 20:29:25 -0400
+Subject: [PATCH] night/sx8-numerics: revert GDN q/k norm to ggml_l2_norm
+ (5fdfa62829, qwen35 only) - throwaway numerics probe
+
+---
+ src/models/qwen35.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/models/qwen35.cpp b/src/models/qwen35.cpp
+index 74e45ff117..d82bfa6bd5 100644
+--- a/src/models/qwen35.cpp
++++ b/src/models/qwen35.cpp
+@@ -432,8 +432,8 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn_linear(
+ 
+     const float eps_norm = hparams.f_norm_rms_eps;
+ 
+-    q_conv = build_gdn_l2_norm(ctx0, q_conv, eps_norm);
+-    k_conv = build_gdn_l2_norm(ctx0, k_conv, eps_norm);
++    q_conv = ggml_l2_norm(ctx0, q_conv, eps_norm);
++    k_conv = ggml_l2_norm(ctx0, k_conv, eps_norm);
+ 
+     //q_conv = ggml_cont_4d(ctx0, q_conv, head_k_dim, num_k_heads, n_seq_tokens, n_seqs);
+     //k_conv = ggml_cont_4d(ctx0, k_conv, head_k_dim, num_k_heads, n_seq_tokens, n_seqs);

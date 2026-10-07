@@ -1,0 +1,65 @@
+From d0ca10b84484b6a1eb24f1ce9828548c2f299271 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 17 Aug 2026 08:52:12 -0400
+Subject: [PATCH] contract: tq3 rows 48-51 implemented behind
+ GGML_ARIFI_TURBO_WEIGHT_QUANTS, plus the three corrections the port forces
+ (their 200 = our TURBO2_0; six ids, four destinations; token_embd is Q6_K)
+
+---
+ docs/TYPE-ID-ALLOCATION.md | 36 ++++++++++++++++++++++++++++++++----
+ 1 file changed, 32 insertions(+), 4 deletions(-)
+
+diff --git a/docs/TYPE-ID-ALLOCATION.md b/docs/TYPE-ID-ALLOCATION.md
+index 2e16941d40..8c2b210d5a 100644
+--- a/docs/TYPE-ID-ALLOCATION.md
++++ b/docs/TYPE-ID-ALLOCATION.md
+@@ -130,10 +130,10 @@ are **not ours to choose**: we adopt whatever the format's originator serialized
+ | 104 | `GGML_TYPE_Q3_0_ROCMFPX` | ROCmFPX | `qs[12] + e[2]` | 14 | 32 | reserved, same slot |
+ | 107 | `GGML_TYPE_Q2_0_ROCMFPX` | ROCmFPX | `qs[8] + e[2]` | 10 | 32 | reserved, same slot |
+ 
+-| 48 | `GGML_TYPE_TQ3_4S` | tq3 (**retagged**) | `d(4) + qs[12]` | 16 | 32 | **RESERVED, not implemented** — see §3.1.1 |
+-| 49 | `GGML_TYPE_TQ3_0` | tq3 (**retagged**) | `d + qs[12]` | 14 | 32 | **RESERVED, not implemented** — see §3.1.1 |
+-| 50 | `GGML_TYPE_TQ3_4SE` | tq3 (**retagged**) | `d(6) + qs[12]` | 18 | 32 | **RESERVED, not implemented** — see §3.1.1 |
+-| 51 | `GGML_TYPE_TQ3_1S_SHIFT` | tq3 (**retagged**) | `3 x half + qs[12]` | 18 | 32 | **RESERVED, not implemented** — see §3.1.1 |
++| 48 | `GGML_TYPE_TQ3_4S` | tq3 (**retagged**) | `d(4) + qs[12]` | 16 | 32 | **implemented behind `GGML_ARIFI_TURBO_WEIGHT_QUANTS`** (lane-142) — see §3.1.1 |
++| 49 | `GGML_TYPE_TQ3_0` | tq3 (**retagged**) | `d + qs[12]` | 14 | 32 | **implemented behind `GGML_ARIFI_TURBO_WEIGHT_QUANTS`** (lane-142) — see §3.1.1 |
++| 50 | `GGML_TYPE_TQ3_4SE` | tq3 (**retagged**) | `d(6) + qs[12]` | 18 | 32 | **implemented behind `GGML_ARIFI_TURBO_WEIGHT_QUANTS`** (lane-142) — see §3.1.1 |
++| 51 | `GGML_TYPE_TQ3_1S_SHIFT` | tq3 (**retagged**) | `3 x half + qs[12]` | 18 | 32 | **implemented behind `GGML_ARIFI_TURBO_WEIGHT_QUANTS`** (lane-142) — see §3.1.1 |
+ 
+ `44` is left as a hole. It is the value TurboQuant uses for a runtime-only type and the value our
+ current `GGML_TYPE_COUNT` occupies; leaving it unassigned costs nothing and removes a whole class of
+@@ -183,6 +183,34 @@ Whoever ports it: land the codec and the coherence proof FIRST, and only then th
+ retag tool shipped ahead of a working dequant converts a file that fails loudly at load into a file
+ that loads and emits garbage, which is strictly worse than the situation this section describes.
+ 
++##### Status after lane-142 (2026-08-17)
++
++The codec IS ported, from `turbo-tan/llama.cpp-tq3@58ad80ffb`, into
++`ggml/src/ggml-arifi-turbo-weights.c` under the existing `GGML_ARIFI_TURBO_WEIGHT_QUANTS` flag —
++the same file and flag as `TQ3_1S`/`TQ4_1S`, because the two families share the block size, the
++Lloyd-Max centroid table and the randomized Hadamard rotation byte for byte, and because placing
++the new case labels beside the existing `TQ3_1S` labels inherits its already-correct treatment of
++the seven `ggml-cpu/ops.cpp` switch sites. The flag is **default OFF**, like both of its siblings;
++"implemented" in the table above means implemented behind it, not compiled by default.
++
++Proof logs: `research/local-inference/lane-evidence/2026-08-17-lane-142-tq3-proofs/`.
++
++Three corrections this port forces on the paragraphs above, all measured at that sha:
++
++1. tq3 does **not** number this family contiguously. Its enum is `TQ3_1S_AP1 = 31`,
++   `TQ3_4SE = 36`, `TQ3_4SV = 37`, `TQ3_1S = 44`, `TQ3_4S = 46`, `TQ3_0 = 200`. In particular
++   **tq3's `TQ3_0 = 200` is our `TURBO2_0`** — a second, independent collision, and the reason 49
++   is not optional.
++2. This table reserves **four** destinations but tq3 serializes at least **six** ids. `TQ3_4SV` (37)
++   and `TQ3_1S_AP1` (31) have no destination, and tq3's `TQ3_1S` (44) is very likely the same wire
++   format as our `TQ3_1S` (45) but has not been proven so. The retag tool **refuses** all three
++   rather than guessing. Allocating them is an open decision, not a lane's to make.
++3. The only tq3-id file on the estate carries **`token_embd.weight` as Q6_K**, not as a tq3 type
++   (866 tensors = 360 f32 + 2 Q6_K + 504 at id 46). A coherent generation on it therefore exercises
++   `mul_mat`/`vec_dot` and the loader, and says **nothing** about `get_rows` — which is precisely
++   the switch site that aborted at runtime for g128 (§7). `get_rows` coverage for these ids comes
++   from `tests/test-backend-ops.cpp`, where they are listed in `all_types[]`.
++
+ ### 3.2 Block R — ArifiLabs runtime-only types, **200-255**
+ 
+ Types that exist only as live tensors — KV-cache codecs, repack/interleave layouts, scratch formats.

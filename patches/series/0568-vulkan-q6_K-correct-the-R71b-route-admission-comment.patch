@@ -1,0 +1,33 @@
+From 303733676decd637e95f1c7ddf9c5643d8f203ce Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 07:56:29 -0400
+Subject: [PATCH] vulkan q6_K: correct the R71b route-admission comment to the
+ CHECK-R73 record
+
+The comment claimed '36/36 paired rounds, worst 1.003'. That counted three shapes; the R71b G2 shapes were timed afterwards. The checked record is 58/60 paired rounds across five shapes, worst round 0.9894, with 1024x5120 n=8 a tie (1.0087). Comment only - no code, no behaviour change.
+
+Origin: CHECK-R73 correction owed
+Measured-effect: none (comment only)
+Lane: lane-258
+Cherry-picked-from: 28add056ecf0baf88a2087f518376cf26df086bd
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 06eda2c710..0ed4d16608 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -7678,8 +7678,10 @@ static bool ggml_vk_should_use_mmvq_impl(const vk_device& device, uint32_t m, ui
+     // last at EVERY measured shape: n == 7 and n == 8.
+     //
+     // WHY THIS NOW SHIPS DEFAULT ON (R71b, President law: a PPL-gated, never-slower-here gain
+-    // ships ON; the elegance of the explanation is not a criterion). n=7,8 won 36/36 paired rounds
+-    // across every timed shape and every occurrence pick, worst single round 1.003. R71 held the
++    // ships ON; the elegance of the explanation is not a criterion). n=7,8 won 58/60 paired rounds
++    // across five shapes, worst round 0.9894; 1024x5120 n=8 is a tie (1.0087). (This line read
++    // "36/36, worst 1.003" until lane-258 / R74 corrected it to the CHECK-R73 record: the 36/36
++    // counted three shapes, and the R71b G2 shapes were added afterwards.) R71 held the
+     // default OFF because the qualifying widths are a non-contiguous island the row geometry does
+     // not explain -- the f32 shader runs rm_kq = 2 rows at every width (:7555) while the MMVQ one
+     // runs rm_int_n(rm_kq_int=1, i) = 1 row at NUM_COLS <= 4 and 4 at >= 5 (:7666), which predicts

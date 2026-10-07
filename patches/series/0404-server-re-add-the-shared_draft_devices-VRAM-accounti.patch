@@ -1,0 +1,131 @@
+From b0d977e6ba8ba9ac8e39472e9b1e95b5887874c5 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 29 Aug 2026 02:39:14 -0400
+Subject: [PATCH] server: re-add the shared_draft_devices VRAM accounting on
+ top of common_fit_extra_model (multi-device only)
+
+President ruling 2 of 2026-08-29. The b10636 base move resolved
+tools/server/server-context.cpp to UPSTREAM in three commits, which deleted the
+server's manual "reserve VRAM for the draft / MTP context before fitting the
+target" block. Upstream replaced it with common_fit_extra_model, which fits
+draft and target together, so re-adding that block whole would double-count the
+draft. It is not re-added.
+
+SCOPE, measured rather than inherited from the prior report's wording: the
+PLACEMENT half of the shared_draft_devices hardening never left.
+server_prepare_shared_draft_devices() is live and make_params_dft() still pins
+the draft to shared_draft_devices.devices with main_gpu 0, split_mode LAYER and
+its own tensor_split. Only the VRAM-ACCOUNTING half was dropped, and only one
+part of it is re-addable without double-counting: the main-device shared-tensor
+measurement.
+
+The gap it closes: common_fit_extra_model measures the draft at
+common_base_params_to_speculative's DEFAULT placement (common/common.cpp builds
+its own params_dft and the server cannot inject into it - the function copies
+speculative.draft.devices but not main_gpu, split_mode or tensor_split). The
+server then loads the draft somewhere else. The shared tensors that land on the
+target's main device are therefore uncounted.
+
+MULTI-DEVICE ONLY, and that gate is new. With one device both placements are
+the same device and the reservation would be a straight double-count against
+common_fit_extra_model - on this single-GPU gfx1103 rig that is a residency
+regression, not hardening. Gated on server_target_fit_devices().size() > 1 the
+patch is inert here.
+
+NOT re-added: add_reservations(dmd, devs), the full draft measurement. That is
+exactly what common_fit_extra_model now does.
+
+VERIFICATION LIMIT, stated plainly: compile-verified only. The bump's verify bar
+(test-backend-ops, test-quantize-fns, two single-model llama-bench smokes) never
+launches llama-server and never exercises a draft or MTP path, and the
+multi-device gate makes this code provably unreachable on the rig that could
+run it. No behaviour receipt exists.
+---
+ tools/server/server-context.cpp | 74 ++++++++++++++++++++++++++++++++-
+ 1 file changed, 73 insertions(+), 1 deletion(-)
+
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index b83f69804d..a62e124c34 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -1389,7 +1389,79 @@ private:
+             }
+         }
+ 
+-        // note: the draft / MTP context is fitted together with the target model, see common_fit_extra_model
++        // note: the draft / MTP context is fitted together with the target model, see common_fit_extra_model.
++        //
++        // common_fit_extra_model measures the draft at common_base_params_to_speculative's DEFAULT
++        // placement. The server does not use that placement: make_params_dft above pins the draft to
++        // shared_draft_devices.devices with main_gpu 0, split_mode LAYER and its own tensor_split. So
++        // the shared tensors that land on the target's main device are not in the fit's estimate.
++        // Reserve that one delta here. Multi-device only: with a single device both placements are
++        // the same device, and reserving there would double-count against common_fit_extra_model.
++        if (params_base.fit_params && has_spec) {
++            const std::vector<ggml_backend_dev_t> tgt_devices = server_target_fit_devices(params_base);
++            auto mparams_tgt = common_model_params_to_llama(params_base);
++            if (tgt_devices.size() > 1 && (shared_draft_devices.prepared || spec_mtp) &&
++                mparams_tgt.split_mode != LLAMA_SPLIT_MODE_NONE && mparams_tgt.main_gpu >= 0) {
++                try {
++                    common_params params_dft = make_params_dft();
++                    auto mparams_dft = common_model_params_to_llama(params_dft);
++                    auto cparams_dft = common_context_params_to_llama(params_dft);
++                    if (spec_mtp) {
++                        cparams_dft.ctx_type = LLAMA_CONTEXT_TYPE_MTP;
++                    }
++                    cparams_dft.n_rs_seq = 0;
++
++                    auto cparams_tgt = common_context_params_to_llama(params_base);
++                    llama_model_params mparams_tgt_main = mparams_tgt;
++                    mparams_tgt_main.split_mode = LLAMA_SPLIT_MODE_NONE;
++                    llama_model_tensor_buft_override mtp_overrides[2] = {};
++                    if (spec_mtp) {
++                        mtp_overrides[0] = {
++                            common_moe_cache_tensor_override_pattern(), ggml_backend_cpu_buffer_type() };
++                        mparams_tgt_main.tensor_buft_overrides = mtp_overrides;
++                        mparams_tgt_main.use_extra_bufts = false;
++                    }
++
++                    // an MTP context runs on the target's own weights, so only its share of the
++                    // main device is new; a real draft model brings its weights with it
++                    const bool measure_model_bytes = has_draft;
++                    const char * path_dft = spec_mtp ? params_base.model.path.c_str() : params_dft.model.path.c_str();
++                    const llama_model_params & mparams_measure = spec_mtp ? mparams_tgt_main : mparams_dft;
++
++                    std::vector<ggml_backend_dev_t> devs_main;
++                    uint32_t hp_ngl = 0, hp_nct = 0, hp_nex = 0;
++                    const auto dmd_main = common_get_device_memory_data_with_parent(
++                        path_dft, &mparams_measure, &cparams_dft,
++                        params_base.model.path.c_str(), &mparams_tgt_main, &cparams_tgt,
++                        devs_main, hp_ngl, hp_nct, hp_nex, GGML_LOG_LEVEL_ERROR);
++
++                    GGML_ASSERT(!params_base.fit_params_target.empty());
++                    GGML_ASSERT(dmd_main.size() >= devs_main.size());
++                    for (size_t i = 0; i < devs_main.size(); i++) {
++                        const size_t bytes = (measure_model_bytes ? dmd_main[i].model : 0) +
++                                             dmd_main[i].context + dmd_main[i].compute;
++                        if (bytes == 0) {
++                            continue;
++                        }
++                        for (size_t j = 0; j < tgt_devices.size(); j++) {
++                            if (tgt_devices[j] != devs_main[i]) {
++                                continue;
++                            }
++                            GGML_ASSERT(j < params_base.fit_params_target.size());
++                            if (bytes > SIZE_MAX - params_base.fit_params_target[j]) {
++                                throw std::runtime_error("shared draft memory margin overflowed");
++                            }
++                            SRV_INF("[spec] reserving %.2f MiB on %s for main-device shared tensors\n",
++                                    bytes / (1024.0 * 1024.0), ggml_backend_dev_name(devs_main[i]));
++                            params_base.fit_params_target[j] += bytes;
++                            break;
++                        }
++                    }
++                } catch (const std::exception & e) {
++                    SRV_DBG("[spec] failed to measure main-device shared-tensor memory: %s\n", e.what());
++                }
++            }
++        }
+ 
+         // attach a progress callback
+         {

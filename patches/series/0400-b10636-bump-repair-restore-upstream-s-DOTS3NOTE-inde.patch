@@ -1,0 +1,45 @@
+From ce06be9045def3fe5357b8821e05b6f42b33dc2f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 29 Aug 2026 00:45:48 -0400
+Subject: [PATCH] b10636 bump repair: restore upstream's DOTS3NOTE indexer arch
+ + the two TAG_LLAMA_SEQ_ID_NEG TODOs that a whole-file --theirs resolution
+ reverted. checkout --theirs takes stage 3 (the WHOLE file), not just the
+ conflicting hunks - upstream's 4-line b10524..b10636 delta to this file was
+ lost with it. GLM_DSA is absent here PRE-EXISTING (also absent on
+ lane165-pre-bump-arifi-main), so it is NOT restored by this commit and stays
+ a President item.
+
+---
+ src/llama-kv-cache.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index d788e031c8..c71248d25f 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -588,7 +588,8 @@ llama_kv_cache::llama_kv_cache(
+         // indexer: this is a functional requirement for the model, not optional
+         // tuning, so it overrides the default-off policy (still respects the hard
+         // LLAMA_ATTN_ROT_DISABLE lock-out).
+-        if (!attn_rot_disable && (model.arch == LLM_ARCH_DEEPSEEK32 || model.arch == LLM_ARCH_DEEPSEEK4) &&
++        if (!attn_rot_disable && (model.arch == LLM_ARCH_DEEPSEEK32 || model.arch == LLM_ARCH_DEEPSEEK4 ||
++                model.arch == LLM_ARCH_DOTS3NOTE) &&
+             hparams.n_embd_head_k_full == hparams.indexer_head_size) {
+             attn_rot_k = true;
+         }
+@@ -655,6 +656,7 @@ bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
+         return true;
+     }
+ 
++    // TODO: fix incosistent handling of `seq_id < 0` and `seq_id == -1` in the codebase [TAG_LLAMA_SEQ_ID_NEG]
+     GGML_ASSERT(seq_id == -1 || (seq_id >= 0 && (size_t) seq_id < seq_to_stream.size()));
+ 
+     if (p0 < 0) {
+@@ -2713,6 +2715,7 @@ const slot_info_vec_t *   sinfos_in) {
+ 
+     GGML_UNUSED(flags);
+ 
++    // TODO: fix incosistent handling of `seq_id < 0` and `seq_id == -1` in the codebase [TAG_LLAMA_SEQ_ID_NEG]
+     GGML_ASSERT(seq_id == -1 || (seq_id >= 0 && (size_t) seq_id < seq_to_stream.size()));
+ 
+     if (sinfos_out) {

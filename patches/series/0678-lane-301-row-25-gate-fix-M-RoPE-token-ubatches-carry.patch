@@ -1,0 +1,142 @@
+From 40fdae95eeb6044702a30aba052005a9f4ce7461 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 13:32:48 -0400
+Subject: [PATCH] lane-301: row 25 gate fix - M-RoPE token ubatches carry
+ n_pos=4, only an embedding ubatch disables the pooled cache; path-class WARN
+ log; RED=2 drops every fresh write; protected-win entry for row-26 sparse
+ prefill (c3 logger-off x2)
+
+(cherry picked from commit fa1ef58cda43dd9ef0c73bd7f4be3ddcf98352ec)
+
+Origin: ArifiLabs (native) - fork-authored (lane-301); no upstream origin exists.
+Measured-effect: UNMEASURED on its own - supporting commit; see release ledger Table 1 W16, the number sits on that win's main commit
+---
+ src/llama-memory-hybrid-idx.cpp      | 18 +++++++++++++-----
+ src/llama-memory-hybrid-idx.h        |  1 +
+ src/models/qwen4exp.cpp              | 12 ++++++++++++
+ tools/arifi-sync/protected-wins.json | 20 ++++++++++++++++++++
+ 4 files changed, 46 insertions(+), 5 deletions(-)
+
+diff --git a/src/llama-memory-hybrid-idx.cpp b/src/llama-memory-hybrid-idx.cpp
+index 34b7cab0bb..88dbea58c2 100644
+--- a/src/llama-memory-hybrid-idx.cpp
++++ b/src/llama-memory-hybrid-idx.cpp
+@@ -114,7 +114,7 @@ llama_memory_hybrid_idx::llama_memory_hybrid_idx(
+     }
+ 
+     if (n_bytes) {
+-        LLAMA_LOG_INFO("%s: pooled indexer-key cache %.2f MiB (row 25; GGML_ARIFI_QSA_POOL_CACHE=0 disables)\n", __func__, n_bytes/1024.0/1024.0);
++        LLAMA_LOG_WARN("%s: pooled indexer-key cache %.2f MiB (row 25; GGML_ARIFI_QSA_POOL_CACHE=0 disables)\n", __func__, n_bytes/1024.0/1024.0);
+     }
+ }
+ 
+@@ -148,7 +148,14 @@ bool llama_memory_hybrid_idx::one_seq() const {
+ }
+ 
+ bool llama_memory_hybrid_idx::qsa_incr_ok(const llama_ubatch & ubatch, uint32_t ratio, int64_t n_fresh) const {
+-    if (!mem_idx || mem_idx->get_n_stream() != 1 || ratio == 0 || ubatch.n_tokens == 0 || ubatch.is_pos_2d() || !one_seq()) {
++    // M-RoPE models carry n_pos = 4 on every ubatch: a token ubatch broadcasts one position over the sections
++    // (llama_batch_allocr::split), so only an embedding ubatch holds real 2d positions. Once one lands, cells
++    // may need the ranked layout, which the cache does not key; stay off until clear().
++    if (ubatch.is_pos_2d() && !ubatch.token) {
++        pooled_saw_2d = true;
++    }
++
++    if (!mem_idx || mem_idx->get_n_stream() != 1 || ratio == 0 || ubatch.n_tokens == 0 || pooled_saw_2d || !one_seq()) {
+         return false;
+     }
+ 
+@@ -245,6 +252,7 @@ void llama_memory_hybrid_idx::clear(bool data) {
+     llama_memory_hybrid::clear(data);
+ 
+     pooled_invalidate();
++    pooled_saw_2d = false;
+ 
+     if (mem_idx) {
+         mem_idx->clear(data);
+@@ -484,7 +492,8 @@ void llama_memory_hybrid_idx::set_input_qsa(
+             p_lo = std::min(p_lo, ubatch->pos[i]);
+         }
+ 
+-        static const bool red = [] { const char * e = getenv("GGML_ARIFI_QSA_POOL_RED"); return e && atoi(e) != 0; }();
++        // RED plant: 1 drops one fresh write per ubatch, 2 drops every fresh write (the cache stays at its first fill)
++        static const int red = [] { const char * e = getenv("GGML_ARIFI_QSA_POOL_RED"); return e ? atoi(e) : 0; }();
+         bool planted = false;
+ 
+         for (int64_t e = 0; e < pool->n_fresh; ++e) {
+@@ -507,8 +516,7 @@ void llama_memory_hybrid_idx::set_input_qsa(
+ 
+             fd[e] = (int32_t) pb;
+ 
+-            // RED plant: drop one fresh block's write, so its row stays stale
+-            if (red && !planted) {
++            if (red >= 2 || (red == 1 && !planted)) {
+                 fd[e]   = row_pad;
+                 planted = true;
+             }
+diff --git a/src/llama-memory-hybrid-idx.h b/src/llama-memory-hybrid-idx.h
+index ddcbcf0203..a051c80538 100644
+--- a/src/llama-memory-hybrid-idx.h
++++ b/src/llama-memory-hybrid-idx.h
+@@ -113,6 +113,7 @@ private:
+     std::vector<ggml_tensor *>           pooled;         // by il
+     mutable std::vector<int64_t>         pooled_epoch;   // by il, == pooled_gen when clean
+     int64_t                              pooled_gen = 0;
++    mutable bool                         pooled_saw_2d = false;  // an embedding ubatch with 2d positions landed
+     std::vector<ggml_context_ptr>        pooled_ctxs;
+     std::vector<ggml_backend_buffer_ptr> pooled_bufs;
+ 
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+index cea348ac30..0813e6eef6 100644
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -753,6 +753,18 @@ ggml_tensor * llama_model_qwen4exp::graph::build_qsa_top_k(
+ 
+     (incr ? inp->layers_incr : pool_on ? inp->layers_full_write : inp->layers_stale).push_back(il);
+ 
++    {
++        // one line per path class, so a server log proves which path ran (llama INFO lines are filtered there)
++        static bool said[3] = {};
++        const int cls = incr ? 0 : pool_on ? 1 : 2;
++        if (!said[cls]) {
++            said[cls] = true;
++            LLAMA_LOG_WARN("qsa pooled cache (lane-301 row 25): first %s graph il=%d n_tokens=%lld n_kv=%lld cache=%d incr_ok=%d\n",
++                    cls == 0 ? "INCREMENTAL" : cls == 1 ? "FULL-WRITE" : "STALE", il, (long long) n_tokens, (long long) n_kv,
++                    pcache != nullptr, (int) inp->incr_ok);
++        }
++    }
++
+     if (pool_on && inp->read_rows == nullptr) {
+         inp->read_rows = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_blocks);
+         ggml_set_input(inp->read_rows);
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index 1c006ece59..6ed4ef594a 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -1760,6 +1760,26 @@
+       "valid_conditions": "RDNA3 with coopmat1 int8 support (device probe). Elsewhere cm1_int_min_n = cm1_f16b_min_n = 0 = upstream behaviour. Upstream int8 coopmat1 still wins from n >= 48 (1.04-3.53x) and for IQ4_XS/Q6_K at 5120x17408 at small n when SMALLN=down is set; M33 (int8 from n = 33) and a medium-tile int8 at n <= 32 are banked levers, unmeasured.",
+       "notes": "Three-arm table and per-side mechanism paragraphs: W1-COLLISION-MAP.md sections N11, N12 and section 4. Literal vanilla-b11178 upstream arm: see the map's Sol-fix section.",
+       "_registered": "2026-09-27, lane-296 Sol-fix pass. The fail-closed validator named aa6ebfce2 / e0d733dde / 11eef8565 unregistered; 5432990f3 registered with them as the shipped form."
++    },
++    {
++      "id": "vulkan-fa-sparse-prefill-qsa",
++      "status": "active",
++      "mechanism": "Vulkan flash-attention sparse gather for QSA PREFILL (Strata FEATURE-MAP row 26, lane 301). A sparse-hinted FA (n_kv_max > 0) with N > 8 now takes the gqa layout when the sparse gate's own conditions hold (raw F16 K/V, KV >= max(4096, 2*n_kv_max)); the shader resolves per-token rows (sparse_base uses gqa_iq1 = token), so each prefill query reads only its ~2051 selected cells instead of dense masked attention over all n_kv. Runtime switches: GGML_ARIFI_FA_SPARSE_PREFILL=0 restores dense prefill, GGML_ARIFI_FA_SPARSE_PREFILL_MIN_RATIO; RED plant GGML_ARIFI_QSA_RED_PLANT=1.",
++      "commit": "6d528366f1e274e6412ac228a2da895305b5c150",
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
++      ],
++      "anchors": [
++        "GGML_ARIFI_FA_SPARSE_PREFILL",
++        "FA sparse prefill engaged"
++      ],
++      "evidence": "cache/qsa-x1-lane/cells/c3-10051215-state.json",
++      "quality_gate": "test-backend-ops FLASH_ATTN_EXT n_kv_max cases 21/21 on bin-b and bin-c, incl. 6 new prefill-shaped (nb>1) sparse cases; RED plant (GGML_ARIFI_QSA_RED_PLANT=1) fails exactly the 9 prefill-shaped cases (c1-10051048). Greedy 128 ids identical to bin-a at 2K/8K/16K/32K in both rounds (c3-10051215; bin-a itself differed once at 16K r2 = run noise).",
++      "workload": "Qwen3.8-Flash-Next GSQ-RCO IQ3_S (ISTA-DASLab), llama-server -ub 4096 -b 4096 -c 33792 -fa on -lm dio, F16 KV, 780M Vulkan; prompts 2K/8K/16K/32K tokens, n_predict 128, interleaved A/B/C x2 rounds logger off (c3-10051215, 32K arms in their own timed batch).",
++      "measured_effect": "Prefill tok/s bin-a -> bin-b mean of 2 rounds: 2K 214.8 -> 214.8 (0%), 8K 214.9 -> 215.7 (+0.4%), 16K 156.9 -> 205.7 (+31%), 32K 105.8 -> 194.1 (+83%). 32K/2K ratio 0.49 -> 0.90 (Strata-flat target 0.85 met). Decode 16K 9.07 -> 9.40 tok/s (+3.6%), 32K 8.30 -> 8.31 (flat). Prefill FA per 4096 ubatch at KV 32768: 38.8 s dense -> 3.7 s sparse (logger, c1-10051048).",
++      "valid_conditions": "QSA models with an indexer top-k hint (qwen4exp); F16 K/V; KV >= max(4096, 2*n_kv_max). Quantized KV still runs dense prefill (q8_0 sparse gather not ported; MMQ scalar FA path indexes K linearly).",
++      "notes": "Lane 301 REPORT/DECISIONS D5, D7: board/programs/local-inference/lanes/2026-10-05-lane-301-*.md.",
++      "_registered": "2026-10-05, lane 301 relaunch 4."
+     }
+   ]
+ }

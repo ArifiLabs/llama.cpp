@@ -1,0 +1,146 @@
+From 053ac03f80398254d6bb4688a49b6801c0b6fa1f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 30 Aug 2026 11:53:07 -0400
+Subject: [PATCH] R1 fix: guard the bank index tensors on ALLOCATION, not on
+ rs_r1
+
+The tensors are created unconditionally but consumed only when R1 is active AND the model's
+build_rs call passed bank=true. ggml_backend_sched_alloc_graph allocates what the graph reaches,
+so on the shipped arm (LLAMA_RS_R1_OFF=1) and the ring-off arm s_copy_bank->buffer is NULL and
+set_input dereferenced it. llama-context.cpp:1731 warns about exactly this in as many words:
+"this call causes a crash if any model inputs were not used in the graph and were therefore not
+allocated". The F-141 gate runs the shipped arm FIRST, so this would have crashed the baseline -
+the arm whose failure is easiest to misread as an environment problem rather than this diff.
+
+Guarding on rs_r1 would not have been enough: rs_r1 is a property of the MEMORY (n_rs_seq > 0 &&
+n_seq_max == 1), not of the model, so a mamba/rwkv/plamo2/lfm2/kimi/minimax run with
+--ctx-checkpoints and --parallel 1 sets it true while never passing bank=true - the same
+dereference, and one no gate in this chain would have caught (Ornith-9B is qwen3next and the ring
+probe's model is qwen35; both are inside the five paired sites).
+
+Also corrects the superseded C4 magnitudes in the delta-net-base comment: independent review
+982310ae puts the copy saving at +7.7% (A/D = 1.0766) and the reuse forfeit at -11.7%
+(D/B = 0.8830), not the "~12% cancels" the first draft quoted.
+
+Receipts: build rc=0, binaries mtime-verified 11:52 (F-142 4.2 - never the wrapper exit code);
+test-backend-ops -o SET_ROWS 365/367 on Vulkan, every f32->f32 case OK including the i32-index
+path this diff uses. The two failures are the pre-existing q2_0_g128 family (lane-175 C4.5).
+---
+ src/llama-graph.cpp           | 49 +++++++++++++++++++++++++----------
+ src/models/delta-net-base.cpp |  6 +++--
+ 2 files changed, 40 insertions(+), 15 deletions(-)
+
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index f956ef0e83..6d02c9dd48 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -369,7 +369,13 @@ void llm_graph_input_cls::set_input(const llama_ubatch * ubatch) {
+ // older than this ubatch newest, and it lands at plane (i - pos_bank) mod K. This is a
+ // CONTENT-only change per ubatch; the node consuming it is a fixed-topology GGML_OP_SET_ROWS.
+ static void set_input_rs_wrow(ggml_tensor * t, const llama_memory_recurrent_context * m) {
+-    if (!t || !m->get_rs_r1()) {
++    // ALLOCATION is the guard, not rs_r1. These tensors are created unconditionally but consumed
++    // only when R1 is active AND the model's build_rs call passed bank=true, and the graph
++    // allocator allocates only what the graph reaches - so `buffer` is null on the shipped arm,
++    // on the ring-off arm, and on any recurrent model outside the five paired sites that
++    // nonetheless satisfies rs_r1 (n_rs_seq > 0 && n_seq_max == 1). Dereferencing there is the
++    // crash llama-context.cpp:1731 warns about in as many words.
++    if (!t || !t->buffer || !m->get_rs_r1()) {
+         return;
+     }
+     GGML_ASSERT(ggml_backend_buffer_is_host(t->buffer));
+@@ -389,12 +395,17 @@ void llm_graph_input_rs::set_input(const llama_ubatch * ubatch) {
+         int32_t * data = (int32_t *) s_copy->data;
+ 
+         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
+-        GGML_ASSERT(ggml_backend_buffer_is_host(s_copy_bank->buffer));
+-        int32_t * bank = (int32_t *) s_copy_bank->data;
++        // See the note on set_input_rs_wrow: guard on ALLOCATION, not on rs_r1.
++        const bool bank_live = s_copy_bank && s_copy_bank->buffer;
++        int32_t * bank = nullptr;
++        if (bank_live) {
++            GGML_ASSERT(ggml_backend_buffer_is_host(s_copy_bank->buffer));
++            bank = (int32_t *) s_copy_bank->data;
++        }
+         // ONE traversal: s_copy() CONSUMES the rollback index (rs_idx[seq] = 0), so a second pass
+         // would read 0 and silently resolve every rolled-back read to slot 0.
+         for (uint32_t i = 0; i < n_rs; ++i) {
+-            data[i] = mctx->s_copy2(i, &bank[i]);
++            data[i] = mctx->s_copy2(i, bank_live ? &bank[i] : nullptr);
+         }
+         set_input_rs_wrow(s_wrow, mctx);
+         // ring-repair 2026-08-25: leak hunt - see whether the fresh-seq read row matches the
+@@ -1179,11 +1190,15 @@ void llm_graph_input_mem_hybrid::set_input(const llama_ubatch * ubatch) {
+         int32_t * data = (int32_t *) inp_rs->s_copy->data;
+ 
+         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
+-        GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
+-        int32_t * bank = (int32_t *) inp_rs->s_copy_bank->data;
++        const bool bank_live = inp_rs->s_copy_bank && inp_rs->s_copy_bank->buffer;
++        int32_t * bank = nullptr;
++        if (bank_live) {
++            GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
++            bank = (int32_t *) inp_rs->s_copy_bank->data;
++        }
+         // ONE traversal - see the note on the non-hybrid path above.
+         for (uint32_t i = 0; i < n_rs; ++i) {
+-            data[i] = mctx->get_recr()->s_copy2(i, &bank[i]);
++            data[i] = mctx->get_recr()->s_copy2(i, bank_live ? &bank[i] : nullptr);
+         }
+         set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
+         // ring-repair 2026-08-25: leak hunt (hybrid path) - fresh-seq read row vs zeroed row.
+@@ -1241,11 +1256,15 @@ void llm_graph_input_mem_hybrid_k::set_input(const llama_ubatch * ubatch) {
+         int32_t * data = (int32_t *) inp_rs->s_copy->data;
+ 
+         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
+-        GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
+-        int32_t * bank = (int32_t *) inp_rs->s_copy_bank->data;
++        const bool bank_live = inp_rs->s_copy_bank && inp_rs->s_copy_bank->buffer;
++        int32_t * bank = nullptr;
++        if (bank_live) {
++            GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
++            bank = (int32_t *) inp_rs->s_copy_bank->data;
++        }
+         // ONE traversal - see the note on the non-hybrid path above.
+         for (uint32_t i = 0; i < n_rs; ++i) {
+-            data[i] = mctx->get_recr()->s_copy2(i, &bank[i]);
++            data[i] = mctx->get_recr()->s_copy2(i, bank_live ? &bank[i] : nullptr);
+         }
+         set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
+     }
+@@ -1326,11 +1345,15 @@ void llm_graph_input_mem_hybrid_iswa::set_input(const llama_ubatch * ubatch) {
+         int32_t * data = (int32_t *) inp_rs->s_copy->data;
+ 
+         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
+-        GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
+-        int32_t * bank = (int32_t *) inp_rs->s_copy_bank->data;
++        const bool bank_live = inp_rs->s_copy_bank && inp_rs->s_copy_bank->buffer;
++        int32_t * bank = nullptr;
++        if (bank_live) {
++            GGML_ASSERT(ggml_backend_buffer_is_host(inp_rs->s_copy_bank->buffer));
++            bank = (int32_t *) inp_rs->s_copy_bank->data;
++        }
+         // ONE traversal - see the note on the non-hybrid path above.
+         for (uint32_t i = 0; i < n_rs; ++i) {
+-            data[i] = mctx->get_recr()->s_copy2(i, &bank[i]);
++            data[i] = mctx->get_recr()->s_copy2(i, bank_live ? &bank[i] : nullptr);
+         }
+         set_input_rs_wrow(inp_rs->s_wrow, mctx->get_recr());
+     }
+diff --git a/src/models/delta-net-base.cpp b/src/models/delta-net-base.cpp
+index 91fef9c293..8b35945218 100644
+--- a/src/models/delta-net-base.cpp
++++ b/src/models/delta-net-base.cpp
+@@ -818,8 +818,10 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
+     // The plane reaches the GPU as a RUNTIME ROW INDEX (inp->s_wrow), never as a baked view offset.
+     // That is the whole difference from lane-175's C4, which expressed the same relabel as a
+     // constant ggml view offset: the offset changed every token, so the cached graph had to be
+-    // rebuilt every token (1 graph reused vs 379-631), and the rebuild cost exactly cancelled the
+-    // ~12% the copy elimination won (A/B 0.9568, CI95 [0.8988, 1.0429], TIED). Here the graph
++    // rebuilt every token (1 graph reused vs 379-631), and the rebuild cost MORE than the copy
++    // elimination won. Independent review (982310ae, 2026-08-30) corrected the magnitudes to
++    // A/D = 1.0766 (+7.7% from deleting the copies) x D/B = 0.8830 (-11.7% from forfeiting reuse)
++    // = 0.9506, matching the server's A/B 0.9568 CI95 [0.8988, 1.0429] TIED. Here the graph
+     // topology is fixed and only the index tensor's CONTENTS move - the same mechanism by which the
+     // KV cache writes a different row every token and still reuses its graph
+     // (llama-kv-cache.cpp, ggml_set_rows(k, k_cur, k_idxs); can_reuse compares only k_idxs->ne[0]).

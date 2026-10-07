@@ -1,0 +1,156 @@
+From 2e6144ca42796b2d6c3d791bc6c3c132a0c9ad7c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 7 Sep 2026 06:56:26 -0400
+Subject: [PATCH] arifi-sync: scope subcommand (F-161) - the ingest A/B scope
+ derived from the collision map (upstream files x our files x hunk overlap x
+ speed paths) = sanity|named|full; UPDATE-RUNBOOK 4.1b.4 scope law; selfcheck
+ Lane: lane-220
+
+---
+ tools/arifi-sync/arifi_sync.py | 119 +++++++++++++++++++++++++++++++++
+ 1 file changed, 119 insertions(+)
+
+diff --git a/tools/arifi-sync/arifi_sync.py b/tools/arifi-sync/arifi_sync.py
+index 6e0c5aa9a7..dec7bf1364 100644
+--- a/tools/arifi-sync/arifi_sync.py
++++ b/tools/arifi-sync/arifi_sync.py
+@@ -1780,6 +1780,118 @@ def cmd_bump(repo: str, cfg: dict, args) -> int:
+ 
+ # ---------------------------------------------------------------- status
+ 
++# ---------------------------------------------------------------------------------------------
++# scope - the ingest A/B scope, DERIVED from the collision map (UPDATE-RUNBOOK 4.1b.4, President
++# 2026-09-07 06:5x, F-161). Works for an upstream bump (old=base, new=tag) and for a fork re-ingest
++# (old=the ref we ingested last time, new=the fork's current ref). Prints the map + ONE scope line.
++# ---------------------------------------------------------------------------------------------
++SPEED_PATH_PREFIXES = ("ggml/", "src/llama-", "src/llama.cpp", "common/speculative", "tools/server/",
++                       "tools/cli/", "common/sampling", "common/common.cpp")
++SPEED_PATH_IGNORE_SUFFIX = (".md", ".txt", ".yml", ".yaml", ".json", ".svelte", ".ts", ".css", ".html")
++
++
++def _is_speed_path(path: str) -> bool:
++    if path.endswith(SPEED_PATH_IGNORE_SUFFIX):
++        return False
++    return path.startswith(SPEED_PATH_PREFIXES)
++
++
++def _hunks(repo: str, a: str, b: str, path: str, pad: int = 3):
++    """Post-image line ranges of every hunk a..b touches in path (from `git diff -U0`), padded."""
++    _, out, _ = git(repo, "diff", "-U0", a, b, "--", path, check=False)
++    ranges = []
++    for line in out.split("\n"):
++        if not line.startswith("@@"):
++            continue
++        # @@ -l,s +l,s @@
++        try:
++            new = line.split("+", 1)[1].split(" ", 1)[0]
++            start, _, count = new.partition(",")
++            start = int(start); count = int(count) if count else 1
++            ranges.append((max(1, start - pad), start + max(count, 1) + pad))
++        except ValueError:
++            continue
++    return ranges
++
++
++def _overlaps(r1, r2) -> int:
++    n = 0
++    for a0, a1 in r1:
++        for b0, b1 in r2:
++            if a0 <= b1 and b0 <= a1:
++                n += 1
++                break
++    return n
++
++
++def scope_verdict(collisions: int, speed_touched: int) -> str:
++    if collisions > 0:
++        return "named"
++    if speed_touched > 0:
++        return "full"
++    return "sanity"
++
++
++def cmd_scope(repo: str, cfg: dict, args) -> int:
++    old = args.old or cfg["base"]["upstream_sha"]
++    new = args.new
++    ours = args.ref
++    for r in (old, new, ours):
++        if _resolve_ref(repo, r) == "":
++            raise Loud("cannot resolve %s - fetch first: arifi_sync.py currency" % r)
++    step("SCOPE %s -> %s (ours = %s): the A/B scope is derived from the collision map, never inherited" % (old, new, ours))
++    _, theirs, _ = git(repo, "diff", "--name-only", old, new)
++    their_paths = sorted(p for p in theirs.split("\n") if p)
++    _, mine, _ = git(repo, "diff", "--name-only", old, ours)
++    our_paths = set(p for p in mine.split("\n") if p)
++    inter = [p for p in their_paths if p in our_paths]
++    speed = [p for p in their_paths if _is_speed_path(p)]
++    collisions = []
++    for p in inter:
++        up = _hunks(repo, old, new, p)
++        us = _hunks(repo, old, ours, p)
++        n = _overlaps(up, us)
++        say("  %-60s upstream %d hunk(s), ours %d hunk(s), COLLIDING %d" % (p, len(up), len(us), n))
++        if n:
++            collisions.append((p, n))
++    say("upstream delta files   : %d" % len(their_paths))
++    say("our patch files        : %d" % len(our_paths))
++    say("intersecting files     : %d" % len(inter))
++    say("speed-path files moved : %d" % len(speed))
++    for p in speed[:40]:
++        say("    speed: %s" % p)
++    say("named collisions       : %d" % len(collisions))
++    for p, n in collisions:
++        say("    COLLISION %s (%d hunk pair(s))" % (p, n))
++    verdict = scope_verdict(len(collisions), len(speed))
++    owed = {
++        "sanity": "build + correctness gates + F-141 both arms + ONE file A/B (seated line, plain + DFlash2), expected CI containing 0",
++        "named": "4.1b.3 three arms on each named collision surface + the sanity pair",
++        "full": "the five-file matrix (a speed path moved with no collision: the change can move every file) - name the forcing commit",
++    }[verdict]
++    say("SCOPE: %s -- %s" % (verdict, owed))
++    if getattr(args, "json", None):
++        import json as _json
++        Path(args.json).write_text(_json.dumps({
++            "old": old, "new": new, "ours": ours, "upstream_files": their_paths, "our_files": sorted(our_paths),
++            "intersection": inter, "speed_paths": speed, "collisions": collisions, "scope": verdict, "owed": owed,
++        }, indent=2), encoding="utf-8")
++        say("map written: %s" % args.json)
++    return 0
++
++
++def _scope_selfcheck() -> None:
++    # RED/GREEN: the three verdicts and the overlap arithmetic, no git needed.
++    assert scope_verdict(0, 0) == "sanity"
++    assert scope_verdict(0, 2) == "full"
++    assert scope_verdict(1, 5) == "named"
++    assert _overlaps([(10, 20)], [(15, 30)]) == 1
++    assert _overlaps([(10, 20)], [(21, 30)]) == 0
++    assert _overlaps([(10, 20), (40, 50)], [(45, 46), (5, 12)]) == 2
++    assert _is_speed_path("ggml/src/ggml-vulkan/ggml-vulkan.cpp") and not _is_speed_path("ggml/src/README.md")
++    assert not _is_speed_path("tools/ui/src/app.svelte") and _is_speed_path("tools/server/server.cpp")
++
++
+ def cmd_status(repo: str, cfg: dict, args) -> int:
+     base = cfg["base"]["upstream_sha"]
+     ref = cfg["base"].get("ref", "master")
+@@ -1810,6 +1922,12 @@ def main(argv=None) -> int:
+ 
+     sub.add_parser("status")
+ 
++    p = sub.add_parser("scope", help="ingest A/B scope from the collision map (runbook 4.1b.4)")
++    p.add_argument("--old", default=None, help="old base / last-ingested ref (default sources.json base)")
++    p.add_argument("--new", required=True, help="new upstream tag or fork ref")
++    p.add_argument("--ref", default="arifi/main", help="our line")
++    p.add_argument("--json", default=None, help="write the map as JSON")
++    p.add_argument("--selftest", action="store_true")
+     p = sub.add_parser("provenance")
+     p.add_argument("--ref", default=None)
+     p.add_argument("--strict", action="store_true",
+@@ -1874,6 +1992,7 @@ def main(argv=None) -> int:
+         ("build", None): cmd_build,
+         ("judge", None): cmd_judge,
+         ("bump", None): cmd_bump,
++        ("scope", None): cmd_scope,
+         ("protected-win", "validate"): cmd_protected_win_validate,
+         ("protected-win", "check"): cmd_protected_win_check,
+         ("protected-win", "discover"): cmd_protected_win_discover,

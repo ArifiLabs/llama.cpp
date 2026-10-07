@@ -1,0 +1,53 @@
+From 6c179072ce767dbafc33ee61e35ec87847f063d7 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 19:01:07 -0400
+Subject: [PATCH] lane-299: protected-wins entry qwen4exp-layout-copies
+ (measured +1.48%/+1.19%, ids exact 10/10)
+
+Origin: lane-299 (ArifiLabs native; registration of the layout-copies win bd0917c874)
+Measured-effect: UNMEASURED (registration only; the win it registers is +1.48%/+1.19%, cache/fusion-x1-lane/cells/ab11-10061754-verdict.json)
+Lane: lane-299
+---
+ tools/arifi-sync/protected-wins.json | 29 ++++++++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index 36b76621d2..1ac2bfd101 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -1985,6 +1985,35 @@
+       "measured_effect": "Decode dispatches per token 3099 -> 3027 (-72 = 36 GDN layers x (GET_ROWS + SET_ROWS)). Decode tok/s medians of 3 rounds: short prompt 10.98 -> 11.47 (+4.47%), 597-token prompt 10.85 -> 11.19 (+3.09%). Rounds unfused short 9.99/10.98/10.98, fused 11.47/11.52/11.45; unfused long 10.43/10.86/10.85, fused 10.72/11.52/11.19 (first unfused arm ran cold, kept). lane-166 interleaved_ab.significant (bootstrap, unfused/fused ratio of medians, n=3 per arm): short 0.9572 CI95 [0.8668, 0.9591] SIGNIFICANT; long 0.9701 CI95 [0.9055, 1.0129] TIED at n=3.",
+       "valid_conditions": "Fires only when a GATED_DELTA_NET state src is a single-use GET_ROWS of a recurrent bank and its snapshot tail is SET_ROWS back into the same bank with no other bank access in between (qwen4exp R1 path). Conv-state GET_ROWS/SET_ROWS are not fused. Other graphs never match.",
+       "notes": "lane-299 2026-10-05. Commit subjects 7d07d087b9 / 85f01020b7 still read WIP; HQ rewords at merge."
++    },
++    {
++      "id": "qwen4exp-layout-copies",
++      "status": "active",
++      "mechanism": "qwen4exp graph: conv-state tails are written with one strided CPY (no CONT first) and the PLE taps use one transpose-copy plus one kernel cast instead of 4 CONT + 4 CONT + 4 CAST + 1 CONT. Same bytes, fewer dispatches.",
++      "commit": "bd0917c874",
++      "protected_paths": [
++        "src/models/qwen4exp.cpp"
++      ],
++      "anchors": [
++        "l299_layout",
++        "LLAMA_L299_LAYOUT_OFF"
++      ],
++      "symbols": {
++        "src/models/qwen4exp.cpp": [
++          "l299_layout"
++        ]
++      },
++      "opt_out": "LLAMA_L299_LAYOUT_OFF=1",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/ab11-10061754-verdict.json",
++        "cache/fusion-x1-lane/cells/ab7-10060555-verdict.json",
++        "cache/fusion-x1-lane/cells/build13-10061050-optest-L299_LAYOUT.txt"
++      ],
++      "quality_gate": "test-backend-ops -o L299_LAYOUT 4/4 OK; planted stale-history variant (LLAMA_L299_LAYOUT_PLANT=1) diverges at token 2 on both prompts (RED seen). llama-server greedy token ids identical on vs LLAMA_L299_LAYOUT_OFF=1, 64 tokens, 12-token and 597-token prompts, 10/10 rounds.",
++      "workload": "ISTA-DASLab Qwen3.8-Flash-Next-GSQ-RCO IQ3_S (qwen4exp) on the X1 (890M), llama-server port 8299, 64-token greedy decode; all lane-299 levers on vs on minus layout, 10 rotated ABBA rounds in one window.",
++      "measured_effect": "Decode dispatches per token 3027 -> 2868. Decode tok/s medians: short 11.593 -> 11.765 (+1.48%, CI [1.005, 1.0161]), long 11.391 -> 11.526 (+1.19%, CI [1.0061, 1.0155]).",
++      "valid_conditions": "qwen4exp graphs only (conv tails and PLE taps); LLAMA_L299_LAYOUT_OFF=1 restores the old graph.",
++      "notes": "lane-299 2026-10-06, ab11 merge receipt (HQ82 order 2)."
+     }
+   ]
+ }

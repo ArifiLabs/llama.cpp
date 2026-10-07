@@ -1,0 +1,53 @@
+From e7d1b6406f1ed7de5641b09213ccfb83c1e8ac1a Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 12:06:36 -0400
+Subject: [PATCH] test(r57): three k, two effects - the width-4 knee moves, the
+ width-7 cliff does not
+
+Step 0 said the n=3->4 drop does not survive at small k. Walking k=2048 and k=3072 out
+to n=8 says what that means, and it is two things, not one.
+
+The width-4 knee IS k-dependent: +16.4% at k=5120 against +6.4% / +2.7% at k=2048 /
+k=3072, with one row per workgroup on both sides at every k so no schedule change is
+mixed in. An issue ceiling per column cannot do that - it would knee at the same n at
+every k. So the capacity premise this lane was told to bury is not refuted.
+
+The width-7 cliff is NOT k-dependent: +34.6% at k=2048 and +27.4% at k=3072, at working
+sets 50% apart (15.8 vs 23.6 KB), and only +6% at k=5120. Width-locked across two k is
+the NUM_COLS == 7 tail defect R46 named in the mmvq framework, not a capacity crossing.
+Large, previously unmeasured on this shape, and NOT this lane's subject - handed up.
+
+No threshold is claimed. n*k*1.125 does not fit the three points, and at n>=5 the
+schedule gives 4 rows per workgroup, i.e. 4x fewer workgroups re-reading B, so a shared
+working set should weaken there rather than collapse.
+
+Origin: fork-authored (ArifiLabs lane-248 R57 q4_K cheaper dot, Opus 5 MEDIUM kernel-maker)
+Measured-effect: op-level perf-mode only (rows in receipts); no default moves, no shipped path touched; served t/s UNMEASURED by the maker - HQ pairs quiet
+Lane: lane-248
+Cherry-picked-from: d0511efcd (SOURCE PATHS ONLY, ArifiLabs lane-254 R66 integration)
+Recut-onto: 1b6185951 (ArifiLabs lane-254 R66c, from 1c4be0c08)
+---
+ tests/test-backend-ops.cpp | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index f56aec964c..546ed5c71a 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -12588,6 +12588,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+     for (int bs : {6, 7, 8}) {
+         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 248320, bs, 2048, {1, 1}, {1, 1}));
+     }
++    // It DID move: largest step-down at n=7 for k=2048 against n=4 for k=5120
++    // (r57-evidence/13-knee-table.txt). k=3072 is the third point, for two reasons. (a) A single
++    // working-set threshold does not fit the two points exactly -- k=5120 is still healthy at
++    // n=3 = 17.3 KB while k=2048 has already collapsed at n=7 = 15.8 KB -- so the threshold, if
++    // there is one, needs locating rather than asserting. (b) n=7 is the width R46 blamed for a
++    // "NUM_COLS == 7 tail defect in the mmvq framework"; a cliff that appears at n=7 for one k and
++    // not another cannot be that defect, and a third k says so or refutes it.
++    for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 248320, bs, 3072, {1, 1}, {1, 1}));
++    }
+ 
+     // ArifiLabs lane-248 / R57 decider: the MARGINAL VERIFY ROW, both regimes, one binary.
+     //

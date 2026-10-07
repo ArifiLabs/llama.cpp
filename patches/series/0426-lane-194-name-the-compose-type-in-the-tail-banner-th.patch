@@ -1,0 +1,66 @@
+From b9ba180ef445c1a079da7d55408773ffc3b66727 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 1 Sep 2026 07:16:49 -0400
+Subject: [PATCH] lane-194: name the compose type in the tail banner - the
+ receipt that stops a vacuous fidelity green
+
+tail_compose's ct silently falls back to F32 when the body is not q4_0/q4_0. That is
+the correct behaviour (only q4_0 has a quant->F16 pipeline; F16 over a q5_0 body
+would push the whole compose onto the CPU) - but it meant NO LOG LINE distinguished
+an F16 compose from a silent F32 fallback.
+
+A fidelity row taken on an unnoticed fallback would reproduce the F32 numbers exactly
+and read as 'F16 is lossless'. A vacuous green carrying a PLAUSIBLE number is strictly
+worse than a skipped test: nothing looks wrong. This is the F-112 shape one level up,
+at the feature layer instead of the test layer.
+
+  KV precision tail ON - 1024 exact F16 cells ... body; compose=F16
+  KV precision tail ON - ... ; compose=F32 (F16 REQUESTED BUT REFUSED: body is not q4_0/q4_0)
+
+Every measurement run in the report now carries its own compose= receipt, verified
+per run. A completed 6-pair decode A/B was DISCARDED and re-run because its runs
+lacked -lv 99 and therefore lacked the receipt.
+
+What this unblocked, both firsts:
+- FIDELITY: at --temp 0 --seed 1, F32 compose and F16 compose generate CHARACTER-
+  IDENTICAL text (90 tokens). tail-OFF diverges from both, which is the control
+  proving the comparison is live. The lane is not a quality trade - this is the
+  receipt for the source argument, not the argument.
+- END TO END: until this run LLAMA_KV_TAIL_F16=1 had NEVER generated a token; every
+  earlier probe OOM'd before serving. The four-site compose flip, the n_tail<=0 early
+  return, F16 ggml_concat at real shapes and FA on F16 K/V are now all exercised.
+- DECODE: +15.42% vs F32 compose, 95% CI [+10.94%, +19.90%], 8/8 ABBA pairs positive,
+  t=8.14 df 7. Prefill unchanged (CI spans zero) = the attribution control lands: the
+  compose runs per decode step, not in prefill.
+- SCRATCH at the seat's real -b 512 -ub 256 (I had used defaults): 1358.57 -> 596.58
+  MiB, -56.1%, from the real load pass's allocation bytes.
+---
+ src/llama-kv-cache.cpp | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index 5ed2583835..08637e799c 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -525,8 +525,19 @@ llama_kv_cache::llama_kv_cache(
+                 LLAMA_LOG_WARN("%s: KV precision tail OFF - %s\n", __func__, refuse);
+             } else if (want > 0) {
+                 tail_n = want;
+-                LLAMA_LOG_INFO("%s: KV precision tail ON - %u exact F16 cells per layer beside a %s/%s body\n",
+-                        __func__, tail_n, ggml_type_name(layer_type_k), ggml_type_name(layer_type_v));
++                // lane-194: NAME THE COMPOSE TYPE. Without this there is no way to tell from a log
++                // which compose actually ran, and the F16 request silently falls back to F32 on a
++                // non-q4_0 body (llama_kv_tail_f16_compose / tail_compose's ct). A fidelity row taken
++                // on an unnoticed fallback would reproduce the F32 numbers exactly and read as
++                // "F16 is lossless" - a vacuous green carrying a PLAUSIBLE number, which is worse
++                // than a skipped test. Any F16 claim must quote this line.
++                const bool f16_req = llama_kv_tail_f16_compose();
++                const bool f16_eff = f16_req && layer_type_k == GGML_TYPE_Q4_0 && layer_type_v == GGML_TYPE_Q4_0;
++                LLAMA_LOG_INFO("%s: KV precision tail ON - %u exact F16 cells per layer beside a %s/%s body; "
++                        "compose=%s%s\n",
++                        __func__, tail_n, ggml_type_name(layer_type_k), ggml_type_name(layer_type_v),
++                        f16_eff ? "F16" : "F32",
++                        (f16_req && !f16_eff) ? " (F16 REQUESTED BUT REFUSED: body is not q4_0/q4_0)" : "");
+             }
+         }
+ 

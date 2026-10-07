@@ -1,0 +1,67 @@
+From dddfaa45d953f789d3ba6870b9844b5eae138440 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 9 Sep 2026 03:04:45 -0400
+Subject: [PATCH] tests: test-save-load-state Test 9 (device storage ring) -
+ the first draft read logits the ring never stores and went RED on the ring
+ code itself; the repaired test checks the restored state, GREEN on cdff32828
+ (R31 checker F1)
+
+(cherry picked from commit 203a2201d3fe6b2ba86d23e497d1236fdb161827)
+Conflict-resolved: hand: test-save-load-state.cpp Test 9 repair - our seq-1 last-token replay kept (logits belong to the restored state), then upstream-suite generate_tokens_compare against the baseline generation_result (tokens + NMSE logits); gate owed on the rig
+---
+ tests/test-save-load-state.cpp | 24 +++++++++++++++++++-----
+ 1 file changed, 19 insertions(+), 5 deletions(-)
+
+diff --git a/tests/test-save-load-state.cpp b/tests/test-save-load-state.cpp
+index 00ddd814c7..70bef0e6a4 100644
+--- a/tests/test-save-load-state.cpp
++++ b/tests/test-save-load-state.cpp
+@@ -471,10 +471,6 @@ static bool test_seq_storage_ring(struct llama_model * model, const struct commo
+     }
+ 
+     int n_past = (int) n_token_count_out - 1;
+-    if (!common_replay_last_token(ctx.get(), tokens.back(), n_past)) {
+-        return false;
+-    }
+-    n_past++;
+ 
+     const uint32_t fl1 = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(1);
+     const uint32_t fl2 = LLAMA_STATE_SEQ_FLAGS_ON_DEVICE | LLAMA_STATE_SEQ_FLAGS_STORAGE(2);
+@@ -492,11 +488,18 @@ static bool test_seq_storage_ring(struct llama_model * model, const struct commo
+     std::vector<uint8_t> store1;
+     std::vector<uint8_t> store2;
+ 
+-    // snapshot 1: the state at n_past
++    // snapshot 1: the state at n_past, BEFORE the last prompt token is replayed. A seq state carries no logits,
++    // so the restored sequence must re-decode the last token itself to sample from (R31 serial fix: the first
++    // draft of this test snapshotted after the replay and then sampled from the ADVANCED seq 0's stale logits).
+     if (!get_state(fl1, store1)) {
+         return false;
+     }
+ 
++    if (!common_replay_last_token(ctx.get(), tokens.back(), n_past)) {
++        return false;
++    }
++    n_past++;
++
+     // advance seq 0, then snapshot 2 into a different storage slot
+     {
+         auto smpl_tmp = llama_sampler_ptr{llama_sampler_chain_init(sparams)};
+@@ -521,6 +524,17 @@ static bool test_seq_storage_ring(struct llama_model * model, const struct commo
+         }
+     }
+ 
++    // replay the last prompt token on seq 1 (position n_past - 1) so the logits belong to the restored state
++    {
++        llama_batch_ptr batch(1, 0, 1);
++        common_batch_clear(batch.get());
++        common_batch_add(batch.get(), tokens.back(), n_past - 1, {1}, true);
++        if (llama_decode(ctx.get(), batch.get())) {
++            LOG_ERR("\n%s: failed to replay last token on seq 1\n", __func__);
++            return false;
++        }
++    }
++
+     if (!generate_tokens_compare(ctx.get(), smpl.get(), n_past, params.n_predict, 1, expected_result)) {
+         LOG_ERR("\n%s: error: storage 1 was clobbered by the storage 2 snapshot (generation differs from expected)\n", __func__);
+         return false;

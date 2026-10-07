@@ -1,0 +1,99 @@
+From 07033abbcb59df8cfb5361b947dfb2633268dbfd Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 12:06:58 -0400
+Subject: [PATCH] fix(r61): the dump's same-arm control FAILED, and it caught a
+ real defect in the method
+
+Two consecutive LEGACY runs of the identical filtered sweep produced different sha256s (a7374122... vs cd821d8c...). The kernel was not the cause and could not have been: upstream's init_tensor_uniform seeds a thread_local std::default_random_engine from std::random_device and splits each tensor across hardware_concurrency() slices, so every run of test-backend-ops draws different weights and activations. A legacy-vs-v2 sha difference would have been unattributable, and - worse - a legacy-vs-v2 sha MATCH would have been impossible, so the proof could never have been produced. This is precisely what the same-arm control exists to catch, and it is the reason it was run before the v2 comparison rather than after.
+
+Root fix: with GGML_ARIFI_OP_DUMP set, and only then, init_tensor_uniform takes a deterministic single-threaded path whose seed is derived from the tensor's own identity (type, shape, name, range) rather than from a call counter - so it is stable against thread scheduling AND against the order in which tensors are initialised. Default behaviour is byte-identical with the variable unset. The tree already documents this nondeterminism twice (the R46b note at the SX8 m=1 removal, and sx8_ref_value's 'init_tensor_uniform cannot be used here' comment), so this follows existing practice rather than inventing one.
+
+init_mul_mat_id_tensors is deliberately NOT made deterministic: its expert ids are shuffled from std::random_device, so a MUL_MAT_ID dump would differ run to run whichever arm ran. The dump sweep stays filtered to -o MUL_MAT and a comment says so. The _id mirror is proved instead by the planted RED, which must redden MUL_MAT_ID under v2 and only under v2; the two MUL_MAT_ID correctness rows HQ asked for are folded into leg A.
+
+Correctness on binary #1 before the rebuild, both arms: RC=0 OK (r61-evidence/41, 42). The three dumps taken on binary #1 are discarded as invalid and re-taken.
+
+Origin: fork-authored (ArifiLabs lane-249 R61 iq3 MMVQ wide-width, Opus 5 MEDIUM kernel-maker)
+Measured-effect: none - test-harness determinism only, gated behind GGML_ARIFI_OP_DUMP and inert unset
+Lane: lane-249
+Cherry-picked-from: 9ada2f2bc (SOURCE PATHS ONLY, ArifiLabs lane-254 R66 integration)
+Recut-onto: 1b6185951 (ArifiLabs lane-254 R66c, from 16c9d6061)
+Conflict-resolved: auto: affix(one side only added lines around the base, other side edited it) in tests/test-backend-ops.cpp
+---
+ tests/test-backend-ops.cpp | 50 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 70eaa699ef..0f25b1db2b 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -51,6 +51,13 @@
+ #   define N_THREADS std::thread::hardware_concurrency()
+ #endif
+ 
++// arifi lane-249 / R61 step 2: is the GGML_ARIFI_OP_DUMP bit-identity dump enabled?
++// One getenv, cached; everything gated on this is inert when the variable is unset.
++static bool arifi_op_dump_enabled() {
++    static const bool enabled = getenv("GGML_ARIFI_OP_DUMP") != nullptr;
++    return enabled;
++}
++
+ static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float max = 1.0f) {
+     if (ggml_is_empty(tensor)) {
+         return;
+@@ -58,6 +65,43 @@ static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float m
+ 
+     size_t nels = ggml_nelements(tensor);
+     std::vector<float> data(nels);
++
++    // arifi lane-249 / R61 step 2: DETERMINISTIC INIT FOR THE DUMP, and only for the dump.
++    //
++    // The dump's whole claim is that two runs of the same filtered sweep differing only in a kernel
++    // arm must produce the same file. That is a statement about the KERNEL only if both runs see
++    // the SAME INPUT DATA - and upstream's initialiser below seeds a `thread_local` engine from
++    // `std::random_device` and splits the tensor across `hardware_concurrency()` slices, so every
++    // run draws different weights and activations, and which slice a reused thread's engine serves
++    // varies too. Seat-62's same-arm control caught this directly: two consecutive LEGACY runs of
++    // the identical sweep produced different sha256s (a7374122... vs cd821d8c...). Without this
++    // fix the dump could never have proved anything, and a legacy-vs-v2 difference would have been
++    // unattributable. This is exactly what the control exists to catch.
++    //
++    // The seed is derived from the tensor's own identity - type, shape, name, range - rather than
++    // from a call counter, so it is deterministic regardless of thread scheduling AND of the order
++    // in which tensors happen to be initialised. Note line "data[0] > 0.5f*(min+max)" below picks
++    // whether an imatrix is used during quantisation, so the weights' very encoding depends on this
++    // stream; determinism here is what makes the quantised A-side reproducible too.
++    if (arifi_op_dump_enabled()) {
++        uint64_t h = 0xcbf29ce484222325ull;
++        auto mix = [&h](uint64_t v) { h ^= v; h *= 0x100000001b3ull; };
++        mix((uint64_t) tensor->type);
++        for (int i = 0; i < GGML_MAX_DIMS; i++) {
++            mix((uint64_t) tensor->ne[i]);
++        }
++        for (const char * p = tensor->name; *p != '\0'; ++p) {
++            mix((uint64_t) (unsigned char) *p);
++        }
++        mix((uint64_t) (int64_t) (min * 1000000.0f));
++        mix((uint64_t) (int64_t) (max * 1000000.0f));
++
++        std::default_random_engine gen((unsigned int) (h ^ (h >> 32)));
++        std::uniform_real_distribution<float> distribution(min, max);
++        for (size_t i = 0; i < nels; i++) {
++            data[i] = distribution(gen);
++        }
++    } else
+     {
+         // parallel initialization
+         static const size_t n_threads = std::max<size_t>(1, std::min<size_t>(nels/1024, std::min<size_t>(4, N_THREADS/2)));
+@@ -5720,6 +5764,12 @@ struct test_mul_mat_hadamard : public test_mul_mat {
+     }
+ };
+ 
++// arifi lane-249 / R61 step 2: NOT made deterministic under GGML_ARIFI_OP_DUMP, deliberately.
++// The expert `ids` below are shuffled from std::random_device, so a dump taken over MUL_MAT_ID
++// would differ run to run no matter which kernel arm ran, and the sha would prove nothing. The
++// dump sweep is therefore filtered to `-o MUL_MAT`. The _id mirror is proved instead by the
++// planted RED (r61b-red.cmd), which must redden MUL_MAT_ID under v2 and only under v2. Anyone
++// extending the dump to MUL_MAT_ID must seed this deterministically first.
+ static void init_mul_mat_id_ids(ggml_context * ctx, int n_mats) {
+     std::random_device rd;
+     std::default_random_engine rng(rd());

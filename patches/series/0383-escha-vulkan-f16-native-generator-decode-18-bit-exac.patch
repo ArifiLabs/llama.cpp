@@ -1,0 +1,79 @@
+From 87655671d4b96c9d026e0cef73b86a735917487d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 04:40:24 -0400
+Subject: [PATCH] escha vulkan: f16-native generator - decode +18%, bit-exact
+
+The profile after the RTE fix says ESCHA_MM is still 86.95% of decode GPU time (13,200 calls at
+642 us), so the bottleneck did not move and the generator is still the whole cost.
+
+unpackHalf2x16 widens both halves to f32, adds there, narrows back to f16 and widens again for the
+FMA. unpackFloat2x16 reinterprets the same bits as float16_t with no convert at all, so the add is
+an f16 add and only one widening survives - roughly three instructions of eight removed from the
+hottest line in the model.
+
+Bit-identical, and proven so rather than argued: an f16 add is the exact sum rounded once, and the
+sum of two f16 values is always exact in f32, so both spellings round the same real number the same
+way. The exhaustive 65,536-codeword sweep carries a fourth column for this path - CANDIDATE EXACT,
+all 524,288 words matching the shipped path bit for bit.
+
+Measured, two rounds, arms alternated in one thermal session on Balanced:
+    f32 generator   pp512 15.46 / 15.44   tg32 3.27 / 3.28
+    f16 generator   pp512 16.20 / 16.43   tg32 3.87 / 3.86
+That is +18.0% decode and +5.6% prefill for zero quality cost.
+
+ESCHA_F16_GEN=0 restores the f32 path. The one device behaviour that could separate them is f16
+denormal flushing; this device reports denorm-preserve TRUE. Re-sweep on any device change.
+
+Origin: ArifiLabs (native)
+---
+ .../ggml-vulkan/vulkan-shaders/escha_mm.comp  | 28 +++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+index 8af9a8f575..d8c97d1c15 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp
+@@ -113,8 +113,35 @@ uint f32_to_f16_rte(float f) {
+ #define ESCHA_HW_RTE 1
+ #endif
+ 
++// SEAT-40 LEVER: stay in f16 for the whole generator.
++//
++// The profile says ESCHA_MM is 86.95% of decode GPU time (13,200 calls, 642 us each), so the
++// generator is still the whole cost after the RTE fix -- the bottleneck did not move.
++//
++// unpackHalf2x16 widens both halves to f32 (two V_CVT_F32_F16), adds in f32, then narrows back
++// (one V_CVT_F16_F32) and widens again for the FMA. unpackFloat2x16 reinterprets the same bits as
++// float16_t with no convert at all, so the add happens in f16 and only ONE widening survives.
++// Three instructions of roughly eight, on the single hottest line in the model.
++//
++// It is bit-identical, not approximately so: an f16 add is the exact sum rounded once to f16, and
++// the sum of two f16 values is always exact in f32, so both spellings round the same real number
++// the same way. PROVEN, not argued -- the exhaustive 65,536-codeword sweep carries a fourth column
++// comparing this against the shipped path: "CANDIDATE EXACT: F16ADD matches the SHIPPED F16CAST
++// path on all 524288 words, bit for bit" (rte-sweep/RTE-SWEEP-RESULT.txt).
++//
++// The device reports denorm-preserve TRUE for f16, which is the one behaviour that could have
++// separated the two paths. On a device that flushes f16 denormals this must be re-swept before it
++// is trusted; ESCHA_F16_GEN=0 restores the f32 path.
++#ifndef ESCHA_F16_GEN
++#define ESCHA_F16_GEN 1
++#endif
++
+ float escha_F(uint xw) {
+     const uint q = 0x3B603B60u ^ ((xw * 0xCBAC1FEDu) & 0x8FFF8FFFu);
++#if ESCHA_F16_GEN
++    const f16vec2 hh = unpackFloat2x16(q);         // pure bit reinterpret, no convert
++    return float(hh.x + hh.y);                     // one f16 add, one widen
++#else
+     const vec2 h = unpackHalf2x16(q);
+     const float s = h.x + h.y;                     // exact operands; correctly-rounded f32 add
+ #if ESCHA_HW_RTE
+@@ -122,6 +149,7 @@ float escha_F(uint xw) {
+ #else
+     return unpackHalf2x16(f32_to_f16_rte(s)).x;    // value of the f16-rounded sum
+ #endif
++#endif
+ }
+ 
+ // 64-bit funnel shift via two u32s; no shaderInt64

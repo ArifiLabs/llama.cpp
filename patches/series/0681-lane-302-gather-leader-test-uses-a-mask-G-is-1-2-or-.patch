@@ -1,0 +1,47 @@
+From e2ee8583dab69bfcbc6cda167e7d37d23c7f583d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 07:41:59 -0400
+Subject: [PATCH] lane-302: gather leader test uses a mask (G is 1, 2 or 4),
+ comment points at the real pipeline block
+
+No division by a specialization constant in the shader (the AMD driver precedent in
+mul_mat_vec_iq3_s.comp). Exact for the only widths the host accepts.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Lane: lane-302
+(cherry picked from commit 2346a2b0458b9c848cf56c47b28c255243420c8c)
+
+Origin: ArifiLabs (native) - fork-authored (lane-302); no upstream origin exists.
+Measured-effect: UNMEASURED on its own - supporting commit; see release ledger Table 1 W17, the number sits on that win's main commit
+---
+ ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl  | 3 ++-
+ ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp | 2 +-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
+index 05ebf969c0..bbff7e70d7 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl
+@@ -117,7 +117,8 @@ bool gather_setup() {
+             rank++;
+         }
+     }
+-    if ((rank % NUM_COLS) != 0) {
++    // NUM_COLS is 1, 2 or 4 (host-enforced): a mask, never a division by a spec constant (AMD driver, lane-166)
++    if ((rank & (NUM_COLS - 1u)) != 0) {
+         return false;
+     }
+     expert_id = uint(e);
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+index c71d6defd3..aeb6e6dda5 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
+@@ -246,7 +246,7 @@ bool is_legacy_quant(const std::string& type_name) {
+ }
+ 
+ // arifi lane-302: types with a MUL_MAT_ID expert-gather mat-vec (the qwen4exp IQ3_S file's `_exps` set).
+-// Keep in sync with ggml_vk_moe_gather_type() in ggml-vulkan.cpp.
++// Keep in sync with the pipeline_dequant_mul_mat_vec_idg_f32 creation block in ggml-vulkan.cpp.
+ bool is_moe_gather_type(const std::string& type_name) {
+     return type_name == "iq4_nl" || type_name == "iq2_s" || type_name == "iq3_xxs" || type_name == "iq3_s" || type_name == "iq4_xs";
+ }
