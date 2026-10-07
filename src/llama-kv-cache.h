@@ -390,6 +390,19 @@ private:
     // note: this is not part of the KV state and it's only used to speed-up the find_slot() method
     std::vector<uint32_t> v_heads;
 
+    // lane-300 F-141: a freed cell keeps its K/V bytes, and a masked read of them still moves result bits
+    // (signed-zero products). v_dirty[s][i] = cell i may hold non-zero bytes. Before each ubatch, empty dirty
+    // cells inside [0, n_kv) are zeroed, so a cache with history reads exactly like a fresh one.
+    // env LLAMA_ARIFI_KV_ZERO_FREED=0 disables it.
+    std::vector<std::vector<uint8_t>> v_dirty;
+    bool kv_zero_pending = false;
+
+    void zero_cells(uint32_t strm, uint32_t i0, uint32_t i1, std::vector<uint8_t> & zeros) const;
+
+public:
+    void zero_stale_cells(const slot_info & sinfo, uint32_t n_kv);
+
+private:
     // TODO: temporary until we refactor to be able to share the same cells between 2 kv caches [TAG_KV_CACHE_SHARE_CELLS]
     llama_kv_cache * other;
 
