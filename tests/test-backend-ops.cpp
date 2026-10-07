@@ -6792,14 +6792,18 @@ struct test_soft_max : public test_case {
     }
 };
 
-// matmul, then a wide soft_max (ncols > 16384) that writes its partials into the matmul input cache,
-// then a second matmul on the same input whose weight depends on the soft_max (upstream #29591)
+// matmul, then a middle op that writes into the matmul input cache (wide soft_max partials, ncols > 16384,
+// or flash attention mask-opt bits), then a second matmul on the same input (upstream #29591).
+// A strided b forces the input to be staged on every route. The middle op only orders the graph: its
+// values enter as 0*mid, so the quantized copy sees bit-identical input on every backend.
 struct test_mul_mat_prealloc_reuse : public test_case {
     const ggml_type type_a;
+    const bool fa;
     const int64_t m, n, k;
+    const bool b_strided;
 
     std::string vars() override {
-        return VARS_TO_STR4(type_a, m, n, k);
+        return VARS_TO_STR6(type_a, fa, m, n, k, b_strided);
     }
 
     std::string op_desc(ggml_tensor * t) override {
@@ -6811,23 +6815,42 @@ struct test_mul_mat_prealloc_reuse : public test_case {
         return 5e-4;
     }
 
-    test_mul_mat_prealloc_reuse(ggml_type type_a = GGML_TYPE_Q4_0, int64_t m = 64, int64_t n = 32, int64_t k = 256)
-        : type_a(type_a), m(m), n(n), k(k) {}
+    test_mul_mat_prealloc_reuse(ggml_type type_a = GGML_TYPE_Q4_0, bool fa = false, int64_t m = 64, int64_t n = 32, int64_t k = 256,
+            bool b_strided = true)
+        : type_a(type_a), fa(fa), m(m), n(n), k(k), b_strided(b_strided) {}
 
     ggml_tensor * build_graph(ggml_context * ctx) override {
         ggml_tensor * a1 = ggml_new_tensor_2d(ctx, type_a, k, m);
-        ggml_tensor * b  = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, k, n);
-        ggml_tensor * x  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 20000 - m*n);
+        ggml_tensor * bb = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, b_strided ? 2*k : k, n);
+        ggml_tensor * a2f = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, k, m);
         ggml_tensor * a2 = ggml_new_tensor_2d(ctx, type_a, k, m);
         ggml_set_name(a1, "a1");
-        ggml_set_name(b, "b");
-        ggml_set_name(x, "x");
+        ggml_set_name(bb, "bb");
+        ggml_set_name(a2f, "a2f");
+        ggml_tensor * b = b_strided ? ggml_view_2d(ctx, bb, k, n, bb->nb[1], 0) : bb;
 
-        // the soft_max input depends on y1, so no graph reorder can move the first matmul after it
+        // the middle op input depends on y1, so no graph reorder can move the first matmul after it
         ggml_tensor * y1 = ggml_mul_mat(ctx, a1, b);
-        ggml_tensor * s_in = ggml_concat(ctx, ggml_reshape_1d(ctx, y1, m*n), x, 0);
-        ggml_tensor * s  = ggml_scale(ctx, ggml_soft_max(ctx, s_in), 20000.0f);
-        ggml_tensor * w2 = ggml_cpy(ctx, ggml_reshape_2d(ctx, ggml_view_1d(ctx, s, k*m, 0), k, m), a2);
+        ggml_tensor * y1z = ggml_scale(ctx, ggml_reshape_1d(ctx, y1, m*n), 0.0f);
+        ggml_tensor * mid;
+        if (fa) {
+            const int64_t hs = 64, nh = 8, kv = 2048, nb = 32;  // mask 2048 x 32: mask-opt on, sparse off
+            GGML_ASSERT(hs*nh*nb == k*m && hs*nb*nh > m*n);
+            ggml_tensor * xq = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, hs*nb*nh - m*n);
+            ggml_tensor * kc = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, hs, kv, nh);
+            ggml_tensor * vc = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, hs, kv, nh);
+            ggml_tensor * mk = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, kv, nb);
+            ggml_set_name(xq, "xq");
+            ggml_tensor * q = ggml_reshape_3d(ctx, ggml_concat(ctx, y1z, xq, 0), hs, nb, nh);
+            mid = ggml_flash_attn_ext(ctx, q, kc, vc, mk, 1.0f/8.0f, 0.0f, 0.0f);
+            ggml_prec_set_acc(mid, GGML_PREC_F32);
+        } else {
+            ggml_tensor * x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 20000 - m*n);
+            ggml_set_name(x, "x");
+            mid = ggml_soft_max(ctx, ggml_concat(ctx, y1z, x, 0));
+        }
+        ggml_tensor * mz = ggml_scale(ctx, ggml_reshape_2d(ctx, ggml_view_1d(ctx, mid, k*m, 0), k, m), 0.0f);
+        ggml_tensor * w2 = ggml_cpy(ctx, ggml_add(ctx, a2f, mz), a2);
         ggml_tensor * y2 = ggml_mul_mat(ctx, w2, b);
 
         ggml_tensor * out = ggml_add(ctx, y1, y2);
@@ -12096,9 +12119,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {16, 2, 32, 1}, true,  false, GGML_TYPE_F16, {1, 1}, 0.1f, 0.0f));
     test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {16, 2, 32, 1}, false, true,  GGML_TYPE_F32, {1, 1}, 0.1f, 0.0f));
     test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {32, 2, 32, 1}, true,  true,  GGML_TYPE_F32, {1, 1}, 0.1f, 0.0f));
-    for (ggml_type t : {GGML_TYPE_Q4_0, GGML_TYPE_Q8_0}) {
-        for (int64_t n : {1, 32}) {
-            test_cases.emplace_back(new test_mul_mat_prealloc_reuse(t, 64, n, 256));
+    for (ggml_type t : {GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_F16}) {
+        for (bool fa : {false, true}) {
+            test_cases.emplace_back(new test_mul_mat_prealloc_reuse(t, fa, 64, 4,  256, true));
+            test_cases.emplace_back(new test_mul_mat_prealloc_reuse(t, fa, 64, 32, 256, true));
+            test_cases.emplace_back(new test_mul_mat_prealloc_reuse(t, fa, 64, 32, 256, false));
         }
     }
     test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {32, 2, 32, 1}, true,  false, GGML_TYPE_F16, {1, 1}, 0.1f, 0.0f));
