@@ -232,6 +232,25 @@ The two serve lines are the measured cells' command lines (`evidence/b11178-x1i2
 Toolchain, flags and the MinGW runtime step are in [`docs/BUILDING.md`](docs/BUILDING.md). At startup the Vulkan
 backend prints one line for each tuned default it applied on your GPU.
 
+## Test system (Radeon 890M numbers)
+
+Every 890M number on this page was measured on this machine and software stack, read live on 2026-10-07.
+
+| Part | What we run |
+|---|---|
+| Machine | Minisforum AI X1 Pro-470 (board GPBAC 1.0), BIOS 1.01 (2026-04-08, the latest Minisforum lists), performance mode |
+| CPU / GPU | AMD Ryzen AI 9 HX 470, 12 cores / 24 threads; Radeon 890M (RDNA 3.5, gfx1150), integrated |
+| Memory | 96 GB DDR5-5600 (2 x 48 GB, dual channel); 72 GB reserved for the GPU in the BIOS, so Windows sees about 23.6 GB |
+| Storage | three NVMe drives on Windows' native NVMe driver (`nvmedisk.sys`, not the SCSI path): models on a Fanxiang S880 1 TB and a KingSpec XG7000 2 TB (PCIe Gen4 x4), Windows on a Crucial P3 Plus 1 TB. How: [native NVMe guide](docs/arifi/windows-native-nvme/README.md) |
+| Operating system | Windows 11 Pro Insider Preview, Dev channel, build 29680.1000 |
+| GPU driver | AMD Software (Adrenalin) 26.8.1, driver 32.0.31041.1004; Vulkan 1.4.349, AMD driver 2.0.395 (LLPC compiler) |
+| AMD chipset | AMD Chipset Software 8.08.12.551 |
+| Build tools | MinGW-w64 GCC (build of record, [`docs/BUILDING.md`](docs/BUILDING.md)), Vulkan SDK 1.4.357.0. ROCm / HIP SDK is not installed: this fork runs on Vulkan |
+| Windows settings | power plan Balanced (fastest for the integrated GPU in our A/B on the previous machine, a Radeon 780M; not yet re-tested on this one); hypervisor and VBS off; hardware-accelerated GPU scheduling on; Windows Search indexer, SysMain, OneDrive and 12 background scheduled tasks off |
+
+**All numbers here are from Windows.** We have not measured this fork on Linux; the drivers, scheduler and memory
+handling there differ, so Linux numbers on the same machine may differ in either direction.
+
 ## Hardware
 
 - **Measured on:** AMD Radeon 890M (Minisforum AI X1 Pro-470, the tables above marked 890M) and AMD Radeon 780M
