@@ -1786,7 +1786,7 @@ uint32_t llama_kv_cache::get_n_kv(const slot_info & sinfo) const {
 static bool llama_kv_zero_freed() {
     static const bool on = [] {
         const char * e = getenv("LLAMA_ARIFI_KV_ZERO_FREED");
-        return e == nullptr || atoi(e) != 0;
+        return e != nullptr && atoi(e) != 0;
     }();
     return on;
 }
