@@ -23,6 +23,9 @@ Detail beyond the summaries here lives in three places: [`docs/FINDINGS.md`](doc
 its default, and the measurement that chose the default), and
 [`patches/series/MANIFEST.md`](patches/series/MANIFEST.md) (per-patch source and measured effect).
 
+Releases are versioned `v0.1.<release>.<patch>`: the third number counts releases, the fourth counts fix
+releases on top of one. Each release section names its branch and upstream base.
+
 ## Reference hardware
 
 Unless an entry says otherwise, every measurement was taken on:
@@ -30,8 +33,78 @@ Unless an entry says otherwise, every measurement was taken on:
 - **RIG-A** — Beelink SER7, AMD Ryzen (Zen 4) with Radeon 780M integrated graphics (RDNA3,
   gfx1103, 12 CU), 32 GB DDR5-5600 with a 16 GB unified-memory carve-out, Windows 11,
   MinGW/UCRT toolchain, Vulkan backend.
+- **RIG-B** — Minisforum AI X1 Pro-470, AMD Ryzen AI 9 HX 470 with Radeon 890M integrated graphics
+  (RDNA 3.5), 96 GB DDR5-5600 with 72 GB reserved for the GPU, Windows 11, Vulkan backend; the rig of record
+  from 30 September 2026 (v0.1.3.0 onward).
 
 ---
+
+## v0.1.3.0 - 2026-10-07 (branch `b11178-x1i2`, upstream `b11178`)
+
+Measured on the Radeon 890M (Minisforum AI X1 Pro-470). Receipts: [`evidence/b11178-x1i2/`](evidence/b11178-x1i2/).
+
+### Added
+- MTP drafting for Qwen3.8-Flash-Next with an MTP sidecar head (`--spec-type draft-mtp -md <sidecar>`): 10.73 → 16.64
+  t/s short prompt (+55.0%), 10.38 → 15.14 long (+45.8%).
+- A 40,525-token draft vocabulary head for MTP: +4.6% to +8.7% decode over the MTP head, same output ids.
+- Recurrent-state update in place (GDN state bank) on the MTP verify path and in plain decode: MTP decode +9.5%; plain
+  +4.4% short, +3.0% long. On by default; `GGML_VK_DISABLE_GDN_BANK` reverts.
+- One fused dispatch per hyper-connection post step: 288 fewer dispatches per token, +1.2% short / +6.6% long decode.
+  `GGML_VK_DISABLE_HC_POST_W` reverts.
+- Sparse attention at prefill (QSA): 32K-token prompt 105.8 → 194.1 t/s (+83.4%). `GGML_ARIFI_FA_SPARSE_PREFILL=0` reverts.
+- Pooled indexer-key cache for long-context decode: decode at 32K tokens 8.29 → 10.35 t/s (+24.8%).
+  `GGML_ARIFI_QSA_POOL_CACHE=0` reverts.
+- Embedding-row prefetch per prompt chunk (novel 2,000-token prefill +42.9%, decode +6.2%) and release from the
+  Windows working set. `LLAMA_PLE_PREFETCH=0` / `LLAMA_PLE_RELEASE=0` revert.
+- Repeatable greedy decode on Vulkan: masked KV cells are kept out of the coopmat1 flash-attention sum (10 of 10
+  identical runs per prompt). `GGML_VK_FA_DEADV_KEEP=1` restores the old path.
+- MoE expert mat-vec in slot-major order (served decode unchanged, +0.34% mean). `GGML_ARIFI_MOE_GATHER=0` reverts.
+- GLM-5.3 Flash with routed experts streamed from NVMe (`GGML_ARIFI_MOE_NVME=1`): 2.96 t/s decode.
+- Direct-I/O model loading on Windows (`-lm dio`): Qwen3.8-Flash-Next serves at a 0.8–1.6 GB server working set.
+- `llama-quantize` reads its input in slabs on Windows.
+
+### Changed
+- Base moved from upstream `b10825` to `b11178` (with upstream's int8 coopmat1 path).
+- S-X8 v4.3 prompt reading runs on the int8 coopmat1 kernel from 56 columns: 782-token prompt +25.8%.
+  `GGML_ARIFI_SX8_CM1=0` reverts.
+- Prompt images are kept in reusable device snapshots: server peak working set 8.57 → 1.51 GB on a 512-token prompt.
+- The ROCmFP4-FAST q8_1 mat-vec route is on by default (+26.9% drafted on the Radeon 780M).
+  `GGML_ARIFI_ROCMFP4_MMVQ=0` reverts.
+
+### Fixed
+- Loading Qwen3.8-Flash-Next no longer drains Windows memory to the alarm line (whole-file prefetch removed).
+- An MTP checkpoint restore at a position not divisible by 4 no longer writes the wrong ring plane.
+
+## v0.1.2.0 - 2026-10-01 (branch `b10825-r86i-x1`, upstream `b10825`)
+
+Measured on the Radeon 780M (Beelink SER7 Pro).
+
+### Added
+- Vulkan kernels for every fork format (`test-backend-ops` on Vulkan against the CPU reference, 0 failures).
+- Mat-vec kernels tuned for speculative-decoding verify widths 2-8, and the S-X8 v4.3 decode kernels.
+- The ROCmFP4-FAST q8_1 mat-vec route (opt-in in this release): Qwen3.8 27B ROCmFP4-FAST with DFlash2 7.498 → 9.518
+  t/s (+26.9%).
+- Adaptive draft length (`--spec-draft-adaptive`) and the Vulkan MoE expert cache (`--moe-cache`).
+- Placement into the Radeon 890M's GPU reservation (`GGML_VK_UMA_PLACEMENT`).
+
+### Fixed
+- Stable DFlash2 and MTP drafting on Qwen3.8: attaching a drafter no longer corrupts the recurrent state of hybrid
+  models, replayed draft tokens are not re-verified after a checkpoint restore, and a rejected draft checkpoint no
+  longer stops the server.
+
+## v0.1.1.0 - 2026-09-22 (branch `b10825-r73i`, upstream `b10825`)
+
+First public release: a capability release, no speed headline.
+
+### Added
+- A linear patch series on upstream `b10825` that `tools/arifi-sync/arifi_sync.py series check` replays and verifies.
+- Seven tracked sources: PowerInfer SSD expert streaming, PrismML Q2_0_G128 with its VNNI repack, the ROCmFPX
+  formats, TQ3_4S, TurboQuant KV with TQ3_1S / TQ4_1S and their Vulkan kernels, plus three host-transfer expert-prefetch
+  patches.
+
+---
+
+Everything below predates the first public release (v0.1.1.0) and is kept as the development record.
 
 ## On upstream `b10819` (`6a1a922d2`) — 2026-09-05 to 2026-09-06
 

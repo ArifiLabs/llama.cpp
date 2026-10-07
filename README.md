@@ -10,6 +10,9 @@ quant formats that only CUDA or Metal users could run, makes the formats you alr
 MTP speculative decoding stable and repeatable. Built on upstream llama.cpp `b11178`. Work on the fork started in
 July 2026; this is its third published release.
 
+**Version `v0.1.3.0`** (upstream `b11178`) · [Changelog](CHANGELOG.md) · versions are `v0.1.<release>.<patch>`: the
+third number counts releases, the fourth counts fix releases on top of one.
+
 ## Speed: Radeon 890M (Minisforum AI X1 Pro-470)
 
 | Model file | Mode | Draft depth | Drafter | Key server flags | Decode t/s, short / ~600-token prompt | Prompt t/s (~600 tokens) | Decode vs our previous release |
@@ -367,12 +370,12 @@ from NVMe, built on upstream's model code (#27773). Upstream llama.cpp's v0.6.0 
 2 September, `b10819` on 6 September, `b10825` on 7 September and `b11178` on 3 October. Each headline names its
 machine; no number moves between the 780M and the 890M.
 
-| Release | Date | Upstream base | What it added | Headline served number | Receipts |
-|---|---|---|---|---|---|
-| `b10825-r73i` | 2026-09-22 | `b10825` | First public release. A linear patch series that `series check` replays and verifies. Seven tracked sources: PowerInfer SSD expert streaming, PrismML Q2_0_G128 with its VNNI repack, the ROCmFPX formats, TQ3_4S, TurboQuant KV with TQ3_1S / TQ4_1S and their Vulkan kernels, plus three host-transfer prefetch patches | none: a capability release | that branch's `README.md` |
-| `b10825-r86i-x1` | 2026-10-01 | `b10825` | Vulkan kernels for every fork format (`test-backend-ops`, 0 failures), mat-vec kernels for verify widths 2-8, S-X8 kernels, the ROCmFP4-FAST q8_1 route (opt-in), stable DFlash2 and MTP on Qwen3.8, adaptive draft length, the Vulkan MoE expert cache, placement into the 890M's GPU reservation | Radeon 780M: Qwen3.8 27B ROCmFP4-FAST, DFlash2, **9.518 t/s** (from 7.498, +26.9%) | the 780M table above |
-| `x1i` (not published) | 2026-10-03 | `b11178` | The base move to `b11178` with upstream's int8 coopmat1 path, S-X8 prompt reading on int8 coopmat1, prompt images in device snapshots, the ROCmFP4-FAST route on by default | Radeon 890M: Ornith-1.5 35B, DFlash2, **29.51 / 31.23 t/s**; Qwen3.8 27B Q4_K_XL, DFlash2, 10.46 / 10.61 t/s | the comparator arms (`x`) in [`evidence/b11178-x1i2/`](evidence/b11178-x1i2/) `sg-orn-*`, `sg-q27-*` |
-| `b11178-x1i2` | 2026-10-07 | `b11178` | MTP for Qwen3.8-Flash-Next with a 40K draft vocabulary, GDN state bank, fused hyper-connection step, sparse prefill attention and the pooled indexer cache, embedding-row prefetch and release, repeatable greedy decode, slot-major MoE mat-vec, GLM-5.3 Flash NVMe streaming, Windows direct-I/O load, quantize slab reads | Radeon 890M: Ornith-1.5 35B, MTP, **34.07 / 35.01 t/s**; Qwen3.8-Flash-Next, MTP + 40K vocabulary, 20.24 / 19.45; Qwen3.8 27B Q4_K_XL, DFlash2, 12.09 / 11.55 | [`evidence/b11178-x1i2/`](evidence/b11178-x1i2/) |
+| Version | Release | Date | Upstream base | What it added | Headline served number | Receipts |
+|---|---|---|---|---|---|---|
+| `v0.1.1.0` | `b10825-r73i` | 2026-09-22 | `b10825` | First public release. A linear patch series that `series check` replays and verifies. Seven tracked sources: PowerInfer SSD expert streaming, PrismML Q2_0_G128 with its VNNI repack, the ROCmFPX formats, TQ3_4S, TurboQuant KV with TQ3_1S / TQ4_1S and their Vulkan kernels, plus three host-transfer prefetch patches | none: a capability release | that branch's `README.md` |
+| `v0.1.2.0` | `b10825-r86i-x1` | 2026-10-01 | `b10825` | Vulkan kernels for every fork format (`test-backend-ops`, 0 failures), mat-vec kernels for verify widths 2-8, S-X8 kernels, the ROCmFP4-FAST q8_1 route (opt-in), stable DFlash2 and MTP on Qwen3.8, adaptive draft length, the Vulkan MoE expert cache, placement into the 890M's GPU reservation | Radeon 780M: Qwen3.8 27B ROCmFP4-FAST, DFlash2, **9.518 t/s** (from 7.498, +26.9%) | the 780M table above |
+| - | `x1i` (not published) | 2026-10-03 | `b11178` | The base move to `b11178` with upstream's int8 coopmat1 path, S-X8 prompt reading on int8 coopmat1, prompt images in device snapshots, the ROCmFP4-FAST route on by default | Radeon 890M: Ornith-1.5 35B, DFlash2, **29.51 / 31.23 t/s**; Qwen3.8 27B Q4_K_XL, DFlash2, 10.46 / 10.61 t/s | the comparator arms (`x`) in [`evidence/b11178-x1i2/`](evidence/b11178-x1i2/) `sg-orn-*`, `sg-q27-*` |
+| `v0.1.3.0` | `b11178-x1i2` | 2026-10-07 | `b11178` | MTP for Qwen3.8-Flash-Next with a 40K draft vocabulary, GDN state bank, fused hyper-connection step, sparse prefill attention and the pooled indexer cache, embedding-row prefetch and release, repeatable greedy decode, slot-major MoE mat-vec, GLM-5.3 Flash NVMe streaming, Windows direct-I/O load, quantize slab reads | Radeon 890M: Ornith-1.5 35B, MTP, **34.07 / 35.01 t/s**; Qwen3.8-Flash-Next, MTP + 40K vocabulary, 20.24 / 19.45; Qwen3.8 27B Q4_K_XL, DFlash2, 12.09 / 11.55 | [`evidence/b11178-x1i2/`](evidence/b11178-x1i2/) |
 
 On the 890M, from `x1i` to this release: Qwen3.8 27B Q4_K_XL with DFlash2 rose 15.5% (short prompt) and 8.7% (long),
 and Ornith-1.5 35B rose from 29.51 / 31.23 t/s (DFlash2) to 34.07 / 35.01 t/s (MTP). Short / long = a ~12-token and
