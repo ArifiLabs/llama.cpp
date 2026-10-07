@@ -119,6 +119,18 @@ bool gather_setup() {
     const uint s = gather_linear() % gl_NumWorkGroups.y;
     const uint ts = s / p.nei0;
     const int e = data_ids[(s - ts * p.nei0) + ts * p.nbi1];
+    // width 1: every slot leads its own column, so skip the rank scan (cellW-10071710 RGP: 25 serial
+    // iterations per wave, 10.8% of iq4_nl wave cost; the driver keeps the dead loop). Same offsets as below.
+    if (NUM_COLS == 1u) {
+        if (s >= p.expert_i1 * p.nei0) {
+            return false;
+        }
+        expert_id = uint(e);
+        gcol_b[0] = ((s - ts * p.nei0) % p.ne11) * p.stride_b + ts * p.batch_stride_b;
+        gcol_d[0] = (s - ts * p.nei0) * p.stride_d + ts * p.batch_stride_d;
+        gcols = 1;
+        return true;
+    }
     uint rank = 0;
     for (uint s2 = 0; s2 < s; ++s2) {
         const uint t2 = s2 / p.nei0;
