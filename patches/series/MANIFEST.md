@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **745**, all non-merge, applied in filename order.
+- Patches: **748**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 745 commit messages, same provenance trailers. Verified, not
+same file contents, same 748 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -824,6 +824,9 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 743 | `0743-github-drop-the-third-party-FUNDING.yml-that-arrived.patch` | arifi-fork-base | `f8d9999ee` | - | - | github: drop the third-party FUNDING.yml that arrived with the turboquant import |
 | 744 | `0744-release-carry-the-published-documents-to-R86i-NOTICE.patch` | arifi-fork-base | `5c0d91b03` | - | `GGML_ARIFI_VNNI_REPACK`, `GGML_RECURRENT_STATE_F16`, `POWERINFER_IOCP`, `MAX_N_CACHED` | release: carry the published documents to R86i - NOTICE, licences, curated evidence, README, notes, stranger-run DLL step |
 | 745 | `0745-release-README-STATUS-and-release-notes-for-b11178-x.patch` | arifi-fork-base | `5cce5b16d` | - | `LLAMA_USE_PREBUILT_UI`, `GGML_ARIFI_VNNI_REPACK`, `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE`, `MAX_N_CACHED` | release: README, STATUS and release notes for b11178-x1i2, with the speed-test receipts |
+| 746 | `0746-docs-README-adds-how-we-run-each-model-where-each-im.patch` | arifi-fork-base | `1d2dc3860` | - | `GGML_RECURRENT_STATE_F16`, `LANE110_PROF` | docs: README adds how we run each model, where each improvement lives, and the fork's history |
+| 747 | `0747-docs-README-notes-GLM-5.3-Flash-served-on-the-890M-b.patch` | arifi-fork-base | `684ec4be8` | - | - | docs: README notes GLM-5.3 Flash served on the 890M before upstream v0.6.0 |
+| 748 | `0748-docs-README-dates-when-each-model-ran-here.patch` | arifi-fork-base | `86a48c6ef` | - | - | docs: README dates when each model ran here |
 
 ## Measured effect, per patch
 
@@ -1648,6 +1651,9 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0743-github-drop-the-third-party-FUNDING.yml-that-arrived.patch` | UNMEASURED - repository metadata only; no code path is touched. |
 | `0744-release-carry-the-published-documents-to-R86i-NOTICE.patch` | UNMEASURED - documents, licence texts and receipts only; no code path is touched. |
 | `0745-release-README-STATUS-and-release-notes-for-b11178-x.patch` | UNMEASURED - documents and receipts only; no code path is touched. |
+| `0746-docs-README-adds-how-we-run-each-model-where-each-im.patch` | UNMEASURED - documents only; no code path is touched. |
+| `0747-docs-README-notes-GLM-5.3-Flash-served-on-the-890M-b.patch` | UNMEASURED - documents only; no code path is touched. |
+| `0748-docs-README-dates-when-each-model-ran-here.patch` | UNMEASURED - documents only; no code path is touched. |
 
 ## Unclassified
 

@@ -1,0 +1,209 @@
+From 1d2dc38604a976faf6944de27d3a4e2232bd361c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 04:28:01 -0400
+Subject: [PATCH] docs: README adds how we run each model, where each
+ improvement lives, and the fork's history
+
+README.md gains three sections: "How we run it" (every 890M row with the exact server flags of the measured arm, draft depth and drafter file, plus the GLM environment), "Where each improvement lives" (one row per improvement by layer, linked to the source), and "History" (fork start 2026-07-22, the two machines, every release with its headline served number). Every new number and date is traced in the release lane's README-v2-NOTES.md.
+
+Origin: ArifiLabs (native) - release documentation for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ README.md | 128 ++++++++++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 119 insertions(+), 9 deletions(-)
+
+diff --git a/README.md b/README.md
+index 82be5bd38e..c856bb55b2 100644
+--- a/README.md
++++ b/README.md
+@@ -7,7 +7,8 @@
+ 
+ A llama.cpp fork built for AMD integrated GPUs. It runs MTP drafting on Qwen3.8-Flash-Next, gives Vulkan kernels to
+ quant formats that only CUDA or Metal users could run, makes the formats you already use faster, and keeps DFlash2 and
+-MTP speculative decoding stable and repeatable. Built on upstream llama.cpp `b11178`.
++MTP speculative decoding stable and repeatable. Built on upstream llama.cpp `b11178`. Work on the fork started in
++July 2026; this is its third published release.
+ 
+ ## Speed: Radeon 890M (Minisforum AI X1 Pro-470)
+ 
+@@ -43,6 +44,38 @@ on every row. Percent = (this ÷ previous - 1) × 100 on the shown means, cut to
+ Ryzen AI 9 HX 470, Radeon 890M, 96 GB DDR5-5600, 72 GB reserved for the GPU, Windows 11. Decode = 128 greedy tokens
+ after a ~12-token and a ~600-token prompt.
+ 
++## How we run it (Radeon 890M)
++
++Every row of the 890M table above, with the exact server flags of the arm that produced it. Each line starts with
++`llama-server -m <model file>`; port, host and CPU-thread flags (`-t`, `-tb`) are left out. "Draft depth" is
++`--spec-draft-n-max`: the most tokens the drafter proposes per step.
++
++| Model file | Mode | Draft depth | Drafter file | Server flags | Decode t/s, short / long |
++|---|---|---|---|---|---|
++| `Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf` (ISTA-DASLab) | plain (A/B arm) ⁴ | none | none | `-ngl 999 -np 1 -fa on --lazy-mode on -c 2048 -lm mmap` | 12.01 / 11.89 |
++| same | plain (in-cell arm for the MTP rows) | none | none | `-ngl 999 -np 1 -fa on --lazy-mode on -c 4096 -lm dio` | 11.89 / 11.77 |
++| same | MTP | 3 | `mtp-sidecar-qwen4exp-q8_0.gguf` (MTP sidecar) | `-ngl 999 -np 1 -fa on --lazy-mode on -c 4096 -lm dio -md mtp-sidecar-qwen4exp-q8_0.gguf -ngld 999 --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | 19.68 / 17.70 |
++| same | MTP + 40K draft vocabulary | 3 | `mtp-sidecar-qwen4exp-q8_0-dven40k.gguf` | `-ngl 999 -np 1 -fa on --lazy-mode on -c 4096 -lm dio -md mtp-sidecar-qwen4exp-q8_0-dven40k.gguf -ngld 999 --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | **20.24 / 19.45** |
++| `Ornith-1.5-35B-Q4_K_M.gguf` (ornith-ai) | plain | none | none | `-ngl 999 -np 1 -fa on -c 4096 -ub 512 -b 2048 -lm dio --lazy-mode on` | 29.33 / 28.98 |
++| same | MTP | 3 | none: the head is in the model file | `-ngl 999 -np 1 -fa on -c 4096 -ub 512 -b 2048 -lm dio --lazy-mode on --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | **34.07 / 35.01** |
++| same | DFlash2 | 2 | `Ornith-1.5-35B-A3B-DFlash2-BF16.gguf` (jzinno) | `-ngl 999 -np 1 -fa on -c 4096 -ub 512 -b 2048 -lm dio --lazy-mode on -md Ornith-1.5-35B-A3B-DFlash2-BF16.gguf -ngld 999 --spec-type draft-dflash --spec-draft-n-max 2 --dflash-defer-injection 0` | 32.07 / 33.60 |
++| `Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf` (huihui-ai) | plain | none | none | `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1 --ctx-checkpoints 32 --ctx-checkpoints-device off --ctx-checkpoints-toolcall on` | 4.57 / 4.60 |
++| same | MTP | 3 | none: the head is in the model file | `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1 --ctx-checkpoints 32 --ctx-checkpoints-device off --ctx-checkpoints-toolcall on --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.5` | 10.08 / 9.84 |
++| same | DFlash2 | 3 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (incoai) | `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1 --ctx-checkpoints 32 --ctx-checkpoints-device off --ctx-checkpoints-toolcall on --spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 3` | **12.09 / 11.55** |
++| `Qwen3.8-27B-SX8v43-id57.gguf` (MarlaLabs, retagged to type 57) | plain | none | none | `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1` | 2.94 / 2.96 |
++| same | DFlash2 | 4 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (incoai) | `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1 --spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 4` | 8.89 / 8.29 |
++| `GLM-5.3-Flash-GSQ-RCO-3.0bit.gguf` (pfeifferj) | DFlash2, experts streamed from NVMe ⁵ | 2 | `GLM-5.3-Flash-DFlash2-Q8_0.gguf` (Anbeeld) | `-dev Vulkan0 -ngl 999 --no-host --no-op-offload --no-warmup -fit off -lm mmap -fa off -c 2048 -b 8 -ub 8 -np 1 --moe-cache 1536 -md GLM-5.3-Flash-DFlash2-Q8_0.gguf -devd Vulkan0 -ngld 99 --spec-type draft-dflash --spec-draft-n-max 2` | 2.96 (chat) |
++
++⁴ In the A/B arms the test harness held the server's Windows working set to 4.29 GB. That is a job limit set
++outside the server, not a server flag. ⁵ The GLM line also needs these environment variables:
++`GGML_ARIFI_MOE_NVME=1 GGML_ARIFI_MOE_NVME_CACHE_MIB=1536 GGML_ARIFI_MOE_NVME_IO_LANES=8 GGML_ARIFI_MOE_NVME_BATCH_READ=1
++GGML_ARIFI_MOE_NVME_RESIDENT_MIB=61440 GGML_ARIFI_MOE_NVME_POLICY=heat GGML_ARIFI_MOE_DECODE_MAX_TOKENS=3
++GGML_ARIFI_VK_MOE_CACHE=v1 GGML_ARIFI_VK_MOE_MV=coop GGML_ARIFI_VK_MOE_MV_MULTI=0 GGML_ARIFI_VK_SHARED_BUDGET_MIB=1024
++POWERINFER_NO_BUFFERING=1 GGML_SCHED_PREFETCH_EXPERTS=0`, and `GGML_ARIFI_MOE_NVME_REPLICAS` names a list of two
++identical copies of the model file on two drives. Each server line is copied from the measured cell's own record:
++[`evidence/b11178-x1i2/`](evidence/b11178-x1i2/) `sg-*-state.json` (field `args`). The GLM cell's command record is not
++in this repository; its result is [`glm-shipgate-VERDICT.txt`](evidence/b11178-x1i2/glm-shipgate-VERDICT.txt).
++
+ ## Speed: Radeon 780M (Beelink SER7 Pro), Qwen3.8 27B
+ 
+ | 27B model file | Plain decode, t/s: before → after | DFlash2 decode, t/s: before → after |
+@@ -124,13 +157,15 @@ build-vulkan\bin\llama-server.exe -m Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-0
+ # Qwen3.8 27B with DFlash2 drafting
+ build-vulkan\bin\llama-server.exe -m Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf -dev Vulkan0 -ngl 999 -fa on `
+   -c 8192 -b 1024 -ub 512 -ctk q8_0 -ctv q8_0 --parallel 1 `
++  --ctx-checkpoints 32 --ctx-checkpoints-device off --ctx-checkpoints-toolcall on `
+   --spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 3
+ ```
+ 
+ The two serve lines are the measured cells' command lines (`evidence/b11178-x1i2/sg-fn-*-state.json`,
+-`sg-q27-*-state.json`; port, host, thread and context-checkpoint flags left out). The 27B drafter is incoai's `Qwen3.8-27B-DFlash2-GGUF`
+-(Q4_K_M). Toolchain, flags and the MinGW runtime step are in [`docs/BUILDING.md`](docs/BUILDING.md). At startup the
+-Vulkan backend prints one line for each tuned default it applied on your GPU.
++`sg-q27-*-state.json`; port, host and thread flags left out). Every other model and mode is in
++[How we run it](#how-we-run-it-radeon-890m). The 27B drafter is incoai's `Qwen3.8-27B-DFlash2-GGUF` (Q4_K_M).
++Toolchain, flags and the MinGW runtime step are in [`docs/BUILDING.md`](docs/BUILDING.md). At startup the Vulkan
++backend prints one line for each tuned default it applied on your GPU.
+ 
+ ## Hardware
+ 
+@@ -147,7 +182,7 @@ Vulkan backend prints one line for each tuned default it applied on your GPU.
+ ### Quant formats with GPU kernels
+ 
+ Every format below has Vulkan shaders in this tree. The weight formats pass `test-backend-ops` on the
+-GPU against the CPU reference, with 0 failures.
++Vulkan backend against the CPU reference, with 0 failures.
+ 
+ | Format | Format author | Vulkan | CPU | CUDA | Metal |
+ |---|---|---|---|---|---|
+@@ -162,6 +197,9 @@ GPU against the CPU reference, with 0 failures.
+ 
+ ² Carried from the format author's tree; we build and test on Vulkan and CPU.
+ 
++One more KV cache format runs on the CPU only: **TBQ3_0 and TBQ4_0** (types 58/59, from jtrefon's
++llama.cpp-turboq-mtp). A `tbq3_0` V cache is refused unless `LLAMA_ALLOW_TBQ3_KV=1` is set.
++
+ ### Faster kernels for formats you already use
+ 
+ Speculative decoding verifies several tokens per step, so mat-vec speed at widths 2-8 decides drafted
+@@ -192,18 +230,90 @@ upstream path.
+ - **Repeatable greedy decode on Vulkan:** masked KV cells no longer reach the coopmat1 flash-attention sum, so the same
+   prompt gives the same output request after request.
+ - **Adaptive draft length:** `--spec-draft-adaptive` sizes each draft from the measured acceptance.
++- **Draft recent-token penalty:** MTP drafting de-weights its most recent tokens (on by default;
++  `LLAMA_SPEC_DRAFT_RECENT_PENALTY=0:0` turns it off).
++- **DFlash2 options:** `--dflash-defer-injection` and the fused encoder-injection switch (`LLAMA_DFLASH_FUSED_INJECT`).
++- **Context checkpoints:** `--ctx-checkpoints-device` keeps the checkpoint ring in the GPU reservation with pooled
++  recurrent-state slots, and `--ctx-checkpoints-toolcall` anchors a checkpoint at each tool call.
+ - **GLM-5.3 Flash with NVMe expert streaming** (`GGML_ARIFI_MOE_NVME=1`): routed experts are read from the drive.
+ - **Bigger-than-RAM MoE:** PowerInfer expert streaming from SSD (`EXPERT_BUNDLE_PATH`) runs a 35B MoE
+   model (Qwen3.6-35B-A3B) with its experts read from an on-disk bundle.
+-- **MoE expert cache on Vulkan:** `--moe-cache` keeps recently used experts on the GPU when the routed
++- **MoE expert cache on Vulkan:** `--moe-cache` keeps recently used experts in the GPU reservation when the routed
+   experts stay in host memory, with a dedicated Vulkan shader and heat-protected eviction. It is the
+   ggml-backend provider from TheTom's turboquant tree. See [`docs/backend/MOE-CACHE.md`](docs/backend/MOE-CACHE.md).
+ - **Placement into the GPU reservation** on the Radeon 890M (`GGML_VK_UMA_PLACEMENT`), plus a
+   per-heap allocator that serves 27B drafted lines which used to fail at load.
++- **K-cache mean-centering** for `q4_0` K caches: opt-in at build time (`-DGGML_ARIFI_KV_MEANCENTER=ON`), then
++  `--kv-mean-center`. See [`docs/kv-mean-center.md`](docs/kv-mean-center.md).
++
++## Where each improvement lives
++
++One row per improvement, by the layer it changes. Paths are in this repository.
++
++| Layer | Improvement | Where |
++|---|---|---|
++| Type | S-X8 v4.3 (type 57): CPU decoder, Vulkan kernels, packed prefill tile, int8 coopmat1 prompt path | [`dequant_sx8.comp`](ggml/src/ggml-vulkan/vulkan-shaders/dequant_sx8.comp), [`mul_mat_vec_sx8.comp`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_sx8.comp), [`mul_mm_funcs.glsl`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mm_funcs.glsl), [`ggml-cpu/quants.c`](ggml/src/ggml-cpu/quants.c) |
++| Type | ROCmFP4, ROCmFP4-FAST, ROCmFPX FP2/FP3/FP6/FP8 | [`ggml/rocmfp4/`](ggml/rocmfp4/), [`ggml/rocmfpx/`](ggml/rocmfpx/), [`dequant_rocmfp4_fast.comp`](ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfp4_fast.comp), [`dequant_rocmfpx_fp8.comp`](ggml/src/ggml-vulkan/vulkan-shaders/dequant_rocmfpx_fp8.comp) and siblings |
++| Type | TQ3_1S, TQ4_1S, TQ3_4S weights (Vulkan, CPU, CUDA, Metal) | [`mul_mat_vec_tq_sg.comp`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_tq_sg.comp), [`tq_rotate_act.comp`](ggml/src/ggml-vulkan/vulkan-shaders/tq_rotate_act.comp), [`ggml-arifi-turbo-weights.c`](ggml/src/ggml-arifi-turbo-weights.c), [`tq3-native.cu`](ggml/src/ggml-cuda/tq3-native.cu), [`ggml-metal.metal`](ggml/src/ggml-metal/ggml-metal.metal) |
++| Type | TurboQuant KV cache (turbo2/3/4) | [`dequant_turbo3_0.comp`](ggml/src/ggml-vulkan/vulkan-shaders/dequant_turbo3_0.comp), [`turbo_wht.comp`](ggml/src/ggml-vulkan/vulkan-shaders/turbo_wht.comp) |
++| Type | TBQ3_0 / TBQ4_0 KV cache (types 58/59, CPU) | [`ggml-tbq-quant.c`](ggml/src/ggml-tbq-quant.c), [`ggml-cpu/ops.cpp`](ggml/src/ggml-cpu/ops.cpp) |
++| Type | Q2_0_G128 ternary (type 43) and its CPU VNNI repack | [`dequant_q2_0_g128.comp`](ggml/src/ggml-vulkan/vulkan-shaders/dequant_q2_0_g128.comp), [`arch/x86/repack.cpp`](ggml/src/ggml-cpu/arch/x86/repack.cpp) |
++| Type | Escha-W2 (types 55/56), fused `GGML_OP_ESCHA_MM` | [`escha_mm.comp`](ggml/src/ggml-vulkan/vulkan-shaders/escha_mm.comp), [`ggml-cpu/ops.cpp`](ggml/src/ggml-cpu/ops.cpp) |
++| Kernel | IQ4_XS 16-thread mat-vec (upstream's kept as a switch) and its q8_1 MMVQ admit | [`mul_mat_vec_iq4_xs.comp`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs.comp), [`mul_mat_vec_iq4_xs_up.comp`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq4_xs_up.comp) |
++| Kernel | IQ3_S / IQ3_XXS: 16 threads per superblock, sign hoist, width-6 and width-7 row counts | [`mul_mat_vec_iq3_s.comp`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp), [`mul_mat_vec_iq3_xxs.comp`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_xxs.comp) |
++| Kernel | Q5_K activation hoist, Q6_K direct scales and x-fold | [`mul_mat_vec_q5_k.comp`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q5_k.comp), [`mul_mat_vec_q6_k.comp`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_q6_k.comp) |
++| Kernel | q8_1 MMVQ: A-side hoist, Q4_K width-5 split, Q5_K / Q6_K / ROCmFP4-FAST routes, admit width and wide rows | [`mul_mat_vecq.comp`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq.comp), [`mul_mat_vecq_funcs.glsl`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vecq_funcs.glsl) |
++| Kernel | MoE expert mat-vec in slot-major order, IQ3_S two rows, IQ2_S packed signs | [`mul_mat_vec_base.glsl`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl), [`mul_mat_vec_iq2_s.comp`](ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp) |
++| Kernel | Recurrent-state update in place (GDN state bank) | [`gated_delta_net.comp`](ggml/src/ggml-vulkan/vulkan-shaders/gated_delta_net.comp), [`ggml-vulkan.cpp`](ggml/src/ggml-vulkan/ggml-vulkan.cpp) |
++| Kernel | Tiled concat-transpose for the delta-net conv state | [`concat_transpose.comp`](ggml/src/ggml-vulkan/vulkan-shaders/concat_transpose.comp) |
++| Kernel | Fused hyper-connection post step, sparse attention at prefill, masked-KV fix in coopmat1 flash attention, coopmat1 width rule and f16 staging, flash-attention dequant-KV switch, MoE mat-vec rows switch | [`ggml-vulkan.cpp`](ggml/src/ggml-vulkan/ggml-vulkan.cpp) |
++| Memory | Placement into the GPU reservation, per-heap allocator, host-split memory type, UMA read path | [`ggml-vulkan.cpp`](ggml/src/ggml-vulkan/ggml-vulkan.cpp), [`ggml-vulkan-buffers.cpp`](ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp) |
++| Model graph | Embedding-row prefetch and release, MTP sidecar head and 40K draft vocabulary, Flash-Next layout copies | [`src/models/qwen4exp.cpp`](src/models/qwen4exp.cpp) |
++| Memory | Pooled indexer-key cache for long-context decode | [`llama-memory-hybrid-idx.cpp`](src/llama-memory-hybrid-idx.cpp) |
++| Memory | f16 recurrent state (`GGML_RECURRENT_STATE_F16=1`), KV n-gram index switch | [`llama-model.cpp`](src/llama-model.cpp), [`llama-kv-cache.cpp`](src/llama-kv-cache.cpp) |
++| MoE | Expert cache with heat-protected eviction (`--moe-cache`) | [`ggml-backend-moe-cache.h`](ggml/src/ggml-backend-moe-cache.h), [`ggml-vulkan-moe-cache.cpp`](ggml/src/ggml-vulkan/ggml-vulkan-moe-cache.cpp), [`moe_cache_mv.comp`](ggml/src/ggml-vulkan/vulkan-shaders/moe_cache_mv.comp) |
++| MoE | GLM-5.3 Flash NVMe expert streaming | [`llama-moe-disk.h`](src/llama-moe-disk.h), [`ggml-vulkan-moe-cache.cpp`](ggml/src/ggml-vulkan/ggml-vulkan-moe-cache.cpp), [`ggml-backend.cpp`](ggml/src/ggml-backend.cpp) |
++| MoE | PowerInfer SSD expert streaming, bundle writer, pipeline reuse, Windows port; host-transfer expert prefetch | [`llama-graph.cpp`](src/llama-graph.cpp), [`llama-model.cpp`](src/llama-model.cpp), [`ggml-cpu/repack.cpp`](ggml/src/ggml-cpu/repack.cpp), [`ggml-backend.cpp`](ggml/src/ggml-backend.cpp) |
++| Loader | Direct-I/O load on Windows (`-lm dio`) | [`llama-mmap.cpp`](src/llama-mmap.cpp) |
++| Loader | S-X8 PCA companion correction | [`llama-model-loader.cpp`](src/llama-model-loader.cpp), [`tools/sx8/`](tools/sx8/) |
++| Loader | llama-quantize slab reads on Windows | [`llama-quant.cpp`](src/llama-quant.cpp) |
++| Server | Adaptive draft length, draft recent-token penalty, DFlash2 fused-inject switch | [`common/speculative.cpp`](common/speculative.cpp) |
++| Server | `--dflash-defer-injection`, `--spec-draft-adaptive`, `--moe-cache` flags | [`common/arg.cpp`](common/arg.cpp) |
++| Server | Device context-checkpoint ring and tool-call anchor | [`server-context.cpp`](tools/server/server-context.cpp) |
++| Tools | GGUF retag tools, K-cache mean-centering, op and determinism probes, patch-series tooling | [`tools/gguf-retag-sx8/`](tools/gguf-retag-sx8/), [`tools/gguf-retag-tq3/`](tools/gguf-retag-tq3/), [`tools/gguf-retag-g128/`](tools/gguf-retag-g128/), [`tools/kv-mean-center/`](tools/kv-mean-center/), [`tools/arifi-op-probe/`](tools/arifi-op-probe/), [`tools/arifi-sync/`](tools/arifi-sync/) |
++| Diagnostics | Per-op profiling (`LANE110_PROF`), expert prefetch cap, mat-vec traces and row overrides (`GGML_ARIFI_G128_MMV_ROWS`, `GGML_ARIFI_Q6K_XFOLD`, `GGML_ARIFI_MMVQ_TRACE`), staging and host-split limits | [`llama-context.cpp`](src/llama-context.cpp), [`llama-graph.cpp`](src/llama-graph.cpp), [`ggml-vulkan.cpp`](ggml/src/ggml-vulkan/ggml-vulkan.cpp), [`ggml-vulkan-buffers.cpp`](ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp); all switches in [`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.md) |
++| Build | CI that compiles CUDA, Metal, SYCL and Vulkan with the fork's formats on | [`arifi-backends-matrix.yml`](.github/workflows/arifi-backends-matrix.yml) |
++
++## History
++
++**The fork started in July 2026.** Its first commit, which sets up its identity and notices, is dated 22 July 2026.
++Release `b11178-x1i2` carries 828 fork commits on top of upstream `b11178`.
++
++**Two machines.** Both are mini-PCs with an integrated GPU on one RAM pool.
++
++| Machine | GPU | Memory | In use |
++|---|---|---|---|
++| Beelink SER7 Pro (Ryzen 7 7840HS) | Radeon 780M (RDNA3) | DDR5-5600, 16 GB reserved for the GPU | until 30 September 2026 |
++| Minisforum AI X1 Pro-470 (Ryzen AI 9 HX 470) | Radeon 890M (RDNA 3.5) | 96 GB DDR5-5600, 72 GB reserved for the GPU | from 30 September 2026 |
++
++**Releases.** The fork follows upstream: its served build moved to upstream `b10524` on 20 August, `b10680` by
++2 September, `b10819` on 6 September, `b10825` on 7 September and `b11178` on 3 October. Each headline names its
++machine; no number moves between the 780M and the 890M.
++
++| Release | Date | Upstream base | What it added | Headline served number | Receipts |
++|---|---|---|---|---|---|
++| `b10825-r73i` | 2026-09-22 | `b10825` | First public release. A linear patch series that `series check` replays and verifies. Seven tracked sources: PowerInfer SSD expert streaming, PrismML Q2_0_G128 with its VNNI repack, the ROCmFPX formats, TQ3_4S, TurboQuant KV with TQ3_1S / TQ4_1S and their Vulkan kernels, plus three host-transfer prefetch patches | none: a capability release | that branch's `README.md` |
++| `b10825-r86i-x1` | 2026-10-01 | `b10825` | Vulkan kernels for every fork format (`test-backend-ops`, 0 failures), mat-vec kernels for verify widths 2-8, S-X8 kernels, the ROCmFP4-FAST q8_1 route (opt-in), stable DFlash2 and MTP on Qwen3.8, adaptive draft length, the Vulkan MoE expert cache, placement into the 890M's GPU reservation | Radeon 780M: Qwen3.8 27B ROCmFP4-FAST, DFlash2, **9.518 t/s** (from 7.498, +26.9%) | the 780M table above |
++| `x1i` (not published) | 2026-10-03 | `b11178` | The base move to `b11178` with upstream's int8 coopmat1 path, S-X8 prompt reading on int8 coopmat1, prompt images in device snapshots, the ROCmFP4-FAST route on by default | Radeon 890M: Ornith-1.5 35B, DFlash2, **29.51 / 31.23 t/s**; Qwen3.8 27B Q4_K_XL, DFlash2, 10.46 / 10.61 t/s | the comparator arms (`x`) in [`evidence/b11178-x1i2/`](evidence/b11178-x1i2/) `sg-orn-*`, `sg-q27-*` |
++| `b11178-x1i2` | 2026-10-07 | `b11178` | MTP for Qwen3.8-Flash-Next with a 40K draft vocabulary, GDN state bank, fused hyper-connection step, sparse prefill attention and the pooled indexer cache, embedding-row prefetch and release, repeatable greedy decode, slot-major MoE mat-vec, GLM-5.3 Flash NVMe streaming, Windows direct-I/O load, quantize slab reads | Radeon 890M: Ornith-1.5 35B, MTP, **34.07 / 35.01 t/s**; Qwen3.8-Flash-Next, MTP + 40K vocabulary, 20.24 / 19.45; Qwen3.8 27B Q4_K_XL, DFlash2, 12.09 / 11.55 | [`evidence/b11178-x1i2/`](evidence/b11178-x1i2/) |
++
++On the 890M, from `x1i` to this release: Qwen3.8 27B Q4_K_XL with DFlash2 rose 15.5% (short prompt) and 8.7% (long),
++and Ornith-1.5 35B rose from 29.51 / 31.23 t/s (DFlash2) to 34.07 / 35.01 t/s (MTP). Short / long = a ~12-token and
++a ~600-token prompt, means of 4 rounds (8 for MTP).
+ 
+ ## For format authors and researchers
+ 
+-You were sent this link because your format runs here on the GPU. Find your format below.
++You were sent this link because your format runs here with Vulkan kernels. Find your format below.
+ 
+ **S-X8 v4.3 (MarlaLabs).** Vulkan: `dequant_sx8.comp`, `mul_mat_vec_sx8.comp`, a q8_1 MMVQ path, a
+ packed cooperative-matrix tile for prefill, and (new) prompt reading on the int8 coopmat1 kernel from 56 columns.
+@@ -254,8 +364,8 @@ switch and its default is in [`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.
+ - **A linear patch series** on upstream `b11178` (`f9af9be219ca647a59106f6201bf0d85fab00224`), zero merge commits.
+   `python tools/arifi-sync/arifi_sync.py series check` regenerates it, replays it with `git am` and compares the result
+   with this tree.
+-- **Runtime switches.** Each tuned default has an environment switch that restores the old path, listed in
+-  [`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.md).
++- **Runtime switches.** Each tuned default has an environment switch that restores the old path. The tables on this
++  page name each one; [`docs/OPTIONS-REGISTRY.md`](docs/OPTIONS-REGISTRY.md) holds the earlier ones with their evidence.
+ - **Protected wins.** [`tools/arifi-sync/protected-wins.json`](tools/arifi-sync/protected-wins.json) names the code that
+   61 measured wins depend on, and `protected-win validate` flags an upstream bump that drops one. It passes at this
+   tip.
