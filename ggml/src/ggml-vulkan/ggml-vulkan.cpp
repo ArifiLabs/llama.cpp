@@ -4346,6 +4346,14 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         }
     }
 
+    // lane-301 lever 4: QSA mask chain read from the top_k indices (16 KiB row bitmap + 1 KiB scan, 256 threads)
+    if (device->properties.limits.maxComputeSharedMemorySize >= 4096 * 4 + 256 * 4 &&
+        device->properties.limits.maxComputeWorkGroupInvocations >= 256 &&
+        device->properties.limits.maxComputeWorkGroupSize[0] >= 256) {
+        ggml_vk_create_pipeline(device, device->pipeline_fa_qsa_mask_compact, "fa_qsa_mask_compact", fa_qsa_mask_compact_len, fa_qsa_mask_compact_data, "main", 3, sizeof(vk_op_flash_attn_qsa_mask_push_constants), {1, 1, 1}, {256}, 1, true);
+        ggml_vk_create_pipeline(device, device->pipeline_fa_qsa_mask_dense, "fa_qsa_mask_dense", fa_qsa_mask_dense_len, fa_qsa_mask_dense_data, "main", 3, sizeof(vk_op_flash_attn_qsa_mask_push_constants), {1, 1, 1}, {256}, 1, true);
+    }
+
     // arifi lane-296 night R2: GGML_ARIFI_Q8_1_SCALE=f16 = scale-consistent activation rounding (default off = upstream).
     const char * q81s = getenv("GGML_ARIFI_Q8_1_SCALE");
     const uint32_t q81_f16 = (q81s != nullptr && strcmp(q81s, "f16") == 0) ? 1u : 0u;
@@ -10869,7 +10877,8 @@ static bool ggml_vk_fa_sparse_prefill_gqa(const ggml_tensor * dst, const ggml_te
            (int64_t)KV >= std::max<int64_t>(4096, ratio * (int64_t)n_kv_max);
 }
 
-void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * q, const ggml_tensor * k, const ggml_tensor * v, const ggml_tensor * mask, const ggml_tensor * sinks, ggml_tensor * dst, const vk_fa_seg_part * part) {
+void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * q, const ggml_tensor * k, const ggml_tensor * v, const ggml_tensor * mask, const ggml_tensor * sinks, ggml_tensor * dst, const vk_fa_seg_part * part,
+                        const ggml_tensor * qsa_idx, const ggml_tensor * qsa_raw_mask) {
     VK_LOG_DEBUG("ggml_vk_flash_attn((" << q << ", name=" << q->name << ", type=" << q->type << ", ne0=" << q->ne[0] << ", ne1=" << q->ne[1] << ", ne2=" << q->ne[2] << ", ne3=" << q->ne[3] << ", nb0=" << q->nb[0] << ", nb1=" << q->nb[1] << ", nb2=" << q->nb[2] << ", nb3=" << q->nb[3];
     std::cerr << "), (" << k << ", name=" << k->name << ", type=" << k->type << ", ne0=" << k->ne[0] << ", ne1=" << k->ne[1] << ", ne2=" << k->ne[2] << ", ne3=" << k->ne[3] << ", nb0=" << k->nb[0] << ", nb1=" << k->nb[1] << ", nb2=" << k->nb[2] << ", nb3=" << k->nb[3];
     std::cerr << "), (" << v << ", name=" << v->name << ", type=" << v->type << ", ne0=" << v->ne[0] << ", ne1=" << v->ne[1] << ", ne2=" << v->ne[2] << ", ne3=" << v->ne[3] << ", nb0=" << v->nb[0] << ", nb1=" << v->nb[1] << ", nb2=" << v->nb[2] << ", nb3=" << v->nb[3];
@@ -11044,6 +11053,38 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
                             (gqa_ratio > 1 || (tuning_params.path == FA_SCALAR && N == 1));
     // lane-301: a prefill promoted to the gqa layout for sparsity must be sparse, never dense-in-gqa
     GGML_ASSERT(!prefill_gqa || use_sparse);
+
+    // lane-301 lever 4: the QSA mask chain was fused into this FA, so `mask` (the ADD node) was never written.
+    // Sparse: compact straight from the top_k indices and read the raw kq_mask, equal to the materialized mask
+    // (0 + m) at every cell the compaction keeps. Dense: materialize the mask into the ADD node's own buffer.
+    // GGML_ARIFI_QSA_MASKFUSE=red (test-only) drops the first 64 top_k entries of every row (1 sat at the op test's NMSE floor).
+    static const uint32_t qsa_red_skip = [] { const char * s = getenv("GGML_ARIFI_QSA_MASKFUSE"); return (s && strcmp(s, "red") == 0) ? 64u : 0u; }();
+    if (qsa_idx) {
+        static bool once[2] = {};
+        if (!once[use_sparse]) {
+            once[use_sparse] = true;
+            fprintf(stderr, "ggml_vulkan: QSA mask chain fused into FA (lane-301 lever 4): sparse=%d N=%u KV=%u width=%d%s\n",
+                    (int) use_sparse, (uint32_t) neq1, KV, (int) qsa_idx->ne[0], qsa_red_skip ? " RED" : "");
+        }
+        if (use_sparse) {
+            mask = qsa_raw_mask;
+        } else {
+            vk_pipeline pl = ctx->device->pipeline_fa_qsa_mask_dense;
+            ggml_pipeline_request_descriptor_sets(ctx, pl, 1);
+            const vk_op_flash_attn_qsa_mask_push_constants pc = {
+                (uint32_t) qsa_raw_mask->ne[0], (uint32_t) qsa_raw_mask->ne[1], (uint32_t) qsa_raw_mask->ne[2],
+                (uint32_t) (qsa_raw_mask->nb[1] / sizeof(ggml_fp16_t)), (uint32_t) (qsa_raw_mask->nb[2] / sizeof(ggml_fp16_t)),
+                (uint32_t) (qsa_raw_mask->nb[3] / sizeof(ggml_fp16_t)), 0u, (uint32_t) qsa_idx->ne[0],
+                (uint32_t) (qsa_idx->nb[1] / sizeof(int32_t)), (uint32_t) (qsa_idx->nb[2] / sizeof(int32_t)), qsa_red_skip,
+                (uint32_t) (mask->nb[1] / sizeof(ggml_fp16_t)), (uint32_t) (mask->nb[2] / sizeof(ggml_fp16_t)),
+                (uint32_t) (mask->nb[3] / sizeof(ggml_fp16_t)),
+            };
+            ggml_vk_dispatch_pipeline(ctx, subctx, pl,
+                                      { ggml_vk_tensor_subbuffer(ctx, qsa_raw_mask), ggml_vk_tensor_subbuffer(ctx, qsa_idx), ggml_vk_tensor_subbuffer(ctx, mask) },
+                                      pc, { (uint32_t) mask->ne[1], (uint32_t) mask->ne[2], (uint32_t) mask->ne[3] });
+            ggml_vk_sync_buffers(ctx, subctx);
+        }
+    }
     if (prefill_gqa) {
         static bool once = false;
         if (!once) {
@@ -11268,6 +11309,9 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
     vk_pipeline sparse_compact_pipeline = ctx->device->fa_sparse_compact_use_subgroups
         ? ctx->device->pipeline_fa_sparse_compact_subgroup
         : ctx->device->pipeline_fa_sparse_compact;
+    if (use_sparse && qsa_idx) {
+        sparse_compact_pipeline = ctx->device->pipeline_fa_qsa_mask_compact;
+    }
     if (use_sparse) {
         ggml_pipeline_request_descriptor_sets(ctx, sparse_compact_pipeline, 1);
         if (ctx->prealloc_size_y < sparse_idx_size) {
@@ -11362,9 +11406,20 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
             (uint32_t)n_kv_max - ((red_plant && prefill_gqa) ? 1u : 0u),
         };
 
+        if (qsa_idx) {
+            const vk_op_flash_attn_qsa_mask_push_constants qm_pc = {
+                sc_pc.KV, sc_pc.nem1, sc_pc.nem2, sc_pc.nbm1, sc_pc.nbm2, sc_pc.nbm3, sc_pc.n_kv_max,
+                (uint32_t) qsa_idx->ne[0], (uint32_t) (qsa_idx->nb[1] / sizeof(int32_t)), (uint32_t) (qsa_idx->nb[2] / sizeof(int32_t)),
+                qsa_red_skip, 0u, 0u, 0u,
+            };
+            ggml_vk_dispatch_pipeline(ctx, subctx, sparse_compact_pipeline,
+                                      { mask_buf, ggml_vk_tensor_subbuffer(ctx, qsa_idx), sparse_buf }, qm_pc,
+                                      { nem1, nem2, nem3 });
+        } else {
         ggml_vk_dispatch_pipeline(ctx, subctx, sparse_compact_pipeline,
                                   { mask_buf, sparse_buf }, sc_pc,
                                   { nem1, nem2, nem3 });
+        }
         ggml_vk_sync_buffers(ctx, subctx);
     }
 
@@ -15568,7 +15623,14 @@ bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, in
 
         break;
     case GGML_OP_FILL:
-        ggml_vk_fill(ctx, compute_ctx, node);
+        if (ctx->fused_qsa_mask_fa) {
+            // lane-301 lever 4: the whole QSA mask chain runs inside the FA that ends the pattern
+            ggml_tensor * fa = cgraph->nodes[node_idx + ctx->num_additional_fused_ops];
+            ggml_vk_flash_attn(ctx, compute_ctx, fa->src[0], fa->src[1], fa->src[2], fa->src[3], fa->src[4], fa, nullptr,
+                               cgraph->nodes[node_idx + 1], fa->src[3]->src[1]);
+        } else {
+            ggml_vk_fill(ctx, compute_ctx, node);
+        }
 
         break;
     case GGML_OP_SCALE:
@@ -17459,6 +17521,53 @@ bool ggml_vk_tensors_overlap(const ggml_tensor * a, const ggml_tensor * b, bool 
     return false;
 }
 
+// lane-301 lever 4: qwen4exp build_attn_qsa mask chain (qsa_mask_fa_pattern). GGML_ARIFI_QSA_MASKFUSE=0 keeps it unfused.
+static bool ggml_vk_can_fuse_qsa_mask_fa(ggml_backend_vk_context * ctx, const struct ggml_cgraph * cgraph, int node_idx) {
+    static const bool off = [] { const char * s = getenv("GGML_ARIFI_QSA_MASKFUSE"); return s && s[0] == '0'; }();
+    if (off || ctx->device->disable_fusion || !ctx->device->pipeline_fa_qsa_mask_compact || !ctx->device->pipeline_fa_qsa_mask_dense) {
+        return false;
+    }
+    const int n_ops = qsa_mask_fa_pattern.size();
+    if (!ggml_vk_match_ops(cgraph, node_idx, qsa_mask_fa_pattern) ||
+        !ggml_check_edges(cgraph, node_idx, qsa_mask_fa_edges)) {
+        return false;
+    }
+    for (int j = 0; j < n_ops - 1; ++j) {
+        if (ggml_node_get_use_count(cgraph, node_idx + j) != 1) {
+            return false;
+        }
+    }
+    const ggml_tensor * fill_0   = cgraph->nodes[node_idx + 0];
+    const ggml_tensor * idx      = cgraph->nodes[node_idx + 1]; // [width, n_tps, n_stream, 1]
+    const ggml_tensor * fill_inf = cgraph->nodes[node_idx + 2];
+    const ggml_tensor * add      = cgraph->nodes[node_idx + 6];
+    const ggml_tensor * fa       = cgraph->nodes[node_idx + 7];
+    const ggml_tensor * raw      = add->src[1];                 // [n_kv, n_tps, 1, n_stream]
+
+    const float c_inf = ggml_get_op_params_f32(fill_inf, 0);
+    const float c_0   = ggml_get_op_params_f32(fill_0, 0);
+    if (!(std::isinf(c_inf) && c_inf < 0.0f) || c_0 != 0.0f || fill_inf->src[0] != raw) {
+        return false;
+    }
+    if (raw->type != GGML_TYPE_F16 || add->type != GGML_TYPE_F16 || !ggml_is_contiguous(raw) ||
+        !ggml_is_contiguous(add) || !ggml_are_same_shape(raw, add)) {
+        return false;
+    }
+    if (idx->type != GGML_TYPE_I32 || idx->nb[0] != sizeof(int32_t) || idx->ne[3] != 1 || idx->ne[0] <= 0 ||
+        raw->ne[2] != 1 || idx->ne[1] != raw->ne[1] || idx->ne[2] != raw->ne[3] || raw->ne[0] > 32 * 4096) {
+        return false;
+    }
+    // the hint must bound the selected count; a segmented FA keeps the unfused path
+    if (ggml_get_op_params_i32(fa, 4) < idx->ne[0] || ggml_flash_attn_ext_n_segments(fa) > 0 || fa->src[3] != add) {
+        return false;
+    }
+    // the dense writer fills the ADD node's buffer while it reads top_k
+    if (ggml_vk_tensors_overlap(add, idx, false) || ggml_vk_tensors_overlap(add, raw, false)) {
+        return false;
+    }
+    return true;
+}
+
 bool ggml_vk_can_fuse_rms_norm_mul_rope(ggml_backend_vk_context * ctx, const struct ggml_cgraph * cgraph,
                                                int node_idx) {
     const ggml_tensor *rms = cgraph->nodes[node_idx + 0];
@@ -17727,6 +17836,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
         ctx->fused_topk_moe_mode = TOPK_MOE_COUNT;
         ctx->fused_topk_moe_scale = false;
         ctx->fused_topk_qsa = false;
+        ctx->fused_qsa_mask_fa = false;
         ctx->fused_hc_post_w = false;
         ctx->fused_rms_norm_mode = RMS_NORM_COUNT;
         const char *fusion_string {};
@@ -17854,6 +17964,11 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                 // with a data dependency on that register. The overlap check still
                 // rejects partial overlaps (different base or size).
                 std::fill_n(op_srcs_fused_elementwise, 5, true);
+            } else if (ggml_vk_can_fuse_qsa_mask_fa(ctx, cgraph, i)) {
+                ctx->num_additional_fused_ops = qsa_mask_fa_pattern.size() - 1;
+                ctx->fused_qsa_mask_fa = true;
+                fusion_string = "QSA_MASK_FA";
+                std::fill_n(op_srcs_fused_elementwise, ctx->num_additional_fused_ops + 1, false);
             } else if (ggml_vk_can_fuse_topk_qsa(ctx, cgraph, i)) {
                 ctx->num_additional_fused_ops = topk_qsa_pattern.size() - 1;
                 ctx->fused_topk_qsa = true;
@@ -17968,6 +18083,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                 ctx->fused_topk_moe_mode = TOPK_MOE_COUNT;
                 ctx->fused_topk_moe_scale = false;
                 ctx->fused_topk_qsa = false;
+                ctx->fused_qsa_mask_fa = false;
                 ctx->fused_hc_post_w = false;
                 ctx->fused_rms_norm_mode = RMS_NORM_COUNT;
                 fusion_string = nullptr;
@@ -18240,6 +18356,12 @@ void ggml_vk_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * graph, 
         if (keep_pattern(topk_qsa_pattern)) {
             continue;
         }
+        if (match_pattern(qsa_mask_fa_pattern, first_unused)) {
+            // the fused FA reads top_k and the raw kq_mask at the FA slot: keep them alive until then
+            add_pattern_alloc_deps(qsa_mask_fa_pattern, first_unused + (int) qsa_mask_fa_pattern.size() - 1);
+            keep_pattern(qsa_mask_fa_pattern);
+            continue;
+        }
 
         if (keep_pattern(rms_norm_mul_add_mul_pattern)) {
             continue;
@@ -18256,6 +18378,24 @@ void ggml_vk_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * graph, 
         if (keep_pattern(rope_view_set_rows_pattern)) {
             continue;
         }
+
+        // Protect every interior QSA node (not just the start): the mask branch is
+        // independent, so it gets pulled out and breaks keep_pattern otherwise.
+        // Both passes use it: the view pass would otherwise hoist the top_k VIEW of
+        // qsa_mask_fa_pattern (its src is already computed) ahead of the FILL.
+        auto const &in_qsa_pattern = [&](int n) -> bool {
+            for (int o = 0; o < (int) topk_qsa_pattern.size(); ++o) {
+                if (n - o >= 0 && match_pattern(topk_qsa_pattern, n - o)) {
+                    return true;
+                }
+            }
+            for (int o = 0; o < (int) qsa_mask_fa_pattern.size(); ++o) {
+                if (n - o >= 0 && match_pattern(qsa_mask_fa_pattern, n - o)) {
+                    return true;
+                }
+            }
+            return false;
+        };
 
         // First, grab the next unused node.
         current_set.push_back(first_unused);
@@ -18274,16 +18414,6 @@ void ggml_vk_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * graph, 
             if (is_empty(graph->nodes[j])) {
                 continue;
             }
-            // Protect every interior QSA node (not just the start): the mask branch is
-            // independent, so it gets pulled out and breaks keep_pattern otherwise.
-            auto const &in_qsa_pattern = [&](int n) -> bool {
-                for (int o = 0; o < (int) topk_qsa_pattern.size(); ++o) {
-                    if (n - o >= 0 && match_pattern(topk_qsa_pattern, n - o)) {
-                        return true;
-                    }
-                }
-                return false;
-            };
             if (match_pattern(topk_moe_early_softmax_norm, j) ||
                 match_pattern(topk_moe_sigmoid_norm_bias, j) ||
                 match_pattern(topk_moe_sqrt_softplus_norm_bias, j) ||
@@ -18465,7 +18595,7 @@ void ggml_vk_graph_optimize(ggml_backend_t backend, struct ggml_cgraph * graph, 
                 if (used[j]) {
                     continue;
                 }
-                if (!is_empty(graph->nodes[j])) {
+                if (!is_empty(graph->nodes[j]) || in_qsa_pattern(j)) {
                     continue;
                 }
                 bool ok = true;

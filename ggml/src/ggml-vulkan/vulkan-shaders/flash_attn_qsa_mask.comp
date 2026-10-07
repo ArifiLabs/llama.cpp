@@ -1,0 +1,135 @@
+#version 450
+
+#extension GL_EXT_control_flow_attributes : enable
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+
+// lane-301 lever 4: the qwen4exp QSA mask chain fill(-inf) -> set_rows(0 at top_k) -> add(kq_mask), read
+// straight from the top_k indices. One workgroup per mask row. A row bitmap of the selected cells is built
+// in shared memory, then
+//   default:   compact the selected cells whose kq_mask is finite into an ascending index list (-1 padded),
+//              the same list flash_attn_sparse_compact.comp emits from the materialized mask;
+//   DENSE_OUT: write the materialized mask itself (kq_mask where selected, -inf elsewhere) for a dense FA.
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+layout(constant_id = 0) const uint BLOCK_SIZE = 256;
+
+layout (binding = 0) readonly buffer M {float16_t data_m[];};
+layout (binding = 1) readonly buffer T {int32_t data_t[];};
+#ifdef DENSE_OUT
+layout (binding = 2) writeonly buffer O {float16_t data_o[];};
+#else
+layout (binding = 2) writeonly buffer O {int32_t data_o[];};
+#endif
+
+layout (push_constant) uniform parameter {
+    uint KV;
+    uint nem1;
+    uint nem2;
+    uint nbm1;
+    uint nbm2;
+    uint nbm3;
+    uint n_kv_max;
+    uint width;
+    uint nbt1;
+    uint nbt3;
+    uint skip;
+    uint nbo1;
+    uint nbo2;
+    uint nbo3;
+} p;
+
+// KV <= 32 * MAX_WORDS (host checks)
+const uint MAX_WORDS = 4096;
+shared uint bits_sh[MAX_WORDS];
+#ifndef DENSE_OUT
+shared uint scan[BLOCK_SIZE];
+#endif
+
+void main() {
+    const uint i1 = gl_WorkGroupID.x;
+    const uint i2 = gl_WorkGroupID.y;
+    const uint i3 = gl_WorkGroupID.z;
+    const uint tid = gl_LocalInvocationIndex;
+
+    const uint m_base  = i3 * p.nbm3 + i2 * p.nbm2 + i1 * p.nbm1;
+    const uint t_base  = i3 * p.nbt3 + i1 * p.nbt1;
+    const uint n_words = (p.KV + 31) / 32;
+
+    for (uint w = tid; w < n_words; w += BLOCK_SIZE) {
+        bits_sh[w] = 0;
+    }
+    barrier();
+
+    // skip > 0 only for the planted RED variant
+    for (uint j = p.skip + tid; j < p.width; j += BLOCK_SIZE) {
+        const int idx = data_t[t_base + j];
+        if (idx >= 0 && uint(idx) < p.KV) {
+            atomicOr(bits_sh[uint(idx) >> 5], 1u << (uint(idx) & 31));
+        }
+    }
+    barrier();
+
+#ifdef DENSE_OUT
+    const uint o_base = i3 * p.nbo3 + i2 * p.nbo2 + i1 * p.nbo1;
+    // 16-bit storage only: compute in f32, convert at the store (f16 -> f32 -> f16 is exact, -inf included)
+    const float neg_inf = uintBitsToFloat(0xFF800000u);
+    for (uint k = tid; k < p.KV; k += BLOCK_SIZE) {
+        const bool sel = ((bits_sh[k >> 5] >> (k & 31)) & 1u) != 0;
+        data_o[o_base + k] = float16_t(sel ? float(data_m[m_base + k]) : neg_inf);
+    }
+#else
+    const uint out_base = ((i3 * p.nem2 + i2) * p.nem1 + i1) * p.n_kv_max;
+
+    uint base = 0;
+    for (uint w0 = 0; w0 < n_words; w0 += BLOCK_SIZE) {
+        const uint w = w0 + tid;
+        uint b = 0;
+        if (w < n_words) {
+            b = bits_sh[w];
+            // a selected cell the causal mask hides is dropped, exactly as -inf + 0 is in the materialized mask
+            uint rest = b;
+            while (rest != 0) {
+                const uint l = findLSB(rest);
+                rest &= rest - 1;
+                const float v = float(data_m[m_base + w * 32 + l]);
+                if (isinf(v) || isnan(v)) {
+                    b &= ~(1u << l);
+                }
+            }
+        }
+        const uint cnt = bitCount(b);
+
+        // Hillis-Steele inclusive prefix sum over the workgroup
+        scan[tid] = cnt;
+        barrier();
+        for (uint off = 1; off < BLOCK_SIZE; off <<= 1) {
+            uint add = 0;
+            if (tid >= off) {
+                add = scan[tid - off];
+            }
+            barrier();
+            scan[tid] += add;
+            barrier();
+        }
+        const uint total = scan[BLOCK_SIZE - 1];
+        uint slot = base + scan[tid] - cnt;
+
+        // ascending: words in tid order, bits LSB first
+        while (b != 0) {
+            const uint l = findLSB(b);
+            b &= b - 1;
+            if (slot < p.n_kv_max) {
+                data_o[out_base + slot] = int32_t(w * 32 + l);
+            }
+            slot++;
+        }
+        base += total;
+        barrier();
+    }
+
+    for (uint s = min(base, p.n_kv_max) + tid; s < p.n_kv_max; s += BLOCK_SIZE) {
+        data_o[out_base + s] = int32_t(-1);
+    }
+#endif
+}

@@ -35,6 +35,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <random>
 #include <regex>
 #include <set>
@@ -7891,6 +7892,96 @@ struct test_topk_qsa : public test_case {
     }
 };
 
+// lane-301 lever 4: qwen4exp build_attn_qsa mask chain (fill -inf, set_rows 0 at top_k, add kq_mask) feeding a
+// sparse-hinted FA, built node for node as the model builds it. Vulkan fuses the chain into the FA.
+struct test_qsa_mask_fa : public test_case {
+    const int64_t kv;
+    const int64_t nb;
+    const int64_t n_stream;
+    const int64_t width;
+    ggml_tensor * out {};
+
+    std::string op_desc(ggml_tensor * t) override {
+        GGML_UNUSED(t);
+        return "QSA_MASK_FA";
+    }
+
+    std::string vars() override {
+        return VARS_TO_STR4(kv, nb, n_stream, width);
+    }
+
+    test_qsa_mask_fa(int64_t kv = 8192, int64_t nb = 1, int64_t n_stream = 1, int64_t width = 2051)
+        : kv(kv), nb(nb), n_stream(n_stream), width(width) {}
+
+    double max_nmse_err() override { return 5e-4; }
+    bool run_whole_graph() override { return true; }
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        const int64_t hs = 256, nh_kv = 2, gqa = 12;
+        ggml_tensor * q = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, hs, nb, nh_kv * gqa, n_stream);
+        ggml_set_name(q, "q");
+        ggml_tensor * k0 = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, hs, 2 * kv, nh_kv, n_stream);
+        ggml_tensor * k  = ggml_view_4d(ctx, k0, hs, kv, nh_kv, n_stream, k0->nb[1], k0->nb[2], k0->nb[3], 0);
+        ggml_set_name(k, "k");
+        ggml_tensor * v0 = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, hs, 2 * kv, nh_kv, n_stream);
+        ggml_tensor * v  = ggml_view_4d(ctx, v0, hs, kv, nh_kv, n_stream, v0->nb[1], v0->nb[2], v0->nb[3], 0);
+        ggml_set_name(v, "v");
+        ggml_tensor * kq_mask = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, kv, nb, 1, n_stream);
+        ggml_set_name(kq_mask, "kq_mask");
+        ggml_tensor * top_k = ggml_new_tensor_4d(ctx, GGML_TYPE_I32, width, nb, 1, n_stream);
+        ggml_set_name(top_k, "top_k");
+
+        // src/models/qwen4exp.cpp build_attn_qsa, verbatim
+        ggml_tensor * kq_mask_all = ggml_fill(ctx, kq_mask, -INFINITY);
+        kq_mask_all = ggml_view_4d(ctx, kq_mask_all, 1, kq_mask_all->ne[0], kq_mask_all->ne[1], kq_mask_all->ne[3], kq_mask_all->nb[0], kq_mask_all->nb[1], kq_mask_all->nb[2], 0);
+        ggml_tensor * top_k_3d = ggml_view_4d(ctx, top_k, top_k->ne[0], top_k->ne[1], top_k->ne[3], 1, top_k->nb[1], top_k->nb[2], top_k->ne[3]*top_k->nb[3], 0);
+        ggml_tensor * zeros = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 1, top_k_3d->ne[0], top_k_3d->ne[1], top_k_3d->ne[2]);
+        zeros = ggml_fill(ctx, zeros, 0.0f);
+        ggml_tensor * kq_mask_top_k = ggml_set_rows(ctx, kq_mask_all, zeros, top_k_3d);
+        kq_mask_top_k = ggml_view_4d(ctx, kq_mask_top_k, kq_mask_top_k->ne[1], kq_mask_top_k->ne[2], 1, kq_mask_top_k->ne[3], kq_mask_top_k->nb[2], kq_mask_top_k->nb[3], kq_mask_top_k->nb[3], 0);
+        kq_mask_top_k = ggml_add(ctx, kq_mask_top_k, kq_mask);
+
+        out = ggml_flash_attn_ext(ctx, q, k, v, kq_mask_top_k, 1.0f/sqrtf((float) hs), 0.0f, 0.0f);
+        ggml_flash_attn_ext_set_n_kv_max(out, width);
+        ggml_prec_set_acc(out, GGML_PREC_F32);
+        ggml_set_name(out, "out");
+        return out;
+    }
+
+    std::vector<ggml_tensor *> fusion_test_nodes() override { return { out }; }
+
+    // causal mask (the last nb cells unfold one per row); top_k = width distinct random cells per row, so
+    // some land on causally masked cells exactly as the indexer's -inf fill does early in a prompt
+    void initialize_tensors(ggml_context * ctx) override {
+        std::mt19937 rng(1234);
+        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+            if (t->op != GGML_OP_NONE) {
+                continue;
+            }
+            if (strcmp(t->name, "kq_mask") == 0) {
+                std::vector<ggml_fp16_t> data(ggml_nelements(t));
+                for (int64_t r = 0; r < ggml_nrows(t); r++) {
+                    const int64_t visible = kv - nb + (r % nb) + 1;
+                    for (int64_t i = 0; i < kv; i++) {
+                        data[r * kv + i] = ggml_fp32_to_fp16(i < visible ? 0.0f : -INFINITY);
+                    }
+                }
+                ggml_backend_tensor_set(t, data.data(), 0, data.size() * sizeof(ggml_fp16_t));
+            } else if (strcmp(t->name, "top_k") == 0) {
+                std::vector<int32_t> perm(kv), data;
+                for (int64_t r = 0; r < ggml_nrows(t); r++) {
+                    std::iota(perm.begin(), perm.end(), 0);
+                    std::shuffle(perm.begin(), perm.end(), rng);
+                    data.insert(data.end(), perm.begin(), perm.begin() + width);
+                }
+                ggml_backend_tensor_set(t, data.data(), 0, data.size() * sizeof(int32_t));
+            } else {
+                init_tensor_uniform(t);
+            }
+        }
+    }
+};
+
 enum MoeGatingFunc {
     GATING_FUNC_SOFTMAX,
     GATING_FUNC_SIGMOID,
@@ -12355,6 +12446,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_topk_qsa(512,  2048,  2, 1, 1500));
     test_cases.emplace_back(new test_topk_qsa(256,  2048,  4, 2, 2000));
     test_cases.emplace_back(new test_topk_qsa(64,   256,   2, 1, 200));  // small k: unfused fallback
+
+    // lane-301 lever 4: QSA mask chain fused into FA. sparse decode, sparse prefill (gqa layout), 2 streams,
+    // and KV < 4096 where FA stays dense and the fused path materializes the mask
+    test_cases.emplace_back(new test_qsa_mask_fa(8192,  1,  1, 2051));
+    test_cases.emplace_back(new test_qsa_mask_fa(32768, 1,  1, 2051));
+    test_cases.emplace_back(new test_qsa_mask_fa(8192,  9,  1, 2051));
+    test_cases.emplace_back(new test_qsa_mask_fa(32768, 64, 1, 2051));
+    test_cases.emplace_back(new test_qsa_mask_fa(8192,  9,  2, 2051));
+    test_cases.emplace_back(new test_qsa_mask_fa(2048,  1,  1, 300));
+    test_cases.emplace_back(new test_qsa_mask_fa(2048,  64, 1, 300));
 
     // exhaustive top_k tests
     //for (int i = 1; i < 9999; ++i) {

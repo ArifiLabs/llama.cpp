@@ -123,7 +123,8 @@ void ggml_vk_mul_mat_id(ggml_backend_vk_context * ctx, vk_context& subctx, const
 // flash-attn
 struct vk_fa_seg_part;  // lane-196 segmented FA partition (ggml-vulkan.cpp)
 void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * q, const ggml_tensor * k, const ggml_tensor * v, const ggml_tensor * mask, const ggml_tensor * sinks, ggml_tensor * dst,
-                        const vk_fa_seg_part * part = nullptr);
+                        const vk_fa_seg_part * part = nullptr, const ggml_tensor * qsa_idx = nullptr,
+                        const ggml_tensor * qsa_raw_mask = nullptr);
 
 // operators
 void ggml_vk_cpy_to_contiguous(ggml_backend_vk_context * ctx, vk_context& subctx, vk_pipeline pipeline, const ggml_tensor * tensor, const vk_subbuffer & in, const vk_subbuffer & out);

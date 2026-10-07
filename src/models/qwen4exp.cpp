@@ -941,6 +941,10 @@ ggml_tensor * llama_model_qwen4exp::graph::build_attn_qsa(
 
     ggml_tensor * kq_mask = inp->get_kq_mask();
 
+    // the indexer subgraph lands before the mask chain, so FILL..FLASH_ATTN_EXT stay consecutive for the
+    // Vulkan QSA mask fusion (lane-301 lever 4); node order only, the math is unchanged
+    ggml_build_forward_expand(gf, top_k);
+
     // prepare new kq mask - starts filled with -INFINITY
     ggml_tensor * kq_mask_all = ggml_fill(ctx0, kq_mask, -INFINITY);
 

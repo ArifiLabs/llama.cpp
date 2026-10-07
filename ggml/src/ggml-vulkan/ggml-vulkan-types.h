@@ -666,6 +666,24 @@ static constexpr std::initializer_list<std::array<int, 3>> topk_qsa_edges {
     { 6, 0, 5 }, // top_k->src[0]   == add
 };
 
+// lane-301 lever 4: qwen4exp build_attn_qsa mask chain feeding FA. FA reads the top_k indices and the raw
+// kq_mask directly; the -inf fill, the zeros fill, the set_rows and the add are never materialized.
+static constexpr std::initializer_list<ggml_op> qsa_mask_fa_pattern { GGML_OP_FILL,     GGML_OP_VIEW,
+                                                                      GGML_OP_FILL,     GGML_OP_VIEW,
+                                                                      GGML_OP_SET_ROWS, GGML_OP_VIEW,
+                                                                      GGML_OP_ADD,      GGML_OP_FLASH_ATTN_EXT };
+
+// ggml_set_rows stores src as (values, indices, dest), so the graph visits fill(0), view(top_k), fill(-inf), view
+static constexpr std::initializer_list<std::array<int, 3>> qsa_mask_fa_edges {
+    { 3, 0, 2 }, // view->src[0]     == fill(-inf)
+    { 4, 0, 0 }, // set_rows->src[0] == fill(0)       (values)
+    { 4, 1, 1 }, // set_rows->src[1] == view(top_k)   (indices)
+    { 4, 2, 3 }, // set_rows->src[2] == view(-inf)    (dest)
+    { 5, 0, 4 }, // view->src[0]     == set_rows
+    { 6, 0, 5 }, // add->src[0]      == view
+    { 7, 3, 6 }, // fa->src[3]       == add
+};
+
 static constexpr std::initializer_list<ggml_op> rms_norm_mul_add_mul_pattern { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_ADD, GGML_OP_MUL };
 
 static constexpr std::initializer_list<ggml_op> rms_norm_mul_add_pattern     { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_ADD };
@@ -1673,6 +1691,9 @@ struct vk_device_struct {
 
     vk_pipeline pipeline_fa_sparse_compact;
     vk_pipeline pipeline_fa_sparse_compact_subgroup;
+    // lane-301 lever 4: QSA mask chain fused into FA (compact from top_k, or dense mask writer)
+    vk_pipeline pipeline_fa_qsa_mask_compact;
+    vk_pipeline pipeline_fa_qsa_mask_dense;
     bool fa_sparse_compact_use_subgroups;
 
     vk_pipeline pipeline_flash_attn_split_k_reduce;
@@ -2123,6 +2144,8 @@ struct ggml_backend_vk_context {
     bool fused_topk_moe_scale {};
     // QSA indexer gather+add+top_k fused into one radix-select
     bool fused_topk_qsa {};
+    // lane-301 lever 4: FILL -> VIEW -> FILL -> VIEW -> SET_ROWS -> VIEW -> ADD -> FLASH_ATTN_EXT in one FA
+    bool fused_qsa_mask_fa {};
     // lane-299: SCALE -> SIGMOID -> SCALE -> DSV4_HC_POST in one dispatch
     bool fused_hc_post_w {};
     // lane-299 GDN_BANK: per graph, GDN nodes that read/write the recurrent bank in place, and the
