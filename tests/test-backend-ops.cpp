@@ -13003,6 +13003,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
         test_cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32, 12288, 4096, 2560, {1, 1}, {1, 1}));
     }
 
+    // lane 301 lever 4: QSA mask chain + FA at served decode/prefill shapes (fused vs GGML_ARIFI_QSA_MASKFUSE=0, RGP target)
+    test_cases.emplace_back(new test_qsa_mask_fa(8192,  1,  1, 2051));
+    test_cases.emplace_back(new test_qsa_mask_fa(32768, 1,  1, 2051));
+    test_cases.emplace_back(new test_qsa_mask_fa(32768, 64, 1, 2051));
+
     // ArifiLabs Escha-W2 fused linear (lane-164): real 27B projection shapes across the
     // decode->prefill ncols range. Cost is strictly linear in ncols (measured on a 780M:
     // 1.15 us*1000/col for escha2 5120x12288, 2.12 for escha3 17408x5120, from ncols 1/8/64),
