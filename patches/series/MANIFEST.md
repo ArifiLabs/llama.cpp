@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **772**, all non-merge, applied in filename order.
+- Patches: **773**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 772 commit messages, same provenance trailers. Verified, not
+same file contents, same 773 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -851,6 +851,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 770 | `0770-docs-lane-299-runbook-NMSE-op-tests-miss-n_tokens-2..patch` | arifi-fork-base | `417d26b36` | - | - | docs: lane-299 runbook - NMSE op tests miss n_tokens 2..8 bit-exactness; verify-window census recipe |
 | 771 | `0771-lane-302-lever-9-MUL_MAT_ID-expert-gather-for-Q2_0-a.patch` | arifi-fork-base | `bfa4b73e2` | - | - | lane-302 lever 9: MUL_MAT_ID expert gather for Q2_0 and every legacy / q8_1 MMVQ id type |
 | 772 | `0772-lane-302-lever-9-GGML_ARIFI_MOE_GATHER_EXT-default-O.patch` | arifi-fork-base | `5991bb1e3` | - | - | lane-302 lever 9: GGML_ARIFI_MOE_GATHER_EXT default OFF (opt-in, measured slower on Q2_0) |
+| 773 | `0773-protected-wins-register-the-v0.1.3.1-opt-in-arms-KV_.patch` | arifi-fork-base | `a5ff6df2b` | - | - | protected-wins: register the v0.1.3.1 opt-in arms (KV_ZERO_FREED entry, GATHER_EXT joins the slot-major gather) |
 
 ## Measured effect, per patch
 
@@ -1702,6 +1703,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0770-docs-lane-299-runbook-NMSE-op-tests-miss-n_tokens-2..patch` | UNMEASURED (docs only; trap from cache/fusion-x1-lane/cells/ab14-10071210-verdict.json) |
 | `0771-lane-302-lever-9-MUL_MAT_ID-expert-gather-for-Q2_0-a.patch` | UNMEASURED at commit; op gates + timing in cache/moe-gather-x1-lane/cells/cellT-*/SUMMARY.txt |
 | `0772-lane-302-lever-9-GGML_ARIFI_MOE_GATHER_EXT-default-O.patch` | default OFF = integ route (cell T e0 32/32 IDENT to gather-off; cell U default-arm proof cache/moe-gather-x1-lane/cells/cellU-*/SUMMARY.txt); opt-in arm +8..+22% slower at n2..n8 on Q2_0 down, cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt |
+| `0773-protected-wins-register-the-v0.1.3.1-opt-in-arms-KV_.patch` | none (protected-win ledger registration; the numbers live in the entries) |
 
 ## Unclassified
 
@@ -2343,4 +2345,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `58d81805c` build-info: --version prints the arifilabs release and its upstream base
 - `bfa4b73e2` lane-302 lever 9: MUL_MAT_ID expert gather for Q2_0 and every legacy / q8_1 MMVQ id type
 - `5991bb1e3` lane-302 lever 9: GGML_ARIFI_MOE_GATHER_EXT default OFF (opt-in, measured slower on Q2_0)
+- `a5ff6df2b` protected-wins: register the v0.1.3.1 opt-in arms (KV_ZERO_FREED entry, GATHER_EXT joins the slot-major gather)
 
