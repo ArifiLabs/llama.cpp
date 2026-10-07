@@ -653,10 +653,11 @@ static uint32_t moe_gather_iq3xxs_init_env() {
 }
 
 // lane-302 lever 9: expert gather for the legacy f32-path types and every q8_1 MMVQ id type (the served Q2_0 down
-// tensors among them). Same workgroup, rows and spec constants as each id pipeline. Unset = ON, 0 = off.
+// tensors among them). Same workgroup, rows and spec constants as each id pipeline. Unset = OFF, 1 = on
+// (cell T: Q2_0 down n2..n8 +8..+22% slower; OFF creates no idg twins, so dispatch keeps the per-token loop).
 static uint32_t moe_gather_ext_env() {
     const char * e = getenv("GGML_ARIFI_MOE_GATHER_EXT");
-    return (e != nullptr && e[0] == '0') ? 0u : 1u;
+    return (e != nullptr && e[0] == '1') ? 1u : 0u;
 }
 
 static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipeline, size_t spv_size, const void* spv_data, const std::string entrypoint,
