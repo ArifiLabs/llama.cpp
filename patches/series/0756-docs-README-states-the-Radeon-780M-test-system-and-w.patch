@@ -1,0 +1,79 @@
+From 974a80309444acab1f4e06473f768644e315eacb Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 17:46:26 -0400
+Subject: [PATCH] docs: README states the Radeon 780M test system and what
+ changes between the 780M and the 890M
+
+A "Test system (Radeon 780M numbers)" section lists the previous machine's BIOS settings, memory epochs, driver, Windows build, power plan (with the measured plan A/B) and Windows settings. A "Radeon 780M vs Radeon 890M" section explains that both GPUs get the same kernel settings at every verify width, the one compute-unit-based difference, where each default was tuned, the best draft depth per GPU (4 on the 780M, 6 on the 890M for the 27B) and the memory each line needs. Also: the Escha .escha_aux data is tensors inside the GGUF, not a separate file, and the Q5_K route reverts with `legacy`, not `0`.
+
+Origin: ArifiLabs (native) - release documentation for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ README.md | 47 ++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 46 insertions(+), 1 deletion(-)
+
+diff --git a/README.md b/README.md
+index 7e837bc7fb..ed554432d4 100644
+--- a/README.md
++++ b/README.md
+@@ -254,6 +254,51 @@ Every 890M number on this page was measured on this machine and software stack,
+ **All numbers here are from Windows.** We have not measured this fork on Linux; the drivers, scheduler and memory
+ handling there differ, so Linux numbers on the same machine may differ in either direction.
+ 
++## Test system (Radeon 780M numbers)
++
++Every 780M number on this page was measured on our previous machine, used until 30 September 2026. Read from our
++equipment record and the rig stamp each A/B receipt carries.
++
++| Part | What we ran |
++|---|---|
++| Machine | Beelink SER7 Pro, BIOS `SER7PRO_P5C8V38` (AMI, 2024-01-09): cTDP 54 W performance mode, fans max, SVM / AMD-V off, Wi-Fi off |
++| CPU / GPU | AMD Ryzen 7 7840HS, 8 cores / 16 threads; Radeon 780M (RDNA3, gfx1103, 12 CU), integrated |
++| Memory | DDR5-5600 with a 16 GB BIOS reservation for the GPU. Until 3 September 2026: 2 x 16 GB matched dual channel (32 GB). From 3 September: 32 GB + 16 GB (48 GB, asymmetric). Each receipt names its memory epoch |
++| GPU driver | AMD Software (Adrenalin) driver 32.0.31041.1004 in the September runs (the same driver the 890M runs now) |
++| Operating system | Windows 11 Pro Insider, build 29648 in the September runs |
++| Power plan | Balanced. Measured on this machine: Balanced 29.12 > Ultimate 28.90 > High Performance 28.39 t/s; a "max performance" plan (minimum processor state 100% together with the AMD power slider at max) starved the integrated GPU to 11.07 t/s, because the CPU then takes the shared package power. The benchmark harness refuses to run off Balanced |
++| Windows settings | Hyper-V, Virtual Machine Platform and Windows Hypervisor Platform removed; VBS / memory integrity and Credential Guard off (LSA protection kept on); SysMain off; Fast Startup and hibernation off; hardware-accelerated GPU scheduling on; Defender exclusions on the model, build and run folders |
++| AMD software | Memory Optimizer "Productivity"; metrics tracking and overlay off |
++
++On the 780M the hypervisor removal mattered most for long prompts (+22% on long context in our measurement). If you
++reproduce our 780M numbers, match the BIOS reservation (16 GB), the power plan (Balanced) and the hypervisor state first.
++
++## Radeon 780M vs Radeon 890M: what changes
++
++If you run a Radeon 780M (Ryzen 7040 / 8040 series), you get the same tuned kernels as the 890M.
++
++- **Same settings at every verify width.** Speculative decoding checks several drafted tokens at once; the "verify
++  width" n is the number of tokens checked per step (draft depth + 1). The Vulkan backend's device probe reads the
++  GPU's subgroup and wave properties, not its name, and classes both the 780M (gfx1103, RDNA3) and the 890M (gfx1150,
++  RDNA 3.5) as RDNA3. Both therefore get the same mat-vec rows per workgroup, the same q8_1 route and the same width
++  splits for n = 1 to 8. The startup log prints `device-probe (RDNA3)` for each one.
++- **One difference:** flash-attention work splitting scales with the compute-unit count (12 on the 780M, 16 on the
++  890M). Placement into the GPU reservation (`GGML_VK_UMA_PLACEMENT`) is enabled by device id for the 890M only.
++- **Where each default was tuned:** the width defaults (IQ3_S / IQ3_XXS rows at n = 6 and 7, the Q4_K width-5 split,
++  the Q5_K / Q6_K / ROCmFP4-FAST q8_1 routes) were tuned and measured on the 780M, so they are native to it. The int8
++  coopmat1 prompt path and the slot-major MoE mat-vec were measured on the 890M only. A re-tune of the width defaults
++  on the 890M is in progress.
++- **Draft depth (`--spec-draft-n-max`) is where the two GPUs differ in practice.** On the 780M, Qwen3.8 27B with
++  DFlash2 peaked at **depth 4**: depth 5 and 6 were slower per served step (27B GSQ IQ3_S 8.12 t/s at depth 4; Huihui
++  Q4_K_XL best at depth 4, 7.76 t/s; measured September 2026). On the 890M the same 27B goes further: **depth 6** beats
++  depth 3 by +14.2% on the short prompt (Q4_K_XL, 11.63 -> 13.28 t/s) and S-X8 gains +8.4%, so the 890M lines move to
++  depth 6. On a 780M, start at depth 4 for the 27B; on an 890M, depth 6. The kernel table above used depth 2 on the 780M
++  only to compare builds, not as the best setting.
++- **Memory:** the 780M machine we measured had 16 GB reserved for the GPU in the BIOS; a 27B Q4_K_XL with its DFlash2
++  drafter fits there. The Flash-Next, Ornith-1.5 35B and GLM-5.3 files are larger than 16 GB; those lines were
++  measured with the 890M machine's 72 GB reservation. A 780M laptop or mini-PC can usually raise its reservation in
++  the BIOS (look for "UMA frame buffer size").
++
+ ## Hardware
+ 
+ - **Measured on:** AMD Radeon 890M (Minisforum AI X1 Pro-470, the tables above marked 890M) and AMD Radeon 780M
+@@ -300,7 +345,7 @@ upstream path.
+ | iq3 mat-vec at width 7: register spill removed | 465,399.5 → 20,890.3 µs per op, 22.2x | on (RDNA3), `GGML_ARIFI_IQ3_N7_ROWS=4` reverts |
+ | q6_K on the q8_1 MMVQ path at widths 7-8 | lm_head at width 7 20,046 → 14,313 µs, 1.40x; width 8 1.13x | on (AMD), `GGML_ARIFI_Q6K_MMVQ=legacy` reverts |
+ | q4_K width-5 split | lm_head 12,749.2 → 9,747.1 µs, 1.30x | on (RDNA3), `GGML_ARIFI_Q4K_W5_SPLIT=0` reverts |
+-| q5_K on the q8_1 MMVQ path at widths 5-8 | +6.7% to +20.4% per op at widths 5-8 (FFN shape 17408x5120) | on (AMD), `GGML_ARIFI_Q5K_MMVQ=0` reverts |
++| q5_K on the q8_1 MMVQ path at widths 5-8 | +6.7% to +20.4% per op at widths 5-8 (FFN shape 17408x5120) | on (AMD), `GGML_ARIFI_Q5K_MMVQ=legacy` reverts |
+ | iq3_s two rows per workgroup at width 6 | iq3_s mat-vec time of the 6th verify column 47.23 → 23.78 ms per step | on (RDNA3) |
+ | S-X8 decode kernel, A-hoist and MMVQ route | plain 1.831 → 2.247 t/s; drafted 3.334 → 4.475 t/s (medians); 71-73 GB/s at widths 4-8 | on |
+ | TQ subgroup mat-vec | `llama-bench`: TQ3_4S 27B tg32 0.67 → 1.80 t/s; TQ4_1S 0.5B tg64 44.69 → 126.65 t/s | on |

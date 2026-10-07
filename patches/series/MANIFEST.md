@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **755**, all non-merge, applied in filename order.
+- Patches: **756**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 755 commit messages, same provenance trailers. Verified, not
+same file contents, same 756 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -834,6 +834,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 753 | `0753-docs-version-the-releases-v0.1.-release-.-patch-and-.patch` | arifi-fork-base | `5b506202a` | - | - | docs: version the releases v0.1.<release>.<patch>, and bring the changelog up to v0.1.3.0 |
 | 754 | `0754-docs-README-states-the-test-system-and-ships-the-Win.patch` | arifi-fork-base | `45a0eae43` | - | - | docs: README states the test system, and ships the Windows native NVMe guide |
 | 755 | `0755-tools-ship-the-qwen4exp-MTP-sidecar-builders-with-St.patch` | arifi-fork-base | `dddcc11b5` | Niko1221/Strata@82f46a8c8f475f001ad76d92f58f4a4f8ffb0253 (tools/mtp_fetch.py, tools/test_mtp_fetch.py, LICENSE; copied unchanged) | - | tools: ship the qwen4exp MTP sidecar builders with Strata's fetch tool; README credits every model publisher |
+| 756 | `0756-docs-README-states-the-Radeon-780M-test-system-and-w.patch` | arifi-fork-base | `974a80309` | - | - | docs: README states the Radeon 780M test system and what changes between the 780M and the 890M |
 
 ## Measured effect, per patch
 
@@ -1668,6 +1669,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0753-docs-version-the-releases-v0.1.-release-.-patch-and-.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0754-docs-README-states-the-test-system-and-ships-the-Win.patch` | UNMEASURED - documents only; no engine code path is touched. |
 | `0755-tools-ship-the-qwen4exp-MTP-sidecar-builders-with-St.patch` | none on the engine (tools and documents only); the shipped scripts regenerate both served sidecars with identical tensors (lane 298 cells/sidecar-regen.txt). |
+| `0756-docs-README-states-the-Radeon-780M-test-system-and-w.patch` | UNMEASURED - documents only; no code path is touched. |
 
 ## Unclassified
 
