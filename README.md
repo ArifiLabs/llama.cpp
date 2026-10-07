@@ -151,6 +151,7 @@ Each before → after pair is one A/B on one file: this fork's build without the
 ROCmFP4-FAST, which shows **means**, as its protected-win record states. On the Q4_K_XL and S-X8 rows, the plain and
 DFlash2 pairs are separate A/Bs. "tie" = the paired confidence interval includes zero. File sizes are in GB (10⁹ bytes).
 ¹ The build before these kernels could not load this file with a drafter; a per-heap allocator fix cured it.
+These four files have not yet been measured on the Radeon 890M; that A/B is queued.
 
 ## What is new in this release
 
@@ -159,7 +160,7 @@ build where the change landed; receipts are in [`evidence/b11178-x1i2/`](evidenc
 
 | Change | Effect (Radeon 890M) | Default |
 |---|---|---|
-| MTP drafting for Qwen3.8-Flash-Next (`--spec-type draft-mtp -md <MTP sidecar>`) | 10.73 → 16.64 t/s short prompt (+55.0%), 10.38 → 15.14 long (+45.8%), draft acceptance 91.5% / 78.2%, means of 2 rounds | opt-in (needs the MTP sidecar GGUF) |
+| MTP drafting for Qwen3.8-Flash-Next (`--spec-type draft-mtp -md <MTP sidecar>`) | 10.73 → 16.64 t/s short prompt (+55.0%), 10.38 → 15.14 long (+45.8%), draft acceptance 91.5% / 78.2%, means of 2 rounds | opt-in: needs the MTP sidecar GGUF, built by us from Qwen's checkpoint ([where it comes from](#how-we-run-it-radeon-890m)) |
 | 40,525-token draft vocabulary head for MTP | +4.6% to +8.7% decode over the MTP head on all six test requests, same output ids | opt-in (sidecar) |
 | Recurrent-state update in place (GDN state bank) on the MTP verify path and in plain decode | MTP decode +9.5% (mean of four prompts, 3-round medians, ids 12/12); plain decode +4.4% short, +3.0% long (3 rounds) | on; `GGML_VK_DISABLE_GDN_BANK` reverts |
 | One fused dispatch per hyper-connection post step | 288 fewer dispatches per token; +1.2% short / +6.6% long decode in a 2-run ABBA, ids 8/8 | on; `GGML_VK_DISABLE_HC_POST_W` reverts |
