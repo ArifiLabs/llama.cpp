@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **751**, all non-merge, applied in filename order.
+- Patches: **752**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 751 commit messages, same provenance trailers. Verified, not
+same file contents, same 752 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -830,6 +830,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 749 | `0749-docs-README-speed-table-shows-each-row-s-draft-depth.patch` | arifi-fork-base | `86fd7d857` | - | - | docs: README speed table shows each row's draft depth, drafter and key server flags |
 | 750 | `0750-docs-README-regroups-How-we-run-it-per-model-explain.patch` | arifi-fork-base | `d83db5af6` | - | - | docs: README regroups How we run it per model, explains default-on switches, names the MTP sidecar source |
 | 751 | `0751-docs-README-adds-download-links-for-every-model-S-X8.patch` | arifi-fork-base | `c2e648e70` | - | - | docs: README adds download links for every model, S-X8 and Escha-W2 format notes, linked credits |
+| 752 | `0752-docs-README-names-the-MTP-sidecar-source-in-the-swit.patch` | arifi-fork-base | `81f914952` | - | - | docs: README names the MTP sidecar source in the switch table, marks the 780M-only files as not yet measured on the 890M |
 
 ## Measured effect, per patch
 
@@ -1660,6 +1661,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0749-docs-README-speed-table-shows-each-row-s-draft-depth.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0750-docs-README-regroups-How-we-run-it-per-model-explain.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0751-docs-README-adds-download-links-for-every-model-S-X8.patch` | UNMEASURED - documents only; no code path is touched. |
+| `0752-docs-README-names-the-MTP-sidecar-source-in-the-swit.patch` | UNMEASURED - documents only; no code path is touched. |
 
 ## Unclassified
 
