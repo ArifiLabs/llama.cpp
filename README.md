@@ -289,6 +289,11 @@ One row per improvement, by the layer it changes. Paths are in this repository.
 **The fork started in July 2026.** Its first commit, which sets up its identity and notices, is dated 22 July 2026.
 Release `b11178-x1i2` carries 828 fork commits on top of upstream `b11178`.
 
+**GLM-5.3 Flash on an integrated GPU, before upstream's release.** We took upstream's GLM-5.3 Flash model code the day
+after it merged (#27773, 30 September) and served the model on the Radeon 890M on 2 October 2026, with its routed
+experts streamed from NVMe. Upstream's v0.6.0 release, which announced GLM-5.3 Flash support, came on 5 October.
+NVMe expert streaming for this model on an integrated GPU is ours; upstream has no such path.
+
 **Two machines.** Both are mini-PCs with an integrated GPU on one RAM pool.
 
 | Machine | GPU | Memory | In use |
