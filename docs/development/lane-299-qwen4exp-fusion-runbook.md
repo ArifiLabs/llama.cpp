@@ -19,3 +19,10 @@ Rerun recipe for a weaker model. Scripts live in `C:/ArifiLabs/cache/fusion-x1-l
 
 Measured state (2026-10-06): HC_POST_W WIN, GDN_BANK WIN (both on this branch). MUL_MAT_SCALE_SILU and CONV_BANK
 reverted (no gain). `LLAMA_RING_OFF=1` is -5.7% vs stock: it routes the GDN state through slow GET_ROWS + CPY.
+
+Trap (2026-10-07, HC_POST_RMS): an NMSE op test cannot see bit-exactness at n_tokens 2..8. HC_POST_RMS was ids-exact
+in plain decode (48/48) yet drifted at token 26 in every MTP verify-window round (ab14, draft-mtp n-max 3). Any fused
+norm op that engages at n_tokens <= 8 needs an exact-equality op case at n_tokens 2..8, or a served MTP arm, before
+it ships default ON. Census recipe for verify windows: `GGML_VK_PERF_LOGGER=1` under the MTP serve line, then group
+perf blocks by the `n=` of their MUL_MAT_VEC rows and read the SECOND block of each shape (the first carries pipeline
+compile time).
