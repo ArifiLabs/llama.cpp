@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **749**, all non-merge, applied in filename order.
+- Patches: **750**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 749 commit messages, same provenance trailers. Verified, not
+same file contents, same 750 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -828,6 +828,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 747 | `0747-docs-README-notes-GLM-5.3-Flash-served-on-the-890M-b.patch` | arifi-fork-base | `684ec4be8` | - | - | docs: README notes GLM-5.3 Flash served on the 890M before upstream v0.6.0 |
 | 748 | `0748-docs-README-dates-when-each-model-ran-here.patch` | arifi-fork-base | `86a48c6ef` | - | - | docs: README dates when each model ran here |
 | 749 | `0749-docs-README-speed-table-shows-each-row-s-draft-depth.patch` | arifi-fork-base | `86fd7d857` | - | - | docs: README speed table shows each row's draft depth, drafter and key server flags |
+| 750 | `0750-docs-README-regroups-How-we-run-it-per-model-explain.patch` | arifi-fork-base | `d83db5af6` | - | - | docs: README regroups How we run it per model, explains default-on switches, names the MTP sidecar source |
 
 ## Measured effect, per patch
 
@@ -1656,6 +1657,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0747-docs-README-notes-GLM-5.3-Flash-served-on-the-890M-b.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0748-docs-README-dates-when-each-model-ran-here.patch` | UNMEASURED - documents only; no code path is touched. |
 | `0749-docs-README-speed-table-shows-each-row-s-draft-depth.patch` | UNMEASURED - documents only; no code path is touched. |
+| `0750-docs-README-regroups-How-we-run-it-per-model-explain.patch` | UNMEASURED - documents only; no code path is touched. |
 
 ## Unclassified
 
