@@ -1,0 +1,53 @@
+From 5f37b74001e015e664f1bdff5239389be5e1580f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 20:30:49 -0400
+Subject: [PATCH] vulkan: IQ3_S mat-vec spec id clash from merge round 2
+ (IQ3S_INIT moves to spec 5)
+
+Round 2 landed two independent arms on constant_id 4 of mul_mat_vec_iq3_s.comp: lane-300 F-141 3b
+ARIFI_IQ3_TPB_STOCK (538198cd99, set by the MUL_MAT f32/f16 pipelines from GGML_ARIFI_MMV_ROWSTABLE_N)
+and lane-302 Route A ARIFI_IQ3S_INIT (48468238d0, set by the idg gather pipeline from
+GGML_ARIFI_IQ3S_INIT). glslc refused the shader ("specialization-constant id already used",
+build-logs/build-integ3.txt). ARIFI_IQ3S_INIT moves to spec 5; the idg IQ3_S pipeline passes 0u at
+spec 4 (TPB_STOCK off = lane-302's own shape, TPB from NUM_COLS) and its init value at spec 5. The
+MUL_MAT pipelines are unchanged and leave spec 5 at its default 0. Both arms keep their defaults.
+
+Origin: lane-298
+Measured-effect: UNMEASURED (merge repair; restores the build, smoke run-ismoke2.ps1 is the receipt)
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp                       | 2 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp | 5 +++--
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 504f7c0704..6ae0fb3b9c 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -4041,7 +4041,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             const uint32_t iq2s_body = moe_gather_iq2s_body_env();
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ2_S],  "mul_mat_vec_idg_iq2_s_f32",   arr_dmmv_idg_iq2_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq2_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, iq2s_body}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_XXS], "mul_mat_vec_idg_iq3_xxs_f32", arr_dmmv_idg_iq3_xxs_f32_f32_len[reduc16], arr_dmmv_idg_iq3_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, iq3_sign_hoist, moe_gather_iq3xxs_init_env()}, 1, true, use_subgroups16, force_subgroup_size16);
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_idg_iq3_s_f32",   arr_dmmv_idg_iq3_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr_iq3s, 1, 1}, {wg_size_subgroup16, gr_iq3s, gc, iq3_sign_hoist, moe_gather_iq3s_init_env()}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_idg_iq3_s_f32",   arr_dmmv_idg_iq3_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr_iq3s, 1, 1}, {wg_size_subgroup16, gr_iq3s, gc, iq3_sign_hoist, 0u, moe_gather_iq3s_init_env()}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_XS],  "mul_mat_vec_idg_iq4_xs_f32",  arr_dmmv_idg_iq4_xs_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_NL],  "mul_mat_vec_idg_iq4_nl_f32",  arr_dmmv_idg_iq4_nl_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_nl_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, moe_gather_tail, moe_gather_iq4nl_body_env()}, 1, true, use_subgroups16, force_subgroup_size16);
+         }
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+index 4dcd64e59e..8ecad06e5d 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+@@ -43,10 +43,11 @@ const uint TPB_OVER_8  = ARIFI_TPB16 ?  2u : 1u;   // == TPB / 8
+ // Default 0. GGML_ARIFI_IQ3_MMVQ=v2 selects arm 1; ONE binary serves both.
+ layout (constant_id = 3) const uint ARIFI_IQ3_SIGN_HOIST = 0;
+ 
+-// arifi lane-302 Route A: IQ3_S grid init (spec 4, GGML_ARIFI_IQ3S_INIT, idg pipeline only). 1 = batched: all of a
++// arifi lane-302 Route A: IQ3_S grid init (spec 5, GGML_ARIFI_IQ3S_INIT, idg pipeline only). 1 = batched: all of a
+ // thread's loads issue before any LDS store (the IQ2_S lever-4 shape; the strided loop serialized 8 x load -> wait ->
+ // store). Same table, every entry written once: byte-identical by construction. 2 = planted wrong arm (table rotated).
+-layout (constant_id = 4) const uint ARIFI_IQ3S_INIT = 0;
++// lane-298 round-2 merge: spec 4 is lane-300's ARIFI_IQ3_TPB_STOCK above, so this arm moved to spec 5.
++layout (constant_id = 5) const uint ARIFI_IQ3S_INIT = 0;
+ 
+ void arifi_init_iq3s_batched() {
+     const uint t = gl_LocalInvocationIndex;

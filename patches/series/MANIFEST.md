@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **761**, all non-merge, applied in filename order.
+- Patches: **763**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 761 commit messages, same provenance trailers. Verified, not
+same file contents, same 763 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -840,6 +840,8 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 759 | `0759-arifi-sync-x1i-reword-table-context-rows-carry-no-fi.patch` | arifi-fork-base | `0dcbd357c` | - | - | arifi-sync: x1i-reword table - context rows carry no figures |
 | 760 | `0760-lane-298-integ-round-2-freeze-prep-full-shas-on-the-.patch` | arifi-fork-base | `acf329085` | - | - | lane-298 integ round 2 freeze prep: full shas on the round-2 win commit fields; Q39 Measured-effect cells |
 | 761 | `0761-arifi-sync-re-key-the-sha-pinned-ledgers-after-the-p.patch` | arifi-fork-base | `4476c4221` | - | - | arifi-sync: re-key the sha-pinned ledgers after the post-x1i trailer reword |
+| 762 | `0762-vulkan-IQ3_S-mat-vec-spec-id-clash-from-merge-round-.patch` | ternary-g128 | `5f37b7400` | - | - | vulkan: IQ3_S mat-vec spec id clash from merge round 2 (IQ3S_INIT moves to spec 5) |
+| 763 | `0763-protected-wins-register-the-integ-wins-W5-W6-W7-W8-W.patch` | arifi-fork-base | `aa9cac23a` | - | - | protected-wins: register the integ wins W5 W6 W7 W8 W12 W13 W18, join W9 W16, cover the round-2 non-wins |
 
 ## Measured effect, per patch
 
@@ -1680,6 +1682,8 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0759-arifi-sync-x1i-reword-table-context-rows-carry-no-fi.patch` | UNMEASURED - release tooling only. effcheck.py over post-x1i-trailers.tsv: 13 rows classify as real, 45 as no effect. |
 | `0760-lane-298-integ-round-2-freeze-prep-full-shas-on-the-.patch` | none (ledger keys and trailer-table text only; no engine change) |
 | `0761-arifi-sync-re-key-the-sha-pinned-ledgers-after-the-p.patch` | UNMEASURED - ledger keys only; no inference code path is touched. |
+| `0762-vulkan-IQ3_S-mat-vec-spec-id-clash-from-merge-round-.patch` | UNMEASURED (merge repair; restores the build, smoke run-ismoke2.ps1 is the receipt) |
+| `0763-protected-wins-register-the-integ-wins-W5-W6-W7-W8-W.patch` | none (protected-win ledger registration; the numbers live in the entries) |
 
 ## Unclassified
 
@@ -2312,4 +2316,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `0dcbd357c` arifi-sync: x1i-reword table - context rows carry no figures
 - `acf329085` lane-298 integ round 2 freeze prep: full shas on the round-2 win commit fields; Q39 Measured-effect cells
 - `4476c4221` arifi-sync: re-key the sha-pinned ledgers after the post-x1i trailer reword
+- `aa9cac23a` protected-wins: register the integ wins W5 W6 W7 W8 W12 W13 W18, join W9 W16, cover the round-2 non-wins
 
