@@ -775,8 +775,9 @@ llama_kv_cache::llama_kv_cache(
             hparams.n_embd_head_k_full == hparams.indexer_head_size) {
             attn_rot_k = true;
             // the deepseek32/dots3note indexer graphs multiply this matrix into the whole head
-            // (ggml_mul_mat), so it keeps master's full-width tile; the nrot experiment below would abort them
-            rot_k_full = true;
+            // (ggml_mul_mat), so it keeps master's full-width tile; the nrot experiment below would abort them.
+            // deepseek4 applies it tile-wise (llama_mul_mat_hadamard) and keeps the experiment's tile.
+            rot_k_full = model.arch != LLM_ARCH_DEEPSEEK4;
         }
 
         if (attn_rot_k) {
