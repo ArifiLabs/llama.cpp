@@ -1650,12 +1650,62 @@ void ggml_vk_buffer_memset_async(vk_context& ctx, vk_buffer& dst, size_t offset,
     ctx->s->buffer->buf.fillBuffer(dst->buffer, offset, size, c);
 }
 
+// lane-298: memset batch. Between ggml_vk_memset_batch(true) and (false) every GPU-path ggml_vk_buffer_memset on this
+// thread records its fill into ONE transfer command buffer per device (device mutex held for the batch); the end submits
+// once and waits once. Same fills, same queue, same bytes; only the per-fill submit + fence wait goes.
+// GGML_VK_MEMSET_BATCH=0 = one submit per fill (the v0.1.3.0 path).
+struct vk_memset_batch_entry {
+    vk_device  device;
+    vk_context ctx;
+};
+static thread_local bool g_vk_memset_batch_on = false;
+static thread_local std::vector<vk_memset_batch_entry> g_vk_memset_batch;
+
+void ggml_vk_memset_batch(bool begin) {
+    static const bool enabled = [] {
+        const char * e = getenv("GGML_VK_MEMSET_BATCH");
+        return e == nullptr || atoi(e) != 0;
+    }();
+    if (begin) {
+        g_vk_memset_batch_on = enabled;
+        return;
+    }
+    g_vk_memset_batch_on = false;
+    for (auto & b : g_vk_memset_batch) {
+        ggml_vk_ctx_end(b.ctx);
+        ggml_vk_submit(b.ctx, b.device->fence);
+        VK_CHECK(b.device->device.waitForFences({ b.device->fence }, true, UINT64_MAX), "vk_memset_batch waitForFences", b.device);
+        b.device->device.resetFences({ b.device->fence });
+        ggml_vk_queue_command_pools_cleanup(b.device);
+        b.device->mutex.unlock();
+    }
+    g_vk_memset_batch.clear();
+}
+
 void ggml_vk_buffer_memset(vk_buffer& dst, size_t offset, uint32_t c, size_t size) {
     VK_LOG_DEBUG("ggml_vk_buffer_memset(" << offset << ", " << c << ", " << size << ")");
 
     if (dst->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible &&
         dst->device->uma) {
         memset((uint8_t*)dst->ptr + offset, c, size);
+        return;
+    }
+
+    if (g_vk_memset_batch_on) {
+        vk_memset_batch_entry * b = nullptr;
+        for (auto & x : g_vk_memset_batch) {
+            if (x.device == dst->device) {
+                b = &x;
+            }
+        }
+        if (b == nullptr) {
+            dst->device->mutex.lock();
+            vk_context subctx = ggml_vk_create_temporary_context(dst->device->transfer_queue->cmd_pool);
+            ggml_vk_ctx_begin(dst->device, subctx);
+            g_vk_memset_batch.push_back({ dst->device, subctx });
+            b = &g_vk_memset_batch.back();
+        }
+        b->ctx->s->buffer->buf.fillBuffer(dst->buffer, offset, size, c);
         return;
     }
 

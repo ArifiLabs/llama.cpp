@@ -1865,6 +1865,25 @@ void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t lo, uint
     uint32_t n_cells = 0;
     uint32_t n_runs  = 0;
 
+    // lane-298: backends that can batch memsets (Vulkan: one submit + one fence for the whole apply instead of one per
+    // layer x K/V x run). Same fills, same bytes. Not used with transposed V (its set_2d upload shares the command pool).
+    using memset_batch_fn = void (*)(bool);
+    std::vector<memset_batch_fn> batch;
+    auto batch_begin = [&]() {
+        if (!batch.empty() || v_trans) {
+            return;
+        }
+        for (const auto & [_, buf] : ctxs_bufs) {
+            ggml_backend_dev_t dev = ggml_backend_buft_get_device(ggml_backend_buffer_get_type(buf.get()));
+            ggml_backend_reg_t reg = dev ? ggml_backend_dev_backend_reg(dev) : nullptr;
+            auto fn = reg ? (memset_batch_fn) ggml_backend_reg_get_proc_address(reg, "ggml_backend_vk_memset_batch") : nullptr;
+            if (fn && std::find(batch.begin(), batch.end(), fn) == batch.end()) {
+                fn(true);
+                batch.push_back(fn);
+            }
+        }
+    };
+
     for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
         const uint32_t strm  = sinfo.strm[s];
         const auto &   cells = v_cells[strm];
@@ -1881,6 +1900,7 @@ void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t lo, uint
             while (j < n && dirty[j] && cells.is_empty(j)) {
                 dirty[j++] = 0;
             }
+            batch_begin();
             zero_cells(strm, i, j, zeros);
             n_cells += j - i;
             n_runs++;
@@ -1892,8 +1912,12 @@ void llama_kv_cache::zero_stale_cells(const slot_info & sinfo, uint32_t lo, uint
         }
     }
 
+    for (auto fn : batch) {
+        fn(false);
+    }
+
     if (n_cells > 0) {
-        LLAMA_LOG_INFO("%s: kv-zero %u freed cells in %u runs, window [%u, %u)\n", __func__, n_cells, n_runs, lo, n_kv);
+        LLAMA_LOG_INFO("%s: kv-zero %u freed cells in %u runs, window [%u, %u), batched %d\n", __func__, n_cells, n_runs, lo, n_kv, (int) !batch.empty());
     }
 
     kv_zero_pending = left;
