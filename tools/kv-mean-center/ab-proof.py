@@ -27,8 +27,21 @@ SCHEMA = "arifilabs.kv-mean-center.ab-proof.v1"
 OFF_IDENTITY_SCHEMA = "arifilabs.kv-mean-center.off-identity.v1"
 PPL_RE = re.compile(r"PPL\s*=\s*([0-9]+(?:\.[0-9]+)?)(?:\s*\+/-\s*([0-9]+(?:\.[0-9]+)?))?")
 HEAVY_RE = re.compile(r"(?i)(cmake|ninja|cc1plus|clang\+\+|llama-(?:server|cli|perplexity|bench|kv-mean-center))")
-GATE_PYTHON = Path("C:/ArifiLabs/products/CareerCommand/.venv/Scripts/python.exe")
-HYGIENE_PYTHON = Path("C:/ArifiLabs/shared/.venv/Scripts/python.exe")
+
+
+def _studio_root() -> Path:
+    """ARIFI_STUDIO_ROOT, else the nearest ancestor holding registers/ + research/ (the seat layout)."""
+    if os.environ.get("ARIFI_STUDIO_ROOT"):
+        return Path(os.environ["ARIFI_STUDIO_ROOT"])
+    for d in Path(__file__).resolve().parents:
+        if (d / "registers").is_dir() and (d / "research").is_dir():
+            return d
+    return Path(".")
+
+
+STUDIO_ROOT = _studio_root()
+GATE_PYTHON = STUDIO_ROOT / "products/CareerCommand/.venv/Scripts/python.exe"
+HYGIENE_PYTHON = STUDIO_ROOT / "shared/.venv/Scripts/python.exe"
 
 
 class ProofError(RuntimeError):

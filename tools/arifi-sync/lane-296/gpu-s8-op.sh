@@ -4,8 +4,9 @@
 # PRE-REGISTERED: float path systematic if |1-beta| >= 5e-3 (most of its 7.7e-3), random if |1-beta| < 1e-3.
 #   Witness: off + GGML_ARIFI_F32ACC=ssm_out on ssm_out L0 drops from 7.66e-3 toward about 2e-4 (f16-act sim 1.88e-4).
 set -u
-N=/c/ArifiLabs/cache/lane296/night; C=$N/ev12/cap
-SX8=C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf
+S=${STUDIO_ROOT:?set STUDIO_ROOT to the studio root (receipts name the original machine paths)}
+N=$S/cache/lane296/night; C=$N/ev12/cap
+SX8=$S/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf
 for t in ssm_out:0 ssm_out:16 ssm_out:32 ssm_out:48 ssm_out:62 attn_output:31; do r=${t%%:*}; l=${t##*:}; w=blk.$l.$r.weight
   $N/probe-run.sh s8-off-$r-$l GGML_ARIFI_Q8_0_CM1=off -- replay off $SX8 $w $C/$w.x
 done

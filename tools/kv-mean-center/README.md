@@ -77,10 +77,11 @@ PPL gain that does not exceed twice the pooled standard error.
 The same harness also fail-closes the default-OFF byte-identity proof after two clean native builds:
 
 ```powershell
-C:/ArifiLabs/shared/.venv/Scripts/python.exe tools/kv-mean-center/ab-proof.py verify-off-identity `
-  --base-bin-dir C:/ArifiLabs/research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs/off-base-bin `
-  --feature-bin-dir C:/ArifiLabs/research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs/off-feature-bin `
-  --output C:/ArifiLabs/research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs/off-identity.json
+$ev = '<evidence-dir>'   # receipts: research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs
+python tools/kv-mean-center/ab-proof.py verify-off-identity `
+  --base-bin-dir "$ev/off-base-bin" `
+  --feature-bin-dir "$ev/off-feature-bin" `
+  --output "$ev/off-identity.json"
 ```
 
 Every common `.exe` and `.dll` must hash identically. The only permitted feature-only artifacts
@@ -91,7 +92,7 @@ The seated model's generated side artifact belongs beside its source model under
 `models` machine home:
 
 ```powershell
-$ev = 'C:/ArifiLabs/research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs'
+$ev = '<evidence-dir>'
 $zip = "$ev/wikitext-2-raw-v1.zip"
 New-Item -ItemType Directory -Force -Path "$ev/corpora" | Out-Null
 Invoke-WebRequest `
@@ -99,12 +100,13 @@ Invoke-WebRequest `
   -OutFile $zip
 Expand-Archive -LiteralPath $zip -DestinationPath "$ev/corpora" -Force
 
-C:/ArifiLabs/shared/.venv/Scripts/python.exe tools/kv-mean-center/ab-proof.py run `
-  --bin-dir C:/ArifiLabs/research/local-inference/src/_158kcache/build-vulkan/bin `
-  --model C:/ArifiLabs/models/hf/AtomicChat/Qwen3.8-27B-GGUF/Qwen3.8-27B-AD-IQ4_XS.gguf `
+$models = '<models-dir>/AtomicChat/Qwen3.8-27B-GGUF'
+python tools/kv-mean-center/ab-proof.py run `
+  --bin-dir build-vulkan/bin `
+  --model "$models/Qwen3.8-27B-AD-IQ4_XS.gguf" `
   --calibration-corpus "$ev/corpora/wikitext-2-raw/wiki.train.raw" `
   --evaluation-corpus "$ev/corpora/wikitext-2-raw/wiki.test.raw" `
-  --calibration-output C:/ArifiLabs/models/hf/AtomicChat/Qwen3.8-27B-GGUF/kv-mean-center-q4_0.gguf `
+  --calibration-output "$models/kv-mean-center-q4_0.gguf" `
   --output-dir $ev
 ```
 
@@ -114,9 +116,11 @@ declared through `CC_RUN_ANNOUNCE`, run with the 7.0 GB floor, redirected throug
 surrounded by full-command-line process scans. Re-derive a completed bank with:
 
 ```powershell
-C:/ArifiLabs/shared/.venv/Scripts/python.exe tools/kv-mean-center/ab-proof.py verify `
-  --output-dir C:/ArifiLabs/research/local-inference/lane-evidence/2026-08-19-lane-158-kcache-proofs
+python tools/kv-mean-center/ab-proof.py verify --output-dir '<evidence-dir>'
 ```
+
+Receipts keep the original machine paths. On the seat, `ab-proof.py` finds the studio root (or reads
+`ARIFI_STUDIO_ROOT`) for its gate and hygiene interpreters.
 
 `--kv-mean-center-probe-output proof.json` is specific to `llama-kv-mean-center`. In probe mode the
 tool reads the centered graph tensors back from their real backend buffers and checks that

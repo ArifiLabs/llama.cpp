@@ -19,18 +19,19 @@
 #     2-chunk smoke (4.2685 / 6.0557 vs off 4.3127 / 6.0863): PPL below off 7.408170.
 # Done file: night/int8goal-s8.done ; per-leg night/int8goal-s8-<leg>.done ; evidence ev15s8/
 set -u
-N=/c/ArifiLabs/cache/lane296/night; EV=$N/ev15s8; mkdir -p $EV; W=$EV/window.txt
-export PATH="<home>/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT.LLVM_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin:$PATH"
+S=${STUDIO_ROOT:?set STUDIO_ROOT to the studio root (receipts name the original machine paths)}
+N=$S/cache/lane296/night; EV=$N/ev15s8; mkdir -p $EV; W=$EV/window.txt
+export PATH="${MINGW_BIN:+$MINGW_BIN:}$PATH"  # WinLibs POSIX UCRT LLVM mingw64/bin
 export ARIFI_GPU_BUDGET_GIB=26
-MK=/c/ArifiLabs/cache/GPU-BUSY-lane296c.marker; FB=$N/b-int8c/bin; RB=C:/ArifiLabs/models/engines/arifi-b10825-r86i-6fb7a425a
-SX8=C:/ArifiLabs/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf
-Q4=C:/ArifiLabs/models/hf/huihui-ai/Huihui-Qwen3.8-27B-abliterated-UD-GGUF/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf
-GSQ=C:/ArifiLabs/models/hf/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf
+MK=$S/cache/GPU-BUSY-lane296c.marker; FB=$N/b-int8c/bin; RB=$S/models/engines/arifi-b10825-r86i-6fb7a425a
+SX8=$S/models/hf/marlalabsAI/Qwen3.8-27B-SX8/Qwen3.8-27B-SX8v43-id57.gguf
+Q4=$S/models/hf/huihui-ai/Huihui-Qwen3.8-27B-abliterated-UD-GGUF/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf
+GSQ=$S/models/hf/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF/Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf
 BQ4=$N/kl/base-Q4-R.kld; BSN=$N/kl/base-SX8-R-nf.kld; BG=$N/kl/base-GSQ-R.kld
-WT=C:/ArifiLabs/cache/r53-pca-wt/r53-evidence/wikitext/wikitext-2-raw/wiki.test.raw
+WT=$S/cache/r53-pca-wt/r53-evidence/wikitext/wikitext-2-raw/wiki.test.raw
 CLR="-u GGML_ARIFI_Q8_0_CM1 -u GGML_ARIFI_Q8_0_CM1_ONLY -u GGML_ARIFI_Q8_0_CM1_SKIP -u GGML_ARIFI_Q8_1_SCALE -u GGML_ARIFI_Q8_0_CM1_2D -u GGML_ARIFI_Q8_0_CM1_2D_SHIFT -u GGML_ARIFI_F32ACC"
 CAND="GGML_ARIFI_Q8_0_CM1=on GGML_ARIFI_Q8_0_CM1_2D=ssm_out GGML_ARIFI_F32ACC=all"
-others(){ ls /c/ArifiLabs/cache/GPU-TIMED-*.marker /c/ArifiLabs/cache/GPU-BUSY-*.marker 2>/dev/null | grep -v -e 'GPU-BUSY-lane296\.marker$' -e 'GPU-BUSY-lane296c\.marker$'
+others(){ ls $S/cache/GPU-TIMED-*.marker $S/cache/GPU-BUSY-*.marker 2>/dev/null | grep -v -e 'GPU-BUSY-lane296\.marker$' -e 'GPU-BUSY-lane296c\.marker$'
           tasklist //FO CSV //NH 2>/dev/null | grep -i '"llama-' | grep -v '"13696"'; }
 leg(){ n=$1; shift; [ -e $N/int8goal-s8-$n.done ] && return 0
   while [ -n "$(others)" ]; do echo "YIELD $(date -Is) $(others | tr '\n' ' ')" >> $W; sleep 60; done

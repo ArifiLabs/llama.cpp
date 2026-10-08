@@ -950,6 +950,13 @@ def parse_cache(path: str) -> dict:
     return out
 
 
+def _repo_relative(entries: dict, repo: str) -> dict:
+    """Values under the repo root compare as repo-relative, so the committed snapshot holds no checkout path."""
+    rp = os.path.abspath(repo).replace("\\", "/").rstrip("/").lower() + "/"
+    return {k: (t, v.replace("\\", "/")[len(rp):] if v.replace("\\", "/").lower().startswith(rp) else v)
+            for k, (t, v) in entries.items()}
+
+
 def cmd_recipe_diff(repo: str, cfg: dict, args) -> int:
     """Recover the build recipe by DIFFING, never by grepping.
 
@@ -966,7 +973,7 @@ def cmd_recipe_diff(repo: str, cfg: dict, args) -> int:
     if not os.path.exists(live):
         raise Loud("no live cache at %s - configure a build first, or pass --live" % live)
 
-    a, b = parse_cache(snap), parse_cache(live)
+    a, b = _repo_relative(parse_cache(snap), repo), _repo_relative(parse_cache(live), repo)
     step("recipe diff: committed snapshot  vs  live cache")
     say("snapshot: %s  (%d entries)" % (snap, len(a)))
     say("live    : %s  (%d entries)" % (live, len(b)))
@@ -1217,6 +1224,12 @@ def cmd_judge(repo: str, cfg: dict, args) -> int:
     if model.startswith("SET-ME"):
         raise Loud("judge.model is not configured in sources.json. Set it to the absolute path\n"
                    "of the regression model gguf. This tool will not pick a model for you.")
+    if not os.path.isabs(model):
+        # studio-relative, resolved like evidence locators (repo/../../.. or ARIFI_STUDIO_ROOT)
+        for root in (os.path.dirname(os.path.dirname(os.path.dirname(repo.rstrip("/\\")))), STUDIO_ROOT):
+            if root and os.path.exists(os.path.join(root, model)):
+                model = os.path.join(root, model)
+                break
     if not os.path.exists(model):
         raise Loud("judge model not found: %s" % model)
     say("judge binary : %s" % binary)
@@ -2089,7 +2102,21 @@ def _evidence_resolves(repo: str, locator: str) -> bool:
     return False
 
 
-STUDIO_ROOT = "C:/ArifiLabs"
+def _find_studio_root() -> str:
+    """ARIFI_STUDIO_ROOT, else the nearest ancestor holding registers/ + research/, else "" (public clone)."""
+    if os.environ.get("ARIFI_STUDIO_ROOT"):
+        return os.environ["ARIFI_STUDIO_ROOT"]
+    d = os.path.dirname(os.path.abspath(__file__))
+    while True:
+        if os.path.isdir(os.path.join(d, "registers")) and os.path.isdir(os.path.join(d, "research")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return ""
+        d = parent
+
+
+STUDIO_ROOT = _find_studio_root()
 
 
 def validate_protected_wins(repo: str, ref: str, cfg=None) -> list:
