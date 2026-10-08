@@ -643,7 +643,7 @@ float dot_block_iq3_xxs(const block_iq3_xxs w, const uint ab) {
 float dot_block_iq3_s(const block_iq3_s w, const uint ab) {
     float sum = 0.0f;
     for (int ib32 = 0; ib32 < 8; ib32++) {
-        const uint ls = 2u * uint(w.scales[ib32 >> 1] >> (4u * uint(ib32 & 1))) + 1u;
+        const uint ls = 2u * ((uint(w.scales[ib32 >> 1]) >> (4u * uint(ib32 & 1))) & 0xFu) + 1u;
         const uint qh = uint(w.qh[ib32]);
         const block_q8_1 a = data_act[ab + uint(ib32)];
         int sumi = 0;
