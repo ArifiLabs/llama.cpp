@@ -199,6 +199,7 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
     # llama_build_and_test(test-double-float.cpp) # SLOW
 
     llama_build(test-llama-archs.cpp)
+    llama_build(test-spec-accept-eog.cpp) # needs a model: test-llama-archs -a "^llama$" -o <dir>
 
     # Ternary repack kernels. No model can reach the _generic variants (the dispatch gates Q2_0 and
     # Q2_0_G128 on AVX512-VNNI only), so they are called directly here.
