@@ -2315,7 +2315,7 @@
       "id": "vulkan-qsa-mask-fa-fusion",
       "status": "active",
       "mechanism": "qwen4exp build_attn_qsa materializes a full [n_kv, n_tps] f16 mask per QSA layer per ubatch (fill -inf, fill 0, set_rows 0 at top_k cells, add kq_mask) and the sparse FA re-reads that row to compact finite cells. Vulkan matches the chain FILL..FLASH_ATTN_EXT (qsa_mask_fa_pattern) and runs flash_attn_qsa_mask.comp: a per-row shared-memory bitmap of the top_k indices compacts the selected finite cells in the same ascending order, so FA math is unchanged; dense FA (KV below the sparse floor) gets the mask written into the ADD node's buffer by the same kernel. Compaction cost becomes O(top_k) instead of O(n_kv). Default ON; GGML_ARIFI_QSA_MASKFUSE=0 keeps the chain unfused; =red drops the first 64 top_k entries per row (planted wrong variant).",
-      "commit": "5543c29e1341fffa161c1563a95d0a3facaf3a7b",
+      "commit": "21dcfd83cae7114475d065e0cfbd02af341aca45",
       "protected_paths": [
         "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
         "ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_qsa_mask.comp",
@@ -2342,7 +2342,7 @@
       "notes": "Lane 301 DECISIONS D66-D69 (board/programs/local-inference/lanes/2026-10-05-lane-301-DECISIONS.md). f42f16e38c is a message-only reword of 3ab1a4540d (same tree); also_commits eebf2a7df4 adds the QSA_MASK_FA perf-mode test shapes (no engine code).",
       "_registered": "2026-10-08, lane 301 relaunch 40.",
       "also_commits": [
-        "03a822b6e7b7205819f2ce44f16bcab9a43845a9"
+        "90aba50569667ca1249b468ca02feeb50f24a8a4"
       ]
     }
   ],
