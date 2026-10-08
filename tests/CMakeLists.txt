@@ -342,6 +342,10 @@ if (NOT LLAMA_USE_SYSTEM_GGML)
     # as a skip when SKIP_RETURN_CODE says so; without it, every CPU-only
     # runner records the skip as a failure.
     set_tests_properties(test-moe-cache PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+    # Every cache weight type on the Vulkan cache matvec vs the CPU result; exits 77 without a Vulkan device.
+    llama_build(test-moe-cache-vk-types.cpp)
+    llama_test(test-moe-cache-vk-types LABEL "main;backend")
+    set_tests_properties(test-moe-cache-vk-types PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 endif()
 
 llama_build_and_test(test-moe-cache-fit.cpp)
