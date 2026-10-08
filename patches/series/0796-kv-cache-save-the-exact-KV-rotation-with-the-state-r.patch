@@ -1,4 +1,4 @@
-From 9905714c2961f021568f9b297d0ac89218840df4 Mon Sep 17 00:00:00 2001
+From 5e1f308af3e6d0191cef260bd9a281ec369da337 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 19:45:29 -0400
 Subject: [PATCH] kv-cache: save the exact KV rotation with the state, reject a
@@ -19,7 +19,7 @@ record. The kv_mean_center bias-basis check reads n_rot_k != 0. Our DSA rotation
 (LLM_ARCH_GLM_DSA is absent from it on 7156c61607 while b11178 had it; separate row, see REPORT/QUESTIONS).
 
 Taken-from: ggml-org/llama.cpp@210791069b (#28498)
-Measured-effect: not yet measured; check = test-save-load-state column "rot" RED on 7156c61607 (mismatched restores accepted), GREEN here (rejected), on a test-llama-archs llama model (head_k 128).
+Measured-effect: CORRECTNESS ONLY, SPEED UNMEASURED - not yet measured; check = test-save-load-state column "rot" RED on 7156c61607 (mismatched restores accepted), GREEN here (rejected), on a test-llama-archs llama model (head_k 128).
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  include/llama.h        |  4 +-

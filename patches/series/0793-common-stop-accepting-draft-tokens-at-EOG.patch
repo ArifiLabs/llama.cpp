@@ -1,4 +1,4 @@
-From 1632f134e017f2b7f6d90d139a480109d866f512 Mon Sep 17 00:00:00 2001
+From dc298c1913fd8aa4e3aed06c8ded97716ea6ca5b Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 19:40:22 -0400
 Subject: [PATCH] common : stop accepting draft tokens at EOG
@@ -10,7 +10,7 @@ our maximal-coupling (dists) overload, which upstream does not have. A trailing 
 still accepted, because on replay the last token comes from the target.
 
 Taken-from: ggml-org/llama.cpp@d280808f5d (#29638)
-Measured-effect: test-spec-accept-eog RED on 7156c61607 (2 tokens accepted per overload), GREEN here (1); the served 2-turn replay effect is not measured.
+Measured-effect: CORRECTNESS ONLY, SPEED UNMEASURED - test-spec-accept-eog RED on 7156c61607 (2 tokens accepted per overload), GREEN here (1); the served 2-turn replay effect is not measured.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  common/sampling.cpp | 11 ++++++++++-

@@ -1,4 +1,4 @@
-From 81bf18af24c32d27e25cea1bed3f9dfb640f493e Mon Sep 17 00:00:00 2001
+From c2cf383e15efa2f5b9a2fd7f19e838d97a96ffa4 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 19:41:42 -0400
 Subject: [PATCH] llama : re-reserve the sched when the nextn extraction flags
@@ -11,7 +11,7 @@ mid-run. Changing the flags now invalidates the reserve, so the next compute res
 Cost: one reserve at the first drafted decode, nothing per token. Clean apply.
 
 Taken-from: ggml-org/llama.cpp@1a3011cc0c (#30020)
-Measured-effect: not yet measured; check = MTP serve under GGML_SCHED_DEBUG_REALLOC (no mid-run realloc after the first decode), owed with the next MTP served cell.
+Measured-effect: CORRECTNESS ONLY, SPEED UNMEASURED - not yet measured; check = MTP serve under GGML_SCHED_DEBUG_REALLOC (no mid-run realloc after the first decode), owed with the next MTP served cell.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/llama-context.cpp | 5 +++++

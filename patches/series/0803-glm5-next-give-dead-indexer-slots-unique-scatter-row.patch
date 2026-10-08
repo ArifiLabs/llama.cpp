@@ -1,4 +1,4 @@
-From f433dfe70e89eb3602b1a907547f959e1b8f64e2 Mon Sep 17 00:00:00 2001
+From 45d8c6e967194af90ca102a0f57e65f10f3c021e Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 19:46:14 -0400
 Subject: [PATCH] glm5-next: give dead indexer slots unique scatter rows
@@ -14,7 +14,7 @@ Cost: per k-pool layer a few small ops over [n_sel, n_tokens] (exp, arange, sub/
 gather_mask is allocated on the scatter path too. Not measured on the GLM5-Next serve line; owner moe-x1-lane.
 
 Taken-from: ggml-org/llama.cpp@05af0d2b13 (#29745)
-Measured-effect: not yet measured; check = CPU greedy 2-sequence glm5-next run (test-llama-archs model) ids identical across 3 runs; decode cost on the GLM5-Next serve line owed to moe-x1-lane.
+Measured-effect: CORRECTNESS ONLY, SPEED UNMEASURED - not yet measured; check = CPU greedy 2-sequence glm5-next run (test-llama-archs model) ids identical across 3 runs; decode cost on the GLM5-Next serve line owed to moe-x1-lane.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/models/glm5-next.cpp | 26 +++++++++++++++++---------

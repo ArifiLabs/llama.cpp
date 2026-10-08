@@ -1,4 +1,4 @@
-From dbf3364ad87c1de43912347e4c5867fa72c24c36 Mon Sep 17 00:00:00 2001
+From 9ef414e29d762a835ebbfc7f4bafb8592f9d58f2 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 19:41:27 -0400
 Subject: [PATCH] ggml : require input tensors to be GGML_OP_NONE
@@ -10,7 +10,7 @@ eagle3.cpp inp_g; glm5-next.cpp k-pool inputs; qwen4exp.cpp read_rows, fresh_*, 
 tensor fresh from ggml_new_tensor_*; no view or op result is flagged as input. Clean apply.
 
 Taken-from: ggml-org/llama.cpp@b5cf8ce02a (#29647)
-Measured-effect: guard only, no runtime cost; test-llama-archs over all archs builds every graph under the assert (redgreen-4).
+Measured-effect: NO RUNTIME EFFECT - guard only, no runtime cost; test-llama-archs over all archs builds every graph under the assert (redgreen-4).
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  ggml/src/ggml.c       | 1 +

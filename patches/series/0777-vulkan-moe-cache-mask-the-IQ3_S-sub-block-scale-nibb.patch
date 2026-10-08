@@ -1,4 +1,4 @@
-From 86d8ca4c2db9dcdc205273b87a8f392d9c168a03 Mon Sep 17 00:00:00 2001
+From 16e0fbfc55995aced7259c37f09219365ababd55 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 20:42:50 -0400
 Subject: [PATCH] vulkan moe-cache: mask the IQ3_S sub-block scale nibble in
@@ -21,7 +21,7 @@ in this shader present in that file (IQ2_S, IQ3_XXS, IQ4_NL, IQ4_XS) and Q2_0
 were read against their CPU dequantizers and match.
 
 Origin: ArifiLabs (native) - defect in our moe_cache_mv.comp; strata-x1 lane (rank 5 step A, Q-R5-BUG)
-Measured-effect: PENDING - functional cell r5d (IQ3_S NVMe path vs resident, ids compare) queued; no speed effect expected (one AND per sub-block).
+Measured-effect: CORRECTNESS ONLY, SPEED UNMEASURED - PENDING - functional cell r5d (IQ3_S NVMe path vs resident, ids compare) queued; no speed effect expected (one AND per sub-block).
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  ggml/src/ggml-vulkan/vulkan-shaders/moe_cache_mv.comp | 2 +-

@@ -1,4 +1,4 @@
-From 10c7a28166e45f391349f3c5ba0c6b9d2a71573e Mon Sep 17 00:00:00 2001
+From 432862154d9fb02c7d46029bba63e9c4e9ed3ee4 Mon Sep 17 00:00:00 2001
 From: Angelo Arifi <arifilabs@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 19:42:27 -0400
 Subject: [PATCH] llama : preserve original batch order for speculative
@@ -18,7 +18,7 @@ never reads rows after encode, so upstream does not need this. At -np 1 the batc
 the served single-slot lines compute the same rows as before.
 
 Taken-from: ggml-org/llama.cpp@4453b535fd (#29019)
-Measured-effect: not yet measured; owed = -np 1 DFlash2 and MTP greedy ids identical vs integ, -np 2 DFlash2 acceptance per slot vs integ (upstream removed its regression test before merge).
+Measured-effect: CORRECTNESS ONLY, SPEED UNMEASURED - not yet measured; owed = -np 1 DFlash2 and MTP greedy ids identical vs integ, -np 2 DFlash2 acceptance per slot vs integ (upstream removed its regression test before merge).
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/llama-batch.cpp   |  1 +
