@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **803**, all non-merge, applied in filename order.
+- Patches: **806**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 803 commit messages, same provenance trailers. Verified, not
+same file contents, same 806 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -882,6 +882,9 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 801 | `0801-ggml-require-input-tensors-to-be-GGML_OP_NONE.patch` | arifi-fork-base | `dbf3364ad` | ggml-org/llama.cpp@b5cf8ce02a (#29647) | - | ggml : require input tensors to be GGML_OP_NONE |
 | 802 | `0802-llama-re-reserve-the-sched-when-the-nextn-extraction.patch` | arifi-fork-base | `81bf18af2` | ggml-org/llama.cpp@1a3011cc0c (#30020) | - | llama : re-reserve the sched when the nextn extraction flags change |
 | 803 | `0803-glm5-next-give-dead-indexer-slots-unique-scatter-row.patch` | arifi-fork-base | `f433dfe70` | ggml-org/llama.cpp@05af0d2b13 (#29745) | - | glm5-next: give dead indexer slots unique scatter rows |
+| 804 | `0804-kv-mean-center-ab-proof-runs-without-the-private-ari.patch` | arifi-fork-base | `cf0e6f2f4` | - | - | kv-mean-center: ab-proof runs without the private arifi_core package |
+| 805 | `0805-kv-cache-DSA-indexer-rotation-keeps-the-full-width-H.patch` | arifi-fork-base | `f464aacbd` | - | - | kv-cache: DSA indexer rotation keeps the full-width Hadamard tile |
+| 806 | `0806-kv-cache-keep-deepseek4-on-the-nrot-experiment-tile-.patch` | arifi-fork-base | `5357b4899` | - | - | kv-cache: keep deepseek4 on the nrot experiment tile (narrow 5eb9502f45) |
 
 ## Measured effect, per patch
 
@@ -1767,6 +1770,9 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0801-ggml-require-input-tensors-to-be-GGML_OP_NONE.patch` | guard only, no runtime cost; test-llama-archs over all archs builds every graph under the assert (redgreen-4). |
 | `0802-llama-re-reserve-the-sched-when-the-nextn-extraction.patch` | not yet measured; check = MTP serve under GGML_SCHED_DEBUG_REALLOC (no mid-run realloc after the first decode), owed with the next MTP served cell. |
 | `0803-glm5-next-give-dead-indexer-slots-unique-scatter-row.patch` | not yet measured; check = CPU greedy 2-sequence glm5-next run (test-llama-archs model) ids identical across 3 runs; decode cost on the GLM5-Next serve line owed to moe-x1-lane. |
+| `0804-kv-mean-center-ab-proof-runs-without-the-private-ari.patch` | none (tools-only; selftest identical hidden vs present, cells/abfix-selftest/) |
+| `0805-kv-cache-DSA-indexer-rotation-keeps-the-full-width-H.patch` | correctness fix; RED = deepseek32 graph abort on 7156c61607 (cache/upstream-x1-lane/cells/rg4-red-4, rg5-red-2-deepseek32); GREEN = cache/upstream-x1-lane/cells/rg6-summary.txt (154 archs CPU, Vulkan 3/3, with 8b88d87900) |
+| `0806-kv-cache-keep-deepseek4-on-the-nrot-experiment-tile-.patch` | correctness fix; GREEN = cache/upstream-x1-lane/cells/rg6-summary.txt (redgreen-6: 154 archs CPU one step each, Vulkan 3/3; deepseek4 OK, deepseek32 + dots3note no longer abort); protected-win check PASS cache/upstream-x1-lane/cells/pw-check-8b88d87900.txt |
 
 ## Unclassified
 
@@ -2435,4 +2441,7 @@ rather than silently bucketed - add a rule when a new source appears.
 - `dbf3364ad` ggml : require input tensors to be GGML_OP_NONE
 - `81bf18af2` llama : re-reserve the sched when the nextn extraction flags change
 - `f433dfe70` glm5-next: give dead indexer slots unique scatter rows
+- `cf0e6f2f4` kv-mean-center: ab-proof runs without the private arifi_core package
+- `f464aacbd` kv-cache: DSA indexer rotation keeps the full-width Hadamard tile
+- `5357b4899` kv-cache: keep deepseek4 on the nrot experiment tile (narrow 5eb9502f45)
 

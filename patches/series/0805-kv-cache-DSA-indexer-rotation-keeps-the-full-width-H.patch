@@ -1,0 +1,54 @@
+From f464aacbdd2301514a10f50b61fc6f0538ea407d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 13:23:19 -0400
+Subject: [PATCH] kv-cache: DSA indexer rotation keeps the full-width Hadamard
+ tile
+
+test-llama-archs -a deepseek32 aborts at graph build on 7156c61607 with GGML_ASSERT(ggml_can_mul_mat(a, b)).
+Cause: the patch-series EXPERIMENT (41448a06bc, TurboQuant rotation patch) forces the K rotation tile to
+nrot=64 for every cache, but the DSA lightning-indexer cache turns rotation on as a functional requirement and
+deepseek32.cpp:252/254 and dots3note.cpp multiply that matrix straight into the whole indexer head
+(ggml_mul_mat(self_k_rot_lid, indexer_q)). A 64x64 matrix against a 128-wide head fails the shape check.
+Base b11178 and upstream b11476 use the largest power of 2 that divides the head, which is the head.
+
+The DSA-forced branch now sets rot_k_full, and the tile size ignores the nrot experiment and
+LLAMA_ATTN_ROT_K_NROT for it. Every other cache keeps the 64 default and the env override. deepseek4
+(tile-aware llama_mul_mat_hadamard) goes back to base's full-width tile too. glm-dsa is not in the
+forced list on our tree (QUESTIONS Q11) and is unchanged.
+(Picked from upstream-x1 lane 5eb9502f45 for v0.1.3.1, HQ84 13:2x order; trailers added by lane 298.)
+
+Origin: upstream-x1 lane Q13 (ours, not an upstream port)
+Measured-effect: correctness fix; RED = deepseek32 graph abort on 7156c61607 (cache/upstream-x1-lane/cells/rg4-red-4, rg5-red-2-deepseek32); GREEN = cache/upstream-x1-lane/cells/rg6-summary.txt (154 archs CPU, Vulkan 3/3, with 8b88d87900)
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/llama-kv-cache.cpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index e2b44e195f..388d06ff60 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -769,10 +769,14 @@ llama_kv_cache::llama_kv_cache(
+         // indexer: this is a functional requirement for the model, not optional
+         // tuning, so it overrides the default-off policy (still respects the hard
+         // LLAMA_ATTN_ROT_DISABLE lock-out).
++        bool rot_k_full = false;
+         if (!attn_rot_disable && (model.arch == LLM_ARCH_DEEPSEEK32 || model.arch == LLM_ARCH_DEEPSEEK4 ||
+                 model.arch == LLM_ARCH_DOTS3NOTE) &&
+             hparams.n_embd_head_k_full == hparams.indexer_head_size) {
+             attn_rot_k = true;
++            // the deepseek32/dots3note indexer graphs multiply this matrix into the whole head
++            // (ggml_mul_mat), so it keeps master's full-width tile; the nrot experiment below would abort them
++            rot_k_full = true;
+         }
+ 
+         if (attn_rot_k) {
+@@ -783,7 +787,7 @@ llama_kv_cache::llama_kv_cache(
+             // value saved with the state (#28498) is the one the graph uses.
+             // ref: https://github.com/ggml-org/llama.cpp/pull/21038#issuecomment-4141323088
+             const char * LLAMA_ATTN_ROT_K_NROT = getenv("LLAMA_ATTN_ROT_K_NROT");
+-            const int nrot = LLAMA_ATTN_ROT_K_NROT ? atoi(LLAMA_ATTN_ROT_K_NROT) : 64;
++            const int nrot = rot_k_full ? 0 : LLAMA_ATTN_ROT_K_NROT ? atoi(LLAMA_ATTN_ROT_K_NROT) : 64;
+ 
+             if (nrot > 0) {
+                 n_rot_k = (uint32_t) nrot;
