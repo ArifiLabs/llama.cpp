@@ -55,6 +55,14 @@ vec4 arifi_deq4(uint ib, uint iqs, uint a_offset) {
 #define arifi_deq4 dequantize4
 #endif
 
+#ifdef MUL_MAT_ID_GATHER
+// arifi lane-302 lever 11 (spec 5, GGML_ARIFI_MOE_NOUNROLL): 1 = rolled K loop only (same iter() calls in the same order).
+// 2 = planted wrong arm (skips the first K chunk; op gate must go RED).
+layout (constant_id = 5) const uint ARIFI_NOUNROLL = 0;
+#else
+const uint ARIFI_NOUNROLL = 0;
+#endif
+
 uint a_offset, b_offset, d_offset, y_offset;
 
 vec4 load_b(const uint j, const uint iybs, const uint iqs, const bool lastiter, out bool OOB_y, out bool OOB_z, out bool OOB_w) {
@@ -291,9 +299,9 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
         num_iters++;
     }
     int unroll_count = 4;
-    uint unrolled_iters = num_iters & ~(unroll_count - 1);
+    uint unrolled_iters = ARIFI_NOUNROLL != 0 ? 0 : num_iters & ~(unroll_count - 1);
 
-    uint i = 0;
+    uint i = ARIFI_NOUNROLL == 2 ? 1 : 0;
 
 #if K_PER_ITER == 4
     // If the K dimension is odd, we need lastiter==true on the last iteration
@@ -325,7 +333,7 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
 #endif
 
     unroll_count = 2;
-    unrolled_iters = num_iters & ~(unroll_count - 1);
+    unrolled_iters = ARIFI_NOUNROLL != 0 ? 0 : num_iters & ~(unroll_count - 1);
 
 #if K_PER_ITER == 4
     if ((p.ncols & 3) != 0 &&
