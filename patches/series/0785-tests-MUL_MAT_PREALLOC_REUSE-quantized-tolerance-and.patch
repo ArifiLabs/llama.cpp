@@ -1,0 +1,53 @@
+From ed182b41f977058a3755f0ae54f581a2c0adf467 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 13:40:29 -0400
+Subject: [PATCH] tests: MUL_MAT_PREALLOC_REUSE - quantized tolerance and
+ forced matmul-before-soft_max order
+
+The case compares a q4_0/q8_0 x q8_1 matmul against the CPU reference, so it takes
+the test_mul_mat tolerance (5e-4) instead of the default 1e-7. The soft_max input
+now concatenates the first matmul's output, so a graph reorder cannot move that
+matmul after the soft_max and turn the RED arm green for the wrong reason
+(ncols stays 20000 > 16384).
+
+Taken-from: ggml-org/llama.cpp@806eee9841 (#29591, test from PR text)
+Origin: upstream-x1 lane PORT-SPEC P2
+Measured-effect: UNMEASURED (test only; RED/GREEN in MERGE-READY.md row P2)
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tests/test-backend-ops.cpp | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index b22405812f..9e840a0909 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -6807,20 +6807,26 @@ struct test_mul_mat_prealloc_reuse : public test_case {
+         return "MUL_MAT_PREALLOC_REUSE";
+     }
+ 
++    double max_nmse_err() override {
++        return 5e-4;
++    }
++
+     test_mul_mat_prealloc_reuse(ggml_type type_a = GGML_TYPE_Q4_0, int64_t m = 64, int64_t n = 32, int64_t k = 256)
+         : type_a(type_a), m(m), n(n), k(k) {}
+ 
+     ggml_tensor * build_graph(ggml_context * ctx) override {
+         ggml_tensor * a1 = ggml_new_tensor_2d(ctx, type_a, k, m);
+         ggml_tensor * b  = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, k, n);
+-        ggml_tensor * x  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 20000);
++        ggml_tensor * x  = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 20000 - m*n);
+         ggml_tensor * a2 = ggml_new_tensor_2d(ctx, type_a, k, m);
+         ggml_set_name(a1, "a1");
+         ggml_set_name(b, "b");
+         ggml_set_name(x, "x");
+ 
++        // the soft_max input depends on y1, so no graph reorder can move the first matmul after it
+         ggml_tensor * y1 = ggml_mul_mat(ctx, a1, b);
+-        ggml_tensor * s  = ggml_scale(ctx, ggml_soft_max(ctx, x), 20000.0f);
++        ggml_tensor * s_in = ggml_concat(ctx, ggml_reshape_1d(ctx, y1, m*n), x, 0);
++        ggml_tensor * s  = ggml_scale(ctx, ggml_soft_max(ctx, s_in), 20000.0f);
+         ggml_tensor * w2 = ggml_cpy(ctx, ggml_reshape_2d(ctx, ggml_view_1d(ctx, s, k*m, 0), k, m), a2);
+         ggml_tensor * y2 = ggml_mul_mat(ctx, w2, b);
+ 

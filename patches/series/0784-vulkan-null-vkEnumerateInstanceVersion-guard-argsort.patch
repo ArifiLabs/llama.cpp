@@ -1,0 +1,83 @@
+From 57ac8b7d16910fe3197eeb412b625590eda34e51 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 13:35:14 -0400
+Subject: [PATCH] vulkan: null vkEnumerateInstanceVersion guard + argsort WG
+ size capped at the pipeline count
+
+A Vulkan 1.0 loader has no vkEnumerateInstanceVersion; backend init called a
+null pointer. It is now treated like any loader under 1.2. Argsort picked its
+single-workgroup path and outer pass start from max_workgroup_size_log2, which
+can exceed the number of argsort pipelines (devices with > 1024 invocations per
+WG); both are now capped at num_argsort_pipelines - 1, and supports_op agrees.
+No change on RDNA3 (max WG 1024 = the top pipeline).
+
+Taken-from: ggml-org/llama.cpp@58cb9138e4 (#29872), ggml-org/llama.cpp@cea74625fa (#29469)
+Origin: upstream-x1 lane PORT-SPEC P6
+Measured-effect: UNMEASURED (robustness on other devices; ARGSORT gate stays green
+  on the 890M, MERGE-READY.md row P6)
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 18 +++++++++++++-----
+ 1 file changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 187fb6edcc..429501d1de 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -6824,10 +6824,16 @@ void ggml_vk_instance_init() {
+     // See https://github.com/KhronosGroup/Vulkan-Hpp?tab=readme-ov-file#extensions--per-device-function-pointers-
+     ggml_vk_default_dispatcher_instance.init(vkGetInstanceProcAddr);
+ 
++    // vkEnumerateInstanceVersion is Vulkan 1.1. A null value indicated Vulkan 1.0.
++    if (ggml_vk_default_dispatcher_instance.vkEnumerateInstanceVersion == nullptr) {
++        GGML_LOG_ERROR("ggml_vulkan: Error: Vulkan 1.2 required.");
++        throw vk::SystemError(vk::Result::eErrorFeatureNotPresent, "Vulkan 1.2 required");
++    }
++
+     uint32_t api_version = vk::enumerateInstanceVersion();
+ 
+     if (api_version < VK_API_VERSION_1_2) {
+-        std::cerr << "ggml_vulkan: Error: Vulkan 1.2 required." << std::endl;
++        GGML_LOG_ERROR("ggml_vulkan: Error: Vulkan 1.2 required.");
+         throw vk::SystemError(vk::Result::eErrorFeatureNotPresent, "Vulkan 1.2 required");
+     }
+ 
+@@ -14349,8 +14355,10 @@ void ggml_vk_argsort(ggml_backend_vk_context * ctx, vk_context& subctx, const gg
+     // Pick the largest workgroup size <= ncolsp2
+     uint32_t pipeline_idx = std::min(ncols_pad_log2, num_argsort_pipelines - 1);
+ 
++    uint32_t max_wg_log2 = std::min(ctx->device->max_workgroup_size_log2, num_argsort_pipelines - 1);
++
+     // Use the "small" argsort shader if the whole sort can be done by a single workgroup.
+-    bool use_small = ncols_pad_log2 <= ctx->device->max_workgroup_size_log2 &&
++    bool use_small = ncols_pad_log2 <= max_wg_log2 &&
+                      ctx->device->pipeline_argsort_f32[pipeline_idx] != nullptr;
+ 
+     vk_pipeline pipeline = use_small ? ctx->device->pipeline_argsort_f32[pipeline_idx]
+@@ -14385,7 +14393,7 @@ void ggml_vk_argsort(ggml_backend_vk_context * ctx, vk_context& subctx, const gg
+     {
+         vk_op_argsort_push_constants pc2 = pc;
+         pc2.outer_start = 0;
+-        pc2.outer_end = std::min(ncols_pad_log2, ctx->device->max_workgroup_size_log2);
++        pc2.outer_end = std::min(ncols_pad_log2, max_wg_log2);
+         pc2.inner_start = 0;
+         pc2.inner_end = 100;
+         ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
+@@ -14394,7 +14402,7 @@ void ggml_vk_argsort(ggml_backend_vk_context * ctx, vk_context& subctx, const gg
+     if (!use_small) {
+         ggml_vk_sync_buffers(ctx, subctx);
+         // Loop over outer/inner passes, synchronizing between each pass.
+-        for (uint32_t outer = ctx->device->max_workgroup_size_log2; outer < ncols_pad_log2; ++outer) {
++        for (uint32_t outer = max_wg_log2; outer < ncols_pad_log2; ++outer) {
+             for (uint32_t inner = 0; inner < outer + 1; ++inner) {
+                 vk_op_argsort_push_constants pc2 = pc;
+                 pc2.outer_start = outer;
+@@ -19329,7 +19337,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                 if (device->vulkan_memory_model) {
+                     return true;
+                 } else {
+-                    return op->ne[0] <= (1 << device->max_workgroup_size_log2);
++                    return op->ne[0] <= (1 << std::min(device->max_workgroup_size_log2, num_argsort_pipelines - 1));
+                 }
+             }
+         case GGML_OP_TOP_K:

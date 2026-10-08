@@ -1,0 +1,52 @@
+From 729043be9d5f0cc8fb60335ffca9384f57529c9d Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 13:34:09 -0400
+Subject: [PATCH] vulkan: fix stale prealloc_y reuse across flash attention and
+ soft_max
+
+matmul skips re-converting an input already staged in prealloc_y, keyed on the
+last tensor and pipeline. Flash attention (mask-opt bits, sparse index list) and
+the wide soft_max path (ncols > 16384) also write prealloc_y without clearing
+that record, so a second matmul on the same input read garbage. The record is
+now cleared at those write sites.
+
+Ours checked: our other prealloc_y writer (TurboQuant tq_rotate_act staging,
+mul_mat_id) records its own pipeline as the last converter, so it cannot be
+reused stale; no extra site needed.
+
+Taken-from: ggml-org/llama.cpp@806eee9841 (#29591)
+Origin: upstream-x1 lane PORT-SPEC P2
+Measured-effect: UNMEASURED (correctness; RED/GREEN on MUL_MAT_PREALLOC_REUSE in
+  MERGE-READY.md row P2)
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index bef46ddb8c..187fb6edcc 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -11286,6 +11286,11 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
+     vk_subbuffer sinks_buf = sinks ? ggml_vk_tensor_subbuffer(ctx, sinks) : q_buf;
+     vk_subbuffer mask_opt_buf = use_mask_opt ? ggml_vk_subbuffer(ctx, ctx->prealloc_y, 0) : q_buf;
+     vk_subbuffer sparse_buf = use_sparse ? ggml_vk_subbuffer(ctx, ctx->prealloc_y, 0) : q_buf;
++    if (use_mask_opt || use_sparse) {
++        // the mask opt bits and the sparse index list overwrite a matmul input converted into prealloc_y
++        ctx->prealloc_y_last_pipeline_used = nullptr;
++        ctx->prealloc_y_last_tensor_used = nullptr;
++    }
+ 
+     if (use_dequant_kv) {
+         const uint64_t fp = sizeof(ggml_fp16_t);
+@@ -14180,6 +14185,10 @@ void ggml_vk_soft_max(ggml_backend_vk_context * ctx, vk_context& subctx, const g
+         vk_subbuffer buf_x = { ctx->prealloc_x, 0, tmp_size };
+         vk_subbuffer buf_y = { ctx->prealloc_y, 0, tmp_size };
+ 
++        // the partial results overwrite a matmul input converted into prealloc_y
++        ctx->prealloc_y_last_pipeline_used = nullptr;
++        ctx->prealloc_y_last_tensor_used = nullptr;
++
+         std::array<uint32_t, 3> elements = { num_wgs, nrows_x, 1 };
+ 
+         vk_pipeline pipeline1 = src1 && src1->type == GGML_TYPE_F16 ? ctx->device->pipeline_soft_max_large1_f32_f16 : ctx->device->pipeline_soft_max_large1_f32;

@@ -1,0 +1,42 @@
+From 86d8ca4c2db9dcdc205273b87a8f392d9c168a03 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 20:42:50 -0400
+Subject: [PATCH] vulkan moe-cache: mask the IQ3_S sub-block scale nibble in
+ moe_cache_mv
+
+dot_block_iq3_s read the 4-bit scale as `scales[ib32 >> 1] >> (4 * (ib32 & 1))`
+with no `& 0xF`. For odd ib32 the shift drops the low nibble, so the value is right.
+For even ib32 the shift is 0 and the whole byte is used, so the low-nibble scale
+gets +16 * (high nibble). Every even 32-wide sub-block of every IQ3_S expert row
+on the NVMe / expert-cache matvec path was mis-scaled. The CPU reference
+(dequantize_row_iq3_s: `1 + 2*(scales[ib32/2] & 0xf)`) and the resident Vulkan
+shaders mask it.
+
+Seen on ISTA-DASLab Qwen3.8-Flash-Next-GSQ-RCO IQ3_S (10 gate + 10 up expert
+tensors are IQ3_S): the NVMe/cache path emitted garbage from token 0 in every
+arm (strata-x1 r5a/r5b/r5c cells), while the resident path was correct. Files
+whose experts are only K-quants / Q5_1 / Q8_0 (Ornith Q4_K_M, Unsloth
+UD-Q4_K_XL) were correct on the same path (r5c d1/d2/d3). The other IQ kernels
+in this shader present in that file (IQ2_S, IQ3_XXS, IQ4_NL, IQ4_XS) and Q2_0
+were read against their CPU dequantizers and match.
+
+Origin: ArifiLabs (native) - defect in our moe_cache_mv.comp; strata-x1 lane (rank 5 step A, Q-R5-BUG)
+Measured-effect: PENDING - functional cell r5d (IQ3_S NVMe path vs resident, ids compare) queued; no speed effect expected (one AND per sub-block).
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ ggml/src/ggml-vulkan/vulkan-shaders/moe_cache_mv.comp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/moe_cache_mv.comp b/ggml/src/ggml-vulkan/vulkan-shaders/moe_cache_mv.comp
+index f989970279..b8efadb857 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/moe_cache_mv.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/moe_cache_mv.comp
+@@ -643,7 +643,7 @@ float dot_block_iq3_xxs(const block_iq3_xxs w, const uint ab) {
+ float dot_block_iq3_s(const block_iq3_s w, const uint ab) {
+     float sum = 0.0f;
+     for (int ib32 = 0; ib32 < 8; ib32++) {
+-        const uint ls = 2u * uint(w.scales[ib32 >> 1] >> (4u * uint(ib32 & 1))) + 1u;
++        const uint ls = 2u * ((uint(w.scales[ib32 >> 1]) >> (4u * uint(ib32 & 1))) & 0xFu) + 1u;
+         const uint qh = uint(w.qh[ib32]);
+         const block_q8_1 a = data_act[ab + uint(ib32)];
+         int sumi = 0;

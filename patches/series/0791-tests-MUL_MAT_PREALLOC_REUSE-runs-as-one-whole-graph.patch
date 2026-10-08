@@ -1,0 +1,32 @@
+From 23b8c36b55a54163943be16484600192d5480ad3 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 17:46:52 -0400
+Subject: [PATCH] tests: MUL_MAT_PREALLOC_REUSE runs as one whole graph
+
+Without run_whole_graph, test-backend-ops compares node by node: each node is computed as
+its own one-node graph, and every Vulkan graph compute ends in ggml_vk_graph_cleanup, which
+resets the prealloc_y reuse record. The stale reuse could then never fire on either arm (rg2
+printed one ERR per node, the node-by-node signature). The case now runs as one graph and
+compares only the final output, which is how a model graph runs.
+
+Origin: upstream-x1 lane PORT-SPEC P2 (test for ggml-org/llama.cpp@806eee9841, #29591)
+Measured-effect: none (test only; RED/GREEN in MERGE-READY.md row P2)
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tests/test-backend-ops.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 7975e11063..8a0582b1ad 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -6830,6 +6830,9 @@ struct test_mul_mat_prealloc_reuse : public test_case {
+         return 5e-4;
+     }
+ 
++    // node-by-node compare runs each node as its own graph, and the Vulkan graph cleanup resets the reuse record
++    bool run_whole_graph() override { return true; }
++
+     test_mul_mat_prealloc_reuse(ggml_type type_a = GGML_TYPE_Q4_0, bool fa = false, int64_t m = 64, int64_t n = 32, int64_t k = 256,
+             bool b_strided = true)
+         : type_a(type_a), fa(fa), m(m), n(n), k(k), b_strided(b_strided) {}

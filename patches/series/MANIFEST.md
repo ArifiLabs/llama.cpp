@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **776**, all non-merge, applied in filename order.
+- Patches: **799**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 776 commit messages, same provenance trailers. Verified, not
+same file contents, same 799 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -855,6 +855,29 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 774 | `0774-lane-300-LLAMA_ARIFI_KV_ZERO_FREED-default-0-1-HQ84-.patch` | arifi-fork-base | `b0b41ed54` | - | - | lane-300: LLAMA_ARIFI_KV_ZERO_FREED default 0 -> 1 (HQ84 item 3: kv-zero ships default ON in the point release) |
 | 775 | `0775-protected-wins-kv-zero-freed-cells-is-default-ON-in-.patch` | arifi-fork-base | `410f8e275` | - | - | protected-wins: kv-zero-freed-cells is default ON in v0.1.3.1 (b0b41ed548), id drops -opt-in |
 | 776 | `0776-tools-replace-local-C-ArifiLabs-paths-with-repo-rela.patch` | arifi-fork-base | `66f36df66` | - | - | tools: replace local C:/ArifiLabs paths with repo-relative ones in hand-written tools (HQ84 item 9) |
+| 777 | `0777-vulkan-moe-cache-mask-the-IQ3_S-sub-block-scale-nibb.patch` | arifi-fork-base | `86d8ca4c2` | - | - | vulkan moe-cache: mask the IQ3_S sub-block scale nibble in moe_cache_mv |
+| 778 | `0778-tests-per-type-check-of-the-Vulkan-MoE-cache-matvec-.patch` | arifi-fork-base | `3ef4ebe6d` | - | - | tests: per-type check of the Vulkan MoE cache matvec against the CPU |
+| 779 | `0779-tests-mul_mat-mul_mat_id-cases-on-a-slice-of-a-large.patch` | arifi-fork-base | `d2d304af9` | ggml-org/llama.cpp@52624716156a25af417b616e23bc712452d9396c (#28956) | - | tests: mul_mat / mul_mat_id cases on a slice of a larger cache (RED on 7156c61607) |
+| 780 | `0780-vulkan-read-the-batch-stride-of-an-in-place-src0-src.patch` | ternary-g128 | `6ce45c9a6` | ggml-org/llama.cpp@52624716156a25af417b616e23bc712452d9396c (#28956) | - | vulkan: read the batch stride of an in-place src0/src1 from nb[2] (mul_mat on a cache slice) |
+| 781 | `0781-tests-matmul-wide-soft_max-matmul-on-the-same-input-.patch` | arifi-fork-base | `d1e94cd73` | ggml-org/llama.cpp@806eee9841 (#29591, test from PR text, not merged upstream) | - | tests: matmul -> wide soft_max -> matmul on the same input (prealloc_y reuse, RED before #29591) |
+| 782 | `0782-vulkan-fix-stale-prealloc_y-reuse-across-flash-atten.patch` | ternary-g128 | `729043be9` | ggml-org/llama.cpp@806eee9841 (#29591) | - | vulkan: fix stale prealloc_y reuse across flash attention and soft_max |
+| 783 | `0783-vulkan-fix-flash-attention-Q8_1-shared-memory-write-.patch` | ternary-g128 | `76d05142b` | ggml-org/llama.cpp@6c59c40076 (#29988) | - | vulkan: fix flash attention Q8_1 shared-memory write out of bounds |
+| 784 | `0784-vulkan-null-vkEnumerateInstanceVersion-guard-argsort.patch` | ternary-g128 | `57ac8b7d1` | ggml-org/llama.cpp@58cb9138e4 (#29872), ggml-org/llama.cpp@cea74625fa (#29469) | - | vulkan: null vkEnumerateInstanceVersion guard + argsort WG size capped at the pipeline count |
+| 785 | `0785-tests-MUL_MAT_PREALLOC_REUSE-quantized-tolerance-and.patch` | arifi-fork-base | `ed182b41f` | ggml-org/llama.cpp@806eee9841 (#29591, test from PR text) | - | tests: MUL_MAT_PREALLOC_REUSE - quantized tolerance and forced matmul-before-soft_max order |
+| 786 | `0786-tests-MUL_MAT_PREALLOC_REUSE-v2-strided-input-forces.patch` | arifi-fork-base | `d1bd56ba2` | - | - | tests: MUL_MAT_PREALLOC_REUSE v2 - strided input forces staging, FA mask-opt arm, noise-free copy |
+| 787 | `0787-tests-gguf-handcrafted-file-whose-tensor-size-wraps-.patch` | arifi-fork-base | `484df5e38` | ggml-org/llama.cpp@a6ea155d3d (#26979), test part | - | tests: gguf handcrafted file whose tensor size wraps after padding (RED on 7156c61607) |
+| 788 | `0788-gguf-reject-crafted-files-that-hang-or-overflow-the-.patch` | arifi-fork-base | `504b41e20` | ggml-org/llama.cpp@c13e04e1dd (#29598), ggml-org/llama.cpp@a6ea155d3d (#26979), ggml-org/llama.cpp@2149c00f44 (#29384) | - | gguf: reject crafted files that hang or overflow the loader |
+| 789 | `0789-tests-CLAMP-on-a-non-contiguous-view-RED-on-7156c616.patch` | arifi-fork-base | `cdbd475a4` | ggml-org/llama.cpp@65840ed53c (#29517), test part | - | tests: CLAMP on a non-contiguous view (RED on 7156c61607) |
+| 790 | `0790-ggml-cpu-cuda-CPU-reference-fixes-CLAMP-views-soft_m.patch` | arifi-fork-base | `999a1790f` | ggml-org/llama.cpp@65840ed53c (#29517), ggml-org/llama.cpp@dd4c286f38 (#27096), ggml-org/llama.cpp@d3954b9324 (#29575), ggml-org/llama.cpp@284153e069 (#29545) | - | ggml-cpu, cuda: CPU reference fixes (CLAMP views, soft_max_back alias, get_rows_back bounds, AVX512-FP16 dot) |
+| 791 | `0791-tests-MUL_MAT_PREALLOC_REUSE-runs-as-one-whole-graph.patch` | arifi-fork-base | `23b8c36b5` | - | - | tests: MUL_MAT_PREALLOC_REUSE runs as one whole graph |
+| 792 | `0792-tests-draft-acceptance-stops-at-EOG-RED-on-7156c6160.patch` | arifi-fork-base | `305502a07` | - | - | tests: draft acceptance stops at EOG (RED on 7156c61607) |
+| 793 | `0793-common-stop-accepting-draft-tokens-at-EOG.patch` | arifi-fork-base | `1632f134e` | ggml-org/llama.cpp@d280808f5d (#29638) | - | common : stop accepting draft tokens at EOG |
+| 794 | `0794-llama-preserve-original-batch-order-for-speculative-.patch` | arifi-fork-base | `10c7a2816` | ggml-org/llama.cpp@4453b535fd (#29019) | - | llama : preserve original batch order for speculative decoding layer inputs |
+| 795 | `0795-tests-state-restore-must-refuse-a-different-KV-rotat.patch` | arifi-fork-base | `8eac38cd7` | - | - | tests: state restore must refuse a different KV rotation (RED on 7156c61607) |
+| 796 | `0796-kv-cache-save-the-exact-KV-rotation-with-the-state-r.patch` | arifi-fork-base | `9905714c2` | ggml-org/llama.cpp@210791069b (#28498) | - | kv-cache: save the exact KV rotation with the state, reject a mismatched restore |
+| 797 | `0797-lane-301-lever-4-fuse-the-qwen4exp-QSA-mask-chain-in.patch` | arifi-fork-base | `5543c29e1` | - | - | lane-301 lever 4: fuse the qwen4exp QSA mask chain into the Vulkan FA |
+| 798 | `0798-lane-301-tests-QSA_MASK_FA-perf-mode-cases-RGP-targe.patch` | arifi-fork-base | `03a822b6e` | - | - | lane-301 tests: QSA_MASK_FA perf-mode cases (RGP target for lever 4) |
+| 799 | `0799-lane-301-protected-win-vulkan-qsa-mask-fa-fusion-for.patch` | arifi-fork-base | `8632241b9` | - | - | lane-301: protected-win vulkan-qsa-mask-fa-fusion for lever 4 (f42f16e38c) |
 
 ## Measured effect, per patch
 
@@ -1710,6 +1733,32 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0774-lane-300-LLAMA_ARIFI_KV_ZERO_FREED-default-0-1-HQ84-.patch` | default ON, cost QM (qwen4exp MTP n3) pooled +0.45% (floor 0.87%), OO (Ornith DFlash n2) pooled -0.31% / -3.23% (floors 0.38% / 7.33%, worst round -4.51%) (cells/c31q-10070739-*, c31o-10070746-*, c31o-10070901-*); -fa off history == fresh bit-equal, S-NF F-nondet 4 -> 0 (cells/c31p-10070726-*) |
 | `0775-protected-wins-kv-zero-freed-cells-is-default-ON-in-.patch` | none (registry text; receipts are lane 300 cell 31: c31p-10070726, c31q-10070739, c31o-10070746, c31o-10070901) |
 | `0776-tools-replace-local-C-ArifiLabs-paths-with-repo-rela.patch` | none (path handling only; proof cells/scrub-proof-*.txt: validate/check/series PASS in both root modes, every locator resolves) |
+| `0777-vulkan-moe-cache-mask-the-IQ3_S-sub-block-scale-nibb.patch` | PENDING - functional cell r5d (IQ3_S NVMe path vs resident, ids compare) queued; no speed effect expected (one AND per sub-block). |
+| `0778-tests-per-type-check-of-the-Vulkan-MoE-cache-matvec-.patch` | test only, no runtime change; receipt = iq3_s FAIL on 7156c61607 and PASS on 6fc7feeaa9 (cell queued). |
+| `0779-tests-mul_mat-mul_mat_id-cases-on-a-slice-of-a-large.patch` | UNMEASURED (test only; RED/GREEN receipt in MERGE-READY.md row P1) |
+| `0780-vulkan-read-the-batch-stride-of-an-in-place-src0-src.patch` | UNMEASURED (correctness; RED/GREEN on test-backend-ops MUL_MAT
+  and MUL_MAT_ID in MERGE-READY.md row P1) |
+| `0781-tests-matmul-wide-soft_max-matmul-on-the-same-input-.patch` | UNMEASURED (test only; RED/GREEN in MERGE-READY.md row P2) |
+| `0782-vulkan-fix-stale-prealloc_y-reuse-across-flash-atten.patch` | UNMEASURED (correctness; RED/GREEN on MUL_MAT_PREALLOC_REUSE in
+  MERGE-READY.md row P2) |
+| `0783-vulkan-fix-flash-attention-Q8_1-shared-memory-write-.patch` | UNMEASURED (correctness; FLASH_ATTN_EXT gate in MERGE-READY.md row P3) |
+| `0784-vulkan-null-vkEnumerateInstanceVersion-guard-argsort.patch` | UNMEASURED (robustness on other devices; ARGSORT gate stays green
+  on the 890M, MERGE-READY.md row P6) |
+| `0785-tests-MUL_MAT_PREALLOC_REUSE-quantized-tolerance-and.patch` | UNMEASURED (test only; RED/GREEN in MERGE-READY.md row P2) |
+| `0786-tests-MUL_MAT_PREALLOC_REUSE-v2-strided-input-forces.patch` | none (test only; RED/GREEN in MERGE-READY.md row P2) |
+| `0787-tests-gguf-handcrafted-file-whose-tensor-size-wraps-.patch` | none (test only; RED/GREEN in MERGE-READY.md row P5) |
+| `0788-gguf-reject-crafted-files-that-hang-or-overflow-the-.patch` | UNMEASURED (correctness; test-gguf RED/GREEN in MERGE-READY.md row P5; load path, no decode effect) |
+| `0789-tests-CLAMP-on-a-non-contiguous-view-RED-on-7156c616.patch` | none (test only; RED/GREEN in MERGE-READY.md row P7) |
+| `0790-ggml-cpu-cuda-CPU-reference-fixes-CLAMP-views-soft_m.patch` | UNMEASURED (correctness; CLAMP RED/GREEN, SOFT_MAX_BACK and GET_ROWS_BACK no-regression in MERGE-READY.md row P7) |
+| `0791-tests-MUL_MAT_PREALLOC_REUSE-runs-as-one-whole-graph.patch` | none (test only; RED/GREEN in MERGE-READY.md row P2) |
+| `0792-tests-draft-acceptance-stops-at-EOG-RED-on-7156c6160.patch` | none (test only); RED rc=1 on 7156c61607, GREEN rc=0 with the fix (cache/upstream-x1-lane/cells/rg4-red-2-accept-eog.txt, rg4-green-2-accept-eog.txt) |
+| `0793-common-stop-accepting-draft-tokens-at-EOG.patch` | test-spec-accept-eog RED on 7156c61607 (2 tokens accepted per overload), GREEN here (1); the served 2-turn replay effect is not measured. |
+| `0794-llama-preserve-original-batch-order-for-speculative-.patch` | not yet measured; owed = -np 1 DFlash2 and MTP greedy ids identical vs integ, -np 2 DFlash2 acceptance per slot vs integ (upstream removed its regression test before merge). |
+| `0795-tests-state-restore-must-refuse-a-different-KV-rotat.patch` | none (test only); RED rot FAIL (both mismatched restores accepted) on 7156c61607, GREEN rot PASS, other 12 columns PASS both arms (cache/upstream-x1-lane/cells/rg4-red-3-save-load-state.txt, rg4-green-3-save-load-state.txt) |
+| `0796-kv-cache-save-the-exact-KV-rotation-with-the-state-r.patch` | not yet measured; check = test-save-load-state column "rot" RED on 7156c61607 (mismatched restores accepted), GREEN here (rejected), on a test-llama-archs llama model (head_k 128). |
+| `0797-lane-301-lever-4-fuse-the-qwen4exp-QSA-mask-chain-in.patch` | prefill +0.2/+0.9/+0.4/+0.8% at 2K/8K/16K/32K, decode tie (-0.7..0.0%), greedy ids identical 128/128 at every length, served ABBA x2 vs integ 7156c61607 (cache/qsa-x1-lane/cells/c19-10080535-state.json); op RED FAIL 7/7 (cells/c18-10072033-ops-red.out.log); mechanism RGP compaction dispatch ~42 -> ~18 us at 32K (cells/c18-rgp-*) |
+| `0798-lane-301-tests-QSA_MASK_FA-perf-mode-cases-RGP-targe.patch` | none (test shapes only) |
+| `0799-lane-301-protected-win-vulkan-qsa-mask-fa-fusion-for.patch` | none (registration only; the measured effect is f42f16e38c's, cache/qsa-x1-lane/cells/c19-10080535-state.json) |
 
 ## Unclassified
 
@@ -2355,4 +2404,23 @@ rather than silently bucketed - add a rule when a new source appears.
 - `b0b41ed54` lane-300: LLAMA_ARIFI_KV_ZERO_FREED default 0 -> 1 (HQ84 item 3: kv-zero ships default ON in the point release)
 - `410f8e275` protected-wins: kv-zero-freed-cells is default ON in v0.1.3.1 (b0b41ed548), id drops -opt-in
 - `66f36df66` tools: replace local C:/ArifiLabs paths with repo-relative ones in hand-written tools (HQ84 item 9)
+- `86d8ca4c2` vulkan moe-cache: mask the IQ3_S sub-block scale nibble in moe_cache_mv
+- `3ef4ebe6d` tests: per-type check of the Vulkan MoE cache matvec against the CPU
+- `d2d304af9` tests: mul_mat / mul_mat_id cases on a slice of a larger cache (RED on 7156c61607)
+- `d1e94cd73` tests: matmul -> wide soft_max -> matmul on the same input (prealloc_y reuse, RED before #29591)
+- `ed182b41f` tests: MUL_MAT_PREALLOC_REUSE - quantized tolerance and forced matmul-before-soft_max order
+- `d1bd56ba2` tests: MUL_MAT_PREALLOC_REUSE v2 - strided input forces staging, FA mask-opt arm, noise-free copy
+- `484df5e38` tests: gguf handcrafted file whose tensor size wraps after padding (RED on 7156c61607)
+- `504b41e20` gguf: reject crafted files that hang or overflow the loader
+- `cdbd475a4` tests: CLAMP on a non-contiguous view (RED on 7156c61607)
+- `999a1790f` ggml-cpu, cuda: CPU reference fixes (CLAMP views, soft_max_back alias, get_rows_back bounds, AVX512-FP16 dot)
+- `23b8c36b5` tests: MUL_MAT_PREALLOC_REUSE runs as one whole graph
+- `305502a07` tests: draft acceptance stops at EOG (RED on 7156c61607)
+- `1632f134e` common : stop accepting draft tokens at EOG
+- `10c7a2816` llama : preserve original batch order for speculative decoding layer inputs
+- `8eac38cd7` tests: state restore must refuse a different KV rotation (RED on 7156c61607)
+- `9905714c2` kv-cache: save the exact KV rotation with the state, reject a mismatched restore
+- `5543c29e1` lane-301 lever 4: fuse the qwen4exp QSA mask chain into the Vulkan FA
+- `03a822b6e` lane-301 tests: QSA_MASK_FA perf-mode cases (RGP target for lever 4)
+- `8632241b9` lane-301: protected-win vulkan-qsa-mask-fa-fusion for lever 4 (f42f16e38c)
 
