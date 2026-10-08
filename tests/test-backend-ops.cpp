@@ -13315,8 +13315,9 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     // 5120x6144 / 1024x5120 for the four types the R71b block above does not carry (q4_K/q6_K
     // gain only bs=9 there). bs 1..9 = the verify band plus one past the mat-vec boundary.
     // Filters: -p "type_a=iq4_xs,type_b=f32,m=10240" etc. (ggml type names, lower-case).
+    // lane-299 / HQ84 item 6: q8_0 joins, because S-X8 carries every attention projection in q8_0 at these shapes.
     for (int bs : {1, 2, 3, 4, 5, 6, 7, 8, 9}) {
-        for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ4_XS, GGML_TYPE_IQ3_S, GGML_TYPE_IQ3_XXS}) {
+        for (ggml_type type_a : {GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ4_XS, GGML_TYPE_IQ3_S, GGML_TYPE_IQ3_XXS, GGML_TYPE_Q8_0}) {
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 10240, bs, 5120, {1, 1}, {1, 1}));
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  6144, bs, 5120, {1, 1}, {1, 1}));
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 12288, bs, 5120, {1, 1}, {1, 1}));
