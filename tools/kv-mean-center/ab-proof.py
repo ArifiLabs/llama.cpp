@@ -43,6 +43,12 @@ STUDIO_ROOT = _studio_root()
 GATE_PYTHON = STUDIO_ROOT / "products/CareerCommand/.venv/Scripts/python.exe"
 HYGIENE_PYTHON = STUDIO_ROOT / "shared/.venv/Scripts/python.exe"
 
+try:  # Arifi Labs' private seat tooling; a public checkout runs without it
+    from arifi_core import load_governor as lg
+except ImportError:
+    lg = None
+    print("arifi_core not installed: process-hygiene and load-governor checks skipped", file=sys.stderr)
+
 
 class ProofError(RuntimeError):
     pass
@@ -84,6 +90,8 @@ def assert_quiet() -> dict[str, Any]:
     heavy = command_line_scan()
     if heavy:
         raise ProofError("bench purity refused overlapping heavy/inference command lines: " + json.dumps(heavy))
+    if lg is None:
+        return {"command_lines": heavy, "process_hygiene": "skipped: arifi_core not installed"}
     hygiene = subprocess.run(
         [str(HYGIENE_PYTHON), "-m", "arifi_core.process_hygiene"],
         text=True, capture_output=True, check=False,
@@ -94,6 +102,8 @@ def assert_quiet() -> dict[str, Any]:
 
 
 def declare_launch(label: str) -> None:
+    if lg is None:
+        return
     body = f"lane-158 {label}; seated Qwen3.8-27B AD-IQ4_XS; one process; floor 7.0 GB; K-cache A/B proof"
     proc = subprocess.run(
         [str(GATE_PYTHON), "-m", "career_engine.hooks.gate_declare", "CC_RUN_ANNOUNCE", body],
@@ -116,8 +126,8 @@ def assert_load_floor(argv: list[str]) -> dict[str, Any]:
     GPU-resident load -- weights land in the dedicated carveout, so the binding limits are the GPU
     budget and the system-side floor -- without exec'ing, so launch timing is unchanged.
     """
-    from arifi_core import load_governor as lg  # company venv; the runbook invokes us with it
-
+    if lg is None:
+        return {"load_governor": "skipped: arifi_core not installed"}
     # take the model from -m, never "largest .gguf on the command line": the calibrator's -o names
     # the artifact it is about to CREATE, so scanning all .gguf arguments stats a file that does
     # not exist yet and dies with WinError 2 before any floor is ever compared.
