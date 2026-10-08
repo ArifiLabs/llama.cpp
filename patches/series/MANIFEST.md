@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **799**, all non-merge, applied in filename order.
+- Patches: **803**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 799 commit messages, same provenance trailers. Verified, not
+same file contents, same 803 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -878,6 +878,10 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 797 | `0797-lane-301-lever-4-fuse-the-qwen4exp-QSA-mask-chain-in.patch` | arifi-fork-base | `5543c29e1` | - | - | lane-301 lever 4: fuse the qwen4exp QSA mask chain into the Vulkan FA |
 | 798 | `0798-lane-301-tests-QSA_MASK_FA-perf-mode-cases-RGP-targe.patch` | arifi-fork-base | `03a822b6e` | - | - | lane-301 tests: QSA_MASK_FA perf-mode cases (RGP target for lever 4) |
 | 799 | `0799-lane-301-protected-win-vulkan-qsa-mask-fa-fusion-for.patch` | arifi-fork-base | `8632241b9` | - | - | lane-301: protected-win vulkan-qsa-mask-fa-fusion for lever 4 (f42f16e38c) |
+| 800 | `0800-ggml-collect-all-input-tensors-into-graph_inputs.patch` | arifi-fork-base | `00cea8047` | ggml-org/llama.cpp@8019dc563b (#29634) | - | ggml : collect all input tensors into graph_inputs |
+| 801 | `0801-ggml-require-input-tensors-to-be-GGML_OP_NONE.patch` | arifi-fork-base | `dbf3364ad` | ggml-org/llama.cpp@b5cf8ce02a (#29647) | - | ggml : require input tensors to be GGML_OP_NONE |
+| 802 | `0802-llama-re-reserve-the-sched-when-the-nextn-extraction.patch` | arifi-fork-base | `81bf18af2` | ggml-org/llama.cpp@1a3011cc0c (#30020) | - | llama : re-reserve the sched when the nextn extraction flags change |
+| 803 | `0803-glm5-next-give-dead-indexer-slots-unique-scatter-row.patch` | arifi-fork-base | `f433dfe70` | ggml-org/llama.cpp@05af0d2b13 (#29745) | - | glm5-next: give dead indexer slots unique scatter rows |
 
 ## Measured effect, per patch
 
@@ -1759,6 +1763,10 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0797-lane-301-lever-4-fuse-the-qwen4exp-QSA-mask-chain-in.patch` | prefill +0.2/+0.9/+0.4/+0.8% at 2K/8K/16K/32K, decode tie (-0.7..0.0%), greedy ids identical 128/128 at every length, served ABBA x2 vs integ 7156c61607 (cache/qsa-x1-lane/cells/c19-10080535-state.json); op RED FAIL 7/7 (cells/c18-10072033-ops-red.out.log); mechanism RGP compaction dispatch ~42 -> ~18 us at 32K (cells/c18-rgp-*) |
 | `0798-lane-301-tests-QSA_MASK_FA-perf-mode-cases-RGP-targe.patch` | none (test shapes only) |
 | `0799-lane-301-protected-win-vulkan-qsa-mask-fa-fusion-for.patch` | none (registration only; the measured effect is f42f16e38c's, cache/qsa-x1-lane/cells/c19-10080535-state.json) |
+| `0800-ggml-collect-all-input-tensors-into-graph_inputs.patch` | none on the rig (n_copies 1 path unchanged by construction); multi-GPU pipeline-parallel correctness, not measurable here. |
+| `0801-ggml-require-input-tensors-to-be-GGML_OP_NONE.patch` | guard only, no runtime cost; test-llama-archs over all archs builds every graph under the assert (redgreen-4). |
+| `0802-llama-re-reserve-the-sched-when-the-nextn-extraction.patch` | not yet measured; check = MTP serve under GGML_SCHED_DEBUG_REALLOC (no mid-run realloc after the first decode), owed with the next MTP served cell. |
+| `0803-glm5-next-give-dead-indexer-slots-unique-scatter-row.patch` | not yet measured; check = CPU greedy 2-sequence glm5-next run (test-llama-archs model) ids identical across 3 runs; decode cost on the GLM5-Next serve line owed to moe-x1-lane. |
 
 ## Unclassified
 
@@ -2423,4 +2431,8 @@ rather than silently bucketed - add a rule when a new source appears.
 - `5543c29e1` lane-301 lever 4: fuse the qwen4exp QSA mask chain into the Vulkan FA
 - `03a822b6e` lane-301 tests: QSA_MASK_FA perf-mode cases (RGP target for lever 4)
 - `8632241b9` lane-301: protected-win vulkan-qsa-mask-fa-fusion for lever 4 (f42f16e38c)
+- `00cea8047` ggml : collect all input tensors into graph_inputs
+- `dbf3364ad` ggml : require input tensors to be GGML_OP_NONE
+- `81bf18af2` llama : re-reserve the sched when the nextn extraction flags change
+- `f433dfe70` glm5-next: give dead indexer slots unique scatter rows
 
