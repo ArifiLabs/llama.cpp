@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **775**, all non-merge, applied in filename order.
+- Patches: **776**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 775 commit messages, same provenance trailers. Verified, not
+same file contents, same 776 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -854,6 +854,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 773 | `0773-protected-wins-register-the-v0.1.3.1-opt-in-arms-KV_.patch` | arifi-fork-base | `a5ff6df2b` | - | - | protected-wins: register the v0.1.3.1 opt-in arms (KV_ZERO_FREED entry, GATHER_EXT joins the slot-major gather) |
 | 774 | `0774-lane-300-LLAMA_ARIFI_KV_ZERO_FREED-default-0-1-HQ84-.patch` | arifi-fork-base | `b0b41ed54` | - | - | lane-300: LLAMA_ARIFI_KV_ZERO_FREED default 0 -> 1 (HQ84 item 3: kv-zero ships default ON in the point release) |
 | 775 | `0775-protected-wins-kv-zero-freed-cells-is-default-ON-in-.patch` | arifi-fork-base | `410f8e275` | - | - | protected-wins: kv-zero-freed-cells is default ON in v0.1.3.1 (b0b41ed548), id drops -opt-in |
+| 776 | `0776-tools-replace-local-C-ArifiLabs-paths-with-repo-rela.patch` | arifi-fork-base | `66f36df66` | - | - | tools: replace local C:/ArifiLabs paths with repo-relative ones in hand-written tools (HQ84 item 9) |
 
 ## Measured effect, per patch
 
@@ -1708,6 +1709,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0773-protected-wins-register-the-v0.1.3.1-opt-in-arms-KV_.patch` | none (protected-win ledger registration; the numbers live in the entries) |
 | `0774-lane-300-LLAMA_ARIFI_KV_ZERO_FREED-default-0-1-HQ84-.patch` | default ON, cost QM (qwen4exp MTP n3) pooled +0.45% (floor 0.87%), OO (Ornith DFlash n2) pooled -0.31% / -3.23% (floors 0.38% / 7.33%, worst round -4.51%) (cells/c31q-10070739-*, c31o-10070746-*, c31o-10070901-*); -fa off history == fresh bit-equal, S-NF F-nondet 4 -> 0 (cells/c31p-10070726-*) |
 | `0775-protected-wins-kv-zero-freed-cells-is-default-ON-in-.patch` | none (registry text; receipts are lane 300 cell 31: c31p-10070726, c31q-10070739, c31o-10070746, c31o-10070901) |
+| `0776-tools-replace-local-C-ArifiLabs-paths-with-repo-rela.patch` | none (path handling only; proof cells/scrub-proof-*.txt: validate/check/series PASS in both root modes, every locator resolves) |
 
 ## Unclassified
 
@@ -2352,4 +2354,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `a5ff6df2b` protected-wins: register the v0.1.3.1 opt-in arms (KV_ZERO_FREED entry, GATHER_EXT joins the slot-major gather)
 - `b0b41ed54` lane-300: LLAMA_ARIFI_KV_ZERO_FREED default 0 -> 1 (HQ84 item 3: kv-zero ships default ON in the point release)
 - `410f8e275` protected-wins: kv-zero-freed-cells is default ON in v0.1.3.1 (b0b41ed548), id drops -opt-in
+- `66f36df66` tools: replace local C:/ArifiLabs paths with repo-relative ones in hand-written tools (HQ84 item 9)
 
