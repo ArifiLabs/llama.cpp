@@ -769,10 +769,14 @@ llama_kv_cache::llama_kv_cache(
         // indexer: this is a functional requirement for the model, not optional
         // tuning, so it overrides the default-off policy (still respects the hard
         // LLAMA_ATTN_ROT_DISABLE lock-out).
+        bool rot_k_full = false;
         if (!attn_rot_disable && (model.arch == LLM_ARCH_DEEPSEEK32 || model.arch == LLM_ARCH_DEEPSEEK4 ||
                 model.arch == LLM_ARCH_DOTS3NOTE) &&
             hparams.n_embd_head_k_full == hparams.indexer_head_size) {
             attn_rot_k = true;
+            // the deepseek32/dots3note indexer graphs multiply this matrix into the whole head
+            // (ggml_mul_mat), so it keeps master's full-width tile; the nrot experiment below would abort them
+            rot_k_full = true;
         }
 
         if (attn_rot_k) {
@@ -783,7 +787,7 @@ llama_kv_cache::llama_kv_cache(
             // value saved with the state (#28498) is the one the graph uses.
             // ref: https://github.com/ggml-org/llama.cpp/pull/21038#issuecomment-4141323088
             const char * LLAMA_ATTN_ROT_K_NROT = getenv("LLAMA_ATTN_ROT_K_NROT");
-            const int nrot = LLAMA_ATTN_ROT_K_NROT ? atoi(LLAMA_ATTN_ROT_K_NROT) : 64;
+            const int nrot = rot_k_full ? 0 : LLAMA_ATTN_ROT_K_NROT ? atoi(LLAMA_ATTN_ROT_K_NROT) : 64;
 
             if (nrot > 0) {
                 n_rot_k = (uint32_t) nrot;
