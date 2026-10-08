@@ -1349,6 +1349,129 @@ static bool test_ckpt_finalize_failure(struct llama_model * model, const struct 
 }
 
 
+// Test 10: state rotation
+// a KV state saved with attention rotation enabled must restore only into a context with the same setting;
+// note: rotation is only active for quantized KV caches with a head size that is a multiple of 64,
+//       for other models the restore into the rotation-disabled context is valid and the test passes vacuously
+static bool test_state_rotation(struct llama_model * model, const struct common_params & params) {
+    LOGV(LOG_LEVEL_INFO, "\n=== Test 10: state rotation ===\n");
+
+    // Ours: rotation is OFF unless LLAMA_ATTN_ROT_{K,V}_OVERRIDE=1, and LLAMA_ATTN_ROT_K_NROT picks the K tile
+    // (default 64, 0 = largest power of 2). Upstream's test is vacuous here (rotation never on, and a mismatched
+    // restore only logs), so this version forces rotation on and REQUIRES the mismatched restores to fail when the
+    // model's K head size qualifies (q8_0 cache, head_k % 64 == 0): rotation off, and K tile 64 vs the largest.
+    const std::string attn_rot_disable = common_get_env("LLAMA_ATTN_ROT_DISABLE");
+    const std::string rot_k_ov = common_get_env("LLAMA_ATTN_ROT_K_OVERRIDE");
+    const std::string rot_v_ov = common_get_env("LLAMA_ATTN_ROT_V_OVERRIDE");
+    const std::string rot_k_nrot = common_get_env("LLAMA_ATTN_ROT_K_NROT");
+
+    int64_t head_k = 0;
+    {
+        char arch[64] = {};
+        char buf[64]  = {};
+        if (llama_model_meta_val_str(model, "general.architecture", arch, sizeof(arch)) > 0 &&
+            llama_model_meta_val_str(model, (std::string(arch) + ".attention.key_length").c_str(), buf, sizeof(buf)) > 0) {
+            head_k = atoll(buf);
+        } else if (llama_model_n_head(model) > 0) {
+            head_k = llama_model_n_embd(model) / llama_model_n_head(model);
+        }
+    }
+    const bool expect_rot      = head_k > 0 && head_k % 64 == 0;
+    const bool expect_tile_mis = head_k > 0 && head_k % 128 == 0;
+    LOG("%s: head_k=%lld expect_rot=%d expect_tile_mismatch=%d\n", __func__, (long long) head_k, expect_rot, expect_tile_mis);
+
+    // mode 0: rotation on, K tile 64; mode 1: rotation off; mode 2: rotation on, K tile = largest power of 2
+    const auto make_context = [&](ggml_type type_k, ggml_type type_v, int mode) {
+        common_set_env("LLAMA_ATTN_ROT_DISABLE", mode == 1 ? "1" : "0");
+        common_set_env("LLAMA_ATTN_ROT_K_OVERRIDE", "1");
+        common_set_env("LLAMA_ATTN_ROT_V_OVERRIDE", "1");
+        common_set_env("LLAMA_ATTN_ROT_K_NROT", mode == 2 ? "0" : "64");
+        auto params_ctx = common_context_params_to_llama(params);
+        params_ctx.n_ctx    = 32;
+        params_ctx.n_batch  = 1;
+        params_ctx.n_ubatch = 1;
+        params_ctx.type_k   = type_k;
+        params_ctx.type_v   = type_v;
+        params_ctx.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+        return llama_context_ptr(llama_init_from_model(model, params_ctx));
+    };
+
+    std::vector<std::pair<ggml_type, ggml_type>> type_pairs;
+    for (const auto & types : { std::pair{GGML_TYPE_Q8_0, GGML_TYPE_Q8_0} }) {
+        if (make_context(types.first, types.second, 0)) {
+            type_pairs.push_back(types);
+        }
+    }
+    if (type_pairs.empty()) {
+        LOG_WRN("%s: no supported quantized KV cache type combination - skipping\n", __func__);
+        return true;
+    }
+
+    bool success = true;
+    for (const auto & types : type_pairs) {
+        auto src = make_context(types.first, types.second, 0);
+        if (!src) {
+            LOG_ERR("%s: failed to create source context\n", __func__);
+            success = false;
+            break;
+        }
+
+        llama_token token = 0;
+        if (llama_decode(src.get(), llama_batch_get_one(&token, 1))) {
+            LOG_ERR("%s: failed to decode token\n", __func__);
+            success = false;
+            break;
+        }
+
+        const size_t state_size = llama_state_seq_get_size(src.get(), 0);
+        if (state_size == 0) {
+            continue; // no KV state to test
+        }
+
+        std::vector<uint8_t> state(state_size);
+        if (llama_state_seq_get_data(src.get(), state.data(), state.size(), 0) != state.size()) {
+            LOG_ERR("%s: failed to save sequence state\n", __func__);
+            success = false;
+            break;
+        }
+
+        auto matching = make_context(types.first, types.second, 0);
+        if (!matching || llama_state_seq_set_data(matching.get(), state.data(), state.size(), 0) != state.size()) {
+            LOG_ERR("%s: failed to restore matching rotation\n", __func__);
+            success = false;
+            break;
+        }
+
+        for (const int mode : { 1, 2 }) {
+            const bool expect_reject = mode == 1 ? expect_rot : expect_tile_mis;
+            auto mismatched = make_context(types.first, types.second, mode);
+            if (!mismatched) {
+                LOG_ERR("%s: failed to create mismatched rotation context (mode %d)\n", __func__, mode);
+                success = false;
+                break;
+            }
+            const bool accepted = llama_state_seq_set_data(mismatched.get(), state.data(), state.size(), 0) != 0;
+            LOG("%s: restore into %s: %s (expected %s)\n", __func__, mode == 1 ? "rotation-off" : "K-tile-largest",
+                accepted ? "accepted" : "rejected", expect_reject ? "rejected" : "either");
+            if (expect_reject && accepted) {
+                LOG_ERR("%s: state saved with one rotation was restored into a context with another\n", __func__);
+                success = false;
+            }
+        }
+    }
+    common_set_env("LLAMA_ATTN_ROT_DISABLE", attn_rot_disable);
+    common_set_env("LLAMA_ATTN_ROT_K_OVERRIDE", rot_k_ov.empty() ? "0" : rot_k_ov);
+    common_set_env("LLAMA_ATTN_ROT_V_OVERRIDE", rot_v_ov.empty() ? "0" : rot_v_ov);
+    common_set_env("LLAMA_ATTN_ROT_K_NROT", rot_k_nrot.empty() ? "64" : rot_k_nrot);
+
+    if (!success) {
+        return false;
+    }
+
+    LOGV(LOG_LEVEL_INFO, "\nPASS\n");
+    return true;
+}
+
 struct test_suite {
     std::vector<test_status> results;
 
@@ -1461,9 +1584,9 @@ static bool test_owned_snapshot(llama_model * model, const common_params & param
 // column headers for the --models table, one per test, in the order they are run
 static const std::vector<const char *> test_names = getenv("LLAMA_TEST_SNAPSHOT_ONLY")
     ? std::vector<const char *>{ "snapshot" }
-    : std::vector<const char *>{ "baseline", "seq_rm", "state_load", "cp_h", "cp_d", "cp_h_s", "cp_d_s", "rt", "ring", "own", "fin", "snapshot" };
+    : std::vector<const char *>{ "baseline", "seq_rm", "state_load", "cp_h", "cp_d", "cp_h_s", "cp_d_s", "rt", "ring", "own", "fin", "snapshot", "rot" };
 
-// Run the full save/load test suite (tests 1-8) for a single model.
+// Run the full save/load test suite for a single model.
 // Returns the per-test results.
 static test_suite run_save_load_tests_for_model(const std::string & model_path, const struct common_params & base_params) {
     test_suite suite;
@@ -1567,6 +1690,9 @@ static test_suite run_save_load_tests_for_model(const std::string & model_path, 
     // built with -DLLAMA_TEST_CHECKPOINT_FAULT_INJECTION=ON
     suite.results.push_back(test_ckpt_finalize_failure(model, params, tokens, 11) ? test_status::PASS : test_status::FAIL);
     suite.results.push_back(test_owned_snapshot(model, params) ? test_status::PASS : test_status::FAIL);
+
+    // Test 10: state rotation
+    suite.results.push_back(test_state_rotation(model, params) ? test_status::PASS : test_status::FAIL);
 
     return suite;
 }
