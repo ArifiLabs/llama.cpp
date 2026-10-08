@@ -2310,6 +2310,40 @@
       "workload": "Qwen3.8 27B / Qwen3.8-Flash-Next served greedy decode after a prompt history (lane 300 cell 31 shapes QM and OO) on the Radeon 890M, llama-server.",
       "measured_effect": "When ON: F-nondet 4 -> 0 on S-NF (-fa off history == fresh, bit-equal); decode cost QM pooled +0.45% (floor 0.87%), OO pooled -0.31% / -3.23% (floors 0.38% / 7.33%); a measured cost, not a speed win. =0: identical to the merge base.",
       "opt_out": "default ON; LLAMA_ARIFI_KV_ZERO_FREED=0 restores the merge-base path"
+    },
+    {
+      "id": "vulkan-qsa-mask-fa-fusion",
+      "status": "active",
+      "mechanism": "qwen4exp build_attn_qsa materializes a full [n_kv, n_tps] f16 mask per QSA layer per ubatch (fill -inf, fill 0, set_rows 0 at top_k cells, add kq_mask) and the sparse FA re-reads that row to compact finite cells. Vulkan matches the chain FILL..FLASH_ATTN_EXT (qsa_mask_fa_pattern) and runs flash_attn_qsa_mask.comp: a per-row shared-memory bitmap of the top_k indices compacts the selected finite cells in the same ascending order, so FA math is unchanged; dense FA (KV below the sparse floor) gets the mask written into the ADD node's buffer by the same kernel. Compaction cost becomes O(top_k) instead of O(n_kv). Default ON; GGML_ARIFI_QSA_MASKFUSE=0 keeps the chain unfused; =red drops the first 64 top_k entries per row (planted wrong variant).",
+      "commit": "5543c29e1341fffa161c1563a95d0a3facaf3a7b",
+      "protected_paths": [
+        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
+        "ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_qsa_mask.comp",
+        "src/models/qwen4exp.cpp"
+      ],
+      "anchors": [
+        "GGML_ARIFI_QSA_MASKFUSE",
+        "qsa_mask_fa_pattern",
+        "flash_attn_qsa_mask",
+        "QSA mask chain fused into FA"
+      ],
+      "evidence": [
+        "cache/qsa-x1-lane/cells/c19-10080535-state.json",
+        "cache/qsa-x1-lane/cells/c19-10080535-n1.server.err.log",
+        "cache/qsa-x1-lane/cells/c19-10080535-n2-32k.server.err.log",
+        "cache/qsa-x1-lane/cells/c18-10072033-state.json",
+        "cache/qsa-x1-lane/cells/c18-10072033-ops-red.out.log",
+        "cache/qsa-x1-lane/NOTES.md"
+      ],
+      "quality_gate": "Op test QSA_MASK_FA (7 cases: sparse decode 8K/32K, sparse prefill nb 9/64, 2 streams, dense KV 2048 nb 1/64) on 7/7 and off 7/7; planted RED (=red) FAIL 7/7 (c18-10072033). Served greedy 128 ids identical fused vs integ 7156c61607 at 2K/8K/16K/32K, both rounds (c19-10080535). Served engagement: 'QSA mask chain fused into FA (lane-301 lever 4): sparse=1 N=4092 KV=8192 width=2051' in every fused arm log, absent in the integ arm logs (c19-10080535-*.server.err.log).",
+      "workload": "Qwen3.8-Flash-Next GSQ-RCO IQ3_S (ISTA-DASLab), llama-server -ub 4096 -b 4096 -c 33792 -fa on -lm dio -np 1, F16 KV, Radeon 890M Vulkan (Minisforum AI X1 Pro-470); prompts 2K/8K/16K/32K, n_predict 128; ABBA x2 bin-n (c55c281a1d, tree = eebf2a7df4) vs integ binary cache/mtp-x1-lane/build-integ/bin, 32K arms in their own batch (c19-10080535).",
+      "measured_effect": "Prefill tok/s integ -> fused, mean of 2 rounds: 2K 217.96 -> 218.43 (+0.2%, rounds overlap), 8K 212.71 -> 214.67 (+0.9%), 16K 203.08 -> 203.94 (+0.4%), 32K 192.07 -> 193.59 (+0.8%); 8K/16K/32K every fused round above every integ round. Decode tie: 2K 11.39 -> 11.32, 8K 11.56 -> 11.51, 16K 11.39 -> 11.37, 32K 11.19 -> 11.20. Mechanism (RGP c18, kv 32768 nb 1): same FA pipeline both arms, compaction dispatch ~42 -> ~18 us. Decode verdict = tie: 8K fused rounds 11.51/11.51 sit below integ 11.55/11.57 (-0.4%), but 2 sequential-arm rounds cannot resolve 0.4% in decode (SPINE section 4 wall 3, bimodal DRAM contention); the 0.4% prefill separations at 16K stand because prefill is compute-bound and its round spread is 0.07-0.14%.",
+      "valid_conditions": "Vulkan, qwen4exp QSA layers, f16 contiguous raw kq_mask, KV <= 131072, shared memory >= 4096*4 + 256*4 bytes. Elsewhere the unfused chain runs unchanged.",
+      "notes": "Lane 301 DECISIONS D66-D69 (board/programs/local-inference/lanes/2026-10-05-lane-301-DECISIONS.md). f42f16e38c is a message-only reword of 3ab1a4540d (same tree); also_commits eebf2a7df4 adds the QSA_MASK_FA perf-mode test shapes (no engine code).",
+      "_registered": "2026-10-08, lane 301 relaunch 40.",
+      "also_commits": [
+        "03a822b6e7b7205819f2ce44f16bcab9a43845a9"
+      ]
     }
   ],
   "_rekeyed_pre_rebase_to_x1i": "Re-keyed 2026-10-06 (release-prep HQ82) from the pre-rebase chain (reachable only through the fork tag arifi-pre-rebase-e86ca0289, which does not ship) to the rebased commit on the x1i line. Map: the checked replay-provenance.json row when one exists, else a unique git patch-id --stable match. The prior key is kept in *_pre_rebase. No row was added, removed or re-judged."
