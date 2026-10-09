@@ -2375,9 +2375,9 @@
     {
       "id": "vulkan-moe-gather-width1-rank-scan-skip",
       "status": "active",
-      "_registered": "2026-10-08, lane-302 relaunch-48 (Opus 5.5). Op-level WIN, served LOSSLESS-TIE vs integ 7156c61607; default ON (no switch: dead-code removal, byte-identical).",
+      "_registered": "2026-10-08, lane-302 relaunch-48 (Opus 5.5). Op-level WIN, served LOSSLESS-TIE vs integ 7156c61607; default ON (no switch: dead-code removal, byte-identical). Re-keyed 2026-10-09 by lane 298 relaunch-100 (HQ85 Q69 linearize grant): commit = the pick of 33f8ae3037 onto lane-298/v0132, patch-id equal.",
       "mechanism": "gather_setup() in mul_mat_vec_base.glsl returns the slot's own expert and B/D offsets directly when NUM_COLS == 1 (the served width), skipping the leader-rank scan whose result is unused at width 1. cellW-10071710 RGP: the scan ran 25 serial scalar iterations per wave = 10.8% of mul_mat_vec_idg_iq4_nl and 4.5% of idg_iq2_s wave cost at n5. Widths 2 and 4 keep the scan.",
-      "commit": "33f8ae30373c5b79645d809d42a2adc4b717b9d0",
+      "commit": "5583912fe85554917c74b3cbd1d22969ee554f67",
       "protected_paths": [
         "ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_base.glsl"
       ],
