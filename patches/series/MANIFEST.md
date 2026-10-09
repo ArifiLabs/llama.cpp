@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **809**, all non-merge, applied in filename order.
+- Patches: **811**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 809 commit messages, same provenance trailers. Verified, not
+same file contents, same 811 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -888,6 +888,8 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 807 | `0807-arifi-sync-repoint-lane-301-lever-4-entries-after-th.patch` | arifi-fork-base | `df552ea82` | - | - | arifi-sync: repoint lane 301 lever-4 entries after the trailer reword |
 | 808 | `0808-tests-mul_mat-over-padded-batches-with-an-odd-elemen.patch` | arifi-fork-base | `be1f7e6e6` | ggml-org/llama.cpp@83dd71f869 (#29254) - the PR names the missing a_offset check; the test is ours. | - | tests: mul_mat over padded batches with an odd element stride (F32/F16/BF16 mat-vec) |
 | 809 | `0809-vulkan-mat-vec-aligned-branch-checks-a_offset-F32-a-.patch` | ternary-g128 | `0e7ed6ff9` | ggml-org/llama.cpp@83dd71f869 (#29254) | - | vulkan: mat-vec aligned branch checks a_offset; F32 a loads 2 at a time (#29254) |
+| 810 | `0810-arifi-sync-resolution-row-for-vulkan-moe-gather-slot.patch` | arifi-fork-base | `86a4e7967` | - | - | arifi-sync: resolution row for vulkan-moe-gather-slot-major-matvec-id vs P17 |
+| 811 | `0811-tests-give-the-per-type-Vulkan-MoE-cache-test-64-exp.patch` | arifi-fork-base | `d474126e5` | ArifiLabs/llama.cpp@e97dd7e618557fdd7425a617c16987fa977467a7 | - | tests: give the per-type Vulkan MoE cache test 64 experts so a pool exists |
 
 ## Measured effect, per patch
 
@@ -1779,6 +1781,8 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0807-arifi-sync-repoint-lane-301-lever-4-entries-after-th.patch` | none (manifest sha repoint; no source change) |
 | `0808-tests-mul_mat-over-padded-batches-with-an-odd-elemen.patch` | NO RUNTIME EFFECT - test only; RED on 0206f2bf90 = 2 of 7 padded odd-stride MUL_MAT cases FAIL (F16, BF16), GREEN on 20a1244b13 = 7/7 OK (cache/upstream-x1-lane/cells/rg8-summary.txt). |
 | `0809-vulkan-mat-vec-aligned-branch-checks-a_offset-F32-a-.patch` | CORRECTNESS ONLY, SPEED UNMEASURED - padded odd-stride MUL_MAT 2/7 FAIL -> 7/7 OK (cache/upstream-x1-lane/cells/rg8-summary.txt); the F32 2-at-a-time load reads the same values, its speed on the 890M is not measured. |
+| `0810-arifi-sync-resolution-row-for-vulkan-moe-gather-slot.patch` | NO RUNTIME EFFECT - metadata only; receipt cache/mtp-x1-lane/cells/p5-pw-check-incoming.txt |
+| `0811-tests-give-the-per-type-Vulkan-MoE-cache-test-64-exp.patch` | NO RUNTIME EFFECT - test only; receipt cache/strata-x1/cells/vkt-10082238-state.json (iq3_s FAIL on 7156c61607, PASS on the fix) |
 
 ## Unclassified
 
@@ -2452,4 +2456,6 @@ rather than silently bucketed - add a rule when a new source appears.
 - `44a04aae3` kv-cache: keep deepseek4 on the nrot experiment tile (narrow 5eb9502f45)
 - `df552ea82` arifi-sync: repoint lane 301 lever-4 entries after the trailer reword
 - `be1f7e6e6` tests: mul_mat over padded batches with an odd element stride (F32/F16/BF16 mat-vec)
+- `86a4e7967` arifi-sync: resolution row for vulkan-moe-gather-slot-major-matvec-id vs P17
+- `d474126e5` tests: give the per-type Vulkan MoE cache test 64 experts so a pool exists
 
