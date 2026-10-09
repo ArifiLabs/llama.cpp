@@ -1,0 +1,170 @@
+From c94561dfcc0f4a0433bbefec87450dd4b4367428 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 12:06:55 -0400
+Subject: [PATCH] test(r61): iq3_s/iq3_xxs/iq4_xs rows on the shapes the GSQ
+ file serves, plus a mat-vec pipeline-identity trace
+
+R61 step 0 is a diagnosis, not a kernel change. Nothing here alters a route, a
+default or a shader.
+
+Two gaps this closes.
+
+(1) COVERAGE. The 27B GSQ-RCO file carries IQ3_S on 144 tensors, IQ4_XS on 96 and
+IQ3_XXS on 78, and test-backend-ops had no row for iq3_xxs at either 27B FFN
+orientation, no 5120x17408 iquant row at all, and no n=6/n=7 anywhere in the
+iquant width sweep. The lane-209 block covered iq3_s / iq4_xs at 17408x5120 and
+bs {1,2,3,4,5,8} only. Eval and perf rows are added in the SAME commit for every
+new cell (green-but-blind).
+
+The 248320x5120 rows are added as CORRECTNESS coverage and a width reference on a
+shape the microbench reads cleanly. They are NOT this file's served lm_head: its
+output.weight is Q4_K (Sol MEDIUM review 2026-09-16 section A), so a synthetic
+iq3 row there carries no verdict and the comment says so in the source.
+
+Both FFN orientations are labelled diagnostics too. The R50 brief names them
+launch/issue-bound in this microbench (33-39 GB/s at every width), a cost the
+served graph pipelines away. What they can honestly answer is the RELATIVE width
+question across three types on one framework, one shape, one set of rounds.
+
+(2) PIPELINE IDENTITY. GGML_VK_PERF_LOGGER names ops by type and shape only
+(get_node_fusion_name), so a timing row cannot tell the q8_1 integer-dot mat-vec
+apart from the f32 dequant one -- and which of the two serves iq3_s at each width
+is the whole R61 question. GGML_ARIFI_MMV_PIPELINE_TRACE=1 prints the selected
+mat-vec pipeline once per distinct (pipeline, type, m, n, k). Default off, no
+route touched.
+
+It settles question 1 of the brief empirically, and the answer refutes the
+brief's cheapest candidate: there is no q8_1 MMVQ pipeline for the iq3 types to
+be routed to. ggml_vk_get_dequantize_mul_mat_vec's b_type == GGML_TYPE_Q8_1
+switch falls to `default: return nullptr` for IQ3_S / IQ3_XXS / IQ4_XS, and no
+pipeline_dequant_mul_mat_vec_q8_1_f32[..][GGML_TYPE_IQ3_*] is ever created, so
+the `dmmv == nullptr` fallback runs at every width. Measured: all three take
+mul_mat_vec_<t>_f32_f32 with quantize_y=0 at n=1..8 under the default route AND
+under GGML_VK_FORCE_MMVQ=1, byte-identical traces; q4_K takes
+mul_mat_vec_q4_k_q8_1_f32 with quantize_y=1 at every n in both arms.
+
+Receipts land in the follow-up commit.
+
+Origin: fork-authored (ArifiLabs lane-249 R61 iq3 MMVQ wide-width, Opus 5 MEDIUM kernel-maker)
+Measured-effect: op-level perf-mode only (rows in receipts); served t/s UNMEASURED by the maker - HQ pairs quiet
+Lane: lane-249
+Cherry-picked-from: 5c6b81a4b (SOURCE PATHS ONLY, ArifiLabs lane-254 R66 integration)
+Recut-onto: 1b6185951 (ArifiLabs lane-254 R66c, from 1d0613c16)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 28 ++++++++++++++
+ tests/test-backend-ops.cpp           | 56 ++++++++++++++++++++++++++++
+ 2 files changed, 84 insertions(+)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 64582db940..68f74f48cb 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -7837,6 +7837,34 @@ static void ggml_vk_mul_mat_vec_q_f16(ggml_backend_vk_context * ctx, vk_context&
+         to_q8_1 = ggml_vk_get_quantize_pipeline(ctx, GGML_TYPE_Q8_1);
+     }
+ 
++    // arifi lane-249 / R61 step 0(a): DIAGNOSTIC ONLY. GGML_ARIFI_MMV_PIPELINE_TRACE=1 names the
++    // mat-vec pipeline this dispatch actually selected, once per distinct
++    // (pipeline, type, m, n, k) tuple, on stderr. It changes no route and no default -- it exists
++    // because GGML_VK_PERF_LOGGER names ops by type and shape only (get_node_fusion_name), so a
++    // timing row cannot tell the q8_1 integer-dot shader apart from the f32 dequant one, and the
++    // whole R61 question is which of the two serves iq3_s / iq3_xxs at each width.
++    //
++    // What it is expected to show, and what the source already says: no
++    // pipeline_dequant_mul_mat_vec_q8_1_f32[..][GGML_TYPE_IQ3_S | IQ3_XXS | IQ4_XS] is ever
++    // created, and the b_type == GGML_TYPE_Q8_1 switch in ggml_vk_get_dequantize_mul_mat_vec falls
++    // to `default: return nullptr` for them -- so the `dmmv == nullptr` fallback above runs at
++    // EVERY width and GGML_VK_FORCE_MMVQ cannot move them.
++    {
++        static const bool trace = getenv("GGML_ARIFI_MMV_PIPELINE_TRACE") != nullptr;
++        if (trace && dmmv != nullptr) {
++            static std::mutex                   trace_mutex;
++            static std::set<std::string>        seen;
++            char buf[256];
++            snprintf(buf, sizeof(buf), "%s type_a=%s m=%u n=%u k=%u quantize_y=%d",
++                     dmmv->name.c_str(), ggml_type_name(src0->type),
++                     (uint32_t) ne20, (uint32_t) ne11, (uint32_t) ne00, (int) quantize_y);
++            std::lock_guard<std::mutex> guard(trace_mutex);
++            if (seen.insert(buf).second) {
++                fprintf(stderr, "ggml_vulkan: mmv pipeline: %s\n", buf);
++            }
++        }
++    }
++
+     if (ggml_nbytes(src0) > ctx->device->properties.limits.maxStorageBufferRange) {
+         dmmv = ggml_vk_get_64b_indexing_pipeline(ctx, dmmv);
+     }
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 8fc9d4e43a..cbe152195a 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -10847,6 +10847,31 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         }
+     }
+ 
++    // ArifiLabs lane-249 / R61: the iquant types at the EMBED/OUTPUT shape (248320x5120), which had
++    // no eval row at all. The loop above is the q8_1-MMVQ type set, and iq3_s / iq3_xxs / iq4_xs
++    // have NO q8_1 mat-vec pipeline (the b_type == GGML_TYPE_Q8_1 switch in
++    // ggml_vk_get_dequantize_mul_mat_vec falls to `default: return nullptr`), so they were never
++    // covered there. These three carry 318 tensors of the 27B GSQ-RCO file between them
++    // (IQ3_S 144, IQ4_XS 96, IQ3_XXS 78), so the CORRECTNESS coverage is owed.
++    //
++    // SYNTHETIC SHAPE, NOT A SERVED ONE (Sol MEDIUM review 2026-09-16 §A): the GSQ-RCO file's
++    // output.weight is Q4_K, so an iq3/iq4 row at 248320x5120 does not represent that file's
++    // lm_head and carries NO performance verdict. It is coverage of a shape the shader must still
++    // be correct on, nothing more.
++    //
++    // The matching PERF rows are added in the same commit (green-but-blind: an eval row with no
++    // perf row measures nothing, a perf row with no eval row proves nothing).
++    for (ggml_type type_a : {GGML_TYPE_IQ3_S, GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ4_XS}) {
++        for (int n = 1; n <= 8; ++n) {
++            // The two FFN orientations the GSQ-RCO file really carries these types at, and the
++            // synthetic lm_head shape. Every perf row added for these types in the perf list has
++            // its correctness twin here.
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, n,  5120, { 1, 1 }, { 1, 1 }));
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, n, 17408, { 1, 1 }, { 1, 1 }));
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, n,  5120, { 1, 1 }, { 1, 1 }));
++        }
++    }
++
+     // The SYCL backend picks between one and two output rows per subgroup by row count when there
+     // are two destination columns (Q4_K_MMVQ_ROW_PAIR_MIN_NROWS in ggml-sycl/mmvq.cpp). Cover both
+     // sides of that boundary, including an odd row count above it for the row-pair tail.
+@@ -12482,6 +12507,37 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
+         }
+     }
+ 
++    // ArifiLabs lane-249 / R61: the 27B GSQ-RCO iquant types on the shapes that file ACTUALLY
++    // serves them at, at every NUM_COLS the spec constant reaches.
++    //
++    // The two FFN orientations are where IQ3_S (144 tensors), IQ4_XS (96) and IQ3_XXS (78) live in
++    // that file; its output.weight is Q4_K (Sol MEDIUM review 2026-09-16 §A), so the lm_head shape
++    // is NOT an iquant shape on this file. The block above covered 17408x5120 for iq3_s / iq4_xs at
++    // bs {1,2,3,4,5,8} only -- no iq3_xxs at all, no 5120x17408, and no n=6/n=7. This closes those
++    // holes so the width sweep of the three types has no gap and a sibling control at every cell.
++    //
++    // READ THESE AS DIAGNOSTICS, NOT AS A VERDICT. The R50 brief names both FFN shapes
++    // launch/issue-bound in this microbench ("33-39 GB/s at every width -- do not chase those
++    // rows"), a cost the served graph pipelines away. What they can honestly answer is the
++    // RELATIVE width question: three types on the same framework, same shape, same rounds.
++    //
++    // NO ENV IS NEEDED for the three iquant rows: GGML_VK_FORCE_MMVQ=1 sets quantize_y, the q8_1
++    // pipeline getter returns nullptr for these types, and the caller falls straight back to the
++    // f32 dequant shader with quantize_y=false. They measure mul_mat_vec_iq3_s.comp /
++    // mul_mat_vec_iq3_xxs.comp / mul_mat_vec_iq4_xs.comp unconditionally. The q4_K control DOES
++    // move with the env, and at n>=5, k<=8192 it is on MMVQ+hoist by default (lane-235 / R48b).
++    //
++    // Filters: -p "m=17408" / -p "m=5120" / -p "m=248320".
++    for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
++        for (ggml_type type_a : {GGML_TYPE_IQ3_S, GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ4_XS, GGML_TYPE_Q4_K}) {
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,  17408, bs,  5120, {1, 1}, {1, 1}));
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32,   5120, bs, 17408, {1, 1}, {1, 1}));
++            // Synthetic lm_head shape: correctness coverage and a width reference on a shape the
++            // microbench reads cleanly. It is NOT this file's served lm_head (that one is Q4_K).
++            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 248320, bs,  5120, {1, 1}, {1, 1}));
++        }
++    }
++
+     // ArifiLabs lane-230 / R46: the REAL 27B S-X8 decode shapes. The 27B .sx8v43 file carries 128
+     // gate/up matrices at 17408x5120 and 64 down matrices at 5120x17408 in S-X8, plus the
+     // 248320x5120 embedding/output pair; every other projection is Q8_0. Q8_0 and Q4_K ride along

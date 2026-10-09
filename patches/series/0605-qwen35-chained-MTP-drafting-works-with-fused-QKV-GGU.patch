@@ -1,0 +1,56 @@
+From e48074e57e4ba22bc099f47a0cad6bae83d46aee Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 09:13:19 -0400
+Subject: [PATCH] qwen35: chained MTP drafting works with fused-QKV GGUFs (W1
+ collision C071)
+
+Upstream loads the MTP block through create_tensor_qkv and builds its Q/K/V with build_qkv, so a fused-QKV GGUF leaves layer.wq/wk/wv null. Our chained-MTP block (LLAMA_SPEC_CHAIN) read wq/wk/wv directly and would dereference null. The block now slices the fused product like build_qkv(reshape = false), over the block's width rows rather than the graph's n_tokens. Unfused files take the unchanged path. Witness: run 12 chain-MTP greedy on a fused copy of GSQ IQ2_S vs the unfused file.
+
+Origin: ArifiLabs lane-296
+Lane: lane-296
+---
+ src/models/qwen35.cpp | 21 ++++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/src/models/qwen35.cpp b/src/models/qwen35.cpp
+index 03c5ac6079..74e45ff117 100644
+--- a/src/models/qwen35.cpp
++++ b/src/models/qwen35.cpp
+@@ -580,7 +580,24 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
+ 
+             cur_b = build_norm(cur_b, layer.attn_norm, nullptr, LLM_NORM_RMS, il);
+ 
+-            ggml_tensor * Qfull_b = build_lora_mm(layer.wq, cur_b, layer.wq_s);
++            // lane-296 C071: a fused-QKV GGUF (create_tensor_qkv) leaves wq/wk/wv null; slice the fused
++            // product like build_qkv(reshape = false) does, but over `width` rows, not the graph's n_tokens
++            ggml_tensor * Qfull_b, * K_b, * V_b;
++            if (layer.wqkv) {
++                ggml_tensor * qkv_b = build_lora_mm(layer.wqkv, cur_b, layer.wqkv_s);
++                if (layer.wqkv_b) {
++                    qkv_b = ggml_add(ctx0, qkv_b, layer.wqkv_b);
++                }
++                const int64_t n_q = n_embd_head * 2 * n_head;
++                const int64_t n_k = n_embd_head * n_head_kv;
++                Qfull_b = ggml_cont(ctx0, ggml_view_2d(ctx0, qkv_b, n_q, width, qkv_b->nb[1], 0));
++                K_b     = ggml_cont(ctx0, ggml_view_2d(ctx0, qkv_b, n_k, width, qkv_b->nb[1], ggml_row_size(qkv_b->type, n_q)));
++                V_b     = ggml_cont(ctx0, ggml_view_2d(ctx0, qkv_b, n_k, width, qkv_b->nb[1], ggml_row_size(qkv_b->type, n_q + n_k)));
++            } else {
++                Qfull_b = build_lora_mm(layer.wq, cur_b, layer.wq_s);
++                K_b     = build_lora_mm(layer.wk, cur_b, layer.wk_s);
++                V_b     = build_lora_mm(layer.wv, cur_b, layer.wv_s);
++            }
+ 
+             ggml_tensor * Q_b = ggml_view_3d(ctx0, Qfull_b,
+                     n_embd_head, n_head, width,
+@@ -596,11 +613,9 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
+                     ggml_element_size(Qfull_b) * n_embd_head);
+             gate_b = ggml_cont_2d(ctx0, gate_b, n_embd_head * n_head, width);
+ 
+-            ggml_tensor * K_b = build_lora_mm(layer.wk, cur_b, layer.wk_s);
+             K_b = ggml_reshape_3d(ctx0, K_b, n_embd_head, n_head_kv, width);
+             K_b = build_norm(K_b, layer.attn_k_norm, nullptr, LLM_NORM_RMS, il);
+ 
+-            ggml_tensor * V_b = build_lora_mm(layer.wv, cur_b, layer.wv_s);
+             V_b = ggml_reshape_3d(ctx0, V_b, n_embd_head, n_head_kv, width);
+ 
+             // M-RoPE positions are section-major: [dim0 x n_tokens, dim1 x n_tokens, ...]

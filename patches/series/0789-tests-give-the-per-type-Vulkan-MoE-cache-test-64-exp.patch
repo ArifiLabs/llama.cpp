@@ -1,0 +1,34 @@
+From 0f54fdee5455364e7a58e42ca4758cbff5fd263f Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 02:32:37 -0400
+Subject: [PATCH] tests: give the per-type Vulkan MoE cache test 64 experts so
+ a pool exists
+
+The Vulkan cache only builds a pool for a shape with at least
+moe_cache_pool_slots_min (64) entries (vk_moe_build_pending). With 8 experts
+no pool was ever created, so every begin() returned NULL and run vkt-10081445
+reported "no cache hit" for 23 of 23 types on both trees: a harness defect,
+not a per-type result.
+
+Origin: lane-strata-x1
+Taken-from: ArifiLabs/llama.cpp@e97dd7e618557fdd7425a617c16987fa977467a7
+Measured-effect: NO RUNTIME EFFECT - test only; receipt cache/strata-x1/cells/vkt-10082238-state.json (iq3_s FAIL on 88081ccb8c, PASS on the fix)
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tests/test-moe-cache-vk-types.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/tests/test-moe-cache-vk-types.cpp b/tests/test-moe-cache-vk-types.cpp
+index 818543827d..8c1feeaef5 100644
+--- a/tests/test-moe-cache-vk-types.cpp
++++ b/tests/test-moe-cache-vk-types.cpp
+@@ -19,7 +19,8 @@ namespace {
+ 
+ constexpr int64_t n_in     = 256;
+ constexpr int64_t n_out    = 128;
+-constexpr int64_t n_expert = 8;
++// Must be >= moe_cache_pool_slots_min (64): a shape with fewer entries never gets a pool.
++constexpr int64_t n_expert = 64;
+ constexpr int64_t n_used   = 2;
+ constexpr int     max_steps = 64;
+ constexpr int     steps_after_hit = 4;

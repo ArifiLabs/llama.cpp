@@ -1,0 +1,56 @@
+From 9c47f89b05be99fcf9d692ea91a2c2b1d038dac7 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 23:05:32 -0400
+Subject: [PATCH] lane-300: det-probe DETP_ROWS_OPS=2 full node dump per width
+ (last-row hash, I32 nodes included); cell-16 name-walk compare was blind
+ across width-dependent graphs. Lane: lane-300
+
+Origin: lane-300
+Measured-effect: tooling only (tools/arifi-op-probe, no engine source); served default ids == 96a6a8d976 binary, cache/determinism-x1-lane/cells/c27-10061355-state.json
+---
+ tools/arifi-op-probe/det-probe.cpp | 17 ++++++++++++++---
+ 1 file changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/tools/arifi-op-probe/det-probe.cpp b/tools/arifi-op-probe/det-probe.cpp
+index fbfefb0bad..0c28715970 100644
+--- a/tools/arifi-op-probe/det-probe.cpp
++++ b/tools/arifi-op-probe/det-probe.cpp
+@@ -170,7 +170,7 @@ static bool want(const probe * p, const ggml_tensor * t) {
+ // last token's slice: the highest dim whose size equals the batch width (ASSUMED token dim); width 1 = whole tensor
+ static void rows_rec(probe * p, const ggml_tensor * t) {
+     if (strncmp(t->name, "cache_", 6) == 0) return;
+-    if (t->type != GGML_TYPE_F32 && t->type != GGML_TYPE_F16) return;
++    if (t->type != GGML_TYPE_F32 && t->type != GGML_TYPE_F16 && t->type != GGML_TYPE_I32) return;   // I32: bit-copied, equality only
+     const std::vector<float> f = to_f32(t);
+     int d = -1;
+     if (p->n_tok > 1) for (int i = 3; i >= 1; --i) if (t->ne[i] == p->n_tok) { d = i; break; }
+@@ -240,7 +240,9 @@ int main(int argc, char ** argv) {
+         if (pr.mode == 0) pr.mode = 2;   // no names: only FA nodes are asked for (and hashed)
+     }
+     g_fa_dump = getenv("DETP_FA_DUMP");
+-    pr.rows_mode = getenv("DETP_ROWS") && envi("DETP_ROWS_OPS", 0) == 1;
++    // DETP_ROWS_OPS=1: name-walk compare (first 40 diffs); =2: also dump every node's last-row hash per width (offline match)
++    const int rows_ops = envi("DETP_ROWS_OPS", 0);
++    pr.rows_mode = getenv("DETP_ROWS") && rows_ops >= 1;
+     if (pr.mode != 0 || pr.rows_mode) { params.cb_eval = cb; params.cb_eval_user_data = &pr; }
+     params.warmup = false;
+ 
+@@ -326,8 +328,17 @@ int main(int argc, char ** argv) {
+                 pr.n_tok = w; pr.rows_cur = pr.rows_mode ? &ops : nullptr;
+                 dec(S, t - w + 1, t + 1, true);
+                 pr.rows_cur = nullptr;
++                if (pr.rows_mode && rows_ops == 2) {
++                    for (size_t i = 0; i < ops.size(); ++i) {
++                        const rrec & o = ops[i];
++                        double ma = 0; for (float x : o.last) ma = std::max(ma, (double) std::fabs(x));
++                        fprintf(out, "{\"node\":true,\"t\":%d,\"w\":%d,\"i\":%zu,\"name\":\"%s\",\"op\":\"%s\",\"n\":%zu,\"h\":\"%016llx\",\"ma\":%.6g}\n",
++                                t, w, i, o.name.c_str(), ggml_op_name((ggml_op) o.op), o.last.size(),
++                                (unsigned long long) fnv((const uint8_t *) o.last.data(), o.last.size() * 4, 1469598103934665603ull), ma);
++                    }
++                }
+                 if (pr.rows_mode) {
+-                    if (wi == 0) ref_ops = std::move(ops);
++                    if (wi == 0) ref_ops = ops;
+                     else {   // walk both node lists in order, matching by name; report the first 40 value differences
+                         size_t j = 0; int nd = 0, nskip = 0;
+                         for (size_t i = 0; i < ops.size() && nd < 40; ++i) {

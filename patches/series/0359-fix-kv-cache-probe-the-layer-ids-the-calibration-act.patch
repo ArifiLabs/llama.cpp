@@ -1,0 +1,130 @@
+From 38be26b05906c16fbf09e731f8c8484ca84c7067 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 19 Aug 2026 10:07:58 -0400
+Subject: [PATCH] fix(kv-cache): probe the layer ids the calibration actually
+ has, and let an existing calibration be reused
+
+Both defects blocked the A/B after the calibration itself succeeded.
+
+1. write_probe required the probed layer ids to be a dense 0..n-1 range. The calibrated layers are
+   the ones that emit "k_cache_in", which is neither every layer nor contiguous: on the seated
+   64-layer Qwen3.8-27B they are 3,7,11,...,63. So a correct probe was rejected with "tensor probe
+   is missing calibration layer 0". It now parses the ids out of the calibration file's own tensor
+   names and compares against those.
+
+2. --reuse-calibration. Recalibrating is not free of consequence: the artifact is not
+   byte-reproducible, so a rerun changes its SHA-256 and invalidates the catalog row already
+   published for it. Without the flag the overwrite refusal still stands. The reuse entry carries
+   the empty purity shape the bank verifier reads, because no launch happened to scan.
+
+With these the full proof completes: tensor probe PASS (16 layers, both buffers Vulkan0, every layer
+a nonzero delta, max error vs calibration 7.34e-08 against a 0.002 bound), 3x PPL per arm, and both
+speed arms.
+
+Assisted-by: Claude Opus 5
+---
+ tools/kv-mean-center/ab-proof.py        | 29 ++++++++++++++++++-----
+ tools/kv-mean-center/kv-mean-center.cpp | 31 ++++++++++++++++++++-----
+ 2 files changed, 48 insertions(+), 12 deletions(-)
+
+diff --git a/tools/kv-mean-center/ab-proof.py b/tools/kv-mean-center/ab-proof.py
+index b7855d61a6..9a4158f985 100644
+--- a/tools/kv-mean-center/ab-proof.py
++++ b/tools/kv-mean-center/ab-proof.py
+@@ -350,7 +350,8 @@ def run(args: argparse.Namespace) -> int:
+         require_file(path, label)
+     if calibration_corpus == evaluation_corpus:
+         raise ProofError("calibration and evaluation corpora must be different files")
+-    if calibration.exists():
++    reuse_calibration = getattr(args, "reuse_calibration", False) and calibration.is_file()
++    if calibration.exists() and not reuse_calibration:
+         raise ProofError(f"refusing to overwrite calibration artifact: {calibration}")
+     if not calibration.parent.is_dir():
+         raise ProofError(f"registered calibration side-home must already exist: {calibration.parent}")
+@@ -403,11 +404,23 @@ def run(args: argparse.Namespace) -> int:
+         runs.append(item)
+         write_json(out_dir / "runs.json", runs)
+ 
+-    bank_run(run_native(
+-        [str(exes["calibrator"]), *common, "-f", str(calibration_corpus), "-o", str(calibration),
+-         "-c", str(args.calibration_context), "--chunks", str(args.calibration_chunks)],
+-        "calibrate exact seated model", out_dir, "calibration",
+-    ))
++    if reuse_calibration:
++        # no launch happened, so there is no purity scan to record; carry the empty shape the
++        # bank verifier reads rather than a partial entry it cannot interpret
++        empty_purity = {"command_lines": [], "process_hygiene": "not run: calibration reused"}
++        bank_run({"stem": "calibration", "reused": True, "path": str(calibration),
++                  "sha256": sha256(calibration),
++                  "purity_before": empty_purity, "purity_after": empty_purity,
++                  "returncode": 0, "log": None,
++                  "note": "existing calibration reused (--reuse-calibration); not recalibrated, "
++                          "because the artifact is not byte-reproducible and a rerun would change "
++                          "the SHA-256 already published in the artifact catalog"})
++    else:
++        bank_run(run_native(
++            [str(exes["calibrator"]), *common, "-f", str(calibration_corpus), "-o", str(calibration),
++             "-c", str(args.calibration_context), "--chunks", str(args.calibration_chunks)],
++            "calibrate exact seated model", out_dir, "calibration",
++        ))
+     require_file(calibration, "calibration artifact")
+     manifest["calibration_sha256"] = sha256(calibration)
+     write_json(out_dir / "manifest.json", manifest)
+@@ -534,6 +547,10 @@ def parser() -> argparse.ArgumentParser:
+     run_p.add_argument("--calibration-context", type=int, default=512)
+     run_p.add_argument("--calibration-chunks", type=int, default=64)
+     run_p.add_argument("--ppl-chunks", type=int, default=4)
++    # Reuse an EXISTING calibration instead of refusing. Recalibrating is not free of consequence:
++    # the artifact is not byte-reproducible, so a rerun changes its SHA-256 and invalidates the
++    # catalog row already published for it. Without this flag the overwrite refusal still stands.
++    run_p.add_argument("--reuse-calibration", action="store_true")
+     verify_p = sub.add_parser("verify")
+     verify_p.add_argument("--output-dir", type=Path, required=True)
+     verify_p.add_argument("--plant-overlap", action="store_true")
+diff --git a/tools/kv-mean-center/kv-mean-center.cpp b/tools/kv-mean-center/kv-mean-center.cpp
+index 1d5850b5ea..c7d0c1c93a 100644
+--- a/tools/kv-mean-center/kv-mean-center.cpp
++++ b/tools/kv-mean-center/kv-mean-center.cpp
+@@ -263,17 +263,36 @@ bool kv_mean_collector::write_probe(
+     }
+     std::sort(layer_ids.begin(), layer_ids.end());
+ 
++    // The calibrated layers are the ones that emit "k_cache_in", which is NOT every layer and is
++    // not a dense range: on a 64-layer Qwen3.8-27B the ids are 3,7,11,...,63. Compare the probed
++    // ids against the ids the calibration file actually carries, never against 0..n-1.
+     const int64_t expected_layers = gguf_get_n_tensors(ctx_gguf);
+-    if ((int64_t) layer_ids.size() != expected_layers) {
+-        LOG_ERR("%s: tensor probe captured %zu layer(s), but calibration contains %" PRId64 "\n",
+-                __func__, layer_ids.size(), expected_layers);
++    std::vector<int32_t> expected_ids;
++    expected_ids.reserve((size_t) expected_layers);
++    for (int64_t i = 0; i < expected_layers; ++i) {
++        const char * name = gguf_get_tensor_name(ctx_gguf, i);
++        int32_t il = -1;
++        if (!name || sscanf(name, "kv_bar.blk.%d.k", &il) != 1 || il < 0) {
++            LOG_ERR("%s: calibration tensor %" PRId64 " has an unexpected name '%s'\n",
++                    __func__, i, name ? name : "(null)");
++            gguf_free(ctx_gguf);
++            ggml_free(ctx_data);
++            return false;
++        }
++        expected_ids.push_back(il);
++    }
++    std::sort(expected_ids.begin(), expected_ids.end());
++
++    if (layer_ids.size() != expected_ids.size()) {
++        LOG_ERR("%s: tensor probe captured %zu layer(s), but calibration contains %zu\n",
++                __func__, layer_ids.size(), expected_ids.size());
+         gguf_free(ctx_gguf);
+         ggml_free(ctx_data);
+         return false;
+     }
+-    for (int64_t expected = 0; expected < expected_layers; ++expected) {
+-        if (layer_ids[(size_t) expected] != expected) {
+-            LOG_ERR("%s: tensor probe is missing calibration layer %" PRId64 "\n", __func__, expected);
++    for (size_t i = 0; i < expected_ids.size(); ++i) {
++        if (layer_ids[i] != expected_ids[i]) {
++            LOG_ERR("%s: tensor probe is missing calibration layer %d\n", __func__, expected_ids[i]);
+             gguf_free(ctx_gguf);
+             ggml_free(ctx_data);
+             return false;

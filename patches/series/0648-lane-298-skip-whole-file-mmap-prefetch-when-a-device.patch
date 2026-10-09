@@ -1,0 +1,46 @@
+From 25239c6a79869e1b85963430397c3a1093a83e67 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 01:01:00 -0400
+Subject: [PATCH] lane-298: skip whole-file mmap prefetch when a device copies
+ weights out of the mapping
+
+On an iGPU (Vulkan mmap_support=false) -lm mmap still copies every offloaded weight into device
+buffers, yet init_mappings(true) asked Windows PrefetchVirtualMemory for the whole non-lazy file
+(~58 GB on a 23.6 GB host). Prefetch now follows mmap_support; LLAMA_MMAP_PREFETCH=0|1 overrides.
+
+Origin: ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.
+Measured-effect: correctness fix (shipped-engine load drain), no speed claim: RED r1k-10060240 / GREEN r1l-10060355 (cache/mtp-x1-lane/cells)
+---
+ src/llama-model.cpp | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index a043907c86..37ce32a2a6 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1799,7 +1799,24 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+         }
+     }
+ 
+-    ml.init_mappings(true, use_mlock ? &pimpl->mlock_mmaps : nullptr);
++    // lane-298: a device without mmap_support copies every offloaded weight out of the mapping, so prefetching
++    // the whole file only floods RAM (Windows PrefetchVirtualMemory over ~58 GB on a 23.6 GB host). Override:
++    // LLAMA_MMAP_PREFETCH=0|1.
++    bool mmap_prefetch = true;
++    for (const auto & dev : devices) {
++        ggml_backend_dev_props props;
++        ggml_backend_dev_get_props(dev.dev, &props);
++        if (!props.caps.mmap_support) {
++            mmap_prefetch = false;
++        }
++    }
++    if (const char * env = getenv("LLAMA_MMAP_PREFETCH")) {
++        mmap_prefetch = atoi(env) != 0;
++    }
++    if (ml.use_mmap) {
++        LLAMA_LOG_INFO("%s: mmap prefetch %s\n", __func__, mmap_prefetch ? "on" : "off (a device copies weights out of the mapping)");
++    }
++    ml.init_mappings(mmap_prefetch, use_mlock ? &pimpl->mlock_mmaps : nullptr);
+     pimpl->mappings.reserve(ml.mappings.size());
+ 
+     // create the backend buffers

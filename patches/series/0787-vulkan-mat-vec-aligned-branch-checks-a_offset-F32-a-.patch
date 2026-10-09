@@ -1,0 +1,88 @@
+From 2aa70040d3737722e7dc5af40d23e3d314ce9967 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 22:48:33 -0400
+Subject: [PATCH] vulkan: mat-vec aligned branch checks a_offset; F32 a loads 2
+ at a time (#29254)
+
+Correctness half: the aligned non-quant branch of mul_mat_vec.comp loads [B]F16 a in packed pairs
+(data_a_packed32[(a_offset + ib)/2]) but never checked that a_offset is even. Since P1 (#28956) the
+batch stride comes from nb[2], so a padded or sliced view can give an odd a_offset and the pair load
+reads the wrong elements. The guard now requires a_offset % 4 == 0, as upstream.
+
+Speed half: F32 dequantize4_2aligned loads two vec2 (data_a_packed64) instead of four floats. PR
+reports +44% to +69% on F32 x F32 mat-vec on Intel B60; F32 a is rare in our served graphs, so the
+AMD effect is measured, not assumed.
+
+Files: types.glsl (A_TYPE_PACKED64 vec2 for DATA_A_F32), mul_mat_vec_iface.glsl (A_PACKED64 binding),
+dequant_funcs.glsl, mul_mat_vec.comp. The other dequant_funcs.glsl includers (copy_from_quant,
+get_rows_quant) build quant types only, as the existing F16 packed32 path already requires.
+
+Taken-from: ggml-org/llama.cpp@83dd71f869 (#29254)
+Measured-effect: CORRECTNESS ONLY, SPEED UNMEASURED - padded odd-stride MUL_MAT 2/7 FAIL -> 7/7 OK (cache/upstream-x1-lane/cells/rg8-summary.txt); the F32 2-at-a-time load reads the same values, its speed on the 890M is not measured.
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl     | 5 +++--
+ ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp       | 6 +++---
+ ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iface.glsl | 3 +++
+ ggml/src/ggml-vulkan/vulkan-shaders/types.glsl             | 1 +
+ 4 files changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
+index 7219e8f6e7..c0c931b4ba 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/dequant_funcs.glsl
+@@ -16,8 +16,9 @@ vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
+                 data_a[a_offset + ib + 2], data_a[a_offset + ib + 3]);
+ }
+ vec4 dequantize4_2aligned(uint ib, uint iqs, uint a_offset) {
+-    return vec4(data_a[a_offset + ib    ], data_a[a_offset + ib + 1],
+-                data_a[a_offset + ib + 2], data_a[a_offset + ib + 3]);
++    const vec2 a = data_a_packed64[(a_offset + ib)/2];
++    const vec2 b = data_a_packed64[(a_offset + ib)/2 + 1];
++    return vec4(a, b);
+ }
+ 
+ #endif
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
+index 08e1dd8562..7fb4129645 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
+@@ -266,9 +266,9 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+ 
+     get_offsets(a_offset, b_offset, d_offset);
+     const bool is_aligned_nonquant =
+-        p.batch_stride_b % 4 == 0 && b_offset % 4 == 0 &&
+-        p.ncols % 4 == 0 && BLOCK_SIZE % 4 == 0 &&
+-        K_PER_ITER == 4;
++        p.batch_stride_b % 4 == 0 && p.ncols % 4 == 0 &&
++        a_offset % 4 == 0 && b_offset % 4 == 0 &&
++        BLOCK_SIZE % 4 == 0 && K_PER_ITER == 4;
+ 
+     y_offset = QUANT_R == 1 ? 1 : QUANT_K/2;
+ 
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iface.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iface.glsl
+index e8d053cdd4..a2b7cef649 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iface.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iface.glsl
+@@ -15,6 +15,9 @@ layout (binding = 0) readonly buffer A_PACKED16 {A_TYPE_PACKED16 data_a_packed16
+ #if defined(A_TYPE_PACKED32)
+ layout (binding = 0) readonly buffer A_PACKED32 {A_TYPE_PACKED32 data_a_packed32[];};
+ #endif
++#if defined(A_TYPE_PACKED64)
++layout (binding = 0) readonly buffer A_PACKED64 {A_TYPE_PACKED64 data_a_packed64[];};
++#endif
+ 
+ layout (binding = 1) readonly buffer B {B_TYPE data_b[];};
+ #ifdef B_TYPEV2
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
+index d9b897497a..b6bd240f3b 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/types.glsl
+@@ -24,6 +24,7 @@
+ #else
+ #define A_TYPE float
+ #endif
++#define A_TYPE_PACKED64 vec2
+ #endif
+ 
+ #if defined(DATA_A_F16)

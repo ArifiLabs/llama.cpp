@@ -1,0 +1,190 @@
+From 34e0eb0ceef7f6bd0df0b7f390c5c4ddbcc138ef Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 10:49:03 -0400
+Subject: [PATCH] lane-302: IQ4_NL gather byte-pair LUT + IQ3_S gather batched
+ grid init arms (opt-in)
+
+GGML_ARIFI_IQ4NL_BODY=1: the IQ4_NL expert-gather mat-vec reads both nibble values of a qs byte with one LDS
+read from a 256-entry vec2 table built from the 16-entry LUT (same floats, same dequantize4 component order,
+byte-identical by construction); =3 is the planted wrong arm (pair swapped). Spec constant 4 of the idg pipeline.
+GGML_ARIFI_IQ3S_INIT=1: the IQ3_S gather grid init issues all 8 per-thread loads before any LDS store (the IQ2_S
+lever-4 shape, cellN-10060804 ISA 16 -> 2 serialized waits there); =2 is the planted wrong arm (table rotated).
+Both unset = 0 = legacy; idg pipelines only, so n_tokens 1 is untouched. Gather notice prints both values.
+Cherry-pick name for lane 298: lane-302 IQ4_NL/IQ3_S gather body arms.
+
+Origin: lane-302 (ArifiLabs native, fork-authored; no upstream origin)
+Measured-effect: OPT-IN, default off. Op level cells/cellQ-10061202-read.json (cache/moe-gather-x1-lane): IQ4_NL byte-pair LUT n2 +14.7/+15.8%, n4 +12.9/+15.6%, n8 +16.2/+19.5% slower; IQ3_S batched init n2 +10.2/+19.9%, n4 +3.7/+6.3% slower, n8 -1.8/-1.7%; both byte-identical (harness IDENT) with planted RED; default arm unchanged
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          | 22 ++++++++--
+ .../vulkan-shaders/mul_mat_vec.comp           | 41 +++++++++++++++++--
+ .../vulkan-shaders/mul_mat_vec_iq3_s.comp     | 29 ++++++++++++-
+ 3 files changed, 83 insertions(+), 9 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 23d172cdf9..e6c3b9edd7 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -632,6 +632,20 @@ static uint32_t moe_gather_iq2s_body_env() {
+     return (e != nullptr && e[0] >= '0' && e[0] <= '5') ? (uint32_t) (e[0] - '0') : 5u;
+ }
+ 
++// lane-302 Route A: IQ4_NL gather body (spec 4 of the generic idg shader), opt-in until measured.
++// 1 = byte-pair LUT (byte-identical by construction); 3 = planted wrong arm (test only)
++static uint32_t moe_gather_iq4nl_body_env() {
++    const char * e = getenv("GGML_ARIFI_IQ4NL_BODY");
++    return (e != nullptr && (e[0] == '1' || e[0] == '3')) ? (uint32_t) (e[0] - '0') : 0u;
++}
++
++// lane-302 Route A: IQ3_S gather grid init (spec 4 of mul_mat_vec_iq3_s.comp), opt-in until measured.
++// 1 = batched loads before stores (byte-identical by construction); 2 = planted wrong arm (test only)
++static uint32_t moe_gather_iq3s_init_env() {
++    const char * e = getenv("GGML_ARIFI_IQ3S_INIT");
++    return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
++}
++
+ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipeline, size_t spv_size, const void* spv_data, const std::string entrypoint,
+                                          uint32_t parameter_count, std::array<uint32_t, 3> wg_denoms, std::vector<uint32_t> specialization_constants,
+                                          bool disable_robustness, bool require_full_subgroups, uint32_t required_subgroup_size) {
+@@ -3989,8 +4003,8 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             device->moe_gather_rows = (r == 1 || r == 2 || r == 4 || r == 8) ? r : rm_iq;
+             if (w == 0 && device->moe_gather_cols != 0) {
+                 // fprintf, not GGML_LOG_INFO: the server log callback drops ggml-vulkan INFO lines (lane-302 cell E)
+-                fprintf(stderr, "ggml_vulkan: MUL_MAT_ID expert gather ON, width %u, rows %u, iq3_s rows %u, iq4_nl tail %u, iq2_s body %u%s\n", device->moe_gather_cols,
+-                        device->moe_gather_rows, renv == nullptr ? 2u : device->moe_gather_rows, moe_gather_tail_env(), moe_gather_iq2s_body_env(),
++                fprintf(stderr, "ggml_vulkan: MUL_MAT_ID expert gather ON, width %u, rows %u, iq3_s rows %u, iq4_nl tail %u, iq2_s body %u, iq4_nl body %u, iq3_s init %u%s\n", device->moe_gather_cols,
++                        device->moe_gather_rows, renv == nullptr ? 2u : device->moe_gather_rows, moe_gather_tail_env(), moe_gather_iq2s_body_env(), moe_gather_iq4nl_body_env(), moe_gather_iq3s_init_env(),
+                         device->moe_gather_plant ? " (PLANT: wrong token count, test only)" : "");
+             }
+         }
+@@ -4005,9 +4019,9 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+             const uint32_t iq2s_body = moe_gather_iq2s_body_env();
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ2_S],  "mul_mat_vec_idg_iq2_s_f32",   arr_dmmv_idg_iq2_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq2_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, iq2s_body}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_XXS], "mul_mat_vec_idg_iq3_xxs_f32", arr_dmmv_idg_iq3_xxs_f32_f32_len[reduc16], arr_dmmv_idg_iq3_xxs_f32_f32_data[reduc16], "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_idg_iq3_s_f32",   arr_dmmv_idg_iq3_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr_iq3s, 1, 1}, {wg_size_subgroup16, gr_iq3s, gc, iq3_sign_hoist}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ3_S],   "mul_mat_vec_idg_iq3_s_f32",   arr_dmmv_idg_iq3_s_f32_f32_len[reduc16],   arr_dmmv_idg_iq3_s_f32_f32_data[reduc16],   "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr_iq3s, 1, 1}, {wg_size_subgroup16, gr_iq3s, gc, iq3_sign_hoist, moe_gather_iq3s_init_env()}, 1, true, use_subgroups16, force_subgroup_size16);
+             ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_XS],  "mul_mat_vec_idg_iq4_xs_f32",  arr_dmmv_idg_iq4_xs_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_xs_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc}, 1, true, use_subgroups16, force_subgroup_size16);
+-            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_NL],  "mul_mat_vec_idg_iq4_nl_f32",  arr_dmmv_idg_iq4_nl_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_nl_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, moe_gather_tail}, 1, true, use_subgroups16, force_subgroup_size16);
++            ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_idg_f32[w][GGML_TYPE_IQ4_NL],  "mul_mat_vec_idg_iq4_nl_f32",  arr_dmmv_idg_iq4_nl_f32_f32_len[reduc16],  arr_dmmv_idg_iq4_nl_f32_f32_data[reduc16],  "main", mul_mat_vec_id_num_bindings, sizeof(vk_mat_vec_id_push_constants), {gr, 1, 1}, {wg_size_subgroup16, gr, gc, moe_gather_tail, moe_gather_iq4nl_body_env()}, 1, true, use_subgroups16, force_subgroup_size16);
+         }
+ 
+         // TurboQuant weight types. Same 32-thread pin and SHMEM reduction as the
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
+index 6dbb03aa71..08e1dd8562 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec.comp
+@@ -27,6 +27,34 @@ layout (constant_id = 3) const uint GATHER_TAIL = 0;
+ #endif
+ 
+ 
++#if defined(DATA_A_IQ4_NL) && defined(MUL_MAT_ID_GATHER)
++// arifi lane-302 Route A: IQ4_NL gather body (spec 4, GGML_ARIFI_IQ4NL_BODY). 1 = byte-pair LUT: one LDS read per
++// qs byte gives both nibble values in dequantize4's component order, same floats, so byte-identical by construction.
++// 3 = planted wrong arm (pair swapped inside the table; op gate must go RED).
++#define ARIFI_IQ4NL_BODY_ON 1
++layout (constant_id = 4) const uint ARIFI_IQ4NL_BODY = 0;
++shared vec2 arifi_kv2[256];
++
++void arifi_init_kv2() {
++    for (uint i = gl_LocalInvocationIndex; i < 256; i += gl_WorkGroupSize.x) {
++        const uint lo = ARIFI_IQ4NL_BODY == 3 ? (i >> 4) : (i & 0xFu);
++        const uint hi = ARIFI_IQ4NL_BODY == 3 ? (i & 0xFu) : (i >> 4);
++        arifi_kv2[i] = vec2(kvalues_iq4nl[lo], kvalues_iq4nl[hi]);
++    }
++    barrier();
++}
++
++vec4 arifi_deq4(uint ib, uint iqs, uint a_offset) {
++    if (ARIFI_IQ4NL_BODY == 1 || ARIFI_IQ4NL_BODY == 3) {
++        const uint vui = uint(data_a_packed16[a_offset + ib].qs[iqs/2]);
++        return vec4(arifi_kv2[vui & 0xFFu], arifi_kv2[vui >> 8]);
++    }
++    return dequantize4(ib, iqs, a_offset);
++}
++#else
++#define arifi_deq4 dequantize4
++#endif
++
+ uint a_offset, b_offset, d_offset, y_offset;
+ 
+ vec4 load_b(const uint j, const uint iybs, const uint iqs, const bool lastiter, out bool OOB_y, out bool OOB_z, out bool OOB_w) {
+@@ -88,8 +116,8 @@ void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const
+         const uint ib = (ibi + col)/QUANT_K; // block index
+         ibi += p.ncols;
+ 
+-        vec4 v = dequantize4(ib, iqs, a_offset);
+-        vec4 v2 = dequantize4(ib, iqs+(4/QUANT_R), a_offset);
++        vec4 v = arifi_deq4(ib, iqs, a_offset);
++        vec4 v2 = arifi_deq4(ib, iqs+(4/QUANT_R), a_offset);
+ 
+         const vec2 dm = get_dm(ib, a_offset);
+         if (dm.y != 0) { // quant has min component
+@@ -162,8 +190,8 @@ void tail_iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row,
+         const uint iybs = col - col%QUANT_K;
+         const uint ib = ((first_row + hn)*p.ncols + col)/QUANT_K;
+ 
+-        vec4 v = dequantize4(ib, iqs, a_offset);
+-        vec4 v2 = dequantize4(ib, iqs+(4/QUANT_R), a_offset);
++        vec4 v = arifi_deq4(ib, iqs, a_offset);
++        vec4 v2 = arifi_deq4(ib, iqs+(4/QUANT_R), a_offset);
+ 
+         const vec2 dm = get_dm(ib, a_offset);
+         if (dm.y != 0) {
+@@ -364,6 +392,11 @@ void main() {
+ #ifdef NEEDS_INIT_IQ_SHMEM
+     init_iq_shmem(gl_WorkGroupSize);
+ #endif
++#ifdef ARIFI_IQ4NL_BODY_ON
++    if (ARIFI_IQ4NL_BODY == 1 || ARIFI_IQ4NL_BODY == 3) {
++        arifi_init_kv2();
++    }
++#endif
+ 
+     // do NUM_ROWS at a time, unless there aren't enough remaining rows
+     if (first_row + NUM_ROWS <= p.stride_d) {
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+index c2ab7cf5b4..8c9b0469d8 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq3_s.comp
+@@ -40,6 +40,29 @@ const uint TPB_OVER_8  = ARIFI_TPB16 ?  2u : 1u;   // == TPB / 8
+ // Default 0. GGML_ARIFI_IQ3_MMVQ=v2 selects arm 1; ONE binary serves both.
+ layout (constant_id = 3) const uint ARIFI_IQ3_SIGN_HOIST = 0;
+ 
++// arifi lane-302 Route A: IQ3_S grid init (spec 4, GGML_ARIFI_IQ3S_INIT, idg pipeline only). 1 = batched: all of a
++// thread's loads issue before any LDS store (the IQ2_S lever-4 shape; the strided loop serialized 8 x load -> wait ->
++// store). Same table, every entry written once: byte-identical by construction. 2 = planted wrong arm (table rotated).
++layout (constant_id = 4) const uint ARIFI_IQ3S_INIT = 0;
++
++void arifi_init_iq3s_batched() {
++    const uint t = gl_LocalInvocationIndex;
++    const uint W = gl_WorkGroupSize.x;
++    for (uint i0 = 0; i0 < 512; i0 += 8 * W) {
++        uint v[8];
++        [[unroll]] for (uint k = 0; k < 8; ++k) {
++            v[k] = iq3s_grid_const[min(i0 + k * W + t, 511u)];
++        }
++        [[unroll]] for (uint k = 0; k < 8; ++k) {
++            const uint idx = i0 + k * W + t;
++            if (idx < 512) {
++                iq3s_grid[ARIFI_IQ3S_INIT == 2 ? ((idx + 1u) & 511u) : idx] = v[k];
++            }
++        }
++    }
++    barrier();
++}
++
+ // The eight signed grid values, as the legacy chain would have computed them element by element.
+ vec4 iq3s_sign_lo(const vec4 g, const uint sign) {
+     return vec4((sign &  1) != 0 ? -g.x : g.x,
+@@ -204,7 +227,11 @@ void main() {
+     }
+ #endif
+ 
+-    init_iq_shmem(gl_WorkGroupSize);
++    if (ARIFI_IQ3S_INIT != 0) {
++        arifi_init_iq3s_batched();
++    } else {
++        init_iq_shmem(gl_WorkGroupSize);
++    }
+ 
+     // do NUM_ROWS at a time, unless there aren't enough remaining rows
+     if (first_row + NUM_ROWS <= p.stride_d) {

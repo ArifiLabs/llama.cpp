@@ -1,0 +1,115 @@
+From 36d8f5e83247dfcc7c3e636eb4706da8d08dda49 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 17:51:41 -0400
+Subject: [PATCH] lane-296 int8 goal stage 8: pre-register x16 pairing and the
+ c64 x x16 joint reading before c64 lands; smoke downgraded (2 seqs/pass);
+ S-X8 f32acc route checked by code; price disclosed
+
+Lane: lane-296
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tools/arifi-sync/lane-296/INT8-ACCURACY.md | 14 +++++++++-----
+ tools/arifi-sync/lane-296/INT8-MATH.md     | 19 ++++++++++++++++---
+ tools/arifi-sync/lane-296/s8_read.py       | 17 +++++++++++++++++
+ 3 files changed, 42 insertions(+), 8 deletions(-)
+
+diff --git a/tools/arifi-sync/lane-296/INT8-ACCURACY.md b/tools/arifi-sync/lane-296/INT8-ACCURACY.md
+index be219a7529..c5b0a5fe17 100644
+--- a/tools/arifi-sync/lane-296/INT8-ACCURACY.md
++++ b/tools/arifi-sync/lane-296/INT8-ACCURACY.md
+@@ -238,7 +238,8 @@ merged or pushed; HQ takes the merge word to the President.
+ - **H-A (the float path is biased): FALSIFIED.** Its 7.7e-3 error is random: global slope within 2.6e-4 of 1, and
+   under 0.1% of the error lies along the output (CHECKED, op probe).
+ - **Its source is NAMED: f16 accumulation** on the coopmat1 float path. With f32 accumulation the same path gives
+-  2.66e-4. This covers every quant type, S-X8 FFN included (CHECKED, knob `GGML_ARIFI_F32ACC`, commit `3e85f0cb6e`).
++  2.66e-4 (CHECKED on Q8_0, knob `GGML_ARIFI_F32ACC`, commit `3e85f0cb6e`). The same f16-accumulator selection
++  covers the S-X8 FFN (CHECKED by code and role log). Its S-X8 op error is not measured (ASSUMED similar).
+ - So "int8 on vs off" swaps two error sources: 8-bit activations (int8) against f16 accumulation (float).
+   Separating them is chain `night/gpu-int8goal-s8.sh` (evidence `night/ev15s8/`, reader `night/s8_read.py`):
+ 
+@@ -250,10 +251,13 @@ merged or pushed; HQ takes the merge word to the President.
+ | d-q4, d-gsq | candidate on Q4_K_XL and GSQ, 16 chunks, KL vs r86i | no-harm, only if d64 chunk-16 <= 7.4163 |
+ | r64 | r86i engine, 64 chunks | pairs the candidate and A against r86i |
+ 
+-2-chunk smoke of the exact-arithmetic model (CHECKED, `ev15s8/smoke-all.*`): 4.2685 / 6.0557. For comparison, off
+-reads 4.3127 / 6.0863, A 4.3048 / 6.0800 and B5 4.3343 / 6.1022. Exact scored LOWER than every arm on both chunks.
+-Two chunks prove nothing, so the direction is ASSUMED. If it holds, the lever for "int8 on every layer at r86i quality"
+-is to remove f16 accumulation from the float paths.
++Pre-registered joint reading of c64 and x16: `night/INT8-MATH.md` section 6b, written before c64 landed.
++x16 is paired over the same 16 chunks against off, A and B5; "exact helps" needs x16 - off <= -2 SE.
++A 2-chunk smoke of the exact model read 4.2685 / 6.0557 (CHECKED). It ran 2 sequences per pass, the reference
++legs run 4, so it is not comparable and shows no direction.
++
++Stage-8 price actual: 23 op-level runs (cap 20; 11 voided by my own self-initialised `prec`, then rerun),
++1 unplanned 2-chunk S-X8 smoke load (about 1 min), 2 builds.
+ 
+ Three numbers per line (r86i / vanilla b11178 / candidate d): PENDING the chain. Filled cells so far:
+ 
+diff --git a/tools/arifi-sync/lane-296/INT8-MATH.md b/tools/arifi-sync/lane-296/INT8-MATH.md
+index 4913f4ae2a..48012dc8bb 100644
+--- a/tools/arifi-sync/lane-296/INT8-MATH.md
++++ b/tools/arifi-sync/lane-296/INT8-MATH.md
+@@ -200,9 +200,18 @@ few outlier chunks.**
+ |---|---|---|---|---|
+ | H-B | a correction in the file was fitted to the float path | the PCA companion is not loaded in the A / B5 legs | no `<model>.sx8pca.gguf` beside the model (the folder holds only the .gguf); no `GGML_ARIFI_SX8_PCA_FILE` in the ev14 chain; no PCA load line in `a64.err` / `b564.err`; loader `src/llama-model-loader.cpp:862-877` | **FALSIFIED** (CHECKED). Whether the S-X8 quantizer itself saw float-path activations was not read; a per-op RANDOM noise (H-A below) cannot be fitted anyway (ASSUMED). |
+ | H-A | the float path is biased in a direction the model likes | systematic if the global slope \|1-beta\| >= 5e-3 (most of the 7.7e-3); random if < 1e-3 | \|1-beta\| = 0.6e-4 to 2.6e-4 against rel 7.7e-3 to 7.9e-3; error share along the output 0.000-0.001; cos(error, output) -0.004 to -0.034; per-row constant-shift share <= 0.7% (table 6c) | **FALSIFIED** (CHECKED). The float-path error is random noise. A consistent shrink exists but is 0.006-0.026% of the output, 30-100x under the noise. |
+-| H-A' | source of the 7.7e-3 | if f32 accumulation leaves the error near 7.7e-3, the source is elsewhere | f32 accumulation on the same path: 2.66e-4 (L0), 2.80e-4 (L62), `attn_output` L31 3.64e-4. f16-activation rounding alone (host sim): 1.88e-4 | **NAMED: f16 accumulation** (CHECKED). `ggml_vk_get_mul_mat_mat_f16acc` (`ggml-vulkan.cpp:7366-7380`) picks the f16-accumulator coopmat1 pipeline for EVERY quant type on the float path when `coopmat_acc_f16_support` and prec = DEFAULT. On S-X8 that includes the S-X8 FFN and output matmuls (role log of the `F32ACC=all` smoke, CHECKED). |
++| H-A' | source of the 7.7e-3 | if f32 accumulation leaves the error near 7.7e-3, the source is elsewhere | f32 accumulation on the same path: 2.66e-4 (L0), 2.80e-4 (L62), `attn_output` L31 3.64e-4. f16-activation rounding alone (host sim): 1.88e-4 | **NAMED: f16 accumulation** (CHECKED). `ggml_vk_get_mul_mat_mat_f16acc` (`ggml-vulkan.cpp:7366-7380`) picks the f16-accumulator coopmat1 pipeline for EVERY quant type on the float path when `coopmat_acc_f16_support` and prec = DEFAULT. On S-X8 the FFN and output matmuls pass through the same selection: the role log of the `F32ACC=all` smoke shows the override (CHECKED). A `{sx8, f32-B, f32acc}` coopmat1 pipeline is registered (`X_CM1_F32B`, `ggml-vulkan.cpp:2681-2689`), so the override keeps the same kernel family and takes no dequant fallback (CHECKED by code). The S-X8 op error under f16 vs f32 accumulation is NOT measured (ASSUMED similar to Q8_0). |
+ | H-C | exactness on one layer exposes the others' errors | c64 (A + `ssm_out` f32 accumulation, no int8 on `ssm_out`) within 2 SE of A, and B5 - c64 >= 2 SE | chain `night/gpu-int8goal-s8.sh`, leg c64 | PENDING |
+-| H-D | PPL on this text does not measure fidelity | exact-arithmetic model (int8 off, f32 accumulation everywhere) scores ABOVE off 7.408170 at 16 chunks | leg x16; 2-chunk smoke: 4.2685 / 6.0557 vs off 4.3127 / 6.0863, A 4.3048 / 6.0800, B5 4.3343 / 6.1022 | PENDING; the smoke points AGAINST H-D (exact scores lower on both chunks; 2 chunks only, ASSUMED direction) |
++| H-D | PPL on this text does not measure fidelity | x16 (int8 off, f32 accumulation everywhere) - off >= +2 paired SE at 16 chunks (paired over the same 16 chunks, `s8_read.py`); x16 - off <= -2 SE = exact HELPS | leg x16 | PENDING. The 2-chunk smoke (4.2685 / 6.0557) is NOT evidence: it ran 2 sequences per pass against 4 in the reference legs (different batch shape on a recurrent model), so it shows no direction |
++
++Joint reading of c64 and x16 (pre-registered 17:5x, before c64 lands at about 18:03; 2 SE = 0.009 at 64 chunks):
++
++| c64 - A | x16 - off | reading | next |
++|---|---|---|---|
++| >= +0.009 (c64 near B5) | <= -2 SE | H-C: exact `ssm_out` alone exposes the other layers' f16-accumulation noise | candidate d is the fix, judged by d64 |
++| >= +0.009 | > -2 SE | H-D: the PPL bar rewards f16-accumulation noise; fidelity and the bar disagree | President sees both numbers as they are |
++| within +-0.009 (c64 near A) and B5 - c64 >= +0.009 | any | an in-graph effect of the int8 two-digit path the op witnesses missed | owed checks (a) new x between computes, (b) last-ubatch capture |
++| <= -0.009 | any | exact `ssm_out` helps; B5's +0.0121 is int8-path specific | same as the row above |
+ 
+ ### 6c. Bias decomposition of one multiplication (CHECKED, `ev12/s8-*.txt`, probe BIAS line, 256 rows x 512 tokens, f64 reference)
+ 
+@@ -233,8 +242,12 @@ HEAD sources and `ev12/s8-off-ssm_out-0.txt` from 3e85f0cb6e).
+   sources at once: activation rounding (int8) against accumulation rounding (float).
+ - If c64 lands near B5, the extra PPL comes from removing the float noise on `ssm_out`, not from int8.
+   Otherwise B5's int8 path carries an in-graph effect, and the two checks owed from section 5 come next.
+-- If x16 scores below off (as the 2-chunk smoke suggests), exact arithmetic IMPROVES this model's PPL. Then the
++- If x16 scores below off by 2 paired SE, exact arithmetic IMPROVES this model's PPL. Then the
+   lever for "int8 on every layer at r86i quality" is to remove f16 accumulation from the float paths (S-X8 FFN).
+   Making int8 less exact is not that lever. Leg d64 is exactly that candidate: B5 + `GGML_ARIFI_F32ACC=all`.
+ - Speed: f32 accumulation on the S-X8 FFN is not free on RDNA3 coopmat1 (ASSUMED). The smoke's 22.7 s per 2-chunk
+   pass is an INDICATION only; the served timing stays HELD.
++- HQ's H-C leg "two digits on EVERY Q8_0 role, no f32 accumulation" is NOT in the chain. c64 + x16 + d64 replace it
++  for the question asked; it stays owed as the direct int8-only test.
++- Stage-8 price actual: 23 op-level runs of about 20 s (cap 20; 11 voided by the self-initialised `prec`, 1 HEAD
++  re-check), 1 S-X8 2-chunk smoke load (about 1 min, not in the price list), 2 builds of about 45 s.
+diff --git a/tools/arifi-sync/lane-296/s8_read.py b/tools/arifi-sync/lane-296/s8_read.py
+index 00220f1cb2..d6d9130639 100644
+--- a/tools/arifi-sync/lane-296/s8_read.py
++++ b/tools/arifi-sync/lane-296/s8_read.py
+@@ -33,6 +33,23 @@ for a, b in PAIRS:
+     m = sum(d) / n
+     se = math.sqrt(sum((x - m) ** 2 for x in d) / (n - 1) / n) * pb
+     print(f"| {a} - {b} | {pa - pb:+.4f} | {se:.4f} | {(pa - pb) / se:+.1f} | {sum(1 for x in d if x > 0)}/{n} |")
++# x16 paired over the same 16 chunks (KL-leg rows) against the 16-chunk legs; pre-registered: x16 - off <= -2 SE = exact helps
++import contextlib  # noqa: E402
++import io  # noqa: E402
++
++with contextlib.redirect_stdout(io.StringIO()):  # paired_noise prints its own table at import
++    import paired_noise as pn  # noqa: E402
++
++x = pn.chunks("ev15s8/x16.txt")
++for name, p in (("off", "ev6/sx8-off.txt"), ("A", "ev10/a-sx8.txt"), ("B5", "ev13/b5-sx8.txt")):
++    o = pn.chunks(p)
++    if not x or not o:
++        print(f"| x16 - {name} (16ch) | missing |")
++        continue
++    d = [a - b for a, b in zip(x[0], o[0])]
++    m = sum(d) / 16
++    se = math.sqrt(sum((v - m) ** 2 for v in d) / 15 / 16) * o[1]
++    print(f"| x16 - {name} (16ch) | {x[1] - o[1]:+.4f} | {se:.4f} | {(x[1] - o[1]) / se:+.1f} | {sum(1 for v in d if v > 0)}/16 |")
+ for leg in ("x16", "d-q4", "d-gsq"):
+     f = N / "ev15s8" / f"{leg}.txt"
+     if not f.exists():

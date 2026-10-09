@@ -1,0 +1,158 @@
+From bceb3dce93ceddad1b9714d71a91660b9ac4a436 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 16:28:57 -0400
+Subject: [PATCH] lane-300 F-141: coopmat1 FA zeroes V rows masked for every
+ valid tile row (stale/foreign KV content no longer reaches the P*V WMMA sum);
+ flags bit 32 default ON, GGML_VK_FA_DEADV_KEEP=1 = planted-RED switch;
+ fa-replay sign-class arms. Lane: lane-300
+
+(cherry picked from commit 96a6a8d9765b98e5328208a929ea8a7811252ebc)
+
+Origin: ArifiLabs (native) - fork-authored (lane-300); no upstream origin exists.
+Measured-effect: UNMEASURED - no served number for this commit in the release ledger or the commit message
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp          |  9 ++++-
+ .../vulkan-shaders/flash_attn_base.glsl       |  3 ++
+ .../vulkan-shaders/flash_attn_cm1.comp        | 38 ++++++++++++++++---
+ 3 files changed, 43 insertions(+), 7 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 4d78b604d5..2198f46b46 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1445,6 +1445,12 @@ vk_fa_pipeline_state get_fa_pipeline_state(const vk_device& device, const vk_fa_
+                      (use_logit_softcap ? 4 : 0) |
+                      (old_amd_windows   ? 8 : 0) |
+                      (use_sparse        ? 16 : 0);
++    // lane-300 F-141: coopmat1 zeroes fully-masked V rows (bit-deterministic vs stale KV content).
++    // GGML_VK_FA_DEADV_KEEP=1 restores the old leak; it exists only as the planted-RED check.
++    static const bool deadv_keep = getenv("GGML_VK_FA_DEADV_KEEP") != nullptr;
++    if (params.path == FA_COOPMAT1 && use_mask && !deadv_keep) {
++        flags |= 32;
++    }
+ 
+     const uint32_t subgroup_size = params.disable_subgroups ? 0 : params.subgroup_size;
+ 
+@@ -10476,8 +10482,9 @@ bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, const vk_
+     const uint32_t pvsh = MatBc * osh_stride * pvsh_elem_size;
+ 
+     const uint32_t slope = Br * acctype;
++    const uint32_t col_live = Bc * sizeof(uint32_t);  // lane-300 colLiveSh
+ 
+-    const uint32_t total_size = tmpsh + iq_shmem + Qf + Psh + sfsh + ksh + pvsh + slope;
++    const uint32_t total_size = tmpsh + iq_shmem + Qf + Psh + sfsh + ksh + pvsh + slope + col_live;
+     const bool supported = total_size <= device->properties.limits.maxComputeSharedMemorySize;
+ 
+     VK_LOG_DEBUG("ggml_vk_flash_attn_coopmat_shmem_support(HSK=" << hsk << ", HSV=" << hsv << ", f32acc=" << f32acc << ", total_size=" << total_size << ", supported=" << supported);
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_base.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_base.glsl
+index 9d447394a5..b4bbe835a2 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_base.glsl
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_base.glsl
+@@ -26,6 +26,9 @@ const bool LOGIT_SOFTCAP   = (Flags & 4) != 0;
+ const bool OLD_AMD_WINDOWS = (Flags & 8) != 0;
+ // Sparse: gather binding-7 indices instead of scanning [0,KV); p.split_kv = n_kv_max.
+ const bool USE_SPARSE      = (Flags & 16) != 0;
++// lane-300 F-141: coopmat1 zeroes V rows whose column is masked for every valid tile row, so stale or
++// foreign KV content cannot reach the P*V coopmat sum (RDNA3.5: +0 P times negative V perturbs live sums).
++const bool DEADV_ZERO      = (Flags & 32) != 0;
+ 
+ // Round up head sizes to a multiple of 16, for coopmat1/coopmat2 paths
+ const uint32_t HSK_pad = (HSK + 15) & ~15;
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp
+index 7be1d11d3a..561e2fce0f 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp
+@@ -64,6 +64,9 @@ shared O_TYPEV4 pvsh[MatBc * osh_stride];
+ 
+ shared ACC_TYPE slope[Br];
+ 
++// lane-300 F-141: colLiveSh[c] == j + 1 when KV column c of tile j has a live mask value in some valid row
++shared uint colLiveSh[Bc];
++
+ void main() {
+ #ifdef NEEDS_INIT_IQ_SHMEM
+     if (fa_type_needs_shmem(FaTypeK) || fa_type_needs_shmem(FaTypeV)) {
+@@ -152,6 +155,15 @@ void main() {
+     uint32_t mask_opt_bits = 0;
+     f16vec4 mask_cache[Bc * Br / 4 / WorkGroupSize];
+ 
++    if (DEADV_ZERO) {
++        [[unroll]] for (uint32_t c = 0; c < Bc; c += gl_WorkGroupSize.x) {
++            if (c + tid < Bc) {
++                colLiveSh[c + tid] = 0;
++            }
++        }
++        barrier();
++    }
++
+     [[dont_unroll]]
+     for (uint32_t j = start_j; j < end_j; ++j) {
+ 
+@@ -215,6 +227,15 @@ void main() {
+                                 m = f16vec4(0.0);
+                             }
+                             mask_cache[idx / WorkGroupSize] = m;
++                            if (DEADV_ZERO) {
++                                bool live = false;
++                                [[unroll]] for (uint32_t k = 0; k < 4; ++k) {
++                                    live = live || ((p.gqa_ratio > 1 || i * Br + r * 4 + k < N) && float(m[k]) > NEG_FLT_MAX_OVER_2);
++                                }
++                                if (live) {
++                                    colLiveSh[c] = j + 1;
++                                }
++                            }
+                         } else if (USE_SPARSE) {
+                             mask_cache[idx / WorkGroupSize] = f16vec4(NEG_FLT_MAX_OVER_2);
+                         }
+@@ -422,7 +443,8 @@ void main() {
+                     FLOAT_TYPEV4 V_Tf = FLOAT_TYPEV4(0);
+                     uint32_t v_row;
+                     bool kv_active = fa_kv_index(j * Bc + c, v_row);
+-                    if (kv_active && (HSV == HSV_pad || d < HSV / 4)) {
++                    const bool v_dead = DEADV_ZERO && MASK_ENABLE && mask_opt_bits != MASK_OPT_ALL_ZERO && colLiveSh[c] != j + 1;
++                    if (kv_active && !v_dead && (HSV == HSV_pad || d < HSV / 4)) {
+ #if !defined(BFLOAT16)
+                         if (USE_DECODE_V) {
+                             uint coord = v_row * v_stride * BLOCK_SIZE_V + 4 * d;
+@@ -444,6 +466,12 @@ void main() {
+ 
+         const uint num_hsv_tiles = (HSV + MatBc * row_split - 1) / (MatBc * row_split); // round up
+ 
++        // lane-300 F-141: a tile with any masking stages V so dead columns can be zeroed (workgroup-uniform)
++        const bool zero_dead_v = DEADV_ZERO && MASK_ENABLE && mask_opt_bits != MASK_OPT_ALL_ZERO;
++        // For quants we always preload via kvsh. For f16/bf16 we only preload when
++        // alignment / bounds / dead-V zeroing force it (otherwise we coopMatLoad direct from data_vv4).
++        const bool stage_v = USE_DECODE_V || KV_bounds_check || USE_SPARSE || zero_dead_v;
++
+         // Each subgroup handles HSV/4 columns
+         [[unroll]] for (uint32_t hsv_tile = 0; hsv_tile < num_hsv_tiles; ++hsv_tile) {
+             const uint hsv_offset = (hsv_tile * row_split + gl_SubgroupID) * 16;
+@@ -460,9 +488,6 @@ void main() {
+             // staged through a Bc * MatBr size staging buffer.
+             // If V is a quant type, then it is always staged for dequantization.
+             if (SHMEM_STAGING == 0) {
+-            // For quants we always preload via kvsh. For f16/bf16 we only preload when
+-            // alignment / bounds force it (otherwise we coopMatLoad direct from data_vv4).
+-            const bool stage_v = USE_DECODE_V || KV_bounds_check || USE_SPARSE;
+             if (stage_v) {
+                 [[unroll]] for (uint32_t i = 0; i < v_loads_per_thread; ++i) {
+                     const uint idx = i * gl_WorkGroupSize.x + tid;
+@@ -477,7 +502,8 @@ void main() {
+                     const uint ib = coord / BLOCK_SIZE_V;
+                     const uint iqs = coord % BLOCK_SIZE_V;
+ 
+-                    if (USE_SPARSE ? (kv_active && v_col < HSV) : (!KV_bounds_check || (v_row < KV && v_col < HSV))) {
++                    if ((USE_SPARSE ? (kv_active && v_col < HSV) : (!KV_bounds_check || (v_row < KV && v_col < HSV))) &&
++                        (!zero_dead_v || colLiveSh[row] == j + 1)) {
+ #if !defined(BFLOAT16)
+                         if (USE_DECODE_V) {
+                             kvsh[row * vsh_stride + col] = dequantize4(ib, iqs, v_offset, BINDING_IDX_V);
+@@ -501,7 +527,7 @@ void main() {
+                     coopMatLoad(KMat, Psh, bc_chunk * MatBc * psh_stride, psh_stride, gl_CooperativeMatrixLayoutColumnMajor);
+ 
+                     if (SHMEM_STAGING == 0) {
+-                    if (!USE_DECODE_V && !KV_bounds_check && !USE_SPARSE) {
++                    if (!stage_v) {
+                         // F16/BF16 values can be loaded directly from global memory
+                         const uint v_tile_row = j * Bc + bc_chunk * MatBc;
+                         const uint v_tile_offset = v_offset / 4 + v_tile_row * v_stride / 4 + hsv_offset / 4;

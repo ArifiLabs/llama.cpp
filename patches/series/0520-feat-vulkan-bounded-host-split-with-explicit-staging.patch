@@ -1,0 +1,951 @@
+From 6513fce9fc0cb2a4b96899325de960efaa4872ea Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 02:02:14 -0400
+Subject: [PATCH] feat(vulkan): bounded host split with explicit staging
+ reserve (R46b B7c)
+
+Carve a staging reserve out of the host-visible heap before any bulk
+admission, then let the loader transaction place a bounded, deterministic
+subset of weight buffers on host memory instead of refusing; unbounded host
+placement stays impossible. Switches GGML_VK_STAGING_RESERVE and
+GGML_VK_HOST_SPLIT_MAX documented in OPTIONS-REGISTRY. Independent review
+PASS. HQ load cells: 27B Q4_K_XL fits with no split; 27B S-X8 admits a
+bounded split and is refused with GGML_VK_HOST_SPLIT_MAX=0; 84 GB refused
+before any allocation.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Conflict-resolved: S4 split (f172be756): auto_split - our hunks re-homed into ggml-vulkan-buffers.cpp,ggml-vulkan-types.h,ggml-vulkan.cpp; wrap/same-point regions merged in place (fixS4_593.py)
+---
+ docs/OPTIONS-REGISTRY.md                     |   2 +
+ ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp | 113 ++++++++++-
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h     |  89 +++++++-
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp         |  85 ++++++++
+ tests/test-alloc.cpp                         | 190 ++++++++++++++++-
+ tests/test-backend-ops.cpp                   | 203 +++++++++++++++++++
+ 6 files changed, 668 insertions(+), 14 deletions(-)
+
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index db7db5f3e9..18116b1f9d 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -60,6 +60,8 @@ safe measurement posture.
+ | S-X8 mat-vec shape tuning (R47d lookup) | **Code, not an environment variable. ON by device probe** — subgroup width 64 with `maxComputeSharedMemorySize == 32768`, the SUBGROUP workgroup class, f32 activations, and only for the exact (m, k, n) cells the table names. Added 2026-09-11 (lane-230/R46b commit D). | Scope: `GGML_TYPE_SX8` `mul_mat_vec` with f32 activations. 31 measured cells over the four real 27B S-X8 decode shapes at n=1..8; the n=1 FFN orientations take rows=4/wg=256 and the 248320x5120 output takes rows=8/wg=64, which is why one global pair cannot express it. Every other shape, every n>8, the f16/q8_1/id paths and every other device keep the probed default. A stderr receipt at pipeline creation names ON/OFF and the probed default. | Nothing to operate. To measure against it, set `GGML_VK_SX8_MMV_ROWS`/`_WG` (which turns the lookup off whole). | **MEASURED on lane-232's base, which does NOT carry R46's `n <= 3` whole-block decode.** Every selected cell read >= 0.97 of the probed default in BOTH rounds, best cells +12.18% (248320x5120 n=2) and +10.76% (n=6); source `research/local-inference/lane-evidence/2026-09-11-lane-232-r47a-alloc-instrument/R47D-TRACES-SWEEP.md`, "Sweep selection". R46 replaces the decode math and row-blocking loop at `n <= 3` and leaves the reduction shape untouched, so the shared-memory arithmetic still holds, but **the n=1/2/3 optima are UNVERIFIED on the rebased kernel** until they are re-measured on the R46b stage. No held-out deployment guarantee is claimed. |
+ | `GGML_VK_PLACEMENT=bulk-large-heap` | **OFF when unset; unset changes no byte of the existing placement chain.** Only the exact string `bulk-large-heap` is accepted. Added 2026-09-11 (lane-230/R46b commit E). | Scope: the bulk device buffers the model loader suballocates weights from (`ggml_backend_vk_buffer_type_alloc_buffer`), and nothing else — prealloc scratch and staging keep their current paths. The policy asks for a `DEVICE_LOCAL` type on the LARGEST heap and excludes every other heap for those buffers; grouping is untouched. A refusal is not fatal: that one buffer falls back to the stock chain and says so on stderr. A receipt names the chosen heap **with tracing off**. | Only to test the R47d placement hypothesis, in proof cells A/B, against an unchanged-policy control. | **UNMEASURED as a fix — commissioned, not proven.** R47d established the mechanism it targets: the placement chain tests each allocation against the WHOLE heap size with no cumulative accounting (`ggml-vulkan.cpp` `ggml_vk_find_memory_properties`), so `GGML_VK_PREFER_HOST_MEMORY=1` puts bulk weights on host-visible heap 1 and a 256 MiB grouping puts them in the small combined-property heap 2, and the first pinned upload then dies at `submit seq=0` with `ErrorUnknown` in both arms (`R47D-TRACES-SWEEP.md`, "Exact failure boundaries"). The driver-internal cause of `ErrorUnknown` is **UNSCORED**. The cumulative requirement reservation with rollback that the same commission asks for is **NOT implemented**; this is heap selection only. |
+ | `GGML_VK_ALLOC_TRACE=1` | **OFF when unset, zero cost.** Added 2026-09-11 (lane-232/R47a). | Scope: diagnostic only. Prints requirement bytes, `memoryTypeBits`, every candidate memory type/heap tried, the chosen type and heap, per-heap live bytes, the driver's `VK_EXT_memory_budget` figures (or `budget=unavailable`, never fabricated zeros), and one line per queue submit with its copy batch and `VkResult`. | Load-failure and placement investigation. Never in a timed run: the trace is large (10.6 MB for one 27B load) and writes on the hot path. | Diagnostic instrument, no performance claim. It is what produced the two exact failure boundaries in `R47D-TRACES-SWEEP.md`. |
++| `GGML_VK_STAGING_RESERVE` | **unset = the device-probed default, which is `suballocation_block_size` (1 GiB unless `GGML_VK_SUBALLOCATION_BLOCK_SIZE` or the device's max allocation size lowers it).** Decimal bytes; `0` disables the reserve; an unparsable value keeps the default rather than becoming 0. Read at device creation, never compiled in. Added 2026-09-14 (lane-230/R46b B7c). | Scope: one reservation in the B7a per-device heap ledger, taken on the heap that `sync_staging` really allocates from (`HOST_VISIBLE\|HOST_COHERENT\|HOST_CACHED`, falling back to `HOST_VISIBLE\|HOST_COHERENT`), charged during `ggml_vk_get_device()` **before any bulk weight buffer can be planned or admitted**, and released exactly once in `~vk_device_struct`. It allocates nothing: it is a floor in the ledger that upload staging, prealloc scratch and compute buffers can still spend and weights cannot. The default is a real requirement, not a guess - a bulk weight buffer is capped at `suballocation_block_size`, one tensor lives inside one such buffer, and `sync_staging` is sized to one copy, so that block size is the largest single upload chunk this device can be asked to stage. | Leave unset. Lower it on a device whose host-visible heap is small enough that 1 GiB of floor refuses a load that used to fit; `0` restores pre-B7c admission exactly. | **Mechanism, not a performance claim: nothing here was timed and no model was loaded.** The reserve is charged before admission (`test-backend-ops heapres`, "the reserve is already charged before any bulk admission", probe reports 1073741824 B on heap 1 of 11311906816 B on the 780M) and releases exactly once (`heapres`, "a second release stole nothing"). **It reduces the bytes a load may take on that heap** - the R46b B7c report's positive HQ cell (27B Q4_K_XL still fits without a split) is what proves the default is safe on this rig, and it has not been run. |
++| `GGML_VK_HOST_SPLIT_MAX` | **unset = the derived bound: free bytes on the heaps carrying this batch's host candidates, after the staging reserve and every live reservation.** Decimal bytes; `0` forbids any host placement; an unparsable value keeps the derived bound. Read per plan, never compiled in. Added 2026-09-14 (lane-230/R46b B7c). | Scope: `vk_heap_ledger::reserve_plan()` - the total bytes ONE load's bulk weight buffers may place on memory types that are **not** `DEVICE_LOCAL`. Candidate ORDER is untouched, so a load that fits device memory picks exactly what it picked before B7c, including one taken under `GGML_VK_PLACEMENT=bulk-large-heap`, whose `DEVICE_LOCAL`-on-the-largest-heap attempt still comes first. That policy is **not** a device-only chain - it prepends its attempt and falls through to the stock chain, so its host FALLBACK is now bounded like every other host placement, which is the R47d failure mode bounded on purpose. Spill selection is plan-order first-fit: device candidates are tried first for every buffer, so the buffers that spill are the suffix of plan order, and the walk backtracks only when a prefix choice makes the remainder infeasible. One stderr line, ungated, when a split is admitted: `bounded host split admitted: N B of M B placed on host-visible memory (bound B B, staging reserve S B on heap H)`. | Leave unset to keep the R47d P2 shape (bulk weights on the host heap) bounded by the ledger and the staging reserve. Set a smaller number to force weights back onto the device, `0` to refuse a load that cannot be placed device-local at all. | **Mechanism, not a performance claim.** Boundary behaviour is covered exactly (`heapres`: admitted at the bound, refused one byte past it, nothing charged on refusal, bound 0 forbids the split). **Named limit:** on a device with ONE host-visible heap the derived default is not tighter than the per-heap ledger check it sits beside - the teeth of the default are the staging reserve, and the tightening is operator-driven through this variable. |
+ | `--spec-draft-adaptive` | **OFF.** CLI flag; sizes each draft from a per-sequence EMA of accepted tokens instead of a fixed `--spec-draft-n-max`, which becomes a safety ceiling rather than a tuning parameter. Backing off is averaged (alpha 0.25, ~4-step memory); probing upward is additive. Reset on `begin()` — a new prompt or a reused server slot — never mid-generation. | Scope: `common/speculative.cpp` draft-length selection. Sits in the `else` of this fork's existing DFlash2 adaptive selector, so a controller already armed keeps precedence; the MTP sites keep their own adaptive precedence. Speculation stays distribution-preserving, so the flag can move throughput and **cannot** move output. | Turn it on where content type varies within a session and no single fixed depth is right — its author's motivating measurement is that the correct depth is *opposite* for prose and for JSON. Sweep it against your own fixed depth before adopting. | **UNMEASURED ON RIG-A — no A/B for this flag exists on this hardware, and none should be quoted.** The measured table in the source commit was taken on a **Radeon 8060S** by the upstream author (three drafter configurations × prose/json × fixed-vs-adaptive, 300 greedy tokens on a Qwen3.8-27B ROCmFP4-FAST target). Those are **upstream-reported numbers for a different GPU** and are deliberately not restated here as results of this fork. Default OFF for that reason alone: the mechanism is sound and the evidence for it is somebody else's box. |
+ | `GGML_ARIFI_FA_DEQUANT_KV` | **Device default when unset, which is ON on every device** (upstream behaviour). `1` forces the f16 dequant-KV scratch copy ON, `0` forces the in-place quantized-KV read. Added 2026-09-06 (lane-212/R19), default flipped to ON 2026-09-07 (lane-220/R27). | Scope: Vulkan flash attention with a quantized K and V, prefill only (`neq1 >= 64`); decode never reaches it. One stderr receipt line `ggml_vulkan: FA dequant-KV scratch: ON\|OFF (device default\|GGML_ARIFI_FA_DEQUANT_KV)` binds every A/B log to the path it ran. Bit-identical either way - the same FA math with f32 accumulation, only the KV read strategy differs. A device that measures the scratch copy as a cost flips its own default at `fa_deq_device_default`, with its number. | Leave it unset. Set `0` to reproduce the pre-R27 AMD RDNA3 arm on the same binary, or on a device where the scratch copy is measurably a cost. | **The knob and the receipt are the result; the magnitude is NOT.** R19D measured `+8.08%` clean prefill on one binary and R27 flipped the default on it. The R18 wave recomputed the same banked rounds on 2026-09-08 and **it does not reproduce**: gate OFF vs ON on one binary reads decode `+0.49%` CI95 `[-1.62%, +2.59%]` and prefill `+0.85%` `[+0.36%, +1.33%]`; the DFlash2 arm reads decode `-0.91%` `[-1.93%, +0.12%]`. Do not quote `+8.08%`. Evidence: `research/local-inference/lane-evidence/2026-09-02-lane-209/r18-kernel-wave/R18-KERNEL-WAVE-REPORT.md`, `.../r19-seat-prefill/R19D-ENGAGEMENT-LEGS.md`. |
+ | `LLAMA_DFLASH_FUSED_INJECT` | **OFF when unset on this fork - the LEGACY encode+decode path. This DIVERGES from upstream 662a0b012, deliberately.** `1` selects the fused injection (upstream shape). Added 2026-09-06 (lane-212/R18), default set to legacy 2026-09-08 (lane-225/R38). The C API default (`llama_cparams::dflash_fused_inject`) stays **fused**, because the legacy shape is a caller contract - the caller must `llama_encode` the chunk first - so only `common/speculative.cpp`, which owns both halves, defaults it off. | Scope: the DFlash2 drafter's K/V injection only. Fused = one `llama_decode` per chunk with the encoder (fc + rms norm) in-graph. Legacy = `llama_encode` the chunk through `graph<true>`, read the encoded rows back through `llama_get_embeddings_nextn`, feed them to the injection decode at the draft width. Nothing removed: `graph<true>`, the fused embd branch and the legacy host path all stay compiled. One receipt line per process names the arm. | Set `1` to restore upstream behaviour, and on any box that has not measured this pair. The default here is a **conservative choice on a sub-floor number, not a measured win** - see the cost cell before treating it as a recommendation. | **DOCUMENTED-TAKE, no gain, and the default flip is under the floor.** Seat DFlash2 decode `-0.98%` CI95 `[-1.16%, -0.80%]` fused vs legacy; U-IQ4XS `+0.05%` `[-0.56%, +0.67%]`; U-Q3KXL `-0.87%` `[-2.50%, +0.77%]`. Against this box's own build floor - the R18 wave's INERT controls, where both arms ran identical code, moved decode by up to **+3.71%** and prefill by up to **-8.28%**, both excluding zero, so **none of these three clears it** and the direction is all the flip rests on. Quality: F-141 both arms on the seat, `test-quantize-fns` identical to the bank. Evidence: `.../r18-kernel-wave/r15c2-dflash-encoder-fusion`. |
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp b/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp
+index 08bea6d508..ffb2ae5a0e 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp
+@@ -49,6 +49,70 @@ static uint32_t ggml_vk_largest_heap(const vk::PhysicalDeviceMemoryProperties &
+     return best;
+ }
+ 
++// R46b B7c: both switches are read from the environment at RUNTIME, never compiled in. An
++// unparsable or empty value keeps the default rather than silently becoming 0, because a mistyped
++// budget that reads as "no memory at all" would refuse every load.
++static uint64_t ggml_vk_env_bytes(const char * name, uint64_t fallback) {
++    const char * s = getenv(name);
++    if (s == nullptr || *s == '\0') {
++        return fallback;
++    }
++    char * end = nullptr;
++    errno = 0;
++    const unsigned long long v = strtoull(s, &end, 10);
++    if (errno != 0 || end == s || *end != '\0') {
++        return fallback;
++    }
++    return (uint64_t) v;
++}
++
++// The reserve is sized from a real requirement, not a guess: a bulk weight buffer is capped at
++// suballocation_block_size (ggml_backend_vk_buffer_type_get_max_size), one tensor lives inside one
++// such buffer, and sync_staging is sized to one copy - so the block size is the largest single
++// upload chunk this device can ever be asked to stage. GGML_VK_STAGING_RESERVE overrides it;
++// 0 disables the reserve.
++static uint64_t ggml_vk_staging_reserve_bytes(vk_device & device) {
++    return ggml_vk_env_bytes("GGML_VK_STAGING_RESERVE", device->suballocation_block_size);
++}
++
++// Charged during device creation, before the buffer type can plan or allocate anything.
++static void ggml_vk_reserve_staging(vk_device & device) {
++    const uint64_t want = ggml_vk_staging_reserve_bytes(device);
++    if (want == 0) {
++        return;
++    }
++
++    const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
++
++    // sync_staging's own flags, preferred set then fallback set (ggml_vk_ensure_sync_staging_buffer).
++    // The reserve has to land on the heap staging will really allocate from, not on "a host-visible
++    // heap somewhere".
++    const vk::MemoryPropertyFlags wanted[2] = {
++        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent | vk::MemoryPropertyFlagBits::eHostCached,
++        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
++    };
++
++    for (const auto & flags : wanted) {
++        for (uint32_t t = 0; t < mem_props.memoryTypeCount; ++t) {
++            if ((mem_props.memoryTypes[t].propertyFlags & flags) != flags) {
++                continue;
++            }
++            const uint32_t h = mem_props.memoryTypes[t].heapIndex;
++            if (h >= mem_props.memoryHeapCount) {
++                continue;
++            }
++            if (device->staging_reserve.try_reserve(&device->heap_ledger, h, want,
++                                                    mem_props.memoryHeaps[h].size)) {
++                return;
++            }
++        }
++    }
++
++    fprintf(stderr, "ggml_vulkan: staging reserve of %llu B fits no host-visible heap; continuing "
++                    "with no reserve (host placement stays bounded by the heap ledger)\n",
++            (unsigned long long) want);
++}
++
+ // only_heap != UINT32_MAX restricts the candidate list to that one heap (R46b commit E).
+ // R46b B7a-R2 (finding 3): `ledger` is the ledger of the device these memory properties came from.
+ // Heap indices are only meaningful together with their device, so the ledger is passed in rather
+@@ -1488,6 +1552,11 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
+                             cand.type  = t;
+                             cand.heap  = mem_props.memoryTypes[t].heapIndex;
+                             cand.bytes = mem_req.size;
++                            // R46b B7c: a placement is a host SPLIT when the memory type is not
++                            // DEVICE_LOCAL. Candidate ORDER is untouched, so a load that fits device
++                            // memory still picks exactly what it picked before.
++                            cand.host_split = !(mem_props.memoryTypes[t].propertyFlags &
++                                                vk::MemoryPropertyFlagBits::eDeviceLocal);
+                             cands[i].push_back(cand);
+                         }
+                     }
+@@ -1501,9 +1570,36 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
+         return NULL;   // measurement failed; decide nothing
+     }
+ 
++    // R46b B7c: the bound on this load's host split. Default = what is left on the heaps that carry
++    // this batch's host candidates, AFTER the staging reserve and every live reservation - the
++    // staging reserve is already charged, so it is arithmetically impossible for weights to be
++    // admitted into it. GGML_VK_HOST_SPLIT_MAX lowers the bound (0 forbids any host placement).
++    uint64_t host_split_max = 0;
++    {
++        bool host_heap[VK_MAX_MEMORY_HEAPS] = {};
++        for (const auto & item : cands) {
++            for (const auto & c : item) {
++                if (c.host_split && c.heap < VK_MAX_MEMORY_HEAPS) {
++                    host_heap[c.heap] = true;
++                }
++            }
++        }
++        for (uint32_t h = 0; h < n_heaps; ++h) {
++            if (!host_heap[h]) {
++                continue;
++            }
++            const uint64_t live = device->heap_ledger.reserved(h);
++            const uint64_t free = live >= budgets[h] ? 0 : budgets[h] - live;
++            host_split_max = free > UINT64_MAX - host_split_max ? UINT64_MAX : host_split_max + free;
++        }
++        host_split_max = ggml_vk_env_bytes("GGML_VK_HOST_SPLIT_MAX", host_split_max);
++    }
++
+     // From here on nothing can throw, so a committed reservation always reaches the plan object.
+     std::vector<size_t> choice;
+-    const vk_plan_result res = device->heap_ledger.reserve_plan(cands, budgets, n_heaps, choice);
++    uint64_t host_bytes = 0;
++    const vk_plan_result res = device->heap_ledger.reserve_plan(cands, budgets, n_heaps, choice,
++                                                                host_split_max, &host_bytes);
+     if (res == VK_PLAN_INFEASIBLE) {
+         *status = GGML_BACKEND_PLAN_INFEASIBLE;
+         return NULL;
+@@ -1520,6 +1616,21 @@ static ggml_backend_buffer_type_plan_t ggml_backend_vk_buffer_type_plan_begin(
+         plan->entries[i].flags = type_flags[c.type];
+     }
+ 
++    // R46b B7c: one line, only when bytes really spilled. stderr and ungated, like the
++    // bulk-large-heap receipt: a run that splits has to say so even with tracing off.
++    if (host_bytes > 0) {
++        uint64_t total = 0;
++        for (const auto & e : plan->entries) {
++            total += e.bytes;
++        }
++        fprintf(stderr, "ggml_vulkan: bounded host split admitted: %llu B of %llu B placed on "
++                        "host-visible memory (bound %llu B, staging reserve %llu B on heap %u)\n",
++                (unsigned long long) host_bytes, (unsigned long long) total,
++                (unsigned long long) host_split_max,
++                (unsigned long long) device->staging_reserve.bytes,
++                device->staging_reserve.heap);
++    }
++
+     *status = GGML_BACKEND_PLAN_FEASIBLE;
+     return reinterpret_cast<ggml_backend_buffer_type_plan_t>(plan.release());
+ }
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index 9bdc7377b1..bc8d41dc03 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -784,6 +784,11 @@ struct vk_plan_candidate {
+     uint32_t type  = 0;
+     uint32_t heap  = 0;
+     uint64_t bytes = 0;   // real VkMemoryRequirements::size for this buffer, not the requested size
++    // R46b B7c: this placement spills the buffer onto memory that is NOT DEVICE_LOCAL. The property
++    // belongs to the memory TYPE, not to the heap: a heap can carry both a DEVICE_LOCAL and a
++    // host-only type (R47d's small combined-property heap 2 is exactly that), so classifying by heap
++    // would mislabel one of them.
++    bool     host_split = false;
+ };
+ 
+ // Bound on the backtracking search. Hitting it means "did not finish deciding", which is reported
+@@ -866,11 +871,21 @@ public:
+     //
+     // Returns VK_PLAN_FEASIBLE (out_choice[i] = index into cands[i]), VK_PLAN_INFEASIBLE (no
+     // complete assignment exists) or VK_PLAN_INDETERMINATE (search bound hit; decide nothing).
++    //
++    // R46b B7c: `host_split_max` caps the TOTAL bytes this one batch may place on candidates marked
++    // host_split (not DEVICE_LOCAL). UINT64_MAX means "no cap of my own"; the per-heap budget check
++    // below still applies and is unchanged. 0 forbids any host placement. `out_host_bytes` reports
++    // how many bytes the committed assignment actually put on host memory (0 when nothing spilled).
+     vk_plan_result reserve_plan(const std::vector<std::vector<vk_plan_candidate>> & cands,
+                                 const uint64_t * budgets, size_t n_budgets,
+-                                std::vector<size_t> & out_choice) {
++                                std::vector<size_t> & out_choice,
++                                uint64_t host_split_max = UINT64_MAX,
++                                uint64_t * out_host_bytes = nullptr) {
+         const size_t n = cands.size();
+         out_choice.assign(n, 0);
++        if (out_host_bytes != nullptr) {
++            *out_host_bytes = 0;
++        }
+         if (n == 0) {
+             return VK_PLAN_FEASIBLE;
+         }
+@@ -888,7 +903,14 @@ public:
+             }
+             bool same = true;
+             for (size_t c = 0; c < cands[k].size() && same; ++c) {
+-                same = cands[k][c].heap == cands[k - 1][c].heap && cands[k][c].bytes == cands[k - 1][c].bytes;
++                // R46b B7c: host_split is part of what makes two candidates interchangeable. Two
++                // types on ONE heap can differ in DEVICE_LOCAL, so comparing heap+bytes alone would
++                // call them identical and the non-decreasing-choice restriction could then prune the
++                // only assignment that fits under host_split_max - a refusal the planner did not
++                // prove.
++                same = cands[k][c].heap       == cands[k - 1][c].heap  &&
++                       cands[k][c].bytes      == cands[k - 1][c].bytes &&
++                       cands[k][c].host_split == cands[k - 1][c].host_split;
+             }
+             same_as_prev[k] = same;
+         }
+@@ -938,8 +960,9 @@ public:
+ 
+         uint64_t delta[VK_MAX_MEMORY_HEAPS] = {};
+         std::vector<size_t> next(n, 0);
+-        uint64_t nodes = 0;
+-        size_t   i     = 0;
++        uint64_t nodes      = 0;
++        uint64_t host_used  = 0;   // R46b B7c: bytes this walk has placed on host_split candidates
++        size_t   i          = 0;
+ 
+         while (i < n) {
+             if (++nodes > VK_PLAN_MAX_SEARCH_NODES) {
+@@ -965,7 +988,17 @@ public:
+                 if (cand.bytes > after_live - delta[cand.heap]) {
+                     continue;
+                 }
++                // R46b B7c: the declared bound on host placement, in the same subtraction form so
++                // nothing can wrap. A candidate that would take the batch past the bound is skipped
++                // exactly like one that does not fit its heap, so the walk keeps looking (and
++                // backtracks) instead of refusing.
++                if (cand.host_split && (host_used > host_split_max || cand.bytes > host_split_max - host_used)) {
++                    continue;
++                }
+                 delta[cand.heap] += cand.bytes;
++                if (cand.host_split) {
++                    host_used += cand.bytes;
++                }
+                 out_choice[i] = c;
+                 next[i]       = c + 1;   // resume after this choice if we ever backtrack into it
+                 placed        = true;
+@@ -986,12 +1019,18 @@ public:
+             i--;
+             const vk_plan_candidate & undo = cands[i][out_choice[i]];
+             delta[undo.heap] -= undo.bytes;
++            if (undo.host_split) {
++                host_used -= undo.bytes;
++            }
+         }
+ 
+         // Every delta was validated against its budget above, so this cannot overflow.
+         for (uint32_t h = 0; h < VK_MAX_MEMORY_HEAPS; ++h) {
+             reserved_bytes[h] += delta[h];
+         }
++        if (out_host_bytes != nullptr) {
++            *out_host_bytes = host_used;
++        }
+         return VK_PLAN_FEASIBLE;
+     }
+ 
+@@ -1021,6 +1060,45 @@ private:
+     uint64_t reserved_bytes[VK_MAX_MEMORY_HEAPS] = {};
+ };
+ 
++// R46b B7c: the per-device STAGING RESERVE. Bytes carved out of the host-visible heap in the B7a
++// ledger BEFORE any bulk weight buffer can be admitted, so a bounded host split cannot starve upload
++// staging (sync_staging), prealloc scratch or the compute buffers that come after the load.
++//
++// It is a plain charge against the ledger, not a Vulkan allocation: nothing is allocated until the
++// staging buffer is really needed, and when it is, its own reservation is taken on top. The reserve
++// is therefore a floor the weights cannot eat, and it is deliberately NOT consumed by the real
++// staging allocation - releasing it early would give the floor back to whatever allocates next.
++//
++// release() is exact-once by construction: it zeroes `bytes` before returning, so a second call
++// releases nothing. That matters because the ledger refuses (rather than clamps) an over-release,
++// and a double release that happened to be covered by someone else's live bytes would silently steal
++// them.
++struct vk_staging_reserve {
++    vk_heap_ledger * ledger = nullptr;
++    uint32_t         heap   = UINT32_MAX;
++    uint64_t         bytes  = 0;
++
++    bool try_reserve(vk_heap_ledger * l, uint32_t h, uint64_t b, uint64_t budget) {
++        GGML_ASSERT(bytes == 0);
++        if (l == nullptr || b == 0 || !l->reserve(h, b, budget)) {
++            return false;
++        }
++        ledger = l;
++        heap   = h;
++        bytes  = b;
++        return true;
++    }
++
++    bool release() {
++        if (bytes == 0) {
++            return false;
++        }
++        const uint64_t b = bytes;
++        bytes = 0;
++        return ledger->release(heap, b);
++    }
++};
++
+ // R46b B7a-R2 (finding 4): test-only fault injection into ggml_vk_create_buffer(), so the
+ // post-allocation cleanup paths (map / bind / buffer-device-address) are exercised through the
+ // PRODUCTION allocator instead of a helper. In a normal build the macro expands to nothing and
+@@ -1097,6 +1175,9 @@ struct vk_device_struct {
+     // the device's, so no stale identity (a recycled VkDevice handle or pointer) can alias it.
+     vk_heap_ledger heap_ledger;
+ 
++    // R46b B7c: charged once during device creation, released once in ~vk_device_struct.
++    vk_staging_reserve staging_reserve;
++
+     // Guards compile_pending, all_pipelines, and the dynamic pipeline maps
+     // (flash_attn, fa_mask_opt, solve_tri, conv2d, etc). The actual compile
+     // runs with no lock held, so different pipelines can compile in parallel.
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 1628098d01..955f6deb37 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -5432,6 +5432,11 @@ vk_device ggml_vk_get_device(size_t idx) {
+ 
+         device->fence = device->device.createFence({});
+ 
++        // R46b B7c: BEFORE the first bulk admission. The buffer type above is only a descriptor;
++        // nothing has planned or allocated on this device yet, so the reserve is necessarily ahead
++        // of every weight buffer that will ever compete with staging for the host heap.
++        ggml_vk_reserve_staging(device);
++
+         device->idx = idx;
+ 
+         device->serialize_submissions = getenv("GGML_VK_SERIALIZE_SUBMISSIONS") != nullptr;
+@@ -17923,6 +17928,10 @@ vk_device_struct::~vk_device_struct() {
+     device.destroyFence(fence);
+ 
+     ggml_vk_destroy_buffer(sync_staging);
++    // R46b B7c: the staging reserve outlives every buffer on this device on purpose - it is
++    // released here, after sync_staging is gone, and exactly once (release() zeroes itself).
++    staging_reserve.release();
++
+ 
+     if (compute_queue) compute_queue->cmd_pool.destroy(device);
+     if (transfer_queue) transfer_queue->cmd_pool.destroy(device);
+@@ -18392,6 +18401,82 @@ GGML_BACKEND_API int ggml_vk_heapres_plan_search(const uint32_t * cand_heaps, co
+     return (int) res;
+ }
+ 
++// R46b B7c: same seam, with per-candidate host-split flags and the bound. `cand_host[k] != 0` marks
++// candidate k as a host (non DEVICE_LOCAL) placement.
++GGML_BACKEND_API int ggml_vk_heapres_plan_search_split(const uint32_t * cand_heaps, const uint64_t * cand_bytes,
++                                                       const int * cand_host, const int * cand_counts, int n_items,
++                                                       const uint64_t * budgets, int n_heaps,
++                                                       uint64_t host_split_max,
++                                                       int * out_choice, uint64_t * out_host_bytes) {
++    std::vector<std::vector<vk_plan_candidate>> cands((size_t) n_items);
++    size_t off = 0;
++    for (int i = 0; i < n_items; i++) {
++        for (int c = 0; c < cand_counts[i]; c++, off++) {
++            vk_plan_candidate cand;
++            cand.type       = (uint32_t) off;
++            cand.heap       = cand_heaps[off];
++            cand.bytes      = cand_bytes[off];
++            cand.host_split = cand_host[off] != 0;
++            cands[(size_t) i].push_back(cand);
++        }
++    }
++
++    std::vector<size_t> choice;
++    uint64_t host_bytes = 0;
++    const vk_plan_result res = vk_heapres_test_ledger().reserve_plan(cands, budgets, (size_t) n_heaps, choice,
++                                                                     host_split_max, &host_bytes);
++    if (res == VK_PLAN_FEASIBLE && out_choice) {
++        for (int i = 0; i < n_items; i++) {
++            out_choice[i] = (int) choice[(size_t) i];
++        }
++    }
++    if (out_host_bytes) {
++        *out_host_bytes = host_bytes;
++    }
++    return (int) res;
++}
++
++// R46b B7c: the staging reserve's own ownership contract, on the TEST ledger. `other_bytes` is a
++// second live reservation on the same heap, so a release that ran twice would visibly steal it
++// instead of being masked by the ledger's underflow refusal.
++GGML_BACKEND_API void ggml_vk_heapres_staging_exact_once(uint32_t heap, uint64_t bytes, uint64_t other_bytes,
++                                                         uint64_t budget, int * first_ok, int * second_ok,
++                                                         uint64_t * reserved_after_first,
++                                                         uint64_t * reserved_after_second) {
++    vk_staging_reserve reserve;
++    reserve.try_reserve(&vk_heapres_test_ledger(), heap, bytes, budget);
++    vk_heapres_test_ledger().reserve(heap, other_bytes, budget);
++
++    *first_ok             = reserve.release() ? 1 : 0;
++    *reserved_after_first = vk_heapres_test_ledger().reserved(heap);
++    *second_ok            = reserve.release() ? 1 : 0;
++    *reserved_after_second = vk_heapres_test_ledger().reserved(heap);
++}
++
++// R46b B7c: the REAL device's staging reserve, sampled right after device creation and before any
++// buffer type has planned or allocated. Returns -1 when no Vulkan device is present.
++GGML_BACKEND_API int ggml_vk_staging_reserve_probe(uint64_t * bytes, uint32_t * heap, uint64_t * reserved_on_heap,
++                                                   uint64_t * heap_size) {
++    ggml_vk_instance_init();
++    if (vk_instance.device_indices.empty()) {
++        return -1;
++    }
++    vk_device device = ggml_vk_get_device(0);
++
++    *bytes            = device->staging_reserve.bytes;
++    *heap             = device->staging_reserve.heap;
++    *reserved_on_heap = device->staging_reserve.heap == UINT32_MAX ? 0
++                                                                   : device->heap_ledger.reserved(device->staging_reserve.heap);
++    *heap_size = 0;
++    if (device->staging_reserve.heap != UINT32_MAX) {
++        const vk::PhysicalDeviceMemoryProperties mem_props = device->physical_device.getMemoryProperties();
++        if (device->staging_reserve.heap < mem_props.memoryHeapCount) {
++            *heap_size = mem_props.memoryHeaps[device->staging_reserve.heap].size;
++        }
++    }
++    return 0;
++}
++
+ // Live plans held open by the probe, so two plans can compete for one device's capacity.
+ static std::vector<ggml_backend_buffer_type_plan_t> & vk_plan_probe_held() {
+     static std::vector<ggml_backend_buffer_type_plan_t> held;
+diff --git a/tests/test-alloc.cpp b/tests/test-alloc.cpp
+index 684acbf286..a3bab0c979 100644
+--- a/tests/test-alloc.cpp
++++ b/tests/test-alloc.cpp
+@@ -36,17 +36,30 @@ struct dummy_backend_context {
+     size_t              plan_alloc_call = 0;
+     std::vector<size_t> plan_alloc_order;             // plan entry index of each plan_alloc_buffer call
+ 
++    // R46b B7c: a SECOND pool this buffer type may spill into when the first is full, and the two
++    // things that keep that spill bounded. Defaults leave the backend exactly as B7b left it:
++    // host_budget 0 means there is nowhere to spill, so every older test takes the same decisions.
++    size_t host_budget     = 0;          // capacity of the spill pool
++    size_t staging_reserve = 0;          // carved out of host_budget before any weight is admitted
++    size_t host_split_max  = SIZE_MAX;   // bound on what ONE plan may spill
++    size_t host_reserved   = 0;          // open plans' spill bytes
++    size_t host_consumed   = 0;          // spill bytes now owned by live buffers
++    size_t host_released   = 0;          // spill bytes plan_free gave back
++    std::vector<ggml_backend_buffer_t> host_buffers;   // which live buffers are on the spill pool
++
+     ggml_backend_buffer_i              buffer_interface;
+     ggml_backend_device                device;
+     ggml_backend                       backend;
+     std::vector<ggml_backend_buffer_t> buffers;
+ 
++    // Live bytes in the FIRST pool only: spill buffers are counted by host_consumed instead, so one
++    // buffer is never charged to both pools.
+     size_t allocated_total() const {
+         size_t n = 0;
+         for (ggml_backend_buffer_t buf : buffers) {
+             n += ggml_backend_buffer_get_size(buf);
+         }
+-        return n;
++        return n - host_consumed;
+     }
+ };
+ 
+@@ -84,6 +97,7 @@ static bool dummy_backend_buffer_type_is_host(ggml_backend_buffer_type_t) {
+ struct ggml_backend_buffer_type_plan {
+     std::vector<size_t> sizes;
+     std::vector<bool>   consumed;   // R46b B7b loader: exactly-once adoption is asserted, not assumed
++    std::vector<bool>   host;       // R46b B7c: this entry was placed on the spill pool
+     size_t              reserved = 0;
+ };
+ 
+@@ -107,16 +121,39 @@ static ggml_backend_buffer_type_plan_t dummy_backend_buffer_type_plan_begin(
+         }
+         need += sizes[i];
+     }
++    // R46b B7c: place the batch, first pool first, in plan order. What does not fit the first pool
++    // spills onto the second - but only within BOTH the free bytes left after the staging reserve
++    // and the declared split bound. With host_budget 0 (the default) the spill capacity is 0, so
++    // this is the B7b decision unchanged: the batch fits the first pool or it is refused.
+     const size_t in_use = ctx->reserved + ctx->allocated_total();
+-    if (need > ctx->budget || in_use > ctx->budget - need) {
+-        *status = GGML_BACKEND_PLAN_INFEASIBLE;
+-        return nullptr;
++    size_t dev_free = ctx->budget > in_use ? ctx->budget - in_use : 0;
++
++    const size_t host_in_use = ctx->staging_reserve + ctx->host_reserved + ctx->host_consumed;
++    const size_t host_free   = ctx->host_budget > host_in_use ? ctx->host_budget - host_in_use : 0;
++    size_t host_left = std::min(ctx->host_split_max, host_free);
++
++    std::vector<bool> host(n, false);
++    size_t dev_need = 0, host_need = 0;
++    for (size_t i = 0; i < n; i++) {
++        if (sizes[i] <= dev_free) {
++            dev_free  -= sizes[i];
++            dev_need  += sizes[i];
++        } else if (sizes[i] <= host_left) {
++            host_left -= sizes[i];
++            host_need += sizes[i];
++            host[i]    = true;
++        } else {
++            *status = GGML_BACKEND_PLAN_INFEASIBLE;
++            return nullptr;
++        }
+     }
+-    ctx->reserved += need;
++    ctx->reserved      += dev_need;
++    ctx->host_reserved += host_need;
+ 
+     ggml_backend_buffer_type_plan_t plan = new ggml_backend_buffer_type_plan;
+     plan->sizes.assign(sizes, sizes + n);
+     plan->consumed.assign(n, false);
++    plan->host     = host;
+     plan->reserved = need;
+     return plan;
+ }
+@@ -132,9 +169,18 @@ static ggml_backend_buffer_t dummy_backend_buffer_type_plan_alloc_buffer(
+     }
+     // hand the reservation to the buffer: reserved drops, allocated_total() rises by the same bytes
+     plan->consumed[i] = true;
+-    ctx->reserved    -= plan->sizes[i];
+     plan->reserved   -= plan->sizes[i];
+-    return dummy_backend_buffer_type_alloc_buffer(buft, plan->sizes[i]);
++    if (plan->host[i]) {
++        ctx->host_reserved -= plan->sizes[i];
++        ctx->host_consumed += plan->sizes[i];
++    } else {
++        ctx->reserved -= plan->sizes[i];
++    }
++    ggml_backend_buffer_t buf = dummy_backend_buffer_type_alloc_buffer(buft, plan->sizes[i]);
++    if (plan->host[i]) {
++        ctx->host_buffers.push_back(buf);   // so freeing it returns spill capacity, not first-pool
++    }
++    return buf;
+ }
+ 
+ static void dummy_backend_buffer_type_plan_free(ggml_backend_buffer_type_t buft, ggml_backend_buffer_type_plan_t plan) {
+@@ -143,8 +189,13 @@ static void dummy_backend_buffer_type_plan_free(ggml_backend_buffer_type_t buft,
+     // release exactly what was never consumed
+     for (size_t i = 0; i < plan->sizes.size(); i++) {
+         if (!plan->consumed[i]) {
+-            ctx->reserved -= plan->sizes[i];
+-            ctx->released += plan->sizes[i];
++            if (plan->host[i]) {
++                ctx->host_reserved -= plan->sizes[i];
++                ctx->host_released += plan->sizes[i];
++            } else {
++                ctx->reserved -= plan->sizes[i];
++                ctx->released += plan->sizes[i];
++            }
+             plan->reserved -= plan->sizes[i];
+         }
+     }
+@@ -157,6 +208,12 @@ static void dummy_backend_buffer_type_plan_free(ggml_backend_buffer_type_t buft,
+ static void dummy_backend_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     dummy_backend_context * ctx = (dummy_backend_context *) buffer->context;
+ 
++    auto h = std::find(ctx->host_buffers.begin(), ctx->host_buffers.end(), buffer);
++    if (h != ctx->host_buffers.end()) {
++        ctx->host_consumed -= ggml_backend_buffer_get_size(buffer);
++        ctx->host_buffers.erase(h);
++    }
++
+     auto i = std::find(ctx->buffers.begin(), ctx->buffers.end(), buffer);
+     GGML_ASSERT(i != ctx->buffers.end());
+     ctx->buffers.erase(i);
+@@ -1035,6 +1092,118 @@ static void test_loader_transaction_overflow_is_refused() {
+     GGML_ASSERT(a.context->alloc_calls == 0);
+ }
+ 
++//
++// R46b B7c — the bounded host split, at the same loader-wide transaction boundary. These cases are
++// about OWNERSHIP: who holds the spilled bytes at each instant, and that a split in flight is
++// discharged exactly once. Which memory a real Vulkan device picks is decided by the planner and is
++// covered in the heapres suite, not here.
++
++static void test_loader_split_refusal_allocates_nothing() {
++    const size_t chunk = 64;
++
++    // A fits. B needs three buffers, holds two, and could spill the third - except the bound says
++    // no. The whole load must be refused with A untouched: a bounded split that cannot be made
++    // large enough is still a refusal, not a partial load.
++    dummy_backend a = dummy_backend_init(chunk);
++    dummy_backend b = dummy_backend_init(chunk);
++    plan_wire(a);
++    plan_wire(b);
++    a.context->budget = 10 * chunk;
++    b.context->budget = 2 * chunk;
++    b.context->host_budget    = 8 * chunk;   // room to spill...
++    b.context->host_split_max = chunk - 1;   // ...but not this load's room
++
++    ggml_context_ptr ctx_a = plan_make_ctx(3, chunk);
++    ggml_context_ptr ctx_b = plan_make_ctx(3, chunk);
++
++    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_a.get(), &a.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx_b.get(), &b.buffer_type));
++
++    GGML_ASSERT(!ggml_backend_alloc_plan_commit(plan.get()));
++    GGML_ASSERT(a.context->alloc_calls == 0 && b.context->alloc_calls == 0);
++    GGML_ASSERT(b.context->host_reserved == 0);
++
++    plan.reset();
++    GGML_ASSERT(a.context->reserved == 0 && b.context->reserved == 0);
++    GGML_ASSERT(b.context->host_reserved == 0);
++
++    // the same load with the bound one byte wider is admitted, and reports the split it took
++    b.context->host_split_max = chunk;
++    loader_plan_ptr wider(ggml_backend_alloc_plan_init());
++    GGML_ASSERT(ggml_backend_alloc_plan_add(wider.get(), ctx_a.get(), &a.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_add(wider.get(), ctx_b.get(), &b.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_commit(wider.get()));
++    GGML_ASSERT(b.context->reserved == 2 * chunk && b.context->host_reserved == chunk);
++}
++
++static void test_loader_split_staging_reserve_precedes_admission() {
++    const size_t chunk = 64;
++
++    // The spill pool is big enough for the load - until the staging reserve is charged first. The
++    // reserve is not capacity the weights may borrow, so the load is refused rather than admitted
++    // into it.
++    dummy_backend a = dummy_backend_init(chunk);
++    plan_wire(a);
++    a.context->budget       = chunk;       // one buffer on the device
++    a.context->host_budget  = 4 * chunk;   // two more would fit the spill pool...
++
++    ggml_context_ptr ctx = plan_make_ctx(3, chunk);
++
++    {
++        a.context->staging_reserve = 2 * chunk + 1;   // ...but this is not theirs to take
++        loader_plan_ptr plan(ggml_backend_alloc_plan_init());
++        GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx.get(), &a.buffer_type));
++        GGML_ASSERT(!ggml_backend_alloc_plan_commit(plan.get()));
++        GGML_ASSERT(a.context->alloc_calls == 0);
++    }
++
++    // exactly at the boundary the same load is admitted, and the reserve is still untouched
++    a.context->staging_reserve = 2 * chunk;
++    {
++        loader_plan_ptr plan(ggml_backend_alloc_plan_init());
++        GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx.get(), &a.buffer_type));
++        GGML_ASSERT(ggml_backend_alloc_plan_commit(plan.get()));
++        GGML_ASSERT(a.context->reserved == chunk && a.context->host_reserved == 2 * chunk);
++
++        ggml_backend_buffer_t buf = ggml_backend_alloc_plan_alloc(plan.get(), ctx.get(), &a.buffer_type);
++        GGML_ASSERT(buf != nullptr);
++        GGML_ASSERT(a.context->host_consumed == 2 * chunk);
++        GGML_ASSERT(a.context->host_reserved == 0);
++        GGML_ASSERT(a.context->staging_reserve == 2 * chunk);   // never consumed by weights
++        ggml_backend_buffer_free(buf);
++    }
++    GGML_ASSERT(a.context->host_consumed == 0);
++    GGML_ASSERT(a.context->host_reserved == 0);
++}
++
++static void test_loader_split_mid_load_failure_rolls_back() {
++    const size_t chunk = 64;
++
++    // A split is in flight when an allocation fails part way through the group. Every byte - device
++    // and spilled - must come back, each released exactly once.
++    dummy_backend a = dummy_backend_init(chunk);
++    plan_wire(a);
++    a.context->budget          = 2 * chunk;
++    a.context->host_budget     = 2 * chunk;
++    a.context->fail_alloc_at   = 2;   // third buffer of the group, so a spilled entry is live
++
++    ggml_context_ptr ctx = plan_make_ctx(4, chunk);
++
++    loader_plan_ptr plan(ggml_backend_alloc_plan_init());
++    GGML_ASSERT(ggml_backend_alloc_plan_add(plan.get(), ctx.get(), &a.buffer_type));
++    GGML_ASSERT(ggml_backend_alloc_plan_commit(plan.get()));
++    GGML_ASSERT(a.context->reserved == 2 * chunk && a.context->host_reserved == 2 * chunk);
++
++    GGML_ASSERT(ggml_backend_alloc_plan_alloc(plan.get(), ctx.get(), &a.buffer_type) == nullptr);
++
++    plan.reset();
++    GGML_ASSERT(a.context->reserved == 0 && a.context->host_reserved == 0);
++    GGML_ASSERT(a.context->host_consumed == 0);
++    GGML_ASSERT(a.context->released + a.context->host_released == 2 * chunk);   // the two never built
++    GGML_ASSERT(a.context->plan_free_calls == 1);
++}
++
+ static void test_backend_graph_optimize(ggml_backend_t, ggml_cgraph * graph, ggml_backend_graph_optimize_params * params) {
+     GGML_ASSERT(graph->n_nodes == 3);
+     params->add_alloc_dep(params->user_data, graph->nodes[0], graph->nodes[2]);
+@@ -1097,6 +1266,9 @@ int main() {
+     run("test_loader_transaction_competing_and_isolated", test_loader_transaction_competing_and_isolated);
+     run("test_loader_transaction_two_contexts_one_buffer_type", test_loader_transaction_two_contexts_one_buffer_type);
+     run("test_loader_transaction_mid_load_failure_rolls_back", test_loader_transaction_mid_load_failure_rolls_back);
++    run("test_loader_split_refusal_allocates_nothing", test_loader_split_refusal_allocates_nothing);
++    run("test_loader_split_staging_reserve_precedes_admission", test_loader_split_staging_reserve_precedes_admission);
++    run("test_loader_split_mid_load_failure_rolls_back", test_loader_split_mid_load_failure_rolls_back);
+     run("test_loader_transaction_mixed_backends", test_loader_transaction_mixed_backends);
+     run("test_loader_transaction_overflow_is_refused", test_loader_transaction_overflow_is_refused);
+     return 0;
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index 53c4884905..cf483d2719 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -13893,6 +13893,18 @@ extern "C" {
+     int      ggml_vk_heapres_plan_search(const uint32_t * cand_heaps, const uint64_t * cand_bytes,
+                                          const int * cand_counts, int n_items,
+                                          const uint64_t * budgets, int n_heaps, int * out_choice);
++    // R46b B7c — bounded host split and the staging reserve.
++    int      ggml_vk_heapres_plan_search_split(const uint32_t * cand_heaps, const uint64_t * cand_bytes,
++                                               const int * cand_host, const int * cand_counts, int n_items,
++                                               const uint64_t * budgets, int n_heaps,
++                                               uint64_t host_split_max,
++                                               int * out_choice, uint64_t * out_host_bytes);
++    void     ggml_vk_heapres_staging_exact_once(uint32_t heap, uint64_t bytes, uint64_t other_bytes,
++                                                uint64_t budget, int * first_ok, int * second_ok,
++                                                uint64_t * reserved_after_first,
++                                                uint64_t * reserved_after_second);
++    int      ggml_vk_staging_reserve_probe(uint64_t * bytes, uint32_t * heap, uint64_t * reserved_on_heap,
++                                           uint64_t * heap_size);
+     int      ggml_vk_plan_probe_limits(uint64_t * max_chunk, uint64_t * total_heap,
+                                        uint64_t * reserved_now, int * used_maintenance4);
+     int      ggml_vk_plan_probe_begin(const uint64_t * sizes, int n, int * status);
+@@ -14386,6 +14398,196 @@ static void heapres_plan_ledger_tests() {
+     ggml_vk_heapres_reset();
+ }
+ 
++// ---------------------------------------------------------------------------------------------
++// R46b B7c - bounded host split and the staging reserve.
++//
++// Synthetic ledger exercise: no device, no model, no allocation. A candidate here is
++// (heap, bytes, host), where host marks a placement on memory that is NOT DEVICE_LOCAL.
++// ---------------------------------------------------------------------------------------------
++
++struct heapres_split_cand {
++    uint32_t heap;
++    uint64_t bytes;
++    bool     host;
++};
++
++static int heapres_split_search(const std::vector<std::vector<heapres_split_cand>> & items,
++                                const std::vector<uint64_t> & budgets,
++                                uint64_t host_split_max,
++                                std::vector<int> & choice,
++                                uint64_t & host_bytes) {
++    std::vector<uint32_t> heaps;
++    std::vector<uint64_t> bytes;
++    std::vector<int>      host;
++    std::vector<int>      counts;
++    for (const auto & item : items) {
++        counts.push_back((int) item.size());
++        for (const auto & c : item) {
++            heaps.push_back(c.heap);
++            bytes.push_back(c.bytes);
++            host.push_back(c.host ? 1 : 0);
++        }
++    }
++    choice.assign(items.size(), -1);
++    host_bytes = 0;
++    return ggml_vk_heapres_plan_search_split(heaps.data(), bytes.data(), host.data(), counts.data(),
++                                             (int) items.size(), budgets.data(), (int) budgets.size(),
++                                             host_split_max, choice.data(), &host_bytes);
++}
++
++static void heapres_host_split_tests() {
++    const uint64_t MiB = 1024ull * 1024ull;
++    printf("Vulkan bounded host split + staging reserve (R46b B7c)\n");
++
++    std::vector<int> choice;
++    uint64_t host_bytes = 0;
++
++    // Three 8 MiB buffers; heap 0 is DEVICE_LOCAL and holds exactly one of them, heap 1 is
++    // host-visible and could hold all three. What stops it is the bound, and only the bound.
++    const std::vector<std::vector<heapres_split_cand>> three_buffers = {
++        { {0, 8 * MiB, false}, {1, 8 * MiB, true} },
++        { {0, 8 * MiB, false}, {1, 8 * MiB, true} },
++        { {0, 8 * MiB, false}, {1, 8 * MiB, true} },
++    };
++    const std::vector<uint64_t> budgets = { 8 * MiB, 100 * MiB };
++
++    // 1. Exactly at the bound: 16 MiB of split admitted when the bound is 16 MiB.
++    ggml_vk_heapres_reset();
++    {
++        const int res = heapres_split_search(three_buffers, budgets, 16 * MiB, choice, host_bytes);
++        heapres_check(res == HEAPRES_PLAN_FEASIBLE, "split exactly at the bound is admitted");
++        heapres_check(host_bytes == 16 * MiB, "split reports exactly the bytes it spilled");
++        heapres_check(ggml_vk_heapres_reserved(0) == 8 * MiB && ggml_vk_heapres_reserved(1) == 16 * MiB,
++                      "split charged 8MiB device + 16MiB host, once each");
++        // Deterministic spill selection: plan-order first-fit. Device candidates come first for
++        // every buffer, so the buffers that spill are the SUFFIX of plan order.
++        heapres_check(choice[0] == 0 && choice[1] == 1 && choice[2] == 1,
++                      "spill selection is plan-order first-fit: the suffix spills");
++    }
++
++    // 2. One byte over the bound: refused, and nothing is charged anywhere.
++    ggml_vk_heapres_reset();
++    {
++        const int res = heapres_split_search(three_buffers, budgets, 16 * MiB - 1, choice, host_bytes);
++        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "one byte past the bound is refused");
++        heapres_check(ggml_vk_heapres_reserved(0) == 0 && ggml_vk_heapres_reserved(1) == 0,
++                      "a refused split charged nothing");
++        heapres_check(host_bytes == 0, "a refused split reports no host bytes");
++    }
++
++    // 3. Bound 0 forbids host placement outright: the set that needed a split is refused even
++    //    though the host heap has room.
++    ggml_vk_heapres_reset();
++    {
++        const int res = heapres_split_search(three_buffers, budgets, 0, choice, host_bytes);
++        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "bound 0 forbids any host placement");
++        heapres_check(ggml_vk_heapres_reserved(1) == 0, "bound 0 left the host heap untouched");
++    }
++
++    // 4. The staging reserve precedes admission. The same batch and the same DEFAULT bound shape
++    //    (free bytes on the host heap), with the reserve already charged: the weights can no longer
++    //    reach into it, and the reserve survives the refusal intact.
++    ggml_vk_heapres_reset();
++    {
++        heapres_check(ggml_vk_heapres_reserve(1, 90 * MiB, 100 * MiB), "staging reserve charged first");
++        const uint64_t free_after_reserve = 100 * MiB - 90 * MiB;
++        const int res = heapres_split_search(three_buffers, budgets, free_after_reserve, choice, host_bytes);
++        heapres_check(res == HEAPRES_PLAN_INFEASIBLE, "weights cannot be admitted into the staging reserve");
++        heapres_check(ggml_vk_heapres_reserved(1) == 90 * MiB, "the reserve is intact after the refusal");
++    }
++    //    ... and with the reserve small enough, the same batch is admitted and stays clear of it.
++    ggml_vk_heapres_reset();
++    {
++        heapres_check(ggml_vk_heapres_reserve(1, 20 * MiB, 100 * MiB), "smaller staging reserve charged first");
++        const int res = heapres_split_search(three_buffers, budgets, 100 * MiB - 20 * MiB, choice, host_bytes);
++        heapres_check(res == HEAPRES_PLAN_FEASIBLE, "a split that fits beside the reserve is admitted");
++        heapres_check(ggml_vk_heapres_reserved(1) == 20 * MiB + 16 * MiB,
++                      "reserve plus split, both charged, neither consuming the other");
++    }
++
++    // 5. A batch whose candidates are all DEVICE_LOCAL is decided exactly as B7b decided it: no
++    //    candidate is a host split, so the bound - even 0 - cannot alter the assignment or the
++    //    charges. This is the candidate SHAPE the bulk-large-heap policy contributes; it is NOT that
++    //    policy's production path, which prepends its attempt and then falls through to the stock
++    //    chain (host-visible flag sets included). That path cannot be driven from a test at all:
++    //    ggml_vk_placement_bulk_large_heap() caches its answer in a function-local static, so the
++    //    environment cannot flip it after the first call in this process.
++    ggml_vk_heapres_reset();
++    {
++        std::vector<std::vector<std::pair<uint32_t, uint64_t>>> plain;
++        std::vector<std::vector<heapres_split_cand>>           split;
++        for (int i = 0; i < 6; i++) {
++            const uint64_t bytes = (uint64_t) (i + 1) * MiB;
++            plain.push_back({ {0, bytes}, {1, bytes} });
++            split.push_back({ {0, bytes, false}, {1, bytes, false} });
++        }
++        std::vector<int> plain_choice;
++        const int res_plain = heapres_plan_search(plain, { 12 * MiB, 12 * MiB }, plain_choice);
++        const uint64_t plain_0 = ggml_vk_heapres_reserved(0);
++        const uint64_t plain_1 = ggml_vk_heapres_reserved(1);
++
++        ggml_vk_heapres_reset();
++        const int res_split = heapres_split_search(split, { 12 * MiB, 12 * MiB }, 0, choice, host_bytes);
++        heapres_check(res_plain == res_split, "device-only candidates: same verdict with the bound on");
++        heapres_check(plain_choice == choice, "device-only candidates: identical assignment");
++        heapres_check(plain_0 == ggml_vk_heapres_reserved(0) && plain_1 == ggml_vk_heapres_reserved(1),
++                      "device-only candidates: identical charges");
++        heapres_check(host_bytes == 0, "device-only candidates: no host bytes reported");
++    }
++
++    // 6. Host-ness is part of what makes two buffers interchangeable. Both items here have the same
++    //    heaps and the same sizes in the same positions, but opposite host flags, and the ONLY
++    //    assignment inside the bound needs item 1 to choose position 0 while item 0 chose position 1.
++    //    A symmetry break that ignored the host flag would call them interchangeable, forbid that,
++    //    and report a refusal it never proved.
++    ggml_vk_heapres_reset();
++    {
++        const std::vector<std::vector<heapres_split_cand>> mixed = {
++            { {0, 4 * MiB, true},  {1, 4 * MiB, false} },
++            { {0, 4 * MiB, false}, {1, 4 * MiB, true}  },
++        };
++        const int res = heapres_split_search(mixed, { 4 * MiB, 4 * MiB }, 4 * MiB, choice, host_bytes);
++        heapres_check(res == HEAPRES_PLAN_FEASIBLE, "differing host-ness is not interchangeable");
++        heapres_check(choice[0] == 1 && choice[1] == 0, "both buffers took the device-local option");
++        heapres_check(host_bytes == 0, "the assignment inside the bound spilled nothing");
++    }
++
++    // 7. The staging reserve releases exactly once. `other` is a second live reservation on the same
++    //    heap: a second release would be large enough to succeed against it and would steal it, so
++    //    this cannot be satisfied by the ledger's underflow refusal alone.
++    ggml_vk_heapres_reset();
++    {
++        int first_ok = 0, second_ok = 0;
++        uint64_t after_first = 0, after_second = 0;
++        ggml_vk_heapres_staging_exact_once(5, 256 * MiB, 512 * MiB, 1024 * MiB,
++                                           &first_ok, &second_ok, &after_first, &after_second);
++        heapres_check(first_ok == 1, "staging reserve released once");
++        heapres_check(after_first == 512 * MiB, "release gave back exactly the reserve");
++        heapres_check(second_ok == 0, "a second release is refused");
++        heapres_check(after_second == 512 * MiB, "a second release stole nothing");
++    }
++
++    ggml_vk_heapres_reset();
++
++    // 8. The REAL device: the reserve is charged during device creation, before any buffer type has
++    //    planned or allocated. This is the first probe in the suite that touches a device.
++    {
++        uint64_t bytes = 0, reserved_on_heap = 0, heap_size = 0;
++        uint32_t heap = UINT32_MAX;
++        if (ggml_vk_staging_reserve_probe(&bytes, &heap, &reserved_on_heap, &heap_size) == 0) {
++            heapres_check(bytes > 0, "device staging reserve is non-zero by default");
++            heapres_check(heap != UINT32_MAX, "device staging reserve names a host-visible heap");
++            heapres_check(bytes <= heap_size, "device staging reserve fits its heap");
++            heapres_check(reserved_on_heap >= bytes,
++                          "the reserve is already charged before any bulk admission");
++            printf("  note staging reserve = %llu B on heap %u (heap size %llu B)\n",
++                   (unsigned long long) bytes, heap, (unsigned long long) heap_size);
++        } else {
++            printf("  note no Vulkan device: device staging reserve probe skipped\n");
++        }
++    }
++}
++
+ // Builds `n` meta tensors and lets the loader's own split arithmetic turn them into buffers.
+ //
+ // `vary` controls the SHAPE of the resulting buffer set, and the distinction matters:
+@@ -14579,6 +14781,7 @@ static void heapres_plan_production_tests() {
+ static int heapres_main() {
+     heapres_ledger_tests();
+     heapres_plan_ledger_tests();
++    heapres_host_split_tests();
+     heapres_fault_tests();
+     heapres_plan_production_tests();
+     printf("%s: %s\n", "heapres", heapres_failures == 0 ? "all tests passed" : "FAILURES");

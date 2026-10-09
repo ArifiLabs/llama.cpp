@@ -1,0 +1,66 @@
+From aa4b99410b9a0d81e5e255bd573726b17310ecf9 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 09:08:35 -0400
+Subject: [PATCH] vulkan: use float below S-X8 served crossover
+
+Assisted-by: Codex
+---
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h | 4 ++--
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp     | 2 +-
+ tests/test-backend-ops.cpp               | 7 +++++++
+ 3 files changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-types.h b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+index f3c9061f6b..1f323858ce 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-types.h
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-types.h
+@@ -1321,9 +1321,9 @@ struct vk_device_struct {
+     uint32_t q8_0_cm1_2d_shift = 8;
+     // arifi lane-296 S8: float-path matmuls of these weight roles ("all" = every weight) accumulate in f32 [GGML_ARIFI_F32ACC].
+     std::set<std::string> f32acc_roles;
+-    // lane sx8-int8 stage 10: S-X8 int8 cm1 from this width (default 0 = every mat-mat width) [GGML_ARIFI_SX8_CM1_MIN_N],
++    // lane sx8-int8 stage 10: S-X8 int8 cm1 from this width (measured served crossover) [GGML_ARIFI_SX8_CM1_MIN_N],
+     // and the roles that take it (empty = all; measuring tool for per-role quality) [GGML_ARIFI_SX8_CM1_ROLES].
+-    uint32_t sx8_cm1_min_n = 0;
++    uint32_t sx8_cm1_min_n = 56;
+     std::set<std::string> sx8_cm1_roles;
+     // lane sx8-int8 stage 10 fix knob: S-X8 roles on two-digit activations ("all" = every role) [GGML_ARIFI_SX8_CM1_2D].
+     std::set<std::string> sx8_cm1_2d_roles;
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 90097f120a..de8d43d876 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -7925,7 +7925,7 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
+     if (ctx->device->coopmat_int_support && ne11 < ctx->device->cm1_int_min_n && !cm1_int_down && src0->type != GGML_TYPE_SX8) {
+         mmp_map = nullptr;
+     }
+-    // lane sx8-int8 stage 10: S-X8 has its own width gate (default every width) and role selector, with a receipt per role.
++    // lane sx8-int8 stage 10: S-X8 has its own width gate and role selector, with a receipt per role.
+     if (ctx->device->coopmat_int_support && src0->type == GGML_TYPE_SX8) {
+         std::string role = src0->name;
+         if (role.rfind("blk.", 0) == 0 && role.find('.', 4) != std::string::npos) {
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index a682e413f8..dfe62f9ff5 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -5690,6 +5690,10 @@ struct test_mul_mat_sx8_gate : public test_mul_mat {
+     }
+ };
+ 
++struct test_mul_mat_sx8_threshold : public test_mul_mat_sx8_gate {
++    test_mul_mat_sx8_threshold(int64_t n) : test_mul_mat_sx8_gate(0, 1056, n) {}
++    std::string vars() override { return test_mul_mat_sx8_gate::vars() + ",sx8_threshold_fixture=1"; }
++};
+ // ArifiLabs lane-206: adversarial data patterns for MUL_MAT.
+ //
+ // Every other MUL_MAT case fills both operands from uniform[-1,1]. That distribution cannot reach
+@@ -11420,6 +11424,9 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     }
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_SX8, GGML_TYPE_F32, 248320, 48, 5120, {1, 1}, {1, 1}));
+     for (int pattern : {0, 1, 2, 3}) { test_cases.emplace_back(new test_mul_mat_sx8_gate(pattern)); }
++    // Both sides of the default S-X8 mat-mat width gate, against the dequantized float reference.
++    test_cases.emplace_back(new test_mul_mat_sx8_threshold(55));
++    test_cases.emplace_back(new test_mul_mat_sx8_threshold(56));
+     // 2048 K steps can use the mask; 2049 must use the ungated two-digit fallback.
+     test_cases.emplace_back(new test_mul_mat_sx8_gate(0, 262144));
+     test_cases.emplace_back(new test_mul_mat_sx8_gate(0, 262176));

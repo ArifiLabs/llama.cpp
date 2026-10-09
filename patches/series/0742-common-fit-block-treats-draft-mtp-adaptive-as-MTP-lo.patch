@@ -1,0 +1,39 @@
+From db6813257a65de1f4c9e3c74bf2538bbe751f0d9 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 09:05:50 -0400
+Subject: [PATCH] common: fit block treats draft-mtp-adaptive as MTP (load
+ crash fix)
+
+`--spec-type draft-mtp-adaptive` with `-md <MTP sidecar>` crashed the published x1i2 binary at load,
+8 of 8 (0xC0000005, strata-x1 cells/adapt-10070750 A34/A35; same flags with draft-mtp load fine).
+The fit block in common_init_result set spec_mtp from DRAFT_MTP only, so with the adaptive type it
+fitted the sidecar as an ordinary draft context (ctx_type left at the default, not
+LLAMA_CONTEXT_TYPE_MTP). Every other reader of the type pairs DRAFT_MTP with DRAFT_MTP_ADAPTIVE
+(arg.cpp common_models_handler_init, common.cpp load_mtp, server-context.cpp load,
+speculative.cpp common_speculative_init); this one now does too.
+
+Default unchanged: the expression differs only when DRAFT_MTP_ADAPTIVE is in the type list, so
+every other spec type (and no spec) takes the same path as 88081ccb8c.
+
+Origin: lane-298
+Measured-effect: UNMEASURED (correctness fix; served-load receipt cells/afix-* from run-afix.ps1: integ crashes, fix loads, ids vs draft-mtp)
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ common/common.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/common/common.cpp b/common/common.cpp
+index 7c6cb068ae..cf27aa79cb 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -1310,7 +1310,9 @@ common_init_result::common_init_result(common_params & params, bool model_only)
+         // the draft context is created from the same base params and follows the main context, fit both together
+         const bool has_draft = params.speculative.has_dft();
+         const bool spec_mtp  = std::find(params.speculative.types.begin(), params.speculative.types.end(),
+-            COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end();
++            COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end() ||
++                               std::find(params.speculative.types.begin(), params.speculative.types.end(),
++            COMMON_SPECULATIVE_TYPE_DRAFT_MTP_ADAPTIVE) != params.speculative.types.end();
+ 
+         common_params params_dft = common_base_params_to_speculative(params);
+ 

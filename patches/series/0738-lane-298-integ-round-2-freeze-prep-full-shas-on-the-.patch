@@ -1,0 +1,64 @@
+From a9434a9a95bedf269274141f87335ffa8c202e13 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 19:58:25 -0400
+Subject: [PATCH] lane-298 integ round 2 freeze prep: full shas on the round-2
+ win commit fields; Q39 Measured-effect cells
+
+reword.py re-keys only full 40-hex shas in tools/arifi-sync/**/*.json. The two round-2 entries
+(vulkan-cm1-f16b-staging-mul-mat-id, qwen4exp-layout-copies) carried 10-char integ shas and would
+have gone stale after the reword; they now carry the full shas of 75bd52ad79 and 78db7c5e44.
+
+post-x1i-trailers.tsv: the Measured-effect cells of 84864cdb32, 1053ae7e6d and d716f45cab said
+UNMEASURED; each is a correctness fix with a planted-RED / GREEN receipt pair (Q39, HQ82 accepted the
+receipts). Text names the receipts and makes no speed claim (_measured_effect_is_real stays False).
+
+Origin: lane-298
+Measured-effect: none (ledger keys and trailer-table text only; no engine change)
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tools/arifi-sync/protected-wins.json              | 4 ++--
+ tools/arifi-sync/x1i-reword/post-x1i-trailers.tsv | 6 +++---
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index bd85a744fe..383e5fd4e0 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -1857,7 +1857,7 @@
+       "id": "vulkan-cm1-f16b-staging-mul-mat-id",
+       "status": "active",
+       "mechanism": "coopmat1 (non-coopmat2, non-Intel) MUL_MAT_ID prompt matmuls stage B f32->f16 before the kernel (lane-296 N11 extended to the id path) when no int8 q8_1 id pipeline is taken and tokens >= cm1_f16b_min_n, so iq2_s / iq3_xxs / iq3_s experts run the f16-B coopmat1 pipeline instead of f32-B. Not a precision change on fp16 devices: the f32-B kernel already rounds B to f16vec2 in shared memory (mul_mm.comp:195). Default ON; GGML_ARIFI_CM1_F16B_ID=0 keeps f32-B; =red is the planted wrong variant (staged B never written).",
+-      "commit": "75bd52ad79",
++      "commit": "75bd52ad79759c2ae3120a9209c6955e3c694246",
+       "protected_paths": [
+         "ggml/src/ggml-vulkan/ggml-vulkan.cpp"
+       ],
+@@ -2057,7 +2057,7 @@
+       "id": "qwen4exp-layout-copies",
+       "status": "active",
+       "mechanism": "qwen4exp graph: conv-state tails are written with one strided CPY (no CONT first) and the PLE taps use one transpose-copy plus one kernel cast instead of 4 CONT + 4 CONT + 4 CAST + 1 CONT. Same bytes, fewer dispatches.",
+-      "commit": "78db7c5e44",
++      "commit": "78db7c5e449765a01f7644d402e764383a97eed2",
+       "protected_paths": [
+         "src/models/qwen4exp.cpp"
+       ],
+diff --git a/tools/arifi-sync/x1i-reword/post-x1i-trailers.tsv b/tools/arifi-sync/x1i-reword/post-x1i-trailers.tsv
+index 788d80357f..b7c5cf0136 100644
+--- a/tools/arifi-sync/x1i-reword/post-x1i-trailers.tsv
++++ b/tools/arifi-sync/x1i-reword/post-x1i-trailers.tsv
+@@ -1,7 +1,7 @@
+ sha	lane	effect_source	Origin	Measured-effect	subject
+-84864cdb3262b59643b34a254db3ccbdd46929cd	lane-298	ledger-context	ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.	UNMEASURED on its own - supporting commit; see release ledger Table 1 W6, the number sits on that win's main commit	lane-298: skip whole-file mmap prefetch when a device copies weights out of the mapping
++84864cdb3262b59643b34a254db3ccbdd46929cd	lane-298	ledger-context	ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.	correctness fix (shipped-engine load drain), no speed claim: RED r1k-10060240 / GREEN r1l-10060355 (cache/mtp-x1-lane/cells)	lane-298: skip whole-file mmap prefetch when a device copies weights out of the mapping
+ 81cb0d344c99085d3b37c38daf640b04b07723f1	lane-300	none	ArifiLabs (native) - fork-authored (lane-300); no upstream origin exists.	UNMEASURED - no served number for this commit in the release ledger or the commit message	lane-300 F-141: coopmat1 FA zeroes V rows masked for every valid tile row (stale/foreign KV content no longer reaches the P*V WMMA sum); flags bit 32 default ON, GGML_VK_FA_DEADV_KEEP=1 = planted-RED switch; fa-replay sign-class arms. Lane: lane-300
+-1053ae7e6d1ad469b90452e64df9c387261be994	lane-298	none	ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.	UNMEASURED - no served number for this commit in the release ledger or the commit message	lane-298 R1 checkpoint fix: ssm row save/restore maps to the physical ring plane
++1053ae7e6d1ad469b90452e64df9c387261be994	lane-298	none	ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.	correctness fix (R1 checkpoint restore), no speed claim: RED r1h-10060107 / GREEN r1i-10060141, shipped base r1n-10060634 (cache/mtp-x1-lane/cells)	lane-298 R1 checkpoint fix: ssm row save/restore maps to the physical ring plane
+ 27ea8ebf9981e07ebe72dfe5b175a399d9d414c2	lane-298	ledger	ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.	part of win W5, MTP drafting for Qwen3.8-Flash-Next (qwen4exp): plain 10.73 -> MTP n-max 3 p-min 0.5 16.64 t/s short (+55.0%), long 10.38 -> 15.14 (+45.8%); accept 91.5% / 78.2%; MEANS of 2 rounds, -lm dio. cache/mtp-x1-lane/cells/gate2c-10050216-* (state head = 1c80315817). Lane grade: "pending strict 2a" [release ledger Table 1 W5]	lane-298: qwen4exp MTP sidecar load + graph_mtp, target 4-stream capture, Windows unmap_fragment trim (env-gated)
+ 6ec493db369d314e47fbe6dfd9d0b59e129ef601	lane-298	ledger	ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.	part of win W6, Windows -lm dio direct-I/O load fixed: dio loads and serves uncapped: peak WS 0.95 GB, min available 5.4-9.7 GB, ids == reference (298 REPORT item 4); seat 77 reads the same cell as WS 1.0-1.4 GB, 15-17 s load. gate2c-10050216-state.json [release ledger Table 1 W6]	lane-298: fix Windows -lm dio probe failure (unaligned file-pointer moves on NO_BUFFERING handles)
+ ef40589f5a91de9316913da08b863fa03b3df13a	lane-298	ledger-context	ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.	UNMEASURED on its own - supporting commit; see release ledger Table 1 W6, the number sits on that win's main commit	lane-298: unbuffered read_raw_unsafe throws on an unaligned cursor/len/ptr instead of returning floor-sector bytes
+@@ -56,4 +56,4 @@ bb7adcd727b615811032f5db0b02df42993f2745	lane-299	none	ArifiLabs (native) - fork
+ 1dd2bb6f7a631ce6e6926aa96f08bfbfb3fc6c0f	moe-cache-x1	none	ArifiLabs (native) - fork-authored (moe-cache-x1); no upstream origin exists.	UNMEASURED - no served number for this commit in the release ledger or the commit message	moe-cache-x1: GLM-5.3 NVMe expert streaming, x12..x21 measured source
+ 48420bbd07a3c7a0addd95c5a80871054fd6dc11	x1i post-ship work	none	ArifiLabs (native) - fork-authored (x1i post-ship work); no upstream origin exists.	UNMEASURED - no served number for this commit in the release ledger or the commit message	kimi-k3: read the ssm bank through the R1 rotated index (bank=true)
+ 8f7ac4b78bdfaef49bc8d9f28506cd1aa15bcabe	lane-298	none	ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.	UNMEASURED - no served number for this commit in the release ledger or the commit message	lane-298 integ: protected-win registration fixes carried in from lanes 301/302 + HQ80 f2c5fad421 resolution rows
+-d716f45cab1394292933c3ed35d4fe9e0e22b91a	lane-298	none	ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.	UNMEASURED - no served number for this commit in the release ledger or the commit message	vulkan: scope allocator-wide shared admission to MoE NVMe streaming
++d716f45cab1394292933c3ed35d4fe9e0e22b91a	lane-298	none	ArifiLabs (native) - fork-authored (lane-298); no upstream origin exists.	correctness fix (integ load regression), no speed claim: RED ismoke-10061217 arm ig2 / GREEN ismoke-10061337 (cache/mtp-x1-lane/cells)	vulkan: scope allocator-wide shared admission to MoE NVMe streaming

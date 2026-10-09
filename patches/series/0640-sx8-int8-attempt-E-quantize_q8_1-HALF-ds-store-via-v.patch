@@ -1,0 +1,30 @@
+From 30a12cebad49c6eb4a511a1c8b42f8600cc1aa38 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 03:19:42 -0400
+Subject: [PATCH] sx8-int8 attempt E: quantize_q8_1 HALF ds store via vec2 (f16
+ locals need the arithmetic extension)
+
+Lane: sx8-int8-stage10-2026-10-02
+---
+ ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp b/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp
+index 3f87a0c3c3..c81302d203 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/quantize_q8_1.comp
+@@ -162,11 +162,11 @@ void quantize(const uint wgid) {
+         const float sum = shmem[tid];
+ #endif
+ 
+-        const f16vec2 ds_out = HALF != 0 ? f16vec2(dh) : f16vec2(vec2(d, sum * d));
++        const vec2 ds_out = HALF != 0 ? dh : vec2(d, sum * d);
+ #ifndef QBLOCK_X4
+-        data_b[ib].ds = ds_out;
++        data_b[ib].ds = f16vec2(ds_out);
+ #else
+-        data_b[ibx4_outer].ds[ibx4_inner] = ds_out;
++        data_b[ibx4_outer].ds[ibx4_inner] = f16vec2(ds_out);
+ #endif
+     }
+ }

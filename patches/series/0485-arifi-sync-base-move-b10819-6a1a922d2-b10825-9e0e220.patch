@@ -1,0 +1,52 @@
+From 15927def7288256ce93fc456ddfc02243c17adff Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Mon, 7 Sep 2026 00:29:09 -0400
+Subject: [PATCH] arifi-sync: base move b10819/6a1a922d2 -> b10825/9e0e22059
+ (R22 read, R27 execution); 552/552 replayed clean, 0 merges, 0 hunk
+ collisions, marker scan 0, protected wins PASS; R20 slot fix + R19 gate
+ (default ON per R19D) carried Lane: lane-220
+
+---
+ tools/arifi-sync/sources.json | 22 ++++++++++++++++++++--
+ 1 file changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/tools/arifi-sync/sources.json b/tools/arifi-sync/sources.json
+index 04dc363ac4..6830de4364 100644
+--- a/tools/arifi-sync/sources.json
++++ b/tools/arifi-sync/sources.json
+@@ -19,8 +19,8 @@
+     "at all, and `4df29be4f..master` is not a range anybody meant to ask for. Set both, or neither."
+   ],
+   "base": {
+-    "upstream_tag": "b10819",
+-    "upstream_sha": "6a1a922d269908a29cbd4b49c27e6a8e7fd10fae",
++    "upstream_tag": "b10825",
++    "upstream_sha": "9e0e220594af405a62835dc3a27495729fd8506b",
+     "_base_moved_2026_08_29_seat46": [
+       "MOVED b10524/9ee9fc04c -> b10636/4d19b2876 by the FOURTH live execution of UPDATE-RUNBOOK.md 2.",
+       "TAG VERIFIED: `git describe --tags --exact-match 4d19b2876` = b10636, exactly.",
+@@ -234,6 +234,24 @@
+       "post_move_tip_note": "R17C 2026-09-06 (Fable 5.1 MEDIUM, lane-214/integration-b10819-2026-09-06): re-keyed 0b1dea051 -> 697027562 (R13B's repaired tip, R13C owed row 7) -> f34033b67, the linear integration tip = 697027562 + lane-210 (12 commits: off-rig union, WI-1699 restore, Metal loader union WI-1703, CI matrix) + lane-211 (2 commits: symbols guard WI-1700) + lane-213 (2 commits: docs). 0 merges. This re-key commit sits directly on top of f34033b67 and cannot name itself. arifi/main NOT moved; current-state.json NOT flipped.",
+       "note": "arifi/main was linearized first (14 merge commits removed, git diff 95c1b6e69 vs flattened EMPTY) because series regen and the merges==0 gate are unreachable otherwise."
+     },
++    "_base_moved_2026_09_06_b10819_to_b10825": {
++      "from_tag": "b10819",
++      "from_sha": "6a1a922d269908a29cbd4b49c27e6a8e7fd10fae",
++      "to_tag": "b10825",
++      "to_sha": "9e0e220594af405a62835dc3a27495729fd8506b",
++      "tag_verified": "git describe --tags --exact-match 9e0e220594af405a62835dc3a27495729fd8506b = b10825, exactly (R22 section 1). No b10824 tag exists upstream. upstream/master was b10825-3-g3ad1ba733 at the R22 fetch; the TAG was taken per UPDATE-RUNBOOK 2.0.",
++      "moved_utc": "2026-09-06",
++      "moved_by": "lane-220 R27 (Fable 5.1 MEDIUM kernel-maker, pool mode: code half; the serial lane measures), UPDATE-RUNBOOK 2.2 manual path, executing R22's read (lane-217)",
++      "pre_move_tip": "bfdc7aba1",
++      "post_move_tip": "283a58842",
++      "post_move_tip_note": "283a58842 = the 552-commit series replayed onto b10825 (git rebase --onto b10825 b10819, 552/552, 0 stops, 0 merges; git diff vs R22's dry tip lane-217/b10825-dry-tip 4452a9840 EMPTY; git diff --stat b10825..HEAD = 1625 files, +1760250/-2016, byte-equal to b10819..bfdc7aba1). On top of it, in order: R20 4345402de (CPU FLASH_ATTN_EXT op_params slot fix + slot guard, lane-216, WI-1704) and R19 26ab4d9cb re-carried with its RDNA3 default flipped to ON per R19D (lane-215 -> lane-220). This sources.json commit sits on top of those and cannot name itself; the lane report names the final tip. arifi/main NOT moved; current-state.json NOT flipped.",
++      "upstream_subjects": "research/local-inference/lane-evidence/2026-09-02-lane-209/r22-bump-b10825/10-upstream-subjects.txt (6 commits: 74a7c897f github issue template, 971595d66 metal fa-vec M2 Max tunings, c457e3bf7 ui embed assets via CMake, 7620399f5 common --log-jsonl, 0afb805b1 ui chat rendering perf, 9e0e22059 grammar max repetition threshold)",
++      "marker_scan": "0 hits over the whole b10819..b10825 diff for rocmfp/turbo/tq3/tq4_1s/q2_0_g128/arifi/escha/TURBO_WHT (R22 section 4, 14-marker-scan.txt)",
++      "collisions": "0 named collisions: 52 upstream files x 1625 series files = 4 intersecting files (common/arg.cpp, tools/ui/CMakeLists.txt, tools/cli/README.md, tools/server/README.md), hunk-level overlap 0 with a +/-3-line window (R22 section 3, 16-hunk-collision-map.json). No 4.1b comparison owed; no protected-win resolution owed (protected-win check --incoming b10825 exit 0, 21-protected-win-check-b10825.txt).",
++      "series_state": "STALE and pre-existing (R22 section 6.2): series check exits 1 on arifi/main before this move; series regen is BLOCKED by the 58 unprovenanced commits under R24's President ruling (R24-PROVENANCE-AUDIT-REPORT.md). Recorded, not fabricated; regen is owed after the ruling, on whichever branch carries this move.",
++      "r22_report": "research/local-inference/lane-evidence/2026-09-02-lane-209/r22-bump-b10825/R22-B10825-BUMP-PREP-REPORT.md",
++      "r27_report": "research/local-inference/lane-evidence/2026-09-02-lane-209/r27-bump-b10825/R27-B10825-MOVE-REPORT.md"
++    },
+     "_offrig_policy_reversed_2026_09_06": [
+       "THE OFF-RIG DROP POLICY IS REVERSED. President, 2026-09-06, verbatim:",
+       "  \"how can we serve something we claim ingests from different forks and upstream if we",
