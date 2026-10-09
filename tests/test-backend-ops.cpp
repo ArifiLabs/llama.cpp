@@ -12019,6 +12019,13 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         }
     }
     test_cases.emplace_back(new test_mul_mat_id(GGML_TYPE_Q4_0, GGML_TYPE_F32, 32, 2, false, 2880, 32, 2880));
+    // arifi lane-302 lever 12: qwen4exp hyper-connection bf16 weights at the ngram verify widths
+    // (hc_attn_inject 4x10240, hc_down 320x10240, hc_up 10240x320); n straddles the 32 / 64 tile edges
+    for (int n : {9, 16, 23, 31, 32, 33, 47, 62, 64, 65}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_F32, 4, n, 10240, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_F32, 320, n, 10240, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_F32, 10240, n, 320, {1, 1}, {1, 1}));
+    }
 
     // multiple blocks per row: exercises the block-stride loop and the
     // per-expert base offset, which k == 256 alone leaves untested
@@ -13016,6 +13023,15 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     // lane 301 CPU co-compute census: the qwen4exp IQ3_S prefill dense matmuls at ub 4096 (Vulkan perf logger shapes)
     for (ggml_type type : {GGML_TYPE_Q6_K, GGML_TYPE_Q5_K, GGML_TYPE_Q4_K, GGML_TYPE_IQ4_XS}) {
         test_cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32, 12288, 4096, 2560, {1, 1}, {1, 1}));
+    }
+
+    // arifi lane-302 lever 12: qwen4exp hc bf16 matmuls + the served dense q6_K pair at the ngram verify widths
+    for (int n : {16, 23, 31, 33, 47, 62, 65}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_F32, 4, n, 10240, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_F32, 320, n, 10240, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_F32, 10240, n, 320, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 2560, n, 6144, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 10240, n, 2560, {1, 1}, {1, 1}));
     }
 
     // lane 301 lever 4: QSA mask chain + FA at served decode/prefill shapes (fused vs GGML_ARIFI_QSA_MASKFUSE=0, RGP target)

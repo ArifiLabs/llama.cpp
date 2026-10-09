@@ -645,6 +645,26 @@ static uint32_t moe_gather_nounroll_env() {
     return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
 }
 
+// lane-302 lever 12 (cell AC): verify-width MUL_MAT starves the GPU on long-K / small-M weights (hc_attn_inject 4x10240 at
+// n < 32 = 1 workgroup; hc_down 320x10240 at n 33..64 = 5). Both opt-in until measured; unset = stock selection.
+// GGML_ARIFI_MM_SPLITK_SMALLN: 1 = split_k also when n < the tile's N; 2 = planted wrong arm (drops the K tail, test only)
+static uint32_t mm_splitk_smalln_env() {
+    static const uint32_t v = [] {
+        const char * e = getenv("GGML_ARIFI_MM_SPLITK_SMALLN");
+        return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
+    }();
+    return v;
+}
+// GGML_ARIFI_MM_LARGE_MIN_N=<n0>: MUL_MAT (not _ID) takes the large tile for m > 64 and n >= n0 (n0 > 32); 0/unset = stock
+static uint32_t mm_large_min_n_env() {
+    static const uint32_t v = [] {
+        const char * e = getenv("GGML_ARIFI_MM_LARGE_MIN_N");
+        const long n0 = e != nullptr ? strtol(e, nullptr, 10) : 0;
+        return n0 > 32 ? (uint32_t) n0 : 0u;
+    }();
+    return v;
+}
+
 // lane-302 Route A: IQ3_S gather grid init (spec 4 of mul_mat_vec_iq3_s.comp), opt-in until measured.
 // 1 = batched loads before stores (byte-identical by construction); 2 = planted wrong arm (test only)
 static uint32_t moe_gather_iq3s_init_env() {
@@ -3280,6 +3300,20 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             return (uint32_t)configs.size() - 1;
         };
         device->matmul_id_tile_selector = device->matmul_tile_selector;
+        if (mm_large_min_n_env() != 0) {
+            // lane-302 lever 12: MUL_MAT only; the _ID selector keeps the stock copy above
+            device->matmul_tile_selector = [stock = device->matmul_id_tile_selector](uint32_t m, uint32_t n, uint32_t k, uint32_t scc,
+                                              const std::vector<vk_matmul_pipeline_pair>& configs) -> uint32_t {
+                if (configs.size() >= 3 && m > 64 && n >= mm_large_min_n_env()) return (uint32_t)configs.size() - 1;
+                return stock(m, n, k, scc, configs);
+            };
+        }
+    }
+    static bool lever12_logged = false;
+    if (!lever12_logged) {
+        lever12_logged = true;
+        fprintf(stderr, "ggml_vulkan: MUL_MAT small-n split_k %u, large tile min n %u, cores %u (lane-302 lever 12: GGML_ARIFI_MM_SPLITK_SMALLN / _MM_LARGE_MIN_N)\n",
+                mm_splitk_smalln_env(), mm_large_min_n_env(), device->shader_core_count);
     }
 
     // mul mat vec
@@ -7664,7 +7698,7 @@ static uint32_t ggml_vk_guess_split_k(ggml_backend_vk_context * ctx, uint32_t m,
     }
 
     uint32_t split_k = 1;
-    if (ctx->device->shader_core_count != 0 && n >= pipeline->wg_denoms[1]) {
+    if (ctx->device->shader_core_count != 0 && (n >= pipeline->wg_denoms[1] || mm_splitk_smalln_env() != 0)) {
         // If k is 'large' and the SMs will fill less than halfway, use split_k.
         uint32_t m_tiles = CEIL_DIV(m, pipeline->wg_denoms[0]);
         uint32_t n_tiles = CEIL_DIV(n, pipeline->wg_denoms[1]);
@@ -7729,6 +7763,9 @@ void ggml_vk_matmul(
     // Round the split size up to a multiple of 256 (k-quant alignment)
     uint32_t k_split = CEIL_DIV(k, split_k);
     k_split = ROUNDUP_POW2(k_split, 256);
+    if (mm_splitk_smalln_env() == 2 && n < pipeline->wg_denoms[1] && k_split > 256) {
+        k_split -= 256; // lane-302 lever 12 planted wrong arm: the last split stops short of K
+    }
 
     ggml_pipeline_request_descriptor_sets(ctx, pipeline, CEIL_DIV(batch, ctx->device->properties.limits.maxComputeWorkGroupCount[2]));
 
