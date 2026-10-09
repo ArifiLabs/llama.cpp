@@ -1,0 +1,666 @@
+From 328aa6605a44acf5c4abddad47564d76c5e00326 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 05:44:27 -0400
+Subject: [PATCH] docs: v0.1.3.1 run docs match the shipped tree and the gate
+ receipts
+
+HOW-WE-RUN.md: the Radeon 890M numbers and command lines now cite the v0.1.3.1 gate (evidence/v0.1.3.1/pg-*-state.json and pg-*-READ.txt); the depth-6 DFlash2 rows state their depth-3 and depth-4 baselines with the receipt rounds; every claim without a receipt in this repository is removed. ENVIRONMENT.md gains GGML_ARIFI_MOE_GATHER_EXT, GGML_ARIFI_QSA_MASKFUSE and LLAMA_ARIFI_KV_ZERO_FREED, and every Source citation is regenerated from the getenv sites of this tree. WINDOWS-SETTINGS.md keeps only claims a reader can check. docs/BUILDING.md: the Vulkan build line gains the ROCmFPX and TQ weight-format options. docs/OPTIONS-REGISTRY.md: the web UI comes from the pinned tools/ui/dist.tar.gz.
+
+Origin: ArifiLabs (native) - release documentation for this fork; no upstream origin exists.
+Measured-effect: UNMEASURED - documents only; no code path is touched.
+---
+ docs/BUILDING.md               |   1 +
+ docs/OPTIONS-REGISTRY.md       |   7 +-
+ docs/arifi/ENVIRONMENT.md      | 243 +++++++++++++++++----------------
+ docs/arifi/HOW-WE-RUN.md       |  94 +++++--------
+ docs/arifi/WINDOWS-SETTINGS.md |  17 ++-
+ 5 files changed, 172 insertions(+), 190 deletions(-)
+
+diff --git a/docs/BUILDING.md b/docs/BUILDING.md
+index 83639fb26a..6e7da15f1b 100644
+--- a/docs/BUILDING.md
++++ b/docs/BUILDING.md
+@@ -119,6 +119,7 @@ Several defaults in this fork are tuned for a GPU-offloaded rig and are the wron
+ ```bash
+ cmake -S . -B build-vulkan -G Ninja \
+   -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON \
++  -DGGML_ARIFI_ROCMFPX_FORMATS=ON -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON \
+   -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00" \
+   -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00" \
+   -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
+diff --git a/docs/OPTIONS-REGISTRY.md b/docs/OPTIONS-REGISTRY.md
+index d077b28ed0..7eafcc70b9 100644
+--- a/docs/OPTIONS-REGISTRY.md
++++ b/docs/OPTIONS-REGISTRY.md
+@@ -126,10 +126,11 @@ the embed helper immune to DLL shadowing, so UI-ON builds link cleanly.
+ | Variant | Flags | Use | Verified |
+ |---|---|---|---|
+ | UI ON (local default) | omit the four UI/WEBUI OFF flags; keep static-libgcc/libstdc++ + `-D_WIN32_WINNT=0x0A00` | Local dev / interactive web-UI testing. | 2026-07-22 (lane-110): `build-vulkan-ui` — embed ran without `0xC0000139`, server binary 70.59 MB vs 67.81 MB UI-OFF (+2.78 MB embedded assets), generated `tools/ui/ui.cpp` = 14.3 MB. Verified statically (no server launched). |
+-| UI OFF (minimal / CI-bench) | `-DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_USE_PREBUILT_WEBUI=OFF` | Bench-proof and CI builds where the UI is irrelevant to decode paths. | Remains available; `build-vulkan` bench artifact built this way. |
++| UI OFF (minimal / CI-bench) | `-DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_USE_PREBUILT_WEBUI=OFF` | Switches off the npm build and the network download. The pinned UI copy is still embedded; run the server with `--no-ui` for an API-only server. | Remains available. |
+ 
+-**UI asset source (2026-07-22):** the npm build path (`node v24.14.1` already installed —
+-`npm install` + `npm run build` into `tools/ui/dist`), not the prebuilt-release download.
++**UI asset source (current):** the pinned `tools/ui/dist.tar.gz`, sha256-checked and extracted
++at configure time (`tools/ui/CMakeLists.txt:36-59`); `scripts/ui-assets.cmake` takes `tools/ui/dist`
++first, so the build stays offline and repeatable. No npm build and no download are needed.
+ The UI embed touches no decode path; a UI-ON server binary is bench-equivalent to UI-OFF —
+ note the binary used in any RESULTS entry.
+ 
+diff --git a/docs/arifi/ENVIRONMENT.md b/docs/arifi/ENVIRONMENT.md
+index 4847309ec5..0b6d762a14 100644
+--- a/docs/arifi/ENVIRONMENT.md
++++ b/docs/arifi/ENVIRONMENT.md
+@@ -38,37 +38,37 @@ logs each one. A variable you set yourself always wins over the profile. Build o
+ 
+ | Variable | Values | Default | What it does | Source |
+ |---|---|---|---|---|
+-| `GGML_ARIFI_MMVQ_A_HOIST` | `0`, `1` | on for AMD (vendor probe), off elsewhere | q8_1 mat-vec decodes each weight block once per row and k-slice. Also enables the newer MMVQ routing (S-X8 at every width, Q4_K at n ≥ 5 when k ≤ 8192). | vk/ggml-vulkan.cpp:6097; reg |
+-| `GGML_ARIFI_MMVQ_A_HOIST_IQ1` | `1` | off | The same hoist for IQ1_S and IQ1_M. Never on when `GGML_ARIFI_MMVQ_A_HOIST=0`. | vk/ggml-vulkan.cpp:6110; reg |
+-| `GGML_ARIFI_MMVQ_ROUTE` | `legacy` | newer routing | `legacy` keeps the hoist but restores the older MMVQ routing rules. | vk/ggml-vulkan.cpp:6119; reg |
+-| `GGML_ARIFI_MMVQ_WIDE` | `legacy`, `v2` | `legacy` (4-row shape from n = 5) | `v2` starts the 4-row q8_1 shape at n = 4. | vk/ggml-vulkan.cpp:6379; reg |
+-| `GGML_ARIFI_MMVQ_WIDE_ROWS_FROM` | `0`-`8` | `4` | Index from which the 4-row shape is used. Overrides `GGML_ARIFI_MMVQ_WIDE`. | vk/ggml-vulkan.cpp:6385; reg |
+-| `GGML_ARIFI_Q4K_W5_SPLIT` | `0`, `1` | `1` on AMD RDNA3, `0` elsewhere | Q4_K split at n = 5-6 for m ≥ 131072 or m ≤ 1024, k ≤ 8192. | vk/ggml-vulkan.cpp:6422 |
+-| `GGML_ARIFI_Q4K_W5_OVERLAP` | `1`, `3` | `0` (off) | Overlap arms for the Q4_K n ≥ 5 path; measurement arms. | vk/ggml-vulkan.cpp:6400 |
+-| `GGML_ARIFI_Q4K_W5_ROWS` | `1`, `2`, `4` | `0` (shipped shape) | Rows per workgroup for the Q4_K n ≥ 5 path; measurement arms. | vk/ggml-vulkan.cpp:6405 |
+-| `GGML_ARIFI_Q5K_MMVQ` | `route`, `legacy` (`v2` runs as legacy) | `route` on AMD, `legacy` elsewhere | Q5_K on the q8_1 MMVQ path at n = 5-8, k ≤ 8192. | vk/ggml-vulkan.cpp:6139; reg |
+-| `GGML_ARIFI_Q5K_MMVQ_N1` | `0` | on (AMD) | `0` moves Q5_K at n = 1 from MMVQ to the f32 shader. | vk/ggml-vulkan.cpp:8727 |
+-| `GGML_ARIFI_Q5K_B_HOIST` | `0` | on for n ≤ 3, every device | Q5_K mat-vec loads each activation once per superblock. Bit-identical. | vk/ggml-vulkan.cpp:3551; reg |
+-| `GGML_ARIFI_Q6K_MMVQ` | `route`, `legacy`, `1`, `0` | `route` on AMD, `legacy` elsewhere | Q6_K on MMVQ at n = 7-8 (n = 6 at 5120x6144 on RDNA3). `1` = MMVQ at every width, `0` = off everywhere (both diagnostics). | vk/ggml-vulkan.cpp:6175; reg |
+-| `GGML_ARIFI_Q6K_MMVQ_ROWS` | `1`/`2`/`4`, with `@n` (from n) or `@n<n>` (only n), or `inherit` | RDNA3: 1 row at n = 6 only; elsewhere inherited | Rows per workgroup of the Q6_K MMVQ mat-vec. | vk/ggml-vulkan.cpp:3704; reg |
+-| `GGML_ARIFI_Q6K_F32_ROWS` | `1`/`2`/`4`, optional `@n` | inherited (2 on RDNA3) | Rows per workgroup of the Q6_K f32 mat-vec. | vk/ggml-vulkan.cpp:3658; reg |
+-| `GGML_ARIFI_Q6K_XFOLD` | `0` | on, every device | Q6_K activation hoist and −32 fold. Not bit-identical to off. | vk/ggml-vulkan.cpp:3525; reg |
+-| `GGML_VK_Q6K_DIRECT_SCALES` | `0` | on, every device | Q6_K reads its scales directly from the block. `0` = upstream shared-memory path. | vk/ggml-vulkan.cpp:3463; reg |
+-| `GGML_ARIFI_IQ3_MMVQ` | `legacy`, `v2` | `v2`, every device | iq3_s / iq3_xxs sign hoist. Bit-identical; `legacy` restores the inherited loop. | vk/ggml-vulkan.cpp:3580; reg |
+-| `GGML_ARIFI_IQ3_N7_ROWS` | `1`, `2`, `4` | `2` on AMD RDNA3, inherited (4) elsewhere | Rows at n = 7 for iq3_s / iq3_xxs. `4` brings back the register spill. | vk/ggml-vulkan.cpp:3620; reg |
+-| `GGML_ARIFI_IQ3S_N6_ROWS` | `1`, `2`, `4` | `2` on AMD RDNA3, inherited elsewhere | Rows at n = 6 for the iq3_s f32 mat-vec. | vk/ggml-vulkan.cpp:3743 |
+-| `GGML_ARIFI_IQ4XS_MMVQ` | `legacy`, `route`, `all`, `upstream` | `legacy`, every device | IQ4_XS on MMVQ. `route` failed the greedy-identity check, so it is off. | vk/ggml-vulkan.cpp:6198; reg |
+-| `GGML_ARIFI_IQ4XS_MV` | `upstream` | ours (16 threads per superblock) | `upstream` = upstream's IQ4_XS mat-vec shader. | vk/ggml-vulkan.cpp:6216 |
+-| `GGML_ARIFI_IQ4XS_MMVQ_BODY` | `upstream` | ours | `upstream` = upstream's IQ4_XS MMVQ body. | vk/ggml-vulkan.cpp:6218 |
+-| `GGML_ARIFI_IQ4NL_MMVQ` | `1` | off | IQ4_NL on the q8_1 integer dot at every n. | vk/ggml-vulkan.cpp:6449 |
+-| `GGML_ARIFI_ROCMFP4_MMVQ` | `0` (`1` = on) | on for ROCmFP4-FAST files | ROCmFP4-FAST on the q8_1 MMVQ route (AMD, n = 3 and 5). `0` = f32 dequant route. | vk/ggml-vulkan.cpp:6155; reg |
+-| `GGML_ARIFI_SX8_MMVQ` | `0` | on wherever the A-hoist is on (AMD) | S-X8 on the q8_1 MMVQ path. `0` = whole-block f32 route. | vk/ggml-vulkan.cpp:8656; reg |
+-| `GGML_VK_SX8_MMV_WG`, `GGML_VK_SX8_MMV_ROWS` | integers | unset = tuned lookup | Override workgroup size / rows of the S-X8 mat-vec. Setting either bypasses the tuned table. | vk/ggml-vulkan.cpp:1835, 1839; reg |
++| `GGML_ARIFI_MMVQ_A_HOIST` | `0`, `1` | on for AMD (vendor probe), off elsewhere | q8_1 mat-vec decodes each weight block once per row and k-slice. Also enables the newer MMVQ routing (S-X8 at every width, Q4_K at n ≥ 5 when k ≤ 8192). | vk/ggml-vulkan.cpp:6148; reg |
++| `GGML_ARIFI_MMVQ_A_HOIST_IQ1` | `1` | off | The same hoist for IQ1_S and IQ1_M. Never on when `GGML_ARIFI_MMVQ_A_HOIST=0`. | vk/ggml-vulkan.cpp:6161; reg |
++| `GGML_ARIFI_MMVQ_ROUTE` | `legacy` | newer routing | `legacy` keeps the hoist but restores the older MMVQ routing rules. | vk/ggml-vulkan.cpp:6170; reg |
++| `GGML_ARIFI_MMVQ_WIDE` | `legacy`, `v2` | `legacy` (4-row shape from n = 5) | `v2` starts the 4-row q8_1 shape at n = 4. | vk/ggml-vulkan.cpp:6430; reg |
++| `GGML_ARIFI_MMVQ_WIDE_ROWS_FROM` | `0`-`8` | `4` | Index from which the 4-row shape is used. Overrides `GGML_ARIFI_MMVQ_WIDE`. | vk/ggml-vulkan.cpp:6436; reg |
++| `GGML_ARIFI_Q4K_W5_SPLIT` | `0`, `1` | `1` on AMD RDNA3, `0` elsewhere | Q4_K split at n = 5-6 for m ≥ 131072 or m ≤ 1024, k ≤ 8192. | vk/ggml-vulkan.cpp:6473 |
++| `GGML_ARIFI_Q4K_W5_OVERLAP` | `1`, `3` | `0` (off) | Overlap arms for the Q4_K n ≥ 5 path; measurement arms. | vk/ggml-vulkan.cpp:6451, 6463 |
++| `GGML_ARIFI_Q4K_W5_ROWS` | `1`, `2`, `4` | `0` (shipped shape) | Rows per workgroup for the Q4_K n ≥ 5 path; measurement arms. | vk/ggml-vulkan.cpp:6456, 6463 |
++| `GGML_ARIFI_Q5K_MMVQ` | `route`, `legacy` (`v2` runs as legacy) | `route` on AMD, `legacy` elsewhere | Q5_K on the q8_1 MMVQ path at n = 5-8, k ≤ 8192. | vk/ggml-vulkan.cpp:6190; reg |
++| `GGML_ARIFI_Q5K_MMVQ_N1` | `0` | on (AMD) | `0` moves Q5_K at n = 1 from MMVQ to the f32 shader. | vk/ggml-vulkan.cpp:8794 |
++| `GGML_ARIFI_Q5K_B_HOIST` | `0` | on for n ≤ 3, every device | Q5_K mat-vec loads each activation once per superblock. Bit-identical. | vk/ggml-vulkan.cpp:3559; reg |
++| `GGML_ARIFI_Q6K_MMVQ` | `route`, `legacy`, `1`, `0` | `route` on AMD, `legacy` elsewhere | Q6_K on MMVQ at n = 7-8 (n = 6 at 5120x6144 on RDNA3). `1` = MMVQ at every width, `0` = off everywhere (both diagnostics). | vk/ggml-vulkan.cpp:6226, 8615; reg |
++| `GGML_ARIFI_Q6K_MMVQ_ROWS` | `1`/`2`/`4`, with `@n` (from n) or `@n<n>` (only n), or `inherit` | RDNA3: 1 row at n = 6 only; elsewhere inherited | Rows per workgroup of the Q6_K MMVQ mat-vec. | vk/ggml-vulkan.cpp:3712; reg |
++| `GGML_ARIFI_Q6K_F32_ROWS` | `1`/`2`/`4`, optional `@n` | inherited (2 on RDNA3) | Rows per workgroup of the Q6_K f32 mat-vec. | vk/ggml-vulkan.cpp:3666; reg |
++| `GGML_ARIFI_Q6K_XFOLD` | `0` | on, every device | Q6_K activation hoist and −32 fold. Not bit-identical to off. | vk/ggml-vulkan.cpp:3533; reg |
++| `GGML_VK_Q6K_DIRECT_SCALES` | `0` | on, every device | Q6_K reads its scales directly from the block. `0` = upstream shared-memory path. | vk/ggml-vulkan.cpp:3471; reg |
++| `GGML_ARIFI_IQ3_MMVQ` | `legacy`, `v2` | `v2`, every device | iq3_s / iq3_xxs sign hoist. Bit-identical; `legacy` restores the inherited loop. | vk/ggml-vulkan.cpp:3588; reg |
++| `GGML_ARIFI_IQ3_N7_ROWS` | `1`, `2`, `4` | `2` on AMD RDNA3, inherited (4) elsewhere | Rows at n = 7 for iq3_s / iq3_xxs. `4` brings back the register spill. | vk/ggml-vulkan.cpp:3628; reg |
++| `GGML_ARIFI_IQ3S_N6_ROWS` | `1`, `2`, `4` | `2` on AMD RDNA3, inherited elsewhere | Rows at n = 6 for the iq3_s f32 mat-vec. | vk/ggml-vulkan.cpp:3751, 3757 |
++| `GGML_ARIFI_IQ4XS_MMVQ` | `legacy`, `route`, `all`, `upstream` | `legacy`, every device | IQ4_XS on MMVQ. `route` failed the greedy-identity check, so it is off. | vk/ggml-vulkan.cpp:6249; reg |
++| `GGML_ARIFI_IQ4XS_MV` | `upstream` | ours (16 threads per superblock) | `upstream` = upstream's IQ4_XS mat-vec shader. | vk/ggml-vulkan.cpp:6267 |
++| `GGML_ARIFI_IQ4XS_MMVQ_BODY` | `upstream` | ours | `upstream` = upstream's IQ4_XS MMVQ body. | vk/ggml-vulkan.cpp:6269 |
++| `GGML_ARIFI_IQ4NL_MMVQ` | `1` | off | IQ4_NL on the q8_1 integer dot at every n. | vk/ggml-vulkan.cpp:6500 |
++| `GGML_ARIFI_ROCMFP4_MMVQ` | `0` (`1` = on) | on for ROCmFP4-FAST files | ROCmFP4-FAST on the q8_1 MMVQ route (AMD, n = 3 and 5). `0` = f32 dequant route. | vk/ggml-vulkan.cpp:6206; reg |
++| `GGML_ARIFI_SX8_MMVQ` | `0` | on wherever the A-hoist is on (AMD) | S-X8 on the q8_1 MMVQ path. `0` = whole-block f32 route. | vk/ggml-vulkan.cpp:8723; reg |
++| `GGML_VK_SX8_MMV_WG`, `GGML_VK_SX8_MMV_ROWS` | integers | unset = tuned lookup | Override workgroup size / rows of the S-X8 mat-vec. Setting either bypasses the tuned table. | vk/ggml-vulkan.cpp:1843, 1847; reg |
+ | `GGML_ARIFI_MMV_MAX_COLS` | integer | `8` | Widest n that takes mat-vec; wider goes to GEMM. `0` = GEMM at every width. | vk/ggml-vulkan-types.h:403; reg |
+-| `GGML_ARIFI_MMV_ID_ROWS` | `1`, `2`, `4`, `8` | `4` | Rows per workgroup of the MoE (MUL_MAT_ID) mat-vec, RDNA3 only. | vk/ggml-vulkan.cpp:3310; reg |
+-| `GGML_ARIFI_G128_MMV_ROWS` | integer > 0 | `2` | Rows per workgroup of the Q2_0_G128 mat-vec. | vk/ggml-vulkan.cpp:3341; reg |
+-| `GGML_VK_DISABLE_TQ_SUBGROUP` | any value | unset = subgroup path on where the subgroup size is a multiple of 32 | Forces the 32-thread TQ mat-vec instead of the subgroup one. | vk/ggml-vulkan.cpp:3402 |
+-| `GGML_ARIFI_Q8_1_SCALE` | `f16` | off (upstream) | Scale-consistent activation rounding for q8_1. | vk/ggml-vulkan.cpp:4307 |
++| `GGML_ARIFI_MMV_ID_ROWS` | `1`, `2`, `4`, `8` | `4` | Rows per workgroup of the MoE (MUL_MAT_ID) mat-vec, RDNA3 only. | vk/ggml-vulkan.cpp:3318; reg |
++| `GGML_ARIFI_G128_MMV_ROWS` | integer > 0 | `2` | Rows per workgroup of the Q2_0_G128 mat-vec. | vk/ggml-vulkan.cpp:3349; reg |
++| `GGML_VK_DISABLE_TQ_SUBGROUP` | any value | unset = subgroup path on where the subgroup size is a multiple of 32 | Forces the 32-thread TQ mat-vec instead of the subgroup one. | vk/ggml-vulkan.cpp:3410 |
++| `GGML_ARIFI_Q8_1_SCALE` | `f16` | off (upstream) | Scale-consistent activation rounding for q8_1. | vk/ggml-vulkan.cpp:4358 |
+ 
+ <!-- src: vk/ggml-vulkan.cpp:1835-1904, 3310-3341, 3402, 3463, 3510-3760, 4307, 6092-6460, 8656, 8716-8731; vk/ggml-vulkan-types.h:403; docs/OPTIONS-REGISTRY.md "Runtime controls" -->
+ 
+@@ -76,36 +76,37 @@ logs each one. A variable you set yourself always wins over the profile. Build o
+ 
+ | Variable | Values | Default | What it does | Source |
+ |---|---|---|---|---|
+-| `GGML_ARIFI_SX8_CM1` | `0` | on (int8 coopmat devices) | S-X8 prompt reading on the int8 coopmat1 kernel. `0` = float path. | vk/ggml-vulkan.cpp:2492 |
+-| `GGML_ARIFI_SX8_CM1_MIN_N` | integer | `56` | Smallest prompt width (columns) that takes the int8 S-X8 path. | vk/ggml-vulkan.cpp:6297; vk/ggml-vulkan-types.h:1333 |
+-| `GGML_ARIFI_SX8_CM1_ROLES` | comma list of tensor roles | all roles | Limits the int8 S-X8 path to these roles. | vk/ggml-vulkan.cpp:6288 |
+-| `GGML_ARIFI_SX8_CM1_2D` | role list, `none`, `all` | `ffn_up` | Roles that use two-digit int8 on outlier blocks. | vk/ggml-vulkan.cpp:6303 |
+-| `GGML_ARIFI_SX8_CM1_2D_GATE` | integer | `20` | Two-digit only where amax > gate x mean abs(x). | vk/ggml-vulkan.cpp:6323; vk/ggml-vulkan-types.h:1343 |
+-| `GGML_ARIFI_SX8_CM1_H16` | `1` | off | 16-value activation scales instead of two-digit (only if int8 coopmat K = 16). | vk/ggml-vulkan.cpp:6317 |
+-| `GGML_ARIFI_SX8_MM_PACKED` | `0`, `1` | `1` on AMD RDNA3, `0` elsewhere | Packed S-X8 tile decode in the prefill matmul. Bit-identical. | vk/ggml-vulkan.cpp:2467; reg |
+-| `GGML_ARIFI_MMQ_UNDER_COOPMAT` | `1` | off | Registers integer MMQ pipelines on coopmat devices (S-X8, Q8_0). | vk/ggml-vulkan.cpp:2485; reg |
+-| `GGML_ARIFI_CM1_INT_MIN_N` | integer | `48` on AMD RDNA3, `0` elsewhere | Smallest width that takes the int8 coopmat1 MMQ. | vk/ggml-vulkan.cpp:6228 |
+-| `GGML_ARIFI_CM1_INT_SMALLN` | `down`, `off` | off | `down` = IQ4_XS / Q6_K `ffn_down` takes int8 below the minimum width. | vk/ggml-vulkan.cpp:6234 |
+-| `GGML_ARIFI_CM1_F16B` | `upstream`, `never` | `auto` | When coopmat1 converts the B matrix to f16. | vk/ggml-vulkan.cpp:6341 |
+-| `GGML_ARIFI_CM1_F16B_MIN_N` | integer | `24` on AMD RDNA3, `0` elsewhere | Smallest width for f16-B conversion. | vk/ggml-vulkan.cpp:6349 |
+-| `GGML_ARIFI_CM1_F16B_ID` | `0` | on | f16-B staging for the MoE (MUL_MAT_ID) coopmat1 path. `0` keeps f32-B. | vk/ggml-vulkan.cpp:9963 |
+-| `GGML_ARIFI_Q8_0_CM1` | `floor`, `on`, `off`, or a row count | `floor` (int8 on, `ssm_out` stays float) | Q8_0 prompt reading on the int8 coopmat1 kernel. | vk/ggml-vulkan.cpp:6243 |
+-| `GGML_ARIFI_Q8_0_CM1_ONLY`, `GGML_ARIFI_Q8_0_CM1_SKIP` | role lists (`none` = empty) | skip `ssm_out` | Roles that take, or skip, the Q8_0 int8 path. | vk/ggml-vulkan.cpp:6253, 6254 |
+-| `GGML_ARIFI_Q8_0_CM1_2D` | role list | none | Roles that use two-digit int8 for Q8_0. | vk/ggml-vulkan.cpp:6271 |
+-| `GGML_ARIFI_Q8_0_CM1_2D_SHIFT` | `0`-`16` | `8` | Second-digit prescale (2^shift) for Q8_0 two-digit. | vk/ggml-vulkan.cpp:6280; vk/ggml-vulkan-types.h:1326 |
+-| `GGML_ARIFI_F32ACC` | role list | none | Forces f32 accumulation on the float path for these roles. | vk/ggml-vulkan.cpp:6329 |
+-| `GGML_ARIFI_FA_SPARSE_PREFILL` | `0` | on | Sparse attention at prefill (QSA). | vk/ggml-vulkan.cpp:10794 |
+-| `GGML_ARIFI_FA_SPARSE_PREFILL_MIN_RATIO` | integer ≥ 1 | `2` | Minimum ratio for the sparse prefill path to engage. | vk/ggml-vulkan.cpp:10795 |
+-| `GGML_ARIFI_FA_DEQUANT_KV` | `0`, `1` | on, every device (upstream behaviour) | `1` forces the f16 dequant-KV scratch copy, `0` the in-place quantized-KV read. | vk/ggml-vulkan.cpp:10893; reg |
+-| `GGML_VK_DISABLE_GDN_BANK` | any value | unset = fused GDN state bank on | Turns off the in-place recurrent-state update (GDN state bank). Also refuses `LLAMA_GDN_REPLAY`. | vk/ggml-vulkan.cpp:6502; src/llama-memory-recurrent.cpp:60 |
+-| `GGML_VK_DISABLE_HC_POST_W` | any value | unset = fused on | Turns off the single-dispatch hyper-connection post step. | vk/ggml-vulkan.cpp:6501 |
++| `GGML_ARIFI_SX8_CM1` | `0` | on (int8 coopmat devices) | S-X8 prompt reading on the int8 coopmat1 kernel. `0` = float path. | vk/ggml-vulkan.cpp:2500 |
++| `GGML_ARIFI_SX8_CM1_MIN_N` | integer | `56` | Smallest prompt width (columns) that takes the int8 S-X8 path. | vk/ggml-vulkan.cpp:6348 |
++| `GGML_ARIFI_SX8_CM1_ROLES` | comma list of tensor roles | all roles | Limits the int8 S-X8 path to these roles. | vk/ggml-vulkan.cpp:6339 |
++| `GGML_ARIFI_SX8_CM1_2D` | role list, `none`, `all` | `ffn_up` | Roles that use two-digit int8 on outlier blocks. | vk/ggml-vulkan.cpp:6354 |
++| `GGML_ARIFI_SX8_CM1_2D_GATE` | integer | `20` | Two-digit only where amax > gate x mean abs(x). | vk/ggml-vulkan.cpp:6374 |
++| `GGML_ARIFI_SX8_CM1_H16` | `1` | off | 16-value activation scales instead of two-digit (only if int8 coopmat K = 16). | vk/ggml-vulkan.cpp:6368 |
++| `GGML_ARIFI_SX8_MM_PACKED` | `0`, `1` | `1` on AMD RDNA3, `0` elsewhere | Packed S-X8 tile decode in the prefill matmul. Bit-identical. | vk/ggml-vulkan.cpp:2475; reg |
++| `GGML_ARIFI_MMQ_UNDER_COOPMAT` | `1` | off | Registers integer MMQ pipelines on coopmat devices (S-X8, Q8_0). | vk/ggml-vulkan.cpp:2493; reg |
++| `GGML_ARIFI_CM1_INT_MIN_N` | integer | `48` on AMD RDNA3, `0` elsewhere | Smallest width that takes the int8 coopmat1 MMQ. | vk/ggml-vulkan.cpp:6279 |
++| `GGML_ARIFI_CM1_INT_SMALLN` | `down`, `off` | off | `down` = IQ4_XS / Q6_K `ffn_down` takes int8 below the minimum width. | vk/ggml-vulkan.cpp:6285 |
++| `GGML_ARIFI_CM1_F16B` | `upstream`, `never` | `auto` | When coopmat1 converts the B matrix to f16. | vk/ggml-vulkan.cpp:6392 |
++| `GGML_ARIFI_CM1_F16B_MIN_N` | integer | `24` on AMD RDNA3, `0` elsewhere | Smallest width for f16-B conversion. | vk/ggml-vulkan.cpp:6400 |
++| `GGML_ARIFI_CM1_F16B_ID` | `0` | on | f16-B staging for the MoE (MUL_MAT_ID) coopmat1 path. `0` keeps f32-B. | vk/ggml-vulkan.cpp:10030 |
++| `GGML_ARIFI_Q8_0_CM1` | `floor`, `on`, `off`, or a row count | `floor` (int8 on, `ssm_out` stays float) | Q8_0 prompt reading on the int8 coopmat1 kernel. | vk/ggml-vulkan.cpp:6294 |
++| `GGML_ARIFI_Q8_0_CM1_ONLY`, `GGML_ARIFI_Q8_0_CM1_SKIP` | role lists (`none` = empty) | skip `ssm_out` | Roles that take, or skip, the Q8_0 int8 path. | vk/ggml-vulkan.cpp:6304, 6305 |
++| `GGML_ARIFI_Q8_0_CM1_2D` | role list | none | Roles that use two-digit int8 for Q8_0. | vk/ggml-vulkan.cpp:6322 |
++| `GGML_ARIFI_Q8_0_CM1_2D_SHIFT` | `0`-`16` | `8` | Second-digit prescale (2^shift) for Q8_0 two-digit. | vk/ggml-vulkan.cpp:6331 |
++| `GGML_ARIFI_F32ACC` | role list | none | Forces f32 accumulation on the float path for these roles. | vk/ggml-vulkan.cpp:6380 |
++| `GGML_ARIFI_FA_SPARSE_PREFILL` | `0` | on | Sparse attention at prefill (QSA). | vk/ggml-vulkan.cpp:10865 |
++| `GGML_ARIFI_FA_SPARSE_PREFILL_MIN_RATIO` | integer ≥ 1 | `2` | Minimum ratio for the sparse prefill path to engage. | vk/ggml-vulkan.cpp:10866 |
++| `GGML_ARIFI_QSA_MASKFUSE` | `0` (`red` = planted defect) | on | Fuses the sparse-prefill (QSA) mask chain into Vulkan flash attention (Qwen3.8-Flash-Next prompt reading). `0` keeps it unfused. | vk/ggml-vulkan.cpp:11061, 17526 |
++| `GGML_ARIFI_FA_DEQUANT_KV` | `0`, `1` | on, every device (upstream behaviour) | `1` forces the f16 dequant-KV scratch copy, `0` the in-place quantized-KV read. | vk/ggml-vulkan.cpp:10965; reg |
++| `GGML_VK_DISABLE_GDN_BANK` | any value | unset = fused GDN state bank on | Turns off the in-place recurrent-state update (GDN state bank). Also refuses `LLAMA_GDN_REPLAY`. | vk/ggml-vulkan.cpp:6553; src/llama-memory-recurrent.cpp:60 |
++| `GGML_VK_DISABLE_HC_POST_W` | any value | unset = fused on | Turns off the single-dispatch hyper-connection post step. | vk/ggml-vulkan.cpp:6552 |
+ | `GGML_VK_CONCAT_TRANSPOSE` | `0` | on | Tiled concat-transpose for the delta-net conv state. | vk/ggml-vulkan.cpp:354; reg |
+-| `GGML_VK_ESCHA_NO_MULTICOL` | any value | unset = multi-column on | Escha-W2: one column per dispatch instead of shared decode across columns. | vk/ggml-vulkan.cpp:9595 |
+-| `GGML_VK_ESCHA_MAX_COLS` | integer | `0` (no cap) | Caps the Escha-W2 column ladder (A/B arm). | vk/ggml-vulkan.cpp:9627 |
+-| `GGML_VK_ESCHA_F16_STAGE` | any value | off | Escha-W2 f16 staging (opt-in, error budget not yet proven). | vk/ggml-vulkan.cpp:9663 |
+-| `GGML_VK_ESCHA_BLOCK2` | any value | off | Escha-W2 two-block variant (measured slower; kept reachable). | vk/ggml-vulkan.cpp:9681 |
+-| `GGML_VK_ESCHA_LUT` | any value | off | Escha-W2 table-generator arm, single column. | vk/ggml-vulkan.cpp:9686 |
+-| `GGML_VK_ESCHA_NO_COOPMAT` | any value | unset = coopmat used where available | Escha-W2 widest rung without coopmat. | vk/ggml-vulkan.cpp:9699 |
++| `GGML_VK_ESCHA_NO_MULTICOL` | any value | unset = multi-column on | Escha-W2: one column per dispatch instead of shared decode across columns. | vk/ggml-vulkan.cpp:9662 |
++| `GGML_VK_ESCHA_MAX_COLS` | integer | `0` (no cap) | Caps the Escha-W2 column ladder (A/B arm). | vk/ggml-vulkan.cpp:9694 |
++| `GGML_VK_ESCHA_F16_STAGE` | any value | off | Escha-W2 f16 staging (opt-in, error budget not yet proven). | vk/ggml-vulkan.cpp:9730 |
++| `GGML_VK_ESCHA_BLOCK2` | any value | off | Escha-W2 two-block variant (measured slower; kept reachable). | vk/ggml-vulkan.cpp:9748 |
++| `GGML_VK_ESCHA_LUT` | any value | off | Escha-W2 table-generator arm, single column. | vk/ggml-vulkan.cpp:9753 |
++| `GGML_VK_ESCHA_NO_COOPMAT` | any value | unset = coopmat used where available | Escha-W2 widest rung without coopmat. | vk/ggml-vulkan.cpp:9766 |
+ 
+ <!-- src: vk/ggml-vulkan.cpp:354, 2460-2500, 6220-6357, 6498-6502, 9595-9705, 9955-9966, 10790-10796, 10885-10897; vk/ggml-vulkan-types.h:1314-1347; README.md "What is new in this release" -->
+ 
+@@ -113,16 +114,16 @@ logs each one. A variable you set yourself always wins over the profile. Build o
+ 
+ | Variable | Values | Default | What it does | Source |
+ |---|---|---|---|---|
+-| `GGML_ARIFI_MOE_NVME` | `1` | off | Streams routed experts from NVMe with direct reads. Needs `-lm mmap -b 8 -ub 8 --no-host --no-op-offload` and `--moe-cache`. | vk/ggml-vulkan-buffers.cpp:749; src/llama-model-loader.cpp:24; reg |
+-| `GGML_ARIFI_MOE_NVME_CACHE_MIB` | MiB | unset (required when streaming) | Must equal the `--moe-cache` budget, or loading refuses. | src/llama-context.cpp:833; reg |
+-| `GGML_ARIFI_MOE_NVME_IO_LANES` | integer ≥ number of drives | `4` | Parallel NVMe read lanes. | src/llama-moe-disk.h:190; reg |
+-| `GGML_ARIFI_MOE_NVME_REPLICAS` | path to a manifest | unset | Names identical copies of the model file on other drives; misses are spread over them. | src/llama-moe-disk.h:47; reg |
++| `GGML_ARIFI_MOE_NVME` | `1` | off | Streams routed experts from NVMe with direct reads. Needs `-lm mmap -b 8 -ub 8 --no-host --no-op-offload` and `--moe-cache`. | vk/ggml-vulkan-buffers.cpp:749, 798, 956; src/llama-model-loader.cpp:24; vk/ggml-vulkan-moe-cache.cpp:550, 593, 623; vk/ggml-vulkan-shared-budget.h:96; reg |
++| `GGML_ARIFI_MOE_NVME_CACHE_MIB` | MiB | unset (required when streaming) | Must equal the `--moe-cache` budget, or loading refuses. | src/llama-context.cpp:830; src/llama-model-loader.cpp:1569; reg |
++| `GGML_ARIFI_MOE_NVME_IO_LANES` | integer ≥ number of drives | `4` | Parallel NVMe read lanes. | src/llama-moe-disk.h:190; examples/moe-disk-probe/moe-replica-probe.cpp:55, 83; reg |
++| `GGML_ARIFI_MOE_NVME_REPLICAS` | path to a manifest | unset | Names identical copies of the model file on other drives; misses are spread over them. | src/llama-moe-disk.h:47; examples/moe-disk-probe/moe-replica-probe.cpp:100; reg |
+ | `GGML_ARIFI_MOE_NVME_BATCH_READ` | `0` | on | `0` = sequential per-range reads. | ggml/src/ggml-backend.cpp:103 |
+ | `GGML_ARIFI_MOE_NVME_SIBLING` | `0` | on | Sibling pre-read of experts. | vk/ggml-vulkan-moe-cache.cpp:251 |
+ | `GGML_ARIFI_MOE_NVME_POLICY` | `none` | heat (any other value) | `none` = no residency reuse between expert nodes. | vk/ggml-vulkan-moe-cache.cpp:1698; reg |
+ | `GGML_ARIFI_MOE_NVME_RESIDENT_MIB` | MiB | `61440` | Budget for experts kept resident. | vk/ggml-vulkan-moe-cache.cpp:1592; reg |
+-| `GGML_ARIFI_MOE_NVME_HOT_MODE` | `1` | off | Preloads the hottest experts from a profile. | vk/ggml-vulkan-moe-cache.cpp:1547; reg |
+-| `GGML_ARIFI_MOE_NVME_PROFILE_IN`, `_PROFILE_OUT`, `_PROFILE_TAG` | path, path, text | unset | Read / write an expert-use profile; the tag must match the model. | vk/ggml-vulkan-moe-cache.cpp:1548, 1862, 1561; reg |
++| `GGML_ARIFI_MOE_NVME_HOT_MODE` | `1` | off | Preloads the hottest experts from a profile. | vk/ggml-vulkan-moe-cache.cpp:1547; examples/moe-disk-probe/moe-batch-probe.cpp:212; src/llama-model-loader.cpp:1587; reg |
++| `GGML_ARIFI_MOE_NVME_PROFILE_IN`, `_PROFILE_OUT`, `_PROFILE_TAG` | path, path, text | unset | Read / write an expert-use profile; the tag must match the model. | vk/ggml-vulkan-moe-cache.cpp:1548; reg |
+ | `GGML_ARIFI_MOE_NVME_SIDECAR_MAP` | path | unset | Manifest of sidecar files for streaming. | src/llama-model-loader.cpp:1965 |
+ | `GGML_ARIFI_MOE_DECODE_MAX_TOKENS` | `1`-`64` | `1` | Largest node counted as a decode step in the cache counters (3 covers a depth-2 verify). Counters only. | vk/ggml-vulkan-moe-cache.cpp:200 |
+ | `GGML_ARIFI_VK_MOE_CACHE` | `v1`, `v2` | `v1` | Vulkan expert-cache version. | vk/ggml-vulkan-moe-cache.cpp:138; reg |
+@@ -134,15 +135,16 @@ logs each one. A variable you set yourself always wins over the profile. Build o
+ | `GGML_ARIFI_VK_SHARED_BUDGET_MIB` | MiB | no cap below 11800 | Caps shared (host-visible) allocations; hard maximum 11800 MiB. | vk/ggml-vulkan-shared-budget.h:76, 107; reg |
+ | `GGML_ARIFI_VK_SHARED_ADMIT` | `0`, `1` | on only when `GGML_ARIFI_MOE_NVME=1` | Admission check for shared allocations against available RAM minus 4 GiB. | vk/ggml-vulkan-shared-budget.h:94; reg |
+ | `GGML_ARIFI_VK_FILE_CACHE_RESERVE_MIB` | MiB | `2048` | RAM kept for the file-mapping window. | vk/ggml-vulkan-shared-budget.h:72, 103; reg |
+-| `GGML_ARIFI_MOE_GATHER` | `0`, `1`, `2`, `4` | `1` | MoE expert mat-vec in slot-major order at this width. `0` = off. | vk/ggml-vulkan.cpp:4015 |
+-| `GGML_ARIFI_MOE_GATHER_ROWS` | `1`, `2`, `4`, `8` | inherited rows; iq3_s gather `2` | Rows per workgroup of the gather pipelines. | vk/ggml-vulkan.cpp:4023, 4037 |
++| `GGML_ARIFI_MOE_GATHER` | `0`, `1`, `2`, `4` | `1` | MoE expert mat-vec in slot-major order at this width. `0` = off. | vk/ggml-vulkan.cpp:4023 |
++| `GGML_ARIFI_MOE_GATHER_ROWS` | `1`, `2`, `4`, `8` | inherited rows; iq3_s gather `2` | Rows per workgroup of the gather pipelines. | vk/ggml-vulkan.cpp:4031, 4045 |
+ | `GGML_ARIFI_MOE_GATHER_TAIL` | `1` (`2` = planted defect) | off | IQ4_NL gather K-tail redistribution. | vk/ggml-vulkan.cpp:622 |
+-| `GGML_ARIFI_IQ2S_BODY` | `0`-`5` (`2`, `3` = diagnostics) | `5` (int8 body + batched grid init) | IQ2_S gather body. `0` = legacy body. | vk/ggml-vulkan.cpp:631, 4040 |
++| `GGML_ARIFI_IQ2S_BODY` | `0`-`5` (`2`, `3` = diagnostics) | `5` (int8 body + batched grid init) | IQ2_S gather body. `0` = legacy body. | vk/ggml-vulkan.cpp:631 |
+ | `GGML_ARIFI_IQ4NL_BODY` | `1` (`3` = planted defect) | `0` | IQ4_NL gather byte-pair lookup table. | vk/ggml-vulkan.cpp:638 |
+ | `GGML_ARIFI_IQ3S_INIT`, `GGML_ARIFI_IQ3XXS_INIT` | `1` (`2` = planted defect) | `0` | Batched grid init for the iq3 gathers. | vk/ggml-vulkan.cpp:645, 651 |
+-| `GGML_SCHED_PREFETCH_EXPERTS` | integer slots | `0` (off) | Host-to-device expert prefetch; off when NVMe streaming is on. | ggml/src/ggml-backend.cpp:2452; reg |
+-| `EXPERT_BUNDLE_PATH` | path | unset | PowerInfer: loads experts from an on-disk Q4_0 bundle (CPU streaming). | src/llama-model.cpp:2043; reg |
+-| `GENERATE_EXPERT_BUNDLE` | any value | unset | PowerInfer: writes an expert bundle. | src/llama-model.cpp:2049 |
++| `GGML_ARIFI_MOE_GATHER_EXT` | `1` | off | Expert-gather mat-vec for the legacy f32-path types and every q8_1 MoE id type (Q2_0 among them). Off keeps the per-token expert loop. | vk/ggml-vulkan.cpp:659 |
++| `GGML_SCHED_PREFETCH_EXPERTS` | integer slots | `0` (off) | Host-to-device expert prefetch; off when NVMe streaming is on. | ggml/src/ggml-backend.cpp:2468; reg |
++| `EXPERT_BUNDLE_PATH` | path | unset | PowerInfer: loads experts from an on-disk Q4_0 bundle (CPU streaming). | src/llama-model.cpp:2043; ggml/src/ggml-cpu/repack.cpp:5345; reg |
++| `GENERATE_EXPERT_BUNDLE` | any value | unset | PowerInfer: writes an expert bundle. | src/llama-model.cpp:2049; ggml/src/ggml-cpu/repack.cpp:5351 |
+ | `MAX_N_CACHED` | integer > 512 | `6144` (3 x 64 x 32) | PowerInfer hot-expert RAM cache size. | powerinfer/moe_sparse_pipeline/moe_sparse_pipeline/config.hpp:66; reg |
+ | `POWERINFER_IOCP` | `0` | on (Windows) | `0` = synchronous reads instead of IOCP for bundle streaming. | powerinfer/moe_sparse_pipeline/iou.cpp:28; reg |
+ | `POWERINFER_NO_BUFFERING` | `1` | off | Opens the bundle with `FILE_FLAG_NO_BUFFERING` (Windows). | powerinfer/moe_sparse_pipeline/iou.cpp:64; reg |
+@@ -156,7 +158,7 @@ logs each one. A variable you set yourself always wins over the profile. Build o
+ 
+ | Variable | Values | Default | What it does | Source |
+ |---|---|---|---|---|
+-| `LLAMA_SPEC_DRAFT_RECENT_PENALTY` | `k:strength` | `4:3.0` (on) | MTP drafting de-weights its `k` most recent tokens. `0:0` turns it off. | common/speculative.cpp:1968-1969, 2047 |
++| `LLAMA_SPEC_DRAFT_RECENT_PENALTY` | `k:strength` | `4:3.0` (on) | MTP drafting de-weights its `k` most recent tokens. `0:0` turns it off. | common/speculative.cpp:2047 |
+ | `LLAMA_DFLASH_FUSED_INJECT` | `1` | off (legacy encode+decode path) | `1` = fused DFlash2 KV injection, the upstream shape. This fork's default differs from upstream on purpose. | common/speculative.cpp:1195; reg |
+ | `GGML_DFLASH2_ADAPTIVE` | truthy | off | DFlash2 adaptive depth (measured a loss on S-X8 27B). | common/speculative.cpp:1187 |
+ | `GGML_DFLASH2_PREVENTIVE` | truthy | off | Preventive mode of the adaptive controller; needs `GGML_DFLASH2_ADAPTIVE`. | common/speculative.cpp:1188 |
+@@ -166,7 +168,7 @@ logs each one. A variable you set yourself always wins over the profile. Build o
+ | `LLAMA_SPEC_NGRAM_CAP0` | integer | `0` (off) | Caps each n-gram draft at this many tokens after a miss; the cap doubles on full accepts. | common/speculative.cpp:2996 |
+ | `LLAMA_RING_OFF` | any value | ring on | Turns off the recurrent-state ring; rollback then uses checkpoints only. | common/common.h:422 |
+ | `LLAMA_SPEC_CKPT_ON_DEVICE` | any value | off | Draft checkpoints saved on the device (partial state). | tools/server/server-context.cpp:492 |
+-| `LLAMA_GDN_REPLAY` | any value | off | Deferred commit and replay of gated-delta-net state. Refused when the GDN bank is off. | src/llama-memory-recurrent.cpp:58 |
++| `LLAMA_GDN_REPLAY` | any value | off | Deferred commit and replay of gated-delta-net state. Refused when the GDN bank is off. | src/llama-memory-recurrent.cpp:58; tools/server/server-context.cpp:3670, 4698 |
+ | `LLAMA_TOOLCALL_ANCHOR_TOKEN` | token id | unset | Adds one token id to the tool-call checkpoint anchors (`--ctx-checkpoints-toolcall`). | tools/server/server-context.cpp:2312 |
+ 
+ <!-- src: listed file:line sites; README.md "Speculative decoding, MoE and memory"; docs/arifi/STATUS.md "Results that showed no gain" (adaptive depth) -->
+@@ -175,11 +177,12 @@ logs each one. A variable you set yourself always wins over the profile. Build o
+ 
+ | Variable | Values | Default | What it does | Source |
+ |---|---|---|---|---|
+-| `LLAMA_ATTN_ROT_K_OVERRIDE` | non-zero | off | Turns on Hadamard rotation of a quantized K cache (head dim a multiple of 64). | src/llama-kv-cache.cpp:751 |
+-| `LLAMA_ATTN_ROT_V_OVERRIDE` | non-zero | off | The same for a quantized V cache. | src/llama-kv-cache.cpp:758 |
+-| `LLAMA_ATTN_ROT_K_NROT` | integer | `64` | Rotation tile size. | src/llama-kv-cache.cpp:2742 |
+-| `LLAMA_ALLOW_TBQ3_KV` | any value | off | Allows a `tbq3_0` V cache, which is refused by default (token repetition). | src/llama-context.cpp:4654; reg |
+-| `LLAMA_KV_NGRAM_INDEX` | `0` | on (`seq_pos` index) | `0` = the older window scan over used cells. | src/llama-kv-cache.cpp:3191; reg |
++| `LLAMA_ATTN_ROT_K_OVERRIDE` | non-zero | off | Turns on Hadamard rotation of a quantized K cache (head dim a multiple of 64). | src/llama-kv-cache.cpp:753 |
++| `LLAMA_ATTN_ROT_V_OVERRIDE` | non-zero | off | The same for a quantized V cache. | src/llama-kv-cache.cpp:760 |
++| `LLAMA_ATTN_ROT_K_NROT` | integer | `64` | Rotation tile size. | src/llama-kv-cache.cpp:790 |
++| `LLAMA_ALLOW_TBQ3_KV` | any value | off | Allows a `tbq3_0` V cache, which is refused by default (token repetition). | src/llama-context.cpp:4685; reg |
++| `LLAMA_KV_NGRAM_INDEX` | `0` | on (`seq_pos` index) | `0` = the older window scan over used cells. | src/llama-kv-cache.cpp:3300; reg |
++| `LLAMA_ARIFI_KV_ZERO_FREED` | `0` | on | Zeroes freed KV cells before they are reused. `0` leaves them as they are. | src/llama-kv-cache.cpp:1821 |
+ | `LLAMA_KV_TAIL` | cells | `0` (off) | Keeps the newest N KV cells exact in an f16 ring beside a quantized cache. | src/llama-kv-cache.cpp:121 |
+ | `LLAMA_KV_TAIL_F16` | non-zero | off | Composes the read window in f16 instead of f32. | src/llama-kv-cache.cpp:166 |
+ | `LLAMA_KV_TAIL_PERQ` | non-zero | off | Per-query source selection: quantized body and exact ring in one attention node. | src/llama-kv-cache.cpp:185 |
+@@ -187,7 +190,7 @@ logs each one. A variable you set yourself always wins over the profile. Build o
+ | `GGML_RECURRENT_STATE_F16` | any value | off (f32) | Stores the recurrent state in f16. Numerics not validated. | src/llama-model.cpp:2821; reg |
+ | `LLAMA_RS_WROW_SHARE` | `0` | on | Shares one write-row input in the recurrent-state ring. | src/models/delta-net-base.cpp:891 |
+ | `TURBO_AUTO_ASYMMETRIC` | `0` | on | With a turbo K cache and GQA ratio ≥ 6, upgrades K to `q8_0`. | src/llama-kv-cache.cpp:284 |
+-| `TURBO_LAYER_ADAPTIVE` | `1`-`7` | `0` (off) | Per-layer K/V types for TurboQuant caches. | src/llama-kv-cache.cpp:456 |
++| `TURBO_LAYER_ADAPTIVE` | `1`-`7` | `0` (off) | Per-layer K/V types for TurboQuant caches. | src/llama-kv-cache.cpp:458 |
+ 
+ <!-- src: listed file:line sites; docs/OPTIONS-REGISTRY.md "Runtime controls" -->
+ 
+@@ -195,7 +198,7 @@ logs each one. A variable you set yourself always wins over the profile. Build o
+ 
+ | Variable | Values | Default | What it does | Source |
+ |---|---|---|---|---|
+-| `GGML_VK_UMA_PLACEMENT` | `auto`, `legacy`, `device-local` | `auto`: `device-local` on the Radeon 890M (AMD device id `0x150e`), `legacy` (upstream) elsewhere, 780M included | Which memory type backs device buffers on a shared-memory GPU. | vk/ggml-vulkan.cpp:5181; reg |
++| `GGML_VK_UMA_PLACEMENT` | `auto`, `legacy`, `device-local` | `auto`: `device-local` on the Radeon 890M (AMD device id `0x150e`), `legacy` (upstream) elsewhere, 780M included | Which memory type backs device buffers on a shared-memory GPU. | vk/ggml-vulkan.cpp:5232, 5484; reg |
+ | `GGML_VK_PLACEMENT` | `bulk-large-heap` | off | Alternative bulk placement on the large heap. | vk/ggml-vulkan-buffers.cpp:37; reg |
+ | `GGML_VK_STAGING_RESERVE` | bytes (`0` = none) | the suballocation block size (1 GiB unless lowered) | Memory reserved for staging. | vk/ggml-vulkan-buffers.cpp:228; reg |
+ | `GGML_VK_HOST_SPLIT_MAX` | bytes (`0` = no host placement) | derived from free heap bytes | Bound for buffers placed in host memory. | vk/ggml-vulkan-buffers.cpp:1935; reg |
+@@ -205,15 +208,15 @@ logs each one. A variable you set yourself always wins over the profile. Build o
+ | `GGML_ARIFI_UMA_READ_PATH` | `auto`, `direct`, `staging` | `auto` | How tensors are read back on a shared-memory GPU. `direct` = upstream. | vk/ggml-vulkan-buffers.cpp:1500; reg |
+ | `LLAMA_MMAP_PREFETCH` | `0`, `1` | on, but off when a device copies weights out of the mapping | Whole-file prefetch of a memory-mapped model. | src/llama-model.cpp:1816 |
+ | `GGML_ARIFI_MMAP_PREFETCH_MIB` | MiB (max 2048) | whole file when prefetch is on; `0` while NVMe streaming | Size of the mmap prefetch. | src/llama-model-loader.cpp:1880; reg |
+-| `LLAMA_PLE_PREFETCH` | `0`, `1`, `2` | `1` | Prefetches embedding rows per prompt chunk (`2` also in decode, unmeasured). Qwen3.8-Flash-Next. | src/models/qwen4exp.cpp:1383 |
+-| `LLAMA_PLE_RELEASE` | `0` | on | Releases embedding rows from the Windows working set. | src/models/qwen4exp.cpp:1358 |
+-| `LLAMA_PLE_RELEASE_MIB` | MiB | `256` | Release budget for the above. | src/models/qwen4exp.cpp:1359 |
++| `LLAMA_PLE_PREFETCH` | `0`, `1`, `2` | `1` | Prefetches embedding rows per prompt chunk (`2` also in decode, unmeasured). Qwen3.8-Flash-Next. | src/models/qwen4exp.cpp:1387 |
++| `LLAMA_PLE_RELEASE` | `0` | on | Releases embedding rows from the Windows working set. | src/models/qwen4exp.cpp:1362 |
++| `LLAMA_PLE_RELEASE_MIB` | MiB | `256` | Release budget for the above. | src/models/qwen4exp.cpp:1363 |
+ | `LLAMA_L299_LAYOUT_OFF` | any value | layout copies on | Turns off the Flash-Next conv-state layout copies. | src/models/qwen4exp.cpp:14 |
+ | `LLAMA_L299_ALPHA_OFF` | any value | on | Turns off the Flash-Next alpha-bias reorder (MUL_MAT + ADD fusion). | src/models/qwen4exp.cpp:20 |
+ | `LLAMA_WIN_UNMAP_FRAGMENT` | any value | off | Drops mapped pages from the Windows working set after use. | src/llama-mmap.cpp:832 |
+ | `GGML_ARIFI_SX8_PCA` | `0` | on when a PCA companion GGUF is found | `0` skips the S-X8 PCA companion file. | src/llama-model-loader.cpp:878; reg |
+ | `GGML_ARIFI_SX8_PCA_FILE` | path | auto-discovered | Names the PCA companion file. | src/llama-model-loader.cpp:881; reg |
+-| `GGML_SCHED_SPLIT_INPUTS_CAP` | integer ≥ 30 | `64` | Inputs per scheduler split. Upstream's fixed value is 30; `30` reproduces it. | ggml/src/ggml-backend.cpp:1181-1186 |
++| `GGML_SCHED_SPLIT_INPUTS_CAP` | integer ≥ 30 | `64` | Inputs per scheduler split. Upstream's fixed value is 30; `30` reproduces it. | ggml/src/ggml-backend.cpp:1186 |
+ 
+ <!-- src: listed file:line sites; README.md "What is new in this release" -->
+ 
+@@ -223,11 +226,11 @@ All off by default. They make a token's arithmetic at a verify width match plain
+ 
+ | Variable | Values | Default | What it does | Source |
+ |---|---|---|---|---|
+-| `GGML_ARIFI_MMV_ROWSTABLE_N` | integer | `0` (off) | For n up to N, mat-vec uses the n = 1 route, fold and dot order. | vk/ggml-vulkan.cpp:1904 |
+-| `GGML_ARIFI_FA_ROWSTABLE_N` | integer | `0` (off) | For up to N query rows, flash attention keeps the n = 1 KV split. | vk/ggml-vulkan.cpp:10747 |
+-| `GGML_ARIFI_ADD_RMS_ROWSTABLE_N` | integer | `0` (off) | For up to N rows, the ADD + RMS_NORM fusion keeps n = 1 partials. | vk/ggml-vulkan.cpp:7030 |
++| `GGML_ARIFI_MMV_ROWSTABLE_N` | integer | `0` (off) | For n up to N, mat-vec uses the n = 1 route, fold and dot order. | vk/ggml-vulkan.cpp:1912 |
++| `GGML_ARIFI_FA_ROWSTABLE_N` | integer | `0` (off) | For up to N query rows, flash attention keeps the n = 1 KV split. | vk/ggml-vulkan.cpp:10818 |
++| `GGML_ARIFI_ADD_RMS_ROWSTABLE_N` | integer | `0` (off) | For up to N rows, the ADD + RMS_NORM fusion keeps n = 1 partials. | vk/ggml-vulkan.cpp:7087 |
+ | `LLAMA_ARIFI_MOE_SUMROWS_MAX` | integer ≥ 1 | `1` | Widths up to N keep the n = 1 MoE expert-sum order. | src/llama-graph.cpp:2578 |
+-| `GGML_VK_FA_DEADV_KEEP` | any value | off (fix on) | Restores the old path where masked KV cells reach the coopmat1 attention sum (non-repeatable output). | vk/ggml-vulkan.cpp:1511 |
++| `GGML_VK_FA_DEADV_KEEP` | any value | off (fix on) | Restores the old path where masked KV cells reach the coopmat1 attention sum (non-repeatable output). | vk/ggml-vulkan.cpp:1519 |
+ 
+ <!-- src: listed file:line sites; README.md "What is new in this release" (repeatable greedy decode) -->
+ 
+@@ -235,8 +238,8 @@ All off by default. They make a token's arithmetic at a verify width match plain
+ 
+ | Variable | Values | Default | What it does | Source |
+ |---|---|---|---|---|
+-| `GGML_ARIFI_VNNI_REPACK` | `1`, `2` | off | CPU repack for Q1_0 / Q2_0 / Q2_0_G128 weights (`2` = dual residency). Set `1` on a CPU-only machine. | ggml/src/ggml-cpu/repack.cpp:4865, 5322; reg |
+-| `LLAMA_R46_CKPT_FAIL_ALLOC`, `LLAMA_R46_CKPT_FAIL_COPY` | attempt number | inert | Checkpoint fault injection; compiled only with the test-only fault-injection build option. | src/llama-context.cpp:3441, 3500 |
++| `GGML_ARIFI_VNNI_REPACK` | `1`, `2` | off | CPU repack for Q1_0 / Q2_0 / Q2_0_G128 weights (`2` = dual residency). Set `1` on a CPU-only machine. | ggml/src/ggml-cpu/repack.cpp:4865, 5322; src/llama.cpp:338; reg |
++| `LLAMA_R46_CKPT_FAIL_ALLOC`, `LLAMA_R46_CKPT_FAIL_COPY` | attempt number | inert | Checkpoint fault injection; compiled only with the test-only fault-injection build option. | src/llama-context.cpp:3472, 3531 |
+ 
+ <!-- src: listed file:line sites; src/llama-context.cpp:3347-3352 (compile gate) -->
+ 
+@@ -246,35 +249,35 @@ These print traces, run probes, or plant a known defect so a test can prove it f
+ 
+ | Variable | What it does | Source |
+ |---|---|---|
+-| `GGML_ARIFI_MMVQ_TRACE` | One stderr line per distinct MMVQ route decision. | vk/ggml-vulkan.cpp:8878; reg |
+-| `GGML_ARIFI_MMV_PIPELINE_TRACE` | Traces the mat-vec pipeline chosen per call. | vk/ggml-vulkan.cpp:8997 |
+-| `GGML_ARIFI_FA_TRACE` | One stderr line per distinct flash-attention dispatch. | vk/ggml-vulkan.cpp:11109 |
+-| `GGML_ARIFI_GATE_CENSUS` | Records S-X8 two-digit gate counts. | vk/ggml-vulkan.cpp:8449 |
+-| `GGML_ARIFI_VK_MOE_TRACE` | Traces expert-cache staging and fills. | vk/ggml-vulkan-buffers.cpp:1128 |
+-| `GGML_VK_ALLOC_TRACE` | Prints every buffer placement decision. | vk/ggml-vulkan-buffers.cpp:1942; reg |
+-| `GGML_VK_GDN_BANK_DEBUG` | Debug output for the GDN state bank. | vk/ggml-vulkan.cpp:16910 |
+-| `GGML_VK_GDN_SNAP1_DIAG` | Writes GDN bank slot 0 only; output is wrong on any rejected draft. | vk/ggml-vulkan.cpp:13263; reg |
+-| `GGML_VK_FA_MASK_OPT_DISABLE` | Turns off the flash-attention mask optimization. | vk/ggml-vulkan.cpp:11035 |
+-| `GGML_VK_FORCE_SYNC` | Barrier before every node (bisect switch). | vk/ggml-vulkan.cpp:15310 |
+-| `GGML_VK_ARIFI_NEG_CPY_F16` | Loads a wrong-scale quant-to-f16 copy (negative control). | vk/ggml-vulkan.cpp:4441 |
+-| `GGML_VK_GDN_BANK_PLANT`, `GGML_VK_GDN_REPLAY_PLANT`, `GGML_VK_HC_POST_W_PLANT` | Planted defects for the GDN bank, GDN replay and hyper-connection op tests. | vk/ggml-vulkan.cpp:13260, 13273, 15505 |
+-| `GGML_ARIFI_SX8_CM1_RED`, `GGML_ARIFI_SX8_RESIDUAL_RED` | Planted defects for the S-X8 int8 path. | vk/ggml-vulkan.cpp:2496, 8252 |
+-| `GGML_ARIFI_MOE_GATHER_PLANT` | Planted wrong token count in the expert gather. | vk/ggml-vulkan.cpp:4019 |
+-| `GGML_ARIFI_QSA_POOL_RED`, `GGML_ARIFI_QSA_RED_PLANT` | Planted defects in the indexer-key cache and sparse prefill. | src/llama-memory-hybrid-idx.cpp:557; vk/ggml-vulkan.cpp:11286 |
+-| `LLAMA_PLE_PREFETCH_PLANT`, `LLAMA_L299_ALPHA_PLANT`, `LLAMA_L299_LAYOUT_PLANT`, `LLAMA_QWEN4EXP_MTP_RED` | Planted defects in the Flash-Next graph. | src/models/qwen4exp.cpp:1384, 1105, 1449, 334 |
+-| `LLAMA_R45_RED_QUANT_VIEW` | Planted defect in checkpoint sizing. | src/llama-context.cpp:3332 |
+-| `LLAMA_KV_TAIL_NORING`, `LLAMA_KV_TAIL_BREAK`, `LLAMA_KV_TAIL_HIWATER`, `LLAMA_KV_TAIL_AUDIT` | KV tail control arm, broken arm, legacy rule and content audit. | src/llama-kv-cache.cpp:143, 196, 209; src/llama-context.cpp:2479 |
++| `GGML_ARIFI_MMVQ_TRACE` | One stderr line per distinct MMVQ route decision. | vk/ggml-vulkan.cpp:8945, 9031; reg |
++| `GGML_ARIFI_MMV_PIPELINE_TRACE` | Traces the mat-vec pipeline chosen per call. | vk/ggml-vulkan.cpp:9064 |
++| `GGML_ARIFI_FA_TRACE` | One stderr line per distinct flash-attention dispatch. | vk/ggml-vulkan.cpp:11213 |
++| `GGML_ARIFI_GATE_CENSUS` | Records S-X8 two-digit gate counts. | vk/ggml-vulkan.cpp:8516 |
++| `GGML_ARIFI_VK_MOE_TRACE` | Traces expert-cache staging and fills. | vk/ggml-vulkan-buffers.cpp:1128, 1145; vk/ggml-vulkan-moe-cache.cpp:191, 650, 681, 706, 955, 2014; src/llama-moe-disk.h:271 |
++| `GGML_VK_ALLOC_TRACE` | Prints every buffer placement decision. | vk/ggml-vulkan-buffers.cpp:317, 1942; vk/ggml-vulkan-moe-cache.cpp:650, 681, 706; src/llama-context.cpp:3495, 3843; reg |
++| `GGML_VK_GDN_BANK_DEBUG` | Debug output for the GDN state bank. | vk/ggml-vulkan.cpp:17046 |
++| `GGML_VK_GDN_SNAP1_DIAG` | Writes GDN bank slot 0 only; output is wrong on any rejected draft. | vk/ggml-vulkan.cpp:13386; reg |
++| `GGML_VK_FA_MASK_OPT_DISABLE` | Turns off the flash-attention mask optimization. | vk/ggml-vulkan.cpp:11139 |
++| `GGML_VK_FORCE_SYNC` | Barrier before every node (bisect switch). | vk/ggml-vulkan.cpp:15439 |
++| `GGML_VK_ARIFI_NEG_CPY_F16` | Loads a wrong-scale quant-to-f16 copy (negative control). | vk/ggml-vulkan.cpp:4492 |
++| `GGML_VK_GDN_BANK_PLANT`, `GGML_VK_GDN_REPLAY_PLANT`, `GGML_VK_HC_POST_W_PLANT` | Planted defects for the GDN bank, GDN replay and hyper-connection op tests. | vk/ggml-vulkan.cpp:13383, 13396, 15641 |
++| `GGML_ARIFI_SX8_CM1_RED`, `GGML_ARIFI_SX8_RESIDUAL_RED` | Planted defects for the S-X8 int8 path. | vk/ggml-vulkan.cpp:2504, 8314 |
++| `GGML_ARIFI_MOE_GATHER_PLANT` | Planted wrong token count in the expert gather. | vk/ggml-vulkan.cpp:4027 |
++| `GGML_ARIFI_QSA_POOL_RED`, `GGML_ARIFI_QSA_RED_PLANT` | Planted defects in the indexer-key cache and sparse prefill. | src/llama-memory-hybrid-idx.cpp:557; vk/ggml-vulkan.cpp:11398 |
++| `LLAMA_PLE_PREFETCH_PLANT`, `LLAMA_L299_ALPHA_PLANT`, `LLAMA_L299_LAYOUT_PLANT`, `LLAMA_QWEN4EXP_MTP_RED` | Planted defects in the Flash-Next graph. | src/models/qwen4exp.cpp:334, 1109, 1388, 1453 |
++| `LLAMA_R45_RED_QUANT_VIEW` | Planted defect in checkpoint sizing. | src/llama-context.cpp:3363 |
++| `LLAMA_KV_TAIL_NORING`, `LLAMA_KV_TAIL_BREAK`, `LLAMA_KV_TAIL_HIWATER`, `LLAMA_KV_TAIL_AUDIT` | KV tail control arm, broken arm, legacy rule and content audit. | src/llama-kv-cache.cpp:143, 196, 209; src/llama-context.cpp:2492 |
+ | `LLAMA_CKPT_STORAGE_TRACE` | Traces checkpoint storage in the server. | tools/server/server-context.cpp:2834 |
+-| `LLAMA_DFLASH_VERIFY_TRACE` | Traces DFlash2 verify steps. | common/speculative.cpp:1768 |
++| `LLAMA_DFLASH_VERIFY_TRACE` | Traces DFlash2 verify steps. | common/speculative.cpp:1768; tools/server/server-context.cpp:3711, 4564, 4651, 4739 |
+ | `LLAMA_DFLASH_CAPTURE_PROBE`, `LLAMA_PPL_CAPTURE_PROBE` | Keeps the next-token capture on without drafting (server / perplexity). | tools/server/server-context.cpp:1545; tools/perplexity/perplexity.cpp:2071 |
+ | `LLAMA_DFLASH2_FORCE_CAUSAL` | Runs the DFlash2 drafter causally (probe). | common/speculative.cpp:1261 |
+-| `LLAMA_FORCE_RS_SEQ` | Forces the recurrent-state ring size. | common/common.cpp:1827 |
+-| `LLAMA_MOE_UNION_LOG` | Logs the union of routed experts. | common/common.cpp:1858 |
+-| `LANE110_PROF` | Per-op profiling. | src/llama-context.cpp:1829; reg |
+-| `LLAMA_GDN_SEQ_VERIFY`, `LLAMA_RS_R1_OFF`, `LLAMA_RS_CONV_MULTIWRITE`, `LLAMA_RS_CONV_NOSHIFT`, `LLAMA_RS_CONV_FRESH1`, `LLAMA_RS_BANK_OFF_SSM` | Ring diagnostics. Any one of them turns off the runtime-index ring. | src/llama-memory-recurrent.cpp:44-49 |
+-| `LLAMA_RS_BANK_OFF_CONV`, `LLAMA_RS_CONV_DIRECT`, `LLAMA_RS_SHIFT_CONT`, `LLAMA_RS_DUMMY_NODE` | Ring-repair probes in the delta-net graph. | src/models/delta-net-base.cpp:490, 615, 606, 482 |
+-| `LLAMA_RS_AGE_FIX`, `LLAMA_RS_NO_ZERO_ON_CLEAR`, `LLAMA_RS_ZERO_PLANE0_ONLY`, `LLAMA_RS_ZERO_SL_ONLY`, `LLAMA_RS_ZERO_RL_ONLY` | Ring-repair arms for state restore and clearing. | src/llama-memory-recurrent.cpp:390, 286, 290, 293, 294 |
+-| `LLAMA_RS_TRACE`, `LLAMA_RS_POST_DECODE_HASH`, `LLAMA_RS_ZERO_AUDIT`, `LLAMA_RS_ZERO_GATHER_OUT`, `LLAMA_RS_ZERO_TAP` | Ring traces, hashes and zeroing probes. | src/llama-graph.cpp:1224, 3951, 3965; src/llama-context.cpp:2548, 2565 |
++| `LLAMA_FORCE_RS_SEQ` | Forces the recurrent-state ring size. | common/common.cpp:1829 |
++| `LLAMA_MOE_UNION_LOG` | Logs the union of routed experts. | common/common.cpp:1860 |
++| `LANE110_PROF` | Per-op profiling. | src/llama-context.cpp:1831; ggml/src/ggml-cpu/ops.cpp:12761; reg |
++| `LLAMA_GDN_SEQ_VERIFY`, `LLAMA_RS_R1_OFF`, `LLAMA_RS_CONV_MULTIWRITE`, `LLAMA_RS_CONV_NOSHIFT`, `LLAMA_RS_CONV_FRESH1`, `LLAMA_RS_BANK_OFF_SSM` | Ring diagnostics. Any one of them turns off the runtime-index ring. | src/llama-memory-recurrent.cpp:44, 45, 46, 47, 48, 49; src/models/delta-net-base.cpp:534, 535, 545, 669, 704, 808; tools/server/server-context.cpp:1694 |
++| `LLAMA_RS_BANK_OFF_CONV`, `LLAMA_RS_CONV_DIRECT`, `LLAMA_RS_SHIFT_CONT`, `LLAMA_RS_DUMMY_NODE` | Ring-repair probes in the delta-net graph. | src/models/delta-net-base.cpp:482, 490, 606, 615 |
++| `LLAMA_RS_AGE_FIX`, `LLAMA_RS_NO_ZERO_ON_CLEAR`, `LLAMA_RS_ZERO_PLANE0_ONLY`, `LLAMA_RS_ZERO_SL_ONLY`, `LLAMA_RS_ZERO_RL_ONLY` | Ring-repair arms for state restore and clearing. | src/llama-memory-recurrent.cpp:286, 290, 293, 294, 390 |
++| `LLAMA_RS_TRACE`, `LLAMA_RS_POST_DECODE_HASH`, `LLAMA_RS_ZERO_AUDIT`, `LLAMA_RS_ZERO_GATHER_OUT`, `LLAMA_RS_ZERO_TAP` | Ring traces, hashes and zeroing probes. | src/llama-graph.cpp:425, 1224, 3951, 3965; src/llama-context.cpp:2561, 2578; src/llama-memory-recurrent.cpp:229, 257, 340, 1762 |
+ 
+ <!-- src: listed file:line sites -->
+ 
+@@ -282,9 +285,9 @@ These print traces, run probes, or plant a known defect so a test can prove it f
+ 
+ | Variable | Upstream `b11178` | This fork | Source |
+ |---|---|---|---|
+-| `LLAMA_ATTN_ROT_DISABLE` (and rotation itself) | Hadamard rotation on by default for a quantized K or V cache (head dim a multiple of 64). | Rotation off on both sides by default; turn it on per side with `LLAMA_ATTN_ROT_K_OVERRIDE` / `_V_OVERRIDE`. `LLAMA_ATTN_ROT_DISABLE=1` still blocks both. | src/llama-kv-cache.cpp:739-763 |
+-| `GGML_VK_DISABLE_FUSION` | Disables Vulkan op fusions. | Also refuses `LLAMA_GDN_REPLAY`. | src/llama-memory-recurrent.cpp:60 |
+-| `GGML_VK_FA_SPARSE_DISABLE` | Read by upstream. | Also turns off this fork's sparse prefill path. | vk/ggml-vulkan.cpp:10796 |
++| `LLAMA_ATTN_ROT_DISABLE` (and rotation itself) | Hadamard rotation on by default for a quantized K or V cache (head dim a multiple of 64). | Rotation off on both sides by default; turn it on per side with `LLAMA_ATTN_ROT_K_OVERRIDE` / `_V_OVERRIDE`. `LLAMA_ATTN_ROT_DISABLE=1` still blocks both. | src/llama-kv-cache.cpp:741 |
++| `GGML_VK_DISABLE_FUSION` | Disables Vulkan op fusions. | Also refuses `LLAMA_GDN_REPLAY`. | src/llama-memory-recurrent.cpp:60; vk/ggml-vulkan.cpp:6551 |
++| `GGML_VK_FA_SPARSE_DISABLE` | Read by upstream. | Also turns off this fork's sparse prefill path. | vk/ggml-vulkan.cpp:10867, 11044 |
+ 
+ The scheduler split-input cap (`GGML_SCHED_SPLIT_INPUTS_CAP`, a new variable) also changes a default: 64 instead of upstream's fixed 30.
+ 
+@@ -301,7 +304,7 @@ Each flag can also be set through its `LLAMA_ARG_*` variable, as in upstream.
+ | `LLAMA_ARG_CTX_CHECKPOINTS_TOOLCALL` | `--ctx-checkpoints-toolcall {on,off}` | on (needs `--ctx-checkpoints` > 0) | common/arg.cpp:1789 |
+ | `LLAMA_ARG_DFLASH_DEFER_INJECTION` | `--dflash-defer-injection <0\|1>` | `1` | common/arg.cpp:4307 |
+ | `LLAMA_ARG_KV_MEAN_CENTER` | `--kv-mean-center FNAME` | unused (needs `-DGGML_ARIFI_KV_MEANCENTER=ON` and `-ctk q4_0`) | common/arg.cpp:2550 |
+-| `LLAMA_ARG_MOE_CACHE` | `--moe-cache MODE` | `auto` | common/arg.cpp:2917 |
++| `LLAMA_ARG_MOE_CACHE` | `--moe-cache MODE` | `auto` | common/arg.cpp:2917; tools/llama-bench/llama-bench.cpp:371 |
+ | `LLAMA_ARG_SPEC_CHAIN` | `--spec-chain 0\|1\|N` | off | common/arg.cpp:4398 |
+ | `LLAMA_ARG_SPEC_DRAFT_ADAPTIVE` | `--spec-draft-adaptive` | off | common/arg.cpp:4333 |
+ | `LLAMA_ARG_SPEC_DRAFT_N_MIN_ADAPTIVE` | `--spec-draft-n-min-adaptive N` | see `--help` | common/arg.cpp:4380 |
+diff --git a/docs/arifi/HOW-WE-RUN.md b/docs/arifi/HOW-WE-RUN.md
+index f83bd7346a..f44d36b438 100644
+--- a/docs/arifi/HOW-WE-RUN.md
++++ b/docs/arifi/HOW-WE-RUN.md
+@@ -14,16 +14,18 @@ variable we used, and the reason for each one. Environment variables in full: [E
+ 
+ ## Radeon 890M (current machine)
+ 
+-Numbers: v0.1.3.0 measurements; v0.1.3.1 re-measure pending.
++Numbers: the v0.1.3.1 gate, 2026-10-09, this release's arm ("point" column of
++[`evidence/v0.1.3.1/pg-*-READ.txt`](../../evidence/v0.1.3.1/)).
+ 
+-Machine: Minisforum AI X1 Pro-470, Ryzen AI 9 HX 470, Radeon 890M (RDNA 3.5, gfx1150), 96 GB DDR5-5600 with
+-72 GB reserved for the GPU, Windows 11. Each row is one ABBA A/B, 4 rounds per arm (8 for MTP arms), means.
++Machine: Ryzen AI 9 HX 470, Radeon 890M (RDNA 3.5, gfx1150), 96 GB DDR5-5600 with 72 GB reserved for the GPU,
++Windows 11. Each row is an A/B against v0.1.3.0 on the same file: 2 timed rounds per launch (short and long prompt),
++2 launches per arm for Flash-Next and Ornith-1.5 (order ABBA), 1 per arm for the 27B lines; means shown.
+ 
+-The lines below are copied from each measured cell's own record (`evidence/b11178-x1i2/sg-*-state.json`,
++The lines below are copied from each measured arm's own record (`evidence/v0.1.3.1/pg-*-state.json`,
+ field `args`). Each starts with `llama-server -m <model file>`; port and host are left out.
+-Those records set **no environment variables** (`env` is empty); only GLM-5.3 needs some.
++The arms in the tables below set **no environment variables** (`env` is empty); only GLM-5.3 needs some.
+ 
+-<!-- src: README.md "Speed: Radeon 890M", "Test system (Radeon 890M numbers)"; evidence/b11178-x1i2/sg-fn-10062152-state.json, sg-orn-10062214-state.json, sg-ornm-10062326-state.json, sg-q27-10062103-state.json, sg-q27m-10062225-state.json, sg-sx8-10062125-state.json -->
++<!-- src: README.md "Speed: Radeon 890M"; evidence/v0.1.3.1/pg-fn-10082312-state.json, pg-orn-10090030-state.json, pg-q27-10090115-state.json, pg-sx8-10090129-state.json (args, env); evidence/v0.1.3.1/pg-*-READ.txt (point column) -->
+ 
+ ### Qwen3.8-Flash-Next, GSQ-RCO IQ3_S (ISTA-DASLab)
+ 
+@@ -40,7 +42,7 @@ Those records set **no environment variables** (`env` is empty); only GLM-5.3 ne
+ 
+ Environment variables: none.
+ 
+-<!-- src: README.md "How we run it (Radeon 890M)", "Models used"; evidence/b11178-x1i2/sg-fn-10062152-state.json (arms 0-10) -->
++<!-- src: README.md "How we run it (Radeon 890M)", "Models used"; evidence/v0.1.3.1/pg-fn-10082312-state.json (arms P, M, F), pg-fn-10082312-READ.txt -->
+ 
+ ### Ornith-1.5 35B-A3B MoE, Q4_K_M (ornith-ai)
+ 
+@@ -57,7 +59,7 @@ Environment variables: none.
+ 
+ Environment variables: none.
+ 
+-<!-- src: README.md "How we run it (Radeon 890M)", "Models used"; evidence/b11178-x1i2/sg-orn-10062214-state.json, sg-ornm-10062326-state.json -->
++<!-- src: README.md "How we run it (Radeon 890M)", "Models used"; evidence/v0.1.3.1/pg-orn-10090030-state.json (arms P, M, D), pg-orn-10090030-READ.txt -->
+ 
+ ### Qwen3.8 27B dense, UD-Q4_K_XL (Huihui abliterated, huihui-ai)
+ 
+@@ -73,10 +75,11 @@ Environment variables: none.
+ | DFlash2 | 6 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | `--spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 6` | 13.62 / 11.55 |
+ 
+ Environment variables: none. The README leaves `-t 16 -tb 32` out of its lines; the measured records carry them.
+-After this release, a separate ABBA A/B found depth 6 faster than depth 3 on this file: DFlash2
+-11.63 → 13.28 t/s short (+14.2%), long +1.2%. The next release moves this row to depth 6.
++This release moves the DFlash2 row from depth 3 to depth 6: short-prompt decode 12.09 → 13.62 t/s (+12.6%).
++The depth-3 number is the mean of the v0.1.3.0 rounds 12.11 / 12.06 / 12.10 / 12.08 (DFlash2, short, the values
++after the arrow) in [`sg-q27-10062103-shipgate-read.txt`](../../evidence/b11178-x1i2/sg-q27-10062103-shipgate-read.txt).
+ 
+-<!-- src: README.md "How we run it (Radeon 890M)", "Speed: Radeon 890M" (Since this release), "Models used"; evidence/b11178-x1i2/sg-q27-10062103-state.json, sg-q27m-10062225-state.json -->
++<!-- src: README.md "How we run it (Radeon 890M)", "Speed: Radeon 890M", "Models used"; evidence/v0.1.3.1/pg-q27-10090115-state.json (arms P, M, D), pg-q27-10090115-READ.txt; evidence/b11178-x1i2/sg-q27-10062103-shipgate-read.txt (depth 3: 12.11/12.06/12.10/12.08) -->
+ 
+ ### Qwen3.8 27B dense, S-X8 v4.3, 7.5 bits per weight (MarlaLabs)
+ 
+@@ -90,10 +93,12 @@ After this release, a separate ABBA A/B found depth 6 faster than depth 3 on thi
+ | plain | - | - | none | 2.96 / 2.95 |
+ | DFlash2 | 6 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | `--spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 6` | 9.54 / 8.57 |
+ 
+-Environment variables: none. After this release, depth 6 measured faster here too: short +8.4%,
+-long +3.6%, same output. The next release moves this row to depth 6.
++Environment variables: none. This release moves the DFlash2 row from depth 4 to depth 6: short-prompt decode
++8.89 → 9.54 t/s (+7.3%). The depth-4 number is the mean of the v0.1.3.0 rounds 8.88 / 8.89 / 8.89 / 8.89 (DFlash2,
++short, the values after the arrow) in
++[`sg-sx8-10062125-shipgate-read.txt`](../../evidence/b11178-x1i2/sg-sx8-10062125-shipgate-read.txt).
+ 
+-<!-- src: README.md "How we run it (Radeon 890M)", "Speed: Radeon 890M", "Models used"; evidence/b11178-x1i2/sg-sx8-10062125-state.json -->
++<!-- src: README.md "How we run it (Radeon 890M)", "Speed: Radeon 890M", "Models used"; evidence/v0.1.3.1/pg-sx8-10090129-state.json (arms P, D), pg-sx8-10090129-READ.txt; evidence/b11178-x1i2/sg-sx8-10062125-shipgate-read.txt (depth 4: 8.88/8.89/8.89/8.89) -->
+ 
+ ### GLM-5.3 Flash MoE, GSQ-RCO 3.0-bit, routed experts streamed from NVMe (pfeifferj)
+ 
+@@ -133,40 +138,31 @@ the best earlier GLM build, 8 launches ABBA, output ids identical. Prompt readin
+ 
+ ## Radeon 780M (previous machine)
+ 
+-Machine: Beelink SER7 Pro, Ryzen 7 7840HS, Radeon 780M (RDNA3, gfx1103, 12 CU), DDR5-5600 with a 16 GB
+-BIOS reservation for the GPU, Windows 11, Balanced power plan. Used until 30 September 2026. Memory was
+-2 x 16 GB until 3 September 2026 and 32 GB + 16 GB after; each receipt names its epoch.
++Machine: Radeon 780M (RDNA3, gfx1103, 12 CU) with a 16 GB BIOS reservation for the GPU, Windows 11, Balanced
++power plan (the README's "Test system (Radeon 780M numbers)").
+ 
+ Most 780M A/Bs ran from a test harness whose full server line is not in our published records. Where
+ that is so, the block says **command line not recorded** and gives only what was recorded (drafter, depth).
+-Runs on upstream builds before this fork existed (July 2026) are not listed.
+ 
+-<!-- src: README.md "Test system (Radeon 780M numbers)", "Speed: Radeon 780M"; docs/arifi/STATUS.md "How the numbers were taken"; internal: equipment register beelink-ser7-pro.md (not in this repository) -->
++<!-- src: README.md "Test system (Radeon 780M numbers)", "Speed: Radeon 780M", "Radeon 780M vs Radeon 890M" (12 CU, 16 GB); docs/arifi/STATUS.md "How the numbers were taken" -->
+ 
+ ### Qwen3.8 27B dense, UD-Q4_K_XL (Huihui abliterated, huihui-ai), 17.38 GB
+ 
+ - File: `Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf`
+ - Download: [huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF](https://huggingface.co/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF)
+ - Drafter: `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` ([incoai](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2-GGUF))
+-- Our registered serve line on this machine (September 2026), the only full 780M line on record:
+-  `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -t 16 -tb 32 -ctk q8_0 -ctv q8_0 --parallel 1 --jinja --chat-template-file chat_template.jinja --temp 0.7 --top-p 0.8 --top-k 20 --presence-penalty 1.5 --ctx-checkpoints 32 --ctx-checkpoints-device off --ctx-checkpoints-toolcall on`
+-  plus `--spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 3`.
+-  The chat template is the "Sharp" Qwen template from [peculiar-ragdoll/Qwen-Sharp-Chat-Templates](https://huggingface.co/peculiar-ragdoll/Qwen-Sharp-Chat-Templates).
+ 
+ | Mode | Draft depth | Drafter file | Added flags | Decode t/s |
+ |---|---|---|---|---|
+ | plain | - | - | command line not recorded | 3.864 → 4.104 (build A/B, medians, +6.2%) |
+ | DFlash2 | 2 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | command line not recorded | 7.085 → 7.578 (build A/B, medians, +6.9%) |
+-| DFlash2 | 3 | same | the serve line above | 7.82 (depth 2 on the same day: 7.04) |
+-| DFlash2 | 4 | same | command line not recorded | 7.197 (depth table); launch-level 7.208 → 7.192, tie ² |
++| DFlash2 | 4 | same | command line not recorded | 7.197 (depth table); launch-level 7.208 → 7.192 |
+ | DFlash2 | 5 | same | command line not recorded | 6.535 / 6.785 (two legs) |
+ | DFlash2 | 6 | same | command line not recorded | 6.545 |
+ 
+ Environment variables: none recorded.
+-² The README's "Radeon 780M vs Radeon 890M" section gives 7.76 t/s for this file at depth 4. The
+-shipped depth table reads 7.197 for that cell. The two are not yet reconciled.
+ 
+-<!-- src: README.md "Speed: Radeon 780M", "Radeon 780M vs Radeon 890M"; evidence/r86-evidence__81-depth-table.txt, evidence/r86-evidence__80-launchlevel.txt, evidence/chain151__c29-q4kxl-27b-launchlevel-AB.json (drafter); internal: local-inference SPINE.md interactive serve line and serve-line record (not in this repository) -->
++<!-- src: README.md "Speed: Radeon 780M"; evidence/r86-evidence__81-depth-table.txt, evidence/r86-evidence__80-launchlevel.txt, evidence/chain151__c29-q4kxl-27b-launchlevel-AB.json (drafter) -->
+ 
+ ### Qwen3.8 27B dense, GSQ-RCO IQ3_S (ISTA-DASLab)
+ 
+@@ -233,23 +229,6 @@ before these kernels could not load this file with a drafter; a per-heap allocat
+ 
+ <!-- src: README.md "Speed: Radeon 780M", "For format authors and researchers"; docs/arifi/STATUS.md "How the numbers were taken", "Results that showed no gain"; evidence/chain151__c30-sx8-27b-launchlevel-AB.json (drafter) -->
+ 
+-### Ornith-1.5 35B-A3B MoE, Q4_K_M (ornith-ai)
+-
+-- File: `Ornith-1.5-35B-Q4_K_M.gguf`
+-- Download: [ornith-ai/Ornith-1.5-35B-A3B-GGUF](https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF)
+-- Command line not recorded in our published sources.
+-
+-| Mode | Draft depth | Drafter file | Added flags | Decode t/s |
+-|---|---|---|---|---|
+-| plain | - | - | command line not recorded | 26.9–27.5 (this fork); stock upstream 28.5 on the same day |
+-| DFlash2 | 2 | not recorded | `--spec-type draft-dflash --spec-draft-n-max 2` (rest not recorded) | +21.5% on general chat over plain (CI [1.148, 1.271]); acceptance 0.5989 |
+-
+-Environment variables: `GGML_VK_MAX_NODES_PER_SUBMIT=4096` (+1.3%, CI [1.011, 1.016]).
+-At the then-default draft depth the DFlash2 line did not load (Vulkan out of memory at draft context
+-creation); depth 1 gave acceptance 0.7444. Measured in late August 2026, before the September kernel work.
+-
+-<!-- src: internal: local-inference SPINE.md currency blocks 2026-08-28/29 (lane-166, F-139) (not in this repository) -->
+-
+ ### Other 780M measurements (format kernels)
+ 
+ | Model / format | Mode | Result | Command line |
+@@ -270,13 +249,14 @@ creation); depth 1 gave acceptance 0.7444. Measured in late August 2026, before
+   the 780M, 16 on the 890M). Placement into the GPU reservation (`GGML_VK_UMA_PLACEMENT`) is on by
+   device id for the 890M only.
+ - **Where defaults were tuned.** The width defaults were tuned on the 780M. The int8 coopmat1 prompt
+-  path and the slot-major MoE mat-vec were measured on the 890M only. A re-tune on the 890M is in progress.
++  path and the slot-major MoE mat-vec were measured on the 890M only.
+ - **Draft depth.** On the 780M the 27B DFlash2 lines peaked at depth 4; depths 5 and 6 were slower.
+-  On the 890M depth 6 beats depth 3 by +14.2% (short prompt, Q4_K_XL). Start at 4 on a 780M, 6 on an 890M.
++  On the 890M depth 6 beats depth 3: Q4_K_XL short-prompt decode 12.09 → 13.62 t/s (+12.6%).
++  Start at 4 on a 780M, 6 on an 890M.
+ - **Memory.** The 780M machine reserved 16 GB for the GPU; a 27B Q4_K_XL with its drafter fits there.
+   A 780M machine can usually raise its reservation in the BIOS ("UMA frame buffer size").
+ 
+-<!-- src: README.md "Radeon 780M vs Radeon 890M: what changes"; ggml/src/ggml-vulkan/ggml-vulkan.cpp:5191 (0x150e probe) -->
++<!-- src: README.md "Radeon 780M vs Radeon 890M: what changes"; ggml/src/ggml-vulkan/ggml-vulkan.cpp:5242 (0x150e probe); evidence/b11178-x1i2/sg-q27-10062103-shipgate-read.txt (depth 3) -->
+ 
+ ## Every switch we use, and why
+ 
+@@ -297,13 +277,13 @@ creation); depth 1 gave acceptance 0.7444. Measured in late August 2026, before
+ | `-lm dio` | Loads the model with direct I/O on Windows. | Flash-Next loads and serves with a 0.8–1.6 GB server working set, same output ids as mmap. | Flash-Next, Ornith |
+ | `-lm mmap` | Memory-maps the model. | Required by NVMe streaming (mapped expert addresses are identity keys). Flash-Next A/B arm. | GLM, Flash-Next A/B arm |
+ | `--lazy-mode on` | Reads rows of large tensors (per-layer embeddings) from disk on demand. | Function only. | Flash-Next, Ornith |
+-| `-ctk q8_0 -ctv q8_0` | KV cache in q8_0. | Decode-neutral at 8K/16K/32K filled context on the 780M: a memory lever, not a speed lever. | 27B lines |
+-| `--ctx-checkpoints 32` | Up to 32 context checkpoints per slot (also the code default). | 780M, ring vs no ring: per-turn wait -8.18272 s (10.45696 → 2.27424 s); drafted decode 3.85425 → 7.60383 t/s. | Q4_K_XL lines |
+-| `--ctx-checkpoints-device off` | Keeps checkpoints in host memory. The code default (`auto`) is on for hybrid models. | A measured loss for device storage: +250.004 ms per-turn wait, decode −0.12097 t/s. | Q4_K_XL lines |
+-| `--ctx-checkpoints-toolcall on` | Anchors a checkpoint at each tool call (also the code default). | After-tool-call wait −86.161 ms, 5 of 5 faster. | Q4_K_XL lines |
+-| `--spec-type draft-mtp` | Drafts with an MTP head (in the file, or a sidecar via `-md`). | 890M: Flash-Next +65.4% / +50.4%, Ornith-1.5 +16.1% / +20.8%, 27B +120.6% / +114.0% over plain. | Flash-Next, Ornith, 27B Q4_K_XL |
+-| `--spec-type draft-dflash` | Drafts with a DFlash2 drafter (`-md`). | 890M: Ornith-1.5 31.97 / 33.43 vs 29.18 / 28.78 plain; 27B 13.62 vs 4.62 (depth 6). 780M: Ornith-1.5 +21.5%. | Ornith, all 27B, GLM |
+-| `--spec-draft-n-max N` | Draft depth. | Measured per GPU: 780M 27B peaks at 4; 890M depth 6 beats 3 by +14.2%. We always pin it: one engine version preselected depth 7 when unset, and drafted decode fell 7.66 → 2.85 t/s. | all drafted lines |
++| `-ctk q8_0 -ctv q8_0` | KV cache in q8_0. | Function only: about half the KV memory of f16. | 27B lines |
++| `--ctx-checkpoints 32` | Up to 32 context checkpoints per slot (also the code default). | Function only. | Q4_K_XL lines |
++| `--ctx-checkpoints-device off` | Keeps checkpoints in host memory. The code default (`auto`) is on for hybrid models. | Function only. | Q4_K_XL lines |
++| `--ctx-checkpoints-toolcall on` | Anchors a checkpoint at each tool call (also the code default). | Function only. | Q4_K_XL lines |
++| `--spec-type draft-mtp` | Drafts with an MTP head (in the file, or a sidecar via `-md`). | 890M, over plain (README speed table): Flash-Next +64.1% / +50.3%, Ornith-1.5 +15.6% / +19.7%, 27B +119.9% / +114.7%. | Flash-Next, Ornith, 27B Q4_K_XL |
++| `--spec-type draft-dflash` | Drafts with a DFlash2 drafter (`-md`). | 890M: Ornith-1.5 31.97 / 33.43 vs 29.18 / 28.78 plain; 27B 13.62 vs 4.62 (depth 6). | Ornith, all 27B, GLM |
++| `--spec-draft-n-max N` | Draft depth. | Measured per GPU: 780M 27B peaks at 4; 890M depth 6 beats 3 by +12.6% (12.09 → 13.62). We always pin it so each line states its depth. | all drafted lines |
+ | `--spec-draft-p-min 0.5` | Stops a draft when the drafter's top probability falls below 0.5 (default 0.0). | No A/B of 0.5 by us. It is the best setting recorded in the MoE-cache source profile (GLM-5.2, RTX 3090). On the 780M 27B, 0.75 raised acceptance to 0.85 but lost t/s. | MTP lines |
+ | `--dflash-defer-injection 0` | Per-chunk encoder KV injection (default 1 = deferred). | Function only. The flag help says 0 gives higher acceptance on some models. | DFlash2 lines except GLM |
+ | `-md <file>` | Draft model or MTP sidecar file. | Required for DFlash2 and sidecar MTP. | drafted lines |
+@@ -314,11 +294,9 @@ creation); depth 1 gave acceptance 0.7444. Measured in late August 2026, before
+ | `--no-warmup` | Skips the empty warm-up run. | Function only. | GLM |
+ | `-fit off` | Does not auto-adjust unset arguments to fit memory. | Function only. | GLM |
+ | `--moe-cache 1536` | 1536 MiB Vulkan cache for routed experts. | Required: must equal `GGML_ARIFI_MOE_NVME_CACHE_MIB`, or loading refuses. | GLM |
+-| `--jinja --chat-template-file` | Uses the "Sharp" Qwen chat template. | Prompt reading +45%, decode −6% against the embedded template. | 780M Q4_K_XL serve line |
+-| `--temp 0.7 --top-p 0.8 --top-k 20 --presence-penalty 1.5` | Sampling. | The model card's non-thinking settings; no speed effect measured. Speed A/Bs use greedy requests. | 780M Q4_K_XL serve line |
+ | `-ngl 0` | No layers on the GPU. | CPU-path measurement of the VNNI repack. | Q2_0_G128 CPU row |
+ 
+-<!-- src: README.md "How we run it", "What is new in this release", "Radeon 780M vs Radeon 890M"; common/arg.cpp (flag help); common/common.h:330,336,363,679,684,686 (defaults); docs/OPTIONS-REGISTRY.md "X1 NVMe expert streaming"; src/llama-context.cpp:833 (moe-cache check); docs/release/RELEASE-STORY-r73i.md (p-min 0.75); docs/backend/MOE-CACHE.md (GLM-5.2 profile); internal: local-inference SPINE.md R45 switch table and lane-166 block, serve-line record (not in this repository) -->
++<!-- src: README.md "How we run it", "What is new in this release", "Radeon 780M vs Radeon 890M"; common/arg.cpp (flag help); common/common.h:330,336,363,679,684,686 (defaults); docs/OPTIONS-REGISTRY.md "X1 NVMe expert streaming"; src/llama-context.cpp:833 (moe-cache check); docs/release/RELEASE-STORY-r73i.md (p-min 0.75); docs/backend/MOE-CACHE.md (GLM-5.2 profile); evidence/b11178-x1i2/sg-q27-10062103-shipgate-read.txt (depth 3) -->
+ 
+ ## Build switches
+ 
+diff --git a/docs/arifi/WINDOWS-SETTINGS.md b/docs/arifi/WINDOWS-SETTINGS.md
+index 1c57ea2200..ea69e00b62 100644
+--- a/docs/arifi/WINDOWS-SETTINGS.md
++++ b/docs/arifi/WINDOWS-SETTINGS.md
+@@ -4,18 +4,19 @@ Every Windows setting we changed on our test machines, why, and how to undo it.
+ work, so we can turn off things a normal PC keeps. Change only what fits your machine.
+ 
+ Each row says **Measured** when we have an A/B on our own hardware, or **Reason** when the change removes a known load
+-but we have no separate number for it. Run the commands in an **elevated PowerShell 7** window.
++but we have no separate number for it. Run the commands in an **elevated PowerShell 7** window. Every service,
++task, policy and power-setting name below is standard Windows: `Get-Service`, `Get-ScheduledTask` and `powercfg /q`
++show each one on your own machine.
+ 
+-**After every Windows update, check these again.** Updates turn some of them back on: build 29683 re-enabled SysMain,
+-Windows Search, the Windows AI Settings agent and four background tasks on our machine.
++**After every Windows update, check these again.** An update can turn some of them back on.
+ 
+ ## Biggest effect first
+ 
+ | Setting | Our value | Why | Evidence | Undo |
+ |---|---|---|---|---|
+ | Power plan | **Balanced** | On an APU the CPU and the integrated GPU share one power budget. "Performance" plans give it to the CPU and starve the GPU. | **Measured** (Radeon 780M, GPU decode): Balanced 29.12 t/s, Ultimate 28.90, High Performance 28.39; a "max performance" setup (minimum CPU state 100% plus the AMD power slider at max) **11.07 t/s** | `powercfg /setactive SCHEME_BALANCED` is the setting; to undo, pick your old plan |
+-| Hypervisor (Hyper-V, Virtual Machine Platform, Windows Hypervisor Platform) | **Off** | With a hypervisor running, every memory access the GPU makes pays an extra translation cost on the shared memory. | **Measured** (Radeon 780M): long-context decode **+22%** with the hypervisor off | `bcdedit /set hypervisorlaunchtype auto`, re-add the Windows features, reboot |
+-| Virtualization-based security / memory integrity, Credential Guard | **Off** | Same shared-memory cost as the hypervisor (it needs one). | Reason (part of the hypervisor result above) | Windows Security > Device security > Core isolation, turn it back on, reboot |
++| Hypervisor (Hyper-V, Virtual Machine Platform, Windows Hypervisor Platform) | **Off** | With a hypervisor running, every memory access the GPU makes pays an extra translation cost on the shared memory. | Reason | `bcdedit /set hypervisorlaunchtype auto`, re-add the Windows features, reboot |
++| Virtualization-based security / memory integrity, Credential Guard | **Off** | Same shared-memory cost as the hypervisor (it needs one). | Reason (same cost as the hypervisor row) | Windows Security > Device security > Core isolation, turn it back on, reboot |
+ | Hardware-accelerated GPU scheduling (HAGS) | **On** | Every number we publish was measured with it on. | Reason (our baseline) | Settings > System > Display > Graphics > Default graphics settings |
+ | Microsoft Defender exclusions on the model, build and run folders | **Added** | Defender scans a file when a program opens it. A 20-100 GB model file then stalls the load for seconds. | Reason. A public study measured 18.9 s -> 8.1 s cold start on a 76 GB model by taking the scan out of the load path ([ga5in.com](https://ga5in.com/blog/2026-09-18-windows-devdrive-llm-refs/)) | `Remove-MpPreference -ExclusionPath '<folder>'` |
+ | NVMe deep sleep (APST) on mains power | **Off** | An idle NVMe drive drops into deep power states after 0.2 s and needs 10-45 ms to wake. Bursty reads (model loads, streamed experts) pay that each time. | **Measured** (KingSpec XG7000): bursty 1 MB reads 3.0 ms -> about 1.0 ms average latency | see the [NVMe guide](windows-native-nvme/README.md#also-turn-off-nvme-deep-sleep-desktops-on-mains-power) |
+@@ -31,9 +32,9 @@ on. Do not use a Dev Drive inside a VHDX file for models: the study above measur
+ 
+ | Setting | Our value | Why | Evidence | Undo |
+ |---|---|---|---|---|
+-| Windows Search indexer (`WSearch`) | **Disabled** | It indexed new files constantly. | **Measured**: 48.8 CPU-seconds per 60 s on an idle machine after boot | `Set-Service WSearch -StartupType Automatic; Start-Service WSearch` |
++| Windows Search indexer (`WSearch`) | **Disabled** | It indexes new files in the background, and model and build folders hold many large new files. | Reason | `Set-Service WSearch -StartupType Automatic; Start-Service WSearch` |
+ | SysMain (Superfetch) | **Disabled** | It pre-loads files into free RAM. On an APU that RAM is also the GPU's memory pool. | Reason | `Set-Service SysMain -StartupType Automatic; Start-Service SysMain` |
+-| Windows on-device AI (Recall, Click to Do, AI data analysis, Copilot runtime, Settings agent) | **Off by policy** | Its host process (`WorkloadsSessionHost.exe`) held **3.7 GB** of RAM after an update. | **Measured** (RAM), see below | delete the values below or set them back |
++| Windows on-device AI (Recall, Click to Do, AI data analysis, Copilot runtime, Settings agent) | **Off by policy** | Its host process (`WorkloadsSessionHost.exe`) holds RAM in the background, and on an APU that RAM is also the GPU's memory pool. | Reason; `Get-Process WorkloadsSessionHost` shows its memory on your machine | delete the values below or set them back |
+ | OneDrive (app autostart + its 8 scheduled tasks) | **Off** | Background sync. | Reason | start OneDrive once and tick "Start OneDrive when I sign in" |
+ | Fast Startup and hibernation | **Off** | Driver and setting changes then always apply at the next boot. | Reason | `powercfg /hibernate on` |
+ | AMD Software autostart (`StartCN`, `StartDVR` tasks) | **Disabled** | The desktop app and its recorder are not needed to run models; the driver keeps working. | Reason | `Enable-ScheduledTask -TaskName StartCN`, same for `StartDVR` |
+@@ -75,5 +76,3 @@ Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'
+ Get-Process WorkloadsSessionHost -ErrorAction SilentlyContinue
+ powercfg /getactivescheme
+ ```
+-
+-We check 64 settings automatically after every sign-in on our own machine and get an alert if an update changed one.

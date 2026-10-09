@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **793**, all non-merge, applied in filename order.
+- Patches: **794**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 793 commit messages, same provenance trailers. Verified, not
+same file contents, same 794 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -872,6 +872,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 791 | `0791-github-drop-the-third-party-FUNDING.yml-that-arrived.patch` | arifi-fork-base | `0d4fafa12` | - | - | github: drop the third-party FUNDING.yml that arrived with the turboquant import |
 | 792 | `0792-release-carry-the-published-documents-to-R86i-NOTICE.patch` | arifi-fork-base | `69051f1ad` | - | `GGML_ARIFI_VNNI_REPACK`, `GGML_RECURRENT_STATE_F16`, `POWERINFER_IOCP`, `MAX_N_CACHED` | release: carry the published documents to R86i - NOTICE, licences, curated evidence, README, notes, stranger-run DLL step |
 | 793 | `0793-release-v0.1.3.1-README-CHANGELOG-run-docs-and-the-r.patch` | arifi-fork-base | `5fc6ae7df` | - | `GGML_ARIFI_VNNI_REPACK`, `EXPERT_BUNDLE_PATH`, `GGML_RECURRENT_STATE_F16`, `LANE110_PROF`, `LLAMA_USE_PREBUILT_UI`, `GENERATE_EXPERT_BUNDLE`, `MAX_N_CACHED`, `POWERINFER_IOCP`, `LANE110_PREFETCH_CAP` | release: v0.1.3.1 README, CHANGELOG, run docs and the re-gate receipts |
+| 794 | `0794-docs-v0.1.3.1-run-docs-match-the-shipped-tree-and-th.patch` | arifi-fork-base | `328aa6605` | - | `LLAMA_USE_PREBUILT_UI`, `EXPERT_BUNDLE_PATH`, `GENERATE_EXPERT_BUNDLE`, `GGML_ARIFI_VNNI_REPACK`, `LANE110_PROF` | docs: v0.1.3.1 run docs match the shipped tree and the gate receipts |
 
 ## Measured effect, per patch
 
@@ -1747,6 +1748,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0791-github-drop-the-third-party-FUNDING.yml-that-arrived.patch` | UNMEASURED - repository metadata only; no code path is touched. |
 | `0792-release-carry-the-published-documents-to-R86i-NOTICE.patch` | UNMEASURED - documents, licence texts and receipts only; no code path is touched. |
 | `0793-release-v0.1.3.1-README-CHANGELOG-run-docs-and-the-r.patch` | UNMEASURED - documents and receipts only; no code path is touched. |
+| `0794-docs-v0.1.3.1-run-docs-match-the-shipped-tree-and-th.patch` | UNMEASURED - documents only; no code path is touched. |
 
 ## Unclassified
 
