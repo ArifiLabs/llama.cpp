@@ -1,0 +1,27 @@
+v0.1.3.1 RE-GATE on point4 a14473f768 (build-point) vs integ 7156c61607, read 2026-10-09 01:5x EDT, tools/pg_read.py (fn, orn) + tools/pg_read_lite.py (q27, sx8)
+fn  pg-fn-10082312  POINTGATE-BLOCKER  ids SAME every row  RAM min 8.74 GB
+      plain           n= 8 decode median +0.67% neg 3/8 worst -0.35% | prompt median -0.58% worst -2.42%
+      MTP n3          n=13 decode median -0.41% neg 11/13 worst -0.59% | prompt median +0.02% worst -2.78%
+      MTP+dven40k n3  n=13 decode median -0.54% neg 13/13 worst -1.33% | prompt median -0.50% worst -3.37%
+orn pg-orn-10090030  POINTGATE-BLOCKER  ids SAME every row  RAM min 9.89 GB
+      plain           n= 8 decode median -0.17% neg 7/8 worst -0.52% | prompt median -0.33% worst -4.77%
+      MTP n3          n=13 decode median -0.90% neg 13/13 worst -3.54% | prompt median -1.15% worst -6.76%
+      DFlash2         n=13 decode median -0.13% neg 10/13 worst -0.70% | prompt median -1.55% worst -3.07%
+q27 pg-q27-10090115  POINTGATE-PASS  ids SAME every row  RAM min 9.89 GB
+      plain           n= 2 decode median +1.83% neg 0/2 worst +1.12% | prompt median +1.79% worst +1.58%
+      MTP n3          n= 2 decode median -0.45% neg 2/2 worst -0.52% | prompt median +0.32% worst -0.43%
+      DFlash2         n= 2 decode median +0.18% neg 0/2 worst +0.09% | prompt median +0.77% worst -0.05%
+sx8 pg-sx8-10090129  POINTGATE-PASS  ids SAME every row  RAM min 10.38 GB
+      plain           n= 2 decode median +0.04% neg 0/2 worst +0.00% | prompt median -0.08% worst -0.33%
+      DFlash2         n= 2 decode median -0.16% neg 1/2 worst -0.68% | prompt median +0.09% worst -0.80%
+Graph reuse (final "graphs reused" per load, integ vs point, from server.err.log):
+  fn: F a=990 a=990 b=990 b=990; M a=1011 a=1011 b=1011 b=1011; P a=2630 a=2630 b=2630 b=2630; XF a=45 b=45; Z b=89  -> identical integ vs point
+  orn: D a=2095 a=2095 b=2095 b=2095; M a=831 a=831 b=831 b=831; P a=2770 a=2770 b=2770 b=2770; XM a=28 b=28  -> identical integ vs point
+Profile (tools/p4_prof_read.py, cells/pg-{fn-10082312,orn-10090030}-PROF.txt): GPU op time per main graph equal or lower on point;
+  fn main_b1..b81 -0.48..-1.13%, mtp_step +1.41% (+0.058 ms), other +0.25%; orn main_b1..b81 -0.82..+1.27% mixed. No op that only point runs except
+  fn QSA_MASK_FA replacing FLASH_ATTN_EXT(+FILL) about 1:1 (lane 301 lever 4). fn MUL_MAT_VEC bf16 m=4 k=10240 (b1) 2.17 -> 0.57 ms on point.
+  MASKFUSE=0 on point: decode 19.71 vs 19.60 fuse on (+0.52%, rounds 19.29..20.28 = 5% spread) = tie.
+Host gap (tools/p4_hostgap.py, cells/p4-hostgap.txt; recorder loads, logger-inflated): fn wall +0.30%, GPU -0.50%, gap +1.33% (+0.43 ms/graph, 433 graphs);
+  orn wall +0.65%, GPU +0.14%, gap +1.14% (+0.23 ms/graph, 455 graphs). The drafted-decode skew is HOST-SIDE; pick NOT isolated.
+Source re-read (10c7a28166, 81bf18af24): no new wait / readback / sched reset / allocation per compute (identity reorder loop at -np 1; reserve only on flag change).
+  The measured magnitude exceeds what the source of the three spec picks predicts (refutation flag; the cause may be another point commit).

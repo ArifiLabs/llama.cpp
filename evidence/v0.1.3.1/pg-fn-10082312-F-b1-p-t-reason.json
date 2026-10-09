@@ -1,0 +1,32 @@
+{
+ "prompt_file": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-reason.txt",
+ "path": "chat",
+ "regime": "greedy",
+ "sampling": {
+  "temperature": 0.0,
+  "top_k": 1
+ },
+ "ttft_ms": 2113.1,
+ "wall_s": 39.3,
+ "timings": {
+  "cache_n": 0,
+  "prompt_n": 161,
+  "prompt_ms": 2067.195,
+  "prompt_per_token_ms": 12.839720496894412,
+  "prompt_per_second": 77.8833153137464,
+  "predicted_n": 768,
+  "predicted_ms": 37184.256,
+  "predicted_per_token_ms": 48.48012516297262,
+  "predicted_per_second": 20.627009452602735,
+  "draft_n": 630,
+  "draft_n_accepted": 526
+ },
+ "tokens": null,
+ "content": "",
+ "draft_n": 630,
+ "draft_n_accepted": 526,
+ "reasoning_content": "We need answer math problem step by step check calculations. Need solve carefully. Let's parse.\n\nTrain 1 leaves A at 09:10 toward B at 84 km/h. Distance A-B = 391 km. Train 2 leaves B at 10:05 toward A at 106 km/h. Bird starts at A together with first train and flies at 150 km/h back and forth between trains until they meet. Need when and where trains meet, and how far bird flies.\n\nNeed reason step by step and check every calculation.\n\nLet's set time. Let t be hours after 09:10. Train1 position from A: x1 = 84 t, until meeting. Train2 leaves at 10:05, which is 55 min after 09:10 = 55/60 = 11/12 h. For t >= 11/12, train2 position from A: x2 = 391 - 106 (t - 11/12). Meeting when x1 = x2.\n\n84 t = 391 - 106(t - 11/12) = 391 - 106t + 106*11/12. 106*11/12 = (106/12)*11 = 53/6*11 = 583/6 = 97.1666667. So RHS = 391 + 583/6 - 106t. 391 = 2346/6, sum = 2929/6. Equation: 84t = 2929/6 - 106t => 190t = 2929/6 => t = 2929/(1140) hours. Simplify? 2929/1140. 1140*2=2280 remainder649. 649/1140=0.569298. t=2.569298 h = 2h + 0.569298*60=34.1579 min = 2h34m9.47s. Meeting time 09:10 + 2:34:09.47 = 11:44:09.47. Check if after 10:05 yes.\n\nAlternative compute after second train leaves: At 10:05, train1 has traveled 84*(55/60)=84*11/12=7*11=77 km. Distance remaining = 391-77=314 km. Relative speed = 84+106=190 km/h. Time after 10:05 = 314/190 = 157/95 h = 1.65263158 h = 1h39m9.47s. Add to 10:05 = 11:44:09.47. Same.\n\nMeeting location from A: x1 = 84*t = 84*2929/1140 = simplify 84",
+ "text_all": "We need answer math problem step by step check calculations. Need solve carefully. Let's parse.\n\nTrain 1 leaves A at 09:10 toward B at 84 km/h. Distance A-B = 391 km. Train 2 leaves B at 10:05 toward A at 106 km/h. Bird starts at A together with first train and flies at 150 km/h back and forth between trains until they meet. Need when and where trains meet, and how far bird flies.\n\nNeed reason step by step and check every calculation.\n\nLet's set time. Let t be hours after 09:10. Train1 position from A: x1 = 84 t, until meeting. Train2 leaves at 10:05, which is 55 min after 09:10 = 55/60 = 11/12 h. For t >= 11/12, train2 position from A: x2 = 391 - 106 (t - 11/12). Meeting when x1 = x2.\n\n84 t = 391 - 106(t - 11/12) = 391 - 106t + 106*11/12. 106*11/12 = (106/12)*11 = 53/6*11 = 583/6 = 97.1666667. So RHS = 391 + 583/6 - 106t. 391 = 2346/6, sum = 2929/6. Equation: 84t = 2929/6 - 106t => 190t = 2929/6 => t = 2929/(1140) hours. Simplify? 2929/1140. 1140*2=2280 remainder649. 649/1140=0.569298. t=2.569298 h = 2h + 0.569298*60=34.1579 min = 2h34m9.47s. Meeting time 09:10 + 2:34:09.47 = 11:44:09.47. Check if after 10:05 yes.\n\nAlternative compute after second train leaves: At 10:05, train1 has traveled 84*(55/60)=84*11/12=7*11=77 km. Distance remaining = 391-77=314 km. Relative speed = 84+106=190 km/h. Time after 10:05 = 314/190 = 157/95 h = 1.65263158 h = 1h39m9.47s. Add to 10:05 = 11:44:09.47. Same.\n\nMeeting location from A: x1 = 84*t = 84*2929/1140 = simplify 84\u001e",
+ "finish_reason": "length",
+ "answer_reached": false
+}

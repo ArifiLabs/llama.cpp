@@ -1,0 +1,66 @@
+pg-fn-10082312 POINTGATE-BLOCKER
+| model | mode | round prompt | integ -> point (every round) | ids | accepted/drafted integ -> point |
+|---|---|---|---|---|---|
+| fn | plain | r1 short | decode 11.63/11.72 -> 11.73/11.73 (+0.45%, band 1.00%); prompt 30.53/30.62 -> 29.82/30.06 (-2.08%, band 1.00%) REGRESSION | ids same | acc 0/0 -> 0/0 |
+| fn | plain | r1 long | decode 11.61/11.60 -> 11.57/11.59 (-0.23%, band 1.00%); prompt 134.98/138.99 -> 139.69/137.52 (+1.18%, band 2.92%) | ids same | acc 0/0 -> 0/0 |
+| fn | plain | r2 short | decode 11.99/11.98 -> 11.95/11.93 (-0.35%, band 1.00%); prompt 30.50/30.19 -> 29.88/29.77 (-1.70%, band 1.03%) REGRESSION | ids same | acc 0/0 -> 0/0 |
+| fn | plain | r2 long | decode 11.89/11.87 -> 11.87/11.86 (-0.09%, band 1.00%); prompt 152.11/154.40 -> 154.37/153.75 (+0.53%, band 1.49%) | ids same | acc 0/0 -> 0/0 |
+| fn | MTP n3 | r1 short | decode 19.40/19.39 -> 19.39/19.27 (-0.32%, band 1.00%); prompt 29.54/29.69 -> 29.35/29.10 (-1.32%, band 1.00%) REGRESSION | ids same | acc 174/184 -> 174/184 |
+| fn | MTP n3 | r1 long | decode 17.60/17.59 -> 17.53/17.62 (-0.14%, band 1.00%); prompt 131.73/131.34 -> 130.56/131.21 (-0.49%, band 1.00%) | ids same | acc 168/224 -> 168/224 |
+| fn | MTP n3 | r2 short | decode 19.61/19.68 -> 19.53/19.57 (-0.50%, band 1.00%); prompt 29.60/29.59 -> 28.52/29.03 (-2.78%, band 1.75%) REGRESSION | ids same | acc 174/184 -> 174/184 |
+| fn | MTP n3 | r2 long | decode 17.77/17.73 -> 17.73/17.59 (-0.51%, band 1.00%); prompt 147.76/148.75 -> 148.31/147.29 (-0.31%, band 1.00%) | ids same | acc 168/224 -> 168/224 |
+| fn | MTP+dven40k n3 | r1 short | decode 19.69/19.91 -> 19.66/19.72 (-0.54%, band 1.09%); prompt 29.61/29.89 -> 29.33/29.00 (-1.96%, band 1.11%) REGRESSION | ids same | acc 166/192 -> 166/192 |
+| fn | MTP+dven40k n3 | r1 long | decode 19.28/19.31 -> 19.27/19.18 (-0.38%, band 1.00%); prompt 131.81/131.44 -> 130.59/131.35 (-0.50%, band 1.00%) | ids same | acc 166/226 -> 166/226 |
+| fn | MTP+dven40k n3 | r2 short | decode 20.33/20.27 -> 20.25/20.11 (-0.59%, band 1.00%); prompt 29.86/29.71 -> 29.11/28.44 (-3.37%, band 2.34%) REGRESSION | ids same | acc 166/188 -> 166/188 |
+| fn | MTP+dven40k n3 | r2 long | decode 19.37/19.44 -> 19.36/19.28 (-0.44%, band 1.00%); prompt 148.34/148.93 -> 147.91/148.47 (-0.30%, band 1.00%) | ids same | acc 166/226 -> 166/226 |
+| fn | plain | t chat | decode 11.35/11.55 -> 11.56/11.56 (+0.92%, band 1.73%); prompt 50.56/53.69 -> 52.61/49.11 (-2.42%, band 6.88%) | ids same | acc 0/0 -> 0/0 |
+| fn | plain | t code | decode 11.05/11.66 -> 11.64/11.64 (+2.52%, band 5.34%); prompt 53.98/65.09 -> 64.49/64.56 (+8.38%, band 18.65%) | ids same | acc 0/0 -> 0/0 |
+| fn | plain | t json | decode 11.26/11.69 -> 11.71/11.69 (+1.98%, band 3.81%); prompt 64.35/69.16 -> 68.83/68.80 (+3.08%, band 7.20%) | ids same | acc 0/0 -> 0/0 |
+| fn | plain | t reason | decode 11.44/11.68 -> 11.66/11.66 (+0.89%, band 2.05%); prompt 79.86/81.50 -> 80.56/77.41 (-2.10%, band 4.00%) | ids same | acc 0/0 -> 0/0 |
+| fn | MTP n3 | t chat | decode 12.37/12.38 -> 12.32/12.31 (-0.49%, band 1.00%); prompt 51.69/51.34 -> 52.16/51.38 (+0.49%, band 1.51%) | ids same | acc 442/790 -> 442/790 |
+| fn | MTP n3 | t code | decode 18.00/18.00 -> 17.92/17.87 (-0.59%, band 1.00%); prompt 60.71/61.67 -> 61.69/61.49 (+0.64%, band 1.57%) | ids same | acc 670/790 -> 670/790 |
+| fn | MTP n3 | t json | decode 18.84/18.93 -> 18.82/18.78 (-0.46%, band 1.00%); prompt 66.84/66.61 -> 66.87/66.59 (+0.00%, band 1.00%) | ids same | acc 474/560 -> 474/560 |
+| fn | MTP n3 | t reason | decode 18.39/18.45 -> 18.34/18.30 (-0.53%, band 1.00%); prompt 77.26/78.09 -> 77.20/78.38 (+0.15%, band 1.52%) | ids same | acc 1038/1234 -> 1038/1234 |
+| fn | MTP n3 | s short | decode 18.03/18.19 -> 18.11/18.13 (+0.02%, band 1.00%); prompt 28.37/28.17 -> 28.35/28.71 (+0.92%, band 1.26%) | ids same | acc 170/206 -> 170/206 |
+| fn | MTP n3 | s chat | decode 11.74/11.74 -> 11.73/11.66 (-0.41%, band 1.00%); prompt 54.64/54.69 -> 54.46/54.89 (+0.02%, band 1.00%) | ids same | acc 412/814 -> 412/814 |
+| fn | MTP n3 | s code | decode 17.36/17.48 -> 17.39/17.33 (-0.36%, band 1.00%); prompt 59.87/62.59 -> 62.94/62.23 (+2.21%, band 4.45%) | ids same | acc 662/828 -> 662/828 |
+| fn | MTP n3 | s json | decode 20.26/20.29 -> 20.26/20.21 (-0.21%, band 1.00%); prompt 68.17/68.26 -> 67.99/68.02 (-0.31%, band 1.00%) | ids same | acc 572/628 -> 572/628 |
+| fn | MTP n3 | s reason | decode 15.22/14.84 -> 15.13/15.13 (+0.69%, band 2.53%); prompt 79.11/79.54 -> 79.48/79.73 (+0.35%, band 1.00%) | ids same | acc 876/1204 -> 876/1204 |
+| fn | MTP+dven40k n3 | t chat | decode 14.06/14.04 -> 13.97/13.98 (-0.57%, band 1.00%); prompt 51.40/51.77 -> 51.23/51.45 (-0.47%, band 1.00%) | ids same | acc 458/760 -> 458/760 |
+| fn | MTP+dven40k n3 | t code | decode 18.63/18.58 -> 18.50/18.46 (-0.65%, band 1.00%); prompt 61.75/62.10 -> 61.42/61.53 (-0.73%, band 1.00%) | ids same | acc 642/834 -> 642/834 |
+| fn | MTP+dven40k n3 | t json | decode 20.68/20.77 -> 20.63/20.64 (-0.42%, band 1.00%); prompt 65.95/66.57 -> 66.49/66.29 (+0.20%, band 1.00%) | ids same | acc 466/554 -> 466/554 |
+| fn | MTP+dven40k n3 | t reason | decode 20.76/20.73 -> 20.63/20.70 (-0.41%, band 1.00%); prompt 78.21/78.31 -> 77.88/77.30 (-0.85%, band 1.00%) | ids same | acc 1052/1260 -> 1052/1260 |
+| fn | MTP+dven40k n3 | s short | decode 17.98/17.83 -> 17.80/17.71 (-0.83%, band 1.00%); prompt 28.76/28.86 -> 28.70/28.41 (-0.89%, band 1.01%) | ids same | acc 154/198 -> 154/198 |
+| fn | MTP+dven40k n3 | s chat | decode 12.78/12.76 -> 12.66/12.54 (-1.33%, band 1.00%) REGRESSION; prompt 54.80/54.62 -> 54.41/54.41 (-0.55%, band 1.00%) | ids same | acc 380/726 -> 380/726 |
+| fn | MTP+dven40k n3 | s code | decode 16.36/16.33 -> 16.31/16.26 (-0.38%, band 1.00%); prompt 61.07/62.69 -> 62.63/62.17 (+0.84%, band 2.61%) | ids same | acc 574/822 -> 574/822 |
+| fn | MTP+dven40k n3 | s json | decode 21.70/21.76 -> 21.71/21.55 (-0.44%, band 1.00%); prompt 67.89/67.32 -> 67.18/67.48 (-0.41%, band 1.00%) | ids same | acc 564/644 -> 564/644 |
+| fn | MTP+dven40k n3 | s reason | decode 16.86/16.79 -> 16.71/16.71 (-0.67%, band 1.00%); prompt 79.93/79.89 -> 79.85/79.37 (-0.38%, band 1.00%) | ids same | acc 878/1190 -> 878/1190 |
+
+| model | mode | type | regime | point decode | point plain greedy | drafted vs plain | point acceptance | answer reached (chat) |
+|---|---|---|---|---|---|---|---|---|
+| fn | MTP n3 | chat | greedy | 12.32 | 11.56 | +6.5% | 442/790 = 55.9% | 0/2 |
+| fn | MTP n3 | code | greedy | 17.89 | 11.64 | +53.7% | 670/790 = 84.8% | 2/2 |
+| fn | MTP n3 | json | greedy | 18.80 | 11.70 | +60.6% | 474/560 = 84.6% | 2/2 |
+| fn | MTP n3 | reason | greedy | 18.32 | 11.66 | +57.1% | 1038/1234 = 84.1% | 0/2 |
+| fn | MTP n3 | short | sampled | 18.12 | 11.73 | +54.4% | 170/206 = 82.5% | raw |
+| fn | MTP n3 | chat | sampled | 11.69 | 11.56 | +1.2% | 412/814 = 50.6% | 0/2 |
+| fn | MTP n3 | code | sampled | 17.36 | 11.64 | +49.1% | 662/828 = 80.0% | 2/2 |
+| fn | MTP n3 | json | sampled | 20.23 | 11.70 | +72.9% | 572/628 = 91.1% | 2/2 |
+| fn | MTP n3 | reason | sampled | 15.13 | 11.66 | +29.8% | 876/1204 = 72.8% | 0/2 |
+| fn | MTP+dven40k n3 | chat | greedy | 13.97 | 11.56 | +20.9% | 458/760 = 60.3% | 0/2 |
+| fn | MTP+dven40k n3 | code | greedy | 18.48 | 11.64 | +58.7% | 642/834 = 77.0% | 2/2 |
+| fn | MTP+dven40k n3 | json | greedy | 20.64 | 11.70 | +76.3% | 466/554 = 84.1% | 2/2 |
+| fn | MTP+dven40k n3 | reason | greedy | 20.66 | 11.66 | +77.2% | 1052/1260 = 83.5% | 0/2 |
+| fn | MTP+dven40k n3 | short | sampled | 17.75 | 11.73 | +51.4% | 154/198 = 77.8% | raw |
+| fn | MTP+dven40k n3 | chat | sampled | 12.60 | 11.56 | +9.0% | 380/726 = 52.3% | 0/2 |
+| fn | MTP+dven40k n3 | code | sampled | 16.28 | 11.64 | +39.9% | 574/822 = 69.8% | 0/2 |
+| fn | MTP+dven40k n3 | json | sampled | 21.63 | 11.70 | +84.8% | 564/644 = 87.6% | 2/2 |
+| fn | MTP+dven40k n3 | reason | sampled | 16.71 | 11.66 | +43.3% | 878/1190 = 73.8% | 0/2 |
+plain/r1-short/prompt: point -2.08% beyond band 1.00%
+plain/r2-short/prompt: point -1.70% beyond band 1.03%
+MTP n3/r1-short/prompt: point -1.32% beyond band 1.00%
+MTP n3/r2-short/prompt: point -2.78% beyond band 1.75%
+MTP+dven40k n3/r1-short/prompt: point -1.96% beyond band 1.11%
+MTP+dven40k n3/r2-short/prompt: point -3.37% beyond band 2.34%
+MTP+dven40k n3/s-chat/decode: point -1.33% beyond band 1.00%
+RAM min 8.74 GB

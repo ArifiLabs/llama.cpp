@@ -1,0 +1,30 @@
+{
+ "prompt_file": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-json.txt",
+ "path": "chat",
+ "regime": "greedy",
+ "sampling": {
+  "temperature": 0.0,
+  "top_k": 1
+ },
+ "ttft_ms": 509.9,
+ "wall_s": 17.18,
+ "timings": {
+  "cache_n": 0,
+  "prompt_n": 87,
+  "prompt_ms": 462.365,
+  "prompt_per_token_ms": 5.314540229885058,
+  "prompt_per_second": 188.1630313713192,
+  "predicted_n": 485,
+  "predicted_ms": 16665.193,
+  "predicted_per_token_ms": 34.432216942148756,
+  "predicted_per_second": 29.0425679438576
+ },
+ "tokens": null,
+ "content": "```json\n{\n  \"employees\": [\n    {\n      \"id\": 1001,\n      \"name\": \"Margaret Chen\",\n      \"title\": \"VP of Engineering\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2015-03-12\",\n      \"skills\": [\"Strategy\", \"System Design\", \"Team Leadership\", \"Cloud Architecture\"],\n      \"manager_id\": null\n    },\n    {\n      \"id\": 1047,\n      \"name\": \"David Okonkwo\",\n      \"title\": \"Engineering Manager\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2017-08-24\",\n      \"skills\": [\"Agile\", \"Python\", \"Hiring\", \"Project Management\"],\n      \"manager_id\": 1001\n    },\n    {\n      \"id\": 1182,\n      \"name\": \"Priya Nair\",\n      \"title\": \"Senior Software Engineer\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2020-01-06\",\n      \"skills\": [\"JavaScript\", \"TypeScript\", \"React\", \"PostgreSQL\", \"Testing\"],\n      \"manager_id\": 1047\n    }\n  ]\n}\n```",
+ "draft_n": null,
+ "draft_n_accepted": null,
+ "reasoning_content": "The user wants me to return three employee records from an HR export as one JSON object matching a specific schema. Let me create three realistic employee records.\n\nThe schema is:\n```json\n{\n  \"employees\": [\n    {\n      \"id\": int,\n      \"name\": str,\n      \"title\": str,\n      \"department\": str,\n      \"start_date\": \"YYYY-MM-DD\",\n      \"skills\": [str],\n      \"manager_id\": int or null\n    }\n  ]\n}\n```\n\nLet me create three employees. I'll make them realistic with proper relationships (manager_id references).\n\nLet me create:\n1. A CEO or VP with no manager (null)\n2. A manager who reports to the first\n3. An engineer who reports to the second\n\nLet me make the manager relationships consistent.\n",
+ "text_all": "The user wants me to return three employee records from an HR export as one JSON object matching a specific schema. Let me create three realistic employee records.\n\nThe schema is:\n```json\n{\n  \"employees\": [\n    {\n      \"id\": int,\n      \"name\": str,\n      \"title\": str,\n      \"department\": str,\n      \"start_date\": \"YYYY-MM-DD\",\n      \"skills\": [str],\n      \"manager_id\": int or null\n    }\n  ]\n}\n```\n\nLet me create three employees. I'll make them realistic with proper relationships (manager_id references).\n\nLet me create:\n1. A CEO or VP with no manager (null)\n2. A manager who reports to the first\n3. An engineer who reports to the second\n\nLet me make the manager relationships consistent.\n\u001e```json\n{\n  \"employees\": [\n    {\n      \"id\": 1001,\n      \"name\": \"Margaret Chen\",\n      \"title\": \"VP of Engineering\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2015-03-12\",\n      \"skills\": [\"Strategy\", \"System Design\", \"Team Leadership\", \"Cloud Architecture\"],\n      \"manager_id\": null\n    },\n    {\n      \"id\": 1047,\n      \"name\": \"David Okonkwo\",\n      \"title\": \"Engineering Manager\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2017-08-24\",\n      \"skills\": [\"Agile\", \"Python\", \"Hiring\", \"Project Management\"],\n      \"manager_id\": 1001\n    },\n    {\n      \"id\": 1182,\n      \"name\": \"Priya Nair\",\n      \"title\": \"Senior Software Engineer\",\n      \"department\": \"Engineering\",\n      \"start_date\": \"2020-01-06\",\n      \"skills\": [\"JavaScript\", \"TypeScript\", \"React\", \"PostgreSQL\", \"Testing\"],\n      \"manager_id\": 1047\n    }\n  ]\n}\n```",
+ "finish_reason": "stop",
+ "answer_reached": true
+}

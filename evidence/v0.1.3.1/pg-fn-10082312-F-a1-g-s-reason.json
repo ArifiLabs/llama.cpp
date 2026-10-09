@@ -1,0 +1,35 @@
+{
+ "prompt_file": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-reason.txt",
+ "path": "chat",
+ "regime": "sampled",
+ "sampling": {
+  "temperature": 0.7,
+  "top_k": 40,
+  "top_p": 0.95,
+  "min_p": 0.05,
+  "seed": 298
+ },
+ "ttft_ms": 2079.9,
+ "wall_s": 47.58,
+ "timings": {
+  "cache_n": 0,
+  "prompt_n": 161,
+  "prompt_ms": 2014.299,
+  "prompt_per_token_ms": 12.511173913043478,
+  "prompt_per_second": 79.92855082587043,
+  "predicted_n": 768,
+  "predicted_ms": 45502.627,
+  "predicted_per_token_ms": 59.32545893089961,
+  "predicted_per_second": 16.856169644886656,
+  "draft_n": 595,
+  "draft_n_accepted": 439
+ },
+ "tokens": null,
+ "content": "",
+ "draft_n": 595,
+ "draft_n_accepted": 439,
+ "reasoning_content": "We need solve problem step by step, check calculations. Need produce final. Let's analyze carefully.\n\nProblem: Train A leaves city A at 09:10 toward B, speed 84 km/h. Distance A-B = 391 km. Second train leaves B at 10:05 toward A, speed 106 km/h. Bird starts at A together with first train and flies at 150 km/h back and forth between two trains until they meet. When and where do trains meet, how far does bird fly? Need step by step and check every calculation.\n\nNeed consider timing. First train leaves at 9:10. Second leaves at 10:05. Bird starts at A together with first train at 9:10, flies at 150 km/h back and forth between two trains until they meet. But second train not started until 10:05. Bird initially flies toward B? Since second train not started. It may fly between first train and B? Problem says between the two trains until they meet. Before second train leaves, there is only one train. Usually classic bird problem assumes both start simultaneously. Here bird starts with first train, second later. Need interpret bird behavior before second train departure: It could fly back and forth between first train and city B? But \"between the two trains\" impossible. Could it wait at A? But starts at A together with first train and flies at 150 km/h back and forth between the two trains until they meet. Maybe bird immediately flies to B? Need reason.\n\nLet's parse: A train leaves city A at 09:10 travelling at 84 km/h toward city B, which is 391 km away. A second train leaves B at 10:05 toward A at 106 km/h. A bird starts at A together with the first train and flies at 150 km/h back and forth between the two trains until they meet. When and where do the trains meet, and how far does the bird fly?\n\nCould mean bird starts at A at 9:10, flies toward second train (which is at B initially until 10:05) at 150, turns around etc. But before 10:05, second train is stationary at B? It says leaves B at 10:05, so before that train is at B? The bird can fly between first train and the second train (which is parked at B) until second leaves. This is plausible. But classic distance bird = speed * total time from bird start until trains meet, as long as bird continuously flies at 150 km/h. It starts at 9:10 and stops when trains meet. It doesn't matter back-and-forth, if continuous. Need total time from 9:10 to meeting time. But if bird cannot fly between two trains before second starts? It can fly to B where second train sits, then back etc. If \"between two trains\" includes stationary train at B, then yes bird continuously flies from 9:10 until meeting. But if bird waits until second train leaves? It says starts at A together with first train, so no waiting. Need maybe compute total time from 9:10 to meeting. Check if bird ever reaches B before second train leaves? First train leaves 9:10, speed 84. Distance to B 391. Time for first train alone to reach B = 391/84 = 4.65476 h = 4h39m17",
+ "text_all": "We need solve problem step by step, check calculations. Need produce final. Let's analyze carefully.\n\nProblem: Train A leaves city A at 09:10 toward B, speed 84 km/h. Distance A-B = 391 km. Second train leaves B at 10:05 toward A, speed 106 km/h. Bird starts at A together with first train and flies at 150 km/h back and forth between two trains until they meet. When and where do trains meet, how far does bird fly? Need step by step and check every calculation.\n\nNeed consider timing. First train leaves at 9:10. Second leaves at 10:05. Bird starts at A together with first train at 9:10, flies at 150 km/h back and forth between two trains until they meet. But second train not started until 10:05. Bird initially flies toward B? Since second train not started. It may fly between first train and B? Problem says between the two trains until they meet. Before second train leaves, there is only one train. Usually classic bird problem assumes both start simultaneously. Here bird starts with first train, second later. Need interpret bird behavior before second train departure: It could fly back and forth between first train and city B? But \"between the two trains\" impossible. Could it wait at A? But starts at A together with first train and flies at 150 km/h back and forth between the two trains until they meet. Maybe bird immediately flies to B? Need reason.\n\nLet's parse: A train leaves city A at 09:10 travelling at 84 km/h toward city B, which is 391 km away. A second train leaves B at 10:05 toward A at 106 km/h. A bird starts at A together with the first train and flies at 150 km/h back and forth between the two trains until they meet. When and where do the trains meet, and how far does the bird fly?\n\nCould mean bird starts at A at 9:10, flies toward second train (which is at B initially until 10:05) at 150, turns around etc. But before 10:05, second train is stationary at B? It says leaves B at 10:05, so before that train is at B? The bird can fly between first train and the second train (which is parked at B) until second leaves. This is plausible. But classic distance bird = speed * total time from bird start until trains meet, as long as bird continuously flies at 150 km/h. It starts at 9:10 and stops when trains meet. It doesn't matter back-and-forth, if continuous. Need total time from 9:10 to meeting time. But if bird cannot fly between two trains before second starts? It can fly to B where second train sits, then back etc. If \"between two trains\" includes stationary train at B, then yes bird continuously flies from 9:10 until meeting. But if bird waits until second train leaves? It says starts at A together with first train, so no waiting. Need maybe compute total time from 9:10 to meeting. Check if bird ever reaches B before second train leaves? First train leaves 9:10, speed 84. Distance to B 391. Time for first train alone to reach B = 391/84 = 4.65476 h = 4h39m17\u001e",
+ "finish_reason": "length",
+ "answer_reached": false
+}

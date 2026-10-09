@@ -82,10 +82,12 @@ binary was built against. That produced `0xC0000139` (`STATUS_ENTRYPOINT_NOT_FOU
 `ui-assets.cmake` ran the asset-embed helper. Linking the runtime statically makes the binaries
 immune to DLL shadowing. See [`OPTIONS-REGISTRY.md` §Build variants](OPTIONS-REGISTRY.md#build-variants).
 
-### `LLAMA_USE_PREBUILT_UI=OFF` — required if you do not want a downloaded UI bundle
+### The web UI is on by default, and offline
 
-Leaving it on makes the configure step fetch a prebuilt web-UI release. Build the UI from source
-(`npm install && npm run build` in `tools/ui`) or turn the UI off entirely — see §4.
+This fork carries a pinned copy of the web UI (`tools/ui/dist.tar.gz`, checked against
+`tools/ui/dist.tar.gz.sha256` at configure time). It takes priority over the npm build and the
+network download, so every build embeds the same UI without network access or Node.js. To leave the
+UI out of a minimal or CI build, see §4.
 
 ---
 
@@ -98,8 +100,7 @@ cmake -S . -B build-cpu -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00" \
   -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00" \
-  -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" \
-  -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF
+  -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
 
 cmake --build build-cpu --target llama-server -j 6
 ```
@@ -120,16 +121,18 @@ cmake -S . -B build-vulkan -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON \
   -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00" \
   -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00" \
-  -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" \
-  -DLLAMA_USE_PREBUILT_UI=OFF
+  -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
 
 cmake --build build-vulkan --target llama-server -j 6
 ```
 
-The web UI is **ON** by default in local builds and is built from source. For a minimal or
-bench-proof build add `-DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF
--DLLAMA_USE_PREBUILT_WEBUI=OFF`. The UI touches no decode path, so a UI-ON server binary is
-bench-equivalent to UI-OFF — but record which one produced any number you publish.
+The server this builds includes the **web UI**: run it and open `http://127.0.0.1:8080`. The UI
+comes from the pinned `tools/ui/dist.tar.gz` (see §2), so the build stays offline and repeatable.
+The pinned copy is embedded whenever the server is built (`scripts/ui-assets.cmake` uses
+`tools/ui/dist` first), so `-DLLAMA_BUILD_UI=OFF` and `-DLLAMA_USE_PREBUILT_UI=OFF` do not remove
+it in this fork; they only switch off the npm build and the network download. To run a server
+without the UI, start it with `--no-ui` (environment `LLAMA_ARG_UI=0`). The UI touches no decode
+path, so it does not change any speed number.
 
 ## 4.5 Make `bin/` self-sufficient before you run or copy it
 

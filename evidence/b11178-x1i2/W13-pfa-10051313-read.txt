@@ -1,0 +1,18 @@
+pf1: 43 prefetch lines (0 PLANT), ms min/med/max 0.3/24.9/88.7, pages max 8395 | r1 prefill 180.10 decode 10.98 | r2 prefill 181.91 decode 11.30
+pf2: 43 prefetch lines (0 PLANT), ms min/med/max 0.3/25.0/94.6, pages max 8396 | r1 prefill 180.20 decode 11.05 | r2 prefill 182.12 decode 11.27
+off1: 0 prefetch lines (0 PLANT) | r1 prefill 126.00 decode 10.29 | r2 prefill 180.03 decode 11.21
+off2: 0 prefetch lines (0 PLANT) | r1 prefill 126.01 decode 10.45 | r2 prefill 179.90 decode 10.98
+plant: 43 prefetch lines (43 PLANT), ms min/med/max 0.2/26.8/80.0, pages max 8379 | r1 prefill 128.55 decode 11.07 | r2 prefill 182.30 decode 11.31
+twin: 0 prefetch lines (0 PLANT) | r1 prefill 124.89 decode 10.41 | r2 prefill nan decode nan
+(0) fire: PASS
+(1) RED premise off r1 prefill 126.01 vs r2 179.96 = -30.0% -> MET
+    pf vs off r1 prefill: +42.97%
+    pf vs off r2 prefill: +1.14%
+    pf vs off r1 decode: +6.21%
+    pf vs off r2 decode: +1.72%
+(2) WIN bar (r1 prefill >= +3%, others >= -2%): PASS
+(3) ids pf1 r1 == twin r1 4/4: PASS
+(4) plant r1 prefill vs off +2.02% < half pf gain: PASS
+(5) order off1 -> off2 r1 prefill +0.00%
+(5) order pf1 -> pf2 r1 prefill +0.06%
+VERDICT: PASS -> LLAMA_PLE_PREFETCH default 1

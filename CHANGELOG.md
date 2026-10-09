@@ -23,6 +23,9 @@ Detail beyond the summaries here lives in three places: [`docs/FINDINGS.md`](doc
 its default, and the measurement that chose the default), and
 [`patches/series/MANIFEST.md`](patches/series/MANIFEST.md) (per-patch source and measured effect).
 
+Releases are versioned `v0.1.<release>.<patch>`: the third number counts releases, the fourth counts fix
+releases on top of one. Each release section names its branch and upstream base.
+
 ## Reference hardware
 
 Unless an entry says otherwise, every measurement was taken on:
@@ -30,8 +33,167 @@ Unless an entry says otherwise, every measurement was taken on:
 - **RIG-A** — Beelink SER7, AMD Ryzen (Zen 4) with Radeon 780M integrated graphics (RDNA3,
   gfx1103, 12 CU), 32 GB DDR5-5600 with a 16 GB unified-memory carve-out, Windows 11,
   MinGW/UCRT toolchain, Vulkan backend.
+- **RIG-B** — Minisforum AI X1 Pro-470, AMD Ryzen AI 9 HX 470 with Radeon 890M integrated graphics
+  (RDNA 3.5), 96 GB DDR5-5600 with 72 GB reserved for the GPU, Windows 11, Vulkan backend; the rig of record
+  from 30 September 2026 (v0.1.3.0 onward).
 
 ---
+
+## v0.1.3.1 - 2026-10-09 (branch `b11178-v0.1.3.1`, tag `v0.1.3.1`, upstream `b11178`, evidence `evidence/v0.1.3.1/`)
+
+A fix release on v0.1.3.0, measured on the Radeon 890M (Minisforum AI X1 Pro-470). Ship gate vs v0.1.3.0 on four
+models, every served mode, greedy and sampled: output ids identical on every row; speed within 1% of v0.1.3.0 on the
+means; new draft depth 6 for both 27B DFlash2 lines: Q4_K_XL 12.09 -> 13.62 t/s short (+12.6%), S-X8 8.89 -> 9.54
+(+7.3%). Receipts `pg-fn-10082312`, `pg-orn-10090030`, `pg-q27-10090115`, `pg-sx8-10090129`, `pg-summary-p4.txt`.
+
+### Fixed
+- `--spec-type draft-mtp-adaptive` with a sidecar (`-md`) no longer crashes at load (0xC0000005). The memory-fit step
+  built the sidecar as a plain draft model because it checked only `draft-mtp`. Failing load reproduced on v0.1.3.0,
+  fixed loads healthy, `draft-mtp` output ids unchanged (8 of 8 rounds). Commit `2adf5cc557`; receipt `afix-10071150`.
+- IQ3_S MoE weights on the Vulkan MoE cache path: the sub-block scale nibble is now masked in `moe_cache_mv`, so IQ3_S
+  matches the CPU (wrong output before). Commits `16e0fbfc55` (fix), `b8b6fc962b` (per-type test vs CPU), `d474126e55`
+  (the test uses 64 experts so the cache pool exists); receipt strata-x1 `vkt-10082238` (iq3_s FAIL on v0.1.3.0, PASS
+  with the fix, 0 of 23 types FAIL).
+- Vulkan mat-vec on padded batches with an odd element stride (F16/BF16) took the aligned path and gave wrong
+  results; the aligned branch now also checks `a_offset` (upstream #29254). Commits `be1f7e6e6a` (test) `0e7ed6ff91`;
+  receipt upstream-x1 `rg8` (RED 2 of 7 MUL_MAT cases FAIL -> GREEN 7/7).
+- Vulkan mat-mul on a slice of a larger buffer (a KV-cache view) read the wrong rows for every head past the first; the
+  batch stride now comes from the tensor (upstream #28956, also applied to our S-X8 second pass and MoE gather).
+  Commits `53fa3053f9` `5103e6b89a`; receipt upstream-x1 `rg2` (RED 0/4 -> GREEN 4/4).
+- Vulkan reused a stale converted input after flash attention or a wide soft_max overwrote the same scratch buffer
+  (upstream #29591). Commits `f72601a07f` `c1dc0494a1` `541c06bbb0` `b84c1290a4` `5f6e304080`; receipt upstream-x1 `rg3`
+  (RED 5/18 OK, error ~1.0 -> GREEN 18/18).
+- Vulkan flash attention Q8_1 shared-memory write past the tile end (upstream #29988). Commit `d57bd92565`; receipt
+  upstream-x1 `rg3` (no regression 234/234; fix by code read, out-of-bounds write has no deterministic RED on AMD).
+- Vulkan: guard a null `vkEnumerateInstanceVersion` (Vulkan 1.0 loaders) and cap the argsort workgroup size (upstream
+  #29872, #29469). Commit `ce5bb40b7e`; receipt upstream-x1 `rg2` (ARGSORT 98/98, no regression).
+- GGUF loader rejects crafted files that hang or overflow it (duplicate names, size that wraps after padding,
+  element-count overflow; upstream #29598, #26979, #29384). Commits `2e91bdf179` `b213162139`; receipt upstream-x1 `rg3`
+  (test-gguf RED rc=1 -> GREEN rc=0).
+- CPU reference fixes: CLAMP on a non-contiguous view, soft_max_back alias, get_rows_back bounds, AVX512-FP16 f32
+  accumulate (upstream #29517, #27096, #29575, #29545). Commits `5a54109af1` `3052774bd0`; receipt upstream-x1 `rg3`
+  (CLAMP RED 6/8 -> GREEN 8/8).
+- Speculative decoding stops accepting draft tokens after a confirmed end-of-generation token, in both verify paths
+  (upstream #29638). Commits `bbb85f3ef1` (test) `dc298c1913`; receipt upstream-x1 `rg4` (accepted 2 -> 1).
+- Speculative decoding layer inputs keep the original batch order at `-np` > 1 (upstream #29019). Commit `432862154d`;
+  receipt: served check in the v0.1.3.1 smoke (`-np 1` ids == v0.1.3.0, `-np 2` acceptance per slot).
+- Saved state records the KV rotation; a restore into a different rotation is refused instead of silently wrong
+  (upstream #28498; session format 10 -> 11, sequence state 3 -> 4: older state files are refused). Commits
+  `850f46de87` (test) `5e1f308af3`; receipt upstream-x1 `rg4` (rot FAIL -> PASS, other 12 columns PASS both).
+- Graph inputs: every input tensor is collected (pipeline-parallel `n_copies` > 1), an input that is not a leaf now
+  asserts instead of computing wrong, and changing the MTP/DFlash extraction flags re-reserves the scheduler once
+  instead of reallocating mid-run (upstream #29634, #29647, #30020). Commits `820d1afd4a` `9ef414e29d` `c2cf383e15`;
+  receipt upstream-x1 `rg4`/`rg5` (assert held over every served arch family, Vulkan vs CPU OK both arms) + the
+  v0.1.3.1 smoke `Preal` arm (MTP serve under `GGML_SCHED_DEBUG_REALLOC=1`, no realloc abort).
+- GLM-5 Next: dead indexer slots scatter to their own rows instead of racing on one (upstream #29745). Commit
+  `45d8c6e967`; receipt upstream-x1 `rg5` (glm5-next Vulkan vs CPU, no regression; fix by code read, the race has no
+  deterministic RED on the test model).
+- DeepSeek-3.2 and dots3note graphs aborted at load (DSA key rotation width): their indexer rotation keeps the
+  full-width Hadamard tile; deepseek4 keeps the 64 tile. Commits `b06ad79994` `44a04aae36`; receipt upstream-x1 `rg6` (RED abort on v0.1.3.0 -> GREEN 154/154
+  archs CPU, Vulkan 3/3).
+- `tools/kv-mean-center/ab-proof.py` runs without our private `arifi_core` package (it raised ImportError in a public
+  checkout; the process-hygiene / load-governor checks are skipped with one line). Commit `4257f341eb`; receipt
+  `abfix-selftest` (selftest identical with the package hidden and present).
+
+### Added
+- `tools/qwen4exp-mtp-sidecar/`: build the Qwen3.8-Flash-Next MTP sidecar yourself. Strata's `mtp_fetch.py` (MIT,
+  unchanged) fetches the 31 BF16 MTP tensors at a pinned Qwen revision; our `build_sidecar.py` checks the Q8_0 head
+  against them and writes the sidecar; `make_dvocab_sidecar.py` writes the 40K draft-vocabulary variant. The scripts
+  regenerate both served sidecars with identical tensors (sha256 in the folder README). Commit `7dbdd07317`; receipt
+  `sidecar-regen`.
+- `--version` prints `arifilabs v0.1.3.1 (upstream b11178)`. Commit `58d81805c0`.
+- `GGML_ARIFI_MOE_GATHER_EXT=1` (opt-in, default off): MoE expert gather mat-vec for Q2_0 and every legacy / q8_1
+  id type; off is identical to v0.1.3.0.
+  Lane 302, commits `bfa4b73e2d` `5991bb1e34`; receipts `cellT-10070643`, `cellU-10071120`.
+
+### Faster
+- Qwen3.8-Flash-Next prompt reading: the QSA attention mask chain is fused into Vulkan flash attention (compaction
+  O(top_k), not O(n_kv)). Prompt +0.9% at 8K, +0.4% at 16K, +0.8% at 32K (every fused round above every v0.1.3.0
+  round), 2K and decode tie, output ids identical. `GGML_ARIFI_QSA_MASKFUSE=0` turns it off. Lane 301, commits
+  `21dcfd83ca` `90aba50569` `145b2f7c11`; receipts `c19-10080535`, `c18-10072033`.
+
+### Next (v0.1.3.2)
+- Lane 301 k-pool fixes (upstream #29958, #29994, #29805).
+- Upstream #28937 BF16 src1, once it has a receipt on our tree.
+
+### Changed
+- Freed KV cells are now zeroed before reuse (default ON), so `-fa off` decode after a history equals a fresh run bit for
+  bit (4 history drifts -> 0). `LLAMA_ARIFI_KV_ZERO_FREED=0` restores v0.1.3.0 behaviour (output ids identical to
+  v0.1.3.0). Decode and prompt reading stay inside the measured noise band (`kvz-10080516`). Lane 300,
+  commits `1ea866f868` `7ecb9a918b` `2fc868a681` `b0b41ed548`; receipts `c31p-10070726`, `c31q-10070739`,
+  `c31o-10070746`, `c31o-10070901`.
+- Recommended draft depth for Qwen3.8 27B with DFlash2 is `--spec-draft-n-max 6` (was 3 / 4). No code change. S-X8 output ids
+  identical; Q4_K_XL identical except two known near-tie tokens (@78 short, @92 long). Q4_K_XL (Huihui): +14.21% short, +1.24% long (`depthc-10070817`). S-X8 v4.3: +6.47% short, +2.09% long in
+  one window (`sx8mtp-10070611`); pooled over 8 rounds +8.4% / +3.6% (`depth-10070406`).
+- Lane-299 runbook: NMSE op tests miss bit-exactness at 2-8 token verify windows; how to census a verify window.
+  Commit `417d26b368`.
+
+## v0.1.3.0 - 2026-10-07 (branch `b11178-x1i2`, upstream `b11178`)
+
+Measured on the Radeon 890M (Minisforum AI X1 Pro-470). Receipts: [`evidence/b11178-x1i2/`](evidence/b11178-x1i2/).
+
+### Added
+- MTP drafting for Qwen3.8-Flash-Next with an MTP sidecar head (`--spec-type draft-mtp -md <sidecar>`): 10.73 → 16.64
+  t/s short prompt (+55.0%), 10.38 → 15.14 long (+45.8%).
+- A 40,525-token draft vocabulary head for MTP: +4.6% to +8.7% decode over the MTP head, same output ids.
+- Recurrent-state update in place (GDN state bank) on the MTP verify path and in plain decode: MTP decode +9.5%; plain
+  +4.4% short, +3.0% long. On by default; `GGML_VK_DISABLE_GDN_BANK` reverts.
+- One fused dispatch per hyper-connection post step: 288 fewer dispatches per token, +1.2% short / +6.6% long decode.
+  `GGML_VK_DISABLE_HC_POST_W` reverts.
+- Sparse attention at prefill (QSA): 32K-token prompt 105.8 → 194.1 t/s (+83.4%). `GGML_ARIFI_FA_SPARSE_PREFILL=0` reverts.
+- Pooled indexer-key cache for long-context decode: decode at 32K tokens 8.29 → 10.35 t/s (+24.8%).
+  `GGML_ARIFI_QSA_POOL_CACHE=0` reverts.
+- Embedding-row prefetch per prompt chunk (novel 2,000-token prefill +42.9%, decode +6.2%) and release from the
+  Windows working set. `LLAMA_PLE_PREFETCH=0` / `LLAMA_PLE_RELEASE=0` revert.
+- Repeatable greedy decode on Vulkan: masked KV cells are kept out of the coopmat1 flash-attention sum (10 of 10
+  identical runs per prompt). `GGML_VK_FA_DEADV_KEEP=1` restores the old path.
+- MoE expert mat-vec in slot-major order (served decode unchanged, +0.34% mean). `GGML_ARIFI_MOE_GATHER=0` reverts.
+- GLM-5.3 Flash with routed experts streamed from NVMe (`GGML_ARIFI_MOE_NVME=1`): 2.96 t/s decode.
+- Direct-I/O model loading on Windows (`-lm dio`): Qwen3.8-Flash-Next serves at a 0.8–1.6 GB server working set.
+- `llama-quantize` reads its input in slabs on Windows.
+
+### Changed
+- Base moved from upstream `b10825` to `b11178` (with upstream's int8 coopmat1 path).
+- S-X8 v4.3 prompt reading runs on the int8 coopmat1 kernel from 56 columns: 782-token prompt +25.8%.
+  `GGML_ARIFI_SX8_CM1=0` reverts.
+- Prompt images are kept in reusable device snapshots: server peak working set 8.57 → 1.51 GB on a 512-token prompt.
+- The ROCmFP4-FAST q8_1 mat-vec route is on by default (+26.9% drafted on the Radeon 780M).
+  `GGML_ARIFI_ROCMFP4_MMVQ=0` reverts.
+
+### Fixed
+- Loading Qwen3.8-Flash-Next no longer drains Windows memory to the alarm line (whole-file prefetch removed).
+- An MTP checkpoint restore at a position not divisible by 4 no longer writes the wrong ring plane.
+
+## v0.1.2.0 - 2026-10-01 (branch `b10825-r86i-x1`, upstream `b10825`)
+
+Measured on the Radeon 780M (Beelink SER7 Pro).
+
+### Added
+- Vulkan kernels for every fork format (`test-backend-ops` on Vulkan against the CPU reference, 0 failures).
+- Mat-vec kernels tuned for speculative-decoding verify widths 2-8, and the S-X8 v4.3 decode kernels.
+- The ROCmFP4-FAST q8_1 mat-vec route (opt-in in this release): Qwen3.8 27B ROCmFP4-FAST with DFlash2 7.498 → 9.518
+  t/s (+26.9%).
+- Adaptive draft length (`--spec-draft-adaptive`) and the Vulkan MoE expert cache (`--moe-cache`).
+- Placement into the Radeon 890M's GPU reservation (`GGML_VK_UMA_PLACEMENT`).
+
+### Fixed
+- Stable DFlash2 and MTP drafting on Qwen3.8: attaching a drafter no longer corrupts the recurrent state of hybrid
+  models, replayed draft tokens are not re-verified after a checkpoint restore, and a rejected draft checkpoint no
+  longer stops the server.
+
+## v0.1.1.0 - 2026-09-22 (branch `b10825-r73i`, upstream `b10825`)
+
+First public release: a capability release, no speed headline.
+
+### Added
+- A linear patch series on upstream `b10825` that `tools/arifi-sync/arifi_sync.py series check` replays and verifies.
+- Seven tracked sources: PowerInfer SSD expert streaming, PrismML Q2_0_G128 with its VNNI repack, the ROCmFPX
+  formats, TQ3_4S, TurboQuant KV with TQ3_1S / TQ4_1S and their Vulkan kernels, plus three host-transfer expert-prefetch
+  patches.
+
+---
+
+Everything below predates the first public release (v0.1.1.0) and is kept as the development record.
 
 ## On upstream `b10819` (`6a1a922d2`) — 2026-09-05 to 2026-09-06
 

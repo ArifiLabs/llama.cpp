@@ -1,0 +1,35 @@
+{
+ "prompt_file": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-code.txt",
+ "path": "chat",
+ "regime": "sampled",
+ "sampling": {
+  "temperature": 0.7,
+  "top_k": 40,
+  "top_p": 0.95,
+  "min_p": 0.05,
+  "seed": 298
+ },
+ "ttft_ms": 1920.3,
+ "wall_s": 31.15,
+ "timings": {
+  "cache_n": 0,
+  "prompt_n": 117,
+  "prompt_ms": 1869.165,
+  "prompt_per_token_ms": 15.975769230769231,
+  "prompt_per_second": 62.594795002046375,
+  "predicted_n": 512,
+  "predicted_ms": 29233.407,
+  "predicted_per_token_ms": 57.20823287671233,
+  "predicted_per_second": 17.48000156122754,
+  "draft_n": 414,
+  "draft_n_accepted": 331
+ },
+ "tokens": null,
+ "content": "```python\ndef merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:\n    \"\"\"\n    Merge overlapping closed intervals and return the merged intervals sorted\n    by their start values.\n\n    Intervals are treated as closed, so intervals like (1, 2) and (2, 3)\n    are considered overlapping and are merged into (1, 3).\n\n    Args:\n        intervals: A list of closed intervals represented as tuples\n                   (start, end), where start <= end.\n\n    Returns:\n        A list of non-overlapping closed intervals sorted by start value.\n    \"\"\"\n    if not intervals:\n        return []\n\n    sorted_intervals = sorted(intervals)\n    merged: list[tuple[int, int]] = []\n\n    for start, end in sorted_intervals:\n        if not merged or start > merged[-1][1]:\n            merged.append((start, end))\n        else:\n            merged[-1] = (merged[-1][0], max(merged[-1][1], end))\n\n    return merged\n\n\nassert merge_intervals([]) == []\nassert merge_intervals([(3, 4), (1, 2)]) == [(1, 2), (3, 4)]\nassert merge_intervals([(1, 3), (",
+ "draft_n": 414,
+ "draft_n_accepted": 331,
+ "reasoning_content": "We need answer user's request: Write Python 3.12 function merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]] that merges overlapping closed intervals and returns sorted. Handle empty input. Include type hints, docstring, three assert-based tests. Reply with one code block.\n\nNeed final only code block. Need ensure Python 3.12, type hints. Could include from __future__? Not necessary. Function sorts by start then end. Merge if current.start <= last.end (closed intervals, touching overlaps). Return list of tuples. Tests with asserts.\n\nNeed think about if intervals may have start > end? Usually assume valid. Could handle by normalizing? Not required. Maybe robust: if start > end, swap? But type tuple int. Could just sort. Closed intervals: [1,2] and [2,3] merge to [1,3]. Overlapping includes touching.\n\nThree assert-based tests: empty, non-overlap, touching and nested. Could put at bottom.\n\nOne code block only. Ensure no extra text.\n",
+ "text_all": "We need answer user's request: Write Python 3.12 function merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]] that merges overlapping closed intervals and returns sorted. Handle empty input. Include type hints, docstring, three assert-based tests. Reply with one code block.\n\nNeed final only code block. Need ensure Python 3.12, type hints. Could include from __future__? Not necessary. Function sorts by start then end. Merge if current.start <= last.end (closed intervals, touching overlaps). Return list of tuples. Tests with asserts.\n\nNeed think about if intervals may have start > end? Usually assume valid. Could handle by normalizing? Not required. Maybe robust: if start > end, swap? But type tuple int. Could just sort. Closed intervals: [1,2] and [2,3] merge to [1,3]. Overlapping includes touching.\n\nThree assert-based tests: empty, non-overlap, touching and nested. Could put at bottom.\n\nOne code block only. Ensure no extra text.\n\u001e```python\ndef merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:\n    \"\"\"\n    Merge overlapping closed intervals and return the merged intervals sorted\n    by their start values.\n\n    Intervals are treated as closed, so intervals like (1, 2) and (2, 3)\n    are considered overlapping and are merged into (1, 3).\n\n    Args:\n        intervals: A list of closed intervals represented as tuples\n                   (start, end), where start <= end.\n\n    Returns:\n        A list of non-overlapping closed intervals sorted by start value.\n    \"\"\"\n    if not intervals:\n        return []\n\n    sorted_intervals = sorted(intervals)\n    merged: list[tuple[int, int]] = []\n\n    for start, end in sorted_intervals:\n        if not merged or start > merged[-1][1]:\n            merged.append((start, end))\n        else:\n            merged[-1] = (merged[-1][0], max(merged[-1][1], end))\n\n    return merged\n\n\nassert merge_intervals([]) == []\nassert merge_intervals([(3, 4), (1, 2)]) == [(1, 2), (3, 4)]\nassert merge_intervals([(1, 3), (",
+ "finish_reason": "length",
+ "answer_reached": true
+}

@@ -1,0 +1,32 @@
+{
+ "prompt_file": "C:\\ArifiLabs\\cache\\mtp-x1-lane\\cells\\pgc-code.txt",
+ "path": "chat",
+ "regime": "greedy",
+ "sampling": {
+  "temperature": 0.0,
+  "top_k": 1
+ },
+ "ttft_ms": 546.2,
+ "wall_s": 14.7,
+ "timings": {
+  "cache_n": 0,
+  "prompt_n": 75,
+  "prompt_ms": 484.345,
+  "prompt_per_token_ms": 6.457933333333334,
+  "prompt_per_second": 154.8483002818239,
+  "predicted_n": 512,
+  "predicted_ms": 14155.358,
+  "predicted_per_token_ms": 27.701287671232876,
+  "predicted_per_second": 36.09940490378272,
+  "draft_n": 414,
+  "draft_n_accepted": 339
+ },
+ "tokens": null,
+ "content": "",
+ "draft_n": 414,
+ "draft_n_accepted": 339,
+ "reasoning_content": "The user wants a Python 3.12 function that merges overlapping closed intervals. Let me think about this carefully.\n\nThe function signature is:\n```python\ndef merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:\n```\n\nIt should:\n1. Merge overlapping closed intervals\n2. Return them sorted\n3. Handle empty input\n4. Include type hints, docstring, and three assert-based tests\n5. Reply with one code block\n\nLet me think about what \"closed intervals\" means. A closed interval [a, b] includes both endpoints a and b. So [1, 3] and [2, 4] overlap because they share points 2 and 3. Also, [1, 2] and [2, 3] would overlap because they share the point 2 (closed intervals).\n\nWait, let me reconsider. For closed intervals, [1, 2] and [2, 3] share the point 2, so they should be merged into [1, 3].\n\nLet me write the algorithm:\n1. If empty, return empty list\n2. Sort intervals by start\n3. Iterate and merge\n\nLet me write the code:\n\n```python\ndef merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:\n    \"\"\"Merge overlapping closed intervals and return them sorted by start.\n\n    Args:\n        intervals: A list of closed intervals represented as (start, end)\n            tuples where start <= end.\n\n    Returns:\n        A new list of merged intervals sorted by their start value.\n    \"\"\"\n    if not intervals:\n        return []\n\n    sorted_intervals = sorted(intervals, key=lambda interval: interval[0])\n    merged = [list(sorted_intervals[0])]\n\n    for start, end in sorted_intervals[1:]:\n        last_start, last_end = merged[-1]\n        if start <= last_end:  # Overlapping or touching (closed intervals)\n            merged[-1][1] = max(last_end, end)\n        else:\n            merged.append([start, end])\n\n    return [(start, end) for start, end in merged]\n```\n\nNow let me write three tests:\n\n```python\n# Test 1: Empty input\nassert merge_intervals([]) == []\n\n# Test 2: Overlapping",
+ "text_all": "The user wants a Python 3.12 function that merges overlapping closed intervals. Let me think about this carefully.\n\nThe function signature is:\n```python\ndef merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:\n```\n\nIt should:\n1. Merge overlapping closed intervals\n2. Return them sorted\n3. Handle empty input\n4. Include type hints, docstring, and three assert-based tests\n5. Reply with one code block\n\nLet me think about what \"closed intervals\" means. A closed interval [a, b] includes both endpoints a and b. So [1, 3] and [2, 4] overlap because they share points 2 and 3. Also, [1, 2] and [2, 3] would overlap because they share the point 2 (closed intervals).\n\nWait, let me reconsider. For closed intervals, [1, 2] and [2, 3] share the point 2, so they should be merged into [1, 3].\n\nLet me write the algorithm:\n1. If empty, return empty list\n2. Sort intervals by start\n3. Iterate and merge\n\nLet me write the code:\n\n```python\ndef merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:\n    \"\"\"Merge overlapping closed intervals and return them sorted by start.\n\n    Args:\n        intervals: A list of closed intervals represented as (start, end)\n            tuples where start <= end.\n\n    Returns:\n        A new list of merged intervals sorted by their start value.\n    \"\"\"\n    if not intervals:\n        return []\n\n    sorted_intervals = sorted(intervals, key=lambda interval: interval[0])\n    merged = [list(sorted_intervals[0])]\n\n    for start, end in sorted_intervals[1:]:\n        last_start, last_end = merged[-1]\n        if start <= last_end:  # Overlapping or touching (closed intervals)\n            merged[-1][1] = max(last_end, end)\n        else:\n            merged.append([start, end])\n\n    return [(start, end) for start, end in merged]\n```\n\nNow let me write three tests:\n\n```python\n# Test 1: Empty input\nassert merge_intervals([]) == []\n\n# Test 2: Overlapping\u001e",
+ "finish_reason": "length",
+ "answer_reached": false
+}
