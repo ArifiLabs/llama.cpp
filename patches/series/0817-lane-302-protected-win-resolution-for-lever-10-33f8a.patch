@@ -1,0 +1,46 @@
+From fbbf9a3c1bb54e9630c1757679ba70e51934a956 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 14:41:32 -0400
+Subject: [PATCH] lane-302: protected-win resolution for lever 10 (33f8ae3037)
+ on vulkan-moe-gather-slot-major-matvec-id
+
+Lane-branch only (HQ84 2026-10-08 06:3x grant); never on integ or the export tree.
+Verdict adopt-union: gather mechanism kept, width-1 dead rank scan removed. Evidence cells X and Y.
+
+Origin: lane-302
+Measured-effect: UNMEASURED - bookkeeping row; numbers on 33f8ae3037 (cells/cellX-10080605-read.json, cells/cellY-10081402-read.json)
+Lane: lane-302
+---
+ .../arifi-sync/protected-win-resolutions.json | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/tools/arifi-sync/protected-win-resolutions.json b/tools/arifi-sync/protected-win-resolutions.json
+index fdb27a35fc..12c1435217 100644
+--- a/tools/arifi-sync/protected-win-resolutions.json
++++ b/tools/arifi-sync/protected-win-resolutions.json
+@@ -1267,6 +1267,25 @@
+       "decided_utc": "2026-10-09T06:15:00Z",
+       "decided_by": "HQ84 2026-10-09 02:1x EDT (authored from lane-298 relaunch-93 read, QUESTIONS 'HQ84 (2026-10-09 02:1x EDT) - Q67 ruled'); written by lane 298",
+       "owed": "no"
++    },
++    {
++      "win_id": "vulkan-moe-gather-slot-major-matvec-id",
++      "incoming": "33f8ae30373c5b79645d809d42a2adc4b717b9d0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 10 is a fork-internal lane-302 change to gather_setup in mul_mat_vec_base.glsl, not an upstream ingest",
++        "ours": "cell X pre arm: lane build before lever 10 (gather_setup runs the leader-rank scan at NUM_COLS=1); cell Y integ arm 7156c61607",
++        "union": "cell X new arm: same gather mechanism (slot-major order, one weight read per distinct expert) kept; width-1 early return removes only the dead rank scan; op n5 -5.17/-4.45%, n4 -2.04/-1.8%; served tie vs integ"
++      },
++      "quality": "cell X harness byte-identical to gather-off on five served types n1..n8 (TBO 40/40 OK, planted RED 37 FAIL); cell Y greedy+sampled token ids identical 80/80 vs integ, acceptance identical",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellX-10080605-read.json",
++        "cache/moe-gather-x1-lane/cells/cellY-10081402-read.json",
++        "cache/moe-gather-x1-lane/cells/cellW-10071710/SUMMARY.txt",
++        "commit:33f8ae30373c5b79645d809d42a2adc4b717b9d0"
++      ],
++      "decided_utc": "2026-10-08T18:50:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), write granted by HQ84 2026-10-08 06:3x (lane branch only)"
+     }
+   ]
+ }

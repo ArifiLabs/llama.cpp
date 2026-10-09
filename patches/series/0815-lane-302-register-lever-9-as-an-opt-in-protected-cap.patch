@@ -1,0 +1,74 @@
+From 560a45b457d39040e79410097e59c2c349725c2a Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 17:32:23 -0400
+Subject: [PATCH] lane-302: register lever 9 as an opt-in protected capability
+ (replaces the 0dd760c106 baseline row)
+
+The baseline only dispositions history before strict registration, so the lever 9 default-OFF flip
+cannot live there. It is registered in protected-wins.json as vulkan-moe-gather-ext-q2_0-legacy-optin:
+an OPT-IN capability with its measured NEGATIVE effect on this rig (cellT-10070643), protected so an
+incoming change cannot drop it silently. validate --draft PASS (cells/pwvalidate-lever10.txt).
+
+Origin: lane-302
+Measured-effect: UNMEASURED (manifest bookkeeping, no code)
+Lane: lane-302
+---
+ tools/arifi-sync/protected-win-baseline.json |  6 -----
+ tools/arifi-sync/protected-wins.json         | 27 ++++++++++++++++++++
+ 2 files changed, 27 insertions(+), 6 deletions(-)
+
+diff --git a/tools/arifi-sync/protected-win-baseline.json b/tools/arifi-sync/protected-win-baseline.json
+index dc25a30b65..303cd95a5e 100644
+--- a/tools/arifi-sync/protected-win-baseline.json
++++ b/tools/arifi-sync/protected-win-baseline.json
+@@ -345,12 +345,6 @@
+         "d3312a7cbd4e330027b5acb29a80e0dadc96d235"
+       ],
+       "sha_pre_rebase": "6d3bd166c13a5f26fca4e1dcf02b61cdfa3ce4a2"
+-    },
+-    {
+-      "sha": "2644ba9c1717c3ab79a4f65407d14685ae3ec6a1",
+-      "subject": "lane-302 lever 9: GGML_ARIFI_MOE_GATHER_EXT default OFF (opt-in, measured slower on Q2_0)",
+-      "disposition": "NEGATIVE RESULT - lever 9 (e03f35bb45, Q2_0 + legacy/q8_1 gather twins) measured +8..+22% SLOWER at n2..n8 on Q2_0 (cellT-10070643), so this commit defaults it OFF; default OFF = the integ 7156c61607 route (cellU-10071120 PASS). Opt-in only; nothing is protected by keeping it.",
+-      "added_by": "lane-302 relaunch-43, 2026-10-07"
+     }
+   ],
+   "tip_when_recorded_pre_rebase_b10680": "bda5865cb",
+diff --git a/tools/arifi-sync/protected-wins.json b/tools/arifi-sync/protected-wins.json
+index 332564a6b3..cecd7d9a25 100644
+--- a/tools/arifi-sync/protected-wins.json
++++ b/tools/arifi-sync/protected-wins.json
+@@ -2344,6 +2344,33 @@
+       "also_commits": [
+         "90aba50569667ca1249b468ca02feeb50f24a8a4"
+       ]
++    },
++    {
++      "id": "vulkan-moe-gather-ext-q2_0-legacy-optin",
++      "status": "active",
++      "_registered": "2026-10-07, lane-302 relaunch-43 (Opus 5.5). Registered as an OPT-IN capability, NOT a speed win on our rig: default OFF since 2644ba9c17. Protected so an incoming change cannot silently drop the capability (union law: other rigs and quant files).",
++      "mechanism": "MUL_MAT_ID expert gather (slot-major idg pipelines) extended to Q2_0 and every legacy / q8_1 MMVQ id type (q4_0, q8_0, q4_K, q5_K, q6_K, mxfp4 ...). GGML_ARIFI_MOE_GATHER_EXT unset/0 = no idg twins for these types (per-token loop, the integ 7156c61607 route); =1 = gathered. Per-workgroup math unchanged.",
++      "commit": "e03f35bb4573e8ce05f5937a49c74100334e7b7e",
++      "also_commits": [
++        "2644ba9c1717c3ab79a4f65407d14685ae3ec6a1"
++      ],
++      "protected_paths": [
++        "ggml/src/ggml-vulkan/ggml-vulkan.cpp",
++        "ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp"
++      ],
++      "anchors": [
++        "GGML_ARIFI_MOE_GATHER_EXT",
++        "moe_gather_ext_env"
++      ],
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellT-10070643/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellT-10070643-read.json",
++        "cache/moe-gather-x1-lane/cells/cellU-10071120/SUMMARY.txt"
++      ],
++      "quality_gate": "cell T: test-backend-ops 56/56 on q2_0 + q4_0/q8_0/q4_K/q5_K/q6_K/mxfp4 served shapes, planted RED 41 FAIL, harness 32/32 IDENT to gather-off, plant 16/16 DIFF. Cell U: default (OFF) arm IDENT to the integ route.",
++      "workload": "Qwen3.8-Flash-Next qwen4exp IQ3_S serve file, Q2_0 ffn_down_exps (blk 1/10/20/30), 512 experts top-10, AMD Radeon 890M (RDNA3.5), n_tokens 1..8 harness.",
++      "measured_effect": "NEGATIVE on this rig: opt-in arm vs per-token loop, Q2_0 down, real routing, round 1 / round 2: n1 -4.1/+1.7% (tie), n2 +18.4/+9.1%, n4 +9.5/+8.4%, n8 +21.7/+21.8% SLOWER (cellT-10070643). Default OFF = no change (cellU-10071120). Unmeasured on Ornith-1.5 q4_K/q6_K (owed, lane-302).",
++      "valid_conditions": "Vulkan MUL_MAT_ID, n_tokens 2..8, GGML_ARIFI_MOE_GATHER_EXT=1 only."
+     }
+   ],
+   "_rekeyed_pre_rebase_to_x1i": "Re-keyed 2026-10-06 (release-prep HQ82) from the pre-rebase chain (reachable only through the fork tag arifi-pre-rebase-e86ca0289, which does not ship) to the rebased commit on the x1i line. Map: the checked replay-provenance.json row when one exists, else a unique git patch-id --stable match. The prior key is kept in *_pre_rebase. No row was added, removed or re-judged."
