@@ -126,10 +126,11 @@ the embed helper immune to DLL shadowing, so UI-ON builds link cleanly.
 | Variant | Flags | Use | Verified |
 |---|---|---|---|
 | UI ON (local default) | omit the four UI/WEBUI OFF flags; keep static-libgcc/libstdc++ + `-D_WIN32_WINNT=0x0A00` | Local dev / interactive web-UI testing. | 2026-07-22 (lane-110): `build-vulkan-ui` — embed ran without `0xC0000139`, server binary 70.59 MB vs 67.81 MB UI-OFF (+2.78 MB embedded assets), generated `tools/ui/ui.cpp` = 14.3 MB. Verified statically (no server launched). |
-| UI OFF (minimal / CI-bench) | `-DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_USE_PREBUILT_WEBUI=OFF` | Bench-proof and CI builds where the UI is irrelevant to decode paths. | Remains available; `build-vulkan` bench artifact built this way. |
+| UI OFF (minimal / CI-bench) | `-DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_WEBUI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_USE_PREBUILT_WEBUI=OFF` | Switches off the npm build and the network download. The pinned UI copy is still embedded; run the server with `--no-ui` for an API-only server. | Remains available. |
 
-**UI asset source (2026-07-22):** the npm build path (`node v24.14.1` already installed —
-`npm install` + `npm run build` into `tools/ui/dist`), not the prebuilt-release download.
+**UI asset source (current):** the pinned `tools/ui/dist.tar.gz`, sha256-checked and extracted
+at configure time (`tools/ui/CMakeLists.txt:36-59`); `scripts/ui-assets.cmake` takes `tools/ui/dist`
+first, so the build stays offline and repeatable. No npm build and no download are needed.
 The UI embed touches no decode path; a UI-ON server binary is bench-equivalent to UI-OFF —
 note the binary used in any RESULTS entry.
 

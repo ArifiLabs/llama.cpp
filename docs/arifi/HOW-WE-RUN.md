@@ -14,16 +14,18 @@ variable we used, and the reason for each one. Environment variables in full: [E
 
 ## Radeon 890M (current machine)
 
-Numbers: v0.1.3.0 measurements; v0.1.3.1 re-measure pending.
+Numbers: the v0.1.3.1 gate, 2026-10-09, this release's arm ("point" column of
+[`evidence/v0.1.3.1/pg-*-READ.txt`](../../evidence/v0.1.3.1/)).
 
-Machine: Minisforum AI X1 Pro-470, Ryzen AI 9 HX 470, Radeon 890M (RDNA 3.5, gfx1150), 96 GB DDR5-5600 with
-72 GB reserved for the GPU, Windows 11. Each row is one ABBA A/B, 4 rounds per arm (8 for MTP arms), means.
+Machine: Ryzen AI 9 HX 470, Radeon 890M (RDNA 3.5, gfx1150), 96 GB DDR5-5600 with 72 GB reserved for the GPU,
+Windows 11. Each row is an A/B against v0.1.3.0 on the same file: 2 timed rounds per launch (short and long prompt),
+2 launches per arm for Flash-Next and Ornith-1.5 (order ABBA), 1 per arm for the 27B lines; means shown.
 
-The lines below are copied from each measured cell's own record (`evidence/b11178-x1i2/sg-*-state.json`,
+The lines below are copied from each measured arm's own record (`evidence/v0.1.3.1/pg-*-state.json`,
 field `args`). Each starts with `llama-server -m <model file>`; port and host are left out.
-Those records set **no environment variables** (`env` is empty); only GLM-5.3 needs some.
+The arms in the tables below set **no environment variables** (`env` is empty); only GLM-5.3 needs some.
 
-<!-- src: README.md "Speed: Radeon 890M", "Test system (Radeon 890M numbers)"; evidence/b11178-x1i2/sg-fn-10062152-state.json, sg-orn-10062214-state.json, sg-ornm-10062326-state.json, sg-q27-10062103-state.json, sg-q27m-10062225-state.json, sg-sx8-10062125-state.json -->
+<!-- src: README.md "Speed: Radeon 890M"; evidence/v0.1.3.1/pg-fn-10082312-state.json, pg-orn-10090030-state.json, pg-q27-10090115-state.json, pg-sx8-10090129-state.json (args, env); evidence/v0.1.3.1/pg-*-READ.txt (point column) -->
 
 ### Qwen3.8-Flash-Next, GSQ-RCO IQ3_S (ISTA-DASLab)
 
@@ -40,7 +42,7 @@ Those records set **no environment variables** (`env` is empty); only GLM-5.3 ne
 
 Environment variables: none.
 
-<!-- src: README.md "How we run it (Radeon 890M)", "Models used"; evidence/b11178-x1i2/sg-fn-10062152-state.json (arms 0-10) -->
+<!-- src: README.md "How we run it (Radeon 890M)", "Models used"; evidence/v0.1.3.1/pg-fn-10082312-state.json (arms P, M, F), pg-fn-10082312-READ.txt -->
 
 ### Ornith-1.5 35B-A3B MoE, Q4_K_M (ornith-ai)
 
@@ -57,7 +59,7 @@ Environment variables: none.
 
 Environment variables: none.
 
-<!-- src: README.md "How we run it (Radeon 890M)", "Models used"; evidence/b11178-x1i2/sg-orn-10062214-state.json, sg-ornm-10062326-state.json -->
+<!-- src: README.md "How we run it (Radeon 890M)", "Models used"; evidence/v0.1.3.1/pg-orn-10090030-state.json (arms P, M, D), pg-orn-10090030-READ.txt -->
 
 ### Qwen3.8 27B dense, UD-Q4_K_XL (Huihui abliterated, huihui-ai)
 
@@ -73,10 +75,11 @@ Environment variables: none.
 | DFlash2 | 6 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | `--spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 6` | 13.62 / 11.55 |
 
 Environment variables: none. The README leaves `-t 16 -tb 32` out of its lines; the measured records carry them.
-After this release, a separate ABBA A/B found depth 6 faster than depth 3 on this file: DFlash2
-11.63 → 13.28 t/s short (+14.2%), long +1.2%. The next release moves this row to depth 6.
+This release moves the DFlash2 row from depth 3 to depth 6: short-prompt decode 12.09 → 13.62 t/s (+12.6%).
+The depth-3 number is the mean of the v0.1.3.0 rounds 12.11 / 12.06 / 12.10 / 12.08 (DFlash2, short, the values
+after the arrow) in [`sg-q27-10062103-shipgate-read.txt`](../../evidence/b11178-x1i2/sg-q27-10062103-shipgate-read.txt).
 
-<!-- src: README.md "How we run it (Radeon 890M)", "Speed: Radeon 890M" (Since this release), "Models used"; evidence/b11178-x1i2/sg-q27-10062103-state.json, sg-q27m-10062225-state.json -->
+<!-- src: README.md "How we run it (Radeon 890M)", "Speed: Radeon 890M", "Models used"; evidence/v0.1.3.1/pg-q27-10090115-state.json (arms P, M, D), pg-q27-10090115-READ.txt; evidence/b11178-x1i2/sg-q27-10062103-shipgate-read.txt (depth 3: 12.11/12.06/12.10/12.08) -->
 
 ### Qwen3.8 27B dense, S-X8 v4.3, 7.5 bits per weight (MarlaLabs)
 
@@ -90,10 +93,12 @@ After this release, a separate ABBA A/B found depth 6 faster than depth 3 on thi
 | plain | - | - | none | 2.96 / 2.95 |
 | DFlash2 | 6 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | `--spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 6` | 9.54 / 8.57 |
 
-Environment variables: none. After this release, depth 6 measured faster here too: short +8.4%,
-long +3.6%, same output. The next release moves this row to depth 6.
+Environment variables: none. This release moves the DFlash2 row from depth 4 to depth 6: short-prompt decode
+8.89 → 9.54 t/s (+7.3%). The depth-4 number is the mean of the v0.1.3.0 rounds 8.88 / 8.89 / 8.89 / 8.89 (DFlash2,
+short, the values after the arrow) in
+[`sg-sx8-10062125-shipgate-read.txt`](../../evidence/b11178-x1i2/sg-sx8-10062125-shipgate-read.txt).
 
-<!-- src: README.md "How we run it (Radeon 890M)", "Speed: Radeon 890M", "Models used"; evidence/b11178-x1i2/sg-sx8-10062125-state.json -->
+<!-- src: README.md "How we run it (Radeon 890M)", "Speed: Radeon 890M", "Models used"; evidence/v0.1.3.1/pg-sx8-10090129-state.json (arms P, D), pg-sx8-10090129-READ.txt; evidence/b11178-x1i2/sg-sx8-10062125-shipgate-read.txt (depth 4: 8.88/8.89/8.89/8.89) -->
 
 ### GLM-5.3 Flash MoE, GSQ-RCO 3.0-bit, routed experts streamed from NVMe (pfeifferj)
 
@@ -133,40 +138,31 @@ the best earlier GLM build, 8 launches ABBA, output ids identical. Prompt readin
 
 ## Radeon 780M (previous machine)
 
-Machine: Beelink SER7 Pro, Ryzen 7 7840HS, Radeon 780M (RDNA3, gfx1103, 12 CU), DDR5-5600 with a 16 GB
-BIOS reservation for the GPU, Windows 11, Balanced power plan. Used until 30 September 2026. Memory was
-2 x 16 GB until 3 September 2026 and 32 GB + 16 GB after; each receipt names its epoch.
+Machine: Radeon 780M (RDNA3, gfx1103, 12 CU) with a 16 GB BIOS reservation for the GPU, Windows 11, Balanced
+power plan (the README's "Test system (Radeon 780M numbers)").
 
 Most 780M A/Bs ran from a test harness whose full server line is not in our published records. Where
 that is so, the block says **command line not recorded** and gives only what was recorded (drafter, depth).
-Runs on upstream builds before this fork existed (July 2026) are not listed.
 
-<!-- src: README.md "Test system (Radeon 780M numbers)", "Speed: Radeon 780M"; docs/arifi/STATUS.md "How the numbers were taken"; internal: equipment register beelink-ser7-pro.md (not in this repository) -->
+<!-- src: README.md "Test system (Radeon 780M numbers)", "Speed: Radeon 780M", "Radeon 780M vs Radeon 890M" (12 CU, 16 GB); docs/arifi/STATUS.md "How the numbers were taken" -->
 
 ### Qwen3.8 27B dense, UD-Q4_K_XL (Huihui abliterated, huihui-ai), 17.38 GB
 
 - File: `Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf`
 - Download: [huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF](https://huggingface.co/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF)
 - Drafter: `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` ([incoai](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2-GGUF))
-- Our registered serve line on this machine (September 2026), the only full 780M line on record:
-  `-dev Vulkan0 -ngl 999 -fa on -c 8192 -b 1024 -ub 512 -t 16 -tb 32 -ctk q8_0 -ctv q8_0 --parallel 1 --jinja --chat-template-file chat_template.jinja --temp 0.7 --top-p 0.8 --top-k 20 --presence-penalty 1.5 --ctx-checkpoints 32 --ctx-checkpoints-device off --ctx-checkpoints-toolcall on`
-  plus `--spec-type draft-dflash -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --dflash-defer-injection 0 --spec-draft-n-max 3`.
-  The chat template is the "Sharp" Qwen template from [peculiar-ragdoll/Qwen-Sharp-Chat-Templates](https://huggingface.co/peculiar-ragdoll/Qwen-Sharp-Chat-Templates).
 
 | Mode | Draft depth | Drafter file | Added flags | Decode t/s |
 |---|---|---|---|---|
 | plain | - | - | command line not recorded | 3.864 → 4.104 (build A/B, medians, +6.2%) |
 | DFlash2 | 2 | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` | command line not recorded | 7.085 → 7.578 (build A/B, medians, +6.9%) |
-| DFlash2 | 3 | same | the serve line above | 7.82 (depth 2 on the same day: 7.04) |
-| DFlash2 | 4 | same | command line not recorded | 7.197 (depth table); launch-level 7.208 → 7.192, tie ² |
+| DFlash2 | 4 | same | command line not recorded | 7.197 (depth table); launch-level 7.208 → 7.192 |
 | DFlash2 | 5 | same | command line not recorded | 6.535 / 6.785 (two legs) |
 | DFlash2 | 6 | same | command line not recorded | 6.545 |
 
 Environment variables: none recorded.
-² The README's "Radeon 780M vs Radeon 890M" section gives 7.76 t/s for this file at depth 4. The
-shipped depth table reads 7.197 for that cell. The two are not yet reconciled.
 
-<!-- src: README.md "Speed: Radeon 780M", "Radeon 780M vs Radeon 890M"; evidence/r86-evidence__81-depth-table.txt, evidence/r86-evidence__80-launchlevel.txt, evidence/chain151__c29-q4kxl-27b-launchlevel-AB.json (drafter); internal: local-inference SPINE.md interactive serve line and serve-line record (not in this repository) -->
+<!-- src: README.md "Speed: Radeon 780M"; evidence/r86-evidence__81-depth-table.txt, evidence/r86-evidence__80-launchlevel.txt, evidence/chain151__c29-q4kxl-27b-launchlevel-AB.json (drafter) -->
 
 ### Qwen3.8 27B dense, GSQ-RCO IQ3_S (ISTA-DASLab)
 
@@ -233,23 +229,6 @@ before these kernels could not load this file with a drafter; a per-heap allocat
 
 <!-- src: README.md "Speed: Radeon 780M", "For format authors and researchers"; docs/arifi/STATUS.md "How the numbers were taken", "Results that showed no gain"; evidence/chain151__c30-sx8-27b-launchlevel-AB.json (drafter) -->
 
-### Ornith-1.5 35B-A3B MoE, Q4_K_M (ornith-ai)
-
-- File: `Ornith-1.5-35B-Q4_K_M.gguf`
-- Download: [ornith-ai/Ornith-1.5-35B-A3B-GGUF](https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF)
-- Command line not recorded in our published sources.
-
-| Mode | Draft depth | Drafter file | Added flags | Decode t/s |
-|---|---|---|---|---|
-| plain | - | - | command line not recorded | 26.9–27.5 (this fork); stock upstream 28.5 on the same day |
-| DFlash2 | 2 | not recorded | `--spec-type draft-dflash --spec-draft-n-max 2` (rest not recorded) | +21.5% on general chat over plain (CI [1.148, 1.271]); acceptance 0.5989 |
-
-Environment variables: `GGML_VK_MAX_NODES_PER_SUBMIT=4096` (+1.3%, CI [1.011, 1.016]).
-At the then-default draft depth the DFlash2 line did not load (Vulkan out of memory at draft context
-creation); depth 1 gave acceptance 0.7444. Measured in late August 2026, before the September kernel work.
-
-<!-- src: internal: local-inference SPINE.md currency blocks 2026-08-28/29 (lane-166, F-139) (not in this repository) -->
-
 ### Other 780M measurements (format kernels)
 
 | Model / format | Mode | Result | Command line |
@@ -270,13 +249,14 @@ creation); depth 1 gave acceptance 0.7444. Measured in late August 2026, before 
   the 780M, 16 on the 890M). Placement into the GPU reservation (`GGML_VK_UMA_PLACEMENT`) is on by
   device id for the 890M only.
 - **Where defaults were tuned.** The width defaults were tuned on the 780M. The int8 coopmat1 prompt
-  path and the slot-major MoE mat-vec were measured on the 890M only. A re-tune on the 890M is in progress.
+  path and the slot-major MoE mat-vec were measured on the 890M only.
 - **Draft depth.** On the 780M the 27B DFlash2 lines peaked at depth 4; depths 5 and 6 were slower.
-  On the 890M depth 6 beats depth 3 by +14.2% (short prompt, Q4_K_XL). Start at 4 on a 780M, 6 on an 890M.
+  On the 890M depth 6 beats depth 3: Q4_K_XL short-prompt decode 12.09 → 13.62 t/s (+12.6%).
+  Start at 4 on a 780M, 6 on an 890M.
 - **Memory.** The 780M machine reserved 16 GB for the GPU; a 27B Q4_K_XL with its drafter fits there.
   A 780M machine can usually raise its reservation in the BIOS ("UMA frame buffer size").
 
-<!-- src: README.md "Radeon 780M vs Radeon 890M: what changes"; ggml/src/ggml-vulkan/ggml-vulkan.cpp:5191 (0x150e probe) -->
+<!-- src: README.md "Radeon 780M vs Radeon 890M: what changes"; ggml/src/ggml-vulkan/ggml-vulkan.cpp:5242 (0x150e probe); evidence/b11178-x1i2/sg-q27-10062103-shipgate-read.txt (depth 3) -->
 
 ## Every switch we use, and why
 
@@ -297,13 +277,13 @@ creation); depth 1 gave acceptance 0.7444. Measured in late August 2026, before 
 | `-lm dio` | Loads the model with direct I/O on Windows. | Flash-Next loads and serves with a 0.8–1.6 GB server working set, same output ids as mmap. | Flash-Next, Ornith |
 | `-lm mmap` | Memory-maps the model. | Required by NVMe streaming (mapped expert addresses are identity keys). Flash-Next A/B arm. | GLM, Flash-Next A/B arm |
 | `--lazy-mode on` | Reads rows of large tensors (per-layer embeddings) from disk on demand. | Function only. | Flash-Next, Ornith |
-| `-ctk q8_0 -ctv q8_0` | KV cache in q8_0. | Decode-neutral at 8K/16K/32K filled context on the 780M: a memory lever, not a speed lever. | 27B lines |
-| `--ctx-checkpoints 32` | Up to 32 context checkpoints per slot (also the code default). | 780M, ring vs no ring: per-turn wait -8.18272 s (10.45696 → 2.27424 s); drafted decode 3.85425 → 7.60383 t/s. | Q4_K_XL lines |
-| `--ctx-checkpoints-device off` | Keeps checkpoints in host memory. The code default (`auto`) is on for hybrid models. | A measured loss for device storage: +250.004 ms per-turn wait, decode −0.12097 t/s. | Q4_K_XL lines |
-| `--ctx-checkpoints-toolcall on` | Anchors a checkpoint at each tool call (also the code default). | After-tool-call wait −86.161 ms, 5 of 5 faster. | Q4_K_XL lines |
-| `--spec-type draft-mtp` | Drafts with an MTP head (in the file, or a sidecar via `-md`). | 890M: Flash-Next +65.4% / +50.4%, Ornith-1.5 +16.1% / +20.8%, 27B +120.6% / +114.0% over plain. | Flash-Next, Ornith, 27B Q4_K_XL |
-| `--spec-type draft-dflash` | Drafts with a DFlash2 drafter (`-md`). | 890M: Ornith-1.5 31.97 / 33.43 vs 29.18 / 28.78 plain; 27B 13.62 vs 4.62 (depth 6). 780M: Ornith-1.5 +21.5%. | Ornith, all 27B, GLM |
-| `--spec-draft-n-max N` | Draft depth. | Measured per GPU: 780M 27B peaks at 4; 890M depth 6 beats 3 by +14.2%. We always pin it: one engine version preselected depth 7 when unset, and drafted decode fell 7.66 → 2.85 t/s. | all drafted lines |
+| `-ctk q8_0 -ctv q8_0` | KV cache in q8_0. | Function only: about half the KV memory of f16. | 27B lines |
+| `--ctx-checkpoints 32` | Up to 32 context checkpoints per slot (also the code default). | Function only. | Q4_K_XL lines |
+| `--ctx-checkpoints-device off` | Keeps checkpoints in host memory. The code default (`auto`) is on for hybrid models. | Function only. | Q4_K_XL lines |
+| `--ctx-checkpoints-toolcall on` | Anchors a checkpoint at each tool call (also the code default). | Function only. | Q4_K_XL lines |
+| `--spec-type draft-mtp` | Drafts with an MTP head (in the file, or a sidecar via `-md`). | 890M, over plain (README speed table): Flash-Next +64.1% / +50.3%, Ornith-1.5 +15.6% / +19.7%, 27B +119.9% / +114.7%. | Flash-Next, Ornith, 27B Q4_K_XL |
+| `--spec-type draft-dflash` | Drafts with a DFlash2 drafter (`-md`). | 890M: Ornith-1.5 31.97 / 33.43 vs 29.18 / 28.78 plain; 27B 13.62 vs 4.62 (depth 6). | Ornith, all 27B, GLM |
+| `--spec-draft-n-max N` | Draft depth. | Measured per GPU: 780M 27B peaks at 4; 890M depth 6 beats 3 by +12.6% (12.09 → 13.62). We always pin it so each line states its depth. | all drafted lines |
 | `--spec-draft-p-min 0.5` | Stops a draft when the drafter's top probability falls below 0.5 (default 0.0). | No A/B of 0.5 by us. It is the best setting recorded in the MoE-cache source profile (GLM-5.2, RTX 3090). On the 780M 27B, 0.75 raised acceptance to 0.85 but lost t/s. | MTP lines |
 | `--dflash-defer-injection 0` | Per-chunk encoder KV injection (default 1 = deferred). | Function only. The flag help says 0 gives higher acceptance on some models. | DFlash2 lines except GLM |
 | `-md <file>` | Draft model or MTP sidecar file. | Required for DFlash2 and sidecar MTP. | drafted lines |
@@ -314,11 +294,9 @@ creation); depth 1 gave acceptance 0.7444. Measured in late August 2026, before 
 | `--no-warmup` | Skips the empty warm-up run. | Function only. | GLM |
 | `-fit off` | Does not auto-adjust unset arguments to fit memory. | Function only. | GLM |
 | `--moe-cache 1536` | 1536 MiB Vulkan cache for routed experts. | Required: must equal `GGML_ARIFI_MOE_NVME_CACHE_MIB`, or loading refuses. | GLM |
-| `--jinja --chat-template-file` | Uses the "Sharp" Qwen chat template. | Prompt reading +45%, decode −6% against the embedded template. | 780M Q4_K_XL serve line |
-| `--temp 0.7 --top-p 0.8 --top-k 20 --presence-penalty 1.5` | Sampling. | The model card's non-thinking settings; no speed effect measured. Speed A/Bs use greedy requests. | 780M Q4_K_XL serve line |
 | `-ngl 0` | No layers on the GPU. | CPU-path measurement of the VNNI repack. | Q2_0_G128 CPU row |
 
-<!-- src: README.md "How we run it", "What is new in this release", "Radeon 780M vs Radeon 890M"; common/arg.cpp (flag help); common/common.h:330,336,363,679,684,686 (defaults); docs/OPTIONS-REGISTRY.md "X1 NVMe expert streaming"; src/llama-context.cpp:833 (moe-cache check); docs/release/RELEASE-STORY-r73i.md (p-min 0.75); docs/backend/MOE-CACHE.md (GLM-5.2 profile); internal: local-inference SPINE.md R45 switch table and lane-166 block, serve-line record (not in this repository) -->
+<!-- src: README.md "How we run it", "What is new in this release", "Radeon 780M vs Radeon 890M"; common/arg.cpp (flag help); common/common.h:330,336,363,679,684,686 (defaults); docs/OPTIONS-REGISTRY.md "X1 NVMe expert streaming"; src/llama-context.cpp:833 (moe-cache check); docs/release/RELEASE-STORY-r73i.md (p-min 0.75); docs/backend/MOE-CACHE.md (GLM-5.2 profile); evidence/b11178-x1i2/sg-q27-10062103-shipgate-read.txt (depth 3) -->
 
 ## Build switches
 

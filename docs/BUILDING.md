@@ -119,6 +119,7 @@ Several defaults in this fork are tuned for a GPU-offloaded rig and are the wron
 ```bash
 cmake -S . -B build-vulkan -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON \
+  -DGGML_ARIFI_ROCMFPX_FORMATS=ON -DGGML_ARIFI_TURBO_WEIGHT_QUANTS=ON \
   -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00" \
   -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00" \
   -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
