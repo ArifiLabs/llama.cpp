@@ -3309,6 +3309,12 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     // sets it outright, which is what lets one binary measure NUM_ROWS at a FIXED NUM_COLS.
     const uint32_t mmvq_rows_from = device->mmvq_wide_rows_from;
     auto const &rm_int_n = [&](uint32_t rows, uint32_t i) { return (is_rdna3 && i >= mmvq_rows_from) ? 4u : rows; };
+    // arifi lane-299: Q8_0 only, own threshold (device->mmvq_wide_rows_from_q8_0). GGML_ARIFI_Q8_0_ROWS_PLANT
+    // (test-only RED) drops the last column (NUM_COLS i instead of i+1) so the sha gate can see a wrong output.
+    const uint32_t mmvq_rows_from_q8_0 = device->mmvq_wide_rows_from_q8_0;
+    auto const &rm_int_n_q8_0 = [&](uint32_t rows, uint32_t i) { return (is_rdna3 && i >= mmvq_rows_from_q8_0) ? 4u : rows; };
+    static const bool q8_0_rows_plant = getenv("GGML_ARIFI_Q8_0_ROWS_PLANT") != nullptr;
+    auto const &q8_0_cols = [&](uint32_t i) { return (q8_0_rows_plant && i >= 1) ? i : i + 1; };
     // RDNA3: Static 4 rows for all types bench faster than the default
     //
     // arifi R18 / R15-C3 (upstream 2cdae802e, benched on a Strix Halo): the 4 above is applied to every
@@ -3941,7 +3947,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q4_1][i], "mul_mat_vec_q4_1_q8_1_f32", arr_dmmv_q4_1_q8_1_f32_len[reduc], arr_dmmv_q4_1_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_0][i], "mul_mat_vec_q5_0_q8_1_f32", arr_dmmv_q5_0_q8_1_f32_len[reduc], arr_dmmv_q5_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q5_1][i], "mul_mat_vec_q5_1_q8_1_f32", arr_dmmv_q5_1_q8_1_f32_len[reduc], arr_dmmv_q5_1_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
-                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q8_0][i], "mul_mat_vec_q8_0_q8_1_f32", arr_dmmv_q8_0_q8_1_f32_len[reduc], arr_dmmv_q8_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
+                ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_Q8_0][i], "mul_mat_vec_q8_0_q8_1_f32", arr_dmmv_q8_0_q8_1_f32_len[reduc], arr_dmmv_q8_0_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n_q8_0(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n_q8_0(1*rm_stdq_int, i), q8_0_cols(i), mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
                 // arifi lane-302 Route B: IQ4_NL q8_1 mat-vec, Q4_0 geometry; routed only by GGML_ARIFI_IQ4NL_MMVQ=1
                 ggml_vk_create_pipeline(device, device->pipeline_dequant_mul_mat_vec_q8_1_f32[w][GGML_TYPE_IQ4_NL][i], "mul_mat_vec_iq4_nl_q8_1_f32", arr_dmmv_iq4_nl_q8_1_f32_len[reduc], arr_dmmv_iq4_nl_q8_1_f32_data[reduc], "main", mul_mat_vec_num_bindings, sizeof(vk_mat_vec_push_constants), {rm_int_n(1*rm_stdq_int, i), 1, 1}, {wg_size_subgroup_int, rm_int_n(1*rm_stdq_int, i), i+1, mmvq_a_hoist_legacy(i)}, 1, true, use_subgroups, subgroup_size_int);
 
@@ -6447,8 +6453,23 @@ vk_device ggml_vk_get_device(size_t idx) {
                     wide_src = "GGML_ARIFI_MMVQ_WIDE_ROWS_FROM";
                 }
             }
-            fprintf(stderr, "ggml_vulkan: mmvq wide rows_from: %u (%s)\n",
-                    device->mmvq_wide_rows_from, wide_src);
+            // arifi lane-299 sweep-21 (cells/sweep21-10081441-verdict.json): on the Radeon 890M (0x150e) the Q8_0
+            // pipeline runs its own rows (rm_stdq_int) at every width; the 4-row shape lost 25-99% at
+            // NUM_COLS 5..8 on the S-X8 attention shapes. Bit-identical by construction (rows only, see above).
+            // Precedence: GGML_ARIFI_Q8_0_WIDE_ROWS_FROM=<0..8> > an explicit generic knob above > device default.
+            const bool q8_890m = device->vendor_id == VK_VENDOR_ID_AMD && device->properties.deviceID == 0x150e;
+            device->mmvq_wide_rows_from_q8_0 = (q8_890m && strcmp(wide_src, "default") == 0) ? 8u : device->mmvq_wide_rows_from;
+            const char * q8_src = q8_890m && strcmp(wide_src, "default") == 0 ? "device 0x150e" : wide_src;
+            if (const char * rf = getenv("GGML_ARIFI_Q8_0_WIDE_ROWS_FROM")) {
+                char * end = nullptr;
+                const long v = strtol(rf, &end, 10);
+                if (end != rf && v >= 0 && v <= 8) {
+                    device->mmvq_wide_rows_from_q8_0 = (uint32_t) v;
+                    q8_src = "GGML_ARIFI_Q8_0_WIDE_ROWS_FROM";
+                }
+            }
+            fprintf(stderr, "ggml_vulkan: mmvq wide rows_from: %u (%s), q8_0: %u (%s)\n",
+                    device->mmvq_wide_rows_from, wide_src, device->mmvq_wide_rows_from_q8_0, q8_src);
 
             // arifi lane-271 / R85: q4_K width>=5 overlap arms (diagnostic until the decider ships a
             // cell). GGML_ARIFI_Q4K_W5_OVERLAP=0|1|3, GGML_ARIFI_Q4K_W5_ROWS=1|2|4. Unset = 0 = shipped.
