@@ -8,6 +8,7 @@
 #include "llama.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -113,6 +114,16 @@ int main(int argc, char ** argv) {
         return 1;
     }
     const std::vector<int> ids_ref = argmax_rows(ref, nv_ref);
+    {
+        // FNV-1a of the sidecar logits bytes: equal across builds = our sidecar path is value-identical
+        uint64_t h = 1469598103934665603ull;
+        const unsigned char * p = (const unsigned char *) ref.data();
+        for (size_t i = 0; i < ref.size() * sizeof(float); ++i) {
+            h = (h ^ p[i]) * 1099511628211ull;
+        }
+        fprintf(stderr, "sidecar logits fnv1a=%016llx ids [%d %d %d %d]\n", (unsigned long long) h,
+                ids_ref[0], ids_ref[1], ids_ref[2], ids_ref[3]);
+    }
 
     int n_fail = 0;
 
