@@ -169,13 +169,18 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
     const int64_t hc_dim = hc * n_embd;
     const int64_t hc_lr  = hparams.hc_low_rank;
 
+    // an MTP-only file carries the MTP block, tok_embd and output, and no trunk: our sidecar (lane-298) puts the MTP
+    // block's own final mixer in the output_hc_* slot, an upstream #29761 MTP-only file has no output_hc_* at all
+    const bool mtp_only = n_layer_nextn > 0 && ml.get_weight("blk.0.hc_attn_norm.weight") == nullptr;
+    const int head_flags = mtp_only ? TENSOR_NOT_REQUIRED : 0;
+
     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, 0);
 
     // there is no output_norm: the final hyper-connection mixer carries it
     // the gammas load as [n_embd, hc] so the grouped norm multiplies them without a graph reshape
-    hc_head_norm = create_tensor(tn(LLM_TENSOR_HC_HEAD_NORM, "weight"), { n_embd, hc }, TENSOR_ALLOW_RESHAPE);
-    hc_head_down = create_tensor(tn(LLM_TENSOR_HC_HEAD_DOWN, "weight"), { hc_dim, hc_lr }, 0);
-    hc_head_up   = create_tensor(tn(LLM_TENSOR_HC_HEAD_UP,   "weight"), { hc_lr, hc_dim }, 0);
+    hc_head_norm = create_tensor(tn(LLM_TENSOR_HC_HEAD_NORM, "weight"), { n_embd, hc }, TENSOR_ALLOW_RESHAPE | head_flags);
+    hc_head_down = create_tensor(tn(LLM_TENSOR_HC_HEAD_DOWN, "weight"), { hc_dim, hc_lr }, head_flags);
+    hc_head_up   = create_tensor(tn(LLM_TENSOR_HC_HEAD_UP,   "weight"), { hc_lr, hc_dim }, head_flags);
 
     // an MTP sidecar may carry a reduced draft head: output rows for a token subset + d2t (Strata draft_vocab)
     int64_t n_vocab_out = n_vocab;
@@ -211,10 +216,6 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
         per_layer_tok_embd = create_tensor(tn(LLM_TENSOR_PER_LAYER_TOKEN_EMBD, "weight"),
                                            { hparams.ple_head_dim, ple_rows }, TENSOR_READ_LAZY);
     }
-
-    // an MTP sidecar (lane-298) carries the MTP block, tok_embd and output, and no trunk;
-    // its output_hc_* slot holds the MTP block's own final mixer
-    const bool mtp_only = n_layer_nextn > 0 && ml.get_weight("blk.0.hc_attn_norm.weight") == nullptr;
 
     for (int il = mtp_only ? n_layer : 0; il < n_layer; ++il) {
         auto & layer = layers[il];
@@ -296,6 +297,20 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
         layer.nextn.eh_proj = create_tensor(tn(LLM_TENSOR_NEXTN_EH_PROJ, "weight", il), { 2 * n_embd, n_embd }, mtp_flags);
         layer.nextn.enorm   = create_tensor(tn(LLM_TENSOR_NEXTN_ENORM,   "weight", il), { n_embd },             mtp_flags);
         layer.nextn.hnorm   = create_tensor(tn(LLM_TENSOR_NEXTN_HNORM,   "weight", il), { hc_dim },             mtp_flags);
+
+        // upstream #29761 layout: the block's own final mixer under nextn.hc_head_* (our sidecar: output_hc_*), and the
+        // block's QSA indexer, which our dense MTP attention drops (Strata mtp.cpp:215): counted, never loaded
+        layer.nextn.hc_head_norm = create_tensor(tn(LLM_TENSOR_NEXTN_HC_HEAD_NORM, "weight", il), { n_embd, hc },     TENSOR_NOT_REQUIRED | TENSOR_ALLOW_RESHAPE | mtp_flags);
+        layer.nextn.hc_head_down = create_tensor(tn(LLM_TENSOR_NEXTN_HC_HEAD_DOWN, "weight", il), { hc_dim, hc_lr },  TENSOR_NOT_REQUIRED | mtp_flags);
+        layer.nextn.hc_head_up   = create_tensor(tn(LLM_TENSOR_NEXTN_HC_HEAD_UP,   "weight", il), { hc_lr, hc_dim },  TENSOR_NOT_REQUIRED | mtp_flags);
+        {
+            const int64_t idx_dim = hparams.indexer_head_size;
+            const int     unused  = TENSOR_NOT_REQUIRED | TENSOR_SKIP;
+            create_tensor(tn(LLM_TENSOR_INDEXER_Q_PROJ, "weight", il), { n_embd, hparams.indexer_n_head * idx_dim }, unused);
+            create_tensor(tn(LLM_TENSOR_INDEXER_K_PROJ, "weight", il), { n_embd, idx_dim }, unused);
+            create_tensor(tn(LLM_TENSOR_INDEXER_Q_NORM, "weight", il), { idx_dim }, unused);
+            create_tensor(tn(LLM_TENSOR_INDEXER_K_NORM, "weight", il), { idx_dim }, unused);
+        }
 
         layer.hc_attn_norm   = create_tensor(tn(LLM_TENSOR_HC_ATTN_NORM,   "weight", il), { n_embd, hc }, TENSOR_ALLOW_RESHAPE | mtp_flags);
         layer.hc_attn_down   = create_tensor(tn(LLM_TENSOR_HC_ATTN_DOWN,   "weight", il), { hc_dim, hc_lr }, mtp_flags);
@@ -1721,8 +1736,16 @@ llama_model_qwen4exp::graph_mtp::graph_mtp(const llama_model & model, const llm_
     cb(res->t_h_nextn, "h_nextn", -1);
     ggml_build_forward_expand(gf, res->t_h_nextn);
 
+    // the block's own final mixer: nextn.hc_head_* in an upstream #29761 file (whose output_hc_* is the TRUNK's),
+    // output_hc_* in our sidecar
+    const bool nextn_mix = layer.nextn.hc_head_norm != nullptr;
+    GGML_ASSERT((nextn_mix ? layer.nextn.hc_head_down && layer.nextn.hc_head_up : model.hc_head_norm != nullptr) &&
+            "QWEN4EXP MTP block has no final mixer");
     cur = ggml_reshape_3d(ctx0, flat_out, n_embd, hc, flat_out->ne[1]);
-    cur = build_hc_mix(cur, model.hc_head_norm, model.hc_head_down, model.hc_head_up, nullptr, nullptr, -1);
+    cur = build_hc_mix(cur,
+            nextn_mix ? layer.nextn.hc_head_norm : model.hc_head_norm,
+            nextn_mix ? layer.nextn.hc_head_down : model.hc_head_down,
+            nextn_mix ? layer.nextn.hc_head_up   : model.hc_head_up, nullptr, nullptr, -1);
     cb(cur, "result_norm", -1);
     res->t_embd = cur;
 
