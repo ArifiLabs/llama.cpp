@@ -1697,6 +1697,13 @@ void ggml_vk_buffer_memset(vk_buffer& dst, size_t offset, uint32_t c, size_t siz
 
     if (dst->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible &&
         dst->device->uma) {
+        // lane-298 (HQ86 18:42): same race as the GPU path; drain the compute queue so no in-flight graph write lands
+        // after the CPU zero. waitIdle, not a fence submit: a pool cleanup here would reset an open batch's buffer.
+        std::lock_guard<std::recursive_mutex> guard(dst->device->mutex);
+        vk_queue_handle & q = *dst->device->compute_queue->handle;
+        q.lock();
+        q.queue.waitIdle();
+        q.unlock();
         memset((uint8_t*)dst->ptr + offset, c, size);
         return;
     }
