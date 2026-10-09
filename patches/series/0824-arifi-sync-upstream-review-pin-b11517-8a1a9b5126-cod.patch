@@ -1,0 +1,29 @@
+From 179b75d75e3aedb47146c26145cc2470a469293b Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 12:11:18 -0400
+Subject: [PATCH] arifi-sync: upstream review pin -> b11517 (8a1a9b5126); code
+ base stays b11178
+
+Review pin only (HQ85 07:2x relay of upstream-x1 ASK 3). Receipt: cache/upstream-x1-lane/REPORT.md PASS 2
+(b11178 -> b11517, 339 commits, LL-283/285 three-way). base.upstream_sha is unchanged, so the series base pair holds.
+
+Origin: lane-298 (HQ85 07:2x, upstream-x1 ASK 3)
+Measured-effect: none (config metadata; currency drift is now measured from b11517)
+---
+ tools/arifi-sync/sources.json | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/tools/arifi-sync/sources.json b/tools/arifi-sync/sources.json
+index e637653574..f7390d9249 100644
+--- a/tools/arifi-sync/sources.json
++++ b/tools/arifi-sync/sources.json
+@@ -308,7 +308,8 @@
+     "upstream": {
+       "url": "https://github.com/ggml-org/llama.cpp",
+       "ref": "upstream/master",
+-      "pin": "d7bd3bfca",
++      "pin": "8a1a9b5126",
++      "pin_review_2026_10_09_lane298": "ADVANCED d7bd3bfca -> 8a1a9b5126 (tag b11517) as a REVIEW pin only, on HQ85's relay of upstream-x1 ASK 3. Review receipt: cache/upstream-x1-lane/REPORT.md section 'PASS 2' (b11178 -> b11517, 339 commits, three-way per LL-283/285). base.upstream_sha stays b11178/f9af9be21: the code base did not move, so the lane-139 pair rule is not engaged.",
+       "role": "base engine and release tags",
+       "track_tags": true,
+       "pin_review_2026_08_29_seat46": "ADVANCED 9ee9fc04c (b10524) -> 4d19b2876 (tag b10636) by this seat's bump; pin and base.upstream_sha move TOGETHER as one pair, per the lane-139 rule at the top of this file. TAG VERIFIED: `git describe --tags --exact-match 4d19b2876` = b10636. Review surface is 112 commits (`git rev-list --count 9ee9fc04c..b10636`), all subjects banked in research/local-inference/lane-evidence/2026-08-29-b10636-bump-proofs/05-upstream-112-subjects.txt. Marker scan over the ENTIRE 112-commit diff: 0 hits for rocmfp / turbo / tq3 / q2_0_g128 / arifi - FLAG E untouched, MEASURED not assumed (06-upstream-marker-scan.txt). THIS ROW WILL STILL READ BEHIND, AND BY MORE THAN CURRENT-AT-THE-TAG: upstream/master is b10679-1-gd7bd3bfca at this fetch, so a NEWER TAG EXISTS and real work is owed. b10636 was taken anyway because it is the only candidate carrying a rig-verified receipt (it runs Ornith-1.5 MoE at 28.5 t/s on this Vulkan box); b10660+ has no measurement here. The 2026-08-28 fork-currency review's 'b10660-or-later' recommendation is therefore NOT satisfied by this move and stays on the board as a President item. See base._base_moved_2026_08_29_seat46 for the conflict record.",

@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **821**, all non-merge, applied in filename order.
+- Patches: **824**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 821 commit messages, same provenance trailers. Verified, not
+same file contents, same 824 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -900,6 +900,9 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 819 | `0819-lane-302-correct-the-GGML_ARIFI_IQ2S_BODY-comment-un.patch` | arifi-fork-base | `e7f8fbf50` | - | - | lane-302: correct the GGML_ARIFI_IQ2S_BODY comment (unset = 5, not 0) |
 | 820 | `0820-arifi-sync-re-key-lane-302-resolution-rows-to-the-pi.patch` | arifi-fork-base | `8c9f4ff3f` | - | - | arifi-sync: re-key lane 302 resolution rows to the picked tip; QSA mask fusion row |
 | 821 | `0821-arifi-sync-lever-10-protected-win-entry-names-its-pi.patch` | arifi-fork-base | `ffb25b3c1` | - | - | arifi-sync: lever 10 protected-win entry names its picked sha on v0132 |
+| 822 | `0822-tests-lane-299-exact-equality-op-cases-at-verify-wid.patch` | arifi-fork-base | `bef85df8c` | - | - | tests: lane-299 exact-equality op cases at verify widths 2..8 for the shipped fusions HC_POST_W and GDN_BANK |
+| 823 | `0823-tests-q8_0-perf-rows-at-the-S-X8-attention-shapes-10.patch` | arifi-fork-base | `a84bca74d` | - | - | tests: q8_0 perf rows at the S-X8 attention shapes (10240/6144/12288x5120, 5120x6144, 1024x5120, n 1..9) |
+| 824 | `0824-arifi-sync-upstream-review-pin-b11517-8a1a9b5126-cod.patch` | arifi-fork-base | `179b75d75` | - | - | arifi-sync: upstream review pin -> b11517 (8a1a9b5126); code base stays b11178 |
 
 ## Measured effect, per patch
 
@@ -1803,6 +1806,9 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0819-lane-302-correct-the-GGML_ARIFI_IQ2S_BODY-comment-un.patch` | UNMEASURED - comment only |
 | `0820-arifi-sync-re-key-lane-302-resolution-rows-to-the-pi.patch` | NO RUNTIME EFFECT - metadata only; receipt cache/mtp-x1-lane/cells/v0132-302-pwcheck-pre-rekey.txt |
 | `0821-arifi-sync-lever-10-protected-win-entry-names-its-pi.patch` | none (manifest metadata only; no source change) |
+| `0822-tests-lane-299-exact-equality-op-cases-at-verify-wid.patch` | UNMEASURED (test-only; exact-equality receipt in cache/fusion-x1-lane/cells/build16-*-optx-verdict.txt) |
+| `0823-tests-q8_0-perf-rows-at-the-S-X8-attention-shapes-10.patch` | UNMEASURED (tests-only perf rows; no engine path changes) |
+| `0824-arifi-sync-upstream-review-pin-b11517-8a1a9b5126-cod.patch` | none (config metadata; currency drift is now measured from b11517) |
 
 ## Unclassified
 
@@ -2487,4 +2493,7 @@ rather than silently bucketed - add a rule when a new source appears.
 - `e7f8fbf50` lane-302: correct the GGML_ARIFI_IQ2S_BODY comment (unset = 5, not 0)
 - `8c9f4ff3f` arifi-sync: re-key lane 302 resolution rows to the picked tip; QSA mask fusion row
 - `ffb25b3c1` arifi-sync: lever 10 protected-win entry names its picked sha on v0132
+- `bef85df8c` tests: lane-299 exact-equality op cases at verify widths 2..8 for the shipped fusions HC_POST_W and GDN_BANK
+- `a84bca74d` tests: q8_0 perf rows at the S-X8 attention shapes (10240/6144/12288x5120, 5120x6144, 1024x5120, n 1..9)
+- `179b75d75` arifi-sync: upstream review pin -> b11517 (8a1a9b5126); code base stays b11178
 
