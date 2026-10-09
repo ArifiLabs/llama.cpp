@@ -646,12 +646,13 @@ static uint32_t moe_gather_nounroll_env() {
 }
 
 // lane-302 lever 12 (cell AC): verify-width MUL_MAT starves the GPU on long-K / small-M weights (hc_attn_inject 4x10240 at
-// n < 32 = 1 workgroup; hc_down 320x10240 at n 33..64 = 5). Both opt-in until measured; unset = stock selection.
-// GGML_ARIFI_MM_SPLITK_SMALLN: 1 = split_k also when n < the tile's N; 2 = planted wrong arm (drops the K tail, test only)
+// n < 32 = 1 workgroup; hc_down 320x10240 at n 33..64 = 5). Split default ON (cell AE served WIN); large tile opt-in.
+// GGML_ARIFI_MM_SPLITK_SMALLN: unset/1 = split_k also when n < the tile's N; 0 = stock; 2 = planted wrong arm (test only)
 static uint32_t mm_splitk_smalln_env() {
     static const uint32_t v = [] {
         const char * e = getenv("GGML_ARIFI_MM_SPLITK_SMALLN");
-        return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
+        if (e == nullptr || e[0] == '\0') return 1u;
+        return (e[0] == '1' || e[0] == '2') ? (uint32_t) (e[0] - '0') : 0u;
     }();
     return v;
 }
