@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **811**, all non-merge, applied in filename order.
+- Patches: **821**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 811 commit messages, same provenance trailers. Verified, not
+same file contents, same 821 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -890,6 +890,16 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 809 | `0809-vulkan-mat-vec-aligned-branch-checks-a_offset-F32-a-.patch` | ternary-g128 | `0e7ed6ff9` | ggml-org/llama.cpp@83dd71f869 (#29254) | - | vulkan: mat-vec aligned branch checks a_offset; F32 a loads 2 at a time (#29254) |
 | 810 | `0810-arifi-sync-resolution-row-for-vulkan-moe-gather-slot.patch` | arifi-fork-base | `86a4e7967` | - | - | arifi-sync: resolution row for vulkan-moe-gather-slot-major-matvec-id vs P17 |
 | 811 | `0811-tests-give-the-per-type-Vulkan-MoE-cache-test-64-exp.patch` | arifi-fork-base | `d474126e5` | ArifiLabs/llama.cpp@e97dd7e618557fdd7425a617c16987fa977467a7 | - | tests: give the per-type Vulkan MoE cache test 64 experts so a pool exists |
+| 812 | `0812-docs-mirror-the-v0.1.3.1-export-docs-fix-Vulkan-quic.patch` | arifi-fork-base | `f3bd35720` | ArifiLabs/llama.cpp release-export@328aa6605a44acf5c4abddad47564d76c5e00326 | `LLAMA_USE_PREBUILT_UI` | docs: mirror the v0.1.3.1 export docs fix (Vulkan quick-start flags, UI asset source) |
+| 813 | `0813-lane-302-lever-10-skip-the-dead-rank-scan-in-gather_.patch` | arifi-fork-base | `5583912fe` | - | - | lane-302 lever 10: skip the dead rank scan in gather_setup at width 1 |
+| 814 | `0814-lane-302-protected-win-baseline-row-for-the-lever-9-.patch` | arifi-fork-base | `fc07bb3e9` | - | - | lane-302: protected-win baseline row for the lever 9 default-OFF flip 2644ba9c17 |
+| 815 | `0815-lane-302-register-lever-9-as-an-opt-in-protected-cap.patch` | arifi-fork-base | `560a45b45` | - | - | lane-302: register lever 9 as an opt-in protected capability (replaces the 0dd760c106 baseline row) |
+| 816 | `0816-lane-302-protected-wins-entry-vulkan-moe-gather-widt.patch` | arifi-fork-base | `b6378f7b6` | - | - | lane-302: protected-wins entry vulkan-moe-gather-width1-rank-scan-skip (lever 10, 33f8ae3037) |
+| 817 | `0817-lane-302-protected-win-resolution-for-lever-10-33f8a.patch` | arifi-fork-base | `fbbf9a3c1` | - | - | lane-302: protected-win resolution for lever 10 (33f8ae3037) on vulkan-moe-gather-slot-major-matvec-id |
+| 818 | `0818-lane-302-protected-win-resolutions-for-the-28-integ-.patch` | arifi-fork-base | `41b8a8356` | - | - | lane-302: protected-win resolutions for the 28 integ wins the shipping prefix f95422f397 touches |
+| 819 | `0819-lane-302-correct-the-GGML_ARIFI_IQ2S_BODY-comment-un.patch` | arifi-fork-base | `e7f8fbf50` | - | - | lane-302: correct the GGML_ARIFI_IQ2S_BODY comment (unset = 5, not 0) |
+| 820 | `0820-arifi-sync-re-key-lane-302-resolution-rows-to-the-pi.patch` | arifi-fork-base | `8c9f4ff3f` | - | - | arifi-sync: re-key lane 302 resolution rows to the picked tip; QSA mask fusion row |
+| 821 | `0821-arifi-sync-lever-10-protected-win-entry-names-its-pi.patch` | arifi-fork-base | `ffb25b3c1` | - | - | arifi-sync: lever 10 protected-win entry names its picked sha on v0132 |
 
 ## Measured effect, per patch
 
@@ -1783,6 +1793,16 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0809-vulkan-mat-vec-aligned-branch-checks-a_offset-F32-a-.patch` | CORRECTNESS ONLY, SPEED UNMEASURED - padded odd-stride MUL_MAT 2/7 FAIL -> 7/7 OK (cache/upstream-x1-lane/cells/rg8-summary.txt); the F32 2-at-a-time load reads the same values, its speed on the 890M is not measured. |
 | `0810-arifi-sync-resolution-row-for-vulkan-moe-gather-slot.patch` | NO RUNTIME EFFECT - metadata only; receipt cache/mtp-x1-lane/cells/p5-pw-check-incoming.txt |
 | `0811-tests-give-the-per-type-Vulkan-MoE-cache-test-64-exp.patch` | NO RUNTIME EFFECT - test only; receipt cache/strata-x1/cells/vkt-10082238-state.json (iq3_s FAIL on 7156c61607, PASS on the fix) |
+| `0812-docs-mirror-the-v0.1.3.1-export-docs-fix-Vulkan-quic.patch` | NO RUNTIME EFFECT - docs only; receipt cache/mtp-x1-lane/cells/v0132-envcite-check.txt |
+| `0813-lane-302-lever-10-skip-the-dead-rank-scan-in-gather_.patch` | LOSSLESS-TIE served, op-level WIN. Op (cache/moe-gather-x1-lane/cells/cellX-10080605-read.json): n5 -5.17/-4.45%, n4 -2.04/-1.8%, n8 -5.15/-6.18%, n1 -2.4/-6.3%, n2 -2.29/+0.2%; gates 40/40 OK, planted RED. Served ABBA x2 vs integ 7156c61607 at verify width 4 (cells/cellY-10081402-read.json): greedy mean -0.7% (one stalled round N1 r2 long 8.19 vs 15.3 t/s; others ~0), sampled (temp 0.7 seed 1234) mean +0.04%, greedy+sampled ids identical 80/80, acceptance identical |
+| `0814-lane-302-protected-win-baseline-row-for-the-lever-9-.patch` | UNMEASURED (manifest bookkeeping, no code) |
+| `0815-lane-302-register-lever-9-as-an-opt-in-protected-cap.patch` | UNMEASURED (manifest bookkeeping, no code) |
+| `0816-lane-302-protected-wins-entry-vulkan-moe-gather-widt.patch` | UNMEASURED (manifest bookkeeping, no code) |
+| `0817-lane-302-protected-win-resolution-for-lever-10-33f8a.patch` | UNMEASURED - bookkeeping row; numbers on 33f8ae3037 (cells/cellX-10080605-read.json, cells/cellY-10081402-read.json) |
+| `0818-lane-302-protected-win-resolutions-for-the-28-integ-.patch` | UNMEASURED - bookkeeping rows; numbers on e03f35bb45/2644ba9c17 (cells/cellT-10070643, cells/cellU-10071120) and 33f8ae3037 (cells/cellX-10080605-read.json, cells/cellY-10081402-read.json) |
+| `0819-lane-302-correct-the-GGML_ARIFI_IQ2S_BODY-comment-un.patch` | UNMEASURED - comment only |
+| `0820-arifi-sync-re-key-lane-302-resolution-rows-to-the-pi.patch` | NO RUNTIME EFFECT - metadata only; receipt cache/mtp-x1-lane/cells/v0132-302-pwcheck-pre-rekey.txt |
+| `0821-arifi-sync-lever-10-protected-win-entry-names-its-pi.patch` | none (manifest metadata only; no source change) |
 
 ## Unclassified
 
@@ -2458,4 +2478,13 @@ rather than silently bucketed - add a rule when a new source appears.
 - `be1f7e6e6` tests: mul_mat over padded batches with an odd element stride (F32/F16/BF16 mat-vec)
 - `86a4e7967` arifi-sync: resolution row for vulkan-moe-gather-slot-major-matvec-id vs P17
 - `d474126e5` tests: give the per-type Vulkan MoE cache test 64 experts so a pool exists
+- `5583912fe` lane-302 lever 10: skip the dead rank scan in gather_setup at width 1
+- `fc07bb3e9` lane-302: protected-win baseline row for the lever 9 default-OFF flip 2644ba9c17
+- `560a45b45` lane-302: register lever 9 as an opt-in protected capability (replaces the 0dd760c106 baseline row)
+- `b6378f7b6` lane-302: protected-wins entry vulkan-moe-gather-width1-rank-scan-skip (lever 10, 33f8ae3037)
+- `fbbf9a3c1` lane-302: protected-win resolution for lever 10 (33f8ae3037) on vulkan-moe-gather-slot-major-matvec-id
+- `41b8a8356` lane-302: protected-win resolutions for the 28 integ wins the shipping prefix f95422f397 touches
+- `e7f8fbf50` lane-302: correct the GGML_ARIFI_IQ2S_BODY comment (unset = 5, not 0)
+- `8c9f4ff3f` arifi-sync: re-key lane 302 resolution rows to the picked tip; QSA mask fusion row
+- `ffb25b3c1` arifi-sync: lever 10 protected-win entry names its picked sha on v0132
 
