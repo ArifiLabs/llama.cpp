@@ -1,0 +1,46 @@
+From 64792893e9ed9582b534de04d3d82f31c1257a74 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 16:17:57 -0400
+Subject: [PATCH] tests: qwen4exp MTP layout test prints the sidecar logits
+ hash
+
+The FNV-1a of the sidecar's logits bytes, read on the base and on the loader fix, shows our sidecar path stays
+value-identical (the receipt for the protected wins qwen4exp-mtp-sidecar-draft / -draft-subset-head).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Origin: upstream-x1 (P26 test, source bc06d2bf18; joined to the v0132 re-pick by HQ86 2026-10-09 12:32)
+Measured-effect: UNMEASURED (test-only; prints the sidecar logits FNV-1a hash as a value-identity receipt)
+---
+ tests/test-qwen4exp-mtp-layout.cpp | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/tests/test-qwen4exp-mtp-layout.cpp b/tests/test-qwen4exp-mtp-layout.cpp
+index a138948a52..b600eb1a7a 100644
+--- a/tests/test-qwen4exp-mtp-layout.cpp
++++ b/tests/test-qwen4exp-mtp-layout.cpp
+@@ -8,6 +8,7 @@
+ #include "llama.h"
+ 
+ #include <cmath>
++#include <cstdint>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+@@ -113,6 +114,16 @@ int main(int argc, char ** argv) {
+         return 1;
+     }
+     const std::vector<int> ids_ref = argmax_rows(ref, nv_ref);
++    {
++        // FNV-1a of the sidecar logits bytes: equal across builds = our sidecar path is value-identical
++        uint64_t h = 1469598103934665603ull;
++        const unsigned char * p = (const unsigned char *) ref.data();
++        for (size_t i = 0; i < ref.size() * sizeof(float); ++i) {
++            h = (h ^ p[i]) * 1099511628211ull;
++        }
++        fprintf(stderr, "sidecar logits fnv1a=%016llx ids [%d %d %d %d]\n", (unsigned long long) h,
++                ids_ref[0], ids_ref[1], ids_ref[2], ids_ref[3]);
++    }
+ 
+     int n_fail = 0;
+ 

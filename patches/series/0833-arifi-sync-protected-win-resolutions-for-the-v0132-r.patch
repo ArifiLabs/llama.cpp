@@ -1,0 +1,1385 @@
+From de8ad18b2c4024926d375b50df6eca4861aa63bc Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 16:23:10 -0400
+Subject: [PATCH] arifi-sync: protected-win resolutions for the v0132 re-pick
+ (lever 11, lane 299 Q1, P26), keyed to a5071d4a11
+
+HQ86 2026-10-09 12:32 order. The re-pick range b7fb4eeaf0..a5071d4a11 collides
+with 36 protected wins. Rows keyed to the range tip a5071d4a11:
+- lane 302 lever 11: its 28 rows from 6cf866ebcf, `incoming` re-keyed from
+  d91535e0cd, every other field byte-equal;
+- upstream-x1 P26: its 9 rows from 09c6a67178 (a21b5b3ee0 copies), `incoming`
+  re-keyed, every other field byte-equal;
+- lane 299 Q1 (b164ec401f, picked from 1b78a88413): 29 new rows written by
+  lane 298 (lane 299 has ended), adopt-union, citing lane 299's build-18 sha
+  gate, ab19r served read and NOTES relaunch-82/83. Two are anchor edits, not
+  removals (mmvq_a_hoist_legacy, mmvq_wide_rows_from stay on the edited lines).
+Lever 11 also collides with vulkan-qsa-mask-fa-fusion (registered on v0132
+after lane 302 computed its list); P26's row for that win covers the range.
+Check receipt: cache/mtp-x1-lane/cells/v0132-repick-pwcheck2.txt (first run at d34218ccbf, same tree: v0132-repick-pwcheck.txt).
+
+Origin: lane-298 (HQ86 2026-10-09 12:32 re-pick order; rows by lane 302, upstream-x1, lane 298)
+Measured-effect: UNMEASURED (manifest metadata only)
+---
+ .../arifi-sync/protected-win-resolutions.json | 1348 +++++++++++++++++
+ 1 file changed, 1348 insertions(+)
+
+diff --git a/tools/arifi-sync/protected-win-resolutions.json b/tools/arifi-sync/protected-win-resolutions.json
+index f438ffae74..c10173f617 100644
+--- a/tools/arifi-sync/protected-win-resolutions.json
++++ b/tools/arifi-sync/protected-win-resolutions.json
+@@ -1867,6 +1867,1354 @@
+       ],
+       "decided_utc": "2026-10-09T10:00:00Z",
+       "decided_by": "HQ85 2026-10-09 (drafted by lane 298 Q69)"
++    },
++    {
++      "win_id": "vulkan-concat-transpose-deltanet",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-tq-matvec-subgroup",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-escha-mm-column-block",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-rocmfp4-fast-q8_1-mmvq",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-fa-dequant-kv-runtime-gate",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-rdna3-mmv-id-rows-switch",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-mul-mat-id-staging-receipt-hazard-assert",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-uma-read-path-probe",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-q5k-matvec-b-hoist-width-gate",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-mmvq-a-hoist-r48b-route",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-sx8-mulmm-packed-decode-and-mmq-under-coopmat",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-mmv-admit-width-switch",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-mmvq-wide-rows-switch",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-q5k-mmvq-route-n5-8",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-iq3-matvec-sign-hoist-n7-rows",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-q6k-mmvq-route-n7-8",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-q4k-mmvq-w5-column-split",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-iq3s-matvec-n6-rows2",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-iq4xs-q8_1-mmvq-admit-table",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-cm1-width-rule-f16b-guard",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-fa-sparse-prefill-qsa",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-cm1-f16b-staging-mul-mat-id",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-slot-major-matvec-id",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes; lever 11 in mul_mat_vec.comp: spec constant ARIFI_NOUNROLL (default 0, declared only under MUL_MAT_ID_GATHER, a const 0 elsewhere) gates the two unrolled_iters expressions and the loop start; at 0 every expression evaluates exactly as before, so every non-gather and default-OFF gather variant is the stock code; any anchor on the gather banner fprintf line is present on the + line, which only appends ', nounroll %u'"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-iq3s-rows2",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes; any anchor on the gather banner fprintf line is present on the + line, which only appends ', nounroll %u'"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-iq2s-body5",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes; any anchor on the gather banner fprintf line is present on the + line, which only appends ', nounroll %u'"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-qwen4exp-hc-post-w",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-qwen4exp-gdn-bank",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-ext-q2_0-legacy-optin",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range e4793036c1..d91535e0cd is fork-internal lane-302 lever 11 (rolled K loop opt-in) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302 e4793036c1 (this win as registered)",
++        "union": "lever 11 in ggml-vulkan.cpp ADDS moe_gather_nounroll_env() (GGML_ARIFI_MOE_NOUNROLL, unset = 0), appends ', nounroll %u' to the gather banner fprintf, and appends that value as spec constant 5 on the IQ4_NL idg pipeline only; no other line of this win's code changes; any anchor on the gather banner fprintf line is present on the + line, which only appends ', nounroll %u'"
++      },
++      "quality": "default OFF bit-exact by construction (spec 5 = 0 keeps every expression); opt-in arm gates: TBO 40/40 OK, plant RED 9 FAIL, byte harness 18/18 IDENT to gather-off (cells/cellZ-10082244, cells/cellAA-10082306); served ABBA x2 one binary D=0 vs U=1: greedy and sampled token ids identical, acceptance identical, LOSSLESS-TIE (cellAB-10090143-read.json)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAA-10082306-read.json",
++        "cache/moe-gather-x1-lane/cells/cellZ-10082244",
++        "cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json",
++        "cache/moe-gather-x1-lane/cells/lever11-pwcheck-pre.txt",
++        "commit:04f6f9f218ed1ea3c86802ee0cfcd8874abb5146",
++        "commit:d91535e0cd50d7886c8ed274980558d295b31afc"
++      ],
++      "decided_utc": "2026-10-09T17:10:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5), ordered by HQ86 2026-10-09 12:32 (lane branch only; lane 298 re-keys at the re-pick)"
++    },
++    {
++      "win_id": "sx8-pca-companion-correction",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "keep-ours",
++      "arms": {
++        "upstream": "INAPPLICABLE: the incoming commit is our P26 port (layout names only from #29761); this mechanism is fork-only, absent at b11178/b11517, so no upstream-alone arm exists",
++        "ours": "registered entry evidence unchanged; P26 cuts 0 anchors of this win except a moved line where stated. src/llama-model.h: P26 adds three nullptr fields to struct llama_layer_nextn only; no PCA/companion member or code touched",
++        "union": "P26 applied (a21b5b3ee0 == 480d6a95ff, patch-id dd9ee35c97 CHECKED): rg7 GREEN be19a79540 CPU+Vulkan sidecar ids [92 109 18 22], upstream #29761 full + MTP-only files ids equal max|d|=0; sidecar logits FNV-1a 16d02dcc21b18fcc bit-equal RED fd9211c0c3 vs GREEN (CPU); served W5 sidecar MTP greedy ids on v0.1.3.2 candidate b32e79cc8f (carries 480d6a95ff, ancestor CHECKED) == v0.1.3.1: PASS 8/8"
++      },
++      "quality": "rg7 (cells/rg7-summary.txt): RED refuses up-full (expected 148, got 141) and up-mtponly; GREEN CPU+Vulkan PASS, wrong-mixer control differs max|d|=0.2; sidecar logits hash unchanged RED vs GREEN. W5 served greedy ids 8/8 (cells/p14ab-10090915-summary.txt). Speed not measured (loader row, no op/shader change)",
++      "evidence": [
++        "cache/upstream-x1-lane/cells/rg7-summary.txt",
++        "cache/upstream-x1-lane/cells/p14ab-10090915-summary.txt",
++        "commit:a21b5b3ee0",
++        "commit:480d6a95ff"
++      ],
++      "decided_utc": "2026-10-09T16:51:07Z",
++      "decided_by": "upstream-x1 lane lead (Opus 5.5), HQ86 12:32 order",
++      "owed": "no"
++    },
++    {
++      "win_id": "qwen4exp-qsa-pooled-indexer-cache",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "keep-ours",
++      "arms": {
++        "upstream": "INAPPLICABLE: the incoming commit is our P26 port (layout names only from #29761); this mechanism is fork-only, absent at b11178/b11517, so no upstream-alone arm exists",
++        "ours": "registered entry evidence unchanged; P26 cuts 0 anchors of this win except a moved line where stated. qwen4exp.cpp: P26 hunks are load_arch_tensors (head flags, nextn.hc_head_*, MTP-block indexer TENSOR_SKIP) and graph_mtp final-mixer select; the trunk QSA indexer cache path is untouched",
++        "union": "P26 applied (a21b5b3ee0 == 480d6a95ff, patch-id dd9ee35c97 CHECKED): rg7 GREEN be19a79540 CPU+Vulkan sidecar ids [92 109 18 22], upstream #29761 full + MTP-only files ids equal max|d|=0; sidecar logits FNV-1a 16d02dcc21b18fcc bit-equal RED fd9211c0c3 vs GREEN (CPU); served W5 sidecar MTP greedy ids on v0.1.3.2 candidate b32e79cc8f (carries 480d6a95ff, ancestor CHECKED) == v0.1.3.1: PASS 8/8"
++      },
++      "quality": "rg7 (cells/rg7-summary.txt): RED refuses up-full (expected 148, got 141) and up-mtponly; GREEN CPU+Vulkan PASS, wrong-mixer control differs max|d|=0.2; sidecar logits hash unchanged RED vs GREEN. W5 served greedy ids 8/8 (cells/p14ab-10090915-summary.txt). Speed not measured (loader row, no op/shader change)",
++      "evidence": [
++        "cache/upstream-x1-lane/cells/rg7-summary.txt",
++        "cache/upstream-x1-lane/cells/p14ab-10090915-summary.txt",
++        "commit:a21b5b3ee0",
++        "commit:480d6a95ff"
++      ],
++      "decided_utc": "2026-10-09T16:51:07Z",
++      "decided_by": "upstream-x1 lane lead (Opus 5.5), HQ86 12:32 order",
++      "owed": "no"
++    },
++    {
++      "win_id": "qwen4exp-layout-copies",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "keep-ours",
++      "arms": {
++        "upstream": "INAPPLICABLE: the incoming commit is our P26 port (layout names only from #29761); this mechanism is fork-only, absent at b11178/b11517, so no upstream-alone arm exists",
++        "ours": "registered entry evidence unchanged; P26 cuts 0 anchors of this win except a moved line where stated. qwen4exp.cpp: P26 hunks are loader + graph_mtp final-mixer select; no layout-copy code touched",
++        "union": "P26 applied (a21b5b3ee0 == 480d6a95ff, patch-id dd9ee35c97 CHECKED): rg7 GREEN be19a79540 CPU+Vulkan sidecar ids [92 109 18 22], upstream #29761 full + MTP-only files ids equal max|d|=0; sidecar logits FNV-1a 16d02dcc21b18fcc bit-equal RED fd9211c0c3 vs GREEN (CPU); served W5 sidecar MTP greedy ids on v0.1.3.2 candidate b32e79cc8f (carries 480d6a95ff, ancestor CHECKED) == v0.1.3.1: PASS 8/8"
++      },
++      "quality": "rg7 (cells/rg7-summary.txt): RED refuses up-full (expected 148, got 141) and up-mtponly; GREEN CPU+Vulkan PASS, wrong-mixer control differs max|d|=0.2; sidecar logits hash unchanged RED vs GREEN. W5 served greedy ids 8/8 (cells/p14ab-10090915-summary.txt). Speed not measured (loader row, no op/shader change)",
++      "evidence": [
++        "cache/upstream-x1-lane/cells/rg7-summary.txt",
++        "cache/upstream-x1-lane/cells/p14ab-10090915-summary.txt",
++        "commit:a21b5b3ee0",
++        "commit:480d6a95ff"
++      ],
++      "decided_utc": "2026-10-09T16:51:07Z",
++      "decided_by": "upstream-x1 lane lead (Opus 5.5), HQ86 12:32 order",
++      "owed": "no"
++    },
++    {
++      "win_id": "qwen4exp-mtp-draft-subset-head",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "keep-ours",
++      "arms": {
++        "upstream": "INAPPLICABLE: the incoming commit is our P26 port (layout names only from #29761); this mechanism is fork-only, absent at b11178/b11517, so no upstream-alone arm exists",
++        "ours": "registered entry evidence unchanged; P26 cuts 0 anchors of this win except a moved line where stated. qwen4exp.cpp: the subset draft head (n_vocab_out/d2t) block is unchanged; P26 only makes output_hc_* NOT_REQUIRED on an MTP-only file",
++        "union": "P26 applied (a21b5b3ee0 == 480d6a95ff, patch-id dd9ee35c97 CHECKED): rg7 GREEN be19a79540 CPU+Vulkan sidecar ids [92 109 18 22], upstream #29761 full + MTP-only files ids equal max|d|=0; sidecar logits FNV-1a 16d02dcc21b18fcc bit-equal RED fd9211c0c3 vs GREEN (CPU); served W5 sidecar MTP greedy ids on v0.1.3.2 candidate b32e79cc8f (carries 480d6a95ff, ancestor CHECKED) == v0.1.3.1: PASS 8/8"
++      },
++      "quality": "rg7 (cells/rg7-summary.txt): RED refuses up-full (expected 148, got 141) and up-mtponly; GREEN CPU+Vulkan PASS, wrong-mixer control differs max|d|=0.2; sidecar logits hash unchanged RED vs GREEN. W5 served greedy ids 8/8 (cells/p14ab-10090915-summary.txt). Speed not measured (loader row, no op/shader change)",
++      "evidence": [
++        "cache/upstream-x1-lane/cells/rg7-summary.txt",
++        "cache/upstream-x1-lane/cells/p14ab-10090915-summary.txt",
++        "commit:a21b5b3ee0",
++        "commit:480d6a95ff"
++      ],
++      "decided_utc": "2026-10-09T16:51:07Z",
++      "decided_by": "upstream-x1 lane lead (Opus 5.5), HQ86 12:32 order",
++      "owed": "no"
++    },
++    {
++      "win_id": "qwen4exp-ple-release-v2",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "keep-ours",
++      "arms": {
++        "upstream": "INAPPLICABLE: the incoming commit is our P26 port (layout names only from #29761); this mechanism is fork-only, absent at b11178/b11517, so no upstream-alone arm exists",
++        "ours": "registered entry evidence unchanged; P26 cuts 0 anchors of this win except a moved line where stated. qwen4exp.cpp: PLE load/release code untouched (P26 removes only the old mtp_only declaration below the PLE block and re-adds it above)",
++        "union": "P26 applied (a21b5b3ee0 == 480d6a95ff, patch-id dd9ee35c97 CHECKED): rg7 GREEN be19a79540 CPU+Vulkan sidecar ids [92 109 18 22], upstream #29761 full + MTP-only files ids equal max|d|=0; sidecar logits FNV-1a 16d02dcc21b18fcc bit-equal RED fd9211c0c3 vs GREEN (CPU); served W5 sidecar MTP greedy ids on v0.1.3.2 candidate b32e79cc8f (carries 480d6a95ff, ancestor CHECKED) == v0.1.3.1: PASS 8/8"
++      },
++      "quality": "rg7 (cells/rg7-summary.txt): RED refuses up-full (expected 148, got 141) and up-mtponly; GREEN CPU+Vulkan PASS, wrong-mixer control differs max|d|=0.2; sidecar logits hash unchanged RED vs GREEN. W5 served greedy ids 8/8 (cells/p14ab-10090915-summary.txt). Speed not measured (loader row, no op/shader change)",
++      "evidence": [
++        "cache/upstream-x1-lane/cells/rg7-summary.txt",
++        "cache/upstream-x1-lane/cells/p14ab-10090915-summary.txt",
++        "commit:a21b5b3ee0",
++        "commit:480d6a95ff"
++      ],
++      "decided_utc": "2026-10-09T16:51:07Z",
++      "decided_by": "upstream-x1 lane lead (Opus 5.5), HQ86 12:32 order",
++      "owed": "no"
++    },
++    {
++      "win_id": "qwen4exp-ple-prefetch-ahead",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "keep-ours",
++      "arms": {
++        "upstream": "INAPPLICABLE: the incoming commit is our P26 port (layout names only from #29761); this mechanism is fork-only, absent at b11178/b11517, so no upstream-alone arm exists",
++        "ours": "registered entry evidence unchanged; P26 cuts 0 anchors of this win except a moved line where stated. qwen4exp.cpp: PLE prefetch code untouched; P26 hunks are loader flags + graph_mtp mixer select",
++        "union": "P26 applied (a21b5b3ee0 == 480d6a95ff, patch-id dd9ee35c97 CHECKED): rg7 GREEN be19a79540 CPU+Vulkan sidecar ids [92 109 18 22], upstream #29761 full + MTP-only files ids equal max|d|=0; sidecar logits FNV-1a 16d02dcc21b18fcc bit-equal RED fd9211c0c3 vs GREEN (CPU); served W5 sidecar MTP greedy ids on v0.1.3.2 candidate b32e79cc8f (carries 480d6a95ff, ancestor CHECKED) == v0.1.3.1: PASS 8/8"
++      },
++      "quality": "rg7 (cells/rg7-summary.txt): RED refuses up-full (expected 148, got 141) and up-mtponly; GREEN CPU+Vulkan PASS, wrong-mixer control differs max|d|=0.2; sidecar logits hash unchanged RED vs GREEN. W5 served greedy ids 8/8 (cells/p14ab-10090915-summary.txt). Speed not measured (loader row, no op/shader change)",
++      "evidence": [
++        "cache/upstream-x1-lane/cells/rg7-summary.txt",
++        "cache/upstream-x1-lane/cells/p14ab-10090915-summary.txt",
++        "commit:a21b5b3ee0",
++        "commit:480d6a95ff"
++      ],
++      "decided_utc": "2026-10-09T16:51:07Z",
++      "decided_by": "upstream-x1 lane lead (Opus 5.5), HQ86 12:32 order",
++      "owed": "no"
++    },
++    {
++      "win_id": "vulkan-qsa-mask-fa-fusion",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "keep-ours",
++      "arms": {
++        "upstream": "INAPPLICABLE: the incoming commit is our P26 port (layout names only from #29761); this mechanism is fork-only, absent at b11178/b11517, so no upstream-alone arm exists",
++        "ours": "registered entry evidence unchanged; P26 cuts 0 anchors of this win except a moved line where stated. qwen4exp.cpp: build_attn_qsa mask chain untouched; the MTP-block indexer is TENSOR_SKIP (never loaded), the MTP attention stays dense as before",
++        "union": "P26 applied (a21b5b3ee0 == 480d6a95ff, patch-id dd9ee35c97 CHECKED): rg7 GREEN be19a79540 CPU+Vulkan sidecar ids [92 109 18 22], upstream #29761 full + MTP-only files ids equal max|d|=0; sidecar logits FNV-1a 16d02dcc21b18fcc bit-equal RED fd9211c0c3 vs GREEN (CPU); served W5 sidecar MTP greedy ids on v0.1.3.2 candidate b32e79cc8f (carries 480d6a95ff, ancestor CHECKED) == v0.1.3.1: PASS 8/8"
++      },
++      "quality": "rg7 (cells/rg7-summary.txt): RED refuses up-full (expected 148, got 141) and up-mtponly; GREEN CPU+Vulkan PASS, wrong-mixer control differs max|d|=0.2; sidecar logits hash unchanged RED vs GREEN. W5 served greedy ids 8/8 (cells/p14ab-10090915-summary.txt). Speed not measured (loader row, no op/shader change)",
++      "evidence": [
++        "cache/upstream-x1-lane/cells/rg7-summary.txt",
++        "cache/upstream-x1-lane/cells/p14ab-10090915-summary.txt",
++        "commit:a21b5b3ee0",
++        "commit:480d6a95ff"
++      ],
++      "decided_utc": "2026-10-09T16:51:07Z",
++      "decided_by": "upstream-x1 lane lead (Opus 5.5), HQ86 12:32 order",
++      "owed": "no"
++    },
++    {
++      "win_id": "qwen4exp-mtp-sidecar-draft",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "keep-ours",
++      "arms": {
++        "upstream": "INAPPLICABLE: the incoming commit is our P26 port (layout names only from #29761); this mechanism is fork-only, absent at b11178/b11517, so no upstream-alone arm exists",
++        "ours": "registered entry evidence unchanged; P26 cuts 0 anchors of this win except a moved line where stated. qwen4exp.cpp: the anchor line 'mtp_only = n_layer_nextn > 0' MOVED, not removed (now qwen4exp.cpp:174 at a21b5b3ee0, CHECKED) so output_hc_* can be NOT_REQUIRED on an MTP-only file; our sidecar loads the same tensors and builds the same graph (logits hash bit-equal RED vs GREEN)",
++        "union": "P26 applied (a21b5b3ee0 == 480d6a95ff, patch-id dd9ee35c97 CHECKED): rg7 GREEN be19a79540 CPU+Vulkan sidecar ids [92 109 18 22], upstream #29761 full + MTP-only files ids equal max|d|=0; sidecar logits FNV-1a 16d02dcc21b18fcc bit-equal RED fd9211c0c3 vs GREEN (CPU); served W5 sidecar MTP greedy ids on v0.1.3.2 candidate b32e79cc8f (carries 480d6a95ff, ancestor CHECKED) == v0.1.3.1: PASS 8/8"
++      },
++      "quality": "rg7 (cells/rg7-summary.txt): RED refuses up-full (expected 148, got 141) and up-mtponly; GREEN CPU+Vulkan PASS, wrong-mixer control differs max|d|=0.2; sidecar logits hash unchanged RED vs GREEN. W5 served greedy ids 8/8 (cells/p14ab-10090915-summary.txt). Speed not measured (loader row, no op/shader change)",
++      "evidence": [
++        "cache/upstream-x1-lane/cells/rg7-summary.txt",
++        "cache/upstream-x1-lane/cells/p14ab-10090915-summary.txt",
++        "commit:a21b5b3ee0",
++        "commit:480d6a95ff"
++      ],
++      "decided_utc": "2026-10-09T16:51:07Z",
++      "decided_by": "upstream-x1 lane lead (Opus 5.5), HQ86 12:32 order",
++      "owed": "no"
++    },
++    {
++      "win_id": "qwen4exp-mtp-upstream-29761-gguf-load",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "keep-ours",
++      "arms": {
++        "upstream": "ggml-org/llama.cpp@c061df1983 (#29761) loader: tensor names + file layout TAKEN; its MTP hnorm math NOT taken (ours = one RMS over all hc streams, SGLang qwen4_exp_mtp.py reference, Strata agrees; HQ84 rule: upstream is not the default winner, QUESTIONS Q1/Q12)",
++        "ours": "self-collision: the incoming commit IS this win (anchor hc_head_norm matches the replaced output hc_head_* create_tensor lines). P26 applied (a21b5b3ee0 == 480d6a95ff, patch-id dd9ee35c97 CHECKED): rg7 GREEN be19a79540 CPU+Vulkan sidecar ids [92 109 18 22], upstream #29761 full + MTP-only files ids equal max|d|=0; sidecar logits FNV-1a 16d02dcc21b18fcc bit-equal RED fd9211c0c3 vs GREEN (CPU); served W5 sidecar MTP greedy ids on v0.1.3.2 candidate b32e79cc8f (carries 480d6a95ff, ancestor CHECKED) == v0.1.3.1: PASS 8/8",
++        "union": "identical to ours: P26 is the union (upstream layout + our MTP math)"
++      },
++      "quality": "rg7 (cells/rg7-summary.txt): RED refuses up-full (expected 148, got 141) and up-mtponly; GREEN CPU+Vulkan PASS, wrong-mixer control differs max|d|=0.2; sidecar logits hash unchanged RED vs GREEN. W5 served greedy ids 8/8 (cells/p14ab-10090915-summary.txt). Speed not measured (loader row, no op/shader change)",
++      "evidence": [
++        "cache/upstream-x1-lane/cells/rg7-summary.txt",
++        "cache/upstream-x1-lane/cells/p14ab-10090915-summary.txt",
++        "commit:a21b5b3ee0",
++        "commit:480d6a95ff"
++      ],
++      "decided_utc": "2026-10-09T16:51:07Z",
++      "decided_by": "upstream-x1 lane lead (Opus 5.5), HQ86 12:32 order",
++      "owed": "no"
++    },
++    {
++      "win_id": "vulkan-concat-transpose-deltanet",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-tq-matvec-subgroup",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-escha-mm-column-block",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-rocmfp4-fast-q8_1-mmvq",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-fa-dequant-kv-runtime-gate",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-rdna3-mmv-id-rows-switch",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-mul-mat-id-staging-receipt-hazard-assert",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-uma-read-path-probe",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-q5k-matvec-b-hoist-width-gate",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-mmvq-a-hoist-r48b-route",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Anchor line(s) 'mmvq_a_hoist_legacy' are edited, not removed: the Q8_0 pipeline line keeps mmvq_a_hoist_legacy(i) and the banner keeps mmvq_wide_rows_from, adding the q8_0 field. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-sx8-mulmm-packed-decode-and-mmq-under-coopmat",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-mmv-admit-width-switch",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-mmvq-wide-rows-switch",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Anchor line(s) 'mmvq_wide_rows_from' are edited, not removed: the Q8_0 pipeline line keeps mmvq_a_hoist_legacy(i) and the banner keeps mmvq_wide_rows_from, adding the q8_0 field. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-q5k-mmvq-route-n5-8",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-iq3-matvec-sign-hoist-n7-rows",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-q6k-mmvq-route-n7-8",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-q4k-mmvq-w5-column-split",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-iq3s-matvec-n6-rows2",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-iq4xs-q8_1-mmvq-admit-table",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-cm1-width-rule-f16b-guard",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-fa-sparse-prefill-qsa",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-cm1-f16b-staging-mul-mat-id",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-slot-major-matvec-id",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-iq3s-rows2",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-iq2s-body5",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-qwen4exp-hc-post-w",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-qwen4exp-gdn-bank",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan-types.h, ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-qsa-mask-fa-fusion",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-ext-q2_0-legacy-optin",
++      "incoming": "a5071d4a119fc6122bff26d687d38978a856efb0",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: Q1 is fork-internal lane 299 work (sweep-21 890M re-tune), not an upstream ingest",
++        "ours": "v0132 b7fb4eeaf0 / integ 7156c61607: Q8_0 MMVQ uses the generic wide-rows switch (4 rows at NUM_COLS >= 5 on RDNA3)",
++        "union": "Q1 adds a Q8_0-only rows threshold (device field mmvq_wide_rows_from_q8_0, default 8 on AMD 0x150e when the generic knob is unset) consumed only at the Q8_0 q8_1 MMVQ pipeline call site; every other type and device keeps the shipped rows. Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): no line of this win's mechanism changes. Served: S-X8 DFlash2 decode +7.8..+8.3%% at n-max 4, +14.1..+15.5%% at n-max 6 vs integ, ids exact 40/40."
++      },
++      "quality": "lane 299 build-18 op sha gate: on == off == base dump sha 51B4502D4112D2EE (56 cases, 0 fail), plant RED 29/85 fail (cells/optq8-10082123-verdict.txt); served ab19r greedy + sampled ids exact 40/40, acceptance identical",
++      "evidence": [
++        "cache/fusion-x1-lane/cells/optq8-10082123-verdict.txt",
++        "cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json",
++        "cache/fusion-x1-lane/cells/sweep21-10081441-verdict.json",
++        "cache/fusion-x1-lane/NOTES.md",
++        "commit:b164ec401fa1f5a64b472bb7d271bed40fa08bd2"
++      ],
++      "decided_utc": "2026-10-09T20:30:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
+     }
+   ]
+ }

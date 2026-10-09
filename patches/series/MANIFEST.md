@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **824**, all non-merge, applied in filename order.
+- Patches: **833**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 824 commit messages, same provenance trailers. Verified, not
+same file contents, same 833 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -903,6 +903,15 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 822 | `0822-tests-lane-299-exact-equality-op-cases-at-verify-wid.patch` | arifi-fork-base | `bef85df8c` | - | - | tests: lane-299 exact-equality op cases at verify widths 2..8 for the shipped fusions HC_POST_W and GDN_BANK |
 | 823 | `0823-tests-q8_0-perf-rows-at-the-S-X8-attention-shapes-10.patch` | arifi-fork-base | `a84bca74d` | - | - | tests: q8_0 perf rows at the S-X8 attention shapes (10240/6144/12288x5120, 5120x6144, 1024x5120, n 1..9) |
 | 824 | `0824-arifi-sync-upstream-review-pin-b11517-8a1a9b5126-cod.patch` | arifi-fork-base | `179b75d75` | - | - | arifi-sync: upstream review pin -> b11517 (8a1a9b5126); code base stays b11178 |
+| 825 | `0825-lane-302-lever-11-GGML_ARIFI_MOE_NOUNROLL-rolled-K-l.patch` | arifi-fork-base | `9ff0b4689` | - | - | lane-302 lever 11: GGML_ARIFI_MOE_NOUNROLL rolled K loop in the generic idg shader (opt-in) |
+| 826 | `0826-lane-302-register-lever-11-as-an-opt-in-protected-ca.patch` | arifi-fork-base | `2a70efed1` | - | - | lane-302: register lever 11 as an opt-in protected capability (vulkan-moe-gather-iq4nl-nounroll-optin) |
+| 827 | `0827-vulkan-Q8_0-MMVQ-own-rows-at-every-width-on-the-Rade.patch` | ternary-g128 | `b164ec401` | - | - | vulkan: Q8_0 MMVQ own rows at every width on the Radeon 890M (0x150e) |
+| 828 | `0828-qwen4exp-load-upstream-29761-MTP-GGUFs-nextn.hc_head.patch` | arifi-fork-base | `2e24c2db8` | ggml-org/llama.cpp@c061df1983 (#29761) - tensor names and file layout only; the MTP math stays ours. | - | qwen4exp: load upstream #29761 MTP GGUFs (nextn.hc_head_* mixer, QSA indexer in the MTP block, MTP-only files) |
+| 829 | `0829-arifi-sync-register-the-v0132-picks-lane-299-Q1-upst.patch` | arifi-fork-base | `0ad04a0c3` | - | - | arifi-sync: register the v0132 picks (lane 299 Q1, upstream-x1 P26) and re-key lever 11 to its pick |
+| 830 | `0830-tests-qwen4exp-MTP-layout-test-upstream-29761-GGUF-v.patch` | arifi-fork-base | `251a7e02f` | - | - | tests: qwen4exp MTP layout test - upstream #29761 GGUF vs our sidecar of the same weights |
+| 831 | `0831-tests-qwen4exp-MTP-layout-test-prints-the-sidecar-lo.patch` | arifi-fork-base | `64792893e` | - | - | tests: qwen4exp MTP layout test prints the sidecar logits hash |
+| 832 | `0832-arifi-sync-re-key-the-lever-11-Q1-and-P26-registrati.patch` | arifi-fork-base | `a5071d4a1` | - | - | arifi-sync: re-key the lever 11, Q1 and P26 registrations to their v0132 re-pick shas |
+| 833 | `0833-arifi-sync-protected-win-resolutions-for-the-v0132-r.patch` | arifi-fork-base | `de8ad18b2` | - | - | arifi-sync: protected-win resolutions for the v0132 re-pick (lever 11, lane 299 Q1, P26), keyed to a5071d4a11 |
 
 ## Measured effect, per patch
 
@@ -1809,6 +1818,17 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0822-tests-lane-299-exact-equality-op-cases-at-verify-wid.patch` | UNMEASURED (test-only; exact-equality receipt in cache/fusion-x1-lane/cells/build16-*-optx-verdict.txt) |
 | `0823-tests-q8_0-perf-rows-at-the-S-X8-attention-shapes-10.patch` | UNMEASURED (tests-only perf rows; no engine path changes) |
 | `0824-arifi-sync-upstream-review-pin-b11517-8a1a9b5126-cod.patch` | none (config metadata; currency drift is now measured from b11517) |
+| `0825-lane-302-lever-11-GGML_ARIFI_MOE_NOUNROLL-rolled-K-l.patch` | none served (opt-in, default OFF). Served ABBA x2 D=0 vs U=1 one binary: LOSSLESS-TIE, pooled greedy -0.97% / sampled -0.47%, ids identical, acceptance identical (cache/moe-gather-x1-lane/cells/cellAB-10090143-read.json); op idg_iq4_nl n2-n8 -15..-25%, n1 tie (cells/cellAA-10082306) |
+| `0826-lane-302-register-lever-11-as-an-opt-in-protected-ca.patch` | UNMEASURED (manifest bookkeeping, no code) |
+| `0827-vulkan-Q8_0-MMVQ-own-rows-at-every-width-on-the-Rade.patch` | served S-X8 DFlash2 decode, recorder-wrapped ab19r, clean rounds only, vs the integ comparator: +7.8..+8.3% at n-max 4, +14.1..+15.5% at n-max 6 (on/off +14.0..+15.1% at n-max 6; n-max 4 OFF rounds all tainted by host CPU); greedy + sampled 0.7/1234, ids exact 40/40, acceptance identical (cache/fusion-x1-lane/cells/ab19r-10090621-verdict.json, cells/ab19r-10090621-clean-read.json); first read ab19 (no recorder) on/off +7.4..+8.9% / +14.1..+15.1%, served plant RED, same binaries (cells/ab19-10090408-verdict.json); op +25..+99% at NUM_COLS 6..8 (cells/sweep21-10081441-verdict.json) |
+| `0828-qwen4exp-load-upstream-29761-MTP-GGUFs-nextn.hc_head.patch` | upstream #29761 qwen4exp GGUFs (full and MTP-only) now load and draft with logits bit-equal to our
+ sidecar of the same weights (CPU + Vulkan); our sidecar logits hash unchanged RED vs GREEN. Speed not measured
+ (loader row). Served W5 MTP greedy ids-identical run on the real sidecar = cell p14ab (see MERGE-READY row P26). |
+| `0829-arifi-sync-register-the-v0132-picks-lane-299-Q1-upst.patch` | none (registration metadata only; the registered effects are named in each entry) |
+| `0830-tests-qwen4exp-MTP-layout-test-upstream-29761-GGUF-v.patch` | UNMEASURED (test-only; asserts upstream #29761 MTP files give the sidecar ids, max\|d\| < 1e-4, and the trunk-mixer control fails) |
+| `0831-tests-qwen4exp-MTP-layout-test-prints-the-sidecar-lo.patch` | UNMEASURED (test-only; prints the sidecar logits FNV-1a hash as a value-identity receipt) |
+| `0832-arifi-sync-re-key-the-lever-11-Q1-and-P26-registrati.patch` | UNMEASURED (manifest metadata only) |
+| `0833-arifi-sync-protected-win-resolutions-for-the-v0132-r.patch` | UNMEASURED (manifest metadata only) |
 
 ## Unclassified
 
@@ -2496,4 +2516,12 @@ rather than silently bucketed - add a rule when a new source appears.
 - `bef85df8c` tests: lane-299 exact-equality op cases at verify widths 2..8 for the shipped fusions HC_POST_W and GDN_BANK
 - `a84bca74d` tests: q8_0 perf rows at the S-X8 attention shapes (10240/6144/12288x5120, 5120x6144, 1024x5120, n 1..9)
 - `179b75d75` arifi-sync: upstream review pin -> b11517 (8a1a9b5126); code base stays b11178
+- `9ff0b4689` lane-302 lever 11: GGML_ARIFI_MOE_NOUNROLL rolled K loop in the generic idg shader (opt-in)
+- `2a70efed1` lane-302: register lever 11 as an opt-in protected capability (vulkan-moe-gather-iq4nl-nounroll-optin)
+- `2e24c2db8` qwen4exp: load upstream #29761 MTP GGUFs (nextn.hc_head_* mixer, QSA indexer in the MTP block, MTP-only files)
+- `0ad04a0c3` arifi-sync: register the v0132 picks (lane 299 Q1, upstream-x1 P26) and re-key lever 11 to its pick
+- `251a7e02f` tests: qwen4exp MTP layout test - upstream #29761 GGUF vs our sidecar of the same weights
+- `64792893e` tests: qwen4exp MTP layout test prints the sidecar logits hash
+- `a5071d4a1` arifi-sync: re-key the lever 11, Q1 and P26 registrations to their v0132 re-pick shas
+- `de8ad18b2` arifi-sync: protected-win resolutions for the v0132 re-pick (lever 11, lane 299 Q1, P26), keyed to a5071d4a11
 
