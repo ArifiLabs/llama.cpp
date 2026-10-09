@@ -19,7 +19,8 @@ namespace {
 
 constexpr int64_t n_in     = 256;
 constexpr int64_t n_out    = 128;
-constexpr int64_t n_expert = 8;
+// Must be >= moe_cache_pool_slots_min (64): a shape with fewer entries never gets a pool.
+constexpr int64_t n_expert = 64;
 constexpr int64_t n_used   = 2;
 constexpr int     max_steps = 64;
 constexpr int     steps_after_hit = 4;
