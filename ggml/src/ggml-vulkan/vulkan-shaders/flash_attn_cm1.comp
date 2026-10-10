@@ -67,6 +67,43 @@ shared ACC_TYPE slope[Br];
 // lane-300 F-141: colLiveSh[c] == j + 1 when KV column c of tile j has a live mask value in some valid row
 shared uint colLiveSh[Bc];
 
+// lane-301 lever 1: sparse gather column of each tile slot, resolved once per tile (-1 = inactive slot)
+shared int sparseColSh[USE_SPARSE ? Bc : 1];
+
+// lane-301 lever 1: sparse K 16-dim slices double-buffered in kvsh; the next slice is loaded into registers during this slice's coopmat
+const uint32_t K_PRE_N = Bc * MatBr / 4 / WorkGroupSize;
+// no && here: glslang lowers a spec-constant && chain to an OpPhi outside any function (invalid SPIR-V)
+const uint32_t K_DBUF_U = (USE_SPARSE ? 1u : 0u) * (SHMEM_STAGING == 0 ? 1u : 0u) * ((Bc * MatBr / 4) % WorkGroupSize == 0 ? 1u : 0u) *
+                          (K_PRE_N > 0 ? 1u : 0u) * (vsh_stride >= 2 * kvsh_stride ? 1u : 0u);
+const bool K_DBUF = K_DBUF_U != 0;
+
+bool fa_tile_kv(const uint32_t j, const uint32_t c, out uint32_t kcol) {
+    if (USE_SPARSE) {
+        const int idx = sparseColSh[c];
+        kcol = idx >= 0 ? uint32_t(idx) : 0;
+        return idx >= 0;
+    }
+    return fa_kv_index(j * Bc + c, kcol);
+}
+
+FLOAT_TYPEV4 k_slice_load(const bool kv_active, const uint32_t kcol, const uint32_t d, const uint32_t col_vec, const uint32_t k_offset) {
+    FLOAT_TYPEV4 K_Tf = FLOAT_TYPEV4(0);
+    if (kv_active && (HSK == HSK_pad || d * 16 + col_vec * 4 < HSK)) {
+#if !defined(BFLOAT16)
+        if (USE_DECODE_K) {
+            uint coord = kcol * k_stride * BLOCK_SIZE_K + d * 16 + col_vec * 4;
+            uint ib = coord / BLOCK_SIZE_K;
+            uint iqs = (coord % BLOCK_SIZE_K);
+            K_Tf = dequantize4(ib, iqs, k_offset, BINDING_IDX_K);
+        } else
+#endif
+        {
+            K_Tf = FLOAT_TYPEV4(data_kv4[k_offset / 4 + kcol * k_stride / 4 + d * 16 / 4 + col_vec]);
+        }
+    }
+    return K_Tf;
+}
+
 void main() {
 #ifdef NEEDS_INIT_IQ_SHMEM
     if (fa_type_needs_shmem(FaTypeK) || fa_type_needs_shmem(FaTypeV)) {
@@ -171,6 +208,17 @@ void main() {
             mask_cache[idx] = f16vec4(0);
         }
 
+        if (USE_SPARSE) {
+            // previous tile's readers finished at its closing barrier (or at the mask-skip barrier)
+            [[unroll]] for (uint32_t c = 0; c < Bc; c += gl_WorkGroupSize.x) {
+                if (c + tid < Bc) {
+                    uint32_t kc;
+                    sparseColSh[c + tid] = fa_kv_index(j * Bc + c + tid, kc) ? int(kc) : -1;
+                }
+            }
+            barrier();
+        }
+
         if (MASK_ENABLE) {
             if (USE_MASK_OPT && mask_opt_idx != j / 16) {
                 mask_opt_idx = j / 16;
@@ -191,7 +239,7 @@ void main() {
                     uint32_t r = (idx + tid) % (Br / 4);
                     if (idx + tid < Bc * Br / 4 || idx + gl_WorkGroupSize.x <= Bc * Br / 4) {
                         uint32_t kcol;
-                        bool kv_active = fa_kv_index(j * Bc + c, kcol);
+                        bool kv_active = fa_tile_kv(j, c, kcol);
                         if (kv_active) {
                             f16vec4 m;
                             if (USE_SPARSE) {
@@ -264,7 +312,7 @@ void main() {
                 if (idx + gl_WorkGroupSize.x <= Bc * HSK_pad / 4 || c < Bc) {
                     FLOAT_TYPEV4 K_Tf = FLOAT_TYPEV4(0);
                     uint32_t kcol;
-                    bool kv_active = fa_kv_index(j * Bc + c, kcol);
+                    bool kv_active = fa_tile_kv(j, c, kcol);
                     if (kv_active && (HSK == HSK_pad || d < HSK / 4)) {
 #if !defined(BFLOAT16)
                         if (USE_DECODE_K) {
@@ -292,6 +340,18 @@ void main() {
         coopmat<FLOAT_TYPE, gl_ScopeSubgroup, MatBc, 16, gl_MatrixUseA> KMat;
         coopmat<FLOAT_TYPE, gl_ScopeSubgroup, 16, MatBr, gl_MatrixUseB> QMat;
 
+        // K_DBUF: each thread owns the same K_PRE_N (row, col_vec) slots for every slice of this tile
+        FLOAT_TYPEV4 kpre[K_DBUF ? K_PRE_N : 1];
+        uint32_t kpre_col[K_DBUF ? K_PRE_N : 1];
+        bool kpre_act[K_DBUF ? K_PRE_N : 1];
+        if (K_DBUF) {
+            [[unroll]] for (uint32_t e = 0; e < K_PRE_N; ++e) {
+                const uint32_t idx = e * WorkGroupSize + tid;
+                kpre_act[e] = fa_tile_kv(j, idx / (MatBr / 4), kpre_col[e]);
+                kpre[e] = k_slice_load(kpre_act[e], kpre_col[e], 0, idx % (MatBr / 4), k_offset);
+            }
+        }
+
         [[unroll]] for (uint32_t d = 0; d < HSK_pad / 16; ++d) {
             // If SHMEM_STAGING is set, a Bc * HSK_pad size tile of K is loaded to shmem
             // If not, K is loaded directly from global memory if aligned, otherwise
@@ -301,6 +361,23 @@ void main() {
             // For quants we always need to dequant into kvsh; for f16/bf16 we can load
             // directly from global memory when alignment / bounds allow it.
             const bool stage_k = USE_DECODE_K || KV_bounds_check || USE_SPARSE || d * 16 + 16 > HSK;
+            if (K_DBUF) {
+                // buffer d&1 was last read in slice d-2, before every thread passed slice d-1's barrier
+                const uint32_t kbuf = (d & 1) * Bc * kvsh_stride;
+                [[unroll]] for (uint32_t e = 0; e < K_PRE_N; ++e) {
+                    const uint32_t idx = e * WorkGroupSize + tid;
+                    kvsh[kbuf + (idx / (MatBr / 4)) * kvsh_stride + idx % (MatBr / 4)] = kpre[e];
+                }
+                barrier();
+                if (d + 1 < HSK_pad / 16) {
+                    [[unroll]] for (uint32_t e = 0; e < K_PRE_N; ++e) {
+                        const uint32_t idx = e * WorkGroupSize + tid;
+                        kpre[e] = k_slice_load(kpre_act[e], kpre_col[e], d + 1, idx % (MatBr / 4), k_offset);
+                    }
+                }
+                memoryBarrierShared();
+                coopMatLoad(KMat, kvsh, kbuf + (gl_SubgroupID * MatBc) * kvsh_stride, kvsh_stride, gl_CooperativeMatrixLayoutRowMajor);
+            } else {
             if (stage_k) {
                 barrier();
                 [[unroll]] for (uint32_t idx = 0; idx < Bc * MatBr / 4; idx += gl_WorkGroupSize.x) {
@@ -309,7 +386,7 @@ void main() {
                     if (idx + tid < Bc * MatBr / 4) {
                         FLOAT_TYPEV4 K_Tf = FLOAT_TYPEV4(0);
                         uint32_t kcol;
-                        bool kv_active = fa_kv_index(j * Bc + row, kcol);
+                        bool kv_active = fa_tile_kv(j, row, kcol);
                         if (kv_active && (HSK == HSK_pad || d * 16 + col_vec * 4 < HSK)) {
 #if !defined(BFLOAT16)
                             if (USE_DECODE_K) {
@@ -339,6 +416,7 @@ void main() {
                 const uint coord = k_offset / 4 + (j * Bc + gl_SubgroupID * MatBc) * k_stride / 4 + d * 16 / 4;
                 coopMatLoad(KMat, data_kv4, coord, k_stride / 4, gl_CooperativeMatrixLayoutRowMajor);
 #endif
+            }
             }
             } else {
                 memoryBarrierShared();
@@ -442,7 +520,7 @@ void main() {
                 if (idx + gl_WorkGroupSize.x <= Bc * HSV_pad / 4 || c < Bc) {
                     FLOAT_TYPEV4 V_Tf = FLOAT_TYPEV4(0);
                     uint32_t v_row;
-                    bool kv_active = fa_kv_index(j * Bc + c, v_row);
+                    bool kv_active = fa_tile_kv(j, c, v_row);
                     const bool v_dead = DEADV_ZERO && MASK_ENABLE && mask_opt_bits != MASK_OPT_ALL_ZERO && colLiveSh[c] != j + 1;
                     if (kv_active && !v_dead && (HSV == HSV_pad || d < HSV / 4)) {
 #if !defined(BFLOAT16)
@@ -495,7 +573,7 @@ void main() {
                     const uint col = idx % v_cols;
 
                     uint32_t v_row;
-                    bool kv_active = fa_kv_index(j * Bc + row, v_row);
+                    bool kv_active = fa_tile_kv(j, row, v_row);
                     const uint v_col = hsv_tile * MatBc * row_split + col * 4;
 
                     const uint coord = v_row * v_stride * BLOCK_SIZE_V + v_col;
