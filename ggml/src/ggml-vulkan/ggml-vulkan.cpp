@@ -623,12 +623,14 @@ static uint32_t moe_gather_tail_env() {
     return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
 }
 
-// lane-302 Route A levers 3/4: IQ2_S gather body. Unset = 5 (default ON: int8 sign + batched grid init, cellO-10060849
-// served +1.89%). 0 = legacy body; 1 = int8 sign path only (cellM-10060610 served -0.74% alone); 2 skips the LDS grid
-// copy (wrong values, timing diagnostic only); 3 planted wrong arm (test only); 4 = legacy body + batched grid init
+// lane-302 Route A levers 3/4/13: IQ2_S gather body. Unset = 6 (default ON, lever 13: body 5 math with the grid read from
+// the global const table, no LDS init; cell AH). 5 = int8 sign + batched LDS grid init (cellO-10060849 served +1.89%; the
+// lever 13 off-ramp). 0 = legacy body; 1 = int8 sign path only (cellM-10060610 served -0.74% alone); 2 skips the LDS grid
+// copy (wrong values, timing diagnostic only); 3 planted wrong arm (test only); 4 = legacy body + batched grid init;
+// 7 = planted wrong arm 6 (test only)
 static uint32_t moe_gather_iq2s_body_env() {
     const char * e = getenv("GGML_ARIFI_IQ2S_BODY");
-    return (e != nullptr && e[0] >= '0' && e[0] <= '7') ? (uint32_t) (e[0] - '0') : 5u;
+    return (e != nullptr && e[0] >= '0' && e[0] <= '7') ? (uint32_t) (e[0] - '0') : 6u;
 }
 
 // lane-302 Route A: IQ4_NL gather body (spec 4 of the generic idg shader), opt-in until measured.
