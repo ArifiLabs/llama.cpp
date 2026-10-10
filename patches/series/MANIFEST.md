@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **844**, all non-merge, applied in filename order.
+- Patches: **845**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 844 commit messages, same provenance trailers. Verified, not
+same file contents, same 845 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -923,6 +923,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 842 | `0842-lane-302-lever-12-small-n-split_k-default-ON-for-den.patch` | arifi-fork-base | `7b1c2a88c` | - | - | lane-302 lever 12: small-n split_k default ON for dense MUL_MAT (GGML_ARIFI_MM_SPLITK_SMALLN=0 = stock off-ramp) |
 | 843 | `0843-lane-302-register-lever-12-small-n-split_k-as-a-prot.patch` | arifi-fork-base | `6e4c7901f` | - | - | lane-302: register lever 12 small-n split_k as a protected win (vulkan-mm-splitk-small-n-verify) |
 | 844 | `0844-arifi-sync-protected-win-resolutions-for-lane-302-le.patch` | arifi-fork-base | `116b0bd4f` | - | - | arifi-sync: protected-win resolutions for lane 302 lever 12 (32 wins, adopt-union), keyed to picked tip 6e4c7901f1 |
+| 845 | `0845-arifi-sync-re-key-vulkan-mm-splitk-small-n-verify-co.patch` | arifi-fork-base | `fa3037d49` | - | - | arifi-sync: re-key vulkan-mm-splitk-small-n-verify commit to the picked sha 7b1c2a88ca (was lane 302's 44ea6fb40d) |
 
 ## Measured effect, per patch
 
@@ -1851,6 +1852,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0842-lane-302-lever-12-small-n-split_k-default-ON-for-den.patch` | copy +3.1..+3.7%, agent +2.5..+3.0% served decode, cache/moe-gather-x1-lane/cells/cellAE-10091525-read-amend.txt |
 | `0843-lane-302-register-lever-12-small-n-split_k-as-a-prot.patch` | UNMEASURED (manifest bookkeeping, no code) |
 | `0844-arifi-sync-protected-win-resolutions-for-lane-302-le.patch` | UNMEASURED (manifest bookkeeping, no code) |
+| `0845-arifi-sync-re-key-vulkan-mm-splitk-small-n-verify-co.patch` | UNMEASURED (manifest bookkeeping, no code) |
 
 ## Unclassified
 
@@ -2556,4 +2558,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `7b1c2a88c` lane-302 lever 12: small-n split_k default ON for dense MUL_MAT (GGML_ARIFI_MM_SPLITK_SMALLN=0 = stock off-ramp)
 - `6e4c7901f` lane-302: register lever 12 small-n split_k as a protected win (vulkan-mm-splitk-small-n-verify)
 - `116b0bd4f` arifi-sync: protected-win resolutions for lane 302 lever 12 (32 wins, adopt-union), keyed to picked tip 6e4c7901f1
+- `fa3037d49` arifi-sync: re-key vulkan-mm-splitk-small-n-verify commit to the picked sha 7b1c2a88ca (was lane 302's 44ea6fb40d)
 
