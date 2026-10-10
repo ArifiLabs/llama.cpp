@@ -1,0 +1,40 @@
+From 7b1c2a88cabccc1ed629e073a5c622721bda8cfe Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 17:07:34 -0400
+Subject: [PATCH] lane-302 lever 12: small-n split_k default ON for dense
+ MUL_MAT (GGML_ARIFI_MM_SPLITK_SMALLN=0 = stock off-ramp)
+
+Cell AE served A/B (V1 D S S D D S S D V2, greedy + sampled): copy +3.1..+3.7%,
+agent +2.5..+3.0%, short 0; greedy ids S == stock on every run; env 0 == v0.1.3.1.
+HQ86 16:11 ruled the s2-short sampled flip drift-class (pooled band); lane 300
+signed the token-33 flip as a deterministic fp32 split_k reorder (exactness class).
+Ship gate: 4-seed s2-short pooled band + not slower + served planted RED (gate cell AF).
+GGML_ARIFI_MM_LARGE_MIN_N stays opt-in (arm T moved nothing in cell AD).
+
+Origin: lane-302
+Measured-effect: copy +3.1..+3.7%, agent +2.5..+3.0% served decode, cache/moe-gather-x1-lane/cells/cellAE-10091525-read-amend.txt
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index fc39621d8e..fa7e638218 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -646,12 +646,13 @@ static uint32_t moe_gather_nounroll_env() {
+ }
+ 
+ // lane-302 lever 12 (cell AC): verify-width MUL_MAT starves the GPU on long-K / small-M weights (hc_attn_inject 4x10240 at
+-// n < 32 = 1 workgroup; hc_down 320x10240 at n 33..64 = 5). Both opt-in until measured; unset = stock selection.
+-// GGML_ARIFI_MM_SPLITK_SMALLN: 1 = split_k also when n < the tile's N; 2 = planted wrong arm (drops the K tail, test only)
++// n < 32 = 1 workgroup; hc_down 320x10240 at n 33..64 = 5). Split default ON (cell AE served WIN); large tile opt-in.
++// GGML_ARIFI_MM_SPLITK_SMALLN: unset/1 = split_k also when n < the tile's N; 0 = stock; 2 = planted wrong arm (test only)
+ static uint32_t mm_splitk_smalln_env() {
+     static const uint32_t v = [] {
+         const char * e = getenv("GGML_ARIFI_MM_SPLITK_SMALLN");
+-        return (e != nullptr && (e[0] == '1' || e[0] == '2')) ? (uint32_t) (e[0] - '0') : 0u;
++        if (e == nullptr || e[0] == '\0') return 1u;
++        return (e[0] == '1' || e[0] == '2') ? (uint32_t) (e[0] - '0') : 0u;
+     }();
+     return v;
+ }
