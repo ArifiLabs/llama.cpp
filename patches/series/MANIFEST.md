@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **845**, all non-merge, applied in filename order.
+- Patches: **851**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 845 commit messages, same provenance trailers. Verified, not
+same file contents, same 851 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -924,6 +924,12 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 843 | `0843-lane-302-register-lever-12-small-n-split_k-as-a-prot.patch` | arifi-fork-base | `6e4c7901f` | - | - | lane-302: register lever 12 small-n split_k as a protected win (vulkan-mm-splitk-small-n-verify) |
 | 844 | `0844-arifi-sync-protected-win-resolutions-for-lane-302-le.patch` | arifi-fork-base | `116b0bd4f` | - | - | arifi-sync: protected-win resolutions for lane 302 lever 12 (32 wins, adopt-union), keyed to picked tip 6e4c7901f1 |
 | 845 | `0845-arifi-sync-re-key-vulkan-mm-splitk-small-n-verify-co.patch` | arifi-fork-base | `fa3037d49` | - | - | arifi-sync: re-key vulkan-mm-splitk-small-n-verify commit to the picked sha 7b1c2a88ca (was lane 302's 44ea6fb40d) |
+| 846 | `0846-lane-302-lever-13-opt-in-IQ2_S-gather-body-6-reads-t.patch` | arifi-fork-base | `7b0bfb6b8` | - | - | lane-302 lever 13: opt-in IQ2_S gather body 6 reads the grid from the global const table (no LDS init) |
+| 847 | `0847-lane-302-lever-13-IQ2_S-gather-body-6-default-ON-GGM.patch` | arifi-fork-base | `ece2051b8` | - | - | lane-302 lever 13: IQ2_S gather body 6 default ON (GGML_ARIFI_IQ2S_BODY=5 = the body 5 off-ramp) |
+| 848 | `0848-lane-302-register-lever-13-IQ2_S-gather-body-6-as-a-.patch` | arifi-fork-base | `71f4ef805` | - | - | lane-302: register lever 13 IQ2_S gather body 6 as a protected win (vulkan-moe-gather-iq2s-body6-const-grid) |
+| 849 | `0849-arifi-sync-protected-win-resolutions-for-lane-302-le.patch` | arifi-fork-base | `4d57e2e34` | - | - | arifi-sync: protected-win resolutions for lane 302 lever 13 (33 wins, adopt-union), keyed to picked entry 71f4ef8059 |
+| 850 | `0850-lane-302-amend-vulkan-moe-gather-iq2s-body5-registra.patch` | arifi-fork-base | `d05b80a95` | - | - | lane-302: amend vulkan-moe-gather-iq2s-body5 registration: body 5 is the off-ramp since lever 13 |
+| 851 | `0851-build-info-v0.1.3.2.patch` | arifi-fork-base | `03c24d1ec` | - | - | build-info: v0.1.3.2 |
 
 ## Measured effect, per patch
 
@@ -1853,6 +1859,12 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0843-lane-302-register-lever-12-small-n-split_k-as-a-prot.patch` | UNMEASURED (manifest bookkeeping, no code) |
 | `0844-arifi-sync-protected-win-resolutions-for-lane-302-le.patch` | UNMEASURED (manifest bookkeeping, no code) |
 | `0845-arifi-sync-re-key-vulkan-mm-splitk-small-n-verify-co.patch` | UNMEASURED (manifest bookkeeping, no code) |
+| `0846-lane-302-lever-13-opt-in-IQ2_S-gather-body-6-reads-t.patch` | WIN served. Cell AI (cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt), same binary, ABBA x2, BODY=5 vs unset (6): verify width 4 (greedy + sampled temp 0.7 seed 1234) 19.89 -> 20.06 t/s +0.87% (pairs +0.33/+1.36/+1.13/+0.66), acceptance identical 0.7915; plain decode 11.75 -> 11.76 t/s +0.1%; ids identical on every request; planted arm 7 RED fired 2/2 |
+| `0847-lane-302-lever-13-IQ2_S-gather-body-6-default-ON-GGM.patch` | WIN served. Cell AI (cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt), same binary, ABBA x2, BODY=5 vs unset (6): verify width 4 (greedy + sampled temp 0.7 seed 1234) 19.89 -> 20.06 t/s +0.87% (pairs +0.33/+1.36/+1.13/+0.66), acceptance identical 0.7915; plain decode 11.75 -> 11.76 t/s +0.1%; ids identical on every request; planted arm 7 RED fired 2/2 |
+| `0848-lane-302-register-lever-13-IQ2_S-gather-body-6-as-a-.patch` | UNMEASURED (manifest bookkeeping, no code) |
+| `0849-arifi-sync-protected-win-resolutions-for-lane-302-le.patch` | UNMEASURED (manifest bookkeeping, no code) |
+| `0850-lane-302-amend-vulkan-moe-gather-iq2s-body5-registra.patch` | UNMEASURED (manifest bookkeeping, no code) |
+| `0851-build-info-v0.1.3.2.patch` | none (string only); --version check in cache/mtp-x1-lane/cells/v0132rel-version.txt |
 
 ## Unclassified
 
@@ -2559,4 +2571,10 @@ rather than silently bucketed - add a rule when a new source appears.
 - `6e4c7901f` lane-302: register lever 12 small-n split_k as a protected win (vulkan-mm-splitk-small-n-verify)
 - `116b0bd4f` arifi-sync: protected-win resolutions for lane 302 lever 12 (32 wins, adopt-union), keyed to picked tip 6e4c7901f1
 - `fa3037d49` arifi-sync: re-key vulkan-mm-splitk-small-n-verify commit to the picked sha 7b1c2a88ca (was lane 302's 44ea6fb40d)
+- `7b0bfb6b8` lane-302 lever 13: opt-in IQ2_S gather body 6 reads the grid from the global const table (no LDS init)
+- `ece2051b8` lane-302 lever 13: IQ2_S gather body 6 default ON (GGML_ARIFI_IQ2S_BODY=5 = the body 5 off-ramp)
+- `71f4ef805` lane-302: register lever 13 IQ2_S gather body 6 as a protected win (vulkan-moe-gather-iq2s-body6-const-grid)
+- `4d57e2e34` arifi-sync: protected-win resolutions for lane 302 lever 13 (33 wins, adopt-union), keyed to picked entry 71f4ef8059
+- `d05b80a95` lane-302: amend vulkan-moe-gather-iq2s-body5 registration: body 5 is the off-ramp since lever 13
+- `03c24d1ec` build-info: v0.1.3.2
 

@@ -1,0 +1,69 @@
+From 7b0bfb6b8fc455886c3cf61ba3885366a94ee442 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 04:49:02 -0400
+Subject: [PATCH] lane-302 lever 13: opt-in IQ2_S gather body 6 reads the grid
+ from the global const table (no LDS init)
+
+GGML_ARIFI_IQ2S_BODY=6: arm-1 int8 sign body with iq2s_grid_const[qs] instead of the LDS copy, so the
+per-workgroup 8 KB grid init disappears (cell L priced that init at -13% at n4; body 5 recovered about
+half). Same table values and same fma order: byte-identical by construction. 7 = planted wrong arm
+(grid index qs ^ 1), test only. Default stays 5.
+
+Mechanism source: project-maya #19 docs/AMD_EXPERT_KERNELS.md (read only, no code taken).
+Profile: cell AH (cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt): LDS 8192 -> 0 B,
+RGP n4 dispatch 399.6 -> 357.1 us, 18/18 byte-identical, planted arm 7 RED 5/5.
+
+Origin: lane-302
+Measured-effect: WIN served. Cell AI (cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt), same binary, ABBA x2, BODY=5 vs unset (6): verify width 4 (greedy + sampled temp 0.7 seed 1234) 19.89 -> 20.06 t/s +0.87% (pairs +0.33/+1.36/+1.13/+0.66), acceptance identical 0.7915; plain decode 11.75 -> 11.76 t/s +0.1%; ids identical on every request; planted arm 7 RED fired 2/2
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp                     | 2 +-
+ .../ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp    | 9 ++++++---
+ 2 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index fa7e638218..0c56dcc95c 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -628,7 +628,7 @@ static uint32_t moe_gather_tail_env() {
+ // copy (wrong values, timing diagnostic only); 3 planted wrong arm (test only); 4 = legacy body + batched grid init
+ static uint32_t moe_gather_iq2s_body_env() {
+     const char * e = getenv("GGML_ARIFI_IQ2S_BODY");
+-    return (e != nullptr && e[0] >= '0' && e[0] <= '5') ? (uint32_t) (e[0] - '0') : 5u;
++    return (e != nullptr && e[0] >= '0' && e[0] <= '7') ? (uint32_t) (e[0] - '0') : 5u;
+ }
+ 
+ // lane-302 Route A: IQ4_NL gather body (spec 4 of the generic idg shader), opt-in until measured.
+diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
+index 8952875dad..1be9512621 100644
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/mul_mat_vec_iq2_s.comp
+@@ -15,6 +15,9 @@ FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+ //     nibbles swapped) for the op gate's RED check, test only.
+ //     4 = legacy body + batched grid init, 5 = arm 1 body + batched grid init (lane-302 lever 4: cellL ISA showed the
+ //     init as 16 serialized global_load -> s_waitcnt vmcnt(0) -> ds_store; same table, same LDS bytes, so byte-identical).
++//     6 = arm 1 body, grid read from the global const table, no LDS copy and no init (lane-302 lever 13, from
++//     project-maya #19 "IQ2_S reads its 8 KiB codebook through global memory"; same values, byte-identical).
++//     7 = PLANTED WRONG arm 6 (grid index qs ^ 1), test only.
+ layout (constant_id = 3) const uint ARIFI_IQ2S_BODY = 0;
+ 
+ // lane-302 lever 4: issue every grid load before any LDS store (one wait instead of one per load); loads clamp the
+@@ -53,8 +56,8 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid,
+         [[unroll]] for (uint l = 0; l < 2; ++l) {
+             const uint8_t sign = sign16[l];
+             const uint qs = qs16[l] | ((qh << (8 - nibble_shift - 2 * l)) & 0x300);
+-            const uvec2 grid = iq2s_grid[qs];
+-            if (ARIFI_IQ2S_BODY == 1 || ARIFI_IQ2S_BODY == 3 || ARIFI_IQ2S_BODY == 5) {
++            const uvec2 grid = ARIFI_IQ2S_BODY == 6 ? iq2s_grid_const[qs] : ARIFI_IQ2S_BODY == 7 ? iq2s_grid_const[qs ^ 1u] : iq2s_grid[qs];
++            if (ARIFI_IQ2S_BODY == 1 || ARIFI_IQ2S_BODY == 3 || ARIFI_IQ2S_BODY == 5 || ARIFI_IQ2S_BODY == 6 || ARIFI_IQ2S_BODY == 7) {
+                 const uint s8 = ARIFI_IQ2S_BODY == 3 ? ((uint(sign) >> 4) | ((uint(sign) & 0xFu) << 4)) : uint(sign);
+                 const uint mlo = ((s8 & 0xFu) * 0x00204081u) & 0x01010101u;
+                 const uint mhi = (((s8 >> 4) & 0xFu) * 0x00204081u) & 0x01010101u;
+@@ -136,7 +139,7 @@ void main() {
+ 
+     if (ARIFI_IQ2S_BODY == 4 || ARIFI_IQ2S_BODY == 5) {
+         arifi_init_iq2s_batched();
+-    } else if (ARIFI_IQ2S_BODY != 2) {
++    } else if (ARIFI_IQ2S_BODY != 2 && ARIFI_IQ2S_BODY != 6 && ARIFI_IQ2S_BODY != 7) {
+         init_iq_shmem(gl_WorkGroupSize);
+     }
+ 

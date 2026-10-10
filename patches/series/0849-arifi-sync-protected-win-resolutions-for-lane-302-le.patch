@@ -1,0 +1,652 @@
+From 4d57e2e34801e3c9d18422afc1468233ff6d85bb Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 11:04:02 -0400
+Subject: [PATCH] arifi-sync: protected-win resolutions for lane 302 lever 13
+ (33 wins, adopt-union), keyed to picked entry 71f4ef8059
+
+Rows = lane 302's pw_resolutions_lever13.py (its 51726a7814) run against v0132's preflight (cache/mtp-x1-lane/cells/l13-pw-preflight.txt, 33 wins, same set) with incoming re-keyed 8379412f0e -> 71f4ef8059. Pre-land check on throwaway pwscratch11 da24337695: PASS (cache/mtp-x1-lane/cells/l13-pw-check-pre.txt).
+
+Origin: lane-302 (rows), re-keyed by lane-298 relaunch-115
+Measured-effect: UNMEASURED (manifest bookkeeping, no code)
+---
+ .../arifi-sync/protected-win-resolutions.json | 627 ++++++++++++++++++
+ 1 file changed, 627 insertions(+)
+
+diff --git a/tools/arifi-sync/protected-win-resolutions.json b/tools/arifi-sync/protected-win-resolutions.json
+index 40b9234bd1..6f6721f5b4 100644
+--- a/tools/arifi-sync/protected-win-resolutions.json
++++ b/tools/arifi-sync/protected-win-resolutions.json
+@@ -4721,6 +4721,633 @@
+       ],
+       "decided_utc": "2026-10-10T06:50:00Z",
+       "decided_by": "lane-302 lead (Opus 5.5) after cell AG PASS on the HQ86 2026-10-09 21:08 bars (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-concat-transpose-deltanet",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-tq-matvec-subgroup",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-escha-mm-column-block",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-rocmfp4-fast-q8_1-mmvq",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-fa-dequant-kv-runtime-gate",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-rdna3-mmv-id-rows-switch",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-mul-mat-id-staging-receipt-hazard-assert",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-uma-read-path-probe",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-q5k-matvec-b-hoist-width-gate",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-mmvq-a-hoist-r48b-route",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-sx8-mulmm-packed-decode-and-mmq-under-coopmat",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-mmv-admit-width-switch",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-mmvq-wide-rows-switch",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-q5k-mmvq-route-n5-8",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-iq3-matvec-sign-hoist-n7-rows",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-q6k-mmvq-route-n7-8",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-q4k-mmvq-w5-column-split",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-iq3s-matvec-n6-rows2",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-iq4xs-q8_1-mmvq-admit-table",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-cm1-width-rule-f16b-guard",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-fa-sparse-prefill-qsa",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-cm1-f16b-staging-mul-mat-id",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-slot-major-matvec-id",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-iq3s-rows2",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-iq2s-body5",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY); lever 13 in mul_mat_vec_iq2_s.comp adds spec-constant arms 6 (grid from iq2s_grid_const[qs], no LDS init) and 7 (planted, test only): the grid load line and the arm-1 body predicate gain the 6/7 cases and the init branch skips arms 6/7; arms 0..5 are unchanged (body 5 stays as the off-ramp, anchors GGML_ARIFI_IQ2S_BODY / 'iq2_s body' still present)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-qwen4exp-hc-post-w",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-qwen4exp-gdn-bank",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-qsa-mask-fa-fusion",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-ext-q2_0-legacy-optin",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-iq4nl-nounroll-optin",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-q8_0-mmvq-own-rows-890m",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-cm1-fa-sparse-gather-hoist",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
++    },
++    {
++      "win_id": "vulkan-mm-splitk-small-n-verify",
++      "incoming": "71f4ef80590c6be9267a2d2de43bcb03eec45d89",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: the incoming range 8b63f71900..71f4ef8059 is fork-internal lane-302 lever 13 (IQ2_S gather body 6 default ON) plus its protected-wins registration, not an upstream ingest",
++        "ours": "lane-302/v0132-lever12-ship 8b63f71900 (this win as registered)",
++        "union": "lever 13 in ggml-vulkan.cpp changes only moe_gather_iq2s_body_env(): its comment, the accepted range '0'..'5' -> '0'..'7' and the unset default 5 -> 6 (GGML_ARIFI_IQ2S_BODY)"
++      },
++      "quality": "cell AI on lever-12 ship tip 8b63f71900 + lever 13 (every v0132 protected win in the measured tree): arm proof 17/17, TBO body 5 10/0, body 6 10/0, planted body 7 9 FAIL; served planted RED fired 2/2; greedy + sampled ids identical on every request; acceptance identical; served verify width 4 +0.87%, plain decode +0.1% (cellAI-10100632-SUMMARY.txt)",
++      "evidence": [
++        "cache/moe-gather-x1-lane/cells/cellAI-10100632-SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/cellAH-10100433/SUMMARY.txt",
++        "cache/moe-gather-x1-lane/cells/lever13-pwcheck-pre-r66.txt",
++        "commit:71f4ef80590c6be9267a2d2de43bcb03eec45d89"
++      ],
++      "decided_utc": "2026-10-10T15:00:00Z",
++      "decided_by": "lane-302 lead (Opus 5.5) after cell AI WIN (lane branch only; lane 298 re-keys at the merge)"
+     }
+   ]
+ }
