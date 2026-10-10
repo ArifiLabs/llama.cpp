@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **833**, all non-merge, applied in filename order.
+- Patches: **839**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 833 commit messages, same provenance trailers. Verified, not
+same file contents, same 839 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -912,6 +912,12 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 831 | `0831-tests-qwen4exp-MTP-layout-test-prints-the-sidecar-lo.patch` | arifi-fork-base | `64792893e` | - | - | tests: qwen4exp MTP layout test prints the sidecar logits hash |
 | 832 | `0832-arifi-sync-re-key-the-lever-11-Q1-and-P26-registrati.patch` | arifi-fork-base | `a5071d4a1` | - | - | arifi-sync: re-key the lever 11, Q1 and P26 registrations to their v0132 re-pick shas |
 | 833 | `0833-arifi-sync-protected-win-resolutions-for-the-v0132-r.patch` | arifi-fork-base | `de8ad18b2` | - | - | arifi-sync: protected-win resolutions for the v0132 re-pick (lever 11, lane 299 Q1, P26), keyed to a5071d4a11 |
+| 834 | `0834-vulkan-sparse-cm1-FA-resolves-gather-columns-once-pe.patch` | ternary-g128 | `4acd2c85d` | - | - | vulkan: sparse cm1 FA resolves gather columns once per tile and double-buffers K slices |
+| 835 | `0835-lane-301-protected-win-vulkan-cm1-fa-sparse-gather-h.patch` | arifi-fork-base | `4e4f496d1` | - | - | lane-301: protected-win vulkan-cm1-fa-sparse-gather-hoist for lever 1 (20f86b8cc7) |
+| 836 | `0836-lane-298-kv-zero-fills-batched-into-one-Vulkan-submi.patch` | arifi-fork-base | `b6cd445ff` | - | - | lane-298: kv-zero fills batched into one Vulkan submit + one fence per apply |
+| 837 | `0837-lane-298-order-kv-zero-fills-behind-the-graph-comput.patch` | arifi-fork-base | `228a17699` | - | - | lane-298: order kv-zero fills behind the graph (compute queue + barrier), fixes stale K on MTP layer 48 |
+| 838 | `0838-lane-298-drain-the-compute-queue-before-a-host-path-.patch` | arifi-fork-base | `656023648` | - | - | lane-298: drain the compute queue before a host-path kv-zero memset (host-visible UMA buffers) |
+| 839 | `0839-lane-298-host-path-kv-zero-drain-holds-the-queue-loc.patch` | arifi-fork-base | `5e8d8510e` | - | - | lane-298: host-path kv-zero drain holds the queue lock through unique_lock (exception safe) |
 
 ## Measured effect, per patch
 
@@ -1829,6 +1835,12 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0831-tests-qwen4exp-MTP-layout-test-prints-the-sidecar-lo.patch` | UNMEASURED (test-only; prints the sidecar logits FNV-1a hash as a value-identity receipt) |
 | `0832-arifi-sync-re-key-the-lever-11-Q1-and-P26-registrati.patch` | UNMEASURED (manifest metadata only) |
 | `0833-arifi-sync-protected-win-resolutions-for-the-v0132-r.patch` | UNMEASURED (manifest metadata only) |
+| `0834-vulkan-sparse-cm1-FA-resolves-gather-columns-once-pe.patch` | served prefill vs v0.1.3.1 (ed590650bd code), ABBA x2, every fix round above every base round at 8K/16K/32K: 8K 213.92 -> 217.33 (+1.6%), 16K 202.91 -> 206.79 (+1.9%), 32K 192.52 -> 196.41 (+2.0%); 2K tie (219.93 -> 218.43, rounds overlap); decode tie at all lengths; greedy 128 ids identical at 2K/8K/16K/32K; op QSA_MASK_FA kv32768 nb64 4670.8 -> 4016.1 us (0.86x); ops 21/21 + 7/7, planted RED FAIL 9/21 + 5/7 (cache/qsa-x1-lane/cells/c31-10091916-state.json) |
+| `0835-lane-301-protected-win-vulkan-cm1-fa-sparse-gather-h.patch` | none (registration only; the measured effect is 20f86b8cc7's, cache/qsa-x1-lane/cells/c31-10091916-state.json) |
+| `0836-lane-298-kv-zero-fills-batched-into-one-Vulkan-submi.patch` | UNMEASURED (build + smoke + prefill re-cut queued; receipts cells/kvzb-*) |
+| `0837-lane-298-order-kv-zero-fills-behind-the-graph-comput.patch` | UNMEASURED (gate queued: ids vs v0.1.3.1 equal + served ABBA cost; receipts cells/kvzo-*) |
+| `0838-lane-298-drain-the-compute-queue-before-a-host-path-.patch` | UNMEASURED (gated by the kvzo cell: ids vs v0.1.3.1 + served ABBA; host path has 0 exposure there) |
+| `0839-lane-298-host-path-kv-zero-drain-holds-the-queue-loc.patch` | UNMEASURED (same gate as f2ac86ff9a: kvzo cell, ids vs v0.1.3.1 + served ABBA) |
 
 ## Unclassified
 
@@ -2524,4 +2536,9 @@ rather than silently bucketed - add a rule when a new source appears.
 - `64792893e` tests: qwen4exp MTP layout test prints the sidecar logits hash
 - `a5071d4a1` arifi-sync: re-key the lever 11, Q1 and P26 registrations to their v0132 re-pick shas
 - `de8ad18b2` arifi-sync: protected-win resolutions for the v0132 re-pick (lever 11, lane 299 Q1, P26), keyed to a5071d4a11
+- `4e4f496d1` lane-301: protected-win vulkan-cm1-fa-sparse-gather-hoist for lever 1 (20f86b8cc7)
+- `b6cd445ff` lane-298: kv-zero fills batched into one Vulkan submit + one fence per apply
+- `228a17699` lane-298: order kv-zero fills behind the graph (compute queue + barrier), fixes stale K on MTP layer 48
+- `656023648` lane-298: drain the compute queue before a host-path kv-zero memset (host-visible UMA buffers)
+- `5e8d8510e` lane-298: host-path kv-zero drain holds the queue lock through unique_lock (exception safe)
 

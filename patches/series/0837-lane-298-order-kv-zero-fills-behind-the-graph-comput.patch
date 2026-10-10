@@ -1,0 +1,64 @@
+From 228a176995be85fb744efb1f19bc8450b6a34736 Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 18:35:09 -0400
+Subject: [PATCH] lane-298: order kv-zero fills behind the graph (compute queue
+ + barrier), fixes stale K on MTP layer 48
+
+kvzp-10091505 and kvzs-10091800 read stale K right after a fenced kv-zero fill on the
+v0.1.3.1 path (2 of 46 and 1 of 231 layer-48 probes). Vulkan graph compute returns
+without a wait when support_async, and ggml_vk_buffer_memset submitted its fill on the
+transfer queue, so a graph K write still in flight on the compute queue was not ordered
+against the zero. The fill now records on the device compute queue's command pool and
+starts with a full ggml_vk_sync_buffers barrier: its first scope covers every earlier
+compute submit, so the fill runs after the graph's last write. The fence wait after the
+fill is unchanged. Both paths (one submit per fill, and the batched kv-zero apply) use it.
+No queue drain on the host (the GGML_VK_MEMSET_SYNC diagnostic is not part of this fix).
+Host-visible UMA buffers keep the CPU memset branch.
+
+Origin: lane-298
+Measured-effect: UNMEASURED (gate queued: ids vs v0.1.3.1 equal + served ABBA cost; receipts cells/kvzo-*)
+---
+ ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp | 16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp b/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp
+index 0c79f61e31..67790ecdb4 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp
+@@ -1654,6 +1654,16 @@ void ggml_vk_buffer_memset_async(vk_context& ctx, vk_buffer& dst, size_t offset,
+ // thread records its fill into ONE transfer command buffer per device (device mutex held for the batch); the end submits
+ // once and waits once. Same fills, same queue, same bytes; only the per-fill submit + fence wait goes.
+ // GGML_VK_MEMSET_BATCH=0 = one submit per fill (the v0.1.3.0 path).
++// lane-298 (kvzp-10091505 / kvzs-10091800 stale K): graph compute returns without a wait (support_async), so a fill on
++// the transfer queue could land before an in-flight graph K write. Record fills on the compute queue behind a full
++// barrier: the barrier's first scope covers every earlier compute submit, so the fill runs after the graph's last write.
++static vk_context ggml_vk_memset_begin_ordered(vk_device & device) {
++    vk_context subctx = ggml_vk_create_temporary_context(device->compute_queue->cmd_pool);
++    ggml_vk_ctx_begin(device, subctx);
++    ggml_vk_sync_buffers(nullptr, subctx);
++    return subctx;
++}
++
+ struct vk_memset_batch_entry {
+     vk_device  device;
+     vk_context ctx;
+@@ -1700,8 +1710,7 @@ void ggml_vk_buffer_memset(vk_buffer& dst, size_t offset, uint32_t c, size_t siz
+         }
+         if (b == nullptr) {
+             dst->device->mutex.lock();
+-            vk_context subctx = ggml_vk_create_temporary_context(dst->device->transfer_queue->cmd_pool);
+-            ggml_vk_ctx_begin(dst->device, subctx);
++            vk_context subctx = ggml_vk_memset_begin_ordered(dst->device);
+             g_vk_memset_batch.push_back({ dst->device, subctx });
+             b = &g_vk_memset_batch.back();
+         }
+@@ -1710,8 +1719,7 @@ void ggml_vk_buffer_memset(vk_buffer& dst, size_t offset, uint32_t c, size_t siz
+     }
+ 
+     std::lock_guard<std::recursive_mutex> guard(dst->device->mutex);
+-    vk_context subctx = ggml_vk_create_temporary_context(dst->device->transfer_queue->cmd_pool);
+-    ggml_vk_ctx_begin(dst->device, subctx);
++    vk_context subctx = ggml_vk_memset_begin_ordered(dst->device);
+     subctx->s->buffer->buf.fillBuffer(dst->buffer, offset, size, c);
+     ggml_vk_ctx_end(subctx);
+ 
