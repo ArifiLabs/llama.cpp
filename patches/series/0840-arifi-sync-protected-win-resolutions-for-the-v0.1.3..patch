@@ -1,0 +1,892 @@
+From e0c868605f66e92da3ddf5ee955c78db9dcc904c Mon Sep 17 00:00:00 2001
+From: Angelo Arifi <arifilabs@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 01:23:33 -0400
+Subject: [PATCH] arifi-sync: protected-win resolutions for the v0.1.3.2 rc
+ range (lever 1 + kv-zero batch), keyed to c21f0689d0
+
+34 adopt-union rows (31 lever-1 path/semantic collisions + kv-zero-freed-cells, kv-ple-ngram-index-switch, vulkan-host-split-memtype-select). Rows written from the KVZO-PASS receipt; check PASS 34/34 on throwaway lane-298/v0132-pwscratch6 10490eeeaa (cells/rc2-pw-check.txt).
+
+Origin: lane-298
+Measured-effect: none (registry rows only; code effect in cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt)
+Lane: lane-298
+---
+ .../arifi-sync/protected-win-resolutions.json | 866 ++++++++++++++++++
+ 1 file changed, 866 insertions(+)
+
+diff --git a/tools/arifi-sync/protected-win-resolutions.json b/tools/arifi-sync/protected-win-resolutions.json
+index c10173f617..1d6a5d7093 100644
+--- a/tools/arifi-sync/protected-win-resolutions.json
++++ b/tools/arifi-sync/protected-win-resolutions.json
+@@ -3215,6 +3215,872 @@
+       ],
+       "decided_utc": "2026-10-09T20:30:00Z",
+       "decided_by": "lane-298 lead (Opus 5.5) per HQ86 2026-10-09 12:32 (lane 299 ended; its commit 1b78a88413 / 94f505acfc and NOTES relaunch-82/83 are the why)"
++    },
++    {
++      "win_id": "vulkan-concat-transpose-deltanet",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-tq-matvec-subgroup",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-escha-mm-column-block",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-rocmfp4-fast-q8_1-mmvq",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-fa-dequant-kv-runtime-gate",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-rdna3-mmv-id-rows-switch",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "kv-ple-ngram-index-switch",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: kv-zero fills submit one memset per layer x K/V x run",
++        "union": "Path-only collision (src/llama-kv-cache.cpp): kv-zero batch edits only zero_stale_cells (batch begin/end + one INFO field); the PLE n-gram index switch and for_each_token_in are untouched."
++      },
++      "quality": "kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-mul-mat-id-staging-receipt-hazard-assert",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-uma-read-path-probe",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds ggml_vk_memset_batch and a compute-queue drain before a host-path memset inside ggml_vk_buffer_memset_async / ggml_vk_buffer_memset (ggml-vulkan-buffers.cpp:1653-1730); the UMA read-back path is untouched. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-q5k-matvec-b-hoist-width-gate",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-mmvq-a-hoist-r48b-route",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-sx8-mulmm-packed-decode-and-mmq-under-coopmat",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-host-split-memtype-select",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: kv-zero fills submit one memset per layer x K/V x run",
++        "union": "Path-only collision: kv-zero batch adds ggml_vk_memset_batch and a compute-queue drain before a host-path memset inside ggml_vk_buffer_memset_async / ggml_vk_buffer_memset (ggml-vulkan-buffers.cpp:1653-1730); ggml-vulkan-common.h gains its declaration. ggml_backend_vk_buffer_type_plan_begin and the host-split memtype candidates are untouched."
++      },
++      "quality": "kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-mmv-admit-width-switch",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-mmvq-wide-rows-switch",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-q5k-mmvq-route-n5-8",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-iq3-matvec-sign-hoist-n7-rows",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-q6k-mmvq-route-n7-8",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-q4k-mmvq-w5-column-split",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-iq3s-matvec-n6-rows2",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-iq4xs-q8_1-mmvq-admit-table",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-cm1-width-rule-f16b-guard",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-fa-sparse-prefill-qsa",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Same sparse FA path: lever 1 changes flash_attn_cm1.comp under USE_SPARSE (gather columns resolved once per tile into LDS, K slices double-buffered); this win's dispatch and math are unchanged and c31 ran the sparse path with ids identical and the QSA_MASK_FA op gate PASS. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-cm1-f16b-staging-mul-mat-id",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-slot-major-matvec-id",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-iq3s-rows2",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-iq2s-body5",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-qwen4exp-hc-post-w",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-qwen4exp-gdn-bank",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "kv-zero-freed-cells",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: kv-zero fills submit one memset per layer x K/V x run",
++        "union": "Same mechanism, batched: zero_stale_cells issues the identical fills (same cells, same bytes, same window bound) between ggml_backend_vk_memset_batch(true/false) so Vulkan submits once per apply instead of once per layer x K/V x run; transposed V keeps the unbatched path. KVZO VERIFY: 0 stale-K hits over 308 layer-48 probes."
++      },
++      "quality": "kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-qsa-mask-fa-fusion",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Same sparse FA path: lever 1 changes flash_attn_cm1.comp under USE_SPARSE (gather columns resolved once per tile into LDS, K slices double-buffered); this win's dispatch and math are unchanged and c31 ran the sparse path with ids identical and the QSA_MASK_FA op gate PASS. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-ext-q2_0-legacy-optin",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-moe-gather-iq4nl-nounroll-optin",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
++    },
++    {
++      "win_id": "vulkan-q8_0-mmvq-own-rows-890m",
++      "incoming": "c21f0689d0084fc0bb53dae3053b20ddb16cb46f",
++      "verdict": "adopt-union",
++      "arms": {
++        "upstream": "inapplicable: lever 1 + kv-zero batch are fork-internal lane work, not an upstream ingest",
++        "ours": "v0132 cc1c462189: sparse cm1 FA reads gather columns per K slice, single-buffered",
++        "union": "Path-only collision (ggml/src/ggml-vulkan/ggml-vulkan.cpp): lever 1 adds only sparse_col = Bc*4 bytes to the coopmat FA shared-memory budget in ggml_vk_flash_attn_coopmat_shmem_support; no line of this win's mechanism changes. kv-zero batch adds only ggml_backend_vk_reg_get_proc_address (registry proc entry \"ggml_backend_vk_memset_batch\") at the end of ggml-vulkan.cpp; no line of this win's mechanism changes."
++      },
++      "quality": "lane 301 c31 vs v0.1.3.1 on llama-server: greedy ids sha-identical 128/128 at 2K/8K/16K/32K, all 4 runs; FA ops 21/21 + QSA_MASK_FA 7/7 on base and fix; planted RED FAIL 9/21 + 5/7; prefill +1.6/+1.9/+2.0% at 8K/16K/32K, 2K and decode tie; kvzo-10100057 (KVZO-PASS) on llama-server, Flash-Next MTP, A = v0.1.3.1 point a14473f76, B = rc c21f0689d0, ABBA: greedy ids A1 == B1/B2/A2 every request, sampled ids 6/6 equal x3; acceptance identical (greedy 1026/1224 83.8%, sampled 486/657 74.0%); greedy decode B/A -0.03%, sampled -0.32%, prefill +0.04%, all WITHIN-NOISE (bar max(1.0%, drift)); VERIFY build e978149875: 0/308 stale-K; lane 300 ids signature 36/36 + 18/18",
++      "evidence": [
++        "cache/qsa-x1-lane/cells/c31-10091916-state.json",
++        "cache/qsa-x1-lane/MERGE-READY.md",
++        "cache/qsa-x1-lane/NOTES.md",
++        "cache/mtp-x1-lane/cells/rc-pw-check-lever1only.txt",
++        "commit:20f86b8cc7",
++        "commit:4acd2c85dbaaef478857c4ac977d29629bc8d775",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt",
++        "cache/mtp-x1-lane/cells/kvzo-10100057-state.json",
++        "cache/mtp-x1-lane/cells/kvzo-10092337-verify.txt",
++        "cache/mtp-x1-lane/cells/rc-pw-check.txt",
++        "cache/determinism-x1-lane/QUESTIONS.md"
++      ],
++      "decided_utc": "2026-10-10T05:25:00Z",
++      "decided_by": "lane-298 lead (Opus 5.5) relaunch-112; rc range accepted by HQ86 20:40 + HQ87 Q79 (rows from the kvzo cell receipt, keyed once to the landing tip)"
+     }
+   ]
+ }
