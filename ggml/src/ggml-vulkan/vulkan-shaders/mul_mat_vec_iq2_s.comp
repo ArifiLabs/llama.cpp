@@ -15,6 +15,9 @@ FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
 //     nibbles swapped) for the op gate's RED check, test only.
 //     4 = legacy body + batched grid init, 5 = arm 1 body + batched grid init (lane-302 lever 4: cellL ISA showed the
 //     init as 16 serialized global_load -> s_waitcnt vmcnt(0) -> ds_store; same table, same LDS bytes, so byte-identical).
+//     6 = arm 1 body, grid read from the global const table, no LDS copy and no init (lane-302 lever 13, from
+//     project-maya #19 "IQ2_S reads its 8 KiB codebook through global memory"; same values, byte-identical).
+//     7 = PLANTED WRONG arm 6 (grid index qs ^ 1), test only.
 layout (constant_id = 3) const uint ARIFI_IQ2S_BODY = 0;
 
 // lane-302 lever 4: issue every grid load before any LDS store (one wait instead of one per load); loads clamp the
@@ -53,8 +56,8 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
         [[unroll]] for (uint l = 0; l < 2; ++l) {
             const uint8_t sign = sign16[l];
             const uint qs = qs16[l] | ((qh << (8 - nibble_shift - 2 * l)) & 0x300);
-            const uvec2 grid = iq2s_grid[qs];
-            if (ARIFI_IQ2S_BODY == 1 || ARIFI_IQ2S_BODY == 3 || ARIFI_IQ2S_BODY == 5) {
+            const uvec2 grid = ARIFI_IQ2S_BODY == 6 ? iq2s_grid_const[qs] : ARIFI_IQ2S_BODY == 7 ? iq2s_grid_const[qs ^ 1u] : iq2s_grid[qs];
+            if (ARIFI_IQ2S_BODY == 1 || ARIFI_IQ2S_BODY == 3 || ARIFI_IQ2S_BODY == 5 || ARIFI_IQ2S_BODY == 6 || ARIFI_IQ2S_BODY == 7) {
                 const uint s8 = ARIFI_IQ2S_BODY == 3 ? ((uint(sign) >> 4) | ((uint(sign) & 0xFu) << 4)) : uint(sign);
                 const uint mlo = ((s8 & 0xFu) * 0x00204081u) & 0x01010101u;
                 const uint mhi = (((s8 >> 4) & 0xFu) * 0x00204081u) & 0x01010101u;
@@ -136,7 +139,7 @@ void main() {
 
     if (ARIFI_IQ2S_BODY == 4 || ARIFI_IQ2S_BODY == 5) {
         arifi_init_iq2s_batched();
-    } else if (ARIFI_IQ2S_BODY != 2) {
+    } else if (ARIFI_IQ2S_BODY != 2 && ARIFI_IQ2S_BODY != 6 && ARIFI_IQ2S_BODY != 7) {
         init_iq_shmem(gl_WorkGroupSize);
     }
 

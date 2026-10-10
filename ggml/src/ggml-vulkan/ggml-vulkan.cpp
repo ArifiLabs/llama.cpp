@@ -628,7 +628,7 @@ static uint32_t moe_gather_tail_env() {
 // copy (wrong values, timing diagnostic only); 3 planted wrong arm (test only); 4 = legacy body + batched grid init
 static uint32_t moe_gather_iq2s_body_env() {
     const char * e = getenv("GGML_ARIFI_IQ2S_BODY");
-    return (e != nullptr && e[0] >= '0' && e[0] <= '5') ? (uint32_t) (e[0] - '0') : 5u;
+    return (e != nullptr && e[0] >= '0' && e[0] <= '7') ? (uint32_t) (e[0] - '0') : 5u;
 }
 
 // lane-302 Route A: IQ4_NL gather body (spec 4 of the generic idg shader), opt-in until measured.
