@@ -721,6 +721,59 @@ class StrictRegistrationTest(unittest.TestCase):
         self.assertIn(landed, [r[0] for r in rows])
 
 
+class RevertedOnLineTest(unittest.TestCase):
+    """HQ87 Q89: a measured win that a later commit reverts EXACTLY is exempt, and says so."""
+    setUp, tearDown = StrictRegistrationTest.setUp, StrictRegistrationTest.tearDown
+    _validate = StrictRegistrationTest._validate
+
+    def _win(self, path, text, effect="-9.4% per dispatch, 8 launches"):
+        return self.r.commit("vulkan: measured win on " + path, {path: text}, effect=effect)
+
+    def _revert(self, names, files):
+        return self.r.commit("revert " + " ".join(n[:10] for n in names), files, effect="none")
+
+    def _unregistered(self):
+        return [p for p in self._validate() if "UNREGISTERED" in p]
+
+    def test_exact_revert_is_exempt_and_printed(self):
+        w = self._win("ggml/w.c", "int w(void){return 2;}\n")
+        git(self.r.path, "rm", "-q", "--", "ggml/w.c")
+        git(self.r.path, "commit", "-q", "-m",
+            "revert %s\n\nOrigin: ArifiLabs (native)\nMeasured-effect: none\n" % w[:10])
+        r = git(self.r.path, "rev-parse", "HEAD")
+        self.assertEqual({w: r}, A.reverted_on_line(self.r.path, self.r.cfg, "main"))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual([], self._unregistered())
+        self.assertIn("REVERTED (%s by %s)" % (w[:9], r[:9]), buf.getvalue())
+
+    def test_one_revert_of_a_set_on_one_file_is_exempt(self):
+        self.r.write("ggml/s.c", "a\nb\nc\n")
+        git(self.r.path, "add", "--", "ggml/s.c")
+        git(self.r.path, "commit", "-q", "-m", "seed\n\nOrigin: ArifiLabs (native)\nMeasured-effect: none\n")
+        w1 = self._win("ggml/s.c", "a\nFAST1\nb\nc\n")
+        w2 = self._win("ggml/s.c", "a\nFAST1\nb\nFAST2\nc\n", effect="+3.1% decode")
+        self._revert([w1, w2], {"ggml/s.c": "a\nb\nc\n"})
+        self.assertEqual([], self._unregistered())
+
+    def test_RED_a_revert_with_one_line_difference_stays_unregistered(self):
+        self.r.write("ggml/s.c", "a\nb\nc\n")
+        git(self.r.path, "add", "--", "ggml/s.c")
+        git(self.r.path, "commit", "-q", "-m", "seed\n\nOrigin: ArifiLabs (native)\nMeasured-effect: none\n")
+        w = self._win("ggml/s.c", "a\nFAST\nb\nc\n")
+        self._revert([w], {"ggml/s.c": "a\nb\nc\nEXTRA\n"})
+        self.assertEqual({}, A.reverted_on_line(self.r.path, self.r.cfg, "main"))
+        self.assertTrue(any(w[:9] in p for p in self._unregistered()))
+
+    def test_RED_an_exact_inverse_that_does_not_name_the_win_stays_unregistered(self):
+        self.r.write("ggml/s.c", "a\n")
+        git(self.r.path, "add", "--", "ggml/s.c")
+        git(self.r.path, "commit", "-q", "-m", "seed\n\nOrigin: ArifiLabs (native)\nMeasured-effect: none\n")
+        w = self._win("ggml/s.c", "a\nFAST\n")
+        self.r.commit("cleanup", {"ggml/s.c": "a\n"}, effect="none")
+        self.assertTrue(any(w[:9] in p for p in self._unregistered()))
+
+
 class BaselineBoundaryTest(unittest.TestCase):
     """CHECKER-R3 residual, 2026-09-04: the baseline was closed to new shas BY CONVENTION only.
 

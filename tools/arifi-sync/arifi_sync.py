@@ -2177,6 +2177,12 @@ def validate_protected_wins(repo: str, ref: str, cfg=None) -> list:
     if cfg is not None:
         problems.extend(baseline_boundary_problems(repo))
         problems.extend(replay_provenance(repo, cfg)[0])
+        covered, baseline = covered_win_commits(repo), load_discovery_baseline(repo)
+        for w, r in reverted_on_line(repo, cfg, ref).items():
+            if w not in covered and w not in baseline and \
+                    _measured_effect_is_real(commit_trailers(repo, w)["Measured-effect"]):
+                say("REVERTED (%s by %s) %r - exact inverse on line, exempt from registration"
+                    % (w[:9], r[:9], gout(repo, "log", "-1", "--format=%s", w)[:70]))
         for sha, subject, eff in unregistered_measured_wins(repo, cfg, ref):
             problems.append(
                 "UNREGISTERED measured win %s %r - it landed with `Measured-effect: %s` and is "
@@ -2607,6 +2613,70 @@ def covered_win_commits(repo: str) -> set:
     return covered
 
 
+_SHA_WORD = re.compile(r"\b[0-9a-f]{7,40}\b")
+
+
+def reverted_on_line(repo: str, cfg: dict, ref: str) -> dict:
+    """{W: R} for commits W in base..ref that a LATER commit R in base..ref reverts EXACTLY (HQ87 Q89).
+
+    R names the set S it reverts by sha in its message (one revert may undo several commits). The
+    proof is a replay, not a reading of the message: start from R^, apply the reverse of every
+    commit in S (newest first) and the result must equal R's tree on every path S or R touches,
+    the registry files (manifest, resolutions, baseline) and the generated series excepted -
+    those are bookkeeping that a revert legitimately rewrites around later entries. One line more
+    or less in R, or a reverse that does not apply, and nothing in S is exempt (fail-closed)."""
+    base = cfg["base"]["upstream_sha"]
+    order = gout(repo, "rev-list", "--reverse", "%s..%s" % (base, ref)).split()
+    pos = {s: i for i, s in enumerate(order)}
+    skip = {"tools/arifi-sync/" + n for n in (PROTECTED_WINS, PROTECTED_RESOLUTIONS, PROTECTED_BASELINE)}
+    series = series_pathspec(cfg)
+    bodies = {}
+    for rec in gout(repo, "log", "--format=%H%x00%B%x1e", "%s..%s" % (base, ref)).split("\x1e"):
+        if "\x00" in rec:
+            h, b = rec.split("\x00", 1)
+            bodies[h.strip()] = b
+    out = {}
+    for r in order:
+        named = []
+        for word in _SHA_WORD.findall(bodies.get(r, "")):
+            hits = [s for s in order[:pos[r]] if s.startswith(word)]
+            if len(hits) == 1 and hits[0] not in named:
+                named.append(hits[0])
+        if not named:
+            continue
+        named.sort(key=pos.get)
+        paths = set()
+        for c in named + [r]:
+            paths.update(gout(repo, "diff-tree", "-r", "--no-commit-id", "--name-only", c).split())
+        paths = sorted(p for p in paths if p not in skip and not (p + "/").startswith(series.rstrip("/") + "/"))
+        if not paths:
+            continue
+        env = dict(os.environ, GIT_INDEX_FILE=os.path.join(gout(repo, "rev-parse", "--absolute-git-dir"),
+                                                           "arifi-revert-%s.idx" % r[:12]))
+        ok = git(repo, "read-tree", r + "^", check=False, env=env)[0] == 0
+        for c in reversed(named):
+            if not ok:
+                break
+            patch = subprocess.run(["git", "-C", repo, "diff", "--binary", c + "^", c, "--"] + paths,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+            if patch.strip():
+                ok = subprocess.run(["git", "-C", repo, "apply", "-R", "--cached", "--whitespace=nowarn"],
+                                    input=patch, env=env, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE).returncode == 0
+        if ok:
+            tree = subprocess.run(["git", "-C", repo, "write-tree"], env=env, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE).stdout.decode().strip()
+            ok = bool(tree) and git(repo, "diff", "--quiet", tree, r, "--", *paths, check=False)[0] == 0
+        try:
+            os.remove(env["GIT_INDEX_FILE"])
+        except OSError:
+            pass
+        if ok:
+            for c in named:
+                out.setdefault(c, r)
+    return out
+
+
 def unregistered_measured_wins(repo: str, cfg: dict, ref: str) -> list:
     """The STRICT set: landed commits with a real `Measured-effect:` that no manifest entry covers
     AND no baseline row dispositions. This is the single predicate `discover` prints and
@@ -2620,9 +2690,10 @@ def unregistered_measured_wins(repo: str, cfg: dict, ref: str) -> list:
     # and a one-to-one map. Rows that fail those checks map nothing and their commits stay in the
     # set below, so a broken ledger cannot quiet the gate.
     _, replayed = replay_provenance(repo, cfg)
+    reverted = reverted_on_line(repo, cfg, ref)
     rows = []
     for sha in gout(repo, "rev-list", "--reverse", "%s..%s" % (base, ref)).split():
-        if sha in covered or sha in baseline or sha in replayed:
+        if sha in covered or sha in baseline or sha in replayed or sha in reverted:
             continue
         eff = commit_trailers(repo, sha)["Measured-effect"]
         if _measured_effect_is_real(eff):
