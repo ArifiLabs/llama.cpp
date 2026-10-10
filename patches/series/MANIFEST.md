@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **851**, all non-merge, applied in filename order.
+- Patches: **852**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 851 commit messages, same provenance trailers. Verified, not
+same file contents, same 852 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -930,6 +930,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 849 | `0849-arifi-sync-protected-win-resolutions-for-lane-302-le.patch` | arifi-fork-base | `4d57e2e34` | - | - | arifi-sync: protected-win resolutions for lane 302 lever 13 (33 wins, adopt-union), keyed to picked entry 71f4ef8059 |
 | 850 | `0850-lane-302-amend-vulkan-moe-gather-iq2s-body5-registra.patch` | arifi-fork-base | `d05b80a95` | - | - | lane-302: amend vulkan-moe-gather-iq2s-body5 registration: body 5 is the off-ramp since lever 13 |
 | 851 | `0851-build-info-v0.1.3.2.patch` | arifi-fork-base | `03c24d1ec` | - | - | build-info: v0.1.3.2 |
+| 852 | `0852-lane-298-revert-lane-302-lever-12-small-n-split_k-fr.patch` | arifi-fork-base | `b5dbcc886` | - | - | lane-298: revert lane 302 lever 12 (small-n split_k) from v0.1.3.2: it changes plain greedy text vs v0.1.3.1 |
 
 ## Measured effect, per patch
 
@@ -1865,6 +1866,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0849-arifi-sync-protected-win-resolutions-for-lane-302-le.patch` | UNMEASURED (manifest bookkeeping, no code) |
 | `0850-lane-302-amend-vulkan-moe-gather-iq2s-body5-registra.patch` | UNMEASURED (manifest bookkeeping, no code) |
 | `0851-build-info-v0.1.3.2.patch` | none (string only); --version check in cache/mtp-x1-lane/cells/v0132rel-version.txt |
+| `0852-lane-298-revert-lane-302-lever-12-small-n-split_k-fr.patch` | correctness only - restores v0.1.3.1 plain greedy ids on Flash-Next + Ornith 1.5 (cache/mtp-x1-lane/cells/rg-bis-10101451-state.json, BIS-READ in cache/mtp-x1-lane/progress.txt) |
 
 ## Unclassified
 
@@ -2577,4 +2579,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `4d57e2e34` arifi-sync: protected-win resolutions for lane 302 lever 13 (33 wins, adopt-union), keyed to picked entry 71f4ef8059
 - `d05b80a95` lane-302: amend vulkan-moe-gather-iq2s-body5 registration: body 5 is the off-ramp since lever 13
 - `03c24d1ec` build-info: v0.1.3.2
+- `b5dbcc886` lane-298: revert lane 302 lever 12 (small-n split_k) from v0.1.3.2: it changes plain greedy text vs v0.1.3.1
 
