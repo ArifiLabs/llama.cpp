@@ -11,7 +11,7 @@ adds to upstream llama.cpp. It is generated from git, never hand-maintained, and
 integrity check refuses to pass if it has drifted from git by so much as a byte.
 
 - Base: `ggml-org/llama.cpp` tag `b11178`, `f9af9be219ca647a59106f6201bf0d85fab00224`
-- Patches: **839**, all non-merge, applied in filename order.
+- Patches: **840**, all non-merge, applied in filename order.
 
 ## Applying the series
 
@@ -21,7 +21,7 @@ git am patches/series/*.patch
 ```
 
 The result is byte-identical to `master` everywhere outside `patches/series` itself:
-same file contents, same 839 commit messages, same provenance trailers. Verified, not
+same file contents, same 840 commit messages, same provenance trailers. Verified, not
 asserted - `series check` replays the series with `git am` and diffs the result against
 `master` on every run.
 
@@ -918,6 +918,7 @@ generated directory is destroyed and rewritten on the next `series regen`.
 | 837 | `0837-lane-298-order-kv-zero-fills-behind-the-graph-comput.patch` | arifi-fork-base | `228a17699` | - | - | lane-298: order kv-zero fills behind the graph (compute queue + barrier), fixes stale K on MTP layer 48 |
 | 838 | `0838-lane-298-drain-the-compute-queue-before-a-host-path-.patch` | arifi-fork-base | `656023648` | - | - | lane-298: drain the compute queue before a host-path kv-zero memset (host-visible UMA buffers) |
 | 839 | `0839-lane-298-host-path-kv-zero-drain-holds-the-queue-loc.patch` | arifi-fork-base | `5e8d8510e` | - | - | lane-298: host-path kv-zero drain holds the queue lock through unique_lock (exception safe) |
+| 840 | `0840-arifi-sync-protected-win-resolutions-for-the-v0.1.3..patch` | arifi-fork-base | `e0c868605` | - | - | arifi-sync: protected-win resolutions for the v0.1.3.2 rc range (lever 1 + kv-zero batch), keyed to c21f0689d0 |
 
 ## Measured effect, per patch
 
@@ -1841,6 +1842,7 @@ legal and honest value; an absent trailer is a gap and is named as one.
 | `0837-lane-298-order-kv-zero-fills-behind-the-graph-comput.patch` | UNMEASURED (gate queued: ids vs v0.1.3.1 equal + served ABBA cost; receipts cells/kvzo-*) |
 | `0838-lane-298-drain-the-compute-queue-before-a-host-path-.patch` | UNMEASURED (gated by the kvzo cell: ids vs v0.1.3.1 + served ABBA; host path has 0 exposure there) |
 | `0839-lane-298-host-path-kv-zero-drain-holds-the-queue-loc.patch` | UNMEASURED (same gate as f2ac86ff9a: kvzo cell, ids vs v0.1.3.1 + served ABBA) |
+| `0840-arifi-sync-protected-win-resolutions-for-the-v0.1.3..patch` | none (registry rows only; code effect in cache/mtp-x1-lane/cells/kvzo-10100057-verdict.txt) |
 
 ## Unclassified
 
@@ -2541,4 +2543,5 @@ rather than silently bucketed - add a rule when a new source appears.
 - `228a17699` lane-298: order kv-zero fills behind the graph (compute queue + barrier), fixes stale K on MTP layer 48
 - `656023648` lane-298: drain the compute queue before a host-path kv-zero memset (host-visible UMA buffers)
 - `5e8d8510e` lane-298: host-path kv-zero drain holds the queue lock through unique_lock (exception safe)
+- `e0c868605` arifi-sync: protected-win resolutions for the v0.1.3.2 rc range (lever 1 + kv-zero batch), keyed to c21f0689d0
 
